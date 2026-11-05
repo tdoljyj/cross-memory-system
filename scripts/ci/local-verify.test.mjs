@@ -541,6 +541,7 @@ test('the watchdog levels come from where they live: the installed script wins o
   assert.deepEqual(at('Desk-A', '[int]$SuspendDisk=50, [int]$ResumeDisk=65, [double]$SuspendMem=6.0'), { suspend: 50, resume: 65 }, 'the installed watchdog (an older one) is what runs');
   assert.deepEqual(at('Desk-A', '$suspendDisk=40; $resumeDisk=70; $interval=60'), { suspend: 40, resume: 70 }, 'a rendered one too');
   assert.deepEqual(at('Desk-A', 'no levels in here'), { suspend: 50, resume: 80 });
+  assert.deepEqual(at('Desk-A', '$suspendDisk=42.5; $resumeDisk=66.5;'), { suspend: 42.5, resume: 66.5 }, 'levels with decimals');
   assert.deepEqual(at('Desk-B', null), { suspend: 50, resume: 80 }, 'a host without an installed script path: the profile');
   assert.equal(at('Somebody-Else', null), null, 'not a CI host');
   assert.deepEqual(at('Somebody-Else', null, { CLUED_CI_RESUME_FREE_GB: '90' }), { suspend: null, resume: 90 }, 'the variable names a level for any machine');
@@ -553,7 +554,7 @@ test('fixed drives are asked of Windows once and read as drive letters', () => {
   const run = (file, args) => { seen.push([file, args.at(-1)]); return { status: 0, stdout: 'C:\r\nd:\r\n\r\n' }; };
   assert.deepEqual(fixedDrives({ run }), ['C:', 'D:']);
   assert.match(seen[0][1], /DriveType=3/, 'fixed drives only (not optical, removable or network ones)');
-  assert.deepEqual(fixedDrives({ run: () => ({ status: 1, stdout: '' }), exists: (drive) => drive === 'C:\\' || drive === 'E:\\' }), ['C:', 'E:'], 'not listable: the drives that exist, not a switch to the home directory');
+  assert.deepEqual([...fixedDrives({ run: () => ({ status: 1, stdout: '' }), exists: (drive) => drive === 'C:\\' || drive === 'E:\\' })], ['C:', 'E:'], 'not listable: the drives that exist, not a switch to the home directory');
   let tries = 0;
   assert.deepEqual(fixedDrives({ run: () => { tries += 1; return tries === 1 ? { status: 1, stdout: '' } : { status: 0, stdout: 'D:\r\n' }; } }), ['D:'], 'asked again once');
 });

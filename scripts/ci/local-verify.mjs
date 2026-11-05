@@ -34,29 +34,33 @@
 // CI's full checkout, the Linux clone has GitHub's branches (as origin/*), its
 // tags and an origin remote: some tests read commits only a branch other than
 // main still holds. On Windows the worktrees see this repository's own refs.
-// Runs go side by side (defect 791484c2): each is queued after the change is
-// snapshotted (so it verifies what was there when it started), and starts when it
-// is first in line and the machine has room for one more (free memory, idle CPU,
-// free disk, the system drive counted against the CI watchdog's levels; at most
-// CLUED_LOCAL_VERIFY_MAX_RUNS, default 4; the first run always starts;
-// CLUED_LOCAL_VERIFY_RESOURCES=off leaves only that limit, as the tests do); a
-// waiting run prints its position. A run stopped without cleaning up (a killed
-// process) is noticed by its process number and, while queued, by not having been
-// touched for two minutes; run.lock keeps naming a run that lives, so copies of this
-// tool that still take the whole cache wait for all of them. Each run has a
-// temporary directory of its own (TEMP, TMP, TMPDIR for the tests) under the cache. The shared things have a lock each: the installation
-// of the dependencies of a lockfile, main's results, main's worktree, the repository's
-// worktree list and fetches. A change is verified in a worktree of its own. Logs, worktrees,
-// results of main and the dependency cache (about 10 GB) live under
-// <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first fixed
-// drive after the system drive (as setup-clued-dev-linux.ps1 picks), or CLUED_DEV_ROOT (the same root
-// setup-clued-dev-linux.ps1 installs CluedDev-Linux under) or, for this
-// directory alone, CLUED_LOCAL_VERIFY_HOME; ~/.cache/clued-local-verify where
-// there is no other drive. Never on the system drive when another exists: the CI
-// host's watchdog pauses the runners when it runs short (defect 2102f7e1). The
-// location is always a real path, links resolved. On a CI host (a machine in
-// scripts/ci/self-hosted/node-profiles.json) a run warns when the system drive is
-// below the level at which the installed watchdog starts the runners again.
+// Runs go side by side (defect 791484c2). Each run is queued after the change is
+// snapshotted (so it verifies what was there when it started) and starts when it
+// is first in line and the machine has room for one more: free memory, idle CPU,
+// free disk, the system drive counted against the CI watchdog's levels. At most
+// CLUED_LOCAL_VERIFY_MAX_RUNS run (default 4); the first run always starts;
+// CLUED_LOCAL_VERIFY_RESOURCES=off leaves only that limit, as the tests do. A
+// waiting run prints its position.
+// A run stopped without cleaning up (a killed process) is noticed by its process
+// number and, while queued, by not having been touched for two minutes. run.lock
+// keeps naming a run that lives (a run names itself again between suites if the
+// one it named has stopped), so copies of this tool that still take the whole
+// cache wait for all of them.
+// The shared things have a lock each: the installation of the dependencies of a
+// lockfile, main's results, main's worktree, the repository's worktree list and
+// fetches. A change is verified in a worktree of its own and with a temporary
+// directory of its own (TEMP, TMP, TMPDIR for the tests) under the cache.
+// Logs, worktrees, results of main and the dependency cache (about 10 GB) live
+// under <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first
+// fixed drive after the system drive (as setup-clued-dev-linux.ps1 picks), or
+// CLUED_DEV_ROOT (the same root setup-clued-dev-linux.ps1 installs CluedDev-Linux
+// under) or, for this directory alone, CLUED_LOCAL_VERIFY_HOME;
+// ~/.cache/clued-local-verify where there is no other drive. Never on the system
+// drive when another exists: the CI host's watchdog pauses the runners when it
+// runs short (defect 2102f7e1). The location is always a real path, links
+// resolved. On a CI host (a machine in scripts/ci/self-hosted/node-profiles.json)
+// a run warns when the system drive is below the level at which the installed
+// watchdog starts the runners again.
 //
 // A command that runs Node's test runner and ran no test is a failure, never a
 // pass (an entry point that exits 0 without running anything looks the same as
@@ -76,7 +80,7 @@ export const DISTRIBUTION = 'CluedDev-Linux';
 export const CHECKS = ['ci-suites', 'clued-cloud-tests', 'migration-verify'];
 // The Node version clued-required-tests.yml sets up.
 export const CI_NODE = '24.19.0';
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own (a failure message may name its drive)
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
@@ -170,21 +174,24 @@ export function fixedDrives({ run = spawnSync, exists = fs.existsSync } = {}) {
   }
   // cannot be listed: the drives that exist (an optical or removable one may be among them), never a silent switch
   // of the cache to the home directory, which would have its own locks and registry
-  return [...'CDEFGHIJKLMNOPQRSTUVWXYZ'].map((letter) => `${letter}:`).filter((drive) => exists(`${drive}\\`));
+  const guessed = [...'CDEFGHIJKLMNOPQRSTUVWXYZ'].map((letter) => `${letter}:`).filter((drive) => exists(`${drive}\\`));
+  guessed.guessed = true;
+  return guessed;
 }
 
 // Where the developer tools keep their large files on Windows: CLUED_DEV_ROOT,
 // else \clued-dev on the first fixed drive after the system drive (D: to Z:, as
 // the setup script does); null elsewhere and where there is no other drive.
-export function dataRoot(env = process.env, { platform = process.platform, fixed = fixedDrives, systemDrive = env.SystemDrive || 'C:' } = {}) {
+export function dataRoot(env = process.env, { platform = process.platform, fixed = fixedDrives, systemDrive = env.SystemDrive || 'C:', exists = fs.existsSync } = {}) {
   if (env.CLUED_DEV_ROOT) return path.resolve(env.CLUED_DEV_ROOT);
   if (platform !== 'win32') return null;
   const drives = fixed();
-  for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
-    const drive = `${letter}:`;
-    if (drive.toLowerCase() !== systemDrive.toLowerCase() && drives.includes(drive)) return path.win32.join(`${drive}\\`, 'clued-dev');
-  }
-  return null;
+  const candidates = [...'DEFGHIJKLMNOPQRSTUVWXYZ'].map((letter) => `${letter}:`)
+    .filter((drive) => drive.toLowerCase() !== systemDrive.toLowerCase() && drives.includes(drive));
+  // drives that were only guessed (the listing failed) may include an optical or a removable one: the one that
+  // already has the data directory wins, so the cache does not move
+  const chosen = drives.guessed ? (candidates.find((drive) => exists(`${drive}\\clued-dev`)) ?? candidates[0]) : candidates[0];
+  return chosen ? path.win32.join(`${chosen}\\`, 'clued-dev') : null;
 }
 
 // Not %LOCALAPPDATA%: a packaged Windows app's processes see AppData redirected
@@ -417,7 +424,8 @@ export function acquireNamedLock(dir, name, { pid = process.pid, now = Date.now,
     try {
       fs.renameSync(file, moved);
     } catch {
-      continue; // another waiter took it first
+      wait(50); // another waiter took it first (or the file is held for a moment): not a tight loop
+      continue;
     }
     const taken = read(moved);
     if (taken?.token !== held?.token) {
@@ -519,7 +527,12 @@ export function listRuns(home, { alive = processAlive, now = Date.now, wait = sl
     }
     if (run === undefined) continue; // gone
     if (run === null) {
-      runs.unreadable += 1;
+      let age = 0;
+      try {
+        age = now() - fs.statSync(file).mtimeMs;
+      } catch { continue; }
+      if (age > 10 * 60_000) fs.rmSync(file, { force: true }); // garbled (a power loss), not being written
+      else runs.unreadable += 1;
       continue;
     }
     let stale = !alive(run.pid);
@@ -647,6 +660,12 @@ function umbrellaState(home, { alive, now }) {
 // linked into place, which fails if anyone placed one in the meantime.
 function takeUmbrella(home, { alive, now }) {
   const file = path.join(home, 'run.lock');
+  try {
+    for (const name of fs.readdirSync(home)) {
+      const pid = /^run\.lock\.(\d+)\.(?:stale|umbrella)$/.exec(name)?.[1];
+      if (pid !== undefined && !alive(Number(pid))) fs.rmSync(path.join(home, name), { force: true }); // left by a process that stopped
+    }
+  } catch { /* none */ }
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const state = umbrellaState(home, { alive, now });
     if (state.joined) return { ok: true };
@@ -672,7 +691,7 @@ function takeUmbrella(home, { alive, now }) {
       fs.linkSync(temporary, file);
       return { ok: true };
     } catch (error) {
-      if (error.code !== 'EEXIST') throw error; // someone placed one in this instant: look again
+      if (error.code !== 'EEXIST' && error.code !== 'ENOENT') throw error; // someone placed one (or swept ours) in this instant: look again
     } finally {
       fs.rmSync(temporary, { force: true });
     }
@@ -979,9 +998,14 @@ export function pruneWorktrees(root, home, { alive = processAlive, now = Date.no
   const owned = (entry) => /-r(\d+-[0-9a-f]{6})$/.exec(entry)?.[1] ?? null;
   // the temporary directories of runs that are gone
   const temp = path.join(home, 't');
-  if (fs.existsSync(temp)) {
-    for (const name of fs.readdirSync(temp)) if (!live.has(name)) fs.rmSync(path.join(temp, name), { recursive: true, force: true });
-  }
+  try {
+    for (const name of fs.readdirSync(temp)) {
+      if (live.has(name)) continue;
+      try {
+        fs.rmSync(path.join(temp, name), { recursive: true, force: true });
+      } catch { /* held by something a test left: the next run tries again */ }
+    }
+  } catch { /* none */ }
   const gone = [
     ...entries.filter((entry) => owned(entry) && !live.has(owned(entry))),
     ...entries.filter((entry) => !owned(entry)).sort((a, b) => mtimeOf(b) - mtimeOf(a)).slice(KEEP_WORKTREES),
@@ -1031,13 +1055,14 @@ function npmSync(args, cwd, label, log) {
 // (the store is then only read), runs that need another install at the same time.
 // A store a live run uses is never removed (the run's record names it, written
 // while the key's lock is still held).
-function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null }) {
+export function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null, npm = npmSync }) {
   const app = path.join(dir, APP);
   const read = (file) => (fs.existsSync(path.join(app, file)) ? fs.readFileSync(path.join(app, file)) : null);
   if (!read('package.json') || !read('package-lock.json')) throw new Error(`${APP} has no package.json or package-lock.json`);
   const key = dependencyKey({ lock: read('package-lock.json'), packageJson: read('package.json'), npmrc: read('.npmrc') ?? '' });
   const store = path.join(home, 'node_modules');
   const ready = path.join(store, key);
+  const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
   fs.mkdirSync(store, { recursive: true });
   withLock(home, `dependencies-${key}`, () => {
     for (const name of fs.readdirSync(store)) {
@@ -1050,17 +1075,23 @@ function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = nu
         if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
       }
       try {
-        npmSync(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
+        npm(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
           '--fetch-timeout=60000', '--no-audit', '--no-fund'], temporary, `installing ${APP} dependencies (${key})`, log);
+        // the embedded PostgreSQL package is rebuilt before the store is complete: once complete it is only read
+        // (a rebuild in place would replace binaries that another run's tests are running)
+        if (fs.existsSync(path.join(temporary, 'node_modules', platformPackage))) {
+          npm(['rebuild', platformPackage], temporary, `rebuilding ${platformPackage}`, log);
+          fs.writeFileSync(path.join(temporary, 'rebuilt'), '');
+        }
         fs.writeFileSync(path.join(temporary, 'complete'), '');
         renameRetrying(temporary, ready);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }
     }
-    const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+    // a store an earlier version of this tool installed has not been rebuilt: that one is rebuilt in place, once
     if (rebuild && !fs.existsSync(path.join(ready, 'rebuilt')) && fs.existsSync(path.join(ready, 'node_modules', platformPackage))) {
-      npmSync(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
+      npm(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
       fs.writeFileSync(path.join(ready, 'rebuilt'), '');
     }
     fs.utimesSync(ready, new Date(), new Date());
@@ -1301,7 +1332,10 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
     try {
       dropWorktree(root, dir, home);
     } catch { /* the next run's prune takes it */ }
-    fs.rmSync(temp, { recursive: true, force: true });
+    try {
+      killUnder(temp); // an embedded PostgreSQL a test left holds files there
+      fs.rmSync(temp, { recursive: true, force: true });
+    } catch { /* the next run's prune takes it: a failure here must not replace the verdicts */ }
   }
 }
 
@@ -1351,10 +1385,12 @@ export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, 
     `repo="$HOME/${LINUX_HOME}/repo"`,
     'mkdir -p "$repo"',
     // whatever happens, this run's refs go and its temporary directory; set first
-    `trap 'rm -rf "\${tool:-/nonexistent-local-verify}"; git -C "$repo" for-each-ref --format="delete %(refname)" refs/local-verify/${run}/ ${INCOMING}${run}/ | git -C "$repo" update-ref --stdin' EXIT`,
+    `trap 'rm -rf "\${tool:-/nonexistent-local-verify}"; git -C "$repo" for-each-ref --format="delete %(refname)" refs/local-verify/${run}/ ${INCOMING}${run}/ 2>/dev/null | git -C "$repo" update-ref --stdin 2>/dev/null' EXIT`,
     `exec 9>"$HOME/${LINUX_HOME}/repo.lock"; flock -w 900 9`,
     '[ -d "$repo/.git" ] || git init -q "$repo"',
     `git -C "$repo" remote get-url origin >/dev/null 2>&1 || git -C "$repo" remote add origin https://github.com/${REPOSITORY}.git`,
+    // refs of runs that stopped without their clean-up (the time is in the name, a day is far longer than a run)
+    "now=$(date +%s)000; for ref in $(git -C \"$repo\" for-each-ref --format='%(refname)' refs/local-verify/); do case $ref in refs/local-verify/run-*-*/*) t=${ref#refs/local-verify/run-*-}; t=${t%%/*}; [ $((now - t)) -gt 86400000 ] && echo \"delete $ref\" || true;; esac; done | git -C \"$repo\" update-ref --stdin",
     ...(bundle ? [
       `git -C "$repo" bundle verify -q ${quote(bundle)} >/dev/null`,
       // every ref the bundle carries, so all its objects are kept (a fetch keeps
@@ -1445,6 +1481,18 @@ export function refUpdates(wanted, have) {
 // main under refs/local-verify/<run>/{candidate,base}, and GitHub's branches
 // and tags as last fetched; null when it lacks none. The first one carries the
 // whole history. What the clone has goes in on stdin, however many refs it has.
+// Refs a Windows run set in this repository for its bundle and a stopped process did not remove: of a process
+// that is gone, or older than a day (the name has the time).
+export function sweepRunRefs(root, { alive = processAlive, now = Date.now } = {}) {
+  const listed = git(['for-each-ref', '--format=%(refname)', 'refs/local-verify/'], { cwd: root, allowFail: true });
+  if (listed.status !== 0) return;
+  for (const ref of String(listed.stdout).split('\n')) {
+    const match = /^refs\/local-verify\/run-(\d+)(?:-(\d+))?\//.exec(ref);
+    if (!match) continue;
+    const old = match[2] !== undefined && now() - Number(match[2]) > 86_400_000;
+    if (old || !alive(Number(match[1]))) git(['update-ref', '-d', ref], { cwd: root, allowFail: true });
+  }
+}
 export function bundleFor(root, { run, candidate, main, has, file }) {
   const github = [`--glob=${GITHUB_BRANCHES}*`, `--glob=${GITHUB_TAGS}*`];
   const exclude = has.map((sha) => `^${sha}\n`).join('');
@@ -1481,7 +1529,7 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, d
   if (!String(names.stdout ?? '').split(/\r?\n/).map((name) => name.replace(/\0/g, '').trim()).includes(distribution)) {
     throw new Error(`${distribution} is not installed; run scripts/ci/setup-clued-dev-linux.ps1`);
   }
-  const run = `run-${process.pid}`;
+  const run = `run-${process.pid}-${Date.now()}`; // the time lets a clean-up tell an old run's refs
   const clone = linuxRefs(root, distribution);
   const bundle = bundleFor(root, { run, candidate, main, has: clone.has, file: path.join(home, 'bundles', `${run}.bundle`) });
   const refsFile = path.join(home, 'bundles', `${run}.refs`);
@@ -1549,6 +1597,7 @@ async function verifyChange({ options, root, home, change, run }) {
     for (const ref of ['refs/local-verify/github-main', 'refs/local-verify/candidate', 'refs/local-verify/base']) {
       git(['update-ref', '-d', ref], { cwd: root, allowFail: true });
     }
+    sweepRunRefs(root);
   }
   // a Linux hand-over reads the refs fetched here
   const mainCommit = resolveMain(root, options, home);
@@ -1567,7 +1616,7 @@ async function verifyChange({ options, root, home, change, run }) {
   // bundles of runs that are gone (another run's are in use)
   if (fs.existsSync(path.join(home, 'bundles'))) {
     for (const name of fs.readdirSync(path.join(home, 'bundles'))) {
-      const owner = /^run-(\d+)\./.exec(name)?.[1];
+      const owner = /^run-(\d+)[-.]/.exec(name)?.[1];
       if (owner === undefined || !processAlive(Number(owner))) fs.rmSync(path.join(home, 'bundles', name), { force: true });
     }
   }

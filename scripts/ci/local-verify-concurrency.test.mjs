@@ -9,8 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { acquireNamedLock, admitRun, beginRun, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees, refreshUmbrella,
-  roomForOneMore, sampleResources, withLock, worktree, worktreeLock } from './local-verify.mjs';
+import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
+  refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = path.join(ROOT, 'scripts', 'ci', 'local-verify.mjs');
@@ -58,7 +58,7 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   const plenty = { freeMemGb: 40, idleCores: 20, dataFreeGb: 500, systemFreeGb: 120 };
   assert.deepEqual(roomForOneMore({ running: 0 }, { freeMemGb: 0, idleCores: 0, dataFreeGb: 0, systemFreeGb: 0 }).ok, true, 'nothing running: always');
   assert.equal(roomForOneMore({ running: 1 }, plenty).ok, true);
-  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample, { resume: 65 }).lacks.map((lack) => lack.kind);
+  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample, { resume: 65, keeps: HOST_KEEPS }).lacks.map((lack) => lack.kind);
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 15 }), ['memory'], 'a run takes 6 GB and 10 GB stay free: 16 needed');
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 16 }), []);
   assert.deepEqual(kinds(1, { ...plenty, idleCores: 7 }), ['cpu']);
@@ -74,7 +74,11 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 28 }, { ramping: 2 }), [], '16 left');
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 30 }, { ramping: 0 }), []);
   assert.deepEqual(kinds(4, plenty), ['runs'], 'at most 4 at a time');
-  const limited = roomForOneMore({ running: 2 }, plenty, { maxRuns: 2 });
+  // in the distribution (one VM with the CI runners') less memory stays free than on the host
+  const twelve = { ...plenty, freeMemGb: 12 };
+  assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: VM_KEEPS }).ok, true);
+  assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: HOST_KEEPS }).ok, false);
+  const limited = roomForOneMore({ running: 2 }, plenty, { maxRuns: 2, keeps: HOST_KEEPS });
   assert.match(limited.lacks[0].text, /2 runs are running, the limit is 2/);
 });
 
@@ -102,6 +106,7 @@ function machine(t) {
     log: (line) => state.lines.push(line),
     wait: () => { state.time += 4000; state.hooks.shift()?.(); },
     env: {},
+    limits: { keeps: HOST_KEEPS }, // the numbers of a Windows host, wherever the test runs
   };
   return { home, state, options };
 }
@@ -328,7 +333,7 @@ function runTool({ dir, main, env, home, extra = {} }) {
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 
 test('three different changes verified at the same time finish side by side with the results each has alone', { timeout: 240_000 }, async (t) => {
-  const seconds = 8;
+  const seconds = 12;
   // alone, one after the other, each with a cache of its own
   const solo = probeRepository(t, { seconds: 0 }); // the duration does not change a verdict
   const alone = {};
@@ -499,6 +504,7 @@ test('what ends processes under a worktree does not reach a sibling worktree who
 });
 
 test('the Linux script is valid bash and its lock keeps two runs apart (where flock exists)', (t) => {
+  if (process.platform !== 'linux') return t.skip('Linux only: elsewhere "bash" may be the launcher of a distribution, or a bash without flock'); // checked in the distribution by local-verify --linux
   const bash = spawnSync('bash', ['-c', 'command -v flock'], { encoding: 'utf8', windowsHide: true });
   const script = linuxScript({ bundle: '/b/it.bundle', refs: '/b/run.refs', tool: '/b/tool.mjs', run: 'run-1', candidate: 'a'.repeat(40), main: 'b'.repeat(40), suites: ['x'] });
   const syntax = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8', windowsHide: true });
@@ -530,4 +536,90 @@ test('the probes of side-by-side runs see a temporary directory of their own', {
   assert.equal(new Set(temps).size, 2);
   temps.forEach((temp) => assert.ok(temp.startsWith(path.join(home, 't') + path.sep), `${temp} is under the cache's own temporary directories`));
   assert.deepEqual(fs.existsSync(path.join(home, 't')) ? fs.readdirSync(path.join(home, 't')) : [], [], 'removed when the runs end');
+});
+
+// ---- the second review ----
+
+test('a new dependency store is rebuilt before it is complete and then only read; an old one without the mark is rebuilt in place, once', (t) => {
+  const home = tempHome(t);
+  const dir = tempHome(t, 'lv-conc-wt');
+  const app = path.join(dir, 'apps', 'clued-cloud');
+  fs.mkdirSync(app, { recursive: true });
+  fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'a', dependencies: { b: '1.0.0' } }));
+  fs.writeFileSync(path.join(app, 'package-lock.json'), '{"lockfileVersion":3}');
+  const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+  const calls = [];
+  const npm = (args, cwd) => {
+    calls.push([args[0], cwd]);
+    if (args[0] === 'ci') fs.mkdirSync(path.join(cwd, 'node_modules', platformPackage), { recursive: true });
+  };
+  const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
+  const ready = path.join(home, 'node_modules', key);
+  assert.deepEqual(calls.map(([what]) => what), ['ci', 'rebuild'], 'installed and rebuilt, for every suite');
+  assert.equal(calls[0][1], calls[1][1], 'in the same temporary directory');
+  assert.notEqual(calls[1][1], ready, 'not in the store other runs read');
+  assert.ok(fs.existsSync(path.join(ready, 'complete')) && fs.existsSync(path.join(ready, 'rebuilt')));
+  assert.equal(fs.realpathSync(path.join(app, 'node_modules')), fs.realpathSync(path.join(ready, 'node_modules')), 'linked into the worktree');
+  calls.length = 0;
+  ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
+  assert.deepEqual(calls, [], 'a second run reads the store: nothing is installed or rebuilt');
+  // a store an earlier version made: no mark
+  fs.rmSync(path.join(ready, 'rebuilt'));
+  ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
+  assert.deepEqual(calls, [], 'a suite that does not need the rebuild leaves it alone');
+  ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
+  assert.deepEqual(calls, [['rebuild', ready]], 'rebuilt in place once');
+  ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
+  assert.equal(calls.length, 1, 'and marked');
+});
+
+test('housekeeping: the temporary directory of a dead run goes, a garbled record goes after a while, a fresh unreadable one only makes pruning wait', (t) => {
+  const home = tempHome(t);
+  fs.mkdirSync(path.join(home, 't', '99999999-abcdef'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'worktrees'), { recursive: true });
+  const repo = tempHome(t, 'lv-conc-norepo');
+  // a record garbled long ago (a power loss) is removed; a fresh unreadable one only makes pruning wait
+  const runs = path.join(home, 'runs');
+  fs.mkdirSync(runs, { recursive: true });
+  fs.writeFileSync(path.join(runs, '1-aaaaaa.json'), '');
+  fs.writeFileSync(path.join(runs, '2-bbbbbb.json'), '');
+  const old = new Date(Date.now() - 20 * 60_000);
+  fs.utimesSync(path.join(runs, '1-aaaaaa.json'), old, old);
+  const listed = listRuns(home, { wait: () => {} });
+  assert.equal(listed.unreadable, 1, 'the fresh one');
+  assert.deepEqual(fs.readdirSync(runs), ['2-bbbbbb.json'], 'the old one is gone');
+  fs.rmSync(path.join(runs, '2-bbbbbb.json'));
+  pruneWorktrees(repo, home, { alive: () => true });
+  assert.deepEqual(fs.readdirSync(path.join(home, 't')), [], "a dead run's temporary directory is removed");
+});
+
+test('the cache stays where it is when the drives could only be guessed; data drives are named once; run refs of runs that are gone are swept', (t) => {
+  const win = { platform: 'win32', systemDrive: 'C:' };
+  const guessed = ['C:', 'D:', 'E:'];
+  guessed.guessed = true;
+  assert.equal(dataRoot({}, { ...win, fixed: () => guessed, exists: (dir) => dir === 'E:\\clued-dev' }), path.win32.join('E:\\', 'clued-dev'), 'where the data directory already is');
+  assert.equal(dataRoot({}, { ...win, fixed: () => guessed, exists: () => false }), path.win32.join('D:\\', 'clued-dev'), 'else the first');
+  // refs a Windows run set for its bundle
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lv-conc-refs-')));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const config = `${repo}.gitconfig`;
+  fs.writeFileSync(config, '');
+  t.after(() => fs.rmSync(config, { force: true }));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM']) {
+    const before = process.env[key];
+    process.env[key] = env[key];
+    t.after(() => { if (before === undefined) delete process.env[key]; else process.env[key] = before; });
+  }
+  const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'c');
+  const head = git('rev-parse', 'HEAD');
+  const now = 1_800_000_000_000;
+  for (const name of ['run-111', 'run-222-' + now, 'run-333-' + (now - 2 * 86_400_000), 'run-444-' + now, 'incoming/other']) git('update-ref', `refs/local-verify/${name}/candidate`, head);
+  sweepRunRefs(repo, { alive: (pid) => pid !== 111 && pid !== 444, now: () => now + 1000 });
+  assert.deepEqual(git('for-each-ref', '--format=%(refname)', 'refs/local-verify/').split('\n').sort(), [
+    'refs/local-verify/incoming/other/candidate',
+    'refs/local-verify/run-222-' + now + '/candidate',
+  ], 'gone: 111 (dead), 333 (a day old), 444 (dead); kept: 222 (alive and fresh) and what is not a run\'s');
 });
