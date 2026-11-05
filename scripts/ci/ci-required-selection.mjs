@@ -40,8 +40,7 @@ const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions
 export const SUITES = {
   'ci-suites': {
     'resource-maintenance': ['scripts/ci/self-hosted/resource-maintenance/**', 'config/ci-resource-maintenance.json',
-      'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', 'tests/fixtures/compute-panel-duplicate-runs.json',
-      '.github/workflows/clued-compute-panel.yml'],
+      'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
     'resident-node': RESIDENT_AND_SOURCE,
     'resident-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
