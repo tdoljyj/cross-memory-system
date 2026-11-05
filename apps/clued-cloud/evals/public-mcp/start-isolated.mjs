@@ -187,7 +187,7 @@ async function start(){
     await launched.publishReady();
   }catch(error){console.error(error.message);await shutdown(1);}
 }
-if(import.meta.main??process.argv[1]?.split(/[\/]/).pop()===decodeURIComponent(import.meta.url.split('/').pop())){
+if(import.meta.main??process.argv[1]?.split(/[\\/]/).pop()===decodeURIComponent(import.meta.url.split('/').pop())){
   try{if(process.argv[2]==='allocate')console.log(await allocateIsolatedPort());
     else if(process.argv[2]==='record')console.log(launcherIdentity(Number(process.argv[3])));
     else if(process.argv[2]==='ready'){
