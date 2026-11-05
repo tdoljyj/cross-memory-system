@@ -22,6 +22,14 @@ const cfg = validateCompanionConfig({
 const BATCH = '0123456789abcdef-0123456789ab';
 const JOB = 'e'.repeat(64);
 
+test('merge-ref metadata is optional and advisory, malformed or missing values never imply movement', () => {
+  const row = { number:884, state:'open', merged:false, head:'a'.repeat(40) };
+  assert.deepEqual(parsePull(JSON.stringify(row),884), { number:884,state:'open',headSha:row.head });
+  for (const mergeSha of [null, false, 'not-a-sha', 'a'.repeat(100)])
+    assert.equal(parsePull(JSON.stringify({...row,mergeSha}),884).mergeSha,undefined);
+  assert.equal(parsePull(JSON.stringify({...row,mergeSha:'b'.repeat(40)}),884).mergeSha,'b'.repeat(40));
+});
+
 test('argv builders are fixed and refuse anything that is not a validated id', () => {
   const a = argv(cfg);
   assert.deepEqual(a.startWait('clued-ci-wsprep', BATCH).slice(-4), ['/usr/bin/systemctl', 'start', '--wait', `clued-ci-wsprep@${BATCH}.service`]);
@@ -162,7 +170,7 @@ test('pr-head (phase 2): an exact request and answer shape; the companion reads 
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: async () => {}, clock: () => Date.parse('2026-10-22T12:00:00Z'), readPull: pr => readPullArgv('C:\\gh.exe', 'tdoljyj/cross-memory-system', pr) });
   await c.step();
   assert.deepEqual((await box.poll(req)).pull, { number: 884, state: 'merged', headSha: 'a'.repeat(40) });
-  assert.deepEqual(asked.find(a => a.includes('api')), ['C:\\gh.exe', 'api', '--method', 'GET', 'repos/tdoljyj/cross-memory-system/pulls/884', '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha}']);
+  assert.deepEqual(asked.find(a => a.includes('api')), ['C:\\gh.exe', 'api', '--method', 'GET', 'repos/tdoljyj/cross-memory-system/pulls/884', '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}']);
   assert.equal(parsePull('{"number":884,"state":"open","merged":false,"head":"not-a-sha"}', 884), null);
   assert.equal(parsePull('{"number":1,"state":"open","merged":false,"head":"' + 'a'.repeat(40) + '"}', 884), null, 'another PR is no answer');
   assert.throws(() => readPullArgv('gh', 'tdoljyj/cross-memory-system', 1), { code: 'COMPANION_PR_HEAD_ARGS_INVALID' });

@@ -19,20 +19,27 @@ import { readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../src/resident-v2/entry-runtime.mjs';
 import { supportedNativeExecution } from '../src/admission-facts-v2.mjs';
+import { serverAnswerCurrent, retainServerAnswerForFacts } from '../src/clock-skew.mjs';
 import { STATE_V2 } from '../src/resident-v2/layout.mjs';
 
 const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
 const stop = code => { throw Object.assign(new Error(code), { code }); };
 
 // Pure verification of the clued_work_verify_v1 reply for the batch claim generation.
-export function protectedFactsFromVerify({ job, batchClaim, body, status, config, accepted, now }) {
+export function protectedFactsFromVerify({ job, batchClaim, body, status, config, accepted, sentMono, nowMono }) {
   const claim = body?.claim;
-  if (status !== 200 || body?.status !== 'ok' || body.verdict !== 'ADMITTED' || !supportedNativeExecution(body.execution_policy,claim?.lease_key_required)
-    || claim.execution_handover_pending !== false || claim.status !== 'ACTIVE'
-    || claim.claim_id !== batchClaim.claimId || claim.context_key !== config.scope || claim.fence !== batchClaim.fence
-    || body.current_fence !== batchClaim.fence || claim.execution_epoch !== batchClaim.epoch || body.execution_epoch !== batchClaim.epoch
-    || !Array.isArray(body.paths_outside_write_set) || body.paths_outside_write_set.length
-    || !(Date.parse(claim.expires_at) > now) || !(Date.parse(body.verified_at) <= now) || now - Date.parse(body.verified_at) > 30000) stop('native_claim_observation_refused');
+  const failed = [];
+  for (const [name, ok] of [['reply', status === 200 && body?.status === 'ok'], ['verdict', body?.verdict === 'ADMITTED'],
+    ['execution_policy', supportedNativeExecution(body?.execution_policy, claim?.lease_key_required)],
+    ['handover_pending', claim?.execution_handover_pending === false], ['claim_status', claim?.status === 'ACTIVE'],
+    ['claim_identity', claim?.claim_id === batchClaim.claimId && claim?.fence === batchClaim.fence && claim?.execution_epoch === batchClaim.epoch],
+    ['context_key', claim?.context_key === config.scope],
+    ['current_fence', body?.current_fence === batchClaim.fence && body?.execution_epoch === batchClaim.epoch],
+    ['changed_paths', Array.isArray(body?.paths_outside_write_set) && body.paths_outside_write_set.length === 0]]) if (!ok) failed.push(name);
+  // Decision 1100a0ed: the same server-time/monotonic check used by the full
+  // admission and native.current ports. Never compare two machines' clocks.
+  failed.push(...serverAnswerCurrent({ verifiedAt: body?.verified_at, expiresAt: claim?.expires_at, sentMono, nowMono }));
+  if (failed.length) throw Object.assign(new Error('native_claim_observation_refused'), { code: 'native_claim_observation_refused', checks: failed });
   return { ...subjectOfV2(job), ...Object.fromEntries(REFS.map(r => [r, accepted[r]])), ciPrincipalBindingId: config.ciPrincipalBindingId,
     sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true, observedAt: body.verified_at, claimExpiresAt: claim.expires_at,
     claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }, executionPolicy: body.execution_policy, guarded: claim.lease_key_required };
@@ -70,7 +77,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // The protected observation port of a v2 scanner publisher (this entry and the stage-R relay entry): the
 // read-only Native verify RPC for the batch claim generation. It never binds a PR or charges a meter.
-// clock (verified_at freshness), monotonic (the retry budget), sleep and timeoutSignal are the tests' seams.
+// clock (audit anchors), monotonic (answer age and retry budget), sleep and timeoutSignal are the tests' seams.
 export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log, clock = Date.now, monotonic = () => performance.now(), sleep = pause,
   timeoutSignal = ms => AbortSignal.timeout(ms), recoveryState = null }) {
   return { async observe(subject, claimGen) {
@@ -96,6 +103,7 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
         unavailable({ attempt: attempt - 1, cause: 'budget', status: null });
       }
       let response = null, body, cause = null;
+      const sentMono = monotonic();
       try {
         if (state) state.verifyRequests++;
         response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: timeoutSignal(Math.max(1, Math.min(OBSERVE_ATTEMPT_MS, Math.ceil(remaining)))),
@@ -109,11 +117,23 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
         cause = response ? 'body' : 'transport';
       }
       if (cause === null) {
-        const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: clock() });
+        let facts;
+        try { facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, sentMono, nowMono: monotonic() }); }
+        catch (error) {
+          // Retain the existing deadline outcome for an otherwise valid answer
+          // whose timer ran late. A semantic refusal is never made retryable.
+          if (error.code === 'native_claim_observation_refused' && error.checks.length === 1
+            && error.checks[0] === 'round_trip_age' && monotonic() > deadline) unavailable({ attempt, cause: 'budget', status: response.status });
+          // observationLog stores only a digest of its data. Put each fixed
+          // check name in the kind, never raw replies, tokens or unknown text.
+          if (error.code === 'native_claim_observation_refused') for (const name of error.checks) log(`native_claim_observation_refused_${name}`, {});
+          throw error;
+        }
         live();
         if (monotonic() > deadline) {
           unavailable({ attempt, cause: 'budget', status: response.status });
         }
+        retainServerAnswerForFacts(facts, { verifiedAt: body.verified_at, expiresAt: body.claim.expires_at, sentMono }, monotonic);
         log('native_claim_observation', body);
         return facts;
       }

@@ -1,0 +1,83 @@
+{
+  "contract": "clued.independent-ci.hosted-relay-registry-spec/2",
+  "repository": "tdoljyj/cross-memory-system",
+  "repositoryId": 1334673495,
+  "repositoryOwner": "tdoljyj",
+  "repositoryOwnerId": 52366662,
+  "baseRef": "main",
+  "eventName": "pull_request",
+  "runnerEnvironment": "github-hosted",
+  "expectedSubject": "repo:tdoljyj/cross-memory-system:pull_request",
+  "hostedAppId": 15368,
+  "publisherAppId": 5368905,
+  "issuer": "https://token.actions.githubusercontent.com",
+  "audience": "clued-hosted-relay-v1",
+  "annotationTitle": "clued-hosted-relay-v1",
+  "iatSkewSeconds": 60,
+  "requireCheckRunIdClaim": true,
+  "forbiddenChangePrefixes": [
+    ".github/"
+  ],
+  "forbiddenChangePaths": [
+    ".gitattributes"
+  ],
+  "roles": {
+    "gitleaks": {
+      "checkName": "gitleaks",
+      "hostedCheckName": "gitleaks-hosted-executor",
+      "workflowPath": ".github/workflows/gitleaks.yml",
+      "runsOn": "ubuntu-latest",
+      "closure": [
+        ".gitattributes",
+        ".github/actions/ci-temporary-storage/action.yml",
+        ".github/actions/ci-temporary-storage/check-workflows.mjs",
+        ".github/actions/ci-temporary-storage/coverage.json",
+        ".github/actions/ci-temporary-storage/setup.mjs",
+        ".github/actions/ci-temporary-storage/setup.py",
+        ".github/workflows/gitleaks.yml",
+        ".gitleaks.toml",
+        ".gitleaksignore",
+        "scripts/ci/clued-scan-start.mjs",
+        "scripts/ci/reviewed_gitleaks.py",
+        "scripts/ci/reviewed_gitleaks_historical.py"
+      ],
+      "mustNotExist": [],
+      "forbiddenChangePrefixes": [
+        "scripts/ci/"
+      ]
+    },
+    "trivy": {
+      "checkName": "trivy",
+      "hostedCheckName": "trivy-hosted-executor",
+      "workflowPath": ".github/workflows/trivy.yml",
+      "runsOn": "ubuntu-latest",
+      "closure": [
+        ".gitattributes",
+        ".github/actions/ci-temporary-storage/action.yml",
+        ".github/actions/ci-temporary-storage/check-workflows.mjs",
+        ".github/actions/ci-temporary-storage/coverage.json",
+        ".github/actions/ci-temporary-storage/setup.mjs",
+        ".github/actions/ci-temporary-storage/setup.py",
+        ".github/workflows/trivy.yml",
+        "scripts/ci/clued-scan-start.mjs"
+      ],
+      "mustNotExist": [
+        ".trivyignore",
+        ".trivyignore.yaml",
+        "trivy-secret.yaml",
+        "trivy.yaml"
+      ],
+      "forbiddenChangePrefixes": [
+        "scripts/ci/"
+      ]
+    }
+  },
+  "scanStart": {
+    "contract": "clued.ci-scan-start-workflow-gate/1",
+    "stepName": "Acquire one-time scan permission",
+    "scriptPath": "scripts/ci/clued-scan-start.mjs",
+    "scriptSha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
+    "endpoint": "https://kooyumi.pixelgrav.com/v1/ci/scan-start",
+    "audience": "clued-ci-scan-start-v1"
+  }
+}

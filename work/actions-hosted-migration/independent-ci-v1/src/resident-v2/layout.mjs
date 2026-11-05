@@ -77,6 +77,8 @@ export const ENTRY_V2 = Object.freeze({
   'train-maintenance': `${P}src/independent-control-checks-v2/train-maintenance.mjs`,
   'role-probe': `${P}src/resident-v2/role-probe-entry.mjs`,
   'revocation-maintenance': `${P}src/resident-v2/revocation-entry.mjs`,
+  // Stage 13 observes live relay prerequisites; it never dispatches or qualifies.
+  'relay-qualification': `${P}src/resident-v2/relay-qualification-entry.mjs`,
 });
 // Kind 'formal': the fixed eight stages, all derived with the batch. Kind 'hosted-relay': stage R, number 9,
 // derived only after the hosted wait (derive-batch.mjs --relay-roles) for the relay candidates the resident
@@ -101,6 +103,7 @@ const ROWS = [
   { number: 11, kind: 'role-probe', name: 'role-probe', entryRole: 'role-probe', jobRoles: ['role-probe-run'], runMilliseconds: 60_000, linuxWorker: false },
   // Independent negative-effect maintenance, outside PR batches and scanner quotas.
   { number: 12, kind: 'revocation-maintenance', name: 'revocation-maintenance', entryRole: 'revocation-maintenance', jobRoles: ['revocation-maintenance-run'], runMilliseconds: 300_000, linuxWorker: false },
+  { number: 13, kind: 'relay-qualification', name: 'relay-qualification', entryRole: 'relay-qualification', jobRoles: ['relay-qualification-run'], runMilliseconds: 300_000, linuxWorker: false },
 ];
 export const STAGES_V2 = Object.freeze(ROWS.map(s => Object.freeze({ variableJobRoles: false, ...s, jobRoles: Object.freeze([...s.jobRoles]) })));
 export const FORMAL_STAGES_V2 = Object.freeze(STAGES_V2.filter(s => s.kind === 'formal'));
@@ -110,6 +113,7 @@ export const TRAIN_STAGE_NUMBER = 10;
 export const TRAIN_STAGE_V2 = STAGES_V2.find(s => s.number === TRAIN_STAGE_NUMBER);
 export const ROLE_PROBE_STAGE_NUMBER = 11;
 export const REVOCATION_STAGE_NUMBER = 12;
+export const RELAY_QUALIFICATION_STAGE_NUMBER = 13;
 // The job roles of one stage package: exactly the row's roles, or (stage R) a non-empty subset in row order.
 export function stageJobRolesValid(row, roles) {
   if (!row || !Array.isArray(roles)) return false;

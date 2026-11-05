@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { canonical } from '../src/proof.mjs';
 import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { makeRevocationRun, validateRevocationRun, revocationRunId, validateRevocationFacts, revocationQualification } from '../src/resident-v2/revocation-run.mjs';
@@ -95,7 +96,7 @@ test('qualification is exact Source-bound, time-bounded and cannot confer HALT p
   }
 });
 test('C# public boundary validates the same maintenance run identity and fixed stage12 cap', {skip:process.platform!=='win32'},()=>{
-  const dir=path.resolve('work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows');
+  const dir=fileURLToPath(new URL('../src/resident-v2/windows/',import.meta.url));
   const job=makeRevocationRun({repo:'tdoljyj/cross-memory-system',runId,sourceManifestSha256:key,nodeProfileSha256:'c'.repeat(64),createdAt:new Date().toISOString()});
   const quote=s=>"'"+s.replaceAll("'","''")+"'";
   const command=`$ErrorActionPreference='Stop'; Add-Type -Path ${quote(path.join(dir,'NodeProfileV2.cs'))},${quote(path.join(dir,'FormalPublicBoundaryV2.cs'))} -ReferencedAssemblies System.Web.Extensions; $j=New-Object 'System.Collections.Generic.Dictionary[string,object]'; $v=ConvertFrom-Json ${quote(JSON.stringify(job))}; foreach($p in $v.PSObject.Properties){$j.Add($p.Name,$p.Value)}; $x=[FormalPublicBoundaryV2]::ValidateRevocationRun($j,${quote(key)},${quote(runId)},${quote('c'.repeat(64))}); if([FormalPublicBoundaryV2]::StageMilliseconds[11] -ne 300000){throw 'cap'}; [FormalPublicBoundaryV2]::RevocationRunId($j)`;

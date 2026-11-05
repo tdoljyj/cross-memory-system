@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // GitHub CI metered per Task (migration 20261003180000, GenericWorkClaim
 // §10.4, Task bb9f1e36): verify with pr_ref and head_sha admits at most 40
@@ -222,12 +222,8 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     const status = (await admin.query('select clued_private.work_claim_exemption_status_v1($1,$2) s', [userId, task])).rows[0].s;
     assert.deepEqual(Object.keys(status).sort(), ['active_exemptions', 'claims_last_24h']);
     assert.equal(status.claims_last_24h, 2);
-    // The real formal migration is installed by the full chain and replays
-    // unchanged after the original business/concurrency/negative matrix.
-    const closeoutMigration = await findGatewayCloseoutMigration(root);
-    const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
-    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    // Qualify the complete current chain's explicit Worker82/CI8 successor.
+    // Historical Worker80 replay remains in its separate phase tests.
     await assertGatewayCloseoutBoundary(admin);
 
   } finally {

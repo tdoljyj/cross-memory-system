@@ -8,7 +8,12 @@
 import {createHash} from 'node:crypto';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
 import {qualifyPrimary} from './clued-gated-proof.mjs';
-import {registeredWorkflowSource,selectRegisteredProfiles,rolesForSource} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,selectRegisteredProfiles,rolesForSource,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
+
+// Profile bytes retain their independent raw digest and the original strict
+// duplicate-key/depth checks; only the runtime view is hydrated from disk/3.
+const parseProfileCatalogue=raw=>{parseFourSourceRawData(raw);return parseWorkflowProfiles(raw);};
 
 export const MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL=Object.freeze({
   schema:'clued.merge-admission-four-source-observations/1',
@@ -444,18 +449,24 @@ function applicability(profiles,changedFiles){
 }
 function executionSourceSelection(s,profiles,roles,c,descriptor=expectations.execution_source){
   if(!exact(s,['source_checkout_sha','entries','manifest'])||s.source_checkout_sha!==descriptor.source_checkout_sha)bad();
-  const sources=new Map(),members=[];
+  const sources=new Map(),members=[],identified=new Map(),
+    readCatalogueSource=createCatalogueSourceReader({registry:profiles,roleSpecs:roles});
   for(const x of array(s.entries)){
     if(!exact(x,['workflow_file','workflow_blob'])||!Object.hasOwn(profiles.workflows,x.workflow_file)||!sha(x.workflow_blob)||sources.has(x.workflow_file))bad();
-    const source=registeredWorkflowSource(profiles,x.workflow_file,x.workflow_blob),accepted=rolesForSource(roles,x.workflow_file,x.workflow_blob);
-    if(!source.passed||accepted===null||!same(accepted.map(x=>x.job_id).sort(),[...source.profile.primary_ids].sort()))bad();
-    sources.set(x.workflow_file,x.workflow_blob);members.push(x.workflow_file+':'+x.workflow_blob);
+    const source=readCatalogueSource({file:x.workflow_file,blob:x.workflow_blob}),accepted=source.roles;
+    if(!source.source_identified||!accepted||!same(accepted.map(x=>x.job_id).sort(),[...source.profile.primary_ids].sort()))bad();
+    sources.set(x.workflow_file,x.workflow_blob);identified.set(x.workflow_file,source);members.push(x.workflow_file+':'+x.workflow_blob);
   }
   // This fixed private corpus checks every known reviewed workflow path and
   // an independently supplied source-directory transcript. These internal
   // selection booleans mean byte/transcript consistency, never authorization.
   if(!same([...sources.keys()].sort(),Object.keys(profiles.workflows).sort())||
     !pagesConsistent(s.manifest,members,c,'native_execution_workflow_sources:'+s.source_checkout_sha))bad();
+  // Metadata identity closes the directory transcript; it never proves execution.
+  // Source-only projections carry execution_eligible:false and every actual
+  // workflow-source execution read continues through registeredWorkflowSource.
+  if([...identified.values()].some(source=>source.kind==='SOURCE_METADATA_ONLY_DISABLED'))
+    return {schema:profiles.schema,workflows:Object.fromEntries([...identified].map(([file,source])=>[file,source.profile]))};
   const selected=selectRegisteredProfiles(profiles,sources,{sourceApproved:true,directoryComplete:true});
   if(!selected.passed)bad();return selected.profiles;
 }
@@ -481,7 +492,7 @@ function parsed(p){
   const from=timestampMicros(p.window.start),to=timestampMicros(p.window.end),closed=timestampMicros(p.collection.closed_at);
   if(from>=to||closed<from||to-from>31n*86400000000n||timestampMicros(p.collection.retention_start)>from||
     (p.collection.window_status==='closed'&&closed<to))bad();
-  const c={from,to,closed,window:p.window,collection:p.collection},registry=parseRawFourSourceDataCandidate(p.proof_profiles_raw);
+  const c={from,to,closed,window:p.window,collection:p.collection},registry=parseProfileCatalogue(p.proof_profiles_raw);
   if(!object(registry.workflows)||!object(p.populations)||Object.keys(p.populations).some(x=>!names.includes(x)))bad();
   const profiles=executionSourceSelection(p.execution_sources,registry,roles,c);
   const executionVersions=new Map([[EXECUTION_SOURCE_COMMIT,{descriptor:expectations.execution_source,profiles}]]);
@@ -511,7 +522,7 @@ function parsed(p){
       // actual tip, full directory and ancestry bind each round; only exact
       // complete raw hash pairs select a reviewed version.
       const descriptor={...template,source_checkout_sha:snapshot.source_checkout_sha};
-      const historicalRegistry=parseRawFourSourceDataCandidate(cfg.proof_profiles_raw),historicalRoles=parseRawFourSourceDataCandidate(cfg.role_specs_raw);
+      const historicalRegistry=parseProfileCatalogue(cfg.proof_profiles_raw),historicalRoles=parseRawFourSourceDataCandidate(cfg.role_specs_raw);
       const selected=executionSourceSelection(snapshot.execution_sources,historicalRegistry,historicalRoles,c,descriptor);
       executionVersions.set(snapshot.source_checkout_sha,{descriptor,profiles:selected});
     }

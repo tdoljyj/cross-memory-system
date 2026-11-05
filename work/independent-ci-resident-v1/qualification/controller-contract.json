@@ -1,0 +1,116 @@
+{
+  "contract": "clued.hosted-relay-qualification-controller/1",
+  "status": "DESIGN_CANDIDATE_NOT_EXECUTABLE",
+  "task": "169fd456-ef50-4795-b273-df8acfb16076",
+  "inspectedMain": "28555e12622ef4b409d961e8295f4c5b421b92e3",
+  "installedSource": "1cba7ba527dc4755560e05f956c3f888350d3249",
+  "productionAdapterStatus": "NOT_IMPLEMENTED_NOT_QUALIFIED",
+  "ownerAuthority": [
+    "8f8d6611-7812-4228-89cb-cf23d6d9d7c9@1",
+    "0f076bba-137d-4007-a160-4c4d0245ef3c@1",
+    "41ab823a-9987-4ae4-8d6c-d7ca90d0de02@1"
+  ],
+  "requiredAuthorityReadBeforeLive": [
+    {
+      "reference": "c32676f4-4528-408c-b5e6-88cb27fca13a@1",
+      "referenceSource": "current Task169 and preparation-hold.json",
+      "status": "FULL_CURRENT_TEXT_READ_FROM_CANONICAL_UI_2026_11_02",
+      "observedReadReceipt": "bed195fd-3675-47e2-8410-f68e851c8044",
+      "originalDecisionReceipt": null,
+      "missingReadNeverMeansNoConstraint": true,
+      "liveQualificationAllowedUntilResolved": false
+    }
+  ],
+  "existingInterfacesInspected": [
+    {
+      "file": "work/independent-ci-resident-v1/src/engine-windows.mjs",
+      "interfaces": ["runStage", "runRoleProbe", "revocationMaintenanceQualification"],
+      "limitation": "These interfaces do not create a qualified exclusive L1-L4 session."
+    },
+    {
+      "file": "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs",
+      "limitation": "Single-stage completion is explicitly NO_QUALIFICATION; stage 9 publishes real checks and consumes K(head,role)."
+    },
+    {
+      "file": "work/independent-ci-resident-v1/test/relay.test.mjs",
+      "limitation": "Synthetic engine/companion ports are offline evidence only; ordinary Resume can continue a paused batch and is unsuitable for this exclusive session."
+    }
+  ],
+  "binding": {
+    "principal": "installed qualified Resident principal only",
+    "exactSubject": ["repository", "pr", "headSha", "baseSha", "sourceManifestSha256", "claimId", "fence", "executionEpoch", "runId"],
+    "freshHeadRequired": true,
+    "previouslyExecutedHeadForbidden": true,
+    "foreignBatchOrUpgradeMustBeIdle": true,
+    "ordinaryResumeMustNotContinueQualification": true,
+    "newAcceptedSourceAndAdapterQualificationBeforeLive": true,
+    "agentSuppliedFlagsOrJSONNeverConferQualification": true
+  },
+  "phases": [
+    "exclusive-protected-principal-and-source-admission",
+    "durable-fresh-head-reservation",
+    "derive-and-run-stage-1-once",
+    "dispatch-gitleaks-once-and-trivy-once",
+    "verify-oidc-and-annotations-inside-protected-principal",
+    "prove-real-ref-move-and-old-merge-sha-readability",
+    "prove-fresh-jwks-network-from-clued-control-principal",
+    "trusted-terminal-and-cleanup",
+    "independent-attestation-before-any-qualification-pass"
+  ],
+  "onceRules": {
+    "stage1Maximum": 1,
+    "hostedDispatchMaximumPerRole": 1,
+    "localScannerFallback": false,
+    "roles": ["gitleaks", "trivy"],
+    "placementHosted": false,
+    "durableIntentBeforeEveryEffect": true,
+    "unknownDispatchOrPublication": "stop-and-reconcile-original-journal-never-post-again",
+    "interruptedOrFailedHead": "retain-burn-and-failure-no-empty-commit-or-rescan"
+  },
+  "protectedEvidence": {
+    "rawOrEncodedJwtMayLeavePrincipal": false,
+    "privateKeyTokenOrBatchKeyMayReachAgent": false,
+    "publicOutput": "strict allowlist of verified claims, presence flags, evidence locators and hashes",
+    "completeAnnotationsRequired": true,
+    "checkRunId": "after L1, requireCheckRunIdClaim must be true in a separately reviewed rebuilt registry and newly accepted Source; an absent claim does not waive the rule",
+    "oldMerge": "real ref movement followed by actual read of old merge SHA; cached or never-moved observation is insufficient",
+    "jwks": "fresh network observation from actual clued-control broker; cached successful verification is insufficient"
+  },
+  "failurePolicy": {
+    "noLocalFallback": true,
+    "noAutomaticRetry": true,
+    "noOrdinaryBatchResume": true,
+    "terminalAndCleanupMustBeTrusted": true,
+    "missingTerminalOrCleanup": "HOLD_UNCERTAIN_PRESERVE_EVIDENCE",
+    "qualificationWithoutAttestation": false
+  },
+  "budget": {
+    "paidSpendAuthorized": false,
+    "billingCeilingUsd": 0,
+    "unknownFreeQuotaStopsBeforeDispatch": true,
+    "configuredWorkflowTimeoutCeilingMinutes": 80,
+    "timeoutCeilingIsNotEstimatedOrActualSpend": true
+  },
+  "offlineAcceptanceCases": [
+    "principal-source-or-execution-binding-mismatch-refuses-before-effects",
+    "busy-batch-upgrade-or-ordinary-resume-refuses-before-effects",
+    "used-head-or-key-refuses-before-stage-1",
+    "recovery-never-repeats-stage-1-or-hosted-dispatch",
+    "dispatch-uncertainty-never-retries-or-falls-back-local",
+    "partial-oidc-or-annotation-set-never-passes",
+    "old-unbound-registry-is-insufficient-even-if-check-run-id-is-absent",
+    "old-sha-without-real-ref-move-never-passes",
+    "jwks-cache-hit-without-fresh-broker-network-never-passes",
+    "missing-terminal-or-cleanup-remains-uncertain",
+    "secret-shaped-unallowlisted-output-is-refused",
+    "offline-success-never-claims-live-qualification"
+  ],
+  "currentEffects": {
+    "implementedController": false,
+    "liveDispatches": 0,
+    "installedSourceChanged": false,
+    "relayEnabled": false,
+    "hostedWorkflowsEnabled": false,
+    "autoHandoverEnabled": false
+  }
+}

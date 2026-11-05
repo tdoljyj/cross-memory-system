@@ -90,6 +90,7 @@ export async function installGeneration1(root, pkg, { at = T0, upgraderManifest 
   for (const slot of GENERATED_SLOTS) await put(live(root, slot), fakeCompiled(slot, pkg.residentSha));
   const receipt = { contract: 'clued.independent-ci.resident-install-receipt/6', generation: 1, packageManifestSha256: pkg.sha, windowsLayout: WINDOWS_LAYOUT,
     stateCompat: pkg.manifest.stateCompat, nodeProfileSha256: nodeProfile, nodeIdentitySha256: nodeIdentity, policySha256: pkg.policySha,
+    acceptanceSha256: sha256(pkg.files.get('record/acceptance.json')), installationSha256: sha256(pkg.files.get('record/installation.json')),
     upgrader: { service: 'CluedCIUpgrader', manifestSha256: upgraderManifest }, writtenBy: 'install-resident.ps1', inheritedFrom: null, upgrade: null,
     linux: { generation: 1, manifestSha256: pkg.linuxSha, ciSourceManifestSha256: pkg.ciSource, qualificationsSha256: {} } };
   const receiptBytes = json(receipt);

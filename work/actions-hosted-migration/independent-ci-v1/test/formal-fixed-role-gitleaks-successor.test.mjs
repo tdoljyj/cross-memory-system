@@ -48,14 +48,14 @@ function execution() {
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 730, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 732, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };
 }
 
-test('Source v4 has exactly 730 findings/102 commits; the legacy Source remains 726/100', () => {
-  assert.deepEqual(REVIEWED_COMMITS, { findings: 730, commits: 102, sha256: 'f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192' });
+test('Source v4 successor has exactly 732 findings/103 commits; the legacy Source remains 726/100', () => {
+  assert.deepEqual(REVIEWED_COMMITS, { findings: 732, commits: 103, sha256: '576a86a6061e6c4331ec952b4bc498570fe614b46131d1387c871c59d2cf80cb' });
   assert.deepEqual(LEGACY_COMMITS, { findings: 726, commits: 100, sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 });
 
@@ -71,7 +71,8 @@ test('the actual self-test must retain every old guard and prove new marker and 
   }
   for (const key of ['baseline_detection', 'exact_history_only', 'new_commit_detection', 'different_path_detection',
     'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
-    'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection']) {
+    'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection',
+    'historical_json_new_commit_detection','historical_json_different_path_detection','historical_json_different_line_detection','genuine_curl_credential_detection']) {
     for (const value of [false, undefined]) {
       const changed = report(); changed.regression[key] = value;
       assert.throws(() => validateSelfTestReport(changed), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' }, key);
@@ -85,11 +86,11 @@ test('the actual self-test must retain every old guard and prove new marker and 
     { code: 'ACTUAL_TRUSTED_SELF_TEST_OBSERVATION_REQUIRED' });
 });
 
-test('policy and result bridge agree on 730 and reject both legacy/mismatched counts and incomplete cleanup', () => {
+test('policy and result bridge agree on 732 and reject both legacy/mismatched counts and incomplete cleanup', () => {
   const { job, observation, issue, now } = execution();
   assert.equal(validateCleanupObservation(job, observation), observation);
   assert.equal(observationFacts(issue, observation, now).exitCode, 0);
-  for (const count of [726, 729, 731, undefined]) {
+  for (const count of [726, 729, 730, 731, undefined]) {
     const changed = { ...observation, requiredHistoricalExceptions: count };
     assert.throws(() => validateCleanupObservation(job, changed), { code: 'ACTUAL_ROLE_CLEANUP_UNCONFIRMED' });
     assert.throws(() => observationFacts(issue, changed, now), { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });

@@ -7,11 +7,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const openMigration = '20261009160000_worker_gateway_request_context_probe_v1.sql';
 const closeMigration = '20261009160100_close_worker_gateway_request_context_probe_v1.sql';
-const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const signature = 'public.clued_worker_request_context_probe_v1()';
 const lifecycle = 'clued_private.worker_request_probe_lifecycle_v1';
 const role = 'clued_worker_gateway';
@@ -39,7 +39,7 @@ const businessCatalog = `select p.oid::regprocedure::text signature,p.proowner::
 test('temporary gateway probe reports real invoker settings and closes permanently without changing business ACLs',
   { timeout: 240000 }, async t => {
     const sql = name => fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8');
-    const [opening, closing, gatewaySql] = await Promise.all([sql(openMigration), sql(closeMigration), sql(gatewayMigration)]);
+    const [opening, closing] = await Promise.all([sql(openMigration), sql(closeMigration)]);
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-gateway-request-context-'));
     const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: hash(),
       port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
@@ -69,7 +69,7 @@ test('temporary gateway probe reports real invoker settings and closes permanent
         catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
       }
       const baseline = (await admin.query(businessCatalog)).rows;
-      assert.equal(baseline.filter(r => r.gateway).length, 80);
+      await assertGatewayCloseoutBoundary(admin);
       const caller = server.getPgClient(); clients.push(caller); await caller.connect();
       await caller.query('set session authorization authenticator; set role clued_worker_gateway');
       const metadata = () => admin.query(`select singleton,opened_at,deadline,closed_at,function_oid,function_owner_oid,
@@ -117,7 +117,13 @@ test('temporary gateway probe reports real invoker settings and closes permanent
           assert.equal((await admin.query('select has_table_privilege($1,$2,\'SELECT\') value', [selected, lifecycle])).rows[0].value, false, selected);
         }
         assert.equal((await admin.query('select has_table_privilege($1,$2,\'SELECT\') value', [role, lifecycle])).rows[0].value, false);
-        assert.equal((await admin.query(businessCatalog)).rows.filter(r => r.gateway).length + 1, 81);
+        const expectedGateway = [...baseline.filter(r => r.gateway).map(r => r.signature), signature]
+          .map(s => s.replace(/^public\./, '')).sort();
+        const actualGateway = (await admin.query(`select p.oid::regprocedure::text signature
+          from pg_proc p where p.pronamespace='public'::regnamespace
+            and has_function_privilege('clued_worker_gateway',p.oid,'EXECUTE') order by 1`)).rows
+          .map(r => r.signature.replace(/^public\./, '')).sort();
+        assert.deepEqual(actualGateway, expectedGateway, 'the exact qualified successor plus only the temporary probe');
         await assert.rejects(admin.query(`select ${signature}`), requestDenied,
           'even the function owner does not satisfy the request identity guard');
         assert.deepEqual((await admin.query(businessCatalog)).rows, baseline);
@@ -229,7 +235,7 @@ test('temporary gateway probe reports real invoker settings and closes permanent
         await admin.query(opening);
       });
 
-      await t.test('cleanup restores exactly eighty gateway RPCs and open/close replay never resurrects the probe', async () => {
+      await t.test('cleanup preserves the explicit gateway successor and open/close replay never resurrects the probe', async () => {
         await admin.query(closing);
         assert.equal((await admin.query('select to_regprocedure($1) value', [signature])).rows[0].value, null);
         const tombstone = await metadata(); assert.ok(tombstone.closed_at);
@@ -237,9 +243,10 @@ test('temporary gateway probe reports real invoker settings and closes permanent
         await admin.query(opening); await admin.query(closing); await admin.query(opening);
         assert.equal((await admin.query('select to_regprocedure($1) value', [signature])).rows[0].value, null);
         assert.deepEqual(await metadata(), tombstone);
-        await admin.query(gatewaySql);
+        // The full chain now includes Worker82/CI8. Never replay the historical
+        // Worker80 transition over its deliberately larger exact successor.
+        await assertGatewayCloseoutBoundary(admin);
         assert.deepEqual((await admin.query(businessCatalog)).rows, baseline);
-        assert.equal((await admin.query(businessCatalog)).rows.filter(r => r.gateway).length, 80);
         await admin.query(`create function ${signature} returns jsonb language sql as $$select '{}'::jsonb$$`);
         try { await assert.rejects(admin.query(opening), identityDenied); await assert.rejects(admin.query(closing), identityDenied); }
         finally { await admin.query(`drop function ${signature}`); }

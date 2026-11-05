@@ -17,6 +17,7 @@ import {openFixedRoleSession,takeActualRoleSession} from '../formal-fixed-role-p
 import {readFixedIssueJob} from './issue-job.mjs';
 import {canonical} from '../../src/proof.mjs';
 import {noteBridgeResponseTimes,noteBridgeRefsTimes} from '../../src/admission-facts-v2.mjs';
+import {validateScanStartGrant,noteScanStartResponseWindow} from '../../src/scan-start-v1/grant.mjs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
@@ -31,7 +32,9 @@ export const isCleanBlocked=r=>r?.status==='BLOCKED'&&r.sideEffectsMayHaveStarte
 // What a validated callback response gives the adapter. An admission keeps its response's issuance and expiry, so the
 // adapter's own re-check measures freshness from the issuance while that response is valid (Owner Decision 6f1fb753);
 // a refs snapshot keeps them too (remoteRefsReferenceTime, Task 576231fa).
-export const callbackValue=(action,response)=>action==='admission'?noteBridgeResponseTimes(response.admission,response):noteBridgeRefsTimes(response.remoteRefs,response);
+export const callbackValue=(action,response)=>action==='scan-start'
+  ?noteScanStartResponseWindow(response.scanStart,response)
+  :action==='admission'?noteBridgeResponseTimes(response.admission,response):noteBridgeRefsTimes(response.remoteRefs,response);
 export async function executeProtectedIssuedJob(options={}){
   let locked=false,executionMayHaveStarted=false;
   try{
@@ -39,8 +42,9 @@ export async function executeProtectedIssuedJob(options={}){
     const selectedJob=await readFixedIssueJob();const context=await loadLinuxContext(selectedJob);takeAcceptedBridgeContext(context);const box=takeActualMailbox(await openAcceptedMailbox(context));await box.lock();locked=true;
     const issue=validateIssue(decode(await box.read('issue'))),job=issue.job;
     check(job.role===context.role&&job.sourceManifestSha256===context.config.sourceManifestSha256&&issue.sourceAcceptanceRef===context.sourceAcceptanceRef&&issue.hostQualificationRef===context.hostQualificationRef,'FORMAL_ISSUE_QUALIFICATION_CHANGED');
-    let sequence=0;
+    let sequence=0,scanStartRequested=false;
     const callback=async(action,subject)=>{check(canonical(subject)===canonical(job),'FORMAL_CALLBACK_SUBJECT_CHANGED');
+      if(action==='scan-start'){check(!scanStartRequested,'SCAN_START_ONCE_REQUIRED');scanStartRequested=true;}
       const fresh=await loadLinuxContext(job);check(fresh.sourceAcceptanceRef===context.sourceAcceptanceRef&&fresh.hostQualificationRef===context.hostQualificationRef&&fresh.config.sourceManifestSha256===job.sourceManifestSha256,'FORMAL_CALLBACK_AUTHORITY_CHANGED');
       const request=makeChallenge(issue,action,++sequence),suffix=String(sequence).padStart(2,'0');await box.write('challenge-'+suffix,encode(request));
       const response=validateResponse(issue,request,decode(await box.wait('response-'+suffix,{deadline:Date.parse(request.deadline),signal})));
@@ -48,7 +52,8 @@ export async function executeProtectedIssuedJob(options={}){
     };
     // Adapters cannot prepare until their first callback gets a fresh actual
     // production response through the accepted Root-protected relay.
-    const ports=Object.freeze({admissionPort:subject=>callback('admission',subject),remoteRefsPort:subject=>callback('remote-refs',subject)});
+    const ports=Object.freeze({admissionPort:subject=>callback('admission',subject),remoteRefsPort:subject=>callback('remote-refs',subject),
+      scanStartPort:async subject=>{const grant=await callback('scan-start',subject);validateScanStartGrant(grant,{job,executionId:issue.issueId});return grant;}});
     const session=takeActualRoleSession(await openFixedRoleSession(job));
     const adapter=job.role==='gitleaks'?createFormalGitleaksAdapter(ports):job.role==='trivy'?createFormalTrivyAdapter(ports):createFormalContractPlacementAdapter(ports);executionMayHaveStarted=true;
     const result=await adapter.execute(job,{signal});

@@ -26,7 +26,7 @@ export const V1_REQUIRED_SOURCE = Object.freeze([...['runtime/one-shot.mjs', 'ru
   'src/hosted-relay-v1/attest.mjs', 'src/hosted-relay-v1/registry.mjs', 'src/hosted-relay-v1/oidc.mjs'].map(p => 'work/actions-hosted-migration/independent-ci-v1/' + p),
   ...['clued-work-admission.mjs', 'clued-control-workflow-source.mjs', 'clued-control-workflow-sources.json', 'clued-production-publisher-source.mjs',
     'clued-production-publisher-sources.json', 'clued-publisher-qualification-source.mjs', 'clued-publisher-qualification-sources.json',
-    'clued-workflow-profile.mjs', 'merge-admission-measurement-history.mjs', 'merge-admission-policy.mjs', 'merge-admission-source-producer.mjs'].map(p => 'scripts/ci/' + p),
+    'clued-standard-runner-actor-source.mjs', 'clued-standard-runner-actor-sources.json', 'clued-workflow-profile.mjs', 'merge-admission-measurement-history.mjs', 'merge-admission-policy.mjs', 'merge-admission-source-producer.mjs'].map(p => 'scripts/ci/' + p),
   'scripts/runner/clued-runner-job-started.mjs'].sort());
 export const INSTALL_ROOT = process.platform === 'win32' ? 'C:\\ProgramData\\CluedIndependentCI' : '/etc/clued-independent-ci';
 export const APP_KEY_FILE = process.platform === 'win32' ? 'C:\\ProgramData\\CluedControl\\trusted\\controller-checks-app.pem' : '/etc/clued-control/trusted/controller-checks-app.pem';
