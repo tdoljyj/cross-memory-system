@@ -23,7 +23,7 @@ test("the poller trailer here is the resident poller's own, character for charac
 
 test("body and head commit both name the live claim and scope: OK", () => {
   const r = checkRepush({ prBody: text(NEW), commitMessage: text(NEW), claim: NEW, scope: SCOPE });
-  assert.deepEqual(r, { ok: true, problems: [] });
+  assert.deepEqual(r, { ok: true, problems: [], notes: [] });
 });
 
 test("the PR body still names the old claim (the #992 case): refused with the body edit to make", () => {
@@ -37,6 +37,36 @@ test("the head commit still names the old claim: refused even though the body wi
   const r = checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE });
   assert.deepEqual(codes(r), ["COMMIT_CLAIM_MISMATCH"]);
   assert.match(r.problems[0].fix, /run this check again with the new SHA/);
+});
+
+test("bodyGoverns: the head commit's claim and scope mismatches become notes, the run stays ok", () => {
+  const other = "project:11111111-2222-3333-4444-555555555555";
+  const r = checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE, bodyGoverns: true });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.problems, []);
+  assert.deepEqual(r.notes.map(n => n.code), ["COMMIT_CLAIM_MISMATCH"]);
+  assert.deepEqual(r.notes, [{ where: "head-commit", code: "COMMIT_CLAIM_MISMATCH", found: OLD, expected: NEW }]);
+  const s = checkRepush({ prBody: text(NEW), commitMessage: text(NEW, other), claim: NEW, scope: SCOPE, bodyGoverns: true });
+  assert.equal(s.ok, true);
+  assert.deepEqual(s.notes, [{ where: "head-commit", code: "COMMIT_SCOPE_MISMATCH", found: other, expected: SCOPE }]);
+  // off by default: the same input without the option is refused as before
+  assert.deepEqual(codes(checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE, bodyGoverns: false })), ["COMMIT_CLAIM_MISMATCH"]);
+});
+
+test("bodyGoverns: every check on the body is still an error, whatever the head commit says", () => {
+  const other = "project:11111111-2222-3333-4444-555555555555";
+  const noScope = `x\n\nClued-Work-Claim: ${NEW}\n`;
+  const cases = [
+    [text(OLD), "BODY_CLAIM_MISMATCH"], [text(NEW, other), "BODY_SCOPE_MISMATCH"], [noScope, "BODY_SCOPE_MISMATCH"],
+    [text(NEW.toUpperCase()), "BODY_TRAILER_MISSING"], ["Summary only.\n", "BODY_TRAILER_MISSING"],
+    [`x\n\nClued-Work-Claim:\u00a0${NEW}\n`, "BODY_TRAILER_UNPARSEABLE"],
+  ];
+  for (const [prBody, code] of cases) {
+    const r = checkRepush({ prBody, commitMessage: text(OLD, other), claim: NEW, scope: SCOPE, bodyGoverns: true });
+    assert.equal(r.ok, false, code);
+    assert.deepEqual(codes(r), [code]);
+    assert.deepEqual(r.notes.map(n => n.code).sort(), ["COMMIT_CLAIM_MISMATCH", "COMMIT_SCOPE_MISMATCH"], code);
+  }
 });
 
 test("both stale: both reported", () => {
@@ -95,12 +125,18 @@ test("scope mismatches are reported where they are; a missing scope line and a m
 
 test("arguments: every malformed or repeated one is refused, naming it", () => {
   const good = ["--repo", "o/r", "--pr", "992", "--head", HEAD, "--claim", NEW];
-  assert.deepEqual(parseArgs(good), { args: { repo: "o/r", pr: 992, head: HEAD, claim: NEW, scope: "global" } });
+  assert.deepEqual(parseArgs(good), { args: { repo: "o/r", pr: 992, head: HEAD, claim: NEW, scope: "global", bodyGoverns: false } });
   assert.equal(parseArgs([...good, "--scope", SCOPE]).args.scope, SCOPE);
   assert.equal(parseArgs(good.map(v => (v === "o/r" ? "tdoljyj/.github" : v))).args.repo, "tdoljyj/.github");
+  // --body-governs takes no value, wherever it stands
+  assert.equal(parseArgs([...good, "--body-governs"]).args.bodyGoverns, true);
+  assert.deepEqual(parseArgs(["--body-governs", ...good, "--scope", SCOPE]).args, { repo: "o/r", pr: 992, head: HEAD, claim: NEW, scope: SCOPE, bodyGoverns: true });
+  assert.equal(parseArgs(["--repo", "o/r", "--body-governs", "--pr", "992", "--head", HEAD, "--claim", NEW]).args.bodyGoverns, true);
   const swap = (from, to) => good.map(v => (v === from ? to : v));
   const cases = [
     [[], /--repo is required/], [["--repo", "o/r"], /--pr is required/], [[...good, "--pr", "1"], /--pr given twice/],
+    [[...good, "--body-governs", "--body-governs"], /--body-governs given twice/], [[...good, "--body-governs", "true"], /unknown argument "true"/],
+    [[...good, "--scope", "--body-governs"], /--scope must/], [[...good, "--body-governs", "--scope"], /--scope needs a value/], [["--repo", "o/r", "--pr", "--body-governs", "--head", HEAD, "--claim", NEW], /--pr must/],
     [[...good, "--extra", "x"], /unknown argument "--extra"/], [["--repo=o/r", "--pr"], /unknown argument "--repo=o\/r"/],
     [[...good, "--scope", "project:x"], /--scope/], [[...good, "--scope", "project:0597AA60-9b98-4da6-a4ab-63d7705b632f"], /--scope/],
     [swap(NEW, NEW.toUpperCase()), /--claim/], [swap(HEAD, HEAD.slice(0, 12)), /--head/], [swap("992", "0"), /--pr must/],
@@ -142,6 +178,60 @@ test("main: exit 0 / 1 / 2 with injected readers, and the readers get the PR and
   assert.match(err.text, /^PREFLIGHT_READ_FAILED: gh pr failed \(1\): Could not resolve/);
 });
 
+test("main --body-governs: the head commit's old claim or scope is a NOTE on stdout and exit 0; the body still decides exit 1", async () => {
+  const other = "project:11111111-2222-3333-4444-555555555555";
+  const ports = (body, msg) => ({ readPrBody: async () => body, readCommitMessage: async () => msg });
+  const argv = [...ARGV, "--body-governs"];
+  let out = capture(), err = capture();
+  assert.equal(await main(argv, ports(text(NEW), text(OLD)), out, err), 0);
+  assert.equal(out.text,
+    `NOTE (head-commit): COMMIT_CLAIM_MISMATCH: found ${OLD}, expected ${NEW}; --body-governs: this does not fail the run\n`
+    + `OK: PR #992 body names claim ${NEW}, scope ${SCOPE}; head 378da6e1's trailer names another claim, so the body governs (--body-governs)\n`);
+  assert.equal(err.text, "");
+
+  out = capture();
+  assert.equal(await main(argv, ports(text(NEW), text(NEW, other)), out, err), 0);
+  assert.equal(out.text,
+    `NOTE (head-commit): COMMIT_SCOPE_MISMATCH: found ${other}, expected ${SCOPE}; --body-governs: this does not fail the run\n`
+    + `OK: PR #992 body names claim ${NEW}, scope ${SCOPE}; head 378da6e1's trailer names another scope, so the body governs (--body-governs)\n`);
+
+  out = capture();
+  assert.equal(await main(argv, ports(text(NEW), text(OLD, other)), out, err), 0);
+  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH.*\nNOTE \(head-commit\): COMMIT_SCOPE_MISMATCH.*\nOK: .*head 378da6e1's trailer names another claim and scope, so the body governs/);
+
+  // a head commit that agrees (or has no trailer) keeps the usual OK line, flag or not
+  out = capture();
+  assert.equal(await main(argv, ports(text(NEW), text(NEW)), out, err), 0);
+  assert.equal(out.text, `OK: PR #992 body and head 378da6e1 name claim ${NEW}, scope ${SCOPE}\n`);
+  out = capture();
+  assert.equal(await main(argv, ports(text(NEW), "ci: x\n"), out, err), 0);
+  assert.match(out.text, /has no trailer, so the body decides/);
+
+  // the body is still checked: exit 1, the body's problem listed, the head commit's mismatch still shown as a note
+  out = capture();
+  assert.equal(await main(argv, ports(text(OLD), text(OLD)), out, err), 1);
+  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH/);
+  assert.match(out.text, /BODY_CLAIM_MISMATCH \(pr-body\): found 796078d6/);
+  assert.doesNotMatch(out.text, /^OK/m);
+
+  // no trailer in the body at all: exit 1 on the body, the head commit's mismatch still only a note
+  out = capture();
+  assert.equal(await main(argv, ports("Summary only.\n", text(OLD)), out, err), 1);
+  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH/m);
+  assert.match(out.text, /^BODY_TRAILER_MISSING \(pr-body\)/m);
+  assert.doesNotMatch(out.text, /^COMMIT_CLAIM_MISMATCH/m);
+
+  // without the flag the same input is exit 1 and no NOTE
+  out = capture();
+  assert.equal(await main(ARGV, ports(text(NEW), text(OLD)), out, err), 1);
+  assert.match(out.text, /^COMMIT_CLAIM_MISMATCH \(head-commit\)/);
+  assert.doesNotMatch(out.text, /NOTE/);
+
+  err = capture();
+  assert.equal(await main([...argv, "--body-governs"], ports("", ""), capture(), err), 2);
+  assert.match(err.text, /^--body-governs given twice\nusage:.*\[--body-governs\]\n$/);
+});
+
 test("main: anything unexpected is exit 2 PREFLIGHT_INTERNAL_ERROR, never exit 1 or a stack", async () => {
   const err = capture();
   const ports = { readPrBody: async () => text(NEW), readCommitMessage: async () => text(NEW) };
@@ -157,6 +247,9 @@ test("CLI: run directly it checks (a usage error is exit 2), also through a junc
   const direct = runNode([TOOL]);
   assert.equal(direct.status, 2, direct.stderr);
   assert.match(direct.stderr, /--repo is required/);
+  const twice = runNode([TOOL, "--body-governs", "--body-governs"]);
+  assert.equal(twice.status, 2, twice.stderr);
+  assert.match(twice.stderr, /^--body-governs given twice\r?\nusage:/);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repush-preflight-"));
   try {
     const link = path.join(dir, "ci");

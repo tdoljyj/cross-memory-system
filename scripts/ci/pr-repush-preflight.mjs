@@ -1,14 +1,14 @@
 // Pre-push check for a pull request that is pushed again under a claim (Clued-Work-Claim) it did not carry before.
 //
-//   node scripts/ci/pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <uuid> [--scope global|project:<uuid>]
+//   node scripts/ci/pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <uuid> [--scope global|project:<uuid>] [--body-governs]
 //
 // Run it BEFORE `git push`, with --head the full SHA of the branch head about to be pushed (from a main checkout, for example
 // `$(git -C <branch checkout> rev-parse HEAD)`; plain `git rev-parse HEAD` there would name main's head) and --claim
 // the claim that is live now (check it first with clued_work_verify, read-only). --scope defaults to global, as a missing
 // Clued-Work-Scope line does. Exit 0 prints OK with the claim and scope checked; exit 1 lists every place that names another
-// claim or scope and how to fix it; exit 2 is a usage, read or internal error (nothing was checked). It reads the PR body with
-// `gh` and the commit message with local `git` (run it from any checkout whose object store holds --head), and never reads,
-// prints or keeps a token or lease key.
+// claim or scope and how to fix it (with --body-governs the head commit's places are NOTE lines instead, see below); exit 2
+// is a usage, read or internal error (nothing was checked). It reads the PR body with `gh` and the commit message with local
+// `git` (run it from any checkout whose object store holds --head), and never reads, prints or keeps a token or lease key.
 //
 // Why: the claim a head is judged under is whatever the PR names, read in two places with two parsers.
 //   - The resident's poller (work/independent-ci-resident-v1/src/poller.mjs, TRAILER) proposes a PR only when its BODY has a
@@ -23,6 +23,11 @@
 // refuses that batch with full_admission_claim_changed.
 // The head commit's trailer is checked too when it has one, so the two never disagree (it decides whenever the body loses
 // its trailer).
+// --body-governs relaxes that for a head commit that cannot be amended (already reviewed, or pinned byte for byte): its
+// trailer then names an older claim or scope while the body names the live one, and admission still passes because the body
+// is read first. With the flag a mismatch in the head commit's trailer is printed as `NOTE (head-commit):`, also when the run
+// fails on the body, and does not fail the run; every check on the body stays an error. Keep the body's trailer in place: if
+// it is removed later, admission falls back to the stale head commit trailer and refuses.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -40,8 +45,10 @@ const AMEND = 'then run this check again with the new SHA';
 
 // Every mismatch between what the PR body and the head commit name and the claim and scope the push is meant for.
 // scope defaults to 'global' and is always checked (a missing scope line reads as global); there is no "unchecked" value.
-export function checkRepush({ prBody, commitMessage, claim, scope = 'global' }) {
-  const problems = [];
+// With bodyGoverns the head commit's mismatches come back in `notes` (no `fix`) instead of `problems`; the body's are
+// always problems.
+export function checkRepush({ prBody, commitMessage, claim, scope = 'global', bodyGoverns = false }) {
+  const problems = [], notes = [];
   const body = parseClaimReference(prBody);
   const pollerSees = POLLER_TRAILER.test(typeof prBody === 'string' ? prBody : '');
   if (!pollerSees) {
@@ -61,28 +68,39 @@ export function checkRepush({ prBody, commitMessage, claim, scope = 'global' }) 
       fix: scope === 'global' ? 'edit the PR body before the push: remove the Clued-Work-Scope line' : `edit the PR body before the push: Clued-Work-Scope: ${scope}` });
   }
   const commit = parseClaimReference(commitMessage);
+  const commitIssue = (code, found, expected, fix) => {
+    if (bodyGoverns) notes.push({ where: 'head-commit', code, found, expected });
+    else problems.push({ where: 'head-commit', code, found, expected, fix });
+  };
   if (commit && commit.claim_id !== claim) {
-    problems.push({ where: 'head-commit', code: 'COMMIT_CLAIM_MISMATCH', found: commit.claim_id, expected: claim,
-      fix: `amend the head commit's trailer before the push (Clued-Work-Claim: ${claim}), ${AMEND}` });
+    commitIssue('COMMIT_CLAIM_MISMATCH', commit.claim_id, claim, `amend the head commit's trailer before the push (Clued-Work-Claim: ${claim}), ${AMEND}`);
   }
   if (commit && commit.scope !== scope) {
-    problems.push({ where: 'head-commit', code: 'COMMIT_SCOPE_MISMATCH', found: commit.scope, expected: scope,
-      fix: scope === 'global' ? `amend the head commit to drop its Clued-Work-Scope trailer, ${AMEND}` : `amend the head commit's trailer before the push (Clued-Work-Scope: ${scope}), ${AMEND}` });
+    commitIssue('COMMIT_SCOPE_MISMATCH', commit.scope, scope,
+      scope === 'global' ? `amend the head commit to drop its Clued-Work-Scope trailer, ${AMEND}` : `amend the head commit's trailer before the push (Clued-Work-Scope: ${scope}), ${AMEND}`);
   }
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, notes };
 }
 
-const USAGE = 'usage: pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <lower-case uuid> [--scope global|project:<lower-case uuid>]';
+const USAGE = 'usage: pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <lower-case uuid> [--scope global|project:<lower-case uuid>] [--body-governs]';
 
 // { args } or { error } naming the first argument that is wrong.
 export function parseArgs(argv) {
   const out = {};
-  for (let i = 0; i < argv.length; i += 2) {
+  let i = 0;
+  while (i < argv.length) {
     const key = argv[i], value = argv[i + 1];
+    if (key === '--body-governs') {   // the only argument without a value
+      if ('body-governs' in out) return { error: `${key} given twice` };
+      out['body-governs'] = true;
+      i += 1;
+      continue;
+    }
     if (!['--repo', '--pr', '--head', '--claim', '--scope'].includes(key)) return { error: `unknown argument ${JSON.stringify(key)} (use "--name value")` };
     if (value === undefined) return { error: `${key} needs a value` };
     if (key.slice(2) in out) return { error: `${key} given twice` };
     out[key.slice(2)] = value;
+    i += 2;
   }
   for (const k of ['repo', 'pr', 'head', 'claim']) if (out[k] === undefined) return { error: `--${k} is required` };
   const parts = out.repo.split('/');
@@ -91,7 +109,7 @@ export function parseArgs(argv) {
   if (!HEX40.test(out.head)) return { error: '--head must be the full 40-hex lower-case SHA (git rev-parse HEAD)' };
   if (!UUID.test(out.claim)) return { error: '--claim must be a lower-case claim UUID' };
   if (out.scope !== undefined && !SCOPE.test(out.scope)) return { error: '--scope must be global or project:<lower-case uuid>' };
-  return { args: { repo: out.repo, pr: Number(out.pr), head: out.head, claim: out.claim, scope: out.scope ?? 'global' } };
+  return { args: { repo: out.repo, pr: Number(out.pr), head: out.head, claim: out.claim, scope: out.scope ?? 'global', bodyGoverns: out['body-governs'] === true } };
 }
 
 function read(cmd, args) {
@@ -118,12 +136,19 @@ export async function main(argv = process.argv.slice(2), ports = defaultPorts, o
       prBody = await ports.readPrBody(args.repo, args.pr);
       commitMessage = await ports.readCommitMessage(args.head);
     } catch (e) { err.write(`PREFLIGHT_READ_FAILED: ${e.message}\n`); return 2; }
-    const result = checkRepush({ prBody, commitMessage, claim: args.claim, scope: args.scope });
+    const result = checkRepush({ prBody, commitMessage, claim: args.claim, scope: args.scope, bodyGoverns: args.bodyGoverns });
+    for (const n of result.notes) out.write(`NOTE (${n.where}): ${n.code}: found ${n.found ?? 'none'}, expected ${n.expected}; --body-governs: this does not fail the run\n`);
     if (result.ok) {
       const head = args.head.slice(0, 8);
-      out.write(parseClaimReference(commitMessage)
-        ? `OK: PR #${args.pr} body and head ${head} name claim ${args.claim}, scope ${args.scope}\n`
-        : `OK: PR #${args.pr} body names claim ${args.claim}, scope ${args.scope}; head ${head} has no trailer, so the body decides\n`);
+      if (result.notes.length) {
+        const claimStale = result.notes.some(n => n.code === 'COMMIT_CLAIM_MISMATCH'), scopeStale = result.notes.some(n => n.code === 'COMMIT_SCOPE_MISMATCH');
+        const stale = claimStale && scopeStale ? 'claim and scope' : claimStale ? 'claim' : 'scope';
+        out.write(`OK: PR #${args.pr} body names claim ${args.claim}, scope ${args.scope}; head ${head}'s trailer names another ${stale}, so the body governs (--body-governs)\n`);
+      } else {
+        out.write(parseClaimReference(commitMessage)
+          ? `OK: PR #${args.pr} body and head ${head} name claim ${args.claim}, scope ${args.scope}\n`
+          : `OK: PR #${args.pr} body names claim ${args.claim}, scope ${args.scope}; head ${head} has no trailer, so the body decides\n`);
+      }
       return 0;
     }
     for (const p of result.problems) out.write(`${p.code} (${p.where}): found ${p.found ?? 'none'}, expected ${p.expected}. Fix: ${p.fix}\n`);
