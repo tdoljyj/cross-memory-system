@@ -1,0 +1,17 @@
+{
+  "schema": "clued.install-inherited-native-provenance216/1",
+  "selector_native": {
+    "copied_from": "C:\\w\\relay-qual-169\\root-owned-supervisor216\\SelectorPublisher216.dll",
+    "sha256": "3eb5a5e9daeba5b9351da5b1922240ef695a694772342625d125a73d2ef40a01",
+    "source_path": "C:\\w\\relay-qual-169\\root-owned-supervisor216\\SelectorPublisher216.cs",
+    "source_sha256": "8f3f07a100c8e19213cef0552ae4667232b9e7f60945459ce745730dc27613c7",
+    "compile_evidence": "C:\\w\\relay-qual-169\\root-owned-supervisor216\\native-build216.json",
+    "compiled_here": false
+  },
+  "child_factory": {
+    "copied_from": "C:/w/cache-maintenance-0c51/class-validation181/trusted-provider-server181/ba-provider-r1/new_child_read_access181.dll",
+    "sha256": "24076ae339aa6b90240da7abb0dee2ea4be224f781aab1a08cf8b19764944bbf",
+    "compiled_here": false
+  },
+  "original_role_protocol": "Root214 console/UAC parent package4members reused exactly; installation new loaders/Host independently reviewed"
+}

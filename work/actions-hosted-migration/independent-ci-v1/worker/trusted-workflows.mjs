@@ -1,5 +1,5 @@
 // Exact hosted workflow bytes pinned by each installed Source generation.
-// ROWS is the immutable legacy PR-A x PR-B set; the active 730-finding gitleaks
+// ROWS is the immutable legacy PR-A x PR-B set; the active 732-finding candidate gitleaks
 // Source v4 uses the separate successor block, never that old 726 set.
 // Every role, role policy and signed-result check derives its accepted set from here, on the Source v2 path
 // (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and on the H5 one-shot
@@ -31,11 +31,11 @@ const ROWS = [
 // END TRUSTED WORKFLOW ROWS
 
 // BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
-const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab","blob":"e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966","blob":"6441fc32b084002de697415ea8343af07816c929","commit":"c8c146b4067a32a0ed3a1a6be04dda52a59dd4db"};
 // END GITLEAKS SUCCESSOR
 
 // BEGIN TRIVY SUCCESSOR (generated from a real workflow-freeze commit)
-const TRIVY_SUCCESSOR_ROW = {"path":".github/workflows/trivy.yml","sha256":"8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2","blob":"50bd4ae3312ea3c5b1896a9ec81922b0b392343b","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
+const TRIVY_SUCCESSOR_ROW = {"path":".github/workflows/trivy.yml","sha256":"ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb","blob":"9867c4c847a61aa33761e27b793e0928bc6cbfdc","commit":"956078fcec98844ab9be05e857fe4f53b3372fc4"};
 // END TRIVY SUCCESSOR
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -52,7 +52,7 @@ for (const path of paths) if (!ROWS.some(row => row[0] === path)) fail('TRUSTED_
 // Keyed by the sha256 of the bytes.
 export const TRUSTED_WORKFLOWS = Object.freeze(table);
 
-// The 730-finding Source v4 consumes only this independently frozen successor.
+// The 732-finding Source v4 candidate consumes only this independently frozen successor.
 // Legacy v3/H5 continues to use ROWS above and never inherits the new bytes.
 // null is a preparation state: the active successor has no accepted workflow.
 if (GITLEAKS_SUCCESSOR_ROW !== null && (Object.keys(GITLEAKS_SUCCESSOR_ROW).sort().join('|') !== 'blob|commit|path|sha256'

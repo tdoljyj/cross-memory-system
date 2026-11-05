@@ -1,0 +1,13 @@
+{
+  "schema": "clued.install-static-code-epochs216/1",
+  "formula": "SHA256 of exact static capture-index UTF8 bytes; files and raw member pins packaged in accepted Source; not Owner/Source permission",
+  "runner": {
+    "path": "C:\\w\\cache-maintenance-0c51\\class-validation181\\self-install220\\node_capture_pins215.json",
+    "sha256": "8e26a5ed5165ebc594c43b3f403f2ae2ce79dc58f6568f3423afb4a403da1a6c"
+  },
+  "observer": {
+    "path": "C:\\w\\cache-maintenance-0c51\\class-validation181\\host-install216\\observer-capture216.json",
+    "sha256": "19a5bf5de21d0a63ac9f64534310aab48c63d0a76bf31409726aca18e19a0ddf"
+  },
+  "runtime_refs_in_code_epoch": false
+}

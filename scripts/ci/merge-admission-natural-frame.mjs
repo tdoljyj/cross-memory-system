@@ -6,7 +6,8 @@ import {MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL as P,MERGE_ADMISSION_FOUR_SOURCE_PR
 import {admissionEnvelopeInput,naturalRoundId} from './merge-admission-source-producer.mjs';
 import {mapNaturalSourceEvents} from './merge-admission-natural-intake.mjs';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
-import {registeredWorkflowSource} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const key=r=>r.run_id+':'+(r.attempt??r.run_attempt);
 const target=r=>key(r)+':'+r.pr_number+':'+r.head_sha;
@@ -78,9 +79,10 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
       execution_sources:{source_checkout_sha:expected.execution_source.source_checkout_sha,entries:[],manifest:null},
       ...(v2?{previous_execution_snapshots:[],execution_configurations:{}}:{} )};
     for(const n of names)packet[n]=[];packet.attempts=attemptRows.map(r=>({...r}));
-    const registry=JSON.parse(runtime.proof_profiles_raw),roles=JSON.parse(runtime.role_specs_raw);
+    const registry=parseWorkflowProfiles(runtime.proof_profiles_raw),roles=JSON.parse(runtime.role_specs_raw);
+    const readCatalogueSource=createCatalogueSourceReader({registry,roleSpecs:roles});
     for(const path of Object.keys(registry.workflows)){
-      const wf=runtime.execution_workflow_blobs[path];if(!registeredWorkflowSource(registry,path,wf).passed)throw Error('CURRENT_EXECUTION_SOURCE_NOT_REGISTERED');
+      const wf=runtime.execution_workflow_blobs[path];if(!readCatalogueSource({file:path,blob:wf}).source_identified)throw Error('CURRENT_EXECUTION_SOURCE_NOT_REGISTERED');
       packet.execution_sources.entries.push({workflow_file:path,workflow_blob:wf});
     }
     const executionVersions=new Map([[expected.execution_source.source_checkout_sha,{descriptor:expected.execution_source,registry,roles,blobs:runtime.execution_workflow_blobs}]]);
@@ -107,10 +109,11 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
       const declared=expected.previous_execution_sources.find(s=>s.source_checkout_sha===tip);
       if(declared&&(declared.profiles_sha256!==template.profiles_sha256||declared.role_specs_sha256!==template.role_specs_sha256))return null;
       if(packet.previous_execution_snapshots.length>=1000)return null;
-      const descriptor={...template,source_checkout_sha:tip},historicalRegistry=JSON.parse(snapshot.proof_profiles_raw),historicalRoles=JSON.parse(snapshot.role_specs_raw),
-        blobs=Object.fromEntries((snapshot.workflow_directory??[]).map(r=>[r.path,r.sha])),entries=[];
+      const descriptor={...template,source_checkout_sha:tip},historicalRegistry=parseWorkflowProfiles(snapshot.proof_profiles_raw),historicalRoles=JSON.parse(snapshot.role_specs_raw),
+        blobs=Object.fromEntries((snapshot.workflow_directory??[]).map(r=>[r.path,r.sha])),entries=[],
+        readHistoricalCatalogueSource=createCatalogueSourceReader({registry:historicalRegistry,roleSpecs:historicalRoles});
       for(const path of Object.keys(historicalRegistry.workflows)){
-        const wf=blobs[path];if(!registeredWorkflowSource(historicalRegistry,path,wf).passed)return null;entries.push({workflow_file:path,workflow_blob:wf});
+        const wf=blobs[path];if(!readHistoricalCatalogueSource({file:path,blob:wf}).source_identified)return null;entries.push({workflow_file:path,workflow_blob:wf});
       }
       const configuration_key=template.profiles_sha256+':'+template.role_specs_sha256,currentKey=expected.execution_source.profiles_sha256+':'+expected.execution_source.role_specs_sha256;
       if(configuration_key!==currentKey&&!Object.hasOwn(packet.execution_configurations,configuration_key))packet.execution_configurations[configuration_key]={proof_profiles_raw:snapshot.proof_profiles_raw,role_specs_raw:snapshot.role_specs_raw};

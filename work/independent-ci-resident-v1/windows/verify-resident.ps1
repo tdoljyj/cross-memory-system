@@ -416,12 +416,22 @@ function Get-VerifyVerdict($checks) {
   return @{ status = 'RESIDENT_VERIFICATION_FAILED'; exit = 1 }
 }
 
+function Get-VerifyInputFailure([string]$check, [string]$message) {
+  $name = if (@('install-receipt', 'record-acceptance', 'policy-input', 'companion-input', 'broker-input') -ccontains $check) { $check } else { 'verify-inputs' }
+  $code = if ($message -cmatch '^(INSTALL_RECEIPT_(PIN_REQUIRED|BOUNDARY_REFUSED|CHANGED)|INSTALLED_NODE_(PROFILE_REFUSED|PROFILE_CHANGED|CONFIG_CHANGED))\z') { $message } else { 'VERIFY_INPUT_UNREADABLE' }
+  [pscustomobject]@{ check = $name; detail = $code }
+}
+# A failed pinned input must still produce a bounded JSON verdict for the frozen upgrade-apply reader.
+# Raw exceptions can contain paths or contents: only fixed check names and fixed failure codes leave this process.
+$script:VerifyInputCheck = 'install-receipt'
+try {
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
 $receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
 Record 'install-receipt' $true
 $ReceiptContracts = @('clued.independent-ci.resident-install-receipt/5', 'clued.independent-ci.resident-install-receipt/6')
 if ($ReceiptContracts -cnotcontains $receipt.contract -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 $acceptancePath=Join-Path $Root 'record\acceptance.json'
+$script:VerifyInputCheck = 'record-acceptance'
 $Accepted=Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB
 $Node=$Accepted.node
 $NodeCanonical=ConvertTo-NodeProfileCanonical $Node
@@ -429,9 +439,11 @@ $nh=[Security.Cryptography.SHA256]::Create();try{$NodeProfileSha256=([BitConvert
 if($NodeProfileSha256 -cne $receipt.nodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $receipt.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_PROFILE_CHANGED'}
 $Runner=[string]$Node.runnerService
 foreach($pair in @(@('config\policy.json',$receipt.policySha256),@('config\companion.json',$receipt.companionConfigSha256),@('config\broker.json',$receipt.brokerConfigSha256))){
+  $script:VerifyInputCheck = @{'config\policy.json'='policy-input';'config\companion.json'='companion-input';'config\broker.json'='broker-input'}[$pair[0]]
   $file=Join-Path $Root $pair[0];$cfg=Read-ReviewedPublicJson $file $pair[1];if($pair[0] -ceq 'config\companion.json'){$cfg=$cfg.companion}
   if($cfg.nodeProfileSha256 -cne $NodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $cfg.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_CONFIG_CHANGED'}
 }
+$script:VerifyInputCheck = 'verify-inputs'
 
 # DESIGN.md section 33: the companion's Source scripts are in the installed Source and exist; the CI root grants the resident service
 # its READ_CONTROL entry (live ACL, not the receipt: an install by hand or an earlier install counts the same).
@@ -678,3 +690,9 @@ if ($receipt.contract -ceq 'clued.independent-ci.resident-install-receipt/6') {
 $verdict = Get-VerifyVerdict $checks
 [ordered]@{ status = $verdict.status; checks = $checks } | ConvertTo-Json -Depth 6
 exit $verdict.exit
+} catch {
+  $failure = Get-VerifyInputFailure $script:VerifyInputCheck ([string]$_.Exception.Message)
+  Record $failure.check $false $failure.detail
+  [ordered]@{ status = 'RESIDENT_VERIFICATION_FAILED'; checks = $checks } | ConvertTo-Json -Depth 6
+  exit 1
+}

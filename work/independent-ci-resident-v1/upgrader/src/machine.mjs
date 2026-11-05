@@ -366,7 +366,10 @@ export class Machine {
     if (waiting.length === 0) {
       const ps = await this.resident.pauseState();
       const w = await this.windows.verify(this.applyArgs(j, { generation, expectPausedSha256: ps?.sha256 ?? null }));
-      if (!w.ok) return { ok: false, code: codes.fail, detail: { cause: 'windows', windowsCode: w.code ?? null } };
+      if (!w.ok) {
+        const failure = applyFailure('verify', w);
+        return { ok: false, code: codes.fail, detail: { cause: 'windows', windowsCode: failure.applyCode, ...failure } };
+      }
       const l = await this.linux.verify({ opId: this.opId, generation }, intent.seq);
       if (!l.ok && l.code === U.COMPANION_UNAVAILABLE && codes.companion && now < Date.parse(intent.at) + companionWaitMs) return waitFor(POLL.transient, { code: codes.companion, waiting: 'linux-verify' });
       if (!l.ok) return { ok: false, code: codes.fail, detail: { cause: 'linux', linuxCode: l.code ?? null } };
@@ -388,6 +391,7 @@ export class Machine {
     const out = { ...prev, contract: RECEIPT_CONTRACT_V6, generation: plan.toGeneration, packageManifestSha256: plan.packageManifestSha256,
       windowsLayout: plan.target.windowsLayout, stateCompat: plan.target.stateCompat, policySha256: plan.target.policySha256,
       companionConfigSha256: plan.target.companionConfigSha256, sourceManifestSha256: plan.target.sourceManifestSha256,
+      acceptanceSha256: newShas['record\\acceptance.json'], installationSha256: newShas['record\\installation.json'],
       residentManifestSha256: plan.target.residentManifestSha256, ciSourceManifestSha256: plan.target.ciSourceManifestSha256,
       residentBinaryPath: scm.resident.binPath, brokerBinaryPath: scm.broker.binPath,
       companionTaskAction: { path: scm.companionTask.path, arguments: scm.companionTask.arguments },

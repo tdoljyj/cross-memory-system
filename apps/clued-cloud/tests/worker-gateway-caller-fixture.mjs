@@ -22,6 +22,10 @@ const transition = await fs.readFile(path.join(cloud,'supabase/migrations/202610
 export const WORKER_SIGNATURES = [...transition.matchAll(/'(public\.clued_[a-z0-9_]+\([^']*\))'/g)].map(m=>m[1].replace(/^public\./,'')).sort();
 assert.equal(WORKER_SIGNATURES.length,80);
 assert.equal(new Set(WORKER_SIGNATURES).size,80);
+// The historical gateway closeout stays exactly 80. Only the explicit later
+// physical-start migration adds these two authenticated serving-Worker doors;
+// it adds no anon/Binding/public definer access.
+export const SCAN_START_GATEWAY_SIGNATURES = ['clued_ci_scan_start_hosted_v1(jsonb)', 'clued_ci_scan_start_policy_v1(jsonb)'].sort();
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
   const names=(await fs.readdir(path.join(cloudRoot,'supabase/migrations'))).filter(n=>n.endsWith('_worker_gateway_closeout_v1.sql'));
@@ -54,7 +58,9 @@ export async function assertGatewayCloseoutBoundary(db) {
   const signatures=async(role,definersOnly)=> (await db.query(`select p.oid::regprocedure::text signature
     from pg_proc p where p.pronamespace='public'::regnamespace
     and ($2::boolean=false or p.prosecdef) and has_function_privilege($1,p.oid,'EXECUTE') order by 1`,[role,definersOnly])).rows.map(r=>r.signature.replace(/^public\./,''));
-  assert.deepEqual(await signatures(GATEWAY_ROLE,false),WORKER_SIGNATURES,'GW remains exactly 80');
+  const successor = (await db.query("select to_regclass('clued_private.ci_scan_start_keys_v1') is not null present")).rows[0].present;
+  const expected = successor ? [...WORKER_SIGNATURES, ...SCAN_START_GATEWAY_SIGNATURES].sort() : WORKER_SIGNATURES;
+  assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,successor ? 'GW is exactly historical 80 + the two scan-start successor RPCs' : 'historical GW remains exactly 80');
   assert.deepEqual(await signatures('anon',true),CI_SIGNATURES,'Clued anon definer surface is exactly CI8');
 }
 

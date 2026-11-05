@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Owner Credential v0.1, step 3 (migration 20261003030000): over the per-Task
 // claim cap, a claim or takeover consumes an Owner Grant for
@@ -248,12 +248,8 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
     assert.equal((await admin.query('select uses from clued_private.owner_grants_v1 where id=$1',
       [conflictGrant.grant.grant_id])).rows[0].uses, 1);
     committed(await release('claude', holder));
-    // The real formal migration is installed by the full chain and replays
-    // unchanged after the original business/concurrency/negative matrix.
-    const closeoutMigration = await findGatewayCloseoutMigration(root);
-    const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
-    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    // Qualify the complete current chain's explicit Worker82/CI8 successor.
+    // Historical Worker80 replay remains in its separate phase tests.
     await assertGatewayCloseoutBoundary(admin);
 
   } finally {

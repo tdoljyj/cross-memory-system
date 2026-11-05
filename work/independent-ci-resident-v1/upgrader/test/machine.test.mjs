@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ResidentExecutor } from '../../src/executor.mjs';
+import { executorFixture, fakeEngine } from '../../test/helpers.mjs';
 import { sha256 } from '../../src/canonical.mjs';
 import { applyFailure, decide } from '../src/machine.mjs';
 import { lastFailureOf } from '../src/upgrader-main.mjs';
@@ -16,6 +20,91 @@ const managed = env => treeDigest(env.root, { exclude: journalOnly });
 // Everything outside the operation's own directory and the status view: what "no side effect" compares.
 const outside = env => treeDigest(env.root, { exclude: rel => rel.startsWith('upgrade/ops/') || rel === 'upgrade/status.json' });
 const live = (env, slot) => fs.readFile(path.join(env.root, ...slot.split('\\')));
+
+for (const rollback of [false, true]) test(`real executor pause and role probe unblock ${rollback ? 'rollback-' : ''}verify without an Owner resume`, async t => {
+  const env = await makeEnv(t, { windowsOptions: { failVerify: g => rollback && g === 2 } });
+  const engine = fakeEngine();
+  let probes = 0;
+  engine.runRoleProbe = async () => { probes++; return { ok: true, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
+    roleProbe: { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' },
+    outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_NOT_HELD', sideEffects: 0, mayHavePublished: false } }; };
+  const f = await executorFixture(t, { engine, now: env.clock.now });
+  let pauseBytes;
+  const requestPause = env.resident.requestPause.bind(env.resident);
+  env.resident.requestPause = async (name, bytes) => { pauseBytes = bytes; return requestPause(name, bytes); };
+  const start = env.resident.start.bind(env.resident);
+  env.resident.start = (...args) => { start(...args); f.exec = new ResidentExecutor(f.ports); };
+  env.resident.status = async () => {
+    env.resident.tick();
+    f.advance(env.clock.now - f.clock());
+    if (env.resident.paused && !(await f.ledger.paused())) {
+      await f.ledger.pause({ reason: JSON.parse(pauseBytes).reason, requestSha256: sha256(pauseBytes) });
+    }
+    if (env.resident.running) await f.exec.tick();
+    return { writtenAt: env.clock.now, executorState: (await f.ledger.paused()) ? 'PAUSED' : 'IDLE', current: false,
+      probeAt: f.exec.roleProbe.last?.at ?? null };
+  };
+  const op = await openOp(env, 'n2');
+  const result = await runOp(env, op);
+  assert.equal(result.terminal.outcome, rollback ? 'ROLLED_BACK_PAUSED' : 'SUCCEEDED');
+  assert.ok(probes >= (rollback ? 3 : 2), 'a new actual role observation after each service restart');
+  assert.equal(env.resident.owner.length, rollback ? 0 : 1, 'only normal machine resume, never an Owner workaround');
+  assert.equal(engine.calls.filter(c => c[0] === 'stage' || c[0] === 'derive').length, 0);
+});
+
+test('Windows verify failure keeps the bounded failed check in the journal and status, including rollback', async t => {
+  const env = await makeEnv(t);
+  const verify = env.windows.verify.bind(env.windows);
+  env.windows.verify = async args => args.generation === 2 ? { ok: false, code: 'VERIFY_FAILED', at: 'generation-current' } : verify(args);
+  const op = await openOp(env, 'n2');
+  const result = await runOp(env, op);
+  assert.equal(result.terminal.outcome, 'ROLLED_BACK_PAUSED');
+  const journal = await loadJournal(env, op);
+  const failed = journal.steps.find(s => s.step === 'verify');
+  assert.deepEqual(failed.result.detail, { cause: 'windows', windowsCode: 'VERIFY_FAILED', where: 'verify', applyCode: 'VERIFY_FAILED', applyAt: 'generation-current' });
+  assert.deepEqual(lastFailureOf({}, journal.steps), { step: 'verify', code: U.VERIFY_FAILED, where: 'verify', applyCode: 'VERIFY_FAILED', applyAt: 'generation-current' });
+});
+
+test('generation 2 record pins pass the real Windows verifier reader after the machine switches both records', { skip: process.platform !== 'win32' }, async t => {
+  const env = await makeEnv(t);
+  const script = path.join(env.root, 'verify-record-pins.ps1');
+  const verifier = fileURLToPath(new URL('../../windows/verify-resident.ps1', import.meta.url));
+  await fs.writeFile(script, `param([string]$Root,[string]$Verifier)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Verifier,[ref]$tokens,[ref]$errors)
+$f=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Read-ReviewedPublicJson'},$true)
+. ([scriptblock]::Create($f.Extent.Text))
+$r=Get-Content -LiteralPath (Join-Path $Root 'install\\install-receipt.json') -Raw|ConvertFrom-Json
+try {
+  $null=Read-ReviewedPublicJson (Join-Path $Root 'record\\acceptance.json') $r.acceptanceSha256 4MB
+  $null=Read-ReviewedPublicJson (Join-Path $Root 'record\\installation.json') $r.installationSha256 4MB
+  [Console]::Out.WriteLine('RECORD_PINS_VERIFIED')
+} catch {[Console]::Out.WriteLine($_.Exception.Message);exit 1}
+`);
+  const verify = env.windows.verify.bind(env.windows);
+  const reads = [];
+  env.windows.verify = async args => {
+    const normal = await verify(args);
+    if (!normal.ok) return normal;
+    try {
+      const out = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-File', script, '-Root', env.root, '-Verifier', verifier], { encoding: 'utf8', windowsHide: true });
+      reads.push([args.generation, out.trim()]);
+      return normal;
+    } catch { return { ok: false, code: 'VERIFY_FAILED', detail: 'INSTALL_RECEIPT_CHANGED' }; }
+  };
+  const op = await openOp(env, 'n2');
+  const result = await runOp(env, op);
+  assert.equal(result.terminal.outcome, 'SUCCEEDED');
+  assert.deepEqual(reads, [[2, 'RECORD_PINS_VERIFIED']]);
+  const receipt = JSON.parse(await live(env, RECEIPT_SLOT));
+  assert.equal(receipt.acceptanceSha256, sha256(await live(env, 'record\\acceptance.json')));
+  assert.equal(receipt.installationSha256, sha256(await live(env, 'record\\installation.json')));
+  // A changed record is still refused by the same real verifier helper.
+  await fs.appendFile(path.join(env.root, 'record', 'acceptance.json'), ' ');
+  await assert.rejects(env.windows.verify({ opId: op, generation: 2 }).then(r => { if (!r.ok) throw new Error(r.detail); }), /INSTALL_RECEIPT_CHANGED/);
+});
 
 test('N -> N+1: every step in order, generation 2 live, generation 1 kept, the node resumed', async t => {
   const env = await makeEnv(t);

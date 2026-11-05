@@ -47,7 +47,8 @@ public sealed class SwapBroker : ServiceBase
     // stage R, the hosted relay (free-minutes design S22): the same one generic helper runs it (the helper's
     // own stage table maps 9 to the relay-publisher entry), so broker.json still pins exactly one helper.
     // Stages 1-8, stage R (9) and stage 10 (train maintenance, quota phase 2 step 3c-1), each with its run cap.
-    static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000, 60000, 300000 };
+    static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000, 60000, 300000, 300000 };
+    public static bool RuntimeStageValid(int stage) { return stage >= 1 && stage <= StageMilliseconds.Length; }
     static readonly Regex Hex32 = new Regex("^[0-9a-f]{32}$"), Hex64 = new Regex("^[0-9a-f]{64}$"), Uuid = new Regex("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$");
     static readonly Regex Iso = new Regex(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,7})?Z$");
     readonly string root, configSha, profileSha;
@@ -216,7 +217,7 @@ public sealed class SwapBroker : ServiceBase
             || (v["contract"] as string) != RequestContract) throw new BrokerRefusal("BROKER_REQUEST_SHAPE");
         if (!(v["stage"] is int)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
         int stage = (int)v["stage"]; string nonce = v["nonce"] as string; string config = v["configSha256"] as string; string deadlineText = v["deadline"] as string;
-        if (stage < 1 || stage > StageMilliseconds.Length || nonce == null || !Hex32.IsMatch(nonce) || config == null || !Hex64.IsMatch(config) || deadlineText == null || !Iso.IsMatch(deadlineText)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
+        if (!RuntimeStageValid(stage) || nonce == null || !Hex32.IsMatch(nonce) || config == null || !Hex64.IsMatch(config) || deadlineText == null || !Iso.IsMatch(deadlineText)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
         DateTime deadline = DateTime.Parse(deadlineText, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
         if (deadline > DateTime.UtcNow.AddMilliseconds(StageMilliseconds[stage - 1] + 180000)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
         if (deadline < DateTime.UtcNow.AddMinutes(2)) throw new BrokerRefusal("BROKER_REQUEST_EXPIRED");

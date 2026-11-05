@@ -87,7 +87,147 @@ export function stepFingerprint(steps) {
   return createHash("sha256").update(JSON.stringify(steps)).digest("hex");
 }
 
-export function repositoryTemporaryStorageFindings(document, name, audit) {
+// These Source candidates classify six exact pre-bootstrap guards, not whole jobs.
+// The scan-permission lifecycle DOES write its single no-clobber RUNNER_TEMP
+// producer and consumes the original once permission. It is never read-only.
+// Whole YAML, parsed definition, guard and builtin-only producer closure pins
+// prevent coverage metadata alone from registering an exception. Later runtime
+// still requires the ordinary bootstrap. Source acceptance is a separate gate.
+const REGISTERED_PRE_BOOTSTRAP = [
+  {
+    "file": "clued-handover-disposable-idle.yml",
+    "job": "disposable-idle",
+    "lifecycle": "native617-read-guard-v1",
+    "workflow_sha256": "133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66",
+    "definition_sha256": "ed7a2f81f6c43de8b473a60f30a7a155c7c3197fec6c2a3a09c71d49c1b8ba66",
+    "guardIndex": 1,
+    "bootstrapIndex": 3,
+    "guard_step_sha256": "273979e088d94cb400ee370a03d56520df0b6723c4e7f0a2284eb4e3fd77c903",
+    "closure": {
+      "scripts/ci/clued-handover-native-entry.mjs": "6f6366e3ac098421ca2b1300fc299c17c5cc4bf439bec83adeae9fec69925b7f",
+      "config/clued-handover-native-entry-policy.json": "161217046e6df8267fd76ab80b898a62af615213e2d3ecb90292f8667a642dcf"
+    },
+    "lifecycle_effect": "read_only_qualification_guard_before_candidate_bootstrap",
+    "conditional_checkout_implied_by_guard": false
+  },
+  {
+    "file": "clued-handover-external-qualification.yml",
+    "job": "qualify",
+    "lifecycle": "native617-read-guard-v1",
+    "workflow_sha256": "c42ab88ddb6e8f0774ec55cecf3507578870f8233d6ec11c09162212f3442d5f",
+    "definition_sha256": "6167e3acdc666d97021e8dd068c9b1b02a14b87ad7a7ee4116f81a832af7ed30",
+    "guardIndex": 1,
+    "bootstrapIndex": 3,
+    "guard_step_sha256": "273979e088d94cb400ee370a03d56520df0b6723c4e7f0a2284eb4e3fd77c903",
+    "closure": {
+      "scripts/ci/clued-handover-native-entry.mjs": "6f6366e3ac098421ca2b1300fc299c17c5cc4bf439bec83adeae9fec69925b7f",
+      "config/clued-handover-native-entry-policy.json": "161217046e6df8267fd76ab80b898a62af615213e2d3ecb90292f8667a642dcf"
+    },
+    "lifecycle_effect": "read_only_qualification_guard_before_candidate_bootstrap",
+    "conditional_checkout_implied_by_guard": false
+  },
+  {
+    "file": "clued-native617-admission-dispatch.yml",
+    "job": "admit",
+    "lifecycle": "native617-read-guard-v1",
+    "workflow_sha256": "03528c7c651114476d596e16944643108743681024bc32a54760f8ad93dbe460",
+    "definition_sha256": "6feee13f778e83c15457e15d31c613bdd16d56c1c4d93f03a7b4368a55ca18d4",
+    "guardIndex": 1,
+    "bootstrapIndex": 3,
+    "guard_step_sha256": "273979e088d94cb400ee370a03d56520df0b6723c4e7f0a2284eb4e3fd77c903",
+    "closure": {
+      "scripts/ci/clued-handover-native-entry.mjs": "6f6366e3ac098421ca2b1300fc299c17c5cc4bf439bec83adeae9fec69925b7f",
+      "config/clued-handover-native-entry-policy.json": "161217046e6df8267fd76ab80b898a62af615213e2d3ecb90292f8667a642dcf"
+    },
+    "lifecycle_effect": "read_only_qualification_guard_before_candidate_bootstrap",
+    "conditional_checkout_implied_by_guard": false
+  },
+  {
+    "file": "contract-placement.yml",
+    "job": "contract-placement",
+    "lifecycle": "ordinary-qualified-subject-guard-v1",
+    "workflow_sha256": "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b",
+    "definition_sha256": "2b0a7742e800d3bdc444997cedb350974eccd9be12c10a8c5cd882b35191ed0d",
+    "guardIndex": 2,
+    "bootstrapIndex": 3,
+    "guard_step_sha256": "e82d657ea857f6d873fcc2e8b706312d6998c9c5c7ca39e702115e41b7e504ad",
+    "closure": {},
+    "lifecycle_effect": "read_only_qualification_guard_before_candidate_bootstrap",
+    "conditional_checkout_implied_by_guard": true
+  },
+  {
+    "file": "gitleaks.yml",
+    "job": "gitleaks-trusted-self-hosted",
+    "lifecycle": "native-scan-permission-runner-temp-v1",
+    "workflow_sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966",
+    "definition_sha256": "e96e5406c618bd6ac0a719f999c96cb02b85545c75cd62b9001a901f3486d491",
+    "guardIndex": 1,
+    "bootstrapIndex": 2,
+    "guard_step_sha256": "2b75bae673d4a9d1d06f785c3fdc527686b68241f65a6873d80acd0330ff2232",
+    "closure": {
+      "scripts/ci/clued-scan-start.mjs": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1"
+    },
+    "lifecycle_effect": "fixed_RUNNER_TEMP_clued_scan_start_source_CreateNew_plus_original_Native_once_HTTP_burn",
+    "conditional_checkout_implied_by_guard": false
+  },
+  {
+    "file": "trivy.yml",
+    "job": "trivy-trusted-self-hosted",
+    "lifecycle": "native-scan-permission-runner-temp-v1",
+    "workflow_sha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb",
+    "definition_sha256": "9648c3561d8c5bc0835190f5dbb201f9dcc69d6dc6f6e2f04ab77b003fe17192",
+    "guardIndex": 1,
+    "bootstrapIndex": 2,
+    "guard_step_sha256": "2b75bae673d4a9d1d06f785c3fdc527686b68241f65a6873d80acd0330ff2232",
+    "closure": {
+      "scripts/ci/clued-scan-start.mjs": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1"
+    },
+    "lifecycle_effect": "fixed_RUNNER_TEMP_clued_scan_start_source_CreateNew_plus_original_Native_once_HTTP_burn",
+    "conditional_checkout_implied_by_guard": false
+  }
+];
+const canonicalDefinition = value => Array.isArray(value) ? value.map(canonicalDefinition) :
+  value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalDefinition(value[key])])) : value;
+
+function regularBoundedSource(root, relative) {
+  if (typeof root !== "string" || !path.isAbsolute(root)) throw new Error("Source root required");
+  let target = path.resolve(root);
+  if (!lstatSync(target).isDirectory() || lstatSync(target).isSymbolicLink()) throw new Error("Source root must be regular");
+  const pieces = relative.split("/");
+  if (pieces.some(piece => !piece || piece === "." || piece === "..")) throw new Error("Invalid fixed Source path");
+  for (const [index, piece] of pieces.entries()) {
+    target = path.join(target, piece);
+    const stat = lstatSync(target);
+    if (stat.isSymbolicLink() || (index < pieces.length - 1 ? !stat.isDirectory() : !stat.isFile() || stat.size > 1048576)) {
+      throw new Error("Producer Source must be bounded and regular");
+    }
+  }
+  return readFileSync(target, "utf8");
+}
+
+function registeredPreBootstrap(document, name, id, classification, context) {
+  if (!Object.hasOwn(classification, "pre_bootstrap_lifecycle")) return null;
+  const row = REGISTERED_PRE_BOOTSTRAP.find(row => row.file === name && row.job === id &&
+    row.lifecycle === classification.pre_bootstrap_lifecycle);
+  if (!row || classification.mode !== "job-temp") return null;
+  try {
+    const actualSource = regularBoundedSource(context?.sourceRoot, `.github/workflows/${name}`);
+    if (sourceFingerprint(actualSource) !== row.workflow_sha256 ||
+        stepFingerprint(canonicalDefinition(document)) !== row.definition_sha256 ||
+        stepFingerprint(document.jobs[id].steps[row.guardIndex]) !== row.guard_step_sha256 ||
+        document.jobs[id].steps[row.bootstrapIndex]?.uses !== classification.action ||
+        !ACTION.test(classification.action ?? "")) return null;
+    // Parse the bytes we just read as well: a caller cannot pair a pinned raw
+    // source with a different document, nor use metadata hashes as evidence.
+    if (stepFingerprint(canonicalDefinition(parse(actualSource))) !== row.definition_sha256) return null;
+    for (const [relative, expected] of Object.entries(row.closure)) {
+      if (sourceFingerprint(regularBoundedSource(context.sourceRoot, relative)) !== expected) return null;
+    }
+    return row;
+  } catch { return null; }
+}
+
+export function repositoryTemporaryStorageFindings(document, name, audit, context) {
   const findings = [];
   if (!audit || typeof audit.jobs !== "object") return [`${name}: workflow has no reviewed temporary-data classification`];
   const jobs = document.jobs ?? {};
@@ -122,6 +262,10 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
     if (classification.mode === "step-env" && checkoutSources(steps).length) {
       findings.push(`${label}: no-checkout control must not load repository code`);
     }
+    const lifecycle = registeredPreBootstrap(document, name, id, classification, context);
+    if (Object.hasOwn(classification, "pre_bootstrap_lifecycle") && !lifecycle) {
+      findings.push(`${label}: pre-bootstrap lifecycle Source or implementation closure is not registered`);
+    }
     for (const [key, value] of Object.entries({ ...document.env, ...job.env })) {
       const governed = GOVERNED_KEYS.find(k => k === key.toUpperCase());
       if (governed && (key !== governed || value !== PLATFORM_TEMP_ENVIRONMENT[governed])) findings.push(`${label}: overridden job temporary environment: ${key}`);
@@ -140,8 +284,12 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
         if (!VENDOR_ACTION.test(step.uses) && !ACTION.test(step.uses)) findings.push(`${label}: unknown action temporary lifecycle: ${step.uses}`);
         if (ACTION.test(step.uses)) {
           const prefix = step.uses.slice(2, -".github/actions/ci-temporary-storage".length).replace(/\/$/, "");
+          // Only this exact registered placement guard proves the earlier
+          // conditional checkout occurred before the unconditional bootstrap.
+          const guardImpliesCheckout = lifecycle?.conditional_checkout_implied_by_guard === true &&
+            index === lifecycle.bootstrapIndex && lifecycle.guardIndex < index;
           const available = checkoutSources(steps.slice(0, index)).some(s => s.path === prefix && s.if !== "false" &&
-            (s.if === "true" || s.if === condition(step.if ?? "true")));
+            (s.if === "true" || s.if === condition(step.if ?? "true") || guardImpliesCheckout));
           if (!available) findings.push(`${label}: temporary bootstrap is not in an existing compatible checkout`);
           if (step.uses !== classification.action) findings.push(`${label}: temporary bootstrap changed its reviewed source checkout`);
         }
@@ -151,7 +299,8 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
       const setup = steps.slice(0, index).some(s => ACTION.test(s.uses ?? "") &&
         s.uses === classification.action && condition(s.if ?? "true") !== "false" &&
         (!Object.hasOwn(s, "if") || condition(s.if) === condition(step.if)));
-      if (classification.mode === "step-env" ? !independent : !setup && !independent) {
+      const registeredGuard = lifecycle && index === lifecycle.guardIndex && index < lifecycle.bootstrapIndex;
+      if (classification.mode === "step-env" ? !independent : !setup && !independent && !registeredGuard) {
         findings.push(`${label}: temporary storage is not bound before runtime step ${index + 1}`);
       }
     }
@@ -174,13 +323,13 @@ export function checkRepositoryWorkflows(directory, catalog = JSON.parse(readFil
   if (catalog.schema !== "clued.ci-temporary-storage-coverage/1") return ["temporary-data audit schema is invalid"];
   const files = readdirSync(directory).filter(name => /\.ya?ml$/.test(name));
   const findings = [];
+  const root = path.resolve(directory, "../..");
   for (const old of Object.keys(catalog.workflows ?? {})) {
     if (!files.includes(old)) findings.push(`${old}: reviewed workflow no longer exists`);
   }
   for (const name of files) {
-    findings.push(...repositoryTemporaryStorageFindings(parse(readFileSync(path.join(directory, name), "utf8")), name, catalog.workflows?.[name]));
+    findings.push(...repositoryTemporaryStorageFindings(parse(readFileSync(path.join(directory, name), "utf8")), name, catalog.workflows?.[name], { sourceRoot: root }));
   }
-  const root = path.resolve(directory, "../..");
   const actionRoot = path.join(root, ".github/actions");
   const discover = (folder) => readdirSync(folder, { withFileTypes: true }).flatMap(entry => {
     const target = path.join(folder, entry.name);

@@ -75,10 +75,12 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {isDeepStrictEqual} from "node:util";
 import {CONTROL_WORKFLOW_FILES,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
+import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
-import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from "./clued-workflow-profile.mjs";
+import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -305,6 +307,46 @@ export async function githubPaged(fetchImpl, env, route, key) {
   return items;
 }
 
+// Bounded retry of the read-only GitHub API calls. A GET that answers 500, 502,
+// 503 or 504, or that fails on the network, is tried again after 1s and 2s (three
+// attempts in all; CLUED_GITHUB_RETRY_BASE_MS scales the first pause). Every
+// other status, including each 4xx, is final at once, and nothing but a GET to
+// the GitHub API is ever repeated, so the Clued RPCs and the App's writes are
+// untouched. The pauses are added to `budget.spentMs`, which the gate counts
+// into its wait. When the attempts run out the last response is returned (the
+// caller throws its usual `GitHub API <route> returned 5xx`), or, for a network
+// failure, an error `GitHub API <route> could not be reached`.
+export const GITHUB_READ_RETRY_ATTEMPTS = 3;
+export const GITHUB_READ_RETRY_STATUSES = Object.freeze([500, 502, 503, 504]);
+const RETRY_ORIGINAL = Symbol("githubReadRetryOriginal");
+export function withGithubReadRetry(fetchImpl, env = {}, { sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), budget = null } = {}) {
+  if (typeof fetchImpl !== "function") return fetchImpl;
+  const inner = fetchImpl[RETRY_ORIGINAL] ?? fetchImpl;
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const configured = Number.parseInt(env.CLUED_GITHUB_RETRY_BASE_MS ?? "", 10);
+  const baseMs = Number.isInteger(configured) && configured >= 0 ? Math.min(configured, 10000) : 1000;
+  const wrapped = async (url, init = {}) => {
+    const target = String(url);
+    if ((init.method ?? "GET") !== "GET" || !target.startsWith(`${base}/`)) return inner(url, init);
+    for (let attempt = 1; ; attempt += 1) {
+      let response = null;
+      let failure = null;
+      try { response = await inner(url, init); } catch (error) { failure = error; }
+      const transient = failure !== null || GITHUB_READ_RETRY_STATUSES.includes(response.status);
+      if (!transient) return response;
+      if (attempt >= GITHUB_READ_RETRY_ATTEMPTS) {
+        if (failure === null) return response;
+        throw new Error(`GitHub API ${target.slice(base.length)} could not be reached after ${attempt} attempts (${failure instanceof Error ? failure.message : String(failure)})`);
+      }
+      const pause = baseMs * 2 ** (attempt - 1);
+      if (budget) budget.spentMs += pause;
+      await sleep(pause);
+    }
+  };
+  wrapped[RETRY_ORIGINAL] = inner;
+  return wrapped;
+}
+
 // The files endpoint stops at 3000 entries. Callers compare file_count with
 // the PR's changed_files and fail closed when the list came back short.
 export async function changedPathsOfPullRequest(fetchImpl, env, repository, number) {
@@ -414,7 +456,7 @@ export function registeredPlacementSuccessor({file,headText,baseText,profiles,ro
     // parser or importing any candidate code.
     const compiled=compileRegisteredWorkflow(headText,{primary_ids:["contract-placement"],accepted_roles:roles,
       parseYaml:()=>({name:"contract-placement",on:{pull_request:null},jobs:{"admission-gate":{},"contract-placement":role.definition}})});
-    if(JSON.stringify(compiled)!==JSON.stringify(profile) ||
+    if(!isDeepStrictEqual(compiled,profile) ||
       sha256Hex(workflowJobs(headText).find(job=>job.name===GATE_JOB)?.lines.join("\n")??"")!==PLACEMENT_GATE_SHA256)
       return no("placement compiled Source/FrozenGate differs");
     return {passed:true,registeredPlacementTransition:before.profile.gated===false,profile,role};
@@ -427,7 +469,7 @@ function trustedPlacementCatalogues() {
     if(!info.isFile() || info.isSymbolicLink() || info.size>limit)throw Error("trusted placement catalogue unavailable");
     const bytes=fs.readFileSync(location),text=bytes.toString("utf8");
     if(bytes.length>limit || !Buffer.from(text,"utf8").equals(bytes))throw Error("trusted placement catalogue invalid");
-    return JSON.parse(text);
+    return name.endsWith("clued-gated-proof-profiles.json")?parseWorkflowProfiles(bytes):JSON.parse(text);
   };
   try{return {profiles:read("./clued-gated-proof-profiles.json",1048576),
     roleSpecs:read("./clued-gated-proof-role-specs.json",524288)};}
@@ -630,6 +672,45 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
       {
         "job_id": "untrusted-hosted",
         "definition_sha256": "f968f1e82055b40013ef4bb560b0b11bd7af6bc90b0817f821c59db273dc794a"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+    "candidate_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_sha256": "d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "2325e6f3f3d459f1204a77a842d4726b13cad06e73c1312478a6b9df013882bd"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/trivy.yml",
+    "predecessor_blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+    "candidate_blob": "9867c4c847a61aa33761e27b793e0928bc6cbfdc",
+    "candidate_sha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "7745a8c7286ffba75761d8ee00fbb099809318a9bdc6bf52760064d040cefa8f"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_blob": "6441fc32b084002de697415ea8343af07816c929",
+    "candidate_sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf"
       }
     ]
   }
@@ -1248,7 +1329,7 @@ function strategyShrinks(job, old) {
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
-export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false } = {}) {
+export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false, registeredActorTransition = false } = {}) {
   const form = workflowFormFindings(headText);
   if (form.length) return form;
   // Only the trusted-main exact-pair caller may set this Source classification.
@@ -1257,6 +1338,7 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
     if(baseText===null||workflowIsGated(baseText)||workflowIsGated(headText))return ['controller_Source_expected_ungated'];
     return [];
   }
+  if(registeredActorTransition===true&&actorSourceTransition(ACTOR_WORKFLOW,headText).passed)return [];
   const jobs = workflowJobs(headText);
   const selfHosted = jobs.some((job) => !jobIsHosted(job));
   const required = baseText === null ? selfHosted : workflowIsGated(baseText) ||
@@ -1349,6 +1431,10 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
         !registeredPublisherPrQualificationTransition(trustedPublisherPrQualificationProfiles(),file.filename,head,base,{repository}).passed)) {
       gate.push(`workflow_gate:${file.filename}:publisher_PR_qualification_Source_not_registered`);
     }
+    const actorKnown=file.filename===ACTOR_WORKFLOW||file.previous_filename===ACTOR_WORKFLOW;
+    const actorSource=actorKnown&&file.filename===ACTOR_WORKFLOW&&['added','modified'].includes(file.status)&&
+      (file.status==='added'||basePath===file.filename)?actorSourceTransition(file.filename,head):null;
+    if(actorKnown&&!actorSource?.passed)gate.push(`workflow_gate:${file.filename}:actor_Source_FullRoles_not_registered`);
     const controlKnown=Object.hasOwn(CONTROL_WORKFLOW_FILES,file.filename)||Object.hasOwn(CONTROL_WORKFLOW_FILES,file.previous_filename??'');
     const controlSource=controlKnown?registeredControlWorkflowTransition(trustedControlProfiles(),file.filename,head,base,{repository,change:file}):null;
     if(controlKnown&&!controlSource.passed)gate.push(`workflow_gate:${file.filename}:control_Source_not_registered`);
@@ -1363,7 +1449,7 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     const ordinaryRequired=ordinaryKnown&&(workflowIsGated(head)||base!==null&&workflowIsGated(base));
     const ordinarySource=ordinaryRequired?registeredBootstrapOrdinarySuccessor({file,headText:head,baseText:base,...trustedPlacementCatalogues()}):null;
     if(ordinaryRequired&&!ordinarySource.passed)gate.push(`workflow_gate:${file.filename}:bootstrap_ordinary_Source_not_registered`);
-    for (const finding of gateFindings(head, base, { registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
+    for (const finding of gateFindings(head, base, { registeredActorTransition:actorSource?.passed===true, registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
       registeredPlacementTransition:placementSource?.registeredPlacementTransition===true,
       registeredBootstrapOrdinaryTransition:ordinarySource?.registeredBootstrapOrdinaryTransition===true })) {
       gate.push(`workflow_gate:${file.filename}:${finding}`);
@@ -2416,6 +2502,15 @@ export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
 export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
 export const INDEPENDENT_GATE_WAIT_SECONDS = 600;
 export const INDEPENDENT_GATE_POLL_SECONDS = 30;
+// CLUED_ADMISSION_GATE_WAIT_SECONDS may lower the wait or raise it up to this
+// ceiling. The gate job holds one runner while it polls, and the registered
+// job's timeout-minutes (15) must still cover checkout, setup and the wait, so
+// a longer wait is a workflow change (the env value, and the timeout beyond
+// this ceiling) that registers a new gate digest.
+export const INDEPENDENT_GATE_WAIT_CEILING_SECONDS = 780;
+// The one job of the workflow that is the gate; every other job of the run is
+// a heavy job (independentRepairRerun).
+export const INDEPENDENT_GATE_JOB_NAME = "admission-gate";
 // The independent CI's native-work-admission ids: v1 (<job id>:f<fence>:e<epoch>:a<attempt>) and
 // Source v2 (src/job-v2.mjs admissionExternalIdV2: v2:<job id>:a<1|2>:c<claim prefix>:f<fence>:e<epoch>).
 const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
@@ -2440,11 +2535,74 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
-async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit }) {
+// Repair re-run. The independent CI is slow (a throttled uplink makes its
+// bundling take minutes, or it is busy with another pull request), so the gate
+// can time out with ADMISSION_PENDING, skip every heavy job, and see the
+// admission settle a moment later. A "Re-run all jobs" of that run is then the
+// only way to run the required tests on this head without a new commit, which
+// would start the slow independent CI from scratch. It is admitted only when
+// the run's earlier attempts, read from the Actions API, prove that no heavy
+// job of this head ever ran (rule 41ab823a: one real run of one check on one
+// commit):
+//   - every earlier attempt lists the gate job once and at least one other job,
+//     all of this head;
+//   - every job except the gate job of every earlier attempt has status
+//     completed and conclusion skipped (success, failure, cancelled, anything
+//     else counts as having run);
+//   - the gate job of every earlier attempt ended with a not-admitted verdict:
+//     its admission-gate annotation starts with ADMISSION_PENDING (the reason
+//     this exists) or RERUN_REFUSED (a refused earlier re-run, which ran
+//     nothing either).
+// Because the attempt this admits runs the heavy jobs, the next re-run finds
+// them in its history and is refused: the allowance is one, and it is derived
+// from GitHub's record instead of an attempt number. Anything unreadable
+// refuses. The gate job already holds `actions: read` and `checks: read`.
+const INDEPENDENT_NOT_ADMITTED_VERDICT = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+// A gate that stopped on a GitHub API failure that outlived the bounded retry
+// (main() reports it as an ERROR with title kooyumi-work-admission) ran no heavy
+// job either: only a 5xx answer or an unreachable API counts, not a 4xx.
+const INDEPENDENT_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+const INDEPENDENT_ERROR_ANNOTATION_TITLE = "kooyumi-work-admission";
+export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self }) {
+  const repository = env.GITHUB_REPOSITORY;
+  const runId = env.GITHUB_RUN_ID;
+  const refuse = (reason) => ({ allowed: false, reason });
+  if (!self || self.head_sha !== pr.head.sha || Number(self.run_attempt) !== attempt)
+    return refuse(`run ${runId} is not attempt ${attempt} of a run of ${pr.head.sha}`);
+  const attempts = [];
+  try {
+    for (let earlier = 1; earlier < attempt; earlier += 1) {
+      const jobs = await githubPaged(fetchImpl, env, `/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs`, "jobs");
+      const listed = jobs.filter((job) => job && typeof job === "object");
+      const gates = listed.filter((job) => job.name === INDEPENDENT_GATE_JOB_NAME);
+      const heavy = listed.filter((job) => job.name !== INDEPENDENT_GATE_JOB_NAME);
+      if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0)
+        return refuse(`attempt ${earlier} does not list one ${INDEPENDENT_GATE_JOB_NAME} job and its heavy jobs`);
+      if (listed.some((job) => job.head_sha !== pr.head.sha))
+        return refuse(`attempt ${earlier} has a job of another head than ${pr.head.sha}`);
+      const ran = heavy.filter((job) => !(job.status === "completed" && job.conclusion === "skipped"));
+      if (ran.length > 0)
+        return refuse(`attempt ${earlier} already ran ${ran.map((job) => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; ` +
+          "one commit's required tests run once");
+      const notes = await githubPaged(fetchImpl, env, `/repos/${repository}/check-runs/${gates[0].id}/annotations`);
+      if (!notes.some((note) => note && (
+        (note.title === INDEPENDENT_GATE_JOB_NAME && INDEPENDENT_NOT_ADMITTED_VERDICT.test(String(note.message ?? ""))) ||
+        (note.title === INDEPENDENT_ERROR_ANNOTATION_TITLE && INDEPENDENT_TRANSIENT_API_ERROR.test(String(note.message ?? ""))))))
+        return refuse(`the ${INDEPENDENT_GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage`);
+      attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
+    }
+  } catch (error) {
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return { allowed: true, attempts };
+}
+
+async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
   const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
   outcome.admission_source = INDEPENDENT_GATE_SOURCE;
   outcome.automation_self_hosted = false;
   const check = independent && independent.check;
+  let repair = null;
   if (check) outcome.admission_run = { id: check.id, status: check.status, conclusion: check.conclusion ?? null,
     html_url: check.html_url ?? null, source: what };
   if (!independent || !independent.settled) {
@@ -2459,9 +2617,9 @@ async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, in
   } else if (!pr.base || !pr.base.repo || pr.base.ref !== pr.base.repo.default_branch) {
     outcome.verdict = "REJECTED";
     outcome.reasons.push("the independent CI admits only pull requests into the default branch");
-  } else if (attempt) {
+  } else if (attempt && !(repair = await independentRepairRerun({ fetchImpl, env, pr, attempt, self })).allowed) {
     outcome.verdict = "RERUN_REFUSED";
-    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission names no re-run allowance; push a new commit`);
+    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission allows one repair re-run, only when no earlier attempt ran a heavy job (${repair.reason}); push a new commit`);
   } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
     repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
   })) {
@@ -2470,6 +2628,7 @@ async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, in
   } else {
     outcome.verdict = "ADMITTED";
     outcome.admitted = true;
+    if (repair) outcome.repair_rerun = { attempt, earlier_attempts: repair.attempts };
   }
   return outcome;
 }
@@ -2713,6 +2872,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   }
 
   const outcome = emptyOutcome(eventName);
+  const retryBudget = { spentMs: 0 };
+  fetchImpl = withGithubReadRetry(fetchImpl, env, { sleep, budget: retryBudget });
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
@@ -2734,8 +2895,11 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   const maxWait = independentSource ? INDEPENDENT_GATE_WAIT_SECONDS : GATE_WAIT_SECONDS;
   const pollSeconds = independentSource ? INDEPENDENT_GATE_POLL_SECONDS : GATE_POLL_SECONDS;
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
+  // The independent source may be configured above its default, up to the
+  // ceiling its registered job can hold; the default gate only lowers its wait.
+  const ceiling = independentSource ? INDEPENDENT_GATE_WAIT_CEILING_SECONDS : maxWait;
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
-    ? Math.min(waitSeconds, maxWait) : maxWait;
+    ? Math.min(waitSeconds, ceiling) : maxWait;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
@@ -2763,15 +2927,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
-      if (settled || waited >= limit) break;
-      const delay = Math.min(pollSeconds, limit - waited);
+      // The pauses of retried GitHub reads count into the wait.
+      const used = waited + retryBudget.spentMs / 1000;
+      if (settled || used >= limit) break;
+      const delay = Math.min(pollSeconds, limit - used);
       await sleep(delay * 1000);
       waited += delay;
     }
     // The independent source decides unless the clued-admission App's
     // event-bound check (disaster recovery only) settled first.
     if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
-      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit });
+      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
@@ -2866,9 +3032,29 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
 // environment's branch policy keeps the token from it anyway.
 
 export const DISPATCH_ADMISSION_WORKFLOW = "clued-work-admission-dispatch.yml";
-export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"];
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml", "clued-standard-runner-actor-qualification.yml"];
 export const DISPATCH_ADMISSION_TTL_SECONDS = 1800;
 export const ADMITTED_HEAD_TITLE = "clued-admitted-head";
+export const DISPATCH_NATIVE_VERDICT_TITLE = "clued-dispatch-native-verdict-v1";
+// Only the real Native response is projected; a missing field stays null.
+// This carrier records an existing admission, never creates an OS permission.
+export function closeNativeDispatchVerdict(payload,request){
+  const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v);
+  const positive=v=>Number.isSafeInteger(v)&&v>0;
+  const claim=payload?.claim;
+  const expiry=typeof claim?.expires_at==='string'&&claim.expires_at.length<=64&&Number.isFinite(Date.parse(claim.expires_at))?claim.expires_at:null;
+  const fields={verdict:payload?.verdict==='ADMITTED'?'ADMITTED':null,
+    execution_authorized:typeof payload?.execution_authorized==='boolean'?payload.execution_authorized:null,
+    execution_epoch:positive(payload?.execution_epoch)?payload.execution_epoch:null,
+    execution_policy:['active','staged'].includes(payload?.execution_policy)?payload.execution_policy:null,
+    head_authorization_id:uuid(payload?.head_authorization_id)?payload.head_authorization_id:null,
+    task_id:uuid(claim?.task_id)?claim.task_id:null,fence:positive(claim?.fence)?claim.fence:null,
+    claim_status:['ACTIVE','DRAINING'].includes(claim?.status)?claim.status:null,expires_at:expiry};
+  return {contract:'clued.native-ci-dispatch-verdict/1',subject:{scope:request.scope,claim_id:request.claim_id,
+    repository:request.repository,head_sha:request.head_sha,target_branch:request.target_branch,workflow:request.workflow},
+    native:fields,complete:fields.verdict==='ADMITTED'&&fields.execution_authorized===true&&fields.execution_epoch!==null&&fields.execution_policy!==null&&fields.task_id!==null&&fields.fence!==null&&fields.claim_status!==null&&fields.expires_at!==null};
+}
+
 
 // The head the admission run verified, from its own notice annotation. The
 // run executes default-branch code only, so the annotation is that code's.
@@ -2999,6 +3185,9 @@ async function dispatchAdmitCore({ env, fetchImpl, workspace }) {
   if (verified.kind === "refused") throw new Error(`Clued refused the verification request (${verified.detail}).`);
   outcome.verdict = verified.verdict;
   outcome.reasons.push(...verified.reasons);
+  outcome.dispatch_admission = closeNativeDispatchVerdict(verified.payload,{scope,claim_id:claimId,head_sha:commit.sha,repository:env.GITHUB_REPOSITORY,target_branch:ref,workflow});
+  if(outcome.dispatch_admission.complete) console.log(`::notice title=${DISPATCH_NATIVE_VERDICT_TITLE}::${JSON.stringify(outcome.dispatch_admission)}`);
+
   if (verified.payload.claim && typeof verified.payload.claim === "object") {
     const { claim } = verified.payload;
     outcome.claim = {
@@ -3437,6 +3626,7 @@ export function mergeSlotOutputs(outcome) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, { readPolicyFile = fs.readFileSync } = {}) {
+  fetchImpl = withGithubReadRetry(fetchImpl, env);
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
   if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {

@@ -1,9 +1,13 @@
 import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
+import {ACTOR_WORKFLOW,classifyActorSource,trustedActorCatalogue} from './clued-standard-runner-actor-source.mjs';
+import {NON_PR_CONTROL_FILES,NON_PR_CONTROL_SOURCE_PATH,parseNonPrControlCatalogue,classifyNonPrControlWorkflowSource} from './clued-non-pr-control-source.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
+import {CONTROL_WORKFLOW_SOURCE_PATH,CONTROL_WORKFLOW_FILES,MAIN_SECRET_CONTROLLER_ROUTE,SLOT_COMPLETION_OBSERVER_SOURCE,compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 // Merge Admission v0.1 §7.3, step 3: the merge slot follows CI
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync,createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -47,6 +51,182 @@ test('default CI enumeration excludes only exact registered dispatch publisher b
   assert.equal(ciWorkflows(ROOT,()=>['unregistered-dispatch.yml'],readFile).size,1,
     'an arbitrary gated dispatch is never a basename exclusion');
 });
+test('non-PR enumeration requires fresh complete fixed-family data and exact Source bytes at every observation',()=>{
+  const names=['clued-compute-panel.yml','clued-native617-admission-dispatch.yml'],
+    raw=fs.readFileSync(path.join(ROOT,NON_PR_CONTROL_SOURCE_PATH)),r=parseNonPrControlCatalogue(raw);
+  let reads=0;
+  const read=p=>{if(p.endsWith('clued-non-pr-control-sources.json')){reads++;return raw;}return fs.readFileSync(p);};
+  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,2);
+  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,4,'a later call obtains new Source data');
+  for(const name of names){
+    const file='.github/workflows/'+name,text=fs.readFileSync(path.join(ROOT,file),'utf8');
+    for(const changed of [text+'\n',text.replace('admission-gate:','changed-gate:'),text.replace('workflow_dispatch:','pull_request:')])
+      assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p.endsWith('clued-non-pr-control-sources.json')?raw:Buffer.from(changed)),/unregistered default non-PR control Source/);
+    const partial=structuredClone(r);partial.roles[file].pop();
+    assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p.endsWith('clued-non-pr-control-sources.json')?Buffer.from(JSON.stringify(partial,null,2)+'\n'):fs.readFileSync(p)),/unregistered default non-PR control Source/);
+  }
+  assert.throws(()=>ciWorkflows(ROOT,()=>names,p=>p.endsWith('clued-non-pr-control-sources.json')?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>names,p=>p.endsWith('clued-non-pr-control-sources.json')?Buffer.from([0xff]):fs.readFileSync(p)),/invalid UTF-8/);
+});
+
+test('nongated ordinary CI needs an exact registered Source and independent complete FullRoles, not a basename',()=>{
+  const name='runner-budget-policy.yml',file='.github/workflows/'+name,text=fs.readFileSync(path.join(ROOT,file)),
+    ordinaryPath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),rolesPath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json');
+  const expected=gitBlobSha(text),read=p=>fs.readFileSync(p);
+  assert.deepEqual([...ciWorkflows(ROOT,()=>[name],read)],[[file,expected]]);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.concat([text,Buffer.from('\n')]):read(p)),/unregistered default ordinary Source/);
+  const specs=JSON.parse(read(rolesPath));specs.workflows[file].sources[expected].pop();
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolesPath?Buffer.from(JSON.stringify(specs)):read(p)),/unregistered default ordinary Role/);
+  const changed=JSON.parse(read(rolesPath));changed.workflows[file].sources[expected][0].definition.steps.reverse();
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolesPath?Buffer.from(JSON.stringify(changed)):read(p)),/unregistered default ordinary Role/);
+  assert.equal(ciWorkflows(ROOT,()=>['renamed-budget.yml'],p=>p.endsWith('renamed-budget.yml')?text:read(p)).size,0,'another path cannot borrow the registered Source');
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===ordinaryPath?Buffer.alloc(1048577):read(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolesPath?Buffer.alloc(524289):read(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===ordinaryPath?Buffer.from([0xff]):read(p)),/invalid UTF-8/);
+  let sourceReads=0;const fresh=p=>{if(p===ordinaryPath)sourceReads++;return read(p);};
+  ciWorkflows(ROOT,()=>[name],fresh);ciWorkflows(ROOT,()=>[name],fresh);assert.equal(sourceReads,2,'no Source verdict is reused across observations');
+});
+
+const CONTROL_HISTORY_SOURCE_DIGESTS_186=[
+  {
+    "file": ".github/workflows/public-mcp-gate-receipt.yml",
+    "blob": "3a6afbeeee101dd1d1cfb9c9ed24e8d9c661f2d9",
+    "source_json_sha256": "0de5d114c491f8f9dfdb805b522bb0562e7d5d370911c9b2976f2ef837d5ebcd",
+    "roles_json_sha256": "0f1b55b570fdfa401d1fc3fcfa02890439aa80c7d47fe9553518277ba8c0b1af"
+  },
+  {
+    "file": ".github/workflows/public-mcp-gate-receipt.yml",
+    "blob": "f38dbd2cee150154de660633e010d4c56f56ff75",
+    "source_json_sha256": "8b26f1ec042ec60671a22270bd508009932991c30565ae43d5ee2a5ccc673627",
+    "roles_json_sha256": "6a710800a5af878db68c694a33cc8b185e6e7e27ef83ef55a0e2269dc6f4fe40"
+  },
+  {
+    "file": ".github/workflows/memory-publication-gate.yml",
+    "blob": "02988b3be31122457485e1ba6189a71e70de8d54",
+    "source_json_sha256": "7c9e3daa9c2fb713b059920840642e15440abcd9a0c7b644eb89b3a37afd82f4",
+    "roles_json_sha256": "9837c00b6ce70e107027d14c1f83677fb02e4855b63ae825ada6b5d654f6982a"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission.yml",
+    "blob": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+    "source_json_sha256": "0dc994974bc16ab3ca629b1abb2b2ca5afc27c9b4afa29a9cc2f9a6689bf8dbc",
+    "roles_json_sha256": "5ad050d2cb8a1cd4bb63643e1963cfdcde7090292dd8e85e689de85ff984ffcb"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission.yml",
+    "blob": "aab0c9555734aba1f9d1c44f4be68699f4375a52",
+    "source_json_sha256": "291cc908a7530f7622274d30868d34888bb7c9da5ff78e91a0964e2f848ddfd0",
+    "roles_json_sha256": "f9c3be3f865fb179ef0f0545a85d35b4d4d6cf3d0faea88e9d5790edf21631fc"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission-reverify.yml",
+    "blob": "8d112ceea21487b9ef871558a2e3bab8decef126",
+    "source_json_sha256": "965459721ddef8ee77675581c3c8c53dc4e12ce2dbc5888d8acf742bdec83005",
+    "roles_json_sha256": "b035c8e18359cc2595e9fd57a5d8eb0932afee7123a8cd7c5a95e1360e5df1e3"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission-reverify.yml",
+    "blob": "b8780a1b00f3ff253abc3d36168f74f0121cd53b",
+    "source_json_sha256": "8189292a1ab42eecca4c367b8a4f3c38a6d1abb3899c2fa418e47d3717935e27",
+    "roles_json_sha256": "6ffa42b2ce123669aaa9648678be0d011fd3cd4acffe3b8f19a3735304055dee"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission-dispatch.yml",
+    "blob": "797efcd6218b04b347e0cd55d3352ac70cca2167",
+    "source_json_sha256": "dd46f9a9ae335682be43f4093d53793eb5dc2a3541fb1ad4c4b3e1612a26351f",
+    "roles_json_sha256": "a082353a50cc95430b885f43518b9810d0557928ae3eabc068daf23aca729e63"
+  },
+  {
+    "file": ".github/workflows/clued-work-admission-dispatch.yml",
+    "blob": "3de6dcd8b8124e2d6bcd4eb0f2e46cd751438c79",
+    "source_json_sha256": "83685200e9c0fd10b0cc4b6e8fca306252f97e6f5edb0546602cf12e628b0be5",
+    "roles_json_sha256": "f701eb019bb5de04d9cc3a293b09f1f63aa1cac5b508157d3d7609b3362b973b"
+  },
+  {
+    "file": ".github/workflows/clued-merge-slot-ci.yml",
+    "blob": "662dbc3e846311379efa5f081b3cca518a881f74",
+    "source_json_sha256": "afb4a2cb8b4b2edebd0efa4ad2cd41ad7f80abb246c45819b995f97dd4f9d12c",
+    "roles_json_sha256": "c865fa0c0b605380ed781e0ac7026c12ab6903fd85c6d76ee9c417d48e043b90"
+  },
+  {
+    "file": ".github/workflows/clued-merge-slot-ci.yml",
+    "blob": "1a95a89f8a0238c14c7c2cc520e46b38727b5210",
+    "source_json_sha256": "b85f0491d4835537d56bc86bd3445fc78dbf99ae0bcad096ee3b8929172a2699",
+    "roles_json_sha256": "e36b8092c717ca2dca19e9451995b2a317ba00e32981be11dad201cb8cc94e32"
+  },
+  {
+    "file": ".github/workflows/clued-merge-executor.yml",
+    "blob": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+    "source_json_sha256": "b40905e9d87b63e7cd0df8b794f6bab7afe67095ef9534157b1511c44e4e1499",
+    "roles_json_sha256": "c19c33ad83631127dc777a50a5348461392944c947b1de753549f40f294726bd"
+  },
+  {
+    "file": ".github/workflows/clued-merge-executor.yml",
+    "blob": "7f4653b5a4f70c75f6220ac2e6e190fab9005de6",
+    "source_json_sha256": "67da66c5b6dba8ab8beb4dba8792abc10ff2fed93d751140316af62f55d493b9",
+    "roles_json_sha256": "870fb556aee0905ff425d265fc5dea75226e14695d1825543d8b3b3d885d1e44"
+  }
+];
+const controlRegistry=()=>JSON.parse(fs.readFileSync(path.join(ROOT,CONTROL_WORKFLOW_SOURCE_PATH)));
+const shaJson=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+test('all historical seven-family Source and Role values retain their immutable complete digests',()=>{
+  const r=controlRegistry();assert.equal(Object.keys(r.workflows).length,7);
+  for(const pin of CONTROL_HISTORY_SOURCE_DIGESTS_186){
+    const source=r.workflows[pin.file].sources.find(s=>s.workflow_blob===pin.blob);
+    assert.ok(source,pin.file+': historical Source retained');
+    assert.equal(shaJson(source),pin.source_json_sha256);
+    assert.equal(shaJson(r.roles[pin.file][pin.blob]),pin.roles_json_sha256);
+    const result=registeredControlWorkflowSource(r,pin.file,source.source_yaml);
+    assert.equal(result.passed,true,pin.file+': historical Source still compiles exactly');
+    assert.equal(result.authority_boundary.execution_authority,false);
+  }
+});
+
+test('slot notification successor binds exact current Git bytes and complete unchanged hosted job without migrating its route',()=>{
+  const r=controlRegistry(),file=SLOT_COMPLETION_OBSERVER_SOURCE.file,rows=r.workflows[file].sources,
+    previous=rows.find(s=>s.source_kind==='legacy_predecessor'),observer=rows.find(s=>s.source_kind==='completion_observer_successor'),
+    old=rows.find(s=>s.source_kind==='controller_successor'),text=fs.readFileSync(path.join(ROOT,file),'utf8');
+  assert.equal(rows.length,3);assert.equal(observer.workflow_blob,SLOT_COMPLETION_OBSERVER_SOURCE.workflow_blob);
+  assert.equal(observer.source_yaml,text);assert.equal(observer.operation,'extend_completion_observer');
+  assert.deepEqual(observer.workflow_definition.jobs,previous.workflow_definition.jobs,'all commands, permissions, env, route and steps remain unchanged');
+  assert.deepEqual(r.roles[file][observer.workflow_blob],r.roles[file][previous.workflow_blob],'the complete job Role is identical');
+  const original=previous.workflow_definition.on.workflow_run.workflows,current=observer.workflow_definition.on.workflow_run.workflows;
+  assert.deepEqual(current.filter(name=>!['runner-budget-policy','clued-required-tests'].includes(name)),original);
+  for(const signal of ['runner-budget-policy','clued-required-tests'])assert.equal(current.filter(name=>name===signal).length,1);
+  assert.deepEqual(old.workflow_definition.jobs.report['runs-on'],[...MAIN_SECRET_CONTROLLER_ROUTE]);
+  assert.equal(old.workflow_definition.on.workflow_run.workflows.filter(name=>name==='runner-budget-policy').length,1);
+  assert.equal(old.workflow_definition.on.workflow_run.workflows.includes('clued-required-tests'),false);
+  const result=registeredControlWorkflowSource(r,file,text);assert.equal(result.passed,true);
+  assert.equal(result.authority_boundary.execution_authority,false);
+  const change={filename:file,status:'modified'};
+  assert.equal(registeredControlWorkflowTransition(r,file,text,previous.source_yaml,{repository:REPO,change}).passed,true);
+  assert.equal(registeredControlWorkflowTransition(r,file,text,old.source_yaml,{repository:REPO,change}).passed,false,'this is not permission to roll a migrated controller back to hosted');
+});
+
+test('the observer exact pins refuse every other signal, trigger, env, permission, route or command change',()=>{
+  const r=controlRegistry(),file=SLOT_COMPLETION_OBSERVER_SOURCE.file,
+    previous=r.workflows[file].sources.find(s=>s.source_kind==='legacy_predecessor'),observer=r.workflows[file].sources.find(s=>s.source_kind==='completion_observer_successor'),
+    compile=(text,value,kind='completion_observer_successor',target=file)=>compileControlWorkflowSource(target,text,{source_kind:kind,predecessor:previous,
+      parseYaml:()=>value,accepted_roles:Object.entries(value.jobs).map(([job_id,definition])=>({job_id,definition_sha256:roleDefinitionDigest(definition),definition}))});
+  assert.deepEqual(compile(observer.source_yaml,observer.workflow_definition),observer);
+  for(const edit of [
+    v=>v.on.workflow_run.workflows.push('another-signal'),v=>v.on.workflow_run.workflows.push('runner-budget-policy'),
+    v=>v.on.workflow_run.workflows.splice(0,1),v=>v.on.workflow_run.workflows.reverse(),
+    v=>v.on.workflow_run.types=['requested'],v=>v.on.pull_request=null,
+    v=>v.jobs.report.environment='other',v=>v.permissions.actions='read',
+    v=>v.jobs.report['runs-on']=[...MAIN_SECRET_CONTROLLER_ROUTE],v=>v.jobs.report.steps[3].run+='\necho changed',
+  ]){const value=structuredClone(observer.workflow_definition);edit(value);assert.throws(()=>compile(observer.source_yaml,value),/unregistered control Source/);}
+  assert.throws(()=>compile(observer.source_yaml+'\n',observer.workflow_definition),/unregistered control Source/);
+  assert.throws(()=>compile(observer.source_yaml,observer.workflow_definition,'completion_observer_successor','.github/workflows/clued-merge-executor.yml'),/source kind/);
+  const migrated=structuredClone(observer.workflow_definition);migrated.jobs.report['runs-on']=[...MAIN_SECRET_CONTROLLER_ROUTE];
+  assert.throws(()=>compile(observer.source_yaml,migrated,'controller_successor'),/exact slot completion observer delta/,'the old route-migration kind may not gain the new two-signal allowance');
+  for(const edit of [
+    x=>delete x.roles[file][observer.workflow_blob],x=>x.roles[file][observer.workflow_blob].pop(),
+    x=>x.workflows[file].sources.push(structuredClone(observer)),x=>x.workflows[file].sources.find(s=>s.source_kind==='completion_observer_successor').source_yaml+='\n',
+  ]){const changed=structuredClone(r);edit(changed);assert.equal(registeredControlWorkflowSource(changed,file,observer.source_yaml).passed,false);}
+});
+
 const GITLEAKS = ".github/workflows/gitleaks.yml";
 const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
 
@@ -120,20 +300,44 @@ test("gitBlobSha is git's blob id", () => {
   if (expected) assert.equal(gitBlobSha(fs.readFileSync(file)), expected);
 });
 
-test("the CI workflows are gitleaks, trivy and the gated workflows of this branch", () => {
+test("PR CI enumeration retains registered ordinary Sources and excludes only exact non-PR families", () => {
   const dir = path.join(ROOT, ".github", "workflows");
   const gated = fs.readdirSync(dir).filter((name) => /\.ya?ml$/.test(name) && workflowIsGated(fs.readFileSync(path.join(dir, name), "utf8")));
   assert.ok(gated.length >= 10, gated.join(", "));
   const publisherCatalogue=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
   const prGated=gated.filter(name=>{
     const file='.github/workflows/'+name;
+    if(file===ACTOR_WORKFLOW){
+      const selected=classifyActorSource(trustedActorCatalogue(),file,fs.readFileSync(path.join(ROOT,file),'utf8'));
+      assert.equal(selected.passed,true,'only a complete typed non-PR actor Source/FullRoles is excluded');
+      assert.equal(selected.execution_authority,false);return false;
+    }
+    if(Object.hasOwn(NON_PR_CONTROL_FILES,file)){
+      const r=parseNonPrControlCatalogue(fs.readFileSync(path.join(ROOT,NON_PR_CONTROL_SOURCE_PATH))),
+        selected=classifyNonPrControlWorkflowSource(r,file,fs.readFileSync(path.join(ROOT,file),'utf8'));
+      assert.equal(selected.passed,true,'a complete independently pinned non-PR Source is required');
+      assert.equal(selected.execution_authority,false);return false;
+    }
     if(!Object.hasOwn(publisherCatalogue.workflows,file))return true;
     const text=fs.readFileSync(path.join(dir,name),'utf8');
     assert.equal(registeredPublisherSource(publisherCatalogue,file,text).passed,true,'an exact registered dispatch Source is required');
     return false;
   });
-  // The three required-check workflows are gated too; each is counted once.
-  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS])].map((name) => `.github/workflows/${name}`).sort());
+  const profiles=parseWorkflowProfiles(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'))),
+    specs=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json'))),
+    ordinary=fs.readdirSync(dir).filter(name=>{
+      const file='.github/workflows/'+name;if(!Object.hasOwn(profiles.workflows,file)||gated.includes(name))return false;
+      const selected=registeredWorkflowSource(profiles,file,gitBlobSha(fs.readFileSync(path.join(ROOT,file))));
+      assert.equal(selected.passed,true,file);assert.equal(selected.profile.gated,false);
+      const roles=rolesForSource(specs,file,selected.profile.workflow_blob);assert.ok(roles?.length);
+      for(const role of roles)assert.equal(roleDefinitionDigest(role.definition),role.definition_sha256,file);
+      return true;
+    });
+  assert.deepEqual(ordinary,['runner-budget-policy.yml'],'the existing registered nongated CI must not disappear');
+  // Required-check workflows are counted once, and controllers add no PR test.
+  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS,...ordinary])].map((name) => `.github/workflows/${name}`).sort());
+  assert.equal(WORKFLOWS.has('.github/workflows/clued-compute-panel.yml'),false);
+  assert.equal(WORKFLOWS.has('.github/workflows/clued-native617-admission-dispatch.yml'),false);
 });
 
 test("the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted", () => {
@@ -798,4 +1002,16 @@ test("A2 v2: the slot reporter counts v2 checks: green, and a v2 final failure r
   assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].returned], [[], "failed", true]);
   assert.equal(await requiredBarrier(fakeFetch({ ...v2Green(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []) }).fetchImpl,
     env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), true);
+});
+
+
+test('manual actor exclusion never admits an unknown/mutated Source or creates actor authority',()=>{
+ const r=trustedActorCatalogue(),text=r.source.source_yaml;
+ const read=p=>p.endsWith('clued-standard-runner-actor-sources.json')?Buffer.from(JSON.stringify(r)):Buffer.from(text);
+ assert.equal(ciWorkflows(ROOT,()=>['clued-standard-runner-actor-qualification.yml'],read).size,0);
+ for(const changed of [text+'\n',text.replace('--execute','--plan'),text.replace("github.actor_id == '52366662'","true")]){
+  assert.equal(ciWorkflows(ROOT,()=>['clued-standard-runner-actor-qualification.yml'],p=>p.endsWith('clued-standard-runner-actor-sources.json')?read(p):Buffer.from(changed)).size,1);
+ }
+ assert.equal(ciWorkflows(ROOT,()=>['unknown-manual-actor.yml'],read).size,1);
+ assert.equal(classifyActorSource(r,ACTOR_WORKFLOW,text).execution_authority,false);
 });
