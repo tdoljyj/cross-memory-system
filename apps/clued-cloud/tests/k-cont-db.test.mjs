@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -31,7 +31,7 @@ async function applyQualifiedMigrations(admin, names) {
     if (name === '20261014044323_all_contexts_authorization_v2.sql') {
       await assertGatewayCloseoutBoundary(admin);
       const closedCatalog = await snapshotCallerCatalog(admin);
-      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+      await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
       await assertGatewayCloseoutBoundary(admin);
       assert.deepEqual(await snapshotCallerCatalog(admin), closedCatalog,
         'actual sealed G6 replay preserves original definitions and ACL at its bounded stage');

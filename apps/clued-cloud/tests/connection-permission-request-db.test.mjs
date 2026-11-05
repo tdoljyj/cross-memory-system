@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Connection permission requests (migration 20261004150000; Owner Decision
 // 43ba00e2, Task e86eb58d): a connection that lacks a context or action asks
@@ -65,7 +65,7 @@ test('connection permission requests: ask without the scope, Owner approves once
       if (name === '20261014044323_all_contexts_authorization_v2.sql') {
         await assertGatewayCloseoutBoundary(admin);
         const originalCatalog = await snapshotCallerCatalog(admin);
-        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+        await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
         await assertGatewayCloseoutBoundary(admin);
         assert.deepEqual(await snapshotCallerCatalog(admin), originalCatalog, 'original closeout replay preserves its qualified source and ACL');
       }

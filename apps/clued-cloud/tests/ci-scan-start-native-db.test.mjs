@@ -113,7 +113,12 @@ test('physical scan-start Native K: real transactions, exact existing authority 
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
       assert.deepEqual(anon,CI_SIGNATURES);
       const after=await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v");
-      assert.equal(after.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",''),beforeCommands);
+      // 20261105120000 later adds exactly the resident CI's two queue actions after the keepalive.
+      const queueAssist="  if op='merge_queue_join' then\n    return clued_private.work_claim_ci_queue_join_v1(b,p_input);\n  end if;\n"+
+        "  if op='lease_extend' then\n    return clued_private.work_claim_ci_lease_extend_v1(b,p_input);\n  end if;\n";
+      assert.equal(after.split(queueAssist).length-1,1,'the queue assist actions appear once');
+      assert.equal(after.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",'')
+        .replace(queueAssist,''),beforeCommands);
       for(const [original,copy] of [
         ['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
         ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){

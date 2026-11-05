@@ -11,7 +11,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Information Flow M0-D slice S5 (contract M0DCloseout.v0.1 sections 4.1,
 // 4.3.3, 5.1, 6.3, 6.4, 7 E2E-03/04/05/14, 8 gates M0D-B01 and M0D-B05):
@@ -1063,7 +1063,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     // Reapply the actual formal closeout after all fixture scenarios; no skip.
     const closeoutMigration = await findGatewayCloseoutMigration(root);
     const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 
