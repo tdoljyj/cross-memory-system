@@ -27,8 +27,16 @@ const DUTY_2A=[
   [`clued_private.ci_duty_admits_v1(b.user_id,b.id,'issuer_role')`,`exists(select 1 from clued_private.binding_roles_v1 where user_id=b.user_id and binding_id=b.id
       and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp())`],
   [`not clued_private.ci_duty_admits_v1(v_binding.user_id,v_binding.id,'issuer_admits')`,`not clued_private.binding_role_admits_v1(v_binding,'ci-admission')`],
+  [`  if op='publication_begin' then
+    if clued_private.ci_duty_account_phase_v1(b.user_id)>=4 then
+      return jsonb_build_object('status','rejected','error_code','phase_requires_reservation'); end if;
+`,`  if op='publication_begin' then
+`],
 ];
-const undoDuty2A=text=>{for(const [now,before] of DUTY_2A){const n=text.split(now).length-1;assert.ok(n<=1,'one 2A rewrite at most: '+now);text=text.split(now).join(before);}return text;};
+// expected: how many 2A rewrites the body carries (the door 2, verify 2, its core 1), so that an undo that matched
+// nothing cannot pass.
+const undoDuty2A=(text,expected)=>{let total=0;for(const [now,before] of DUTY_2A){const n=text.split(now).length-1;assert.ok(n<=1,'one 2A rewrite at most: '+now);total+=n;text=text.split(now).join(before);}
+  assert.equal(total,expected,'2A rewrites undone');return text;};
 
 const newGateway=['clued_ci_scan_start_hosted_v1(jsonb)','clued_ci_scan_start_policy_v1(jsonb)'];
 async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
@@ -127,7 +135,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
       assert.deepEqual(anon,CI_SIGNATURES);
-      const after=undoDuty2A(await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v"));
+      const after=undoDuty2A(await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v"),2);
       // 20261105120000 later adds exactly the resident CI's two queue actions after the keepalive.
       const queueAssist="  if op='merge_queue_join' then\n    return clued_private.work_claim_ci_queue_join_v1(b,p_input);\n  end if;\n"+
         "  if op='lease_extend' then\n    return clued_private.work_claim_ci_lease_extend_v1(b,p_input);\n  end if;\n";
@@ -137,13 +145,14 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       for(const [original,copy] of [
         ['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
         ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){
-        let restored=undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)']));
+        const rewrites=original==='public.clued_work_verify_v1'?2:1;
+        let restored=undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)']),rewrites);
         restored=restored.replace('FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)','FUNCTION '+original+'(p_token_hash text, p_input jsonb)')
           .replaceAll('clued_private.ci_scan_start_resolve_principal_v1(p_binding_id,','clued_private.resolve_binding(p_token_hash,')
           .replaceAll('clued_private.ci_scan_start_verify_core_principal_v1(p_binding_id,p_input)','clued_private.work_claim_verify_before_execution_v1(p_token_hash,p_input)')
           .replaceAll('p_binding_id','p_token_hash');
         assert.equal(restored,beforeNative[original],'only exact credential resolution and delegated core entry differ');
-        assert.equal(undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)'])),beforeNative[original],'old Native full-verifier remains byte identical apart from the 2A routing');
+        assert.equal(undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)']),rewrites),beforeNative[original],'old Native full-verifier remains byte identical apart from the 2A routing');
       }
       for(const role of ['anon','authenticated','service_role'])for(const name of newGateway)
         assert.equal((await admin.query('select has_function_privilege($1,$2,\'EXECUTE\') b',[role,'public.'+name])).rows[0].b,false);
