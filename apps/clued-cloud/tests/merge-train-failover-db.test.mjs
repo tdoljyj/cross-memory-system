@@ -272,7 +272,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         assert.ok(handoverCheck.includes(piece), 'binding_role_handover_check_v1 keeps ' + piece);
       }
       assert.equal((await admin.query(`select to_regprocedure('clued_private.ci_failover_role_patch_v1(text,text,text)') r`)).rows[0].r, null);
-      // The CI door is 2a's body plus the two node actions; the duty check (20261104090000: ci_duty_admits_v1, which reads
+      // The CI door is 2a's body plus the two node actions; the duty check (20261105160000: ci_duty_admits_v1, which reads
       // the role with effective_at<=clock_timestamp()) is the only duty read and replaces the direct role read.
       const door = (await admin.query(`select prosrc from pg_proc where oid='clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure`)).rows[0].prosrc;
       const gate = "ci_duty_admits_v1(b.user_id,b.id,'duty_role')";

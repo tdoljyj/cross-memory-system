@@ -8,7 +8,7 @@ import {schedulingFixture,uuid,digest,sha} from './ci-scheduling-stage1-fixture.
 
 const MODES=['duty_role','duty_admits','duty_merge_slot','duty_publisher','issuer_role','issuer_admits','admission_role'];
 
-// The criteria the entry points used before 20261104090000, kept here verbatim as the reference.
+// The criteria the entry points used before 20261105160000, kept here verbatim as the reference.
 const LEGACY={
   role:(u,b)=>`exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=${u} and r.binding_id=${b} and r.role='ci-admission' and r.revoked_at is null and r.effective_at<=clock_timestamp())`,
   publisher:(u,b)=>`exists(select 1 from clued_private.binding_roles_v1 where user_id=${u} and binding_id=${b} and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp() and purpose<>'parking')`,
@@ -63,6 +63,19 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       }
       // N1 guard present in the 2a begin command
       assert.match((await one("select prosrc from pg_proc where proname='work_claim_independent_begin_v1'")).prosrc,/phase_requires_reservation/);
+      // 20261102151506: the server-principal clones are still exactly their originals with only the credential entry
+      // changed (the transform of that migration applied to today's originals), and the source guard is re-pinned.
+      for(const [original,copy] of [['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
+        ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){
+        let body=(await one('select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)'])).v;
+        body=body.replace('FUNCTION '+original+'(p_token_hash text, p_input jsonb)','FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)')
+          .replace('clued_private.resolve_binding(p_token_hash,','clued_private.ci_scan_start_resolve_principal_v1(p_binding_id,')
+          .replaceAll('clued_private.work_claim_verify_before_execution_v1(p_token_hash,p_input)','clued_private.ci_scan_start_verify_core_principal_v1(p_binding_id,p_input)')
+          .replaceAll('p_token_hash','p_binding_id');
+        assert.equal((await one('select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)'])).v,body,copy);
+      }
+      assert.equal((await one('select clued_private.ci_scan_start_native_source_current_v1() v')).v,true);
+      assert.ok((await one("select prosrc from pg_proc where proname='ci_scan_start_begin_v1'")).prosrc.includes("not clued_private.ci_duty_admits_v1(b.user_id,b.id,'duty_role')"));
     });
 
     // ---- phase <= 3 and the account without a CI project: every mode equals its previous criterion, every row state.
@@ -139,6 +152,17 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       const cmd=async(b,input)=>(await one('select clued_private.work_claim_ci_command_v1($1,$2::jsonb)v',[await tokenOf(b),input])).v;
       assert.equal((await cmd(B,{action:'ci_nodes_status',scope:'global'})).error_code,'admission_binding_required');
       assert.notEqual((await cmd(A,{action:'ci_nodes_status',scope:'global'})).error_code,'admission_binding_required');
+      // 20261105120000 (#1000): merge_queue_join and lease_extend sit behind the door and merge_slot_admits_v1.
+      // A holder whose row is for 'other' passes the door's role check but not the resident-node rule.
+      const assist=action=>({action,scope:'global',pr_ref:'fixture/repository-12345#99',head_sha:sha('assist'),...(action==='lease_extend'?{minutes:5}:{})});
+      for(const action of ['merge_queue_join','lease_extend']){
+        assert.equal((await cmd(B,assist(action))).error_code,'admission_binding_required',action+' B');
+        const passed=await cmd(A,assist(action));
+        assert.notEqual(passed.error_code,'admission_binding_required',action+' A '+JSON.stringify(passed));
+        await clearRoles();await grant(A,'other');
+        assert.equal((await cmd(A,assist(action))).error_code,'admission_binding_required',action+' A other');
+        await clearRoles();await grant(A);
+      }
       for(const fn of ['work_claim_independent_begin_v1','work_claim_independent_abort_v1']){
         const r=(await one(`select clued_private.${fn}($1,$2::jsonb)v`,[await tokenOf(B),{scope:'global',action:'x'}])).v;
         assert.equal(r.error_code,'admission_binding_required');
@@ -191,6 +215,12 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       assert.equal((await probe(B)).reason,undefined);assert.equal((await probe(A)).reason,'admission_binding_required');
       const cmd=async(b)=>(await one('select clued_private.work_claim_ci_command_v1($1,$2::jsonb)v',[await tokenOf(b),{action:'ci_nodes_status',scope:'global'}])).v;
       assert.equal((await cmd(A)).error_code,'admission_binding_required');assert.notEqual((await cmd(B)).error_code,'admission_binding_required');
+      for(const action of ['merge_queue_join','lease_extend']){
+        const input={action,scope:'global',pr_ref:'fixture/repository-12345#99',head_sha:sha('assist'),...(action==='lease_extend'?{minutes:5}:{})};
+        const holder=(await one('select clued_private.work_claim_ci_command_v1($1,$2::jsonb)v',[await tokenOf(B),input])).v;
+        assert.notEqual(holder.error_code,'admission_binding_required',action+' lease holder '+JSON.stringify(holder));
+        assert.equal((await one('select clued_private.work_claim_ci_command_v1($1,$2::jsonb)v',[await tokenOf(A),input])).v.error_code,'admission_binding_required',action+' old role holder');
+      }
       // hand the lease over: the answers move with it at once
       await setLease(nodeA,A,'active');
       assert.equal((await probe(A)).reason,undefined);assert.equal((await probe(B)).reason,'admission_binding_required');

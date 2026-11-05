@@ -288,6 +288,50 @@ $r$    if (p_choices->>'enabled')::boolean and clued_private.ci_duty_account_pha
       raise exception 'resident_failover_phase4_retired' using errcode='55000'; end if;
     if (p_choices->>'enabled')::boolean=(v_setting->>'enabled')::boolean then$r$);
 
+-- 20261102151506 (scan start keys): the authenticated server-principal clones of
+-- the two verify functions carry the same two determinations; they get the same
+-- rewrite, so that the clone stays the original with only its credential entry
+-- changed. The Native-source guard pins the originals' text by hash; it is
+-- re-pinned below to the rewritten text, exactly as that migration computed it.
+select clued_private.ci_duty_patch_v1('clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)',
+$a$not exists(select 1 from clued_private.binding_roles_v1 where binding_id=b.id
+        and user_id=b.user_id and role='ci-admission' and revoked_at is null
+        and effective_at<=clock_timestamp())$a$,
+$r$not clued_private.ci_duty_admits_v1(b.user_id,b.id,'issuer_role')$r$);
+select clued_private.ci_duty_patch_v1('clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)',
+$a$exists(select 1 from clued_private.binding_roles_v1 where user_id=b.user_id and binding_id=b.id
+      and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp())$a$,
+$r$clued_private.ci_duty_admits_v1(b.user_id,b.id,'issuer_role')$r$);
+select clued_private.ci_duty_patch_v1('clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)',
+$a$not clued_private.binding_role_admits_v1(v_binding,'ci-admission')$a$,
+$r$not clued_private.ci_duty_admits_v1(v_binding.user_id,v_binding.id,'issuer_admits')$r$);
+
+-- Class C: the scan-start transaction (local command and hosted entry). The
+-- caller must be on duty, as the command door already requires for the local
+-- path; from phase 4 the train lease decides, like the door.
+select clued_private.ci_duty_patch_v1('clued_private.ci_scan_start_begin_v1(public.clued_agent_bindings,clued_private.ci_scan_start_policies_v1,jsonb,text,text,text)',
+$a$not exists(select 1 from clued_private.binding_roles_v1 where user_id=b.user_id and binding_id=b.id
+      and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp())$a$,
+$r$not clued_private.ci_duty_admits_v1(b.user_id,b.id,'duty_role')$r$);
+
+-- Re-pin the Native-source guard to the rewritten verify bodies (same text and
+-- form as 20261102151506; create or replace keeps its owner-only ACL).
+do $ci_duty_repin$ declare verify_hash text; core_hash text; begin
+  select encode(extensions.digest(convert_to(prosrc,'UTF8'),'sha256'),'hex') into verify_hash
+    from pg_catalog.pg_proc where oid='public.clued_work_verify_v1(text,jsonb)'::regprocedure;
+  select encode(extensions.digest(convert_to(prosrc,'UTF8'),'sha256'),'hex') into core_hash
+    from pg_catalog.pg_proc where oid='clued_private.work_claim_verify_before_execution_v1(text,jsonb)'::regprocedure;
+  if to_regprocedure('clued_private.ci_scan_start_native_source_current_v1()') is null then
+    raise exception 'ci_duty_patch_function_missing: clued_private.ci_scan_start_native_source_current_v1()'; end if;
+  execute format($source$create or replace function clued_private.ci_scan_start_native_source_current_v1() returns boolean
+    language sql stable security definer set search_path='' as $guard$
+      select (select encode(extensions.digest(convert_to(prosrc,'UTF8'),'sha256'),'hex')
+        from pg_catalog.pg_proc where oid='public.clued_work_verify_v1(text,jsonb)'::regprocedure)=%L
+      and (select encode(extensions.digest(convert_to(prosrc,'UTF8'),'sha256'),'hex')
+        from pg_catalog.pg_proc where oid='clued_private.work_claim_verify_before_execution_v1(text,jsonb)'::regprocedure)=%L
+    $guard$ $source$,verify_hash,core_hash);
+end $ci_duty_repin$;
+
 drop function clued_private.ci_duty_patch_v1(text,text,text);
 
 -- ---------------------------------------------------------------------------

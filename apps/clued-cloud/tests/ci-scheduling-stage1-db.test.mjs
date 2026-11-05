@@ -10,7 +10,7 @@ test('stage1 scheduling: real PostgreSQL full migration chain and isolated autho
   const start=async(node,id,g,client=admin)=>(await sql('select clued_private.ci_job_started_v1($1,$2,$3,$4,$5)v',[user,project,node,id,g],client)).v;
   const release=async(node,id,g,reason='REJECTED',kind='rejected',breaker='closed',client=admin)=>(await sql('select clued_private.ci_job_release_v1($1,$2,$3,$4,$5,$6,$7,$8,true)v',[user,project,node,id,g,reason,kind,breaker],client)).v;
   try{
-    await t.test('12 private RLS tables, exactly six Native wrappers, unchanged GW80/CI8 and closed node transport',async()=>{
+    await t.test('12 private RLS tables, the six Native wrappers and two scan-start gateway entries by name, unchanged GW80/CI8 and closed node transport',async()=>{
       const rows=(await admin.query(`select relname,relrowsecurity from pg_class where relnamespace='clued_private'::regnamespace and relkind='r' and relname=any($1)`,
         [['ci_nodes_v1','ci_jobs_v1','ci_job_leases_v1','ci_publish_keys_v1','ci_exec_keys_v1','ci_green_ledger_v1','ci_quota_counters_v1','ci_train_lease_v1','ci_train_front_v1','ci_nonce_ledger_v1','ci_result_index_v1','ci_sealed_drop_v1']])).rows;
       assert.equal(rows.length,12);assert.ok(rows.every(r=>r.relrowsecurity));await assertGatewayCloseoutBoundary(admin);
@@ -19,9 +19,18 @@ test('stage1 scheduling: real PostgreSQL full migration chain and isolated autho
         await assert.rejects(()=>c.query("select clued_private.ci_node_dispatch_v1('{}')"),/permission denied/);
       }
       assert.equal((await sql("select clued_private.ci_node_dispatch_v1('{}')v")).v.error_code,'SIGNATURE_GATEWAY_NOT_ACTIVATED');
+      // Every public clued_ci_* function by name and who may run it: the six Stage 1 Native wrappers (signed-in
+      // Owner only) and the two scan-start entries of 20261102151506 (serving Worker gateway only). A new public
+      // clued_ci_* function must be added here with its grantees, not just counted.
       const catalog=(await admin.query(`select p.oid::regprocedure::text s,has_function_privilege('authenticated',p.oid,'execute') a,
-        has_function_privilege('anon',p.oid,'execute') x from pg_proc p where p.pronamespace='public'::regnamespace and p.proname like 'clued_ci_%'`)).rows;
-      assert.equal(catalog.length,6);assert.ok(catalog.every(r=>r.a&&!r.x));
+        has_function_privilege('anon',p.oid,'execute') x,has_function_privilege('clued_worker_gateway',p.oid,'execute') g
+        from pg_proc p where p.pronamespace='public'::regnamespace and p.proname like 'clued_ci_%' order by 1`)).rows;
+      const native={a:true,x:false,g:false},gateway={a:false,x:false,g:true};
+      assert.deepEqual(Object.fromEntries(catalog.map(r=>[r.s,{a:r.a,x:r.x,g:r.g}])),{
+        'clued_ci_node_apply_v1(jsonb)':native,'clued_ci_node_confirmation_issue_v1(jsonb)':native,
+        'clued_ci_node_registration_v1(jsonb)':native,'clued_ci_nodes_v1(jsonb)':native,
+        'clued_ci_pool_apply_v1(jsonb)':native,'clued_ci_pool_confirmation_issue_v1(jsonb)':native,
+        'clued_ci_scan_start_hosted_v1(jsonb)':gateway,'clued_ci_scan_start_policy_v1(jsonb)':gateway});
     });
     await t.test('Native requires live same-account session and rejects delegated/cross-project/private JWK',async()=>{
       await assert.rejects(()=>f.native('clued_ci_nodes_v1',{project_id:project},f.claims(user,uuid())),/native_session/);
