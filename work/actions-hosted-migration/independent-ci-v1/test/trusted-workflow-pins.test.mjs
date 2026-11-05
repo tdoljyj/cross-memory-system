@@ -233,7 +233,7 @@ const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: p
 const git = (args, input) => { const r = spawnSync(GIT, args, { input, env: GIT_ENV });
   if (r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr).slice(0, 300)}`); return r.stdout.toString('utf8').trim(); };
 
-test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tampered bytes are refused before output', { skip: !GIT ? 'no single-link git executable' : !GITLEAKS_SUCCESSOR && 'successor workflow awaits a real freeze commit' }, async t => {
+test('gitleaks v4 prepare: only the active successor workflow with the 733 helper pins passes; legacy, swapped or tampered bytes are refused before output', { skip: !GIT ? 'no single-link git executable' : !GITLEAKS_SUCCESSOR && 'successor workflow awaits a real freeze commit' }, async t => {
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'clued-workflow-pins-'));
   t.after(async () => {
     const open = async p => { const s = await fsp.lstat(p); await fsp.chmod(p, s.isDirectory() ? 0o700 : 0o600);

@@ -14,12 +14,15 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '4441bbee3b022be40a0e6533ee6f56241621babc961b0389c25d4484a298d67f',
-  '.gitleaks.toml': 'f21a46cb2a0c2a61a63e0ebaf9115759cd244abcd99682c1d83da36d3b78061b',
-  'scripts/ci/reviewed_gitleaks_historical.py': 'd395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870',
+  'scripts/ci/reviewed_gitleaks.py': 'e7748d751a223403bcf023dd0d8e45813a2c6b07a416d97dc902d924b85fd4e9',
+  '.gitleaks.toml': '55d9299006ddacf2c48cd171edc87b6f00e0e002d43fa0c36e692f7662f01a06',
+  'scripts/ci/reviewed_gitleaks_historical.py': '7656040557f4dbc7f04c1439eb99ef45021610ca7698fe2f6eb186a625141595',
 });
-// This active Source pins the 732-record proposed reviewed set (old730 byte-identical +2 exact historical JSON metadata subjects); the
-// hosted gitleaks.yml checks the same config/helper/commit-set/ignore digests, and its successor row is
+// This active Source pins the 733-record proposed reviewed set (old730 byte-identical +2 exact historical JSON metadata subjects
+// +1 exact d94cd486 twin of the first of them, Owner Decision 98fec682); the
+// hosted gitleaks.yml is meant to check the same config/helper/commit-set/ignore digests, but until it is re-registered
+// it still pins the previous 732 set (registering a new gitleaks.yml Source changes the gated-proof catalog and so
+// adds a finding of its own at the registering commit; Clued task 3961ec52). Its successor row is
 // re-frozen from the real commit that carries those workflow bytes (repin-trusted-workflows.mjs). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
 // never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
@@ -37,12 +40,12 @@ export function acceptedWorkflowSha256(role) {
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 732, commits: 103,
-  sha256: '576a86a6061e6c4331ec952b4bc498570fe614b46131d1387c871c59d2cf80cb' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 733, commits: 104,
+  sha256: '702a8d6c6cabd1ba42451397f848aed74eacfbf2e6349bd491378533c6be7d56' });
 // Recomputed by the pinned helper's actual verify_history, not inferred by adding counts.
-export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 174,
+export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 175,
   verified_git_objects: 130, reviewed_commits_sha256: REVIEWED_COMMITS.sha256,
-  reviewed_ignore_sha256: '61b4af25bf5aea6dbc40591245d736f6ff26f7103f7c1d9bd16b878614a935fd' });
+  reviewed_ignore_sha256: '51d18a93ba783848ab6bd60e496a1ceb9fcb82d901533f0bd8114189a99edd6b' });
 export function matchesReviewedHistoryProof(value) {
   return value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).sort().join('|') === Object.keys(REVIEWED_HISTORY_PROOF).sort().join('|')

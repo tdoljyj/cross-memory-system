@@ -387,16 +387,25 @@ test('actual frozen registry gitleaks/trivy closures and full tracked inventory 
   assert.ok(inventory.filter(entry => entry.type !== 'tree').length >= 9000, 'use the real repository scale');
   for (const role of ['gitleaks', 'trivy']) {
     const accepted = registry.roles[role]; assert.ok(accepted.closure.length >= 26 && accepted.closure.length <= 64);
-    const closureFiles = new Map(accepted.closure.map(entry => {
+    // Only these closure files may differ from the frozen 732 hosted generation: they are re-pinned by the reviewed-set changes
+    // (Decision 98fec682). Their live bytes are used with live digests (this test measures the fetch budget, not the freeze);
+    // every other closure file must still equal its frozen sha256 and blob id in the working tree.
+    const REPINNED = new Set(['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/reviewed_gitleaks_historical.py']);
+    const closure = clone(accepted.closure);
+    const closureFiles = new Map(closure.map(entry => {
       const bytes = readFileSync(path.join(repoRoot, entry.path));
-      assert.equal(hex(bytes), entry.sha256, 'actual frozen closure bytes: ' + entry.path);
-      assert.equal(hex(Buffer.concat([Buffer.from('blob ' + bytes.length + '\0'), bytes]), 'sha1'), entry.blob);
+      const blob = hex(Buffer.concat([Buffer.from('blob ' + bytes.length + '\0'), bytes]), 'sha1');
+      if (REPINNED.has(entry.path)) { entry.sha256 = hex(bytes); entry.blob = blob; }
+      else {
+        assert.equal(hex(bytes), entry.sha256, 'actual frozen closure bytes: ' + entry.path);
+        assert.equal(blob, entry.blob);
+      }
       return [entry.path, bytes];
     }));
     const f = fixture({ role, workflowPath: accepted.workflowPath, checkName: accepted.hostedCheckName, closureFiles, inventory,
-      closureModes: new Map(accepted.closure.map(entry => [entry.path, entry.mode])),
+      closureModes: new Map(closure.map(entry => [entry.path, entry.mode])),
       fetch: async url => url.includes('/contents/') ? Response.json({ message: 'Not Found', status: '404' }, { status: 404 }) : null });
-    const pin = f.policy.roles[role]; pin.closure = clone(accepted.closure); pin.must_not_exist = clone(accepted.mustNotExist);
+    const pin = f.policy.roles[role]; pin.closure = clone(closure); pin.must_not_exist = clone(accepted.mustNotExist);
     pin.forbidden_change_prefixes = clone(accepted.forbiddenChangePrefixes);
     assert.equal(pin.workflow_blob, accepted.workflowBlob); assert.equal(pin.workflow_sha256, accepted.workflowSha256);
     // Different B inventory, with the same protected closure; T/H share a root.
@@ -407,10 +416,10 @@ test('actual frozen registry gitleaks/trivy closures and full tracked inventory 
     const value = await (await f.handle(f.request(await token({ workflow_ref: REPO + '/' + accepted.workflowPath + '@refs/pull/88/merge' })))).json();
     assert.equal(value.launch_allowed, true, JSON.stringify(value)); assert.equal(value.role, role); assert.equal(f.begins.length, 1);
     assert.ok(f.calls.length <= 50); assert.equal(f.calls.filter(call => call.url.includes('/git/trees/')).length, 2);
-    const uniqueBlobs = new Set(accepted.closure.map(entry => entry.blob));
+    const uniqueBlobs = new Set(closure.map(entry => entry.blob));
     assert.equal(f.calls.filter(call => call.url.includes('/git/blobs/')).length, uniqueBlobs.size);
     assert.equal(f.calls.filter(call => call.url.includes('/contents/')).length, accepted.mustNotExist.length * 2);
-    t.diagnostic(`${role}: closure=${accepted.closure.length}, uniqueBlobs=${uniqueBlobs.size}, inventoryRows=${f.treePacket.tree.length}, totalFetches=${f.calls.length}`);
+    t.diagnostic(`${role}: closure=${closure.length}, uniqueBlobs=${uniqueBlobs.size}, inventoryRows=${f.treePacket.tree.length}, totalFetches=${f.calls.length}`);
   }
 });
 
