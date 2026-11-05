@@ -3,7 +3,8 @@
 import {createHash} from 'node:crypto';
 import {readNaturalArtifact,admissionEnvelopeInput,operationEnvelopeInput} from './merge-admission-source-producer.mjs';
 import {nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
-import {registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,rolesForSource,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
 export const NATURAL_CACHE_SCHEMA='clued.r9-natural-origin-cache/1';
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const blob=x=>createHash('sha1').update('blob '+Buffer.byteLength(x)+'\0').update(x).digest('hex');
@@ -64,13 +65,14 @@ function executionSnapshotValid(snapshot,templates){
     if(!object(history)||Object.keys(history).sort().join('|')!==['base_commit','head_commit','merge_base_commit','status'].sort().join('|')||
       history.base_commit!==snapshot.source_checkout_sha||history.merge_base_commit!==snapshot.source_checkout_sha||!sha(history.head_commit)||
       history.status!==(history.head_commit===snapshot.source_checkout_sha?'identical':'ahead'))return false;
-    const profiles=JSON.parse(snapshot.proof_profiles_raw),roles=JSON.parse(snapshot.role_specs_raw),directory=new Map();
+    const profiles=parseWorkflowProfiles(snapshot.proof_profiles_raw),roles=JSON.parse(snapshot.role_specs_raw),directory=new Map();
     for(const row of snapshot.workflow_directory){if(!object(row)||Object.keys(row).sort().join('|')!==['path','sha','type','mode'].sort().join('|')||typeof row.path!=='string'||!row.path.startsWith('.github/workflows/')||
       row.type!=='blob'||row.mode!=='100644'||!sha(row.sha)||directory.has(row.path))return false;directory.set(row.path,row.sha);}
     if(!object(profiles.workflows)||!Object.keys(profiles.workflows).length)return false;
+    const readCatalogueSource=createCatalogueSourceReader({registry:profiles,roleSpecs:roles});
     for(const path of Object.keys(profiles.workflows)){
-      const pin=directory.get(path),source=registeredWorkflowSource(profiles,path,pin),accepted=rolesForSource(roles,path,pin);
-      if(!source.passed||!accepted||JSON.stringify(accepted.map(r=>r.job_id).sort())!==JSON.stringify([...source.profile.primary_ids].sort()))return false;
+      const pin=directory.get(path),source=readCatalogueSource({file:path,blob:pin}),accepted=source.roles;
+      if(!source.source_identified||!accepted||JSON.stringify(accepted.map(r=>r.job_id).sort())!==JSON.stringify([...source.profile.primary_ids].sort()))return false;
     }
     return true;
   }catch{return false;}

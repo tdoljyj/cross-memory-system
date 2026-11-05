@@ -1664,6 +1664,172 @@
             "credentials": "existing_clued_admission_environment_and_native_job_token",
             "stored_secrets": true
           }
+        },
+        {
+          "registration_status": "registered",
+          "family": "trusted_main_secret_controller",
+          "source_kind": "dispatcher_choice_successor",
+          "operation": "extend_dispatcher_choice",
+          "workflow_blob": "6f9410a9b33d8055fcc5044c4f87c2612b4aca93",
+          "source_sha256": "6ed9642dd95e4d116011f9cece441666d48838406ca3932022a8a39ff124697b",
+          "source_yaml": "name: clued-work-admission-dispatch\nrun-name: admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}\n\n# Work Claim Admission v0.1 §4.6, hand dispatch (Owner Decision 75abfe80,\n# Task 29128827). Agents act through the Owner's account, so a heavy workflow\n# dispatched by hand must first have its claim verified here:\n#\n#   1. Dispatch this workflow on the default branch with the heavy workflow,\n#      the ref it will run on and the claim id. This run verifies the claim\n#      with Clued and is named \"admit <workflow> <ref> <claim_id>\".\n#   2. Dispatch the heavy workflow on that ref with admission_run_id = this\n#      run's id. Its admission-gate admits only when this run succeeded on the\n#      default branch within 30 minutes and names that workflow and ref.\n#\n# The Clued token comes from the `clued-admission` environment, whose\n# deployment branches are limited to main; the job also refuses any other ref.\n# Default-branch code only, hosted runner, no application dependency install.\n\non:\n  workflow_dispatch:\n    inputs:\n      workflow:\n        description: Heavy workflow that will be dispatched\n        required: true\n        type: choice\n        options:\n          - clued-connection-authorization.yml\n          - clued-g4-database.yml\n          - information-flow-e2e.yml\n          - clued-handover-external-qualification.yml\n          - clued-handover-disposable-idle.yml\n          - clued-standard-runner-actor-qualification.yml\n      ref:\n        description: Branch or tag the heavy workflow will run on\n        required: true\n        type: string\n      claim_id:\n        description: Live Clued work claim covering this run\n        required: true\n        type: string\n      scope:\n        description: Claim scope, global or project:<canonical_project_id>\n        required: false\n        default: global\n        type: string\n\npermissions:\n  contents: read\n\njobs:\n  admit:\n    name: clued-work-admission-dispatch\n    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    environment: clued-admission\n    steps:\n      # Re-review 4, m6: the default branch as it is now, so a re-run of an\n      # old run does not replay that run's older code with today's secrets.\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          ref: ${{ github.event.repository.default_branch || 'main' }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: \"22\"\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify the work claim with Clued\n        env:\n          ADMIT_WORKFLOW: ${{ inputs.workflow }}\n          ADMIT_REF: ${{ inputs.ref }}\n          ADMIT_CLAIM_ID: ${{ inputs.claim_id }}\n          ADMIT_SCOPE: ${{ inputs.scope }}\n          CLUED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit\n      - name: Export the closed local natural R9 packet\n        if: ${{ always() }}\n        run: node scripts/ci/merge-admission-source-producer.mjs --export admission\n      - name: Preserve natural R9 source observations\n        if: ${{ always() }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json\n          if-no-files-found: warn\n          retention-days: 90\n",
+          "workflow_definition": {
+            "name": "clued-work-admission-dispatch",
+            "run-name": "admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}",
+            "on": {
+              "workflow_dispatch": {
+                "inputs": {
+                  "workflow": {
+                    "description": "Heavy workflow that will be dispatched",
+                    "required": true,
+                    "type": "choice",
+                    "options": [
+                      "clued-connection-authorization.yml",
+                      "clued-g4-database.yml",
+                      "information-flow-e2e.yml",
+                      "clued-handover-external-qualification.yml",
+                      "clued-handover-disposable-idle.yml",
+                      "clued-standard-runner-actor-qualification.yml"
+                    ]
+                  },
+                  "ref": {
+                    "description": "Branch or tag the heavy workflow will run on",
+                    "required": true,
+                    "type": "string"
+                  },
+                  "claim_id": {
+                    "description": "Live Clued work claim covering this run",
+                    "required": true,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "description": "Claim scope, global or project:<canonical_project_id>",
+                    "required": false,
+                    "default": "global",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "permissions": {
+              "contents": "read"
+            },
+            "jobs": {
+              "admit": {
+                "name": "clued-work-admission-dispatch",
+                "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+                "runs-on": "ubuntu-slim",
+                "timeout-minutes": 5,
+                "environment": "clued-admission",
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                      "persist-credentials": false
+                    }
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "22"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "name": "Verify the work claim with Clued",
+                    "env": {
+                      "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                      "ADMIT_REF": "${{ inputs.ref }}",
+                      "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                      "ADMIT_SCOPE": "${{ inputs.scope }}",
+                      "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                      "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+                  },
+                  {
+                    "name": "Export the closed local natural R9 packet",
+                    "if": "${{ always() }}",
+                    "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+                  },
+                  {
+                    "name": "Preserve natural R9 source observations",
+                    "if": "${{ always() }}",
+                    "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                    "with": {
+                      "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                      "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                      "if-no-files-found": "warn",
+                      "retention-days": 90
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "predecessor_blob": "797efcd6218b04b347e0cd55d3352ac70cca2167",
+          "primary_ids": [
+            "admit"
+          ],
+          "role_digests": {
+            "admit": "f3ff23059cbc216ed45040028e2c8ad96cfd4a71ead978a57ac6f1dd66f0f74a"
+          },
+          "command_digests": {
+            "admit": {
+              "Verify the work claim with Clued": [
+                "9d3817c599524e76ca56c58e9837477b27e5755ddd1e451e1603aca645585b15"
+              ],
+              "Export the closed local natural R9 packet": [
+                "5a5555ad4daf34846cf1d314248b9c0fda6ccf18ead52ba101dcc4f026874547"
+              ]
+            }
+          },
+          "implementation_blobs": {
+            ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+            ".github/actions/ci-temporary-storage/check-workflows.mjs": "bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc",
+            ".github/actions/ci-temporary-storage/coverage.json": "01e05e15b80fcf1f0431e71d8aa05d1584aa8d0d",
+            ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+            ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+            ".github/workflows/clued-standard-runner-actor-qualification.yml": "d752e91ae501313396163df277883d2d02fa100e",
+            "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+            "config/clued-handover-native-entry-policy.json": "2a26987dfc41458a6db005f144dd07fd49ee8644",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+            "scripts/ci/clued-gated-proof-profiles.json": "ef4270fd72819d3f4cbab5ddb4484426e337f720",
+            "scripts/ci/clued-gated-proof-role-specs.json": "81f2a2bed2113dde22f260733234f954180ac0c6",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "c7884078fee3afbf98681425982051a87df38ce9",
+            "scripts/ci/clued-handover-native-entry.mjs": "d6682bdece007f142bd53185d70427c7eb3e7f7c",
+            "scripts/ci/clued-merge-slot-ci.mjs": "b26a73bc6e05c4917d236a15e62b5ff01955f7b0",
+            "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+            "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+            "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+            "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+            "scripts/ci/clued-scan-start.mjs": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+            "scripts/ci/clued-standard-runner-actor-source.mjs": "e8de9a37f939941fc5ce05627c08e2db57a298e6",
+            "scripts/ci/clued-standard-runner-actor-sources.json": "5112f5f0102fd7f9828fe96b0b07930f77dd0e6e",
+            "scripts/ci/clued-work-admission.mjs": "525b46a283117a735f5891340563be57b529625d",
+            "scripts/ci/clued-workflow-profile.mjs": "69622ceef577da9e4eb8dab25fed4bdc1cbb50f3",
+            "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+            "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/runner/clued-runner-job-started.mjs": "dd6dcaf875539c23a9e87726542de8179a81456a",
+            "scripts/runner/qualify-standard-runner-actor.mjs": "794861b9acf7659ef2bb946f2c1dff7ef33fbd10"
+          },
+          "authority_boundary": {
+            "proof_classification": "trusted_main_secret_controller_source_only",
+            "execution_authority": false,
+            "host_qualification": "separate_required",
+            "runner_hook_exception": false,
+            "dispatch_authority": false,
+            "production_authority": false,
+            "canonical_authority": false,
+            "credentials": "existing_clued_admission_environment_and_native_job_token",
+            "stored_secrets": true
+          }
         }
       ]
     },
@@ -2039,6 +2205,201 @@
             "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
             "scripts/ci/clued-merge-slot-ci.test.mjs": "ff1a7fca21c56e387a41f8b5cc6d122673e03d24",
             "scripts/ci/clued-merge-executor.test.mjs": "7ce28e317b9a75e2156add6de04efd2c74243571"
+          },
+          "authority_boundary": {
+            "proof_classification": "trusted_main_secret_controller_source_only",
+            "execution_authority": false,
+            "host_qualification": "separate_required",
+            "runner_hook_exception": false,
+            "dispatch_authority": false,
+            "production_authority": false,
+            "canonical_authority": false,
+            "credentials": "existing_clued_admission_environment_and_native_job_token",
+            "stored_secrets": true
+          }
+        },
+        {
+          "registration_status": "registered",
+          "family": "trusted_main_secret_controller",
+          "source_kind": "completion_observer_successor",
+          "operation": "extend_completion_observer",
+          "workflow_blob": "759fd82dc328fba0aa663e2c6c8c9aa516292294",
+          "source_sha256": "670c8e3bee253df7811cf35699213d94d548698178e3e1fb1a5789399c63b261",
+          "source_yaml": "name: clued-merge-slot-ci\n\n# Merge Admission v0.1 §7.3, step 3 of §13 (Task 3576d10d; Owner Decisions\n# 4f576896 and 1fb7f6b3): the merge slot follows CI. Each time a CI workflow\n# run of a pull request completes, and by hand, this reports to Clued the CI\n# state of each open pull request that holds a merge slot\n# (scripts/ci/clued-merge-slot-ci.mjs, clued_work_merge_slot_touch_v1):\n# running keeps the slot 90 minutes, green 30 minutes, failed returns it and\n# fails the head's kooyumi-merge-slot check. The hourly report is a step of\n# clued-work-admission-reverify.yml, which runs anyway, so it costs no extra\n# hosted run. The holder no longer renews its claim to keep the slot.\n# The final step calls the executor in this same job, after a successful\n# report. No second workflow is started; skipped or failed reports cannot\n# execute it. The executor still reads the queue and exact-head authorization\n# itself. Ten minutes preserves the two former five-minute job budgets.\n#\n# workflow_run runs this file and the script from the default branch, with\n# the clued-admission environment's token and App key (deployment branches\n# limited to main). The triggering event is only a signal: the script reads\n# the pull requests, check runs and workflow runs itself and trusts nothing in\n# the event. The job's condition uses the event only to skip runs of push and\n# schedule events, which are never a pull request's head. A pull request\n# cannot change this file for its own run.\n#\n# The workflows below are the CI workflows by name: gitleaks, trivy, the\n# admission check and every gated workflow (scripts/ci/clued-merge-slot-ci.test.mjs\n# keeps the list equal to the gated workflows on this branch). A missed name\n# only delays a report to the hourly run.\n\non:\n  workflow_run:\n    workflows:\n      - gitleaks\n      - trivy\n      - kooyumi-work-admission\n      - clued-cloud-node22-install\n      - clued-cloud-quality\n      - clued-components\n      - clued-required-tests\n      - runner-budget-policy\n      - contract-placement\n      - Clued connection authorization candidate\n      - Clued G4 Database Gate\n      - design-refs\n      - Information Flow M0-D E2E\n      - model-program-m2-scoped-consumer\n      - public-mcp-behavior\n      - public-mcp-protocol\n      - Clued handover hook qualification / company-linux-01\n      - Clued handover hook qualification / company-linux-02\n      - Clued handover hook qualification / company-linux-03\n      - Clued handover hook qualification / company-linux-04\n      - Clued handover hook qualification / home-linux-01\n      - Clued handover hook qualification / company-win-01\n      - Clued handover hook qualification / home-win-01\n      - Clued disposable external handover qualification\n      - Clued disposable cancellation fixture\n    types: [completed]\n  workflow_dispatch:\n\npermissions:\n  # This job also executes the queue and reruns admitted gate-only runs.\n  actions: write\n  checks: read\n  contents: read\n  pull-requests: read\n\njobs:\n  report:\n    name: clued-merge-slot-ci\n    if: >-\n      github.event_name != 'workflow_run' ||\n      github.event.workflow_run.event == 'pull_request' ||\n      github.event.workflow_run.event == 'pull_request_target'\n    runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n    # Share the independent executor's lock: the two entry points cannot mutate\n    # the queue concurrently. A burst leaves one pending job; it reads all slots\n    # and the current queue when it starts. Never cancel running queue work.\n    concurrency:\n      group: clued-merge-executor\n      cancel-in-progress: false\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          ref: ${{ github.event.repository.default_branch || 'main' }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: \"22\"\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Self-test the merge slot report and executor (no network, mocked fetch)\n        run: node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs\n      - name: Report the CI state of the pull requests holding a merge slot\n        env:\n          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}\n          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}\n          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}\n          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-merge-slot-ci.mjs\n      - name: Bring the default branch into the queue head, turn on auto-merge or merge it\n        timeout-minutes: 5\n        env:\n          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}\n          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}\n          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}\n          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-merge-executor.mjs\n      - name: Export the closed local natural R9 packet\n        if: ${{ always() }}\n        run: node scripts/ci/merge-admission-source-producer.mjs --export slot\n      - name: Preserve natural R9 source observations\n        if: ${{ always() }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json\n          if-no-files-found: warn\n          retention-days: 90\n",
+          "workflow_definition": {
+            "name": "clued-merge-slot-ci",
+            "on": {
+              "workflow_run": {
+                "workflows": [
+                  "gitleaks",
+                  "trivy",
+                  "kooyumi-work-admission",
+                  "clued-cloud-node22-install",
+                  "clued-cloud-quality",
+                  "clued-components",
+                  "clued-required-tests",
+                  "runner-budget-policy",
+                  "contract-placement",
+                  "Clued connection authorization candidate",
+                  "Clued G4 Database Gate",
+                  "design-refs",
+                  "Information Flow M0-D E2E",
+                  "model-program-m2-scoped-consumer",
+                  "public-mcp-behavior",
+                  "public-mcp-protocol",
+                  "Clued handover hook qualification / company-linux-01",
+                  "Clued handover hook qualification / company-linux-02",
+                  "Clued handover hook qualification / company-linux-03",
+                  "Clued handover hook qualification / company-linux-04",
+                  "Clued handover hook qualification / home-linux-01",
+                  "Clued handover hook qualification / company-win-01",
+                  "Clued handover hook qualification / home-win-01",
+                  "Clued disposable external handover qualification",
+                  "Clued disposable cancellation fixture"
+                ],
+                "types": [
+                  "completed"
+                ]
+              },
+              "workflow_dispatch": null
+            },
+            "permissions": {
+              "actions": "write",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "jobs": {
+              "report": {
+                "name": "clued-merge-slot-ci",
+                "if": "github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'",
+                "runs-on": "ubuntu-slim",
+                "timeout-minutes": 10,
+                "environment": "clued-admission",
+                "concurrency": {
+                  "group": "clued-merge-executor",
+                  "cancel-in-progress": false
+                },
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                      "persist-credentials": false
+                    }
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "22"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "name": "Self-test the merge slot report and executor (no network, mocked fetch)",
+                    "run": "node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs"
+                  },
+                  {
+                    "name": "Report the CI state of the pull requests holding a merge slot",
+                    "env": {
+                      "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                      "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                      "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                      "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-merge-slot-ci.mjs"
+                  },
+                  {
+                    "name": "Bring the default branch into the queue head, turn on auto-merge or merge it",
+                    "timeout-minutes": 5,
+                    "env": {
+                      "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                      "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                      "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                      "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-merge-executor.mjs"
+                  },
+                  {
+                    "name": "Export the closed local natural R9 packet",
+                    "if": "${{ always() }}",
+                    "run": "node scripts/ci/merge-admission-source-producer.mjs --export slot"
+                  },
+                  {
+                    "name": "Preserve natural R9 source observations",
+                    "if": "${{ always() }}",
+                    "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                    "with": {
+                      "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                      "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                      "if-no-files-found": "warn",
+                      "retention-days": 90
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "predecessor_blob": "662dbc3e846311379efa5f081b3cca518a881f74",
+          "primary_ids": [
+            "report"
+          ],
+          "role_digests": {
+            "report": "becc90f293b687326328f684eae049bd17985ef259db9db6bf501f7ad027b63d"
+          },
+          "command_digests": {
+            "report": {
+              "Self-test the merge slot report and executor (no network, mocked fetch)": [
+                "19aebb7dcf80eb8e96270b23a8e79d636e0b9592fbe8acf54f45054e952531ee"
+              ],
+              "Report the CI state of the pull requests holding a merge slot": [
+                "922a2a0f17015e5875ae747383bdd8b426fb8d201d2bc78ea16db59b444a6ab3"
+              ],
+              "Bring the default branch into the queue head, turn on auto-merge or merge it": [
+                "b8a603370c5bb1348115fafbd1416863739f1eee48771b4f9b87fbee1cac3dad"
+              ],
+              "Export the closed local natural R9 packet": [
+                "d200c40337741f9efbe0b3e62221dd98777474be11cb3060cccf803566716c92"
+              ]
+            }
+          },
+          "implementation_blobs": {
+            ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+            ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+            ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+            "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+            "scripts/ci/ci-required-selection.mjs": "12fbf6e1a14b5e9a9b986ed0dbbb6c5a99271e5a",
+            "scripts/ci/clued-docs-only.py": "395f086b58ea3ff6cb5946660da734cc5072938f",
+            "scripts/ci/clued-gated-proof-profiles.json": "ef4270fd72819d3f4cbab5ddb4484426e337f720",
+            "scripts/ci/clued-gated-proof-role-specs.json": "81f2a2bed2113dde22f260733234f954180ac0c6",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "c1c76dc8421297a25ce371c23171a0b3f6690908",
+            "scripts/ci/clued-gated-proof.mjs": "d92a4cbec0992e16a7c69ded5540be1f40c2d39a",
+            "scripts/ci/clued-managed-auto-merge.mjs": "738e887104de888abc9bd63f2d86a135a891ffb8",
+            "scripts/ci/clued-merge-executor.mjs": "d337e8057026fbfa5a2151825562205558a7e850",
+            "scripts/ci/clued-merge-executor.test.mjs": "33e38adb2cd83463976cfd500ba32a34014a6f36",
+            "scripts/ci/clued-merge-slot-ci.mjs": "69c40e7aa897b352293fa8ef43ded843c0f0b191",
+            "scripts/ci/clued-merge-slot-ci.test.mjs": "900c7496bef6edd4f45b67c2444f991a984bda25",
+            "scripts/ci/clued-non-pr-control-source.mjs": "1bb822b1fb821bfd651bd27b454308ded2be61c2",
+            "scripts/ci/clued-non-pr-control-sources.json": "3d447c3155aa3fa8c63a42adc9187a1fdb4985d7",
+            "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+            "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+            "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+            "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+            "scripts/ci/clued-required-applicability.mjs": "19d8ac176b4708f2976bbaaae816ad2f4a43b1d4",
+            "scripts/ci/clued-source-only-workflow.mjs": "ab784bff64ac4caaad473ffe728e391997df6594",
+            "scripts/ci/clued-work-admission.mjs": "c23db774a37360a7aa18b5b1de83a6751c499d3b",
+            "scripts/ci/clued-workflow-profile.mjs": "69622ceef577da9e4eb8dab25fed4bdc1cbb50f3",
+            "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+            "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/test_clued_docs_only.py": "509cf8c428349a13d979584e3493435445defa27",
+            "scripts/runner/clued-runner-job-started.mjs": "dd6dcaf875539c23a9e87726542de8179a81456a"
           },
           "authority_boundary": {
             "proof_classification": "trusted_main_secret_controller_source_only",
@@ -3323,6 +3684,67 @@
             ]
           }
         }
+      ],
+      "6f9410a9b33d8055fcc5044c4f87c2612b4aca93": [
+        {
+          "job_id": "admit",
+          "definition_sha256": "f3ff23059cbc216ed45040028e2c8ad96cfd4a71ead978a57ac6f1dd66f0f74a",
+          "definition": {
+            "name": "clued-work-admission-dispatch",
+            "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+            "runs-on": "ubuntu-slim",
+            "timeout-minutes": 5,
+            "environment": "clued-admission",
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify the work claim with Clued",
+                "env": {
+                  "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                  "ADMIT_REF": "${{ inputs.ref }}",
+                  "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                  "ADMIT_SCOPE": "${{ inputs.scope }}",
+                  "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+              },
+              {
+                "name": "Export the closed local natural R9 packet",
+                "if": "${{ always() }}",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+              },
+              {
+                "name": "Preserve natural R9 source observations",
+                "if": "${{ always() }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "if-no-files-found": "warn",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
       ]
     },
     ".github/workflows/clued-merge-slot-ci.yml": {
@@ -3418,6 +3840,85 @@
               "X64",
               "clued-controller-windows-v1"
             ],
+            "timeout-minutes": 10,
+            "environment": "clued-admission",
+            "concurrency": {
+              "group": "clued-merge-executor",
+              "cancel-in-progress": false
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Self-test the merge slot report and executor (no network, mocked fetch)",
+                "run": "node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs"
+              },
+              {
+                "name": "Report the CI state of the pull requests holding a merge slot",
+                "env": {
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                  "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                  "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-merge-slot-ci.mjs"
+              },
+              {
+                "name": "Bring the default branch into the queue head, turn on auto-merge or merge it",
+                "timeout-minutes": 5,
+                "env": {
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                  "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                  "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-merge-executor.mjs"
+              },
+              {
+                "name": "Export the closed local natural R9 packet",
+                "if": "${{ always() }}",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export slot"
+              },
+              {
+                "name": "Preserve natural R9 source observations",
+                "if": "${{ always() }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "if-no-files-found": "warn",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "759fd82dc328fba0aa663e2c6c8c9aa516292294": [
+        {
+          "job_id": "report",
+          "definition_sha256": "becc90f293b687326328f684eae049bd17985ef259db9db6bf501f7ad027b63d",
+          "definition": {
+            "name": "clued-merge-slot-ci",
+            "if": "github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'",
+            "runs-on": "ubuntu-slim",
             "timeout-minutes": 10,
             "environment": "clued-admission",
             "concurrency": {

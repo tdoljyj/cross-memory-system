@@ -764,7 +764,10 @@ test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of 
 });
 
 test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be dispatched off main", async () => {
-  assert.deepEqual(DISPATCH_GATED_WORKFLOWS, ADMISSION_DISPATCH_GATED, "the same list as the admission script");
+  // clued-standard-runner-actor-qualification.yml is admitted by the admission script but runs on main only (both qualification jobs require github.ref == refs/heads/main),
+  // so the hook must keep refusing its dispatch on any other branch: it is the one deliberate difference.
+  const MAIN_ONLY_ADMITTED = ["clued-standard-runner-actor-qualification.yml"];
+  assert.deepEqual(DISPATCH_GATED_WORKFLOWS, ADMISSION_DISPATCH_GATED.filter((file) => !MAIN_ONLY_ADMITTED.includes(file)), "the admission script's list without the main-only workflows");
   for (const file of DISPATCH_GATED_WORKFLOWS) {
     const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x",
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/feature/x` };
@@ -780,7 +783,7 @@ test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be 
     assert.match(rerun.result.reason, /re-runs are refused/);
     assert.deepEqual(rerun.calls.map((c) => c.url), [RUN]);
   }
-  for (const file of ["clued-integration-runtime-nightly.yml", "mps03-native-agent.yml", "trivy.yml"]) {
+  for (const file of ["clued-integration-runtime-nightly.yml", "mps03-native-agent.yml", "trivy.yml", "clued-standard-runner-actor-qualification.yml"]) {
     const { result, calls } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x",
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/feature/x` }, {});
     assert.equal(result.allow, false, file);

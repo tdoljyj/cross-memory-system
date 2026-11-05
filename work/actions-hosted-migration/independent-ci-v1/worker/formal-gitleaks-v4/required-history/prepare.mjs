@@ -14,10 +14,11 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '9b1755f9001560aab95bb893f8c2cdc36f1826e3f83d2cae3ccf15ff27b4a476',
-  '.gitleaks.toml': '8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba',
+  'scripts/ci/reviewed_gitleaks.py': '4441bbee3b022be40a0e6533ee6f56241621babc961b0389c25d4484a298d67f',
+  '.gitleaks.toml': 'f21a46cb2a0c2a61a63e0ebaf9115759cd244abcd99682c1d83da36d3b78061b',
+  'scripts/ci/reviewed_gitleaks_historical.py': 'd395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870',
 });
-// This active Source pins the 730-record reviewed set (729 + the 16f981cc role-probe fixture, PR #937); the
+// This active Source pins the 732-record proposed reviewed set (old730 byte-identical +2 exact historical JSON metadata subjects); the
 // hosted gitleaks.yml checks the same config/helper/commit-set/ignore digests, and its successor row is
 // re-frozen from the real commit that carries those workflow bytes (repin-trusted-workflows.mjs). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
@@ -36,12 +37,12 @@ export function acceptedWorkflowSha256(role) {
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 730, commits: 102,
-  sha256: 'f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 732, commits: 103,
+  sha256: '576a86a6061e6c4331ec952b4bc498570fe614b46131d1387c871c59d2cf80cb' });
 // Recomputed by the pinned helper's actual verify_history, not inferred by adding counts.
-export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 173,
+export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 174,
   verified_git_objects: 130, reviewed_commits_sha256: REVIEWED_COMMITS.sha256,
-  reviewed_ignore_sha256: 'e727e450499b2b63f247d54d6bcfe749ab21d68b3135ef11b56c7405f883aff7' });
+  reviewed_ignore_sha256: '61b4af25bf5aea6dbc40591245d736f6ff26f7103f7c1d9bd16b878614a935fd' });
 export function matchesReviewedHistoryProof(value) {
   return value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).sort().join('|') === Object.keys(REVIEWED_HISTORY_PROOF).sort().join('|')
@@ -283,14 +284,15 @@ export function validateSelfTestReport(selfTestReport) {
     && selfTestReport.commits === REVIEWED_HISTORY_PROOF.commits && selfTestReport.files_at_commits === REVIEWED_HISTORY_PROOF.files_at_commits
     && selfTestReport.verified_git_objects === REVIEWED_HISTORY_PROOF.verified_git_objects
     && selfTestReport.global_fingerprints === 0 && selfTestReport.ignore_sha256 === REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256
-    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|role_probe_different_line_detection|role_probe_different_path_detection|role_probe_new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
+    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|genuine_curl_credential_detection|handover_acceptance_artifact_proof|historical_json_different_line_detection|historical_json_different_path_detection|historical_json_new_commit_detection|new_commit_detection|role_probe_different_line_detection|role_probe_different_path_detection|role_probe_new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
     && typeof selfTestReport.regression.synthetic_test_repository === 'string' && selfTestReport.regression.synthetic_test_repository.length <= 4096
     && !/[\x00-\x1f\x7f]/.test(selfTestReport.regression.synthetic_test_repository)
     && path.posix.isAbsolute(selfTestReport.regression.synthetic_test_repository) && path.posix.basename(selfTestReport.regression.synthetic_test_repository) === 'repo'
     && selfTestReport.regression?.baseline_detection === true && selfTestReport.regression.exact_history_only === true
     && selfTestReport.regression.new_commit_detection === true && selfTestReport.regression.different_path_detection === true
     && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
-      'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection']
+      'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection',
+      'historical_json_new_commit_detection', 'historical_json_different_path_detection', 'historical_json_different_line_detection', 'genuine_curl_credential_detection']
       .every(key => selfTestReport.regression[key] === true)
     && Object.keys(selfTestReport.regression.handover_acceptance_artifact_proof ?? {}).sort().join('|') === 'actual_git_artifact_passes|forged_digest_rejected|valid_nonancestor_rejected|wrong_line_rejected|wrong_path_rejected'
     && ['actual_git_artifact_passes', 'forged_digest_rejected', 'valid_nonancestor_rejected', 'wrong_line_rejected', 'wrong_path_rejected']
@@ -329,7 +331,8 @@ export async function runReviewedSelfTest(plan) {
     }
   }
   check(await fileHash(plan.prepared.trustedHelper) === SOURCE_PINS['scripts/ci/reviewed_gitleaks.py']
-    && await fileHash(path.join(plan.prepared.repository, '.gitleaks.toml')) === SOURCE_PINS['.gitleaks.toml'], 'SELF_TEST_TRUSTED_SOURCE_CHANGED');
+    && await fileHash(path.join(plan.prepared.repository, '.gitleaks.toml')) === SOURCE_PINS['.gitleaks.toml']
+    && await fileHash(path.join(path.dirname(plan.prepared.trustedHelper), 'reviewed_gitleaks_historical.py')) === SOURCE_PINS['scripts/ci/reviewed_gitleaks_historical.py'], 'SELF_TEST_TRUSTED_SOURCE_CHANGED');
   const invocation = trustedSelfTestInvocation(plan);
   const root = path.join(plan.prepared.control, 'self-test'); await fsp.mkdir(root, { mode: 0o700 });
   const bin = path.join(root, 'bin'), temp = path.join(root, 'tmp'), templates = path.join(root, 'templates');

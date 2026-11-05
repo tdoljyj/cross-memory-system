@@ -26,7 +26,7 @@ const C=await import('./merge-admission-r9-collector.mjs');
 const U=await import('./ci-usage-report.mjs');
 const N=await import(pathToFileURL(overrides['merge-admission-native-population.mjs']).href);
 const F=await import(pathToFileURL(overrides['merge-admission-four-sources.mjs']).href);
-const {workflowBlob}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
+const {workflowBlob,parseWorkflowProfiles,serializeWorkflowProfiles}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
 const repository='tdoljyj/cross-memory-system',head='a'.repeat(40),window={start:'2026-10-10T00:00:00.000Z',end:'2026-10-11T00:00:00.000Z'};
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:tdoljyj/cross-memory-system:main'};
@@ -400,7 +400,7 @@ test('authenticated Native consistency does not produce missing four-source/cloc
   assert.ok(result.gaps.includes('AUTHENTICATED_SEALED_CLOCK_TRANSPORT_MISSING'));
 });
 test('current real registry has no usage publisher: the integration gives a specific preparation gap',async()=>{
-  const profiles=JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
+  const profiles=parseWorkflowProfiles(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json')));
   assert.equal(Object.hasOwn(profiles.workflows,C.R9_PUBLISHER_PATH),false);
   const fake=nativeRequest({sourceContract:contract(false)});const result=await C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window});
   assert.equal(result.source_authenticated,false);assert.equal(result.official_metric,false);assert.equal(result.native.status,'COMPLETE');
@@ -489,7 +489,7 @@ function fourFrame(rows){
   const ids={attempts:'native_attempts',targets:'admission_targets',admission_batches:'admission_selection_journal',admissions:'final_admission_journal',operations:'operation_journal_all_origins',head_moves:'native_head_move_journal',rounds:'final_round_journal',cancellations:'native_cancel_evidence'};
   const p={schema:protocol.schema,repository,scope,window,collection:{watermark:'fixed.1',closed_at:'2026-10-11T00:01:00.000Z',window_status:'closed',retention_start:window.start},populations:{},
     sources_raw:JSON.stringify([{source_checkout_sha:head,sources_raw:JSON.stringify(texts)}]),proof_profiles_raw:profiles,role_specs_raw:roles,
-    execution_sources:{source_checkout_sha:head,entries:Object.entries(JSON.parse(profiles).workflows).map(([workflow_file,s])=>({workflow_file,workflow_blob:s.workflow_blob})),manifest:null}};
+    execution_sources:{source_checkout_sha:head,entries:Object.entries(parseWorkflowProfiles(profiles).workflows).map(([workflow_file,s])=>({workflow_file,workflow_blob:s.workflow_blob})),manifest:null}};
   for(const n of names)p[n]=[];p.attempts=rows;
   const manifest=(source_id,members)=>{const b={snapshot_id:'fixed.1',total:members.length,member_digest:digest(JSON.stringify(members)),first_member:members[0]??null,last_member:members.at(-1)??null};
     return {reader_source:protocol.reader_source,source_id,scope,cohort:protocol.population_cohort,window,retention_start:window.start,watermark:p.collection.watermark,collected_at:p.collection.closed_at,
@@ -523,7 +523,7 @@ test('M2: a complete actually bound supplied frame has a promotion path, while a
   const f=fourFrame([attemptRow()]),fake=nativeRequest({artifact:zip(packet({fourSource:f.frame}))});
   const r=await C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,sourceContractRaw:selection(null,f.expected)});
   assert.equal(r.metrics.unclaimed_admitted.official_metric,true);assert.equal(r.metrics.unclaimed_admitted.value,0);
-  const file=Object.entries(JSON.parse(f.p.proof_profiles_raw).workflows).find(([,p])=>p.primary_ids.length)?.[0];assert.ok(file);
+  const file=Object.entries(parseWorkflowProfiles(f.p.proof_profiles_raw).workflows).find(([,p])=>p.primary_ids.length)?.[0];assert.ok(file);
   const native=await C.collectIncrementalNative({request:nativeRequest({runs:[run(42,{path:file,pull_requests:[{number:727}]})]}).request,repository,window});
   assert.equal(C.bindFourSourceNativePopulation(f.frame.packet_raw,native,f.expected).reason_code,'FOUR_SOURCE_NATIVE_KIND_MISMATCH');
 });
@@ -660,8 +660,12 @@ test('N4: known-known start conflict and a false FINAL keep the original strict 
 if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a checkout-shaped tree without any private directory or override',()=>{
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'clued-r9-checkout-'));
   try{
-    const paths=[...C.R9_SOURCE_PATHS,...Object.keys(JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8')).workflows),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
-      'scripts/ci/clued-work-admission.mjs','scripts/runner/clued-runner-job-started.mjs',
+    const paths=[...C.R9_SOURCE_PATHS,...Object.keys(parseWorkflowProfiles(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))).workflows),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
+      'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-source-only-workflow.mjs','scripts/ci/clued-required-applicability.mjs','scripts/runner/clued-runner-job-started.mjs',
+      'scripts/ci/clued-control-workflow-source.mjs','scripts/ci/clued-control-workflow-sources.json',
+      'scripts/ci/clued-production-publisher-source.mjs','scripts/ci/clued-production-publisher-sources.json',
+      'scripts/ci/clued-publisher-qualification-source.mjs','scripts/ci/clued-publisher-qualification-sources.json',
+      'scripts/ci/clued-standard-runner-actor-source.mjs','scripts/ci/clued-standard-runner-actor-sources.json',
       '.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
     for(const rel of paths){const author=path.join(here,path.basename(rel)),src=fs.existsSync(author)?author:['scripts/ci/merge-admission-r9-collector.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/ci-usage-report.mjs'].includes(rel)?author:
       rel==='scripts/ci/merge-admission-native-population.mjs'?overrides['merge-admission-native-population.mjs']:rel==='scripts/ci/merge-admission-four-sources.mjs'?overrides['merge-admission-four-sources.mjs']:path.join(repo,rel);
@@ -678,7 +682,7 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
     descriptor={registration_status:'registered',workflow_path:'.github/workflows/clued-merge-slot-ci.yml',workflow_blob:'d'.repeat(40),job_id:'report',job_name:'clued-merge-slot-ci',source_paths:['scripts/ci/clued-merge-slot-ci.mjs'],required_steps:['Export','Upload']},
     coverage={schema:'clued.r9-finite-recorded-operation-coverage/1',epoch_id:'10000000-0000-4000-8000-000000000001',owner_receipt_id:'10000000-0000-4000-8000-000000000001',repository,scope,mode:'explicit_recorded_origins_during_this_epoch',original_source_paths:['scripts/ci/clued-merge-executor.mjs']},
     cfg={schema:'clued.r9-runtime-source-selection/1',registration_status:'registered',repository,scope,natural_producers:[descriptor],operation_coverage:coverage,forward_epoch:{epoch_id:coverage.epoch_id}},
-    rawCfg=JSON.stringify(cfg),sourceSelection={repository,head_sha:head,default_branch:'main',natural_producers:[descriptor],profiles_raw:f.p.proof_profiles_raw,workflow_blobs:Object.fromEntries(Object.keys(JSON.parse(f.p.proof_profiles_raw).workflows).map(file=>[file,workflowBlob(fs.readFileSync(path.join(repo,file),'utf8'))]))},
+    rawCfg=JSON.stringify(cfg),sourceSelection={repository,head_sha:head,default_branch:'main',natural_producers:[descriptor],profiles_raw:f.p.proof_profiles_raw,workflow_blobs:Object.fromEntries(f.p.execution_sources.entries.map(({workflow_file,workflow_blob})=>[workflow_file,workflow_blob]))},
     paths={script:'scripts/ci/clued-work-admission.mjs',workflow:'.github/workflows/clued-work-admission.yml',reverify_workflow:'.github/workflows/clued-work-admission-reverify.yml',policy:'config/merge-admission-policy.json'},
     texts=Object.fromEntries(Object.entries(paths).map(([k,relative])=>[k,fs.readFileSync(path.join(repo,relative),'utf8')])),
     runtime={source_contract_raw:selection(clock.pins,f.expected),forward_epoch:{epoch_id:coverage.epoch_id},operation_coverage:coverage,natural_selection:sourceSelection,
@@ -763,11 +767,11 @@ test('collector rejects caller-authority shared tables when platform digest or t
 });
 
 test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
-  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
+  const profiles=serializeWorkflowProfiles({schema:'clued.gated-proof-profiles/2',workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
     admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
     cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:wf}}]},
     selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
-    contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
+    contract={profiles:parseWorkflowProfiles(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
       source_tree:Object.fromEntries(['source/script','source/workflow','source/reverify_workflow','source/policy',path].map(p=>[p,{sha:p===path?wf:'a'.repeat(40),type:'blob',mode:'100644'}]))};
   assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
   assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,admission_source:{script_blob:'c'.repeat(40)}},runtime,contract),false);
@@ -781,11 +785,20 @@ test('same-source main advance needs the complete independent source bytes, not 
 });
 
 test('source equivalence cannot replace raw profile/role digest pins with reformatted or malformed bytes',()=>{
-  const profiles='{"workflows":{}}',roles='{"roles":[]}',admission={script_blob:'a'.repeat(40)},
-    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[]},
-    selection={admission_source:admission,workflow_blobs:{}},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
-  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'{"workflows": {}}',role_specs_raw:roles},contract),false);
-  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'not-json',role_specs_raw:roles},contract),false);
+  const semantic={schema:'clued.gated-proof-profiles/2',workflows:{}},roles='{"roles":[]}',
+    admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]]));
+  for(const profiles of [JSON.stringify(semantic),serializeWorkflowProfiles(semantic)]){
+    const cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[]},
+      selection={admission_source:admission,workflow_blobs:{}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
+      contract={profiles:parseWorkflowProfiles(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
+        source_tree:Object.fromEntries(['script','workflow','reverify_workflow','policy'].map(k=>['source/'+k,{sha:'a'.repeat(40),type:'blob',mode:'100644'}]))};
+    assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true,'the exact valid /2 or /3 baseline must qualify');
+    const reformatted=profiles+' ';
+    assert.deepEqual(JSON.parse(reformatted),JSON.parse(profiles),'raw difference preserves the JSON value');
+    assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{...runtime,proof_profiles_raw:reformatted},contract),false);
+    assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{...runtime,role_specs_raw:'{"roles": []}'},contract),false);
+    assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{...runtime,proof_profiles_raw:'not-json'},contract),false);
+  }
 });
 
 test('bounded parallel Native captures retain every member under the same request function',async()=>{

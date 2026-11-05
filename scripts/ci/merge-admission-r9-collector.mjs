@@ -5,7 +5,7 @@ import {inflateRawSync} from 'node:zlib';
 import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore,nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 import {readMergeAdmissionFourSources,parseFourSourceRawData} from './merge-admission-four-sources.mjs';
 import {integrateClockSourceCandidate} from './merge-admission-clock-source.mjs';
-import {registeredWorkflowSource,rolesForSource,workflowBlob} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,rolesForSource,workflowBlob,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
 import {collectNaturalSourceArtifacts} from './merge-admission-natural-intake.mjs';
 import {assembleNaturalFourSourceFrame,excludeQuarantinedMainMoves} from './merge-admission-natural-frame.mjs';
@@ -17,6 +17,8 @@ export const R9_PACKET_FILE='r9-sealed-packet.json';
 export const R9_CACHE_FILE='r9-artifact-cache.json';
 export const R9_PACKET_SCHEMA='clued.merge-admission-r9-sealed-packet/2';
 export const R9_CACHE_SCHEMA='clued.merge-admission-r9-artifact-cache/1';
+// Keep the existing duplicate-key/depth guard as well as the disk/3 codec.
+const profileCatalogue=raw=>{parseFourSourceRawData(raw);return parseWorkflowProfiles(raw);};
 export const R9_PUBLISHER_PATH='.github/workflows/clued-ci-usage-report.yml';
 export const R9_SOURCE_PATHS=Object.freeze([
   R9_PUBLISHER_PATH,'scripts/ci/ci-usage-report.mjs','scripts/ci/merge-admission-r9-collector.mjs',
@@ -102,7 +104,7 @@ export async function loadR9DefaultBranchContract({request,repository}){
   if(tree.truncated!==false||!Array.isArray(tree.tree)||new Set(tree.tree.map(x=>x.path)).size!==tree.tree.length)fail('NATIVE_SOURCE_TREE_INVALID');
   let r9Registry=null;try{r9Registry=parseFourSourceRawData((await sourceText(request,repository,R9_RUNTIME_CONFIG,head)).text);}catch{}
   return {repository,repository_id:String(repo.id),default_branch:repo.default_branch,head_sha:head,
-    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),
+    profiles:profileCatalogue(profiles.text),roles:parseFourSourceRawData(roles.text),
     profiles_sha256:hash(profiles.text),role_specs_sha256:hash(roles.text),
     source_tree:Object.fromEntries(tree.tree.map(x=>[x.path,{sha:x.sha,type:x.type,mode:x.mode}])),
     r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
@@ -628,7 +630,7 @@ export function sameNaturalSourceSnapshot(cfg,naturalSelection,runtimeInputs,con
       ...['script','workflow','reverify_workflow','policy'].map(k=>[cfg.admission_source[k+'_path'],cfg.admission_source[k+'_blob']])];
     return object(cfg.admission_source)&&object(naturalSelection.admission_source)&&
     same(cfg.admission_source,naturalSelection.admission_source)&&
-    same(parseFourSourceRawData(runtimeInputs.proof_profiles_raw),contract.profiles)&&
+    same(profileCatalogue(runtimeInputs.proof_profiles_raw),contract.profiles)&&
     same(parseFourSourceRawData(runtimeInputs.role_specs_raw),contract.roles)&&
     hash(runtimeInputs.proof_profiles_raw)===cfg.execution_source?.profiles_sha256&&
     hash(runtimeInputs.role_specs_raw)===cfg.execution_source?.role_specs_sha256&&
@@ -658,7 +660,7 @@ const isoMicros=us=>{const x=BigInt(us);return new Date(Number(x/1000000n)*1000)
 // Native artifact/target authentication is independently enforced above.
 export function mapNativeAttemptsForFourSource(native,expectedRaw,window,{profilesRaw=null,workflowBlobs={}}={}){
   const e=parseFourSourceRawData(expectedRaw),admissionPaths=new Set(e.admission_sources.flatMap(s=>[s.workflow_path,s.reverify_workflow_path]));
-  const profiles=profilesRaw===null?null:parseFourSourceRawData(profilesRaw);
+  const profiles=profilesRaw===null?null:profileCatalogue(profilesRaw);
   if(profiles&&hash(profilesRaw)!==e.execution_source.profiles_sha256)fail('INDEPENDENT_NATIVE_KIND_SELECTION_MISMATCH');
   return (native.population_packets??[]).map(n=>{
     const r=n.run,m=r.status==='completed'?nativeCompletionMembership(n,window):null;
@@ -683,7 +685,7 @@ export function bindFourSourceNativePopulation(packetRaw,native,expectedRaw){
     const inspected=inspectNativePopulationStore(native.store_raw,p.repository);
     if(inspected.status!=='VALID_DATA_STORE'||native.population?.complete!==true||p.repository!==e.repository||!same(p.scope,e.scope))fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
     const actual=inspected.packets,supplied=new Map(p.attempts.map(a=>[key(a),a]));
-    const registry=parseFourSourceRawData(p.proof_profiles_raw);
+    const registry=profileCatalogue(p.proof_profiles_raw);
     if(supplied.size!==p.attempts.length)fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
     for(const n of native.population_packets??native.attempts??[])if(!supplied.has(key(n.run)))fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
     for(const a of supplied.values()){

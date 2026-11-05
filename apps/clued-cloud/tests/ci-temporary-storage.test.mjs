@@ -667,3 +667,134 @@ for (const phase of ["container-start", "encrypt"]) test("backup cancellation du
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+// Source classification only: these tests never run guards, scanners or permissions.
+const lifecycleSubjects = [
+  ["clued-handover-disposable-idle.yml", "disposable-idle", 1, 3],
+  ["clued-handover-external-qualification.yml", "qualify", 1, 3],
+  ["clued-native617-admission-dispatch.yml", "admit", 1, 3],
+  ["contract-placement.yml", "contract-placement", 2, 3],
+  ["gitleaks.yml", "gitleaks-trusted-self-hosted", 1, 2],
+  ["trivy.yml", "trivy-trusted-self-hosted", 1, 2],
+];
+const lifecycleClosure = ["scripts/ci/clued-handover-native-entry.mjs",
+  "config/clued-handover-native-entry-policy.json", "scripts/ci/clued-scan-start.mjs"];
+const lifecycleRepository = fileURLToPath(new URL("../../../", import.meta.url));
+const lifecycleCoverage = JSON.parse(readFileSync(new URL("../../../.github/actions/ci-temporary-storage/coverage.json", import.meta.url), "utf8"));
+function lifecycleFixture(name, run) {
+  return fixture(({ base }) => {
+    const sourceRoot = path.join(base, "source");
+    for (const relative of [`.github/workflows/${name}`, ...lifecycleClosure]) {
+      const target = path.join(sourceRoot, relative);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, readFileSync(path.join(lifecycleRepository, relative)));
+    }
+    const document = parse(readFileSync(path.join(sourceRoot, ".github/workflows", name), "utf8"));
+    const audit = structuredClone(lifecycleCoverage.workflows[name]);
+    const check = (doc = document, reviewed = audit, context = { sourceRoot }) =>
+      repositoryTemporaryStorageFindings(doc, name, reviewed, context);
+    return run({ sourceRoot, document, audit, check });
+  });
+}
+for (const [name, id, guardIndex, bootstrapIndex] of lifecycleSubjects) {
+  test(`exact pre-bootstrap lifecycle: ${name}/${id}; later runtime stays governed`, () => lifecycleFixture(name, ({ document, audit, check }) => {
+    assert.equal(audit.jobs[id].mode, "job-temp");
+    assert.deepEqual(check(), []);
+    assert.ok(check(document, audit, {}).length, "Metadata alone cannot register a lifecycle");
+    for (const forged of [true, false, null, {}, "read-only", "forged-lifecycle"]) {
+      const changed = structuredClone(audit); changed.jobs[id].pre_bootstrap_lifecycle = forged;
+      assert.match(check(document, changed).join("\n"), /lifecycle Source/);
+    }
+    const removed = structuredClone(audit); delete removed.jobs[id].pre_bootstrap_lifecycle;
+    assert.match(check(document, removed).join("\n"), /not bound before runtime/);
+    const mutations = [
+      doc => { doc.jobs[id].steps[guardIndex].run += "\necho unexpected"; },
+      doc => { doc.jobs[id].steps[guardIndex].if = "false"; },
+      doc => { doc.jobs[id].steps[guardIndex]["continue-on-error"] = true; },
+      doc => { doc.jobs[id]["runs-on"] = "unexpected-route"; },
+      doc => { doc.jobs[id].permissions = { contents: "write" }; },
+      doc => { doc.jobs[id].steps[0].with = { ...doc.jobs[id].steps[0].with, ref: "unreviewed" }; },
+      doc => { doc.jobs[id].steps[0].if = "true"; },
+      doc => { doc.jobs[id].env = { UNREVIEWED: "true" }; },
+      doc => { doc.jobs[id].steps.splice(bootstrapIndex, 0, { run: "node unknown.mjs" }); },
+      doc => { doc.jobs[id].steps.splice(guardIndex, 1); },
+      doc => { doc.jobs[id].steps.splice(bootstrapIndex, 1); },
+    ];
+    for (const mutate of mutations) {
+      const changed = structuredClone(document); mutate(changed);
+      assert.ok(check(changed).length, "Changed document cannot borrow frozen raw Source");
+    }
+    const later = structuredClone(document);
+    later.jobs[id].steps.push({ run: "node unknown.mjs", if: "always()" });
+    assert.ok(check(later).length, "Registration never exempts later runtime");
+  }));
+}
+
+test("pre-bootstrap closure rejects raw Source/config/producer drift, oversize and missing files", () => {
+  for (const [name] of lifecycleSubjects) lifecycleFixture(name, ({ sourceRoot, check }) => {
+    const target = path.join(sourceRoot, ".github/workflows", name), original = readFileSync(target, "utf8");
+    writeFileSync(target, original + "\n# changed Source bytes\n");
+    assert.match(check().join("\n"), /lifecycle Source/);
+    writeFileSync(target, original);
+    const closure = name.startsWith("clued-") ? lifecycleClosure.slice(0, 2) :
+      ["gitleaks.yml", "trivy.yml"].includes(name) ? lifecycleClosure.slice(2) : [];
+    for (const relative of closure) {
+      const producer = path.join(sourceRoot, relative), bytes = readFileSync(producer);
+      writeFileSync(producer, Buffer.concat([bytes, Buffer.from("\n ")]));
+      assert.match(check().join("\n"), /lifecycle Source/);
+      writeFileSync(producer, Buffer.alloc(1048577, 32));
+      assert.match(check().join("\n"), /lifecycle Source/);
+      rmSync(producer); assert.match(check().join("\n"), /lifecycle Source/);
+      writeFileSync(producer, bytes);
+    }
+    assert.deepEqual(check(), []);
+  });
+});
+
+test("producer closure directory aliases cannot borrow an exact lifecycle", () => lifecycleFixture(
+  "clued-handover-disposable-idle.yml", ({ sourceRoot, check }) => {
+    const scripts = path.join(sourceRoot, "scripts"), saved = path.join(sourceRoot, "saved-scripts");
+    mkdirSync(path.join(saved, "ci"), { recursive: true });
+    const relative = "ci/clued-handover-native-entry.mjs";
+    writeFileSync(path.join(saved, relative), readFileSync(path.join(scripts, relative)));
+    rmSync(scripts, { recursive: true });
+    symlinkSync(saved, scripts, process.platform === "win32" ? "junction" : "dir");
+    assert.match(check().join("\n"), /lifecycle Source/);
+  }));
+
+test("scan permission lifecycle retains the real no-clobber RUNNER_TEMP write and original once producer", () => {
+  for (const name of ["gitleaks.yml", "trivy.yml"]) lifecycleFixture(name, ({ document, audit, check }) => {
+    const id = name === "gitleaks.yml" ? "gitleaks-trusted-self-hosted" : "trivy-trusted-self-hosted";
+    assert.equal(audit.jobs[id].pre_bootstrap_lifecycle, "native-scan-permission-runner-temp-v1");
+    assert.notEqual(audit.jobs[id].mode, "no-temp-writes");
+    const guard = document.jobs[id].steps[1];
+    assert.match(guard.run, /set -euC/);
+    assert.match(guard.run, /> "\$RUNNER_TEMP\/clued-scan-start\.mjs"/);
+    assert.match(guard.run, /sha256sum -c --quiet -/);
+    assert.match(guard.run, /node "\$RUNNER_TEMP\/clued-scan-start\.mjs" --run/);
+    for (const replacement of [guard.run.replace("set -euC", "set -eu"),
+      guard.run.replaceAll("clued-scan-start.mjs", "other-purpose.mjs"),
+      guard.run + "\ncurl https://unreviewed.invalid", guard.run.replace("sha256sum -c --quiet -", "true")]) {
+      const changed = structuredClone(document); changed.jobs[id].steps[1].run = replacement;
+      assert.match(check(changed).join("\n"), /lifecycle Source/);
+    }
+    assert.deepEqual(check(), []);
+  });
+});
+
+test("conditional placement checkout is implied only by the exact successful subject guard", () => lifecycleFixture(
+  "contract-placement.yml", ({ document, audit, check }) => {
+    const id = "contract-placement", steps = document.jobs[id].steps;
+    assert.notEqual(checkoutSources(steps)[0].if, "true");
+    assert.equal(steps[3].if, undefined);
+    assert.match(steps[2].run, /trustedPush/); assert.match(steps[2].run, /trustedPr/);
+    assert.deepEqual(check(), []);
+    for (const change of [doc => { doc.jobs[id].steps[2].run = "echo caller_says_qualified"; },
+      doc => { doc.jobs[id].steps[2].env.CLUED_AUTOMATION_SELF_HOSTED = "true"; },
+      doc => { doc.jobs[id].steps[0].if = "false"; }]) {
+      const changed = structuredClone(document); change(changed);
+      const reclassified = structuredClone(audit);
+      reclassified.jobs[id].checkout_sources = checkoutSources(changed.jobs[id].steps);
+      assert.match(check(changed, reclassified).join("\n"), /compatible checkout/);
+    }
+  }));

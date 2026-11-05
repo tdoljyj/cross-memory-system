@@ -280,13 +280,16 @@ const json = text => { try { return JSON.parse(text); } catch { return null; } }
 export const PR_HEAD_TIMEOUT_MS = 30_000;
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
-  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha}'];
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
 }
 // The gh answer -> { number, state: open | closed | merged, headSha }, or null when it is not exactly that shape.
 export function parsePull(stdout, pr) {
   const v = json(stdout);
   if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
-  return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
+  // Advisory only: it may defer a qualification read, never authorize one.
+  // Older companion answers have no mergeSha; absence is not ref movement.
+  return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head,
+    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}) };
 }
 
 // DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end

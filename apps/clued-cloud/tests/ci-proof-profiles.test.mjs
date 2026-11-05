@@ -5,11 +5,17 @@ import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {execFileSync} from 'node:child_process';
-import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest,rolesForSource,registeredWorkflowSource} from '../../../scripts/ci/clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest,rolesForSource,registeredWorkflowSource,parseWorkflowProfiles} from '../../../scripts/ci/clued-workflow-profile.mjs';
 import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
+import {recognizeCatalogueWorkflow,SOURCE_METADATA_ONLY_DISABLED} from '../../../scripts/ci/clued-source-only-workflow.mjs';
+import {qualifyPrimary} from '../../../scripts/ci/clued-gated-proof.mjs';
 // These critical negative cases run through the existing quality unit entry.
 import '../../../scripts/ci/clued-gated-proof.test.mjs';
 import '../../../scripts/ci/clued-workflow-profile.test.mjs';
+import '../../../scripts/ci/clued-workflow-profile-codec.test.mjs';
+import '../../../scripts/ci/clued-source-only-workflow.test.mjs';
+import '../../../scripts/ci/clued-non-pr-control-source.test.mjs';
+import '../../../scripts/ci/clued-required-applicability.test.mjs';
 import '../../../scripts/ci/clued-gated-proof-runtime.test.mjs';
 import '../../../scripts/ci/clued-reader-budget-cache.test.mjs';
 // Consumer regressions execute on the actual PR's quality unit entry too.
@@ -18,7 +24,7 @@ import '../../../scripts/ci/npm-cache-observation.test.mjs';
 const require=createRequire(import.meta.url);
 const YAML=require('yaml');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
-const registry=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
+const registry=parseWorkflowProfiles(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
 const roleSpecs=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
 const parseYaml=text=>{const doc=YAML.parseDocument(text);assert.deepEqual(doc.errors,[]);assert.deepEqual(doc.warnings,[]);return doc.toJS({maxAliasCount:0});};
 
@@ -39,12 +45,23 @@ test('registered definitions match full YAML bytes and complete explicit primary
       [record,...(record.accepted_sources??[])].map(entry=>entry.workflow_blob).sort(),`${file}: orphan source roles`);
   }
   for(const [file,blob] of current) {
-    const record=registry.workflows[file];assert.ok(record,`${file}: missing source registration`);
-    assert.ok([record,...(record.accepted_sources??[])].some(entry=>entry.workflow_blob===blob),`${file}: no registered current source`);
+    const identity=recognizeCatalogueWorkflow({registry,roleSpecs,file,blob});
+    assert.equal(identity.source_identified,true,`${file}: current Source identity is missing`);
+    if(identity.kind===SOURCE_METADATA_ONLY_DISABLED) {
+      assert.equal(identity.execution_eligible,false);
+      assert.equal(identity.profile.execution_eligible,false);
+      assert.equal(registeredWorkflowSource(registry,file,blob).passed,false,
+        'metadata-only identification must never register the disabled Native Source');
+      assert.equal(qualifyPrimary(identity.profile,[],file).passed,false,
+        'a disabled Source cannot prove execution');
+    } else {
+      assert.equal(identity.execution_eligible,true);
+      assert.equal(registeredWorkflowSource(registry,file,blob).passed,true);
+    }
     assert.equal(workflowBlob(fs.readFileSync(path.join(root,file),'utf8')),blob);
     const committed=execFileSync('git',['show',`HEAD:${file}`],{cwd:root,encoding:'utf8',maxBuffer:524288,windowsHide:true});
-    assert.ok([record,...(record.accepted_sources??[])].some(entry=>entry.workflow_blob===workflowBlob(committed)),
-      `${file}: committed Git bytes have no registration`);
+    assert.equal(recognizeCatalogueWorkflow({registry,roleSpecs,file,blob:workflowBlob(committed)}).source_identified,true,
+      `${file}: committed Git bytes have no Source identity`);
   }
 });
 

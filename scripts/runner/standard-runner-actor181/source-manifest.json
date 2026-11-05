@@ -1,0 +1,652 @@
+{
+  "schema": "clued.standard-runner-provider-source208/1",
+  "physical_owner_packet": null,
+  "qualification": false,
+  "files": {
+    "server/runner_spawn_transport181.mjs": {
+      "sha256": "ac56d52d00d11e14f80877a68276e9d6ffbcc4e80322e4fe2480e51a04a8ae15",
+      "bytes": 7004,
+      "source": "server/runner_spawn_transport181.mjs"
+    },
+    "server/runner_pipe_wrapper181.ps1": {
+      "sha256": "e39091d524ada1f0631c05eb8a91f417d76689196a4953801955c663a67f240f",
+      "bytes": 9520,
+      "source": "server/runner_pipe_wrapper181.ps1"
+    },
+    "server/provider_client181.ps1": {
+      "sha256": "5b53a5861e7708594c5c37343ea001c0d838cfdb8b0a15ff9008e35e2f236f3a",
+      "bytes": 3745,
+      "source": "server/provider_client181.ps1"
+    },
+    "server/authority_server181.ps1": {
+      "sha256": "15ad0a6e66ed87fa2fa30f398200ba35dd80ae524387ce6407306a84e24f03d1",
+      "bytes": 15949,
+      "source": "server/authority_server181.ps1"
+    },
+    "server/closed-spawn-and-authority-abi181.json": {
+      "sha256": "f1b7ec9212c1780f0c3d15edf4e4ba08cbfe3546ca9db164fc8e9181ade9a8a6",
+      "bytes": 8010,
+      "source": "server/closed-spawn-and-authority-abi181.json"
+    },
+    "bridge/root_mcp_bridge181.js": {
+      "sha256": "9f4155821083637ff3364fecb09aa7f63e71b0c8d6244b192b75013109dd7d2f",
+      "bytes": 28942,
+      "source": "bridge/root_mcp_bridge181.js"
+    },
+    "bridge/console_frame181.mjs": {
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+      "bytes": 757,
+      "source": "bridge/console_frame181.mjs"
+    },
+    "bridge/ci_origin_read181.cjs": {
+      "sha256": "6ba112177cabde424603f5268fabc2923e61c87bb75b7cafa4dccfb7c3d49d34",
+      "bytes": 6492,
+      "source": "bridge/ci_origin_read181.cjs"
+    },
+    "bridge/public_epoch_read181.cjs": {
+      "sha256": "522f5b16d77b7228596e2c7ca06eaaac7c7b67e153c29dd0ae6112cbfd9cb9a2",
+      "bytes": 3184,
+      "source": "bridge/public_epoch_read181.cjs"
+    },
+    "capture/actor.ps1": {
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+      "bytes": 29883,
+      "source": "capture/actor.ps1"
+    },
+    "capture/runner_entry.ps1": {
+      "sha256": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc",
+      "bytes": 31773,
+      "source": "capture/runner_entry.ps1"
+    },
+    "capture/observer_entry.ps1": {
+      "sha256": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079",
+      "bytes": 23435,
+      "source": "capture/observer_entry.ps1"
+    },
+    "capture/observer_core.ps1": {
+      "sha256": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c",
+      "bytes": 4284,
+      "source": "capture/observer_core.ps1"
+    },
+    "capture/observer_os.ps1": {
+      "sha256": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a",
+      "bytes": 45853,
+      "source": "capture/observer_os.ps1"
+    },
+    "capture/identity.dll": {
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8",
+      "bytes": 15872,
+      "source": "capture/identity.dll"
+    },
+    "capture/definition.ps1": {
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+      "bytes": 6546,
+      "source": "capture/definition.ps1"
+    },
+    "capture/registration.ps1": {
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+      "bytes": 896,
+      "source": "capture/registration.ps1"
+    },
+    "capture/local_pipe.dll": {
+      "sha256": "0fc2bc75b9ff8696e60d8999dc5867ec1dffbacd66479c60f781e0629cef6932",
+      "bytes": 12800,
+      "source": "capture/local_pipe.dll"
+    },
+    "joint/runner_entry_runtime181.ps1": {
+      "sha256": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc",
+      "bytes": 31773,
+      "source": "joint/runner_entry_runtime181.ps1"
+    },
+    "joint/runner_pipe_wrapper_runtime181.ps1": {
+      "sha256": "769044544957af1c79d39e6cf30c49b6adc5900ec960e2e1846e27c43a3c9db3",
+      "bytes": 9520,
+      "source": "joint/runner_pipe_wrapper_runtime181.ps1"
+    },
+    "joint/provider_client_runtime181.ps1": {
+      "sha256": "b71d7eb8159942d94bc6ea14c0a572b3c5cea7636140c373fc3dcdebd07932d1",
+      "bytes": 6107,
+      "source": "joint/provider_client_runtime181.ps1"
+    },
+    "joint/LocalPipeTransportRuntime181.dll": {
+      "sha256": "579063ff78159c37f36cd2af12b4802e6c5da38b7138f24ef7c97d66377b7d8f",
+      "bytes": 13312,
+      "source": "joint/LocalPipeTransportRuntime181.dll"
+    },
+    "joint/LocalPipeTransportRuntime181.cs": {
+      "sha256": "86c9acdae0bc96f411eb0b60fc3e5cc6060fb4ec7fd9161f04b705150041c478",
+      "bytes": 11285,
+      "source": "joint/LocalPipeTransportRuntime181.cs"
+    },
+    "joint/authority_server_with_reader181.ps1": {
+      "sha256": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3",
+      "bytes": 16708,
+      "source": "joint/authority_server_with_reader181.ps1"
+    },
+    "joint/relay_stdio_wrapper181.ps1": {
+      "sha256": "09e211957c29aeeedca084185f0c676f6b92157880f7f1e7f3b130e79b8248b8",
+      "bytes": 4773,
+      "source": "joint/relay_stdio_wrapper181.ps1"
+    },
+    "joint/ba_observer_wrapper181.ps1": {
+      "sha256": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2",
+      "bytes": 15611,
+      "source": "joint/ba_observer_wrapper181.ps1"
+    },
+    "joint/ba_observer_launcher181.mjs": {
+      "sha256": "2275ba693f84d6a79783bd29771afedf7996a0c94f4ab11d10a15f09c6dc22c4",
+      "bytes": 6900,
+      "source": "joint/ba_observer_launcher181.mjs"
+    },
+    "joint/captured_pair_launch181.mjs": {
+      "sha256": "08ec2e011495b0960fb380fa08ec141199b968c31ec4814249e4aa2240a50a70",
+      "bytes": 3211,
+      "source": "joint/captured_pair_launch181.mjs"
+    },
+    "joint/runner_spawn_transport211.mjs": {
+      "sha256": "05306130b91a56d3958c4ae4d2ffc5380f5278a7b9e8d114bc62fc34734d95e7",
+      "bytes": 7317,
+      "source": "joint/runner_spawn_transport211.mjs"
+    },
+    "joint/joint_runtime211.mjs": {
+      "sha256": "37248bb933bb38e35c834b8c3f38a1d97b808e66144c9afe5e93de12a431d99e",
+      "bytes": 3045,
+      "source": "joint/joint_runtime211.mjs"
+    },
+    "node-runtime/NodePrimaryObservation211.cs": {
+      "sha256": "a4ee0b66382d693ce3fc0bc7cf0e007ed36b9902fda12f2bed6bbdadffe808bc",
+      "bytes": 8907,
+      "source": "node-runtime/NodePrimaryObservation211.cs"
+    },
+    "node-runtime/read-node-primary.mjs": {
+      "sha256": "fe4bee9ca15ce87d964c88770a3c9ee079f6c3cde555f6d6bbb1faa09807edc6",
+      "bytes": 3887,
+      "source": "node-runtime/read-node-primary.mjs"
+    },
+    "node-runtime/runtime-projection.mjs": {
+      "sha256": "f75ef56429dbdbdcccf5b71be27fab4234da4bffbf5b4b210d76cd403ef5602c",
+      "bytes": 1677,
+      "source": "node-runtime/runtime-projection.mjs"
+    },
+    "node-ingress/node-authority212.mjs": {
+      "sha256": "7063e687f4f1a8565ba81f0f1efa4a11a3459b341b7bc8a5c83b067c23f1c2ac",
+      "bytes": 8670,
+      "source": "node-ingress/node-authority212.mjs"
+    },
+    "node-ingress/node_broker212.ps1": {
+      "sha256": "77f46d2d87ccae6e71160e16048b3b32d5357e409b8c8cce1e8f05c4da89d3a1",
+      "bytes": 4592,
+      "source": "node-ingress/node_broker212.ps1"
+    },
+    "node-ingress/NodeIngressPipe212.cs": {
+      "sha256": "4154cc09c96124a8ffd146debd4e1cfe4b64b119309b7c9e09ed508e440415ce",
+      "bytes": 11667,
+      "source": "node-ingress/NodeIngressPipe212.cs"
+    },
+    "node-ingress/NodeIngressPipe212.dll": {
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb",
+      "bytes": 13824,
+      "source": "node-ingress/NodeIngressPipe212.dll"
+    },
+    "node-ingress/protocol212.mjs": {
+      "sha256": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e",
+      "bytes": 2414,
+      "source": "node-ingress/protocol212.mjs"
+    },
+    "node-ingress/root_node_authority212.js": {
+      "sha256": "b32892565e43c198a404fa31d68e3c5d13952fcdfec7bcabfd1b7b9d4beb0685",
+      "bytes": 10808,
+      "source": "node-ingress/root_node_authority212.js"
+    },
+    "node-ingress/root_node_ingress212.ps1": {
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+      "bytes": 4404,
+      "source": "node-ingress/root_node_ingress212.ps1"
+    },
+    "node-ingress/selector-wait212.mjs": {
+      "sha256": "bb9b67aa63a1a4ed6a63c87bf3e13f0c3b337604b9c88768358327d0ba9386e5",
+      "bytes": 1583,
+      "source": "node-ingress/selector-wait212.mjs"
+    },
+    "node-ingress/WindowsAccountIdentity181.dll": {
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8",
+      "bytes": 15872,
+      "source": "node-ingress/WindowsAccountIdentity181.dll"
+    },
+    "self-install/captured-members215.json": {
+      "sha256": "b3d843c1281a5fa2d8590f9efd79b95ef305480ae173026951ad041f08e451f3",
+      "bytes": 1889,
+      "source": "self-install/captured-members215.json"
+    },
+    "self-install/core.ps1": {
+      "sha256": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4",
+      "bytes": 16573,
+      "source": "self-install/core.ps1"
+    },
+    "self-install/definition.ps1": {
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+      "bytes": 6546,
+      "source": "self-install/definition.ps1"
+    },
+    "self-install/enrollment_adapter.ps1": {
+      "sha256": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627",
+      "bytes": 7943,
+      "source": "self-install/enrollment_adapter.ps1"
+    },
+    "self-install/enrollment_code.py": {
+      "sha256": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79",
+      "bytes": 9991,
+      "source": "self-install/enrollment_code.py"
+    },
+    "self-install/identity.dll": {
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8",
+      "bytes": 15872,
+      "source": "self-install/identity.dll"
+    },
+    "self-install/ingress.dll": {
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb",
+      "bytes": 13824,
+      "source": "self-install/ingress.dll"
+    },
+    "self-install/install_protocol215.mjs": {
+      "sha256": "e45cd5d9ecf6f2657417fa8d52377f632b4309f89c1772b923847b91b13ce294",
+      "bytes": 2496,
+      "source": "self-install/install_protocol215.mjs"
+    },
+    "self-install/install_spawn215.mjs": {
+      "sha256": "aa07e354d2fc3e881c9bf50fa8d53bcbd39e110c72e96594236eb9df85471ca0",
+      "bytes": 7441,
+      "source": "self-install/install_spawn215.mjs"
+    },
+    "self-install/install_wrapper215.ps1": {
+      "sha256": "383ab3c34ddc98c43fffa5a3b19269c299033231d0c7ce09b4408e546a33a749",
+      "bytes": 10751,
+      "source": "self-install/install_wrapper215.ps1"
+    },
+    "self-install/namespace.ps1": {
+      "sha256": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9",
+      "bytes": 953,
+      "source": "self-install/namespace.ps1"
+    },
+    "self-install/node_broker212.ps1": {
+      "sha256": "cb8e77757c9924abe7b7a82859fa27506937c8db5def05659d9ed58e3eb81485",
+      "bytes": 4629,
+      "source": "self-install/node_broker212.ps1"
+    },
+    "self-install/node_capture_pins215.json": {
+      "sha256": "8e26a5ed5165ebc594c43b3f403f2ae2ce79dc58f6568f3423afb4a403da1a6c",
+      "bytes": 1763,
+      "source": "self-install/node_capture_pins215.json"
+    },
+    "self-install/node_install_authority215.mjs": {
+      "sha256": "13679cac295573aa2593c870c1c6a417c4a73c31a7bb93ed3206eb4601414c5f",
+      "bytes": 8770,
+      "source": "self-install/node_install_authority215.mjs"
+    },
+    "self-install/protocol212.mjs": {
+      "sha256": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e",
+      "bytes": 2414,
+      "source": "self-install/protocol212.mjs"
+    },
+    "self-install/registration.ps1": {
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+      "bytes": 896,
+      "source": "self-install/registration.ps1"
+    },
+    "self-install/run_install215.mjs": {
+      "sha256": "c4ffbc79ea4fc649614ce35a363eb25f6ba6db2dac933a3d571e35c6854c8e6d",
+      "bytes": 1816,
+      "source": "self-install/run_install215.mjs"
+    },
+    "self-install/selector_wait218.mjs": {
+      "sha256": "dde1b02c0acf77877b0bf5fac22f266e99942318d383fbc4868eb43265eb2a59",
+      "bytes": 1170,
+      "source": "self-install/selector_wait218.mjs"
+    },
+    "self-install/self_helpers.ps1": {
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+      "bytes": 29883,
+      "source": "self-install/self_helpers.ps1"
+    },
+    "self-install/xml_helpers.ps1": {
+      "sha256": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5",
+      "bytes": 10959,
+      "source": "self-install/xml_helpers.ps1"
+    },
+    "host-qualification/authority_server_with_reader181.ps1": {
+      "sha256": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3",
+      "bytes": 16708,
+      "source": "host-qualification/authority_server_with_reader181.ps1"
+    },
+    "host-qualification/ba_observer_wrapper181.ps1": {
+      "sha256": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2",
+      "bytes": 15611,
+      "source": "host-qualification/ba_observer_wrapper181.ps1"
+    },
+    "host-qualification/build_capture214.mjs": {
+      "sha256": "3ee3c9ba45dd3614e5e34519f1649a09c1f0f04a16407126b81dcee67c977c75",
+      "bytes": 8011,
+      "source": "host-qualification/build_capture214.mjs"
+    },
+    "host-qualification/capture-inputs214.json": {
+      "sha256": "ce19a6c3e5bf08c690691cdaa5e8ba3733baa8b450db460fdf1cf35fcc0776d2",
+      "bytes": 6210,
+      "source": "host-qualification/capture-inputs214.json"
+    },
+    "host-qualification/capture_pins214.mjs": {
+      "sha256": "aeaed264569fa43e1bec24927aef27fc60b574358ffb653fc5f8069727b5ea17",
+      "bytes": 2193,
+      "source": "host-qualification/capture_pins214.mjs"
+    },
+    "host-qualification/console_frame181.mjs": {
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+      "bytes": 757,
+      "source": "host-qualification/console_frame181.mjs"
+    },
+    "host-qualification/console_transport214.mjs": {
+      "sha256": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd",
+      "bytes": 3709,
+      "source": "host-qualification/console_transport214.mjs"
+    },
+    "host-qualification/LocalPipeTransportRuntime181.dll": {
+      "sha256": "579063ff78159c37f36cd2af12b4802e6c5da38b7138f24ef7c97d66377b7d8f",
+      "bytes": 13312,
+      "source": "host-qualification/LocalPipeTransportRuntime181.dll"
+    },
+    "host-qualification/new_child_read_access181.dll": {
+      "sha256": "24076ae339aa6b90240da7abb0dee2ea4be224f781aab1a08cf8b19764944bbf",
+      "bytes": 25088,
+      "source": "host-qualification/new_child_read_access181.dll"
+    },
+    "host-qualification/NodeIngressPipe212.dll": {
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb",
+      "bytes": 13824,
+      "source": "host-qualification/NodeIngressPipe212.dll"
+    },
+    "host-qualification/observer_entry181.ps1": {
+      "sha256": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079",
+      "bytes": 23435,
+      "source": "host-qualification/observer_entry181.ps1"
+    },
+    "host-qualification/OriginalPipeTask214.cs": {
+      "sha256": "66bab59df8f5db096b7446f8de783661da0c39fb482dc2151534ccc302d1cc4c",
+      "bytes": 607,
+      "source": "host-qualification/OriginalPipeTask214.cs"
+    },
+    "host-qualification/OriginalPipeTask214.dll": {
+      "sha256": "deec8b4985ba67084bb0d11b56b1cfe1059340bf77775d042a86126c9721dab0",
+      "bytes": 4096,
+      "source": "host-qualification/OriginalPipeTask214.dll"
+    },
+    "host-qualification/owned_effects214.ps1": {
+      "sha256": "5f14a330ff00e1701db0d0f37507d08370cd9a28f2e40cadba4319011334a81c",
+      "bytes": 16406,
+      "source": "host-qualification/owned_effects214.ps1"
+    },
+    "host-qualification/parent_bootstrap181.ps1": {
+      "sha256": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f",
+      "bytes": 9145,
+      "source": "host-qualification/parent_bootstrap181.ps1"
+    },
+    "host-qualification/relay_entry214.ps1": {
+      "sha256": "0ed43755374e6f322c6ed7d8c3ddc0202cb9d88ecf6fcac4196369fa53e4e797",
+      "bytes": 4746,
+      "source": "host-qualification/relay_entry214.ps1"
+    },
+    "host-qualification/relay_ingress_mux216.ps1": {
+      "sha256": "454c10a1caf4ca133084f7c8a86e742da62437df97f0cce26507f66a62a9b9a2",
+      "bytes": 16133,
+      "source": "host-qualification/relay_ingress_mux216.ps1"
+    },
+    "host-qualification/root_node_ingress212.ps1": {
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+      "bytes": 4404,
+      "source": "host-qualification/root_node_ingress212.ps1"
+    },
+    "host-qualification/root_owned_supervisor214.js": {
+      "sha256": "faff55a65f78b0504dd1db72461025f6b303ae04f9556f40e31adca32335dda6",
+      "bytes": 20868,
+      "source": "host-qualification/root_owned_supervisor214.js"
+    },
+    "host-qualification/root_uac_control181.dll": {
+      "sha256": "5885416d8d76ad33dfd5978d61221402b6f7b035c4f226611d4f1b229c493ad8",
+      "bytes": 15360,
+      "source": "host-qualification/root_uac_control181.dll"
+    },
+    "host-qualification/root_uac_supervisor181.ps1": {
+      "sha256": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36",
+      "bytes": 11947,
+      "source": "host-qualification/root_uac_supervisor181.ps1"
+    },
+    "host-qualification/selector_publisher216.ps1": {
+      "sha256": "6dfe7e7d05e8a2d9a26bafb0237b14c55535bbc58882b0a4176ea6af2a4c59c2",
+      "bytes": 2495,
+      "source": "host-qualification/selector_publisher216.ps1"
+    },
+    "host-qualification/SelectorPublisher216.cs": {
+      "sha256": "8f3f07a100c8e19213cef0552ae4667232b9e7f60945459ce745730dc27613c7",
+      "bytes": 9001,
+      "source": "host-qualification/SelectorPublisher216.cs"
+    },
+    "host-qualification/SelectorPublisher216.dll": {
+      "sha256": "3eb5a5e9daeba5b9351da5b1922240ef695a694772342625d125a73d2ef40a01",
+      "bytes": 13312,
+      "source": "host-qualification/SelectorPublisher216.dll"
+    },
+    "host-qualification/self_registration_actor181.ps1": {
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+      "bytes": 29883,
+      "source": "host-qualification/self_registration_actor181.ps1"
+    },
+    "host-qualification/self_registration_observer181.ps1": {
+      "sha256": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c",
+      "bytes": 4284,
+      "source": "host-qualification/self_registration_observer181.ps1"
+    },
+    "host-qualification/self_registration_observer_os181.ps1": {
+      "sha256": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a",
+      "bytes": 45853,
+      "source": "host-qualification/self_registration_observer_os181.ps1"
+    },
+    "host-qualification/supervisor_entry214.ps1": {
+      "sha256": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf",
+      "bytes": 12945,
+      "source": "host-qualification/supervisor_entry214.ps1"
+    },
+    "host-qualification/windows_task_definition181.ps1": {
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+      "bytes": 6546,
+      "source": "host-qualification/windows_task_definition181.ps1"
+    },
+    "host-qualification/windows_task_registration_account181.ps1": {
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+      "bytes": 896,
+      "source": "host-qualification/windows_task_registration_account181.ps1"
+    },
+    "host-qualification/WindowsAccountIdentity181.dll": {
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8",
+      "bytes": 15872,
+      "source": "host-qualification/WindowsAccountIdentity181.dll"
+    },
+    "host-install/actor.ps1": {
+      "sha256": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4",
+      "bytes": 16573,
+      "source": "host-install/actor.ps1"
+    },
+    "host-install/budget-table216.json": {
+      "sha256": "74ce5f31697a0067fc9c01edb0d7e74d4b7c292b5b2490f7f93017057f321ea6",
+      "bytes": 1120,
+      "source": "host-install/budget-table216.json"
+    },
+    "host-install/build_capture216.mjs": {
+      "sha256": "dac98e3550cd59896ab74391f5c9c5226623f4dbef3c22a5419afd827e47f511",
+      "bytes": 7798,
+      "source": "host-install/build_capture216.mjs"
+    },
+    "host-install/capture-inputs216.json": {
+      "sha256": "e9d100c8b98ddd032faf6aa2784a1ef8f330ea329905456e66c6796ba0041eae",
+      "bytes": 4355,
+      "source": "host-install/capture-inputs216.json"
+    },
+    "host-install/capture_pins216.mjs": {
+      "sha256": "c5f477472a49e21f78af30bab16d7939f58f67953397197eb39e92fb1eb8922c",
+      "bytes": 2171,
+      "source": "host-install/capture_pins216.mjs"
+    },
+    "host-install/child_factory.dll": {
+      "sha256": "24076ae339aa6b90240da7abb0dee2ea4be224f781aab1a08cf8b19764944bbf",
+      "bytes": 25088,
+      "source": "host-install/child_factory.dll"
+    },
+    "host-install/code-epochs216.json": {
+      "sha256": "a002e31c7b07ed08f5100cef0983de92e99380da4dbd8353f89de3b0e4cafcc7",
+      "bytes": 677,
+      "source": "host-install/code-epochs216.json"
+    },
+    "host-install/console_frame.mjs": {
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+      "bytes": 757,
+      "source": "host-install/console_frame.mjs"
+    },
+    "host-install/console_transport.mjs": {
+      "sha256": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd",
+      "bytes": 3709,
+      "source": "host-install/console_transport.mjs"
+    },
+    "host-install/control.dll": {
+      "sha256": "5885416d8d76ad33dfd5978d61221402b6f7b035c4f226611d4f1b229c493ad8",
+      "bytes": 15360,
+      "source": "host-install/control.dll"
+    },
+    "host-install/definition.ps1": {
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+      "bytes": 6546,
+      "source": "host-install/definition.ps1"
+    },
+    "host-install/enrollment_adapter.ps1": {
+      "sha256": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627",
+      "bytes": 7943,
+      "source": "host-install/enrollment_adapter.ps1"
+    },
+    "host-install/enrollment_code.py": {
+      "sha256": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79",
+      "bytes": 9991,
+      "source": "host-install/enrollment_code.py"
+    },
+    "host-install/identity.dll": {
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8",
+      "bytes": 15872,
+      "source": "host-install/identity.dll"
+    },
+    "host-install/imports216.json": {
+      "sha256": "e576ab8cb4e87512cdcc47e2a68d7d869b332231d23401addfb718f33bf50109",
+      "bytes": 2398,
+      "source": "host-install/imports216.json"
+    },
+    "host-install/ingress.dll": {
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb",
+      "bytes": 13824,
+      "source": "host-install/ingress.dll"
+    },
+    "host-install/install_observer216.ps1": {
+      "sha256": "e6a4cc9d6c0cf907cf1cd009bb6685b0c1bcf8d067bf28bc069d737328e80f73",
+      "bytes": 6935,
+      "source": "host-install/install_observer216.ps1"
+    },
+    "host-install/install_observer_entry216.ps1": {
+      "sha256": "dbc5b428b49b85bf4c2e58ea72da63ec7a91d07b319845207f076f2c59efb30e",
+      "bytes": 4740,
+      "source": "host-install/install_observer_entry216.ps1"
+    },
+    "host-install/install_relay216.ps1": {
+      "sha256": "e7d70a9514a8057bd9541143824e41dd3d55a6235854c082f0a577fd60ea5653",
+      "bytes": 12551,
+      "source": "host-install/install_relay216.ps1"
+    },
+    "host-install/install_relay_entry216.ps1": {
+      "sha256": "c2036ae654ae2275b88a9bd6fe24caefbf088aeb04a673da97698ebb137a485f",
+      "bytes": 4937,
+      "source": "host-install/install_relay_entry216.ps1"
+    },
+    "host-install/namespace.ps1": {
+      "sha256": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9",
+      "bytes": 953,
+      "source": "host-install/namespace.ps1"
+    },
+    "host-install/native-provenance216.json": {
+      "sha256": "8f525e5756981cdc9a92b79511f628e2f9bf927ce28aa56df3c8aca145b839f7",
+      "bytes": 1015,
+      "source": "host-install/native-provenance216.json"
+    },
+    "host-install/node_ingress.ps1": {
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+      "bytes": 4404,
+      "source": "host-install/node_ingress.ps1"
+    },
+    "host-install/observer-capture216.json": {
+      "sha256": "19a5bf5de21d0a63ac9f64534310aab48c63d0a76bf31409726aca18e19a0ddf",
+      "bytes": 2893,
+      "source": "host-install/observer-capture216.json"
+    },
+    "host-install/observer.ps1": {
+      "sha256": "142b564e2fd411e7f68d82b2b6ca4b16ef261c5d795324d296b8b6535a35895e",
+      "bytes": 9366,
+      "source": "host-install/observer.ps1"
+    },
+    "host-install/parent_bootstrap.ps1": {
+      "sha256": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f",
+      "bytes": 9145,
+      "source": "host-install/parent_bootstrap.ps1"
+    },
+    "host-install/qual_helpers.ps1": {
+      "sha256": "2eced12090f96460c5699f247d171bd3e16a69e908c9debd6986cd36af3dc509",
+      "bytes": 11967,
+      "source": "host-install/qual_helpers.ps1"
+    },
+    "host-install/qual_receiver.ps1": {
+      "sha256": "4ea513a4a99a5aca4dac62670e37ed4237acbabd776d891be03bb906f5c856a0",
+      "bytes": 18918,
+      "source": "host-install/qual_receiver.ps1"
+    },
+    "host-install/registration.ps1": {
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+      "bytes": 896,
+      "source": "host-install/registration.ps1"
+    },
+    "host-install/root_entry.ps1": {
+      "sha256": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf",
+      "bytes": 12945,
+      "source": "host-install/root_entry.ps1"
+    },
+    "host-install/root_install_authority216.js": {
+      "sha256": "d9f903576edc9128f966097df93cfaaefb5306ebe1c0c73f571f8f082a0c6b7e",
+      "bytes": 25634,
+      "source": "host-install/root_install_authority216.js"
+    },
+    "host-install/selector_native.dll": {
+      "sha256": "3eb5a5e9daeba5b9351da5b1922240ef695a694772342625d125a73d2ef40a01",
+      "bytes": 13312,
+      "source": "host-install/selector_native.dll"
+    },
+    "host-install/self-bootstrap215.json": {
+      "sha256": "08f7b2694e0fbdd40faaba9303befd739695c6c243f00363b9900c32ee50e033",
+      "bytes": 104,
+      "source": "host-install/self-bootstrap215.json"
+    },
+    "host-install/self_helpers.ps1": {
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+      "bytes": 29883,
+      "source": "host-install/self_helpers.ps1"
+    },
+    "host-install/uac_supervisor.ps1": {
+      "sha256": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36",
+      "bytes": 11947,
+      "source": "host-install/uac_supervisor.ps1"
+    },
+    "host-install/xml.ps1": {
+      "sha256": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5",
+      "bytes": 10959,
+      "source": "host-install/xml.ps1"
+    }
+  }
+}

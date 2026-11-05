@@ -3,7 +3,7 @@
 // same input within 0.36 s under the old `verified_at <= Date.now()`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CLOCK_SKEW_MS, LEASE_MARGIN_MS, freshStamp, notFuture, serverAnswerCurrent } from '../src/clock-skew.mjs';
+import { CLOCK_SKEW_MS, LEASE_MARGIN_MS, freshStamp, notFuture, serverAnswerCurrent, retainServerAnswerForFacts, retainedServerAnswerCurrent } from '../src/clock-skew.mjs';
 import { controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
 
 const NOW = Date.parse('2026-10-31T07:00:00.000Z');
@@ -33,6 +33,24 @@ test('serverAnswerCurrent: form of verified_at only, monotonic age ≤ 30 s, lea
   assert.deepEqual(serverAnswerCurrent({ ...ok, expiresAt: iso(NOW + 5301) }), []);
   assert.deepEqual(serverAnswerCurrent({ ...ok, verifiedAt: 'yesterday' }), ['verified_at_form']);
   assert.deepEqual(serverAnswerCurrent({ ...ok, expiresAt: null }), ['expires_at_form']);
+  assert.deepEqual(serverAnswerCurrent({ ...ok, expiresAt: iso(NOW + 5000), nowMono: 32_000 }), ['round_trip_age', 'lease_remaining'],
+    'an excessive RTT cannot hide a lease which does not outlast it');
+});
+
+test('issuer-held facts keep their original monotonic deadline, cannot be changed, rebound or forged by JSON', () => {
+  let mono = 100;
+  const answer = { verifiedAt: iso(NOW), expiresAt: iso(NOW + 60_000), sentMono: 0 };
+  const facts = { observedAt: iso(NOW), claimExpiresAt: answer.expiresAt, nested: { fence: 1 } };
+  assert.equal(retainServerAnswerForFacts(facts, answer, () => mono), facts);
+  assert.equal(retainedServerAnswerCurrent(facts), true);
+  assert.equal(retainedServerAnswerCurrent(structuredClone(facts)), null, 'serialized fields carry no issuer-held proof');
+  assert.throws(() => retainServerAnswerForFacts(facts, answer, () => mono), /server_answer_binding_refused/);
+  facts.nested.fence++;
+  assert.equal(retainedServerAnswerCurrent(facts), false, 'the original identity and fields are bound');
+  facts.nested.fence--;
+  mono = 30_000; assert.equal(retainedServerAnswerCurrent(facts), true);
+  mono++; assert.equal(retainedServerAnswerCurrent(facts), false, 'checking does not refresh the send time');
+  assert.throws(() => retainServerAnswerForFacts({}, answer, () => mono), /server_answer_binding_refused/);
 });
 
 // The live check every Native publication runs (entry-runtime.mjs native.current).

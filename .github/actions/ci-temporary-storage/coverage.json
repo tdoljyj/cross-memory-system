@@ -917,7 +917,8 @@
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "ordinary-qualified-subject-guard-v1"
         }
       }
     },
@@ -1005,7 +1006,8 @@
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "native-scan-permission-runner-temp-v1"
         }
       }
     },
@@ -1713,7 +1715,8 @@
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "native-scan-permission-runner-temp-v1"
         }
       }
     },
@@ -2017,7 +2020,8 @@
           "retained_artifacts": [
             "${{ runner.temp }}/clued-handover-evidence/*.json"
           ],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "native617-read-guard-v1"
         }
       }
     },
@@ -2053,7 +2057,8 @@
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "native617-read-guard-v1"
         }
       }
     },
@@ -2143,6 +2148,97 @@
           ],
           "retained_artifacts": [],
           "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-standard-runner-actor-qualification.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "standard-runner actor qualification; separately admitted/Owner qualified",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "qualify-company": {
+          "mode": "job-temp",
+          "purpose": "standard-runner actor qualification; separately admitted/Owner qualified",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "qualify-home": {
+          "mode": "job-temp",
+          "purpose": "standard-runner actor qualification; separately admitted/Owner qualified",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-native617-admission-dispatch.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "Native617 source-only dispatcher; qualification and execution remain separately guarded",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "admit": {
+          "mode": "job-temp",
+          "purpose": "Native617 source-only dispatcher; qualification and execution remain separately guarded",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
+          "persistent_action_caches": [],
+          "pre_bootstrap_lifecycle": "native617-read-guard-v1"
         }
       }
     }
