@@ -1,0 +1,405 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+
+// Resident CI assist (migration 20261105120000; Clued Decision "第 12 代‘推送后
+// 全自动’设计决定"): two CI RPCs, clued_work_merge_queue_join_v1 and
+// clued_work_lease_extend_v1, let the CI admission Binding put a pull
+// request's claim into merge:<owner>/<repo>:main and extend its lease, without
+// touching the holder's lease_version, fence, progress_ref, renewals or
+// execution epoch.
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const uuid = () => crypto.randomUUID();
+const hash = () => crypto.randomBytes(32).toString('hex');
+const REPO = 'tdoljyj/cross-memory-system';
+const SLOT = `merge:${REPO}:main`;
+const nowEpoch = () => Math.floor(Date.now() / 1000);
+const fresh = (sub, extra = {}) =>
+  ({ sub, role: 'authenticated', session_id: 'sess-owner', aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }], ...extra });
+const HEAD = (c) => c.repeat(40);
+
+async function freePort() {
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+test('resident CI assist: clued_work_merge_queue_join_v1 and clued_work_lease_extend_v1', { timeout: 300000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-ci-queue-assist-'));
+  const server = new EmbeddedPostgres({
+    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+  });
+  const clients = [];
+  try {
+    await server.initialise();
+    await server.start();
+    const admin = server.getPgClient();
+    clients.push(admin);
+    await admin.connect();
+    await admin.query(`create role anon nologin; create role authenticated nologin;
+      create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+      create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,
+        banned_until timestamptz,deleted_at timestamptz);
+      create function auth.uid() returns uuid language sql stable as
+        $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      create function auth.jwt() returns jsonb language sql stable as
+        $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      grant usage on schema auth,extensions to anon,authenticated,service_role;
+      grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
+      .filter((name) => name.endsWith('.sql')).sort()) {
+      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    }
+    await allowRawTestBindings(admin);
+
+    const userId = uuid();
+    const u2 = uuid();
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at)
+      values($1,'ci-assist@example.invalid',now()),($2,'ci-assist-2@example.invalid',now())`, [userId, u2]);
+    const tokens = {};
+    const ids = {};
+    for (const [name, owner] of [['h1', userId], ['h2', userId], ['h3', userId], ['node', userId], ['envci', userId],
+      ['standby', userId], ['k1', u2], ['k2', u2], ['knode', u2]]) {
+      tokens[name] = hash();
+      ids[name] = (await admin.query(`insert into public.clued_agent_bindings
+        (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic',$2,$3,array['context:read','context:write'],array['*']) returning id`,
+      [owner, `${name} connection`, tokens[name]])).rows[0].id;
+    }
+    const anon = server.getPgClient();
+    clients.push(anon);
+    await anon.connect();
+    await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    const human = server.getPgClient();
+    clients.push(human);
+    await human.connect();
+    await human.query('set role authenticated');
+
+    const native = async (name, input, claims) => {
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [claims.sub ?? '', JSON.stringify(claims)]);
+      return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
+    };
+    const agent = async (who, name, input) =>
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
+    const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
+    const claim = async (who, title, extra = {}) => {
+      const task = committed(await agent(who, 'clued_record_mutate', {
+        operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
+        scope: 'global', idempotency_key: uuid(), authority: 'observed',
+        confidence_reason: 'ci assist fixture', source_refs: [], source_unavailable_reason: 'fixture',
+        mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
+      })).target_refs[0].id;
+      return committed(await agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: task,
+        write_set: [`ci-assist/${uuid()}`], holder_label: title, holder_session_ref: `session-${title}`,
+        trigger_refs: [`task:${title.toLowerCase()}`], ...extra })).claim;
+    };
+    const renew = async (who, c, extra = {}) => committed(await agent(who, 'clued_work_renew_v1', { scope: 'global',
+      claim_id: c.claim_id, fence: c.fence, lease_version: c.lease_version, progress_ref: uuid(), ...extra })).claim;
+    // Binds a claim to a pull request and admits a head, as the admission check does.
+    const admit = async (who, c, pr, head) => {
+      const result = await agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head });
+      assert.equal(result.verdict, 'ADMITTED', JSON.stringify(result));
+      return result.claim;
+    };
+    const JOIN = 'clued_work_merge_queue_join_v1';
+    const EXTEND = 'clued_work_lease_extend_v1';
+    const join = (who, pr, head, extra = {}) => agent(who, JOIN, { scope: 'global', pr_ref: pr, head_sha: head, ...extra });
+    const extend = (who, pr, head, minutes, extra = {}) =>
+      agent(who, EXTEND, { scope: 'global', pr_ref: pr, head_sha: head, minutes, ...extra });
+    const row = async (c) => (await admin.query(`select status,expires_at,hard_deadline_at,lease_version,renewals,fence,
+      progress_ref,progress_refs,holder_binding_id,holder_session_ref,lease_key_hash,execution_epoch,trigger_refs,
+      merge_queued_at,merge_slot_at,merge_slot_ci_at,bound_pr,admitted_heads
+      from clued_private.work_claims_v1 where claim_id=$1`, [c.claim_id])).rows[0];
+    const holderFields = ['fence', 'lease_version', 'renewals', 'progress_ref', 'progress_refs', 'holder_binding_id',
+      'holder_session_ref', 'lease_key_hash', 'execution_epoch', 'hard_deadline_at'];
+    const assertHolderFieldsKept = (after, before, label) => {
+      for (const key of holderFields) assert.deepEqual(after[key], before[key], `${label}: ${key}`);
+    };
+    const queueOf = async (user = userId, ref = SLOT) =>
+      (await admin.query('select clued_private.work_claim_merge_queue_current_v1($1,$2) v', [user, ref])).rows[0].v;
+    const order = (queue) => queue.entries.filter((e) => ['head', 'waiting'].includes(e.state))
+      .sort((x, y) => x.position - y.position).map((e) => e.claim_id);
+    const receipts = async (operation, user = userId) => (await admin.query(`select object_id,binding_id,metadata,created_at
+      from public.clued_audit_receipts where operation=$1 and user_id=$2 order by created_at,id`, [operation, user])).rows;
+    // Moves every queue time of an account back, as if the minutes had passed (leases stay).
+    const shift = async (minutes, user = userId) => {
+      await admin.query('begin');
+      await admin.query("set local session_replication_role='replica'");
+      await admin.query(`update clued_private.work_claims_v1 set
+        merge_slot_at=merge_slot_at-make_interval(mins=>$2),merge_queued_at=merge_queued_at-make_interval(mins=>$2),
+        merge_slot_taken_at=merge_slot_taken_at-make_interval(mins=>$2),merge_slot_ci_at=merge_slot_ci_at-make_interval(mins=>$2)
+        where user_id=$1`, [user, minutes]);
+      await admin.query(`update clued_private.work_claim_merge_queue_v1 set head_left_at=head_left_at-make_interval(mins=>$2),
+        left_queued_at=left_queued_at-make_interval(mins=>$2) where user_id=$1`, [user, minutes]);
+      await admin.query(`update clued_private.work_claim_merge_front_v1 set queued_at=queued_at-make_interval(mins=>$2),
+        since=since-make_interval(mins=>$2),left_at=left_at-make_interval(mins=>$2) where user_id=$1`, [user, minutes]);
+      await admin.query(`update clued_private.work_claim_merge_departed_v1 set queued_at=queued_at-make_interval(mins=>$2),
+        left_at=left_at-make_interval(mins=>$2) where user_id=$1`, [user, minutes]);
+      await admin.query(`update clued_private.work_claim_merge_rank_v1 set queued_at=queued_at-make_interval(mins=>$2)
+        where user_id=$1`, [user, minutes]);
+      await admin.query('commit');
+    };
+    const roleReceipt = async (user) => (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
+      values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [user])).rows[0].id;
+    const mark = async (user, who, purpose, effective = "now()-interval '5 minutes'") =>
+      admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
+        values($1,$2,'ci-admission',now()-interval '10 minutes',$3,${effective},$4)`, [user, ids[who], await roleReceipt(user), purpose]);
+
+    // --- Surface: the two RPCs to anon (CI signatures) only; the helpers to nobody. ---
+    const can = async (role, signature) => (await admin.query(
+      `select has_function_privilege($1,$2::regprocedure,'execute') v`, [role, signature])).rows[0].v;
+    for (const fn of [`public.${JOIN}(text,jsonb)`, `public.${EXTEND}(text,jsonb)`]) {
+      assert.deepEqual([await can('anon', fn), await can('authenticated', fn), await can('service_role', fn),
+        await can('clued_worker_gateway', fn)], [true, false, false, false], fn);
+      assert.equal((await admin.query('select prosecdef from pg_proc where oid=$1::regprocedure', [fn])).rows[0].prosecdef, true, fn);
+    }
+    for (const fn of ['work_claim_ci_assist_target_v1', 'work_claim_ci_assist_input_v1', 'work_claim_ci_assist_admits_v1',
+      'work_claim_ci_queue_join_v1', 'work_claim_ci_lease_extend_v1']) {
+      assert.equal((await admin.query(`select count(*)::int n from pg_proc where pronamespace='clued_private'::regnamespace
+        and proname=$1`, [fn])).rows[0].n, 1, fn);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        const allowed = (await admin.query(`select bool_or(has_function_privilege($1,p.oid,'execute')) v from pg_proc p
+          where p.pronamespace='clued_private'::regnamespace and p.proname=$2`, [role, fn])).rows[0].v;
+        assert.equal(allowed, false, `${role} can execute ${fn}`);
+      }
+    }
+    await assertGatewayCloseoutBoundary(admin);
+
+    // --- Before any ci-admission mark every Binding is refused (unlike touch's open behaviour). ---
+    const a = await claim('h1', 'A');
+    const pr1 = `${REPO}#1`;
+    const notCi = { status: 'ok', joined: false, reason: 'admission_binding_required' };
+    const notCiExtend = { status: 'ok', extended: false, reason: 'admission_binding_required' };
+    assert.deepEqual(await join('node', pr1, HEAD('a')), notCi);
+    assert.deepEqual(await extend('node', pr1, HEAD('a'), 30), notCiExtend);
+    await assert.rejects(() => anon.query(`select public.${JOIN}($1,$2) v`, [hash(), { scope: 'global', pr_ref: pr1, head_sha: HEAD('a') }]),
+      (error) => error.code === '42501', 'an unknown token is refused');
+
+    await mark(userId, 'node', 'resident-node');
+    await mark(userId, 'envci', 'other');
+    await mark(userId, 'standby', 'resident-node', "now()+interval '5 minutes'"); // marked, not started
+
+    // --- Input checks (22023). ---
+    for (const [bad, code] of [[{ pr_ref: undefined }, /work_claim_pr_ref_invalid/], [{ pr_ref: 'not a pr' }, /work_claim_pr_ref_invalid/],
+      [{ pr_ref: 7 }, /work_claim_pr_ref_invalid/], [{ head_sha: undefined }, /work_claim_head_sha_invalid/],
+      [{ head_sha: 'xyz' }, /work_claim_head_sha_invalid/], [{ head_sha: 'a'.repeat(65) }, /work_claim_head_sha_invalid/],
+      [{ extra: true }, /work_claim_merge_queue_join_input_invalid/], [{ minutes: 5 }, /work_claim_merge_queue_join_input_invalid/],
+      [{ scope: 7 }, /work_claim_merge_queue_join_input_invalid/]]) {
+      await assert.rejects(() => join('node', pr1, HEAD('a'), bad), (error) => code.test(error.message) && error.code === '22023',
+        JSON.stringify(bad));
+    }
+    await assert.rejects(() => agent('node', JOIN, JSON.stringify(['not', 'an', 'object'])), /work_claim_merge_queue_join_input_invalid/);
+    for (const minutes of [0, 181, 1.5, '10', -1, null, undefined]) {
+      await assert.rejects(() => extend('node', pr1, HEAD('a'), minutes), /work_claim_lease_extend_minutes_invalid/, `minutes ${minutes}`);
+    }
+    await assert.rejects(() => extend('node', pr1, HEAD('a'), 10, { extra: true }), /work_claim_lease_extend_input_invalid/);
+    await assert.rejects(() => extend('node', 'bad', HEAD('a'), 10), /work_claim_pr_ref_invalid/);
+
+    // --- Authorization: the holder, a standby node not yet on duty and an "other" row get touch's answer. ---
+    for (const who of ['h1', 'standby', 'envci']) {
+      assert.deepEqual(await join(who, pr1, HEAD('a')), notCi, who);
+      assert.deepEqual(await extend(who, pr1, HEAD('a'), 30), notCiExtend, who);
+    }
+
+    // --- The claim must be bound to exactly that pull request, with that head admitted, and live. ---
+    assert.equal((await join('node', pr1, HEAD('a'))).reason, 'claim_not_bound');
+    assert.equal((await extend('node', pr1, HEAD('a'), 30)).reason, 'claim_not_bound');
+    const aBound = await admit('node', a, pr1, HEAD('a'));
+    assert.deepEqual([aBound.bound_pr, (await row(a)).admitted_heads], [pr1, [HEAD('a')]]);
+    for (const result of [await join('node', pr1, HEAD('b')), await extend('node', pr1, HEAD('b'), 30)]) {
+      assert.deepEqual([result.status, result.reason], ['ok', 'head_not_admitted']);
+    }
+    assert.equal((await join('node', `${REPO}#11`, HEAD('a'))).reason, 'claim_not_bound', 'another PR');
+    assert.equal((await join('node', `${REPO.toUpperCase()}#1`, HEAD('a'))).reason, 'claim_not_bound', 'exactly the bound pr_ref');
+    assert.deepEqual(await receipts('work_claim_merge_queue_join_by_ci'), [], 'refusals write nothing');
+
+    // --- Join without the ref: added at the back; the holder's fields stay. ---
+    const aBefore = await row(a);
+    const joinedA = await join('node', pr1, HEAD('A'));
+    assert.deepEqual([joinedA.status, joinedA.joined, joinedA.claim_id, joinedA.merge_ref], ['ok', true, a.claim_id, SLOT],
+      JSON.stringify(joinedA));
+    assert.deepEqual(joinedA.merge_queue.map((q) => [q.ref, q.state, q.position]), [[SLOT, 'head', 1]]);
+    const aAfter = await row(a);
+    assertHolderFieldsKept(aAfter, aBefore, 'join');
+    assert.deepEqual([aAfter.expires_at, aAfter.status], [aBefore.expires_at, 'ACTIVE']);
+    assert.deepEqual(aAfter.trigger_refs, [SLOT, 'task:a'].sort());
+    let joinReceipts = await receipts('work_claim_merge_queue_join_by_ci');
+    assert.equal(joinReceipts.length, 1);
+    assert.deepEqual([joinReceipts[0].object_id, joinReceipts[0].binding_id, joinReceipts[0].metadata.receipt_kind,
+      joinReceipts[0].metadata.pr_ref, joinReceipts[0].metadata.head_sha, joinReceipts[0].metadata.ci_binding_id,
+      joinReceipts[0].metadata.rejoined], [a.claim_id, ids.node, 'WORK_CLAIM_MERGE_QUEUE_JOINED_BY_CI', pr1, HEAD('a'), ids.node, false]);
+    // Already in the queue (head): idempotent, no write.
+    const again = await join('node', pr1, HEAD('a'));
+    assert.deepEqual([again.joined, again.reason, again.merge_queue[0].state], [false, 'already_queued', 'head']);
+    assert.equal((await receipts('work_claim_merge_queue_join_by_ci')).length, 1);
+    assert.deepEqual(await row(a), aAfter);
+
+    // A second pull request joins behind it; waiting is also already queued.
+    const b = await claim('h2', 'B');
+    const pr2 = `${REPO}#2`;
+    await admit('node', b, pr2, HEAD('b'));
+    const joinedB = await join('node', pr2, HEAD('b'));
+    assert.deepEqual(joinedB.merge_queue.map((q) => [q.state, q.position]), [['waiting', 2]]);
+    assert.deepEqual(order(await queueOf()), [a.claim_id, b.claim_id]);
+    assert.equal((await join('node', pr2, HEAD('b'))).reason, 'already_queued');
+
+    // The holder's own renewal still works with the lease_version it holds, and keeps its place.
+    const aRenewed = await renew('h1', aBound);
+    assert.equal(aRenewed.lease_version, aBound.lease_version + 1);
+    assert.deepEqual(order(await queueOf()), [a.claim_id, b.claim_id]);
+
+    // --- Rejoin after a lapse: back of the queue, renewals untouched. ---
+    await shift(46);
+    assert.deepEqual((await queueOf()).entries.map((e) => [e.claim_id, e.state]),
+      [[a.claim_id, 'lapsed'], [b.claim_id, 'head']], 'A lapsed, B is head');
+    const aLapsed = await row(a);
+    const rejoined = await join('node', pr1, HEAD('a'));
+    assert.deepEqual([rejoined.joined, rejoined.merge_queue[0].state, rejoined.merge_queue[0].position], [true, 'waiting', 2]);
+    assert.deepEqual(order(await queueOf()), [b.claim_id, a.claim_id]);
+    const aRejoined = await row(a);
+    assertHolderFieldsKept(aRejoined, aLapsed, 'rejoin');
+    assert.deepEqual([aRejoined.expires_at, aRejoined.trigger_refs], [aLapsed.expires_at, aLapsed.trigger_refs]);
+    assert.ok(aRejoined.merge_queued_at > aLapsed.merge_queued_at, 'a new join time');
+    joinReceipts = await receipts('work_claim_merge_queue_join_by_ci');
+    assert.deepEqual(joinReceipts.map((r) => [r.object_id, r.metadata.rejoined, r.metadata.previous_state]),
+      [[a.claim_id, false, 'none'], [b.claim_id, false, 'none'], [a.claim_id, true, 'lapsed']]);
+
+    // --- Not live: released, expired, handover pending or superseded claims are never touched. ---
+    const c = await claim('h3', 'C');
+    const pr3 = `${REPO}#3`;
+    await admit('node', c, pr3, HEAD('c'));
+    await admin.query(`update clued_private.work_claims_v1 set issued_at=now()-interval '20 minutes',
+      expires_at=now()-interval '1 minute' where claim_id=$1`, [c.claim_id]);
+    const cExpired = await row(c);
+    assert.equal((await extend('node', pr3, HEAD('c'), 60)).reason, 'claim_not_live', 'never revives an expired lease');
+    assert.deepEqual([(await row(c)).status, (await row(c)).expires_at], ['EXPIRED', cExpired.expires_at]);
+    assert.equal((await join('node', pr3, HEAD('c'))).reason, 'claim_not_live');
+    const d = await claim('h3', 'D');
+    const pr4 = `${REPO}#4`;
+    await admit('node', d, pr4, HEAD('d'));
+    await admin.query('update clued_private.work_claims_v1 set execution_handover_pending=true where claim_id=$1', [d.claim_id]);
+    assert.equal((await join('node', pr4, HEAD('d'))).reason, 'claim_not_live', 'handover pending');
+    assert.equal((await extend('node', pr4, HEAD('d'), 60)).reason, 'claim_not_live', 'handover pending');
+    const g = await claim('h2', 'G');
+    const pr7 = `${REPO}#7`;
+    const gBound = await admit('node', g, pr7, HEAD('7'));
+    committed(await agent('h2', 'clued_work_release_v1', { scope: 'global', claim_id: g.claim_id, fence: gBound.fence, outcome: 'completed' }));
+    assert.equal((await extend('node', pr7, HEAD('7'), 60)).reason, 'claim_not_live', 'released');
+    assert.equal((await join('node', pr7, HEAD('7'))).reason, 'claim_not_live', 'released');
+
+    // --- lease_extend: never past the hard deadline, idempotent, at most once per 5 minutes. ---
+    const e = await claim('h3', 'E');
+    const pr5 = `${REPO}#5`;
+    await admit('node', e, pr5, HEAD('e'));
+    await admin.query(`update clued_private.work_claims_v1 set expires_at=now()+interval '10 minutes' where claim_id=$1`, [e.claim_id]);
+    const eBefore = await row(e);
+    const extended = await extend('node', pr5, HEAD('e'), 60);
+    assert.deepEqual([extended.status, extended.extended, extended.claim_id, extended.minutes], ['ok', true, e.claim_id, 60],
+      JSON.stringify(extended));
+    const eAfter = await row(e);
+    assert.ok(Math.abs(eAfter.expires_at - Date.now() - 60 * 60000) < 60000, `about an hour from now: ${eAfter.expires_at}`);
+    assert.equal(new Date(extended.expires_at).getTime(), eAfter.expires_at.getTime());
+    assert.equal(new Date(extended.previous_expires_at).getTime(), eBefore.expires_at.getTime());
+    assertHolderFieldsKept(eAfter, eBefore, 'extend');
+    for (const key of ['trigger_refs', 'merge_queued_at', 'merge_slot_at', 'merge_slot_ci_at', 'status']) {
+      assert.deepEqual(eAfter[key], eBefore[key], `extend: ${key}`);
+    }
+    let extendReceipts = await receipts('work_claim_lease_extend_by_ci');
+    assert.equal(extendReceipts.length, 1);
+    assert.deepEqual([extendReceipts[0].object_id, extendReceipts[0].binding_id, extendReceipts[0].metadata.receipt_kind,
+      extendReceipts[0].metadata.minutes, extendReceipts[0].metadata.pr_ref],
+    [e.claim_id, ids.node, 'WORK_CLAIM_LEASE_EXTENDED_BY_CI', 60, pr5]);
+    assert.equal(new Date(extendReceipts[0].metadata.previous_expires_at).getTime(), eBefore.expires_at.getTime());
+    assert.equal(new Date(extendReceipts[0].metadata.expires_at).getTime(), eAfter.expires_at.getTime());
+    // A shorter extension is already covered: no write.
+    const shorter = await extend('node', pr5, HEAD('e'), 30);
+    assert.deepEqual([shorter.extended, shorter.reason], [false, 'already_extended']);
+    // A longer one inside 5 minutes is a no-op success.
+    const soon = await extend('node', pr5, HEAD('e'), 180);
+    assert.deepEqual([soon.status, soon.extended, soon.reason], ['ok', false, 'recently_extended']);
+    assert.deepEqual(await row(e), eAfter);
+    assert.equal((await receipts('work_claim_lease_extend_by_ci')).length, 1);
+    // Once 5 minutes have passed, it extends again (180 minutes, the upper bound).
+    await admin.query(`update public.clued_audit_receipts set created_at=created_at-interval '6 minutes'
+      where operation='work_claim_lease_extend_by_ci' and user_id=$1`, [userId]);
+    const later = await extend('node', pr5, HEAD('e'), 180);
+    assert.equal(later.extended, true, JSON.stringify(later));
+    assert.ok(Math.abs((await row(e)).expires_at - Date.now() - 180 * 60000) < 60000);
+    // The holder's renewal is still accepted after the CI extension.
+    const eHolder = await renew('h3', { claim_id: e.claim_id, fence: Number(eBefore.fence), lease_version: Number(eBefore.lease_version) });
+    assert.equal(Number(eHolder.lease_version), Number(eBefore.lease_version) + 1);
+
+    // The hard deadline caps it, and then nothing more is written.
+    const f = await claim('h3', 'F');
+    const pr6 = `${REPO}#6`;
+    await admit('node', f, pr6, HEAD('f'));
+    await admin.query(`update clued_private.work_claims_v1 set expires_at=now()+interval '30 seconds',
+      hard_deadline_at=now()+interval '20 minutes' where claim_id=$1`, [f.claim_id]);
+    const capped = await extend('node', pr6, HEAD('f'), 1);
+    assert.equal(capped.extended, true, 'one minute is a valid extension (lower bound)');
+    await admin.query(`update public.clued_audit_receipts set created_at=created_at-interval '6 minutes'
+      where operation='work_claim_lease_extend_by_ci' and user_id=$1`, [userId]);
+    const toDeadline = await extend('node', pr6, HEAD('f'), 180);
+    const fRow = await row(f);
+    assert.deepEqual([toDeadline.extended, fRow.expires_at.getTime()], [true, fRow.hard_deadline_at.getTime()]);
+    assert.equal(new Date(toDeadline.hard_deadline_at).getTime(), fRow.hard_deadline_at.getTime());
+    await admin.query(`update public.clued_audit_receipts set created_at=created_at-interval '6 minutes'
+      where operation='work_claim_lease_extend_by_ci' and user_id=$1`, [userId]);
+    const atDeadline = await extend('node', pr6, HEAD('f'), 180);
+    assert.deepEqual([atDeadline.extended, atDeadline.reason], [false, 'hard_deadline']);
+    extendReceipts = await receipts('work_claim_lease_extend_by_ci');
+    assert.deepEqual(extendReceipts.map((r) => r.object_id), [e.claim_id, e.claim_id, f.claim_id, f.claim_id],
+      'one receipt per effective extension');
+
+    // --- An account with a recorded front (priority ordering): a lapsed front rejoins at the back. ---
+    await mark(u2, 'knode', 'resident-node');
+    const k1 = await claim('k1', 'K1');
+    const k2 = await claim('k2', 'K2');
+    committed(await native('clued_merge_queue_ordering_set_v1', { ordering: 'priority', base_version: 0 }, fresh(u2)));
+    await admit('knode', k1, `${REPO}#21`, HEAD('1'));
+    await admit('knode', k2, `${REPO}#22`, HEAD('2'));
+    assert.equal((await join('knode', `${REPO}#21`, HEAD('1'))).joined, true);
+    assert.equal((await join('knode', `${REPO}#22`, HEAD('2'))).joined, true);
+    const front = async () => (await admin.query(`select claim_id from clued_private.work_claim_merge_front_v1
+      where user_id=$1 and merge_ref=$2`, [u2, SLOT])).rows[0]?.claim_id;
+    assert.equal(await front(), k1.claim_id);
+    assert.deepEqual(order(await queueOf(u2)), [k1.claim_id, k2.claim_id]);
+    await shift(46, u2);
+    const k1Lapsed = await row(k1);
+    const k1Back = await join('knode', `${REPO}#21`, HEAD('1'));
+    assert.deepEqual([k1Back.joined, k1Back.merge_queue[0].state], [true, 'waiting']);
+    assert.deepEqual(order(await queueOf(u2)), [k2.claim_id, k1.claim_id]);
+    assert.equal(await front(), k2.claim_id, 'the next head is recorded in the same write');
+    assertHolderFieldsKept(await row(k1), k1Lapsed, 'recorded rejoin');
+    // The other account's node cannot act for this account's claims.
+    assert.equal((await join('node', `${REPO}#22`, HEAD('2'))).reason, 'claim_not_bound');
+
+    await assertGatewayCloseoutBoundary(admin);
+  } finally {
+    for (const client of clients.reverse()) await client.end().catch(() => {});
+    await server.stop().catch(() => {});
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

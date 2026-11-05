@@ -215,7 +215,7 @@ Owner 已选 C1，并配合导入签名密钥（Decision `818a9b05`）；C2 保�
 CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理由：这些是专为 CI 设计的门口，调用方没有 Worker 凭据，也不该有；A 之后它们只认证明值，T1 已解决；它们的输入不经 Worker 校验本来就是设计如此。
 
 - 规则：**白名单 = `scripts/ci/**` 与 `scripts/hooks/**` 直接调用的 RPC**，不写死名单。数据库测试从这两个目录的源码里提取 `/rest/v1/rpc/<name>` 与 RPC 名常量，`anon` 可执行的 SECURITY DEFINER 函数集合必须等于这个集合；新增 CI 调用的 RPC 只要出现在 CI 源码里就自动进入白名单，反过来 Worker 专用函数误授 `anon` 会被测试拦下。
-- 2026-10-08 的集合：`clued_owner_grant_admission_door_v1`、`clued_owner_grant_door_consume_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1`、`clued_work_claims_active_v1`，加上 MergeAdmission 第 3 步（PR #631，Task `3576d10d`）新增的 `clued_work_merge_slot_touch_v1`、`clued_work_merge_slot_holders_v1`。MergeAdmission 第 4、5 步（Task `38e0c90d`、`91039d74`）若再加 CI 调用的 RPC，按同一规则进入白名单。
+- 2026-10-08 的集合：`clued_owner_grant_admission_door_v1`、`clued_owner_grant_door_consume_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1`、`clued_work_claims_active_v1`，加上 MergeAdmission 第 3 步（PR #631，Task `3576d10d`）新增的 `clued_work_merge_slot_touch_v1`、`clued_work_merge_slot_holders_v1`。MergeAdmission 第 4、5 步（Task `38e0c90d`、`91039d74`）若再加 CI 调用的 RPC，按同一规则进入白名单。2026-11-05 起（迁移 `20261105120000_work_claim_ci_queue_assist_v1.sql`，Clued Decision「第 12 代‘推送后全自动’设计决定」）按同一规则再加常驻 CI 用的 `clued_work_merge_queue_join_v1`、`clued_work_lease_extend_v1`，集合为 10 项；该迁移核对这两项只授 anon（不授 PUBLIC、authenticated、service_role 与 Worker 角色），不符即失败；完整的 10 项集合由数据库测试（`worker-gateway-caller-fixture.mjs`）固定。
 - 其中 Worker 也在用的（如 `clued_work_verify_v1`、`clued_work_claims_active_v1`）同时授予 Worker 角色。白名单的来源规则写进迁移注释与 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md)。
 
 ### 6.4 第 3 步核实结论（2026-10-08，只读）
