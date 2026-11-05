@@ -353,8 +353,10 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       await admin.query("update public.clued_agent_bindings set revoked_at=null where id=$1", [client.id]);
       // Drive alignment item 3 (Owner Decision f382c494): a new file the layout does not
       // allow where it was written is placed in 90_待归类 when that track is allowed.
-      const placed = async m => (await admin.query("select clued_private.storage_mutation_paths_v1(clued_private.credential_internal_proof_v1($1),$2,$3::jsonb) value",
-        [clientHash, target.connection, JSON.stringify(m)])).rows[0].value.destination_path;
+      const placedAs = async (hash, connection, m) => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+        [hash, connection, JSON.stringify(m)])).rows[0].value.destination_path;
+      const proof = (await admin.query("select clued_private.credential_internal_proof_v1($1) value", [clientHash])).rows[0].value;
+      const placed = m => placedAs(proof, target.connection, m);
       const file = destination_path => ({ operation: "create", target_kind: "file", destination_path });
       assert.equal(await placed(file("stray.md")), `${target.root}/stray.md`, "a profile without 90_待归类 places nothing");
       const profileOf = (await admin.query("select profile_id from clued_private.storage_connections_v1 where id=$1", [target.connection])).rows[0].profile_id;
@@ -377,6 +379,47 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         await admin.query("update public.clued_agent_bindings set revoked_at=null where id=$1", [client.id]);
         const longName = "n".repeat(1000 - target.root.length - 1 - 3) + ".md";
         await assert.rejects(placed(file(longName)), /storage_path_invalid/);
+        // Clued Task e21ff6fd: the stored column is the verifier of the proof. The client's real proof (the
+        // sha256 of its token) is placed; the stored verifier itself is not a proof and places nothing.
+        assert.equal(await placedAs(sha(client.token), target.connection, file("stray.md")), `${target.root}/90_待归类/stray.md`);
+        assert.equal(await placedAs(clientHash, target.connection, file("stray.md")), "stray.md", "the stored verifier is not a proof");
+        // Only a live, unexpired authorization of the Binding resolves the root.
+        for (const [column, value] of [["expires_at", "now()-interval '1 second'"], ["revoked_at", "now()"]]) {
+          const saved = (await admin.query(`select ${column}::text v from clued_private.authorizations_v12 where binding_id=$1`, [client.id])).rows[0].v;
+          await timeTravel(`update clued_private.authorizations_v12 set ${column}=${value} where binding_id=$1`, [client.id]);
+          try {
+            assert.equal(await placed(file("stray.md")), "stray.md", `an authorization with ${column} set places nothing`);
+          } finally {
+            await timeTravel(`update clued_private.authorizations_v12 set ${column}=$2::timestamptz where binding_id=$1`, [client.id, saved]);
+          }
+        }
+        assert.equal(await placed(file("stray.md")), `${target.root}/90_待归类/stray.md`, "restored");
+        // Another owner's connection resolves no root for this Binding, even when its profile places.
+        const foreign = await createRoot(), foreignProfile = (await admin.query("select profile_id from clued_private.storage_connections_v1 where id=$1", [foreign.connection])).rows[0].profile_id;
+        await admin.query("update clued_private.resource_center_profiles_v1 set cloud_runtime=jsonb_set(cloud_runtime,'{allowed_root_children}',cloud_runtime->'allowed_root_children' || '[\"90_待归类\"]'::jsonb) where id=$1", [foreignProfile]);
+        assert.equal(await placedAs(proof, foreign.connection, file("stray.md")), `${foreign.root}/90_待归类/stray.md`, "the same owner's other connection places");
+        const stranger = randomUUID();
+        await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())", [stranger, `${stranger}@binary-exec.invalid`]);
+        await timeTravel("update clued_private.storage_connections_v1 set owner_id=$2 where id=$1", [foreign.connection, stranger]);
+        await timeTravel("update clued_private.resource_center_profiles_v1 set user_id=$2 where id=$1", [foreignProfile, stranger]);
+        assert.equal(await placedAs(proof, foreign.connection, file("stray.md")), "stray.md", "another owner's connection places nothing");
+
+        // End to end with the client's real token: the submitted job binds the placed path, and a binary
+        // upload begins at the placed path and submits there.
+        const strayJob = randomUUID();
+        const strayText = await submitRaw(client, target, { operation: "create", target_kind: "file", destination_path: "stray.md", content: "散" }, strayJob);
+        assert.equal(strayText.status, "queued", JSON.stringify(strayText));
+        assert.equal((await jobRow(strayJob)).mutation.destination_path, `${target.root}/90_待归类/stray.md`, "the job binds the placed path");
+        const strayBytes = pngBytes(1024);
+        const begun = await staging({ ...beginInput(target, strayBytes), destination_path: "stray.png" }, client.token);
+        assert.equal(begun.destination_path, `${target.root}/90_待归类/stray.png`, "the staging row binds the placed path");
+        assert.equal((await staging(claimsOf(begun))).state, "receiving");
+        assert.equal((await staging({ action: "received", staging_id: begun.staging_id, outcome: "validating" })).state, "validating");
+        assert.equal((await staging({ action: "validated", staging_id: begun.staging_id, outcome: "ready" })).state, "ready");
+        const strayBinaryJob = randomUUID();
+        const strayBinary = await submitRaw(client, target, { ...binaryMutation(target, begun.staging_id, strayBytes), destination_path: "stray.png" }, strayBinaryJob);
+        assert.equal(strayBinary.status, "queued", JSON.stringify(strayBinary));
+        assert.equal((await jobRow(strayBinaryJob)).mutation.destination_path, `${target.root}/90_待归类/stray.png`, "the binary job matches its staging row");
       } finally {
         await admin.query("update clued_private.resource_center_profiles_v1 set cloud_runtime=$2::jsonb where id=$1", [profileOf, JSON.stringify(runtime)]);
       }
