@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical } from '../src/proof.mjs';
@@ -124,13 +125,19 @@ async function put(root, name, bytes) {
   await fs.writeFile(path.join(root, 'incoming', `${name}.json`), bytes, { flag: 'wx' });
   await fs.writeFile(path.join(root, 'incoming', `${name}.ready.json`), canonical({ bytes: bytes.length, contract: 'clued.independent-ci.complete-public-file/1', sha256: sha(bytes) }), { flag: 'wx' });
 }
-// The test's own wait runs on the real clock: a test that skews Date.now (review M2: +35 s inside the first collection) must not make
-// this wait expire when the Linux side's file is merely a few milliseconds late (the 2026-11-04 flake of "a slow refs collection").
-const REAL_NOW = Date.now.bind(Date);
-async function waitFor(file, ms = 8000) {
-  for (const until = REAL_NOW() + ms; ;) { try { return await fs.readFile(file); } catch (e) { if (e.code !== 'ENOENT' || REAL_NOW() > until) throw e; } await new Promise(r => setTimeout(r, 50)); }
+// The fixture's own waits, measured on the monotonic clock: a test that moves Date.now (the slow refs collection) must
+// not end them early. SPOOL_WAIT_MS bounds waiting for the issuer's spool files; NO_ANSWER_WAIT_MS bounds how long the
+// simulated worker watches the issuer's collections before it ends its round unanswered.
+const SPOOL_WAIT_MS = 8000;
+const NO_ANSWER_WAIT_MS = 8000;
+async function waitFor(file, ms = SPOOL_WAIT_MS) {
+  for (const until = performance.now() + ms; ;) { try { return await fs.readFile(file); } catch (e) { if (e.code !== 'ENOENT' || performance.now() > until) throw e; } await new Promise(r => setTimeout(r, 50)); }
 }
 const exists = file => fs.lstat(file).then(() => true, () => false);
+// The simulated Linux side runs beside runIssuer and is awaited after it. Its failure aborts runIssuer (pass
+// `signal: linux.signal`), so the test reports it at once instead of waiting out the issue, and it is marked handled,
+// so it is reported once, by that await, and not as an unhandled rejection first.
+const linuxSide = run => { const ac = new AbortController(), p = run(); p.catch(() => ac.abort()); return Object.assign(p, { signal: ac.signal }); };
 
 test('collectRefs: at most three complete collections (waits 1 and 2 s), each only while it fits before the deadline; a refusal is never collected again', WINDOWS, async t => {
   assert.deepEqual([[...REFS_RETRY_WAITS_MS], REFS_COLLECTION_MS], [[1000, 2000], 30_000]);
@@ -178,26 +185,28 @@ test('issuer (gitleaks): before the issue a transient refs failure is collected 
   }
   // transient once, then complete: issued with the complete snapshot of the second collection
   const f = issuerFixture(t), root = await spool(t), s = scripted(['github_transport_unconfirmed', 'ok']), w = [];
-  const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    assert.deepEqual(issue.remoteRefs, s.calls[1]); await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();
+  const linux = linuxSide(async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    assert.deepEqual(issue.remoteRefs, s.calls[1]); await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); });
   const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box: await createFixtureMailbox(root, 'windows'),
-    sleep: backoffSleep(w), stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
+    sleep: backoffSleep(w), signal: linux.signal, stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
   await linux;
   assert.deepEqual([r.status, r.reason, r.sideEffects, s.calls.length, w], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]]);
 });
 
 test('issuer (gitleaks): a slow refs collection (35 s, then retried) does not leave the admission stale at the issue (review M2)', WINDOWS, async t => {
-  const realNow = Date.now;
+  const realNow = Date.now, start = realNow();
   let skew = 0;
   Date.now = () => realNow() + skew;
   t.after(() => { Date.now = realNow; });
   const f = issuerFixture(t), root = await spool(t), w = [], calls = [];
   // the first collection takes 35 s and fails transiently (its own window ran out); the second is complete at once
   const collect = async () => { calls.push(calls.length); if (calls.length === 1) { skew += 35_000; throw coded('REFS_WINDOW_EXPIRED'); } return refsSnapshot(); };
-  const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();
+  const linux = linuxSide(async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    // the issuer saw the moved clock: its issue is from after the slow collection
+    assert.ok(Date.parse(issue.issuedAt) >= start + 35_000, issue.issuedAt);
+    await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); });
   const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect, box: await createFixtureMailbox(root, 'windows'),
-    sleep: backoffSleep(w), stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 120_000 });
+    sleep: backoffSleep(w), signal: linux.signal, stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 120_000 });
   await linux;
   // issued (the Linux side then ended it cleanly), not BLOCKED on a stale admission before the issue
   assert.deepEqual([r.status, r.reason, calls.length, w], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 2, [1000]]);
@@ -211,22 +220,22 @@ test('issuer (gitleaks): a remote-refs callback retries a transient failure and 
     [['REFS_HTTP_503', 'REFS_TRANSPORT_UNCONFIRMED', 'REFS_HTTP_429', 'ok'], false, 'BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, [1000, 2000]],
     [['REFS_PAGE_SHAPE_UNKNOWN', 'ok'], false, 'UNCERTAIN', 'REMOTE_REFS_REFUSED', 1, []]]) {
     const f = issuerFixture(t), root = await spool(t), s = scripted(['ok', ...plan]), w = [];
-    const linux = (async () => {
+    const linux = linuxSide(async () => {
       const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
       const challenge = makeChallenge(issue, 'remote-refs', 1);
       await put(root, 'challenge-01', encode(challenge));
       if (!answered) {
         // the worker gets no answer within its round and ends with its clean blocked record (simulated at once)
-        for (const end = Date.now() + 8000; s.calls.length < 1 + plan.length - 1 && Date.now() < end;) await new Promise(r => setTimeout(r, 20));
+        for (const end = performance.now() + NO_ANSWER_WAIT_MS; s.calls.length < 1 + plan.length - 1 && performance.now() < end;) await new Promise(r => setTimeout(r, 20));
         if (status === 'BLOCKED') await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
         return;
       }
       const response = validateResponse(issue, challenge, decode(await waitFor(path.join(root, 'outgoing', 'response-01.json'))));
       assert.deepEqual(response.remoteRefs, s.calls.at(-1), 'the answer is the complete collection after the retry');
       await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE')));
-    })();
+    });
     const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box: await createFixtureMailbox(root, 'windows'),
-      sleep: backoffSleep(w), stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
+      sleep: backoffSleep(w), signal: linux.signal, stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
     await linux;
     assert.deepEqual([r.status, r.reason, r.sideEffects, w], [status, reason, sideEffects, waits], plan.join());
     assert.equal(await exists(path.join(root, 'outgoing', 'response-01.json')), answered, plan.join());

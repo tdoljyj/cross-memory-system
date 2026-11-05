@@ -14,13 +14,15 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': 'a604c77c92aabcf2abe1919c2930c34bb6d82633cba84995e4156c033c70bbe7',
+  'scripts/ci/reviewed_gitleaks.py': 'e7748d751a223403bcf023dd0d8e45813a2c6b07a416d97dc902d924b85fd4e9',
   '.gitleaks.toml': '55d9299006ddacf2c48cd171edc87b6f00e0e002d43fa0c36e692f7662f01a06',
-  'scripts/ci/reviewed_gitleaks_historical.py': 'ed2a198650173a2d5f469e2094e02ce3c6301421b2186460c212281a0d2a8cd6',
+  'scripts/ci/reviewed_gitleaks_historical.py': '7656040557f4dbc7f04c1439eb99ef45021610ca7698fe2f6eb186a625141595',
 });
 // This active Source pins the 733-record proposed reviewed set (old730 byte-identical +2 exact historical JSON metadata subjects
 // +1 exact d94cd486 twin of the first of them, Owner Decision 98fec682); the
-// hosted gitleaks.yml checks the same config/helper/commit-set/ignore digests, and its successor row is
+// hosted gitleaks.yml is meant to check the same config/helper/commit-set/ignore digests, but until it is re-registered
+// it still pins the previous 732 set (registering a new gitleaks.yml Source changes the gated-proof catalog and so
+// adds a finding of its own at the registering commit; Clued task 3961ec52). Its successor row is
 // re-frozen from the real commit that carries those workflow bytes (repin-trusted-workflows.mjs). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
 // never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
@@ -55,12 +57,6 @@ const HASH = /^[a-f0-9]{64}$/;
 const completedSelfTests = new WeakMap();
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (value, code) => { if (!value) fail(code); };
-// Reviewed commits reachable only from a GitHub branch until it is merged (Decision 98fec682): the code stays stable, the message names the branch.
-const BRANCH_ONLY_REVIEWED = Object.freeze({ d94cd486e29a7362888fc32cd807ceb38890acb6: 'claude/gitleaks-midgen-reviewed-hold (PR #991)' });
-// Pure: the message for a set of missing reviewed commits; the branch hint only for commits that are really in that set.
-export const notInStoreMessage = missing => ['REVIEWED_COMMIT_NOT_IN_STORE'].concat(Object.entries(BRANCH_ONLY_REVIEWED)
-  .filter(([sha]) => missing.includes(sha)).map(([sha, branch]) => `${sha.slice(0, 8)} lives only on branch ${branch} until it is merged: do not delete it`)).join(': ');
-const notInStore = missing => { throw Object.assign(new Error(notInStoreMessage(missing)), { code: 'REVIEWED_COMMIT_NOT_IN_STORE' }); };
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const relative = value => typeof value === 'string' && !/[\\:\x00-\x20\x7f]/.test(value) && !value.startsWith('/')
   && value.split('/').every(part => part && part !== '.' && part !== '..');
@@ -225,15 +221,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   for (const sha of [job.headSha, job.baseSha]) check((await processGit(git, dotgit, ['cat-file', '-t', sha], { alternate, maxBytes: 4096 })).text.trim() === 'commit', 'HEAD_BASE_COMMIT_MISSING');
   const reviewedPresent = async withAlternate => (await processGit(git, dotgit, ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
     { stdin: reviewedInput, alternate: withAlternate, maxBytes: 65536 })).text.trim() === reviewedTypes;
-  if (!await reviewedPresent(alternate)) {
-    // Which commits are missing: ask once per commit (the pinned set is small); a failed probe counts as missing.
-    const missing = [];
-    for (const sha of reviewedCommits) {
-      const probe = await processGit(git, dotgit, ['cat-file', '-t', sha], { alternate, maxBytes: 4096 }).catch(() => null);
-      if (probe?.text.trim() !== 'commit') missing.push(sha);
-    }
-    notInStore(missing);
-  }
+  check(await reviewedPresent(alternate), 'REVIEWED_COMMIT_NOT_IN_STORE');
   for (const ref of refs) await processGit(git, dotgit, ['check-ref-format', ref.name], { alternate, maxBytes: 4096 });
   const revisions = tips.join('\n') + '\n';
   const objects = (await processGit(git, dotgit, ['rev-list', '--objects', '--no-object-names', '--stdin'], { stdin: revisions, alternate, maxBytes: 128 * 1024 * 1024 })).text.trim().split('\n').filter(Boolean).sort();

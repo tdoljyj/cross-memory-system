@@ -15,7 +15,7 @@ import { attempt2Decision } from '../src/attempts.mjs';
 import { mayHavePublished } from '../src/executed-heads.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes, withTimeout } from './helpers.mjs';
 
 // /proc/buddyinfo fixtures of test_host_tuning.py (memguard's own): 0 blocks of order >= 7 in LOW, thousands in HIGH.
 const LOW_BUDDY = 'Node 0, zone    DMA32   5131   2227    703    424    335    263    210      0      0      0      0\n'
@@ -200,12 +200,18 @@ test('A: an Owner abort while the gate waits ends the wait: OWNER_ABORT_REQUESTE
 test('A: an Owner abort asked while the gate sleeps wakes it at once (requestStop), not a poll later', async t => {
   const f = await gateEngine(t, [LOW]);
   let slept = 0;
-  f.engine.sleep = () => { slept += 1; return new Promise(() => {}); }; // a sleep that would last for ever
+  let entered;
+  const sleeping = new Promise(resolve => { entered = resolve; });
+  f.engine.sleep = () => { slept += 1; entered(); return new Promise(() => {}); }; // a sleep that would last for ever
   const running = f.engine.runStage(f.batch, stages[1], plain);
-  for (let i = 0; i < 200 && !f.engine.gateWake; i++) await new Promise(resolve => setImmediate(resolve));
+  // Wait for the gate to actually be asleep, not for a count of event-loop turns: before its first sleep the stage does real file I/O.
+  // A stage that ends before it sleeps fails here with its own code, not after the timeout (a stage that throws before it sleeps fails here with its own error).
+  const ended = running.then(result => ({ ended: result }));
+  const first = await withTimeout(Promise.race([sleeping.then(() => null), ended]), 'the gate to go to sleep');
+  assert.equal(first, null, `the stage ended before the gate slept: ${first?.ended?.code}`);
   assert.equal(typeof f.engine.gateWake, 'function', 'the gate sleeps after its first low reading');
   await f.engine.requestStop(f.batch, 2);
-  const r = await Promise.race([running, new Promise(resolve => setTimeout(() => resolve('STILL_SLEEPING'), 3000))]);
+  const r = await withTimeout(running, 'the sleeping gate to wake at once (requestStop), not a poll later', 3000);
   assert.deepEqual([r.code, slept, f.reads(), f.invoked, f.engine.gateWake], ['OWNER_ABORT_REQUESTED', 1, 1, [], null]);
   // a wake with nobody sleeping is nothing
   const g = await gateEngine(t, [LOW]);

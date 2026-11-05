@@ -125,6 +125,27 @@ export function fakeCompanion(script = {}, clock = () => Date.now()) {
 // sleep: the executor's wait between abort polls and quiescence re-checks; a turn of the event loop in tests.
 export const fastSleep = () => new Promise(resolve => setImmediate(resolve));
 
+// A wait for a state that real I/O brings about must not be a count of event-loop turns: how many turns the I/O takes depends on the
+// machine's load. Wait on the state itself and bound the wait by wall-clock time (withTimeout, waitFor below), so a miss fails with
+// a message that names what was waited for.
+const WAIT_MS = 10_000;
+// withTimeout: the promise's value, or an error naming `what` once `ms` have passed (the timer never outlives the call).
+export async function withTimeout(promise, what, ms = WAIT_MS) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms waiting for ${what}`)), ms); });
+  try { return await Promise.race([promise, late]); } finally { clearTimeout(timer); }
+}
+// waitFor: polls `read` (sync or async, itself expected to return) about every millisecond until it returns something truthy, which is the result.
+export async function waitFor(read, what, ms = WAIT_MS) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = await read();
+    if (value) return value;
+    if (Date.now() >= deadline) throw new Error(`timed out after ${ms} ms waiting for ${what}`);
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+}
+
 // backfillManifest: the install's carried-state manifest (install\backfill-manifest.json); null = none carried (an empty
 // list of sources), false = no manifest at all. status: a status board (status.mjs), or none.
 export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z'), sleep = fastSleep,

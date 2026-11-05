@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "53",
+      "version": "54",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "3e70535d7dba877afd399c4f571d9690086d61ee2cd1498a2937de5f9e44c982",
+      "content_sha256": "f81a38bd517ec0164bf64e6a39f8ef24712d091e0c96e757b0d18e59194ec9d4",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -56,15 +56,15 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.work-handover-native-admission-v1.mjs"
+        "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs"
       ],
-      "content_sha256": "47da4af7eb15b56259503d2e872af4080ff3740bce80dab077d869a31d2bb69c",
+      "content_sha256": "b57c98550aff77a7054981a128e10693117d28276d43ba174d87bcf5f1e78b3a",
       "version_marker": {
-        "file": "clued-runner-job-started.work-handover-native-admission-v1.mjs",
+        "file": "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.9",
+      "version": "1.1.10",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "a36f0d45716e23a3ec5ac750d71ac2b64fb47b180b0e376fdb5325fea927fe64",
+      "content_sha256": "055d69ec66bf698d676a07cb5ff114d793e1a81081685030fae64b7ff3a1e8ba",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -131,13 +131,13 @@
     {
       "id": "hook.settings",
       "kind": "hook",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Claude Code hook registration (.claude/settings.json).",
       "root": ".claude",
       "files": [
         "settings.json"
       ],
-      "content_sha256": "0dc40be75363da599b8996202efd58733214546f481580f57e71350a3b10b5fe"
+      "content_sha256": "c0d1e8e8801714524b4359974d64817caade55d6e0eb09e8e35a86ef48aed1e9"
     },
     {
       "id": "script.runner-handover-qualifier",
@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.3",
+      "version": "1.1.6",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "f5669650c28c64b218f45147e74f43cc8dd7f71e1e1f2a604f3c214e36bbb120"
+      "content_sha256": "39264fb77107080013a2b6281c184aafaa18de76309d262809935a05c3607bbd"
     },
     {
       "id": "script.resource-maintenance",
@@ -578,7 +578,7 @@
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -590,7 +590,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2a72aa9b01a93d926767777739c5ad0a6f80951f5f113ade248e10660e98c82f"
+      "content_sha256": "c3fb56890dbb8b446ab1abdb9461db107429b46ca80af97c327f92fbd2f7d57e"
     },
     {
       "id": "script.source-only-workflow",

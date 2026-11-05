@@ -93,13 +93,15 @@ test('five original workflow blocks preserve exact accepted successors and added
   // history object, and no arbitrary future choice or hook is normalized away.
   const acceptedAdditions={
     'clued-work-admission-dispatch.yml':{anchor:'          - information-flow-e2e.yml\n',lines:[
-      '          - clued-handover-external-qualification.yml','          - clued-handover-disposable-idle.yml']},
-    'clued-merge-slot-ci.yml':{anchor:'      - public-mcp-protocol\n',lines:[
+      '          - clued-handover-external-qualification.yml','          - clued-handover-disposable-idle.yml',
+      '          - clued-standard-runner-actor-qualification.yml']},
+    'clued-merge-slot-ci.yml':[{anchor:'      - clued-components\n',lines:[
+      '      - clued-required-tests','      - runner-budget-policy']},{anchor:'      - public-mcp-protocol\n',lines:[
       '      - Clued handover hook qualification / company-linux-01','      - Clued handover hook qualification / company-linux-02',
       '      - Clued handover hook qualification / company-linux-03','      - Clued handover hook qualification / company-linux-04',
       '      - Clued handover hook qualification / home-linux-01','      - Clued handover hook qualification / company-win-01',
       '      - Clued handover hook qualification / home-win-01','      - Clued disposable external handover qualification',
-      '      - Clued disposable cancellation fixture']},
+      '      - Clued disposable cancellation fixture']}],
   };
   for(const name of ['clued-work-admission.yml','clued-work-admission-reverify.yml','clued-work-admission-dispatch.yml','clued-merge-executor.yml','clued-merge-slot-ci.yml']){
     const old=execFileSync('git',['show',ORIGINAL_WORKFLOW_BASE+':.github/workflows/'+name],{cwd:repo,encoding:'utf8'}),next=fs.readFileSync(path.join(stage,'.github/workflows',name),'utf8').replace(/\r\n/g,'\n');
@@ -120,17 +122,12 @@ test('five original workflow blocks preserve exact accepted successors and added
       const lines=ordinary.split('\n');assert.equal(lines.filter(line=>line===current).length,1,name+': exact reviewed display-name change');
       ordinary=lines.map(line=>line===current?previous:line).join('\n');
     }
-    // Current exact registered successors have bounded trigger-only deltas.
-    // Validate those complete Sources before comparing the older artifact
-    // insertion witness; arbitrary trigger/route changes cannot be normalized.
+    // Current exact registered successors: validate those complete Sources. Their bounded trigger-only deltas are the
+    // accepted additions below (main's list carries them since the merge of main 4eb9064b), so they are not removed here too.
     if(['clued-work-admission-dispatch.yml','clued-merge-slot-ci.yml'].includes(name)){
       const catalogue=JSON.parse(fs.readFileSync(path.join(stage,CONTROL_WORKFLOW_SOURCE_PATH),'utf8'));
       const exact=registeredControlWorkflowSource(catalogue,'.github/workflows/'+name,next);
       assert.equal(exact.passed,true,name+': current exact registered Source');
-      const lines=name==='clued-work-admission-dispatch.yml'?[
-        '          - clued-standard-runner-actor-qualification.yml\n'
-      ]:['      - runner-budget-policy\n','      - clued-required-tests\n'];
-      for(const line of lines){assert.equal(ordinary.split(line).length-1,1);ordinary=ordinary.replace(line,'');}
     }
     // Retirement228 removes exactly one completed retired consumer. Restore
     // only that line for this historical 59522b comparison; current Source
@@ -142,8 +139,7 @@ test('five original workflow blocks preserve exact accepted successors and added
       assert.equal(ordinary.split(anchor).length-1,1);
       ordinary=ordinary.replace(anchor,removed+anchor);
     }
-    const additions=acceptedAdditions[name];
-    if(additions){
+    for(const additions of [].concat(acceptedAdditions[name]??[])){
       const exact=additions.anchor+additions.lines.join('\n')+'\n';
       assert.equal(ordinary.split(exact).length-1,1,name+': exact accepted trigger additions appear once');
       ordinary=ordinary.replace(exact,additions.anchor);

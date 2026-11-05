@@ -6,10 +6,8 @@ import subprocess
 
 H = 'cc353e29a32b991696df95d5fc3f9b9d107e8d1c'
 # Owner Decision 98fec682: the one exact, byte-identical twin of the cc353e29 gitleaks.yml line at the
-# registration commit d94cd486 (PR #991 branch). Nothing else at that commit is reviewed here.
+# registration commit d94cd486 (merged to main by PR #991). Nothing else at that commit is reviewed here.
 H2 = 'd94cd486e29a7362888fc32cd807ceb38890acb6'
-# Reviewed commits that are reachable only from a GitHub branch (not from main) until that branch is merged.
-BRANCH_ONLY = {H2: 'claude/gitleaks-midgen-reviewed-hold'}
 SOURCE_COMMIT = '956078fcec98844ab9be05e857fe4f53b3372fc4'
 CATALOG = 'scripts/ci/clued-gated-proof-profiles.json'
 ROLES = 'scripts/ci/clued-gated-proof-role-specs.json'

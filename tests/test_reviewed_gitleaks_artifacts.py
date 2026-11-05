@@ -763,12 +763,13 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
     """Owner Decision 98fec682: one appended fingerprint, the d94cd486 twin of the cc353e29 gitleaks.yml line."""
     D94 = 'd94cd486e29a7362888fc32cd807ceb38890acb6'
     FINGERPRINT = D94 + ':scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829'
-    GEN8_COMMIT = '2640dce9'
+    # The last main commit with the prior 732-record reviewed set (full id: reachable from main, never an unpublished local commit).
+    PRIOR_732_COMMIT = '94d70bc1654607160416daba60685f9e8bd4fca3'
 
     @classmethod
     def setUpClass(cls):
         cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
-        cls.old_config = reviewed.run(['git', 'cat-file', 'blob', cls.GEN8_COMMIT + ':.gitleaks.toml'], cwd=ROOT).decode()
+        cls.old_config = reviewed.run(['git', 'cat-file', 'blob', cls.PRIOR_732_COMMIT + ':.gitleaks.toml'], cwd=ROOT).decode()
         cls.policy = reviewed._candidate_policy
         cls.data = cls.policy.load(ROOT)
 
@@ -834,13 +835,15 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
                 self.policy.verify(fingerprint, self.data)
         self.assertEqual(self.policy.SPECS_D94[0]['line_sha256'], self.policy.SPECS[0]['line_sha256'])
 
-    def test_a_missing_branch_only_commit_names_its_branch(self):
-        records = reviewed.parse_records(self.config)
-        with tempfile.TemporaryDirectory(prefix='clued-empty-store-') as empty:
-            reviewed.run(['git', 'init', '--quiet'], cwd=Path(empty))
-            with self.assertRaisesRegex(ValueError, 'd94cd486 \\(branch claude/gitleaks-midgen-reviewed-hold\\)'):
-                reviewed._ensure_reviewed_commits(Path(empty), records, allow_fetch=False)
-        self.assertEqual(self.policy.BRANCH_ONLY, {self.D94: 'claude/gitleaks-midgen-reviewed-hold'})
+    def test_the_prior_732_bytes_are_enforced_even_when_the_record_set_is_unchanged(self):
+        rows = self.rows()
+        swapped = self.config.replace(rows[730] + chr(10) + rows[731], rows[731] + chr(10) + rows[730], 1)
+        keys = json.loads(rows[731][len(reviewed.PREFIX):])
+        reordered = self.config.replace(rows[731], reviewed.PREFIX + json.dumps({'kinds': keys['kinds'], 'fingerprint': keys['fingerprint']}, separators=(',', ':')), 1)
+        for changed in (swapped, reordered):
+            self.assertNotEqual(changed, self.config)
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(changed)
 
     def test_changed_catalog_bytes_or_line_are_rejected(self):
         for mutate in [lambda d: d.update(catalog=d['catalog'] + b' '),

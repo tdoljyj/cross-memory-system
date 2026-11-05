@@ -10,7 +10,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import DefaultEmbeddedPostgres from 'embedded-postgres';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
-import {findGatewayCloseoutMigration,assertGatewayCloseoutBoundary,snapshotCallerCatalog} from './worker-gateway-caller-fixture.mjs';
+import {findGatewayCloseoutMigration,assertGatewayCloseoutBoundary,snapshotCallerCatalog, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 const runtime=createRequire(process.env.CLUED_POSTGRES_TEST_RUNTIME || import.meta.url);
 const EmbeddedPostgres=process.env.CLUED_POSTGRES_TEST_RUNTIME
   ?(await import(pathToFileURL(runtime.resolve('embedded-postgres')))).default:DefaultEmbeddedPostgres;
@@ -49,7 +49,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
     const closeout=await findGatewayCloseoutMigration(cloud);
     await assertGatewayCloseoutBoundary(db);
     const callerCatalog=await snapshotCallerCatalog(db);
-    await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',closeout),'utf8'));
+    await replayGatewayCloseout(db, await fs.readFile(path.join(cloud,'supabase/migrations',closeout),'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'formal G6 replay preserves Native V1/V2 definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(db);
     await allowTestIssuerCredentials(db);

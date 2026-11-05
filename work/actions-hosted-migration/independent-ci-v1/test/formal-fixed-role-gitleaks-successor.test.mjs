@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { batchJobsV2, subjectOfV2 } from '../src/job-v2.mjs';
-import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, notInStoreMessage, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
 import { validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { observationFacts } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -130,14 +130,5 @@ test('the self-test git shim admits exactly the cc353e29 and d94cd486 one-commit
   for (const args of [diff(`${d94}^`, cc353), diff(`${cc353}^`, d94), diff(`${d94}^`, '0'.repeat(40)), diff(`${'0'.repeat(40)}^`, '0'.repeat(40)),
     [...diff(`${d94}^`, d94), '--stat'], ['diff', `${d94}^`, d94], ['log', d94], ['show', d94], ['fetch', 'origin', d94]]) {
     assert.throws(() => safeGitArguments(args, c), { code: 'SELF_TEST_GIT_COMMAND_REFUSED' });
-  }
-});
-
-test('the missing-commit message names the branch only when d94cd486 is among the missing commits (Decision 98fec682)', () => {
-  const d94 = 'd94cd486e29a7362888fc32cd807ceb38890acb6', other = 'cc353e29a32b991696df95d5fc3f9b9d107e8d1c';
-  assert.equal(notInStoreMessage([other]), 'REVIEWED_COMMIT_NOT_IN_STORE');
-  assert.equal(notInStoreMessage([]), 'REVIEWED_COMMIT_NOT_IN_STORE');
-  for (const missing of [[d94], [other, d94]]) {
-    assert.match(notInStoreMessage(missing), /^REVIEWED_COMMIT_NOT_IN_STORE: d94cd486 lives only on branch claude\/gitleaks-midgen-reviewed-hold \(PR #991\) until it is merged: do not delete it$/);
   }
 });

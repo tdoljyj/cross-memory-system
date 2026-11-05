@@ -78,8 +78,28 @@
 //                                  separately for a re-run's admission-gate
 //                                  job (480 each). A heavy job of a re-run of a
 //                                  pull request that changes a workflow can
-//                                  wait for both: up to twice this.
+//                                  wait for both: up to twice this, plus at
+//                                  most READ_ALLOWANCE_MS of reads.
 // It needs Node 18 or newer (the runner bundles one under externals/).
+//
+// Transient reads (work-handover-native-admission-retry-v1, component 1.0.2;
+// Task 5cee3629, resident CI DESIGN 53.7): a network error, a reply cut off
+// while its body is read, an attempt that runs past its own time bound
+// (READ_ATTEMPT_MS; 10 s for the execution_current observation), or a
+// 500/502/503/504 answer (GitHub's or the Clued RPC's) is tried again, at most
+// READ_ATTEMPTS times per call with READ_RETRY_DELAYS_MS between. Only reads
+// are tried again: every GET, and the two POSTs their callers mark as reads
+// (the installation-token mint: a new token is harmless; the read-only
+// execution_current observation). Any other answer (401, 403, 404, 429, a
+// malformed body) is final at once, as before. While the hook waits for the
+// admission run, the Native kooyumi-work-admission check or a re-run's
+// admission-gate job, a poll that still fails transiently is "not settled
+// yet", never a refusal, until the wait ends; then the last failure refuses.
+// Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS), however long
+// its reads take, and all reads of one hook run end within twice that plus
+// READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
+// read, never at a time taken before the retries. Fail closed is unchanged:
+// nothing is admitted on a failure.
 
 import { createSign,createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -87,8 +107,69 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-native-admission-v1";
-export const COMPONENT_VERSION = "1.0.1";
+export const HOOK_VERSION = "work-handover-native-admission-retry-v1";
+export const COMPONENT_VERSION = "1.0.2";
+
+// Transient reads (see the header).
+export const READ_ATTEMPTS = 3;
+export const READ_RETRY_DELAYS_MS = Object.freeze([2_000, 5_000]);
+export const READ_ATTEMPT_MS = 30_000;
+export const OBSERVATION_ATTEMPT_MS = 10_000;
+export const READ_ALLOWANCE_MS = 120_000;
+const TRANSIENT_STATUS = new Set([500, 502, 503, 504]);
+const RETRYING = Symbol("clued-runner-hook-retrying-fetch");
+const transient = (error) => Boolean(error && error.transient === true);
+const markTransient = (failure) => {
+  const error = failure instanceof Error ? failure : new Error(String(failure));
+  error.transient = true;
+  return error;
+};
+// CLUED_RUNNER_HOOK_WAIT_SECONDS (480 when unset or not a whole number of seconds).
+export function waitLimitSeconds(env) {
+  const seconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : 480;
+}
+// fetchImpl with bounded retries of transient read failures. A request is a read when its method is GET, or when its caller marks it
+// (init.retryRead, a POST that only reads). Each attempt gets its own time bound (init.attemptMs, else READ_ATTEMPT_MS, never past
+// deadlineAt) and reads the whole body inside it, so a reply cut off mid-body is a failed attempt too. A failure left at the end is
+// marked transient (a transient status is returned as it is: github() marks its error). No attempt starts and no retry waits past
+// deadlineAt. Wrapping twice adds nothing. Nothing that is not a read is ever repeated.
+export function retryingFetch(fetchImpl, { sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = () => Date.now(),
+  deadlineAt = () => Infinity, timeoutSignal = (ms) => AbortSignal.timeout(ms) } = {}) {
+  if (fetchImpl[RETRYING]) return fetchImpl;
+  const wrapped = async (url, init = {}) => {
+    const { retryRead = false, attemptMs = READ_ATTEMPT_MS, ...request } = init;
+    if (String(request.method ?? "GET").toUpperCase() !== "GET" && retryRead !== true) return fetchImpl(url, request);
+    let failure = null;
+    for (let attempt = 1; ; attempt += 1) {
+      const left = deadlineAt() - now();
+      if (!(left >= 1)) throw markTransient(failure ?? new Error("the hook's time for reads is used up"));
+      let response = null;
+      failure = null;
+      try {
+        const answer = await fetchImpl(url, { ...request, signal: timeoutSignal(Math.min(attemptMs, left)) });
+        if (TRANSIENT_STATUS.has(answer.status)) {
+          try { await answer.body?.cancel?.(); } catch { /* the failed answer is discarded */ }
+          response = { status: answer.status, ok: false, json: async () => null, text: async () => "" };
+        } else {
+          // A malformed body stays the caller's refusal (json() throws there, once, never transient).
+          const text = await answer.text();
+          return { status: answer.status, ok: answer.status >= 200 && answer.status < 300, json: async () => JSON.parse(text), text: async () => text };
+        }
+      } catch (error) {
+        failure = error;
+      }
+      const delay = READ_RETRY_DELAYS_MS[attempt - 1];
+      if (attempt >= READ_ATTEMPTS || now() + delay >= deadlineAt()) {
+        if (response) return response;
+        throw markTransient(failure);
+      }
+      await sleep(delay);
+    }
+  };
+  wrapped[RETRYING] = true;
+  return wrapped;
+}
 
 // Native fetch otherwise ignores the runner's established proxy settings.
 // Enable Node's own proxy support before any credential or network read,
@@ -122,15 +203,19 @@ export function workflowPathOf(env) {
   return match ? match[1] : null;
 }
 
-async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200 } = {}) {
+async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200, retryRead = false } = {}) {
   const response = await fetchImpl(`https://api.github.com${url}`, {
-    method,
+    method, ...(retryRead ? { retryRead: true } : {}),
     headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "user-agent": "clued-runner-hook",
       "x-github-api-version": "2022-11-28", ...(body ? { "content-type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (allowMissing && response.status === 404) return null;
-  if (response.status !== expect) throw new Error(`GitHub ${url} returned ${response.status}`);
+  if (response.status !== expect) {
+    const error = new Error(`GitHub ${url} returned ${response.status}`);
+    error.transient = TRANSIENT_STATUS.has(response.status);
+    throw error;
+  }
   return response.json();
 }
 
@@ -172,7 +257,7 @@ async function readToken({ env, fetchImpl, readFile, now, repository, checksRead
     const jwt = appJwt(appId, key, Math.floor(now() / 1000));
     const installation = await github(fetchImpl, jwt, `/repos/${repository}/installation`);
     if (!installation || !/^[0-9]{1,20}$/.test(String(installation.id))) throw new Error(`App ${appId} has no installation on ${repository}.`);
-    const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201,
+    const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201, retryRead: true,
       body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read", pull_requests: "read",
         ...(checksRead ? { checks: "read" } : {}) } } });
     if (!minted || typeof minted.token !== "string" || !minted.token) throw new Error(`App ${appId} returned no installation token.`);
@@ -247,7 +332,9 @@ export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
 export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
 const NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
 
-export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha, prNumber, since, observedAt = Date.now()) {
+// observedAt: the time the pages were read (a number), or a clock read after the last page (a function; the hook passes its clock,
+// so a check completed while a read was tried again is judged at the time it was seen, not at a time taken before the retries).
+export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha, prNumber, since, observedAt = Date.now) {
   const checks = [];
   for (let page = 1; page <= 10; page += 1) {
     const body = await github(fetchImpl, token, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${INDEPENDENT_ADMISSION_CHECK}&filter=all&per_page=100&page=${page}`);
@@ -257,6 +344,7 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
     if (checks.length >= body.total_count) break;
     if (page === 10 || body.check_runs.length === 0) throw new Error("Native admission checks are incomplete.");
   }
+  const observed = typeof observedAt === "function" ? observedAt() : observedAt;
   const newest = checks.filter(check => check?.name === INDEPENDENT_ADMISSION_CHECK
     && check.head_sha === headSha && Number(check.app?.id) === INDEPENDENT_ADMISSION_APP_ID)
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
@@ -269,7 +357,7 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
     && named.length > 0 && named.every(number => number === Number(prNumber))
     && Number.isSafeInteger(newest.id) && newest.id > 0
     && Number.isFinite(started) && Number.isFinite(completed) && completed >= started
-    && completed <= observedAt + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
+    && completed <= observed + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
   return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
 }
 
@@ -393,7 +481,7 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
 // Whether a job of attempt `attempt` (2 or later) of this pull request run may
 // start. The workflow-change rule is applied afterwards, as for attempt 1.
 // Every error, and everything that cannot be observed, refuses.
-async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, runId, run, pr, attempt, workflow, limit, sleep }) {
+async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, runId, run, pr, attempt, workflow, limit, sleep, now }) {
   const what = `pull request #${pr.number ?? "(none)"}, run attempt ${attempt}`;
   const refuse = (why) => ({ allow: false, reason: `${what}: ${why}` });
   if (!/^[1-9][0-9]{0,9}$/.test(String(pr.number ?? ""))) return refuse("the event names no pull request number; re-run refused");
@@ -427,13 +515,16 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   // not started or not completed is the API's lag: wait for it, like for the
   // admission run below, and refuse at the end of the wait.
   let seen;
+  // The wait ends by the clock as well as by the count of polls, however long a poll's reads take.
+  const waitUntil = now() + limit * 1000;
   for (let waited = 0; ; waited += 10) {
     try {
       seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
     } catch (error) {
-      return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
+      if (!transient(error) || waited >= limit || now() >= waitUntil) return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
+      seen = { state: "pending" };
     }
-    if (seen.state !== "pending" || waited >= limit) break;
+    if (seen.state !== "pending" || waited >= limit || now() >= waitUntil) break;
     await sleep(10_000);
   }
   if (seen.state === "ok") {
@@ -460,8 +551,14 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
     + `use "Re-run all jobs", not "Re-run failed jobs" or a single job`);
 }
 
-export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
-  now = () => Date.now() }) {
+// The reads of one hook run: one wrapper, its deadline twice the wait plus READ_ALLOWANCE_MS from the run's start.
+function hookReads({ env, fetchImpl, sleep, now, timeoutSignal }) {
+  const deadline = now() + 2 * waitLimitSeconds(env) * 1000 + READ_ALLOWANCE_MS;
+  return retryingFetch(fetchImpl, { sleep, now, deadlineAt: () => deadline, ...(timeoutSignal ? { timeoutSignal } : {}) });
+}
+export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = () => Date.now(), timeoutSignal = null }) {
+  const fetchImpl = hookReads({ env, fetchImpl: rawFetch, sleep, now, timeoutSignal });
   const result = { allow: false, reason: "", event: env.GITHUB_EVENT_NAME ?? "", ref: env.GITHUB_REF ?? "", workflow: null };
   const repository = (env.CLUED_RUNNER_HOOK_REPOSITORY ?? "").trim();
   const defaultBranch = (env.CLUED_RUNNER_HOOK_DEFAULT_BRANCH ?? "").trim() || "main";
@@ -527,8 +624,7 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
       result.reason = `pull request into ${pr.base.ref}, not ${defaultBranch}`;
       return result;
     }
-    const waitSeconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
-    const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
+    const limit = waitLimitSeconds(env);
     // The attempt as the runner and as GitHub see it; both must be readable
     // and the same.
     const runnerAttempt = attemptNumber((env.GITHUB_RUN_ATTEMPT ?? "").trim() || "1");
@@ -541,7 +637,7 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     let rerun = "";
     if (runnerAttempt > 1) {
       const verdict = await rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, runId, run, pr, attempt: runnerAttempt,
-        workflow, limit, sleep });
+        workflow, limit, sleep, now });
       if (!verdict.allow) {
         result.reason = verdict.reason;
         return result;
@@ -565,9 +661,16 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     if (producer.state === "disabled_manually") {
       const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
       let native;
+      const waitUntil = now() + limit * 1000;
       for (let waited = 0; ; waited += 10) {
-        native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now());
-        if (native.settled || waited >= limit) break;
+        try {
+          native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
+        } catch (error) {
+          // Not settled yet while the wait lasts; the last transient failure refuses at its end (fail closed).
+          if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
+          native = { settled: false, check: null, admitted: false };
+        }
+        if (native.settled || waited >= limit || now() >= waitUntil) break;
         await sleep(10_000);
       }
       const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
@@ -579,9 +682,15 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
       return result;
     }
     let found = null;
+    const waitUntil = now() + limit * 1000;
     for (let waited = 0; ; waited += 10) {
-      found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);
-      if ((found && found.status === "completed") || waited >= limit) break;
+      try {
+        found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);
+      } catch (error) {
+        if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
+        found = null;
+      }
+      if ((found && found.status === "completed") || waited >= limit || now() >= waitUntil) break;
       await sleep(10_000);
     }
     result.allow = Boolean(found && found.status === "completed" && found.conclusion === "success");
@@ -600,8 +709,9 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
 // never from a pull request's checkout or environment overrides. The query
 // carries no Binding token, private lease key, or admission App credential.
 export async function decideWithCurrentEpoch(options) {
-  const result = await decide(options);
-  const { env, fetchImpl, readFile = fs.readFileSync, now = () => Date.now() } = options;
+  const { env, readFile = fs.readFileSync, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), timeoutSignal = null } = options;
+  const fetchImpl = hookReads({ env, fetchImpl: options.fetchImpl, sleep, now, timeoutSignal });
+  const result = await decide({ ...options, fetchImpl });
   if (!result.allow || (MAIN_EVENTS.has(env.GITHUB_EVENT_NAME) && env.GITHUB_REF ===
     `refs/heads/${(env.CLUED_RUNNER_HOOK_DEFAULT_BRANCH ?? "").trim() || "main"}`)) return result;
   const repository = env.CLUED_RUNNER_HOOK_REPOSITORY;
@@ -624,7 +734,7 @@ export async function decideWithCurrentEpoch(options) {
       workflow: result.workflow.slice(".github/workflows/".length) };
   }
   const response = await fetchImpl(`${match[1]}/rest/v1/rpc/clued_work_verify_v1`, {
-    method: "POST", signal: AbortSignal.timeout(10000), headers: { apikey: match[2], authorization: `Bearer ${match[2]}`, "content-type": "application/json" },
+    method: "POST", retryRead: true, attemptMs: OBSERVATION_ATTEMPT_MS, headers: { apikey: match[2], authorization: `Bearer ${match[2]}`, "content-type": "application/json" },
     body: JSON.stringify({ p_token_hash: null, p_input: { action: "execution_current", ...target } }),
   });
   if (response.status !== 200) throw new Error(`Clued execution epoch unavailable (${response.status})`);

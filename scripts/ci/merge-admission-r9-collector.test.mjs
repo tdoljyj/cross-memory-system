@@ -665,6 +665,7 @@ if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a
       'scripts/ci/clued-control-workflow-source.mjs','scripts/ci/clued-control-workflow-sources.json',
       'scripts/ci/clued-production-publisher-source.mjs','scripts/ci/clued-production-publisher-sources.json',
       'scripts/ci/clued-publisher-qualification-source.mjs','scripts/ci/clued-publisher-qualification-sources.json',
+      'scripts/ci/clued-standard-runner-actor-source.mjs','scripts/ci/clued-standard-runner-actor-sources.json',
       '.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
     for(const rel of paths){const author=path.join(here,path.basename(rel)),src=fs.existsSync(author)?author:['scripts/ci/merge-admission-r9-collector.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/ci-usage-report.mjs'].includes(rel)?author:
       rel==='scripts/ci/merge-admission-native-population.mjs'?overrides['merge-admission-native-population.mjs']:rel==='scripts/ci/merge-admission-four-sources.mjs'?overrides['merge-admission-four-sources.mjs']:path.join(repo,rel);

@@ -54,6 +54,34 @@ export async function snapshotCallerCatalog(db) {
     where (n.nspname='public' and p.proname like 'clued_%') or n.nspname='clued_private'
       or (n.nspname='auth' and p.proname in ('uid','jwt')) order by 1,2`)).rows;
 }
+// The sealed closeout (20261010161848) refuses any caller privilege outside its
+// own manifest, so replaying it after the full chain fails on the privileges
+// that explicit later successors add on purpose: the two scan-start serving
+// doors for the Worker gateway (20261102151506). These are exactly those
+// privileges; a later successor that adds one names it here.
+export const CLOSEOUT_SUCCESSOR_GRANTS = [
+  ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
+  ['public.clued_ci_scan_start_policy_v1(jsonb)', GATEWAY_ROLE],
+];
+// Replays the sealed closeout SQL unchanged. Where a successor is installed,
+// its own privilege is set aside for the replay and put back afterwards (same
+// grantor, so the ACL text is unchanged); the closeout still checks every
+// other function, role and ACL exactly. Before the successors this is a plain
+// replay.
+export async function replayGatewayCloseout(db, closeoutSql) {
+  const present = [];
+  for (const [signature, role] of CLOSEOUT_SUCCESSOR_GRANTS) {
+    const {rows:[row]} = await db.query(`select to_regprocedure($1) is not null
+      and has_function_privilege($2,to_regprocedure($1),'EXECUTE') granted`, [signature, role]);
+    if (row.granted) present.push([signature, role]);
+  }
+  for (const [signature, role] of present) await db.query(`revoke execute on function ${signature} from ${role}`);
+  try {
+    return await db.query(closeoutSql);
+  } finally {
+    for (const [signature, role] of present) await db.query(`grant execute on function ${signature} to ${role}`);
+  }
+}
 export async function assertGatewayCloseoutBoundary(db) {
   const signatures=async(role,definersOnly)=> (await db.query(`select p.oid::regprocedure::text signature
     from pg_proc p where p.pronamespace='public'::regnamespace

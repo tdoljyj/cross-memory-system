@@ -9,7 +9,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { stopOwnedPostgres } from './model-domain-postgres-lifecycle.fixture.mjs';
 import {DOMAIN_POLICY as P} from '../worker/model-domain-policy.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { GATEWAY_ROLE, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
+import { GATEWAY_ROLE, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Original Task 1502fd80. Real isolated PostgreSQL; no service/production URI.
 // Candidate state is NOT_RUN until this file really executes in admitted CI.
@@ -347,7 +347,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       const before=await snapshotCallerCatalog(admin);
       const closeout=migrationBundle.find(entry=>entry.name===CLOSEOUT_MIGRATION);
       assert.ok(closeout,'the complete migration bundle must include G6');
-      await admin.query(closeout.sql);
+      await replayGatewayCloseout(admin, closeout.sql);
       await assertGatewayCloseoutBoundary(admin);
       assert.deepEqual(await snapshotCallerCatalog(admin),before);
     });
