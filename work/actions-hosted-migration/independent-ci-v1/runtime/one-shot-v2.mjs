@@ -309,6 +309,19 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     if (!active) stop('publication_recovery_unconfirmed');
     active.observedJob = structuredClone(job);
     return baseAuthority.observe(job, claim);
+  },
+  // Generation 13 (resident DESIGN §57.2): what is left of the publication's one observation window (PUBLICATION_OBSERVE_BUDGET_MS,
+  // shared by every observation before and after the write), null before its first observation. The publisher reads it before the
+  // write, so that a write whose confirmation cannot fit is not made (staged-check-publisher-v2.mjs#confirmationFits).
+  windowLeftMs() {
+    const deadline = active?.observation?.deadline;
+    return Number.isFinite(deadline) ? deadline - monotonic() : null;
+  },
+  // How much of that window is used so far (0 before its first observation, which starts it): the publisher measures a boundary as
+  // the difference, its first observation included (review round 3, MINOR 1).
+  windowUsedMs() {
+    const started = active?.observation?.startedAt;
+    return Number.isFinite(started) ? monotonic() - started : 0;
   } };
   const publisher = createStagedCheckPublisherV2({ ...publisherOptions, journal, github, nativeAdmission, authority, clock });
   const requireGuard = condition => { if (!condition) stop('publication_recovery_unconfirmed'); };
@@ -428,7 +441,9 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     } catch { op.unsafe = true; }
     finally { active = null; }
     if (!op.unsafe) return result;
-    return { ...result, status: 'UNCERTAIN', reason: 'publication_recovery_unconfirmed', sideEffects: result?.sideEffects ?? 0,
+    // An UNCERTAIN is never safe to run again: the flag of the result it replaces is dropped (review round 2, MAJOR A).
+    const { safeToRerun: _dropped, ...rest } = result ?? {};
+    return { ...rest, status: 'UNCERTAIN', reason: 'publication_recovery_unconfirmed', sideEffects: result?.sideEffects ?? 0,
       productionAuthorized: false, mayHavePublished: true, ...(method === 'publishHosted' ? { roleMutex: { key: result?.roleMutex?.key ?? null, held: true } } : {}) };
   };
   return Object.freeze({ fixture: publisher.fixture, publish: input => run('publish', input), publishHosted: input => run('publishHosted', input) });

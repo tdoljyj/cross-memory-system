@@ -36,13 +36,28 @@ def load_tool(tree, installed_sha):
     return mod, tool_sha
 
 
+def read_copy(roles_dir, role, name):
+    """One file of root's copy of the installed roles-v3. A copy not made yet (an empty or missing public-six directory: the root
+    export of THIS generation has not run) is a refusal with its code, never a traceback."""
+    path = os.path.join(roles_dir, name)
+    try:
+        return open(path, 'rb').read()
+    except FileNotFoundError:
+        refuse('INSTALLED_ROLES_COPY_MISSING', role=role, file=name, dir=roles_dir)
+    except OSError as e:
+        refuse('INSTALLED_ROLES_COPY_UNREADABLE', role=role, file=name, error=type(e).__name__)
+
+
 def main(argv):
     if len(argv) != 7:
         refuse('USAGE')
     tree, repo, commit, roles_dir, manifest_file, ci_sha, facts_file = argv
     if not re.fullmatch(r'[0-9a-f]{40}', commit) or not re.fullmatch(r'[0-9a-f]{64}', ci_sha):
         refuse('USAGE')
-    facts = json.load(open(facts_file, encoding='utf-8'))
+    try:
+        facts = json.load(open(facts_file, encoding='utf-8'))
+    except (OSError, ValueError):   # missing, unreadable or not JSON: the same refusal as a wrong shape
+        refuse('LINUX_VERSION_FACTS_REFUSED')
     if not isinstance(facts, dict) or facts.get('contract') != FACTS_CONTRACT or not isinstance(facts.get('roles'), dict):
         refuse('LINUX_VERSION_FACTS_REFUSED')
     try:
@@ -76,11 +91,11 @@ def main(argv):
 
     out = {}
     for role in ROLES:
-        pol_bytes = open(os.path.join(roles_dir, role + '.json'), 'rb').read()
+        pol_bytes = read_copy(roles_dir, role, role + '.json')
         want = (facts['roles'].get(role) or {}).get('policySha256')
         if hashlib.sha256(pol_bytes).hexdigest() != want:
             refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role)
-        q_bytes = open(os.path.join(roles_dir, role + '.qualification.json'), 'rb').read()
+        q_bytes = read_copy(roles_dir, role, role + '.qualification.json')
         if hashlib.sha256(q_bytes).hexdigest() != ((facts['roles'].get(role) or {}).get('qualificationSha256')):
             refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role, file='qualification')
         q = json.loads(q_bytes.decode('utf-8'))

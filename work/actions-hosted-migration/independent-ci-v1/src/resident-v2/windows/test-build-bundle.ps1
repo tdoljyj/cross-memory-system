@@ -8,7 +8,7 @@ function Refused-With([scriptblock]$f,[string]$code,[string]$what){$got=$null;tr
 $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$t,[ref]$e);if($e.Count){throw 'BUILD_BUNDLE_PARSE_FAILED'}
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
-  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint',
+  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint','Move-FailedGen2',
   'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update',
   'Seed-Meta-Object','Seed-Meta-Failure-At','Seed-Note-Network-Failure','Seed-After-Network-Failure','Network-Step-Failed')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
@@ -48,6 +48,23 @@ Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILE
 Yes ($null -eq (Branch-Only-Hint 'fetch-all-heads-and-tags' 'GIT_STEP_FAILED' @($d94))) 'no-hint-at-another-stage'
 Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'REMOTE_MAIN_BASE_CHANGED' @($d94))) 'no-hint-for-another-reason'
 Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @())) 'no-hint-for-an-empty-set'
+# Generation 13 (DESIGN 57.3): a gen-2\ without its receipt is renamed to the first free gen-2-failed-<n>\ (at most 3); a complete
+# gen-2\ or none is left alone; a link in its place is refused.
+$mf=Join-Path ([IO.Path]::GetTempPath()) ('mfg2-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($mf)
+try{
+ $Gen1Root=$mf;$Gen2Name='gen-2';$Gen2FailedMax=3;$Gen2Root=Join-Path $mf 'gen-2';$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
+ Yes ($null -eq (Move-FailedGen2)) 'no-gen-2-nothing-moved'
+ foreach($n in 1..3){[void][IO.Directory]::CreateDirectory($Gen2Root);Yes ((Move-FailedGen2) -ceq "gen-2-failed-$n") "failed-gen-2-moved-$n";Yes (-not (Test-Path -LiteralPath $Gen2Root)) "gen-2-gone-$n"}
+ [void][IO.Directory]::CreateDirectory($Gen2Root);Refused-With {Move-FailedGen2} 'REBUNDLE_FAILED_GENERATIONS_EXHAUSTED' 'failed-generations-bounded'
+ [IO.File]::WriteAllText($Gen2Receipt,'{}');Yes ($null -eq (Move-FailedGen2)) 'complete-gen-2-left-alone';Yes (Test-Path -LiteralPath $Gen2Receipt) 'complete-gen-2-kept'
+ # a link (junction) or a file where gen-2\ belongs is refused, never renamed or followed (review round 1, MINOR 5)
+ $lk=Join-Path $mf 'links';[void][IO.Directory]::CreateDirectory($lk);$Gen1Root=$lk;$Gen2Root=Join-Path $lk 'gen-2';$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
+ $target=Join-Path $mf 'elsewhere';[void][IO.Directory]::CreateDirectory($target)
+ [void](New-Item -ItemType Junction -Path $Gen2Root -Target $target)
+ Refused-With {Move-FailedGen2} 'FIXED_REAL_BUNDLE_ROOT_REQUIRED' 'junction-gen-2-refused';Yes ((Test-Path -LiteralPath $Gen2Root) -and -not (Test-Path -LiteralPath (Join-Path $lk 'gen-2-failed-1'))) 'junction-gen-2-left-in-place'
+ [IO.Directory]::Delete($Gen2Root);[IO.File]::WriteAllText($Gen2Root,'x')
+ Refused-With {Move-FailedGen2} 'FIXED_REAL_BUNDLE_ROOT_REQUIRED' 'file-gen-2-refused'
+}finally{[IO.Directory]::Delete($mf,$true)}
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=300');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
@@ -469,6 +486,20 @@ if($git){
    [void][IO.Directory]::CreateDirectory((Join-Path $res ('bundles\'+$nbatch+'\gen-2')))
    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.reason -ceq 'BUNDLE_GENERATION_INCOMPLETE') ('gen-2-incomplete:'+$out)
+   # Generation 13 (DESIGN 57.3, Task 3e2e12d7): that gen-2\ is what a second generation cut off by the network leaves. The next -Rebundle
+   # moves it to gen-2-failed-1\ and builds the second generation; -CheckRefs then reads the complete one.
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.generation -eq 2 -and $v.setAside -ceq 'gen-2-failed-1') ('rebundle-after-failed-gen-2:'+$out)
+   Yes ((Test-Path -LiteralPath (Join-Path $res ('bundles\'+$nbatch+'\gen-2-failed-1'))) -and (Test-Path -LiteralPath (Join-Path $res ('bundles\'+$nbatch+'\gen-2\all-refs.receipt.json')))) 'failed-gen-2-moved-aside'
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'REMOTE_REFS_UNCHANGED') ('check-refs-after-moved-aside:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.reason -ceq 'FIXED_TARGET_ALREADY_EXISTS' -and $v.status -ceq 'REFUSED_BEFORE_WRITE' -and $null -eq $v.setAside -and $v.automaticRetryAllowed -eq $false) ('complete-gen-2-never-moved:'+$out)
+   # Generation 13 (DESIGN 57.6, Task 3edfc598): an installed Source commit GitHub does not have (an unpushed branch) is named, not a git step
+   $ubatch='0123456789abcdef-222222222222';$uob=Join-Path $res ('outbox\'+$ubatch);[void][IO.Directory]::CreateDirectory($uob)
+   $ud=[ordered]@{};foreach($k in $descriptor.Keys){$ud[$k]=$descriptor[$k]};$ud['batchId']=$ubatch;$ud['sourceCommit']='c'*40;[IO.File]::WriteAllText((Join-Path $uob 'descriptor.json'),($ud|ConvertTo-Json -Compress))
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $ubatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.reason -ceq 'SOURCE_COMMIT_NOT_ON_REMOTE') ('source-commit-not-on-remote:'+$out)
    # step 3c-2: a train front batch's whole run carries S in the bundle and the receipt
    $fbatch='0123456789abcdef-abcdef012345';$fob=Join-Path $res ('outbox\'+$fbatch);[void][IO.Directory]::CreateDirectory($fob)
    $fd=[ordered]@{contract='clued.independent-ci.resident-batch-descriptor/3';batchId=$fbatch;repo='tdoljyj/cross-memory-system';headSha=$c2;testSha=$cS;baseSha=$c1;sourceCommit=$c1;gitleaksTomlSha256=(Hash-Text $toml)}
@@ -506,10 +537,20 @@ if($git){
    }
    $down=Join-Path $tmp 'build-bundle-down.ps1';[IO.File]::WriteAllText($down,$text)
    $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $dbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
-   Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_PRESERVED_NO_RETRY' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.stage -ceq 'fetch-all-heads-and-tags' -and $v.git.label -ceq 'fetch' -and $v.git.exitCode -ne 0) ('network-down-refusal:'+$out)
+   Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_PRESERVED_NO_RETRY' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.stage -ceq 'fetch-all-heads-and-tags' -and $v.git.label -ceq 'fetch' -and $v.git.exitCode -ne 0 -and $v.automaticRetryAllowed -eq $false) ('network-down-refusal:'+$out)
    Yes ($v.storeAttempts -eq 3 -and @($v.failedAttempts).Count -eq 2 -and $v.failedAttempts[0].attempt -eq 1 -and $v.failedAttempts[0].reason -ceq 'GIT_STEP_FAILED' -and $v.failedAttempts[0].git.label -ceq 'fetch' -and $v.failedAttempts[0].stage -ceq 'fetch-all-heads-and-tags' -and $v.failedAttempts[1].attempt -eq 2 -and $v.failedAttempts[1].git.label -ceq 'fetch') ('network-down-attempts:'+$out)
    Yes ($v.seed.used -eq $true -and $v.seed.networkFailureNoted -eq $true -and $null -eq $v.hint -and $out -cnotmatch '127\.0\.0\.1') ('network-down-seeded-retry-noted-no-url:'+$out)
    $dm=[IO.File]::ReadAllText((Join-Path $res 'bundles\_seed\seed-meta.json'))|ConvertFrom-Json;Yes ($null -ne $dm.lastNetworkFailureAtUnix -and $dm.lastFullFetchSeconds -eq 500) 'network-down-meta'
+   # Generation 13 (DESIGN 57.3; review round 2): a second generation cut off by the line leaves partial state the next -Rebundle sets
+   # aside, and the resident may run it again (automaticRetryAllowed, only for the whole fetch or the ls-remote); that next run says
+   # what it set aside.
+   $rbatch='0123456789abcdef-a00000000013';$rob=Join-Path $res ('outbox\'+$rbatch);[void][IO.Directory]::CreateDirectory($rob)
+   $rd=[ordered]@{};foreach($k in $descriptor.Keys){$rd[$k]=$descriptor[$k]};$rd['batchId']=$rbatch;[IO.File]::WriteAllText((Join-Path $rob 'descriptor.json'),($rd|ConvertTo-Json -Compress))
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $rbatch)-join '';Yes ($LASTEXITCODE -eq 0) ('gen-1-before-line-down:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $rbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.git.label -ceq 'fetch' -and $v.automaticRetryAllowed -eq $true -and $null -eq $v.setAside) ('rebundle-line-down:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $rbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.setAside -ceq 'gen-2-failed-1' -and $v.automaticRetryAllowed -eq $true) ('rebundle-line-down-again-sets-aside:'+$out)
   }
  }finally{if($listener){$listener.Stop()};Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue;Remove-Item Env:\GIT_CONFIG_GLOBAL,Env:\GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue}
 }

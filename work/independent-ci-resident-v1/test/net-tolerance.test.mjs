@@ -84,8 +84,10 @@ test('networkFailure: only the most specific fact says "the line"; a code alone 
   for (const reason of NETWORK_GITHUB_REASONS) assert.equal(networkFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', outcome: { reason } }), true, reason);
   for (const reason of ['github_http_429', 'github_http_501', null]) assert.equal(networkFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', outcome: { reason } }), false, String(reason));
   for (const reason of NETWORK_NATIVE_REASONS) assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason } }), true, reason);
-  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1), ['full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired'],
+  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1, 4), ['full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired'],
     'the pre-write side of the Source reread reasons (withdrawal-text.mjs ADMISSION_REREAD_REASONS without the after-write one)');
+  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(4), ['protected_facts_reobservation_unavailable', 'native_admission_aged_before_write'],
+    'generation 13: the publisher\'s passing pre-write reasons that are the line (DESIGN §57.2)');
   for (const reason of ['full_admission_principal_unknown', 'full_admission_rejected', 'full_admission_claim_changed'])
     assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason } }), false, reason);
   assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason: 'full_admission_unavailable', diagnostic: { transport: true } } }), true);
@@ -516,5 +518,13 @@ test('executor: noteBreakerProbe resets on a failed probe, brings the trial forw
 
 test('the pre-write network reasons are exactly the Source reread reasons that can come before a write', async () => {
   const { ADMISSION_REREAD_REASONS } = await import('../../actions-hosted-migration/independent-ci-v1/src/withdrawal-text.mjs');
-  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1), ADMISSION_REREAD_REASONS.filter(r => r.startsWith('full_admission_')));
+  // generation 13 (DESIGN §57.2): after them, the publisher's three passing pre-write reasons
+  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1, 4), ADMISSION_REREAD_REASONS.filter(r => r.startsWith('full_admission_')));
+});
+
+test('generation 13: a publication that could not use its admission in time before the write is the line; a window too short for it is not (DESIGN §57.2)', () => {
+  for (const reason of ['protected_facts_reobservation_unavailable', 'native_admission_aged_before_write'])
+    assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason } }), true, reason);
+  assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason: 'publication_window_short_before_write' } }), false,
+    'a slow complete admission alone makes it, again and again: the ordinary breaker with its growing back-off');
 });
