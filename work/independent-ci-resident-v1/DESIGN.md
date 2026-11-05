@@ -3977,7 +3977,7 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 以前只在拒绝答复里的 `hint` 恰好等于 §52 那条固定文案时才记一条日志，其余全部丢弃。现在**每一次**没有写出 bundle 的 `build-bundle` / `rebuild-bundle` 都写一条 `bundle-refusal`（本机 `companion-log\relay-<日期>.jsonl`），字段固定，只有代码和计数：`status`、`reason`、`stage`、最后一个 git 步骤（`label`、`exitCode`、`stderrChars`：只是 stderr 的字符数，不是内容）、`storeAttempts`、`failedAttempts`（最多 3 个：序号、原因、阶段、git 步骤、秒数；refs 竞态只记个数，不记 ref 名）、`seed`（`used`、`reason`、`discarded`、`networkFailureNoted`）、runner 自己的事实（退出码、是否超时、进程树、拒绝码）。每个值都过自己的模式（大写代码、小写步骤名、范围内的整数），不符合的记 null；脚本输出里的路径、`created` 目录、`seed.error` 文本、任何自由文本一律不记。没有可解析的答复（超时、崩溃）也记一条，脚本字段全为 null。`hint` 仍只在逐字节等于固定文案时记录。日志失败不影响答复。
 
-companion 对执行器的答复：拒绝的原因是一个 GitHub 步骤（`fetch`、`ls-remote`、`fetch-reviewed`、`fetch-test`，与 `build-bundle.ps1` 的 `$NetworkSteps` 同一清单，测试钉住）在 git 里失败时答 `BUNDLE_NETWORK_UNAVAILABLE`（`bundleNetworkRefusal`），其余一切仍答 `BUNDLE_UNAVAILABLE`。答复合同（`resident-companion-response/4`）不变：只是 `code` 的取值多了一个；第 9 代的 companion 只会答 `BUNDLE_UNAVAILABLE`，执行器当作非网络处理（安全的一侧）。执行器的失败码仍是 `BUNDLE_UNAVAILABLE`。注意：git 的 stderr 不读，所以“已审提交所在分支被删”（§52）在 `fetch-reviewed` 失败时也会被当成网络；它受网络上限约束（53.3），日志里的 `hint` 仍会写出那条固定提示。
+companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remote` 在 git 里失败时答 `BUNDLE_NETWORK_UNAVAILABLE`（`bundleNetworkRefusal`），其余一切仍答 `BUNDLE_UNAVAILABLE`。按 SHA 取的 `fetch-reviewed`、`fetch-test` 不算：同一次尝试里它们总在整仓 `fetch` 和 `ls-remote` 都成功之后才运行（测试钉住这个顺序），失败更可能是 GitHub 已不再提供那个提交（§52 的分支被删、车头的试合并被 GitHub 丢弃），它们仍是确定性的、计普通 cap（脚本自己照旧重试它们）。答复合同（`resident-companion-response/4`）不变：只是 `code` 的取值多了一个；第 9 代的 companion 只会答 `BUNDLE_UNAVAILABLE`，执行器当作非网络处理（安全的一侧）。执行器的失败码仍是 `BUNDLE_UNAVAILABLE`。
 
 ### 53.2 网络失败后的重试走种子（`build-bundle.ps1`）
 
@@ -3998,8 +3998,8 @@ companion 对执行器的答复：拒绝的原因是一个 GitHub 步骤（`fetc
 
 - **网络原因**（`breaker.mjs`）：打开熔断的那组失败全部带 `network`（执行器把 `networkFailure` 的结论随批次结局交给熔断器）时 `cause = 'network'`，试跑等 `trialDelayMs`（10 分钟）。混有任何别的失败就是 null，用原来的 30/60/120。第 9 代带过来的状态（条目没有这个标志）不会被当成网络原因。
 - **同一根因不叠加**：网络原因的熔断，试跑又以网络失败结束时按同一级重开，还是 10 分钟，一次断流不会把冷却叠到 60、120（所以网络只需要一个延迟值，不再是一组）；它的代价由每 head 的网络上限兜住。试跑以别的失败结束则按原规则升一级，原因变为 null，之后照原阶梯。
-- **只读探测提前试跑**：熔断器 open 且原因为网络时，角色探测得到**确定答复**（`held` / `not-held`；`uncertain` 也是探测自身读不到时的结果，算失败）、第 10 段的摘要带回 main 的提交（真的读到了 GitHub；不当班的运行什么也不读，`mainSha` 为 null，算失败）各算一次成功，失败的探测把计数清零；连续 `earlyTrialProbes` 次成功时试跑立即到期（已经到期就保持），并解除环境停止、把网络退避中的行设为立即到期（`queue.mjs#wakeNetworkRows`），回执 `breaker-early-trial`（含 `lifted`、`woke`），持久化到队列文件。half-open、closed 或非网络原因的熔断器不听探测。
-- **Owner 提前放行**：`windows/rearm-resident.ps1 -Request ReleaseBreaker -Reason <文字>`（提权，同 Rearm）在 `owner\` 写 `clued.independent-ci.resident-owner-breaker-release/1`（`by`、`reason`、`requestedAt`、`nonce`；`tools/rearm-tool.mjs request-release-breaker` 写同一形状，`inspect` 输出新增 `breaker`）。服务让 open 的熔断器的试跑立即到期，同样解除环境停止、唤醒网络退避的行，回执 `owner-request`（kind `breaker-release`，含理由、原试跑时间、级别、原因、`lifted`、`woke`）；**不关闭**熔断器，试跑仍要越过失败的位置。熔断器不是 open 时拒绝（`BREAKER_NOT_OPEN`），拒绝回执 `owner-request-refused` 里也记下理由和请求人（`kind`、`by`、`reason`），迟到或重复的请求什么也不改。
+- **只读探测提前试跑**：熔断器 open 且原因为网络时，角色探测得到**确定答复**（`held` / `not-held`；`uncertain` 也是探测自身读不到时的结果，算失败）、第 10 段的摘要带回 main 的提交（真的读到了 GitHub；不当班的运行什么也不读，`mainSha` 为 null，算失败）各算一次成功，失败的探测把计数清零；连续 `earlyTrialProbes` 次成功、**且其中至少一次是读到 GitHub 的第 10 段**（角色探测只读 Native；11-05 断的正是到 GitHub 的线路，Native 能答复不说明 GitHub 能到）时试跑立即到期（已经到期就保持），只解除**网络上限**造成的停止（`queue.mjs#liftNetworkStops`；其他环境停止，例如在普通 cap 停下的确定性打包拒绝，仍等熔断器关闭）、把网络退避中的行设为立即到期（`queue.mjs#wakeNetworkRows`），回执 `breaker-early-trial`（含 `lifted`、`woke`），持久化到队列文件。half-open、closed 或非网络原因的熔断器不听探测。
+- **Owner 提前放行**：`windows/rearm-resident.ps1 -Request ReleaseBreaker -Reason <文字>`（提权，同 Rearm）在 `owner\` 写 `clued.independent-ci.resident-owner-breaker-release/1`（`by`、`reason`、`requestedAt`、`nonce`；`tools/rearm-tool.mjs request-release-breaker` 写同一形状，`inspect` 输出新增 `breaker`）。服务让 open 的熔断器的试跑立即到期，并像熔断器关闭时那样解除**所有**环境停止、唤醒网络退避的行（Owner 已判断故障消失），回执 `owner-request`（kind `breaker-release`，含理由、原试跑时间、级别、原因、`lifted`、`woke`）；**不关闭**熔断器，试跑仍要越过失败的位置。熔断器不是 open 时拒绝（`BREAKER_NOT_OPEN`），拒绝回执 `owner-request-refused` 里也记下理由和请求人（`kind`、`by`、`reason`），迟到或重复的请求什么也不改。
 
 ### 53.5 状态显示与实际一致
 
@@ -4009,8 +4009,8 @@ companion 对执行器的答复：拒绝的原因是一个 GitHub 步骤（`fetc
 
 ### 53.6 写后读确认失败：有限次退避重读，仍失败则判 transient 并安排第 2 次尝试
 
-- **可通过的原因**（`withdrawal-text.mjs#admissionVerificationRetryable`）：GitHub 读不到（500/502/503/504、无传输）；`full_admission_unavailable` **且**诊断 `transport: true`（`full-admission-v2.mjs#transportFault`：网络错误、超时、“returned 500/502/503/504”；凭据被拒、401/403、评估器异常都不是，诊断里 `transport: false`）；观察不完整或过期（`full_admission_mode_unknown`、`full_admission_observer_unknown`、`full_admission_observation_expired`、写后的 `NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE`；写前这些本来就是 transient）。`transport` 布尔值进 Source 与常驻两侧的诊断白名单（`admission-facts-v2.mjs`、`engine-windows.mjs#parseStageOutcome`），不带任何文本。
-- Source（`formal-work-admission-check-v2/publisher.mjs#reverified`）：写入后的核对（新的 after 边界：Native + GitHub、绑定与写前比较、读回、新鲜度）以可通过的原因失败时，等 10、30、60 秒后**从头**再做一次核对；不开始会越过“首次核对开始后 3 分钟”（`VERIFY_WAIT_WINDOW_MS`）的等待，也不开始会让持有记录到期前剩不到 2 分钟（`VERIFY_REVOKE_RESERVE_MS`，给撤回留的时间；`startup.mjs` 传 `deadlineAt`）的等待，所以最后一次核对最晚在写入后约 3 分钟开始，整个结局远在第 1 段 15 分钟上限内。每次等待前后都 `assertLive`（持有记录的租约与进程）；它拒绝时撤回也做不了，结局是 `UNCERTAIN`（交给对账，与任何租约丢失相同，测试断言了这一点）。绑定变化、读回不一致、凭据被拒等真实拒绝立即终局。已结算批次重跑时的读回（`previous` 路径）同样处理。撤回措辞：可通过的原因写 “verification unavailable”（含观察过期这几种），真实变化仍写 “authorization changed”。
+- **可通过的原因**（`withdrawal-text.mjs#admissionVerificationRetryable`）：GitHub 读不到（500/502/503/504、无传输）；`full_admission_unavailable` **且**诊断 `transport: true`（`full-admission-v2.mjs#transportFault`，按评估代码实际抛出的形状判断：Source `github.mjs` 带码的 `github_http_500/502/503/504`、`github_transport_unconfirmed`；裸网络错误、超时；`githubJson` 的 “GitHub API … returned 502” 和 Native RPC 的 “Clued … returned 503” 或 “… returned 503: <细节>”；凭据被拒、401/403/429、评估器异常都不是，诊断里 `transport: false`）；观察不完整或过期（`full_admission_mode_unknown`、`full_admission_observer_unknown`、`full_admission_observation_expired`、写后的 `NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE`；写前这些本来就是 transient）。`transport` 布尔值进 Source 与常驻两侧的诊断白名单（`admission-facts-v2.mjs`、`engine-windows.mjs#parseStageOutcome`），不带任何文本。
+- Source（`formal-work-admission-check-v2/publisher.mjs#reverified`）：写入后的核对（新的 after 边界：Native + GitHub、绑定与写前比较、读回、新鲜度）以可通过的原因失败时，等 10、30、60 秒后**从头**再做一次核对；不开始会越过“首次核对开始后 3 分钟”（`VERIFY_WAIT_WINDOW_MS`）的等待，也不开始会让持有记录到期前剩不到 2 分钟（`VERIFY_REVOKE_RESERVE_MS`，给撤回留的时间；`startup.mjs` 传 `deadlineAt`）的等待，所以最后一次核对最晚在写入后约 3 分钟开始，整个结局远在第 1 段 15 分钟上限内。每次等待前后都 `assertLive`（持有记录的租约与进程）；它拒绝时撤回也做不了，结局是 `UNCERTAIN`（交给对账，与任何租约丢失相同，测试断言了这一点）。绑定变化、读回不一致、凭据被拒等真实拒绝立即终局。已结算批次重跑时的读回（`previous` 路径）同样处理。撤回措辞：可通过的原因写 “verification unavailable”（含观察过期这几种），不是传输故障的 `full_admission_unavailable`（凭据被拒、评估器异常）写 “verification failed”（评估失败，未观察到授权变化），真实变化仍写 “authorization changed”。
 - 重读用完、时间窗或期限不够时仍照旧撤回；`stage-fact.mjs#outcomeFailureCode` 把**第 1 段**、原因可通过的 `REVOKED`（用结果里绑定的诊断判断）映射为 transient 码 `ADMISSION_VERIFICATION_UNAVAILABLE`（Source `TRANSIENT_CODES` 与常驻 `classify.mjs#TRANSIENT_CODES` 同一列表，测试钉住）。失败表新行：`transient / burn / attempt2 / counts`（`stages: "any"`，因为表要求每个码对每段都有一行；只有第 1 段会产生它）。于是 attempt 1 结束为 FAILED_CLEAN，自动安排唯一的第 2 次尝试（10 分钟后，新 job id、新 external_id；`published-on-github` 只拦同一 attempt 的准入检查，第 1 段也不在“可能已发布”记录的段里），不用新提交。其他段的 `REVOKED`（角色检查已在 head 上）和第 1 段的非可通过原因仍是 `PUBLICATION_REVOKED`，clean-final。第 2 次尝试再失败按原规则烧头。
 - Native 的 Task CI 计量按 head 计一次（迁移 `20261003180000`：同一 head 再验证不重复计），所以重读和第 2 次尝试都不多花额度。
 
@@ -4025,19 +4025,20 @@ companion 对执行器的答复：拒绝的原因是一个 GitHub 步骤（`fetc
 1. **新策略 /9**：已签策略改动的字段只有 `contract`（`…resident-policy/8` → `/9`）和新增的 `breaker.network.trialDelayMs = 600000`、`breaker.network.earlyTrialProbes = 2`、`breaker.network.releasesPerHeadPer24h = 36`；其余数值与已装的 /8 相同（安装时的 `sourceManifestSha256`、`ciSourceManifestSha256`、`residentManifestSha256` 和 `ownerAcceptance.decisionRef` 照每次安装更新）。新策略哈希需要 Owner 的 Decision、Grant 与一次 UAC。
 2. **行为变化**（需要 Owner 决定接受，全部只在 /9 下生效的标 /9）：
    - /9：网络释放（53.3 的判定）不计 `releasesPerHeadPer24h`，改计每 head 每天 36 次的网络上限，退避固定 10 分钟（原 10/20/40）；到上限是可自动解除的环境停止。
-   - /9：网络原因的熔断试跑等 10 分钟（原 30），同一断流的失败不升级；只读探测连续 2 次真正到达外面时试跑立即到期并唤醒行。
-   - 所有策略：companion 对网络类打包失败答 `BUNDLE_NETWORK_UNAVAILABLE`；打包拒绝全部进本机日志（只有代码和计数）。
+   - /9：网络原因的熔断试跑等 10 分钟（原 30），同一断流的失败不升级；只读探测连续 2 次真正到达外面、其中至少一次读到 GitHub 时试跑立即到期，解除网络上限的停止并唤醒网络退避的行。
+   - 所有策略：Owner 的 `ReleaseBreaker` 让试跑立即到期，并像熔断器关闭那样解除所有环境停止、唤醒网络退避的行。
+   - 所有策略：companion 对整仓 `fetch` / `ls-remote` 的 git 失败答 `BUNDLE_NETWORK_UNAVAILABLE`；打包拒绝全部进本机日志（只有代码和计数）。
    - 所有策略：网络重试与之后 6 小时的构建用种子（种子仍只是建议性的，核对不变）；带种子的网络重试再失败时多一次不带种子的尝试（最多 3 次）。
    - 所有策略：第 1 段写后核对在可通过的原因下有界重读；仍失败时撤回并转为 transient → 自动第 2 次尝试（原为 clean-final 烧头）。`full_admission_unavailable` 的诊断多一个 `transport` 布尔值。
-   - 所有策略：新增 Owner 请求 `ReleaseBreaker`；状态立即刷新与 PR 页措辞。
+   - 所有策略：状态立即刷新与 PR 页措辞；撤回措辞多一种 “verification failed”。
 3. 不需要：ACL 变化、新目录、Native 迁移、托管工作流登记、companion 答复合同变化（`seed-meta.json` 在已有的 `bundles\_seed\` 下）。
 
 ### 53.9 测试
 
 - `windows/test-build-bundle.ps1`（PS 5.1，184 → 225 例）：网络失败记录与时间窗、种子在“网络快”时被网络重试启用、带种子的网络重试、带种子重试再失败后的不带种子尝试与“绝无第 4 次”、无种子时仍只有一次网络重试、重试时种子损坏、锁被占用、脚本自己的拒绝不记录；整个脚本作为进程对一个关闭的本机端口运行（GitHub 不可达）：拒绝答复里的原因、阶段、git 步骤、三次尝试、`networkFailureNoted`，答复不含 URL。
-- `test/halt-timeouts.test.mjs`：拒绝日志只含代码和计数、各种越界值为 null、不泄露路径/令牌/URL/ref 名、字段名与 `build-bundle.ps1` 一致；`BUNDLE_NETWORK_UNAVAILABLE` 只给 GitHub 步骤的 git 失败，步骤清单与脚本一致。
-- `test/net-tolerance.test.mjs`（新，22 例）：策略 /9 的校验与示例；`networkFailure` 的每个分支（含诊断 `transport` 经常驻解析保留）；熔断器的网络延迟、不叠加、混合原因、/7 /8 不变、旧状态、探测（含已到期再到期）、Owner 放行；`ADMISSION_VERIFICATION_UNAVAILABLE` 的分类与第 2 次尝试（执行器端到端完成）；**模拟断流 45 分钟**：没有 head 被烧、没有行 STOPPED、不计 release-cap、不花 evaluation，网络恢复后第一个 PR 在 10 分钟内重新跑、三个 PR 都在 12 分钟内跑完；确定性打包拒绝仍两次即停、熔断器不标网络；网络上限停下的行在第 10 段读到 main 后被解除并跑完；/8 策略下行为与第 9 代相同；第 10 段读不到 main、角色探测 uncertain 都不算成功；Owner 放行的回执、拒绝回执里的理由；status flush 与定时器补写、PR 页文字、companion 立即重发与读取节流。
-- Source：`test/github-read-retry.test.mjs`（写后一次 5xx 重读后结算；Native 传输故障一次重读后结算；持续读不到、Native 传输故障、观察过期、mode 读不到的撤回与映射；非传输的 `full_admission_unavailable` 不重读且不转 transient；`transportFault` 判定；时间窗、期限与租约丢失的具体结局）、`test/resident-v2-quota-phase1.test.mjs`（`transport` 穿过两侧过滤）、`test/resident-v2-build-bundle.test.mjs`（钉住新的重试规则）。
+- `test/halt-timeouts.test.mjs`：拒绝日志只含代码和计数、各种越界值为 null、不泄露路径/令牌/URL/ref 名、字段名与 `build-bundle.ps1` 一致；`BUNDLE_NETWORK_UNAVAILABLE` 只给整仓 `fetch` / `ls-remote` 的 git 失败（脚本里它们先于按 SHA 的取回，测试钉住顺序）。
+- `test/net-tolerance.test.mjs`（新，22 例）：策略 /9 的校验与示例；`networkFailure` 的每个分支（含诊断 `transport` 经常驻解析保留）；熔断器的网络延迟、不叠加、混合原因、/7 /8 不变、旧状态、探测（含已到期再到期、只有 Native 答复不提前）、Owner 放行；角色探测经 `roleProbeMaintenance` 真跑（uncertain 清零、held 计数但不单独提前）；探测只解除网络上限的停止、Owner 放行解除全部环境停止；`ADMISSION_VERIFICATION_UNAVAILABLE` 的分类与第 2 次尝试（执行器端到端完成）；**模拟断流 45 分钟**：没有 head 被烧、没有行 STOPPED、不计 release-cap、不花 evaluation，网络恢复后第一个 PR 在 10 分钟内重新跑、三个 PR 都在 12 分钟内跑完；确定性打包拒绝仍两次即停、熔断器不标网络；网络上限停下的行在第 10 段读到 main 后被解除并跑完；/8 策略下行为与第 9 代相同；第 10 段读不到 main、角色探测 uncertain 都不算成功；Owner 放行的回执、拒绝回执里的理由；status flush 与定时器补写、PR 页文字、companion 立即重发与读取节流。
+- Source：`test/github-read-retry.test.mjs`（写后一次 5xx 重读后结算；Native 传输故障一次重读后结算；持续读不到、Native 传输故障、观察过期、mode 读不到的撤回与映射；非传输的 `full_admission_unavailable` 不重读、不转 transient、措辞 “verification failed”；`transportFault` 用评估代码真实抛出的错误形状判定；时间窗、期限与租约丢失的具体结局）、`test/resident-v2-quota-phase1.test.mjs`（`transport` 穿过两侧过滤）、`test/resident-v2-build-bundle.test.mjs`（钉住新的重试规则）。
 - 既有测试按新口径修改：`queue`（网络释放的上限、退避与唤醒）、`core`（usage 分开计数，/8 照旧）、`engine-v2`（诊断白名单含 `transport`）、`failure-table`。
 - 平台：Windows 上全部 node、python、PS 套件；Linux 平台用 `--import` 预加载把 `process.platform` 设成 `linux` 跑全部 node 套件——失败的 15 例与未改动的第 9 代基线（`0521cb9f`）完全相同，都是平台假设（Windows 控制器守卫 `FORMAL_WINDOWS_CONTROLLER_REQUIRED`、NTFS 上的 POSIX 权限位），本代没有新增。
 
@@ -4046,5 +4047,5 @@ companion 对执行器的答复：拒绝的原因是一个 GitHub 步骤（`fetc
 - runner hook（53.7）不在本代。
 - 模拟断流是离线测试（假 companion、假引擎、假时钟）；真实 broker、真实 GitHub 断流下的表现要在装机后观察（`bundle-refusal` 日志、`batch-unexecuted` 的 `network`、`breaker-early-trial` 回执）。
 - 探测提前试跑依赖第 10 段在当班运行（读到 main）或角色探测到期；都不跑时等 10 分钟或 Owner 放行。
-- “已审提交所在分支被删”与网络失败在打包脚本里无法区分（stderr 不读），按网络处理并受网络上限约束（53.1）。
+- 整仓 `fetch` / `ls-remote` 以外的取回失败一律当确定性失败（53.1）：如果线路恰好在按 SHA 取回时断开，这一次会计普通 cap（脚本自己仍会在窗口内重试一次）。
 - Linux 预加载无法模拟 POSIX 文件权限与 Windows 平台守卫，真实 Linux 上的那 15 例没有在本机验证（本机的两个 WSL 发行版都属于 CI，不碰）。

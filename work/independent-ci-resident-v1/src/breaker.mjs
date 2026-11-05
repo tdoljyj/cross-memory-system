@@ -21,9 +21,9 @@
 //     breaker.network.trialDelayMs (10 minutes) for its trial; a trial that fails on the network again reopens it at the SAME delay and
 //     level (one outage is one cause: its failures never stack the delay; the network release cap per head bounds what an outage costs),
 //     any other failure at the next level of breaker.backoffMs as before (and the cause is no longer network);
-//     breaker.network.earlyTrialProbes read-only probes in a row that reached the outside (a role probe with a definite answer, a
-//     stage-10 run that read main from GitHub) after it opened make its trial due now (breakerProbe; a failed probe starts the count
-//     again). The Owner's release (breakerRelease, rearm-resident.ps1 -Request ReleaseBreaker, with a reason, in the receipts) makes the
+//     breaker.network.earlyTrialProbes read-only probes in a row that reached the outside (a role probe with a definite answer from
+//     Native, a stage-10 run that read main from GitHub), at least one of them a GitHub read, after it opened make its trial due now
+//     (breakerProbe; a failed probe starts the count again). The Owner's release (breakerRelease, rearm-resident.ps1 -Request ReleaseBreaker, with a reason, in the receipts) makes the
 //     trial of any open breaker due now, whatever the policy. Neither one closes it: the trial still has to get past the failing place.
 import { check } from './canonical.mjs';
 
@@ -46,7 +46,7 @@ export function positionOf(stage, phase = 'stage') {
 }
 
 export const closedBreaker = () => ({ state: 'closed', failures: [], streak: 0, streakPos: 0, streakPrs: [], streakFails: [], openedAt: null, level: 0, nextTrialAt: null,
-  failingPos: null, failingWindowsOnly: null, exclude: [], closedAt: null, cause: null, probeOks: 0 });
+  failingPos: null, failingWindowsOnly: null, exclude: [], closedAt: null, cause: null, probeOks: 0, probeGithub: false });
 
 const valid = b => b && BREAKER_STATES.includes(b.state) && Array.isArray(b.failures) && Array.isArray(b.exclude) && Array.isArray(b.streakPrs) && Number.isSafeInteger(b.level);
 export const breakerOf = stored => (valid(stored) ? stored : closedBreaker());
@@ -66,7 +66,7 @@ const open = (b, policy, now, { pos, windowsOnly, prs, level, cause = null }) =>
   const delays = policy.breaker.backoffMs;
   const delay = cause === NETWORK_CAUSE && networkOf(policy) ? networkOf(policy).trialDelayMs : delays[Math.min(level, delays.length - 1)];
   const reopening = b.state !== 'closed';
-  Object.assign(b, { state: 'open', openedAt: reopening ? (b.openedAt ?? now) : now, level, nextTrialAt: now + delay, cause, probeOks: 0,
+  Object.assign(b, { state: 'open', openedAt: reopening ? (b.openedAt ?? now) : now, level, nextTrialAt: now + delay, cause, probeOks: 0, probeGithub: false,
     failingPos: reopening ? Math.max(b.failingPos ?? pos, pos) : pos,
     failingWindowsOnly: reopening ? (b.failingWindowsOnly === true && windowsOnly === true) : windowsOnly === true,
     exclude: [...new Set([...b.exclude, ...prs])].slice(-FAILURES_KEPT) });
@@ -114,17 +114,21 @@ export function breakerRecord(b, ev, policy, now) {
   return transition;
 }
 
-// Generation 10: one read-only probe that ran while the breaker is open (ok: it reached the outside and answered). Only an open breaker
-// of cause network under a /9 policy listens. Returns 'early-trial' when this probe completed the run of breaker.network.earlyTrialProbes
-// (the trial is due now: brought forward, or already due and still waiting for a candidate, which the executor then wakes), else null.
-export function breakerProbe(b, ok, policy, now) {
+// Generation 10: one read-only probe that ran while the breaker is open (ok: it reached the outside and answered; github: what it read
+// was GitHub). Only an open breaker of cause network under a /9 policy listens. Returns 'early-trial' when this probe completed a run of
+// breaker.network.earlyTrialProbes good probes with at least one GitHub read among them (the trial is due now: brought forward, or already
+// due and still waiting for a candidate, which the executor then wakes), else null. A Native answer alone never ends an outage of the
+// line to GitHub (2026-11-05: only that line was down).
+export function breakerProbe(b, ok, policy, now, { github = false } = {}) {
   const n = networkOf(policy);
   if (!n || b.state !== 'open' || b.cause !== NETWORK_CAUSE) return null;
-  if (ok !== true) { b.probeOks = 0; return null; }
+  if (ok !== true) { b.probeOks = 0; b.probeGithub = false; return null; }
   b.probeOks = (Number.isSafeInteger(b.probeOks) ? b.probeOks : 0) + 1;
-  if (b.probeOks < n.earlyTrialProbes) return null;
+  if (github === true) b.probeGithub = true;
+  if (b.probeOks < n.earlyTrialProbes || b.probeGithub !== true) return null;
   if (now < b.nextTrialAt) b.nextTrialAt = now;
   b.probeOks = 0;
+  b.probeGithub = false;
   return 'early-trial';
 }
 
@@ -135,6 +139,7 @@ export function breakerRelease(b, now) {
   const previousNextTrialAt = b.nextTrialAt;
   if (now < b.nextTrialAt) b.nextTrialAt = now;
   b.probeOks = 0;
+  b.probeGithub = false;
   return { released: true, code: null, state: b.state, previousNextTrialAt, level: b.level, cause: b.cause ?? null, openedAt: b.openedAt };
 }
 

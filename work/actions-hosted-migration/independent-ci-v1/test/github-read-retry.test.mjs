@@ -307,7 +307,8 @@ test('work admission v2 (gen 10): what is not a passing cause is never read agai
     const r = await pub.publish(job);
     assert.deepEqual([r.status, r.reason, sleeps.length], ['REVOKED', 'full_admission_unavailable', 0], JSON.stringify(diagnostic));
     assert.equal(outcomeFailureCode(r, 1), 'PUBLICATION_REVOKED', JSON.stringify(diagnostic));
-    assert.match(github.checks[0].output.title, /withdrawn: verification unavailable/, 'still not "authorization changed": nothing was found to have changed');
+    assert.match(github.checks[0].output.title, /withdrawn: verification failed/, 'neither "authorization changed" nor "could not be read": the evaluation failed');
+    assert.match(github.checks[0].output.summary, /admission evaluation failed/);
   }
   for (const reason of ['NATIVE_AUTHORIZATION_BINDING_CHANGED', 'NATIVE_CHECK_READBACK_UNCONFIRMED', 'github_http_429', 'github_http_501', 'full_admission_claim_changed'])
     assert.equal(outcomeFailureCode({ status: 'REVOKED', reason, sideEffects: 2 }, 1), 'PUBLICATION_REVOKED', reason);
@@ -320,10 +321,16 @@ test('work admission v2 (gen 10): what is not a passing cause is never read agai
 
 test('full admission v2 (gen 10): the catch-all says whether it caught a transport fault, and the diagnostic keeps that flag', () => {
   const net = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }) });
-  for (const e of [net, Object.assign(new Error('timed out'), { name: 'TimeoutError' }), new Error('GitHub API /repos/x/pulls/1 returned 502'), new Error('Native verify returned 503')])
+  // the shapes the evaluation's own code throws: Source github.mjs (coded), githubJson and the Native RPC (clued-work-admission.mjs describe())
+  const coded = code => Object.assign(new Error(code), { code });
+  for (const e of [net, Object.assign(new Error('timed out'), { name: 'TimeoutError' }), coded('github_http_502'), coded('github_http_503'), coded('github_transport_unconfirmed'),
+    new Error('GitHub API /repos/x/pulls/1 returned 502'), new Error('Clued clued_work_verify_v1 returned 503'),
+    new Error('Clued clued_work_verify_v1 returned 504: code=PGRST000 message=upstream [server=cloudflare content-type=application/json]')])
     assert.equal(transportFault(e), true, String(e?.message));
-  for (const e of [new Error('GitHub API /repos/x/pulls/1 returned 403'), new Error('GitHub API /x returned 401'), new Error('returned 502 but more'), new TypeError('fetch failed'),
-    new TypeError('x is not a function'), Object.assign(new Error('aborted'), { name: 'AbortError' }), null, 'returned 502'])
+  for (const e of [coded('github_http_403'), coded('github_http_429'), coded('github_http_501'), new Error('GitHub API /repos/x/pulls/1 returned 403'), new Error('GitHub API /x returned 401'),
+    new Error('Clued clued_work_verify_v1 returned 401: code=x'), new Error('Clued clued_work_verify_v1 returned 5031'), new Error('returned 502 but more'),
+    new Error('Clued clued_work_verify_v1 returned no verdict (503: x).'), new TypeError('fetch failed'), new TypeError('x is not a function'),
+    Object.assign(new Error('aborted'), { name: 'AbortError' }), null, 'returned 502'])
     assert.equal(transportFault(e), false, String(e?.message ?? e));
   assert.equal(sanitizeAdmissionDiagnosticV2({ phase: 'native', transport: true }).transport, true);
   assert.equal(sanitizeAdmissionDiagnosticV2({ phase: 'native', transport: 'yes' }).transport, undefined);

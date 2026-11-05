@@ -268,7 +268,7 @@ test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; a
   f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
   assert.equal((await f.exec.tick()).state, 'IDLE'); assert.equal(calls, 1);
   assert.equal((await f.ledger.keys()).length, 0);
-  assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 });
+  assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), networkReleasesByHead: new Map(), stage8Retries: 0 });
   assert.equal(f.companion.calls.length, 0); assert.equal(f.engine.calls.length, 0);
   await f.exec.tick(); assert.equal(calls, 1);
   f.advance(1800000 - 1); await f.exec.tick(); assert.equal(calls, 1);

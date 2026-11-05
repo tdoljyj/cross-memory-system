@@ -21,8 +21,12 @@ export const ADMISSION_REREAD_REASONS = Object.freeze(['full_admission_mode_unkn
   'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE']);
 export const admissionVerificationRetryable = (cause, diagnostic = null) => (cause === 'full_admission_unavailable' ? diagnostic?.transport === true : verificationUnavailable(cause))
   || ADMISSION_REREAD_REASONS.includes(cause);
-// subject: 'Work admission' | 'Independent control' | 'Independent CI'. unavailable: the cause is "could not be verified" (default: the
-// read set above; the work admission also passes its reread reasons).
-export const withdrawalTitle = (subject, cause, unavailable = verificationUnavailable(cause)) => unavailable ? `${subject} check withdrawn: verification unavailable` : `${subject} authorization changed`;
-export const withdrawalNote = (cause, unavailable = verificationUnavailable(cause)) => unavailable
-  ? ' GitHub or Native could not be read in time to confirm the authorization after the write; no change of it was observed. The check is withdrawn rather than left unverified.' : '';
+// subject: 'Work admission' | 'Independent control' | 'Independent CI'. unavailable: true when the cause is "could not be verified"
+// (default: the read set above; the work admission also passes its reread reasons), 'failed' when the verification after the write
+// could not be completed for another reason that says nothing about the authorization either (generation 10: a full_admission_unavailable
+// that caught no transport fault: a refused credential, an evaluator fault), false when the authorization changed.
+export const withdrawalTitle = (subject, cause, unavailable = verificationUnavailable(cause)) => unavailable === 'failed' ? `${subject} check withdrawn: verification failed`
+  : unavailable ? `${subject} check withdrawn: verification unavailable` : `${subject} authorization changed`;
+export const withdrawalNote = (cause, unavailable = verificationUnavailable(cause)) => unavailable === 'failed'
+  ? ' The verification after the write could not be completed (the admission evaluation failed); no change of the authorization was observed. The check is withdrawn rather than left unverified.'
+  : unavailable ? ' GitHub or Native could not be read in time to confirm the authorization after the write; no change of it was observed. The check is withdrawn rather than left unverified.' : '';

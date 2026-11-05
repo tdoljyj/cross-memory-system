@@ -534,11 +534,12 @@ export class ResidentExecutor {
       this.queue.breaker = b;
       if (b.state !== 'open') return null;
       const now = this.clock(), before = b.nextTrialAt;
-      const t = breakerProbe(b, ok, this.policy, now);
+      const t = breakerProbe(b, ok, this.policy, now, { github: probe === 'train-run' });
       if (t === 'early-trial') {
         // The outside answers again: rows a network release or the network cap holds back are due now (else the trial may find no
-        // candidate, and the rows would wait out their own 10 minutes or a stop that only a closing breaker lifts).
-        const { lifted, woke } = this.wakeAfterNetwork(now);
+        // candidate, and the rows would wait out their own 10 minutes or a stop that only a closing breaker lifts). Only the network
+        // cap's stops: any other environment stop still waits for the breaker to close.
+        const { lifted, woke } = this.wakeAfterNetwork(now, { all: false });
         await this.receipt('breaker-early-trial', { probe, level: b.level, cause: b.cause ?? null, previousNextTrialAt: new Date(before).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString(), lifted, woke });
       }
       await this.persistQueue();
@@ -554,7 +555,8 @@ export class ResidentExecutor {
     this.queue.breaker = b;
     const r = breakerRelease(b, this.clock());
     check(r.released === true, r.code ?? 'BREAKER_NOT_OPEN');
-    const { lifted, woke } = this.wakeAfterNetwork(this.clock());
+    // The Owner says the fault is gone: every environment stop is lifted, as a closing breaker does (DESIGN 53.4, 53.8).
+    const { lifted, woke } = this.wakeAfterNetwork(this.clock(), { all: true });
     // Like every breaker change the queue file is a view: the release is in force in memory now; a file that cannot be written now
     // is written by the next batch end (the trial itself), never a reason to refuse what already took effect.
     await this.persistQueue();
@@ -567,10 +569,11 @@ export class ResidentExecutor {
   // Generation 10: the policy's breaker.network (contract /9), or null.
   networkPolicy() { return this.policy.breaker?.network ?? null; }
 
-  // Generation 10 (DESIGN 53.4): environment stops lifted, network back-offs due now (queue.mjs). A view.
-  wakeAfterNetwork(now) {
+  // Generation 10 (DESIGN 53.4): stops lifted (all: every environment stop, the Owner's release; else only the network cap's, the probes),
+  // network back-offs due now (queue.mjs). A view.
+  wakeAfterNetwork(now, { all }) {
     let lifted = [], woke = [];
-    try { lifted = this.queue.liftEnvironmentStops(now); woke = this.queue.wakeNetworkRows(now); } catch { /* a view */ }
+    try { lifted = all ? this.queue.liftEnvironmentStops(now) : this.queue.liftNetworkStops(now); woke = this.queue.wakeNetworkRows(now); } catch { /* a view */ }
     return { lifted, woke };
   }
 

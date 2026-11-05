@@ -50,9 +50,10 @@ import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVeri
 
 // Generation 10: the back-off between the bounded re-reads of the verification after the write (reverified below): 100 s of waiting at
 // most, on top of the per-request read retry (read-retry.mjs) inside each verification. No wait starts later than VERIFY_WAIT_WINDOW_MS
-// after the first verification began, nor when it would leave less than VERIFY_REVOKE_RESERVE_MS before the stage's own deadline
-// (deadlineAt): the withdrawal (an identity read, the PATCH, a read-back, each at most 30 s) must still fit. So the last verification
-// starts at most 3 minutes after the write and the whole ending stays well inside stage 1's 15-minute cap.
+// after the first verification began: that window is what keeps the ending inside stage 1's 15-minute cap (the last verification starts
+// at most 3 minutes after the write). Nor does a wait start when it would leave less than VERIFY_REVOKE_RESERVE_MS before deadlineAt,
+// the end of the held record's lease (startup.mjs passes it; the read retry uses the same bound), so the withdrawal (an identity read,
+// the PATCH, a read-back, each at most 30 s) always has its time.
 export const VERIFY_REREAD_DELAYS_MS = Object.freeze([10_000, 30_000, 60_000]);
 export const VERIFY_WAIT_WINDOW_MS = 180_000;
 export const VERIFY_REVOKE_RESERVE_MS = 120_000;
@@ -145,7 +146,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       }
     }
   }
-  const unverified = (cause, diagnostic) => verificationUnavailable(cause) || admissionVerificationRetryable(cause, diagnostic);
+  // The withdrawal's wording: "verification unavailable" for a passing cause (and the read set), "verification failed" for a
+  // full_admission_unavailable that caught no transport fault, "authorization changed" for everything else.
+  const unverified = (cause, diagnostic) => admissionVerificationRetryable(cause, diagnostic) ? true : cause === 'full_admission_unavailable' ? 'failed' : verificationUnavailable(cause);
   // §41.4 touch running, second of the two: the holders and the proof read now; any failing read or unmet condition skips it.
   async function touchRunning(job) {
     let out;

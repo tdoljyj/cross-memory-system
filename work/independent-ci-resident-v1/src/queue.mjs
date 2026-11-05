@@ -435,6 +435,19 @@ export class RunQueue {
     return lifted;
   }
 
+  // Generation 10 (DESIGN 53.4): the probes see the outside again: only the rows the network cap stopped are lifted (any other environment
+  // stop, a deterministic refusal at the ordinary cap among them, still waits for the breaker to close, as before). Returns the PRs.
+  liftNetworkStops(now) {
+    const lifted = [];
+    for (const r of this.data.rows) {
+      if (r.state !== 'STOPPED' || r.stopKind !== 'release-cap' || r.stopClass !== 'environment' || r.reason !== NETWORK_RELEASE_CAP_REACHED || !r.current) continue;
+      Object.assign(r, { stopKind: null, stopClass: null, level: 0, levelKind: null, nextAt: now, order: this.seq(), origin: 'lifted', deferUntil: null });
+      this.setState(r, 'BACKOFF', null, now);
+      lifted.push(r.pr);
+    }
+    return lifted;
+  }
+
   // Generation 10 (DESIGN 53.4): the outside answers again (probes, the Owner's release): a row that backs off after a network release
   // is due now instead of at its next 10-minute mark. Returns the PRs it woke.
   wakeNetworkRows(now) {

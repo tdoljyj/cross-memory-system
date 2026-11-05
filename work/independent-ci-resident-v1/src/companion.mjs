@@ -210,11 +210,14 @@ const bundleCount = n => (Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_00
 const bundleExit = n => (Number.isSafeInteger(n) && n >= -2_147_483_648 && n <= 4_294_967_295 ? n : null);
 const bundleGit = g => (plainObject(g) ? { label: bundleSlug(g.label), exitCode: bundleExit(g.exitCode), stderrChars: bundleCount(g.stderrChars) } : null);
 export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
-// Generation 10 (DESIGN 53.3): the GitHub steps of build-bundle.ps1 ($NetworkSteps; a test keeps the two lists equal). A refusal whose
-// own reason is that one of them failed in git (what a network failure looks like there: stderr is never read) is answered with
-// BUNDLE_NETWORK_UNAVAILABLE instead of BUNDLE_UNAVAILABLE, so the executor can tell the line from every other refusal of the script
-// (a ref that fails its checks, main moved, a commit missing, a timeout, the script's own fault), which keep the release cap.
-export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote', 'fetch-reviewed', 'fetch-test']);
+// Generation 10 (DESIGN 53.1, 53.3): the steps of build-bundle.ps1 whose failure in git counts as the line. A refusal whose own reason is
+// that one of them failed in git (stderr is never read) is answered with BUNDLE_NETWORK_UNAVAILABLE instead of BUNDLE_UNAVAILABLE, so the
+// executor can tell the line from every other refusal of the script (a ref that fails its checks, main moved, a commit missing, a timeout,
+// the script's own fault), which keep the release cap. Only the whole fetch and the ls-remote: the by-SHA fetches of the reviewed
+// commits and of S (fetch-reviewed, fetch-test; the script retries them like the others, $NetworkSteps) run after both of those
+// succeeded in the same attempt, so a failure there is much more likely a commit GitHub no longer serves (a deleted branch, a test merge
+// GitHub dropped) than the line: it stays BUNDLE_UNAVAILABLE.
+export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote']);
 export const BUNDLE_NETWORK_UNAVAILABLE = 'BUNDLE_NETWORK_UNAVAILABLE';
 export function bundleNetworkRefusal(runner) {
   if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return false;

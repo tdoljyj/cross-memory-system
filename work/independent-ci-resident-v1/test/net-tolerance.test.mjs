@@ -146,15 +146,17 @@ test('breaker /9: probes in a row make a network trial due now (also one already
   const b = closedBreaker();
   for (const pr of [1, 2, 3]) breakerRecord(b, net(pr), policy, now += MIN);
   const due = b.nextTrialAt;
+  const gh = { github: true };
   assert.equal((due - now) / MIN, 30);
-  assert.equal(breakerProbe(b, true, policy, now += MIN), null);
-  assert.equal(breakerProbe(b, false, policy, now += MIN), null, 'the outage is still there');
-  assert.equal(breakerProbe(b, true, policy, now += MIN), null, 'one in a row again');
+  assert.equal(breakerProbe(b, true, policy, now += MIN, gh), null);
+  assert.equal(breakerProbe(b, false, policy, now += MIN, gh), null, 'the outage is still there');
+  assert.equal(breakerProbe(b, true, policy, now += MIN), null, 'one in a row again (a Native answer)');
+  assert.equal(breakerProbe(b, true, policy, now += MIN), null, 'two in a row, but none read GitHub: the line to GitHub may still be down');
   assert.equal(b.nextTrialAt, due);
-  assert.equal(breakerProbe(b, true, policy, now += MIN), 'early-trial');
-  assert.deepEqual([b.nextTrialAt, b.probeOks], [now, 0]);
+  assert.equal(breakerProbe(b, true, policy, now += MIN, gh), 'early-trial', 'a GitHub read in the run');
+  assert.deepEqual([b.nextTrialAt, b.probeOks, b.probeGithub], [now, 0, false]);
   // still open (no candidate ran the trial yet): two more good probes say so again (the executor then wakes the rows)
-  assert.equal(breakerProbe(b, true, policy, now += MIN), null);
+  assert.equal(breakerProbe(b, true, policy, now += MIN, gh), null);
   assert.equal(breakerProbe(b, true, policy, now += MIN), 'early-trial');
   assert.equal(b.nextTrialAt, now - 2 * MIN, 'a trial already due is not moved');
   assert.equal(breakerGate(b, now).trial, true);
@@ -281,6 +283,25 @@ test('the network cap bounds a lasting outage per head (an environment stop); th
   assert.ok(early.length >= 1 && early.some(b => b.lifted.length > 0), JSON.stringify(early));
 });
 
+test('the probes lift only the network cap\'s stops; a deterministic refusal stopped at the ordinary cap keeps waiting for the breaker to close', async t => {
+  const f = await executorFixture(t, { policy: policyV9() });
+  f.queue.offer({ repo: 'tdoljyj/cross-memory-system', pr: 1, headSha: H(1), baseSha: BASE, prUpdatedAt: null, seq: 1 }, f.clock(), { depth: 100, cooldownMs: 10 * MIN });
+  f.queue.offer({ repo: 'tdoljyj/cross-memory-system', pr: 2, headSha: H(2), baseSha: BASE, prUpdatedAt: null, seq: 2 }, f.clock(), { depth: 100, cooldownMs: 10 * MIN });
+  Object.assign(f.queue.row(1), { state: 'STOPPED', stopKind: 'release-cap', stopClass: 'environment', reason: 'NETWORK_RELEASE_CAP_REACHED' });
+  Object.assign(f.queue.row(2), { state: 'STOPPED', stopKind: 'release-cap', stopClass: 'environment', reason: 'BUNDLE_UNAVAILABLE' });
+  f.queue.breaker = { ...closedBreaker(), state: 'open', cause: NETWORK_CAUSE, openedAt: f.clock(), nextTrialAt: f.clock() + 30 * MIN, failingPos: 1, failingWindowsOnly: true };
+  await f.exec.noteBreakerProbe(true, 'train-run');
+  assert.equal(await f.exec.noteBreakerProbe(true, 'train-run'), 'early-trial');
+  assert.deepEqual([f.queue.row(1).state, f.queue.row(2).state], ['BACKOFF', 'STOPPED']);
+  const [r] = await receiptBodies(f, 'breaker-early-trial');
+  assert.deepEqual(r.lifted, [1]);
+  // the Owner's release lifts every environment stop, as a closing breaker does
+  f.queue.breaker = { ...f.queue.breaker, state: 'open', nextTrialAt: f.clock() + 30 * MIN };
+  await ownerFile(f, breakerReleaseRequest({ reason: 'fixed the line', by: SID }, f.clock));
+  await f.exec.takeOwnerRequests();
+  assert.equal(f.queue.row(2).state, 'BACKOFF');
+});
+
 test('the outage under the installed /8 policy behaves as generation 9 did (the policy decides): its ladder, its cap', async t => {
   const { f, opened } = await outage(t, { minutes: 40, policy: policyV8() });
   assert.deepEqual([opened.cause, (opened.nextTrialAt - opened.at) / MIN], [null, 30]);
@@ -313,14 +334,38 @@ test('stage-10 runs that read main from GitHub bring a network trial forward; a 
     f.advance(MIN);
   }
   assert.ok(early, 'two stage-10 runs that read main brought the trial forward');
-  assert.ok(early.at < due + 30 * MIN);
+  assert.ok(Date.parse(early.body.nextTrialAt) < Date.parse(early.body.previousNextTrialAt), JSON.stringify(early.body));
+  assert.equal(Date.parse(early.body.nextTrialAt), early.at, 'due at the probe');
   assert.deepEqual([early.body.probe, early.body.cause, early.body.level], ['train-run', NETWORK_CAUSE, 0]);
 });
 
-test('executor: the role probe counts only a definite answer (held, not-held); uncertain or none is a failed probe', async t => {
+test('executor: role probes really run (roleProbeMaintenance): uncertain resets the run; held counts but a Native answer alone never ends a GitHub outage', async t => {
+  const fact = { current: { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' } };
+  const engine = fakeEngine();
+  engine.runRoleProbe = async () => ({ ok: true, proof: WINDOWS_CLEAN, roleProbe: fact.current, outcome: { status: 'BLOCKED', reason: fact.current.code, sideEffects: 0, mayHavePublished: false } });
+  const f = await executorFixture(t, { engine, policy: policyV9({ ...NETWORK, trialDelayMs: 30 * MIN }) });
+  const open = () => { f.queue.breaker = { ...closedBreaker(), state: 'open', cause: NETWORK_CAUSE, openedAt: f.clock(), nextTrialAt: f.clock() + 30 * MIN, failingPos: 1, failingWindowsOnly: true }; };
+  const probe = async () => { f.exec.roleProbe.markUrgent(); const r = await f.exec.roleProbeMaintenance(); assert.equal(r, null); f.advance(MIN); };
+  open();
+  await probe();
+  await probe();
+  assert.equal(f.queue.breaker.probeOks, 0, 'two uncertain answers are two failed probes');
+  fact.current = { result: 'held', code: 'ROLE_PROBE_HELD' };
+  await probe();
+  await probe();
+  assert.deepEqual([f.queue.breaker.probeOks, f.queue.breaker.probeGithub, f.queue.breaker.state], [2, false, 'open']);
+  assert.ok(f.queue.breaker.nextTrialAt > f.clock(), 'not brought forward by Native answers alone');
+  assert.deepEqual(await receiptBodies(f, 'breaker-early-trial'), []);
+  assert.equal(engine.calls.filter(c => c[0] === 'stage').length, 0);
+  // a GitHub read completes the run
+  assert.equal(await f.exec.noteBreakerProbe(true, 'train-run'), 'early-trial');
+});
+
+test('executor: the role probe counts only a definite answer (held, not-held); stage 10 only a read of main (wiring)', async t => {
   const text = await fs.readFile(new URL('../src/executor.mjs', import.meta.url), 'utf8');
   assert.match(text, /await this\.noteBreakerProbe\(fact\?\.result === 'held' \|\| fact\?\.result === 'not-held', 'role-probe'\)/);
   assert.match(text, /await this\.noteBreakerProbe\(HEX40\.test\(summary\?\.mainSha \?\? ''\), 'train-run'\)/);
+  assert.match(text, /breakerProbe\(b, ok, this\.policy, now, \{ github: probe === 'train-run' \}\)/);
 });
 
 test('the Owner releases an open breaker early (reason in the receipt, rows woken); a breaker that is not open refuses and keeps the reason too', async t => {
