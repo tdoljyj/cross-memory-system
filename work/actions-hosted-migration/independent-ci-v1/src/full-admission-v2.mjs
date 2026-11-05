@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
-import { freshStamp, serverAnswerCurrent } from './clock-skew.mjs';
+import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './clock-skew.mjs';
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, parseClaimReference, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
@@ -186,7 +186,8 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           workflowGateFindings: [...(outcome.workflow_gate_findings ?? [])], observedAt: new Date(finished).toISOString(),
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,
           packetSha256: digest(packet), evaluationSha256: digest(outcome) };
-        return Object.freeze({ ...facts, observationSha256: digest(facts) });
+        return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
+          { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
       } catch { return blocked('full_admission_unavailable', { phase }); }
     },
   });

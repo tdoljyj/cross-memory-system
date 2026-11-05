@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claims merge slot (migration 20261006120000, Task f89eaf0a, Owner
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
@@ -144,7 +144,21 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
           left_queued_at=least(left_queued_at,clock_timestamp()-make_interval(mins=>$2+1)) where user_id=$1`, [userId, minutes]);
     };
     const queue = (c) => c.merge_queue?.[0];
-    const minutesLeft = (until) => (Date.parse(until) - Date.now()) / 60000;
+    // Every slot time is stamped by the database's clock (clock_timestamp()). The windows below are checked on that
+    // clock alone, never against Node's Date, so drift or a step between the two clocks cannot move them. A slot that
+    // lasts `minutes` from its start ends at start + minutes; the start is no earlier than the beginning of this case and
+    // no later than the database's clock when the slot is read, so `until` lies in [T0 + minutes, now + minutes].
+    // That bounds the start exactly, however long the test process is delayed, where the old 1-minute window did not.
+    const dbMicros = async () => BigInt((await admin.query(
+      'select (extract(epoch from clock_timestamp())*1000000)::bigint v')).rows[0].v);
+    const microsOf = async (timestamp) => BigInt((await admin.query(
+      'select (extract(epoch from $1::timestamptz)*1000000)::bigint v', [timestamp])).rows[0].v);
+    const T0 = await dbMicros();
+    const assertEnds = async (until, minutes, message, since = T0) => {
+      const end = await microsOf(until), now = await dbMicros(), span = BigInt(minutes) * 60_000_000n;
+      assert.ok(end >= since + span && end <= now + span,
+        `${message ?? 'slot end'}: ${until} is not ${minutes} minutes after a start in [${since}, ${now}] (microseconds, database clock)`);
+    };
 
     // The profile names the slot clock.
     assert.equal((await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v.merge_slot_seconds, 2700);
@@ -154,7 +168,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     let b = await claim('codex', 'B: pull request two');
     assert.deepEqual([a.merge_slot_until, a.merge_queue], [null, null], 'no merge ref, no slot');
     a = committed(await renew('claude', a, { trigger_refs: ['task:a', SLOT] })).claim;
-    assert.ok(minutesLeft(a.merge_slot_until) > 44 && minutesLeft(a.merge_slot_until) <= 45, a.merge_slot_until);
+    await assertEnds(a.merge_slot_until, 45, 'a taken slot lasts 45 minutes');
     assert.deepEqual([queue(a).ref, queue(a).state, queue(a).position, queue(a).length, queue(a).head.claim_id, queue(a).ahead],
       [SLOT, 'head', 1, 1, a.claim_id, []]);
     // Another session joins behind it, whatever the case of the ref.
@@ -184,7 +198,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     const before = await slotAt(a);
     a = committed(await renew('claude', a)).claim;
     assert.ok(await slotAt(a) > before, 'a renewal that keeps the ref refreshes the clock');
-    assert.ok(minutesLeft(a.merge_slot_until) > 44);
+    await assertEnds(a.merge_slot_until, 45, 'a renewal restarts the 45 minutes');
     await age(10);
     const aged = await slotAt(a);
     const bound = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: a.claim_id,
@@ -203,13 +217,13 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual(a.trigger_refs, [SLOT, 'task:a'], 'the ref stays until the holder drops it');
     b = await view(b);
     assert.equal(queue(b).state, 'head');
-    const bLeft = minutesLeft(b.merge_slot_until);
-    assert.ok(bLeft > 30 && bLeft < 35, `B became head when A lapsed 11 minutes ago: ${bLeft}`);
+    const bUntil = b.merge_slot_until;
+    await assertEnds(bUntil, 34, 'B became head when A lapsed 11 minutes ago');
     a = committed(await renew('claude', a)).claim;
     assert.deepEqual([queue(a).state, queue(a).position, queue(a).ahead.map((row) => row.claim_id), a.merge_slot_until],
       ['waiting', 2, [b.claim_id], null], 'A joins again at the back');
     b = await view(b);
-    assert.ok(Math.abs(minutesLeft(b.merge_slot_until) - bLeft) < 1, 'A joining again does not move the start B got');
+    assert.equal(b.merge_slot_until, bUntil, 'A joining again does not move the start B got');
     a = committed(await renew('claude', a, { trigger_refs: ['task:a'] })).claim;
     assert.equal(a.merge_queue, null);
 
@@ -356,12 +370,12 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // running keeps the slot 90 minutes after the report (an hour between reports and a late
     // scheduled run, review MAJOR-1), whatever the renewal clock says.
     await age(40);
-    assert.ok(minutesLeft((await view(d)).merge_slot_until) < 6, 'the renewal clock alone has 5 minutes left');
+    await assertEnds((await view(d)).merge_slot_until, 5, 'the renewal clock alone has 5 minutes left');
     const running = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     assert.deepEqual([running.status, running.touched, running.claims], ['ok', true, [d.claim_id]], JSON.stringify(running));
     d = await view(d);
     // 90 minutes from the report, but the slot started 40 minutes ago, so the 120-minute cap ends it first.
-    assert.ok(minutesLeft(d.merge_slot_until) > 79 && minutesLeft(d.merge_slot_until) <= 80, d.merge_slot_until);
+    await assertEnds(d.merge_slot_until, 80, 'the 120-minute cap ends the slot 80 minutes from now');
     assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.ci_head_sha], ['running', HEAD]);
     assert.ok(Math.abs(Date.parse(d.merge_slot_ci.hard_cap_until) - Date.parse(d.merge_slot_ci.taken_at) - 120 * 60000) < 1000);
     // A repeated report refreshes the clock but writes no new Receipt.
@@ -374,19 +388,19 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // green keeps it 30 minutes after the report, unless a renewal gives more.
     await touch({ ci_state: 'green', hard_cap_minutes: 120 });
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 29 && minutesLeft(d.merge_slot_until) <= 30, d.merge_slot_until);
+    await assertEnds(d.merge_slot_until, 30, 'green keeps the slot 30 minutes');
     // A later green report for the same head does not move its 30 minutes (review MINOR-3)...
     await setSlot(d, 'merge_slot_ci_at', 20);
     await touch({ ci_state: 'green', hard_cap_minutes: 120 });
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
+    await assertEnds(d.merge_slot_until, 10, 'a repeated green report does not move the 30 minutes');
     // ...a new head's does, and so does running in between.
     await touch({ ci_state: 'green', hard_cap_minutes: 120, head_sha: '9'.repeat(40) });
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 29, d.merge_slot_until);
+    await assertEnds(d.merge_slot_until, 30, 'a new head restarts the 30 minutes');
     await touch({ ci_state: 'green', hard_cap_minutes: 120 });
     d = committed(await renew('codex', await view(d))).claim;
-    assert.ok(minutesLeft(d.merge_slot_until) > 44, 'the renewal clock is later now');
+    await assertEnds(d.merge_slot_until, 45, 'the renewal clock is later now');
     assert.equal(d.merge_slot_ci.ci_state, 'green', 'a renewal of a live slot keeps its CI state');
     assert.deepEqual((await receipts(d, 'work_claim_merge_slot_touch')).map((m) => [m.ci_state, m.head_sha, m.previous_ci_state]),
       [['running', HEAD, null], ['green', HEAD, 'running'], ['green', '9'.repeat(40), 'green'], ['green', HEAD, 'green']]);
@@ -395,7 +409,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     await startedAgo(d, 110);
     await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
+    await assertEnds(d.merge_slot_until, 10, 'the cap leaves 10 minutes of a slot that started 110 minutes ago');
     await startedAgo(d, 121);
     d = await view(d);
     assert.equal(d.merge_slot_until, null, 'past the hard cap the slot has lapsed');
@@ -410,11 +424,13 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     d = committed(await renew('codex', await view(d))).claim;
     assert.deepEqual([d.merge_slot_until, queue(d).state, queue(d).ahead.map((row) => row.claim_id)],
       [null, 'waiting', [e.claim_id]], 'D joins again behind E');
+    const eLeft = await dbMicros();
     e = committed(await renew('claude', e, { trigger_refs: [] })).claim;
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 44, 'D is head again once E leaves');
+    await assertEnds(d.merge_slot_until, 45, 'D is head again once E leaves', eLeft);
     assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.hard_cap_until], [null, null], 'taken again: a new slot');
-    assert.ok(Date.now() - Date.parse(d.merge_slot_ci.taken_at) < 60000);
+    assert.ok(await microsOf(d.merge_slot_ci.taken_at) >= eLeft && await microsOf(d.merge_slot_ci.taken_at) <= await dbMicros(),
+      'the new slot was taken when E left');
     // Another pull request's report does nothing to it.
     assert.equal((await touch({ pr_ref: 'tdoljyj/cross-memory-system#21', ci_state: 'running', hard_cap_minutes: 90 })).touched, false);
     assert.equal((await touch({ pr_ref: 'tdoljyj/cross-memory-system#21', ci_state: 'failed' })).returned, false);
@@ -472,10 +488,11 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.ok((await view(d)).merge_slot_until);
     // Revoked, expired, scope-denied and context-denied recipients are skipped;
     // the failure still returns the slot. Restore the synthetic Binding each time.
-    for (const [column, value, restore] of [['revoked_at', new Date(), null],
-      ['expires_at', new Date(Date.now() - 1000), null], ['scopes', ['context:write'], ['context:read', 'context:write']],
+    for (const [column, value, restore] of [['revoked_at', 'clock_timestamp()', null],
+      ['expires_at', "clock_timestamp()-interval '1 second'", null], ['scopes', ['context:write'], ['context:read', 'context:write']],
       ['context_keys', ['project:00000000-0000-4000-8000-000000000001'], ['*']]]) {
-      await admin.query(`update public.clued_agent_bindings set ${column}=$2 where id=$1`, [d.holder_binding_id, value]);
+      if (typeof value === 'string') await admin.query(`update public.clued_agent_bindings set ${column}=${value} where id=$1`, [d.holder_binding_id]);
+      else await admin.query(`update public.clued_agent_bindings set ${column}=$2 where id=$1`, [d.holder_binding_id, value]);
       const skipped = await touch({ ci_state: 'failed', head_sha: '7'.repeat(40) });
       assert.deepEqual([skipped.returned, skipped.notified], [true, []], column);
       await admin.query(`update public.clued_agent_bindings set ${column}=$2 where id=$1`, [d.holder_binding_id, restore]);
@@ -511,7 +528,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     q2 = committed(await renew('codex', q2, { trigger_refs: [] })).claim;
     [q1, q3] = [await view(q1), await view(q3)];
     assert.deepEqual([queue(q1).state, q1.merge_slot_until, queue(q3).state], ['out', null, 'head']);
-    assert.ok(minutesLeft(q3.merge_slot_until) > 44, 'Q3 starts when Q2 left');
+    await assertEnds(q3.merge_slot_until, 45, 'Q3 starts when Q2 left');
     // The entry that was out joins again at the back; a released head hands over too.
     q1 = committed(await renew('claude', q1)).claim;
     assert.deepEqual([queue(q1).state, queue(q1).position], ['waiting', 2]);
@@ -519,7 +536,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', claim_id: q3.claim_id, fence: q3.fence, outcome: 'completed' }));
     q1 = await view(q1);
     assert.deepEqual([queue(q1).state, queue(q1).position, queue(q1).length], ['head', 1, 1]);
-    assert.ok(minutesLeft(q1.merge_slot_until) > 44);
+    await assertEnds(q1.merge_slot_until, 45, 'Q1 starts when Q3 released');
     q1 = committed(await renew('claude', q1, { trigger_refs: [] })).claim;
     // The leaving is recorded per account and merge ref, out of reach of the API roles.
     const left = (await admin.query(`select merge_ref,left_claim_id from clued_private.work_claim_merge_queue_v1
@@ -540,7 +557,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     await admin.query(`update clued_private.work_claims_v1 set status='EXPIRED' where claim_id=$1`, [l2.claim_id]);
     [l1, l3] = [await view(l1), await view(l3)];
     assert.deepEqual([queue(l1).state, queue(l3).state], ['out', 'head']);
-    assert.ok(minutesLeft(l3.merge_slot_until) > 43, `L3 keeps the start it got when L2's turn came: ${l3.merge_slot_until}`);
+    await assertEnds(l3.merge_slot_until, 44, `L3 keeps the start it got when L2's turn came: ${l3.merge_slot_until}`);
     l1 = committed(await renew('claude', l1, { trigger_refs: [] })).claim;
     l3 = committed(await renew('codex', l3, { trigger_refs: [] })).claim;
 
@@ -597,7 +614,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // unchanged after the original business/concurrency/negative matrix.
     const closeoutMigration = await findGatewayCloseoutMigration(root);
     const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 

@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto';
 import { canonical } from '../proof.mjs';
 import { REPO } from './layout.mjs';
 import { revocationQualification } from './revocation-run.mjs';
+import { relayQualificationWindow } from './relay-qualification-run.mjs';
 
 export const RECORD_INPUTS_CONTRACT = 'clued.independent-ci.resident-record-inputs/2';
 export const RECORD_MANIFEST_CONTRACT = 'clued.independent-ci.resident-record/2';
@@ -112,7 +113,8 @@ export function validateRecordInputs(v, now = Date.now()) {
   noSecrets(v);
   check(exact(v, ['contract', 'repository', 'sourceCommit', 'scope', 'node', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'appKeyId',
     'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'supabaseUrl', 'publishableKey', 'controllerNodeSha256',
-    'references', 'owner', 'formalRoles', 'signers', ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
+    'references', 'owner', 'formalRoles', 'signers', ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[]),
+    ...(Object.hasOwn(v,'relayQualificationWindow')?['relayQualificationWindow']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
   check(v.contract === RECORD_INPUTS_CONTRACT && v.repository === REPO && SHA.test(v.sourceCommit)
     && (v.scope === 'global' || /^project:[a-f0-9-]{36}$/.test(v.scope)), 'ACTUAL_REPOSITORY_SOURCE_SCOPE_REQUIRED');
   validateNodeProfile(v.node);
@@ -130,6 +132,12 @@ export function validateRecordInputs(v, now = Date.now()) {
     const q=v.revocationMaintenanceQualification;
     check(revocationQualification({accepted:{revocationMaintenanceQualification:q},config:{sourceManifestSha256:q?.sourceManifestSha256}}, {now})
       && HASH.test(q.sourceManifestSha256), 'GENUINE_REVOCATION_QUALIFICATION_REFERENCE_REQUIRED');
+  }
+  if (Object.hasOwn(v, 'relayQualificationWindow')) {
+    const q = v.relayQualificationWindow;
+    check(relayQualificationWindow({ accepted: { relayQualificationWindow: q, ownerReceiptRef: v.owner.ownerReceiptRef },
+      config: { sourceManifestSha256: q?.sourceManifestSha256 } }, { now, reserveMs: 300_000 }),
+    'GENUINE_RELAY_QUALIFICATION_WINDOW_REQUIRED');
   }
   return v;
 }
@@ -166,6 +174,11 @@ export function assembleRecord(inputs, sourceFiles) {
   if(Object.hasOwn(inputs,'revocationMaintenanceQualification')){
     check(inputs.revocationMaintenanceQualification.sourceManifestSha256===config.sourceManifestSha256,'REVOCATION_QUALIFICATION_SOURCE_CHANGED');
     accepted.revocationMaintenanceQualification=structuredClone(inputs.revocationMaintenanceQualification);
+  }
+  if (Object.hasOwn(inputs, 'relayQualificationWindow')) {
+    check(inputs.relayQualificationWindow.sourceManifestSha256 === config.sourceManifestSha256,
+      'RELAY_QUALIFICATION_WINDOW_SOURCE_CHANGED');
+    accepted.relayQualificationWindow = structuredClone(inputs.relayQualificationWindow);
   }
   const acceptanceText = canonical(accepted);
   config.acceptanceSha256 = hash(acceptanceText);

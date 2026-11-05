@@ -18,6 +18,35 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### Transient-read successor candidate (Task 5cee3629)
+
+`work-handover-native-admission-retry-v1` / component `1.0.2` keeps every rule
+of `work-handover-native-admission-v1` and changes only how a passing network
+fault is read. On 2026-11-05 a single cut read of the `kooyumi-work-admission`
+check refused a job although the head was admitted. Now a read that fails with
+a network error, is cut off while its reply is read, runs past its own time
+bound (30 seconds; 10 seconds for the `execution_current` observation), or gets
+a 500/502/503/504 answer (from GitHub or the Clued RPC) is tried again, up to
+three attempts per call with 2 and 5 seconds between them. Only reads are tried
+again: GET requests, and the two POSTs their callers mark as reads (the hook
+App's installation-token mint and the read-only `execution_current`
+observation). A 401, 403, 404, 429 or a malformed answer is final at once, as
+before. While the hook waits for the Native check, the legacy admission run or
+a re-run's `admission-gate` job, a poll that still fails transiently counts as
+"not settled yet" until `CLUED_RUNNER_HOOK_WAIT_SECONDS` ends by the clock;
+then the last failure refuses. A Native check is judged at the time its pages
+were read. All reads of one job start end within twice the wait plus two
+minutes. Nothing is admitted on a failure. `qualify-native-admission-retry-candidate.mjs
+--candidate` repeats the 1.0.1 cases and adds synthetic network cuts. The
+1.0.1 file and its qualifier stay unchanged for rollback.
+
+This file is under `scripts/runner/**`, a protected path: merging it needs an
+Owner Grant. As for every successor, it then needs exact Source acceptance,
+merged-source installation on every registered runner under the protected
+machine procedure, and actual job-start logs showing
+`[hook work-handover-native-admission-retry-v1]` before the fleet counts as
+qualified.
+
 ### Native producer successor candidate (Task 169fd456 / PR #979 prerequisite)
 
 `work-handover-native-admission-v1` / component `1.0.1` fixes the stale
@@ -53,7 +82,7 @@ A job starts only when its run is one of the following:
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the KooYomi admission of the pull request.
 - **A pull request into `main` that changes a workflow,** once `main`'s admission run of the same event as the job's run has succeeded.
   - That admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run. GitHub creates the runs of one event together. Skipped runs are left out: the admission job skips pull requests into other branches.
-  - While that admission run is still going, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 480). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that.
+  - While that admission run is still going, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 480). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that, plus at most two minutes of reads (component 1.0.2).
   - An older success on the same head does not count: for example after a force-push back to an admitted commit, or a pull request closed and reopened (even within seconds).
   - Only `main`'s code decides. `pull_request_target` runs the default branch's copy of the workflow whatever the pull request's base, and that copy checks out `main` and runs only for pull requests into `main` (re-review 6, B1). A branch's edited copy never runs on `pull_request_target`.
   - The run succeeds only when its admission step does. That is the same condition on which it posts the `clued-admission-verified` App check.

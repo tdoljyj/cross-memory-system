@@ -1,0 +1,70 @@
+{
+  "schema": "clued.actor-execution-subject221/1",
+  "source_profile": {
+    "schema": "clued.standard-runner-actor-source-profile/1",
+    "registration_status": "registered",
+    "purpose": "standard_runner_self_s4u_qualification_then_install_once",
+    "effect_purposes": [
+      "standard_runner_self_s4u_qualification_once",
+      "standard_runner_self_s4u_maintenance_install_once"
+    ],
+    "file": ".github/workflows/clued-standard-runner-actor-qualification.yml",
+    "workflow_blob": "d752e91ae501313396163df277883d2d02fa100e",
+    "source_sha256": "9414d76960d096e786738c4470bcf32dd3e50ab2999eea59c922473436034b1d",
+    "workflow_definition_sha256": "7c358827de892ad23968740464cc4390a7773450be6ec8de17317126c6898609",
+    "row_data_sha256": "f0b6d5cc129a74de5a0338e512981936ae6f4e61fad11db624873d448ae5460b",
+    "primary_ids": [
+      "admission-gate",
+      "qualify-company",
+      "qualify-home"
+    ],
+    "pull_request_ci": false,
+    "execution_authority": false
+  },
+  "rows": [
+    {
+      "node_id": "desk-w-591-windows-runner-caches",
+      "host": "DESK-W-591",
+      "sid": "S-1-5-21-858977881-4031698862-3006450925-1005",
+      "runner_id": 21,
+      "runner_name": "clued-ci-company-win-01",
+      "site": "site-company",
+      "job": "qualify-company",
+      "request_sha256": "556c2a224252ae9b84078075049ce6c46bd4c3ccf9cab9dcabdec16c9d6b9ce0",
+      "predecessor_sha256": "d24a9bd1a8b0d905af0a789e0c18e6a97d6433868d124eecaa67c7784d72f297"
+    },
+    {
+      "node_id": "turing-windows-runner-caches",
+      "host": "TURING",
+      "sid": "S-1-5-21-1173730660-3877291096-655431861-1013",
+      "runner_id": 23,
+      "runner_name": "clued-ci-home-win-01",
+      "site": "site-home",
+      "job": "qualify-home",
+      "request_sha256": "961a6a425a81ce2ef4e40fa42809c72210d65ded7bd30c164286e8351206e8b7",
+      "predecessor_sha256": "87f3aa2534d3999d9664c740f5eb5dc1d593fa1cdb075867c68000a788ab8c7c"
+    }
+  ],
+  "roles": [
+    {
+      "job_id": "admission-gate",
+      "definition_sha256": "7f03dd0b1ee6f039452cc779ff3af6eeb646bce22c682f72c6e3c1ebafcc6b7d"
+    },
+    {
+      "job_id": "qualify-company",
+      "definition_sha256": "42fc2a5ce3083bd4ae9f1c5c51c789b6ebc6469494f2d37c429e68de9abd6d87"
+    },
+    {
+      "job_id": "qualify-home",
+      "definition_sha256": "93ffb7abdbbbae5cba80e28b295edd2fe98f4e90b52ca84c195b663557ae8982"
+    }
+  ],
+  "delivery_manifest_sha256": "f52a721bf5b1b6e75f536f26adcec054ee655f8b9c87652671e46f7c554402e0",
+  "phases": [
+    "STANDARD_RUNNER_SELF_QUALIFICATION_ONCE",
+    "STANDARD_RUNNER_SELF_MAINTENANCE_INSTALL_ONCE"
+  ],
+  "physical_owner_acceptance": null,
+  "qualification": false,
+  "execution_authority": false
+}

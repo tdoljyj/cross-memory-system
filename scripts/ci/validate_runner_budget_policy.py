@@ -198,7 +198,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-work-admission-dispatch.yml": {
-        "control_sha256": "ebb3e31056796a46bdfddabb880da1173bdb5128b9e88dded3ee4792b7491745",
+        "control_sha256": "98f3b847549d76ff13d9d0db3ddad80dffb14f8a307b66f7ee06b87788780850",
         "jobs": {
             "admit": "fc0a420fe04b4df0e0fdf17101b5b0ef07e0d439f5fbed0500bf6fca73590388"
         }
@@ -336,6 +336,19 @@ LEGACY_HOSTED_DEBT = {
 # these bytes, is admitted, and an entry fails once its job leaves hosted
 # runners or is gone.
 OWNER_DECISION_HOSTED_SOURCE = "325717a6"
+# Explicit candidate successor for the two existing executor jobs only. No new
+# runner, trigger, timeout, billable store or job is added; push execution is
+# narrowed to PRs. Three read permissions let the fresh OIDC/Native start door
+# verify actual job/check/PR facts. Exact protected-head Grant is still required
+# before merging this Source; this table never activates hosted execution.
+HOSTED_SCAN_START_SUCCESSOR = {
+    "decision": "41ab823a",
+    "frozen_commit": "956078fcec98844ab9be05e857fe4f53b3372fc4",
+    "previous_pins": {
+        "gitleaks.yml": ["f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b", "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"],
+        "trivy.yml": ["57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9", "658cfd509399200a62f4493f4830abf1426b5457fd11a9788ec67c8991f2c71e"],
+    },
+}
 OWNER_DECISION_HOSTED_JOBS = {
     "contract-placement.yml": {
         "control_sha256": "9043db3a2c533c54ac60804a543c80ae79f062109d3322e60b58eb50b749542d",
@@ -345,20 +358,41 @@ OWNER_DECISION_HOSTED_JOBS = {
         }
     },
     "gitleaks.yml": {
-        "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
+        "control_sha256": "f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"
+            "gitleaks-trusted-self-hosted": "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea"
         }
     },
     "trivy.yml": {
-        "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
+        "control_sha256": "7458d438680dcf24af04e6b0843c6e5efcde6dbdc404ca993df40a1c162704da",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "trivy-trusted-self-hosted": "658cfd509399200a62f4493f4830abf1426b5457fd11a9788ec67c8991f2c71e"
+            "trivy-trusted-self-hosted": "67c881212b4932617134a79cf3e8153de4bf5024b30bbbfa2dd129863b05c9bd"
         }
     }
 }
+
+# Exact local Source-candidate successors only. The original 42 debt rows,
+# six Owner jobs and their historical hashes above remain byte-for-byte intact.
+# Matching both the entire workflow and exact predecessor map never activates
+# execution; unknown changes still use and fail the original pinned map.
+EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
+                  'source_commit': 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db',
+                  'workflow_sha256': '116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966',
+                  'predecessor': {'control_sha256': 'f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301',
+                                  'jobs': {'admission-gate': '52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2',
+                                           'gitleaks-trusted-self-hosted': 'b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea'}},
+                  'successor': {'control_sha256': 'f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301',
+                                'jobs': {'admission-gate': '52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2',
+                                         'gitleaks-trusted-self-hosted': 'ae8cea670f38536ff6f5ef5b5be17cd990b49702a0e18f00fae36b9d3598285a'}}},
+ 'clued-merge-slot-ci.yml': {'kind': 'legacy',
+                             'source_commit': 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db',
+                             'workflow_sha256': '670c8e3bee253df7811cf35699213d94d548698178e3e1fb1a5789399c63b261',
+                             'predecessor': {'control_sha256': '500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f',
+                                             'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}},
+                             'successor': {'control_sha256': 'efbfbb17509f923eb395982aa700f85c38ff35f8c61783ea25d3e4025d21af43',
+                                           'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}}}}
 
 # Owner Decision bc6fdad1: GitHub treats every check run that carries a
 # required check's name as that required check, whatever its integration, so a
@@ -617,6 +651,12 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             continue
         entry = baseline.get(filename)
         owner_entry = owner_hosted.get(filename)
+        successor = EXACT_SOURCE_CANDIDATE_SUCCESSORS.get(filename)
+        if successor and source_hash(text) == successor["workflow_sha256"]:
+            if successor["kind"] == "legacy" and entry == successor["predecessor"]:
+                entry = successor["successor"]
+            elif successor["kind"] == "owner" and owner_entry == successor["predecessor"]:
+                owner_entry = successor["successor"]
         pr_triggered = bool(re.search(r"\bpull_request(?:_target)?\b", top["on"]))
         concurrency = top.get("concurrency", "")
         has_cancel = bool(re.search(r"(?m)^\s+cancel-in-progress\s*:", concurrency))

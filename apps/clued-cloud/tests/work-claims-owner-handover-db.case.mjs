@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claims PR 2 (migration 20261005200000, Task f165eb56, Decisions
 // 22b9bd9e and 4bcc424d): the Agent's holder_label, the Owner's list of live
@@ -312,7 +312,7 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
     // unchanged after the original business/concurrency/negative matrix.
     const closeoutMigration = await findGatewayCloseoutMigration(root);
     const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 

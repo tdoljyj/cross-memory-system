@@ -43,9 +43,10 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const int TrainStage=10;
  public const int RoleProbeStage=11;
  public const int RevocationStage=12;
- public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher","train-maintenance","role-probe","revocation-maintenance"};
- public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000};
- public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"},new[]{"train-run"},new[]{"role-probe-run"},new[]{"revocation-maintenance-run"}};
+ public const int RelayQualificationStage=13;
+ public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher","train-maintenance","role-probe","revocation-maintenance","relay-qualification"};
+ public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000,300000};
+ public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"},new[]{"train-run"},new[]{"role-probe-run"},new[]{"revocation-maintenance-run"},new[]{"relay-qualification-run"}};
  // The job roles a stage package may carry: exactly the row's, or (stage R) a non-empty ordered subset.
  public static string[] SelectedJobRoles(int stage,object[] jobs){
   if(stage<1||stage>StageRole.Length||jobs==null)Deny("EXACT_STAGE_JOBS_REQUIRED");string[] row=StageJobRoles[stage-1];
@@ -63,6 +64,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   if(role=="train-maintenance")return P+"src/independent-control-checks-v2/train-maintenance.mjs";
   if(role=="role-probe")return P+"src/resident-v2/role-probe-entry.mjs";
   if(role=="revocation-maintenance")return P+"src/resident-v2/revocation-entry.mjs";
+  if(role=="relay-qualification")return P+"src/resident-v2/relay-qualification-entry.mjs";
   Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");return null;
  }
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
@@ -202,6 +204,38 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
   if(RevocationRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
+ // Stage 13 uses a separate public observation job. No scanner/publication job
+ // or role-probe shape can be reinterpreted as this exact, Source-bound input.
+ // Identity order is relay-qualification-run.mjs RELAY_QUALIFICATION_SUBJECT_FIELDS,
+ // followed by phase/prior nonce/prior hash; createdAt is deliberately excluded.
+ static readonly string[] RelayQualificationSubjectFields={"repo","runId","pr","headSha","baseSha","testSha","sourceManifestSha256","nodeProfileSha256","claimId","fence","executionEpoch","stage1JobId","stage1OutcomeNonce","stage1OutcomeSha256"};
+ static readonly string[] RelayQualificationRunFields={"contract","id","repo","runId","pr","headSha","baseSha","testSha","sourceManifestSha256","nodeProfileSha256","claimId","fence","executionEpoch","stage1JobId","stage1OutcomeNonce","stage1OutcomeSha256","phase","priorObservationNonce","priorObservationSha256","createdAt"};
+ public static string RelayQualificationRunId(Dictionary<string,object> job){
+  var identity=new List<object>{"clued.independent-ci.relay-qualification-run/1"};
+  foreach(string field in RelayQualificationSubjectFields)identity.Add(At(job,field));
+  foreach(string field in new[]{"phase","priorObservationNonce","priorObservationSha256"})identity.Add(At(job,field));
+  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ public static Dictionary<string,object> ValidateRelayQualificationRun(Dictionary<string,object> job,string sourceManifest,string batchId,string profileSha){
+  Fields(job,RelayQualificationRunFields);Exact(job,"contract","clued.independent-ci.relay-qualification-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
+  string run=Text(job,"runId");
+  if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))
+    ||Sha(job,"sourceManifestSha256")!=sourceManifest||Sha(job,"nodeProfileSha256")!=profileSha
+    ||!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||!Commit(Text(job,"testSha"))||Text(job,"testSha")!=Text(job,"headSha")
+    ||!LowerUuid(At(job,"claimId"))||!ValidNonce(Text(job,"stage1OutcomeNonce")))Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");
+  Sha(job,"stage1JobId");Sha(job,"stage1OutcomeSha256");
+  foreach(string field in new[]{"pr","fence","executionEpoch"}){long value=Int(job,field);if(value<1||value>9007199254740991)Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
+  string phase=Text(job,"phase");object priorNonce=At(job,"priorObservationNonce"),priorSha=At(job,"priorObservationSha256");
+  if(phase=="initial"){if(priorNonce!=null||priorSha!=null)Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
+  else if(phase=="after-ref-move"){if(!ValidNonce(priorNonce as string)||!Hash(priorSha as string)||(string)priorNonce==Text(job,"stage1OutcomeNonce"))Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
+  else Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");
+  string created=At(job,"createdAt") as string;
+  // ECMAScript's canonical ISO range includes year 0000; .NET DateTime starts
+  // at 0001. Year 0400 has the same Gregorian leap-day rules, so validate that
+  // one representation without broadening any prior stage's time parser.
+  if(!(IsoMs(created)||(created!=null&&created.StartsWith("0000-",StringComparison.Ordinal)&&IsoMs("0400"+created.Substring(4)))))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  if(RelayQualificationRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
+ }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
   Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   if(Text(job,"role")!=expectedRole)Deny("FIXED_FORMAL_JOB_ROLE_REQUIRED");Sha(job,"id");
@@ -255,6 +289,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
    if(Stage==TrainStage){ValidateTrainRun(j,SourceManifestHash,Text(plan,"batchId"));continue;}
    if(Stage==RoleProbeStage){ValidateRoleProbeRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
    if(Stage==RevocationStage){ValidateRevocationRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
+   if(Stage==RelayQualificationStage){ValidateRelayQualificationRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
    ValidateJobV2(j,roles[i],SourceManifestHash);
    if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it

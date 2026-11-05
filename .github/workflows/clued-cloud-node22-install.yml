@@ -95,9 +95,13 @@ jobs:
       - run: node --version && npm --version
       - name: Install from lockfile on the engines floor
         run: >-
-          timeout --signal=TERM --kill-after=15s 8m
-          npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
-          --fetch-retries=2 --fetch-timeout=30000
+          /usr/bin/python3.12 -I -B
+          /home/runner/.clued-cache-maintenance/source-1.0.1/scripts/ci/self-hosted/resource-maintenance/maintenance.py
+          --registry /home/runner/.clued-cache-maintenance/source-1.0.1/config/ci-resource-maintenance.json
+          --registry-sha256 f8f3ee9711689993b5a9d663961c72b70b1b1dc7c13dd0252d7ec5e2fe5a2d9a
+          --binding /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json
+          run --cache-id npm --timeout 480 --
+          npm ci --ignore-scripts --prefer-offline --fetch-retries=2 --fetch-timeout=30000
 
   untrusted-hosted:
     name: >-

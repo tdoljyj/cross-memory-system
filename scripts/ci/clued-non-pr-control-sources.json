@@ -1,0 +1,1376 @@
+{
+  "default_branch": "main",
+  "execution_authority": false,
+  "purpose": "exact_non_pr_source_classification_only",
+  "repository": "tdoljyj/cross-memory-system",
+  "roles": {
+    ".github/workflows/clued-compute-panel.yml": [
+      {
+        "definition": {
+          "name": "admission-gate",
+          "outputs": {
+            "admitted": "${{ steps.gate.outputs.admitted }}",
+            "enforced": "${{ steps.gate.outputs.enforced }}",
+            "verdict": "${{ steps.gate.outputs.verdict }}"
+          },
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "pull-requests": "read"
+          },
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+              }
+            },
+            {
+              "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+              "with": {
+                "node-version": "24.19.0"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "id": "gate",
+              "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+            }
+          ],
+          "timeout-minutes": 10
+        },
+        "definition_sha256": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
+        "job_id": "admission-gate"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-company-linux-01",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "runner-company-linux-01"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
+              },
+              "name": "Probe the runner",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "shell": "bash"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "4cb8a59fce36545141fe1555a6e1e2ffdc19980165b643cceb41c80f4e20f288",
+        "job_id": "probe-company-linux-01"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-company-linux-02",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "runner-company-linux-02"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
+              },
+              "name": "Probe the runner",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "shell": "bash"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "5a1b2310bea18536ded0d193b75b2107759282f4e4a254dd5a7c7e516e141a17",
+        "job_id": "probe-company-linux-02"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-company-linux-03",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "runner-company-linux-03"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
+              },
+              "name": "Probe the runner",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "shell": "bash"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "f70917829cb770a0e3e9c6f54a2b5e78873ddb132379f5fe87106bdd13714dbc",
+        "job_id": "probe-company-linux-03"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-company-linux-04",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "runner-company-linux-04"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
+              },
+              "name": "Probe the runner",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "shell": "bash"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "02c1274d680d2611206fd170d903ad8329638fda9dea9754b8e7f162bc9f517c",
+        "job_id": "probe-company-linux-04"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-company-win-01",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Windows",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "cap-python312",
+            "site-company"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "EXPECTED_RUNNER_NAME": "clued-ci-company-win-01"
+              },
+              "name": "Probe the runner",
+              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+              "shell": "powershell"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "4cc4f1e6c8c9a114cd81c11e1591ed3fa3312131d4a602b4bf39439eadbbf187",
+        "job_id": "probe-company-win-01"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-probe / clued-ci-home-win-01",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Windows",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "cap-python312",
+            "site-home"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "EXPECTED_RUNNER_NAME": "clued-ci-home-win-01"
+              },
+              "name": "Probe the runner",
+              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+              "shell": "powershell"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "4453ef9a9af1b2e3f705af656e5bbd8a84f789c4b571d369c015c175723c696b",
+        "job_id": "probe-home-win-01"
+      },
+      {
+        "definition": {
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+          "name": "compute-panel",
+          "needs": "admission-gate",
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "issues": "write",
+            "pull-requests": "read",
+            "statuses": "read"
+          },
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "name": "Self-test the panel (no network)",
+              "run": "python3 -I tests/test_compute_panel.py"
+            },
+            {
+              "env": {
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "name": "Rebuild the panel issue",
+              "run": "python3 -I scripts/ci/self-hosted/compute_panel.py"
+            }
+          ],
+          "timeout-minutes": 10
+        },
+        "definition_sha256": "f6dab50b88823d3dc0e6a7901024d73956582a7a422525084348f52d258b1150",
+        "job_id": "panel"
+      }
+    ],
+    ".github/workflows/clued-native617-admission-dispatch.yml": [
+      {
+        "definition": {
+          "name": "admission-gate",
+          "outputs": {
+            "admitted": "${{ steps.gate.outputs.admitted }}",
+            "enforced": "${{ steps.gate.outputs.enforced }}",
+            "verdict": "${{ steps.gate.outputs.verdict }}"
+          },
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "pull-requests": "read"
+          },
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+              }
+            },
+            {
+              "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+              "with": {
+                "node-version": "24.19.0"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "id": "gate",
+              "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+            }
+          ],
+          "timeout-minutes": 10
+        },
+        "definition_sha256": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
+        "job_id": "admission-gate"
+      },
+      {
+        "definition": {
+          "environment": "clued-admission",
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
+          "name": "clued-native617-admission-dispatch",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "trust-internal",
+            "handover-native-control-once"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.repository.default_branch || 'main' }}"
+              }
+            },
+            {
+              "name": "Refuse until independent Native E1 qualification",
+              "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+            },
+            {
+              "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+              "with": {
+                "node-version": "22"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                "ADMIT_REF": "${{ inputs.ref }}",
+                "ADMIT_SCOPE": "${{ inputs.scope }}",
+                "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "name": "Verify the work claim with Clued",
+              "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+            },
+            {
+              "if": "${{ always() }}",
+              "name": "Export the closed local natural R9 packet",
+              "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+            },
+            {
+              "if": "${{ always() }}",
+              "name": "Preserve natural R9 source observations",
+              "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+              "with": {
+                "if-no-files-found": "warn",
+                "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                "retention-days": 90
+              }
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "9cfb9fb59855803c42ba4f554be031265e86425eadc1d2ecdbda74fb1e5c2467",
+        "job_id": "admit"
+      }
+    ]
+  },
+  "schema": "clued.non-pr-control-sources/1",
+  "source_acceptance": null,
+  "workflows": {
+    ".github/workflows/clued-compute-panel.yml": {
+      "family": "compute_panel",
+      "source_sha256": "35e0e05e323d608e873b3375f8ca5ac03601a6a767ed831cbba4df5dfa91adf5",
+      "source_yaml_lines": [
+        "# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes",
+        "# each general-pool runner answers a route probe (its name, free disk and",
+        "# available memory), and one Linux runner rebuilds the panel issue from those",
+        "# probes, the in-progress jobs of every workflow, the resident executors'",
+        "# info-only PR statuses and, for the duplicate-run alert (Task e435e658), the",
+        "# check runs of recent PR heads (checks: read). It uses only this workflow's",
+        "# GITHUB_TOKEN; no secret reaches the pool. See scripts/ci/self-hosted/compute_panel.py and",
+        "# docs/maintenance/compute-panel.md. clued-ci-health and clued-ci-usage-report",
+        "# stay on hosted runners: the pool cannot watch its own complete loss.",
+        "name: clued-compute-panel",
+        "",
+        "on:",
+        "  schedule:",
+        "    - cron: \"*/5 * * * *\"",
+        "  # A run by hand: GitHub may delay or skip */5 schedules (none ran in the first hour after #935).",
+        "  workflow_dispatch:",
+        "",
+        "permissions:",
+        "  contents: read",
+        "",
+        "# A new run cancels the previous one, so an offline runner holds at most one",
+        "# queued probe. Probes that already finished keep their result.",
+        "concurrency:",
+        "  group: clued-compute-panel",
+        "  cancel-in-progress: true",
+        "",
+        "jobs:",
+        "  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when",
+        "  # Clued admits this pull request. The gate does not call Clued and gets no",
+        "  # Clued token (this job runs PR code): it waits for the trusted",
+        "  # pull_request_target run of clued-work-admission.yml on this head and reads",
+        "  # its result, always enforced (Merge Admission step 6 retired the advisory",
+        "  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.",
+        "  # Self-hosted Linux pool, pinned Node (Decision f86179b3).",
+        "  admission-gate:",
+        "    name: admission-gate",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "    timeout-minutes: 10",
+        "    permissions:",
+        "      actions: read",
+        "      checks: read",
+        "      contents: read",
+        "      pull-requests: read",
+        "    outputs:",
+        "      admitted: ${{ steps.gate.outputs.admitted }}",
+        "      enforced: ${{ steps.gate.outputs.enforced }}",
+        "      verdict: ${{ steps.gate.outputs.verdict }}",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+        "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+        "        with:",
+        "          node-version: 24.19.0",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - id: gate",
+        "        env:",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "        run: node scripts/ci/clued-work-admission.mjs --mode gate",
+        "",
+        "  # One probe per runner, each on its own literal route. The job name is what",
+        "  # compute_panel.py reads; it prints one COMPUTE_PANEL_PROBE line.",
+        "  probe-company-linux-01:",
+        "    name: compute-probe / clued-ci-company-linux-01",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-01]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: bash",
+        "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+        "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-01",
+        "        run: |",
+        "          set -euo pipefail",
+        "          if [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then",
+        "            echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2",
+        "            exit 1",
+        "          fi",
+        "          disk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')",
+        "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
+        "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
+        "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
+        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "",
+        "  probe-company-linux-02:",
+        "    name: compute-probe / clued-ci-company-linux-02",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-02]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: bash",
+        "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+        "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-02",
+        "        run: |",
+        "          set -euo pipefail",
+        "          if [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then",
+        "            echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2",
+        "            exit 1",
+        "          fi",
+        "          disk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')",
+        "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
+        "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
+        "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
+        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "",
+        "  probe-company-linux-03:",
+        "    name: compute-probe / clued-ci-company-linux-03",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-03]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: bash",
+        "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+        "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-03",
+        "        run: |",
+        "          set -euo pipefail",
+        "          if [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then",
+        "            echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2",
+        "            exit 1",
+        "          fi",
+        "          disk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')",
+        "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
+        "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
+        "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
+        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "",
+        "  probe-company-linux-04:",
+        "    name: compute-probe / clued-ci-company-linux-04",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-04]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: bash",
+        "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+        "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-04",
+        "        run: |",
+        "          set -euo pipefail",
+        "          if [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then",
+        "            echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2",
+        "            exit 1",
+        "          fi",
+        "          disk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')",
+        "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
+        "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
+        "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
+        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "",
+        "  # The two general Windows runners are told apart by their site label.",
+        "  probe-company-win-01:",
+        "    name: compute-probe / clued-ci-company-win-01",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-company]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: powershell",
+        "        env:",
+        "          EXPECTED_RUNNER_NAME: clued-ci-company-win-01",
+        "        run: |",
+        "          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {",
+        "            throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"",
+        "          }",
+        "          $drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name",
+        "          $disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)",
+        "          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)",
+        "          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress",
+        "          Write-Output \"COMPUTE_PANEL_PROBE $line\"",
+        "          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          if ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }",
+        "",
+        "  probe-home-win-01:",
+        "    name: compute-probe / clued-ci-home-win-01",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-home]",
+        "    timeout-minutes: 5",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Probe the runner",
+        "        shell: powershell",
+        "        env:",
+        "          EXPECTED_RUNNER_NAME: clued-ci-home-win-01",
+        "        run: |",
+        "          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {",
+        "            throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"",
+        "          }",
+        "          $drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name",
+        "          $disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)",
+        "          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)",
+        "          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress",
+        "          Write-Output \"COMPUTE_PANEL_PROBE $line\"",
+        "          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          if ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }",
+        "",
+        "  panel:",
+        "    name: compute-panel",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "    timeout-minutes: 10",
+        "    permissions:",
+        "      actions: read",
+        "      checks: read",
+        "      contents: read",
+        "      issues: write",
+        "      pull-requests: read",
+        "      statuses: read",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      # -I: the runner is shared, so ignore user site-packages and PYTHON* settings.",
+        "      - name: Self-test the panel (no network)",
+        "        run: python3 -I tests/test_compute_panel.py",
+        "      - name: Rebuild the panel issue",
+        "        env:",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "        run: python3 -I scripts/ci/self-hosted/compute_panel.py",
+        ""
+      ],
+      "workflow_blob": "7d263683953b140897c30681828924d6a183b26c",
+      "workflow_definition": {
+        "concurrency": {
+          "cancel-in-progress": true,
+          "group": "clued-compute-panel"
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "id": "gate",
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ],
+            "timeout-minutes": 10
+          },
+          "panel": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-panel",
+            "needs": "admission-gate",
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "issues": "write",
+              "pull-requests": "read",
+              "statuses": "read"
+            },
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Self-test the panel (no network)",
+                "run": "python3 -I tests/test_compute_panel.py"
+              },
+              {
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "name": "Rebuild the panel issue",
+                "run": "python3 -I scripts/ci/self-hosted/compute_panel.py"
+              }
+            ],
+            "timeout-minutes": 10
+          },
+          "probe-company-linux-01": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-company-linux-01",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "runner-company-linux-01"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                  "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
+                },
+                "name": "Probe the runner",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "shell": "bash"
+              }
+            ],
+            "timeout-minutes": 5
+          },
+          "probe-company-linux-02": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-company-linux-02",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "runner-company-linux-02"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                  "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
+                },
+                "name": "Probe the runner",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "shell": "bash"
+              }
+            ],
+            "timeout-minutes": 5
+          },
+          "probe-company-linux-03": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-company-linux-03",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "runner-company-linux-03"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                  "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
+                },
+                "name": "Probe the runner",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "shell": "bash"
+              }
+            ],
+            "timeout-minutes": 5
+          },
+          "probe-company-linux-04": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-company-linux-04",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "runner-company-linux-04"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
+                  "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
+                },
+                "name": "Probe the runner",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "shell": "bash"
+              }
+            ],
+            "timeout-minutes": 5
+          },
+          "probe-company-win-01": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-company-win-01",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Windows",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-python312",
+              "site-company"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "EXPECTED_RUNNER_NAME": "clued-ci-company-win-01"
+                },
+                "name": "Probe the runner",
+                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+                "shell": "powershell"
+              }
+            ],
+            "timeout-minutes": 5
+          },
+          "probe-home-win-01": {
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))",
+            "name": "compute-probe / clued-ci-home-win-01",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Windows",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-python312",
+              "site-home"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "EXPECTED_RUNNER_NAME": "clued-ci-home-win-01"
+                },
+                "name": "Probe the runner",
+                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+                "shell": "powershell"
+              }
+            ],
+            "timeout-minutes": 5
+          }
+        },
+        "name": "clued-compute-panel",
+        "on": {
+          "schedule": [
+            {
+              "cron": "*/5 * * * *"
+            }
+          ],
+          "workflow_dispatch": null
+        },
+        "permissions": {
+          "contents": "read"
+        }
+      },
+      "workflow_definition_sha256": "e35d99eadf18acc62d66b8bac23507d55acda0214d1b7488e8ef8242caf90fc5"
+    },
+    ".github/workflows/clued-native617-admission-dispatch.yml": {
+      "family": "disabled_native617_dispatch",
+      "source_sha256": "03528c7c651114476d596e16944643108743681024bc32a54760f8ad93dbe460",
+      "source_yaml_lines": [
+        "name: clued-native617-admission-dispatch",
+        "run-name: admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}",
+        "",
+        "# Work Claim Admission v0.1 §4.6, hand dispatch (Owner Decision 75abfe80,",
+        "# Task 29128827). Agents act through the Owner's account, so a heavy workflow",
+        "# dispatched by hand must first have its claim verified here:",
+        "#",
+        "#   1. Dispatch this workflow on the default branch with the heavy workflow,",
+        "#      the ref it will run on and the claim id. This run verifies the claim",
+        "#      with Clued and is named \"admit <workflow> <ref> <claim_id>\".",
+        "#   2. Dispatch the heavy workflow on that ref with admission_run_id = this",
+        "#      run's id. Its admission-gate admits only when this run succeeded on the",
+        "#      default branch within 30 minutes and names that workflow and ref.",
+        "#",
+        "# The Clued token comes from the `clued-admission` environment, whose",
+        "# deployment branches are limited to main; the job also refuses any other ref.",
+        "# Default-branch code only; the dedicated runner stays disabled pending qualification.",
+        "",
+        "on:",
+        "  workflow_dispatch:",
+        "    inputs:",
+        "      admission_run_id:",
+        "        description: Existing exact workflow/ref dispatch admission",
+        "        required: true",
+        "        type: string",
+        "      workflow:",
+        "        description: Heavy workflow that will be dispatched",
+        "        required: true",
+        "        type: choice",
+        "        options:",
+        "          - clued-handover-external-qualification.yml",
+        "          - clued-handover-disposable-idle.yml",
+        "      ref:",
+        "        description: Branch or tag the heavy workflow will run on",
+        "        required: true",
+        "        type: string",
+        "      claim_id:",
+        "        description: Live Clued work claim covering this run",
+        "        required: true",
+        "        type: string",
+        "      scope:",
+        "        description: Claim scope, global or project:<canonical_project_id>",
+        "        required: false",
+        "        default: global",
+        "        type: string",
+        "",
+        "permissions:",
+        "  contents: read",
+        "",
+        "jobs:",
+        "  admission-gate:",
+        "    name: admission-gate",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "    timeout-minutes: 10",
+        "    permissions:",
+        "      actions: read",
+        "      checks: read",
+        "      contents: read",
+        "      pull-requests: read",
+        "    outputs:",
+        "      admitted: ${{ steps.gate.outputs.admitted }}",
+        "      enforced: ${{ steps.gate.outputs.enforced }}",
+        "      verdict: ${{ steps.gate.outputs.verdict }}",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+        "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+        "        with:",
+        "          node-version: 24.19.0",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - id: gate",
+        "        env:",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "        run: node scripts/ci/clued-work-admission.mjs --mode gate",
+        "",
+        "  admit:",
+        "    name: clued-native617-admission-dispatch",
+        "    needs: admission-gate",
+        "    if: >-",
+        "      needs.admission-gate.outputs.admitted == 'true' &&",
+        "      (github.ref == 'refs/heads/main')",
+        "    runs-on: [self-hosted, Linux, X64, clued, trust-internal, handover-native-control-once]",
+        "    timeout-minutes: 5",
+        "    environment: clued-admission",
+        "    steps:",
+        "      # Re-review 4, m6: the default branch as it is now, so a re-run of an",
+        "      # old run does not replay that run's older code with today's secrets.",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          ref: ${{ github.event.repository.default_branch || 'main' }}",
+        "          persist-credentials: false",
+        "      - name: Refuse until independent Native E1 qualification",
+        "        run: node scripts/ci/clued-handover-native-entry.mjs --check",
+        "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+        "        with:",
+        "          node-version: \"22\"",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Verify the work claim with Clued",
+        "        env:",
+        "          ADMIT_WORKFLOW: ${{ inputs.workflow }}",
+        "          ADMIT_REF: ${{ inputs.ref }}",
+        "          ADMIT_CLAIM_ID: ${{ inputs.claim_id }}",
+        "          ADMIT_SCOPE: ${{ inputs.scope }}",
+        "          CLUED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
+        "          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "        run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit",
+        "      - name: Export the closed local natural R9 packet",
+        "        if: ${{ always() }}",
+        "        run: node scripts/ci/merge-admission-source-producer.mjs --export admission",
+        "      - name: Preserve natural R9 source observations",
+        "        if: ${{ always() }}",
+        "        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        "        with:",
+        "          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+        "          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+        "          if-no-files-found: warn",
+        "          retention-days: 90",
+        ""
+      ],
+      "workflow_blob": "b3bac281913f30e0a30ad2adba28e1c9e822e5a5",
+      "workflow_definition": {
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "id": "gate",
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ],
+            "timeout-minutes": 10
+          },
+          "admit": {
+            "environment": "clued-admission",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
+            "name": "clued-native617-admission-dispatch",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-control-once"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}"
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                  "ADMIT_REF": "${{ inputs.ref }}",
+                  "ADMIT_SCOPE": "${{ inputs.scope }}",
+                  "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "name": "Verify the work claim with Clued",
+                "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+              },
+              {
+                "if": "${{ always() }}",
+                "name": "Export the closed local natural R9 packet",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+              },
+              {
+                "if": "${{ always() }}",
+                "name": "Preserve natural R9 source observations",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "if-no-files-found": "warn",
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "retention-days": 90
+                }
+              }
+            ],
+            "timeout-minutes": 5
+          }
+        },
+        "name": "clued-native617-admission-dispatch",
+        "on": {
+          "workflow_dispatch": {
+            "inputs": {
+              "admission_run_id": {
+                "description": "Existing exact workflow/ref dispatch admission",
+                "required": true,
+                "type": "string"
+              },
+              "claim_id": {
+                "description": "Live Clued work claim covering this run",
+                "required": true,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Branch or tag the heavy workflow will run on",
+                "required": true,
+                "type": "string"
+              },
+              "scope": {
+                "default": "global",
+                "description": "Claim scope, global or project:<canonical_project_id>",
+                "required": false,
+                "type": "string"
+              },
+              "workflow": {
+                "description": "Heavy workflow that will be dispatched",
+                "options": [
+                  "clued-handover-external-qualification.yml",
+                  "clued-handover-disposable-idle.yml"
+                ],
+                "required": true,
+                "type": "choice"
+              }
+            }
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "run-name": "admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}"
+      },
+      "workflow_definition_sha256": "6feee13f778e83c15457e15d31c613bdd16d56c1c4d93f03a7b4368a55ca18d4"
+    }
+  }
+}

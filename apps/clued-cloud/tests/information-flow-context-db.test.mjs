@@ -13,7 +13,7 @@ import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Information Flow M0-D slice S4 (contract M0DCloseout.v0.1 sections 6.1-6.3,
 // 7, 8 gates M0D-B01 and M0D-B04): Context Policy acceptance, the service
@@ -1325,7 +1325,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
     // Reapply the actual formal closeout after all fixture scenarios; no skip.
     const closeoutMigration = await findGatewayCloseoutMigration(root);
     const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 

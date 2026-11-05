@@ -42,7 +42,7 @@ import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refr
 import { allowRawTestBindings } from "./raw-binding-grants-fixture.mjs";
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, setWorkerGatewayCaller, workerGatewayRpc,
-  snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+  snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
@@ -58,10 +58,10 @@ const tokenHash = crypto.createHash("sha256").update("clued_rcb_test_token").dig
 // exercise current callers; historical PASS is not current-chain qualification.
 async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
   await t.test("historical resource setup closes with actual G6 apply/replay and exact GW80/CI8", async () => {
-    await admin.query(closeoutSql);
+    await replayGatewayCloseout(admin, closeoutSql);
     await assertGatewayCloseoutBoundary(admin);
     const catalog = await snapshotCallerCatalog(admin);
-    await admin.query(closeoutSql);
+    await replayGatewayCloseout(admin, closeoutSql);
     assert.deepEqual(await snapshotCallerCatalog(admin), catalog);
     await assertGatewayCloseoutBoundary(admin);
   });

@@ -1,0 +1,4999 @@
+[
+  {
+    "path": [],
+    "keys": [
+      "schema",
+      "audit_source",
+      "workflows",
+      "future_workflows",
+      "external2_future_workflows"
+    ]
+  },
+  {
+    "path": [
+      "workflows"
+    ],
+    "keys": [
+      ".github/workflows/clued-cloud-node22-install.yml",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      ".github/workflows/clued-components.yml",
+      ".github/workflows/clued-connection-authorization.yml",
+      ".github/workflows/clued-g4-database.yml",
+      ".github/workflows/contract-placement.yml",
+      ".github/workflows/design-refs.yml",
+      ".github/workflows/gitleaks.yml",
+      ".github/workflows/information-flow-e2e.yml",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      ".github/workflows/public-mcp-behavior.yml",
+      ".github/workflows/public-mcp-protocol.yml",
+      ".github/workflows/trivy.yml",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      ".github/workflows/clued-handover-disposable-idle.yml"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run node --version && npm --version",
+      "Install from lockfile on the engines floor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run node --version && npm --version",
+      "Install from lockfile on the engines floor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run node --version && npm --version",
+      "Install from lockfile on the engines floor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-node22-install.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run node --version && npm --version",
+      "Install from lockfile on the engines floor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests",
+      "documentation_skipped_steps"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Observe npm HTTP cache events",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Observe npm HTTP cache events",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-cloud-quality-gate.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Qualify ordinary documentation changes",
+      "Install from lockfile",
+      "Run npm run lint",
+      "Run npm run ledger:verify",
+      "Run npm run typecheck",
+      "Run npm run build",
+      "Run npm run test:unit"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Check component versions against the base",
+      "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v",
+      "VERSION and its git tag agree",
+      "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v",
+      "Admission self-tests on this head"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Check component versions against the base",
+      "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v",
+      "VERSION and its git tag agree",
+      "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v",
+      "Admission self-tests on this head"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Check component versions against the base",
+      "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v",
+      "VERSION and its git tag agree",
+      "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v",
+      "Admission self-tests on this head"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-components.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Check component versions against the base",
+      "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v",
+      "VERSION and its git tag agree",
+      "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v",
+      "Admission self-tests on this head"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline",
+      "Hydrate embedded PostgreSQL bundled library symlinks",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-connection-authorization.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --ignore-scripts",
+      "Install embedded PostgreSQL ICU compatibility runtime",
+      "Run npm run typecheck",
+      "Run npm run test:authorization:transport",
+      "Run npm run test:authorization:database",
+      "Run npm run test:context:v2",
+      "Run npm run test:projection:refresh",
+      "Run npm run test:work:claims",
+      "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs",
+      "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs",
+      "Run node --test tests/db-security-hygiene-db.test.mjs",
+      "Run npm run test:information-flow:candidates",
+      "Run npm run test:information-flow:intake",
+      "Run npm run test:information-flow:promotion",
+      "Run npm run test:information-flow:context",
+      "Run npm run test:information-flow:invalidation",
+      "Run npm run test:information-flow:hardening",
+      "Run npm run test:records:db",
+      "Run npm run test:mtpe:intake",
+      "Run npm run test:production:release-gate",
+      "Run npm run test:integration-runtime:gate-evidence",
+      "S2c gate evidence",
+      "Run npm run test:authorization:invitations",
+      "Run npm run test:authorization:migrations",
+      "Run npm run test:resource-center:authority",
+      "Run npm run test:authorization:integration",
+      "Run npm run test:authorization:pages",
+      "Verify DatasetSplit Native grant correction and Binding successor"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      2,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      3,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare a fresh attempt-specific Supabase project",
+      "Start isolated Supabase runtime",
+      "Verify fresh migration initialization",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      4,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-g4-database.yml",
+      "accepted_sources",
+      5,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Build the application surfaces used by lifecycle tests",
+      "Verify fresh-start guard regressions",
+      "Prepare, start and verify one fresh isolated Supabase runtime",
+      "Lint public and private database schemas",
+      "Run Unified Record V2 RLS and transaction tests",
+      "Run Project Lifecycle Successor v2 database and surface tests",
+      "Verify measurement journal transactions and FIFO replay",
+      "Verify actual PostgreSQL17 production backup coverage",
+      "Stop isolated Supabase runtime"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/contract-placement.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/contract-placement.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/contract-placement.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Placement and renderer fixtures",
+      "Build actual public bootstrap without the application dependency tree",
+      "Render all actual and synthetic contract parts",
+      "Enforce placement and one-time production gate"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/contract-placement.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Placement and renderer fixtures",
+      "Build actual public bootstrap without the application dependency tree",
+      "Render all actual and synthetic contract parts",
+      "Enforce placement and one-time production gate"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run python3 -m unittest scripts/ci/test_check_design_refs.py",
+      "Run python3 scripts/ci/check_design_refs.py"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run python3 -m unittest scripts/ci/test_check_design_refs.py",
+      "Run python3 scripts/ci/check_design_refs.py"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run python3 -m unittest scripts/ci/test_check_design_refs.py",
+      "Run python3 scripts/ci/check_design_refs.py"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/design-refs.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run python3 -m unittest scripts/ci/test_check_design_refs.py",
+      "Run python3 scripts/ci/check_design_refs.py"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Drop refs of deleted branches and of other PRs' earlier runs",
+      "Validate exact historical exceptions and detection regressions",
+      "Scan complete history with Gitleaks 8.30.1"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Drop refs of deleted branches and of other PRs' earlier runs",
+      "Validate exact historical exceptions and detection regressions",
+      "Scan complete history with Gitleaks 8.30.1"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Drop refs of deleted branches and of other PRs' earlier runs",
+      "Validate exact historical exceptions and detection regressions",
+      "Scan complete history with Gitleaks 8.30.1"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/gitleaks.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Drop refs of deleted branches and of other PRs' earlier runs",
+      "Validate exact historical exceptions and detection regressions",
+      "Scan complete history with Gitleaks 8.30.1"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Isolate local Supabase ports",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack",
+      "Record the actual PR test tree"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/information-flow-e2e.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install application dependencies",
+      "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+      "Deny loopback proxy ports to the harness isolation guard",
+      "Run the Information Flow E2E harness",
+      "Recompute normalized evidence digests",
+      "Stop the local Supabase stack"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify standard Python 3.12",
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify standard Python 3.12",
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify standard Python 3.12",
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify standard Python 3.12",
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Install fixed official validation wheels in temporary venv",
+      "Validate four consumers using genuine libraries and frozen public fixtures"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Prepare hosted Docker capacity",
+      "Run npm ci",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Prepare hosted Docker capacity",
+      "Run npm ci",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5",
+      "Serialize fixed public MCP ports with other runners on this host",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Run npm ci",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-behavior.yml",
+      "accepted_sources",
+      1,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Run npm ci",
+      "Isolate this run's Supabase project and ports",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start",
+      "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed",
+      "Run npm run mcp:isolated:fixture",
+      "Allocate a behavior-only loopback port",
+      "Start isolated MCP",
+      "Run npm run mcp:eval:positive",
+      "Run npm run mcp:eval:negative",
+      "Run npm run test:p5:postgres",
+      "Stop isolated services"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Install dependencies from runner cache",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start isolated MCP",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Install dependencies from runner cache",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start isolated MCP",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Run npm ci",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start the allocated protocol instance",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Run npm ci",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start the allocated protocol instance",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Install dependencies from runner cache",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start isolated MCP",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Install dependencies from runner cache",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start isolated MCP",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Run npm ci",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start the allocated protocol instance",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/public-mcp-protocol.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify gate terminal-state and timeout regressions",
+      "Run npm ci",
+      "Verify governed Resource Center mutation contract",
+      "Allocate a protocol-only loopback port",
+      "Start the allocated protocol instance",
+      "Inspector strict schema validation",
+      "Run npm run mcp:protocol:verify",
+      "Run npm run mcp:tools:verify",
+      "Run npm run mcp:flags:verify",
+      "Stop isolated MCP"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Prepare persistent Trivy cache",
+      "Download vulnerability database through runner network",
+      "Vulnerabilities (HIGH/CRITICAL)",
+      "Secrets",
+      "Misconfiguration (HIGH/CRITICAL)"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Prepare persistent Trivy cache",
+      "Download vulnerability database through runner network",
+      "Vulnerabilities (HIGH/CRITICAL)",
+      "Secrets",
+      "Misconfiguration (HIGH/CRITICAL)"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      1
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      1,
+      "required_steps"
+    ],
+    "keys": [
+      "Vulnerabilities (HIGH/CRITICAL)",
+      "Secrets",
+      "Misconfiguration (HIGH/CRITICAL)"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/trivy.yml",
+      "routes",
+      1,
+      "command_digests"
+    ],
+    "keys": [
+      "Vulnerabilities (HIGH/CRITICAL)",
+      "Secrets",
+      "Misconfiguration (HIGH/CRITICAL)"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify source candidate or protected installed code"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes",
+      "accepted_sources"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify declared Source path before dependencies",
+      "Prepare declared Source runtime",
+      "Revalidate exact Source after runtime preparation",
+      "Execute declared source-only or actual External2 path"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify declared Source path before dependencies",
+      "Prepare declared Source runtime",
+      "Revalidate exact Source after runtime preparation",
+      "Execute declared source-only or actual External2 path"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "accepted_sources",
+      0
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "accepted_sources",
+      0,
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Verify declared Source path before dependencies",
+      "Prepare declared Source runtime",
+      "Revalidate exact Source after runtime preparation",
+      "Execute declared source-only or actual External2 path"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-external-qualification.yml",
+      "accepted_sources",
+      0,
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Verify declared Source path before dependencies",
+      "Prepare declared Source runtime",
+      "Revalidate exact Source after runtime preparation",
+      "Execute declared source-only or actual External2 path"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-disposable-idle.yml"
+    ],
+    "keys": [
+      "registration_status",
+      "workflow_blob",
+      "source_sha256",
+      "source_yaml",
+      "primary_ids",
+      "pull_request",
+      "gated",
+      "routes"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-disposable-idle.yml",
+      "pull_request"
+    ],
+    "keys": [
+      "paths"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-disposable-idle.yml",
+      "routes",
+      0
+    ],
+    "keys": [
+      "job_id",
+      "name",
+      "self_hosted",
+      "required_steps",
+      "command_digests"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-disposable-idle.yml",
+      "routes",
+      0,
+      "required_steps"
+    ],
+    "keys": [
+      "Bounded idle process to prove real provider cancellation"
+    ]
+  },
+  {
+    "path": [
+      "workflows",
+      ".github/workflows/clued-handover-disposable-idle.yml",
+      "routes",
+      0,
+      "command_digests"
+    ],
+    "keys": [
+      "Bounded idle process to prove real provider cancellation"
+    ]
+  }
+]

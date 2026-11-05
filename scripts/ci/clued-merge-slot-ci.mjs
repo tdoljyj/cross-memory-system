@@ -46,10 +46,14 @@
 // others, so a run must not skip a holder (confirmation review MINOR-A).
 
 import { createHash } from "node:crypto";
+import {isDeepStrictEqual} from "node:util";
 import fs from "node:fs";
+import {ACTOR_WORKFLOW,ACTOR_SOURCE_PATH,classifyActorSource} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationSource} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
+import {NON_PR_CONTROL_FILES,NON_PR_CONTROL_SOURCE_PATH,parseNonPrControlCatalogue,classifyNonPrControlWorkflowSource} from './clued-non-pr-control-source.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,compileRegisteredWorkflow} from './clued-workflow-profile.mjs';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -201,10 +205,50 @@ export function gitBlobSha(bytes) {
 export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.readFileSync) {
   const dir = path.join(workspace, ".github", "workflows");
   const out = new Map();
+  const bounded=(location,limit,label)=>{
+    const raw=readFile(location),bytes=Buffer.isBuffer(raw)?raw:typeof raw==='string'?Buffer.from(raw,'utf8'):null;
+    if(!bytes||bytes.length>limit)throw Error(label+' exceeds bounds');
+    const text=bytes.toString('utf8');
+    if(!Buffer.from(text,'utf8').equals(bytes))throw Error(label+' invalid UTF-8');
+    return {bytes,text};
+  };
+  // One observation-local snapshot only; never cache Source/Role authorization
+  // between this call and the final fresh directory barrier.
+  let ordinary=null;
+  const ordinarySource=(workflowPath,text,bytes)=>{
+    if(!ordinary){
+      const profiles=bounded(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),1048576,'ordinary Source registry'),
+        roles=bounded(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),524288,'ordinary Role registry');
+      ordinary={profiles:parseWorkflowProfiles(profiles.bytes),roles:JSON.parse(roles.text)};
+    }
+    if(!Object.hasOwn(ordinary.profiles.workflows,workflowPath))return false;
+    const selected=registeredWorkflowSource(ordinary.profiles,workflowPath,gitBlobSha(bytes));
+    if(!selected.passed||selected.profile.gated!==false)throw Error('unregistered default ordinary Source');
+    const profile=selected.profile,roles=rolesForSource(ordinary.roles,workflowPath,profile.workflow_blob);
+    if(!roles||roles.length!==profile.primary_ids.length||roles.some(role=>!role.definition||
+      roleDefinitionDigest(role.definition)!==role.definition_sha256))throw Error('unregistered default ordinary Role');
+    const compiled=compileRegisteredWorkflow(text,{primary_ids:profile.primary_ids,accepted_roles:roles,
+      parseYaml:()=>({on:{pull_request:profile.pull_request},jobs:Object.fromEntries(roles.map(role=>[role.job_id,role.definition]))})});
+    const {accepted_sources,...sourceSubject}=profile;
+    if(!isDeepStrictEqual(compiled,sourceSubject))throw Error('default ordinary Source/Role differs');
+    return true;
+  };
   for (const file of readDir(dir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
-    const bytes = readFile(path.join(dir, file));
-    if (REQUIRED_CHECK_WORKFLOWS.includes(file) || workflowIsGated(bytes.toString("utf8"))) {
-      const workflowPath=`.github/workflows/${file}`;
+    const {bytes,text}=bounded(path.join(dir,file),524288,'workflow Source'),workflowPath=`.github/workflows/${file}`;
+    if(workflowPath===ACTOR_WORKFLOW){
+      const raw=bounded(path.join(workspace,ACTOR_SOURCE_PATH),524288,'actor Source registry');
+      const actor=classifyActorSource(JSON.parse(raw.text),workflowPath,text);
+      if(actor.passed)continue;
+      // An unregistered/mutated manual Source remains counted, never inferred N/A.
+      out.set(workflowPath,gitBlobSha(bytes));continue;
+    }
+    if(Object.hasOwn(NON_PR_CONTROL_FILES,workflowPath)){
+      const raw=bounded(path.join(workspace,NON_PR_CONTROL_SOURCE_PATH),524288,'non-PR Source registry'),
+        selected=classifyNonPrControlWorkflowSource(parseNonPrControlCatalogue(raw.bytes),workflowPath,text);
+      if(!selected.passed)throw Error('unregistered default non-PR control Source');
+      continue;
+    }
+    if (REQUIRED_CHECK_WORKFLOWS.includes(file) || workflowIsGated(text)) {
       if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,workflowPath)) {
         const raw=readFile(path.join(workspace,PUBLISHER_PR_QUALIFICATION_PATH));
         if(raw.length>524288)throw Error('PR qualification Source registry exceeds bounds');
@@ -224,7 +268,7 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
         continue;
       }
       out.set(workflowPath, gitBlobSha(bytes));
-    }
+    }else if(ordinarySource(workflowPath,text,bytes))out.set(workflowPath,gitBlobSha(bytes));
   }
   return out;
 }

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Permission simplification step 4 (migration 20261004210000_authorization_roles;
 // PermissionSimplification.v0.1 §3.1, Decision b32fc5b9, Task 0756c748):
@@ -63,7 +63,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
       if (name === '20261014044323_all_contexts_authorization_v2.sql') {
         await assertGatewayCloseoutBoundary(admin);
         const originalCatalog = await snapshotCallerCatalog(admin);
-        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+        await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
         await assertGatewayCloseoutBoundary(admin);
         assert.deepEqual(await snapshotCallerCatalog(admin), originalCatalog, 'original source closeout replay keeps OIDs and ACL');
       }

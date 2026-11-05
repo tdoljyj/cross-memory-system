@@ -92,13 +92,15 @@ test('five original workflow blocks preserve exact accepted successors and added
   // history object, and no arbitrary future choice or hook is normalized away.
   const acceptedAdditions={
     'clued-work-admission-dispatch.yml':{anchor:'          - information-flow-e2e.yml\n',lines:[
-      '          - clued-handover-external-qualification.yml','          - clued-handover-disposable-idle.yml']},
-    'clued-merge-slot-ci.yml':{anchor:'      - public-mcp-protocol\n',lines:[
+      '          - clued-handover-external-qualification.yml','          - clued-handover-disposable-idle.yml',
+      '          - clued-standard-runner-actor-qualification.yml']},
+    'clued-merge-slot-ci.yml':[{anchor:'      - clued-components\n',lines:[
+      '      - clued-required-tests','      - runner-budget-policy']},{anchor:'      - public-mcp-protocol\n',lines:[
       '      - Clued handover hook qualification / company-linux-01','      - Clued handover hook qualification / company-linux-02',
       '      - Clued handover hook qualification / company-linux-03','      - Clued handover hook qualification / company-linux-04',
       '      - Clued handover hook qualification / home-linux-01','      - Clued handover hook qualification / company-win-01',
       '      - Clued handover hook qualification / home-win-01','      - Clued disposable external handover qualification',
-      '      - Clued disposable cancellation fixture']},
+      '      - Clued disposable cancellation fixture']}],
   };
   for(const name of ['clued-work-admission.yml','clued-work-admission-reverify.yml','clued-work-admission-dispatch.yml','clued-merge-executor.yml','clued-merge-slot-ci.yml']){
     const old=execFileSync('git',['show',ORIGINAL_WORKFLOW_BASE+':.github/workflows/'+name],{cwd:repo,encoding:'utf8'}),next=fs.readFileSync(path.join(stage,'.github/workflows',name),'utf8').replace(/\r\n/g,'\n');
@@ -119,8 +121,7 @@ test('five original workflow blocks preserve exact accepted successors and added
       const lines=ordinary.split('\n');assert.equal(lines.filter(line=>line===current).length,1,name+': exact reviewed display-name change');
       ordinary=lines.map(line=>line===current?previous:line).join('\n');
     }
-    const additions=acceptedAdditions[name];
-    if(additions){
+    for(const additions of [].concat(acceptedAdditions[name]??[])){
       const exact=additions.anchor+additions.lines.join('\n')+'\n';
       assert.equal(ordinary.split(exact).length-1,1,name+': exact accepted trigger additions appear once');
       ordinary=ordinary.replace(exact,additions.anchor);

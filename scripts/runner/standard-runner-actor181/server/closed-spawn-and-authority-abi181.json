@@ -1,0 +1,132 @@
+{
+  "schema": "clued.local-authority-spawn-abi181/1",
+  "status": "IMPLEMENTED_LOCAL_SERVER_AND_CAPTURED_CLIENT_COMPONENTS_NOT_PHYSICAL_ACCEPTANCE",
+  "physical_owner_packet": null,
+  "node_entry": "runner_spawn_transport181.mjs:spawnCapturedRunner181({wrapperBytes,captures})",
+  "node_contract": [
+    "Caller is the installed protected Source using the existing positive ci_dispatch, not a new public CLI/provider flag.",
+    "Source independently supplies exact already accepted bytes. Clone/hash all8 members and wrapper before spawning. No checkout/build/npm/scan or mutable Cw reopen.",
+    "Use actual child_process.spawn ChildProcess object with fixed WindowsPowerShell executable, small fixed EncodedCommand bootstrap, shellfalse, windowsHide, env exactly RUNNER_NAME=fixed expected row after protected Node own RUNNER_NAME and actual hostname match; no other environment is forwarded, owned stdio.",
+    "Bootstrap verifies wrapper bytes from owned stdin against embedded raw SHA before memory declaration import; complete original8 member capture precedes loader invocation.",
+    "Return ChildProcess object only inside its owning Node process. Never transport a Windows HANDLE number. process.pid remains Node own runtime identity.",
+    "captureReady returns actual PS primary PID/start/SID and actual heldParent Node PID/start/SID/image. FILETIME is decimal string, never JSON floating-point number.",
+    "Root holds original child/stdout lifecycle. Validate metadata PID against actual ChildProcess.pid, then Root/relay independently proves kernel pipe peer sameheldParent chain; stdout fields alone never authorize.",
+    "Root installs its exec/session transport before scheduling START. Node startOnce sends closed7 binding to the owned PS stdin once. The child connects only to exact owned relay PID/start/SID and must get live genuine Root decisions before original Register/Run.",
+    "closeBeforeStart closes only its own child stdin. Normal preview/metadata tests do not connect, register or Run. After start, no unattempted-reset, automatic suffix or reconnect."
+  ],
+  "node_start_binding_keys": [
+    "attempt_id",
+    "node_pid",
+    "node_start",
+    "node_image",
+    "relay_pid",
+    "relay_start",
+    "relay_sid"
+  ],
+  "root_server_binding_keys": [
+    "session_id",
+    "host",
+    "node_id",
+    "attempt_id",
+    "accepted_subject_sha256",
+    "owner_receipt_id",
+    "packet_sha256",
+    "request_sha256",
+    "predecessor_r9_index_sha256",
+    "node_pid",
+    "node_start",
+    "node_image",
+    "ps_pid",
+    "ps_start",
+    "ba_pid",
+    "ba_start",
+    "ba_sid",
+    "relay_pid",
+    "relay_start",
+    "relay_sid",
+    "observer_capture_sha256",
+    "runner_capture_sha256"
+  ],
+  "process_roles": {
+    "node": "actual protected CI Node process",
+    "ps": "Node-owned captured standard Self PowerShell child, kernel pipe client",
+    "ba": "actual original captured BA observer; its real stdout produces ready11/final",
+    "relay": "separate Root-owned elevated non-SYSTEM local authority pipe/stdio server; never substitute this PID for observer"
+  },
+  "root_stdio_request_keys": [
+    "schema",
+    "session_id",
+    "request_id",
+    "method",
+    "argument",
+    "binding",
+    "actual_chain"
+  ],
+  "root_stdio_request_schema": "clued.root-owned-authority-request181/1",
+  "root_stdio_actual_chain_keys": [
+    "ps_pid",
+    "ps_start",
+    "ps_parent_pid",
+    "node_pid",
+    "node_start",
+    "ba_pid",
+    "ba_start",
+    "relay_pid",
+    "relay_start"
+  ],
+  "root_stdio_response_keys": [
+    "schema",
+    "session_id",
+    "request_id",
+    "request_sha256",
+    "method",
+    "canonical_receipt_id",
+    "decision",
+    "observer_ready",
+    "observer_phase",
+    "ready_age_ms"
+  ],
+  "root_stdio_response_schema": "clued.root-owned-authority-reply181/1",
+  "root_stdio_request_hash": "SHA256 of exact received UTF8 JSONL line excluding trailing CR/LF. Do not parse/reorder/reserialize before hashing.",
+  "methods": [
+    "VerifyLive",
+    "VerifyCapturedSource",
+    "VerifyObserverStillWaiting",
+    "ReadVerifiedObserverReady",
+    "ExpectedObserverSourceCaptureSha256",
+    "VerifyObserverPhase"
+  ],
+  "argument_policy": "VerifyCapturedSource: exact frozen Self258f digest. VerifyObserverPhase: register or run. Other methods: empty string. No path/executable/argv/script/credential input.",
+  "authority_boundary": [
+    "Root owns the actual server ChildProcess/stdio and the exact captured code/packet before providing binding. JSON copied to another process/session is not authority.",
+    "Root uses only its own MCP Binding for current Canon Owner physical acceptance/record, exact claim/fence/epoch/Binding/revocation and installed Source/Role/admission/global once journal. CI ADMITTED alone and old consumed r9 acceptance are insufficient.",
+    "Root returns CURRENT_FOR_EXACT_ROOT_OWNED_REQUEST only after those real checks; canonical_receipt_id must refer to the actual checks, not fixture111... or an Agent message.",
+    "Root obtains observer_ready only from its actual owned observer stdout, same attempt/packet/code, no final/EOF; no Self-provided ready/phase field can supply it.",
+    "Root phase register is WAITING_SELF_REGISTERED. Run is AWAITING_INSTANCE after genuine original BA-owned ACK. Server additionally same-handle reads exact BA ACK and runner-owned registered receipt and correlates nonce/XML/subject before replying to Run.",
+    "Root may schedule an initial START only after it holds exec/session. START is not approval, currentness or a once-journal consume.",
+    "Root bridge outer ConPTY transport must use frozen console_frame181.mjs emitter49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f; internal actual child stdio stays raw bounded JSONL. Strip-ANSI is not an equivalent transport."
+  ],
+  "freshness": {
+    "root_reply_ms": 4000,
+    "bridge_internal_budget_ms": 3500,
+    "client_wait_ms": 5000,
+    "private_verify_live_lease_ms": 2000,
+    "lease_policy": "Fixed source policy, no caller TTL. Repetitive VerifyLive only; check Root pendingEOF/unsolicited revocation and held peer/Node/observer/relay before reuse. Source/ready/stillwaiting and actual Register/Run always make a fresh Root request. Register and Run guard are independently once. Expiry causes refresh or refusal; never cross an operation guard using cached authority.",
+    "registered_wait_ms": 120000,
+    "instance_wait_ms": 30000,
+    "ready_wait_ms": 35000,
+    "after_ready_release_ms": 30000,
+    "native_original_deadlines_unchanged": true
+  },
+  "remaining_external_integration": [
+    "CI holder installs this exact successor wrapper/spawn provider and its protected no-argument Source resolver under the existing positiveci_dispatch, with live Source/Role acceptance; this local candidate does not alter that repository.",
+    "Root connects its actual currentness/Owner-record MCP implementation and owned BA observer provider/launcher to the reviewed stdio request schema. The frozen bridge supplies mechanics; fixture mocks do not implement Canon authorization.",
+    "New physical packet must cover exact successor hashes, both distinct BA observer/relay process roles and closed original write-set. Its acceptance is currently null.",
+    "Standard Self cross-account BA relay primary token querying may return AccessDenied. Production client refuses; no owner-flag fallback, SeDebug, impersonation or ACL repair."
+  ],
+  "task_operations": 0,
+  "qualification": false,
+  "installation": false,
+  "runner_name_metadata": "Child runner_name is the real Process environment read. It is compatibility metadata only; primary SID, accepted Source and fresh Root authority remain independent.",
+  "independent_observer_relay": "BA observer PID must differ from relay PID even when accountSID/elevation/image match. Alias is rejected before any process/Task query."
+}

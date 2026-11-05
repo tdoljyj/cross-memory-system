@@ -1,0 +1,347 @@
+{
+  "schema": "clued.standard-runner-actor-sources/1",
+  "repository": "tdoljyj/cross-memory-system",
+  "default_branch": "main",
+  "source": {
+    "file": ".github/workflows/clued-standard-runner-actor-qualification.yml",
+    "source_yaml": "name: Clued standard runner qualification and maintenance installation\n\non:\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Exact existing dispatch admission for this Source/ref/claim\n        required: true\n        type: string\n      node_id:\n        description: Closed requested row selector; never execution authority\n        required: true\n        type: choice\n        options:\n          - desk-w-591-windows-runner-caches\n          - turing-windows-runner-caches\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: clued-standard-runner-actor-once\n  cancel-in-progress: false\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.repository.default_branch }}\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify-company:\n    name: standard-runner-actor-company\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'desk-w-591-windows-runner-caches'\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-company]\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n          ref: ${{ github.sha }}\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Run the exact admitted standard-runner actor adapter\n        shell: powershell\n        run: |\n          $ErrorActionPreference = 'Stop'\n          & node scripts/runner/qualify-standard-runner-actor.mjs --execute\n          exit $LASTEXITCODE\n\n  qualify-home:\n    name: standard-runner-actor-home\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'turing-windows-runner-caches'\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-home]\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n          ref: ${{ github.sha }}\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Run the exact admitted standard-runner actor adapter\n        shell: powershell\n        run: |\n          $ErrorActionPreference = 'Stop'\n          & node scripts/runner/qualify-standard-runner-actor.mjs --execute\n          exit $LASTEXITCODE\n",
+    "definition": {
+      "name": "Clued standard runner qualification and maintenance installation",
+      "on": {
+        "workflow_dispatch": {
+          "inputs": {
+            "admission_run_id": {
+              "description": "Exact existing dispatch admission for this Source/ref/claim",
+              "required": true,
+              "type": "string"
+            },
+            "node_id": {
+              "description": "Closed requested row selector; never execution authority",
+              "required": true,
+              "type": "choice",
+              "options": [
+                "desk-w-591-windows-runner-caches",
+                "turing-windows-runner-caches"
+              ]
+            }
+          }
+        }
+      },
+      "permissions": {
+        "contents": "read"
+      },
+      "concurrency": {
+        "group": "clued-standard-runner-actor-once",
+        "cancel-in-progress": false
+      },
+      "jobs": {
+        "admission-gate": {
+          "name": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "timeout-minutes": 10,
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "pull-requests": "read"
+          },
+          "outputs": {
+            "admitted": "${{ steps.gate.outputs.admitted }}"
+          },
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.repository.default_branch }}"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "id": "gate",
+              "env": {
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+            }
+          ]
+        },
+        "qualify-company": {
+          "name": "standard-runner-actor-company",
+          "needs": "admission-gate",
+          "if": "needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'desk-w-591-windows-runner-caches'",
+          "runs-on": [
+            "self-hosted",
+            "Windows",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "cap-node24",
+            "cap-python312",
+            "site-company"
+          ],
+          "timeout-minutes": 15,
+          "permissions": {
+            "contents": "read",
+            "id-token": "write"
+          },
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.sha }}"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "name": "Run the exact admitted standard-runner actor adapter",
+              "shell": "powershell",
+              "run": "$ErrorActionPreference = 'Stop'\n& node scripts/runner/qualify-standard-runner-actor.mjs --execute\nexit $LASTEXITCODE\n"
+            }
+          ]
+        },
+        "qualify-home": {
+          "name": "standard-runner-actor-home",
+          "needs": "admission-gate",
+          "if": "needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'turing-windows-runner-caches'",
+          "runs-on": [
+            "self-hosted",
+            "Windows",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal",
+            "cap-node24",
+            "cap-python312",
+            "site-home"
+          ],
+          "timeout-minutes": 15,
+          "permissions": {
+            "contents": "read",
+            "id-token": "write"
+          },
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.sha }}"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "name": "Run the exact admitted standard-runner actor adapter",
+              "shell": "powershell",
+              "run": "$ErrorActionPreference = 'Stop'\n& node scripts/runner/qualify-standard-runner-actor.mjs --execute\nexit $LASTEXITCODE\n"
+            }
+          ]
+        }
+      }
+    },
+    "rows": [
+      {
+        "node_id": "desk-w-591-windows-runner-caches",
+        "host": "DESK-W-591",
+        "sid": "S-1-5-21-858977881-4031698862-3006450925-1005",
+        "runner_id": 21,
+        "runner_name": "clued-ci-company-win-01",
+        "site": "site-company",
+        "job": "qualify-company",
+        "request_sha256": "556c2a224252ae9b84078075049ce6c46bd4c3ccf9cab9dcabdec16c9d6b9ce0",
+        "predecessor_sha256": "d24a9bd1a8b0d905af0a789e0c18e6a97d6433868d124eecaa67c7784d72f297"
+      },
+      {
+        "node_id": "turing-windows-runner-caches",
+        "host": "TURING",
+        "sid": "S-1-5-21-1173730660-3877291096-655431861-1013",
+        "runner_id": 23,
+        "runner_name": "clued-ci-home-win-01",
+        "site": "site-home",
+        "job": "qualify-home",
+        "request_sha256": "961a6a425a81ce2ef4e40fa42809c72210d65ded7bd30c164286e8351206e8b7",
+        "predecessor_sha256": "87f3aa2534d3999d9664c740f5eb5dc1d593fa1cdb075867c68000a788ab8c7c"
+      }
+    ],
+    "profile": {
+      "schema": "clued.standard-runner-actor-source-profile/1",
+      "registration_status": "registered",
+      "purpose": "standard_runner_self_s4u_qualification_then_install_once",
+      "effect_purposes": [
+        "standard_runner_self_s4u_qualification_once",
+        "standard_runner_self_s4u_maintenance_install_once"
+      ],
+      "file": ".github/workflows/clued-standard-runner-actor-qualification.yml",
+      "workflow_blob": "d752e91ae501313396163df277883d2d02fa100e",
+      "source_sha256": "9414d76960d096e786738c4470bcf32dd3e50ab2999eea59c922473436034b1d",
+      "workflow_definition_sha256": "7c358827de892ad23968740464cc4390a7773450be6ec8de17317126c6898609",
+      "row_data_sha256": "f0b6d5cc129a74de5a0338e512981936ae6f4e61fad11db624873d448ae5460b",
+      "primary_ids": [
+        "admission-gate",
+        "qualify-company",
+        "qualify-home"
+      ],
+      "pull_request_ci": false,
+      "execution_authority": false
+    }
+  },
+  "roles": [
+    {
+      "job_id": "admission-gate",
+      "definition_sha256": "7f03dd0b1ee6f039452cc779ff3af6eeb646bce22c682f72c6e3c1ebafcc6b7d",
+      "definition": {
+        "name": "admission-gate",
+        "runs-on": [
+          "self-hosted",
+          "Linux",
+          "X64",
+          "clued",
+          "pool-general",
+          "trust-internal"
+        ],
+        "timeout-minutes": 10,
+        "permissions": {
+          "actions": "read",
+          "checks": "read",
+          "contents": "read",
+          "pull-requests": "read"
+        },
+        "outputs": {
+          "admitted": "${{ steps.gate.outputs.admitted }}"
+        },
+        "steps": [
+          {
+            "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+            "with": {
+              "persist-credentials": false,
+              "ref": "${{ github.event.repository.default_branch }}"
+            }
+          },
+          {
+            "name": "Configure job temporary storage",
+            "uses": "./.github/actions/ci-temporary-storage"
+          },
+          {
+            "id": "gate",
+            "env": {
+              "GITHUB_TOKEN": "${{ github.token }}"
+            },
+            "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+          }
+        ]
+      }
+    },
+    {
+      "job_id": "qualify-company",
+      "definition_sha256": "42fc2a5ce3083bd4ae9f1c5c51c789b6ebc6469494f2d37c429e68de9abd6d87",
+      "definition": {
+        "name": "standard-runner-actor-company",
+        "needs": "admission-gate",
+        "if": "needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'desk-w-591-windows-runner-caches'",
+        "runs-on": [
+          "self-hosted",
+          "Windows",
+          "X64",
+          "clued",
+          "pool-general",
+          "trust-internal",
+          "cap-node24",
+          "cap-python312",
+          "site-company"
+        ],
+        "timeout-minutes": 15,
+        "permissions": {
+          "contents": "read",
+          "id-token": "write"
+        },
+        "steps": [
+          {
+            "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+            "with": {
+              "persist-credentials": false,
+              "ref": "${{ github.sha }}"
+            }
+          },
+          {
+            "name": "Configure job temporary storage",
+            "uses": "./.github/actions/ci-temporary-storage"
+          },
+          {
+            "name": "Run the exact admitted standard-runner actor adapter",
+            "shell": "powershell",
+            "run": "$ErrorActionPreference = 'Stop'\n& node scripts/runner/qualify-standard-runner-actor.mjs --execute\nexit $LASTEXITCODE\n"
+          }
+        ]
+      }
+    },
+    {
+      "job_id": "qualify-home",
+      "definition_sha256": "93ffb7abdbbbae5cba80e28b295edd2fe98f4e90b52ca84c195b663557ae8982",
+      "definition": {
+        "name": "standard-runner-actor-home",
+        "needs": "admission-gate",
+        "if": "needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'turing-windows-runner-caches'",
+        "runs-on": [
+          "self-hosted",
+          "Windows",
+          "X64",
+          "clued",
+          "pool-general",
+          "trust-internal",
+          "cap-node24",
+          "cap-python312",
+          "site-home"
+        ],
+        "timeout-minutes": 15,
+        "permissions": {
+          "contents": "read",
+          "id-token": "write"
+        },
+        "steps": [
+          {
+            "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+            "with": {
+              "persist-credentials": false,
+              "ref": "${{ github.sha }}"
+            }
+          },
+          {
+            "name": "Configure job temporary storage",
+            "uses": "./.github/actions/ci-temporary-storage"
+          },
+          {
+            "name": "Run the exact admitted standard-runner actor adapter",
+            "shell": "powershell",
+            "run": "$ErrorActionPreference = 'Stop'\n& node scripts/runner/qualify-standard-runner-actor.mjs --execute\nexit $LASTEXITCODE\n"
+          }
+        ]
+      }
+    }
+  ],
+  "adapter": {
+    "path": "scripts/runner/qualify-standard-runner-actor.mjs",
+    "sha256": "c2dd12444ae93439e0009acef45b4e4d436ff71db5c8e21c61ebdb880f6ccb12"
+  },
+  "tool_epoch": {
+    "delivery_manifest_sha256": "f52a721bf5b1b6e75f536f26adcec054ee655f8b9c87652671e46f7c554402e0",
+    "subject_sha256": "ab1360b58b068b9eed738992c8ce526568772dda3afcbc007189a2e4d94a78ff",
+    "pins_sha256": "4ba433c44b12cae88a16f66d57fe89a3227628d8b50e9e63b6311b590809dde2"
+  }
+}
