@@ -6,17 +6,21 @@ import { check, exactKeys } from './canonical.mjs';
 export const ROLE_PROBE_STAGE = 11;
 export const ROLE_PROBE_INTERVAL_MS = Object.freeze({ STANDBY: 15 * 60_000, ACTIVE: 30 * 60_000 });
 export const ROLE_PROBE_CODES = Object.freeze({ held: 'ROLE_PROBE_HELD', 'not-held': 'ROLE_PROBE_NOT_HELD',
-  uncertain: 'ROLE_PROBE_UNCERTAIN', connection: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' });
+  uncertain: 'ROLE_PROBE_UNCERTAIN', connection: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', watchedHead: 'ROLE_PROBE_HELD_WATCHED_HEAD' });
 export const ROLE_PROBE_FACT_FIELDS = Object.freeze(['result', 'code']);
 export const ROLE_PROBE_NOTICE_KINDS = Object.freeze(['role-probe-uncertain', 'role-probe-connection']);
 
+// Generation 12 (DESIGN §56.2): a queue watch's held answer may name the watched PR as the merge-slot holder
+// (ROLE_PROBE_HELD_WATCHED_HEAD). For the node mode it is a plain held answer: roleBookFact turns it into one, so the book
+// (snapshot, receipts' state) only ever stores the four codes an earlier generation can read back.
 export function validateRoleProbeFact(v) {
   exactKeys(v, ROLE_PROBE_FACT_FIELDS, 'ROLE_PROBE_FACT_REFUSED');
-  check((v.result === 'held' && v.code === ROLE_PROBE_CODES.held)
+  check((v.result === 'held' && [ROLE_PROBE_CODES.held, ROLE_PROBE_CODES.watchedHead].includes(v.code))
     || (v.result === 'not-held' && v.code === ROLE_PROBE_CODES['not-held'])
     || (v.result === 'uncertain' && [ROLE_PROBE_CODES.uncertain, ROLE_PROBE_CODES.connection].includes(v.code)), 'ROLE_PROBE_FACT_REFUSED');
   return Object.freeze({ result: v.result, code: v.code });
 }
+export const roleBookFact = f => (f.code === ROLE_PROBE_CODES.watchedHead ? Object.freeze({ result: 'held', code: ROLE_PROBE_CODES.held }) : f);
 
 // `idle` comes from the executor's authoritative ledger, never from the advisory status file.
 // A backward or invalid clock is not due. No timer, receipt, ledger or network lives in this class.

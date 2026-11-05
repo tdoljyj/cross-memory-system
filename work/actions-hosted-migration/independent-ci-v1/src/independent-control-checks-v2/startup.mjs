@@ -9,6 +9,7 @@ import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
 import { STAGE8_CHECK_MS, createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
 import { GreenLedger } from './green-ledger.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from './train-mode.mjs';
+import { createClaimAssistNative } from './claim-assist-native.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   const startedAt = Date.now();
@@ -30,7 +31,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
     const train = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github });
     const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger,
-      trainMode, trainModeUnreadable, ...train });
+      trainMode, trainModeUnreadable, ...train,
+      // Generation 12 (resident DESIGN 56.4): join the merge queue and extend the lease with the CI identity (claim-assist-native.mjs).
+      claimAssist: createClaimAssistNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken }) });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
     // the stage cap and the install's validUntil. Phase 2, step 2: one run only checks (STAGE8_CHECK_MS); the
     // resident parks the batch and runs this stage again on its own back-off.

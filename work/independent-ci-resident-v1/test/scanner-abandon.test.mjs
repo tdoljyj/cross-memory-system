@@ -109,13 +109,16 @@ test('stage 2: attempt 2 runs once after the delay; an attempt 2 abandoned again
   assert.equal((await g.exec.tick()).state, 'COMPLETED');
 });
 
-test('stages 4 and 6: FAILED_CLEAN, never an attempt 2, the head counts as published (stage 3 published)', async t => {
+test('stages 4 and 6: two runs again in the batch (DESIGN 54), then FAILED_CLEAN, never an attempt 2, the head counts as published (stage 3 published)', async t => {
   for (const stage of [4, 6]) {
     const f = await executorFixture(t, { engine: fakeEngine({ stages: { [stage]: { ok: false, code: 'PUBLICATION_UNCERTAIN', proof: WINDOWS_CLEAN, outcome: { status: 'UNCERTAIN', reason: 'BRIDGE_RESULT_DEADLINE', sideEffects: 1, mayHavePublished: true },
       bridge: bridge({ stopRequestId: null, stopCode: null, stageCode: 'PUBLICATION_UNCERTAIN' }) } } }) });
     await f.drop(triggerBytes());
     const r = await f.exec.tick();
     assert.deepEqual([r.state, r.failureCode, r.attempt2], ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, undefined], String(stage));
+    assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === stage).length, 3, 'the run and two runs again');
+    assert.deepEqual(f.engine.calls.filter(c => c[0] === 'archive-windows' && c[1].startsWith('retry-stage-')).map(c => c[1]), [`retry-stage-${stage}-1`, `retry-stage-${stage}-2`],
+      'each run again its own archive instance (never a replay of the one before)');
     const s = await f.ledger.state(KEY);
     assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry, s.terminal.facts.outcomeReason], [stage, 'new-commit', 'BRIDGE_RESULT_DEADLINE']);
     assert.equal(mayHavePublished({}, s).published, true);

@@ -4,6 +4,8 @@
 //   node rearm-tool.mjs request-resume --root <root> --expected-paused-sha256 <sha> --by <sid>
 //   node rearm-tool.mjs request-abort  --root <root> --batch-key <key> --expected-ledger-entry-sha256 <sha> --reason <text> --by <sid>
 //   node rearm-tool.mjs request-drain  --root <root> --reason <text> --by <sid>   (phase 2: end every parked batch, before a reinstall)
+//   node rearm-tool.mjs request-release-breaker --root <root> --reason <text> --by <sid>   (generation 10, DESIGN 53.4: an open breaker's
+//     trial is due now; windows/rearm-resident.ps1 -Request ReleaseBreaker writes the same body)
 //   node rearm-tool.mjs request-intake-pause  --root <root> --reason <text> [--minutes 1-120] [--holder owner]
 //   node rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
 //     (primary/standby C6, DESIGN §20: start no new batch for at most two hours; nothing running or parked is touched.
@@ -28,7 +30,9 @@ import { HEX64, check, parseBoundedJson } from '../src/canonical.mjs';
 import { Ledger } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox } from '../src/inbox.mjs';
-import { ABORT_CONTRACT, DRAIN_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
+import { ABORT_CONTRACT, BREAKER_RELEASE_CONTRACT, DRAIN_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
+import { breakerOf, breakerView } from '../src/breaker.mjs';
+import { QUEUE_FILE, QUEUE_MAX_BYTES } from '../src/queue.mjs';
 import { nonce, readBounded, writeNew } from '../src/store.mjs';
 import { readVersionInputs, versionsView } from '../src/status.mjs';
 import { validatePolicy } from '../src/policy.mjs';
@@ -57,6 +61,20 @@ export async function writeTrainShadowReview(root, mark) {
   return file;
 }
 
+// Task 42fe5ae4: where the last Windows step of the upgrade failed and what upgrade-apply.ps1 said (status.json op.lastFailure). Only the fixed
+// shapes the upgrader itself writes are shown (step/where: lower-case words; codes: UPPER_CASE; applyAt: the short id alphabet), else null.
+const FAILURE_WORD = /^[a-z][a-z0-9-]{0,40}$/;
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]{2,79}$/;
+const FAILURE_AT = /^[A-Za-z0-9_.:-]{1,80}$/;
+export function failureView(f) {
+  if (f === null || typeof f !== 'object' || Array.isArray(f)) return null;
+  const word = v => (typeof v === 'string' && FAILURE_WORD.test(v) ? v : null);
+  const code = v => (typeof v === 'string' && FAILURE_CODE.test(v) ? v : null);
+  const at = v => (typeof v === 'string' && FAILURE_AT.test(v) ? v : null);
+  const view = { step: word(f.step), code: code(f.code), where: word(f.where), applyCode: code(f.applyCode), applyAt: at(f.applyAt) };
+  return Object.values(view).every(v => v === null) ? null : view;
+}
+
 // The in-place upgrade channel as inspect shows it (DESIGN §34), read-only and leniently (a file that cannot be read is null):
 // the generation upgrade\current.json names, the upgrader's op (state, phase, code, the Owner's confirm page while it waits for
 // the grant), its recent endings and the generations it keeps, the Linux side's version facts, and whether both sides agree.
@@ -71,14 +89,24 @@ export async function inspectUpgrade(root, policy = null, clock = Date.now) {
       pinsOk: facts.pinsOk === true, observedAt: facts.observedAt ?? null } : null,
     consistent: view ? view.consistent : null,
     op: op ? { opId: op.opId ?? null, state: op.state ?? null, phase: op.phase ?? null, phaseSince: op.phaseSince ?? null, code: op.code ?? null,
-      fromGeneration: op.fromGeneration ?? null, toGeneration: op.toGeneration ?? null, confirmUrl: view?.upgrade?.confirmUrl ?? null, pausedBy: op.pausedBy ?? null } : null,
+      fromGeneration: op.fromGeneration ?? null, toGeneration: op.toGeneration ?? null, confirmUrl: view?.upgrade?.confirmUrl ?? null, pausedBy: op.pausedBy ?? null,
+      lastFailure: failureView(op.lastFailure) } : null,
     recent: Array.isArray(status?.recent) ? status.recent.slice(0, 10) : [],
     generations: Array.isArray(status?.generations) ? status.generations.slice(0, 20) : [],
     statusWrittenAt: status?.writtenAt ?? null,
   };
 }
 
-export async function inspect({ ledger, receipts, intake = null, upgrade = null }) {
+// Generation 10 (DESIGN 53.4): the run queue's breaker as the status board shows it (breaker.mjs#breakerView), read from state\queue\
+// queue.json; null when it cannot be read (the service then still has its own; inspect never decides anything).
+export async function readBreakerView(state) {
+  try {
+    const q = parseBoundedJson(await readBounded(path.join(state, 'queue', QUEUE_FILE), QUEUE_MAX_BYTES, 'QUEUE_UNREADABLE'), QUEUE_MAX_BYTES, 'QUEUE_UNREADABLE');
+    return breakerView(breakerOf(q?.breaker));
+  } catch { return null; }
+}
+
+export async function inspect({ ledger, receipts, intake = null, upgrade = null, breaker = null }) {
   const halt = await ledger.halted();
   const paused = await ledger.paused();
   const head = await receipts.verify();
@@ -103,6 +131,8 @@ export async function inspect({ ledger, receipts, intake = null, upgrade = null 
     openBatches: open.length, abortTargets, haltedBatch: HEX64.test(key ?? '') ? await ledger.state(key) : null, receiptsHead: head,
     // The in-place upgrade channel (inspectUpgrade; null when the caller read nothing of it).
     upgrade,
+    // Generation 10: the breaker an Owner release (-Request ReleaseBreaker) would act on (null when the caller read nothing of it).
+    breaker,
   };
 }
 
@@ -136,6 +166,13 @@ export function drainRequest({ reason, by }, clock = Date.now) {
   return { contract: DRAIN_CONTRACT, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
 }
 
+// Generation 10 (DESIGN 53.4): the Owner's early release of an open breaker, exactly as windows/rearm-resident.ps1 -Request ReleaseBreaker writes it.
+export function breakerReleaseRequest({ reason, by }, clock = Date.now) {
+  check(typeof reason === 'string' && reason.length > 0 && reason.length <= 200, 'BREAKER_RELEASE_REASON_REQUIRED');
+  check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
+  return { contract: BREAKER_RELEASE_CONTRACT, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
+}
+
 export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
   check(HEX64.test(expectedPausedSha256 ?? ''), 'REVIEWED_PAUSE_SHA_REQUIRED');
   check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
@@ -155,7 +192,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       let policy = null;
       try { policy = validatePolicy(parseBoundedJson(await readBounded(path.join(values.root, 'config', 'policy.json'), 65536, 'POLICY_UNREADABLE'), 65536, 'POLICY_UNREADABLE')); } catch { policy = null; }
       console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now), intake: await readIntakePause(state),
-        upgrade: await inspectUpgrade(values.root, policy) }), null, 2));
+        upgrade: await inspectUpgrade(values.root, policy), breaker: await readBreakerView(state) }), null, 2));
     } else if (positionals[0] === 'request-rearm') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), rearmRequest({ expectedHaltSha256: values['expected-halt-sha256'], reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'REARM_REQUESTED_SERVICE_WILL_VERIFY_AND_ARCHIVE', file }));
@@ -165,6 +202,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     } else if (positionals[0] === 'request-drain') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), drainRequest({ reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'DRAIN_REQUESTED_SERVICE_WILL_END_PARKED_BATCHES', file }));
+    } else if (positionals[0] === 'request-release-breaker') {
+      const file = await writeOwnerRequest(path.join(values.root, 'owner'), breakerReleaseRequest({ reason: values.reason, by: values.by }));
+      console.log(JSON.stringify({ status: 'BREAKER_RELEASE_REQUESTED_SERVICE_WILL_VERIFY', file }));
     } else if (positionals[0] === 'request-intake-pause') {
       check(values.minutes === undefined || /^[0-9]{1,3}$/.test(values.minutes), 'INTAKE_REQUEST_REFUSED');
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakePauseRequest({ holder: values.holder ?? 'owner',

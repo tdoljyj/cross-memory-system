@@ -63,3 +63,11 @@ python -I -m unittest discover -s rollout/test -p "test_*.py"
 - `rollout.test.mjs`：plan 的各类拒绝；`next` 的每一行（两个、三个、一个节点）；observe 只读、读不到就列出。
 - `precheck.test.mjs`：包里带着本树真实的升级代理副本，所以做决定的就是被测的代码：通过、读不到的槽、冻结模块改动（列出文件）、副本被篡改、身份/state/接受/同包、Linux 工具变更。
 - `test_upgrade_tools.py`：`upgrade-config.py` 沿用现装包与拒绝；`roles-derived.py` 的结果等于冻结 Linux 工具 stage 时的 `derive_role`，以及工具不同、角色副本过期、manifest 不是包的、新提交缺钉住文件。
+
+## 6. 第 8 代工具补充（Task 09052ffe 等）
+
+- `build-upgrade.ps1`（和 `reinstall/build.ps1`）开头调用 `reinstall/tools/set-aside-leftovers.py`：同一 stem 上一次**失败**的尝试留下的输出（create-only 会挡住下一次）被改名到 `<workDir>\failed-attempts\<UTC>\`，不删除；已完成的尝试（`upgrade\precheck.<stem>.*.json` / `build-complete.*`）永远不动，换 `-Tag`。git archive 一律用 Python `tarfile` 解包（Windows `tar.exe` 解不了中文路径）。
+- `INSTALL-BATCHES.md`：装机批次方案（只是方案）：哪些改动要整套重装（动冻结的升级代理文件）、哪些原地升级，如何排进最少的批次。
+- `windows/test-upgrade-system.ps1`：以 LocalSystem 跑 Compile 的一次 UAC 测试（改升级通道或 Source v2 Windows 代码时必跑）。
+- `tools/derive-public-export.py`：从上一代已审的 public-export 派生下一代的参数化生成器（原 `make_export23x.py` 一类）。
+

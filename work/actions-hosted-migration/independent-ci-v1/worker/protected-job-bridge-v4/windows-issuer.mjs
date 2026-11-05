@@ -24,7 +24,7 @@ import {runEntry,controllerPrincipal,controllerPorts,observationLog} from '../..
 import {createWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,closeWindowsContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
 import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,admissionValid,issueGeneration,encode,decode,digest} from './protocol.mjs';
-import {validateScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
+import {validateScanStartGrant,NATIVE_SCAN_START_REQUIRED} from '../../src/scan-start-v1/grant.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
 const STALE_ADMISSION='full_admission_observation_expired',UNAVAILABLE_ADMISSION='full_admission_unavailable';
@@ -91,13 +91,14 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
-export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
+export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal,nativeScanStartRequired=NATIVE_SCAN_START_REQUIRED}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
   // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
   // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
   // The issuer's classification still depends only on status/reason/sideEffects, never this diagnostic.
   const diagnosed=outcome=>admissionDiagnostic?{...outcome,admissionDiagnostic}:outcome;
   try{
+    check(typeof nativeScanStartRequired==='boolean','SCAN_START_MODE_INVALID');
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
     // One complete admission. A transient refusal (RETRY_WAITS_MS) is evaluated again, in full, after its wait and
@@ -172,6 +173,8 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       }
       let grant=null;
       if(challenge.action==='scan-start'){
+        // A Source that does not require Native never asks; a challenge anyway is refused, not served.
+        check(nativeScanStartRequired===true,'SCAN_START_NOT_REQUIRED_BY_SOURCE');
         check(!scanStartAttempted&&typeof scanStart==='function','SCAN_START_PORT_OR_ONCE_REQUIRED');
         admissionValid(job,current,clock(),issueGeneration(issue));
         if(clock()>=Date.parse(challenge.deadline))return goLate(challenge);
@@ -193,7 +196,8 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       let raw=null;try{raw=await box.read('result');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(raw){let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
         check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');
-        check(scanStartGranted,'SCAN_START_GRANT_NOT_OBSERVED');
+        // Native mode: the result needs the one granted start. Local mode: no start was ever asked for.
+        check(nativeScanStartRequired?scanStartGranted:!scanStartAttempted,'SCAN_START_GRANT_NOT_OBSERVED');
         verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted(Date.parse(issue.expiresAt));
         // Retries keep only their waits inside the window; a last evaluation may still end past it.
         check(clock()<Date.parse(issue.expiresAt),'BRIDGE_RESULT_DEADLINE');

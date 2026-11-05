@@ -62,7 +62,23 @@ export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-bu
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
-  'train-owner']);
+  'train-owner',
+  // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
+  'lease-short']);
+// Generation 12 (DESIGN §56.3): how long the claim's lease must still run. A running batch needs what an average batch has left
+// (LEASE_BATCH_ESTIMATE_MS from its start, an estimate only) and LEASE_MARGIN_MS for stage 8 and the merge; a batch parked at B
+// needs LEASE_MARGIN_MS. Only a reminder: the admission of every stage checks the lease itself, and a renewal never voids a batch
+// (the batch claim compares claim id, fence and epoch, not the lease end). expiresAt is Native's time, compared with this host's
+// clock: the margin is far wider than the clock tolerance (DESIGN §47).
+export const LEASE_MARGIN_MS = 30 * 60_000;
+export const LEASE_BATCH_ESTIMATE_MS = 22 * 60_000;
+// -> 'expired' | 'short' | null. running: the batch is in flight (since: its start, ms); else it rests at a parking point.
+export function leaseShort({ expiresAt, now, running = false, since = null }) {
+  if (!Number.isSafeInteger(expiresAt) || !Number.isSafeInteger(now)) return null;
+  if (expiresAt <= now) return 'expired';
+  const left = running && Number.isSafeInteger(since) ? Math.max(0, since + LEASE_BATCH_ESTIMATE_MS - now) : 0;
+  return expiresAt - now < left + LEASE_MARGIN_MS ? 'short' : null;
+}
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
 export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
@@ -121,7 +137,8 @@ export class StatusBoard {
     if (!current) return this.update({ current: null });
     const c = { key: key12(current.key), pr: current.pr, headSha: current.headSha, baseSha: current.baseSha, attempt: current.attempt,
       stage: Number.isSafeInteger(current.stage) ? current.stage : null, phase: typeof current.phase === 'string' ? current.phase.slice(0, 40) : null,
-      since: current.since ?? iso(this.clock()), stageSince: iso(this.clock()) };
+      since: current.since ?? iso(this.clock()), stageSince: iso(this.clock()), claimExpiresAt: isoOrNull(current.claimExpiresAt ?? null),
+      leaseFrom: isoOrNull(current.leaseFrom ?? null) };
     return this.update({ current: c });
   }
 
@@ -143,7 +160,8 @@ export class StatusBoard {
       deferred: codeOrNull(p.reason ?? p.deferred), since: isoOrNull(p.firstAt ?? p.since), nextAt: isoOrNull(p.nextAt), eta: isoOrNull(p.eta),
       level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
-      queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null })) });
+      queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
+      heldBy: codeOrNull(p.heldBy ?? null) })) });
   }
 
   snapshot() {
@@ -166,12 +184,18 @@ export class StatusFile {
 
 // The service's timer: rewrites the whole snapshot every intervalMs (writtenAt always moves), never two writes at once,
 // never an exception out of the timer. flush() writes now (start, stop, a state change the caller wants out early).
+// Generation 10 (DESIGN 53.5): a flush asked while a write is under way is not dropped: the running write writes the snapshot once more
+// when it is done (the board may have changed in between), so an early flush never waits for the next 15 seconds.
 export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, schedule = globalThis.setInterval, cancel = globalThis.clearInterval }) {
-  let busy = false;
+  let busy = false, again = false;
   const flush = async () => {
-    if (busy) return false;
+    if (busy) { again = true; return false; }
     busy = true;
-    try { await file.write(board.snapshot()); return true; } catch { return false; } finally { busy = false; }
+    try {
+      let ok = true;
+      do { again = false; try { await file.write(board.snapshot()); } catch { ok = false; } } while (again);
+      return ok;
+    } finally { busy = false; }
   };
   const handle = schedule(() => flush(), intervalMs);
   handle?.unref?.();
@@ -190,7 +214,7 @@ export function parseStatus(bytes) {
   check(v.executor && EXECUTOR_STATES.includes(v.executor.state), 'STATUS_REFUSED');
   const head = h => typeof h === 'string' && HEX40.test(h);
   return {
-    writtenAt: Date.parse(v.writtenAt), changedAt: Date.parse(v.changedAt),
+    writtenAt: Date.parse(v.writtenAt), changedAt: Date.parse(v.changedAt), pid: Number.isSafeInteger(v.pid) && v.pid > 0 ? v.pid : null,
     executor: { state: v.executor.state, since: Date.parse(v.executor.since) || null, reason: typeof v.executor.reason === 'string' && CODE.test(v.executor.reason) ? v.executor.reason : null },
     halt: v.halt && typeof v.halt.code === 'string' && CODE.test(v.halt.code) ? { code: v.halt.code, at: Date.parse(v.halt.at) || null } : null,
     paused: v.paused === true,
@@ -205,18 +229,22 @@ export function parseStatus(bytes) {
           failures: Number.isSafeInteger(v.node.probe.failures) && v.node.probe.failures >= 0 ? v.node.probe.failures : 0, failingSince: ms(v.node.probe.failingSince) } : null } : null,
     backfill: { complete: v.backfill?.complete === true },
     current: v.current && Number.isSafeInteger(v.current.pr) && head(v.current.headSha)
-      ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null } : null,
+      ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null,
+        claimExpiresAt: ms(v.current.claimExpiresAt), leaseFrom: ms(v.current.leaseFrom) } : null,
     pending: Array.isArray(v.pending) ? v.pending.filter(p => Number.isSafeInteger(p?.pr) && head(p.headSha)).slice(0, PENDING_MAX)
       .map(p => ({ pr: p.pr, headSha: p.headSha, state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : null,
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
-        stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null })) : [],
+        stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
+        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null) })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
         at: Date.parse(r.at) || null })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
-    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, parkingFull: v.queue.parkingFull === true } : null,
-    breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt) } : null,
+    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, parkingFull: v.queue.parkingFull === true,
+      hold: codeOrNull(v.queue.hold ?? null) } : null,
+    breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt),
+      cause: v.breaker.cause === 'network' ? 'network' : null } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
     train: trainOf(v.train),

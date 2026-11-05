@@ -23,10 +23,13 @@ import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, validateTrainRunInput } from './train.mjs';
 
+// How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
+export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
 // The installed train mode stages 1 and 8 read (INTERFACES §6: 'off', 'shadow' or 'on'; 'off' for anything else). The one
 // place the resident names it: service-main.mjs gives it to the engine (port trainMode), which passes it to the invoker as
 // --train-mode for those two stages only; the invoker writes it create-only as train-mode.json into the stage directory
@@ -147,7 +150,9 @@ export function parseStageOutcome(o) {
   if (diagnostic) {
     if (OWNER_REVIEW_KINDS.has(d.ownerReviewKind)) diagnostic.ownerReviewKind = d.ownerReviewKind;
     if (ADMISSION_PHASES.has(d.phase)) diagnostic.phase = d.phase;
-    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+    // transport (generation 10): Source full-admission-v2.mjs#transportFault, kept so classify.mjs#networkFailure can tell the line from
+    // any other fault of a NATIVE_ADMISSION_UNAVAILABLE.
+    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh', 'transport']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
     if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
       diagnostic.transientAdmission = d.transientAdmission;
       if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
@@ -156,7 +161,8 @@ export function parseStageOutcome(o) {
   return {
     status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
     diagnostic,
-    scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
+    // claimExpiresAt (generation 12, DESIGN §56.3): the claim's lease end Native reported, for the renewal reminder only.
+    scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue), claimExpiresAt: isoOrNull(s.claimExpiresAt) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
   };
@@ -244,6 +250,11 @@ export function windowsArchiveCode(r, v) {
   if (r?.timedOut === true) return 'WINDOWS_ARCHIVE_TIMED_OUT';
   return 'WINDOWS_ARCHIVE_UNCONFIRMED';
 }
+
+// Generation 11 (DESIGN 55): the waits before the refs gate is asked again after an answer that says only that the line gave none
+// (REMOTE_REFS_NO_ANSWER, companion.mjs). Nothing of the stage has run; an Owner abort ends the wait at once (gateSleep), and after each
+// wait the executor's own check (runStage opts.stillAllowed: no HALT, no drift, the authority still holds) must pass.
+export const REFS_GATE_RETRY_MS = Object.freeze([60_000, 300_000]);
 
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
@@ -404,6 +415,25 @@ export class WindowsEngine {
 
   stopRequested(batch, number) { return this.abortRequested?.batchId === batch.batchId && this.abortRequested.stage === number; }
   async requireV2(name) { const p = this.v2(name); try { await fs.access(p); } catch { fail('SOURCE_V2_REQUIRED'); } return p; }
+  // Generation 12 (DESIGN §56.2): whether the installed Source knows the queue watch (role-probe-run/2, --watch-pr) on its whole path:
+  // the Node job maker and validator (role-probe-run.mjs, which invoke-stage and the entry use) and the session-0 helper's own job check
+  // (windows/FormalPublicBoundaryV2.cs). An older Source refuses the job, which would leave a role probe without a fact (a HALT), so the
+  // executor watches only when both say yes. A definite answer (both read, or a file missing) is kept for the engine's life (the
+  // installed Source does not change under a running service); a read that failed otherwise (a file held by an antivirus or a backup)
+  // is no for now and read again after QUEUE_WATCH_SUPPORT_RETRY_MS (review round 33, MINOR 1).
+  async queueWatchSupported() {
+    if (this.queueWatchKnown !== undefined) return this.queueWatchKnown;
+    const now = typeof this.clock === 'function' ? this.clock() : Date.now();
+    if (Number.isFinite(this.queueWatchReadFailedAt) && now >= this.queueWatchReadFailedAt && now - this.queueWatchReadFailedAt < QUEUE_WATCH_SUPPORT_RETRY_MS) return false;
+    try {
+      const js = await fs.readFile(this.v2('role-probe-run.mjs'), 'utf8'), cs = await fs.readFile(this.v2(path.join('windows', 'FormalPublicBoundaryV2.cs')), 'utf8');
+      this.queueWatchKnown = js.includes("'clued.independent-ci.role-probe-run/2'") && cs.includes('RoleProbeRunV2="clued.independent-ci.role-probe-run/2"');
+    } catch (error) {
+      if (error?.code === 'ENOENT') this.queueWatchKnown = false;
+      else { this.queueWatchReadFailedAt = now; return false; }
+    }
+    return this.queueWatchKnown;
+  }
 
   async scReadback() {
     const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
@@ -453,7 +483,7 @@ export class WindowsEngine {
   }
 
   async archiveLinux(batch, reason) {
-    const answer = await this.companionMailbox.await(await this.companionMailbox.send('archive-linux', { batchId: batch.batchId, reason }, 6 * 60_000), this.sleep);
+    const answer = await this.companionMailbox.await(await this.companionMailbox.send('archive-linux', { batchId: batch.batchId, reason }, ARCHIVE_LINUX_REQUEST_MS), this.sleep);
     return { verified: answer?.ok === true && answer.verified === true, directory: answer?.directory ?? null };
   }
 
@@ -509,14 +539,19 @@ export class WindowsEngine {
 
   // C2 never derives a PR/batch, starts Linux or contacts the companion. The installed invoker creates
   // one stage-11 plan and asks the same serialized broker; independent SCM readback remains mandatory.
-  async runRoleProbe() {
+  // watchPr (generation 12, DESIGN §56.2): the queue watch's PR; the intent is then /2 and the invoker gets --watch-pr.
+  async runRoleProbe({ watchPr = null } = {}) {
     const entry = await this.requireV2('invoke-stage.mjs');
     const runKey = randomBytes(32).toString('hex'), runId = `${runKey.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
-    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 })));
+    const watch = Number.isSafeInteger(watchPr) && watchPr > 0 && watchPr < 10_000_000_000 ? watchPr : null;
+    const manifest = sha256(Buffer.from(canonicalJson(watch === null
+      ? { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 }
+      : { contract: 'clued.independent-ci.role-probe-intent/2', runKey, runId, nodeProfileSha256: this.nodeProfileSha256, watchPr: watch })));
     if (this.busy?.() === true || this.inflight) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
     // A live original runner is not ours to stop: do not even request a swap.
     if (!(await this.scReadback())) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
-    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256], { timeoutMs: 420_000 });
+    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256,
+      ...(watch === null ? [] : ['--watch-pr', String(watch)])], { timeoutMs: 420_000 });
     if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
     const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
     return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };
@@ -661,6 +696,10 @@ export class WindowsEngine {
     const firstLinux = opts ? opts.firstLinux === true : stage.number === 2;
     check(!betweenRoles || [4, 6].includes(stage.number), 'RESIDENT_BETWEEN_ROLES_STAGE_INVALID');
     check(!firstLinux || [2, 4, 6].includes(stage.number), 'RESIDENT_FIRST_LINUX_STAGE_INVALID');
+    // DESIGN 54: a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
+    // took the run's records); the batch's first Linux stage keeps its refs gate and version check (firstLinux) on a run again too.
+    const again = opts?.again ?? 0;
+    check(again === 0 || ([4, 6].includes(stage.number) && [1, 2].includes(again) && !betweenRoles), 'RESIDENT_STAGE_AGAIN_INVALID');
     // Before the second and third Linux role, archive the previous role's protocol records on both
     // hosts, exactly as run-batch.ps1:81 does today; otherwise a stale issue.ready would be relayed.
     if (betweenRoles) {
@@ -681,15 +720,35 @@ export class WindowsEngine {
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
     if (firstLinux) {
-      const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, 6 * 60_000), this.sleep);
+      const askRefs = async () => this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, CHECK_REFS_REQUEST_MS), this.sleep);
+      let refs = await askRefs();
+      // What the gate did (DESIGN 55), carried with the stage's result for its receipt: how often it asked, and why it stopped asking
+      // before the line answered (the executor's check: halt, drift, authority), never both a refusal and the line.
+      const gate = { asks: 1, waitRefused: null };
+      const aborted = async () => ({ ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, refsGate: gate });
+      for (let again = 0; again < REFS_GATE_RETRY_MS.length && refs?.ok !== true && refs?.code === 'REMOTE_REFS_NO_ANSWER'; again++) {
+        if (this.stopRequested(batch, stage.number)) return aborted();
+        await this.gateSleep(REFS_GATE_RETRY_MS[again]);
+        if (this.stopRequested(batch, stage.number)) return aborted();
+        if (typeof opts?.stillAllowed === 'function') {
+          let verdict;
+          try { verdict = await opts.stillAllowed(); } catch { verdict = 'error'; }
+          if (verdict !== true) { gate.waitRefused = typeof verdict === 'string' && /^[a-z-]{1,20}$/.test(verdict) ? verdict : 'refused'; break; }
+        }
+        refs = await askRefs();
+        gate.asks += 1;
+      }
       if (refs?.ok !== true) {
         // Only an explicit "refs moved" answer is the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; no answer or
         // anything else is REFS_GATE_UNCONFIRMED, clean but final: never an attempt-2 code (PR-A review MINOR 5).
         const code = refs?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REFS_GATE_UNCONFIRMED';
-        return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+        // Generation 11 (MINOR-9): the line and nothing else is told to the breaker as a network ending (classify.mjs#networkFailure).
+        return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, refsGate: gate,
+          ...(refs?.code === 'REMOTE_REFS_NO_ANSWER' && gate.waitRefused === null ? { refsNoAnswer: true } : {}) };
       }
+      if (gate.asks > 1) return { ...(await this.invoke(batch, again ? { ...stage, again } : stage, row)), refsGate: gate };
     }
-    return this.invoke(batch, stage, row);
+    return this.invoke(batch, again ? { ...stage, again } : stage, row);
   }
 
   // The pre-stage memory gate (DESIGN §32). { checks, order, blocks, low, ready, waitedMs, refused }: ready true (a reading at or
@@ -739,8 +798,11 @@ export class WindowsEngine {
   }
 
   async invokeStage(batch, stage, row, invoke) {
+    // Generation 11 (DESIGN 54, review B2): a stage run again in the same batch is a new swap; the stop remembered for the run before
+    // (stageStop) is not this run's, so it is forgotten here and a stop of this run finds and writes its own.
+    if (this.stageStopFor?.batchId === batch.batchId && this.stageStopFor.stage === stage.number) this.stageStopFor = null;
     const relay = stage.linuxWorker
-      ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
+      ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId, ...(stage.again ? { again: stage.again } : {}) }, stage.runMilliseconds + 120_000)
       : null;
     this.inflight = relay ? { batchId: batch.batchId, stage: stage.number, request: relay } : null;
     // DESIGN §26: while a scanner-issuer stage runs, its pump and the companion's heartbeat are watched (and the stage is

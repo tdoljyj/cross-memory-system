@@ -60,8 +60,13 @@ function Safe-ChildError([string]$Text){
   try{$v=$Text|ConvertFrom-Json}catch{return $null}
   if((@($v.PSObject.Properties.Name|Sort-Object)-join '|') -cne 'qualificationIssued|reason|stage|status|taskStarted' -or $v.status -cne 'BLOCKED' -or $v.taskStarted -ne $false -or $v.qualificationIssued -ne $false){return $null}
   $stages=@('OPERATION','CONTEXT','STDIN','TRANSPORT','PACKET','BINDING','RECORD','COMPLETE')
-  $reasons=@('FIXED_FORMAL_RELAY_OPERATION_REQUIRED','FIXED_FORMAL_RELAY_SEQUENCE_REQUIRED','FORMAL_RELAY_BYTES_BOUND','FORMAL_RELAY_TRANSPORT_BOUND','FORMAL_RELAY_TRANSPORT_JSON','FORMAL_RELAY_TRANSPORT_CHANGED','FORMAL_RELAY_FILE_BOUND','FORMAL_RELAY_FILE_CHANGED','FORMAL_RELAY_READY_CHANGED','FORMAL_RELAY_STDIN_TIMEOUT','FORMAL_RELAY_ISSUER_CONTEXT_CHANGED','FORMAL_RELAY_SEQUENCE_CHANGED','FORMAL_RELAY_UNCONFIRMED','ENOENT','EEXIST','EACCES','EPERM','ENOTDIR','EISDIR','ELOOP','ENOSPC','EDQUOT','EROFS','EIO','EBUSY','EMFILE','ENFILE','ENAMETOOLONG','EINVAL','EINTR','EPIPE')
-  if(-not($stages -ccontains $v.stage) -or -not($reasons -ccontains $v.reason)){return $null}
+  $reasons=@('FIXED_FORMAL_RELAY_OPERATION_REQUIRED','FIXED_FORMAL_RELAY_SEQUENCE_REQUIRED','FORMAL_RELAY_BYTES_BOUND','FORMAL_RELAY_TRANSPORT_BOUND','FORMAL_RELAY_TRANSPORT_JSON','FORMAL_RELAY_TRANSPORT_CHANGED','FORMAL_RELAY_FILE_BOUND','FORMAL_RELAY_FILE_CHANGED','FORMAL_RELAY_READY_CHANGED','FORMAL_RELAY_STDIN_TIMEOUT','FORMAL_RELAY_ISSUER_CONTEXT_CHANGED','FORMAL_RELAY_SEQUENCE_CHANGED','FORMAL_RELAY_UNCONFIRMED','ENOENT','EEXIST','EACCES','EPERM','ENOTDIR','EISDIR','ELOOP','ENOSPC','EDQUOT','EROFS','EIO','EBUSY','EMFILE','ENFILE','ENAMETOOLONG','EINVAL','EINTR','EPIPE',
+    'BRIDGE_ISSUE_EXPIRED','BRIDGE_CHALLENGE_EXPIRED','BRIDGE_RESPONSE_EXPIRED','BRIDGE_BLOCKED_TIME_INVALID','EAGAIN','ENOMEM','ETIMEDOUT','FORMAL_RELAY_CODE_UNLISTED')
+  # 2026-11-04 (PR #992): a refusal whose code was not listed here was dropped (childError null), so nobody could tell
+  # which check had refused. A fixed-form code of the fixed child is now reported as FORMAL_RELAY_CODE_UNLISTED: the same
+  # shape, no new text, and companion.mjs still treats it as final.
+  if(-not($stages -ccontains $v.stage) -or $v.reason -isnot [string] -or $v.reason -cnotmatch '^[A-Z][A-Z0-9_]{1,79}$'){return $null}
+  if(-not($reasons -ccontains $v.reason)){$v.reason='FORMAL_RELAY_CODE_UNLISTED'}
   return [pscustomobject][ordered]@{status='BLOCKED';reason=$v.reason;stage=$v.stage;taskStarted=$false;qualificationIssued=$false}
 }
 try{
