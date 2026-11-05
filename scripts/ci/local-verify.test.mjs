@@ -10,10 +10,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
-import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dependencyKey, githubRefs,
+import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dataRoot, dependencyKey, githubRefs,
   killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
-  readCached, readResults, refUpdates, runCommands, snapshot, startLinux, testEnvironment, toWslPath, windowsPathOf,
-  withFailureReport, worktree, worktreePath, writeCached } from './local-verify.mjs';
+  readCached, readResults, realpathLoose, refUpdates, runCommands, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
+  toWslPath, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached } from './local-verify.mjs';
 
 // A repository in a temporary directory, isolated from the user's git configuration.
 function repository(t, name = 'repo') {
@@ -90,7 +90,7 @@ test('paths, keys and the environment the commands get', () => {
   assert.equal(windowsPathOf('/home/dev/logs/a.log'), '\\\\wsl.localhost\\CluedDev-Linux\\home\\dev\\logs\\a.log');
   assert.equal(windowsPathOf('C:\\logs\\a.log'), 'C:\\logs\\a.log');
   assert.equal(cacheHome({ CLUED_LOCAL_VERIFY_HOME: '/x' }, '/home/dev'), path.resolve('/x'));
-  assert.equal(cacheHome({ LOCALAPPDATA: '/appdata' }, '/home/me'), path.resolve('/home/me', '.cache', 'clued-local-verify'), 'never under AppData');
+  assert.equal(cacheHome({ LOCALAPPDATA: '/appdata' }, '/home/me', { platform: 'linux' }), path.resolve('/home/me', '.cache', 'clued-local-verify'), 'never under AppData');
   const packageJson = JSON.stringify({ name: 'a', scripts: { test: 'x' }, dependencies: { b: '1.0.0' } });
   const key = dependencyKey({ lock: 'lock', packageJson, nodeVersion: 'v24.19.0', platform: 'win32' });
   assert.match(key, /^[0-9a-f]{16}$/);
@@ -481,4 +481,78 @@ test('a Linux run that cannot start is one row that could not compare; it never 
   assert.equal(rows.length, 1);
   assert.deepEqual([rows[0].platform, rows[0].verdict], ['linux', 'unknown']);
   assert.match(rows[0].detail, /NoSuchDistribution-local-verify-test is not installed/);
+});
+
+// ---- where the cache lives, and what a run says about the system drive (defect 2102f7e1) ----
+test('the cache is on the data drive, not under the home directory on the system drive, and always a real path', (t) => {
+  const win = { platform: 'win32', systemDrive: 'C:' };
+  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'D:\\' }), path.win32.join('D:\\', 'clued-dev'));
+  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'C:\\' || drive === 'E:\\' }), path.win32.join('E:\\', 'clued-dev'), 'the system drive is never the data drive');
+  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'C:\\' }), null, 'no other drive: the home directory');
+  assert.equal(dataRoot({ SystemDrive: 'D:' }, { platform: 'win32', exists: (drive) => drive === 'D:\\' || drive === 'E:\\' }), path.win32.join('E:\\', 'clued-dev'), 'another system drive letter');
+  assert.equal(dataRoot({ CLUED_DEV_ROOT: path.resolve('/dev-root') }, { ...win, exists: () => true }), path.resolve('/dev-root'), 'CLUED_DEV_ROOT decides');
+  assert.equal(dataRoot({}, { platform: 'linux', exists: () => true }), null, 'on Linux the distribution keeps its own home');
+  assert.equal(cacheHome({ CLUED_DEV_ROOT: path.resolve('/dev-root') }, '/home/me'), path.resolve('/dev-root', 'cache', 'clued-local-verify'));
+  assert.equal(cacheHome({ CLUED_DEV_ROOT: path.resolve('/dev-root'), CLUED_LOCAL_VERIFY_HOME: path.resolve('/own') }, '/home/me'), path.resolve('/own'), 'the cache variable is the more specific one');
+  // a link in the way is resolved: Node resolves it in a script's own path, so a path through it would never match
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-link-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const real = path.join(dir, 'real');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, path.join(dir, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(cacheHome({ CLUED_LOCAL_VERIFY_HOME: path.join(dir, 'link', 'cache') }, '/h'), path.join(real, 'cache'), 'through a link, the directory does not exist yet');
+  fs.mkdirSync(path.join(real, 'cache'));
+  assert.equal(cacheHome({ CLUED_LOCAL_VERIFY_HOME: path.join(dir, 'link', 'cache') }, '/h'), path.join(real, 'cache'), 'through a link, it exists');
+  assert.equal(realpathLoose(path.join(dir, 'link', 'a', 'b')), path.join(real, 'a', 'b'));
+});
+
+test('a run says when the system drive is below the CI watchdog resume level, or holds the cache', () => {
+  const win = { platform: 'win32', env: { SystemDrive: 'C:' } };
+  const data = 'D:\\clued-dev\\cache';
+  const [low] = systemDriveNotes(data, { ...win, free: () => 49.8 });
+  assert.match(low, /^C:\\ has 49\.8 GB free, below 65 GB: .*below 50 GB .*starts them again at 65 GB/);
+  assert.equal(systemDriveNotes(data, { ...win, free: () => 64.9 }).length, 1, 'between the two levels the watchdog is still holding the runners');
+  assert.deepEqual(systemDriveNotes(data, { ...win, free: () => 65 }), []);
+  assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:', CLUED_CI_RESUME_FREE_GB: '0' }, free: () => 1 }), [], 'switched off');
+  assert.match(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:', CLUED_CI_RESUME_FREE_GB: '80' }, free: () => 70 })[0], /below 80 GB/);
+  assert.deepEqual(systemDriveNotes(data, { ...win, free: () => { throw new Error('no such drive'); } }), [], 'a drive that cannot be asked is not a warning');
+  const [cache] = systemDriveNotes('C:\\Users\\me\\.cache\\clued-local-verify', { ...win, free: () => 200 });
+  assert.match(cache, /the cache C:\\Users\\me\\\.cache\\clued-local-verify is on C:\\ .*CLUED_DEV_ROOT/);
+  assert.deepEqual(systemDriveNotes('/home/me/.cache', { platform: 'linux', env: {}, free: () => 1 }), []);
+});
+
+test('a command that runs Node tests and runs none is a failure, never a pass', (t) => {
+  const counts = (passed, failed = 0) => ({ type: 'summary', counts: { passed, failed, tests: passed + failed + 2, skipped: 2 } });
+  assert.equal(testsRun(report(counts(0))), 0, 'skipped tests are not tests run');
+  assert.equal(testsRun(report(counts(3, 1))), 4);
+  assert.equal(testsRun(report(pass('a'), fail('b'), summary)), 2, 'a summary without counts: the events');
+  assert.equal(testsRun(report()), 0);
+  const none = command(0, report(counts(0)), { tests: 0 });
+  const result = compareCommand(none, null, { selector: selection });
+  assert.equal(result.verdict, 'new');
+  assert.match(result.detail, /ran no tests/);
+  assert.equal(compareCommand(command(0, report(counts(5)), { tests: 5 }), null, { selector: selection }).verdict, 'pass');
+  assert.equal(compareCommand(command(0, null, { tests: null }), null, { selector: selection }).verdict, 'pass', 'a command without a test report (lint, build) passes on its exit status');
+  assert.equal(compareSuite([command(0), none], null, { selector: selection }).verdict, 'new');
+  // as started: exit 0 and no report, whether or not the command has known failures
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-none-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const selector = { ...selection, reporterUrl: 'file:///r.mjs', SUITE_COMMANDS: { s: [
+    { cwd: '.', argv: ['node', '--test', 'a.test.mjs'] },
+    { cwd: '.', known: 's', argv: ['node', 'run.mjs', '--test', 'b.test.mjs'] },
+    { cwd: '.', argv: ['npm', 'run', 'lint'] },
+  ] } };
+  const results = runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), { spawn: () => ({ status: 0 }), kill: () => {} });
+  assert.deepEqual(results.map((entry) => entry.tests), [0, 0, null]);
+  assert.equal(compareSuite(results, null, { selector: selection, knownLists: { s: [] } }).verdict, 'new');
+  // and with a report that ran tests
+  const ran = runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log2.txt'), {
+    spawn: (file, args) => {
+      const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('.jsonl'));
+      if (destination) fs.writeFileSync(destination.split('=')[1], `${JSON.stringify(pass('t'))}\n${JSON.stringify(counts(1))}\n`);
+      return { status: 0 };
+    },
+    kill: () => {} });
+  assert.deepEqual(ran.map((entry) => entry.tests), [1, 1, null]);
+  assert.equal(compareSuite(ran, null, { selector: selection, knownLists: { s: [] } }).verdict, 'pass');
 });

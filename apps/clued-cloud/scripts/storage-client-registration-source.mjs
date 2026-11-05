@@ -238,6 +238,6 @@ async function main() {
   console.log(JSON.stringify({ status: 'source_captured_not_qualified', sha256: evidence.sha256, size_bytes: evidence.sizeBytes }));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main().catch(() => { console.error('storage_client_source_capture_failed; no qualification or storage authority was granted'); process.exitCode = 1; });
 }

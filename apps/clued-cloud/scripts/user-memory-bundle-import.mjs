@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { sha256, validateUserMemoryBundle } from "./user-memory-bundle.mjs";
@@ -109,7 +108,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

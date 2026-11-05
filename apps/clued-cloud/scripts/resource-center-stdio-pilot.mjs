@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -93,7 +92,7 @@ export async function startPilotServer(profilePath, expectedSha256) {
   return server;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   startPilotServer(process.argv[2], process.argv[3]).catch((error) => {
     process.stderr.write(`${error?.code ?? "RESOURCE_CENTER_PILOT_START_FAILED"}\n`);
     process.exitCode = 1;

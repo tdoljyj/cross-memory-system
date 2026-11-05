@@ -4,7 +4,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 // A self-hosted machine can run several jobs at once. Node otherwise starts
 // one test-file process per CPU in each job, starving workerd/IPC fixtures of
@@ -80,7 +79,11 @@ export async function runNodeTests(args, { cwd = process.cwd(), env = process.en
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// import.meta.main, not a comparison of process.argv[1] with import.meta.url:
+// Node resolves links (a junction, a symlink) in the module URL but not in
+// argv[1], so the comparison failed behind a link and the script ended with exit
+// 0 without running a single test (defect 2102f7e1).
+if (import.meta.main) {
   try {
     process.exitCode = await runNodeTests(process.argv.slice(2));
   } catch (error) {

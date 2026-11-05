@@ -79,6 +79,41 @@ $suspendMem=__SUSPEND_MEM__; $resumeMem=__RESUME_MEM__; $suspendDisk=__SUSPEND_D
 $lastDeferral=''
 # A suspend held back for the same reason is logged once per low-capacity episode.
 function Log-Deferral([string]$m){if($m -ne $script:lastDeferral){Log $m; $script:lastDeferral=$m}}
+# BEGIN capacity-alert
+# A capacity suspend stops the Linux runners; it must never do that unseen (defect
+# 2102f7e1: the runners stood still for 86 minutes and only the log knew). Each
+# suspend writes an ALERT line, a marker file for panels and scripts (present
+# exactly while the runners are held back) and a desktop notification, repeated
+# every $alertEveryMinutes while the hold lasts; the resume removes the marker.
+$alertFile='C:\clued-ci\state\capacity-alert.json'; $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue
+function Show-Toast([string]$title,[string]$text){
+  if($env:CLUED_WATCHDOG_NO_TOAST){return}
+  try{
+    [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
+    $xml=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+    $nodes=$xml.GetElementsByTagName('text')
+    [void]$nodes.Item(0).AppendChild($xml.CreateTextNode($title)); [void]$nodes.Item(1).AppendChild($xml.CreateTextNode($text))
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Clued CI watchdog').Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+  }catch{Log ("Alert notification failed: {0}" -f $_.Exception.Message)}
+}
+function Send-CapacityAlert([string]$kind,[string]$detail){
+  try{
+    if($kind -eq 'Resume'){
+      Remove-Item -LiteralPath $alertFile -Force -ErrorAction SilentlyContinue
+      Log ("ALERT cleared: runners resumed ({0})" -f $detail); Show-Toast 'Clued CI runners resumed' $detail; return
+    }
+    $script:lastAlert=Get-Date
+    $since=$script:lastAlert.ToString('o')
+    if($kind -eq 'Reminder' -and (Test-Path -LiteralPath $alertFile)){try{$since=(Get-Content -LiteralPath $alertFile -Raw | ConvertFrom-Json).since}catch{}}
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) | Out-Null
+    $tmp=$alertFile+'.tmp'
+    ([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json) | Set-Content -LiteralPath $tmp -Encoding UTF8
+    Move-Item -LiteralPath $tmp -Destination $alertFile -Force
+    Log ("ALERT {0}: Linux runners are stopped for low capacity ({1})" -f $kind,$detail)
+    Show-Toast 'Clued CI runners are stopped' $detail
+  }catch{Log ("Capacity alert failed: {0}" -f $_.Exception.Message)}
+}
+# END capacity-alert
 function Test-LinuxBusy {
   # A Runner.Worker process exists exactly while a job runs. Sample twice, a few
   # seconds apart, so a job the listener is just starting is not taken for idle.
@@ -108,9 +143,13 @@ try{while($true){
   if(-not $capacitySuspended -and $belowSuspend -and -not (Test-LinuxBusy)){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl stop $linuxUnits docker containerd 2>$null}else{& wsl.exe -d $distro -u root -e systemctl stop $linuxUnits 2>$null}
     $capacitySuspended=$true; $lastDeferral=''; Log ("Capacity suspend: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)
+    Send-CapacityAlert 'Suspend' ("C: {0} GB free (stops below {1}, resumes at {2}), memory {3} GB free (stops below {4}, resumes at {5})" -f $freeDisk,$suspendDisk,$resumeDisk,$freeMem,$suspendMem,$resumeMem)
   } elseif($capacitySuspended -and $freeMem -ge $resumeMem -and $freeDisk -ge $resumeDisk){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl start containerd docker $linuxUnits 2>$null}else{& wsl.exe -d $distro -u root -e systemctl start $linuxUnits 2>$null}
     $capacitySuspended=$false; Log ("Capacity resume: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)
+    Send-CapacityAlert 'Resume' ("C: {0} GB free, memory {1} GB free" -f $freeDisk,$freeMem)
+  } elseif($capacitySuspended -and ((Get-Date)-$lastAlert).TotalMinutes -ge $alertEveryMinutes){
+    Send-CapacityAlert 'Reminder' ("C: {0} GB free (resumes at {1}), memory {2} GB free (resumes at {3})" -f $freeDisk,$resumeDisk,$freeMem,$resumeMem)
   }
   # Only report the Windows runner service's state when it changes; never start it from here.
   $svc=Get-Service -Name $winService -ErrorAction SilentlyContinue

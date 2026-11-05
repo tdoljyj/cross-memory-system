@@ -1,6 +1,5 @@
 // Offline SQL generation only. No database, provider, or credential access.
 import { readFile, stat } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 
 export const VERSION = '1.0.0';
 const CONTRACT = 'kooyumi.storage-google-redirect-cutover/1';
@@ -147,7 +146,7 @@ export async function main(args) {
   return buildCutoverSql(input);
 }
 
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(sql => process.stdout.write(sql)).catch(error => {
     // Never echo untrusted metadata or file contents, including parse errors.
     process.stderr.write(error.message.startsWith('usage:') ? error.message + '\n'

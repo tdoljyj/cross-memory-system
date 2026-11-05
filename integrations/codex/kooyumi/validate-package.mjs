@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const sourceRoot = fileURLToPath(new URL("./", import.meta.url));
 const appId = "asdk_app_6ad0cb1db0c48191a97bd2bd158836e3";
@@ -43,7 +43,7 @@ export async function validatePackage(root, expectedVersion) {
   return { version: manifest.version, registeredApps: 1, appIds: [appId], mcpServers: [] };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   try {
     const source = JSON.parse(await readFile(new URL("./.codex-plugin/plugin.json", import.meta.url), "utf8"));
     const result = await validatePackage(resolve(process.argv[2] ?? sourceRoot), source.version);

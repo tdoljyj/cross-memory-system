@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 const { Client } = pg;
@@ -65,6 +64,6 @@ export async function resetAcceptanceFixture(connectionString = process.env.SUPA
   return { owners: 2, bindings: 2, contexts: 2, synthetic_only: true };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   console.log(JSON.stringify(await resetAcceptanceFixture()));
 }

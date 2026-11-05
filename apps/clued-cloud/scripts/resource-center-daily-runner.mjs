@@ -4,7 +4,6 @@ import path from "node:path";
 import readline from "node:readline";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { createGoogleDrivePilotCredential } from "../../../kernel/host/resource-center-google-drive-credential.mjs";
 import { createResourceCenterGoogleDriveNativeWriterToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { createResourceCenterRecoveryStore, createResourceCenterProviderAttemptStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
@@ -216,7 +215,7 @@ async function runWithCredentials(c, mode, secrets) {
     run_isolated: args => runIsolatedDailyConsumer(c, args) });
   process.stdout.write(JSON.stringify(result) + "\n");
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv[2], process.argv[3], process.argv[4]).catch(error => {
     // No raw provider response, stack, file path or secret reaches the caller.
     const code = /^DAILY_[A-Z_]+$/.test(error?.message ?? "") ? error.message : "DAILY_HOST_FAILED_CLOSED";

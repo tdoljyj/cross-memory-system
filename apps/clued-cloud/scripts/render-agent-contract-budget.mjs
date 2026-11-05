@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { renderAgentContractBootstrap, renderedBootstrapBytes, AGENT_BOOTSTRAP_BUDGET_BYTES } from "../worker/agent-contract-bootstrap.mjs";
 
 export function validateAgentContractResponse(response, contract, part) {
@@ -94,4 +94,4 @@ console.log(JSON.stringify({ current_parts: responses.length, current_response_b
   synthetic_parts: syntheticResponses.length, synthetic_response_bytes: syntheticResponses.map(renderedBootstrapBytes), version, sha256: identity.sha256 }));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) await main();
+if (import.meta.main) await main();

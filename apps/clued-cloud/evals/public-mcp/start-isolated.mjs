@@ -187,7 +187,7 @@ async function start(){
     await launched.publishReady();
   }catch(error){console.error(error.message);await shutdown(1);}
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(import.meta.main){
   try{if(process.argv[2]==='allocate')console.log(await allocateIsolatedPort());
     else if(process.argv[2]==='record')console.log(launcherIdentity(Number(process.argv[3])));
     else if(process.argv[2]==='ready'){

@@ -1,6 +1,5 @@
 // Run from an independent, single-instance scheduler using a LOGIN role that
 // inherits only clued_projection_watchdog. No Builder or Canonical credentials.
-import { pathToFileURL } from 'node:url';
 
 const APPROVED_KEYS = new Set(['global.priority_frontier', 'global.__aggregate__']);
 const ISO = (value) => typeof value === 'string' ? Date.parse(value) : NaN;
@@ -231,7 +230,7 @@ export async function runProjectionWatchdog(env = process.env) {
   return { status: 'notified', changes };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   runProjectionWatchdog().then((result) => {
     process.stdout.write(JSON.stringify({ status: result.status,
       active_incidents: result.incidents?.length ?? result.changes?.active.length ?? 0 }) + '\n');

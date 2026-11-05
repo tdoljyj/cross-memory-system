@@ -3,7 +3,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const FIXED = Object.freeze({
   contract: 'kooyumi.authorization-issuer-provision/1',
@@ -164,7 +163,7 @@ async function main(args) {
   else process.stdout.write(JSON.stringify(safeSummary(metadata), null, 2) + '\n');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).catch(error => {
     process.stderr.write((error instanceof OperatorInputError ? error.code : 'kooyumi_issuer_input_unreadable') + '\n');
     process.exitCode = 1;

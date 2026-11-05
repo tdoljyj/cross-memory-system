@@ -36,8 +36,19 @@
 // main still holds. On Windows the worktrees see this repository's own refs.
 // One run at a time per cache (a lock, taken after the change is snapshotted,
 // so a queued run verifies what was there when it started). Logs, worktrees,
-// results of main and the dependency cache live under
-// ~/.cache/clued-local-verify (or CLUED_LOCAL_VERIFY_HOME on the Windows side).
+// results of main and the dependency cache (about 10 GB) live under
+// <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first drive
+// after the system drive that exists, or CLUED_DEV_ROOT (the same root
+// setup-clued-dev-linux.ps1 installs CluedDev-Linux under) or, for this
+// directory alone, CLUED_LOCAL_VERIFY_HOME; ~/.cache/clued-local-verify where
+// there is no other drive. Never on the system drive when another exists: the CI
+// host's watchdog pauses the runners when it runs short (defect 2102f7e1). The
+// location is always a real path, links resolved. A run warns when the system
+// drive is below the watchdog's resume level.
+//
+// A command that runs Node's test runner and ran no test is a failure, never a
+// pass (an entry point that exits 0 without running anything looks the same as
+// a green run).
 //
 // Exit 0: no new failure. Exit 1: a new failure, or one it could not compare
 // with main. Exit 2: the run itself could not be set up.
@@ -53,7 +64,12 @@ export const DISTRIBUTION = 'CluedDev-Linux';
 export const CHECKS = ['ci-suites', 'clued-cloud-tests', 'migration-verify'];
 // The Node version clued-required-tests.yml sets up.
 export const CI_NODE = '24.19.0';
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
+// The C: free space (GB) at which the CI host's watchdog (the one installed as
+// C:clued-ciwatchdog-clued-ci.ps1) stops the Linux runners, and at which it
+// starts them again. CLUED_CI_RESUME_FREE_GB overrides the second (0: no check).
+export const CI_HOST_SUSPEND_FREE_GB = 50;
+export const CI_HOST_RESUME_FREE_GB = 65;
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
@@ -118,11 +134,70 @@ export function parseArgs(argv) {
   return options;
 }
 
-// Under the home directory, not %LOCALAPPDATA%: a packaged Windows app's
-// processes see AppData redirected into the package, so a link made there
-// points elsewhere for the cmd.exe that npm starts (tsc "not found").
-export function cacheHome(env = process.env, home = os.homedir()) {
-  return path.resolve(env.CLUED_LOCAL_VERIFY_HOME || path.join(home, '.cache', 'clued-local-verify'));
+// The path with every link (junction, symlink) in it resolved, also when its
+// last parts do not exist yet (those are kept as they are).
+export function realpathLoose(target) {
+  const wanted = path.resolve(target);
+  const tail = [];
+  for (let current = wanted; ;) {
+    try {
+      return path.join(fs.realpathSync(current), ...tail);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return wanted;
+      tail.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+// Where the developer tools keep their large files on Windows: CLUED_DEV_ROOT,
+// else clued-dev on the first drive after the system drive that exists; null
+// elsewhere and where there is no other drive.
+export function dataRoot(env = process.env, { platform = process.platform, exists = fs.existsSync, systemDrive = env.SystemDrive || 'C:' } = {}) {
+  if (env.CLUED_DEV_ROOT) return path.resolve(env.CLUED_DEV_ROOT);
+  if (platform !== 'win32') return null;
+  for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
+    const drive = `${letter}:`;
+    if (drive.toLowerCase() !== systemDrive.toLowerCase() && exists(`${drive}\\`)) return path.win32.join(`${drive}\\`, 'clued-dev');
+  }
+  return null;
+}
+
+// Not %LOCALAPPDATA%: a packaged Windows app's processes see AppData redirected
+// into the package, so a link made there points elsewhere for the cmd.exe that
+// npm starts (tsc "not found"). On the data drive when there is one (see the
+// top of this file), else under the home directory. A real path: Node resolves
+// links in a script's own path, so a path through a link would not match it.
+export function cacheHome(env = process.env, home = os.homedir(), options = {}) {
+  if (env.CLUED_LOCAL_VERIFY_HOME) return realpathLoose(env.CLUED_LOCAL_VERIFY_HOME);
+  const root = dataRoot(env, options);
+  return realpathLoose(root ? path.join(root, 'cache', 'clued-local-verify') : path.join(home, '.cache', 'clued-local-verify'));
+}
+
+export function freeGb(dir, statfs = fs.statfsSync) {
+  const stats = statfs(dir);
+  return (Number(stats.bavail) * Number(stats.bsize)) / 1024 ** 3;
+}
+
+// What a run should tell the user about the system drive (Windows): its free
+// space below the watchdog's resume level, or the cache on it. Null when there
+// is nothing to say.
+export function systemDriveNotes(home, { env = process.env, platform = process.platform, free = freeGb } = {}) {
+  if (platform !== 'win32') return [];
+  const drive = `${env.SystemDrive || 'C:'}\\`;
+  const notes = [];
+  const resume = env.CLUED_CI_RESUME_FREE_GB === undefined ? CI_HOST_RESUME_FREE_GB : Number(env.CLUED_CI_RESUME_FREE_GB);
+  try {
+    const gb = free(drive);
+    if (Number.isFinite(resume) && resume > 0 && gb < resume) {
+      notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog stops the self-hosted runners below ${CI_HOST_SUSPEND_FREE_GB} GB and starts them again at ${resume} GB; free space there first`);
+    }
+  } catch { /* the drive cannot be asked: nothing to say */ }
+  if (path.parse(home).root.toLowerCase() === drive.toLowerCase()) {
+    notes.push(`the cache ${home} is on ${drive} and grows to about 10 GB; set CLUED_DEV_ROOT (or CLUED_LOCAL_VERIFY_HOME) to a directory on another drive`);
+  }
+  return notes;
 }
 
 // C:\a\b (or C:/a/b) as the distribution sees it: /mnt/c/a/b.
@@ -587,7 +662,9 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
           // a timeout ends only the command itself; what it started could hold files
           kill(root, { log });
         }
-        results.push({ status, report: text === null ? null : selector.readReport(text, root), known, error });
+        const parsed = text === null ? null : selector.readReport(text, root);
+        // a command that got the reporter is one that runs tests: the report says how many ran
+        results.push({ status, report: parsed, known, error, tests: reported.report ? testsRun(parsed ?? selector.readReport('', root)) : null });
       } catch (error) {
         log(`local-verify: ${id}: command ${index + 1}: ${error.message}`);
         results.push({ status: null, report: null, known, error: error.message });
@@ -598,6 +675,14 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
     fs.rmSync(temporary, { recursive: true, force: true });
   }
   return results;
+}
+
+// How many tests a Node test report shows as run (passed or failed; skipped
+// and todo ones do not count): the run's own summary, else the events.
+export function testsRun(report) {
+  const counts = report?.summary?.counts;
+  if (counts && Number.isFinite(counts.passed) && Number.isFinite(counts.failed)) return counts.passed + counts.failed;
+  return (report?.events ?? []).filter((event) => event.type === 'pass' || event.type === 'fail').length;
 }
 
 // How to end the processes still running from dir (their command line names
@@ -635,7 +720,10 @@ export function compareCommand(head, base, { selector, known = [] }) {
   const passed = (result) => (result.known && result.report
     ? selector.knownFailureVerdict({ status: result.status, report: result.report, known }).ok
     : result.status === 0);
-  if (passed(head)) return { verdict: 'pass' };
+  if (passed(head)) {
+    // exit 0 and a complete report, but not one test run: a script that did not run the tests
+    return head.tests === 0 ? { verdict: 'new', detail: 'ran no tests (a command that runs no test is not a pass)' } : { verdict: 'pass' };
+  }
   const failing = () => {
     const names = head.report ? failEntries(head.report).map(label) : [];
     return names.length ? `: ${names.join('; ')}` : '';
@@ -904,6 +992,7 @@ async function main(argv) {
   const root = git(['rev-parse', '--show-toplevel']);
   const home = cacheHome();
   fs.mkdirSync(home, { recursive: true });
+  for (const note of systemDriveNotes(home)) console.log(`local-verify: WARNING: ${note}`);
   if (options.candidate && !options.suites.length) throw new Error('--candidate needs --suite');
   // the change as it is now, before any wait for another run
   const change = options.candidate ? null : snapshot(root, options.committed);
@@ -958,7 +1047,7 @@ async function main(argv) {
   return results.some((result) => result.verdict === 'new' || result.verdict === 'unknown') ? 1 : 0;
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (import.meta.main) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

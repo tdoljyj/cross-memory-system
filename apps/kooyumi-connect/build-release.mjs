@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 export function buildRelease(source, commit) {
@@ -25,6 +24,6 @@ async function main() {
   await writeFile(evidence, JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
   process.stdout.write(JSON.stringify(manifest) + '\n');
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (import.meta.main) {
   main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
 }

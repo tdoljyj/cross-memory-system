@@ -490,7 +490,7 @@ async function main() {
   throw new Error("Usage: user-memory-bundle.mjs <export|validate> [options]");
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadDailyHostConfig } from "./resource-center-daily-runner.mjs";
 import { isDeepStrictEqual } from "node:util";
@@ -108,7 +107,7 @@ export async function installDailyHost({ destination, consumer_runtime_directory
   await freshFile(path.join(destination, "installation.json"), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const request = JSON.parse(await fs.readFile(process.argv[2], "utf8"));
   installDailyHost(request).then(result => process.stdout.write(JSON.stringify(result) + "\n")).catch(() => {
     process.stderr.write("INSTALL_FAILED_CLOSED\n");process.exitCode = 2;

@@ -2,3 +2,6 @@
 // suite ran before: the pre-push preflight and local verification.
 import '../../../scripts/ci/pr-repush-preflight.test.mjs';
 import '../../../scripts/ci/local-verify.test.mjs';
+import '../../../scripts/ci/main-entry-realpath.test.mjs';
+import '../../../scripts/ci/setup-clued-dev-linux.test.mjs';
+import '../../../scripts/ci/self-hosted/watchdog-capacity-alert.test.mjs';

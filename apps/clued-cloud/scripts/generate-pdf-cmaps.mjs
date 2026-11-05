@@ -9,7 +9,6 @@
 // CMap is reported as text_unreliable, never as silent empty text.
 // `--check` exits 1 when the committed module is out of date.
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
 
 const source = new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url);
 const target = new URL("../worker/generated/pdf-cmaps.ts", import.meta.url);
@@ -33,7 +32,7 @@ export async function renderPdfCMapModule() {
   return lines.join("\n");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   const rendered = await renderPdfCMapModule();
   if (process.argv.includes("--check")) {
     const current = await readFile(target, "utf8").catch(() => "");
