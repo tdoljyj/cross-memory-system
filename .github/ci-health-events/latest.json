@@ -1,10 +1,10 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-11-02T15:42:08.797994Z",
+  "observed_at": "2026-11-05T19:53:49.750013Z",
   "status": "ANOMALY",
   "notify_model": true,
-  "fingerprint": "61524bcd09cb41d95af64761ffcaa56d4909825a25edd70637184a7c5f21da3c",
+  "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
   "thresholds": {
     "startup_delay_seconds": 300,
     "minimum_repeats": 2,
@@ -24,142 +24,32 @@
         "minimum_repeats": 2,
         "occurrences": 2,
         "wait_causes": {
-          "runner_idle_while_work_queued": 1,
-          "runner_occupied": 1
+          "unexplained": 2
         },
         "jobs": [
           {
-            "job_id": "125062927715",
-            "run_id": 41378175413,
+            "job_id": "127032525195",
+            "run_id": 41962700073,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-02T02:31:19Z",
-            "started_at": "2026-11-02T02:54:54Z",
-            "delay_seconds": 1415,
+            "created_at": "2026-11-05T03:36:54Z",
+            "started_at": "2026-11-05T03:52:35Z",
+            "delay_seconds": 941,
             "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 9,
-            "occupied_by": [
-              {
-                "job_id": 125060646740,
-                "run_id": 41377436645,
-                "name": "admission-gate"
-              },
-              {
-                "job_id": 125060646673,
-                "run_id": 41377436608,
-                "name": "admission-gate"
-              },
-              {
-                "job_id": 125059969539,
-                "run_id": 41377218350,
-                "name": "admission-gate"
-              }
-            ]
+            "wait_cause": "unexplained",
+            "idle_seconds": 941
           },
           {
-            "job_id": "125062927739",
-            "run_id": 41378175413,
+            "job_id": "127218848812",
+            "run_id": 42019634303,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-02T02:31:19Z",
-            "started_at": "2026-11-02T02:55:34Z",
-            "delay_seconds": 1455,
+            "created_at": "2026-11-05T11:31:23Z",
+            "started_at": "2026-11-05T11:42:51Z",
+            "delay_seconds": 688,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 958,
-            "queued_eligible_jobs": [
-              {
-                "job_id": 125060646673,
-                "name": "admission-gate",
-                "overlap_seconds": 946
-              },
-              {
-                "job_id": 125059816307,
-                "name": "admission-gate",
-                "overlap_seconds": 943
-              },
-              {
-                "job_id": 125059817535,
-                "name": "admission-gate",
-                "overlap_seconds": 638
-              },
-              {
-                "job_id": 125059969539,
-                "name": "admission-gate",
-                "overlap_seconds": 531
-              },
-              {
-                "job_id": 125059816688,
-                "name": "admission-gate",
-                "overlap_seconds": 406
-              },
-              {
-                "job_id": 125059969386,
-                "name": "admission-gate",
-                "overlap_seconds": 404
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "code": "RUNNER_IDLE_WHILE_WORK_QUEUED",
-      "key": "runner:clued-ci-company-linux-02:idle-while-work-queued",
-      "message": "No collected job explains clued-ci-company-linux-02's wait while at least 2 eligible jobs queued; online/idleness and the cause remain unverified.",
-      "details": {
-        "runner": "clued-ci-company-linux-02",
-        "severity": "warning",
-        "occupation_evidence": "sampled_jobs_only",
-        "pool": "linux-docker-wsl2-v1",
-        "threshold_seconds": 300,
-        "minimum_repeats": 2,
-        "queued_eligible_job_count": 6,
-        "probes": [
-          {
-            "job_id": "125062927739",
-            "run_id": 41378175413,
-            "name": "runner-heartbeat / clued-ci-company-linux-02",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-02T02:31:19Z",
-            "started_at": "2026-11-02T02:55:34Z",
-            "delay_seconds": 1455,
-            "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 958,
-            "queued_eligible_jobs": [
-              {
-                "job_id": 125060646673,
-                "name": "admission-gate",
-                "overlap_seconds": 946
-              },
-              {
-                "job_id": 125059816307,
-                "name": "admission-gate",
-                "overlap_seconds": 943
-              },
-              {
-                "job_id": 125059817535,
-                "name": "admission-gate",
-                "overlap_seconds": 638
-              },
-              {
-                "job_id": 125059969539,
-                "name": "admission-gate",
-                "overlap_seconds": 531
-              },
-              {
-                "job_id": 125059816688,
-                "name": "admission-gate",
-                "overlap_seconds": 406
-              },
-              {
-                "job_id": 125059969386,
-                "name": "admission-gate",
-                "overlap_seconds": 404
-              }
-            ]
+            "wait_cause": "unexplained",
+            "idle_seconds": 688
           }
         ]
       }
@@ -185,7 +75,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-02T09:58:36Z",
+          "last_verified_at": "2026-11-05T18:58:49Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -203,7 +93,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-02T09:58:36Z",
+          "last_verified_at": "2026-11-05T18:58:49Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -256,7 +146,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-02T09:58:37Z",
+          "last_verified_at": "2026-11-05T18:58:49Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -273,7 +163,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-02T09:58:36Z",
+          "last_verified_at": "2026-11-05T18:58:49Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -287,77 +177,28 @@
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
           {
-            "job_id": "125062927715",
-            "run_id": 41378175413,
+            "job_id": "127032525195",
+            "run_id": 41962700073,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-02T02:31:19Z",
-            "started_at": "2026-11-02T02:54:54Z",
-            "delay_seconds": 1415,
+            "created_at": "2026-11-05T03:36:54Z",
+            "started_at": "2026-11-05T03:52:35Z",
+            "delay_seconds": 941,
             "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 9,
-            "occupied_by": [
-              {
-                "job_id": 125060646740,
-                "run_id": 41377436645,
-                "name": "admission-gate"
-              },
-              {
-                "job_id": 125060646673,
-                "run_id": 41377436608,
-                "name": "admission-gate"
-              },
-              {
-                "job_id": 125059969539,
-                "run_id": 41377218350,
-                "name": "admission-gate"
-              }
-            ]
+            "wait_cause": "unexplained",
+            "idle_seconds": 941
           },
           {
-            "job_id": "125062927739",
-            "run_id": 41378175413,
+            "job_id": "127218848812",
+            "run_id": 42019634303,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-02T02:31:19Z",
-            "started_at": "2026-11-02T02:55:34Z",
-            "delay_seconds": 1455,
+            "created_at": "2026-11-05T11:31:23Z",
+            "started_at": "2026-11-05T11:42:51Z",
+            "delay_seconds": 688,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 958,
-            "queued_eligible_jobs": [
-              {
-                "job_id": 125060646673,
-                "name": "admission-gate",
-                "overlap_seconds": 946
-              },
-              {
-                "job_id": 125059816307,
-                "name": "admission-gate",
-                "overlap_seconds": 943
-              },
-              {
-                "job_id": 125059817535,
-                "name": "admission-gate",
-                "overlap_seconds": 638
-              },
-              {
-                "job_id": 125059969539,
-                "name": "admission-gate",
-                "overlap_seconds": 531
-              },
-              {
-                "job_id": 125059816688,
-                "name": "admission-gate",
-                "overlap_seconds": 406
-              },
-              {
-                "job_id": 125059969386,
-                "name": "admission-gate",
-                "overlap_seconds": 404
-              }
-            ]
+            "wait_cause": "unexplained",
+            "idle_seconds": 688
           }
         ]
       }
