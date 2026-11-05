@@ -4061,7 +4061,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 2. **时间预留。** 只在作业还剩 `DB_ATTEMPT_MS`（310 秒，一次下载的上限）+ `SCAN_RESERVE_MS`（420 秒，扫描 300 秒加核对与清理）时才开始一次 DB 下载；没时间的尝试记为 `skipped: NO_TIME_LEFT` 的失败，由同一条回退规则决定。以前四次下载可能吃光 25 分钟，扫描没有时间，或以 `CACHE_AUTHORITY_EXPIRED` 结束。
 3. **新鲜的 DB 直接用。** 不变：当前 DB 可用且 `NextUpdate` 未到时不下载（`databaseDecision` 的第一条）。
 4. **旧锁回收。** 拿锁遇到 `EEXIST` 时读旧锁（`readLockState`：不跟随链接；只有 `lock()` 写出的 `{pid, nonce}` 形状才有 pid）。同时满足：锁里的 pid 已不存在（`process.kill(pid, 0)` 得 `ESRCH`；锁由 worker 进程自己写，pid 不存在即该角色的 worker 进程已结束）、没有任何带 `clued.verify.nonce` 标签的容器（`docker container ls --all`）、`staging/` 下每一项都是 `db-`/`checks-` 形状的真实目录（`stagingLeftovers`）——才回收（`reclaimStaleLock`）：先把锁用一次原子 rename 认领到缓存根的 `reclaimed/claim-<随机>`（同一把锁只有一个回收者能成功），核对认领到的仍是判断时那一份字节与 inode（不是就放回并拒绝）；再写一条持久、只创建的回执（`clued.independent-ci.trivy-cache-lock-reclaimed/1`：时间、锁的摘要与 pid、认领文件名、将要删除的残留 `stagingToRemove`、三条证明）；再删残留（不跟随链接）；最后写完成记录（`…-done/1`，实际删掉的 `stagingRemoved`），然后正常拿锁继续。拿锁遇到 `EEXIST` 而再读时锁已消失，立即重试拿锁，不等一个轮询周期。任何一条不满足（pid 还在、有容器、残留不可验证、锁形状不对）都不回收：每 15 秒再看一次，最多 5 分钟（且不越过下载与扫描的预留），之后干净地 `BLOCKED`（`CACHE_PREPARATION_LOCK_BUSY`），绝不 `UNCERTAIN`、绝不保留锁。
-5. 测试钩子只经 `fixtureCachePort`；`actualCachePort` 先拒绝带钩子的选项（`ACTUAL_CACHE_HOOKS_REFUSED`），并在构造时把四个输入复制成冻结副本，之后调用方再改选项对象（加钩子、换存储或 docker 客户端）都影响不到准备过程。真实存储对象本身在打品牌之前冻结，方法不能被替换。回收竞争中输掉的一方（对方的 rename 已成功）不算错误，回到拿锁。
+5. 测试钩子只经 `fixtureCachePort`；`actualCachePort` 先拒绝带钩子的选项（`ACTUAL_CACHE_HOOKS_REFUSED`），并在构造时把四个输入复制成冻结副本，之后调用方再改选项对象（加钩子、换存储或 docker 客户端）都影响不到准备过程。真实存储对象本身在打品牌之前冻结，方法不能被替换。回收竞争中输掉的一方（认领那一次 rename 得到 ENOENT，即对方已认领：`CACHE_LOCK_CLAIM_LOST`）不算错误，回到拿锁；认领之后的任何错误照常抛出、干净拒绝。
 
 ### 53.12 第 4、6 段失败为什么不能有第 2 次尝试，以及不用新提交的恢复路径（安全说明）
 

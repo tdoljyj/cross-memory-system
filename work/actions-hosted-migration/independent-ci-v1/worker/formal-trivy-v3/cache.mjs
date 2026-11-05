@@ -107,8 +107,12 @@ export async function reclaimStaleLock({ root, state, leftovers, proof, protect 
   const dir = path.join(root, 'reclaimed'); if (await absent(dir)) await fs.mkdir(dir, { mode: 0o700 }); await protect(dir);
   const at = new Date(clock()).toISOString(), id = at.replace(/[:.]/g, '-') + '-' + randomBytes(8).toString('hex');
   const claim = path.join(dir, 'claim-' + id);
-  await fs.rename(state.file, claim);
-  const stat = await fs.lstat(claim), bytes = stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4096 ? await fs.readFile(claim, 'utf8') : null;
+  // Only this rename tells a lost race (another preparation claimed the lock first): CACHE_LOCK_CLAIM_LOST. Every later error is thrown.
+  try { await fs.rename(state.file, claim); } catch (error) { if (error.code === 'ENOENT') check(false, 'CACHE_LOCK_CLAIM_LOST'); throw error; }
+  // The claim file must exist: a rename that raced another one may report success on some systems (seen on Windows) while the other
+  // rename took the file; then this caller does not hold the lock either.
+  let stat; try { stat = await fs.lstat(claim); } catch (error) { if (error.code === 'ENOENT') check(false, 'CACHE_LOCK_CLAIM_LOST'); throw error; }
+  const bytes = stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4096 ? await fs.readFile(claim, 'utf8') : null;
   if (bytes === null || digest({ bytes }) !== state.sha256 || stat.ino !== state.ino) {
     await fs.rename(claim, state.file).catch(() => {});
     check(false, 'CACHE_LOCK_CHANGED_WHILE_RECLAIMED');
@@ -238,7 +242,7 @@ async function acquireLock({ storage, docker, deadline, signal, hooks }) {
       if (leftovers.verifiable) {
         // Another preparation claimed it first (its rename won, ours finds no lock): not an error, just try the lock again.
         try { reclaimed = await storage.reclaimLock({ state, leftovers, proof: { pidGone: true, cacheContainers: 0, stagingVerifiable: true } }); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        catch (error) { if (error.code !== 'CACHE_LOCK_CLAIM_LOST') throw error; }
         continue;
       }
     }

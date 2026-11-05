@@ -190,6 +190,7 @@ test('on a real directory: the lock state, the staging leftovers and a reclaim w
   const b = reclaimStaleLock({ root, state: stale, leftovers: { verifiable: true, names: [] }, proof: {}, protect: async () => {}, syncDir: NOSYNC });
   const outcomes = await Promise.allSettled([a, b]);
   assert.equal(outcomes.filter(o => o.status === 'fulfilled').length, 1, JSON.stringify(outcomes.map(o => o.status)));
+  assert.equal(outcomes.find(o => o.status === 'rejected').reason.code, 'CACHE_LOCK_CLAIM_LOST', 'only the losing rename says so');
   await writeFile(join(root, 'prepare.lock'), '');
   assert.deepEqual([(await readLockState(root)).pid, (await readLockState(root)).shape], [null, false]);
   await writeFile(join(root, 'staging', 'stray.txt'), 'x');
@@ -211,7 +212,12 @@ test('the actual store is frozen before it is branded: its methods cannot be rep
 
 test('losing a reclaim race (the other rename won) is no error: the lock is simply tried again', async () => {
   const s = store({ lockHeldBy: 4242, current: db(2 * HOUR, 4 * HOUR), staging: [] });
-  s.reclaimLock = async () => { s.lockFile = null; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  s.reclaimLock = async () => { s.lockFile = null; throw Object.assign(new Error('CACHE_LOCK_CLAIM_LOST'), { code: 'CACHE_LOCK_CLAIM_LOST' }); };
   const r = await prepareWith(s, { runContainer: runs([]) });
   assert.deepEqual([r.status, r.lockReclaimed], ['READY', null]);
+  // any other error of the reclaim (an ENOENT after the claim, while removing the leftovers) is not swallowed: a clean refusal with that code
+  const t2 = store({ lockHeldBy: 4242, current: db(2 * HOUR, 4 * HOUR) });
+  t2.reclaimLock = async () => { t2.lockFile = null; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  const r2 = await prepareWith(t2, { runContainer: runs([]) });
+  assert.deepEqual([r2.status, r2.reason], ['BLOCKED', 'ENOENT']);
 });
