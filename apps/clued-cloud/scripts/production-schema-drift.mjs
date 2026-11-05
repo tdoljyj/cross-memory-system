@@ -516,7 +516,7 @@ export function printSummary(report, write = (line) => console.log(line)) {
   if (report.repository_only) write(`repository-only columns and functions (tests see them, production does not): ${report.repository_only.length}`);
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

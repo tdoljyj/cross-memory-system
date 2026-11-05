@@ -32,7 +32,7 @@ export async function renderPdfCMapModule() {
   return lines.join("\n");
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   const rendered = await renderPdfCMapModule();
   if (process.argv.includes("--check")) {
     const current = await readFile(target, "utf8").catch(() => "");

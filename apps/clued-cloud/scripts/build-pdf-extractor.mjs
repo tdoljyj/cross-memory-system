@@ -50,7 +50,7 @@ export async function assertMainWithoutPdfJs(serverDir = path.join(root, "dist",
   if (found.length) throw new Error(`main Worker bundle contains pdf.js (PDFs must be parsed only by clued-storage-pdf):\n${found.join("\n")}`);
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   const { outfile, bytes } = await buildPdfExtractor();
   console.log(`Built PDF extractor Worker ${path.relative(root, outfile)} (${bytes} bytes).`);
   if (process.argv.includes("--check-main")) {

@@ -43,7 +43,7 @@ export async function validatePackage(root, expectedVersion) {
   return { version: manifest.version, registeredApps: 1, appIds: [appId], mcpServers: [] };
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   try {
     const source = JSON.parse(await readFile(new URL("./.codex-plugin/plugin.json", import.meta.url), "utf8"));
     const result = await validatePackage(resolve(process.argv[2] ?? sourceRoot), source.version);

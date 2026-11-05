@@ -163,7 +163,7 @@ async function main(args) {
   else process.stdout.write(JSON.stringify(safeSummary(metadata), null, 2) + '\n');
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main(process.argv.slice(2)).catch(error => {
     process.stderr.write((error instanceof OperatorInputError ? error.code : 'kooyumi_issuer_input_unreadable') + '\n');
     process.exitCode = 1;

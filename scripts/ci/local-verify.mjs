@@ -37,14 +37,15 @@
 // One run at a time per cache (a lock, taken after the change is snapshotted,
 // so a queued run verifies what was there when it started). Logs, worktrees,
 // results of main and the dependency cache (about 10 GB) live under
-// <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first drive
-// after the system drive that exists, or CLUED_DEV_ROOT (the same root
+// <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first fixed
+// drive after the system drive (as setup-clued-dev-linux.ps1 picks), or CLUED_DEV_ROOT (the same root
 // setup-clued-dev-linux.ps1 installs CluedDev-Linux under) or, for this
 // directory alone, CLUED_LOCAL_VERIFY_HOME; ~/.cache/clued-local-verify where
 // there is no other drive. Never on the system drive when another exists: the CI
 // host's watchdog pauses the runners when it runs short (defect 2102f7e1). The
-// location is always a real path, links resolved. A run warns when the system
-// drive is below the watchdog's resume level.
+// location is always a real path, links resolved. On a CI host (a machine in
+// scripts/ci/self-hosted/node-profiles.json) a run warns when the system drive is
+// below the level at which the installed watchdog starts the runners again.
 //
 // A command that runs Node's test runner and ran no test is a failure, never a
 // pass (an entry point that exits 0 without running anything looks the same as
@@ -65,11 +66,6 @@ export const CHECKS = ['ci-suites', 'clued-cloud-tests', 'migration-verify'];
 // The Node version clued-required-tests.yml sets up.
 export const CI_NODE = '24.19.0';
 const CACHE_VERSION = 4;
-// The C: free space (GB) at which the CI host's watchdog (the one installed as
-// C:clued-ciwatchdog-clued-ci.ps1) stops the Linux runners, and at which it
-// starts them again. CLUED_CI_RESUME_FREE_GB overrides the second (0: no check).
-export const CI_HOST_SUSPEND_FREE_GB = 50;
-export const CI_HOST_RESUME_FREE_GB = 65;
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
@@ -151,15 +147,25 @@ export function realpathLoose(target) {
   }
 }
 
+// The fixed (internal) drives, "C:" and so on: what setup-clued-dev-linux.ps1
+// picks its data drive from too (an optical drive, a USB stick or a network drive
+// is not a place for 10 GB of cache). Empty when they cannot be listed.
+export function fixedDrives({ run = spawnSync } = {}) {
+  const listed = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    "(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3').DeviceID"], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+  return listed.status === 0 ? String(listed.stdout).split(/\r?\n/).map((line) => line.trim().toUpperCase()).filter((drive) => /^[A-Z]:$/.test(drive)) : [];
+}
+
 // Where the developer tools keep their large files on Windows: CLUED_DEV_ROOT,
-// else clued-dev on the first drive after the system drive that exists; null
-// elsewhere and where there is no other drive.
-export function dataRoot(env = process.env, { platform = process.platform, exists = fs.existsSync, systemDrive = env.SystemDrive || 'C:' } = {}) {
+// else \clued-dev on the first fixed drive after the system drive (D: to Z:, as
+// the setup script does); null elsewhere and where there is no other drive.
+export function dataRoot(env = process.env, { platform = process.platform, fixed = fixedDrives, systemDrive = env.SystemDrive || 'C:' } = {}) {
   if (env.CLUED_DEV_ROOT) return path.resolve(env.CLUED_DEV_ROOT);
   if (platform !== 'win32') return null;
+  const drives = fixed();
   for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
     const drive = `${letter}:`;
-    if (drive.toLowerCase() !== systemDrive.toLowerCase() && exists(`${drive}\\`)) return path.win32.join(`${drive}\\`, 'clued-dev');
+    if (drive.toLowerCase() !== systemDrive.toLowerCase() && drives.includes(drive)) return path.win32.join(`${drive}\\`, 'clued-dev');
   }
   return null;
 }
@@ -180,18 +186,50 @@ export function freeGb(dir, statfs = fs.statfsSync) {
   return (Number(stats.bavail) * Number(stats.bsize)) / 1024 ** 3;
 }
 
-// What a run should tell the user about the system drive (Windows): its free
-// space below the watchdog's resume level, or the cache on it. Null when there
-// is nothing to say.
-export function systemDriveNotes(home, { env = process.env, platform = process.platform, free = freeGb } = {}) {
-  if (platform !== 'win32') return [];
+// The levels of free space on the system drive (GB) at which the CI host's
+// watchdog stops the self-hosted runners (suspend) and starts them again (resume).
+// Only a machine that is a CI host has any: its entry in
+// scripts/ci/self-hosted/node-profiles.json (by host name) gives the capacity
+// profile's levels, and the watchdog script installed there (its path is in the
+// entry) wins, being what actually runs (it may be older than the profile).
+// CLUED_CI_RESUME_FREE_GB sets the resume level (0: none). Null for any other
+// machine: nothing is guarded there.
+export function watchdogLevels({ hostname = os.hostname(), env = process.env, readText = (file) => fs.readFileSync(file, 'utf8'),
+  profilesFile = fileURLToPath(new URL('./self-hosted/node-profiles.json', import.meta.url)) } = {}) {
+  let host = null;
+  let levels = null;
+  try {
+    const profiles = JSON.parse(readText(profilesFile));
+    host = profiles.hosts.find((entry) => String(entry.hostname).toLowerCase() === String(hostname).toLowerCase()) ?? null;
+    const capacity = host ? profiles.capacity_profiles[host.capacity_profile] : null;
+    if (capacity) levels = { suspend: capacity.suspend_c_free_gb, resume: capacity.resume_c_free_gb };
+  } catch { /* not in a checkout of this repository */ }
+  if (host?.watchdog_path) {
+    try {
+      const installed = readText(host.watchdog_path);
+      const suspend = /\$SuspendDisk\s*=\s*(\d+)/i.exec(installed);
+      const resume = /\$ResumeDisk\s*=\s*(\d+)/i.exec(installed);
+      if (suspend && resume) levels = { suspend: Number(suspend[1]), resume: Number(resume[1]) };
+    } catch { /* not installed here: the profile's levels */ }
+  }
+  if (env.CLUED_CI_RESUME_FREE_GB !== undefined && Number.isFinite(Number(env.CLUED_CI_RESUME_FREE_GB))) {
+    levels = { suspend: levels?.suspend ?? null, resume: Number(env.CLUED_CI_RESUME_FREE_GB) };
+  }
+  return levels;
+}
+
+// What a run should tell the user about the system drive (Windows, on a CI host):
+// its free space below the watchdog's resume level, or the cache on it. Empty when
+// there is nothing to say.
+export function systemDriveNotes(home, { env = process.env, platform = process.platform, free = freeGb, levels = watchdogLevels({ env }) } = {}) {
+  if (platform !== 'win32' || !levels) return [];
   const drive = `${env.SystemDrive || 'C:'}\\`;
   const notes = [];
-  const resume = env.CLUED_CI_RESUME_FREE_GB === undefined ? CI_HOST_RESUME_FREE_GB : Number(env.CLUED_CI_RESUME_FREE_GB);
+  const resume = levels.resume;
   try {
     const gb = free(drive);
     if (Number.isFinite(resume) && resume > 0 && gb < resume) {
-      notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog stops the self-hosted runners below ${CI_HOST_SUSPEND_FREE_GB} GB and starts them again at ${resume} GB; free space there first`);
+      notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog stops the self-hosted runners${levels.suspend ? ` below ${levels.suspend} GB` : ''} and starts them again at ${resume} GB; free space there first`);
     }
   } catch { /* the drive cannot be asked: nothing to say */ }
   if (path.win32.parse(home).root.toLowerCase() === drive.toLowerCase()) {
@@ -677,10 +715,12 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   return results;
 }
 
-// How many tests a Node test report shows as run (passed or failed; skipped
-// and todo ones do not count): the run's own summary, else the events.
+// How many tests a Node test report shows: the run's own count (skipped and todo
+// tests included: a command whose tests are all skipped on this platform did get to
+// its tests), else the events.
 export function testsRun(report) {
   const counts = report?.summary?.counts;
+  if (counts && Number.isFinite(counts.tests)) return counts.tests;
   if (counts && Number.isFinite(counts.passed) && Number.isFinite(counts.failed)) return counts.passed + counts.failed;
   return (report?.events ?? []).filter((event) => event.type === 'pass' || event.type === 'fail').length;
 }
@@ -1047,7 +1087,9 @@ async function main(argv) {
   return results.some((result) => result.verdict === 'new' || result.verdict === 'unknown') ? 1 : 0;
 }
 
-if (import.meta.main) {
+// import.meta.main exists from Node 22.18; on an older Node it is undefined, and a
+// guard that read that as "not the entry point" would exit 0 having done nothing.
+if (import.meta.main ?? (process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)))) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

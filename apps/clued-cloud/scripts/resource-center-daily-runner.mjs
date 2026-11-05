@@ -215,7 +215,7 @@ async function runWithCredentials(c, mode, secrets) {
     run_isolated: args => runIsolatedDailyConsumer(c, args) });
   process.stdout.write(JSON.stringify(result) + "\n");
 }
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main(process.argv[2], process.argv[3], process.argv[4]).catch(error => {
     // No raw provider response, stack, file path or secret reaches the caller.
     const code = /^DAILY_[A-Z_]+$/.test(error?.message ?? "") ? error.message : "DAILY_HOST_FAILED_CLOSED";

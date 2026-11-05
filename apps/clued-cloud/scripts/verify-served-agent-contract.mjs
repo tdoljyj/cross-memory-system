@@ -71,7 +71,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : 'served_agent_contract_unexpected_error'}\n`);
     process.exitCode = 1;

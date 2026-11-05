@@ -100,26 +100,39 @@ function Get-DistributionBasePath {
     return $null
 }
 
-if (-not $DataRoot -and (-not $InstallDir -or -not $DownloadDir)) {
-    $DataRoot = Get-DefaultDataRoot
-    if (-not $DataRoot) {
-        if (-not $AllowSystemDrive) {
-            throw 'There is no fixed drive besides the system drive: pass -DataRoot (or set CLUED_DEV_ROOT), or -AllowSystemDrive to use the system drive'
+# Where things go. A refusal only matters when something is to be installed: an
+# existing distribution is checked and left alone on a machine with one drive too.
+$placeError = $null
+try {
+    if (-not $DataRoot -and (-not $InstallDir -or -not $DownloadDir)) {
+        $DataRoot = Get-DefaultDataRoot
+        if (-not $DataRoot) {
+            if (-not $AllowSystemDrive) {
+                throw 'There is no fixed drive besides the system drive: pass -DataRoot (or set CLUED_DEV_ROOT), or -AllowSystemDrive to use the system drive'
+            }
+            $DataRoot = Join-Path $env:USERPROFILE 'clued-dev'
         }
-        $DataRoot = Join-Path $env:USERPROFILE 'clued-dev'
+    }
+    if (-not $InstallDir) { $InstallDir = Join-Path $DataRoot "wsl\$Name" }
+    if (-not $DownloadDir) { $DownloadDir = Join-Path $DataRoot 'download' }
+    foreach ($place in $InstallDir, $DownloadDir) {
+        if ((Test-OnSystemDrive $place) -and -not $AllowSystemDrive) {
+            throw "$place is on the system drive ($SystemRoot): its free space is what the CI host's watchdog guards. Use another drive, or pass -AllowSystemDrive"
+        }
     }
 }
-if (-not $InstallDir) { $InstallDir = Join-Path $DataRoot "wsl\$Name" }
-if (-not $DownloadDir) { $DownloadDir = Join-Path $DataRoot 'download' }
-foreach ($place in $InstallDir, $DownloadDir) {
-    if ((Test-OnSystemDrive $place) -and -not $AllowSystemDrive) {
-        throw "$place is on the system drive ($SystemRoot): its free space is what the CI host's watchdog guards. Use another drive, or pass -AllowSystemDrive"
-    }
-}
+catch { $placeError = $_ }
 
 $existingBase = Get-DistributionBasePath
+if ($placeError -and -not $existingBase) { throw $placeError }
 if ($existingBase -and (Test-OnSystemDrive $existingBase)) {
-    Write-Warning "$Name keeps its virtual disk on the system drive ($existingBase). Move it when WSL may be restarted (it stops the CI runners' distribution too if they share the VM): wsl --shutdown, then wsl --manage $Name --move $InstallDir"
+    $target = if ($InstallDir) { $InstallDir } else { '<a folder on another drive>' }
+    Write-Warning "$Name keeps its virtual disk on the system drive ($existingBase). Move it when every WSL distribution may stop (wsl --shutdown stops them all, the CI runners' CluedCI-Linux too): wsl --shutdown, then wsl --manage $Name --move $target"
+}
+# local-verify's cache used to live here, on the system drive
+$oldCache = Join-Path $env:USERPROFILE '.cache\clued-local-verify'
+if ((Test-Path -LiteralPath $oldCache) -and -not ((Get-Item -LiteralPath $oldCache -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Write-Warning "$oldCache is a directory on the system drive (up to 10 GB). local-verify now keeps its cache under the data root (<data root>\cache\clued-local-verify); move it there or delete it"
 }
 
 if ($Plan) {
@@ -174,6 +187,7 @@ function Get-CheckedSha256([string]$SumsUrl, [string]$File, [string]$Pinned) {
 # Downloads $Url to $DownloadDir unless a copy with the expected digest is
 # already there; a partial or wrong file is replaced, never used.
 function Get-VerifiedFile([string]$Url, [string]$File, [string]$Expected) {
+    if (-not $DownloadDir) { throw $placeError }
     New-Item -ItemType Directory -Force -Path $DownloadDir | Out-Null
     $target = Join-Path $DownloadDir $File
     if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $Expected) {

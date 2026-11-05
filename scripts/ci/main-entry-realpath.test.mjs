@@ -15,20 +15,30 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const LEGACY = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'ci', 'main-entry-legacy.json'), 'utf8')).files;
 const SCRIPT = /\.(?:mjs|cjs|js)$/;
 
-// A line that compares argv[1] with the module's own URL, without resolving links either way.
-export const usesLinkBlindIdiom = (line) => /process\.argv\[1\]/.test(line) && /import\.meta\.url/.test(line) && !/realpath|import\.meta\.main/.test(line);
+// A line that compares argv[1] with something (the module's own URL, or a constant made from it) without
+// resolving links on either side. A file that also names import.meta.url is one that decides by itself whether it is the entry point.
+export const usesLinkBlindIdiom = (line) => /process\.argv\[1\][^;]{0,80}[!=]==?|[!=]==?[^;]{0,80}process\.argv\[1\]/.test(line) && !/realpath|import\.meta\.main/.test(line);
+const decidesEntryPoint = (text) => /import\.meta\.url/.test(text) && text.split('\n').some(usesLinkBlindIdiom);
 
 function trackedScripts() {
   const listed = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, windowsHide: true });
   return listed.status === 0 ? listed.stdout.split('\0').filter((file) => SCRIPT.test(file)) : null;
 }
 
+test('this Node has import.meta.main (22.18 and later; the application says engines >=22.22), which the guards of the changed scripts use', () => {
+  assert.equal(typeof import.meta.main, 'boolean');
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  assert.ok(major > 22 || (major === 22 && minor >= 18), `Node ${process.versions.node}`);
+});
+
 test('the idiom is recognised', () => {
   assert.ok(usesLinkBlindIdiom('if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {'));
   assert.ok(usesLinkBlindIdiom('if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){'));
+  assert.ok(usesLinkBlindIdiom('if(process.argv[1]&&path.resolve(process.argv[1])===SELF){'), 'against a constant too');
   assert.ok(!usesLinkBlindIdiom('if (import.meta.main) {'));
   assert.ok(!usesLinkBlindIdiom('return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);'));
   assert.ok(!usesLinkBlindIdiom('const argv1 = process.argv[1];'));
+  assert.ok(!usesLinkBlindIdiom("const p=path.join(process.argv[1],n),s=await fs.lstat(p),f=await fs.open(p,'r+');try{if(s.dev!==t.dev)throw 1;}"), 'an argv[1] that is only read');
 });
 
 test('no script decides by itself that it is the entry point with a comparison a link defeats, except the listed pinned ones', (t) => {
@@ -36,7 +46,14 @@ test('no script decides by itself that it is the entry point with a comparison a
   if (files === null) return t.skip('not a git work tree');
   // (this file quotes the idiom in its own fixtures)
   const self = path.relative(ROOT, fileURLToPath(import.meta.url)).split(path.sep).join('/');
-  const found = files.filter((file) => file !== self && fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n').some(usesLinkBlindIdiom)).sort();
+  const found = files.filter((file) => {
+    if (file === self) return false;
+    try {
+      return decidesEntryPoint(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+    } catch {
+      return false; // tracked but not in this work tree
+    }
+  }).sort();
   const listed = new Set(LEGACY);
   assert.deepEqual(found.filter((file) => !listed.has(file)), [],
     'use `if (import.meta.main)` (Node 22.18 and later) so the script also runs behind a link; a new file may not use the comparison');

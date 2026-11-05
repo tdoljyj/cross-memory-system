@@ -10,10 +10,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
-import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dataRoot, dependencyKey, githubRefs,
+import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
   killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
   readCached, readResults, realpathLoose, refUpdates, runCommands, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
-  toWslPath, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached } from './local-verify.mjs';
+  toWslPath, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached } from './local-verify.mjs';
 
 // A repository in a temporary directory, isolated from the user's git configuration.
 function repository(t, name = 'repo') {
@@ -486,12 +486,14 @@ test('a Linux run that cannot start is one row that could not compare; it never 
 // ---- where the cache lives, and what a run says about the system drive (defect 2102f7e1) ----
 test('the cache is on the data drive, not under the home directory on the system drive, and always a real path', (t) => {
   const win = { platform: 'win32', systemDrive: 'C:' };
-  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'D:\\' }), path.win32.join('D:\\', 'clued-dev'));
-  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'C:\\' || drive === 'E:\\' }), path.win32.join('E:\\', 'clued-dev'), 'the system drive is never the data drive');
-  assert.equal(dataRoot({}, { ...win, exists: (drive) => drive === 'C:\\' }), null, 'no other drive: the home directory');
-  assert.equal(dataRoot({ SystemDrive: 'D:' }, { platform: 'win32', exists: (drive) => drive === 'D:\\' || drive === 'E:\\' }), path.win32.join('E:\\', 'clued-dev'), 'another system drive letter');
-  assert.equal(dataRoot({ CLUED_DEV_ROOT: path.resolve('/dev-root') }, { ...win, exists: () => true }), path.resolve('/dev-root'), 'CLUED_DEV_ROOT decides');
-  assert.equal(dataRoot({}, { platform: 'linux', exists: () => true }), null, 'on Linux the distribution keeps its own home');
+  assert.equal(dataRoot({}, { ...win, fixed: () => ['C:', 'D:'] }), path.win32.join('D:\\', 'clued-dev'));
+  assert.equal(dataRoot({}, { ...win, fixed: () => ['C:', 'E:'] }), path.win32.join('E:\\', 'clued-dev'), 'the system drive is never the data drive');
+  assert.equal(dataRoot({}, { ...win, fixed: () => ['C:'] }), null, 'no other drive: the home directory');
+  assert.equal(dataRoot({ SystemDrive: 'D:' }, { platform: 'win32', fixed: () => ['D:', 'E:'] }), path.win32.join('E:\\', 'clued-dev'), 'another system drive letter');
+  assert.equal(dataRoot({ CLUED_DEV_ROOT: path.resolve('/dev-root') }, { ...win, fixed: () => ['D:'] }), path.resolve('/dev-root'), 'CLUED_DEV_ROOT decides');
+  assert.equal(dataRoot({}, { platform: 'linux', fixed: () => ['D:'] }), null, 'on Linux the distribution keeps its own home');
+  assert.equal(dataRoot({}, { ...win, fixed: () => ['C:', 'F:', 'D:'] }), path.win32.join('D:\\', 'clued-dev'), 'drives in letter order');
+  assert.equal(dataRoot({}, { ...win, fixed: () => [] }), null, 'drives that cannot be listed: the home directory');
   assert.equal(cacheHome({ CLUED_DEV_ROOT: path.resolve('/dev-root') }, '/home/me'), path.resolve('/dev-root', 'cache', 'clued-local-verify'));
   assert.equal(cacheHome({ CLUED_DEV_ROOT: path.resolve('/dev-root'), CLUED_LOCAL_VERIFY_HOME: path.resolve('/own') }, '/home/me'), path.resolve('/own'), 'the cache variable is the more specific one');
   // a link in the way is resolved: Node resolves it in a script's own path, so a path through it would never match
@@ -507,24 +509,54 @@ test('the cache is on the data drive, not under the home directory on the system
 });
 
 test('a run says when the system drive is below the CI watchdog resume level, or holds the cache', () => {
-  const win = { platform: 'win32', env: { SystemDrive: 'C:' } };
+  const win = { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 65 } };
   const data = 'D:\\clued-dev\\cache';
   const [low] = systemDriveNotes(data, { ...win, free: () => 49.8 });
   assert.match(low, /^C:\\ has 49\.8 GB free, below 65 GB: .*below 50 GB .*starts them again at 65 GB/);
   assert.equal(systemDriveNotes(data, { ...win, free: () => 64.9 }).length, 1, 'between the two levels the watchdog is still holding the runners');
   assert.deepEqual(systemDriveNotes(data, { ...win, free: () => 65 }), []);
-  assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:', CLUED_CI_RESUME_FREE_GB: '0' }, free: () => 1 }), [], 'switched off');
-  assert.match(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:', CLUED_CI_RESUME_FREE_GB: '80' }, free: () => 70 })[0], /below 80 GB/);
+  assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 0 }, free: () => 1 }), [], 'switched off');
+  assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: null, free: () => 1 }), [], 'not a CI host: nothing is guarded');
+  assert.match(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 80 }, free: () => 70 })[0], /below 80 GB/);
   assert.deepEqual(systemDriveNotes(data, { ...win, free: () => { throw new Error('no such drive'); } }), [], 'a drive that cannot be asked is not a warning');
   const [cache] = systemDriveNotes('C:\\Users\\me\\.cache\\clued-local-verify', { ...win, free: () => 200 });
   assert.match(cache, /the cache C:\\Users\\me\\\.cache\\clued-local-verify is on C:\\ .*CLUED_DEV_ROOT/);
-  assert.deepEqual(systemDriveNotes('/home/me/.cache', { platform: 'linux', env: {}, free: () => 1 }), []);
+  assert.deepEqual(systemDriveNotes('/home/me/.cache', { platform: 'linux', env: {}, free: () => 1, levels: { suspend: 50, resume: 65 } }), []);
+});
+
+test('the watchdog levels come from where they live: the installed script wins over the profile, a machine that is no CI host has none', () => {
+  const profiles = JSON.stringify({ hosts: [{ hostname: 'Desk-A', capacity_profile: 'big', watchdog_path: 'C:\\w\\watchdog.ps1' }, { hostname: 'Desk-B', capacity_profile: 'big' }],
+    capacity_profiles: { big: { suspend_c_free_gb: 50, resume_c_free_gb: 80 } } });
+  const read = (installed) => (file) => {
+    if (file.endsWith('node-profiles.json')) return profiles;
+    if (installed !== null && file === 'C:\\w\\watchdog.ps1') return installed;
+    throw new Error('ENOENT');
+  };
+  const at = (hostname, installed, env = {}) => watchdogLevels({ hostname, env, readText: read(installed), profilesFile: 'x/node-profiles.json' });
+  assert.deepEqual(at('desk-a', null), { suspend: 50, resume: 80 }, "the profile's, host names compared in any case");
+  assert.deepEqual(at('Desk-A', '[int]$SuspendDisk=50, [int]$ResumeDisk=65, [double]$SuspendMem=6.0'), { suspend: 50, resume: 65 }, 'the installed watchdog (an older one) is what runs');
+  assert.deepEqual(at('Desk-A', '$suspendDisk=40; $resumeDisk=70; $interval=60'), { suspend: 40, resume: 70 }, 'a rendered one too');
+  assert.deepEqual(at('Desk-A', 'no levels in here'), { suspend: 50, resume: 80 });
+  assert.deepEqual(at('Desk-B', null), { suspend: 50, resume: 80 }, 'a host without an installed script path: the profile');
+  assert.equal(at('Somebody-Else', null), null, 'not a CI host');
+  assert.deepEqual(at('Somebody-Else', null, { CLUED_CI_RESUME_FREE_GB: '90' }), { suspend: null, resume: 90 }, 'the variable names a level for any machine');
+  assert.deepEqual(at('Desk-A', null, { CLUED_CI_RESUME_FREE_GB: '0' }).resume, 0);
+  assert.equal(watchdogLevels({ hostname: 'x', env: {}, readText: () => { throw new Error('no profiles'); } }), null, 'outside a checkout');
+});
+
+test('fixed drives are asked of Windows once and read as drive letters', () => {
+  const seen = [];
+  const run = (file, args) => { seen.push([file, args.at(-1)]); return { status: 0, stdout: 'C:\r\nd:\r\n\r\n' }; };
+  assert.deepEqual(fixedDrives({ run }), ['C:', 'D:']);
+  assert.match(seen[0][1], /DriveType=3/, 'fixed drives only (not optical, removable or network ones)');
+  assert.deepEqual(fixedDrives({ run: () => ({ status: 1, stdout: '' }) }), [], 'not listable: none');
 });
 
 test('a command that runs Node tests and runs none is a failure, never a pass', (t) => {
   const counts = (passed, failed = 0) => ({ type: 'summary', counts: { passed, failed, tests: passed + failed + 2, skipped: 2 } });
-  assert.equal(testsRun(report(counts(0))), 0, 'skipped tests are not tests run');
-  assert.equal(testsRun(report(counts(3, 1))), 4);
+  assert.equal(testsRun(report(counts(0))), 2, 'tests that are all skipped here were got to');
+  assert.equal(testsRun(report({ type: 'summary', counts: { passed: 0, failed: 0, tests: 0, skipped: 0 } })), 0);
+  assert.equal(testsRun(report(counts(3, 1))), 6, "the run's own count");
   assert.equal(testsRun(report(pass('a'), fail('b'), summary)), 2, 'a summary without counts: the events');
   assert.equal(testsRun(report()), 0);
   const none = command(0, report(counts(0)), { tests: 0 });
@@ -558,6 +590,6 @@ test('a command that runs Node tests and runs none is a failure, never a pass', 
       return { status: 0 };
     },
     kill: () => {} });
-  assert.deepEqual(ran.map((entry) => entry.tests), [1, 1, null]);
+  assert.deepEqual(ran.map((entry) => entry.tests), [3, 3, null]);
   assert.equal(compareSuite(ran, null, { selector: selection, knownLists: { s: [] } }).verdict, 'pass');
 });

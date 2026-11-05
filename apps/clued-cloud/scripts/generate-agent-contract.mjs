@@ -43,7 +43,7 @@ export async function renderComponentsModule() {
   ].join("\n");
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   const outputs = [
     ["worker/generated/agent-contract.ts", target, await renderAgentContractModule()],
     ["worker/generated/components.ts", componentsTarget, await renderComponentsModule()],

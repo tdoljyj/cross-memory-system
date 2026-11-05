@@ -85,10 +85,13 @@ function Log-Deferral([string]$m){if($m -ne $script:lastDeferral){Log $m; $scrip
 # suspend writes an ALERT line, a marker file for panels and scripts (present
 # exactly while the runners are held back) and a desktop notification, repeated
 # every $alertEveryMinutes while the hold lasts; the resume removes the marker.
-$alertFile='C:\clued-ci\state\capacity-alert.json'; $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue
+$alertFile='C:\clued-ci\state\capacity-alert.json'; $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue; $firstLoop=$true
 function Show-Toast([string]$title,[string]$text){
   if($env:CLUED_WATCHDOG_NO_TOAST){return}
   try{
+    # Windows shows a notification only for a registered application id
+    $registered='HKCU:\Software\Classes\AppUserModelId\Clued CI watchdog'
+    if(-not (Test-Path -LiteralPath $registered)){[void](New-Item -Path $registered -Force); [void](New-ItemProperty -Path $registered -Name DisplayName -Value 'Clued CI watchdog' -PropertyType String -Force)}
     [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
     $xml=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
     $nodes=$xml.GetElementsByTagName('text')
@@ -107,11 +110,17 @@ function Send-CapacityAlert([string]$kind,[string]$detail){
     if($kind -eq 'Reminder' -and (Test-Path -LiteralPath $alertFile)){try{$since=(Get-Content -LiteralPath $alertFile -Raw | ConvertFrom-Json).since}catch{}}
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) | Out-Null
     $tmp=$alertFile+'.tmp'
-    ([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json) | Set-Content -LiteralPath $tmp -Encoding UTF8
+    # UTF-8 without a byte order mark, which JSON readers refuse (Set-Content -Encoding UTF8 writes one in Windows PowerShell)
+    [IO.File]::WriteAllText($tmp,([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $tmp -Destination $alertFile -Force
     Log ("ALERT {0}: Linux runners are stopped for low capacity ({1})" -f $kind,$detail)
     Show-Toast 'Clued CI runners are stopped' $detail
   }catch{Log ("Capacity alert failed: {0}" -f $_.Exception.Message)}
+}
+# A marker an earlier watchdog left is true only while the runners are held back: a watchdog that starts
+# with them running (the machine restarted and the space came back) clears it.
+function Clear-StaleCapacityAlert{
+  if(Test-Path -LiteralPath $alertFile){Remove-Item -LiteralPath $alertFile -Force -ErrorAction SilentlyContinue; Log 'ALERT marker of an earlier watchdog removed: the runners are not held back'}
 }
 # END capacity-alert
 function Test-LinuxBusy {
@@ -151,6 +160,7 @@ try{while($true){
   } elseif($capacitySuspended -and ((Get-Date)-$lastAlert).TotalMinutes -ge $alertEveryMinutes){
     Send-CapacityAlert 'Reminder' ("C: {0} GB free (resumes at {1}), memory {2} GB free (resumes at {3})" -f $freeDisk,$resumeDisk,$freeMem,$resumeMem)
   }
+  if($firstLoop){$firstLoop=$false; if(-not $capacitySuspended){Clear-StaleCapacityAlert}}
   # Only report the Windows runner service's state when it changes; never start it from here.
   $svc=Get-Service -Name $winService -ErrorAction SilentlyContinue
   $svcState=if($svc){[string]$svc.Status}else{'missing'}

@@ -8,6 +8,7 @@
     "apps/clued-cloud/scripts/existing-release-v3-host/install-once.mjs",
     "apps/clued-cloud/scripts/existing-release-v3-host/payload/release/existing-release-entry-v1/v3-host/release-once.mjs",
     "apps/clued-cloud/scripts/existing-release-v3-host/payload/release/existing-release-entry-v1/v3/existing-stages.mjs",
+    "apps/clued-cloud/scripts/existing-release-v3-host/payload/release/linux-process-manager.mjs",
     "apps/clued-cloud/scripts/existing-release-v3-host/payload/release/verify-currentness-external.mjs",
     "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
     "apps/clued-cloud/scripts/migration-ledger.mjs",
