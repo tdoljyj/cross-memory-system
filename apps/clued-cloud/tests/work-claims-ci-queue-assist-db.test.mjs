@@ -73,13 +73,15 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     const userId = uuid();
     const u2 = uuid();
     const u3 = uuid();
+    const u4 = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'ci-assist@example.invalid',now()),
-      ($2,'ci-assist-2@example.invalid',now()),($3,'ci-assist-3@example.invalid',now())`, [userId, u2, u3]);
+      ($2,'ci-assist-2@example.invalid',now()),($3,'ci-assist-3@example.invalid',now()),($4,'ci-assist-4@example.invalid',now())`,
+    [userId, u2, u3, u4]);
     const tokens = {};
     const ids = {};
     for (const [name, owner] of [['h1', userId], ['h2', userId], ['h3', userId], ['h4', userId], ['node', userId],
       ['envci', userId], ['standby', userId], ['revoked', userId], ['h5', userId], ['k1', u2], ['k2', u2], ['knode', u2],
-      ['f1', u3], ['f2', u3], ['f3', u3], ['unspec', u3]]) {
+      ['f1', u3], ['f2', u3], ['f3', u3], ['unspec', u3], ['w1', u4], ['wnode', u4]]) {
       tokens[name] = hash();
       ids[name] = (await admin.query(`insert into public.clued_agent_bindings
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
@@ -182,7 +184,7 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
 
     // --- Surface: CI8 and GW80 unchanged; the helpers and the table are private to everybody. ---
     for (const fn of ['work_claim_ci_assist_target_v1', 'work_claim_ci_assist_input_v1', 'work_claim_ci_queue_join_v1',
-      'work_claim_ci_lease_extend_v1', 'work_claim_ci_keep_merge_ref_v1']) {
+      'work_claim_ci_lease_extend_v1', 'work_claim_ci_keep_merge_ref_v1', 'work_claim_ci_extended_to_v1']) {
       assert.equal((await admin.query(`select count(*)::int n from pg_proc where pronamespace='clued_private'::regnamespace
         and proname=$1`, [fn])).rows[0].n, 1, fn);
       for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
@@ -562,6 +564,22 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     assert.deepEqual([x1Back.joined, x1Back.merge_queue[0].state, x1Back.merge_queue[0].position], [true, 'waiting', 2]);
     assert.deepEqual((await receipts('work_claim_merge_queue_join_by_ci', u3)).map((r) => r.metadata.previous_state), ['out']);
     assert.deepEqual(order(await fifo()), [x3.claim_id, x1.claim_id]);
+
+    // --- A CI rejoin of the holder's own ref keeps it the holder's: a renewal without it leaves the queue. ---
+    await mark(u4, 'wnode', 'resident-node');
+    const w = await claim('w1', 'W');
+    await admit('wnode', w, `${REPO}#41`, HEAD('4'));
+    const wJoined = await renew('w1', w, { trigger_refs: ['task:w', SLOT] });
+    assert.deepEqual(wJoined.merge_queue.map((x) => x.state), ['head'], 'the holder joined itself');
+    await shift(46, u4);
+    const wBack = await join('wnode', `${REPO}#41`, HEAD('4'));
+    assert.deepEqual([wBack.joined, wBack.merge_queue[0].state], [true, 'head']);
+    assert.deepEqual((await receipts('work_claim_merge_queue_join_by_ci', u4)).map((r) => [r.metadata.rejoined, r.metadata.previous_state]),
+      [[true, 'lapsed']]);
+    assert.deepEqual((await admin.query('select * from clued_private.work_claim_ci_merge_refs_v1 where claim_id=$1',
+      [w.claim_id])).rows, [], 'a rejoin does not make the ref the CI one');
+    const wLeft = await renew('w1', wJoined, { trigger_refs: ['task:w'] });
+    assert.deepEqual([wLeft.trigger_refs, wLeft.merge_queue], [['task:w'], null], 'the holder leaves the queue by renewing');
 
     await assertGatewayCloseoutBoundary(admin);
   } finally {

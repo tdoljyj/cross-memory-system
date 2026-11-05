@@ -58,8 +58,10 @@
 --    A merge ref never conflicts (work_claim_conflicts skips it), so nothing
 --    else is checked, as for a renewal. expires_at, fence, lease_version,
 --    renewals, progress_ref(s), holder, lease_key and execution_epoch do not
---    move. The ref is remembered as the CI's (work_claim_ci_merge_refs_v1)
---    so that the holder's renewals keep it (item 3). One
+--    move. A ref the CI adds is remembered as the CI's
+--    (work_claim_ci_merge_refs_v1) so that the holder's renewals keep it
+--    (item 3); rejoining a ref already on the claim does not change whose it
+--    is (a ref the holder added stays the holder's). One
 --    WORK_CLAIM_MERGE_QUEUE_JOINED_BY_CI Receipt per join.
 --    Answer {status: ok, joined: true|false, reason?: already_queued |
 --    claim_not_bound | claim_not_live | head_not_admitted | trigger_refs_full,
@@ -88,7 +90,8 @@
 --      place as with a renewal that keeps the ref. A list that already holds
 --      the 50 refs a claim may hold cannot take it back: the renewal raises
 --      work_claim_trigger_refs_invalid (22023). The CI's ref is the one in
---      work_claim_ci_merge_refs_v1; the row goes when the ref leaves the
+--      work_claim_ci_merge_refs_v1, written only when the CI adds the ref
+--      (a CI rejoin of the holder's own ref writes none); the row goes when the ref leaves the
 --      claim (merge, close or CI failure: work_claim_merge_slot_return_core_v1
 --      deletes it; any other way, the next renewal finds the claim without
 --      the ref and deletes it), so a ref the holder puts back itself later is
@@ -228,10 +231,15 @@ begin
       'rejoined',v_rejoin,'previous_state',v_state,'queued_at',c.merge_queued_at,
       'trigger_refs',to_jsonb(c.trigger_refs)))
   returning id into v_receipt;
-  insert into clued_private.work_claim_ci_merge_refs_v1(claim_id,user_id,merge_ref,joined_at,receipt_id)
-    values(c.claim_id,c.user_id,v_ref,v_now,v_receipt)
-    on conflict (claim_id) do update set merge_ref=excluded.merge_ref,joined_at=excluded.joined_at,
-      receipt_id=excluded.receipt_id;
+  -- Only a ref the CI added is the CI's. Rejoining a ref already on the claim
+  -- keeps whatever it was: the holder's own stays the holder's, and a CI row
+  -- is left as it is.
+  if not v_rejoin then
+    insert into clued_private.work_claim_ci_merge_refs_v1(claim_id,user_id,merge_ref,joined_at,receipt_id)
+      values(c.claim_id,c.user_id,v_ref,v_now,v_receipt)
+      on conflict (claim_id) do update set merge_ref=excluded.merge_ref,joined_at=excluded.joined_at,
+        receipt_id=excluded.receipt_id;
+  end if;
   return jsonb_build_object('status','ok','joined',true,'claim_id',c.claim_id,'pr_ref',v_pr,'head_sha',v_head,
     'merge_ref',v_ref,'merge_queue',clued_private.work_claim_merge_queue_view_v1(c),'receipt_id',v_receipt);
 end $$;
