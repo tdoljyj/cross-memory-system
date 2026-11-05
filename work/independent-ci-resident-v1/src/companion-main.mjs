@@ -19,9 +19,11 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
-import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
+import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -37,6 +39,9 @@ export const UPGRADE_LANE_EVERY_MS = 5_000;
 export const HEARTBEAT_LANE_EVERY_MS = 30_000;
 // The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
 export const COMPANION_LOCK_TOUCH_MS = 60_000;
+// The compute panel's five-minute trigger (DESIGN §43, panel-dispatch.mjs) looks this often whether it is due; it dispatches at most every
+// five minutes. Its own Runner: a slow GitHub never delays the heartbeat or the mailbox.
+export const PANEL_DISPATCH_LANE_EVERY_MS = 30_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
@@ -275,8 +280,26 @@ export async function main(args = process.argv.slice(2)) {
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore });
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
+  // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
+  // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
+  const panelRunner = new Runner({ env: { ...process.env }, jobHost });
+  // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
+  const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
+    ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
+      notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
+      state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
+    : null;
+  // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
+  // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
+  const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
+  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => rerunRunner.run(a, o) }),
+    state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
+    clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
+    notify: async (key, title, body) => { await rerunRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); } });
+  // The PR page says when this lane re-ran a head's required tests (pr-status.mjs#PrStatusReporter, rerunDone).
+  reporter.rerunDone = headSha => rerunner.done(headSha);
   keepalive(companionArgv(cfg).keepalive());
-  let lastPoll = 0, lastReport = 0, lastBackstop = 0;
+  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
@@ -289,6 +312,8 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
+      ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
+      lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
@@ -302,11 +327,20 @@ export async function main(args = process.argv.slice(2)) {
           lastBackstop = Date.now();
           try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next time */ }
         }
-        if (Date.now() - lastReport > REPORT_EVERY_MS) {
-          lastReport = Date.now();
+        // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
+        // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started
+        // trial is on the page within seconds, not after the next minute or the batch's end). reporter.pass still writes only what
+        // changed, within its own bounds.
+        if (Date.now() - lastReport > REPORT_MIN_GAP_MS && Date.now() - lastStatusRead > REPORT_MIN_GAP_MS) {
+          lastStatusRead = Date.now();
           let status = null, statusError = false;
           try { status = await readStatus(values.root); } catch { statusError = true; }
-          try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+          const signature = statusSignature(status);
+          if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
+            lastReport = Date.now();
+            lastSignature = signature;
+            try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+          }
         }
       } }),
     ]);

@@ -9,7 +9,12 @@ const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 // status, a redirect (refused by redirect:'error'), an unparsable body and any
 // refusal raised by the caller's fetchImpl (context, acceptance, abort, timeout)
 // are never retried and keep their codes; a body cut off mid-read now reports
-// github_transport_unconfirmed instead of github_response_invalid.
+// github_transport_unconfirmed instead of github_response_invalid. Generation 11
+// (resident DESIGN 55): one exception, a 500/502/503/504 answer to a request
+// that is not a GET. For a write with a read-back (check create, revocation) it
+// is read back at every remaining delay of the window, never sent again; for
+// the two POSTs that are reads (repeatable: the installation-token mint and the
+// GraphQL force-push read) it is sent again like a cut connection.
 // Budget: within any RETRY_SPAN_MS (30 s, the cross-machine challenge deadline)
 // all retries of one port together - their delays, repeated attempts and write
 // read-backs - take at most retryWindowMs (default 4 s); each repeated attempt's
@@ -30,6 +35,11 @@ const connectPhase = cause => ['connect', 'getaddrinfo'].includes(cause?.syscall
 const transport = (error, sent) => Object.assign(new Error('github_transport_unconfirmed'), { code: 'github_transport_unconfirmed',
   retryable: transportFailure(error), unsent: !sent && transportFailure(error) && connectPhase(error.cause) });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Generation 11 (resident DESIGN 55): a 500/502/503/504 answer to a write says nothing about whether GitHub applied it (a gateway can
+// answer after the write landed). It is read back like a reply cut off after sending: the copy GitHub holds is returned, and the
+// write is never sent again (unsent false). A read (GET) keeps its own retry (read-retry.mjs); any other status stays final.
+const WRITE_AMBIGUOUS_STATUS = Object.freeze([500, 502, 503, 504]);
+const ambiguousWrite = status => Object.assign(new Error(`github_http_${status}`), { code: `github_http_${status}`, retryable: true, unsent: false, ambiguous: true });
 
 function jwt(appId, key, now) {
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
@@ -70,7 +80,10 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
           ...(body ? { 'content-type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}) });
     } catch (error) { throw transport(error, false); }
-    if (!response.ok) fail(`github_http_${response.status}`);
+    if (!response.ok) {
+      if (method !== 'GET' && WRITE_AMBIGUOUS_STATUS.includes(response.status)) throw ambiguousWrite(response.status);
+      fail(`github_http_${response.status}`);
+    }
     // A reply arrived: the request was sent and, for a write, accepted.
     try { return await response.json(); } catch (error) {
       if (transportFailure(error)) throw transport(error, true);
@@ -100,6 +113,8 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
           let existing;
           try { existing = await readBack(retryUntil); } catch { break; }
           if (existing) return existing;
+          // A 5xx write (ambiguous): GitHub may store the run a moment after it answered; read back again at the next delay.
+          if (failure.ambiguous) continue;
           if (!failure.unsent || !(retryUntil - clock() >= MIN_ATTEMPT_MS)) break;
         }
         try { return await send(url, method, bearer, body, retryUntil - clock()); } catch (error) {

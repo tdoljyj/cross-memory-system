@@ -18,15 +18,20 @@ const ISO = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
-// C2 sanitizes to three states only: no holder/claim data reaches the resident. The database intentionally
-// shares binding_not_authorized for revoked, expired and scope-refused; do not pretend to distinguish them.
-export function parseRoleProbe(status, body, repository) {
+// C2 sanitizes to three states (held, not-held, uncertain; a watch's held may name its own PR as the slot holder): no holder/claim
+// data reaches the resident. The database intentionally shares binding_not_authorized for revoked, expired and scope-refused; do not
+// pretend to distinguish them.
+// watchPr (generation 12, resident DESIGN 56.2; null: no watch): a held answer whose holders are exactly one, bound to
+// <repository>#watchPr, is ROLE_PROBE_HELD_WATCHED_HEAD. Still no holder data leaves: one bit about the PR the resident asked for.
+export function parseRoleProbe(status, body, repository, watchPr = null) {
   if ((status === 401 || status === 403) && plain(body) && body.code === '42501' && ['binding_not_authorized', 'authorization_revoked_or_expired'].includes(body.message))
     return { result: 'uncertain', code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' };
   if (plain(body) && body.reason === NOT_ON_DUTY && (!Array.isArray(body.holders) || body.holders.length !== 0)) return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' };
-  try { return parseHolders(status, body, repository).onDuty
-    ? { result: 'held', code: 'ROLE_PROBE_HELD' } : { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' }; }
-  catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
+  let parsed;
+  try { parsed = parseHolders(status, body, repository); } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
+  if (!parsed.onDuty) return { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' };
+  const watched = Number.isSafeInteger(watchPr) && watchPr > 0 && parsed.holders.length === 1 && parsed.holders[0].pr === watchPr;
+  return { result: 'held', code: watched ? 'ROLE_PROBE_HELD_WATCHED_HEAD' : 'ROLE_PROBE_HELD' };
 }
 
 // C2 consumes at most 64 KiB; neither an arbitrary upstream error nor a holder list is logged.
@@ -75,7 +80,7 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
     keepalive: async input => write().keepalive(input),
     reportSweepWatermark: async input => write().reportSweepWatermark(input),
     nodesStatus: async () => write().nodesStatus(),
-    async roleProbe() {
+    async roleProbe({ watchPr = null } = {}) {
       let response, body;
       try {
         response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/${HOLDERS_RPC}`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
@@ -83,7 +88,7 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
           body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, repository: config.repository } }) });
         body = await roleProbeBody(response);
       } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
-      return parseRoleProbe(response.status, body, config.repository);
+      return parseRoleProbe(response.status, body, config.repository, watchPr);
     },
     async holders() {
       let response, body;

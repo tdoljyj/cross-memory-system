@@ -63,8 +63,17 @@ export const HANDOVER_LISTING_CAP_MS = 5000;
 export const listingDelayMs = (quietMs, capMs = LISTING_CAP_MS) => Math.min(capMs, Math.max(LISTING_MIN_MS, Math.floor(quietMs / LISTING_QUIET_DIVISOR)));
 const WORKER_RUNNING_STATES = new Set(['activating', 'active', 'deactivating']);
 const RELAY_RECEIPT_CONTRACT ='clued.independent-ci.formal-public-relay-receipt/2';
-const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
+// EAGAIN, ENOMEM and ETIMEDOUT: what the Linux child meets when the WSL VM stalls (a relay call that took 53 s on 2026-11-04
+// instead of the usual 3 s, DESIGN §47). They are retried only before the child could have written (the stages below).
+const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'EAGAIN', 'ENOMEM', 'ETIMEDOUT', 'FORMAL_RELAY_STDIN_TIMEOUT']);
 const CHILD_TRANSIENT_STAGES = new Set(['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']);
+// A refusal by the bridge protocol's time checks (protocol.mjs validateIssue / validateChallenge / validateResponse /
+// validateBlocked), made before the child writes anything: CONTEXT (the issue, read again) or BINDING (the packet against the
+// issue and challenge). The two hosts' clocks differ and are stepped (DESIGN §47), so this is a retryable environment failure,
+// not a permanent refusal; `arrived` below still settles whether anything reached the target, and the attempts and their
+// budgets are the same as for any child failure.
+const CHILD_CLOCK_REASONS = new Set(['BRIDGE_ISSUE_EXPIRED', 'BRIDGE_CHALLENGE_EXPIRED', 'BRIDGE_RESPONSE_EXPIRED', 'BRIDGE_BLOCKED_TIME_INVALID']);
+const CHILD_CLOCK_STAGES = new Set(['CONTEXT', 'BINDING']);
 const AMBIGUOUS_FAILURES = new Set(['PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED', 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY', 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY']);
 const plainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -97,7 +106,8 @@ export function classifyRelayAttempt(runner, receipt) {
   if (v.contract !== RELAY_RECEIPT_CONTRACT) return 'PERMANENT';
   if (v.failureCode === 'PUBLIC_TRANSFER_UNCONFIRMED' && v.processId === null && v.exitCode === null) return 'NO_CHILD';
   if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' && v.childError === null) return 'CHILD_FAILED';
-  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage)) return 'CHILD_FAILED';
+  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && ((CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage))
+    || (CHILD_CLOCK_REASONS.has(ce.reason) && CHILD_CLOCK_STAGES.has(ce.stage)))) return 'CHILD_FAILED';
   if (AMBIGUOUS_FAILURES.has(v.failureCode) || ce?.reason === 'EEXIST') return 'AMBIGUOUS';
   // A Receive* that found the record already in Windows incoming: settled by the arrival check alone.
   if (v.failureCode === 'EXISTING_RECORD_PRESERVED_NO_RETRY') return 'EXISTING';
@@ -132,6 +142,18 @@ export function parseUnitFacts(r) {
 // active or deactivating; failed (kept until reset); an invocation id with a main-process start time. (The pump also counts a
 // challenge it relayed.)
 export const workerRanEvidence = f => !!f && (WORKER_RUNNING_STATES.has(f.activeState) || f.activeState === 'failed' || (f.invocationId !== '' && f.mainStartMonotonic > 0));
+// DESIGN 54: a run again starts the same instance (clued-ci-worker@<jobId>) a second time, and the run before left its facts (failed,
+// or inactive with its invocation id and start time): they are no evidence for this run. baseline = the facts read before this start;
+// only a change from them counts (a new invocation that started its main process or failed, or a running state). 'unread' (the
+// baseline could not be read): only a running state counts (the pump's records count anyway). null: a first run, as before.
+export function workerRanSince(f, baseline = null) {
+  if (baseline === null) return workerRanEvidence(f);
+  if (!f) return false;
+  if (WORKER_RUNNING_STATES.has(f.activeState)) return true;
+  if (baseline === 'unread') return false;
+  const fresh = f.invocationId !== '' && f.invocationId !== baseline.invocationId;
+  return fresh && (f.mainStartMonotonic > baseline.mainStartMonotonic || f.activeState === 'failed');
+}
 
 // The pre-stage memory gate (DESIGN §32, Task 25851665): the same arithmetic as linux/host-tuning/clued-wsl-memguard. Every
 // Windows->WSL hv_sock channel needs one free block of the ring order: each direction's socket default clamped to 6..64 pages,
@@ -170,6 +192,67 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
     receipt: { status: code(v.status), failureCode: code(v.failureCode), exitCode: Number.isSafeInteger(v.exitCode) ? v.exitCode : null,
       processIdPresent: v.processId !== null && v.processId !== undefined, terminalConfirmed: v.terminalConfirmed === true, childError: ce },
     class: klass, stderrTail: stderrTail(r.stderr) };
+}
+
+// DESIGN §44: one log entry per read or action asked again after a timeout (fixed keys, codes and counts only), so that the next
+// HALT shows which probe had no answer, how often and for how long.
+export function retryLogEntry({ at, op, attempt, ms, runner }) {
+  const r = runner ?? {};
+  return { at: new Date(at).toISOString(), kind: 'retry', op, attempt, ms,
+    runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null,
+      refused: typeof r.refused === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(r.refused) ? r.refused : null } };
+}
+
+// DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer may carry one fixed `hint` (a reviewed commit that only a branch keeps
+// alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through the log entry below, and only
+// when it is one of the fixed texts below byte for byte (the same literals as in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any
+// other hint is dropped; of the rest of the answer only the codes and counts that bundleRefusalLogEntry names are kept (generation 10).
+// Empty since PR #991 brought d94cd486 into main (the script's table is empty too): every hint is dropped.
+export const BUNDLE_BRANCH_ONLY_HINTS = Object.freeze([]);
+// Generation 10 (DESIGN 53.1, Task 125a5162 item 1): EVERY bundle that was not written leaves one entry, so the cause of a
+// BUNDLE_UNAVAILABLE is visible (on 2026-11-05 two refused bundles burned a head and the log said nothing). Only codes and counts are
+// kept, each through its own fixed pattern: the script's status, reason and stage, the last git step (its label, exit code and how many
+// characters of stderr it wrote: never the text), the store attempts and every given-up attempt (number, reason, stage, git step,
+// seconds; a refs difference only as its count, never the ref names), the seed's use (used, reason code, discarded, networkFailureNoted)
+// and the runner's own facts (exit code, timed out, tree, refusal code). A value that does not fit its pattern is null; nothing else of
+// the script's output (paths, created directories, any free text) is ever written. The hint stays the one fixed text or null.
+const BUNDLE_CODE = /^[A-Z][A-Z0-9_]{1,79}$/, BUNDLE_SLUG = /^[a-z][a-z0-9-]{0,63}$/;
+const bundleCode = s => (typeof s === 'string' && BUNDLE_CODE.test(s) ? s : null);
+const bundleSlug = s => (typeof s === 'string' && BUNDLE_SLUG.test(s) ? s : null);
+const bundleCount = n => (Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_000 ? n : null);
+const bundleExit = n => (Number.isSafeInteger(n) && n >= -2_147_483_648 && n <= 4_294_967_295 ? n : null);
+const bundleGit = g => (plainObject(g) ? { label: bundleSlug(g.label), exitCode: bundleExit(g.exitCode), stderrChars: bundleCount(g.stderrChars) } : null);
+export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
+// Generation 10 (DESIGN 53.1, 53.3): the steps of build-bundle.ps1 whose failure in git counts as the line. A refusal whose own reason is
+// that one of them failed in git (stderr is never read) is answered with BUNDLE_NETWORK_UNAVAILABLE instead of BUNDLE_UNAVAILABLE, so the
+// executor can tell the line from every other refusal of the script (a ref that fails its checks, main moved, a commit missing, a timeout,
+// the script's own fault), which keep the release cap. Only the whole fetch and the ls-remote: the by-SHA fetches of the reviewed
+// commits and of S (fetch-reviewed, fetch-test; the script retries them like the others, $NetworkSteps) run after both of those
+// succeeded in the same attempt, so a failure there is much more likely a commit GitHub no longer serves (a deleted branch, a test merge
+// GitHub dropped) than the line: it stays BUNDLE_UNAVAILABLE.
+export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote']);
+export const BUNDLE_NETWORK_UNAVAILABLE = 'BUNDLE_NETWORK_UNAVAILABLE';
+export function bundleNetworkRefusal(runner) {
+  if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return false;
+  let v = null;
+  try { v = JSON.parse(runner.stdout); } catch { return false; }
+  return plainObject(v) && v.reason === 'GIT_STEP_FAILED' && plainObject(v.git) && BUNDLE_NETWORK_STEPS.includes(v.git.label) && Number.isSafeInteger(v.git.exitCode) && v.git.exitCode !== 0;
+}
+export function bundleRefusalLogEntry({ at, op, runner }) {
+  const r = plainObject(runner) ? runner : {};
+  let v = null;
+  if (typeof r.stdout === 'string' && r.stdout.length <= 65_536) { try { v = JSON.parse(r.stdout); } catch { v = null; } }
+  if (!plainObject(v)) v = null;
+  const attempts = Array.isArray(v?.failedAttempts) ? v.failedAttempts.slice(0, BUNDLE_LOG_ATTEMPTS_MAX).map(a => (plainObject(a)
+    ? { attempt: bundleCount(a.attempt), reason: bundleCode(a.reason), stage: bundleSlug(a.stage), git: bundleGit(a.git), failedAfterSeconds: bundleCount(a.failedAfterSeconds),
+      refsDiffer: plainObject(a.refsDiffer) ? bundleCount(a.refsDiffer.count) : null }
+    : null)) : null;
+  const s = plainObject(v?.seed) ? v.seed : null;
+  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op: bundleSlug(op),
+    runner: { code: bundleExit(r.code), timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: bundleCode(r.refused) },
+    status: bundleCode(v?.status), reason: bundleCode(v?.reason), stage: bundleSlug(v?.stage), git: bundleGit(v?.git), storeAttempts: bundleCount(v?.storeAttempts),
+    failedAttempts: attempts, seed: s ? { used: s.used === true, reason: bundleCode(s.reason), discarded: s.discarded === true, networkFailureNoted: s.networkFailureNoted === true } : null,
+    hint: typeof v?.hint === 'string' && BUNDLE_BRANCH_ONLY_HINTS.includes(v.hint) ? v.hint : null };
 }
 
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI
@@ -278,6 +361,19 @@ const json = text => { try { return JSON.parse(text); } catch { return null; } }
 
 // pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
 export const PR_HEAD_TIMEOUT_MS = 30_000;
+// DESIGN §44 (Tasks 576231fa, 4d3aaa64, 8e1f07d3, the remainder): a wsl.exe call that ran out of time (25-45 s on a loaded host,
+// DESIGN §25) says nothing about the thing it was asked, so a READ-ONLY probe, or an idempotent root-tool action, is asked again
+// a bounded number of times before "no answer" is turned into a failure that HALTs. Never for an action with an effect.
+export const ARCHIVE_STATUS_RESERVE_MS = 100_000; // kept free for the archive-status reads (3 x 30 s) after a second archive start
+export const RETRY_MIN_ROOM_MS = 60_000; // a second attempt that would get less than this is not made
+export const READ_RETRIES = 2; // reads asked again after a read that timed out: three in all
+export const TERMINAL_NOANSWER_CAP_MS = 120_000; // FORMAL_WORKER_TERMINAL_UNCONFIRMED: the longest wait while the unit facts give no answer
+export const WSPREP_QUIET_WAIT_MS = 5 * 60_000; // after a timed-out workspace preparation: the longest wait for the Linux side to go quiet
+export const WSPREP_QUIET_POLL_MS = 20_000;
+export const CHECK_REFS_SECOND_TRY_MAX_MS = 3 * 60_000; // the refs gate: a second ls-remote only when the first ended within this long
+// A child that ran out of time and is gone (the job host drained its tree, or it was the plain runner's): the read has no answer.
+// A tree the host could not show gone ('unconfirmed') is never asked again on top of itself.
+export const timedOutGone = r => r?.timedOut === true && r.tree !== 'unconfirmed';
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
   return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
@@ -318,8 +414,30 @@ export class Companion {
     };
   }
 
+  // A read-only probe: asked again (READ_RETRIES times) while it only ran out of time. An answer of any kind, a refusal, a launch
+  // failure or an unconfirmed tree ends it at once; the last result is returned.
+  async runRead(a, o, op = 'read') {
+    let r;
+    for (let i = 0; i <= READ_RETRIES; i += 1) {
+      const began = this.clock();
+      r = await this.run(a, o);
+      if (!timedOutGone(r)) return r;
+      await this.noteRetry(op, i + 1, this.clock() - began, r);
+    }
+    return r;
+  }
+
+  // The local log only; it never decides anything and a failing log changes nothing.
+  async noteRetry(op, attempt, ms, runner) {
+    try { await this.log?.(retryLogEntry({ at: this.clock() - ms, op, attempt, ms, runner })); } catch { /* the log never decides */ }
+  }
+
+  async noteBundleRefusal(op, runner) {
+    try { const entry = bundleRefusalLogEntry({ at: this.clock(), op, runner }); if (entry) await this.log?.(entry); } catch { /* the log never decides */ }
+  }
+
   async quiescence(batchId) {
-    const r = await this.run(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 });
+    const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence');
     const v = r.code === 0 ? json(r.stdout) : null;
     return { linuxUnitsInactive: v?.linuxUnitsInactive === true, containersZero: v?.containersZero === true };
   }
@@ -329,7 +447,9 @@ export class Companion {
       case 'build-bundle': {
         const r = await this.run(this.a.bundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 ? json(r.stdout) : null;
-        return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
+        if (v?.status === 'BUNDLE_WRITTEN') return { ok: true, code: null };
+        await this.noteBundleRefusal('build-bundle', r);
+        return { ok: false, code: bundleNetworkRefusal(r) ? BUNDLE_NETWORK_UNAVAILABLE : 'BUNDLE_UNAVAILABLE' };
       }
       // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
       // transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; anything else (including no answer) only says the bundle could not be renewed.
@@ -337,17 +457,43 @@ export class Companion {
         const r = await this.run(this.a.rebundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
         if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN' && v.generation === 2) return { ok: true, code: null };
+        await this.noteBundleRefusal('rebuild-bundle', r);
         return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'BUNDLE_UNAVAILABLE' };
       }
       case 'prepare-workspaces': {
         const r = await this.run(this.a.startWait('clued-ci-wsprep', request.batchId), { timeoutMs: 20 * 60_000 });
-        const proof = await this.quiescence(request.batchId);
+        let proof = await this.quiescence(request.batchId);
         if (r.code === 0) return { ok: true, proof };
+        // §44: `start --wait` ended by its time limit leaves the unit to systemd, which may still be finishing it. Only reads
+        // follow (the root tool's quiescence, never a second start): quiet within the bound is the ordinary refusal (the head
+        // burns, both sides are archived); a unit still busy after it stays WORKSPACE_PREPARATION_UNCONFIRMED and HALTs.
+        if (timedOutGone(r) && !(proof.linuxUnitsInactive && proof.containersZero)) {
+          await this.noteRetry('wsprep-quiet-wait', 1, 20 * 60_000, r);
+          const until = Math.min(this.clock() + WSPREP_QUIET_WAIT_MS, Date.parse(request.deadline) - 60_000);
+          while (this.clock() < until && !(proof.linuxUnitsInactive && proof.containersZero)) {
+            await this.sleep(WSPREP_QUIET_POLL_MS);
+            proof = await this.quiescence(request.batchId);
+          }
+        }
         return { ok: false, code: proof.linuxUnitsInactive ? 'WORKSPACE_PREPARATION_REFUSED' : 'WORKSPACE_PREPARATION_UNCONFIRMED', proof };
       }
       case 'archive-linux': {
-        const r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
-        const s = await this.run(this.a.archiveStatus(`${request.batchId}_${request.reason}`), { timeoutMs: 30_000 });
+        let r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
+        // §44: the archive is a rename-only root action and one instance is idempotent (the tool answers a repeated instance with the
+        // earlier verified result and moves nothing, clued-ci-resident-linux#earlier_result): a `start --wait` that only ran out of
+        // time is asked once more, which joins a unit still running or replays the finished one. Verified still needs exit 0 and the
+        // tool's own receipt.
+        // §46: only while the request's own deadline holds the second start and the status reads (ARCHIVE_LINUX_REQUEST_MS makes room
+        // for both; the clamp is for a request sent with less). The service no longer waits for an answer after the deadline.
+        if (timedOutGone(r)) {
+          const room = Date.parse(request.deadline) - this.clock() - ARCHIVE_STATUS_RESERVE_MS;
+          if (room >= RETRY_MIN_ROOM_MS) {
+            const ms = Math.min(5 * 60_000, room);
+            await this.noteRetry('archive-start-wait', 1, ms, r);
+            r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: ms });
+          }
+        }
+        const s = await this.runRead(this.a.archiveStatus(`${request.batchId}_${request.reason}`), { timeoutMs: 30_000 }, 'archive-status');
         const v = s.code === 0 ? json(s.stdout) : null;
         const verified = r.code === 0 && v?.verified === true && typeof v.directory === 'string';
         return { ok: verified, code: verified ? null : 'LINUX_ARCHIVE_UNCONFIRMED', verified, directory: verified ? v.directory : null };
@@ -355,10 +501,31 @@ export class Companion {
       case 'relay-stage': return this.pump(request);
       // Source v2 S9 / lesson b29: before the first scanner stage, the refs must still be the bundle's.
       case 'check-refs': {
-        const r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: 5 * 60_000 });
-        const v = json(r.stdout);
+        // §44: the gate is one read-only ls-remote (networkWrite false). Only a definite answer (unchanged, or changed) ends it; a read
+        // that got none (git's low-speed limit, a refused proxy, a timeout) is asked once more, when the first did not take long. Reads
+        // without an answer end as REMOTE_REFS_NO_ANSWER or REMOTE_REFS_UNAVAILABLE (generation 11, below).
+        // Generation 11 (DESIGN 55): REMOTE_REFS_NO_ANSWER only when every read was the line and nothing else: ls-remote failed in git
+        // (GIT_STEP_FAILED, ls-remote-check) or the read ran out of time with no verdict, its tree gone ('zero', never 'unconfirmed'). Any
+        // other refusal of the script (a descriptor, a generation) stays REMOTE_REFS_UNAVAILABLE, which the engine never asks again.
+        let v = null, r = null, room = 5 * 60_000, line = true;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          const began = this.clock();
+          r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: room });
+          v = json(r.stdout);
+          const gitLine = v?.reason === 'GIT_STEP_FAILED' && v?.git?.label === 'ls-remote-check';
+          const silent = !v?.status && !v?.reason && r.timedOut === true && r.tree === 'zero' && !r.refused;
+          if (r.tree === 'unconfirmed' || !(gitLine || silent)) line = false;
+          if ((r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') || v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') break;
+          if (r.tree === 'unconfirmed' || this.clock() - began > CHECK_REFS_SECOND_TRY_MAX_MS) break;
+          // §46: the second try gets what is left of the request's deadline (CHECK_REFS_REQUEST_MS makes room for a full one), and
+          // none when too little is left.
+          room = Math.min(5 * 60_000, Date.parse(request.deadline) - this.clock() - 10_000);
+          if (room < RETRY_MIN_ROOM_MS) break;
+          await this.noteRetry('check-refs', attempt, this.clock() - began, r);
+        }
         if (r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') return { ok: true, code: null };
-        return { ok: false, code: v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REMOTE_REFS_UNAVAILABLE' };
+        if (v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' };
+        return { ok: false, code: line ? 'REMOTE_REFS_NO_ANSWER' : 'REMOTE_REFS_UNAVAILABLE' };
       }
       case 'archive-usage': {
         const r = await this.run(this.a.archiveUsage(), { timeoutMs: 2 * 60_000 });
@@ -544,9 +711,21 @@ export class Companion {
       check(first === true, 'COMPANION_PUMP_UNCONFIRMED');
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
+      // DESIGN 54: before a run again starts the instance a second time, its facts from the run before are the baseline.
+      let baseline = null;
+      if (request.again) baseline = parseUnitFacts(await this.runRead(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }, 'worker-unit-baseline')) ?? 'unread';
+      const ranSince = f => workerRanSince(f, baseline);
       await live(); // a cancel that came with the issue transfer starts no worker
       const startCalledAt = this.clock(); // no challenge can exist before the worker was asked to start
-      const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
+      let start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
+      // §44: a start that only ran out of time is never repeated (a second start of an instance that already ran would run the
+      // worker again). Only the unit's own facts decide: evidence that this instance has run (the instance carries this job's id
+      // and only this pump starts it) makes the start a success; none leaves LINUX_WORKER_START_UNCONFIRMED as before.
+      if (start.code !== 0 && timedOutGone(start)) {
+        await this.noteRetry('worker-start', 1, 30_000, start);
+        const f = parseUnitFacts(await this.runRead(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }, 'worker-unit-facts'));
+        if (ranSince(f)) start = { code: 0 };
+      }
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
       // Signals B and C (DESIGN §26). The pump remembers that the worker ran (a unit reaped after its end reads empty), and
@@ -557,7 +736,7 @@ export class Companion {
         if (this.clock() < worker.factsAt) return;
         worker.factsAt = this.clock() + WORKER_FACTS_EVERY_MS;
         const f = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }));
-        if (workerRanEvidence(f) || sequence > 1) worker.ran = true;
+        if (ranSince(f) || sequence > 1) worker.ran = true;
         // Ended: it ran, and its unit is inactive or failed now. The listing the loop takes next is then final: nobody writes
         // Linux outgoing once the worker is gone.
         worker.ended = worker.ran && !!f && ['inactive', 'failed'].includes(f.activeState);
@@ -630,11 +809,13 @@ export class Companion {
         if (!blockedRefused && !['COMPANION_PUMP_CANCELLED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED'].includes(error?.code)) await this.handOverBlocked(deadline, live);
         throw error;
       }
-      const until = this.clock() + 30_000;
+      const until = this.clock() + 30_000, hardUntil = this.clock() + TERMINAL_NOANSWER_CAP_MS;
       for (let look = 0; ; look += 1) {
         const s = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: 15_000 }));
         if (s && ['inactive', 'failed'].includes(s.activeState)) break;
-        check(this.clock() < until, 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
+        // §44: the 30 s are for a unit that was read and is still busy; while the reads themselves get no answer (a loaded wsl.exe
+        // takes 25-45 s, so two reads fit in 30 s) the wait goes on, but no longer than TERMINAL_NOANSWER_CAP_MS in all.
+        check(this.clock() < (s ? until : hardUntil), 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
         await live();
         await this.sleep(Math.min(2000, 500 * 2 ** look)); // 0.5, 1, 2 s, then every 2 s: at most about 17 reads in the 30 s, not 60
       }

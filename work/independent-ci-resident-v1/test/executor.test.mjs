@@ -20,7 +20,7 @@ test('happy path: bundle, stage 1, start, workspaces, stages 2..8 once; the same
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual(f.companion.calls.map(c => c[0]), ['bundle', 'wsprep']);
+  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'wsprep'], 'one live PR read before the reservation');
   assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
   // The same head again: the run queue has seen it, nothing is reserved (phase 2).
@@ -68,6 +68,32 @@ test('the bundle is fetched before stage 1; its failure releases the key with no
   assert.deepEqual(stagesRun(f.engine), [], 'stage 1 never ran');
   assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
   assert.equal(await f.ledger.headBurned(headKey(subject())), false);
+});
+
+test('a merged PR leaves the queue before it is reserved: no bundle, no stage, no breaker count (rule 41ab823a)', async t => {
+  const companion = fakeCompanion({ pull: pr => ({ number: pr, state: 'merged', headSha: HEAD }) });
+  const f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.reason], ['IGNORED', 'PR_CLOSED']);
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason], ['DONE', 'PR_CLOSED']);
+  const receipts = await fs.readdir(path.join(f.root, 'state', 'receipts'));
+  const closed = await Promise.all(receipts.filter(n => n.includes('queue-pr-closed')).map(async n => JSON.parse(await fs.readFile(path.join(f.root, 'state', 'receipts', n), 'utf8')).body));
+  assert.deepEqual(closed.map(b => [b.pr, b.state, b.before]), [[884, 'merged', 'reserve']]);
+  assert.deepEqual(stagesRun(f.engine), [], 'stage 1 never ran');
+  assert.equal(companion.calls.some(c => c[0] === 'bundle'), false, 'no bundle was built');
+  assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
+  assert.equal(await f.ledger.headBurned(headKey(subject())), false);
+  f.advance(3_600_000);
+  assert.equal((await f.exec.tick()).state, 'IDLE', 'it is not tried again');
+});
+
+test('an open PR, or no answer from the live read, runs as before', async t => {
+  for (const pull of [pr => ({ number: pr, state: 'open', headSha: HEAD }), () => null]) {
+    const f = await executorFixture(t, { companion: fakeCompanion({ pull }) });
+    await f.drop(triggerBytes());
+    assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  }
 });
 
 test('stage-1 "not admitted" releases the key; the queue retries on its own back-off and stops at the release cap', async t => {
@@ -242,7 +268,7 @@ test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; a
   f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
   assert.equal((await f.exec.tick()).state, 'IDLE'); assert.equal(calls, 1);
   assert.equal((await f.ledger.keys()).length, 0);
-  assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 });
+  assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), networkReleasesByHead: new Map(), stage8Retries: 0 });
   assert.equal(f.companion.calls.length, 0); assert.equal(f.engine.calls.length, 0);
   await f.exec.tick(); assert.equal(calls, 1);
   f.advance(1800000 - 1); await f.exec.tick(); assert.equal(calls, 1);

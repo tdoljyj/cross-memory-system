@@ -23,7 +23,8 @@
 // fails closed: the pass writes nothing (Task 9cac75be A3: there is no default node; any number of nodes, never two).
 //
 // Take-over check (§5.2): every time the node's role probe confirms the role (status.json node.probe), the companion
-// reads the open PR heads' statuses, at most TAKEOVER_READS_PER_PASS a pass. Another node's 当班 or 双活停机 written
+// reads the open PR heads' statuses, at most TAKEOVER_READS_PER_PASS a pass (generation 12: a new probe does not restart a check in
+// progress, and while the node stays ACTIVE a new one starts at most every TAKEOVER_RECHECK_MS, DESIGN §23.4 and §56.2). Another node's 当班 or 双活停机 written
 // within DUTY_WINDOW_MS, by the Owner's own account and in the exact template, locks this node: it holds the
 // executor's intake pause (C6, holder `dual-active`, renewed while locked, so it never runs out under a lock) and
 // writes 双活停机 on its own queued commits. The lock is released only (review N1) when this node's probe finds it no
@@ -71,6 +72,12 @@ const UNSURE_HOLDERS = ['unconfirmed', 'unreadable'];
 export const RELEASE_READ_MS = 5 * MIN;
 // The take-over check reads at most this many heads a pass (review M4), and after a failed read waits this long.
 export const TAKEOVER_READS_PER_PASS = 10;
+// A check in progress is not restarted by the probes that come meanwhile (it ends when read through, or is dropped when the role is not
+// confirmed any more or a lock is set), and a new one starts at most this often while the node stays ACTIVE (generation 12, review
+// rounds 27 and 28: the queue watch confirms the role every 30 s; restarting on each would never read past the first
+// TAKEOVER_READS_PER_PASS heads). A node that just became ACTIVE (also from UNCERTAIN), whose executor started again, or whose last check
+// was dropped, starts its check at once.
+export const TAKEOVER_RECHECK_MS = 15 * MIN;
 export const READ_RETRY_MS = 5 * MIN;
 // A head the take-over check cannot read this many times in a row is passed over (counted as nobody on duty there), so
 // one unreadable head never keeps the check from ending (re-review of C5).
@@ -281,6 +288,8 @@ export class NodeDuty {
     this.restarted = true; // the first passes after the companion started, until the restart writes are done (NIT 4)
     this.login = null;
     this.check = null; // the take-over check in progress: { probeAt, wasActive, heads, idx, found, retryAt, fails }
+    this.checkStartedAt = null; // when the last check that may still count for TAKEOVER_RECHECK_MS started (generation 12)
+    this.executorPid = null; // the executor's pid in the last status seen: another one starts the spacing over
     this.restartOwed = null; // the heads owed 停摆（NODE_RESTARTED）, fixed at the first pass after the start
     this.readAt = new Map(); // head -> { at, others, admitted }: a STANDBY reads a head at most every RELEASE_READ_MS
   }
@@ -340,11 +349,20 @@ export class NodeDuty {
       }
     }
     if (m.lock) await this.release({ status, node, now, events });
-    // The take-over check: every probe that confirms the role, while not locked; TAKEOVER_READS_PER_PASS heads a pass.
+    // The take-over check: on a probe that confirms the role, while not locked, at most every TAKEOVER_RECHECK_MS while the node stays
+    // ACTIVE; TAKEOVER_READS_PER_PASS heads a pass.
+    // The spacing holds only while the node stays ACTIVE under the same executor: a node seen in any other mode (UNCERTAIN too, which
+    // memory.mode does not keep) or an executor that started again (another pid) checks at its next confirmation, as in generation 11
+    // (review round 29, MINOR 2).
+    if (node.known && node.mode !== 'ACTIVE') this.checkStartedAt = null;
+    if (Number.isSafeInteger(status?.pid)) { if (this.executorPid != null && status.pid !== this.executorPid) this.checkStartedAt = null; this.executorPid = status.pid; }
     const probeHeld = !m.lock && node.known && node.mode === 'ACTIVE' && node.probe?.result === 'held' && node.probe.at;
-    if (!probeHeld) this.check = null;
-    else if (node.probe.at !== m.probeAt && this.check?.probeAt !== node.probe.at) {
+    // A check dropped before its end (the role not confirmed any more, a lock) does not count for the spacing (review round 28, NIT 2).
+    if (!probeHeld) { if (this.check) this.checkStartedAt = null; this.check = null; }
+    else if (node.probe.at !== m.probeAt && !this.check
+      && (m.mode !== 'ACTIVE' || !(Number.isFinite(this.checkStartedAt) && now >= this.checkStartedAt && now - this.checkStartedAt < TAKEOVER_RECHECK_MS))) {
       // wasActive: the mode before this probe, for the lock's reason (re-review: a check may end passes later).
+      this.checkStartedAt = now;
       this.check = { probeAt: node.probe.at, wasActive: m.mode === 'ACTIVE', heads: [...new Set(pulls.map(p => p.headSha))], idx: 0, found: [], retryAt: 0, fails: 0 };
     }
     if (this.check && now >= this.check.retryAt && await this.continueCheck(now)) {

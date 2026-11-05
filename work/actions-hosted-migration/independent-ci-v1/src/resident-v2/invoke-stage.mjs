@@ -20,7 +20,7 @@ import { validateJobV2, makeJobV2 } from '../job-v2.mjs';
 import { ENVELOPE_CONTRACT_V2 } from '../proof-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { readSealedStage, PLAN_CONTRACT_V2 } from './stage-package.mjs';
-import { makeRoleProbeRun } from './role-probe-run.mjs';
+import { makeRoleProbeRun, validWatchPr } from './role-probe-run.mjs';
 import { makeRevocationRun, revocationQualification } from './revocation-run.mjs';
 import { validateRelayQualificationRun, relayQualificationWindow } from './relay-qualification-run.mjs';
 import { readRecordDocs } from './derive-batch.mjs';
@@ -135,16 +135,20 @@ export async function invokeStage({ batchDir, stage, workManifestSha256, batchKe
 // computed independently by the resident from its random key/id and pinned node-profile hash.
 export async function invokeRoleProbe({ runKey, runId, nodeProfileSha256, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
   receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
-  nonce = randomBytes(16).toString('hex') }) {
-  const intent = { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 };
+  nonce = randomBytes(16).toString('hex'), watchPr = null }) {
+  // Generation 12 (resident DESIGN 56.2): a queue watch names its PR in the intent (/2) and the job (role-probe-run/2); without
+  // one both keep /1 byte for byte.
+  const intent = watchPr === null ? { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 }
+    : { contract: 'clued.independent-ci.role-probe-intent/2', runKey, runId, nodeProfileSha256, watchPr };
   const workManifestSha256 = hash(canonical(intent));
   let record, plan, jobsText, planText;
   try {
-    check(HEX64.test(runKey ?? '') && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(runId ?? '') && runId.startsWith(runKey.slice(0, 16)) && HEX64.test(nodeProfileSha256 ?? ''), 'ROLE_PROBE_RUN_REFUSED');
+    check(HEX64.test(runKey ?? '') && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(runId ?? '') && runId.startsWith(runKey.slice(0, 16)) && HEX64.test(nodeProfileSha256 ?? '')
+      && (watchPr === null || validWatchPr(watchPr)), 'ROLE_PROBE_RUN_REFUSED');
     record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock(), required: [ENTRY_V2['role-probe']] });
     check(hash(record.accepted.node) === nodeProfileSha256, 'ROLE_PROBE_RUN_REFUSED');
     jobsText = canonical([makeRoleProbeRun({ repo: record.config.repository, runId, sourceManifestSha256: record.config.sourceManifestSha256,
-      nodeProfileSha256, createdAt: new Date(clock()).toISOString() })]);
+      nodeProfileSha256, createdAt: new Date(clock()).toISOString(), watchPr })]);
     plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: 11, entryRole: 'role-probe', batchKey: runKey, batchId: runId,
       ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256, nodeProfileSha256,
       entrySha256: record.pins.get(ENTRY_V2['role-probe']), acceptanceSha256: record.hashes.acceptanceSha256, sourceManifestSha256: record.config.sourceManifestSha256,
@@ -299,10 +303,12 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     return ['FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION','REVOCATION_MAINTENANCE_PENDING_ORIGINAL_STOPPED_NO_QUALIFICATION'].includes(fact.state)?0:41;
   }
   if (argv[0] === '--role-probe') {
-    if (argv.length !== 6 || argv[2] !== '--probe-id' || argv[4] !== '--node-profile-sha256') {
+    // Optional last pair: --watch-pr <n> (generation 12, the queue watch).
+    const watch = argv.length === 8 && argv[6] === '--watch-pr' && /^[1-9][0-9]{0,9}$/.test(argv[7] ?? '') ? Number(argv[7]) : null;
+    if (![6, 8].includes(argv.length) || argv[2] !== '--probe-id' || argv[4] !== '--node-profile-sha256' || (argv.length === 8 && watch === null)) {
       output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
     }
-    const fact = await invokeRoleProbe({ runKey: argv[1], runId: argv[3], nodeProfileSha256: argv[5] });
+    const fact = await invokeRoleProbe({ runKey: argv[1], runId: argv[3], nodeProfileSha256: argv[5], watchPr: watch });
     output.write(JSON.stringify(fact) + '\n');
     return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
   }

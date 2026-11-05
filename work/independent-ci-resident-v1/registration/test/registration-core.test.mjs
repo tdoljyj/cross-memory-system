@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import {
   CAPABILITIES, ENVIRONMENT_KINDS, PROFILE_KEYS, REGISTRATION_KEYS, buildRegistration, canonicalDigest, canonicalJson, databaseRefuses, jwkFromPublicPem,
   keyFingerprint, publicDocument, publicJwk, sourceFromManifest, validProfile, validateFacts, validateRegistration,
@@ -13,10 +13,36 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PAGE = path.resolve(here, '../../../../apps/clued-cloud/app/ci-nodes/page.tsx');
+// A fresh key pair the registration RPC accepts, as init-keys makes them: about one random pair in 6,500 has a coordinate the RPC
+// refuses, and a test that needs a good key must not fail on it (generation 11: the flaky random-key case).
 const newKey = () => {
-  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  return { publicJwk: jwkFromPublicPem(publicKey.export({ type: 'spki', format: 'pem' })), privateJwk: privateKey.export({ format: 'jwk' }) };
+  for (;;) {
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const publicJwk = jwkFromPublicPem(publicKey.export({ type: 'spki', format: 'pem' }));
+    if (!databaseRefuses(publicJwk)) return { publicJwk, privateJwk: privateKey.export({ format: 'jwk' }) };
+  }
 };
+// A real P-256 public key whose x coordinate holds `text` at `at` (deterministic: no random search). y = sqrt(x^3 - 3x + b) mod p,
+// p = 3 mod 4; when x^3 - 3x + b is not a square, the character after the text is changed and the next x is tried.
+const P256 = { p: 2n ** 256n - 2n ** 224n + 2n ** 192n + 2n ** 96n - 1n, b: 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn };
+const modPow = (base, exp, mod) => { let r = 1n; base %= mod; for (; exp > 0n; exp >>= 1n) { if (exp & 1n) r = r * base % mod; base = base * base % mod; } return r; };
+const b64 = n => Buffer.from(n.toString(16).padStart(64, '0'), 'hex').toString('base64url');
+function keyWith(text, at) {
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const base = 'axq7Bp2LmN0rTv5WzY8cDf3GhJ6kMs9QuXe1Ri4Ow2E'; // 43 characters, the last one encodes zero spare bits
+  for (const c of ALPHABET) {
+    const x64 = (base.slice(0, at) + text + c + base.slice(at + text.length + 1)).slice(0, 43);
+    const x = BigInt('0x' + Buffer.from(x64, 'base64url').toString('hex'));
+    if (x >= P256.p || b64(x) !== x64) continue;
+    const rhs = ((x ** 3n - 3n * x + P256.b) % P256.p + P256.p) % P256.p;
+    const y = modPow(rhs, (P256.p + 1n) / 4n, P256.p);
+    if (y * y % P256.p !== rhs) continue;
+    const jwk = { kty: 'EC', crv: 'P-256', x: x64, y: b64(y) };
+    createPublicKey({ key: jwk, format: 'jwk' }); // on the curve
+    return jwk;
+  }
+  throw new Error('no point found');
+}
 const facts = (over = {}) => ({
   os: 'linux', os_version: 'Linux 6.8.0', hostname: 'company-linux-01', memory_mb: 32000, docker_server_version: '27.3.1',
   hyperv_enabled: null, windows_sandbox_enabled: null, tpm_present: false, identity_public_jwk: newKey().publicJwk,
@@ -122,11 +148,26 @@ test('documents the registration RPC would refuse are caught here, including ins
   assert.equal(databaseRefuses('xxghp_yy'), true, 'no word boundary, unlike the page');
   assert.equal(databaseRefuses('GHO_'), true, 'case-insensitive');
   assert.equal(databaseRefuses('github_pat'), false);
-  // Find a real key pair whose coordinate contains such text (about one in 6,500): it must be refused as unregistrable.
-  let refused = null;
-  for (let i = 0; i < 200000 && !refused; i++) { const key = newKey().publicJwk; if (databaseRefuses(key)) refused = key; }
-  assert.ok(refused, 'a refused key was found');
-  assert.throws(() => buildRegistration(facts({ identity_public_jwk: refused }), options()), /KEY_UNREGISTRABLE/);
+  // Real keys whose x coordinate holds such text (about one random pair in 6,500 does). Inside a word ("AgHo_") only the RPC refuses
+  // it; at a word boundary (the start, or after "-") the page's publicDocument refuses it too. Either way the cause reported is
+  // KEY_UNREGISTRABLE, never FACTS_INVALID or REGISTRATION_INVALID "not a public document" (the flaky case: a random search found
+  // a boundary key about once in forty runs).
+  const inner = keyWith('AgHo_', 10), boundary = keyWith('-ghp_', 10), start = keyWith('gho_', 0);
+  assert.deepEqual([inner, boundary, start].map(k => databaseRefuses(k)), [true, true, true]);
+  assert.deepEqual([inner, boundary, start].map(k => publicDocument(k)), [true, false, false], 'only the boundary keys are not public documents');
+  for (const key of [inner, boundary, start]) {
+    for (const over of [{ identity_public_jwk: key }, { encryption_public_jwk: key }]) {
+      assert.throws(() => validateFacts(facts(over)), /KEY_UNREGISTRABLE/, key.x);
+      assert.throws(() => buildRegistration(facts(over), options()), /KEY_UNREGISTRABLE/, key.x);
+    }
+  }
+  // the registration document itself: the same cause first
+  const good = buildRegistration(facts(), options());
+  for (const key of [inner, boundary, start]) assert.throws(() => validateRegistration({ ...good, identity_public_jwk: key }), /KEY_UNREGISTRABLE/, key.x);
+  // anything that is not a valid public key keeps its own refusal
+  assert.throws(() => validateFacts(facts({ identity_public_jwk: { ...inner, y: inner.x } })), /PUBLIC_KEY_INVALID/);
+  // the helper itself: every key it makes is accepted
+  for (let i = 0; i < 50; i++) assert.equal(databaseRefuses(newKey().publicJwk), false);
 });
 
 test('the installed source manifest gives the Source commit and its own hash', () => {

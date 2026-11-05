@@ -7,6 +7,36 @@ import { databaseDecision, databasePreparationPlan, cachePromotionPlan, inspectD
   checksPreparationPlan, validateChecksBundle } from '../required-trivy-v2/plans.mjs';
 import { runCacheContainer, isActualDockerClient } from './docker.mjs';
 
+// Generation 10 (resident DESIGN 53.11): the network may drop at any time.
+//   - A DB or checks container that ended badly (timed out, cut off, its exit not readable) but whose removal was CONFIRMED could
+//     only have written its own fresh staging directory (the only rw mount, /cache), which is never read unless the run succeeded:
+//     it is a clean failed attempt, not UNCERTAIN. The DB then goes on to its next attempt and, when all four fail, to the existing
+//     fallback to a current DB at most 72 hours old. Only a container whose removal is not confirmed stays UNCERTAIN (lock retained).
+//   - A DB attempt is only started while the job still has DB_ATTEMPT_MS + SCAN_RESERVE_MS left (one attempt may take 310 s, the
+//     scan 300 s); the attempts there is no time for are recorded as skipped and the same fallback rule decides.
+//   - A prepare.lock left behind by an UNCERTAIN ending (DESIGN R6; 2026-11-05 it stopped every trivy run) is reclaimed when it is
+//     provably stale: the pid it names is gone, no cache container exists, and everything in staging/ is a real directory of the
+//     kinds' own shape. A durable receipt is written under reclaimed/ first. Anything not proven: the preparation waits (polling,
+//     bounded) and then refuses cleanly (CACHE_PREPARATION_LOCK_BUSY, BLOCKED), never UNCERTAIN.
+export const DB_ATTEMPT_MS = 310_000;
+export const SCAN_RESERVE_MS = 420_000;
+export const LOCK_POLL_MS = 15_000;
+export const LOCK_WAIT_MS = 300_000;
+// Generation 11 (resident DESIGN 55): the pinned checks bundle gets a second download attempt in the same stage when the first one
+// failed cleanly (removal confirmed) and there is still time for another attempt and the scan after it.
+export const CHECKS_ATTEMPTS = 2;
+export const CHECKS_ATTEMPT_MS = 310_000;
+export const STAGING_NAME = /^(?:db|checks)-[a-f0-9]{64}$/;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// The real probes of a stale lock (fixtureCachePort may replace them; actualCachePort never does).
+const pidAlive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } };
+async function cacheContainersNone(docker) {
+  try {
+    const r = await docker(['container', 'ls', '--all', '--no-trunc', '--filter', 'label=clued.verify.nonce', '--format', '{{.ID}}']);
+    return r?.code === 0 && !r.timedOut && !r.error && typeof r.stdout === 'string' && r.stdout.trim() === '';
+  } catch { return false; }
+}
+
 const check = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }); };
 const actualStores = new WeakSet();
 const safe = value => typeof value === 'string' && /^\/[A-Za-z0-9_./-]+$/.test(value) && path.posix.normalize(value) === value && value !== '/';
@@ -50,6 +80,59 @@ async function removeCacheTree(directory) {
   }
   await fs.rmdir(directory);
 }
+// Generation 10: what the lock left by another preparation says (null when there is none): its digest and inode, and the pid only when
+// it is the shape lock() writes ({ pid, nonce }). Never follows a link; an odd file has no pid (never reclaimed).
+export async function readLockState(root) {
+  const file = path.join(root, 'prepare.lock');
+  let stat; try { stat = await fs.lstat(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4096) return { file, pid: null, sha256: null, shape: false, ino: stat.ino };
+  const bytes = await fs.readFile(file, 'utf8');
+  let value = null; try { value = JSON.parse(bytes); } catch { value = null; }
+  const shape = !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 2 && Number.isSafeInteger(value.pid) && value.pid > 0 && /^[a-f0-9]{64}$/.test(value.nonce ?? '');
+  return { file, pid: shape ? value.pid : null, sha256: digest({ bytes }), shape, ino: stat.ino };
+}
+// Everything directly below staging/: verifiable only when each entry is a real directory of the kinds' own shape.
+export async function stagingLeftovers(root) {
+  const dir = path.join(root, 'staging'), names = [];
+  for (const entry of await fs.readdir(dir)) {
+    const s = await fs.lstat(path.join(dir, entry));
+    if (!STAGING_NAME.test(entry) || s.isSymbolicLink() || !s.isDirectory()) return { verifiable: false, names: [] };
+    names.push(entry);
+  }
+  return { verifiable: true, names: names.sort() };
+}
+// A lock proven stale. Order (review of gen10, round 4):
+//   1. the lock is claimed by one atomic rename into reclaimed/claim-<random>: of two preparations judging the same lock only one
+//      rename succeeds; the claimed file must still be the bytes and inode that were judged (else it is put back, refused);
+//   2. the receipt (durable, create-only): stagingToRemove names what is about to be removed;
+//   3. the leftovers (never following a link); 4. a completion record names what was really removed (stagingRemoved).
+// The lock is gone from prepare.lock at step 1, so a failure at 3 leaves no lock behind, only the receipt without its completion.
+export async function reclaimStaleLock({ root, state, leftovers, proof, protect = dir => protectedPath(dir, { directory: true }), clock = Date.now, syncDir = syncDirectory }) {
+  const dir = path.join(root, 'reclaimed'); if (await absent(dir)) await fs.mkdir(dir, { mode: 0o700 }); await protect(dir);
+  const at = new Date(clock()).toISOString(), id = at.replace(/[:.]/g, '-') + '-' + randomBytes(8).toString('hex');
+  const claim = path.join(dir, 'claim-' + id);
+  // Only this rename tells a lost race (another preparation claimed the lock first): CACHE_LOCK_CLAIM_LOST. Every later error is thrown.
+  try { await fs.rename(state.file, claim); } catch (error) { if (error.code === 'ENOENT') check(false, 'CACHE_LOCK_CLAIM_LOST'); throw error; }
+  // The claim file must exist: a rename that raced another one may report success on some systems (seen on Windows) while the other
+  // rename took the file; then this caller does not hold the lock either.
+  let stat; try { stat = await fs.lstat(claim); } catch (error) { if (error.code === 'ENOENT') check(false, 'CACHE_LOCK_CLAIM_LOST'); throw error; }
+  const bytes = stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4096 ? await fs.readFile(claim, 'utf8') : null;
+  if (bytes === null || digest({ bytes }) !== state.sha256 || stat.ino !== state.ino) {
+    await fs.rename(claim, state.file).catch(() => {});
+    check(false, 'CACHE_LOCK_CHANGED_WHILE_RECLAIMED');
+  }
+  await syncDir(root); await syncDir(dir);
+  const receipt = { contract: 'clued.independent-ci.trivy-cache-lock-reclaimed/1', at, lockSha256: state.sha256, lockPid: state.pid, claim: path.basename(claim),
+    stagingToRemove: leftovers.names, proof };
+  const file = path.join(dir, 'lock-' + id + '.json');
+  await durable(file, receipt); await syncDir(dir);
+  const removed = [];
+  for (const name of leftovers.names) { check(STAGING_NAME.test(name), 'CACHE_RECLAIM_NAME_REFUSED'); await removeCacheTree(path.join(root, 'staging', name)); removed.push(name); }
+  await durable(path.join(dir, 'lock-' + id + '.done.json'), { contract: 'clued.independent-ci.trivy-cache-lock-reclaimed-done/1', receipt: path.basename(file), stagingRemoved: removed, at: new Date(clock()).toISOString() });
+  await syncDir(dir);
+  return { ...receipt, stagingRemoved: removed, receipt: path.basename(file) };
+}
+
 // Reclaim after a confirmed promotion (resident Task 4aedda54, DESIGN §35): every promotion left its staging copy and a new
 // generation behind and nothing was ever removed (about +3.3 GB per DB rotation). Now, once the pointer readback confirmed
 // the activation, the kind's staging copies (this promotion's and any earlier leftover; the prepare lock is held, so no
@@ -101,6 +184,10 @@ export async function createActualStorage(root) {
       catch (error) { await handle.close().catch(() => {}); await fs.unlink(file).catch(() => {}); throw error; }
       lock = handle; },
     async unlock(retain) { if (lock) { await lock.close(); lock = null; if (!retain) await fs.unlink(path.join(root, 'prepare.lock')); } },
+    // Generation 10 (readLockState, stagingLeftovers, reclaimStaleLock below).
+    lockState: () => readLockState(root),
+    stagingLeftovers: () => stagingLeftovers(root),
+    reclaimLock: ({ state, leftovers, proof }) => reclaimStaleLock({ root, state, leftovers, proof }),
     async current(kind) {
       const pointer = await readPointer(kind);
       if (!pointer.value) return { pointer, facts: kind === 'db' ? { exists: false, complete: false } : null };
@@ -138,25 +225,61 @@ export async function createActualStorage(root) {
         reclaimed };
     },
   };
-  actualStores.add(storage); return storage;
+  // Frozen before it is branded (review of gen10, round 5): no caller can replace a method of the actual store (its lock handle lives in
+  // the closure, so lock()/unlock() keep working).
+  Object.freeze(storage); actualStores.add(storage); return storage;
 }
 
-async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadline, signal, fixture }) {
-  let retain = false, acquired = false, activationMayHaveStarted = false, phase = 'PREPARATION'; const observations = [];
+// Generation 10: take the lock; a stale one (pid gone, no cache container, staging verifiable) is reclaimed with a receipt, anything
+// else is waited for (bounded) and then refused cleanly. Returns the reclaim receipt or null.
+async function acquireLock({ storage, docker, deadline, signal, hooks }) {
+  const alive = hooks.pidAlive ?? pidAlive, containersNone = hooks.containersNone ?? cacheContainersNone, wait = hooks.sleep ?? sleep, now = hooks.now ?? Date.now;
+  const until = Math.min(now() + LOCK_WAIT_MS, deadline - DB_ATTEMPT_MS - SCAN_RESERVE_MS);
+  let reclaimed = null;
+  for (;;) {
+    try { await storage.lock(); return reclaimed; } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    const state = await storage.lockState();
+    // Released between the two steps: take it now instead of waiting a poll (review of gen10, round 4).
+    if (state === null) { check(!signal?.aborted && now() < until, 'CACHE_PREPARATION_LOCK_BUSY'); continue; }
+    if (state && !reclaimed && state.shape && state.pid !== process.pid && !alive(state.pid) && await containersNone(docker)) {
+      const leftovers = await storage.stagingLeftovers();
+      if (leftovers.verifiable) {
+        // Another preparation claimed it first (its rename won, ours finds no lock): not an error, just try the lock again.
+        try { reclaimed = await storage.reclaimLock({ state, leftovers, proof: { pidGone: true, cacheContainers: 0, stagingVerifiable: true } }); }
+        catch (error) { if (error.code !== 'CACHE_LOCK_CLAIM_LOST') throw error; }
+        continue;
+      }
+    }
+    check(!signal?.aborted && now() + LOCK_POLL_MS < until, 'CACHE_PREPARATION_LOCK_BUSY');
+    await wait(LOCK_POLL_MS);
+  }
+}
+
+async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadline, signal, fixture, hooks = {} }) {
+  let retain = false, acquired = false, activationMayHaveStarted = false, phase = 'PREPARATION', lockReclaimed = null; const observations = [];
+  const runContainer = hooks.runContainer ?? runCacheContainer, now = hooks.now ?? Date.now;
   try {
-    validateChecksBundleShape(checksPin); await storage.lock(); acquired = true;
+    validateChecksBundleShape(checksPin); lockReclaimed = await acquireLock({ storage, docker, deadline, signal, hooks }); acquired = true;
     const existingDb = await storage.current('db'), current = existingDb.facts;
     let decision = databaseDecision({ current }), activeDb = current, dbActivation = null;
     const attempts = [];
     while (decision.status === 'PREPARE_REQUIRED') {
-      check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
+      check(!signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
+      // No time for another attempt and the scan after it: the rest are skipped and the fallback rule decides (generation 10).
+      if (deadline - now() < DB_ATTEMPT_MS + SCAN_RESERVE_MS) {
+        attempts.push({ ...decision.nextAttempt, outcome: 'failure', cleanupConfirmed: true, skipped: 'NO_TIME_LEFT' });
+        decision = databaseDecision({ current, attempts });
+        continue;
+      }
       const stage = await storage.stage('db'), plan = databasePreparationPlan({ stagingDirectory: stage, current: { exists: false } });
       const spec = { ...plan.attempts[attempts.length], image: plan.image, executable: plan.executable };
-      const run = await runCacheContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
-      if (run.outcome === 'unknown' || !run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
-        reason: run.touched ? 'DB_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, fixture, publicationAuthorized: false }; }
-      const facts = run.outcome === 'success' ? await storage.inspect('db', stage) : null;
-      attempts.push({ repository: spec.repository, attempt: spec.attempt, outcome: run.outcome, cleanupConfirmed: run.cleanupConfirmed, ...(facts ? { db: facts } : {}) });
+      const run = await runContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
+      if (!run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
+        reason: run.touched ? 'DB_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, lockReclaimed, fixture, publicationAuthorized: false }; }
+      // Generation 10: the container is gone; whatever made the run unknown (a timeout, a cut connection) left only its own staging copy.
+      const outcome = run.outcome === 'success' ? 'success' : 'failure';
+      const facts = outcome === 'success' ? await storage.inspect('db', stage) : null;
+      attempts.push({ repository: spec.repository, attempt: spec.attempt, outcome, cleanupConfirmed: true, ...(run.outcome === 'unknown' ? { reason: run.reason ?? 'CACHE_EXECUTION_UNKNOWN' } : {}), ...(facts ? { db: facts } : {}) });
       decision = databaseDecision({ current, attempts });
       if (decision.status === 'READY' && decision.source === 'staging') {
         check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
@@ -171,12 +294,18 @@ async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadli
     const existingChecks = await storage.current('checks'); let activeChecks = existingChecks.facts, checksActivation = null;
     try { validateChecksBundle(activeChecks, checksPin); }
     catch {
-      check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
-      const stage = await storage.stage('checks'), spec = checksPreparationPlan({ stagingDirectory: stage, emptyDirectory: storage.empty, checksPin });
-      check(!spec.status, 'REAL_CHECKS_PIN_MISSING');
-      const run = await runCacheContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
-      if (run.outcome === 'unknown' || !run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
-        reason: run.touched ? 'CHECKS_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, fixture, publicationAuthorized: false }; }
+      let stage, run;
+      for (let attempt = 1; ; attempt += 1) {
+        check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
+        stage = await storage.stage('checks'); const spec = checksPreparationPlan({ stagingDirectory: stage, emptyDirectory: storage.empty, checksPin });
+        check(!spec.status, 'REAL_CHECKS_PIN_MISSING');
+        run = await runContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
+        if (!run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
+          reason: run.touched ? 'CHECKS_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, lockReclaimed, fixture, publicationAuthorized: false }; }
+        // Generation 10: removal confirmed: a clean failure (BLOCKED, lock released), whatever made the run unknown. Generation 11: one
+        // more attempt while another attempt and the scan still fit.
+        if (run.outcome === 'success' || attempt >= CHECKS_ATTEMPTS || deadline - now() < CHECKS_ATTEMPT_MS + SCAN_RESERVE_MS) break;
+      }
       check(run.outcome === 'success', 'PINNED_CHECKS_DOWNLOAD_FAILED');
       const facts = await storage.inspect('checks', stage); validateChecksBundle(facts, checksPin);
       check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
@@ -185,7 +314,7 @@ async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadli
       activationMayHaveStarted = false; phase = 'CHECKS_ACTIVATED'; activeChecks = checksActivation.facts;
     }
     return { status: 'READY', fixture, database: activeDb, dbDecision: { ...decision, db: activeDb }, checksBundle: activeChecks,
-      dbActivation, checksActivation, observations, provenanceSha256: digest({ database: activeDb, checks: activeChecks,
+      dbActivation, checksActivation, observations, lockReclaimed, provenanceSha256: digest({ database: activeDb, checks: activeChecks,
         dbActivation, checksActivation, observations }), publicationAuthorized: false, qualificationIssued: false };
   } catch (error) {
     // Phase determines possible activation, including generic EIO/EACCES/ENOENT
@@ -193,7 +322,7 @@ async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadli
     retain ||= activationMayHaveStarted;
     if (activationMayHaveStarted && error.activationPhase) phase += ':' + error.activationPhase;
     return { status: retain ? 'UNCERTAIN' : 'BLOCKED', reason: error.code ?? 'CACHE_PREPARATION_UNCONFIRMED', phase,
-      activationMayHaveStarted, observations, fixture, publicationAuthorized: false };
+      activationMayHaveStarted, observations, lockReclaimed, fixture, publicationAuthorized: false };
   } finally { if (acquired) await storage.unlock(retain); }
 }
 function validateChecksBundleShape(pin) {
@@ -201,8 +330,12 @@ function validateChecksBundleShape(pin) {
     && pin.majorVersion === 2 && /^[a-f0-9]{64}$/.test(pin.contentSha256 ?? ''), 'REAL_CHECKS_BUNDLE_PIN_REQUIRED');
 }
 const boundedContext = context => { check(context && Object.keys(context).every(key => ['deadline', 'signal'].includes(key)) && Number.isFinite(context.deadline), 'FIXED_CACHE_CONTEXT_REQUIRED'); return context; };
+// The actual port takes its four inputs once, at construction, into a frozen copy: a later change to the caller's options object (a
+// hook, another storage or docker client) never reaches prepare (review of gen10, round 4). Test hooks are refused outright.
 export function actualCachePort(options) {
+  check(options?.hooks === undefined, 'ACTUAL_CACHE_HOOKS_REFUSED');
   check(actualStores.has(options.storage) && isActualDockerClient(options.docker), 'ACTUAL_PROTECTED_CACHE_TRANSPORT_REQUIRED');
-  return Object.freeze({ fixture: false, prepare: context => prepare({ ...options, ...boundedContext(context), fixture: false }) });
+  const fixed = Object.freeze({ storage: options.storage, docker: options.docker, dockerRootDirectory: options.dockerRootDirectory, checksPin: structuredClone(options.checksPin) });
+  return Object.freeze({ fixture: false, prepare: context => prepare({ ...fixed, ...boundedContext(context), fixture: false, hooks: {} }) });
 }
 export function fixtureCachePort(options) { return Object.freeze({ fixture: true, prepare: context => prepare({ ...options, ...boundedContext(context), fixture: true }) }); }

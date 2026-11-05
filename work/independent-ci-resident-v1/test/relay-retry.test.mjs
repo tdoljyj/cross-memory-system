@@ -38,7 +38,10 @@ test('the classification table, row by row; anything it does not name is PERMANE
     [NO_WSL, 'NO_CHILD'],
     // CHILD_FAILED: the child ran and failed at the wsl/VM layer, or with a transient errno in an early stage
     [VM_FLAP, 'CHILD_FAILED'],
-    ...['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT'].flatMap(reason => ['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']
+    ...['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'EAGAIN', 'ENOMEM', 'ETIMEDOUT', 'FORMAL_RELAY_STDIN_TIMEOUT'].flatMap(reason => ['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']
+      .map(stage => [childError(reason, stage), 'CHILD_FAILED'])),
+    // ... or a refusal by the bridge protocol's time checks, made before the child writes (DESIGN §47): a clock difference between the hosts
+    ...['BRIDGE_ISSUE_EXPIRED', 'BRIDGE_CHALLENGE_EXPIRED', 'BRIDGE_RESPONSE_EXPIRED', 'BRIDGE_BLOCKED_TIME_INVALID'].flatMap(reason => ['CONTEXT', 'BINDING']
       .map(stage => [childError(reason, stage), 'CHILD_FAILED'])),
     // AMBIGUOUS: may have written
     [CUT, 'AMBIGUOUS'],
@@ -47,6 +50,11 @@ test('the classification table, row by row; anything it does not name is PERMANE
     [failure('EXISTING_RECORD_PRESERVED_NO_RETRY'), 'EXISTING'],
     // PERMANENT: a transient errno in a later stage, any other reason, identity and record failures, runner refusals
     ...['BINDING', 'RECORD', 'COMPLETE'].map(stage => [childError('EBUSY', stage), 'PERMANENT']),
+    ...['BRIDGE_ISSUE_EXPIRED', 'BRIDGE_RESPONSE_EXPIRED'].flatMap(reason => ['OPERATION', 'STDIN', 'TRANSPORT', 'PACKET', 'RECORD', 'COMPLETE']
+      .map(stage => [childError(reason, stage), 'PERMANENT'])), // time codes only where the child has not written yet
+    // a code relay-public.ps1 could not name, and the other bridge refusals (identity, binding, claim): final, as before
+    ...['FORMAL_RELAY_CODE_UNLISTED', 'BRIDGE_ISSUE_BINDING_REQUIRED', 'BRIDGE_RESPONSE_BINDING_CHANGED', 'BRIDGE_ISSUE_EXCEEDS_CLAIM', 'BRIDGE_TIME_INVALID']
+      .flatMap(reason => ['CONTEXT', 'BINDING'].map(stage => [childError(reason, stage), 'PERMANENT'])),
     [childError('FIXED_FORMAL_RELAY_SEQUENCE_REQUIRED', 'OPERATION'), 'PERMANENT'],
     [childError('EACCES', 'TRANSPORT'), 'PERMANENT'],
     ...['FORMAL_SPOOL_ACL_REFUSED', 'PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY', 'PUBLIC_READY_CHANGED', 'PUBLIC_RECORD_BYTES_CHANGED', 'EXACT_BRIDGE_SOURCE_REQUIRED', 'PUBLIC_CHILD_REFUSED_NO_RETRY']
@@ -93,6 +101,28 @@ test('a fast Receive* failure at the wsl/VM layer is retried within its budget, 
   assert.deepEqual(f.sleeps, [3000]);
   assert.ok(f.calls.filter(x => x.mode === 'ReceiveResult').every(x => x.timeoutMs === RELAY_TIMEOUT_MS));
   assert.deepEqual(f.logs.map(e => [e.mode, e.attempt, e.class]), [['ReceiveResult', 1, 'CHILD_FAILED'], ['ReceiveResult', 2, 'OK']]);
+});
+
+// 2026-11-04, PR #992 (DESIGN §47): a SendIssue refused by a time check was PERMANENT and ended the stage (BRIDGE_ABANDONED_UNPUBLISHED).
+test('a SendIssue or SendResponse the child refused on a time check, before writing, is retried like any child failure', async t => {
+  for (const [mode, reason, where] of [['SendIssue', 'BRIDGE_ISSUE_EXPIRED', 'CONTEXT'], ['SendResponse', 'BRIDGE_RESPONSE_EXPIRED', 'BINDING'], ['SendResponse', 'BRIDGE_CHALLENGE_EXPIRED', 'BINDING']]) {
+    const clockRefusal = childError(reason, where);
+    const f = await companion(t, (m, n) => ({ [mode]: n === 1 ? clockRefusal : OK, pgrep: { code: 1, stdout: '' }, incoming: { code: 0, stdout: '' } })[m]);
+    assert.equal(await f.c.relay(mode, mode === 'SendIssue' ? 0 : 1, { ...stage, challengeDeadline: async () => T0 + 600_000 }), true, mode);
+    assert.equal(attempts(f.calls, mode), 2, mode);
+    assert.deepEqual(f.logs.map(e => [e.mode, e.attempt, e.class]), [[mode, 1, 'CHILD_FAILED'], [mode, 2, 'OK']]);
+    assert.deepEqual(f.logs[0].receipt.childError, { reason, stage: where });
+  }
+  // the retry settles by the target: if the record is already there it is not imported twice, and half a record is kept
+  let f = await companion(t, m => ({ SendIssue: childError('BRIDGE_ISSUE_EXPIRED', 'CONTEXT'), pgrep: { code: 1, stdout: '' }, incoming: { code: 0, stdout: 'issue.json\nissue.ready.json\n' } })[m]);
+  assert.equal(await f.c.relay('SendIssue', 0, stage), true);
+  assert.equal(attempts(f.calls, 'SendIssue'), 1);
+  f = await companion(t, m => ({ SendIssue: childError('BRIDGE_ISSUE_EXPIRED', 'CONTEXT'), pgrep: { code: 1, stdout: '' }, incoming: { code: 0, stdout: 'issue.json\n' } })[m]);
+  await assert.rejects(f.c.relay('SendIssue', 0, stage), e => e.code === 'RELAY_PARTIAL_RECORD_PRESERVED' && e.permanent === true);
+  // a refusal that does not go away ends after the attempts of the call (3 for SendIssue), not before and not after, and is not permanent
+  f = await companion(t, m => ({ SendIssue: childError('BRIDGE_ISSUE_EXPIRED', 'CONTEXT'), pgrep: { code: 1, stdout: '' }, incoming: { code: 0, stdout: '' } })[m]);
+  await assert.rejects(f.c.relay('SendIssue', 0, stage), e => e.code === 'RELAY_REFUSED_NO_RETRY' && e.permanent === false);
+  assert.equal(attempts(f.calls, 'SendIssue'), 3);
 });
 
 test('attempts and gaps per call: 3 for SendIssue, ReceiveResult, ReceiveBlocked (3 s, 8 s); 2 for ReceiveChallenge (3 s) and SendResponse (2 s)', async t => {

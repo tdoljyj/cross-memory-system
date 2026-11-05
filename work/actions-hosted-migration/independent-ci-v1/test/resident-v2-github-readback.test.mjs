@@ -152,7 +152,9 @@ test('stage 1: a read-back that is not complete refuses before Native (fail clos
     github.readAppChecks = async () => { throw Object.assign(new Error(code), { code }); };
     const { pub, admission } = await stageOne(t, github);
     const r = await pub.publish(jobsFor()['work-admission']);
-    assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', code, 0, false]);
+    // DESIGN 49: a GitHub read that outlived the bounded read retry (github_transport_unconfirmed, github_http_5xx) wrote and recorded nothing, so
+    // the entry says it is safe to re-run and the resident releases the head; an incomplete or unconfirmed inventory is a refusal and stays false.
+    assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', code, 0, code === 'github_transport_unconfirmed']);
     assert.equal(admission.calls, 0);
     assert.equal(github.calls.createCheck, 0);
   }
