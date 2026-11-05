@@ -336,6 +336,19 @@ LEGACY_HOSTED_DEBT = {
 # these bytes, is admitted, and an entry fails once its job leaves hosted
 # runners or is gone.
 OWNER_DECISION_HOSTED_SOURCE = "325717a6"
+# Explicit candidate successor for the two existing executor jobs only. No new
+# runner, trigger, timeout, billable store or job is added; push execution is
+# narrowed to PRs. Three read permissions let the fresh OIDC/Native start door
+# verify actual job/check/PR facts. Exact protected-head Grant is still required
+# before merging this Source; this table never activates hosted execution.
+HOSTED_SCAN_START_SUCCESSOR = {
+    "decision": "41ab823a",
+    "frozen_commit": "956078fcec98844ab9be05e857fe4f53b3372fc4",
+    "previous_pins": {
+        "gitleaks.yml": ["f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b", "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"],
+        "trivy.yml": ["57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9", "658cfd509399200a62f4493f4830abf1426b5457fd11a9788ec67c8991f2c71e"],
+    },
+}
 OWNER_DECISION_HOSTED_JOBS = {
     "contract-placement.yml": {
         "control_sha256": "9043db3a2c533c54ac60804a543c80ae79f062109d3322e60b58eb50b749542d",
@@ -345,10 +358,10 @@ OWNER_DECISION_HOSTED_JOBS = {
         }
     },
     "gitleaks.yml": {
-        "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
+        "control_sha256": "f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"
+            "gitleaks-trusted-self-hosted": "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea"
         }
     },
     "trivy.yml": {
