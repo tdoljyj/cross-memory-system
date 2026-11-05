@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.0';
+export const COMPONENT_VERSION='1.0.1';
 export const NON_PR_CONTROL_SOURCE_PATH='scripts/ci/clued-non-pr-control-sources.json';
 export const NON_PR_CONTROL_SOURCE_SCHEMA='clued.non-pr-control-sources/1';
 export const NON_PR_CONTROL_MAX_BYTES=524288;
@@ -13,9 +13,9 @@ const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).for
 export const NON_PR_CONTROL_FILES=freeze({
   ".github/workflows/clued-compute-panel.yml": {
     "family": "compute_panel",
-    "workflow_blob": "e064a36182b8b18da6a8da2f9246b3401ff99b9e",
-    "source_sha256": "87407648f6d212fdf8e1897545e841dabd1a8023e60f4db71df34866c084d3bf",
-    "workflow_definition_sha256": "5e09f26e96c53a8b6343648e9dd8e439ec84f68edef330c33c934833e87ea077",
+    "workflow_blob": "055480696e936490b230f858f5844091068ece89",
+    "source_sha256": "33d6f862228da76ce85e71caf83a65f5096df152a1fbee62aefa844a0d5e270a",
+    "workflow_definition_sha256": "491b4b75a4c9030ee8b7d3a5015aefdf6270eadd65336e7f773711f8fd7a0112",
     "triggers": [
       "schedule",
       "workflow_dispatch"
@@ -28,7 +28,7 @@ export const NON_PR_CONTROL_FILES=freeze({
       "probe-company-linux-04": "2889c0581442422edd9901e83fee231d819281748add922af1d22d59627331a0",
       "probe-company-win-01": "4cc4f1e6c8c9a114cd81c11e1591ed3fa3312131d4a602b4bf39439eadbbf187",
       "probe-home-win-01": "4453ef9a9af1b2e3f705af656e5bbd8a84f789c4b571d369c015c175723c696b",
-      "panel": "04ecb082214ad9fbb93f7c2c4ea33fa2e6fc3ebc602c136b003b1435d897a4dc"
+      "panel": "f6dab50b88823d3dc0e6a7901024d73956582a7a422525084348f52d258b1150"
     }
   },
   ".github/workflows/clued-native617-admission-dispatch.yml": {
