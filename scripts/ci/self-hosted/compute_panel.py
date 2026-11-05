@@ -79,6 +79,7 @@ DUP_FAILED_WAIT = timedelta(minutes=15)  # after a failed scan, wait this long b
 DUP_NAME = 80                          # characters kept of a check's key and label (an unbounded name could overfill the issue body)
 DUP_RUNNING = timedelta(minutes=10)    # a run still in progress counts once it has run this long (a cancelled copy dies sooner)
 DUP_SKIP_CODES = (404, 410, 422)       # a head GitHub cannot return (gone, unprocessable) is skipped, not fatal
+ISSUE_LIMIT = 65536                    # characters an issue body may have
 DUP_BODY_LIMIT = 60000                 # shrink the saved duplicates when the issue body would pass this (the limit is 65536)
 SLEEP = time.sleep
 DUP_RUNS_SHOWN = 4
@@ -805,6 +806,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     settled: dict[str, str] = {}
     found: list[dict] = []
     heads = skipped = 0
+    skipped_heads: list[str] = []
     for pull in pulls:
         if (parse_time(pull.get("updated_at")) or now) < floor:
             continue
@@ -823,6 +825,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
             if error.code not in DUP_SKIP_CODES:
                 raise
             skipped += 1  # this head cannot be read; what was found before stays
+            skipped_heads.append(sha[:12])
             found.extend(item for item in old_found if item["head"] == sha[:12])
             continue
         heads += 1
@@ -830,6 +833,8 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         ended = parse_time(pull.get("merged_at")) or parse_time(pull.get("closed_at")) or parse_time(pull.get("updated_at"))
         if closed and ended is not None and now - ended >= DUP_RESCAN:
             settled[key] = str(pull.get("updated_at"))
+    if skipped and not heads:
+        raise RuntimeError(f"所有 {skipped} 个提交都读不到")  # nothing was read: a failed scan, not an empty one
     best: dict[tuple[str, str], dict] = {}
     for item in found:  # a head shared by two PRs, or read twice, is one finding per check: the larger count wins
         old = best.get((item["head"], item["check"]))
@@ -838,7 +843,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     found = [item for item in best.values() if (parse_time(item["last"]) or now) >= floor]
     found.sort(key=lambda item: item["last"], reverse=True)
     return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "skipped": skipped,
-            "total": len(found), "found": found, "settled": settled}
+            "skipped_heads": skipped_heads[:50], "total": len(found), "found": found, "settled": settled}
 
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
@@ -1034,10 +1039,17 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             state.pop("duplicates_failed_at", None)
             first_scan = not duplicates.get("as_of")
             items = scanned["found"]
+            # Heads that could not be read in the first scan, or since, are "quiet": what they show once readable is
+            # old news, recorded without an announcement.
+            was_quiet = set(duplicates.get("quiet") or [])
+            unreadable = set(scanned.pop("skipped_heads", []))
+            scanned["quiet"] = sorted(unreadable if first_scan else was_quiet & unreadable)[:50]
             state["duplicates"] = duplicates = pack_duplicates(scanned)
             if first_scan:
                 # The first scan records what is already there and announces none of it.
                 mark_announced(state, [duplicate_key(item) for item in items])
+            else:
+                mark_announced(state, [duplicate_key(item) for item in items if item["head"] in was_quiet - unreadable])
     events: dict[str, str] = {}
     for item in items:
         key = duplicate_key(item)
@@ -1131,6 +1143,9 @@ def main() -> int:
         if len(body) <= DUP_BODY_LIMIT:
             break
         shrink_duplicates(state, level)  # the body must stay under the issue limit, or no update could be written
+        body = render(report, state)
+    if len(body) > ISSUE_LIMIT - 500:
+        report["errors"].append(f"正文 {len(body)} 字符，接近 Issue 上限 {ISSUE_LIMIT}")
         body = render(report, state)
     comment = alert_comment(new, resolved, os.environ.get("GITHUB_REPOSITORY_OWNER"), events)
     if issue is None:

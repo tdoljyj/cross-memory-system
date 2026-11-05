@@ -291,11 +291,14 @@ class MaintenanceTelemetryTests(unittest.TestCase):
         self.assertEqual(old[NAME]["maintenance"]["status"], "ok")
 
 
+_IDS = iter(range(1, 10**9))
+
+
 def check(name: str, started_min_ago: float, conclusion: str | None = "success", *, external: str | None = None,
           run: int | None = None, app: str = "github-actions", status: str | None = None) -> dict:
     """A check run as GitHub returns it: a resident one has an independent-ci external_id, a hosted one a run URL."""
     return {
-        "id": int(started_min_ago * 1000) + len(name), "name": name, "app": {"id": 1, "slug": app, "name": app, "description": "d" * 100},
+        "id": next(_IDS), "name": name, "app": {"id": 1, "slug": app, "name": app, "description": "d" * 100},
         "status": status or ("completed" if conclusion else "in_progress"), "conclusion": conclusion,
         "started_at": at(started_min_ago), "completed_at": at(started_min_ago - 1) if conclusion else None,
         "external_id": external,
@@ -902,6 +905,34 @@ class DuplicateReviewTests(unittest.TestCase):
         self.assertIsNotNone(panel.real_run(check("gitleaks-hosted-executor", 30, None, run=11), WORKFLOWS, NOW))
 
 
+    def test_when_no_head_can_be_read_the_scan_fails_and_the_first_scan_stays_quiet(self) -> None:
+        state: dict = {"events_at": panel.iso(NOW)}
+        everything = [panel.RequestError("GET failed (404)", 404)] * 20
+        report = panel.build(FailRules([pull(1, SHA), pull(2, "b" * 40)], {SHA: self.dup, "b" * 40: self.dup},
+                                       rules=[("check-runs", everything)]), NOW, state)
+        self.assertNotIn("duplicates", state)  # not recorded as a scan: the first one is still to come
+        self.assertEqual(state["duplicates_failed_at"], panel.iso(NOW))
+        self.assertTrue(any("都读不到" in error for error in report["errors"]))
+
+    def test_heads_unreadable_in_the_first_scan_are_recorded_quietly_when_they_become_readable(self) -> None:
+        state: dict = {"events_at": panel.iso(NOW)}
+        pulls = [pull(1, SHA), pull(2, "b" * 40), pull(3, "c" * 40)]
+        checks = {SHA: self.dup, "b" * 40: self.dup, "c" * 40: self.dup}
+        panel.build(FailRules(pulls, checks, rules=[("b" * 40, [panel.RequestError("gone", 404)] * 5)]), NOW, state)
+        self.assertEqual((state["duplicates"]["skipped"], state["duplicates"]["quiet"]), (1, ["b" * 12]))
+        # the head is readable an hour later: its old duplicate is recorded, not announced; a new one is
+        newer = pulls + [pull(4, "d" * 40)]
+        report = panel.build(BuildClient(newer, {**checks, "d" * 40: self.dup}), NOW + timedelta(hours=1), state)
+        fresh = [key for key in report["events"] if key.startswith("dup:")]
+        self.assertEqual(len(fresh), 1)
+        self.assertIn("d" * 12, fresh[0])
+        self.assertEqual(state["duplicates"]["quiet"], [])
+
+    def test_check_run_ids_are_unique_so_page_deduplication_never_drops_a_real_run(self) -> None:
+        ids = [check("gitleaks", 5)["id"] for _ in range(50)]
+        self.assertEqual(len(set(ids)), 50)
+
+
 class MainClient(BuildClient):
     """The whole API main() talks to: an issue that is created, edited and commented on."""
 
@@ -977,6 +1008,33 @@ class DuplicateMainTests(unittest.TestCase):
         self.run_main(store, pulls, checks, NOW + timedelta(hours=2))
         self.assertEqual(panel.read_state(store["issue"]["body"])["duplicates"]["total"], len(pulls))
         self.assertLess(len(store["issue"]["body"]), 65536)
+
+    def test_the_worst_case_with_long_names_fits_the_issue_only_because_of_the_guard(self) -> None:
+        from unittest import mock
+        name = "w" * 250
+        dup = [resident(name, 50), resident(name, 40, attempt=2)]
+        count = panel.DUP_KEEP + panel.DUP_MAX + 30
+        shas = [f"{i:04x}" + "a" * 36 for i in range(count)]
+        pulls = [{**pull(i + 1, sha, "closed", 2 * 24 * 60), "title": "T" * 300} for i, sha in enumerate(shas)]
+        checks = {sha: dup for sha in shas}
+        original = panel.read_state
+
+        def crowded(body):
+            state = original(body)
+            panel.mark_announced(state, [f"dup:old{i}:x:2" for i in range(2 * panel.DUP_ANNOUNCED)])
+            panel.mark_announced(state, [f"failed:{i:04d}:{'f' * 40}:company-linux-01" for i in range(400)])
+            return state
+
+        sizes = {}
+        for label, limit in (("unguarded", 10 ** 9), ("guarded", panel.DUP_BODY_LIMIT)):
+            store: dict = {"comments": []}
+            with mock.patch.object(panel, "read_state", crowded), mock.patch.object(panel, "DUP_BODY_LIMIT", limit):
+                self.run_main(store, pulls, checks, NOW)
+                self.run_main(store, pulls, checks, NOW + timedelta(hours=1))
+            sizes[label] = len(store["issue"]["body"])
+        self.assertGreater(sizes["unguarded"], panel.ISSUE_LIMIT)  # the guard is what keeps the update writable
+        self.assertLessEqual(sizes["guarded"], panel.DUP_BODY_LIMIT)
+        self.assertEqual(panel.read_state(store["issue"]["body"])["duplicates"]["total"], count)
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "compute-panel-duplicate-runs.json"
