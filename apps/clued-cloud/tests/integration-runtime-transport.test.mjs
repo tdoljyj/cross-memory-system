@@ -1,4 +1,4 @@
-import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -127,7 +127,7 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     const closeout=await findGatewayCloseoutMigration(root);
     await assertGatewayCloseoutBoundary(admin);
     const callerCatalog=await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog);
     await assertGatewayCloseoutBoundary(admin);
     // test-only registry rows (§13.0)

@@ -1,4 +1,4 @@
-import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -1765,7 +1765,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
     assert.equal((await native({ op: 'list' })).integrations.length, 2);
     const closeout=await findGatewayCloseoutMigration(root);
     const callerCatalog=await snapshotCallerCatalog(db);
-    await db.query(await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
+    await replayGatewayCloseout(db, await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'G6 replay preserves the no-P5 shape');
     await assertGatewayCloseoutBoundary(db);
   } finally {

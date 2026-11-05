@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "53",
+      "version": "54",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "3e70535d7dba877afd399c4f571d9690086d61ee2cd1498a2937de5f9e44c982",
+      "content_sha256": "f81a38bd517ec0164bf64e6a39f8ef24712d091e0c96e757b0d18e59194ec9d4",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.4",
+      "version": "1.1.5",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "edc72d1ebce036a2802de5e2b6bf0980599c6119eb2d546fd02a8b350fb66993"
+      "content_sha256": "7b59679308e3c5231e107f539b772bff2f45438ea3ed2b1790c8ce7b0a705381"
     },
     {
       "id": "script.resource-maintenance",

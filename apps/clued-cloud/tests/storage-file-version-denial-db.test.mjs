@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import EmbeddedPostgres from "embedded-postgres";
 import test from "node:test";
-import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, snapshotCallerCatalog, findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from "./worker-gateway-caller-fixture.mjs";
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, snapshotCallerCatalog, findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary, replayGatewayCloseout } from "./worker-gateway-caller-fixture.mjs";
 
 async function freePort() {
   const server = net.createServer();
@@ -37,7 +37,7 @@ test("file-version diagnosis on the current full migration chain remains read-on
       try { await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8")); }
       catch (error) { throw new Error("Migration " + name + ": " + error.message, { cause: error }); }
     }
-    await admin.query(await fs.readFile(path.join(migrationDir, closeout), "utf8"));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(migrationDir, closeout), "utf8"));
     await assertGatewayCloseoutBoundary(admin);
     const acl = async () => (await admin.query("select proacl::text,prosecdef,proconfig from pg_proc where oid='public.clued_resource_center_authority_v1(text,jsonb)'::regprocedure")).rows;
     const beforeAcl = await acl();
@@ -85,7 +85,7 @@ test("file-version diagnosis on the current full migration chain remains read-on
     });
     await t.test("historical diagnosis closes with sealed G6 replay before current authorization successors", async () => {
       const historicalCatalog = await snapshotCallerCatalog(admin);
-      await admin.query(await fs.readFile(path.join(migrationDir, closeout), "utf8"));
+      await replayGatewayCloseout(admin, await fs.readFile(path.join(migrationDir, closeout), "utf8"));
       assert.deepEqual(await snapshotCallerCatalog(admin), historicalCatalog,
         "actual sealed closeout replay preserves historical definitions and caller ACLs");
       await assertGatewayCloseoutBoundary(admin);
