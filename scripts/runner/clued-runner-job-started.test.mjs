@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 
 import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
-import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, OBSERVATION_ATTEMPT_MS, READ_ALLOWANCE_MS, READ_ATTEMPTS, READ_ATTEMPT_MS, READ_RETRY_DELAYS_MS, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, retryingFetch, shortCheckFindings, waitLimitSeconds, workflowPathOf } from "./clued-runner-job-started.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -84,7 +84,8 @@ function fakeFetch(script) {
     calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
     const key = Object.keys(script).filter((k) => String(url).startsWith(k)).sort((a, b) => b.length - a.length)[0];
     const r = key ? (typeof script[key] === "function" ? script[key]() : script[key]) : { status: 500, body: null };
-    return { status: r.status ?? 200, json: async () => r.body };
+    // a real Response: the hook reads every body with text() (review of 1.0.2, round 2)
+    return new Response(JSON.stringify(r.body ?? null), { status: r.status ?? 200 });
   };
   return { fetchImpl, calls };
 }
@@ -342,7 +343,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-native-admission-v1");
+  assert.equal(HOOK_VERSION, "work-handover-native-admission-retry-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -555,7 +556,9 @@ test("runner hook (Decision 77216370): a re-run of an old head, a closed or a re
       assert.equal(result.allow, false, `${kind}: ${label}`);
       assert.match(result.reason, /^pull request #9, run attempt 2: /);
       assert.match(result.reason, reason, `${kind}: ${label}`);
-      assert.deepEqual(urls(calls), [RUN, PULLS], `${kind}: ${label}: nothing else is read`);
+      // a 500 and a transport failure are transient: the read is tried again (READ_ATTEMPTS in all), then refuses as before
+      const reads = ["500", "transport"].includes(label) ? READ_ATTEMPTS : 1;
+      assert.deepEqual(urls(calls), [RUN, ...Array(reads).fill(PULLS)], `${kind}: ${label}: nothing else is read`);
     }
   }
   // An event without a usable number or head refuses without asking GitHub.
@@ -880,8 +883,216 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // The numeric registry binds the immutable source, so the primary copy must match every raw byte.
 test("primary runner matches the exact immutable numeric successor candidate; equality is not deployment acceptance", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.1");
+  assert.equal(COMPONENT_VERSION, "1.0.2");
   const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
-  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
+  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs", import.meta.url));
   assert.deepEqual(primary, source);
+  // the predecessor stays, byte for byte, for rollback and its own qualifier pin
+  const previous = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
+  assert.match(previous.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.1";/);
+});
+
+// ---- Transient reads (work-handover-native-admission-retry-v1, component 1.0.2; Task 5cee3629) ----
+// Network cuts simulated by the fake fetch: a throw is a rejected fetch (ECONNRESET), a 503 a gateway answer.
+const cut = (failures, answer, error = () => { throw new Error("ECONNRESET"); }) => {
+  let calls = 0;
+  const fn = () => { calls += 1; return calls <= failures ? error() : answer; };
+  fn.count = () => calls;
+  return fn;
+};
+
+test("transient reads: the Native kooyumi-work-admission read cut by the network is read again within the wait and admits", async () => {
+  // poll 1: three attempts cut; poll 2: one more cut, then the check
+  const native = cut(4, { body: { total_count: 1, check_runs: [nativeCheck()] } });
+  const { result, sleeps } = await run({}, { ...nativeScript(nativeCheck()), [NATIVE]: native });
+  assert.equal(result.allow, true, result.reason);
+  assert.match(result.reason, /Native admission 80: succeeded/);
+  assert.equal(native.count(), 5);
+  assert.deepEqual(sleeps, [...READ_RETRY_DELAYS_MS, 10_000, READ_RETRY_DELAYS_MS[0]]);
+});
+
+test("transient reads: a 503 that lasts the whole wait refuses with that failure (fail closed); 403 and malformed are final at once", async () => {
+  const always = cut(Infinity, null, () => ({ status: 503, body: null }));
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: always }), /returned 503/);
+  // CLUED_RUNNER_HOOK_WAIT_SECONDS 20: polls at 0, 10 and 20 s, three attempts each
+  assert.equal(always.count(), 3 * READ_ATTEMPTS);
+  const forbidden = cut(Infinity, null, () => ({ status: 403, body: null }));
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: forbidden }), /returned 403/);
+  assert.equal(forbidden.count(), 1, "403 is not tried again");
+  const malformed = cut(0, { body: { total_count: 1, check_runs: "x" } });
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: malformed }), /incomplete or malformed/);
+  assert.equal(malformed.count(), 1);
+  // the producer state read is a single call: a cut longer than its attempts refuses
+  const producer = cut(Infinity, null);
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: producer }), /ECONNRESET/);
+  assert.equal(producer.count(), READ_ATTEMPTS);
+});
+
+test("transient reads: the legacy admission run and a re-run's admission-gate job are polled through a cut", async () => {
+  const runs = cut(3, admissionRuns(admissionRun()));
+  const legacy = await run({}, { [COMPARE]: files(".github/workflows/gitleaks.yml"), [ADMISSION_RUNS]: runs });
+  assert.equal(legacy.result.allow, true, legacy.result.reason);
+  assert.equal(runs.count(), 4);
+  const jobs = cut(3, jobsOf(gateJob(), heavyJob()));
+  const gate = await rerun(2, HEAVY, { [JOBS(2)]: jobs });
+  assert.equal(gate.result.allow, true, gate.result.reason);
+  assert.equal(jobs.count(), 4);
+  // a cut that outlasts the wait still refuses the re-run, naming the failure
+  const gone = cut(Infinity, null);
+  const refused = await rerun(2, HEAVY, { [JOBS(2)]: gone });
+  assert.equal(refused.result.allow, false);
+  assert.match(refused.result.reason, /cannot read attempt 2's jobs \(ECONNRESET\); re-run refused/);
+});
+
+test("transient reads: the App token mint and the execution_current observation are tried again; a write never is", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const INSTALLATION = "https://api.github.com/repos/o/r/installation";
+  const MINT = "https://api.github.com/app/installations/77/access_tokens";
+  const mint = cut(2, { status: 201, body: { token: "ghs_app" } }, () => ({ status: 502, body: null }));
+  const fake = fakeFetch({ [INSTALLATION]: { body: { id: 77 } }, [MINT]: mint, [RUN]: thisRun(), [COMPARE]: files("apps/x.ts") });
+  const result = await decide({ env: env({ CLUED_RUNNER_HOOK_APP_ID: "4242", CLUED_RUNNER_HOOK_APP_KEY_FILE: "/app.pem" }), fetchImpl: fake.fetchImpl,
+    readFile: (p) => (p === "/app.pem" ? pem : prEvent()), sleep: async () => {} });
+  assert.equal(result.allow, true, result.reason);
+  assert.equal(mint.count(), 3);
+  // the execution_current observation
+  const { url, key } = resolvePublicSupabaseConfig({}, path.resolve(import.meta.dirname, "../.."));
+  const rpc = `${url}/rest/v1/rpc/clued_work_verify_v1`;
+  const config = `${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`;
+  const observation = cut(1, { body: { status: "ok", guard_required: true, epoch_current: true } });
+  const epoch = fakeFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()),
+    [config]: { body: { type: "file", encoding: "base64", content: Buffer.from(`return { url: "${url}", key: "${key}" };`).toString("base64") } },
+    [rpc]: observation });
+  const current = await decideWithCurrentEpoch({ env: env(), fetchImpl: epoch.fetchImpl, sleep: async () => {}, readFile: p => p === "/token" ? "ghp_read" : prEvent() });
+  assert.equal(current.allow, true, current.reason);
+  assert.equal(observation.count(), 2);
+  // the wrapper itself: only reads (GET, or a POST its caller marks) are tried again; wrapping twice adds nothing; every attempt has a
+  // time bound of its own, a new one each time; the read marks never reach the network
+  const seen = [];
+  const raw = async (u, init) => { seen.push([init.method ?? "GET", String(u), init.signal, Object.hasOwn(init, "retryRead") || Object.hasOwn(init, "attemptMs")]);
+    return { status: 503, json: async () => null }; };
+  const wrapped = retryingFetch(raw, { sleep: async () => {} });
+  assert.equal(retryingFetch(wrapped), wrapped);
+  assert.equal((await wrapped("https://api.github.com/repos/o/r/issues", { method: "POST" })).status, 503);
+  assert.equal((await wrapped(rpc, { method: "POST" })).status, 503, "the RPC URL alone does not make a read");
+  assert.equal(seen.length, 2, "a POST that is not marked as a read is never repeated");
+  assert.equal((await wrapped("https://api.github.com/repos/o/r/pulls/9", {})).status, 503);
+  assert.equal((await wrapped(rpc, { method: "POST", retryRead: true, attemptMs: OBSERVATION_ATTEMPT_MS })).status, 503);
+  assert.equal(seen.length, 2 + 2 * READ_ATTEMPTS);
+  const signals = seen.slice(2).map(([, , signal]) => signal);
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal), "a time bound per attempt");
+  assert.equal(new Set(signals).size, signals.length, "a new one each attempt");
+  assert.ok(seen.every(([, , , marks]) => !marks), "retryRead and attemptMs are not sent");
+  const rejecting = retryingFetch(async () => { throw new TypeError("fetch failed"); }, { sleep: async () => {} });
+  await assert.rejects(rejecting("https://api.github.com/x", {}), (error) => error.transient === true && /fetch failed/.test(error.message));
+  assert.equal(READ_RETRY_DELAYS_MS.length, READ_ATTEMPTS - 1);
+  assert.equal(waitLimitSeconds({}), 480);
+  assert.equal(waitLimitSeconds({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "20" }), 20);
+});
+
+// ---- the clock (review of 1.0.2: MAJOR-1, MAJOR-2, MINOR-1, MINOR-2) ----
+// A fake clock: sleeps advance it; an attempt that hangs advances it by its own time bound and fails as AbortSignal.timeout would.
+function clockFor(startMs) {
+  let clock = startMs;
+  const h = { now: () => clock, sleep: async (ms) => { clock += ms; }, timeoutSignal: (ms) => ({ fakeTimeoutMs: ms }), bounds: [] };
+  h.hang = (init) => { h.bounds.push(init.signal.fakeTimeoutMs); clock += init.signal.fakeTimeoutMs; throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); };
+  h.elapsed = () => clock - startMs;
+  return h;
+}
+// fakeFetch, with `intercept(url, init)` answering first (undefined: the script answers).
+function clockedFetch(script, intercept) {
+  const base = fakeFetch(script);
+  return { calls: base.calls, fetchImpl: async (url, init) => { const r = await intercept(String(url), init); return r === undefined ? base.fetchImpl(url, init) : r; } };
+}
+const decideAt = (h, fake, overrides = {}) => decide({ env: env(overrides), fetchImpl: fake.fetchImpl, now: h.now, sleep: h.sleep, timeoutSignal: h.timeoutSignal,
+  readFile: (p) => (p === "/token" ? "ghp_read\n" : prEvent()) });
+
+test("clock: a Native check that completed while its read was tried again is judged at the time it was seen, and admits (MAJOR-1)", async () => {
+  const h = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  // the first read hangs for its full 30 s; the check completed 20 s after the run was created, inside that hang
+  const late = nativeCheck({ completed_at: new Date(Date.parse(RUN_CREATED) + 20_000).toISOString() });
+  let hung = false;
+  const fake = clockedFetch({ [RUN]: thisRun(), ...nativeScript(late) }, (url, init) => {
+    if (url.startsWith(NATIVE) && !hung) { hung = true; return h.hang(init); }
+    return undefined;
+  });
+  const result = await decideAt(h, fake);
+  assert.equal(result.allow, true, result.reason);
+  assert.deepEqual(h.bounds, [READ_ATTEMPT_MS]);
+});
+
+test("clock: a check-runs endpoint that never answers ends the wait by the clock, inside twice the wait plus the read allowance (MAJOR-2)", async () => {
+  const h = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  const fake = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url, init) => (url.startsWith(NATIVE) ? h.hang(init) : undefined));
+  await assert.rejects(decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), (error) => error.name === "TimeoutError" && error.transient === true);
+  const oneCall = READ_ATTEMPTS * READ_ATTEMPT_MS + READ_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0);
+  assert.ok(h.elapsed() <= 480_000 + oneCall + 10_000, `${h.elapsed()} ms`);
+  assert.ok(h.elapsed() <= 2 * 480_000 + READ_ALLOWANCE_MS, `${h.elapsed()} ms`);
+  // a cut that fails at once (ECONNRESET) ends by the clock too: no longer 49 polls of 17 s
+  const g = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  const fast = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url) => { if (url.startsWith(NATIVE)) throw new TypeError("fetch failed"); return undefined; });
+  await assert.rejects(decideAt(g, fast, { CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), /fetch failed/);
+  assert.ok(g.elapsed() <= 480_000 + 7_000 + 10_000, `${g.elapsed()} ms`);
+  // a re-run's gate wait the same way
+  const r = clockFor(Date.parse(RUN_STARTED) + 1_000);
+  const gate = clockedFetch({ [RUN]: rerunOf(2), [PULLS]: pull(), [COMPARE]: files("apps/x.ts") }, (url, init) => (url.startsWith(JOBS(2)) ? r.hang(init) : undefined));
+  const refused = await decide({ env: env({ ...HEAVY, GITHUB_RUN_ATTEMPT: "2", CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), fetchImpl: gate.fetchImpl, now: r.now, sleep: r.sleep,
+    timeoutSignal: r.timeoutSignal, readFile: (p) => (p === "/token" ? "ghp_read\n" : prEvent()) });
+  assert.equal(refused.allow, false);
+  assert.match(refused.reason, /cannot read attempt 2's jobs/);
+  assert.ok(r.elapsed() <= 480_000 + oneCall + 10_000, `${r.elapsed()} ms`);
+});
+
+test("clock: no read starts and no retry waits past the hook's read deadline (twice the wait plus the allowance)", async () => {
+  const h = clockFor(0);
+  const wrapped = retryingFetch(async (url, init) => h.hang(init), { sleep: h.sleep, now: h.now, deadlineAt: () => 31_000, timeoutSignal: h.timeoutSignal });
+  await assert.rejects(wrapped("https://api.github.com/x", {}), (error) => error.transient === true);
+  assert.deepEqual(h.bounds, [30_000], "the second attempt would not fit after its 2 s wait: none");
+  const g = clockFor(0);
+  const late = retryingFetch(async (url, init) => g.hang(init), { sleep: g.sleep, now: g.now, deadlineAt: () => 45_000, timeoutSignal: g.timeoutSignal });
+  await assert.rejects(late("https://api.github.com/x", {}), (error) => error.transient === true);
+  assert.deepEqual(g.bounds, [30_000, 13_000], "an attempt never runs past the deadline");
+  const spent = retryingFetch(async () => { throw new Error("not reached"); }, { now: () => 50_000, deadlineAt: () => 45_000 });
+  await assert.rejects(spent("https://api.github.com/x", {}), /time for reads is used up/);
+});
+
+test("bodies: a real 200 reply is read and admits; a 200 whose body is not JSON is refused at once, read once, not transient", async () => {
+  const { result } = await run({}, nativeScript(nativeCheck()));
+  assert.equal(result.allow, true);
+  let reads = 0;
+  const malformed = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url) => {
+    if (url.startsWith(NATIVE)) { reads += 1; return new Response("{not json", { status: 200 }); }
+    return undefined;
+  });
+  const h = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  await assert.rejects(decideAt(h, malformed), (error) => error instanceof SyntaxError && error.transient !== true);
+  assert.equal(reads, 1);
+});
+
+test("clock: a reply cut off while its body is read is a failed attempt, tried again (MINOR-1); the observation has its own 10 s bound (MINOR-2)", async () => {
+  const h = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  let cut = true;
+  const fake = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url) => {
+    if (url.startsWith(NATIVE) && cut) { cut = false; return { status: 200, text: async () => { throw new TypeError("terminated"); } }; }
+    return undefined;
+  });
+  const result = await decideAt(h, fake);
+  assert.equal(result.allow, true, result.reason);
+  assert.equal(fake.calls.filter((c) => c.url.startsWith(NATIVE)).length, 1, "the cut reply came from the intercept; the script answered the second");
+  // the execution_current observation: each attempt 10 s, its own
+  const { url, key } = resolvePublicSupabaseConfig({}, path.resolve(import.meta.dirname, "../.."));
+  const rpc = `${url}/rest/v1/rpc/clued_work_verify_v1`;
+  const config = `${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`;
+  const g = clockFor(Date.parse(RUN_CREATED) + 1_000);
+  let hangs = 2;
+  const epoch = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()),
+    [config]: { body: { type: "file", encoding: "base64", content: Buffer.from(`return { url: "${url}", key: "${key}" };`).toString("base64") } },
+    [rpc]: { body: { status: "ok", guard_required: true, epoch_current: true } } }, (u, init) => {
+    if (u === rpc) { assert.equal(Object.hasOwn(init, "retryRead") || Object.hasOwn(init, "attemptMs"), false); if (hangs-- > 0) return g.hang(init); }
+    return undefined;
+  });
+  const current = await decideWithCurrentEpoch({ env: env(), fetchImpl: epoch.fetchImpl, now: g.now, sleep: g.sleep, timeoutSignal: g.timeoutSignal,
+    readFile: (p) => (p === "/token" ? "ghp_read" : prEvent()) });
+  assert.equal(current.allow, true, current.reason);
+  assert.deepEqual(g.bounds, [OBSERVATION_ATTEMPT_MS, OBSERVATION_ATTEMPT_MS]);
 });

@@ -56,15 +56,15 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.work-handover-native-admission-v1.mjs"
+        "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs"
       ],
-      "content_sha256": "47da4af7eb15b56259503d2e872af4080ff3740bce80dab077d869a31d2bb69c",
+      "content_sha256": "b57c98550aff77a7054981a128e10693117d28276d43ba174d87bcf5f1e78b3a",
       "version_marker": {
-        "file": "clued-runner-job-started.work-handover-native-admission-v1.mjs",
+        "file": "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "4dc53a6cf95ebf50b0af6ecfa51e933629ca564a2a378f3935d8054889ea64d8"
+      "content_sha256": "edc72d1ebce036a2802de5e2b6bf0980599c6119eb2d546fd02a8b350fb66993"
     },
     {
       "id": "script.resource-maintenance",
