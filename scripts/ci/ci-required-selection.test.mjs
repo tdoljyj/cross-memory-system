@@ -127,7 +127,8 @@ test('any workflow change runs the runner budget policy and the admission self-t
 
 test('maintenance source, policy and panel changes select filesystem tests without weakening other suites', () => {
   for (const file of ['scripts/ci/self-hosted/resource-maintenance/maintenance.py', 'config/ci-resource-maintenance.json',
-    'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
+    'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', 'tests/fixtures/compute-panel-duplicate-runs.json',
+    '.github/workflows/clued-compute-panel.yml']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('resource-maintenance'), file);
   }
   assert.ok(SUITE_COMMANDS['resource-maintenance'].some(c => c.argv.includes('scripts/ci/self-hosted/resource-maintenance')));

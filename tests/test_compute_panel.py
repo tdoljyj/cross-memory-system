@@ -295,7 +295,7 @@ def check(name: str, started_min_ago: float, conclusion: str | None = "success",
           run: int | None = None, app: str = "github-actions", status: str | None = None) -> dict:
     """A check run as GitHub returns it: a resident one has an independent-ci external_id, a hosted one a run URL."""
     return {
-        "id": int(started_min_ago * 1000) + len(name), "name": name, "app": app,
+        "id": int(started_min_ago * 1000) + len(name), "name": name, "app": {"id": 1, "slug": app, "name": app, "description": "d" * 100},
         "status": status or ("completed" if conclusion else "in_progress"), "conclusion": conclusion,
         "started_at": at(started_min_ago), "completed_at": at(started_min_ago - 1) if conclusion else None,
         "external_id": external,
@@ -345,8 +345,10 @@ class DuplicateRunTests(unittest.TestCase):
         ]), [])
 
     def test_a_running_check_counts_once_it_has_started(self) -> None:
-        (item,) = findings([check("gitleaks-hosted-executor", 4, None, run=11), resident("gitleaks", 2, conclusion="failure")])
+        (item,) = findings([check("gitleaks-hosted-executor", 15, None, run=11), resident("gitleaks", 2, conclusion="failure")])
         self.assertEqual(item["count"], 2)
+        # a run that has only just started may be a copy about to be cancelled by its successor: not yet a run
+        self.assertEqual(findings([check("gitleaks-hosted-executor", 4, None, run=11), resident("gitleaks", 2)]), [])
 
     def test_resident_admission_and_stage_8_rechecks_are_not_runs(self) -> None:
         self.assertEqual(findings([
@@ -470,15 +472,16 @@ class DuplicateScanTests(unittest.TestCase):
         recent = pull(2, "b" * 40, "closed", updated_min_ago=3 * 60, merged_min_ago=2 * 60)
         checks = {"a" * 40: dup, "b" * 40: dup}
         first = panel.scan_duplicates(FakeGitHub([closed, recent], checks), NOW, {})
-        self.assertEqual(sorted(first["settled"]), ["a" * 12])
+        self.assertEqual(sorted(first["settled"]), ["1:" + "a" * 12])
         again = FakeGitHub([closed, recent], checks)
         second = panel.scan_duplicates(again, NOW + timedelta(hours=1), first)
         self.assertEqual(len(again.paths), 1 + 2)  # only the recently merged head is read
         self.assertEqual(sorted(item["pr"] for item in second["found"]), [1, 2])
 
     def test_a_pr_updated_after_it_settled_is_read_again(self) -> None:
-        closed = pull(1, "a" * 40, "closed", updated_min_ago=3 * 60)
+        closed = pull(1, "a" * 40, "closed", updated_min_ago=30 * 60)
         first = panel.scan_duplicates(FakeGitHub([closed], {}), NOW, {})
+        self.assertEqual(sorted(first["settled"]), ["1:" + "a" * 12])
         moved = {**closed, "updated_at": at(1)}
         client = FakeGitHub([moved], {})
         panel.scan_duplicates(client, NOW, first)
@@ -568,7 +571,7 @@ class Flaky(BuildClient):
         return super().get(path, params)
 
 
-def many_heads(count: int, state: str = "closed", updated_min_ago: float = 180) -> tuple[list[dict], dict[str, list[dict]]]:
+def many_heads(count: int, state: str = "closed", updated_min_ago: float = 2 * 24 * 60) -> tuple[list[dict], dict[str, list[dict]]]:
     """`count` PRs, each head with one gitleaks check that really ran twice."""
     dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
     shas = [f"{i:04x}" + "a" * 36 for i in range(count)]
@@ -710,6 +713,270 @@ class DuplicateAnnouncedTests(unittest.TestCase):
         report = panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=1), state)
         body = panel.render(report, state)
         self.assertLess(len(body), 50000)  # the limit is 65536 characters
+
+
+class FailRules(BuildClient):
+    """BuildClient that raises the listed exceptions, once each in order, for paths containing a substring."""
+
+    def __init__(self, *args, rules: list[tuple[str, list[BaseException]]], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.rules = rules
+
+    def get(self, path: str, params: dict | None = None):
+        for part, errors in self.rules:
+            if part in path and errors:
+                raise errors.pop(0)
+        return super().get(path, params)
+
+
+class DuplicateReviewTests(unittest.TestCase):
+    """The second review round: shared heads, bounded names, real API shapes, error kinds, the whole of main()."""
+
+    def setUp(self) -> None:
+        self.sleeps: list[float] = []
+        self.original = panel.SLEEP
+        panel.SLEEP = self.sleeps.append
+        self.dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
+
+    def tearDown(self) -> None:
+        panel.SLEEP = self.original
+
+    def test_two_prs_sharing_a_head_are_one_finding_however_often_it_is_scanned(self) -> None:
+        old = 2 * 24 * 60
+        for pulls in ([pull(1, SHA, "closed", old), pull(2, SHA, "closed", old + 7)],
+                      [pull(1, SHA, "closed", old), pull(3, SHA, "open", 10)]):
+            state: dict = {}
+            totals = []
+            for hour in range(5):
+                panel.build(BuildClient(pulls, {SHA: self.dup}), NOW + timedelta(hours=hour), state)
+                totals.append(state["duplicates"]["total"])
+            self.assertEqual(totals, [1] * 5)
+            self.assertEqual(len(state["duplicates"]["found"]), 1)
+
+    def test_long_check_names_are_bounded_but_stay_distinct(self) -> None:
+        first, second = "x" * 255 + "1", "x" * 255 + "2"
+        items = findings([resident(first, 50), resident(first, 40, attempt=2), resident(second, 50), resident(second, 40, attempt=2)])
+        self.assertEqual(len(items), 2)
+        self.assertTrue(all(len(item["check"]) <= panel.DUP_NAME and len(item["label"]) <= panel.DUP_NAME for item in items))
+        self.assertEqual(len({item["check"] for item in items}), 2)
+        self.assertEqual(panel.short_name("gitleaks"), "gitleaks")
+
+    def test_a_third_party_check_names_its_app_by_slug_not_by_the_whole_object(self) -> None:
+        (item,) = findings([check("lint", 50, app="octoapp"), check("lint", 40, app="octoapp")])
+        self.assertEqual([run["executor"] for run in item["runs"]], ["octoapp", "octoapp"])
+        text = panel.duplicate_event(item)[1]
+        self.assertNotIn("description", text)
+        self.assertNotIn("{", text)
+
+    def test_the_split_of_a_finding_counts_every_run_not_only_the_first_four(self) -> None:
+        checks = [check("gitleaks-hosted-executor", 90 - i, run=11) for i in range(4)] + [resident("gitleaks", 30), resident("gitleaks", 20, attempt=2)]
+        (item,) = findings(checks)
+        self.assertEqual((item["count"], item["mix"], len(item["runs"])), (6, {"hosted": 4, "resident": 2}, panel.DUP_RUNS_SHOWN))
+        text = panel.duplicate_event(item)[1]
+        self.assertIn("托管 4 次", text)
+        self.assertIn("常驻 2 次", text)
+
+    def test_a_native_publication_of_one_job_is_one_run(self) -> None:
+        def native(job: str, ago: float, ticket: str) -> dict:
+            return check("gitleaks", ago, external=f"independent-ci:native:v1:{job}:p{ticket}", app="clued-ci-checks-turing-20261018")
+
+        self.assertEqual(findings([native("job-1", 50, "t1"), native("job-1", 40, "t2")]), [])  # published twice
+        (item,) = findings([native("job-1", 50, "t1"), native("job-2", 40, "t2")])  # two jobs
+        self.assertEqual(item["count"], 2)
+
+    def test_a_closed_unmerged_pr_is_read_until_it_has_been_closed_for_a_day(self) -> None:
+        recent = {**pull(1, SHA, "closed", 3 * 60), "closed_at": at(3 * 60)}
+        old = {**pull(2, "b" * 40, "closed", 30 * 60), "closed_at": at(30 * 60)}
+        result = panel.scan_duplicates(FakeGitHub([recent, old], {}), NOW, {})
+        self.assertEqual(sorted(result["settled"]), ["2:" + "b" * 12])
+        # a check published after the PR was closed still reaches the next scan
+        again = FakeGitHub([recent], {SHA: self.dup})
+        self.assertEqual(len(panel.scan_duplicates(again, NOW + timedelta(hours=1), result)["found"]), 1)
+
+    def test_a_check_run_repeated_between_pages_is_counted_once(self) -> None:
+        rows = [resident(f"c{i}", 100 - i * 0.1) for i in range(99)] + [resident("gitleaks", 5)]
+
+        class Overlap(FakeGitHub):
+            def get(self, path: str, params: dict | None = None):
+                reply = super().get(path, params)
+                if "check-runs" in path and (params or {}).get("page") == 2:
+                    reply = {**reply, "check_runs": [rows[-1]] + reply["check_runs"] + [resident("trivy", 6)]}
+                return reply
+
+        client = Overlap([pull(1, SHA)], {SHA: rows})
+        self.assertEqual(panel.scan_duplicates(client, NOW, {})["found"], [])
+
+    def test_a_head_github_cannot_return_is_skipped_other_errors_stop_the_scan(self) -> None:
+        gone = FailRules([pull(1, SHA), pull(2, "b" * 40)], {SHA: self.dup, "b" * 40: self.dup},
+                         rules=[("b" * 40, [panel.RequestError("GET failed (404)", 404)] * 5)])
+        result = panel.scan_duplicates(gone, NOW, {})
+        self.assertEqual((result["skipped"], result["heads_read"], [item["pr"] for item in result["found"]]), (1, 1, [1]))
+        state: dict = {}
+        report = panel.build(FailRules([pull(1, SHA), pull(2, "b" * 40)], {SHA: self.dup, "b" * 40: self.dup},
+                                       rules=[("b" * 40, [panel.RequestError("GET failed (422)", 422)] * 5)]), NOW, state)
+        self.assertEqual(report["duplicates"]["skipped"], 1)
+        self.assertIn("不返回", panel.render(report, state))
+        forbidden = FailRules([pull(1, SHA)], {SHA: self.dup}, rules=[("check-runs", [panel.RequestError("GET failed (403)", 403)])])
+        with self.assertRaises(RuntimeError):
+            panel.scan_duplicates(forbidden, NOW, {})
+
+    def test_running_out_of_budget_midway_is_not_a_failed_scan(self) -> None:
+        class Drain(BuildClient):
+            def low(self) -> bool:
+                return len(self.paths) > 4
+
+        state: dict = {}
+        report = panel.build(Drain([pull(i, f"{i:04x}" + "a" * 36) for i in range(1, 4)], {}), NOW, state)
+        self.assertNotIn("duplicates_failed_at", state)
+        self.assertTrue(any("额度不足" in error for error in report["errors"]))
+
+    def test_every_request_of_the_scan_is_retried_and_unreadable_replies_count_as_transient(self) -> None:
+        import http.client
+        client = FailRules([pull(1, SHA)], {SHA: self.dup}, rules=[
+            ("/pulls", [panel.RequestError("GET failed (502)", 502), OSError("reset")]),
+            ("/actions/runs", [http.client.IncompleteRead(b"x")]),
+            ("check-runs", [ValueError("truncated json")])])
+        self.assertEqual(len(panel.scan_duplicates(client, NOW, {})["found"]), 1)
+        self.assertEqual(len(self.sleeps), 4)
+        stuck = FailRules([pull(1, SHA)], {}, rules=[("check-runs", [ValueError("truncated json")] * 5)])
+        with self.assertRaises(RuntimeError) as caught:
+            panel.scan_duplicates(stuck, NOW, {})
+        self.assertIs(type(caught.exception), RuntimeError)  # a RuntimeError, so build() reports it and goes on
+
+    def test_short_records_among_the_rows_shown_do_not_break_the_panel(self) -> None:
+        state: dict = {}
+        report = panel.build(BuildClient([pull(13, SHA)], {SHA: self.dup}), NOW, state)
+        short = {"head": "a" * 12, "pr": 13, "check": "gitleaks", "count": 2, "last": at(40)}
+        report["duplicates"]["found"] = [short]
+        report["duplicates"]["total"] = 1
+        body = panel.render(report, state)
+        self.assertIn("| #13 | " + "a" * 8 + " | gitleaks | 2 | — | — |", body)
+        self.assertIn("PR #13", panel.duplicate_event(short)[1])
+
+    def test_a_head_with_findings_on_both_sides_of_the_saving_limit_is_read_again(self) -> None:
+        keep = panel.DUP_KEEP + panel.DUP_MAX
+        first = [resident(name, 50) for name in ("gitleaks", "trivy", "contract-placement")]
+        first += [resident(name, 40, attempt=2) for name in ("gitleaks", "trivy", "contract-placement")]
+        pair = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2), resident("trivy", 50), resident("trivy", 40, attempt=2)]
+        shas = [f"{i:04x}" + "a" * 36 for i in range(1 + (keep - 3) // 2 + 1)]
+        checks = {shas[0]: first, **{sha: pair for sha in shas[1:]}}
+        pulls = [pull(i + 1, sha, "closed", 2 * 24 * 60) for i, sha in enumerate(shas)]
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        saved = state["duplicates"]
+        total = 3 + 2 * (len(shas) - 1)
+        self.assertEqual((saved["total"], len(saved["found"]) + len(saved["rest"])), (total, keep))
+        self.assertEqual(len(saved["settled"]), len(shas) - 1)  # the head cut in two is not settled
+        again = BuildClient(pulls, checks)
+        panel.build(again, NOW + timedelta(hours=1), state)
+        self.assertEqual(state["duplicates"]["total"], total)
+        self.assertEqual(sum(1 for path in again.paths if path.endswith("/check-runs")), 1)
+
+    def test_live_keys_among_the_short_records_survive_a_flood_of_other_keys(self) -> None:
+        pulls, checks = many_heads(40)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        rest = state["duplicates"]["rest"]
+        self.assertGreater(len(rest), 20)
+        panel.mark_announced(state, [f"dup:old{i}:x:2" for i in range(3 * panel.DUP_ANNOUNCED)])
+        self.assertTrue(all(panel.is_announced(state, panel.duplicate_key(item)) for item in rest))
+
+    def test_shrinking_the_saved_duplicates_unsettles_what_it_drops_and_the_next_scan_restores_it(self) -> None:
+        pulls, checks = many_heads(40)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        before = len(state["duplicates"]["settled"])
+        panel.shrink_duplicates(state, 1)
+        saved = state["duplicates"]
+        self.assertEqual((saved["total"], saved["rest"], len(saved["found"])), (40, [], panel.DUP_KEEP))
+        self.assertEqual(len(saved["settled"]), before - (40 - panel.DUP_KEEP))
+        panel.shrink_duplicates(state, 3)
+        self.assertEqual(len(state["duplicates"]["found"]), panel.DUP_ROWS)
+        self.assertTrue(all("runs" not in item for item in state["duplicates"]["found"]))
+        again = BuildClient(pulls, checks)
+        panel.build(again, NOW + timedelta(hours=1), state)
+        self.assertEqual(state["duplicates"]["total"], 40)
+
+    def test_a_running_check_only_just_started_is_not_announced(self) -> None:
+        self.assertIsNone(panel.real_run(check("gitleaks-hosted-executor", 3, None, run=11), WORKFLOWS, NOW))
+        self.assertIsNotNone(panel.real_run(check("gitleaks-hosted-executor", 30, None, run=11), WORKFLOWS, NOW))
+
+
+class MainClient(BuildClient):
+    """The whole API main() talks to: an issue that is created, edited and commented on."""
+
+    def __init__(self, pulls: list[dict], checks: dict, store: dict) -> None:
+        super().__init__(pulls, checks)
+        self.store, self.requests = store, 0
+
+    def get(self, path: str, params: dict | None = None):
+        if path == "/issues":
+            return [self.store["issue"]] if self.store.get("issue") else []
+        return super().get(path, params)
+
+    def send(self, method: str, path: str, body: dict):
+        if method == "POST" and path == "/issues":
+            self.store["issue"] = {"number": 952, "body": body["body"]}
+            return self.store["issue"]
+        if method == "POST" and path.endswith("/comments"):
+            self.store["comments"].append(body["body"])
+            return {}
+        self.store["issue"]["body"] = body["body"]
+        return self.store["issue"]
+
+
+class DuplicateMainTests(unittest.TestCase):
+    """Duplicates through main(): the comment, the saved state in the issue body, and the size guard."""
+
+    def run_main(self, store: dict, pulls: list[dict], checks: dict, when: datetime) -> None:
+        import contextlib
+        import io
+        import os
+        import sys
+        from unittest import mock
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when
+
+        client = MainClient(pulls, checks, store)
+        env = {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "GITHUB_REPOSITORY_OWNER": "owner"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", ["panel"]), \
+                mock.patch.object(panel, "GitHub", lambda *args, **kwargs: client), \
+                mock.patch.object(panel, "datetime", Clock), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(panel.main(), 0)
+
+    def test_a_new_duplicate_is_commented_once_and_never_again(self) -> None:
+        dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
+        store: dict = {"comments": []}
+        self.run_main(store, [pull(1, "a" * 40)], {"a" * 40: dup}, NOW)
+        self.assertEqual(store["comments"], [])  # the first run records and says nothing
+        both = [pull(1, "a" * 40), pull(2, "b" * 40)]
+        checks = {"a" * 40: dup, "b" * 40: dup}
+        self.run_main(store, both, checks, NOW + timedelta(hours=1))
+        self.assertEqual(len(store["comments"]), 1)
+        self.assertIn("重复执行：PR #2", store["comments"][0])
+        self.assertIn("@owner", store["comments"][0])
+        for hour in (2, 3, 4):
+            self.run_main(store, both, checks, NOW + timedelta(hours=hour))
+        self.assertEqual(len(store["comments"]), 1)
+        self.assertIn("重复执行", store["issue"]["body"])
+
+    def test_the_issue_body_is_shrunk_when_it_would_pass_the_limit(self) -> None:
+        from unittest import mock
+        pulls, checks = many_heads(panel.DUP_KEEP + panel.DUP_MAX + 20)
+        store: dict = {"comments": []}
+        self.run_main(store, pulls, checks, NOW)
+        full = len(store["issue"]["body"])
+        with mock.patch.object(panel, "DUP_BODY_LIMIT", full - 1500):
+            self.run_main(store, pulls, checks, NOW + timedelta(hours=1))
+        self.assertLessEqual(len(store["issue"]["body"]), full - 1500)
+        state = panel.read_state(store["issue"]["body"])
+        self.assertEqual(state["duplicates"]["total"], len(pulls))  # the total is still exact
+        self.run_main(store, pulls, checks, NOW + timedelta(hours=2))
+        self.assertEqual(panel.read_state(store["issue"]["body"])["duplicates"]["total"], len(pulls))
+        self.assertLess(len(store["issue"]["body"]), 65536)
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "compute-panel-duplicate-runs.json"
