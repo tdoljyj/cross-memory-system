@@ -47,6 +47,14 @@
       "path": [
         "every repository workflow and job has a valid temporary-data lifecycle"
       ],
+      "fingerprint": "4019729e0faf76d1",
+      "reason": "gitleaks middle generation ba469065: its Acquire one-time scan permission step runs before temporary storage is configured; the final generation in PR 989 fixes it"
+    },
+    {
+      "file": "apps/clued-cloud/tests/ci-temporary-storage.test.mjs",
+      "path": [
+        "every repository workflow and job has a valid temporary-data lifecycle"
+      ],
       "fingerprint": "f42faf753ec75ffd",
       "reason": "clued-native617-admission-dispatch.yml and the handover qualification workflows lack reviewed temporary-data entries"
     },
