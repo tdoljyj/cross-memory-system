@@ -26,13 +26,13 @@ function sources(v,path=[],out=[]) {
   return out;
 }
 
-test('all original 67 sources, exact compound and 732 successor drafts roundtrip without losing bytes, roles or metadata',()=>{
+test('all original 66 sources, exact compound and 732 successor drafts roundtrip without losing bytes, roles or metadata',()=>{
   const semantic=read(),wire=encodeWorkflowProfiles(semantic),text=serializeWorkflowProfiles(semantic);
   const decoded=parseWorkflowProfiles(Buffer.from(text));
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,70);
+  assert.equal(sources(decoded).length,69);
   const original=structuredClone(decoded);delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   const successor=original.workflows['.github/workflows/gitleaks.yml'].accepted_sources
     .filter(source=>source.workflow_blob==='6441fc32b084002de697415ea8343af07816c929');
@@ -44,15 +44,15 @@ test('all original 67 sources, exact compound and 732 successor drafts roundtrip
   const NODE22='.github/workflows/clued-cloud-node22-install.yml',NODE22_BLOB='30e783feb7ab54a578b5ed3b692fa664e00207d1';
   assert.equal(original.workflows[NODE22].accepted_sources.filter(source=>source.workflow_blob===NODE22_BLOB).length,1);
   original.workflows[NODE22].accepted_sources=original.workflows[NODE22].accepted_sources.filter(source=>source.workflow_blob!==NODE22_BLOB);
-  assert.equal(sources(original).length,67);
-  assert.equal(roleDefinitionDigest(original),'1ab232292f79359f99c1de58eaf47076bb968593f5ffd46fd54aaafda086554c');
+  assert.equal(sources(original).length,66);
+  assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
   const oldRoles=structuredClone(specs);delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
   assert.equal(oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'][0]
     .definition_sha256,'9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf');
   delete oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'];
   assert.equal(oldRoles.workflows[NODE22].sources[NODE22_BLOB].length,2);
   delete oldRoles.workflows[NODE22].sources[NODE22_BLOB];
-  assert.equal(roleDefinitionDigest(oldRoles),'04eb96fb6640801a7bd1e41eca7e746e61afb829da95e81a633445d1c6852d41');
+  assert.equal(roleDefinitionDigest(oldRoles),'4e8f58e671141c58eb28184f477aa7d3639556eef35b9c340ccde6b76a16aa29');
   assert.ok(Buffer.byteLength(text)<=WORKFLOW_PROFILES_MAX_BYTES);
   assert.notEqual(hash(text),hash(JSON.stringify(semantic,null,2)+'\n'),'disk Source identity changes');
   for(const {path,row,text:source} of sources(decoded)) {
