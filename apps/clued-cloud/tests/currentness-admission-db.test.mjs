@@ -233,7 +233,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     assert.equal(completedProject.status, 'committed');
     const terminalReceiptId = (await admin.query('select receipt_id from public.clued_projects where id=$1',
       [projectId])).rows[0].receipt_id;
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', await findGatewayCloseoutMigration(root)), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', await findGatewayCloseoutMigration(root)), 'utf8'));
     await assertGatewayCloseoutBoundary(admin);
     assert.deepEqual((await rpc('clued_record_list', {
       level: 'global', record_type: 'state',

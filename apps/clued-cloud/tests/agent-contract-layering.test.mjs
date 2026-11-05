@@ -11,14 +11,33 @@ const autonomy = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v4
 const claimRenewal = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v50-v51-map.json', import.meta.url), 'utf8'));
 const sessionTitle = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v51-v52-map.json', import.meta.url), 'utf8'));
 const branding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v52-v53-map.json', import.meta.url), 'utf8'));
+const ciQueueAssist = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v53-v54-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
 // three scoped replacements separately, followed by exact v49 review and v50
 // runtime additions, the v51 claim-renewal clarification, the v52 title
-// metadata correction and the v53 display-name changes. Undo only these declared successors before checking all
-// 24 original normative blocks against the unchanged frozen proof.
+// metadata correction, the v53 display-name changes and the v54 resident CI queue assist. Undo only these declared
+// successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v53Source() {
+  assert.equal(ciQueueAssist.schema, 'clued.agent-contract-ci-queue-assist-successor/1');
+  assert.equal(ciQueueAssist.source_version, 53);
+  assert.equal(ciQueueAssist.target_version, 54);
+  assert.deepEqual(ciQueueAssist.edits.map(row => row.id), ['version', 'ci-queue-assist', 'ci-queue-leave']);
+  assert.equal(sha256(source), ciQueueAssist.target_document_normalized_sha256);
+  let restored = source;
+  for (const { id, before, after } of [...ciQueueAssist.edits].reverse()) {
+    // Only additions: each successor text keeps its predecessor text whole.
+    if (id !== 'version') assert.ok(after.includes(before.trimEnd()), `${id}: additive successor text`);
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact queue assist successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), ciQueueAssist.source_document_normalized_sha256);
+  return restored;
+}
+
 function v52Source() {
+  const source = v53Source();
   assert.equal(branding.schema, 'clued.agent-contract-branding-successor/1');
   assert.equal(branding.source_version, 52);
   assert.equal(branding.target_version, 53);

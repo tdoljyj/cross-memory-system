@@ -11,18 +11,12 @@ export const AUTHORIZATION_SUCCESSOR_MIGRATIONS = [
   '20261014045157_all_contexts_serialization_v2.sql',
   '20261015172722_consent_future_owned_policies.sql',
 ];
-// The historical CI8 of the gateway closeout.
-export const CI8_SIGNATURES = [
+export const CI_SIGNATURES = [
   'clued_owner_grant_admission_door_v1(text,jsonb)', 'clued_owner_grant_door_consume_v1(text,jsonb)',
   'clued_work_verify_v1(text,jsonb)', 'clued_work_claim_adopt_v1(text,jsonb)',
   'clued_work_merge_slot_return_v1(text,jsonb)', 'clued_work_claims_active_v1(text,jsonb)',
   'clued_work_merge_slot_touch_v1(text,jsonb)', 'clued_work_merge_slot_holders_v1(text,jsonb)',
 ].sort();
-// The explicit later CI successor (20261105120000): the resident CI's merge
-// queue join and lease extension. Present only once that migration ran.
-export const CI_ASSIST_SIGNATURES = ['clued_work_lease_extend_v1(text,jsonb)', 'clued_work_merge_queue_join_v1(text,jsonb)'];
-// Every CI signature the current chain exposes to anon.
-export const CI_SIGNATURES = [...CI8_SIGNATURES, ...CI_ASSIST_SIGNATURES].sort();
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const transition = await fs.readFile(path.join(cloud,'supabase/migrations/20261009070002_worker_gateway_transition_v1.sql'),'utf8');
 export const WORKER_SIGNATURES = [...transition.matchAll(/'(public\.clued_[a-z0-9_]+\([^']*\))'/g)].map(m=>m[1].replace(/^public\./,'')).sort();
@@ -63,13 +57,11 @@ export async function snapshotCallerCatalog(db) {
 // The sealed closeout (20261010161848) refuses any caller privilege outside its
 // own manifest, so replaying it after the full chain fails on the privileges
 // that explicit later successors add on purpose: the two scan-start serving
-// doors for the Worker gateway (20261102151506) and the two resident CI RPCs
-// for anon (20261105120000). These are exactly those privileges.
+// doors for the Worker gateway (20261102151506). These are exactly those
+// privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_scan_start_policy_v1(jsonb)', GATEWAY_ROLE],
-  ['public.clued_work_merge_queue_join_v1(text,jsonb)', 'anon'],
-  ['public.clued_work_lease_extend_v1(text,jsonb)', 'anon'],
 ];
 // Replays the sealed closeout SQL unchanged. Where a successor is installed,
 // its own privilege is set aside for the replay and put back afterwards (same
@@ -97,9 +89,7 @@ export async function assertGatewayCloseoutBoundary(db) {
   const successor = (await db.query("select to_regclass('clued_private.ci_scan_start_keys_v1') is not null present")).rows[0].present;
   const expected = successor ? [...WORKER_SIGNATURES, ...SCAN_START_GATEWAY_SIGNATURES].sort() : WORKER_SIGNATURES;
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,successor ? 'GW is exactly historical 80 + the two scan-start successor RPCs' : 'historical GW remains exactly 80');
-  const assist = (await db.query("select to_regprocedure('public.clued_work_merge_queue_join_v1(text,jsonb)') is not null present")).rows[0].present;
-  assert.deepEqual(await signatures('anon',true),assist ? CI_SIGNATURES : CI8_SIGNATURES,
-    assist ? 'Clued anon definer surface is exactly CI8 + the two resident CI successor RPCs' : 'Clued anon definer surface is exactly CI8');
+  assert.deepEqual(await signatures('anon',true),CI_SIGNATURES,'Clued anon definer surface is exactly CI8');
 }
 
 // The historical closeout is source-bound and must be proved before successors.
