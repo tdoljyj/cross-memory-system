@@ -421,7 +421,7 @@ export function acquireLock(home, options = {}) {
 const lockDirOf = (home) => path.join(home, 'locks');
 // fn() while holding the named lock of the cache.
 export function withLock(home, name, fn, options = {}) {
-  const release = acquireNamedLock(lockDirOf(home), name, { what: name, ...options });
+  const release = acquireNamedLock(lockDirOf(home), name, { what: name, pollMs: 250, ...options }); // short holds are common: look often
   try {
     return fn(release);
   } finally {
@@ -539,7 +539,7 @@ export function sampleResources(home, { cpus = os.cpus, freemem = os.freemem, fr
 
 // Room for one more run, given those running (and how many of them only just
 // started: what they will take is not yet seen in the free numbers).
-export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX_RUNS, needs = RUN_NEEDS, keeps = HOST_KEEPS, resume = CI_HOST_RESUME_FREE_GB } = {}) {
+export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX_RUNS, needs = RUN_NEEDS, keeps = HOST_KEEPS, resume = 0 } = {}) {
   if (running === 0) return { ok: true, lacks: [] };
   const lacks = [];
   if (running >= maxRuns) lacks.push({ kind: 'runs', text: `${running} runs are running, the limit is ${maxRuns}` });
@@ -558,8 +558,8 @@ export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX
   return { ok: lacks.length === 0, lacks };
 }
 
-// How many GB of the system drive the watchdog wants kept free.
-export const resumeLevelGb = (env = process.env) => (env.CLUED_CI_RESUME_FREE_GB === undefined ? CI_HOST_RESUME_FREE_GB : Number(env.CLUED_CI_RESUME_FREE_GB));
+// How many GB of the system drive the watchdog wants kept free (0 on a machine that is no CI host).
+export const resumeLevelGb = (env = process.env, levels = watchdogLevels({ env })) => levels?.resume ?? 0;
 export const maxRunsOf = (env = process.env) => (Number.isInteger(Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS)) && Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) > 0
   ? Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) : MAX_RUNS);
 

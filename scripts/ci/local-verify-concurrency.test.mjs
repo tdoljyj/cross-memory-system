@@ -58,7 +58,7 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   const plenty = { freeMemGb: 40, idleCores: 20, dataFreeGb: 500, systemFreeGb: 120 };
   assert.deepEqual(roomForOneMore({ running: 0 }, { freeMemGb: 0, idleCores: 0, dataFreeGb: 0, systemFreeGb: 0 }).ok, true, 'nothing running: always');
   assert.equal(roomForOneMore({ running: 1 }, plenty).ok, true);
-  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample).lacks.map((lack) => lack.kind);
+  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample, { resume: 65 }).lacks.map((lack) => lack.kind);
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 15 }), ['memory'], 'a run takes 6 GB and 10 GB stay free: 16 needed');
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 16 }), []);
   assert.deepEqual(kinds(1, { ...plenty, idleCores: 7 }), ['cpu']);
@@ -328,7 +328,7 @@ function runTool({ dir, main, env, home, extra = {} }) {
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 
 test('three different changes verified at the same time finish side by side with the results each has alone', { timeout: 240_000 }, async (t) => {
-  const seconds = 4;
+  const seconds = 8;
   // alone, one after the other, each with a cache of its own
   const solo = probeRepository(t, { seconds });
   const alone = {};
@@ -358,7 +358,9 @@ test('three different changes verified at the same time finish side by side with
   // the probes of the three changes ran at the same time: every one started before any one ended
   const ran = stampsOf(together.stamps).filter((stamp) => stamp.id !== 'main');
   assert.equal(ran.length, 3);
-  assert.ok(Math.max(...ran.map((stamp) => stamp.start)) < Math.min(...ran.map((stamp) => stamp.end)), 'the three probes overlap in time');
+  const timeline = JSON.stringify(ran.map((stamp) => [stamp.id, stamp.start - started, stamp.end - started]));
+  const waited = outcomes.map((outcome) => outcome.output.split('\n').filter((line) => /queued|started after|another run/.test(line)).join(' | ')).join(' // ');
+  assert.ok(Math.max(...ran.map((stamp) => stamp.start)) < Math.min(...ran.map((stamp) => stamp.end)), `the three probes overlap in time: ${timeline} ${waited}`);
   assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 3, 'each in a worktree of its own');
   // main's baseline for the failing change was computed once, in main's shared worktree
   assert.equal(stampsOf(together.stamps).filter((stamp) => stamp.id === 'main').length, 1);
