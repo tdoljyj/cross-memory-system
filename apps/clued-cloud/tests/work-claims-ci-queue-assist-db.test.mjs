@@ -324,6 +324,13 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     joinReceipts = await receipts('work_claim_merge_queue_join_by_ci');
     assert.deepEqual(joinReceipts.map((r) => [r.object_id, r.metadata.rejoined, r.metadata.previous_state]),
       [[a.claim_id, false, 'none'], [b.claim_id, false, 'none'], [a.claim_id, true, 'lapsed']]);
+    // The CI rejoined its own ref: the ref stays the CI's, and a renewal without it keeps it and the place.
+    assert.deepEqual((await admin.query('select merge_ref from clued_private.work_claim_ci_merge_refs_v1 where claim_id=$1',
+      [a.claim_id])).rows, [{ merge_ref: SLOT }]);
+    const aKept = await renew('h1', await row(a).then((x) => ({ claim_id: a.claim_id, ...x })), { trigger_refs: ['task:a'] });
+    assert.deepEqual(aKept.trigger_refs, [SLOT, 'task:a'].sort());
+    assert.deepEqual((await row(a)).merge_queued_at, aRejoined.merge_queued_at, 'the place is kept');
+    assert.deepEqual(order(await queueOf()), [b.claim_id, a.claim_id]);
 
     // --- A claim that already has another merge ref: both refs, every queue joined again. ---
     const OTHER = 'merge:owner/other:main';
