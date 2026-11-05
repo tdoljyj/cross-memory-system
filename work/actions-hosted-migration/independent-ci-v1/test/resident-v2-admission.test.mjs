@@ -127,7 +127,9 @@ test('full admission v2: scheduling facts are told on admission and carried in a
   const told = [];
   const facts = await w.port.evaluatePr(w.job, w.packet, { scheduling: s => told.push(s) });
   assert.equal(facts.status, 'ADMITTED');
-  assert.deepEqual(told, [{ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 } }]);
+  // generation 12 (resident DESIGN 56.3): the claim's lease end as Native reported it, normalized
+  assert.deepEqual(told.map(({ claimExpiresAt, ...rest }) => rest), [{ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 } }]);
+  assert.ok(Number.isFinite(Date.parse(told[0].claimExpiresAt)) && told[0].claimExpiresAt === new Date(Date.parse(told[0].claimExpiresAt)).toISOString());
   assert.ok(!('scheduling' in facts) && !('mergeQueue' in facts), 'the admitted facts contract (ADMISSION_FIELDS_V2) is unchanged');
   // a throwing listener changes nothing
   assert.equal((await w.port.evaluatePr(w.job, w.packet, { scheduling: () => { throw new Error('boom'); } })).status, 'ADMITTED');
@@ -139,7 +141,9 @@ test('full admission v2: scheduling facts are told on admission and carried in a
   const seen = [];
   const blocked = await capped.port.evaluatePr(capped.job, capped.packet, { scheduling: s => seen.push(s) });
   assert.equal(blocked.reason, 'full_admission_rejected');
-  assert.deepEqual(seen, [{ ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null } }]);
+  assert.deepEqual(seen.map(({ claimExpiresAt, ...rest }) => rest), [{ ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null } }]);
+  assert.equal(typeof seen[0].claimExpiresAt, 'string');
+  assert.ok(!('claimExpiresAt' in fullAdmissionFailureV2(blocked).admissionDiagnostic), 'the diagnostic keeps its shape');
   const failure = fullAdmissionFailureV2(blocked);
   assert.deepEqual(failure.admissionDiagnostic.reasonCodes, ['task_ci_head_cap_reached']);
   assert.equal(failure.admissionDiagnostic.ciRetryAfter, '2026-10-22T12:00:00.000Z');

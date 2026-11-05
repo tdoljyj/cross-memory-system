@@ -12,7 +12,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { validateJobV2 as validateJob, subjectOfV2 as subjectOf } from '../../src/job-v2.mjs';
 import { canonical, digest } from '../../src/proof.mjs';
 import { validateFormalAdmissionV2 } from '../../src/admission-facts-v2.mjs';
-import { validateScanStartGrant, requireFreshScanStartGrant } from '../../src/scan-start-v1/grant.mjs';
+import { validateScanStartGrant, NATIVE_SCAN_START_REQUIRED, scanStartPermission } from '../../src/scan-start-v1/grant.mjs';
 import { prepareContainerWorkerJob } from '../../src/worker-v2.mjs';
 import { loadQualifiedPolicyV2 as loadQualifiedPolicy, protectedPath, qualificationDeadline } from '../qualification-v2.mjs';
 import { IMAGE, LIMITS, WORKFLOW_SHA256S, requiredTrivyPlans } from '../required-trivy-v3/plans.mjs';
@@ -88,21 +88,22 @@ async function removeSnapshot(run, snapshot) {
 // The shared fixture path exercises real argv/readback algorithms with mocked
 // Docker. It is deliberately not the installed qualification or signing path.
 async function executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, workflowSha256, docker,
-  dockerRootDirectory, deadline, signal, admissionPort, scanStartPort, scanStartRecord, fixture, context, generation = null }) {
+  dockerRootDirectory, deadline, signal, admissionPort, scanStartPort, scanStartRecord, fixture, context, generation = null,
+  nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED }) {
   const scans = [], pre = validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation });
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED');
   const plan = requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, inputInventory, database: cache.database,
     dbDecision: cache.dbDecision, checksBundle: cache.checksBundle, checksPin, workflowSha256, sourceManifestSha256: job.sourceManifestSha256 });
   check(typeof scanStartPort === 'function', 'PROTECTED_SCAN_START_PORT_MISSING');
   const grantValue = await scanStartPort(job);
-  const grant = fixture ? validateScanStartGrant(grantValue, { job, executionId: grantValue?.execution_id }) : requireFreshScanStartGrant(job, grantValue);
-  if (!fixture) { check(typeof scanStartRecord === 'function', 'PROTECTED_SCAN_START_RECORD_MISSING'); await scanStartRecord(grant); requireFreshScanStartGrant(job, grantValue); }
+  const grant = fixture ? validateScanStartGrant(grantValue, { job, executionId: grantValue?.execution_id }) : scanStartPermission(job, grantValue, nativeScanStartRequired);
+  if (!fixture) { check(typeof scanStartRecord === 'function', 'PROTECTED_SCAN_START_RECORD_MISSING'); await scanStartRecord(grant); scanStartPermission(job, grantValue, nativeScanStartRequired); }
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
   for (const scan of plan.scanners) {
     validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }); check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
     // The last admission await can outlive the grant's transport window. Burn
     // permission is checked again only before this role unit's first scanner.
-    if (!fixture && scans.length === 0) requireFreshScanStartGrant(job, grantValue);
+    if (!fixture && scans.length === 0) scanStartPermission(job, grantValue, nativeScanStartRequired);
     const result = await runFixedScanner({ scan, docker, dockerRootDirectory, deadline: Math.min(deadline, Date.now() + LIMITS.timeoutMs), signal }); scans.push(result);
     if (!result.complete || !result.cleanupConfirmed || Date.parse(result.cleanupObservedAt) > deadline) return { status: result.touched ? 'UNCERTAIN' : 'BLOCKED',
       reason: result.reason ?? 'SCAN_CLEANUP_UNCONFIRMED', scans, fixture, automaticRetryAllowed: false, checksWritten: false, formalEligible: false };
@@ -146,7 +147,7 @@ export function cacheRefusal(cache, subject, observedAt) {
 export function takeActualObservation(observation, job) {
   validateRequiredJob(job); check(actualObservations.has(observation) && canonical(observation.subject) === canonical(subjectOf(job)), 'ACTUAL_PROTECTED_TRIVY_OBSERVATION_REQUIRED'); return observation;
 }
-export function createFormalTrivyAdapter({ admissionPort, scanStartPort } = {}) {
+export function createFormalTrivyAdapter({ admissionPort, scanStartPort, nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED } = {}) {
   return Object.freeze({ async execute(input, { signal } = {}) {
     let run = null, snapshot = null, mayHaveStarted = false, snapshotReady = false;
     try {
@@ -179,7 +180,7 @@ export function createFormalTrivyAdapter({ admissionPort, scanStartPort } = {}) 
       }
       const result = await executeScanners({ job, preparedRequest: prepared, snapshotDirectory: snapshot, inputInventory, cache, checksPin: accepted.checksPin, workflowSha256,
         docker, dockerRootDirectory: config.dockerRootDirectory, deadline, signal, admissionPort, scanStartPort,
-        scanStartRecord: grant => durableNew(path.join(run, 'scan-start.json'), grant), fixture: false, context: config, generation });
+        scanStartRecord: grant => durableNew(path.join(run, 'scan-start.json'), grant), fixture: false, context: config, generation, nativeScanStartRequired });
       if (result.status !== 'UNCERTAIN') { await removeSnapshot(run, snapshot); snapshotReady = false; }
       if (result.observation) {
         const observation = freeze({ ...result.observation, cleanup: { ...result.observation.cleanup, snapshotRemoved: true, observedAt: new Date().toISOString() } });

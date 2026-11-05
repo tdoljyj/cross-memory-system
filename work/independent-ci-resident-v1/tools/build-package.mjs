@@ -39,6 +39,7 @@ import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
+import { PANEL_REPO, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
@@ -196,6 +197,8 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);
+  // The panel trigger is on unless switched off, and it only exists for the panel's own repository: no silent "on" that does nothing.
+  check(!validatePanelDispatchConfig(finalCompanion.panelDispatch).enabled || finalCompanion.repo === PANEL_REPO, 'PACKAGE_PANEL_DISPATCH_REPO_MISMATCH');
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);

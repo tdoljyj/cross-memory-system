@@ -64,6 +64,25 @@ test('a push between bundle and scan (stage 2) runs attempt 2 once after the del
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 
+test('attempt 2 of a PR merged in the meantime is closed, never run, and the PR leaves the queue (rule 41ab823a)', async t => {
+  let n = 0, state = 'open';
+  const engine = fakeEngine();
+  const base = engine.runStage;
+  engine.runStage = async (batch, stage) => (stage.number === 2 && ++n === 1 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN }) : base(batch, stage));
+  const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => ({ number: pr, state, headSha: HEAD }) }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
+  state = 'merged';
+  f.advance(600_000);
+  const second = await f.exec.tick();
+  assert.deepEqual([second.state, second.reason], ['IGNORED', 'ATTEMPT2_PR_CLOSED']);
+  assert.deepEqual(stagesRun(engine), [1, 2], 'attempt 2 ran no stage');
+  assert.deepEqual(await f.ledger.pendingAttempts2(), [], 'attempt 2 is closed for good');
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason], ['DONE', 'PR_CLOSED']);
+  f.advance(600_000);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+});
+
 test('attempt 2 that fails transiently again ends FAILED_CLEAN with no further attempt', async t => {
   const engine = fakeEngine({ stages: { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof: WINDOWS_CLEAN } } });
   const f = await executorFixture(t, { engine });

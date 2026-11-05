@@ -58,7 +58,7 @@ function context(t,{lastAdmissionDelay=0,firstScannerDelay=0}={}){
     run:()=>regressionExecuteScanners({job,preparedRequest,snapshotDirectory:'/snapshot/repo',inputInventory,
       cache:{database,checksBundle,dbDecision:{status:'READY',fallback:false,db:database},provenanceSha256:hex('9')},checksPin,
       workflowSha256:WORKFLOW_SHA256S[0],docker,dockerRootDirectory:'/var/lib/docker',deadline:START+25*60000,
-      admissionPort,scanStartPort,scanStartRecord:async()=>{records++;await Promise.resolve();},fixture:false,
+      admissionPort,scanStartPort,scanStartRecord:async()=>{records++;await Promise.resolve();},fixture:false,nativeScanStartRequired:true,
       context:{runtimeIdentity:'isolated-regression',hostAcceptanceRef:'isolated',sourceAcceptanceRef:'isolated'},generation})};
 }
 

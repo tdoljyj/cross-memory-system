@@ -46,7 +46,18 @@ import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal }
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
+import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
+// Generation 10: the back-off between the bounded re-reads of the verification after the write (reverified below): 100 s of waiting at
+// most, on top of the per-request read retry (read-retry.mjs) inside each verification. No wait starts later than VERIFY_WAIT_WINDOW_MS
+// after the first verification began: that window is what keeps the ending inside stage 1's 15-minute cap (the last verification starts
+// at most 3 minutes after the write). Nor does a wait start when it would leave less than VERIFY_REVOKE_RESERVE_MS before deadlineAt,
+// the end of the held record's lease (startup.mjs passes it; the read retry uses the same bound), so the withdrawal (an identity read,
+// the PATCH, a read-back, each at most 30 s) always has its time.
+export const VERIFY_REREAD_DELAYS_MS = Object.freeze([10_000, 30_000, 60_000]);
+export const VERIFY_WAIT_WINDOW_MS = 180_000;
+export const VERIFY_REVOKE_RESERVE_MS = 120_000;
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
 const ACTION = 'native-work-admission-check/2';
@@ -76,7 +87,10 @@ export function notOnDuty(reason, diagnostic) {
 }
 // The entry's own "safe to re-run" flag of a refusal (the resident releases a stage-1 failure only on it): inside the first
 // evaluation's boundary (step), with no batch claim recorded, and either a node that is not on duty or not a deterministic PR fault.
-export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => step === 'boundary' && claimed === null && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic));
+// A GitHub read that outlived the bounded read retry (read-retry.mjs) before anything was recorded or written (the published-on-github
+// read-back, the first step) is as safe to re-run as the first evaluation's boundary: nothing exists to reconcile (DESIGN 49).
+export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => claimed === null
+  && ((step === 'boundary' && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic))) || (['published-on-github', 'probe'].includes(step) && verificationUnavailable(reason)));
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === CHECK_NAME && c.head_sha === job.headSha && c.external_id === externalId; }
@@ -105,9 +119,36 @@ function binding(job, packet, facts, authority) {
 // Train on only: slotNative (merge-slot-native.mjs: holders, touch) and sweepStore (train-sweep-store.mjs: latestProof).
 // trainModeUnreadable: train-mode.json was there but unusable (train-mode.mjs#readStageTrainModeFact): a front job parks.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaims, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false, slotNative = null, sweepStore = null, scanStartRegistrySha256 = null,
-  clock = Date.now }, production) {
+  clock = Date.now, sleep = wait, verifyRereadDelaysMs = VERIFY_REREAD_DELAYS_MS, deadlineAt = () => null }, production) {
   const domain = production ? 'production' : 'fixture';
   check(TRAIN_MODES.includes(trainMode), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
+  check(typeof sleep === 'function' && typeof deadlineAt === 'function' && Array.isArray(verifyRereadDelaysMs) && verifyRereadDelaysMs.length <= 6
+    && verifyRereadDelaysMs.every(ms => Number.isSafeInteger(ms) && ms > 0 && ms <= 120_000), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
+  // Generation 10 (resident DESIGN 53.6, Task 125a5162 item 6): a verification of THIS batch's own check that could not be done
+  // could not be done for a passing cause (withdrawal-text.mjs#admissionVerificationRetryable: GitHub unreadable, Native or GitHub
+  // unreachable inside the evaluation, an observation incomplete or too old on a slow line) is done again after a bounded back-off,
+  // every time the whole verification from the start (a fresh after-boundary through Native and GitHub, the binding compared with the
+  // one before the write, the read-back, the freshness). Any other refusal (an authorization that changed, a read-back that disagrees,
+  // a credential refused) is final at once, as before. When the re-reads are used up, or the time window or the stage's deadline leaves
+  // no room for another wait, the check is withdrawn as before ("verification unavailable"); the resident reads that ending at stage 1
+  // as the transient ADMISSION_VERIFICATION_UNAVAILABLE (stage-fact.mjs) and schedules the head's one automatic attempt 2 instead of
+  // burning it for good. assertLive (the held record's lease and the process) is asked before and after every wait; when it refuses,
+  // the withdrawal cannot run either and the ending is UNCERTAIN for the reconciliation, exactly as for any lost lease.
+  async function reverified(job, step) {
+    const began = clock();
+    for (let n = 0; ; n++) {
+      try { return await step(); } catch (e) {
+        const cause = safe(e), now = clock(), delay = verifyRereadDelaysMs[n], deadline = deadlineAt();
+        if (!admissionVerificationRetryable(cause, diagnosticOf(e)) || delay === undefined || now + delay - began > VERIFY_WAIT_WINDOW_MS
+          || (Number.isFinite(deadline) && now + delay + VERIFY_REVOKE_RESERVE_MS >= deadline)) throw e;
+        try { record('native_check_verify_retry', { jobId: job.id, attempt: n + 1, delayMs: delay, cause }); } catch { /* best-effort */ }
+        assertLive(); await sleep(delay); assertLive();
+      }
+    }
+  }
+  // The withdrawal's wording: "verification unavailable" for a passing cause (and the read set), "verification failed" for a
+  // full_admission_unavailable that caught no transport fault, "authorization changed" for everything else.
+  const unverified = (cause, diagnostic) => admissionVerificationRetryable(cause, diagnostic) ? true : cause === 'full_admission_unavailable' ? 'failed' : verificationUnavailable(cause);
   // §41.4 touch running, second of the two: the holders and the proof read now; any failing read or unmet condition skips it.
   async function touchRunning(job) {
     let out;
@@ -153,7 +194,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch { if (phase !== 'sent') return { status: 'UNCERTAIN', reason: 'NEGATIVE_COMPENSATION_JOURNAL_UNCONFIRMED', effectKey: key, sideEffects, productionAuthorized: false }; }
     try {
       assertLive(); sideEffects++;
-      const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: 'Work admission authorization changed', summary: `Reconcile Native admission check ${key}; ${cause}. No Native ticket or Receipt is asserted.` } });
+      const unavailable = unverified(cause, admissionDiagnostic);
+      const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: withdrawalTitle('Work admission', cause, unavailable), summary: `Reconcile Native admission check ${key}; ${cause}.${withdrawalNote(cause, unavailable)} No Native ticket or Receipt is asserted.` } });
       check(identity(patched, job, externalId) && patched.status === 'completed' && patched.conclusion === 'failure', 'NEGATIVE_COMPENSATION_UNCONFIRMED'); await readback(job, externalId, known.id, 'failure');
       if (logged) await journal.transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key); check(['sent', 'uncertain', 'settled'].includes(current?.state), 'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');
@@ -193,6 +235,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       }
       step = 'boundary';
       const evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
+      // DESIGN 51 (B): GitHub must answer once more before the batch claim is recorded or anything is written; if it cannot (after the
+      // bounded read retry) the refusal is clean and safe to re-run, with no claim and no journal record.
+      step = 'probe';
+      await github.readPullRequest(job.pr);
+      check((await github.readChecks(job.headSha))?.complete === true, 'COMPLETE_CHECK_INVENTORY_REQUIRED');
       step = 'admitted';
       before = bound(job, evaluated);
       if (!claimed) {
@@ -203,7 +250,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       }
-      if (previous) { await readback(job, externalId, previous.details.checkRunId, 'success'); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }; }
+      if (previous) { await reverified(job, () => readback(job, externalId, previous.details.checkRunId, 'success')); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }; }
     } catch (e) {
       if (previous?.state === 'settled' && Number.isSafeInteger(previous.details?.checkRunId) && previous.details.checkRunId > 0)
         return revoke({ job, key, externalId, known: { id: previous.details.checkRunId }, phase: 'settled', cause: safe(e), sideEffects: 0, admissionDiagnostic: diagnosticOf(e) });
@@ -235,8 +282,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
       const posted = await github.createCheck(payload, nativeHandle);
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
-      const after = await boundary(job, claimed); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
-      await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
+      const after = await reverified(job, async () => {
+        const a = await boundary(job, claimed); check(a.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
+        await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(a.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
+        return a;
+      });
       await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256 });
       record('native_check_settled', { effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
       return { status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling };

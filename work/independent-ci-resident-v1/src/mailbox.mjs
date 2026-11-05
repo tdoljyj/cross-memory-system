@@ -41,6 +41,12 @@ const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
 // The retention pass's archive names (retention.mjs#ARCHIVE_NAME).
 const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
+// Request deadlines of the two companion actions that are asked again after a timeout (DESIGN §44, §46). One place for the service
+// (service-ports.mjs, engine-windows.mjs) and the companion's own budget: the deadline must hold every attempt the companion may make.
+// archive-linux: two `start --wait` of 5 min, the archive-status reads (3 x 30 s) and slack. check-refs: a first ls-remote that ended
+// within 3 min, a second of at most 5 min, and slack.
+export const ARCHIVE_LINUX_REQUEST_MS = 14 * 60_000;
+export const CHECK_REFS_REQUEST_MS = 9 * 60_000;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
   'archive-prune', 'rebuild-bundle']);
 // rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
@@ -79,11 +85,13 @@ const REQUEST_FIELDS = {
 
 export function validateRequest(v) {
   check(v && KINDS.includes(v.kind), 'MAILBOX_REQUEST_KIND_REFUSED');
-  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind]], 'MAILBOX_REQUEST_KEYS_REFUSED');
+  // DESIGN 54: a relay-stage of a run again (stages 4 and 6 only) carries `again` (1 or 2); a first run never carries it.
+  const again = v.kind === 'relay-stage' && Object.hasOwn(v, 'again');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind], ...(again ? ['again'] : [])], 'MAILBOX_REQUEST_KEYS_REFUSED');
   check(v.contract === REQUEST_CONTRACT && UUID.test(v.requestId), 'MAILBOX_REQUEST_IDENTITY_REFUSED');
   check(BATCH_ID.test(v.batchId), 'MAILBOX_BATCH_ID_REFUSED');
   check(!Number.isNaN(Date.parse(v.createdAt)) && !Number.isNaN(Date.parse(v.deadline)) && Date.parse(v.deadline) > Date.parse(v.createdAt), 'MAILBOX_REQUEST_TIME_REFUSED');
-  if (v.kind === 'relay-stage') check([2, 4, 6].includes(v.stage) && HEX64.test(v.jobId), 'MAILBOX_RELAY_FIELDS_REFUSED');
+  if (v.kind === 'relay-stage') check([2, 4, 6].includes(v.stage) && HEX64.test(v.jobId) && (!again || ([4, 6].includes(v.stage) && [1, 2].includes(v.again))), 'MAILBOX_RELAY_FIELDS_REFUSED');
   if (v.kind === 'archive-linux') check(REASON.test(v.reason), 'MAILBOX_ARCHIVE_REASON_REFUSED');
   if (v.kind === 'pr-head') check(Number.isSafeInteger(v.pr) && v.pr > 0 && v.pr < 1e9, 'MAILBOX_PR_REFUSED');
   return v;
@@ -122,8 +130,13 @@ export function validateResponse(v, request) {
   check(v.directory === null || (typeof v.directory === 'string' && ARCHIVE_DIR.test(v.directory)), 'MAILBOX_RESPONSE_DIRECTORY_REFUSED');
   check(v.verified === null || typeof v.verified === 'boolean', 'MAILBOX_RESPONSE_VERIFIED_REFUSED');
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
-  check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
-    v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+  // parsePull's merge-ref observation is advisory but must survive this boundary.
+  // Keep legacy three-field replies; the sole optional fourth field is a typed
+  // exact SHA, never an open-ended payload or authority to execute anything.
+  check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull,
+    ['number', 'state', 'headSha', ...(v.pull && Object.hasOwn(v.pull, 'mergeSha') ? ['mergeSha'] : [])], 'MAILBOX_RESPONSE_PULL_REFUSED'),
+    v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? '') &&
+    (!Object.hasOwn(v.pull, 'mergeSha') || (typeof v.pull.mergeSha === 'string' && v.pull.mergeSha.length === 40 && HEX40.test(v.pull.mergeSha))))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
     Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');

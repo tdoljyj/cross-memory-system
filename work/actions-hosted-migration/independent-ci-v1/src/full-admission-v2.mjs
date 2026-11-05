@@ -13,6 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
+import { networkFault } from './read-retry.mjs';
+import { verificationUnavailable } from './withdrawal-text.mjs';
 import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './clock-skew.mjs';
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
@@ -43,6 +45,17 @@ export function fullAdmissionFailureV2(facts) {
   const diagnostic = sanitizeAdmissionDiagnosticV2(facts.diagnostic);
   return { reason: facts.reason, ...(diagnostic ? { admissionDiagnostic: diagnostic } : {}) };
 }
+// Generation 10 (resident DESIGN 53.6): whether an exception the evaluation caught was the line or a passing server fault, in the shapes
+// the code it runs really throws:
+//   - Source github.mjs (the mode read, the installation token): a coded error github_http_500/502/503/504 or
+//     github_transport_unconfirmed (withdrawal-text.mjs#verificationUnavailable, the read-retry set);
+//   - a bare network failure (read-retry.mjs#networkFault) or a timeout;
+//   - scripts/ci/clued-work-admission.mjs: githubJson's "GitHub API <route> returned 502" and the Native RPC's
+//     "Clued <rpc> returned 503" or "... returned 503: <detail>" (describe(): the status, then ": " and the details).
+// Anything else (a credential refused, 401, 403, 404, 429, an evaluator fault) is not.
+const RETURNED_5XX = / returned (?:500|502|503|504)(?::|$)/;
+export const transportFault = error => networkFault(error) || error?.name === 'TimeoutError' || verificationUnavailable(error?.code)
+  || (error instanceof Error && RETURNED_5XX.test(error.message ?? ''));
 const blocked = (reason, diagnostic) => Object.freeze({ contract: FULL_ADMISSION_CONTRACT_V2, status: 'BLOCKED', admitted: false, reason, ...(diagnostic ? { diagnostic } : {}) });
 
 function packetValid(job, packet) {
@@ -188,7 +201,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           packetSha256: digest(packet), evaluationSha256: digest(outcome) };
         return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
           { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
-      } catch { return blocked('full_admission_unavailable', { phase }); }
+      } catch (error) { return blocked('full_admission_unavailable', { phase, transport: transportFault(error) }); }
     },
   });
 }

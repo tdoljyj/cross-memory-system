@@ -639,3 +639,37 @@ test('N3: the executor writes the breaker and the intake pause into status.json,
   assert.deepEqual([halted.halt.code, halted.intakePause !== null, halted.breaker.state], ['X_Y', true, 'open']);
   assert.equal(onDuty(halted), 'X_Y');
 });
+
+// DESIGN 49 (Owner decision 4f5f35d3): a passing GitHub / Native fault at stage 1 that wrote nothing releases the head (backs off, does not burn it)
+// and gives attempt 2 back; it is not a node-role answer (the node stays ACTIVE), and a stage after the first still burns into attempt 2.
+const TRANSIENT_REFUSAL = reason => ({ status: 'BLOCKED', reason, sideEffects: 0, mayHavePublished: false, safeToRerun: true, diagnostic: null });
+test('a stage-1 GitHub 5xx / Native-unavailable that wrote nothing releases the head and gives attempt 2 back; unflagged it burns into attempt 2 as before', async t => {
+  for (const [code, reason] of [['GITHUB_TRANSIENT_UNAVAILABLE', 'github_http_502'], ['NATIVE_ADMISSION_UNAVAILABLE', 'full_admission_unavailable']]) {
+    const f = await nodeFx(t, { engine: attempt2Engine([notAdmitted(code, TRANSIENT_REFUSAL(reason))]), facts: [HELD] });
+    await f.exec.tick();
+    await f.drop(triggerBytes());
+    const first = await f.exec.tick();
+    assert.equal(first.state, 'FAILED_CLEAN', code);
+    const key2 = first.attempt2;
+    f.advance(11 * MIN);
+    const second = await f.exec.tick();
+    assert.deepEqual([second.state, second.failureCode, second.release, second.settle?.klass, f.exec.roleProbeMode], ['NOT_ADMITTED', code, 'NOT_ADMITTED', 'environment', 'ACTIVE'], code);
+    assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.key2), [key2], `${code}: attempt 2 is pending again, not spent`);
+    assert.deepEqual(await receiptBodies(f, 'attempt2-reopened'), [{ key: key2, attempt1: first.key }], code);
+    // the head is not burned: after the backoff attempt 2 runs again with the same key (the fake engine now answers ok)
+    f.advance(61 * MIN);
+    const third = await f.exec.tick();
+    assert.deepEqual([third.key, third.attempt2], [key2, undefined], code);
+    assert.deepEqual(f.engine.attempts, [1, 2, 2], code);
+  }
+  // without the entry's own flag it is a burn into attempt 2 (clean cleanup proof), exactly as before
+  const g = await nodeFx(t, { engine: attempt2Engine([notAdmitted('GITHUB_TRANSIENT_UNAVAILABLE', { ...TRANSIENT_REFUSAL('github_http_502'), safeToRerun: false })]), facts: [HELD] });
+  await g.exec.tick();
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'FAILED_CLEAN');
+  g.advance(11 * MIN);
+  const burned = await g.exec.tick();
+  assert.deepEqual([burned.state, burned.failureCode], ['FAILED_CLEAN', 'GITHUB_TRANSIENT_UNAVAILABLE']);
+  assert.deepEqual(await g.ledger.pendingAttempts2(), []);
+  assert.deepEqual(await receiptBodies(g, 'attempt2-reopened'), []);
+});

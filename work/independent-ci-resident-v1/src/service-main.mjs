@@ -102,6 +102,8 @@ export async function main(argv = process.argv.slice(2)) {
   const queue = await RunQueue.open(path.join(state, 'queue'), clock);
   const exec = new ResidentExecutor({
     policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue, versions,
+    // Generation 10 (DESIGN 53.5): the executor writes status.json at once when a batch is claimed and when a breaker trial starts.
+    statusFlush: () => statusTimer.flush(),
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),

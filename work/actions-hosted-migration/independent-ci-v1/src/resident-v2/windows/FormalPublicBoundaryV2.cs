@@ -184,12 +184,20 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
  // C2 probe /1: no PR/head/claim/attempt fields. The complete current node profile is independently pinned by plan /3.
+ // Generation 12 (resident DESIGN 56.2), the queue watch: /2 adds only watchPr (1..9999999999), the one PR whose merge-slot holding the
+ // probe reports as one bit; its identity appends watchPr exactly as role-probe-run.mjs#roleProbeRunId does. /1 is unchanged.
+ public const string RoleProbeRunV1="clued.independent-ci.role-probe-run/1",RoleProbeRunV2="clued.independent-ci.role-probe-run/2";
  public static string RoleProbeRunId(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.role-probe-run/1",At(job,"repo"),At(job,"runId"),At(job,"sourceManifestSha256"),At(job,"nodeProfileSha256")};
+  bool watch=(At(job,"contract") as string)==RoleProbeRunV2;
+  var identity=new List<object>{watch?RoleProbeRunV2:RoleProbeRunV1,At(job,"repo"),At(job,"runId"),At(job,"sourceManifestSha256"),At(job,"nodeProfileSha256")};
+  if(watch)identity.Add(Int(job,"watchPr"));
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  public static Dictionary<string,object> ValidateRoleProbeRun(Dictionary<string,object> job,string sourceManifest,string batchId,string profileSha){
-  Fields(job,new[]{"contract","id","repo","runId","sourceManifestSha256","nodeProfileSha256","createdAt"});Exact(job,"contract","clued.independent-ci.role-probe-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
+  bool watch=(At(job,"contract") as string)==RoleProbeRunV2;
+  if(watch){Fields(job,new[]{"contract","id","repo","runId","sourceManifestSha256","nodeProfileSha256","createdAt","watchPr"});long w=Int(job,"watchPr");if(w<1||w>9999999999L)Deny("FIXED_ROLE_PROBE_RUN_REQUIRED");}
+  else{Fields(job,new[]{"contract","id","repo","runId","sourceManifestSha256","nodeProfileSha256","createdAt"});Exact(job,"contract",RoleProbeRunV1);}
+  Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
   string run=Text(job,"runId");if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest||Sha(job,"nodeProfileSha256")!=profileSha)Deny("FIXED_ROLE_PROBE_RUN_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
   if(RoleProbeRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;

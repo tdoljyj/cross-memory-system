@@ -1,0 +1,121 @@
+{
+  "contract": "clued.independent-ci.resident-policy/9",
+  "repo": "tdoljyj/cross-memory-system",
+  "baseBranch": "main",
+  "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "ciSourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "residentManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "ownerAcceptance": {
+    "decisionRef": "0d84ddbb-ec1f-49c3-bbd0-953f72d53584",
+    "installReceiptRef": null
+  },
+  "validUntil": null,
+  "limits": {
+    "maxBatchesPer24h": 72,
+    "maxEvaluationsPer24h": 96,
+    "perPrBatchesPer24h": 6,
+    "waitingRetriesPer24h": 48,
+    "reevaluationsPerPrHeadPer24h": 6,
+    "releasesPerHeadPer24h": 2,
+    "queueDepth": 100,
+    "maxConcurrent": 1,
+    "inboxMaxFiles": 16,
+    "unexecutedCooldownMs": 600000,
+    "stageMarginMs": 180000
+  },
+  "breaker": {
+    "consecutive": 3,
+    "windowCount": 4,
+    "windowMs": 3600000,
+    "backoffMs": [
+      1800000,
+      3600000,
+      7200000
+    ],
+    "network": {
+      "trialDelayMs": 600000,
+      "earlyTrialProbes": 2,
+      "releasesPerHeadPer24h": 36
+    }
+  },
+  "stage8": {
+    "mode": "park"
+  },
+  "park": {
+    "maxParked": 4,
+    "maxParkedOutsideTop2": 8,
+    "maxMs": 86400000,
+    "stage8MaxTries": 12,
+    "stage8RetriesPer24h": 100
+  },
+  "train": {
+    "enabled": "shadow",
+    "nonFrontRuns": true,
+    "maintenanceEveryMs": 600000,
+    "maintenanceMaxPerDay": 200,
+    "slotHardCapMinutes": 120,
+    "frontBatchBudgetMs": 3600000,
+    "sweepFreshMs": 900000,
+    "fullSweepMaxMs": 21600000
+  },
+  "companion": {
+    "userSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+    "heartbeatMaxAgeMs": 60000
+  },
+  "stageRunMilliseconds": [
+    900000,
+    2700000,
+    900000,
+    1800000,
+    900000,
+    600000,
+    900000,
+    2700000,
+    900000,
+    300000
+  ],
+  "linux": {
+    "distribution": "Ubuntu-24.04",
+    "workerUnit": "clued-ci-worker@.service",
+    "wsprepUnit": "clued-ci-wsprep@.service",
+    "archiveUnit": "clued-ci-archive@.service"
+  },
+  "automaticAttempt2": {
+    "enabled": true,
+    "delayMs": 600000
+  },
+  "retention": {
+    "reminderBytes": 53687091200,
+    "checkEveryMs": 3600000
+  },
+  "relay": {
+    "enabled": false,
+    "roles": [
+      "gitleaks",
+      "trivy"
+    ],
+    "wait": {
+      "signalMs": 600000,
+      "queueMs": 900000,
+      "runSlackMs": 600000,
+      "totalMs": 3600000,
+      "pollMs": 60000,
+      "jobTimeoutMs": {
+        "gitleaks": 1500000,
+        "trivy": 1500000
+      }
+    }
+  },
+  "node": {
+    "contract": "clued.independent-ci.node-profile/1",
+    "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+    "hostname": "TURING",
+    "mutationMutex": "Global\\CluedControlControllerMutationV1-TURING-1015",
+    "nodeName": "turing",
+    "ownerProfileDirectory": "C:\\Users\\17531",
+    "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+    "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+    "wslDistribution": "Ubuntu-24.04"
+  },
+  "nodeProfileSha256": "4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6"
+}
