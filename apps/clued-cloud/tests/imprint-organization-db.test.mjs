@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -527,6 +528,6 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -379,7 +380,7 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
     await db.query('commit');
   } finally {
     if (db) await db.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    await stopCluster(server);
+    await removeTestDirectory(directory).catch(() => {});
   }
 });

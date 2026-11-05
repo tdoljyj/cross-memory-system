@@ -2,6 +2,7 @@
 // with a missing record_schema_version became an unreachable NULL-schema row
 // (readable as CURRENT, never again supersedable or updatable). The shared
 // validator and the supersede core must now reject it with a receipt.
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -184,6 +185,6 @@ test("decision supersede rejects a replacement without record_schema_version", {
     assert.equal(await nullSchemaRows(), 0);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

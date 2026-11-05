@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -238,6 +239,6 @@ test('work claim exemption: Native two-step grant lifts the per-Task cap by 5 fo
     await assert.rejects(() => anon.query('select * from clued_private.work_claim_exemptions_v1'), /permission denied/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

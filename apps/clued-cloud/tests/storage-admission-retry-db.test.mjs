@@ -276,7 +276,7 @@ test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:
   if(cleanup){
    retainedChild?.stdin?.destroy();retainedChild?.stdout?.destroy();retainedChild?.stderr?.destroy();
    const actual=await ownedBoundary();
-   await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
+   await fs.rm(actual,{recursive:true,force:false,maxRetries:20,retryDelay:250});
    await assert.rejects(fs.lstat(actual),{code:'ENOENT'});
    console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',
     fixture_directory:directory,retained_child_pid:retainedChild?.pid??null,...diagnostic,directory_removed:true,

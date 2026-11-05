@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -91,8 +92,8 @@ async function databaseFixture(dir) {
       dumpPath: name => path.join(dir,name),
       runPg: async (tool,args) => execute(process.env[tool === 'pg_dump' ? 'PG_DUMP' : 'PG_RESTORE'] ?? tool,
         tool === 'pg_dump' ? ['--dbname',`postgresql://postgres:${password}@127.0.0.1:${port}/postgres`,...args] : args),
-      close: () => server.stop() };
-  } catch (error) { if (started) await server.stop(); throw error; }
+      close: () => stopCluster(server) };
+  } catch (error) { if (started) await stopCluster(server); throw error; }
 }
 
 test('actual PostgreSQL backup selection, catalog coverage and migration scope fail closed', { timeout:120000 }, async t => {
@@ -190,7 +191,7 @@ test('actual PostgreSQL backup selection, catalog coverage and migration scope f
     });
   } finally {
     if (db) await db.close();
-    await fs.rm(dir,{ recursive:true,force:true });
+    await removeTestDirectory(dir);
   }
   await assert.rejects(fs.stat(dir),{ code:'ENOENT' });
 });

@@ -2,6 +2,7 @@
 // Synthetic identity keys test deployment-config CAS only; no issuer credential
 // table, credential RPC, stage/activate path or test credential grant is created.
 // Synthetic accounts/envelopes never use a live service.
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -242,7 +243,7 @@ test('forward/reverse SQL enforce callback drainage, exact CAS, operator and his
         try { await refused(client, 'canceling statement due to lock timeout'); } finally { await writer.query('ROLLBACK'); }
       });
     } finally {
-      await Promise.allSettled(clients.map(client => client.end())); await server.stop();
+      await Promise.allSettled(clients.map(client => client.end())); await stopCluster(server);
     }
   });
 

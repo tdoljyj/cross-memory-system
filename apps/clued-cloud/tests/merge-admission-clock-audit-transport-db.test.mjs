@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -235,10 +236,10 @@ test('typed C1 audit transport: actual database authorization and transaction bo
     migration_count:chain.length,chain_sha256:hash(JSON.stringify(chain)),candidate_sha256:hash(candidate),
     actual_c1_database_test:true,actual_worker_runtime:true,worker_source_sha256:hash(workerSource),counterexample,
     private_candidate:true,source_authenticated:false,official_metric:false,t0:null,production:false}));
- }finally{for(const client of clients)await client.end().catch(()=>{});await server.stop();
+ }finally{for(const client of clients)await client.end().catch(()=>{});await stopCluster(server);
    const actual=await fs.realpath(directory);assert.equal(actual,directory);assert.equal(path.dirname(actual),parent);
-   assert.ok(path.basename(actual).startsWith('clued-clock-audit-'));await fs.rm(actual,{recursive:true,force:true});
+   assert.ok(path.basename(actual).startsWith('clued-clock-audit-'));await removeTestDirectory(actual);
    const actualWorker=await fs.realpath(workerDirectory);assert.equal(path.dirname(actualWorker),parent);
-   assert.ok(path.basename(actualWorker).startsWith('clued-clock-audit-worker-'));await fs.rm(actualWorker,{recursive:true,force:true});
+   assert.ok(path.basename(actualWorker).startsWith('clued-clock-audit-worker-'));await removeTestDirectory(actualWorker);
    console.log(JSON.stringify({clock_audit_fixture_cleanup:'complete'}));}
 });

@@ -1,4 +1,5 @@
 // Actual disposable PostgreSQL; no production SQL, provider requests or credentials.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs/promises";
@@ -512,9 +513,9 @@ test("semantic recovery: actual migration, independent predicates and private bo
    });
    server.process = undefined;
   }
-  if (started) await server.stop();
+  if (started) await stopCluster(server);
   const resolved = await fs.realpath(dir).catch(() => null);
   if (resolved && path.dirname(resolved) === temporaryRoot && path.basename(resolved).startsWith("kooyumi-semantic-db-"))
-   await fs.rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+   await removeTestDirectory(resolved);
  }
 });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -258,7 +259,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
           assert.equal(ownMarker.pid,ownProcess.pid);assert.equal(ownMarker.run_id,runId);assert.equal(ownMarker.database_dir,databaseDir);
           const postmaster=(await fs.readFile(path.join(databaseDir,'postmaster.pid'),'utf8')).split(/\r?\n/)[0];
           assert.equal(Number(postmaster),ownProcess.pid,'The owned datadir must name this exact PostgreSQL child');
-          await Promise.race([server.stop(),new Promise((_,reject)=>{stopTimer=setTimeout(()=>reject(new Error('OWN_POSTGRES_STOP_TIMEOUT')),15000);})]);
+          await Promise.race([stopCluster(server),new Promise((_,reject)=>{stopTimer=setTimeout(()=>reject(new Error('OWN_POSTGRES_STOP_TIMEOUT')),15000);})]);
           cleanup=exited();
         }
       } else cleanup=!startAttempted&&initialiseSettled;
@@ -271,7 +272,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
     }
     if(cleanup) {
       const actual=await ownedBoundary();
-      await fs.rm(actual,{recursive:true,force:true});
+      await removeTestDirectory(actual);
     } else {
       await fs.writeFile(path.join(directory,'NO_CLEANUP.json'),JSON.stringify({run_id:runId,pid:ownProcess?.pid??null,database_dir:databaseDir,stop_error:stopError,reason:'Own process exit was not proven; directory preserved'})+'\n');
       throw new Error('NO_CLEANUP: own PostgreSQL exit was not proven; preserve '+directory);

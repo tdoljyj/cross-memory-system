@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -1041,7 +1042,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    await stopCluster(server);
+    await removeTestDirectory(directory).catch(() => {});
   }
 });

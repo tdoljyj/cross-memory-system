@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -676,10 +677,10 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       await assert.rejects(listing(),e=>e.code==='42501');
     });
   }finally{
-    for(const c of clients)await c.end().catch(()=>{});if(started)await server.stop();
+    for(const c of clients)await c.end().catch(()=>{});if(started)await stopCluster(server);
     const actual=await fs.realpath(dir);
     if(actual!==dir||path.dirname(actual)!==tempParent||!path.basename(actual).startsWith('clued-owner-lifecycle-'))
       throw new Error('test database directory identity changed; refusing cleanup');
-    await fs.rm(actual,{recursive:true,force:true,maxRetries:20,retryDelay:250});
+    await removeTestDirectory(actual);
   }
 });
