@@ -78,7 +78,7 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     const tokens = {};
     const ids = {};
     for (const [name, owner] of [['h1', userId], ['h2', userId], ['h3', userId], ['h4', userId], ['node', userId],
-      ['envci', userId], ['standby', userId], ['revoked', userId], ['k1', u2], ['k2', u2], ['knode', u2],
+      ['envci', userId], ['standby', userId], ['revoked', userId], ['h5', userId], ['k1', u2], ['k2', u2], ['knode', u2],
       ['f1', u3], ['f2', u3], ['f3', u3], ['unspec', u3]]) {
       tokens[name] = hash();
       ids[name] = (await admin.query(`insert into public.clued_agent_bindings
@@ -109,7 +109,7 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
         ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
         : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
-    const claim = async (who, title, extra = {}) => {
+    const claimAnswer = async (who, title, extra = {}) => {
       const task = committed(await agent(who, 'clued_record_mutate', {
         operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
         scope: 'global', idempotency_key: uuid(), authority: 'observed',
@@ -118,8 +118,9 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
       })).target_refs[0].id;
       return committed(await agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: task,
         write_set: [`ci-assist/${uuid()}`], holder_label: title, holder_session_ref: `session-${title}`,
-        trigger_refs: [`task:${title.toLowerCase()}`], ...extra })).claim;
+        trigger_refs: [`task:${title.toLowerCase()}`], ...extra }));
     };
+    const claim = async (who, title, extra = {}) => (await claimAnswer(who, title, extra)).claim;
     const renew = async (who, c, extra = {}) => committed(await agent(who, 'clued_work_renew_v1', { scope: 'global',
       claim_id: c.claim_id, fence: Number(c.fence), lease_version: Number(c.lease_version), progress_ref: uuid(), ...extra })).claim;
     // Binds a claim to a pull request and admits a head for the current execution epoch, as the admission check does.
@@ -377,12 +378,19 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
       [g.claim_id, (await row(s)).task_id, Number((await row(s)).fence) + 100]);
     assert.equal((await join('node', `${REPO}#15`, HEAD('5'))).reason, 'claim_not_live', 'a newer fence of the Task');
 
-    // --- The execution epoch: after a handover moves it, the old admission no longer counts. ---
-    const p = await live('P', `${REPO}#16`, HEAD('6'), 'h4');
+    // --- The execution epoch: after a key-transfer renewal moves the claim to another
+    // Binding (a new epoch), the old admission no longer counts. ---
+    const pAnswer = await claimAnswer('h4', 'P');
+    const p = pAnswer.claim;
+    assert.ok(pAnswer.lease_key, 'the claim answer carries its private key');
+    await admit('node', p, `${REPO}#16`, HEAD('6'));
     const epoch = Number((await row(p)).execution_epoch);
-    await admin.query('update clued_private.work_claims_v1 set execution_handover_pending=true where claim_id=$1', [p.claim_id]);
-    await admin.query('update clued_private.work_claims_v1 set execution_handover_pending=false where claim_id=$1', [p.claim_id]);
-    assert.equal(Number((await row(p)).execution_epoch), epoch + 1);
+    const moved = committed(await agent('h5', 'clued_work_renew_v1', { scope: 'global', claim_id: p.claim_id,
+      fence: Number(p.fence), lease_version: Number(p.lease_version), lease_key: pAnswer.lease_key,
+      progress_ref: `reconnect:${uuid()}`, holder_session_ref: 'session-P2' }));
+    assert.equal(moved.transferred, true);
+    assert.equal((await row(p)).holder_binding_id, ids.h5);
+    assert.equal(Number((await row(p)).execution_epoch), epoch + 1, 'the transfer moved the execution epoch');
     assert.equal((await join('node', `${REPO}#16`, HEAD('6'))).reason, 'head_not_admitted', 'a revoked batch cannot join');
     assert.equal((await extend('node', `${REPO}#16`, HEAD('6'), 60)).reason, 'head_not_admitted', 'nor extend');
     await admit('node', p, `${REPO}#16`, HEAD('6'));
@@ -446,6 +454,71 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     extendReceipts = await receipts('work_claim_lease_extend_by_ci');
     assert.deepEqual(extendReceipts.map((r) => r.object_id), [e.claim_id, e.claim_id, f.claim_id, f.claim_id],
       'one receipt per effective extension');
+
+    // --- After a CI extension reached the hard deadline, the holder still renews (the expiry stays at the cap). ---
+    const t = await live('T', `${REPO}#18`, HEAD('2'), 'h4');
+    await admin.query(`update clued_private.work_claims_v1 set expires_at=now()+interval '30 minutes',
+      hard_deadline_at=now()+interval '170 minutes' where claim_id=$1`, [t.claim_id]);
+    const tExtended = await extend('node', `${REPO}#18`, HEAD('2'), 180);
+    const tRow = await row(t);
+    assert.deepEqual([tExtended.extended, tRow.expires_at.getTime()], [true, tRow.hard_deadline_at.getTime()]);
+    const tRenewed = await renew('h4', { claim_id: t.claim_id, fence: tRow.fence, lease_version: tRow.lease_version },
+      { progress_ref: HEAD('2'), write_set: [...tRow.write_set, 'ci-assist/extra'] });
+    assert.equal(Number(tRenewed.lease_version), Number(tRow.lease_version) + 1);
+    assert.equal(tRenewed.progress_ref, HEAD('2'));
+    assert.ok(tRenewed.write_set.includes('ci-assist/extra'));
+    assert.equal((await row(t)).expires_at.getTime(), tRow.hard_deadline_at.getTime(), 'the expiry stays at the deadline');
+    // Without a CI extension, a lease at the deadline is refused as before.
+    const tPlain = await live('TPlain', `${REPO}#19`, HEAD('1'), 'h4');
+    await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=expires_at where claim_id=$1`, [tPlain.claim_id]);
+    const tPlainRow = await row(tPlain);
+    const refusedRenew = await agent('h4', 'clued_work_renew_v1', { scope: 'global', claim_id: tPlain.claim_id,
+      fence: Number(tPlainRow.fence), lease_version: Number(tPlainRow.lease_version), progress_ref: uuid() });
+    assert.deepEqual([refusedRenew.status, refusedRenew.error_code], ['rejected', 'work_claim_hard_deadline']);
+
+    // --- Keeping the CI's ref would make 51 refs: the renewal is refused with 22023. ---
+    const u = await live('U', `${REPO}#20`, HEAD('0'), 'h5');
+    await admin.query(`update clued_private.work_claims_v1 set trigger_refs=$2 where claim_id=$1`,
+      [u.claim_id, Array.from({ length: 49 }, (_, i) => `u:${String(i).padStart(2, '0')}`)]);
+    assert.equal((await join('node', `${REPO}#20`, HEAD('0'))).joined, true);
+    assert.equal((await row(u)).trigger_refs.length, 50);
+    const uRow = await row(u);
+    await assert.rejects(() => agent('h5', 'clued_work_renew_v1', { scope: 'global', claim_id: u.claim_id,
+      fence: Number(uRow.fence), lease_version: Number(uRow.lease_version), progress_ref: uuid(),
+      trigger_refs: Array.from({ length: 50 }, (_, i) => `u:${String(i).padStart(2, '0')}`) }),
+    (error) => /work_claim_trigger_refs_invalid/.test(error.message) && error.code === '22023');
+    assert.deepEqual(await row(u), uRow, 'the refused renewal changed nothing');
+
+    // --- The CI's ref left with the slot; one the holder adds again is the holder's own and leaves on renewal. ---
+    const q = await live('Q', `${REPO}#24`, HEAD('7'), 'h5');
+    assert.equal((await join('node', `${REPO}#24`, HEAD('7'))).joined, true);
+    const ciRow = async (x) => (await admin.query('select merge_ref from clued_private.work_claim_ci_merge_refs_v1 where claim_id=$1',
+      [x.claim_id])).rows;
+    assert.deepEqual(await ciRow(q), [{ merge_ref: SLOT }]);
+    assert.equal((await agent('node', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${REPO}#24` })).returned, true);
+    assert.deepEqual((await row(q)).trigger_refs, ['task:q']);
+    assert.deepEqual(await ciRow(q), [], 'the return deletes the CI ref row');
+    let qClaim = await renew('h5', await row(q).then((x) => ({ claim_id: q.claim_id, ...x })), { trigger_refs: ['task:q', SLOT] });
+    assert.deepEqual(qClaim.trigger_refs, [SLOT, 'task:q'].sort(), 'the holder takes the slot itself');
+    qClaim = await renew('h5', qClaim, { trigger_refs: ['task:q'] });
+    assert.deepEqual(qClaim.trigger_refs, ['task:q'], 'a renewal without its own ref leaves the queue');
+    // A stale row of a ref that left some other way is dropped by the next renewal.
+    const q2 = await live('Q2', `${REPO}#25`, HEAD('8'), 'h5');
+    assert.equal((await join('node', `${REPO}#25`, HEAD('8'))).joined, true);
+    await admin.query(`update clued_private.work_claims_v1 set trigger_refs=array['task:q2'] where claim_id=$1`, [q2.claim_id]);
+    let q2Claim = await renew('h5', await row(q2).then((x) => ({ claim_id: q2.claim_id, ...x })), { trigger_refs: ['task:q2', SLOT] });
+    assert.deepEqual(await ciRow(q2), [], 'the stale row is gone');
+    q2Claim = await renew('h5', q2Claim, { trigger_refs: ['task:q2'] });
+    assert.deepEqual(q2Claim.trigger_refs, ['task:q2']);
+
+    // --- Approval (current behaviour, pending an Owner decision): verify records the execution
+    // admission of a protected-layer head before and without any Owner Grant, and the CI may join. ---
+    const v = await claim('h5', 'V');
+    const vAdmitted = await agent('node', 'clued_work_verify_v1', { scope: 'global', claim_id: v.claim_id, pr_ref: `${REPO}#26`,
+      head_sha: HEAD('9'), target_branch: 'main', admission_mode: { state: 'normal', layer: 'protected' } });
+    assert.equal(vAdmitted.verdict, 'ADMITTED');
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where user_id=$1`, [userId])).rows[0].n, 0);
+    assert.equal((await join('node', `${REPO}#26`, HEAD('9'))).joined, true, 'no server-side approval condition today');
 
     // --- A CI ref that left the claim (the slot returned on close) is not put back by a renewal. ---
     assert.equal((await agent('node', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: pr2 })).returned, true);

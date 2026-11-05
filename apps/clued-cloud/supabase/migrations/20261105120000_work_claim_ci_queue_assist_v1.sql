@@ -77,14 +77,27 @@
 --    head_not_admitted, claim_id?, pr_ref, head_sha, minutes, expires_at,
 --    previous_expires_at?, hard_deadline_at, receipt_id?}.
 -- 3. The holder's renewal (clued_private.work_claim_renew_before_execution_v1,
---    two exact anchors):
+--    three exact anchors):
 --    - a renewal that sends trigger_refs without the merge ref the CI added
 --      keeps it (in the claim's own spelling), so the claim keeps its queue
---      place as with a renewal that keeps the ref. The ref is not kept once
---      it has left the claim otherwise (a merge, a close or a CI failure
---      returns the slot); the holder leaves the queue by releasing the claim.
+--      place as with a renewal that keeps the ref. A list that already holds
+--      the 50 refs a claim may hold cannot take it back: the renewal raises
+--      work_claim_trigger_refs_invalid (22023). The CI's ref is the one in
+--      work_claim_ci_merge_refs_v1; the row goes when the ref leaves the
+--      claim (merge, close or CI failure: work_claim_merge_slot_return_core_v1
+--      deletes it; any other way, the next renewal finds the claim without
+--      the ref and deletes it), so a ref the holder puts back itself later is
+--      the holder's own and a renewal without it leaves the queue as usual.
+--      While the CI's ref is on the claim, the holder leaves that queue by
+--      releasing the claim.
 --    - the new expiry is least(greatest(expires_at, now + lease_seconds),
 --      hard_deadline_at): a renewal never shortens a longer lease the CI gave.
+--    - a renewal of a claim whose lease already reached the hard deadline is
+--      refused (work_claim_hard_deadline) as before, except when a CI
+--      extension put it there (a WORK_CLAIM_LEASE_EXTENDED_BY_CI receipt of
+--      this claim with that expiry): the CI may reach the deadline up to 180
+--      minutes early, and the holder must still be able to record progress,
+--      refs and write set. Such a renewal keeps expires_at at the deadline.
 --
 -- Why the holder's fields stay: the CI is not the holder. A renewal is a
 -- compare-and-set on fence and lease_version, so if the CI moved
@@ -235,6 +248,9 @@ begin
     return jsonb_build_object('status','rejected','error_code','admission_binding_required'); end if;
   -- A lease that already ran out expires here first and is never revived.
   perform clued_private.work_claim_expire_due(b.user_id);
+  -- The lease bounds the slot, so the queues of the repository are recorded
+  -- first, as the keepalive does (20261031060000 item 3).
+  perform clued_private.work_claim_merge_front_sync_all_v1(b.user_id,'merge:'||lower(split_part(v_pr,'#',1))||':');
   v_target:=clued_private.work_claim_ci_assist_target_v1(b.user_id,v_scope,v_pr,v_head);
   v_answer:=jsonb_build_object('status','ok','pr_ref',v_pr,'head_sha',v_head,'minutes',v_minutes);
   if v_target ? 'reason' then
@@ -269,21 +285,36 @@ end $$;
 
 -- Item 3, first rule: the trigger refs a renewal sets, with the CI's merge
 -- ref put back when the renewal's own list drops it while the claim still
--- holds it. A list that is already full cannot take it back.
+-- holds it. A row whose ref has already left the claim is stale and goes, so
+-- the ref no longer counts as the CI's. A list that is already full cannot
+-- take the ref back.
 create function clued_private.work_claim_ci_keep_merge_ref_v1(c clued_private.work_claims_v1,p_triggers text[])
-returns text[] language plpgsql stable security definer set search_path='' as $$
+returns text[] language plpgsql volatile security definer set search_path='' as $$
 declare v_ref text; v_held text;
 begin
   select k.merge_ref into v_ref from clued_private.work_claim_ci_merge_refs_v1 k where k.claim_id=c.claim_id;
   if v_ref is null then return p_triggers; end if;
   select t into v_held from unnest(c.trigger_refs) t where lower(t)=v_ref order by t limit 1;
-  if v_held is null or exists(select 1 from unnest(p_triggers) t where lower(t)=v_ref) then
+  if v_held is null then
+    delete from clued_private.work_claim_ci_merge_refs_v1 k where k.claim_id=c.claim_id;
+    return p_triggers;
+  end if;
+  if exists(select 1 from unnest(p_triggers) t where lower(t)=v_ref) then
     return p_triggers; end if;
   if cardinality(p_triggers)>=50 then
     raise exception 'work_claim_trigger_refs_invalid' using errcode='22023',
       detail='the CI merge ref '||v_held||' is kept and the list already holds 50 refs'; end if;
   return clued_private.work_claim_normalize_triggers(to_jsonb(p_triggers||v_held));
 end $$;
+
+-- Item 3, third rule: the claim's lease reached its expiry through a CI
+-- extension (the receipt of an effective extension to exactly that expiry).
+create function clued_private.work_claim_ci_extended_to_v1(c clued_private.work_claims_v1) returns boolean
+language sql stable security definer set search_path='' as $$
+  select exists(select 1 from public.clued_audit_receipts r where r.user_id=c.user_id
+    and r.context_key=c.context_key and r.operation='work_claim_lease_extend_by_ci'
+    and r.object_id=c.claim_id::text and (r.metadata->>'expires_at')::timestamptz=c.expires_at)
+$$;
 
 -- Add the two actions to the CI command door right after the keepalive, so
 -- they run behind its role check and claim lock. The door is otherwise
@@ -322,20 +353,48 @@ $a$;
   a2 text:=$a$  v_expires:=least(v_now+make_interval(secs=>(v_profile->>'lease_seconds')::integer),c.hard_deadline_at);$a$;
   r2 text:=$a$  -- Never shorter than the lease the claim has (a CI extension), never past the deadline.
   v_expires:=least(greatest(c.expires_at,v_now+make_interval(secs=>(v_profile->>'lease_seconds')::integer)),c.hard_deadline_at);$a$;
+  a3 text:=$a$  if c.expires_at>=c.hard_deadline_at then
+    return clued_private.work_claim_reject_log_v1(v_binding,v_scope,c.task_id,c.claim_id,
+      'work_claim_renew','work_claim_hard_deadline',$a$;
+  r3 text:=$a$  -- A CI extension may reach the deadline early; the holder still renews (20261105120000).
+  if c.expires_at>=c.hard_deadline_at and not clued_private.work_claim_ci_extended_to_v1(c) then
+    return clued_private.work_claim_reject_log_v1(v_binding,v_scope,c.task_id,c.claim_id,
+      'work_claim_renew','work_claim_hard_deadline',$a$;
 begin
   body:=pg_catalog.pg_get_functiondef('clued_private.work_claim_renew_before_execution_v1(text,jsonb)'::regprocedure);
   if (length(body)-length(replace(body,a1,'')))/length(a1)<>1
-      or (length(body)-length(replace(body,a2,'')))/length(a2)<>1 then
+      or (length(body)-length(replace(body,a2,'')))/length(a2)<>1
+      or (length(body)-length(replace(body,a3,'')))/length(a3)<>1 then
     raise exception 'work_claim_ci_queue_assist_renew_source_unexpected'; end if;
-  execute replace(replace(body,a1,a1||r1),a2,r2);
+  execute replace(replace(replace(body,a1,a1||r1),a2,r2),a3,r3);
 end $renew_keeps_ci$;
+
+-- The CI's ref leaves with the slot: work_claim_merge_slot_return_core_v1
+-- (20261006120000; merge, close, CI failure) deletes the row of every merge
+-- ref it drops. The anchor must occur exactly once.
+do $return_drops_ci$
+declare body text;
+  a text:=$a$      where claim_id=c.claim_id;
+    insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,$a$;
+  r text:=$a$      where claim_id=c.claim_id;
+    delete from clued_private.work_claim_ci_merge_refs_v1 k
+      where k.claim_id=c.claim_id and exists(select 1 from unnest(v_refs) x where lower(x)=k.merge_ref);
+    insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,$a$;
+begin
+  body:=pg_catalog.pg_get_functiondef(
+    'clued_private.work_claim_merge_slot_return_core_v1(uuid,uuid,text,text,text,jsonb)'::regprocedure);
+  if (length(body)-length(replace(body,a,'')))/length(a)<>1 then
+    raise exception 'work_claim_ci_queue_assist_return_source_unexpected'; end if;
+  execute replace(body,a,r);
+end $return_drops_ci$;
 
 revoke all on function
   clued_private.work_claim_ci_assist_target_v1(uuid,text,text,text),
   clued_private.work_claim_ci_assist_input_v1(jsonb,text[]),
   clued_private.work_claim_ci_queue_join_v1(public.clued_agent_bindings,jsonb),
   clued_private.work_claim_ci_lease_extend_v1(public.clued_agent_bindings,jsonb),
-  clued_private.work_claim_ci_keep_merge_ref_v1(clued_private.work_claims_v1,text[])
+  clued_private.work_claim_ci_keep_merge_ref_v1(clued_private.work_claims_v1,text[]),
+  clued_private.work_claim_ci_extended_to_v1(clued_private.work_claims_v1)
   from public,anon,authenticated,service_role,clued_worker_gateway;
 
 notify pgrst,'reload schema';
