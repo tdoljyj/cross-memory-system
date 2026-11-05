@@ -322,10 +322,15 @@ end $$;
 
 -- Item 3, third rule: the claim's lease reached its expiry through a CI
 -- extension (the receipt of an effective extension to exactly that expiry).
+-- Bounded to the claim's lifetime (created_at >= issued_at), so the lookup is
+-- a range of clued_audit_receipts_stream_idx (user_id, context_key,
+-- created_at desc) rather than every receipt of the context (the scan
+-- 20261009110000 measured near 0.9 s warm).
 create function clued_private.work_claim_ci_extended_to_v1(c clued_private.work_claims_v1) returns boolean
 language sql stable security definer set search_path='' as $$
   select exists(select 1 from public.clued_audit_receipts r where r.user_id=c.user_id
-    and r.context_key=c.context_key and r.operation='work_claim_lease_extend_by_ci'
+    and r.context_key=c.context_key and r.created_at>=c.issued_at
+    and r.operation='work_claim_lease_extend_by_ci'
     and r.object_id=c.claim_id::text and (r.metadata->>'expires_at')::timestamptz=c.expires_at)
 $$;
 

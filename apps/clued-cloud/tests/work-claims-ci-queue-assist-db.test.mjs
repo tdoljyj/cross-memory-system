@@ -478,6 +478,33 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
       fence: Number(tPlainRow.fence), lease_version: Number(tPlainRow.lease_version), progress_ref: uuid() });
     assert.deepEqual([refusedRenew.status, refusedRenew.error_code], ['rejected', 'work_claim_hard_deadline']);
 
+    // Only an extension receipt from the claim's lifetime counts: one dated before the claim was issued does not.
+    const tOld = await live('TOld', `${REPO}#27`, HEAD('5'), 'h4');
+    await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=expires_at where claim_id=$1`, [tOld.claim_id]);
+    const tOldRow = await admin.query('select * from clued_private.work_claims_v1 where claim_id=$1', [tOld.claim_id]).then((r) => r.rows[0]);
+    // Exact expiry (microseconds) copied in SQL; createdAt is an SQL expression over the claim row w.
+    const fakeExtension = (createdAt) => admin.query(`insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,
+        object_type,object_id,version,metadata,created_at)
+      select w.user_id,$2,'global','work_claim_lease_extend_by_ci','work_claim',w.claim_id::text,w.fence,
+        jsonb_build_object('receipt_kind','WORK_CLAIM_LEASE_EXTENDED_BY_CI','expires_at',w.expires_at),${createdAt}
+      from clued_private.work_claims_v1 w where w.claim_id=$1`, [tOld.claim_id, ids.node]);
+    await fakeExtension("w.issued_at-interval '1 minute'");
+    const renewOld = () => agent('h4', 'clued_work_renew_v1', { scope: 'global', claim_id: tOld.claim_id,
+      fence: Number(tOldRow.fence), lease_version: Number(tOldRow.lease_version), progress_ref: uuid() });
+    assert.equal((await renewOld()).error_code, 'work_claim_hard_deadline', 'a receipt from before the claim does not count');
+    await fakeExtension('clock_timestamp()');
+    const renewedOld = await renewOld();
+    assert.equal(renewedOld.status, 'committed', JSON.stringify(renewedOld));
+    // The lookup is a range of the (user_id, context_key, created_at desc) index.
+    await admin.query('set enable_seqscan=off');
+    const plan = (await admin.query(`explain select 1 from public.clued_audit_receipts r where r.user_id=$1
+      and r.context_key='global' and r.created_at>=$2 and r.operation='work_claim_lease_extend_by_ci'
+      and r.object_id=$3 and (r.metadata->>'expires_at')::timestamptz=$4`,
+    [userId, tOldRow.issued_at, tOld.claim_id, tOldRow.expires_at])).rows.map((r) => r['QUERY PLAN']).join(' | ');
+    await admin.query('reset enable_seqscan');
+    assert.match(plan, /Index Cond: [^|]*created_at >= /, plan);
+    console.log(`work_claim_ci_extended_to_v1 lookup plan: ${plan}`);
+
     // --- Keeping the CI's ref would make 51 refs: the renewal is refused with 22023. ---
     const u = await live('U', `${REPO}#20`, HEAD('0'), 'h5');
     await admin.query(`update clued_private.work_claims_v1 set trigger_refs=$2 where claim_id=$1`,
