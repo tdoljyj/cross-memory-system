@@ -161,7 +161,7 @@ WSL memory      28 GB
 WSL processors  16
 WSL swap        8 GB
 capacity suspend: host free memory < 6 GB or C: free < 50 GB
-capacity resume:  host free memory >= 10 GB and C: free >= 80 GB
+capacity resume:  host free memory >= 10 GB and C: free >= 60 GB
 watchdog interval 60 s
 ```
 
