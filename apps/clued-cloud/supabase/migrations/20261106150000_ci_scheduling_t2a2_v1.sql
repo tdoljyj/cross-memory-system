@@ -257,18 +257,26 @@ language plpgsql stable security definer set search_path='' as $$ declare code t
   return code;
 end $$;
 
--- A queued job that can never be leased again (its claim, head authorization or
--- admission moved on for good): null while it may still become leasable (for
--- example a claim handover still pending).
+-- A queued job that can never be leased again: each test mirrors a refusal of
+-- ci_claim_current_v1 that no later event can undo (claim ended, draining,
+-- fenced or moved to a new execution epoch (an execution handover moves it at
+-- once), superseded by a newer single claim of the Task, holder connection
+-- revoked; head authorization revoked; admission's issuer gone or the claim's
+-- resources changed since). Null while it may still become leasable: an older
+-- copy of a race (copies share the Task's fence sequence), a quota.
 create function clued_private.ci_job_stale_v1(j clued_private.ci_jobs_v1) returns text
 language sql stable security definer set search_path='' as $$
   select case
     when c.claim_id is null or c.fence is distinct from j.claim_fence or c.execution_epoch is distinct from j.execution_epoch
-      or c.status not in ('ACTIVE','DRAINING') or c.expires_at<=clock_timestamp() or c.outcome='not_adopted'
-      or exists(select 1 from clued_private.work_claims_v1 newer where newer.user_id=j.user_id and newer.task_id=c.task_id and newer.fence>c.fence)
+      or c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() or c.outcome='not_adopted'
+      or c.copy_index is null and exists(select 1 from clued_private.work_claims_v1 newer where newer.user_id=j.user_id and newer.task_id=c.task_id and newer.fence>c.fence)
+      or not exists(select 1 from public.clued_agent_bindings b where b.id=c.holder_binding_id and clued_private.binding_live_v1(b))
       then 'CI_CLAIM_NOT_CURRENT'
     when not exists(select 1 from clued_private.work_claim_head_authorizations_v1 a where a.authorization_id=j.head_authorization_id and a.revoked_at is null)
       then 'CI_HEAD_AUTHORIZATION_NOT_CURRENT'
+    when not exists(select 1 from clued_private.work_claim_execution_admissions_v1 e where e.admission_id=j.admission_id
+        and e.resources_digest=clued_private.m1_sha256(jsonb_build_object('write_set',c.write_set,'trigger_refs',c.trigger_refs)))
+      then 'CI_EXECUTION_ADMISSION_NOT_CURRENT'
     when not exists(select 1 from clued_private.work_claim_execution_admissions_v1 e join public.clued_agent_bindings b on b.id=e.ci_binding_id
         where e.admission_id=j.admission_id and clued_private.binding_live_v1(b) and clued_private.ci_admission_issue_valid_v1(j.user_id,e,j.project_id))
       then 'CI_ADMISSION_BINDING_NOT_CURRENT'
@@ -280,11 +288,11 @@ $$;
 -- queue (its single source: work_claim_merge_queue_current_v1), then queue time.
 create function clued_private.ci_job_candidates_v1(u uuid,p uuid,at timestamptz,lim integer) returns setof clued_private.ci_jobs_v1
 language sql stable security definer set search_path='' as $$
-  with heads as materialized (select array(select (clued_private.work_claim_merge_queue_current_v1(u,r)->'head'->>'claim_id')::uuid
-      from unnest(clued_private.work_claim_merge_queue_refs_v1(u,null)) r) ids)
+  with heads as materialized (select array(select x from (select (clued_private.work_claim_merge_queue_current_v1(u,r)->'head'->>'claim_id')::uuid x
+      from unnest(clued_private.work_claim_merge_queue_refs_v1(u,null)) r) y where x is not null) ids)
   select x.* from clued_private.ci_jobs_v1 x cross join heads h
   where x.user_id=u and x.project_id=p and x.state='queued' and x.kind<>'maintenance' and x.eligible_after<=at
-  order by x.priority,(x.claim_id=any(h.ids)) desc,x.queued_at,x.created_at,x.job_id
+  order by x.priority,coalesce(x.claim_id=any(h.ids),false) desc,x.queued_at,x.created_at,x.job_id
   limit lim
 $$;
 
@@ -430,7 +438,7 @@ end $$;
 create function clued_private.ci_job_lease_expire_v1(u uuid,p uuid,id uuid,g bigint) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare l clued_private.ci_job_leases_v1; j clued_private.ci_jobs_v1; q clued_private.ci_quota_counters_v1; inp jsonb; nid uuid;
-  r uuid; outcome text; head_key boolean; keyed boolean; produced boolean;
+  r uuid; outcome text; head_key boolean; keyed boolean; produced boolean; consumed boolean;
 begin
   q:=clued_private.ci_policy_v1(u,p);
   select * into l from clued_private.ci_job_leases_v1 where user_id=u and project_id=p and job_id=id and generation=g;
@@ -438,6 +446,8 @@ begin
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
   keyed:=exists(select 1 from clued_private.ci_publish_keys_v1 k where k.job_id=id);
   produced:=exists(select 1 from clued_private.ci_result_index_v1 x where x.job_id=id and x.execution_generation=g);
+  consumed:=exists(select 1 from clued_private.ci_result_index_v1 x join clued_private.ci_publish_keys_v1 k
+    on k.user_id=u and k.job_id=j.parent_job_id and k.check_name=x.result_kind where x.job_id=id and x.execution_generation=g);
   perform clued_private.ci_job_release_v1(u,p,l.holder_node_id,id,g,case when l.started_at is null then 'LEASE_EXPIRED' else 'LEASE_LOST_AFTER_START' end,
     case when j.state='observed' then 'success' else 'environment' end,'lease_expired',true);
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
@@ -448,14 +458,15 @@ begin
       where job_id=id and current_generation=g and state='canceled';
     return jsonb_build_object('outcome','restored','job_id',id,'receipt_id',r);
   end if;
-  -- Started and lost (DESIGN 6.4 rule 3). Publication-bearing jobs never move. A
-  -- job that already produced results is not run again: its results can no
-  -- longer be published (no current lease), so they are invalidated.
+  -- Started and lost (DESIGN 6.4 rule 3). Publication-bearing jobs never move.
+  -- Results already produced can no longer be published (no current lease):
+  -- they are invalidated, and the retry runs again from scratch, unless the
+  -- parent job already reserved a publication from them.
   head_key:=j.kind='combination_execution' and j.combination_mode not in ('depth2','depth3');
   if produced then
     update clued_private.ci_result_index_v1 set state='invalidated' where job_id=id and execution_generation=g and state='available';
   end if;
-  if keyed or produced or j.state<>'failed' or j.kind not in ('delegated_scan','github_f_pr','combination_execution') then outcome:='lost_no_retry';
+  if keyed or consumed or j.state<>'failed' or j.kind not in ('delegated_scan','github_f_pr','combination_execution') then outcome:='lost_no_retry';
   elsif head_key and clued_private.ci_duty_phase_value_v1(q.policy)>=4 then outcome:='lost_head_burned';
   elsif j.attempt>=2 then outcome:='lost_final';
   else
@@ -570,9 +581,12 @@ begin
         and (k.state='unknown' or k.state='reserved' and k.landing_deadline_at<=clock_timestamp())) then
       out:=out||'unknown_publication_in_phase2'::text; end if;
   elsif p_from=2 and p_to=1 then
-    -- Running work: a current, unexpired lease (an expired one is the sweep's),
-    -- or a reserved publication key.
-    if exists(select 1 from clued_private.ci_job_leases_v1 l where l.user_id=u and l.project_id=p and l.state='current' and l.expires_at>clock_timestamp())
+    -- Owner Decision be3aa3f9 (Q-A2): any job in a running state (an expired,
+    -- unswept lease included: the sweep may still retry it), any current lease or
+    -- any reserved publication key.
+    if exists(select 1 from clued_private.ci_jobs_v1 j where j.user_id=u and j.project_id=p
+        and j.state in ('leased','started','result_ready','publication_pending','observed'))
+      or exists(select 1 from clued_private.ci_job_leases_v1 l where l.user_id=u and l.project_id=p and l.state='current')
       or exists(select 1 from clued_private.ci_publish_keys_v1 k where k.user_id=u and k.project_id=p and k.state='reserved') then
       out:=out||'pool_not_drained'::text; end if;
   end if;

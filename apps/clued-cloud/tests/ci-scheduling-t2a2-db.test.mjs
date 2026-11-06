@@ -146,7 +146,10 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
       const id = await enqueue(); assert.equal((await next(nodeA)).job_id, id);
       await assert.rejects(() => issuePhase(2, 1, []), /pool_not_drained/);
       await expire(id);
-      assert.equal((await issuePhase(2, 1, [])).status, 'issued', 'an expired lease is the sweep\'s, not running work');
+      await assert.rejects(() => issuePhase(2, 1, []), /pool_not_drained/, 'an expired, unswept lease is still work (the sweep may retry it)');
+      await sweep();
+      assert.equal((await job(id)).state, 'queued');
+      assert.equal((await issuePhase(2, 1, [])).status, 'issued', 'queued work does not block (Owner decision be3aa3f9)');
       await clearQueue();
       const down = await movePhase(2, 1, []);
       assert.deepEqual([down.pool.phase, down.pool.mode, down.pool.status], [1, 'prepared', 'CONFIGURED_PREPARED']);
@@ -358,8 +361,24 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
         now(),now()+interval '1 hour' from clued_private.ci_jobs_v1 where job_id=$1 returning result_id`, [producing, nB, digest('produced')]);
       await expire(producing);
       const keptResult = (await sweep()).accounts[0].leases.find(x => x.job_id === producing);
-      assert.deepEqual([keptResult.outcome, keptResult.retry_job_id], ['lost_no_retry', null]);
+      assert.equal(keptResult.outcome, 'retried', 'rule 3: the run is lost, its results cannot be published, so it runs again elsewhere');
       assert.equal((await one('select state from clued_private.ci_result_index_v1 where result_id=$1', [result.result_id])).state, 'invalidated');
+      // A scan child whose result the parent already reserved a publication from is not run again.
+      await clearQueue();
+      const parent = await own(); assert.equal((await next(nB)).job_id, parent); await started(nB, parent);
+      const child = await own({ kind: 'delegated_scan', parent_job_id: parent, parent_lease_generation: 1 });
+      assert.equal((await next(nC)).job_id, child); await started(nC, child);
+      const childJob = await job(child);
+      await one(`insert into clued_private.ci_result_index_v1(user_id,project_id,job_id,execution_generation,producer_node_id,result_kind,result_digest,certificate_digest,
+        signature_envelope,source_sha,combination_sha256,qualification_ref,produced_at,expires_at) values($1,$2,$3,1,$4,'gitleaks',$5,$5,'{}',$6,$7,'q',now(),now()+interval '1 hour')
+        returning result_id`, [user, project, child, nC, digest('consumed'), childJob.source_sha, childJob.combination_sha256]);
+      const parentKey = crypto.randomUUID(); const parentJob = await job(parent);
+      await admin.query(`insert into clued_private.ci_publish_keys_v1(key_id,user_id,project_id,registration_ref,repository_id,head_sha,check_name,app_id,job_id,publisher_node_id,
+        execution_generation,request_digest,external_id,state,landing_deadline_at) values($1,$2,$3,$4,$5,$6,'gitleaks',5368905,$7,$8,1,$9,$10,'posted',now())`,
+        [parentKey, user, project, parentJob.registration_ref, parentJob.repository_id, parentJob.head_sha, parent, nB, digest('parent key'), 'fixture:' + parentKey]);
+      await expire(child);
+      const consumedChild = (await sweep()).accounts[0].leases.find(x => x.job_id === child);
+      assert.deepEqual([consumedChild.outcome, consumedChild.retry_job_id], ['lost_no_retry', null]);
       // control: no retry
       await clearQueue();
       const control = await own({ kind: 'control' }); assert.equal((await next(nB)).job_id, control);
@@ -433,6 +452,19 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
       const fresh = await enqueue();
       assert.equal((await next(nB)).job_id, fresh, 'a revocation before the admission does not void it');
       await clearQueue();
+      // A node of the same connection revoked in another project does not void this project's admissions.
+      const queuedHere = await enqueue();
+      const reg = f.registration(f.project2); reg.binding_id = f.binding;
+      const elsewhere = f.committed(await f.native('clued_ci_node_registration_v1', reg)).node_id;
+      for (const action of ['approve', 'revoke']) {
+        const v = Number((await one('select version from clued_private.ci_nodes_v1 where node_id=$1', [elsewhere])).version);
+        const i = await f.native('clued_ci_node_confirmation_issue_v1', { project_id: f.project2, node_id: elsewhere, base_version: v, action,
+          ...(action === 'approve' ? { accepted_ref: 'fixture' } : {}) });
+        f.committed(await f.native('clued_ci_node_apply_v1', { confirmation_token: i.confirmation_token, view_digest: i.view_digest }));
+      }
+      assert.equal((await one('select state from clued_private.ci_nodes_v1 where node_id=$1', [elsewhere])).state, 'revoked');
+      assert.equal((await next(nB)).job_id, queuedHere);
+      await clearQueue();
     });
 
     await t.test('6.3 head batch first: the head of 2a\'s merge queue orders before older work of the same priority', async () => {
@@ -442,16 +474,45 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
       const head = crypto.randomUUID();
       try {
         // Test-only stand-ins for 2a's queue: one ref whose head is the claim above.
+        // Two refs: one whose head is the claim above, one without a head (every entry lapsed).
         await admin.query(`create or replace function clued_private.work_claim_merge_queue_refs_v1(p_user_id uuid,p_prefix text) returns text[]
-          language sql stable as $$ select array['fixture-ref'] $$`);
+          language sql stable as $$ select array['fixture-ref','headless-ref'] $$`);
         await admin.query(`create or replace function clued_private.work_claim_merge_queue_current_v1(p_user_id uuid,p_ref text) returns jsonb
-          language sql stable as $$ select jsonb_build_object('ref',p_ref,'head',jsonb_build_object('claim_id','${head}')) $$`);
+          language sql stable as $$ select jsonb_build_object('ref',p_ref,'head',case when p_ref='fixture-ref' then jsonb_build_object('claim_id','${head}') end) $$`);
         const older = await enqueue(), newer = await enqueue();
         await admin.query("update clued_private.ci_jobs_v1 set queued_at=now()-interval '1 hour' where job_id=$1", [older]);
         await admin.query('update clued_private.ci_jobs_v1 set claim_id=$2 where job_id=$1', [newer, head]);
         const order = (await q("select job_id from clued_private.ci_job_candidates_v1($1,$2,now(),10)", [user, project])).map(r => r.job_id);
         assert.deepEqual(order.filter(x => [older, newer].includes(x)), [newer, older]);
       } finally { for (const d of saved) await admin.query(d); await clearQueue(); }
+    });
+
+    await t.test('stale: an older copy of a race is not stale; a draining claim or a changed write set is', async () => {
+      const id = await enqueue(); const stale = async () => (await one('select clued_private.ci_job_stale_v1(j) s from clued_private.ci_jobs_v1 j where job_id=$1', [id])).s;
+      assert.equal(await stale(), null);
+      const claim = await one('select * from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
+      // A newer claim of the same Task (a race copy shares the fence sequence).
+      const copy = crypto.randomUUID();
+      await admin.query(`insert into clued_private.work_claims_v1 select (jsonb_populate_record(null::clued_private.work_claims_v1,
+        to_jsonb(c)||jsonb_build_object('claim_id',$2::uuid,'fence',c.fence+1,'copy_index',2,'status','RELEASED','idempotency_key','t2a2-copy-'||$2))).* from clued_private.work_claims_v1 c where c.claim_id=$1`, [claim.claim_id, copy]);
+      assert.equal(await stale(), 'CI_CLAIM_NOT_CURRENT', 'a single claim superseded by a newer fence');
+      await admin.query('update clued_private.work_claims_v1 set copy_index=1 where claim_id=$1', [claim.claim_id]);
+      assert.equal(await stale(), null, 'copies share the fence sequence: the older copy is still current');
+      await admin.query('update clued_private.work_claims_v1 set copy_index=null where claim_id=$1', [claim.claim_id]);
+      await admin.query('delete from clued_private.work_claims_v1 where claim_id=$1', [copy]);
+      assert.equal(await stale(), null);
+      await admin.query("update clued_private.work_claims_v1 set write_set=write_set||array['other/**'] where claim_id=$1", [claim.claim_id]);
+      assert.equal(await stale(), 'CI_EXECUTION_ADMISSION_NOT_CURRENT');
+      await admin.query("update clued_private.work_claims_v1 set write_set=$2 where claim_id=$1", [claim.claim_id, claim.write_set]);
+      assert.equal(await stale(), null);
+      // From here the fixture claim is not used again.
+      await admin.query("update clued_private.work_claims_v1 set status='DRAINING' where claim_id=$1", [claim.claim_id]);
+      assert.equal(await stale(), 'CI_CLAIM_NOT_CURRENT', 'draining never returns to active');
+      await admin.query("update clued_private.work_claims_v1 set status='ACTIVE' where claim_id=$1", [claim.claim_id]);
+      // An execution handover moves the claim's execution epoch at once (and for good): the job's admission epoch is gone.
+      await admin.query("update clued_private.work_claims_v1 set execution_handover_pending=true where claim_id=$1", [claim.claim_id]);
+      assert.equal(await stale(), 'CI_CLAIM_NOT_CURRENT');
+      await clearQueue();
     });
 
     await t.test('1->2 machine items for an account with two CI projects, no repository and no limits', async () => {
