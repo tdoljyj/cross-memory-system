@@ -4657,7 +4657,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 ## 58. 常驻升级纳入 Owner 自动审批（Task `ceeaa7c3`；Owner Decision `f8aff2f9`，取代 Decision `3ce5200c` 第 2 项）
 
 - **以前**：`ci.resident_upgrade` 永不自动批准（`3ce5200c` 第 2 项），每次升级 Owner 都要在确认页点一次。
-- **现在**（迁移 `20261106040000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
+- **现在**（迁移 `20261106100000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
   - 开关开着时，门（`owner_grant_resident_upgrade_door_v1`）为它打开或找到的请求调用 `owner_auto_approve_request_v1`。批准范围：一次、一次使用、24 小时，只给发起请求的连接，只限精确的节点与包。批准后在同一次调用里直接消费。
   - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，内容不变（这次 Grant 从哪来，看它的 `auto_approve_id`）。门的答复和发布门一样带 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
   - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。

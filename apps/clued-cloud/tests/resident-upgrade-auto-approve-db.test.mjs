@@ -12,7 +12,7 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // ci.resident_upgrade under the Owner's automatic approval (migration
-// 20261106040000_resident_upgrade_auto_approve_v1, Task ceeaa7c3, Owner Decision
+// 20261106100000_resident_upgrade_auto_approve_v1, Task ceeaa7c3, Owner Decision
 // f8aff2f9): with the switch on the resident-upgrader door approves the request it
 // opens with the switch's high-risk rule (once, one use, 24 hours, the requesting
 // Binding, the exact resource) and uses the grant in the same call; a node gets at
@@ -20,7 +20,7 @@ import { assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.m
 // connection.permission and the model.dataset_split.* actions stay manual.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MIGRATION = '20261106040000_resident_upgrade_auto_approve_v1.sql';
+const MIGRATION = '20261106100000_resident_upgrade_auto_approve_v1.sql';
 const ACTION = 'ci.resident_upgrade';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');

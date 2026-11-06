@@ -16,7 +16,7 @@ import { CI_SIGNATURES, GATEWAY_ROLE, assertGatewayCloseoutBoundary, setWorkerGa
 // RPC hands ci.resident_upgrade to the resident-upgrader door. Only a Binding the Owner
 // marked resident-upgrade (live and started) uses it; the resource names one node and one
 // package exactly; a grant is used once per op_id and replayed by its use receipt; with no
-// grant the op's request is returned or opened. Since 20261106040000 (Task ceeaa7c3, Owner
+// grant the op's request is returned or opened. Since 20261106100000 (Task ceeaa7c3, Owner
 // Decision f8aff2f9) the Owner's automatic approval switch approves it like release.production
 // (resident-upgrade-auto-approve-db.test.mjs); this test turns the switch off first, so every
 // request below waits for the Owner, as the manual path does.
@@ -132,7 +132,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
         { confirmation_token: token.confirmation_token, view_digest: token.view_digest }));
     };
 
-    // --- Registry: one action at one door, high risk, automatic under the switch (20261106040000). ---
+    // --- Registry: one action at one door, high risk, automatic under the switch (20261106100000). ---
     assert.deepEqual((await admin.query(`select doors,risk,auto_approvable from clued_private.owner_grant_actions
       where action=$1`, [ACTION])).rows, [{ doors: ['resident-upgrader'], risk: 'high', auto_approvable: true }]);
     assert.deepEqual((await admin.query(`select doors from clued_private.work_claim_resource_kinds where kind='ci-resident'`)).rows,
