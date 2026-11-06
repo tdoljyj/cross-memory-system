@@ -1872,44 +1872,6 @@
         }
       }
     },
-    "clued-work-handover-qualification-home-linux-01.yml": {
-      "jobs": {
-        "admission-gate": {
-          "mode": "job-temp",
-          "purpose": "handover qualification; PR source simulation, manual main installed-code observation",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        },
-        "qualify": {
-          "mode": "job-temp",
-          "purpose": "handover qualification; PR source simulation, manual main installed-code observation",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": null,
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [
-            "handover-hook-qualification.json"
-          ],
-          "persistent_action_caches": []
-        }
-      }
-    },
     "clued-work-handover-qualification-company-win-01.yml": {
       "jobs": {
         "admission-gate": {
