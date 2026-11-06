@@ -156,16 +156,17 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const mode = acting ? 'on' : 'shadow';
   let state = null, stateReason = null;
   if (sweepStore) { try { state = await sweepStore.readFullSweep(mode); } catch { stateReason = 'TRAIN_SWEEP_STATE_UNREADABLE'; } } else stateReason = 'TRAIN_SWEEP_STATE_UNREADABLE';
-  // A record from before generation 15 reads as: no main tip recorded, not rewritten, a round of scope 'all' (it enumerated everything).
+  // A record from before generation 15 reads as: no main tip recorded, nothing pending, a round of scope 'all' (it enumerated everything).
   const stored = state ?? { mode, incrementalCursor: null, full: freshFull(), inMain: [] };
-  const before = { mainSha: null, mainRewritten: false, ...stored, full: { scope: 'all', scopeReason: null, ...stored.full } };
+  const before = { mainSha: null, allPending: null, ...stored, full: { scope: 'all', scopeReason: null, ...stored.full } };
   const cursor = before.incrementalCursor;
   let full = { ...before.full };
   // Generation 15 (DESIGN 60, option c1): was main rewritten since this node last saw it (the main tip the last run of this mode
   // recorded)? Then heads of merged pulls may have left main: the cross-run "in main" cache is dropped now, a running round is
-  // restarted, and every round until one of scope 'all' completes enumerates everything (mainRewritten). No tip recorded (the first
-  // run of this mode, or a record from before generation 15): the next round enumerates everything too. Not readable: this run's
-  // sweep is incomplete and nothing is recorded, so the next run asks again.
+  // restarted, and every round until one of scope 'all' completes enumerates everything (allPending TRAIN_MAIN_REWRITTEN). No tip
+  // recorded (the first run of this mode, or a record from before generation 15): the history is unknown, so the cache is dropped
+  // too and rounds enumerate everything until one of scope 'all' completes (allPending TRAIN_NO_MAIN_RECORD). Not readable: this
+  // run's sweep is incomplete, no round starts and nothing is recorded, so the next run asks again.
   let history = 'same';
   if (!before.mainSha) history = 'none';
   else if (before.mainSha !== mainSha) {
@@ -175,7 +176,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     } catch (e) { history = e?.code === 'github_http_404' ? 'rewritten' : 'unknown'; }
   }
   if (history === 'unknown') stateReason ??= 'TRAIN_MAIN_HISTORY_UNREADABLE';
-  const mainRewritten = before.mainRewritten || history === 'rewritten';
+  const allPending = history === 'rewritten' ? 'TRAIN_MAIN_REWRITTEN' : before.allPending ?? (history === 'none' ? 'TRAIN_NO_MAIN_RECORD' : null);
   const onSinceMs = job.onSince ? Date.parse(job.onSince) : null;
   // Only a full sweep of this node counts (via 'sweep'). §41.6's watermark take-over is not used (review R2 B1): the stream
   // (revocations_list) lists open publications only, so another node's published greens are invisible to an incremental
@@ -183,10 +184,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // is still reported (harmless) and the stream stays an extra source.
   const sinceOn = f => f.state === 'complete' && f.via === 'sweep' && onSinceMs !== null && Date.parse(f.startedAt) >= onSinceMs;
   const start = () => ({ ...freshFull(), state: 'running', via: 'sweep', startedAt: at, onSince: job.onSince, mainSha,
-    ...(mainRewritten ? { scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN' } : history === 'none' ? { scope: 'all', scopeReason: 'TRAIN_NO_MAIN_RECORD' } : { scope: 'current' }) });
+    ...(allPending ? { scope: 'all', scopeReason: allPending } : { scope: 'current' }) });
   const abandon = reason => ({ ...full, state: 'abandoned', reason });
   if (history === 'rewritten' && full.state === 'running') full = abandon('TRAIN_MAIN_REWRITTEN');
-  if (job.mode === 'on' && !sinceOn(full)) {
+  if (history === 'unknown') { /* no round starts or ends on a history that could not be read */ } else if (job.mode === 'on' && !sinceOn(full)) {
     if (full.state === 'running' && (Date.parse(full.startedAt) < onSinceMs || started - Date.parse(full.startedAt) > job.fullSweepMaxMs))
       full = abandon(Date.parse(full.startedAt) < onSinceMs ? 'TRAIN_FULL_SWEEP_BEFORE_ON' : 'TRAIN_FULL_SWEEP_EXPIRED');
     if (full.state !== 'running' && !(full.state === 'abandoned' && full.reason === 'TRAIN_PULL_OVER_250_COMMITS' && full.onSince === job.onSince)) full = start();
@@ -196,7 +197,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     if (full.state === 'none' || (full.state === 'abandoned' && full.reason !== 'TRAIN_PULL_OVER_250_COMMITS')
       || (full.state === 'complete' && started - Date.parse(full.completedAt) > job.fullSweepMaxMs)) full = start();
   }
-  const sweeper = createSweeper({ github, appId, mainSha, inMain: ['rewritten', 'unknown'].includes(history) ? [] : before.inMain, clock, until: started + SWEEP_BUDGET_MS });
+  const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
   let stream = null;
   try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
   // A running full sweep gets its own share of the time: the incremental part never starves it (review R2 M2).
@@ -244,11 +245,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // The cursor: the newest pull seen when the pass completed; otherwise as far as every pull was judged (progress), so a
   // backlog advances run by run. Acting, only when this run's revocations are all confirmed.
   const advance = !acting || confirmed;
-  // mainRewritten ends with the first round of scope 'all' completed after it (rounds running when it began were restarted).
+  // allPending ends with the first round of scope 'all' completed after it began (a round running when main was rewritten was
+  // restarted; with no tip recorded, a round of scope 'all' from before generation 15 is the enumeration of before).
   const after = { mode, incrementalCursor: !advance ? before.incrementalCursor : incrementalOk ? (incremental.newest ?? cursor)
-    : (incremental.progress ?? before.incrementalCursor), full, inMain: sweeper.inMain(), mainSha, mainRewritten: mainRewritten && !(completedNow && full.scope === 'all') };
+    : (incremental.progress ?? before.incrementalCursor), full, inMain: sweeper.inMain(), mainSha, allPending: completedNow && full.scope === 'all' ? null : allPending };
   if (sweepStore && !stateReason && JSON.stringify(after) !== JSON.stringify({ mode, incrementalCursor: before.incrementalCursor, full: before.full, inMain: before.inMain,
-    mainSha: before.mainSha, mainRewritten: before.mainRewritten })) {
+    mainSha: before.mainSha, allPending: before.allPending })) {
     try { await sweepStore.writeFullSweep({ writtenAt: isoOf(clock()), runId: job.runId, ...after }); } catch { /* the next run starts from the older cursor */ }
   }
   const fullSweepSinceOn = acting && sinceOn(full);
@@ -336,14 +338,14 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
     ledger: summary, decision, openFrontBatch, requestPause,
     sweep: sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: sweepComplete, revoked: revoked.length, unconfirmed: unconfirmed.length + leftover,
-      would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, mainRewritten: after.mainRewritten }) });
+      would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }) });
 }
 
-// mainRewritten (generation 15): main was rewritten and no round of scope 'all' has completed since (the next round enumerates everything).
-const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, sinceOn = false, proofWritten = false, counter, started, clock, mainRewritten = false }) => ({
+// allPending (generation 15): why rounds enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded), or null.
+const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, sinceOn = false, proofWritten = false, counter, started, clock, allPending = null }) => ({
   kind, complete, revoked, unconfirmed, wouldRevokeCount: would,
   fullSweep: { state: full?.state ?? 'none', startedAt: full?.startedAt ?? null, completedAt: full?.completedAt ?? null, sinceOn, reason: full?.reason ?? null,
-    scope: full && full.state !== 'none' ? full.scope : null, scopeReason: full && full.state !== 'none' ? full.scopeReason : null, mainRewritten },
+    scope: full && full.state !== 'none' ? full.scope : null, scopeReason: full && full.state !== 'none' ? full.scopeReason : null, allPending },
   proofWritten, calls: counter.calls, ms: Math.max(0, clock() - started) });
 
 // No role (review R2 M3): the front is unknown here (holders answered admission_binding_required), so a green that may be the

@@ -193,7 +193,7 @@ export async function incrementalSweep({ sweeper, github, entries, stream, curso
 export async function fullSweepHeads(sweeper, pull, scope = 'current') {
   if (scope === 'all' || pull.state === 'open') return sweeper.headsOfPull(pull.number);
   if (pull.state === 'closed' && pull.merged === true) return { tooMany: false, heads: [] };
-  if (pull.state === 'closed' && pull.merged === false) return { tooMany: false, heads: [pull.headSha] };
+  if (pull.state === 'closed' && pull.merged === false) { sweeper.stats.prs++; return { tooMany: false, heads: [pull.headSha] }; }
   fail('TRAIN_PULLS_INCOMPLETE');
 }
 

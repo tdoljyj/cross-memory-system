@@ -108,8 +108,9 @@ export function sweepOf(s) {
   if (!plain(s) || !SWEEP_KINDS.includes(s.kind) || typeof s.complete !== 'boolean' || !plain(s.fullSweep) || !FULL_STATES.includes(s.fullSweep.state)) return null;
   return Object.freeze({ kind: s.kind, complete: s.complete, revoked: count(s.revoked) ?? 0, unconfirmed: count(s.unconfirmed) ?? 0, wouldRevokeCount: count(s.wouldRevokeCount) ?? 0,
     fullSweep: Object.freeze({ state: s.fullSweep.state, startedAt: isoOrNull(s.fullSweep.startedAt), completedAt: isoOrNull(s.fullSweep.completedAt), sinceOn: s.fullSweep.sinceOn === true,
-      // generation 15 (DESIGN 60): 'all' (every pull and commit) or 'current' (open pulls whole, closed unmerged heads), why, and a pending rewrite of main
-      scope: FULL_SCOPES.includes(s.fullSweep.scope) ? s.fullSweep.scope : null, scopeReason: codeOrNull(s.fullSweep.scopeReason), mainRewritten: s.fullSweep.mainRewritten === true }),
+      // generation 15 (DESIGN 60): 'all' (every pull and commit) or 'current' (open pulls whole, closed unmerged heads), why, and why rounds
+      // enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded)
+      scope: FULL_SCOPES.includes(s.fullSweep.scope) ? s.fullSweep.scope : null, scopeReason: codeOrNull(s.fullSweep.scopeReason), allPending: codeOrNull(s.fullSweep.allPending) }),
     proofWritten: s.proofWritten === true });
 }
 
@@ -195,7 +196,7 @@ export function trainSweepView({ summary, previous = null, onSince = null }) {
   const sinceOn = s.fullSweep.state === 'complete' ? s.fullSweep.sinceOn === true : (previous?.fullSinceOn === true && previous?.onSince === onSince);
   return Object.freeze({ at: summary.at, mode: summary.mode, kind: s.kind, complete: s.complete, revoked: s.revoked, unconfirmed: s.unconfirmed, fullState: s.fullSweep.state,
     fullCompletedAt: completedAt, fullSinceOn: sinceOn && summary.mode !== 'shadow', onSince,
-    fullScope: s.fullSweep.scope ?? null, fullScopeReason: s.fullSweep.scopeReason ?? null, mainRewritten: s.fullSweep.mainRewritten === true });
+    fullScope: s.fullSweep.scope ?? null, fullScopeReason: s.fullSweep.scopeReason ?? null, fullAllPending: s.fullSweep.allPending ?? null });
 }
 // The status reader's copy of train.sweep, or null.
 export function parseTrainSweep(v) {
@@ -203,7 +204,7 @@ export function parseTrainSweep(v) {
   return Object.freeze({ at: Date.parse(v.at), mode: v.mode, kind: v.kind, complete: v.complete, revoked: count(v.revoked) ?? 0, unconfirmed: count(v.unconfirmed) ?? 0, fullState: v.fullState,
     fullCompletedAt: Number.isFinite(Date.parse(v.fullCompletedAt)) ? Date.parse(v.fullCompletedAt) : null, fullSinceOn: v.fullSinceOn === true,
     onSince: Number.isFinite(Date.parse(v.onSince)) ? Date.parse(v.onSince) : null,
-    fullScope: FULL_SCOPES.includes(v.fullScope) ? v.fullScope : null, fullScopeReason: codeOrNull(v.fullScopeReason), mainRewritten: v.mainRewritten === true });
+    fullScope: FULL_SCOPES.includes(v.fullScope) ? v.fullScope : null, fullScopeReason: codeOrNull(v.fullScopeReason), fullAllPending: codeOrNull(v.fullAllPending) });
 }
 // The status reader's copy of train.revokeHead (DESIGN §41.3: the Owner's "撤车头" request and its result), or null.
 export function parseRevokeHead(v) {

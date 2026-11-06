@@ -20,12 +20,13 @@ export const FULL_SWEEP_CONTRACT = 'clued.independent-ci.train-full-sweep/1';
 export const FRONT_BATCH_CONTRACT = 'clued.independent-ci.train-front-batch/1';
 export const PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'pr', 'headSha', 'claimId', 'since', 'mainSha', 'clean', 'unconfirmed',
   'fullSweepSinceOn', 'slotHardCapMinutes', 'sweepFreshMs', 'prUpdatedCursor']);
-// Generation 15 (DESIGN 60): the state also records the main tip this run saw (mainSha) and whether main was rewritten since a
-// round enumerated everything (mainRewritten); a round records what it enumerates (scope 'all': every pull and commit, the
-// enumeration before generation 15; 'current': open pulls whole, closed unmerged heads) and why (scopeReason). A record
-// written before generation 15 has none of them: it reads as mainSha null, mainRewritten false and a round of scope 'all'.
+// Generation 15 (DESIGN 60): the state also records the main tip this run saw (mainSha) and why rounds enumerate everything until
+// one of scope 'all' completes (allPending: TRAIN_MAIN_REWRITTEN, TRAIN_NO_MAIN_RECORD, or null); a round records what it
+// enumerates (scope 'all': every pull and commit, the enumeration before generation 15; 'current': open pulls whole, closed
+// unmerged heads) and why (scopeReason). A record written before generation 15 has none of them: it reads as mainSha null,
+// allPending null and a round of scope 'all'.
 export const FULL_SWEEP_FIELDS_V1 = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'incrementalCursor', 'full', 'inMain']);
-export const FULL_SWEEP_FIELDS = Object.freeze([...FULL_SWEEP_FIELDS_V1, 'mainSha', 'mainRewritten']);
+export const FULL_SWEEP_FIELDS = Object.freeze([...FULL_SWEEP_FIELDS_V1, 'mainSha', 'allPending']);
 export const FULL_FIELDS_V1 = Object.freeze(['state', 'via', 'startedAt', 'completedAt', 'onSince', 'mainSha', 'nextPage', 'nextIndex', 'prs', 'commits', 'heads',
   'revoked', 'unconfirmed', 'wouldRevoke', 'calls', 'ms', 'reason']);
 export const FULL_FIELDS = Object.freeze([...FULL_FIELDS_V1, 'scope', 'scopeReason']);
@@ -59,7 +60,7 @@ export function validateSweepProof(p) {
 export function validateFullSweep(s) {
   const f = s?.full;
   const v1 = exact(s, FULL_SWEEP_FIELDS_V1) && exact(f, FULL_FIELDS_V1);
-  const v2 = exact(s, FULL_SWEEP_FIELDS) && exact(f, FULL_FIELDS) && (s.mainSha === null || SHA.test(s.mainSha)) && typeof s.mainRewritten === 'boolean'
+  const v2 = exact(s, FULL_SWEEP_FIELDS) && exact(f, FULL_FIELDS) && (s.mainSha === null || SHA.test(s.mainSha)) && (s.allPending === null || CODE.test(s.allPending))
     && FULL_SCOPES.includes(f.scope) && (f.scopeReason === null || CODE.test(f.scopeReason));
   if (!(v1 || v2) || s.contract !== FULL_SWEEP_CONTRACT || !iso(s.writtenAt) || !RUN_ID.test(s.runId ?? '') || !['shadow', 'on'].includes(s.mode)
     || !(s.incrementalCursor === null || iso(s.incrementalCursor)) || !FULL_STATES.includes(f.state)

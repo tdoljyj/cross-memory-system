@@ -121,15 +121,15 @@ test('facts /2: a summary only with a decision in on; OPEN_FRONT_BATCH only with
   const read = parseTrainSweep(JSON.parse(JSON.stringify(view)));
   assert.deepEqual([read.fullSinceOn, read.fullCompletedAt], [true, T0]);
   // generation 15 (DESIGN 60): what the round enumerates and why, and a rewrite of main still pending, reach the status
-  assert.deepEqual([view.fullScope, view.fullScopeReason, view.mainRewritten, read.fullScope, read.mainRewritten], [null, null, false, null, false], 'a Source before generation 15');
+  assert.deepEqual([view.fullScope, view.fullScopeReason, view.fullAllPending, read.fullScope, read.fullAllPending], [null, null, null, null, null], 'a Source before generation 15');
   const all = trainSummary(answer('on', { sweep: { ...NO_SWEEP, kind: 'full-segment', complete: true, fullSweep: { state: 'running', startedAt: new Date(T0 - MIN).toISOString(),
-    completedAt: null, sinceOn: false, reason: null, scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN', mainRewritten: true } } }).train);
+    completedAt: null, sinceOn: false, reason: null, scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN', allPending: 'TRAIN_MAIN_REWRITTEN' } } }).train);
   const v15 = parseTrainSweep(JSON.parse(JSON.stringify(trainSweepView({ summary: all, onSince: view.onSince }))));
-  assert.deepEqual([v15.fullState, v15.fullScope, v15.fullScopeReason, v15.mainRewritten], ['running', 'all', 'TRAIN_MAIN_REWRITTEN', true]);
+  assert.deepEqual([v15.fullState, v15.fullScope, v15.fullScopeReason, v15.fullAllPending], ['running', 'all', 'TRAIN_MAIN_REWRITTEN', 'TRAIN_MAIN_REWRITTEN']);
   // the Source refuses facts with other values; a summary built past it still shows none of them
   const base = answer('on').train;
-  const odd = trainSummary({ ...base, sweep: { ...base.sweep, fullSweep: { ...base.sweep.fullSweep, scope: 'some', scopeReason: 'lower case', mainRewritten: 'yes' } } });
-  assert.deepEqual([odd.sweep.fullSweep.scope, odd.sweep.fullSweep.scopeReason, odd.sweep.fullSweep.mainRewritten], [null, null, false], 'anything else is not shown');
+  const odd = trainSummary({ ...base, sweep: { ...base.sweep, fullSweep: { ...base.sweep.fullSweep, scope: 'some', scopeReason: 'lower case', allPending: 'yes' } } });
+  assert.deepEqual([odd.sweep.fullSweep.scope, odd.sweep.fullSweep.scopeReason, odd.sweep.fullSweep.allPending], [null, null, null], 'anything else is not shown');
   assert.throws(() => answer('on', { sweep: { ...NO_SWEEP, fullSweep: { ...NO_SWEEP.fullSweep, scope: 'some' } } }), /invalid_train_facts/);
 });
 
