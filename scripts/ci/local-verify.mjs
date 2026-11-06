@@ -1,19 +1,36 @@
 // Local verification before a push (defect 66b7bf56, Owner Decision ecef33d5).
 //
 // Runs the suites the required checks (clued-required-tests.yml) would run for
-// this change, the way they run them, on Windows and in CluedDev-Linux, and
+// this change, the way they run them, on Windows and (--linux) in CluedDev-Linux, and
 // reports only the failures the change brings: a suite that fails is run again
 // on main, and each failing command is compared with the same command there.
 //
+//   node scripts/ci/local-verify.mjs --affected [--base <commit>] [--committed] [--linux-only]
+//                                    [--no-fetch] [--fresh-base] [--no-yield]
 //   node scripts/ci/local-verify.mjs [--base <commit>] [--committed] [--suite <id>]...
 //                                    [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]
 //
+//   --affected    the way to verify before a push (task 70e5f450: a hand-picked
+//                 --suite list missed offline-drill for #1015). It is the default
+//                 selection plus --linux (on Windows), and it refuses --suite and --candidate,
+//                 so the suites cannot be hand-picked: the files the branch
+//                 changes against main select them with the required checks' own
+//                 selectSuites (ci-required-selection.mjs of main, or of --base; the
+//                 call the "Select suites" step of ci-suites makes), and only those
+//                 run, on Windows and in CluedDev-Linux (on a non-Windows host, here
+//                 alone; on Windows without CluedDev-Linux the Linux result is
+//                 "could not compare" and, when a suite is selected, the exit status 1). It prints the line CI
+//                 logs for each check ("ci-suites: selected by changed paths;
+//                 suites: ...") and, for each suite, the changed files that picked
+//                 it (a default run prints the same). --linux-only keeps the run
+//                 to the Linux side.
 //   --base        the main commit to verify against; default: GitHub's main,
 //                 fetched first (--no-fetch uses the last fetched copy).
 //   --committed   verify HEAD only; by default the working tree's changes and
 //                 new files that are not ignored are included (listed first;
 //                 they are also copied into the Linux clone).
-//   --suite       run only these suites (default: what the selection picks).
+//   --suite       run only these suites (default: what the selection picks,
+//                 on Windows alone unless --linux).
 //   --linux       also run in CluedDev-Linux (set up by
 //                 setup-clued-dev-linux.ps1), at the same time as the Windows
 //                 run; --linux-only runs only there.
@@ -85,7 +102,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
-export const CHECKS = ['ci-suites', 'clued-cloud-tests', 'migration-verify'];
 // The Node version clued-required-tests.yml sets up.
 export const CI_NODE = '24.19.0';
 const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own (a failure message may name its drive)
@@ -128,7 +144,7 @@ function git(args, { cwd, env = process.env, allowFail = false, raw = false, tim
 }
 
 export function parseArgs(argv) {
-  const options = { base: null, candidate: null, committed: false, suites: [], here: true, linux: false, fetch: true, freshBase: false, yield: true };
+  const options = { base: null, candidate: null, committed: false, suites: [], affected: false, here: true, linux: false, fetch: true, freshBase: false, yield: true };
   const valued = { '--base': 'base', '--candidate': 'candidate', '--suite': 'suites' };
   for (let i = 0; i < argv.length; i += 1) {
     const [arg, inline] = argv[i].startsWith('--') && argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], undefined];
@@ -144,6 +160,7 @@ export function parseArgs(argv) {
       else options[valued[arg]] = value;
     } else if (inline !== undefined) throw new Error(`${arg} takes no value`);
     else if (arg === '--committed') options.committed = true;
+    else if (arg === '--affected') options.affected = true;
     else if (arg === '--linux') options.linux = true;
     else if (arg === '--linux-only') Object.assign(options, { linux: true, here: false });
     else if (arg === '--no-fetch') options.fetch = false;
@@ -151,6 +168,8 @@ export function parseArgs(argv) {
     else if (arg === '--no-yield') options.yield = false;
     else throw new Error(`unknown option: ${arg}`);
   }
+  if (options.affected && options.suites.length) throw new Error('--affected selects the suites itself; drop --suite');
+  if (options.affected && options.candidate) throw new Error('--candidate is internal (the Linux hand-over); --affected cannot be combined with it');
   return options;
 }
 
@@ -931,6 +950,43 @@ export function changedFiles(root, change, main, limit) {
   return files.length >= limit ? null : files;
 }
 
+// What the required checks run for these changed files (null: unknown): each
+// check of the selection, through its own selectSuites, the call the workflow's
+// "Select suites" step makes (node ci-required-selection.mjs --check <check>);
+// no list of checks, suites or paths is kept here (only the format of the log
+// line is). `lines` are what CI logs for each check, then, for each selected
+// suite, the changed files that picked it (found by asking the same selection
+// about each file alone), the first of each top-level directory (a file in the
+// root counts as its own) first. A change to the selection or the workflow picks
+// every suite, so it shows under all of them.
+export function selectAffected(selector, files, { show = 3 } = {}) {
+  const selections = Object.keys(selector.SUITES).map((check) => ({ check, ...selector.selectSuites(check, files) }));
+  const lines = [];
+  for (const { check, reason, suites } of selections) {
+    lines.push(`${check}: ${reason}; suites: ${suites.join(', ') || 'none'}`);
+    if (files === null || suites.length === 0) continue;
+    const each = files.map((file) => ({ file, picks: selector.selectSuites(check, [file]).suites }));
+    for (const id of suites) {
+      const hits = each.filter((entry) => entry.picks.includes(id)).map((entry) => entry.file);
+      const directories = new Set();
+      const firsts = hits.filter((file) => !directories.has(file.split('/')[0]) && directories.add(file.split('/')[0]));
+      const leading = new Set(firsts);
+      const shown = [...firsts, ...hits.filter((file) => !leading.has(file))].slice(0, show);
+      lines.push(`  ${id}: ${shown.join(', ')}${hits.length > shown.length ? `, ... (${hits.length - shown.length} more)` : ''}`);
+    }
+  }
+  return { suites: selections.flatMap((entry) => entry.suites), selections, lines };
+}
+
+// The suites a change needs: the files it touches against main, selected.
+export function chooseSuites(root, change, main, selector) {
+  const files = changedFiles(root, change, main, selector.FILE_LIMIT);
+  return { files, ...selectAffected(selector, files) };
+}
+
+// --affected adds the Linux side wherever there is one (it is reached from Windows).
+export const runsLinux = (options, platform = process.platform) => options.linux || (options.affected && platform === 'win32');
+
 // main's selection, known-failure list and reporter, as the workflow uses them.
 async function loadSelector(root, main, home) {
   const dir = path.join(home, 'selectors', main);
@@ -1637,6 +1693,8 @@ const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW
 
 async function main(argv) {
   const options = parseArgs(argv);
+  options.linux = runsLinux(options);
+  if (options.affected && !options.linux) console.log('local-verify: --affected: this host has no CluedDev-Linux side to add; this side only');
   if (options.linux && process.platform !== 'win32') throw new Error('--linux runs from Windows; here the run already is on Linux');
   const root = git(['rev-parse', '--show-toplevel']);
   const home = cacheHome();
@@ -1692,9 +1750,12 @@ async function verifyChange({ options, root, home, change, run }) {
   }
   const selector = await loadSelector(root, mainCommit, home);
   if (!suites.length && change) {
-    const files = changedFiles(root, change.commit, mainCommit, selector.FILE_LIMIT);
-    suites = CHECKS.flatMap((check) => selector.selectSuites(check, files).suites);
-    console.log(`local-verify: ${files === null ? 'more files than GitHub lists' : `${files.length} changed file(s)`}; suites: ${suites.join(', ') || 'none'}`);
+    const chosen = chooseSuites(root, change.commit, mainCommit, selector);
+    suites = chosen.suites;
+    console.log(`local-verify: ${chosen.files === null ? 'more files than GitHub lists' : `${chosen.files.length} changed file(s)`}`);
+    for (const line of chosen.lines) console.log(`  ${line}`);
+    console.log(`local-verify: suites: ${suites.join(', ') || 'none'}`);
+    if (!suites.length) console.log('local-verify: nothing to verify: no changed file selects a suite');
   }
   for (const id of suites) if (!selector.SUITE_COMMANDS[id]) throw new Error(`unknown suite: ${id}`);
   const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}-${run.run.id}`);
