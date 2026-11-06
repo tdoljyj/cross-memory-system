@@ -163,7 +163,7 @@
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "db611483dafb6b46d05fd8d2bdb9f852440ccdbf5f09154ba90fbb96ccd3ee9f",
+      "content_sha256": "a9da33f8e3b450e03c7b5d279430b75ebd19c511185ffd123193c9aaaa6d2c7d",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""

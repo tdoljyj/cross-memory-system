@@ -65,8 +65,8 @@ def load_manifest(root: Path = ROOT) -> dict:
 
 
 def write_lf(path: Path, text: str) -> None:
-    """The repository is eol=lf and the R9 re-registration helper refuses CRLF, so
-    never let Windows turn a line feed into CRLF (Path.write_text only takes newline= from Python 3.10)."""
+    """Write text with LF only. The repository is eol=lf and the R9 helper refuses CRLF,
+    so Windows must not translate. (Path.write_text takes newline= only from Python 3.10.)"""
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
 
