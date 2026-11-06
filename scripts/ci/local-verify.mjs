@@ -809,9 +809,12 @@ const YIELD_REPORT_MS = 5 * 60_000;
 const RESIDENT_STALE_MS = 5 * 60_000; // the service rewrites its status page every 15 s; a stopped one leaves its last page
 
 // What the resident runs now, or null. Busy: its status page names a batch
-// (`current`) that is not only waiting (executor WAITING, e.g. for a hosted
-// relay: nothing of it runs here), and the page is fresh. Idle, stale, not
-// installed here or unreadable: null (nothing to yield to that can be seen).
+// (`current`) that is not resting at parking point A (phase 'relay-wait': it
+// only waits for a hosted relay, nothing of it runs here), and the page is
+// fresh. Idle, stale, not installed here or unreadable: null (nothing to yield
+// to that can be seen). The Linux side compares the WSL clock with the page's
+// Windows time: a WSL clock more than five minutes ahead (after the host slept)
+// makes it see the page as stale and not wait; accepted (the Windows side still waits).
 export function residentBusy({ file = RESIDENT_STATUS, readText = (name) => fs.readFileSync(name, 'utf8'), now = Date.now } = {}) {
   let status;
   try {
@@ -820,7 +823,7 @@ export function residentBusy({ file = RESIDENT_STATUS, readText = (name) => fs.r
     return null;
   }
   const current = status?.current;
-  if (!current || typeof current !== 'object' || status.executor?.state === 'WAITING') return null;
+  if (!current || typeof current !== 'object' || current.phase === 'relay-wait') return null;
   if (!(now() - Date.parse(status.writtenAt) <= RESIDENT_STALE_MS)) return null;
   const pr = Number.isSafeInteger(current.pr) ? `PR #${current.pr}` : 'a batch';
   return Number.isSafeInteger(current.stage) ? `${pr} (stage ${current.stage})` : pr;

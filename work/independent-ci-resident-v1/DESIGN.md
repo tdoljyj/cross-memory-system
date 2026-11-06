@@ -4672,14 +4672,14 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 58.2 修法二：local-verify 让路（`scripts/ci/local-verify.mjs`，不在常驻包内）
 
-常驻在跑批次（`C:\ProgramData\CluedIndependentCI\resident\state\status.json` 的 `current` 非空；WSL 内读 `/mnt/c/...` 同一文件）时，local-verify 在每个套件开始前等待，Windows 和 Linux 两侧都等；每 30 s 看一次，每 5 分钟打印一次原因；每一侧整次运行合计最多等 90 分钟（不是每个套件），用完照常继续并说明；Linux 子进程的超时相应加 90 分钟；`--no-yield` 关闭（传给 Linux 侧）。文件不存在、读不了、不是 JSON、5 分钟没重写（服务停了，页面停在最后一次）或执行器是 `WAITING`（例如等托管中继，本机什么都没跑）都算空闲。等待时保留自己的运行名额，排在后面的运行也跟着等。工具自己的并发测试带 `--no-yield`，不会在常驻 CI 里等常驻。
+常驻在跑批次（`C:\ProgramData\CluedIndependentCI\resident\state\status.json` 的 `current` 非空；WSL 内读 `/mnt/c/...` 同一文件）时，local-verify 在每个套件开始前等待，Windows 和 Linux 两侧都等；每 30 s 看一次，每 5 分钟打印一次原因；每一侧整次运行合计最多等 90 分钟（不是每个套件），用完照常继续并说明；Linux 子进程的超时相应加 90 分钟；`--no-yield` 关闭（传给 Linux 侧）。文件不存在、读不了、不是 JSON、5 分钟没重写（服务停了，页面停在最后一次）或 `current.phase` 是 `relay-wait`（批次停在停靠点 A 等托管中继，本机什么都没跑；不看执行器的 `WAITING`：从 A 继续的批次跑第 2–7 段时，页面上还是上一个 tick 的 `WAITING`）都算空闲。Linux 侧用 WSL 的时钟比 Windows 写的 `writtenAt`：主机睡眠后 WSL 时钟若快了 5 分钟以上，Linux 侧会当页面过期而不等；接受这个小风险（Windows 侧照样等）。等待时保留自己的运行名额，排在后面的运行也跟着等。工具自己的并发测试带 `--no-yield`，不会在常驻 CI 里等常驻。
 
 ### 58.3 测试
 
 - `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑，含签发者自己的 `PUBLICATION_UNCERTAIN`；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、放弃证明覆盖不到的有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；重跑后以内存闸门或 refs 移动结束时停止重跑、按各自的码结束并排 attempt 2；mailbox 与引擎的 `again` 规则含第 2 段。
 - `test/scanner-abandon.test.mjs`：第 2 段的 10-28 结束先重跑两次再 `FAILED_CLEAN`；attempt 2 也各有两次重跑；静止证明不成立时先写 refused 再 HALT。
 - `test/test_linux_tool.py`：`retry-stage-2-1/2` 保留工作区，`retry-stage-2-3`、`retry-stage-3-1` 不保留。
-- `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次、`WAITING`、页面过期、页面无时间）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按剩余额度截断、额度用完不等）；`verifySuites` 每个套件先让路、整次运行共用一份额度、`--no-yield` 时不问；Linux 脚本传 `--no-yield`。
+- `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次、停在 A 的 `relay-wait`、从 A 继续时页面仍是 `WAITING`、`retry-wait`、页面过期、页面无时间）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按剩余额度截断、额度用完不等）；`verifySuites` 每个套件先让路、整次运行共用一份额度、`--no-yield` 时不问；Linux 脚本传 `--no-yield`。
 
 ### 58.4 安装
 

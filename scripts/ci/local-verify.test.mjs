@@ -66,7 +66,7 @@ test('options: values inline or next, platforms, fetch and fresh main results; m
 });
 
 // Defect e0a5630d: a run waits before each suite while the resident CI on this host runs a batch (same WSL VM, same CPU).
-test('the resident is busy only while a fresh status page names a batch that is not only waiting; idle, stale, missing or unreadable is not busy', () => {
+test('the resident is busy only while a fresh status page names a batch that is not resting at A; idle, stale, missing or unreadable is not busy', () => {
   const T = Date.parse('2026-11-06T02:20:00Z');
   const page = (o) => () => JSON.stringify({ writtenAt: new Date(T - 15_000).toISOString(), executor: { state: 'RUNNING' }, ...o });
   const busy = (readText, now = () => T) => residentBusy({ readText, now });
@@ -78,7 +78,10 @@ test('the resident is busy only while a fresh status page names a batch that is 
   assert.equal(busy(page({ current: { pr: 1007, stage: null } })), 'PR #1007');
   assert.equal(busy(page({ current: {} })), 'a batch');
   assert.equal(busy(page({ current: 'x' })), null);
-  assert.equal(busy(page({ current: { pr: 1007, stage: 9 }, executor: { state: 'WAITING' } })), null, 'a batch that only waits (a hosted relay) runs nothing here');
+  assert.equal(busy(page({ current: { pr: 1007, stage: null, phase: 'relay-wait' }, executor: { state: 'WAITING' } })), null, 'a batch resting at A (a hosted relay) runs nothing here');
+  assert.equal(busy(page({ current: { pr: 1007, stage: 2, phase: 'stage' }, executor: { state: 'WAITING' } })), 'PR #1007 (stage 2)',
+    'a batch going on from A runs its stages while the page still says WAITING from the tick before');
+  assert.equal(busy(page({ current: { pr: 1007, stage: 2, phase: 'retry-wait' } })), 'PR #1007 (stage 2)', 'about to run stage 2 again');
   assert.equal(busy(page({ current: { pr: 1007, stage: 2 } }), () => T + 5 * 60_000), null, 'a page not rewritten for five minutes: the service is not running');
   assert.equal(busy(page({ current: { pr: 1007, stage: 2 } }), () => T + 4 * 60_000), 'PR #1007 (stage 2)');
   assert.equal(busy(page({ current: { pr: 1007, stage: 2 }, writtenAt: undefined })), null, 'no time on the page');
