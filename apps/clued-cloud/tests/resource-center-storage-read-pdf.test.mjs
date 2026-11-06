@@ -217,7 +217,8 @@ test("decode bombs, operator bombs, oversized tokens and BrotliDecode fail with 
   // the numbers are literal on purpose: a test that read the limits from the module would follow a loosened limit;
   // the guard refuses when the next buffer would pass the cap, so a bomb is charged up to the cap, not less: the
   // lower bounds show the limit was reached, not that the guard refused at once. The 1 MiB string needs a 2 MiB
-  // buffer (doubling) and is refused by the 256 Ki element cap on a string, which is no decode charge.
+  // buffer (doubling) plus a few small ones (hence 1 KiB of slack) and is refused by the 256 Ki element cap on a
+  // string, which is no decode charge.
   const cases = [["operator bomb 100 MB", operatorBombPdf(100 * MiB), [8 * MiB, 16 * MiB], "decode"],
     ["text bomb 300 MB", textBombPdf(300 * MiB), [8 * MiB, 16 * MiB], "decode"],
     ["ToUnicode bomb 200 MB (native DecompressionStream path)", toUnicodeBombPdf(200 * MiB), [8 * MiB, 16 * MiB], "decode"],
@@ -230,9 +231,11 @@ test("decode bombs, operator bombs, oversized tokens and BrotliDecode fail with 
     const seen = `${name}: ${JSON.stringify(meter)}`;
     assert.equal(meter.firstRefusedKind, refusedKind, seen);
     assert.ok(meter.chargedDecodeBytes >= chargedMin && meter.chargedDecodeBytes <= chargedMax, seen);
-    // Decoding stops at the refusal: nothing asks for more than one more buffer, and a refused stream is not
-    // asked again and again (a pdf.js loop that swallows the refusal and goes on, or one that decodes the whole
-    // bomb and charges it afterwards, shows here). Real runs: at most 2 refusals per stream, <= 6.6 MB asked.
+    // Decoding stops at the refusal: the refused decode calls ask for at most one stream cap in total, and no
+    // stream is refused more than twice (a pdf.js loop that swallows the refusal and goes on, or one that decodes
+    // the whole bomb and charges it afterwards, shows here). Real runs: <= 6.6 MB asked in all; a stream is refused
+    // twice because pdf.js reads it a second time after the first refusal (pinned pdfjs-dist 6.3.289: a version
+    // bump that changes this should fail here, and the numbers be re-measured).
     assert.ok(meter.refusedDecodeBytes <= 16 * MiB, seen);
     assert.ok(meter.maxRefusalsPerStream <= 2, seen);
     // Every further call after a refusal is refused too: a few hundred at most (200 streams, 2 each), never the
