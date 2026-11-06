@@ -1,7 +1,7 @@
 // The CI-script tests (scripts/ci and scripts/ci/self-hosted) that neither
-// another application test imports nor a required suite command lists, run
+// another application unit test imports nor the admission self-tests list, run
 // through the established quality unit entry like local-dev-tools.test.mjs
-// (defect ddc94356): no required suite ran them, and on every change only this
+// (defect ddc94356): no required suite ran them on every change, and only this
 // one can, since they read files from across the repository and several load
 // yaml from this application's install. New files join without an edit.
 import { readdirSync, readFileSync } from 'node:fs';
@@ -20,7 +20,13 @@ for (const file of classifyTests(TESTS).unit) {
   if (file === SELF) continue;
   for (const specifier of importSpecifiers(readFileSync(file, 'utf8'))) covered.add(path.resolve(TESTS, specifier));
 }
-for (const command of Object.values(SUITE_COMMANDS).flat()) {
+// The admission self-tests run in their own suite whenever anything they read
+// changes (ci-required-selection.test.mjs holds their triggers to their
+// imports), keep their own known failures, and print GitHub annotations, so
+// they are not run again here. Other suite-listed tests, such as the selection
+// test, check the whole repository but run only when a few files change: they
+// stay here.
+for (const command of SUITE_COMMANDS['admission-self-tests']) {
   for (const arg of command.argv) if (arg.endsWith('.test.mjs')) covered.add(path.resolve(ROOT, command.cwd, arg));
 }
 
