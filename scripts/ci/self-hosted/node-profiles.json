@@ -78,7 +78,7 @@
       "suspend_free_memory_gb": 6.0,
       "resume_free_memory_gb": 10.0,
       "suspend_c_free_gb": 50,
-      "resume_c_free_gb": 80
+      "resume_c_free_gb": 60
     }
   },
   "lifecycle_states": [
