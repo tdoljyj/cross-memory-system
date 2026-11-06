@@ -648,7 +648,7 @@
     {
       "id": "script.standard-runner-actor-source",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Exact manual Actor Source and complete Role classification; no physical execution authority.",
       "root": ".",
       "files": [
@@ -799,7 +799,7 @@
         "scripts/runner/standard-runner-actor181/source-capture.mjs",
         "scripts/runner/standard-runner-actor181/source-manifest.json"
       ],
-      "content_sha256": "451daeb36f8d5edd41596009d3159da7d86113ec4f643ffb10a8e55e8e437578"
+      "content_sha256": "6e2d62ce2f8ff236ccb7e2925edfbcbd4dca6cba9e7fb645f3fb037d94e1b63e"
     },
     {
       "id": "ci.temporary-storage-lifecycle",

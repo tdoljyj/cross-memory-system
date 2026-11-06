@@ -61,6 +61,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     routes.push(route);const changed=mutation(route,opts,routes.length);if(changed)return changed;
     if(route===`/repos/${repository}`)return {ok:true,body:{full_name:repository,id:1,default_branch:'main',created_at:'2026-01-01T00:00:00Z'}};
     if(route===`/repos/${repository}/branches/main`)return {ok:true,body:{name:'main',commit:{sha:head}}};
+    if(route.includes('/git/trees/'))return {ok:true,body:{truncated:false,tree:Object.entries(content).map(([path,text])=>({path,sha:workflowBlob(text),type:'blob',mode:'100644'}))}};
     if(route.includes('/contents/')){
       const file=route.split('/contents/')[1].split('?')[0];let text=content[file];
       if(file.endsWith('clued-gated-proof-profiles.json'))text=JSON.stringify(sourceContract.profiles);

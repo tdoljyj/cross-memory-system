@@ -6,7 +6,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import {ACTOR_WORKFLOW,compileActorSource,classifyActorSource,trustedActorCatalogue} from './clued-standard-runner-actor-source.mjs';
 import {ciWorkflows} from './clued-merge-slot-ci.mjs';
-const require=createRequire(import.meta.url),YAML=require('yaml');
+const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),YAML=require('yaml');
 const registry=trustedActorCatalogue(),raw=registry.source.source_yaml;
 const compile=(text,r=registry)=>compileActorSource(ACTOR_WORKFLOW,text,{parseYaml:s=>YAML.parse(s,{uniqueKeys:true}),roles:r.roles,rows:r.source.rows});
 test('actor exact real YAML, all three complete independent roles; no OS authority',()=>{
