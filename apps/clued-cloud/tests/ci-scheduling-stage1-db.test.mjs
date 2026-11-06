@@ -32,7 +32,8 @@ test('stage1 scheduling: real PostgreSQL full migration chain and isolated autho
         'clued_ci_node_registration_v1(jsonb)':native,'clued_ci_nodes_v1(jsonb)':native,
         'clued_ci_pool_apply_v1(jsonb)':native,'clued_ci_pool_confirmation_issue_v1(jsonb)':native,
         'clued_ci_scan_start_hosted_v1(jsonb)':gateway,'clued_ci_scan_start_policy_v1(jsonb)':gateway,
-        'clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)':gateway,'clued_ci_node_trust_v1(text,uuid)':gateway});
+        'clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)':gateway,'clued_ci_node_trust_v1(text,uuid)':gateway,
+        'clued_ci_phase_apply_v1(jsonb)':native,'clued_ci_phase_confirmation_issue_v1(jsonb)':native});
     });
     await t.test('Native requires live same-account session and rejects delegated/cross-project/private JWK',async()=>{
       await assert.rejects(()=>f.native('clued_ci_nodes_v1',{project_id:project},f.claims(user,uuid())),/native_session/);
@@ -64,6 +65,7 @@ test('stage1 scheduling: real PostgreSQL full migration chain and isolated autho
     });
     await admin.query(`update clued_private.ci_nodes_v1 set qualification_status='verified',qualification_verified_at=now(),qualification_expires_at=now()+interval '1 hour',
       eligible_until=now()+interval '1 hour',hardening_observed=true where node_id=$1`,[node]);
+    await f.live(node);
     await f.modelMode();
     await t.test('two PostgreSQL connections racing one job have exactly one lease; stale renew and revoked eligibility fail',async()=>{
       const id=await f.enqueue(),a=await f.connect(),b=await f.connect();const raced=await Promise.allSettled([lease(node,id,a),lease(node,id,b)]);

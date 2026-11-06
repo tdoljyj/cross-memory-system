@@ -82,10 +82,15 @@ export async function schedulingFixture(){
     const pool=async(p=project,repo=12345,cap=100)=>{const view=await native('clued_ci_nodes_v1',{project_id:p});const issue=await native('clued_ci_pool_confirmation_issue_v1',{
       project_id:p,base_version:view.pool.version,repository:{id:repo,name:'fixture/repository-'+repo},limits:limits(cap),accepted_ref:'fixture-pool-acceptance'});
       return native('clued_ci_pool_apply_v1',{confirmation_token:issue.confirmation_token,view_digest:issue.view_digest});};
+    // G5 (T2A-2): ci_node_current_v1 requires a heartbeat in ci_node_liveness_v1 within 20 minutes.
+    const live=async(node,age='0 seconds')=>{const b=(await admin.query('select binding_id from clued_private.ci_nodes_v1 where node_id=$1',[node])).rows[0].binding_id;
+      await admin.query(`insert into clued_private.ci_node_liveness_v1(node_id,user_id,last_heartbeat_at,last_sender_binding_id,heartbeat_sequence,reported_state,reported_service_running)
+        select $1,user_id,clock_timestamp()-$3::interval,$2,1,'NORMAL',true from clued_private.ci_nodes_v1 where node_id=$1
+        on conflict (node_id) do update set last_heartbeat_at=excluded.last_heartbeat_at`,[node,b,age]);};
     const trustedNode=async()=>{const p=registration();p.binding_id=(await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','ci-stage1-extra-node',$2,array['context:read','context:write'],array['*'])returning id`,[user,crypto.randomBytes(32).toString('hex')])).rows[0].id;
       const r=committed(await native('clued_ci_node_registration_v1',p));await approve(r.node_id);await admin.query(`update clued_private.ci_nodes_v1 set qualification_status='verified',qualification_verified_at=now(),
-      qualification_expires_at=now()+interval '1 hour',eligible_until=now()+interval '1 hour',hardening_observed=true,qualification_receipt_ref='fixture-reviewed-qualification' where node_id=$1`,[r.node_id]);return r.node_id;};
+      qualification_expires_at=now()+interval '1 hour',eligible_until=now()+interval '1 hour',hardening_observed=true,qualification_receipt_ref='fixture-reviewed-qualification' where node_id=$1`,[r.node_id]);await live(r.node_id);return r.node_id;};
     const modelMode=async(phase=2,cap=100)=>{await admin.query(`update clued_private.ci_quota_counters_v1 set policy=$3 where user_id=$1 and project_id=$2 and row_kind='pool_policy'`,
       [user,project,{mode:phase>=4?'pool_enforced':'resident_mirror',phase,limits:limits(cap),status:'FIXTURE_ONLY'}]);};
     const enqueue=async(extra={},client=admin)=>{const data={repository_id:12345,kind:'combination_execution',task_id:task,claim_id:claim.claim_id,claim_fence:Number(claim.fence),execution_epoch:Number(claim.execution_epoch),target_branch:'main',
@@ -97,6 +102,6 @@ export async function schedulingFixture(){
       data.head_authorization_id=auth.authorization_id;
       data.admission_id=(await admin.query(`select admission_id from clued_private.work_claim_execution_admissions_v1 where claim_id=$1 and head_sha=$2 order by created_at desc limit 1`,[claim.claim_id,data.head_sha])).rows[0].admission_id;
       return(await client.query('select clued_private.ci_job_enqueue_v1($1,$2,$3::jsonb)id',[user,project,JSON.stringify(data)])).rows[0].id;};
-    return{admin,human,gateway,connect,close,user,other,project,project2,otherProject,session,binding,token,claims,native,committed,registration,register,approve,pool,trustedNode,modelMode,enqueue,claim,task,server};
+    return{admin,human,gateway,connect,close,user,other,project,project2,otherProject,session,binding,token,claims,native,committed,registration,register,approve,pool,trustedNode,live,modelMode,enqueue,claim,task,server};
   }catch(error){await close().catch(()=>{});throw error;}
 }
