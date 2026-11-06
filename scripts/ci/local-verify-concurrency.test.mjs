@@ -58,14 +58,14 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   const plenty = { freeMemGb: 40, idleCores: 20, dataFreeGb: 500, systemFreeGb: 120 };
   assert.deepEqual(roomForOneMore({ running: 0 }, { freeMemGb: 0, idleCores: 0, dataFreeGb: 0, systemFreeGb: 0 }).ok, true, 'nothing running: always');
   assert.equal(roomForOneMore({ running: 1 }, plenty).ok, true);
-  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample, { resume: 65, keeps: HOST_KEEPS }).lacks.map((lack) => lack.kind);
+  const kinds = (running, sample, extra = {}) => roomForOneMore({ running, ...extra }, sample, { resume: 60, keeps: HOST_KEEPS }).lacks.map((lack) => lack.kind);
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 15 }), ['memory'], 'a run takes 6 GB and 10 GB stay free: 16 needed');
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 16 }), []);
   assert.deepEqual(kinds(1, { ...plenty, idleCores: 7 }), ['cpu']);
   assert.deepEqual(kinds(1, { ...plenty, dataFreeGb: 12 }), ['disk']);
-  // the system drive: the watchdog resumes the runners at 65 GB, and stops them at 50
-  assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 67.9 }), ['system-disk']);
-  assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 68 }), []);
+  // the system drive: the watchdog resumes the runners at 60 GB, and stops them at 50
+  assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 62.9 }), ['system-disk']);
+  assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 63 }), []);
   assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 40 }), ['system-disk']);
   assert.deepEqual(roomForOneMore({ running: 1 }, { ...plenty, systemFreeGb: 40 }, { resume: 0 }).lacks, [], 'the check is off with resume level 0');
   assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: null, dataFreeGb: null }), [], 'a drive that cannot be asked does not hold a run back');
