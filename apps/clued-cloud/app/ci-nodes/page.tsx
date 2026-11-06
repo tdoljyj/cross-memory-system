@@ -12,14 +12,19 @@ type Json = Record<string, unknown>;
 type NodeAction = "approve" | "drain" | "retire" | "revoke";
 type Node = { node_id: string; name: string; state: string; version: number; binding_id: string;
   profile_sha256: string; identity_fingerprint: string; encryption_fingerprint: string;
-  qualification_status: string; publisher_approved: boolean; scan_signing_approved: boolean; connection_expires_at: string | null };
-type Pool = Json & { version: number; mode: "prepared"; status: "UNCONFIGURED" | "CONFIGURED_PREPARED"; limits: Json | null };
-type Listing = { nodes: Node[]; pool: Pool; bindings: { id: string; agent_name: string }[]; observed_at: string };
-type Preview = { kind: "node" | "pool"; token: string; digest: string; expires: string; view: Json;
-  nodeId?: string; baseVersion: number; action?: NodeAction };
-type UnknownWrite = { kind: "registration" | "node" | "pool" | "preview"; nodeId?: string; baseVersion?: number; action?: NodeAction };
+  qualification_status: string; publisher_approved: boolean; scan_signing_approved: boolean; connection_expires_at: string | null;
+  eligible_until?: string | null; hardening_observed?: boolean; preference?: string; profile?: Json };
+type Pool = Json & { version: number; mode: "prepared" | "active"; status: "UNCONFIGURED" | "CONFIGURED_PREPARED" | "ACTIVE"; limits: Json | null };
+type NodeList = { version: number; sha256: string | null };
+type PhaseMove = { target_phase: number; attestations: string[]; unmet: string[] };
+type Phases = { phase: number; moves: PhaseMove[] };
+type Listing = { nodes: Node[]; pool: Pool; nodeList: NodeList; phases: Phases | null; bindings: { id: string; agent_name: string }[]; observed_at: string };
+type Preview = { kind: "node" | "pool" | "phase"; token: string; digest: string; expires: string; view: Json;
+  nodeId?: string; baseVersion: number; action?: NodeAction; targetPhase?: number };
+type UnknownWrite = { kind: "registration" | "node" | "pool" | "phase" | "preview"; nodeId?: string; baseVersion?: number; action?: NodeAction };
 type RpcName = "clued_ci_nodes_v1" | "clued_ci_node_registration_v1" | "clued_ci_node_confirmation_issue_v1"
-  | "clued_ci_node_apply_v1" | "clued_ci_pool_confirmation_issue_v1" | "clued_ci_pool_apply_v1";
+  | "clued_ci_node_apply_v1" | "clued_ci_pool_confirmation_issue_v1" | "clued_ci_pool_apply_v1"
+  | "clued_ci_phase_confirmation_issue_v1" | "clued_ci_phase_apply_v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{64}$/i;
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,7 +64,32 @@ const MESSAGES: Record<string, string> = {
   CI_INPUT_INVALID: "提交内容不符合要求，请刷新并重新核对。",
   QUOTA_UNCONFIGURED: "额度尚未配置，当前保持准备状态。",
   SIGNATURE_GATEWAY_NOT_ACTIVATED: "运行资格核验入口尚未启用。节点可以登记，但不能开始运行。",
+  CI_PHASE_REQUEST_INVALID: "阶段变更内容不完整，请刷新后重新预览。",
+  CI_PHASE_ATTESTATION_MISMATCH: "请逐项勾选这一步需要你确认的事项后重新预览。",
 };
+const PREFERENCES: Record<string, string> = { primary: "主力（先领作业）", relay: "中转（只领排队满 60 秒的作业）", overflow: "溢出（只领排队满 60 秒的作业）" };
+const ATTESTATIONS: Record<string, string> = {
+  two_node_assumptions_a1_a5_installed: "两节点假设清理 A1–A5（9cac75be）已随安装波上线",
+  stage2_exit_acceptance_passed: "阶段 2 退出验收 1–6 已全部通过",
+};
+const UNMET: Record<string, string> = {
+  move_not_offered: "这一步现在不开放",
+  phase_changed: "阶段已在别处更改，请刷新",
+  limits_unconfigured: "额度尚未配置",
+  no_repository: "尚未登记仓库",
+  several_ci_projects: "账户下有多个 CI 项目",
+  duty_holder_not_ready: "当班的发布者在本项目还没有资格有效、20 分钟内有心跳的已批准节点",
+  publisher_not_ready: "有已批准的发布者节点资格失效或 20 分钟内没有心跳",
+  lease_sweep_not_running: "租约清扫最近 5 分钟没有运行",
+  phase2_under_3_days: "阶段 2 运行未满 3 天",
+  unknown_publication_in_phase2: "阶段 2 期间有结果未知的发布",
+  pool_not_drained: "还有在跑的作业或已预留的发布键，请先排空",
+};
+const unmetText = (code: string) => UNMET[code.split(":")[0]] ?? "条件未满足";
+function failureText(code: string): string | undefined {
+  if (code.startsWith("CI_PHASE_CONDITION_UNMET:")) return "进入条件未满足：" + unmetText(code.slice("CI_PHASE_CONDITION_UNMET:".length)) + "。";
+  return MESSAGES[code];
+}
 class RequestFailure extends Error { constructor(message: string, readonly uncertain = false) { super(message); } }
 
 async function rpc(name: RpcName, input: Json): Promise<Json> {
@@ -72,12 +102,12 @@ async function rpc(name: RpcName, input: Json): Promise<Json> {
     // database rejection is definite; never automatically replay a mutation.
     const definite = Boolean(result.error.code && /^[0-9A-Z]{5}$/.test(result.error.code)
       && !/^(08|53|57|58|XX)/.test(result.error.code));
-    throw new RequestFailure(MESSAGES[code] ?? (definite ? "请求被拒绝，请刷新后核对。" : "请求结果尚未确认，请只读核对状态。"), !definite);
+    throw new RequestFailure(failureText(code) ?? (definite ? "请求被拒绝，请刷新后核对。" : "请求结果尚未确认，请只读核对状态。"), !definite);
   }
   if (!object(result.data)) throw new RequestFailure("返回结果无法识别，请只读核对状态。", true);
   if (result.data.status === "rejected" || result.data.status === "failed" || result.data.status === "unknown") {
     const code = str(result.data.error_code);
-    throw new RequestFailure(MESSAGES[code] ?? "请求未能确认，请刷新后核对。", result.data.status !== "rejected");
+    throw new RequestFailure(failureText(code) ?? "请求未能确认，请刷新后核对。", result.data.status !== "rejected");
   }
   return result.data;
 }
@@ -114,9 +144,10 @@ function validLimits(value: unknown): value is Json {
 }
 
 function validPool(value: unknown): value is Pool {
-  return object(value) && integer(value.version) && value.mode === "prepared"
-    && ((value.status === "UNCONFIGURED" && value.limits === null)
-      || (value.status === "CONFIGURED_PREPARED" && validLimits(value.limits)));
+  // From phase 2 the pool is active (T2A-2 phase moves); its limits may be unset again.
+  return object(value) && integer(value.version) && (value.mode === "prepared"
+    ? (value.status === "UNCONFIGURED" && value.limits === null) || (value.status === "CONFIGURED_PREPARED" && validLimits(value.limits))
+    : value.mode === "active" && value.status === "ACTIVE" && (value.limits === null || validLimits(value.limits)));
 }
 
 function uniqueEnum(value: unknown, allowed: readonly string[], min: number, max: number): boolean {
@@ -125,7 +156,8 @@ function uniqueEnum(value: unknown, allowed: readonly string[], min: number, max
 }
 
 function validProfile(value: unknown): boolean {
-  const keys = ["schema", "site_id", "environment_kinds", "slot_count", "memory_limit_mb", "identity_key_origin", "capabilities", "exclusions"];
+  const keys = ["schema", "site_id", "environment_kinds", "slot_count", "memory_limit_mb", "identity_key_origin", "capabilities", "exclusions",
+    "availability", "preference"];
   const capabilities = ["linux", "windows", "docker", "hyper-v", "windows-sandbox", "scan", "publish", "control", "relay", "f-pr"];
   return object(value) && Object.keys(value).every(key => keys.includes(key))
     && integer(value.slot_count) && value.slot_count >= 1 && value.slot_count <= 64
@@ -136,7 +168,41 @@ function validProfile(value: unknown): boolean {
     && (!("memory_limit_mb" in value) || integer(value.memory_limit_mb) && value.memory_limit_mb <= 1048576)
     && (!("identity_key_origin" in value) || value.identity_key_origin === "tpm" || value.identity_key_origin === "software")
     && (!("capabilities" in value) || uniqueEnum(value.capabilities, capabilities, 0, 16))
-    && (!("exclusions" in value) || uniqueEnum(value.exclusions, capabilities, 0, 16));
+    && (!("exclusions" in value) || uniqueEnum(value.exclusions, capabilities, 0, 16))
+    && (!("preference" in value) || typeof value.preference === "string" && value.preference in PREFERENCES)
+    && (!("availability" in value) || validAvailability(value.availability));
+}
+
+// The server checks the timezone name; this only checks the shape.
+const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+function validAvailability(value: unknown): boolean {
+  return object(value) && Object.keys(value).length === 2 && typeof value.timezone === "string" && value.timezone.length <= 64
+    && Array.isArray(value.windows) && value.windows.length >= 1 && value.windows.length <= 14
+    && value.windows.every(window => object(window) && Object.keys(window).length === 3
+      && Array.isArray(window.days) && window.days.length >= 1 && window.days.length <= 7
+      && window.days.every(day => Number.isInteger(day) && Number(day) >= 1 && Number(day) <= 7) && new Set(window.days).size === window.days.length
+      && typeof window.start === "string" && CLOCK.test(window.start)
+      && typeof window.end === "string" && (CLOCK.test(window.end) || window.end === "24:00") && window.start !== window.end);
+}
+
+const DAYS = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+function availabilityText(profile: Json | undefined): string {
+  const value = profile?.availability;
+  if (!validAvailability(value)) return "全天";
+  const zone = str((value as Json).timezone);
+  return ((value as Json).windows as Json[]).map(window => (window.days as number[]).map(day => DAYS[day]).join("、")
+    + " " + str(window.start) + "–" + str(window.end)).join("；") + "（" + zone + "）";
+}
+
+function parsePhases(value: unknown): Phases | null {
+  // Absent before the T2A-2 migration.
+  if (value === undefined) return null;
+  if (!object(value) || !integer(value.phase) || value.phase < 1 || value.phase > 5 || !Array.isArray(value.moves) || value.moves.length > 2
+    || !value.moves.every(move => object(move) && integer(move.target_phase) && Array.isArray(move.attestations)
+      && move.attestations.every(item => typeof item === "string") && Array.isArray(move.unmet) && move.unmet.every(item => typeof item === "string"))) {
+    throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
+  }
+  return { phase: value.phase, moves: value.moves as PhaseMove[] };
 }
 
 function parseListing(value: Json): Listing {
@@ -154,7 +220,12 @@ function parseListing(value: Json): Listing {
     || !value.bindings.every(binding => object(binding) && UUID.test(str(binding.id)) && typeof binding.agent_name === "string")) {
     throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
   }
-  return { nodes: nodes as Node[], pool: value.pool as Listing["pool"], bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at) };
+  // Absent before the 2B migration: no approved node list yet.
+  const list = value.node_list === undefined ? { version: 0, sha256: null } : value.node_list;
+  if (!object(list) || !integer(list.version) || !(list.sha256 === null || typeof list.sha256 === "string" && SHA.test(list.sha256))
+    || (list.version === 0) !== (list.sha256 === null)) throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
+  return { nodes: nodes as Node[], pool: value.pool as Listing["pool"], nodeList: { version: list.version, sha256: list.sha256 },
+    phases: parsePhases(value.phase_moves), bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at) };
 }
 
 function parsePreview(value: Json, target: Omit<Preview, "token" | "digest" | "expires" | "view">): Preview {
@@ -190,7 +261,7 @@ function registrationDocument(source: string, bindings: Listing["bindings"]): Js
 
 function recovered(write: UnknownWrite, listing: Listing): boolean {
   if (write.kind === "preview") return true;
-  if (write.kind === "pool") return listing.pool.version > Number(write.baseVersion);
+  if (write.kind === "pool" || write.kind === "phase") return listing.pool.version > Number(write.baseVersion);
   const node = listing.nodes.find(item => item.node_id === write.nodeId);
   if (write.kind === "registration") return Boolean(node);
   const expected: Record<NodeAction, string> = { approve: "active", drain: "draining", retire: "retired", revoke: "revoked" };
@@ -219,6 +290,7 @@ export default function CiNodesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const current = useRef<Session | null>(null);
   const activeProject = useRef("");
   const epoch = useRef(0);
@@ -342,6 +414,32 @@ export default function CiNodesPage() {
     }), { kind: "pool", baseVersion: listing.pool.version }), { kind: "preview" }, setPreview);
   }
 
+  // Q-B2: the node signature gateway is closed until the Owner opens it for this
+  // project; the same two-step pool confirmation closes it again.
+  async function prepareGateway(open: boolean) {
+    if (!listing) return;
+    if (sensitiveText(acceptedRef)) { setError("接受记录中不能包含密码、令牌或私钥。"); return; }
+    if (open && !acceptedRef.trim()) { setError("打开签名网关前，请填写本次接受记录。"); return; }
+    await mutate(async () => parsePreview(await rpc("clued_ci_pool_confirmation_issue_v1", {
+      project_id: project, base_version: listing.pool.version, signature_gateway_active: open,
+      ...(acceptedRef.trim() ? { accepted_ref: acceptedRef.trim() } : {}),
+    }), { kind: "pool", baseVersion: listing.pool.version }), { kind: "preview" }, setPreview);
+  }
+
+  // G4: one phase step (+-1) with the expected phase; the server checks its
+  // machine conditions again, the Owner ticks the rest.
+  async function preparePhase(move: PhaseMove) {
+    if (!listing?.phases) return;
+    if (sensitiveText(acceptedRef)) { setError("接受记录中不能包含密码、令牌或私钥。"); return; }
+    if (!acceptedRef.trim()) { setError("变更调度阶段前，请填写本次接受记录。"); return; }
+    if (!move.attestations.every(item => ticks[move.target_phase + ":" + item])) { setError("请逐项勾选这一步需要你确认的事项。"); return; }
+    const phase = listing.phases.phase;
+    await mutate(async () => parsePreview(await rpc("clued_ci_phase_confirmation_issue_v1", {
+      project_id: project, base_version: listing.pool.version, expected_phase: phase, target_phase: move.target_phase,
+      attestations: move.attestations, accepted_ref: acceptedRef.trim(),
+    }), { kind: "phase", baseVersion: listing.pool.version, targetPhase: move.target_phase }), { kind: "preview" }, setPreview);
+  }
+
   async function confirm() {
     if (!preview || Date.parse(preview.expires) <= Date.now()) { setPreview(null); setError("确认已过期，请重新读取状态并生成预览。"); return; }
     const exact = preview;
@@ -349,15 +447,20 @@ export default function CiNodesPage() {
     await mutate(async () => {
       const result = exact.kind === "node"
         ? await rpc("clued_ci_node_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest })
+        : exact.kind === "phase" ? await rpc("clued_ci_phase_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest })
         : await rpc("clued_ci_pool_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest });
       const version = exact.kind === "node" ? result.version : validPool(result.pool) ? result.pool.version : undefined;
       if (result.status !== "committed" || !integer(version) || version <= exact.baseVersion
-        || (exact.kind === "node" ? result.node_id !== exact.nodeId : result.project_id !== project)) {
+        || (exact.kind === "node" ? result.node_id !== exact.nodeId : result.project_id !== project)
+        || (exact.kind === "phase" && result.to_phase !== exact.targetPhase)) {
         throw new RequestFailure("修改结果尚未确认，请只读核对状态。", true);
       }
       return result;
     }, { kind: exact.kind, nodeId: exact.nodeId, baseVersion: exact.baseVersion, action: exact.action }, () => {
-      setListing(null); setNotice(exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。" : "准备阶段的额度设置已保存，请刷新查看最新记录。");
+      const gateway = object(exact.view.choices) && typeof exact.view.choices.signature_gateway_active === "boolean";
+      setListing(null); setTicks({}); setNotice(exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。"
+        : exact.kind === "phase" ? "调度阶段已变更为 " + exact.targetPhase + "，请刷新查看最新记录。"
+        : gateway ? "签名网关设置已保存，请刷新查看最新记录。" : "准备阶段的额度设置已保存，请刷新查看最新记录。");
     });
   }
 
@@ -365,7 +468,7 @@ export default function CiNodesPage() {
     if (busy.current) return;
     if (!UUID.test(projectInput.trim())) { setError("请填写有效的项目编号。"); return; }
     ++epoch.current; ++serial.current;
-    setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({});
+    setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({}); setTicks({});
     setRepositoryId(""); setRepositoryName(""); setError(""); setNotice("");
     const next = projectInput.trim().toLowerCase();
     activeProject.current = next;
@@ -375,7 +478,7 @@ export default function CiNodesPage() {
   const blocked = working || unknown !== null || preview !== null || listing === null;
   return <main className="contexts-main owner-confirm ci-nodes">
     <Link href="/">← 首页</Link><h1>执行节点</h1>
-    <p className="ci-prepared">准备阶段 · 尚未启用调度</p>
+    <p className="ci-prepared">{listing?.phases && listing.phases.phase >= 2 ? "调度阶段 " + listing.phases.phase + " · 已启用调度" : "准备阶段 · 尚未启用调度"}</p>
     <p>登记节点、核对公开资料和设置额度。节点被批准登记后，仍需后续的运行资格验收。</p>
     {!ready ? <p role="status">正在确认登录…</p> : !session ? <p><Link href="/account">登录 BeamingFace</Link> 后管理节点。</p> : <>
       <section aria-label="选择项目"><label htmlFor="ci-project">项目编号</label>
@@ -389,12 +492,16 @@ export default function CiNodesPage() {
           <section aria-label="已登记节点"><h2>节点</h2>
             {listing.nodes.length === 0 ? <p>尚未登记节点。</p> : listing.nodes.map(node => <article className="ci-node" key={node.node_id}>
               <h3>{node.name}</h3><p>{STATES[node.state]} · 版本 {node.version}</p>
-              <p>尚未取得运行资格</p>
+              <p>{node.qualification_status === "verified" && node.eligible_until && Date.parse(node.eligible_until) > now
+                ? "运行资格有效至 " + localTime(node.eligible_until) + (node.hardening_observed ? " · 节点自报已加固" : "")
+                : "尚未取得运行资格"}</p>
               <dl><dt>节点编号</dt><dd>{node.node_id}</dd><dt>连接</dt><dd>{listing.bindings.find(item => item.id === node.binding_id)?.agent_name ?? node.binding_id}</dd>
                 <dt>连接到期</dt><dd>{localTime(node.connection_expires_at)}</dd><dt>资料摘要</dt><dd><code>{node.profile_sha256}</code></dd>
                 <dt>身份公钥指纹</dt><dd><code>{node.identity_fingerprint}</code></dd><dt>加密公钥指纹</dt><dd><code>{node.encryption_fingerprint}</code></dd>
                 <dt>资格记录</dt><dd>{node.qualification_status}</dd><dt>发布权限登记</dt><dd>{node.publisher_approved ? "已批准登记" : "未批准"}</dd>
-                <dt>扫描签名登记</dt><dd>{node.scan_signing_approved ? "已批准登记" : "未批准"}</dd></dl>
+                <dt>扫描签名登记</dt><dd>{node.scan_signing_approved ? "已批准登记" : "未批准"}</dd>
+                <dt>领作业偏好</dt><dd>{PREFERENCES[node.preference ?? "primary"] ?? PREFERENCES.primary}</dd>
+                <dt>可用时段</dt><dd>{availabilityText(node.profile)}</dd></dl>
               <div className="owner-actions">
                 {node.state === "pending" && <button type="button" disabled={blocked} onClick={() => void prepareNode(node, "approve")}>批准登记</button>}
                 {node.state === "active" && <button type="button" disabled={blocked} onClick={() => void prepareNode(node, "drain")}>开始排空</button>}
@@ -409,7 +516,8 @@ export default function CiNodesPage() {
             <button type="button" disabled={blocked || !draft.trim()} onClick={() => void register()}>提交登记</button>
           </section>
           <section aria-label="准备阶段额度"><h2>准备阶段额度</h2>
-            <p>{listing.pool.status === "UNCONFIGURED" ? "尚未配置；新的正式执行会被拒绝。" : "已保存额度，仍保持准备状态。"} · 版本 {listing.pool.version}</p>
+            <p>{listing.pool.status === "ACTIVE" ? (listing.pool.limits === null ? "调度已启用，但额度尚未配置；新的执行会被拒绝。" : "调度已启用，按已保存额度执行。")
+              : listing.pool.status === "UNCONFIGURED" ? "尚未配置；新的正式执行会被拒绝。" : "已保存额度，仍保持准备状态。"} · 版本 {listing.pool.version}</p>
             <p>按最近 24 小时统计。六项须全部填写为 0 到 1000000 的整数，或全部留空表示尚未配置。</p><div className="ci-limits">{METRICS.map(([key, label]) => <label key={key} htmlFor={"ci-limit-" + key}>{label}
               <input id={"ci-limit-" + key} type="text" inputMode="numeric" value={limits[key] ?? ""} disabled={blocked}
                 onChange={event => setLimits(previous => ({ ...previous, [key]: event.target.value }))} /></label>)}</div>
@@ -418,12 +526,32 @@ export default function CiNodesPage() {
               <label htmlFor="ci-repository-name">仓库名称（owner/repo）</label><input id="ci-repository-name" value={repositoryName} disabled={blocked} onChange={event => setRepositoryName(event.target.value)} />
             </details><button type="button" disabled={blocked} onClick={() => void preparePool()}>预览额度修改</button>
           </section>
+          <section aria-label="节点签名网关"><h2>节点签名网关</h2>
+            <p>{listing.pool.signature_gateway_active === true ? "已打开：已批准的节点可以提交签名的资格报告和命令。" : "已关闭：节点的签名命令一律被拒绝。"}</p>
+            <p>已批准节点清单 · 版本 {listing.nodeList.version}{listing.nodeList.sha256 ? <> · <code>{listing.nodeList.sha256}</code></> : null}</p>
+            {listing.pool.signature_gateway_active === true
+              ? <button type="button" disabled={blocked} onClick={() => void prepareGateway(false)}>预览关闭网关</button>
+              : <button type="button" disabled={blocked} onClick={() => void prepareGateway(true)}>预览打开网关</button>}
+          </section>
+          {listing.phases && <section aria-label="调度阶段"><h2>调度阶段</h2>
+            <p>当前阶段 {listing.phases.phase}。每次只能前进或退回一个阶段；服务器在确认时再核对一遍条件。</p>
+            {listing.phases.moves.map(move => <article className="ci-node" key={move.target_phase}>
+              <h3>{move.target_phase > listing.phases!.phase ? "进入" : "退回"}阶段 {move.target_phase}</h3>
+              {move.unmet.length > 0 ? <ul>{move.unmet.map(code => <li key={code}>{unmetText(code)}</li>)}</ul> : <p>服务器可核对的条件已满足。</p>}
+              {move.attestations.map(item => <label key={item}><input type="checkbox" id={"ci-attest-" + move.target_phase + "-" + item} disabled={blocked}
+                checked={ticks[move.target_phase + ":" + item] === true}
+                onChange={event => setTicks(previous => ({ ...previous, [move.target_phase + ":" + item]: event.target.checked }))} /> {ATTESTATIONS[item] ?? item}</label>)}
+              <button type="button" disabled={blocked || move.unmet.length > 0} onClick={() => void preparePhase(move)}>
+                预览{move.target_phase > listing.phases!.phase ? "进入" : "退回"}阶段 {move.target_phase}</button>
+            </article>)}
+          </section>}
           <label htmlFor="ci-accepted-ref">本次接受记录（如适用）</label><input id="ci-accepted-ref" value={acceptedRef} disabled={blocked}
             onChange={event => setAcceptedRef(event.target.value)} maxLength={512} />
           <p className="context-muted">状态读取于 {localTime(listing.observed_at)}</p>
         </>}
       </>}
-      {preview && <section className="ci-preview" aria-label="确认修改"><h2>确认{preview.kind === "node" ? ACTIONS[preview.action!] : "额度修改"}</h2>
+      {preview && <section className="ci-preview" aria-label="确认修改"><h2>确认{preview.kind === "node" ? ACTIONS[preview.action!]
+        : preview.kind === "phase" ? "调度阶段变更为 " + preview.targetPhase : "项目设置修改"}</h2>
         <p>请核对服务器给出的完整修改内容。仅本次预览有效；登记批准仍不启用运行资格。</p>
         <pre>{JSON.stringify(preview.view, null, 2)}</pre><p>有效期至 {localTime(preview.expires)}</p>
         {Date.parse(preview.expires) <= now && <p role="status">确认已过期，请取消后重新读取状态。</p>}

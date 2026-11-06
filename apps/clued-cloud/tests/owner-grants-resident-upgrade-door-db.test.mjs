@@ -16,8 +16,10 @@ import { CI_SIGNATURES, GATEWAY_ROLE, assertGatewayCloseoutBoundary, setWorkerGa
 // RPC hands ci.resident_upgrade to the resident-upgrader door. Only a Binding the Owner
 // marked resident-upgrade (live and started) uses it; the resource names one node and one
 // package exactly; a grant is used once per op_id and replayed by its use receipt; with no
-// grant the op's request is returned or opened, and it is never approved automatically,
-// not even with the Owner's automatic approval switch on (the default here).
+// grant the op's request is returned or opened. Since 20261106100000 (Task ceeaa7c3, Owner
+// Decision f8aff2f9) the Owner's automatic approval switch approves it like release.production
+// (resident-upgrade-auto-approve-db.test.mjs); this test turns the switch off first, so every
+// request below waits for the Owner, as the manual path does.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261030010000_resident_upgrade_door_v1.sql';
@@ -39,7 +41,7 @@ async function freePort() {
   return port;
 }
 
-test('owner grants: the resident-upgrader door uses an exact Owner Grant once per op and is never automatic',
+test('owner grants: the resident-upgrader door uses an exact Owner Grant once per op (switch off: the Owner approves)',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-upgrade-door-'));
   const server = new EmbeddedPostgres({
@@ -75,7 +77,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
-    // No manual-approval fixture: the Owner's automatic approval stays at its default, On.
+    // The Owner's automatic approval is turned off below (after the registry checks): the manual path.
 
     const owner = uuid();
     const stranger = uuid();
@@ -130,17 +132,19 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
         { confirmation_token: token.confirmation_token, view_digest: token.view_digest }));
     };
 
-    // --- Registry: one action at one door, high risk, never automatic. ---
+    // --- Registry: one action at one door, high risk, automatic under the switch (20261106100000). ---
     assert.deepEqual((await admin.query(`select doors,risk,auto_approvable from clued_private.owner_grant_actions
-      where action=$1`, [ACTION])).rows, [{ doors: ['resident-upgrader'], risk: 'high', auto_approvable: false }]);
+      where action=$1`, [ACTION])).rows, [{ doors: ['resident-upgrader'], risk: 'high', auto_approvable: true }]);
     assert.deepEqual((await admin.query(`select doors from clued_private.work_claim_resource_kinds where kind='ci-resident'`)).rows,
       [{ doors: ['resident-upgrader'] }]);
-    await assert.rejects(() => admin.query(`update clued_private.owner_grant_actions set auto_approvable=true where action=$1`, [ACTION]),
+    await assert.rejects(() => admin.query(`update clued_private.owner_grant_actions set auto_approvable=true where action='connection.permission'`),
       /owner_grant_actions_auto_approvable_check/);
     let list = await native('clued_owner_grants_list_v1', {});
-    assert.equal(list.auto_approve.on, true, 'the automatic approval switch is on');
-    assert.ok(!list.auto_approve.covers.includes(ACTION));
-    assert.ok(list.auto_approve.excluded.some((x) => x.action === ACTION));
+    assert.equal(list.auto_approve.on, true, 'the automatic approval switch is on by default');
+    assert.ok(list.auto_approve.covers.includes(ACTION));
+    assert.ok(!list.auto_approve.excluded.some((x) => x.action === ACTION));
+    committed(await native('clued_owner_auto_approve_set_v1', { enabled: false, base_version: list.auto_approve.version }));
+    assert.equal((await native('clued_owner_grants_list_v1', {})).auto_approve.on, false);
 
     // --- The role: marked by the Owner in two Native steps, context:read. ---
     const roles = await native('clued_binding_roles_list_v1', {});
@@ -235,7 +239,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     }
     assert.equal(await requests(ids['node-a']), 0);
 
-    // --- No grant: one request per op, reused; never approved automatically. ---
+    // --- No grant: one request per op, reused; not approved automatically with the switch off. ---
     const op1 = uuid();
     let result = await upgrade('node-a', [A1], op1, { note: '  升级到 r6 ' });
     assert.deepEqual([result.status, result.consumed, result.action, result.resources], ['ok', false, ACTION, [A1]]);
@@ -254,11 +258,11 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       [false, pending.request_id, 'pending']);
     assert.equal(await requests(ids['node-a']), 1);
     await fails(upgrade('node-a', [A2], op1), '22023', /owner_grant_door_input_invalid/);
-    // The switch is on and still approves release.production at the release door.
+    // With the switch off nothing is approved automatically, release.production included.
     result = await door('release', { action: 'release.production', resources: [`repo:tdoljyj/cross-memory-system/${'c'.repeat(40)}`] });
-    assert.deepEqual([result.consumed, result.auto_approved], [true, true]);
+    assert.equal(result.consumed, false);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where action=$1`, [ACTION])).rows[0].n, 0,
-      'no automatic grant for ci.resident_upgrade');
+      'no automatic grant for ci.resident_upgrade with the switch off');
 
     // --- The page: only the exact resource, the upgrader's note. ---
     const view = await native('clued_owner_request_view_v1', { request_id: pending.request_id });

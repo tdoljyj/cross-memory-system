@@ -31,7 +31,7 @@
 # Where it goes (defect 2102f7e1): the distribution's virtual disk grows to well
 # over 13 GB and local-verify keeps about 10 GB more, so both live on a data drive,
 # never on the system drive. The CI host's watchdog stops the self-hosted runners
-# when C: has less than 50 GB free (it starts them again at 65 GB), and this
+# when C: has less than 50 GB free (it starts them again at 60 GB), and this
 # distribution once took the host below that. -DataRoot (default: \clued-dev on
 # the first fixed drive after the system drive, or the CLUED_DEV_ROOT variable,
 # which local-verify reads too) holds wsl\<Name> and download; -InstallDir and

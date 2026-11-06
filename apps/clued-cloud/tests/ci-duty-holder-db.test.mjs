@@ -161,7 +161,7 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
 
     let nodeA,nodeB;
     const qualify=id=>admin.query(`update clued_private.ci_nodes_v1 set qualification_status='verified',qualification_verified_at=now(),qualification_expires_at=now()+interval '1 hour',
-      eligible_until=now()+interval '1 hour',hardening_observed=true,qualification_receipt_ref='fixture-reviewed-qualification' where node_id=$1`,[id]);
+      eligible_until=now()+interval '1 hour',hardening_observed=true,qualification_receipt_ref='fixture-reviewed-qualification' where node_id=$1`,[id]).then(()=>f.live(id));
     await t.test('one CI project with TURING-like (A) and DESK-like (B) nodes: phases 1, 2 and 3 equal the old text, the project given or resolved',async()=>{
       const r=await f.register();nodeA=r.node_id;await f.approve(nodeA);await qualify(nodeA);
       const reg=f.registration();reg.binding_id=B;const rb=f.committed(await f.native('clued_ci_node_registration_v1',reg));nodeB=rb.node_id;await f.approve(nodeB);await qualify(nodeB);
@@ -348,8 +348,8 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       const refuse=async(request,pattern,phase=3)=>{const was=await snapshot();await assert.rejects(()=>advance(phase,request),pattern);assert.deepEqual(await snapshot(),was);};
       const request=await maintenanceRequest();
       await refuse(request,/CI_PHASE_CAS_MISMATCH/,4);
-      // as shipped: exactly the eight external items are outstanding
-      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_2b,admission_issue_fact_g9,resident_phase_routing_4e,reconciliation_days_q2,maintenance_never_leased_g1,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source,hosted_admission_publication_route$/);
+      // as shipped: exactly the seven external items are outstanding (T2A-2 shipped G9 and G1's maintenance rule)
+      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_writers_3d,resident_phase_routing_4e,reconciliation_days_q2,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source,hosted_admission_publication_route$/);
       await openExternal();   // test-only: declare the external items shipped; the table-backed checks are real
       await clearRoles();await refuse(request,/holder_not_single_started_node/);
       await grant(A);await grant(B);await refuse(request,/holder_not_single_started_node/);
@@ -471,10 +471,20 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       assert.equal((await retreat(4)).v.outcome,'holder_is_former_lease_holder');
     });
 
-    await t.test('admission validity in phase 3 still follows the role (G9 is not part of 2A): a request built on the old holder\'s admission is refused after a handover',async()=>{
+    await t.test('G9 (T2A-2): an admission issued on duty survives the handover; one issued before the migration keeps the old rule',async()=>{
       await readyPhase3();const request=await maintenanceRequest();
-      await clearRoles();await grant(B);await heartbeat(nodeB,B);
-      await assert.rejects(()=>advance(3,request),/CI_ADMISSION_BINDING_NOT_CURRENT/);
+      assert.equal((await one('select issuer_on_duty x from clued_private.work_claim_execution_admissions_v1 where admission_id=$1',[request.admission_id])).x,true);
+      await clearRoles();await grant(B);await heartbeat(nodeB,B);await qualify(nodeB);
+      const enqueued=await one('select clued_private.ci_job_enqueue_v1($1,$2,$3::jsonb) id',[user,project,
+        JSON.stringify({...request,kind:'combination_execution',role:'batch',combination_sha256:'c'.repeat(64)})]).catch(e=>e);
+      assert.ok(!(enqueued instanceof Error),String(enqueued));
+      const job=await one('select * from clued_private.ci_jobs_v1 where job_id=$1',[enqueued.id]);
+      // legacy row (no recorded fact): the issuer must hold the role now, as before
+      await admin.query('alter table clued_private.work_claim_execution_admissions_v1 disable trigger work_claim_execution_admissions_issue_fact_v1');
+      await admin.query('update clued_private.work_claim_execution_admissions_v1 set issuer_on_duty=null where admission_id=$1',[request.admission_id]);
+      await admin.query('alter table clued_private.work_claim_execution_admissions_v1 enable trigger work_claim_execution_admissions_issue_fact_v1');
+      await assert.rejects(()=>one('select clued_private.ci_claim_current_v1($1,j) from clued_private.ci_jobs_v1 j where job_id=$2',[user,job.job_id]),/CI_ADMISSION_BINDING_NOT_CURRENT/);
+      await assert.rejects(()=>admin.query('update clued_private.work_claim_execution_admissions_v1 set issuer_on_duty=true where admission_id=$1',[request.admission_id]),/CI_IMMUTABLE_FACT/);
     });
 
     await t.test('three and five nodes: only the lease holder is on duty, every approved publisher may issue',async()=>{
