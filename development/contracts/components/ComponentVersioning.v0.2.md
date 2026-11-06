@@ -90,6 +90,7 @@ A component's files and its version change together. `scripts/clued_components.p
 2. a marker differs from the manifest version;
 3. `apps/clued-cloud/worker/generated/components.ts` differs from the manifest;
 4. against the base manifest, a component's digest changed while its version did not, its version went down, or it was removed.
+5. the `--base` ref cannot be used: it is empty, option-like, does not resolve to a commit, or its manifest is not a component manifest. A commit that holds no manifest is reported on stderr as not compared.
 
 The `clued-components` workflow runs this on every pull request and every push to `main`; the placement check of §2.4 runs beside it as `contract-placement`. `bump <id> <version>` raises a version and rewrites its marker; `update` re-records digests; `node apps/clued-cloud/scripts/generate-agent-contract.mjs` regenerates the Worker modules.
 

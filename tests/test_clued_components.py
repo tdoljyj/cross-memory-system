@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +45,9 @@ class Fixture:
         cc.update(self.dir)
 
     def git(self, *args: str) -> None:
-        subprocess.run(["git", *args], cwd=self.dir, check=True, capture_output=True)
+        # No signing and no hooks of the machine's global git configuration in a throwaway repository.
+        subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", *args], cwd=self.dir,
+                       check=True, capture_output=True)
 
     def close(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -163,6 +167,138 @@ class CheckTest(unittest.TestCase):
         write(self.repo.dir / cc.GENERATED,
               f"export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {json.dumps(versions)};\n")
         self.assertEqual(cc.check(self.repo.dir), [])
+
+
+class BaseRefTest(unittest.TestCase):
+    """Task 18af3b76: a --base that cannot be used is an error, never a silent pass."""
+
+    def setUp(self):
+        self.repo = Fixture()
+        self.addCleanup(self.repo.close)
+        self.repo.git("init", "-q")
+        self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+        # The tool run as the CI step runs it: from scripts/ of the checkout it checks.
+        (self.repo.dir / "scripts").mkdir()
+        shutil.copy(ROOT / "scripts" / "clued_components.py", self.repo.dir / "scripts" / "clued_components.py")
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-I", str(self.repo.dir / "scripts" / "clued_components.py"), *args],
+                              cwd=self.repo.dir, capture_output=True, text=True)
+
+    def test_a_missing_ref_is_a_problem(self):
+        problems = cc.check(self.repo.dir, base_ref="origin/does-not-exist")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'origin/does-not-exist' does not resolve to a commit", problems[0])
+
+    def test_the_cli_exits_non_zero_with_a_message_for_a_missing_ref(self):
+        run = self.cli("check", "--base", "origin/does-not-exist")
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("does not resolve to a commit", run.stderr)
+        self.assertNotIn("every component matches", run.stdout)
+
+    def test_an_empty_ref_is_not_the_same_as_no_base(self):
+        # CI passes $BASE; an unset variable arrives as "".
+        self.assertEqual(self.cli("check").returncode, 0)
+        run = self.cli("check", "--base", "")
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("base ref is empty", run.stderr)
+
+    def test_the_all_zero_sha_of_a_new_branch_push_is_refused(self):
+        run = self.cli("check", "--base", "0" * 40)
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("does not resolve to a commit", run.stderr)
+
+    def test_an_option_is_not_taken_for_a_ref(self):
+        run = self.cli("check", "--base=--help")
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("looks like an option", run.stderr)
+
+    def test_a_ref_that_names_a_blob_is_not_a_commit(self):
+        blob = subprocess.run(["git", "rev-parse", "HEAD:tool.py"], cwd=self.repo.dir, capture_output=True,
+                              text=True, check=True).stdout.strip()
+        self.assertEqual(self.cli("check", "--base", blob).returncode, 1)
+
+    def test_a_good_ref_still_passes_through_the_cli(self):
+        run = self.cli("check", "--base", "HEAD")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_a_commit_that_predates_the_manifest_has_nothing_to_compare(self):
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+        subprocess.run([*git, "checkout", "-q", "--orphan", "bare"], cwd=self.repo.dir, check=True, capture_output=True)
+        subprocess.run([*git, "rm", "-rqf", "."], cwd=self.repo.dir, check=True, capture_output=True)
+        write(self.repo.dir / "README", "no manifest here\n")
+        subprocess.run([*git, "add", "README"], cwd=self.repo.dir, check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-qm", "before the manifest"], cwd=self.repo.dir, check=True, capture_output=True)
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        subprocess.run([*git, "checkout", "-q", "master" if self._has("master") else "main"], cwd=self.repo.dir,
+                       check=True, capture_output=True)
+        self.assertEqual(cc.check(self.repo.dir, base_ref=base), [])
+
+    def commit_manifest(self, text: str) -> str:
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+        good = (self.repo.dir / cc.MANIFEST).read_text(encoding="utf-8")
+        write(self.repo.dir / cc.MANIFEST, text)
+        subprocess.run([*git, "commit", "-qam", "odd manifest"], cwd=self.repo.dir, check=True, capture_output=True)
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        write(self.repo.dir / cc.MANIFEST, good)
+        return base
+
+    def test_a_base_manifest_of_the_wrong_shape_is_an_error_not_a_pass(self):
+        for text in ("null", "{}", "[]", '"x"', '{"components": null}', '{"components": [1]}',
+                     '{"components": [{"id": "a"}]}'):
+            with self.subTest(text=text):
+                problems = cc.check(self.repo.dir, base_ref=self.commit_manifest(text))
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("is not a component manifest", problems[0])
+
+    def test_a_commit_without_the_manifest_says_nothing_was_compared(self):
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+        subprocess.run([*git, "rm", "-q", str(cc.MANIFEST)], cwd=self.repo.dir, check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-qm", "no manifest"], cwd=self.repo.dir, check=True, capture_output=True)
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        subprocess.run([*git, "reset", "-q", "--hard", "HEAD~1"], cwd=self.repo.dir, check=True, capture_output=True)
+        run = self.cli("check", "--base", base)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("holds no config/clued-components.json; nothing was compared", run.stderr)
+
+    def test_the_message_carries_gits_own_complaint(self):
+        # GIT_DIR names no repository, wherever the system temp directory happens to be.
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(self.repo.dir / "no-such-git-dir")}):
+            with self.assertRaises(cc.BaseRefError) as caught:
+                cc.resolve_base("HEAD", self.repo.dir)
+        self.assertIn("(git: ", str(caught.exception))
+
+    def test_a_failing_tree_listing_is_an_error_not_an_absent_manifest(self):
+        real = subprocess.run
+
+        def fake(argv, *args, **kwargs):
+            if argv[:2] == ["git", "ls-tree"]:
+                return subprocess.CompletedProcess(argv, 128, "", "fatal: bad tree object")
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(cc.subprocess, "run", fake):
+            problems = cc.check(self.repo.dir, base_ref="HEAD")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("cannot read the tree of base ref 'HEAD' (git: fatal: bad tree object)", problems[0])
+
+    def _has(self, branch: str) -> bool:
+        return subprocess.run(["git", "rev-parse", "--verify", "-q", branch], cwd=self.repo.dir,
+                              capture_output=True).returncode == 0
+
+    def test_a_base_manifest_that_is_not_json_is_an_error(self):
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="]
+        good = (self.repo.dir / cc.MANIFEST).read_text(encoding="utf-8")
+        write(self.repo.dir / cc.MANIFEST, "{not json")
+        subprocess.run([*git, "commit", "-qam", "broken manifest"], cwd=self.repo.dir, check=True, capture_output=True)
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        write(self.repo.dir / cc.MANIFEST, good)
+        problems = cc.check(self.repo.dir, base_ref=base)
+        self.assertTrue(any("is not valid JSON" in p for p in problems), problems)
 
 
 if __name__ == "__main__":
