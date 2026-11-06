@@ -4830,3 +4830,50 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **组件：** `script.independent-native-publication` 从 1.1.11（main 的 #1018 已升到 1.1.11）升到 1.1.12，因为它的文件清单里有本代改到的常驻文件；并重新生成了 `components.ts`。
 - `upgrader/src/` 及其传递依赖一个字节未动；不改签名策略的字段。第 15 代与 train=on 的策略一起安装，由主会话安排。
 - **注意：** 开车后的第一轮 on 模式全量清扫还没有 main 记录，按 60.2 是 `all`，耗时与以前相同；之后各轮才是 `current`。
+
+## 61. 第 16 代候选：strict coverage 与有界空闲续扫
+
+Task `98bddf93-f1ed-4983-b39e-bcbe10be1672`；基于 #1022 的 main `fcf22ff9`。
+本节描述待独立实现审查、正式 Source 接受及安装的候选；不改变已装策略，不代表已满足 30 分钟或 1–2 小时目标。
+
+### 61.1 首绿前的覆盖
+
+`strict=true` 只要求主线 T 是 head H 的祖先，不能证明旧 H 属于本轮车头。因此不能仅凭 strict 放行，也不能只清理当前打开的 PR。
+
+首绿前完整枚举 §60 的相应 `all` / `current` 候选范围，保留 open 历史、强推两端、closed-current 等原有边界。比较方向是 `T <= H`：只有能证明不满足该关系的旧 head，才可以在 strict 开启时延后撤绿。未知比较、枚举不完整、eligible 非车头撤销未双读回，均不生成就绪证明。原全量轮及其 `sinceOn`、游标、`allPending` 继续独立推进。
+
+证明使用独立 strict kind/schema，不向 exact `train-sweep-proof/1` 偷加字段。旧 v1 投影仍如实写 `fullSweepSinceOn=false`；旧 Source/Resident 不认识新能力时仍等待真实 full。较新的损坏证明不回退到旧身份的绿灯证明。
+
+### 61.2 证明与发布授权分层
+
+Stage10 的 coverage 是非授权事实，绑定 repo/T/Source、onSince、可信 job settings、front PR/H/claimId/since、候选范围及撤销确认、新鲜期限。holders 没有提供 fence/epoch，不能虚构这些字段。
+
+Stage8 用既有 full-admission 的真实 `observedClaim` / `batchClaim` 重新建立本次 generation 的例外绑定，并核验 live holder、最新 front-batch、job S、实际 test merge/tree 与 live required-check/App pins/strict。旧 batch 的 fence/epoch 变化必须由原 `sameClaimGeneration` 拒绝；同一有效非例外 coverage 可被新 batch 重新验证，旧 runtime 授权绝不继承。发布前后 Native current、ticket、settlement 和补偿流程保持。
+
+coverage 先于 `openFront` 写出，不依赖尚不存在的 S；S 由其后的原 front-batch 和 Stage8 闭合。strict 为 false、不可读、pins 不合格时，新 coverage 无效，仍要求原真实 full 路径。main 改写继续原暂停、撤 front 并读回、关 auto-merge、冻结到 full 的流程。
+
+### 61.3 常驻门禁与恢复
+
+`trainTakeoverDone` 只表示真实 full 完成。有限就绪只允许匹配 T/H/claim/since/S 的那一行通过等待，不全局放开队列；Source Stage8 仍作最终实时检查。状态分别显示 `frontReadyMode`、`fullPending`、`backgroundAllPending`。
+
+重启不从磁盘直接恢复轻量发布授权，先由 Source 刷新；front/Source/onSince/settings/期限变化使相应缓存失效。新证明可唤醒匹配的 parked front，重复的同一无进展结果不会反复 urgent 消耗预算。main 单调前进只允许重新绑定后的 Source 结果复用非例外覆盖，不迁移旧 front 例外。
+
+### 61.4 required-all 的空闲续扫
+
+原 routine `maintenanceEveryMs` 路径保留。新增独立的 required-all continuation 原因：只推进已经必需且未完成的 `scope=all` 轮，Source 事实新鲜、真实游标/双确认撤销有进展、provider 预算允许且执行器空闲时，每 tick 至多调用一次原 protected Stage10。已知 urgent、可运行 front 与原角色、暂停、HALT、Source 漂移、授权期限及阶段上限门禁优先；不把后台工作冒充 urgent，完成后不自动开始无限新轮。
+
+所有调用先写 `train-run-intent`，失败与中断也计滚动 24h 总账 C（仍不超过 policy 的 200）。额外调用单独计账：`E=max(0,C-ceil(24h/maintenanceEveryMs))`，默认 `200-144=56`。E 用尽退回原周期，C 用尽连 urgent 也等待。它保留 routine 的理论全天次数，不保证无限 urgent 永不耗尽。旧回执没有额外标签按旧调用处理；回执损坏仍按原拒绝/中断恢复规则。
+
+### 61.5 provider 计量与停止条件
+
+controller 最底层 fetch 统计真实 GitHub HTTP 尝试，包括读重试、token mint 和传输重试；Native 请求不混入。分别记录 REST core 与 GraphQL 的 limit/remaining/reset，另读已有 installation 凭据允许的 `/rate_limit` 初始化，不增加 token 权限。
+
+额外续扫需要两资源观测均不超过 60 秒、reset 未到且各剩余超过该窗口一半。保留的另一半仅是后台的保守分区，不停止原正常/前台工作，不保证其他进程共享凭据时绝不触顶。缺失、陈旧、低额、Retry-After、GraphQL HTTP200 限流错误或无进展都停止加速。维护调用读预算后，还会在本次进程内遵守 provider 已返回的 Retry-After/耗尽 reset：期限前不再发后续请求；不能完成的撤销读回仍保持未确认。未选择维护模式的 publisher 不改变请求路径。观测故障只使额外能力未知，不能把成功的旧 publisher 请求变成失败。
+
+GitHub 的资源额度和 secondary 限制分开；遵守响应中的 reset/Retry-After，不能把高层 port 调用数等同于 HTTP/GraphQL cost。依据：[REST 限流](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)、[GraphQL 限流](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api)。
+
+### 61.6 验证与未承诺的可用性
+
+必须用真实 `runTrain`、create-only store、Resident 行门禁及 fixture publisher/merge 演练“已有待合 PR → 启动 → 枚举/撤绿 → coverage → 恢复精确 front → Stage8 → green → 模拟合入”，记录时间线、请求数、前后台状态和拒绝原因；另测 strict 关闭、重开/改写、代次变化、损坏记录、额度/时钟/重启边界。纯模型只补充范围等价性，不替代调用链演练。
+
+保留的条件包括：完整候选枚举的实际工作量、main 改写到 full 的冻结、超过 250 commits/分页拒绝、200/day 与共享 provider 额度、Source 不一致、网络/角色/授权丢失、人工 HALT/Grant、Owner 登录后 companion 才可工作及丢失合并事件的旧恢复依赖。无法从本次局部优化推导所有场景 30 分钟内可合入；目标 1–2 小时必须以实测限定数据量、资源和故障假设。尚有需要 Owner 接受或另项修复的残余时，不宣称全 Task/SLO 通过。

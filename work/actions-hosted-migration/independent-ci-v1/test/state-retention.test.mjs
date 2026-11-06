@@ -75,6 +75,20 @@ test('outcome segments: the open month stays flat; a past month moves whole unde
   assert.equal((await closeOutcomeMonths({ receipts: link, now: DEC })).refused, 'RETENTION_AREA_REDIRECTED');
 });
 
+test('strict sweep retention: exact new kinds expire after 90 days while newest of each kind and foreign names stay', async t => {
+  const r = roots(await tempDir(t)), now = Date.parse('2027-03-01T00:00:00Z');
+  const old = [], kept = [];
+  for (const kind of ['strict-proof', 'strict-round']) {
+    old.push(sweepName(kind, now - 300 * DAY));
+    kept.push(sweepName(kind, now - 200 * DAY, 1));
+  }
+  const foreign = `strict-unknown-${stamp(now - 400 * DAY)}-${RUN}-00000000.json`;
+  for (const n of [...old, ...kept, foreign]) await put(path.join(r.trainSweep, n), now);
+  const pass = await pruneArea({ area: 'train-sweep', roots: r, now });
+  assert.equal(pass.refused, null); assert.deepEqual(pass.names.sort(), old.sort());
+  assert.deepEqual(await ls(r.trainSweep), [...kept, foreign].sort());
+});
+
 test('pruning: names carry the age; the review holds train-shadow; the newest of each kind stays; links refuse', async t => {
   const base = await tempDir(t), r = roots(base), NOW = Date.parse('2027-03-01T00:00:00Z');
   for (const ms of [NOW - 200 * DAY, NOW - 120 * DAY, NOW - 10 * DAY]) await put(path.join(r.trainShadow, shadowName(ms)), ms);

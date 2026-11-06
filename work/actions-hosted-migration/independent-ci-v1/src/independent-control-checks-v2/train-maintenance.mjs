@@ -32,6 +32,7 @@ import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, trainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
+import { runStrictLane, strictIdentity, strictReadiness, sweepProgress } from './train-strict.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
   publicationHeads, revokeGreens } from './train-sweep.mjs';
@@ -82,6 +83,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const { github, counter } = countedGithub(plainGithub);
   const actions = { ...NO_ACTIONS, revokeHead: job.revokeHeadRequestId ? { requestId: job.revokeHeadRequestId, done: false } : null };
   const until = { write: started + REVOKE_WRITE_BEFORE_MS, read: started + STAGE_WORK_BEFORE_MS };
+  let budgetReadFailed = false;
   const duty = await native.holders();
   let nodes = null, nodesDropped = 0;
   const facts = o => ({ facts: trainFacts({ mode: job.mode, at, nodes, nodesDropped, actions, ...o }), sideEffects: fx.n });
@@ -93,6 +95,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     return facts({ onDuty: false, holders: [], mainSha: own.mainSha, rules: null, front: null, revoke: own.targets, ledger: own.summary, decision: 'NOT_ON_DUTY',
       sweep: sweepFacts({ kind: 'incremental', complete: false, revoked: own.revoked, unconfirmed: own.unconfirmed, would: own.targets.length, counter, started, clock }) });
   }
+  // The off-duty path keeps its existing zero-GitHub fast exit. Quota is an observation, never publication authority.
+  try { await github.readRateBudget?.({ until: until.read }); } catch { budgetReadFailed = true; }
   // §41.6 Source check (on only), from ci_nodes_status (step 2b; never from holders: review R1 MAJOR-1). Every node heard
   // within 24 hours runs this Source, or on mode does not run. No record (a server before 2b, a node never heard, a
   // connection with no node) is not compared. An answer that cannot be read defers (TRAIN_SOURCE_UNREADABLE, nothing
@@ -203,12 +207,18 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
   let stream = null;
   try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
+  const strictEnabled = job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
+    && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && !stateReason && !ledgerReason
+    && typeof sweepStore?.readStrictRound === 'function' && typeof sweepStore?.writeStrictRound === 'function' && typeof sweepStore?.appendStrictProof === 'function';
+  const strict = strictEnabled ? await runStrictLane({ identity: strictIdentity({ job, holder, headSha: frontHead.headSha, mainSha,
+    scope: allPending ? 'all' : 'current' }), job, sweepStore, github, native, entries, stream, own, appId, clock, sleep, started, until, ledger,
+    revokeHead: !!job.revokeHeadRequestId, fx }) : null;
   // A running full sweep gets its own share of the time: the incremental part never starves it (review R2 M2).
   const wantSegment = full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
   let incremental = await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
-    until: started + (wantSegment ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
+    until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2 : started + (wantSegment ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
   if (incremental.complete && (stateReason || (acting && ledgerReason))) incremental = { ...incremental, complete: false, reason: stateReason ?? ledgerReason };
-  const segment = wantSegment ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope }) : null;
+  const segment = wantSegment && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope }) : null;
   const byId = new Map();
   for (const t of [...incremental.targets, ...(segment?.targets ?? [])]) byId.set(t.checkRunId, t);
   let targets = [...byId.values()].sort((a, b) => a.checkRunId - b.checkRunId);
@@ -221,16 +231,16 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       try { again = await native.holders(); } catch { again = null; }
       if (!again?.onDuty) { othersRefused = true; targets = targets.filter(t => t.own); }
     }
-    const batch = targets.slice(0, MAX_REVOKES_PER_RUN);
+    const batch = targets.slice(0, Math.max(0, MAX_REVOKES_PER_RUN - (strict?.attempted ?? 0)));
     leftover = targets.length - batch.length;
     const r = await revokeGreens({ github, targets: batch, appId, mainSha, ledger, own, clock, sleep, writeUntil: until.write, readUntil: until.read });
     revoked = r.revoked; unconfirmed = r.unconfirmed; fx.n += r.sideEffects;
   }
-  const confirmed = unconfirmed.length === 0 && leftover === 0 && !othersRefused;
+  const confirmed = unconfirmed.length === 0 && leftover === 0 && !othersRefused && (strict?.unconfirmed ?? 0) === 0;
   const incrementalOk = incremental.complete && (!acting || confirmed);
   const segmentOk = !segment || segment.ok;
   const sweepComplete = incremental.complete && segmentOk && leftover === 0;
-  if (frontHead && revoked.some(r => r.headSha === frontHead.headSha)) front = { ...front, green: false };
+  if (frontHead && [...revoked, ...(strict?.revoked ?? [])].some(r => r.headSha === frontHead.headSha)) front = { ...front, green: false };
   if (actions.revokeHead) actions.revokeHead = { ...actions.revokeHead, done: incrementalOk };
 
   // ---- the cursor and the full sweep after this run ----
@@ -252,12 +262,15 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // restarted; with no tip recorded, a round of scope 'all' from before generation 15 is the enumeration of before).
   const after = { mode, incrementalCursor: !advance ? before.incrementalCursor : incrementalOk ? (incremental.newest ?? cursor)
     : (incremental.progress ?? before.incrementalCursor), full, inMain: sweeper.inMain(), mainSha, allPending: completedNow && full.scope === 'all' ? null : allPending };
+  let fullStateWritten = false;
   if (sweepStore && !stateReason && JSON.stringify(after) !== JSON.stringify({ mode, incrementalCursor: before.incrementalCursor, full: before.full, inMain: before.inMain,
     mainSha: before.mainSha, allPending: before.allPending })) {
-    try { await sweepStore.writeFullSweep({ writtenAt: isoOf(clock()), runId: job.runId, ...after }); } catch { /* the next run starts from the older cursor */ }
+    try { await sweepStore.writeFullSweep({ writtenAt: isoOf(clock()), runId: job.runId, ...after }); fullStateWritten = true; } catch { /* the next run starts from the older cursor */ }
   }
   const fullSweepSinceOn = acting && sinceOn(full);
-  const takeoverPending = job.mode === 'on' && !fullSweepSinceOn;
+  // The independent lane proves only eligible non-front greens; background deferred work and its real full state stay intact.
+  const strictClean = strict?.ready === true && unconfirmed.length === 0 && !othersRefused && (strict?.unconfirmed ?? 0) === 0;
+  let strictReady = false, strictSummary = strictReadiness({ backgroundAllPending: after.allPending });
 
   // ---- the proof (on, revoke-only): stage 8's single-green evidence for this front, clean or not ----
   let proofWritten = false;
@@ -266,11 +279,26 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const bound = frontHead && holder.pr && (since || job.mode === 'revoke-only');
     try {
       await sweepStore.appendProof({ writtenAt: isoOf(clock()), runId: job.runId, mode: job.mode, pr: bound ? holder.pr : null, headSha: bound ? frontHead.headSha : null,
-        claimId: bound ? holder.claimId : null, since: bound ? since : null, mainSha, clean: sweepComplete && confirmed && incrementalOk, unconfirmed: unconfirmed.length + leftover,
+        claimId: bound ? holder.claimId : null, since: bound ? since : null, mainSha, clean: strictClean || (sweepComplete && confirmed && incrementalOk),
+        unconfirmed: strictClean ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),
         fullSweepSinceOn, slotHardCapMinutes: job.slotHardCapMinutes, sweepFreshMs: job.sweepFreshMs, prUpdatedCursor: after.incrementalCursor ?? EPOCH });
       proofWritten = true;
     } catch { proofWritten = false; }
   }
+  if (strict) {
+    strictSummary = strictReadiness({ identity: strict.identity, state: 'running', backgroundAllPending: after.allPending, reason: strict.reason });
+    if (strictClean && proofWritten && strict.round?.incrementalCursor) {
+      const writtenAt = isoOf(clock());
+      try {
+        const proofRef = await sweepStore.appendStrictProof({ ...strict.identity, writtenAt, runId: job.runId, clean: true, enumerationComplete: true,
+          eligibleRevocationsConfirmed: true, unconfirmed: 0, prUpdatedCursor: strict.round.incrementalCursor, sweepFreshMs: job.sweepFreshMs,
+          slotHardCapMinutes: job.slotHardCapMinutes, coverage: strict.round.coverage });
+        strictSummary = strictReadiness({ identity: strict.identity, state: 'ready', proofRef, writtenAt, sweepFreshMs: job.sweepFreshMs, backgroundAllPending: after.allPending });
+        strictReady = true;
+      } catch { /* missing durable limited proof never opens a batch */ }
+    }
+  }
+  const takeoverPending = job.mode === 'on' && !fullSweepSinceOn && !strictReady;
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [];
@@ -321,8 +349,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   if (!acting) decision = wouldDo;
   else if (requestPause) decision = requestPause;
   else if (lostDuty) decision = 'NOT_ON_DUTY';
-  else if (unconfirmed.length) decision = 'TRAIN_REVOKE_UNCONFIRMED';
-  else if (!sweepComplete || !proofWritten) decision = 'TRAIN_SWEEP_INCOMPLETE';
+  else if (unconfirmed.length || (strict?.unconfirmed ?? 0)) decision = 'TRAIN_REVOKE_UNCONFIRMED';
+  else if ((!sweepComplete && !strictReady) || !proofWritten) decision = 'TRAIN_SWEEP_INCOMPLETE';
   else if (othersRefused) decision = 'NOT_ON_DUTY';
   else if (job.mode === 'revoke-only') decision = 'REVOKE_ONLY_DONE';
   else if (takeoverPending) decision = 'TRAIN_TAKEOVER_SWEEP_PENDING';
@@ -338,10 +366,25 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     try { summary = { ...(summary ?? { records: 0, refused: 0 }), closed: (await closeGreenLedgerGroups({ ledger, inMain: sweeper.inMainOf, now: clock(), deadline: until.read, clock })).closed }; }
     catch { /* cleanup is best effort; the ledger stays as it is */ }
   }
+  let progress = null;
+  if (strict?.round?.scope === 'all' && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
+    nextPage: strict.round.nextPage, nextIndex: strict.round.nextIndex, revoked: strict.round.coverage.revoked, advanced: strict.advanced, at: isoOf(clock()) });
+  else if (full.scope === 'all' && full.state === 'running' && allPending) progress = sweepProgress({ identity: { repo: job.repo, mainSha: full.mainSha,
+    sourceManifestSha256: job.sourceManifestSha256, onSince: job.onSince }, startedAt: full.startedAt, nextPage: full.nextPage, nextIndex: full.nextIndex,
+    revoked: full.revoked, advanced: fullStateWritten && (full.nextPage !== before.full.nextPage || full.nextIndex !== before.full.nextIndex || full.revoked > before.full.revoked), at: isoOf(clock()) });
+  // A long segment can outlive the GraphQL observation's 60-second freshness. Refresh only to authorize continuation
+  // after real required-all progress, with the same hard protected deadline (including credential acquisition/retries).
+  if (progress?.advanced === true && typeof github.readRateBudget === 'function' && clock() < until.read - 1000) {
+    try { await github.readRateBudget({ until: until.read }); budgetReadFailed = false; } catch { budgetReadFailed = true; }
+  }
+  const providerBudget = typeof github.rateBudget === 'function' ? github.rateBudget() : null;
   return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
     ledger: summary, decision, openFrontBatch, requestPause,
-    sweep: sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: sweepComplete, revoked: revoked.length, unconfirmed: unconfirmed.length + leftover,
-      would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }) });
+    sweep: { ...sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: strictReady || sweepComplete, revoked: revoked.length + (strict?.revoked.length ?? 0),
+      unconfirmed: strictReady ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),
+      would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }), strictCoverage: strictSummary,
+      ...(providerBudget ? { providerBudget: budgetReadFailed ? { ...providerBudget, state: 'unknown', extraSlicesAllowed: false } : providerBudget } : {}),
+      ...(progress ? { progress } : {}) } });
 }
 
 // allPending (generation 15): why rounds enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded), or null.

@@ -7,6 +7,22 @@ import path from 'node:path';
 import { STATUS_CONTRACT, StatusBoard, StatusFile, parseStatus, readStatus, startStatusTimer } from '../src/status.mjs';
 import { HEAD, executorFixture, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
+test('generation16 status distinguishes limited readiness, pending full and continuation accounting', () => {
+  const board = new StatusBoard({ clock: () => Date.parse('2026-11-06T13:00:00Z') });
+  const read = train => {
+    board.update({ train });
+    return parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train;
+  };
+  assert.deepEqual(read({ enabled: 'on', last: null, frontReadyMode: 'strict-coverage', fullPending: true,
+    backgroundAllPending: true, maintenanceExtraUsed: 29, maintenanceExtraLimit: 56 }),
+  { enabled: 'on', last: null, frontReadyMode: 'strict-coverage', fullPending: true,
+    backgroundAllPending: true, maintenanceExtraUsed: 29, maintenanceExtraLimit: 56 });
+  assert.deepEqual(read({ enabled: 'on', last: null }), { enabled: 'on', last: null }, 'older snapshots keep their exact shape');
+  assert.deepEqual(read({ enabled: 'on', last: null, frontReadyMode: 'green', fullPending: 'false',
+    backgroundAllPending: 1, maintenanceExtraUsed: -1, maintenanceExtraLimit: 201 }), { enabled: 'on', last: null });
+  assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'full-sweep', fullPending: false }).fullPending, false);
+});
+
 test('C2 status carries observations without promoting held to ACTIVE or altering existing mode', () => {
   const b = new StatusBoard({ clock: () => Date.parse('2026-10-25T00:00:00Z') });
   const probe = { at: '2026-10-25T00:00:00.000Z', result: 'held', failures: 0, failingSince: null };

@@ -11,6 +11,7 @@ import { createHash, createPublicKey, randomUUID } from 'node:crypto';
 import { canonical, digest } from '../proof.mjs';
 import { serverAnswerCurrent } from '../clock-skew.mjs';
 import { createGitHubChecksPort } from '../github.mjs';
+import { createGitHubBudgetObserver, guardedGitHubBudgetObserver } from '../github-budget.mjs';
 import { createFullAdmissionPortV2 } from '../full-admission-v2.mjs';
 import { INSTALL_ROOT, APP_KEY_FILE, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule } from './held-record.mjs';
@@ -126,10 +127,15 @@ export function nativeReadPost(supabaseUrl) {
   };
 }
 export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
-  const singleFetch = (url, opts = {}) => { live(); return baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
+  const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
+  const singleFetch = async (url, opts = {}) => {
+    live(); budgetObserver.begin(url);
+    const response = await baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) });
+    budgetObserver.observe(url, response); return response;
+  };
   const fetchImpl = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), readPost: nativeReadPost(record.config.supabaseUrl), onRetry: r => { try { log(r.post ? 'native_read_retry' : 'github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
-    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl });
+    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),

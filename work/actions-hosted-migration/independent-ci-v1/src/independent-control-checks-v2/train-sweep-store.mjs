@@ -7,13 +7,17 @@
 //                                         segmented full sweep of one mode (shadow sweeps never count for on)
 //   front-<ms>-<runId>-<nonce>.json       clued.independent-ci.train-front-batch/1: one front batch this node opened
 //                                         (at most two per head, §41.4; T, S and S's tree for the landing check)
-// A reader takes the newest valid record of a kind; a file of these names that is not exactly a record is ignored and
-// counted (`torn`; `refused` only for proofs and front batches newer than the newest valid proof); any other name is
-// ignored (`foreign`). No credential, no GitHub, no Native.
+//   strict-proof-<ms>-<runId>-<nonce>.json limited non-front coverage; never a v1 full-sweep proof or cross-epoch authority
+//   strict-round-<ms>-<runId>-<nonce>.json independent coverage cursor, including unresolved two-readback revocations
+// Legacy readers take the newest valid record and count unreadable names (`torn`; `refused` for newer proofs/fronts).
+// Strict readers refuse a torn record at or after the newest valid timestamp, and refuse contradictory valid records
+// at that timestamp: neither a run id nor a nonce proves ordering. Unknown pending state is never silently discarded.
+// Other names are ignored (`foreign`). No credential, no GitHub, no Native.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonical } from '../proof.mjs';
+import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, validateStrictProof, validateStrictRound, sameStrictIdentity } from './train-strict.mjs';
 
 export const SWEEP_PROOF_CONTRACT = 'clued.independent-ci.train-sweep-proof/1';
 export const FULL_SWEEP_CONTRACT = 'clued.independent-ci.train-full-sweep/1';
@@ -37,7 +41,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -79,7 +83,7 @@ export function validateFrontBatch(r) {
 }
 
 const KIND = { proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
-  front: [FRONT_BATCH_CONTRACT, validateFrontBatch] };
+  front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound] };
 
 export class TrainSweepStore {
   static async open(directory) {
@@ -92,7 +96,7 @@ export class TrainSweepStore {
     }
     return new TrainSweepStore(resolved);
   }
-  constructor(directory) { this.directory = directory; this.tornNames = new Map(); this.foreignNames = new Set(); this.newestProofMs = null; }
+  constructor(directory) { this.directory = directory; this.tornNames = new Map(); this.foreignNames = new Set(); this.newestProofMs = null; this.newestStrictMs = null; }
   // Stage 8's "no newer proof was replaced by an older one" (review R1 m3): the torn proof and front-batch files (a name of
   // this store that is not exactly its record) newer than the newest valid proof read so far, or all of them before any.
   // A name that is not one of this store's (desktop.ini, a stray copy) never counts: it is listed in `foreign` only.
@@ -101,6 +105,10 @@ export class TrainSweepStore {
   }
   get foreign() { return this.foreignNames.size; }
   get torn() { return this.tornNames.size; }
+  get strictRefused() {
+    return [...this.tornNames.values()].filter(t => ['strict-proof', 'strict-round', 'front'].includes(t.kind)
+      && (this.newestStrictMs === null || t.ms >= this.newestStrictMs)).length;
+  }
   async write(kind, record) {
     if (!Object.hasOwn(KIND, kind)) fail('invalid_train_sweep_record');
     KIND[kind][1](record);
@@ -113,13 +121,15 @@ export class TrainSweepStore {
     return name;
   }
   // Valid records of one kind, newest first; stops after `limit`.
-  async read(kind, limit = Infinity, accept = () => true) {
+  async read(kind, limit = Infinity, accept = () => true, sameNewestStamp = false) {
     const out = [];
+    let newestStamp = null;
     for (const name of (await fs.readdir(this.directory)).sort().reverse()) {
       if (name.endsWith('.tmp')) continue;
       const parts = NAME.exec(name);
       if (!parts) { this.foreignNames.add(name); continue; }
       if (parts[1] !== kind) continue;
+      if (sameNewestStamp && newestStamp !== null && Number(parts[2]) < newestStamp) break;
       try {
         const file = path.join(this.directory, name), stat = await fs.lstat(file);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024) fail('unsafe_train_sweep_record');
@@ -127,7 +137,10 @@ export class TrainSweepStore {
         if (canonical(record) !== text || Date.parse(record.writtenAt) !== Number(parts[2]) || record.runId !== parts[3]) fail('invalid_train_sweep_record');
         if (!accept(record)) continue;
         out.push(record);
-        if (out.length >= limit) break;
+        if (out.length >= limit) {
+          if (!sameNewestStamp) break;
+          newestStamp ??= Number(parts[2]);
+        }
       } catch { this.tornNames.set(name, { kind, ms: Number(parts[2]) }); }
     }
     return out;
@@ -138,6 +151,34 @@ export class TrainSweepStore {
     if (p) this.newestProofMs = Date.parse(p.writtenAt);
     return p;
   }
+  async appendStrictProof(p) { return this.write('strict-proof', { contract: STRICT_PROOF_CONTRACT, ...p }); }
+  async latestStrictProof() {
+    const records = await this.read('strict-proof', 1, () => true, true);
+    const p = records[0] ?? null;
+    if (p) this.newestStrictMs = Date.parse(p.writtenAt);
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_STRICT_PROOF_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === 'strict-proof' && (p === null || t.ms >= Date.parse(p.writtenAt))))
+      fail('TRAIN_STRICT_PROOF_UNREADABLE');
+    // Read round integrity too: an unreadable newer binding invalidation must not resurrect an older certificate.
+    const round = await this.readStrictRound();
+    if (!p || !round || round.state !== 'complete' || round.pending.length !== 0 || !sameStrictIdentity(p, round)) return null;
+    return p;
+  }
+  async readStrictRound() {
+    const records = await this.read('strict-round', 1, () => true, true);
+    const round = records[0] ?? null;
+    // Unlike ordinary historical records, a newer torn round may contain unresolved revocations. Never replace it
+    // with an older complete round and then mint a fresh certificate that hides the unreadable pending state.
+    if ([...this.tornNames.values()].some(t => t.kind === 'strict-round' && (round === null || t.ms >= Date.parse(round.writtenAt))))
+      fail('TRAIN_STRICT_STATE_UNREADABLE');
+    if (round && records.some(r => this.strictMeaning(r) !== this.strictMeaning(round))) fail('TRAIN_STRICT_STATE_UNREADABLE');
+    return round;
+  }
+  strictMeaning(record) {
+    const { writtenAt, runId, ...meaning } = record;
+    return canonical(meaning);
+  }
+  async writeStrictRound(p) { return this.write('strict-round', { contract: STRICT_ROUND_CONTRACT, ...p }); }
   // mode: 'on' (also the revoke-only runs' incremental cursor) or 'shadow'.
   async readFullSweep(mode = 'on') { return (await this.read(`full-${mode}`, 1))[0] ?? null; }
   async writeFullSweep(s) { return this.write(`full-${s?.mode}`, { contract: FULL_SWEEP_CONTRACT, ...s, inMain: (s?.inMain ?? []).slice(-MAX_IN_MAIN) }); }

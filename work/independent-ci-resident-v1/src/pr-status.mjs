@@ -98,7 +98,8 @@ const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion �
 const globalDefer = status => GLOBAL_DEFER_TEXT[status?.queue?.hold] ? status.queue.hold : null;
 // Generation 15 (DESIGN 60.2): the take-over sweep after main was rewritten says why.
 const globalDeferText = (code, status) => (code === 'TRAIN_TAKEOVER_SWEEP_PENDING' && status?.train?.sweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN'
-  ? MAIN_REWRITTEN_TEXT : GLOBAL_DEFER_TEXT[code]);
+  ? MAIN_REWRITTEN_TEXT : code === 'TRAIN_TAKEOVER_SWEEP_PENDING' && status?.train?.frontReadyMode === 'strict-coverage'
+    ? '后台全量清扫未完成，仅已核验的车头可推进' : GLOBAL_DEFER_TEXT[code]);
 // The gate of the whole queue the status shows, in the order the PR page names them: the intake pause, the breaker, the parking
 // places, the daily budgets (a wait's retry is not bound by the evaluations), a global deferral. null: none.
 const GATE_TEXT = Object.freeze({ INTAKE_PAUSED: '暂停接新中', BREAKER_HALF_OPEN: '熔断后的试跑阶段', BREAKER_OPEN: '执行器熔断中', PARKING_FULL: '停靠的批次已满' });
