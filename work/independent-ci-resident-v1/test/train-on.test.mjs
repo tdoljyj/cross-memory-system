@@ -126,6 +126,9 @@ test('facts /2: a summary only with a decision in on; OPEN_FRONT_BATCH only with
     completedAt: null, sinceOn: false, reason: null, scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN', allPending: 'TRAIN_MAIN_REWRITTEN' } } }).train);
   const v15 = parseTrainSweep(JSON.parse(JSON.stringify(trainSweepView({ summary: all, onSince: view.onSince }))));
   assert.deepEqual([v15.fullState, v15.fullScope, v15.fullScopeReason, v15.fullAllPending], ['running', 'all', 'TRAIN_MAIN_REWRITTEN', 'TRAIN_MAIN_REWRITTEN']);
+  // main rewritten voids the full sweep since on that the view kept (the companion's backstop and the duty read fullSinceOn)
+  assert.equal(trainSweepView({ summary: all, previous: view, onSince: view.onSince }).fullSinceOn, false);
+  assert.equal(trainSweepView({ summary: trainSummary(answer('on').train), previous: view, onSince: view.onSince }).fullSinceOn, true, 'without a rewrite it is kept, as before');
   // the Source refuses facts with other values; a summary built past it still shows none of them
   const base = answer('on').train;
   const odd = trainSummary({ ...base, sweep: { ...base.sweep, fullSweep: { ...base.sweep.fullSweep, scope: 'some', scopeReason: 'lower case', allPending: 'yes' } } });

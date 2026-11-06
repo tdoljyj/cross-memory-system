@@ -164,10 +164,13 @@ const ON_TEXT = {
   TRAIN_FRONT_BATCH_RUNNING: '车头批次进行中',
   TRAIN_SOURCE_UNREADABLE: '读不到各常驻节点的 Source，暂不开车',
 };
+// Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
+export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
 export function trainPageLine(summary, pr) {
   if (!summary || summary.front?.pr !== pr) return null;
   if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
-  const text = ON_TEXT[summary.decision] ?? null;
+  const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
+    : ON_TEXT[summary.decision] ?? null;
   return text ? `合并列车：你是车头。${text}。` : null;
 }
 
@@ -193,7 +196,9 @@ export function trainSweepView({ summary, previous = null, onSince = null }) {
   const s = summary?.sweep;
   if (!s) return previous;
   const completedAt = s.fullSweep.state === 'complete' && s.fullSweep.completedAt ? s.fullSweep.completedAt : (previous?.fullCompletedAt ?? null);
-  const sinceOn = s.fullSweep.state === 'complete' ? s.fullSweep.sinceOn === true : (previous?.fullSinceOn === true && previous?.onSince === onSince);
+  // generation 15 (DESIGN 60.2): main rewritten voids the full sweep since on until a round of scope 'all' completes
+  const sinceOn = s.fullSweep.allPending === 'TRAIN_MAIN_REWRITTEN' ? false
+    : s.fullSweep.state === 'complete' ? s.fullSweep.sinceOn === true : (previous?.fullSinceOn === true && previous?.onSince === onSince);
   return Object.freeze({ at: summary.at, mode: summary.mode, kind: s.kind, complete: s.complete, revoked: s.revoked, unconfirmed: s.unconfirmed, fullState: s.fullSweep.state,
     fullCompletedAt: completedAt, fullSinceOn: sinceOn && summary.mode !== 'shadow', onSince,
     fullScope: s.fullSweep.scope ?? null, fullScopeReason: s.fullSweep.scopeReason ?? null, fullAllPending: s.fullSweep.allPending ?? null });

@@ -82,7 +82,7 @@ function fakeGithub(e, w) {
       if (commits.length > 250) return { complete: false, tooMany: true, count: commits.length, headSha: p.head, commits: [] };
       return { complete: true, tooMany: false, count: commits.length, headSha: p.head, commits: [...commits] };
     },
-    async readForcePushes(n) { call('pushes'); world.hooks.pushes?.(n); return { complete: true, events: structuredClone(world.pulls.get(n).forcePushes ?? []) }; },
+    async readForcePushes(n) { call('pushes'); world.hooks.pushes?.(n); return { complete: world.pulls.get(n).pushesIncomplete !== true, events: structuredClone(world.pulls.get(n).forcePushes ?? []) }; },
   };
   gh.green = (id, head, o = {}) => world.checks.set(id, { id, app: { id: o.app ?? APP }, name: o.name ?? SLOT, head_sha: head, status: 'completed', conclusion: o.conclusion ?? 'success',
     output: { title: 'Complete Native control', summary: o.summary ?? summaryOf(world.main) } });
@@ -370,66 +370,90 @@ test('full sweep: a pull over 250 commits voids the round (no restart), a missin
 const FULL1 = { ...FULL0, scope: 'all', scopeReason: null };
 const recordMain = (e, mainSha, o = {}) => e.store.writeFullSweep({ writtenAt: iso(NOW - 1000), runId: RUN, mode: 'on', incrementalCursor: CURSOR, inMain: [],
   full: FULL1, mainSha, allPending: null, ...o });
-// open #1 (O0, O1); #2 closed unmerged at C1 (history C0 and a force push from CP), the #936 df659f1c shape; #3 merged at M1 (M0, MP
-// behind it: in main while main is not rewritten); #4 closed unmerged, its head K1 in main. Greens on every one of them.
-function pullsOfC(e) {
+// open #1 (O0, O1); #2 closed unmerged at C1 (history C0 and a force push from CP), the #936 df659f1c shape; #3 merged into main at
+// M1 (its commits M0, M1 in main; MP, the head a force push replaced, never in main); #4 closed unmerged, its head K1 in main; #6
+// merged into release at R1 (R0, R1 not in main). Greens on every one of them. inMainToo: main still holds #3's commits and K1.
+function pullsOfC(e, { inMainToo = true } = {}) {
   const old = iso(NOW - 86_400_000);
-  const h = { O0: sha(0x40000), O1: sha(0x40001), C0: sha(0x40010), C1: sha(0x40011), CP: sha(0x40012), M0: sha(0x40020), M1: sha(0x40021), MP: sha(0x40022), K1: sha(0x40031) };
+  const h = { O0: sha(0x40000), O1: sha(0x40001), C0: sha(0x40010), C1: sha(0x40011), CP: sha(0x40012), M0: sha(0x40020), M1: sha(0x40021), MP: sha(0x40022), K1: sha(0x40031),
+    R0: sha(0x40050), R1: sha(0x40051) };
   e.gh.pull(1, { head: h.O1, commits: [h.O0, h.O1], updated: old });
   e.gh.pull(2, { state: 'closed', head: h.C1, commits: [h.C0, h.C1], forcePushes: [{ before: h.CP, after: h.C1 }], updated: old });
   e.gh.pull(3, { state: 'closed', merged: true, head: h.M1, commits: [h.M0, h.M1], forcePushes: [{ before: h.MP, after: h.M1 }], updated: old });
   e.gh.pull(4, { state: 'closed', head: h.K1, updated: old });
-  for (const [id, x] of [[41, h.O0], [42, h.C1], [43, h.C0], [44, h.CP], [45, h.K1], [46, h.M0], [47, h.MP], [48, h.M1]]) e.gh.green(id, x);
-  const read = new Set();
+  e.gh.pull(6, { state: 'closed', merged: true, base: 'release', head: h.R1, commits: [h.R0, h.R1], updated: old });
+  for (const [id, x] of [[41, h.O0], [42, h.C1], [43, h.C0], [44, h.CP], [45, h.K1], [46, h.M0], [47, h.MP], [48, h.M1], [49, h.R0], [50, h.R1]]) e.gh.green(id, x);
+  if (inMainToo) for (const x of [h.M0, h.M1, h.K1]) e.gh.world.inMain.add(x);
+  const read = new Set(), commitsRead = new Set();
   e.gh.world.hooks.pushes = n => read.add(n);
-  return { h, read };
+  const commits = e.gh.readPullCommitsBounded;
+  e.gh.readPullCommitsBounded = async n => { commitsRead.add(n); return commits(n); };
+  return { h, read, commitsRead };
 }
 const writesOf = e => [...e.gh.world.writes].sort((a, b) => a - b);
+const sorted = set => [...set].sort((a, b) => a - b);
 
-test('full sweep, main moved forward since last seen: scope current; an open pull whole, a closed unmerged pull its head only (the #936 df659f1c shape), a merged pull nothing', async t => {
+test('full sweep, main moved forward since last seen: scope current; open pulls whole, merged pulls their force-push ends (another base: whole), closed unmerged pulls their head', async t => {
   const e = await setup(t, { fullDone: false });
-  const { h, read } = pullsOfC(e);
-  for (const x of [h.M0, h.M1, h.MP, h.K1]) e.gh.world.inMain.add(x);
+  const { read, commitsRead } = pullsOfC(e);
   await recordMain(e, OLD_T);
   e.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'ahead', aheadBy: 3, behindBy: 0 } : null);
   const { facts } = await e.run();
   assert.deepEqual([facts.sweep.fullSweep.state, facts.sweep.fullSweep.scope, facts.sweep.fullSweep.scopeReason, facts.sweep.fullSweep.allPending], ['complete', 'current', null, null]);
-  assert.deepEqual(writesOf(e), [41, 42], 'the open pull\'s old commit and the closed unmerged head; not that pull\'s history, not a head in main');
-  assert.deepEqual([...read].sort((a, b) => a - b), [1, 910], 'commits and force pushes are read for open pulls only');
+  assert.deepEqual(writesOf(e), [41, 42, 47, 49, 50],
+    'the open pull\'s old commit; the closed unmerged head (#936\'s shape); the head a force push replaced before the merge; the pull merged into release');
+  assert.deepEqual([sorted(commitsRead), sorted(read)], [[1, 6, 910], [1, 3, 6, 910]], 'commit lists for open pulls and the pull into release; force pushes for the merged too');
   const state = await e.store.readFullSweep('on');
   assert.deepEqual([state.mainSha, state.allPending, state.full.scope], [T, null, 'current'], 'this run\'s main tip recorded for the next');
-  // a pull the listing reports neither open nor closed, nor merged nor unmerged, is not guessed at: the round is void
-  const odd = await setup(t, { fullDone: false });
-  await recordMain(odd, T);
-  odd.gh.pull(5, { state: 'closed', head: sha(0x40041), updated: iso(NOW - 86_400_000) });
-  const realPage = odd.gh.readPullsPage;
-  odd.gh.readPullsPage = async o => { const r = await realPage(o); return { ...r, pulls: r.pulls.map(p => (p.number === 5 ? { ...p, merged: null } : p)) }; };
-  const v = await odd.run();
-  assert.deepEqual([v.facts.sweep.fullSweep.scope, v.facts.sweep.fullSweep.state, v.facts.sweep.fullSweep.reason], ['current', 'abandoned', 'TRAIN_PULLS_INCOMPLETE']);
+  // a merged pull's force pushes that cannot be read in full void the round; so does a pull whose state is unclear
+  for (const prep of [x => x.gh.pull(7, { state: 'closed', merged: true, head: sha(0x40061), forcePushes: [], pushesIncomplete: true, updated: iso(NOW - 86_400_000) }),
+    x => { x.gh.pull(5, { state: 'closed', head: sha(0x40041), updated: iso(NOW - 86_400_000) });
+      const realPage = x.gh.readPullsPage;
+      x.gh.readPullsPage = async o => { const r = await realPage(o); return { ...r, pulls: r.pulls.map(q => (q.number === 5 ? { ...q, merged: null } : q)) }; }; }]) {
+    const odd = await setup(t, { fullDone: false });
+    await recordMain(odd, T);
+    prep(odd);
+    const v = await odd.run();
+    assert.deepEqual([v.facts.sweep.fullSweep.scope, v.facts.sweep.fullSweep.state], ['current', 'abandoned']);
+    assert.ok(['TRAIN_FORCE_PUSHES_INCOMPLETE', 'TRAIN_PULLS_INCOMPLETE'].includes(v.facts.sweep.fullSweep.reason), v.facts.sweep.fullSweep.reason);
+  }
+});
+
+test('the reproduction (review MAJOR 1): H1 green, force-pushed to H2, merged; after the train is on, the current round revokes H1', async t => {
+  const H1 = sha(0x60001), H2 = sha(0x60002);
+  const e = await setup(t, { fullDone: false });
+  // before the train: #970's head H1 got its six greens; a rebase force-pushed H2; #970 merged with a merge commit (H2 in main, H1 never)
+  e.gh.pull(970, { state: 'closed', merged: true, head: H2, commits: [H2], forcePushes: [{ before: H1, after: H2 }], updated: iso(NOW - 86_400_000) });
+  e.gh.green(70, H1); e.gh.green(71, H2);
+  e.gh.world.inMain.add(H2);
+  await recordMain(e, T);
+  const { facts } = await e.run();
+  assert.deepEqual([facts.sweep.fullSweep.scope, facts.sweep.fullSweep.state], ['current', 'complete']);
+  assert.deepEqual(writesOf(e), [70], 'H1 (a new pull at H1 could merge it with strict off) revoked; H2, in main, kept');
+  assert.equal(e.gh.world.checks.get(70).conclusion, 'failure');
 });
 
 test('full sweep with no main tip recorded (the first on-mode sweep, or a record from before generation 15): scope all, every pull and commit as before', async t => {
   const e = await setup(t, { fullDone: false });
-  const { h, read } = pullsOfC(e);
-  e.gh.world.inMain.add(h.M1); e.gh.world.inMain.add(h.K1);
+  const { read } = pullsOfC(e);
   const { facts } = await e.run();
   assert.deepEqual([facts.sweep.fullSweep.state, facts.sweep.fullSweep.scope, facts.sweep.fullSweep.scopeReason, facts.sweep.fullSweep.allPending],
     ['complete', 'all', 'TRAIN_NO_MAIN_RECORD', null], 'completed: nothing pending any more');
-  assert.deepEqual(writesOf(e), [41, 42, 43, 44, 46, 47], 'the closed pull\'s history and the merged pull\'s heads outside main too');
-  assert.deepEqual([...read].sort((a, b) => a - b), [1, 2, 3, 4, 910]);
+  assert.deepEqual(writesOf(e), [41, 42, 43, 44, 47, 49, 50], 'the closed pull\'s history too');
+  assert.deepEqual(sorted(read), [1, 2, 3, 4, 6, 910]);
   // a record from before generation 15 (no main tip, no scope): read, not ignored; its running round goes on as scope all
   const g14 = await setup(t, { fullDone: false });
-  const c14 = pullsOfC(g14);
-  g14.gh.world.inMain.add(c14.h.M1); g14.gh.world.inMain.add(c14.h.K1);
+  pullsOfC(g14);
   await g14.store.writeFullSweep({ writtenAt: iso(NOW - 1000), runId: RUN, mode: 'on', incrementalCursor: CURSOR, inMain: [],
     full: { ...FULL0, state: 'running', via: 'sweep', startedAt: iso(NOW - 600_000), onSince: ON_SINCE, mainSha: T, nextPage: 1, nextIndex: 2 } });
   const r14 = await g14.run();
   assert.deepEqual([r14.facts.sweep.fullSweep.startedAt, r14.facts.sweep.fullSweep.scope, r14.facts.sweep.fullSweep.state], [iso(NOW - 600_000), 'all', 'complete'],
     'the round of generation 14 resumed where it was (nextIndex 2), as scope all');
-  assert.deepEqual(writesOf(g14), [46, 47], 'index 2 on (pulls 3, 4 and the front), every commit: the merged pull heads outside main; #1 and #2 were judged before the upgrade');
+  assert.deepEqual(writesOf(g14), [47, 49, 50], 'index 2 on (pulls 3, 4, 6 and the front), every commit; #1 and #2 were judged before the upgrade');
   // with no tip recorded the history is unknown: the in-main cache of before is not trusted either
   const c = await setup(t, { fullDone: false });
-  const cc = pullsOfC(c);
+  const cc = pullsOfC(c, { inMainToo: false });
+  c.gh.world.inMain.add(cc.h.M1); c.gh.world.inMain.add(cc.h.K1);
   await c.store.writeFullSweep({ writtenAt: iso(NOW - 1000), runId: RUN, mode: 'on', incrementalCursor: CURSOR, inMain: [cc.h.M0, cc.h.MP],
     full: { ...FULL0, state: 'complete', via: 'sweep', startedAt: iso(NOW - 9_500_000), completedAt: iso(NOW - 9_400_000), onSince: iso(NOW - 9_600_000), mainSha: T } });
   await c.run();
@@ -445,47 +469,52 @@ test('full sweep with no main tip recorded (the first on-mode sweep, or a record
     ['all', 'TRAIN_NO_MAIN_RECORD', 'complete', null]);
 });
 
-test('main rewritten since last seen: the in-main cache is dropped, the running round restarts as scope all, and every round is all until one completes', async t => {
+test('main rewritten since last seen: the in-main cache is dropped, the round in progress or completed is void, a round of scope all runs at once (no green until done)', async t => {
   const e = await setup(t, { fullDone: false });
-  const { h, read } = pullsOfC(e);
-  // before the rewrite main held M0, M1, MP (merged #3) and the cache says so; the rewrite took them out (only K1 is still in main)
+  // before the rewrite main held #3's M0 and M1 and the cache says so; the rewrite took them out (only K1 is still in main)
+  const { h, read } = pullsOfC(e, { inMainToo: false });
   e.gh.world.inMain.add(h.K1);
-  await recordMain(e, OLD_T, { inMain: [h.M0, h.M1, h.MP], full: { ...FULL1, state: 'running', via: 'sweep', startedAt: iso(NOW - 600_000), onSince: ON_SINCE, mainSha: OLD_T,
+  await recordMain(e, OLD_T, { inMain: [h.M0, h.M1], full: { ...FULL1, state: 'running', via: 'sweep', startedAt: iso(NOW - 600_000), onSince: ON_SINCE, mainSha: OLD_T,
     nextPage: 1, nextIndex: 1, scope: 'current' } });
   e.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'diverged', aheadBy: 2, behindBy: 5 } : null);
   const { facts } = await e.run();
   assert.deepEqual([facts.sweep.fullSweep.state, facts.sweep.fullSweep.startedAt, facts.sweep.fullSweep.scope, facts.sweep.fullSweep.scopeReason],
     ['complete', iso(NOW), 'all', 'TRAIN_MAIN_REWRITTEN'], 'restarted from the first pull, enumerating everything');
-  assert.deepEqual(writesOf(e), [41, 42, 43, 44, 46, 47, 48], 'the merged pull\'s heads left main: revoked (the stale cache would have kept them)');
+  assert.deepEqual(writesOf(e), [41, 42, 43, 44, 46, 47, 48, 49, 50], 'the merged pull\'s heads left main: revoked (the stale cache would have kept M0 and M1)');
   assert.ok(read.has(3), 'the merged pull was read');
   let state = await e.store.readFullSweep('on');
   assert.deepEqual([state.mainSha, state.allPending, facts.sweep.fullSweep.allPending], [T, null, null], 'a round of scope all completed: the rewrite is settled');
-  assert.ok(!state.inMain.some(x => [h.M0, h.M1, h.MP].includes(x)), 'the stale cache entries are gone');
-  // a rewrite after this node's round since on completed starts no round by itself (the runbook's full sweep does, DESIGN 60): it is
-  // pending in the record and the facts until a round of scope all completes; here a round from before onSince must be redone
-  const done = await setup(t, { fullDone: false });
-  await recordMain(done, OLD_T, { full: { ...FULL1, state: 'complete', via: 'sweep', startedAt: iso(NOW - 3_000_000), completedAt: iso(NOW - 2_000_000), onSince: ON_SINCE,
-    mainSha: OLD_T, scope: 'current' } });
-  done.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'diverged', aheadBy: 2, behindBy: 5 } : null);
-  const d1 = await done.run();
-  assert.deepEqual([d1.facts.sweep.fullSweep.state, d1.facts.sweep.fullSweep.scope, d1.facts.sweep.fullSweep.allPending], ['complete', 'current', 'TRAIN_MAIN_REWRITTEN']);
-  assert.deepEqual([(await done.store.readFullSweep('on')).allPending, (await done.run()).facts.sweep.fullSweep.allPending], ['TRAIN_MAIN_REWRITTEN', 'TRAIN_MAIN_REWRITTEN'], 'still pending a run later');
+  assert.ok(!state.inMain.some(x => [h.M0, h.M1].includes(x)), 'the stale cache entries are gone');
+  // the take-over sweep since on had completed: the rewrite voids it; the new round of scope all holds every green until it completes
   const slow = await setup(t, { fullDone: false, tick: 4000 });
-  pullsOfC(slow);
-  for (let n = 5; n <= 60; n++) slow.gh.pull(n, { head: sha(0x41000 + n), updated: iso(NOW - 86_400_000) });
-  await recordMain(slow, OLD_T, { full: { ...FULL1, state: 'complete', via: 'sweep', startedAt: iso(NOW - 9_500_000), completedAt: iso(NOW - 9_400_000), onSince: iso(NOW - 9_600_000),
+  for (let n = 10; n <= 60; n++) slow.gh.pull(n, { head: sha(0x41000 + n), updated: iso(NOW - 86_400_000) });
+  await recordMain(slow, OLD_T, { full: { ...FULL1, state: 'complete', via: 'sweep', startedAt: iso(NOW - 3_000_000), completedAt: iso(NOW - 2_000_000), onSince: ON_SINCE,
     mainSha: OLD_T, scope: 'current' } });
   slow.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'diverged', aheadBy: 2, behindBy: 5 } : null);
   const s1 = await slow.run();
-  assert.deepEqual([s1.facts.sweep.fullSweep.state, s1.facts.sweep.fullSweep.scope, s1.facts.sweep.fullSweep.allPending], ['running', 'all', 'TRAIN_MAIN_REWRITTEN']);
+  assert.deepEqual([s1.facts.decision, s1.facts.openFrontBatch, s1.facts.sweep.fullSweep.state, s1.facts.sweep.fullSweep.scope, s1.facts.sweep.fullSweep.sinceOn,
+    s1.facts.sweep.fullSweep.allPending], ['TRAIN_TAKEOVER_SWEEP_PENDING', null, 'running', 'all', false, 'TRAIN_MAIN_REWRITTEN']);
+  assert.equal((await slow.store.latestProof()).fullSweepSinceOn, false, 'stage 8 sees no full sweep since on: no green');
   state = await slow.store.readFullSweep('on');
   assert.deepEqual([state.mainSha, state.allPending], [T, 'TRAIN_MAIN_REWRITTEN'], 'pending across runs, although the next run sees main where this one left it');
-  slow.native.calls.length = 0;
-  let last = null;
-  let runs = 0;
-  for (; runs < 20 && last?.facts.sweep.fullSweep.state !== 'complete'; runs++) last = await slow.run();
+  let last = null, runs = 0;
+  for (; runs < 20 && last?.facts.sweep.fullSweep.state !== 'complete'; runs++) {
+    last = await slow.run();
+    if (last.facts.sweep.fullSweep.state !== 'complete') assert.equal(last.facts.decision, 'TRAIN_TAKEOVER_SWEEP_PENDING');
+  }
   assert.ok(runs > 1, `the round of scope all took ${runs} more runs`);
-  assert.deepEqual([last.facts.sweep.fullSweep.state, last.facts.sweep.fullSweep.scope, last.facts.sweep.fullSweep.allPending], ['complete', 'all', null]);
+  assert.deepEqual([last.facts.sweep.fullSweep.state, last.facts.sweep.fullSweep.scope, last.facts.sweep.fullSweep.sinceOn, last.facts.sweep.fullSweep.allPending],
+    ['complete', 'all', true, null]);
+  assert.notEqual(last.facts.decision, 'TRAIN_TAKEOVER_SWEEP_PENDING');
+  // revoke-only (under PAUSE) sees the rewrite: the completed round is void now, the next on run starts the round of scope all
+  const paused = await setup(t, { fullDone: false });
+  await recordMain(paused, OLD_T, { full: { ...FULL1, state: 'complete', via: 'sweep', startedAt: iso(NOW - 3_000_000), completedAt: iso(NOW - 2_000_000), onSince: ON_SINCE,
+    mainSha: OLD_T, scope: 'current' } });
+  paused.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'diverged', aheadBy: 2, behindBy: 5 } : null);
+  const po = await paused.run(jobOf({ mode: 'revoke-only' }));
+  assert.deepEqual([po.facts.sweep.fullSweep.state, po.facts.sweep.fullSweep.reason, po.facts.sweep.fullSweep.allPending], ['abandoned', 'TRAIN_MAIN_REWRITTEN', 'TRAIN_MAIN_REWRITTEN']);
+  const on = await paused.run();
+  assert.deepEqual([on.facts.sweep.fullSweep.scope, on.facts.sweep.fullSweep.scopeReason, on.facts.sweep.fullSweep.state], ['all', 'TRAIN_MAIN_REWRITTEN', 'complete']);
 });
 
 test('main history unreadable: the run is incomplete, no round starts, nothing is recorded, the cache is not trusted; the next run asks again', async t => {

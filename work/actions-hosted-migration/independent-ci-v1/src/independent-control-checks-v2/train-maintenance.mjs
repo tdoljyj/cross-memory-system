@@ -162,8 +162,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const cursor = before.incrementalCursor;
   let full = { ...before.full };
   // Generation 15 (DESIGN 60, option c1): was main rewritten since this node last saw it (the main tip the last run of this mode
-  // recorded)? Then heads of merged pulls may have left main: the cross-run "in main" cache is dropped now, a running round is
-  // restarted, and every round until one of scope 'all' completes enumerates everything (allPending TRAIN_MAIN_REWRITTEN). No tip
+  // recorded)? Then heads of merged pulls may have left main: the cross-run "in main" cache is dropped now, the round in progress
+  // and the completed one are void (on mode: a new round and no green until it completes), and every round until one of scope
+  // 'all' completes enumerates everything (allPending TRAIN_MAIN_REWRITTEN). No tip
   // recorded (the first run of this mode, or a record from before generation 15): the history is unknown, so the cache is dropped
   // too and rounds enumerate everything until one of scope 'all' completes (allPending TRAIN_NO_MAIN_RECORD). Not readable: this
   // run's sweep is incomplete, no round starts and nothing is recorded, so the next run asks again.
@@ -185,8 +186,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const sinceOn = f => f.state === 'complete' && f.via === 'sweep' && onSinceMs !== null && Date.parse(f.startedAt) >= onSinceMs;
   const start = () => ({ ...freshFull(), state: 'running', via: 'sweep', startedAt: at, onSince: job.onSince, mainSha,
     ...(allPending ? { scope: 'all', scopeReason: allPending } : { scope: 'current' }) });
-  const abandon = reason => ({ ...full, state: 'abandoned', reason });
-  if (history === 'rewritten' && full.state === 'running') full = abandon('TRAIN_MAIN_REWRITTEN');
+  const abandon = reason => ({ ...full, state: 'abandoned', reason, completedAt: null });
+  // A rewrite voids the round in progress and the one completed (DESIGN 60.2): on mode then starts a round of scope 'all' at once and
+  // is TRAIN_TAKEOVER_SWEEP_PENDING (no green) until it completes; revoke-only leaves that to the next on run; shadow restarts too.
+  if (history === 'rewritten' && ['running', 'complete'].includes(full.state)) full = abandon('TRAIN_MAIN_REWRITTEN');
   if (history === 'unknown') { /* no round starts or ends on a history that could not be read */ } else if (job.mode === 'on' && !sinceOn(full)) {
     if (full.state === 'running' && (Date.parse(full.startedAt) < onSinceMs || started - Date.parse(full.startedAt) > job.fullSweepMaxMs))
       full = abandon(Date.parse(full.startedAt) < onSinceMs ? 'TRAIN_FULL_SWEEP_BEFORE_ON' : 'TRAIN_FULL_SWEEP_EXPIRED');

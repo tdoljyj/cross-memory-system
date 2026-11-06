@@ -9,11 +9,12 @@
 //     commits, the before/after of its force pushes. No truncation: a bound reached is an incomplete sweep.
 //   Full sweep (segmented over runs, cursor in train-sweep-store.mjs): every pull of the listing, oldest first. A round of
 //     scope 'all' reads every pull the same as above (a pull with more than 250 commits, REST's limit, voids the round). A
-//     round of scope 'current' (generation 15, Owner Decision fb39ec73 v2, option c1; DESIGN 60) reads an open pull the
-//     same way, a closed unmerged pull's current head only and a merged pull not at all (its commits are in main): a green a
-//     closed pull's history keeps cannot be merged without a push or a reopen, both of which the incremental sweep sees; its
-//     current head can (a reopen at once), e.g. #936's df659f1c (2026-11-06). train-maintenance.mjs chooses 'all' when main
-//     was rewritten (merged heads may have left main) or no main tip is recorded yet.
+//     round of scope 'current' (generation 15, Owner Decision fb39ec73 v2, options c, c1 and a; DESIGN 60) reads an open pull
+//     the same way; a merged pull into main only the both ends of its force pushes (its commits are in main, the heads a
+//     force push replaced are not); a merged pull into another base the same as an open one; a closed unmerged pull its
+//     current head only: a green a closed pull's history keeps cannot be merged without a push or a reopen, both of which the
+//     incremental sweep sees; its current head can (a reopen at once), e.g. #936's df659f1c (2026-11-06).
+//     train-maintenance.mjs chooses 'all' when main was rewritten (merged heads may have left main) or no main tip is recorded.
 //   Revoke one (revokeGreens): GET the run (App, name, head, success); PATCH failure with the reason; read back; read back
 //     again 30 s later. Both read-backs must show this revocation; anything else is unconfirmed.
 // Any read that is incomplete fails the sweep closed (never "clean").
@@ -123,6 +124,15 @@ export function createSweeper({ github, appId, mainSha, inMain = [], clock = Dat
     stats.prs++; stats.commits += listed.commits.length;
     return { tooMany: false, heads: [...heads] };
   }
+  // Both ends of every force push of one pull, and nothing else (generation 15: a merged pull into main, whose commits are in main).
+  async function forcePushHeadsOfPull(number) {
+    const pushes = await github.readForcePushes(number);
+    if (pushes?.complete !== true) fail('TRAIN_FORCE_PUSHES_INCOMPLETE');
+    const heads = new Set();
+    for (const e of pushes.events) for (const h of [e.before, e.after]) if (h) heads.add(h);
+    stats.prs++;
+    return { tooMany: false, heads: [...heads] };
+  }
   // Greens of these heads -> revocation targets; heads whose containment is unknown make the pass incomplete.
   async function judge(heads, { front, own, revokeHead }) {
     const greens = [];
@@ -137,7 +147,7 @@ export function createSweeper({ github, appId, mainSha, inMain = [], clock = Dat
     if (r.unknown.length) fail('TRAIN_MAIN_CONTAINMENT_UNREADABLE');
     return r.targets;
   }
-  return Object.freeze({ stats, late, judge, headsOfPull, inMainOf, knownInMain: h => contained.get(h) === true,
+  return Object.freeze({ stats, late, judge, headsOfPull, forcePushHeadsOfPull, inMainOf, knownInMain: h => contained.get(h) === true,
     inMain: () => [...contained].filter(([, v]) => v === true).map(([h]) => h) });
 }
 
@@ -189,10 +199,11 @@ export async function incrementalSweep({ sweeper, github, entries, stream, curso
 }
 
 // The heads the full sweep judges for one listed pull. Scope 'all': every pull's every head. Scope 'current': an open pull's
-// every head, a closed unmerged pull's current head, a merged pull's none. -> { tooMany, heads }.
+// every head; a merged pull's force-push ends (into main) or every head (into another base); a closed unmerged pull's current
+// head. -> { tooMany, heads }.
 export async function fullSweepHeads(sweeper, pull, scope = 'current') {
   if (scope === 'all' || pull.state === 'open') return sweeper.headsOfPull(pull.number);
-  if (pull.state === 'closed' && pull.merged === true) return { tooMany: false, heads: [] };
+  if (pull.state === 'closed' && pull.merged === true) return pull.baseRef === 'main' ? sweeper.forcePushHeadsOfPull(pull.number) : sweeper.headsOfPull(pull.number);
   if (pull.state === 'closed' && pull.merged === false) { sweeper.stats.prs++; return { tooMany: false, heads: [pull.headSha] }; }
   fail('TRAIN_PULLS_INCOMPLETE');
 }

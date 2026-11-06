@@ -33,6 +33,10 @@ test('the summary keeps only what status and the PR page show; the page line is 
   assert.deepEqual({ ...s }, { at: facts.at, mode: 'shadow', wouldDo: 'OPEN_FRONT_BATCH', onDuty: true, front: { pr: 910, headSha: '2'.repeat(40) }, mainSha: '1'.repeat(40), strict: true, wouldRevokeCount: 3 });
   assert.match(trainPageLine(s, 910), /^列车影子（只记录，不执行）：你是合并队列车头。开车后会在 GitHub 的试合并提交上跑车头批次。$/);
   assert.equal(trainPageLine(s, 911), null);
+  // generation 15 (DESIGN 60.2): the front's page says why nothing goes green while the train re-sweeps after main was rewritten
+  const pending = allPending => ({ mode: 'on', decision: 'TRAIN_TAKEOVER_SWEEP_PENDING', front: { pr: 910 }, sweep: { fullSweep: { allPending } } });
+  assert.equal(trainPageLine(pending('TRAIN_MAIN_REWRITTEN'), 910), '合并列车：你是车头。main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿。');
+  assert.equal(trainPageLine(pending(null), 910), '合并列车：你是车头。接班清扫未完成，暂不发绿。');
   assert.equal(trainPageLine(trainSummary({ ...facts, wouldDo: 'NOT_ON_DUTY', front: null }), 910), null);
   for (const bad of [null, { ...facts, contract: 'x' }, { ...facts, mode: 'on' }, { ...facts, wouldDo: 'REVOKE' }]) assert.equal(trainSummary(bad), null);
 });

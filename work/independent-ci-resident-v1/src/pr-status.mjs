@@ -31,7 +31,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
-import { withTrainLine } from './train.mjs';
+import { MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
 // Every node writes its own context (node-duty.mjs#nodeContext); there is no default node (Task 9cac75be A3).
@@ -96,6 +96,9 @@ const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion �
   RELAY_QUALIFICATION_WINDOW_UNCONFIRMED: '托管资格窗口未确认，稍后重查', TRAIN_TAKEOVER_SWEEP_PENDING: '合并列车接管扫描中',
   TRAIN_SOURCE_MISMATCH: '合并列车的 Source 不一致，等 Owner 处理', TRAIN_SOURCE_UNREADABLE: '合并列车的 Source 读不出，稍后重查' });
 const globalDefer = status => GLOBAL_DEFER_TEXT[status?.queue?.hold] ? status.queue.hold : null;
+// Generation 15 (DESIGN 60.2): the take-over sweep after main was rewritten says why.
+const globalDeferText = (code, status) => (code === 'TRAIN_TAKEOVER_SWEEP_PENDING' && status?.train?.sweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN'
+  ? MAIN_REWRITTEN_TEXT : GLOBAL_DEFER_TEXT[code]);
 // The gate of the whole queue the status shows, in the order the PR page names them: the intake pause, the breaker, the parking
 // places, the daily budgets (a wait's retry is not bound by the evaluations), a global deferral. null: none.
 const GATE_TEXT = Object.freeze({ INTAKE_PAUSED: '暂停接新中', BREAKER_HALF_OPEN: '熔断后的试跑阶段', BREAKER_OPEN: '执行器熔断中', PARKING_FULL: '停靠的批次已满' });
@@ -263,7 +266,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
     if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`${place}：停靠的批次已满，等它们结束`) };
     // A daily budget used up, or a global deferral: no start before it ends (no estimate that assumes it).
-    if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? GLOBAL_DEFER_TEXT[gate]}`) };
+    if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? globalDeferText(gate, status)}`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
     return { state: 'pending', description: clip(`${place}${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
@@ -345,7 +348,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? GLOBAL_DEFER_TEXT[d] ?? HELD_TEXT[d] ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? HELD_TEXT[d] ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
