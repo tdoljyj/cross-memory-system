@@ -321,6 +321,10 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false, re
 // (a slow or hung wsl.exe) made the pump refuse, proven by the same DESIGN 27 facts to have published nothing (stage 3 has not run).
 // Its other endings keep their own path (the memory gate and the clean refusals: the one attempt 2 of DESIGN 32 / O-2, or as before).
 export const EXECUTION_RETRY_STAGES = Object.freeze([2, 4, 6]);
+// A run again of stage 2 that the first Linux stage's own gates refused before anything of it ran (the refs gate without an answer, the
+// version skew: both burn the head) ends the batch on the abandoned run it follows, as before this generation (BRIDGE_ABANDONED_UNPUBLISHED
+// and the one attempt 2): a run again never ends a batch worse than not running again (independent review of the drill fix, MINOR 1).
+export const STAGE2_RETRY_KEEPS_ABANDONED = Object.freeze(['REFS_GATE_UNCONFIRMED', 'UPGRADE_VERSION_SKEW']);
 export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
   ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
 export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null } = {}) {

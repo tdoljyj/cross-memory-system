@@ -127,6 +127,19 @@ test('stage 2: the runs again used up end exactly as before (FAILED_CLEAN BRIDGE
   assert.deepEqual(await bodies(f, 'execution-retry'), []);
 });
 
+test('stage 2: a run again refused before it ran by the refs gate (no answer) or the version skew ends on the abandoned run, as without the run again', async t => {
+  for (const code of ['REFS_GATE_UNCONFIRMED', 'UPGRADE_VERSION_SKEW']) {
+    const engine = engineWith(2, [pumpLost2(), { ok: false, code, proof: WINDOWS_CLEAN }]);
+    const f = await executorFixture(t, { engine });
+    await f.drop(triggerBytes());
+    const r = await f.exec.tick();
+    assert.deepEqual([r.state, r.failureCode, r.originalCode], ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, 'BRIDGE_STAGE_STOPPED_PUMP_LOST'], code);
+    assert.deepEqual(stagesRun(engine), [1, 2, 2], code);
+    assert.equal(r.attempt2, batchKey(subject({ attempt: 2 })), `${code}: the one attempt 2 is kept`);
+    assert.deepEqual((await bodies(f, 'stage-terminal')).filter(b => b.stage === 2).map(b => [b.failureCode, b.executionRetry ?? 0]), [['BRIDGE_STAGE_STOPPED_PUMP_LOST', 0], [code, 1]], code);
+  }
+});
+
 test('stage 2: a run again that ends otherwise stops the runs again and ends by its own code (memory gate, refs moved: the one attempt 2)', async t => {
   const memory = { ok: false, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN, memoryGate: { checks: 3, order: 9, blocks: 0, low: true, ready: false, waitedMs: 1, refused: true } };
   const moved = { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN };

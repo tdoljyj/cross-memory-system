@@ -4683,6 +4683,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - 签发者自己的 `PUBLICATION_UNCERTAIN`（Source 把有副作用或可能已发布的结果都映射成它）也在 §27 允许表里，所以同样重跑，与第 4、6 段和 attempt 2 一致。
 - “什么都没发布”的依据与 §27 相同：第 2 段唯一的 Windows 进程是扫描签发者，写不了检查；Linux worker 没有 GitHub 凭据；签名结果只有经同批第 3 段才变成检查，而第 3 段只在第 2 段成功之后才跑一次。重跑之前照 §54.2：无 HALT、无漂移、授权够、两台主机静止、两边 `retry-stage-2-K` 归档核实、写 `execution-retry` 回执；任何一步不成立就写 `execution-retry-refused` 并按原路径结束。
 - 等待 60 s、300 s，最多 2 次（`EXECUTION_RETRY_MS`，不变）。第 2 段是批次第一个 Linux 段，重跑时 refs 闸门和版本检查照样再过（`firstLinux`）。
+- 第 2 段是批次的第一个 Linux 段，重跑前还要再过它自己的闸门。如果闸门在什么都没跑之前就拒绝了重跑（refs 闸门没有应答 `REFS_GATE_UNCONFIRMED`，或版本不一致 `UPGRADE_VERSION_SKEW`），批次按被放弃的那次运行结束（`STAGE2_RETRY_KEEPS_ABANDONED`），即与不重跑时一样：`BRIDGE_ABANDONED_UNPUBLISHED`，并保留那一次 attempt 2。原因：这两个码都会烧 head（new-commit），重跑不能让批次比不重跑结束得更差（独立审查 MINOR 1）。
+- 静止证明不成立（例如 worker 一直活着）时，先是重跑前的静止证明被拒（`execution-retry-refused`），再是放弃路径自己的静止证明，然后才 HALT。两次各有 5 分钟上限，所以最坏约 10 分钟才 HALT，以前约 5 分钟。
 - 两次都用完：与以前完全相同，`FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，并且仍有那一次 attempt 2（attempt 2 里同样有两次批次内重跑）。
 - 同一个作业再跑一次（照 §54.3 逐项核对 gitleaks）：运行目录 `runs/gitleaks-<jobId>` 重跑会冲突，由 `stage-retry` 归档移走；对保留工作区的 git 命令带 `--no-optional-locks`，不改工作区；`NATIVE_SCAN_START_REQUIRED = false`，没有一次性的 Native 许可。gitleaks 在 intent 和 outcome 里写 `automaticRetryAllowed:false`，指的是 Source 自己不重试；常驻层的重跑（与 attempt 2 一样）在此之上另有 §27 的证明。
 - 随之放开的守卫：`engine-windows.mjs#runStage` 和 `mailbox.mjs#validateRequest` 允许第 2 段带 `again`（1 或 2）；Linux 工具 `retry-stage-[246]-[12]` 保留工作区（`stage-retry` 范围）。§54.3 的同一单元重跑处理（`workerRanSince` 基线）对第 2 段同样适用。
@@ -4695,14 +4697,16 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 59.3 测试
 
-- `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑，含签发者自己的 `PUBLICATION_UNCERTAIN`；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、放弃证明覆盖不到的有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；重跑后以内存闸门或 refs 移动结束时停止重跑、按各自的码结束并排 attempt 2；mailbox 与引擎的 `again` 规则含第 2 段。
+- `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑，含签发者自己的 `PUBLICATION_UNCERTAIN`；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、放弃证明覆盖不到的有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；重跑后以内存闸门或 refs 移动结束时停止重跑、按各自的码结束并排 attempt 2；重跑被 refs 闸门（无应答）或版本不一致在调用前拒绝时，按被放弃的那次运行结束并保留 attempt 2；mailbox 与引擎的 `again` 规则含第 2 段。
 - `test/scanner-abandon.test.mjs`：第 2 段的 10-28 结束先重跑两次再 `FAILED_CLEAN`；attempt 2 也各有两次重跑；静止证明不成立时先写 refused 再 HALT。
 - `drill/offline-drill.mjs`（incident-20261028-replay）：
   - 结果：真实的 companion 泵、引擎和执行器下，第 2 段重跑两次，每次结束都一样，最后 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`、不 HALT、排一次 attempt 2；回执里有两张 `execution-retry`，两边都有 `retry-stage-2-1/2` 归档，内存闸门在每次调用前各读一次（共 3 次）。
+  - 每次运行从中继失败到该段结束都在 5 分钟内，逐次检查。worker 一直活着的变体：重跑在静止这一步被拒，之后 HALT，从该段结束到 HALT 不超过两个 5 分钟上限。
+  - 模拟里的 worker 在每次 start 时重置自己的记录，这代替了 Linux 侧的 retry-stage 归档；Windows 侧的 retry-stage 归档会移走 `issue.ready.json`，模拟里也随之清掉。
   - 演练的模拟世界原来只能跑一次第 2 段：签发者每次调用都用同一个 broker 请求号，旧的 `.stop` 让重跑一开始就结束，而这次运行找不到在途的 swap、没有 `STOP_SENT`，于是 HALT（PR #1015 的 ci-suites 就是这样失败的）。现在改成与生产一致：`invoke-stage.mjs` 每次调用用 `randomUUID()`；worker 单元每次 `start` 都是一次新运行，有新的 InvocationID 和启动时间。
 - `test/test_linux_tool.py`：`retry-stage-2-1/2` 保留工作区，`retry-stage-2-3`、`retry-stage-3-1` 不保留。
 - `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次、停在 A 的 `relay-wait`、从 A 继续时页面仍是 `WAITING`、`retry-wait`、页面过期、页面无时间）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按剩余额度截断、额度用完不等）；`verifySuites` 每个套件先让路、整次运行共用一份额度、`--no-yield` 时不问；Linux 脚本传 `--no-yield`。
 
 ### 59.4 安装
 
-常驻代码改动（`classify.mjs`、`executor.mjs` 注释、`engine-windows.mjs`、`mailbox.mjs`、Linux 工具）；`upgrader/src/` 及其传递依赖（`canonical`、`store`、`upgrade-mailbox`、`intake-pause`、`inbox`、`instance-lock`）一个字节未动。组件：`script.independent-native-publication` 1.1.9 → 1.1.10（它的文件清单含 `engine-windows.mjs`、`executor.mjs`；`clued_components.py bump` + `update`，并重新生成 `components.ts`）。行为变化需 Owner 在安装第 14 代时确认：第 2 段放弃后同批次内最多再跑两次扫描。
+常驻代码改动（`classify.mjs`、`executor.mjs` 注释、`engine-windows.mjs`、`mailbox.mjs`、Linux 工具）；`upgrader/src/` 及其传递依赖（`canonical`、`store`、`upgrade-mailbox`、`intake-pause`、`inbox`、`instance-lock`）一个字节未动。组件：`script.independent-native-publication` 1.1.9 → 1.1.10（它的文件清单含 `engine-windows.mjs`、`executor.mjs`；`clued_components.py bump` + `update`，并重新生成 `components.ts`）。行为变化需 Owner 在安装第 14 代时确认：第 2 段放弃后同批次内最多再跑两次扫描；每次重跑本身也可能以自己的停机类结束收场（例如签发者未确认），所以一个 head 第 2 段的运行次数从最多 2 次（首跑加 attempt 2）变为最多 6 次。
