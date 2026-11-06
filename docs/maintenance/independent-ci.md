@@ -32,6 +32,20 @@
 - **当前限制。** 转发阶段属于 Source v2（PR-A）。装好并由 Owner 打开之前，六项都由本地正式角色产出。
 - **后备的字节绑定。** 独立 CI 的正式角色固定的是已安装副本里的工作流字节（自托管版本：`gitleaks.yml` `168aebaf…`、`trivy.yml` `cea2fd77…`、`contract-placement.yml` `762f1b13…`）。已安装的包继续使用安装时的副本。从包含托管执行者版本的 `main` 重新构建包之前，必须先重新固定这些字节，否则会以 `ORIGINAL_*_WORKFLOW_DRIFT` 拒绝。
 
+## 推送前的本地验证
+
+推送前用 `--affected` 验证，不要手选 `--suite`：
+
+```bash
+node scripts/ci/local-verify.mjs --affected
+```
+
+- 它取分支相对 `main` 的改动路径（含工作区未提交的改动），用 `main` 上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和工作流 `ci-suites` 的 “Select suites” 步骤是同一段代码，不另抄一份；只跑选中的套件，Windows 和 CluedDev-Linux 两侧都跑。
+- 先打印选择结果和原因：每项检查一行，格式同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件再列出选中它的改动文件。
+- `--suite` 和 `--candidate` 不能与 `--affected` 同用；只想跑 Linux 一侧用 `--affected --linux-only`。
+- 手选套件会漏跑：#1015 当时漏了 `offline-drill`，常驻 CI 失败（run 42177591049）。
+- DESK 上常驻 CI 正在跑批次时，本地验证每个套件前会等它跑完（`--no-yield` 可跳过）。
+
 ## 失败、重试与归档
 
 - 干净的瞬时失败（白名单失败码，两端证明齐全）自动重试一次。第二次仍失败，或者任何未知失败，仍然 HALT，等 Owner 处理。重试同样遵守下面的 2026-10-20 经验，绝不重跑已落定的 job id。

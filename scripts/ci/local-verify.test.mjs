@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
 import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
   killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
-  readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
+  readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, selectAffected, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
   toWslPath, verifySuites, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
 
 // A repository in a temporary directory, isolated from the user's git configuration.
@@ -51,7 +51,7 @@ function repository(t, name = 'repo') {
 }
 
 test('options: values inline or next, platforms, fetch and fresh main results; missing values and unknown options refused', () => {
-  assert.deepEqual(parseArgs([]), { base: null, candidate: null, committed: false, suites: [], here: true, linux: false, fetch: true, freshBase: false, yield: true });
+  assert.deepEqual(parseArgs([]), { base: null, candidate: null, committed: false, suites: [], affected: false, here: true, linux: false, fetch: true, freshBase: false, yield: true });
   assert.equal(parseArgs(['--no-yield']).yield, false);
   assert.throws(() => parseArgs(['--no-yield=1']), /--no-yield takes no value/);
   const o = parseArgs(['--base=abc', '--suite', 'clued-cloud', '--suite=resident-node', '--linux', '--no-fetch', '--committed', '--fresh-base']);
@@ -63,6 +63,13 @@ test('options: values inline or next, platforms, fetch and fresh main results; m
   assert.throws(() => parseArgs(['--suite', '--linux']), /--suite needs a value/);
   assert.throws(() => parseArgs(['--linux=yes']), /--linux takes no value/);
   assert.throws(() => parseArgs(['--fast']), /unknown option: --fast/);
+  assert.equal(parseArgs(['--affected']).affected, true);
+  const both = parseArgs(['--affected', '--linux-only', '--committed']);
+  assert.deepEqual([both.affected, both.here, both.linux], [true, false, true]);
+  assert.throws(() => parseArgs(['--affected=1']), /--affected takes no value/);
+  assert.throws(() => parseArgs(['--affected', '--suite', 'offline-drill']), /--affected selects the suites itself/);
+  assert.throws(() => parseArgs(['--suite=offline-drill', '--affected']), /--affected selects the suites itself/);
+  assert.throws(() => parseArgs(['--affected', '--candidate', 'abc']), /--affected is not for --candidate/);
 });
 
 // Defect e0a5630d: a run waits before each suite while the resident CI on this host runs a batch (same WSL VM, same CPU).
@@ -675,4 +682,92 @@ test('a command that runs Node tests and runs none is a failure, never a pass', 
     kill: () => {} });
   assert.deepEqual(ran.map((entry) => entry.tests), [3, 3, null]);
   assert.equal(compareSuite(ran, null, { selector: selection, knownLists: { s: [] } }).verdict, 'pass');
+});
+
+// The files `git diff --name-only 9100ee93cdfc16ce86fad7a4f28a644629b0b25f f95ec14a7ea7fdb14dcb574551baa1b97d2671e9`
+// lists (#1015). The change touched the resident engine and the offline drill's
+// inputs; a hand-picked suite list left out offline-drill and CI failed there (task 70e5f450).
+const PR_1015_FILES = [
+  'apps/clued-cloud/worker/generated/components.ts',
+  'config/clued-components.json',
+  'scripts/ci/clued-independent-publication-port.mjs',
+  'scripts/ci/local-verify-concurrency.test.mjs',
+  'scripts/ci/local-verify.mjs',
+  'scripts/ci/local-verify.test.mjs',
+  'work/independent-ci-resident-v1/DESIGN.md',
+  'work/independent-ci-resident-v1/linux/bin/clued-ci-resident-linux',
+  'work/independent-ci-resident-v1/src/classify.mjs',
+  'work/independent-ci-resident-v1/src/engine-windows.mjs',
+  'work/independent-ci-resident-v1/src/executor.mjs',
+  'work/independent-ci-resident-v1/src/mailbox.mjs',
+  'work/independent-ci-resident-v1/test/execution-retry.test.mjs',
+  'work/independent-ci-resident-v1/test/scanner-abandon.test.mjs',
+  'work/independent-ci-resident-v1/test/test_linux_tool.py',
+];
+const forCheck = (picked, check) => picked.selections.find((entry) => entry.check === check);
+
+test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
+  const picked = selectAffected(selection, PR_1015_FILES);
+  assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
+  assert.deepEqual(forCheck(picked, 'ci-suites').suites,
+    ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests']);
+  assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
+  assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
+  assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
+  // the line CI logs for the check, then why each suite is in
+  assert.equal(picked.lines[0],
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests');
+  assert.ok(picked.lines.includes('  offline-drill: scripts/ci/clued-independent-publication-port.mjs, scripts/ci/local-verify-concurrency.test.mjs, '
+    + 'scripts/ci/local-verify.mjs, ... (13 files)'));
+  assert.ok(picked.lines.includes('  components: config/clued-components.json'));
+  for (const id of Object.keys(selection.SUITES['ci-suites'])) {
+    assert.equal(picked.lines.some((line) => line.startsWith(`  ${id}: `)), forCheck(picked, 'ci-suites').suites.includes(id), `${id} is explained exactly when it is selected`);
+  }
+});
+
+test('--affected: a change only to the application selects no ci-suites suite, and the selection decides what else', () => {
+  const files = ['apps/clued-cloud/src/lib/example.ts'];
+  const picked = selectAffected(selection, files);
+  assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', files).suites);
+  assert.deepEqual(forCheck(picked, 'ci-suites').suites, []);
+  assert.deepEqual(picked.suites, ['clued-cloud']);
+  assert.equal(picked.lines[0], 'ci-suites: no file this check covers changed; suites: none');
+  // the schema files add the schema check
+  assert.deepEqual(selectAffected(selection, ['apps/clued-cloud/package.json']).suites, ['clued-cloud', 'production-schema']);
+  // a change to the selection itself selects every suite of every check, files unknown too, with no per-file reasons for the unknown
+  assert.equal(selectAffected(selection, ['scripts/ci/ci-required-selection.mjs']).selections[0].suites.length, Object.keys(selection.SUITES['ci-suites']).length);
+  const unknown = selectAffected(selection, null);
+  assert.equal(unknown.selections[0].reason, 'changed files unknown: every suite runs');
+  assert.equal(unknown.suites.length, Object.values(selection.SUITES).flatMap((suites) => Object.keys(suites)).length);
+  assert.ok(unknown.lines.every((line) => !line.startsWith('  ')));
+});
+
+test('--affected asks the selection it is given and holds no list of its own', () => {
+  const asked = [];
+  const selector = { selectSuites: (check, files) => {
+    asked.push([check, files]);
+    return { suites: check === 'ci-suites' && files?.[0] === 'a' ? ['x'] : [], reason: 'because' };
+  } };
+  const picked = selectAffected(selector, ['a', 'b']);
+  assert.deepEqual(picked.suites, ['x']);
+  assert.deepEqual(picked.lines, ['ci-suites: because; suites: x', '  x: a', 'clued-cloud-tests: because; suites: none', 'migration-verify: because; suites: none']);
+  assert.deepEqual(asked[0], ['ci-suites', ['a', 'b']]);
+});
+
+test('--affected: the branch against main, as the pull request lists it, picks the suites', (t) => {
+  const { dir, git, commit } = repository(t);
+  commit({ 'README.md': 'x' });
+  git('switch', '-q', '-c', 'branch');
+  fs.mkdirSync(path.join(dir, 'apps/clued-cloud/src'), { recursive: true });
+  commit({ 'apps/clued-cloud/src/a.ts': 'a' });
+  const application = git('rev-parse', 'HEAD');
+  fs.mkdirSync(path.join(dir, 'work/independent-ci-resident-v1/drill'), { recursive: true });
+  commit({ 'work/independent-ci-resident-v1/drill/offline-drill.mjs': 'd' });
+  const drill = git('rev-parse', 'HEAD');
+  git('switch', '-q', 'main');
+  commit({ VERSION: 'main moved' });
+  const main = git('rev-parse', 'HEAD');
+  const picked = (head) => selectAffected(selection, changedFiles(dir, head, main, selection.FILE_LIMIT)).suites;
+  assert.deepEqual(picked(application), ['clued-cloud'], "main's own commits are not the branch's");
+  assert.deepEqual(picked(drill), ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'admission-self-tests', 'clued-cloud']);
 });

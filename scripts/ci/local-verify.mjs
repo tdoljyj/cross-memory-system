@@ -5,15 +5,27 @@
 // reports only the failures the change brings: a suite that fails is run again
 // on main, and each failing command is compared with the same command there.
 //
+//   node scripts/ci/local-verify.mjs --affected [--base <commit>] [--committed] [--no-fetch] [--fresh-base] [--no-yield]
 //   node scripts/ci/local-verify.mjs [--base <commit>] [--committed] [--suite <id>]...
 //                                    [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]
 //
+//   --affected    the way to verify before a push (task 70e5f450: a hand-picked
+//                 --suite list missed offline-drill for #1015): the files the
+//                 branch changes against main select the suites with the
+//                 required checks' own selection (ci-required-selection.mjs of
+//                 main, the code ci-suites runs in its "Select suites" step),
+//                 and only those run, on Windows and in CluedDev-Linux. It
+//                 prints, per check, the line CI logs ("ci-suites: selected by
+//                 changed paths; suites: ...") and, per suite, the changed
+//                 files that picked it. --suite and --candidate do not go with
+//                 it; --linux-only keeps the run to the Linux side.
 //   --base        the main commit to verify against; default: GitHub's main,
 //                 fetched first (--no-fetch uses the last fetched copy).
 //   --committed   verify HEAD only; by default the working tree's changes and
 //                 new files that are not ignored are included (listed first;
 //                 they are also copied into the Linux clone).
-//   --suite       run only these suites (default: what the selection picks).
+//   --suite       run only these suites (default: what the selection picks,
+//                 as --affected does, on Windows alone unless --linux).
 //   --linux       also run in CluedDev-Linux (set up by
 //                 setup-clued-dev-linux.ps1), at the same time as the Windows
 //                 run; --linux-only runs only there.
@@ -128,7 +140,7 @@ function git(args, { cwd, env = process.env, allowFail = false, raw = false, tim
 }
 
 export function parseArgs(argv) {
-  const options = { base: null, candidate: null, committed: false, suites: [], here: true, linux: false, fetch: true, freshBase: false, yield: true };
+  const options = { base: null, candidate: null, committed: false, suites: [], affected: false, here: true, linux: false, fetch: true, freshBase: false, yield: true };
   const valued = { '--base': 'base', '--candidate': 'candidate', '--suite': 'suites' };
   for (let i = 0; i < argv.length; i += 1) {
     const [arg, inline] = argv[i].startsWith('--') && argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], undefined];
@@ -144,6 +156,7 @@ export function parseArgs(argv) {
       else options[valued[arg]] = value;
     } else if (inline !== undefined) throw new Error(`${arg} takes no value`);
     else if (arg === '--committed') options.committed = true;
+    else if (arg === '--affected') options.affected = true;
     else if (arg === '--linux') options.linux = true;
     else if (arg === '--linux-only') Object.assign(options, { linux: true, here: false });
     else if (arg === '--no-fetch') options.fetch = false;
@@ -151,6 +164,8 @@ export function parseArgs(argv) {
     else if (arg === '--no-yield') options.yield = false;
     else throw new Error(`unknown option: ${arg}`);
   }
+  if (options.affected && options.suites.length) throw new Error('--affected selects the suites itself; drop --suite');
+  if (options.affected && options.candidate) throw new Error('--affected is not for --candidate (the Linux hand-over passes its suites)');
   return options;
 }
 
@@ -931,6 +946,27 @@ export function changedFiles(root, change, main, limit) {
   return files.length >= limit ? null : files;
 }
 
+// What the required checks run for these changed files (null: unknown): each
+// check's own selectSuites, the call the workflow's "Select suites" step makes
+// (node ci-required-selection.mjs --check <check>), nothing of it copied here.
+// `lines` are what CI logs for each check, then, for each selected suite, the
+// changed files that picked it (found by asking the same selection about each
+// file alone; a change to the selection or the workflow picks every suite, so
+// it shows under all of them).
+export function selectAffected(selector, files, { checks = CHECKS, show = 3 } = {}) {
+  const selections = checks.map((check) => ({ check, ...selector.selectSuites(check, files) }));
+  const lines = [];
+  for (const { check, reason, suites } of selections) {
+    lines.push(`${check}: ${reason}; suites: ${suites.join(', ') || 'none'}`);
+    if (files === null) continue;
+    for (const id of suites) {
+      const hits = files.filter((file) => selector.selectSuites(check, [file]).suites.includes(id));
+      lines.push(`  ${id}: ${hits.slice(0, show).join(', ')}${hits.length > show ? `, ... (${hits.length} files)` : ''}`);
+    }
+  }
+  return { suites: selections.flatMap((entry) => entry.suites), selections, lines };
+}
+
 // main's selection, known-failure list and reporter, as the workflow uses them.
 async function loadSelector(root, main, home) {
   const dir = path.join(home, 'selectors', main);
@@ -1637,6 +1673,7 @@ const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW
 
 async function main(argv) {
   const options = parseArgs(argv);
+  if (options.affected && process.platform === 'win32') options.linux = true; // Windows and Linux, the two sides of a run
   if (options.linux && process.platform !== 'win32') throw new Error('--linux runs from Windows; here the run already is on Linux');
   const root = git(['rev-parse', '--show-toplevel']);
   const home = cacheHome();
@@ -1693,8 +1730,10 @@ async function verifyChange({ options, root, home, change, run }) {
   const selector = await loadSelector(root, mainCommit, home);
   if (!suites.length && change) {
     const files = changedFiles(root, change.commit, mainCommit, selector.FILE_LIMIT);
-    suites = CHECKS.flatMap((check) => selector.selectSuites(check, files).suites);
+    const affected = selectAffected(selector, files);
+    suites = affected.suites;
     console.log(`local-verify: ${files === null ? 'more files than GitHub lists' : `${files.length} changed file(s)`}; suites: ${suites.join(', ') || 'none'}`);
+    for (const line of affected.lines) console.log(`  ${line}`);
   }
   for (const id of suites) if (!selector.SUITE_COMMANDS[id]) throw new Error(`unknown suite: ${id}`);
   const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}-${run.run.id}`);
