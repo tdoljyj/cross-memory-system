@@ -14,7 +14,7 @@ test("the primary domain serves Native requests while existing issuers and callb
   const primary = "https://kooyomi.com";
   const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy,
     CLUED_STORAGE_GOOGLE_REDIRECT_URI: web + "/storage/google/callback" };
-  for (const host of ["clued.pixelgrav.com", "kooyumi.pixelgrav.com", "kooyomi.com"]) {
+  for (const host of ["clued.pixelgrav.com", "kooyumi.pixelgrav.com", "kooyomi.com", "beamingface.com", "dev.beamingface.com"]) {
     assert.ok(config.routes.some(route => route.pattern === host && route.custom_domain === true));
   }
   assert.equal(production.KOOYUMI_OAUTH_ORIGIN, web);
@@ -101,4 +101,43 @@ test("missing or malformed web origin configuration never enables an alias", asy
     assert.equal(await routeWebOrigin(new Request(web), { ...env, CLUED_WEB_ORIGINS: value }, async () => { throw Error("invalid configuration admitted"); }), null);
   }
   assert.equal(await routeWebOrigin(new Request(web), { ...env, CLUED_OAUTH_ORIGIN: "invalid" }, async () => { throw Error("missing canonical issuer admitted"); }), null);
+});
+
+test("beamingface.com and dev.beamingface.com are Native web aliases without their own issuer or storage callback", async () => {
+  const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
+  const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy,
+    CLUED_STORAGE_GOOGLE_REDIRECT_URI: web + "/storage/google/callback" };
+  const unexpected = async () => { throw Error("request must not reach Native handler"); };
+  for (const host of ["beamingface.com", "dev.beamingface.com"]) {
+    const origin = "https://" + host;
+    assert.ok(production.CLUED_WEB_ORIGINS.split(",").includes(origin));
+    assert.equal(selectOAuthOrigin(new Request(origin + "/"), production), production);
+    const home = new Request(origin + "/", { headers: { authorization: "Bearer same-origin-session" } });
+    const native = await routeWebOrigin(home, production, async received => { assert.equal(received, home); return new Response("native"); });
+    assert.equal(await native.text(), "native");
+    for (const path of ["/oauth/consent", "/.well-known/oauth-authorization-server"]) {
+      const response = await routeWebOrigin(new Request(origin + path + "?x=1"), production, unexpected);
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("location"), legacy + path + "?x=1");
+    }
+    for (const path of ["/mcp", "/oauth/token", "/oauth/register"]) {
+      const response = await routeWebOrigin(new Request(origin + path, { method: "POST", body: "secret" }), production, unexpected);
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get("location"), null);
+    }
+    const storage = routeStorageOrigin(new Request(origin + "/storage/admin?source=alias"), production);
+    assert.equal(storage.status, 302);
+    assert.equal(storage.headers.get("location"), web + "/storage/admin?source=alias");
+  }
+});
+
+test("look-alike hosts of the beamingface.com aliases are not admitted", async () => {
+  const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
+  const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy };
+  assert.equal(production.CLUED_WEB_ORIGINS.split(",").length, 4);
+  for (const origin of ["https://www.beamingface.com", "https://beamingface.com.evil.test", "https://evilbeamingface.com",
+    "https://prod.beamingface.com", "http://beamingface.com", "http://dev.beamingface.com", "https://beamingface.com:8443"]) {
+    assert.equal(await routeWebOrigin(new Request(origin + "/"), production, async () => { throw Error("look-alike admitted"); }), null);
+    assert.equal(routeStorageOrigin(new Request(origin + "/storage/admin"), production), null);
+  }
 });
