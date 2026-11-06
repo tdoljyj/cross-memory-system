@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {registerHooks} from 'node:module';
 import {loadSourceHistoryFixture} from './hosted-migration-source-history.fixture.mjs';
+import {loadPublisherSourceHistoryFixture} from './production-publisher-source-history.fixture.mjs';
 import {loadHistoricalWorkflowProfiles69e} from './fixtures/workflow-profiles-69e30b6/fixture.mjs';
 import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
 import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
@@ -593,7 +594,9 @@ test('v2 actual 595 old22 replay preserves ac90 while current Source selects exa
   const cfg=JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/merge-admission-r9-source.json'),'utf8')),
     reviewed=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
   assert.equal(h(profilesRaw),reviewed.profiles_sha256);assert.equal(h(rolesRaw),reviewed.role_specs_sha256);
-  assert.equal(h(current.runtime.proof_profiles_raw),cfg.execution_source.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),cfg.execution_source.role_specs_sha256);
+  // This replay's "current" side is the sealed predecessor (80bd559f), not today's registry execution_source.
+  const sealedExecution=JSON.parse(loadPublisherSourceHistoryFixture()).execution_source;
+  assert.equal(h(current.runtime.proof_profiles_raw),sealedExecution.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),sealedExecution.role_specs_sha256);
   const actualBlob=current.runtime.execution_workflow_blobs[file],selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
   assert.equal(selected.passed,true);assert.equal(actualBlob,future[0].workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
   const {rolesForSource,roleDefinitionDigest}=await import('./clued-workflow-profile.mjs'),roles=rolesForSource(currentRoles,file,actualBlob);
