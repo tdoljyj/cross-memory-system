@@ -144,6 +144,8 @@ function Test-LinuxBusy {
   return $false
 }
 Log 'Clued P13 host watchdog started.'
+# the levels it works with, in the log: what a restart took over is readable without opening the script
+Log ("Thresholds: C: stops below {0} GB, resumes at {1} GB; memory stops below {2} GB, resumes at {3} GB" -f $suspendDisk,$resumeDisk,$suspendMem,$resumeMem)
 try{while($true){
   $os=Get-CimInstance Win32_OperatingSystem; $freeMem=[math]::Round($os.FreePhysicalMemory*1KB/1GB,2); $freeDisk=[math]::Round((Get-PSDrive C).Free/1GB,1)
   $belowSuspend=($freeMem -lt $suspendMem -or $freeDisk -lt $suspendDisk)

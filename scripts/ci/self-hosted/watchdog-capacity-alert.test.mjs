@@ -65,6 +65,7 @@ test('the rendered watchdog parses (Windows PowerShell 5.1) and alerts on every 
   const host = profiles.hosts.find((entry) => entry.host_id === 'company-primary');
   const capacity = profiles.capacity_profiles[host.capacity_profile];
   assert.ok(text.includes(`$suspendDisk=${capacity.suspend_c_free_gb}; $resumeDisk=${capacity.resume_c_free_gb};`));
+  assert.match(text, /Log \("Thresholds: C: stops below \{0\} GB, resumes at \{1\} GB; memory stops below \{2\} GB, resumes at \{3\} GB" -f \$suspendDisk,\$resumeDisk,\$suspendMem,\$resumeMem\)/, 'a start logs the levels it works with');
 });
 
 test('the alert block: an ALERT line, a marker file (UTF-8 without a byte order mark) while suspended, kept since the first alert, removed on resume', { skip }, (t) => {
