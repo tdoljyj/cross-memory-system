@@ -108,11 +108,11 @@ function Send-CapacityAlert([string]$kind,[string]$detail){
     $script:lastAlert=Get-Date
     $since=$script:lastAlert.ToString('o')
     if($kind -eq 'Reminder' -and (Test-Path -LiteralPath $alertFile)){try{$since=(Get-Content -LiteralPath $alertFile -Raw | ConvertFrom-Json).since}catch{}}
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) -ErrorAction Stop | Out-Null
     $tmp=$alertFile+'.tmp'
     # UTF-8 without a byte order mark, which JSON readers refuse (Set-Content -Encoding UTF8 writes one in Windows PowerShell)
     [IO.File]::WriteAllText($tmp,([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $tmp -Destination $alertFile -Force
+    Move-Item -LiteralPath $tmp -Destination $alertFile -Force -ErrorAction Stop   # a marker that was not written is no ALERT line either
     Log ("ALERT {0}: Linux runners are stopped for low capacity ({1})" -f $kind,$detail)
     Show-Toast 'Clued CI runners are stopped' $detail
   }catch{Log ("Capacity alert failed: {0}" -f $_.Exception.Message)}
@@ -144,6 +144,8 @@ function Test-LinuxBusy {
   return $false
 }
 Log 'Clued P13 host watchdog started.'
+# the levels it works with, in the log: what a restart took over is readable without opening the script
+Log ("Thresholds: C: stops below {0} GB, resumes at {1} GB; memory stops below {2} GB, resumes at {3} GB" -f $suspendDisk,$resumeDisk,$suspendMem,$resumeMem)
 try{while($true){
   $os=Get-CimInstance Win32_OperatingSystem; $freeMem=[math]::Round($os.FreePhysicalMemory*1KB/1GB,2); $freeDisk=[math]::Round((Get-PSDrive C).Free/1GB,1)
   $belowSuspend=($freeMem -lt $suspendMem -or $freeDisk -lt $suspendDisk)
