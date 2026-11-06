@@ -12,7 +12,7 @@
 // Merge train (DESIGN §41.2): with the train on, a green also needs the single-green proof of stage 10 (trainHeadDecision).
 // Pure.
 import { isTrainFrontJobV2, sameClaimGeneration, validateClaimGeneration } from '../job-v2.mjs';
-import { validateStrictProof } from './train-strict.mjs';
+import { validateStrictProof, validateStrictFrontProof, recordFollows } from './train-strict.mjs';
 
 export const TRAIN_MODES = Object.freeze(['off', 'shadow', 'on']);
 export const TRAIN_MODE_DEFAULT = 'off';
@@ -179,6 +179,41 @@ export function trainHeadDecision({ job, claimId, holders, proof, storeRefused =
   if (!plain(pulls) || pulls.complete !== true || !Array.isArray(pulls.pulls)
     || pulls.pulls.some(p => !plain(p) || !Number.isSafeInteger(p.number) || !Number.isFinite(at(p.updatedAt)) || (p.number !== job.pr && at(p.updatedAt) > cursor))) return no;
   return null;
+}
+
+// This proves the present subject only. It does not assert that any other head
+// lost its old checks, and cannot replace the full/frozen rewrite procedure.
+export function strictFrontHeadDecision({ job, holders, frontProof, proof, fullState, front, ledger, now,
+  liveRules, liveMainSha, observedClaim, batchClaim, testTree, nativeMode, sourceHealthy = false, storeHealthy = false }) {
+  const no = TRAIN_SINGLE_GREEN_NOT_PROVEN;
+  try {
+    if (!plain(job) || !isTrainFrontJobV2(job) || !Number.isSafeInteger(now) || !['normal', 'efficiency'].includes(nativeMode)
+      || liveRules?.strict !== true || liveRules.requiredPinned !== true || liveMainSha !== job.baseSha || !sourceHealthy || !storeHealthy) return no;
+    validateStrictFrontProof(frontProof);
+    validateClaimGeneration(observedClaim); validateClaimGeneration(batchClaim);
+    if (!sameClaimGeneration(observedClaim, batchClaim) || frontProof.front.claimId !== observedClaim.claimId
+      || frontProof.repo !== job.repo || frontProof.sourceManifestSha256 !== job.sourceManifestSha256 || frontProof.mainSha !== job.baseSha) return no;
+    if (!plain(holders) || holders.onDuty !== true || !Array.isArray(holders.holders) || holders.holders.length !== 1) return no;
+    const h = holders.holders[0], since = Date.parse(h?.takenAt ?? ''), written = Date.parse(frontProof.writtenAt);
+    if (h?.claimId !== observedClaim.claimId || h.pr !== job.pr || h.boundPr !== `${job.repo}#${job.pr}`
+      || !Number.isFinite(since) || Date.parse(frontProof.front.since) !== since || frontProof.front.pr !== job.pr
+      || frontProof.front.headSha !== job.headSha || written < since || written > now || now - written >= frontProof.sweepFreshMs) return no;
+    // A durable anchor is required after Stage10. An empty store with a proof
+    // is state loss, not a fresh cold bootstrap. A stale/different tip must be
+    // reconciled by Stage10 before another current-front certificate is used.
+    if (!plain(fullState) || fullState.mode !== 'on' || fullState.mainSha !== job.baseSha
+      || fullState.allPending === 'TRAIN_MAIN_REWRITTEN' || fullState.full?.reason === 'TRAIN_MAIN_REWRITTEN'
+      || fullState.full?.onSince !== frontProof.onSince) return no;
+    // clean=false with zero unconfirmed is ordinary incomplete history. It is
+    // not changed to true and is not confused with a pending negative effect.
+    if (proof !== null && (!plain(proof) || proof.unconfirmed !== 0)) return no;
+    if (!recordFollows(proof, fullState) || !recordFollows(frontProof, fullState) || !recordFollows(frontProof, proof)) return no;
+    if (!plain(front) || front.pr !== job.pr || front.headSha !== job.headSha || front.baseSha !== job.baseSha
+      || front.testSha !== job.testSha || !SHA.test(testTree ?? '') || front.testTree !== testTree
+      || front.claimId !== observedClaim.claimId || Date.parse(front.since) !== since) return no;
+    if (!plain(ledger) || !Array.isArray(ledger.entries) || !Array.isArray(ledger.refused) || ledger.refused.length !== 0) return no;
+    return null;
+  } catch { return no; }
 }
 
 // Rule 7 of §5.3, after the write: the PR was merged (auto-merge merges within seconds of the green), and the merge

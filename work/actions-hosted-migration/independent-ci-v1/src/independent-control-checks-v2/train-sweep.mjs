@@ -267,8 +267,26 @@ export const revocationBody = (t, mainSha) => ({ status: 'completed', conclusion
 // -> { revoked: [{checkRunId, headSha, reason, firstAt, secondAt}], unconfirmed: [{checkRunId, code}], sideEffects, ledgerFailures }.
 // writeUntil / readUntil (review R2 minor 5): no revocation is started after writeUntil and no second read-back is made after
 // readUntil; what is left is unconfirmed (TRAIN_REVOKE_DEADLINE), so the stage ends inside its cap with its facts.
-export async function revokeGreens({ github, targets, appId, mainSha, ledger, own, clock = Date.now, sleep, delayMs = REVOKE_READBACK_DELAY_MS, writeUntil = Infinity, readUntil = Infinity }) {
+export async function revokeGreens({ github, targets, appId, mainSha, ledger, own, clock = Date.now, sleep, delayMs = REVOKE_READBACK_DELAY_MS, writeUntil = Infinity, readUntil = Infinity,
+  pendingStore = null, pendingJob = null }) {
   const pending = [], unconfirmed = [];
+  let durable = [], legacyUnconfirmed = 0, legacySince = null;
+  if (pendingStore && targets.length > 0) {
+    try {
+      const previous = await pendingStore.readPendingRevocations();
+      if (previous && previous.repo !== pendingJob.repo) fail('TRAIN_PENDING_REVOCATIONS_UNREADABLE');
+      if (previous && Date.parse(previous.writtenAt) > clock()) fail('TRAIN_PENDING_REVOCATIONS_UNREADABLE');
+      if (previous && Date.parse(previous.writtenAt) === clock()) await sleep(1);
+      legacyUnconfirmed = previous?.legacyUnconfirmed ?? 0; legacySince = previous?.legacySince ?? null;
+      durable = [...new Map([...(previous?.targets ?? []), ...targets].map(t => [t.checkRunId, t])).values()];
+      if (durable.length > MAX_REVOKES_PER_RUN) fail('TRAIN_PENDING_REVOCATIONS_CAP');
+      await pendingStore.writePendingRevocations({ repo: pendingJob.repo, writtenAt: new Date(clock()).toISOString(), runId: pendingJob.runId,
+        targets: durable, legacyUnconfirmed, legacySince });
+    } catch {
+      return { revoked: [], unconfirmed: targets.map(t => ({ checkRunId: t.checkRunId, code: 'TRAIN_PENDING_REVOCATIONS_UNWRITTEN' })),
+        sideEffects: 0, ledgerFailures: 0, pendingStateFailed: true };
+    }
+  }
   let sideEffects = 0;
   const shows = (c, t, body) => c?.id === t.checkRunId && c.appId === appId && c.name === SLOT_CHECK && c.headSha === t.headSha && c.status === 'completed' && c.conclusion === 'failure'
     && (body === null || (c.title === body.output.title && c.summary === body.output.summary));
@@ -311,5 +329,14 @@ export async function revokeGreens({ github, targets, appId, mainSha, ledger, ow
         detail: `revoked2:${r.firstAt},${r.secondAt};${t.reason}` }); } catch { ledgerFailures++; }
     }
   }
-  return { revoked, unconfirmed: unconfirmed.sort((a, b) => a.checkRunId - b.checkRunId), sideEffects, ledgerFailures };
+  let pendingStateFailed = false;
+  if (pendingStore && targets.length > 0) {
+    const confirmed = ledgerFailures === 0 ? new Set(revoked.map(t => t.checkRunId)) : new Set();
+    const remaining = durable.filter(t => !confirmed.has(t.checkRunId));
+    if (remaining.length !== durable.length) try {
+      await pendingStore.writePendingRevocations({ repo: pendingJob.repo, writtenAt: new Date(clock()).toISOString(), runId: pendingJob.runId,
+        targets: remaining, legacyUnconfirmed, legacySince });
+    } catch { pendingStateFailed = true; }
+  }
+  return { revoked, unconfirmed: unconfirmed.sort((a, b) => a.checkRunId - b.checkRunId), sideEffects, ledgerFailures, pendingStateFailed };
 }

@@ -6,6 +6,8 @@ import { createSweeper, incrementalSweep, fullSweepSegment, MAX_REVOKES_PER_RUN,
 export const STRICT_PROOF_CONTRACT = 'clued.independent-ci.train-strict-coverage-proof/1';
 export const STRICT_ROUND_CONTRACT = 'clued.independent-ci.train-strict-coverage-round/1';
 export const STRICT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-readiness/1';
+export const STRICT_FRONT_PROOF_CONTRACT = 'clued.independent-ci.train-strict-front-proof/1';
+export const STRICT_FRONT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-front-readiness/1';
 export const STRICT_SCOPE_VERSION = 'gen15-all-current/1';
 export const STRICT_AUTHORITY_BINDING = 'stage8-native-current';
 const SHA = /^[a-f0-9]{40}$/, HEX = /^[a-f0-9]{64}$/, UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -27,6 +29,11 @@ export function strictIdentity({ job, holder, headSha, mainSha, scope }) {
     mainSha, front: strictFront(holder, headSha), scope, scopeVersion: STRICT_SCOPE_VERSION, authorityBinding: STRICT_AUTHORITY_BINDING };
 }
 export const sameStrictIdentity = (a, b) => IDENTITY.every(k => digest(a?.[k] ?? null) === digest(b?.[k] ?? null));
+// Equal millisecond stamps do not order two runs; only the same run's ordered
+// full -> v1 -> limited append chain supplies that evidence.
+export const recordFollows = (later, earlier) => earlier == null || later != null && iso(later.writtenAt) && iso(earlier.writtenAt)
+  && (Date.parse(later.writtenAt) > Date.parse(earlier.writtenAt)
+    || later.writtenAt === earlier.writtenAt && later.runId === earlier.runId);
 const validIdentity = p => REPO.test(p.repo ?? '') && p.mode === 'on' && HEX.test(p.sourceManifestSha256 ?? '') && HEX.test(p.settingsDigest ?? '')
   && iso(p.onSince) && SHA.test(p.mainSha ?? '') && validStrictFront(p.front) && ['all', 'current'].includes(p.scope)
   && p.scopeVersion === STRICT_SCOPE_VERSION && p.authorityBinding === STRICT_AUTHORITY_BINDING;
@@ -65,6 +72,45 @@ export function validStrictReadiness(r) {
     : r.proofRef === null && r.writtenAt === null && r.expiresAt === null;
 }
 
+// A current-front observation deliberately makes no assertion about historical
+// heads. Stage 8 independently closes the live Native generation and S/tree.
+export const STRICT_FRONT_PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', ...IDENTITY,
+  'historyCoverage', 'knownUnconfirmed', 'sweepFreshMs', 'slotHardCapMinutes']);
+export function validateStrictFrontProof(p) {
+  if (!exact(p, STRICT_FRONT_PROOF_FIELDS) || p.contract !== STRICT_FRONT_PROOF_CONTRACT || !validIdentity(p)
+    || !iso(p.writtenAt) || !RUN.test(p.runId ?? '') || p.historyCoverage !== false || p.knownUnconfirmed !== 0
+    || Date.parse(p.onSince) > Date.parse(p.writtenAt) || Date.parse(p.front.since) > Date.parse(p.writtenAt)
+    || !Number.isSafeInteger(p.sweepFreshMs) || p.sweepFreshMs < 60_000 || p.sweepFreshMs > 3_600_000
+    || !Number.isSafeInteger(p.slotHardCapMinutes) || p.slotHardCapMinutes < 60 || p.slotHardCapMinutes > 180) fail();
+  return p;
+}
+export function strictFrontReadiness(options = {}) {
+  return { ...strictReadiness(options), contract: STRICT_FRONT_READINESS_CONTRACT, historyCoverage: false };
+}
+export function validStrictFrontReadiness(value) {
+  if (!plain(value) || value.contract !== STRICT_FRONT_READINESS_CONTRACT || value.historyCoverage !== false) return false;
+  const { historyCoverage, ...r } = value;
+  if (r.state === 'ready' && !/^strict-front-proof-\d{13}-[a-f0-9]{16}-[a-f0-9]{12}-[a-f0-9]{8}\.json$/.test(r.proofRef ?? '')) return false;
+  return validStrictReadiness({ ...r, contract: STRICT_READINESS_CONTRACT,
+    proofRef: typeof r.proofRef === 'string' ? r.proofRef.replace(/^strict-front-proof-/, 'strict-proof-') : r.proofRef });
+}
+export function strictFrontSourceHealthy(status, sourceManifestSha256, now) {
+  if (status?.deployed !== true || status.onDuty !== true || !Array.isArray(status.nodes)
+    || !Number.isSafeInteger(status.dropped) || status.dropped !== 0) return false;
+  let current = false;
+  for (const item of status.nodes) {
+    const node = item?.node;
+    if (node == null) continue; // A connection never heard from is not another running Source.
+    const at = Date.parse(node.lastHeartbeatAt ?? '');
+    if (!Number.isFinite(at) || at > now || !HEX.test(node.sourceManifestSha256 ?? '')) return false;
+    if (now - at <= 24 * 3_600_000) {
+      if (node.sourceManifestSha256 !== sourceManifestSha256) return false;
+      current = true;
+    }
+  }
+  return current;
+}
+
 export function validTrainProviderBudget(b, now) {
   const resource = r => r === null || exact(r, ['limit', 'remaining', 'resetAt']) && count(r.limit) && r.limit > 0 && count(r.remaining)
     && r.remaining <= r.limit && iso(r.resetAt);
@@ -78,10 +124,10 @@ export function validTrainProviderBudget(b, now) {
 }
 export function validSweepProgress(p) {
   return exact(p, ['contract', 'roundId', 'scope', 'required', 'advanced', 'token', 'at']) && p.contract === 'clued.independent-ci.train-sweep-progress/1'
-    && HEX.test(p.roundId ?? '') && p.scope === 'all' && p.required === true && typeof p.advanced === 'boolean' && HEX.test(p.token ?? '') && iso(p.at);
+    && HEX.test(p.roundId ?? '') && ['all', 'current'].includes(p.scope) && p.required === true && typeof p.advanced === 'boolean' && HEX.test(p.token ?? '') && iso(p.at);
 }
-export function sweepProgress({ identity, startedAt, nextPage, nextIndex, revoked, advanced, at }) {
-  return { contract: 'clued.independent-ci.train-sweep-progress/1', roundId: digest({ identity, startedAt }), scope: 'all', required: true, advanced,
+export function sweepProgress({ identity, scope = identity.scope ?? 'all', startedAt, nextPage, nextIndex, revoked, advanced, at }) {
+  return { contract: 'clued.independent-ci.train-sweep-progress/1', roundId: digest({ identity, startedAt }), scope, required: true, advanced,
     token: digest({ nextPage, nextIndex, revoked }), at };
 }
 
@@ -107,11 +153,14 @@ export async function runStrictLane({ identity, job, sweepStore, github, native,
   if (targets.some(t => !t.own)) {
     try { onDuty = (await native.holders())?.onDuty === true; } catch { onDuty = false; }
   }
-  const selected = onDuty ? targets.slice(0, MAX_REVOKES_PER_RUN) : targets.filter(t => t.own).slice(0, MAX_REVOKES_PER_RUN);
+  // Legacy pending may predate the negative-intent journal. If duty disappears,
+  // keep those foreign IDs rather than spending their bounded slots on new work.
+  const foreignLegacyHeld = !onDuty && (previous?.pending ?? []).some(t => !t.own);
+  const selected = foreignLegacyHeld ? [] : onDuty ? targets.slice(0, MAX_REVOKES_PER_RUN) : targets.filter(t => t.own).slice(0, MAX_REVOKES_PER_RUN);
   const r = await revokeGreens({ github, targets: selected, appId, mainSha: identity.mainSha, ledger, own, clock, sleep,
-    writeUntil: until.write, readUntil: until.read });
+    writeUntil: until.write, readUntil: until.read, pendingStore: sweepStore, pendingJob: job });
   fx.n += r.sideEffects;
-  const confirmed = onDuty && targets.length === selected.length && r.unconfirmed.length === 0 && r.ledgerFailures === 0;
+  const confirmed = onDuty && targets.length === selected.length && r.unconfirmed.length === 0 && r.ledgerFailures === 0 && !r.pendingStateFailed;
   const coverage = { ...round.coverage };
   for (const k of ['prs', 'commits', 'heads', 'eligible', 'deferred']) coverage[k] += sweeper.stats[k];
   coverage.revoked += r.revoked.length;
@@ -120,7 +169,9 @@ export async function runStrictLane({ identity, job, sweepStore, github, native,
     if (segment?.ok) round = { ...round, nextPage: segment.nextPage, nextIndex: segment.nextIndex,
       state: segment.reachedEnd && incremental.complete ? 'complete' : 'running' };
   }
-  round = { ...round, coverage, pending: selected.filter(t => r.ledgerFailures > 0 || r.unconfirmed.some(u => u.checkRunId === t.checkRunId)) };
+  const notSelected = (previous?.pending ?? []).filter(t => !selected.some(s => s.checkRunId === t.checkRunId));
+  round = { ...round, coverage, pending: [...notSelected,
+    ...selected.filter(t => r.pendingStateFailed || r.ledgerFailures > 0 || r.unconfirmed.some(u => u.checkRunId === t.checkRunId))] };
   try { await sweepStore.writeStrictRound({ ...round, contract: STRICT_ROUND_CONTRACT, writtenAt: new Date(clock()).toISOString(), runId: job.runId }); }
   catch { return { ...no('TRAIN_STRICT_STATE_UNWRITTEN'), attempted: selected.length, revoked: r.revoked, unconfirmed: r.unconfirmed.length }; }
   const ready = round.state === 'complete' && incremental.complete && confirmed && segment?.ok !== false;

@@ -49,8 +49,10 @@ const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const exact = (v, keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const isoExact = v => isoOrNull(v) !== null && new Date(Date.parse(v)).toISOString() === v;
 export const TRAIN_STRICT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-readiness/1';
+export const TRAIN_STRICT_FRONT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-front-readiness/1';
 const HEX64 = /^[0-9a-f]{64}$/;
 const STRICT_PROOF = /^strict-proof-\d{13}-[0-9a-f]{16}-[0-9a-f]{12}-[0-9a-f]{8}\.json$/;
+const STRICT_FRONT_PROOF = /^strict-front-proof-\d{13}-[0-9a-f]{16}-[0-9a-f]{12}-[0-9a-f]{8}\.json$/;
 
 // This is a scheduling observation, never publication authority. Stage 8 revalidates live strict and the Native writer.
 export function strictCoverageOf(v) {
@@ -75,14 +77,26 @@ export function strictCoverageOf(v) {
     backgroundAllPending: v.backgroundAllPending, reason: v.reason });
 }
 
-export function strictCoverageMatches(v, { now, repo, sourceManifestSha256, settingsDigest, onSince, front, sweepFreshMs }) {
-  const r = strictCoverageOf(v);
+// The front-only observation shares the identity/clock shape, but never claims historical coverage.
+export function strictFrontReadinessOf(v) {
+  if (!plain(v) || v.contract !== TRAIN_STRICT_FRONT_READINESS_CONTRACT || v.historyCoverage !== false
+    || (v.state === 'ready' && !STRICT_FRONT_PROOF.test(v.proofRef ?? ''))) return null;
+  const { historyCoverage, ...base } = v;
+  const common = strictCoverageOf({ ...base, contract: TRAIN_STRICT_READINESS_CONTRACT,
+    proofRef: typeof base.proofRef === 'string' ? base.proofRef.replace(/^strict-front-proof-/, 'strict-proof-') : base.proofRef });
+  return common ? Object.freeze({ ...common, contract: TRAIN_STRICT_FRONT_READINESS_CONTRACT, proofRef: v.proofRef, historyCoverage: false }) : null;
+}
+
+function strictObservationMatches(r, { now, repo, sourceManifestSha256, settingsDigest, onSince, front, sweepFreshMs }) {
   if (!r || r.state !== 'ready' || !plain(front) || !Number.isFinite(now)) return false;
   const written = Date.parse(r.writtenAt), expires = Date.parse(r.expiresAt);
   return written >= Date.parse(r.onSince) && now >= written && now < expires && expires - written <= sweepFreshMs && r.repo === repo && r.sourceManifestSha256 === sourceManifestSha256
     && r.settingsDigest === settingsDigest && r.onSince === onSince && r.mainSha === front.baseSha && r.front.pr === front.pr
     && r.front.headSha === front.headSha && r.front.claimId === front.claimId && r.front.since === front.since;
 }
+
+export const strictCoverageMatches = (v, context) => strictObservationMatches(strictCoverageOf(v), context);
+export const strictFrontReadinessMatches = (v, context) => strictObservationMatches(strictFrontReadinessOf(v), context);
 
 // The mode of the next stage-10 run, or null (none), with why: train.enabled 'off' runs nothing; 'shadow' runs shadow on
 // every node; 'on' runs only on an ACTIVE node (STANDBY and UNCERTAIN: NOT_ON_DUTY), 'on' normally, 'revoke-only' under
@@ -103,7 +117,7 @@ export function trainDue({ train, now, runs = [], busy, urgent = false }) {
   return last === null || urgent === true || now - last >= train.maintenanceEveryMs;
 }
 
-// A finite cadence exception for progress in the already-required all round, not a new sweep or an urgent flag.
+// A finite cadence exception for an already-required all/current round, not a new sweep or an urgent flag.
 // Reserve the number of normal cadence calls that fit in one day; every extra also pays the unchanged total cap.
 export function trainIdleExtraDue({ train, now, runs = [], extraRuns = [], busy = false, urgent = false, frontWork = false,
   progress = null, providerBudget = null, consumed = null }) {
@@ -112,7 +126,7 @@ export function trainIdleExtraDue({ train, now, runs = [], extraRuns = [], busy 
   const recent = runs.filter(at => at > now - DAY), extra = extraRuns.filter(at => at > now - DAY);
   const allowance = Math.max(0, train.maintenanceMaxPerDay - Math.ceil(DAY / train.maintenanceEveryMs));
   if (recent.length >= train.maintenanceMaxPerDay || extra.length >= allowance || recent.some(at => at > now)) return false;
-  if (!progress || progress.contract !== 'clued.independent-ci.train-sweep-progress/1' || progress.scope !== 'all' || progress.required !== true
+  if (!progress || progress.contract !== 'clued.independent-ci.train-sweep-progress/1' || !FULL_SCOPES.includes(progress.scope) || progress.required !== true
     || progress.advanced !== true || !HEX64.test(progress.roundId ?? '') || !HEX64.test(progress.token ?? '') || !isoOrNull(progress.at)
     || Date.parse(progress.at) > now || now - Date.parse(progress.at) >= train.maintenanceEveryMs
     || consumed === `${progress.roundId}:${progress.token}`) return false;
@@ -121,8 +135,8 @@ export function trainIdleExtraDue({ train, now, runs = [], extraRuns = [], busy 
 
 function progressOf(v) {
   return exact(v, ['contract', 'roundId', 'scope', 'required', 'advanced', 'token', 'at']) && v.contract === 'clued.independent-ci.train-sweep-progress/1' && HEX64.test(v.roundId ?? '') && HEX64.test(v.token ?? '')
-    && v.scope === 'all' && v.required === true && typeof v.advanced === 'boolean' && isoExact(v.at)
-    ? Object.freeze({ contract: v.contract, roundId: v.roundId, scope: 'all', required: true, advanced: v.advanced, token: v.token, at: v.at }) : null;
+    && FULL_SCOPES.includes(v.scope) && v.required === true && typeof v.advanced === 'boolean' && isoExact(v.at)
+    ? Object.freeze({ contract: v.contract, roundId: v.roundId, scope: v.scope, required: true, advanced: v.advanced, token: v.token, at: v.at }) : null;
 }
 
 export function providerBudgetOf(v, now = null) {
@@ -182,12 +196,16 @@ export function sweepOf(s) {
   const strictCoverage = s.strictCoverage === undefined ? null : strictCoverageOf(s.strictCoverage);
   if (s.strictCoverage !== undefined && strictCoverage === null) return null;
   if (strictCoverage?.state === 'ready' && (s.complete !== true || s.proofWritten !== true || s.unconfirmed !== 0)) return null;
+  const strictFrontReadiness = s.strictFrontReadiness === undefined ? null : strictFrontReadinessOf(s.strictFrontReadiness);
+  if (s.strictFrontReadiness !== undefined && strictFrontReadiness === null) return null;
+  if (strictFrontReadiness?.state === 'ready' && (s.unconfirmed !== 0 || s.fullSweep.allPending === 'TRAIN_MAIN_REWRITTEN')) return null;
   return Object.freeze({ kind: s.kind, complete: s.complete, revoked: count(s.revoked) ?? 0, unconfirmed: count(s.unconfirmed) ?? 0, wouldRevokeCount: count(s.wouldRevokeCount) ?? 0,
     fullSweep: Object.freeze({ state: s.fullSweep.state, startedAt: isoOrNull(s.fullSweep.startedAt), completedAt: isoOrNull(s.fullSweep.completedAt), sinceOn: s.fullSweep.sinceOn === true,
       // generation 15 (DESIGN 60): 'all' (every pull and commit) or 'current' (open pulls whole, closed unmerged heads), why, and why rounds
       // enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded)
       scope: FULL_SCOPES.includes(s.fullSweep.scope) ? s.fullSweep.scope : null, scopeReason: codeOrNull(s.fullSweep.scopeReason), allPending: codeOrNull(s.fullSweep.allPending) }),
     proofWritten: s.proofWritten === true, ...(strictCoverage ? { strictCoverage } : {}),
+    ...(strictFrontReadiness ? { strictFrontReadiness } : {}),
     ...(s.progress !== undefined ? { progress: progressOf(s.progress) } : {}),
     ...(s.providerBudget !== undefined ? { providerBudget: providerBudgetOf(s.providerBudget) } : {}) });
 }
@@ -216,7 +234,7 @@ export function trainSummary(f) {
   const openFrontBatch = f.mode === 'on' && decision === 'OPEN_FRONT_BATCH' ? openFrontBatchOf(f.openFrontBatch) : null;
   if (f.mode === 'on' && decision === 'OPEN_FRONT_BATCH' && !openFrontBatch) return null;
   const sweep = sweepOf(f.sweep);
-  if (f.sweep?.strictCoverage !== undefined && !sweep) return null;
+  if ((f.sweep?.strictCoverage !== undefined || f.sweep?.strictFrontReadiness !== undefined) && !sweep) return null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch });
 }
 
@@ -251,8 +269,10 @@ export function trainPageLine(summary, pr) {
   if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
     : ON_TEXT[summary.decision] ?? null;
-  const background = summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
-    ? '车头严格屏障已核验，后台全量清扫仍未完成。' : '';
+  const background = summary.sweep?.strictFrontReadiness?.state === 'ready'
+    ? '车头采用严格检查路径，历史清扫仍单独进行。'
+    : summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
+      ? '车头严格屏障已核验，后台全量清扫仍未完成。' : '';
   return text ? `合并列车：你是车头。${text}。${background}` : null;
 }
 

@@ -32,7 +32,7 @@ import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, trainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
-import { runStrictLane, strictIdentity, strictReadiness, sweepProgress } from './train-strict.mjs';
+import { runStrictLane, strictIdentity, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
   publicationHeads, revokeGreens } from './train-sweep.mjs';
@@ -85,13 +85,14 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const until = { write: started + REVOKE_WRITE_BEFORE_MS, read: started + STAGE_WORK_BEFORE_MS };
   let budgetReadFailed = false;
   const duty = await native.holders();
+  let frontSourceHealthy = false;
   let nodes = null, nodesDropped = 0;
   const facts = o => ({ facts: trainFacts({ mode: job.mode, at, nodes, nodesDropped, actions, ...o }), sideEffects: fx.n });
 
   if (!duty.onDuty) {
     if (!acting) return facts({ onDuty: false, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null });
     // §41.6: this node's own greens need no role (a revocation only makes things stricter); nobody else's are touched.
-    const own = await revokeOwnOnly({ github, ledger, appId, clock, sleep, started, until, fx });
+    const own = await revokeOwnOnly({ github, ledger, appId, clock, sleep, started, until, fx, sweepStore, job });
     return facts({ onDuty: false, holders: [], mainSha: own.mainSha, rules: null, front: null, revoke: own.targets, ledger: own.summary, decision: 'NOT_ON_DUTY',
       sweep: sweepFacts({ kind: 'incremental', complete: false, revoked: own.revoked, unconfirmed: own.unconfirmed, would: own.targets.length, counter, started, clock }) });
   }
@@ -104,6 +105,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   if (job.mode === 'on') {
     let status = null;
     try { status = await native.nodesStatus(); } catch { status = null; }
+    frontSourceHealthy = strictFrontSourceHealthy(status, job.sourceManifestSha256, clock());
     const stop = decision => facts({ onDuty: true, holders: duty.holders, mainSha: null, rules: null, front: null, revoke: [], ledger: null, decision });
     if (!status || ![true, false, null].includes(status.onDuty)) return stop('TRAIN_SOURCE_UNREADABLE');
     if (status.onDuty === false) return stop('NOT_ON_DUTY');
@@ -163,6 +165,41 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // A record from before generation 15 reads as: no main tip recorded, nothing pending, a round of scope 'all' (it enumerated everything).
   const stored = state ?? { mode, incrementalCursor: null, full: freshFull(), inMain: [] };
   const before = { mainSha: null, allPending: null, ...stored, full: { scope: 'all', scopeReason: null, ...stored.full } };
+  let fastStoreHealthy = false, oldFastProof = null, pendingRevocations = [], pendingReadable = false, pendingRecord = null,
+    legacyStrictPending = [], legacyUnconfirmed = 0, legacySince = null;
+  if (acting && typeof sweepStore?.readPendingRevocations === 'function') {
+    try {
+      const pending = await sweepStore.readPendingRevocations();
+      pendingRecord = pending;
+      if (pending && pending.repo !== job.repo) throw Error('pending_repo_mismatch');
+      pendingRevocations = pending?.targets ?? []; pendingReadable = true;
+      legacyUnconfirmed = pending?.legacyUnconfirmed ?? 0; legacySince = pending?.legacySince ?? null;
+    } catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNREADABLE'; }
+  }
+  if (acting && typeof sweepStore?.readFullSweepStrict === 'function') {
+    try {
+      const anchor = await sweepStore.readFullSweepStrict(mode);
+      const legacy = await sweepStore.latestProofStrict(), round = await sweepStore.readStrictRound();
+      legacyStrictPending = round?.pending ?? [];
+      // IDs from another run do not identify which old effects contributed to
+      // this count. An unrelated B cannot discharge an unknown legacy A.
+      if (legacy && pendingRecord?.runId !== legacy.runId && legacy.unconfirmed > legacyUnconfirmed) {
+        legacyUnconfirmed = legacy.unconfirmed; legacySince ??= isoOf(clock());
+        if (!pendingReadable) throw Error('pending_unreadable');
+        await sweepStore.writePendingRevocations({ repo: job.repo, writtenAt: isoOf(clock()), runId: job.runId,
+          targets: pendingRevocations, legacyUnconfirmed, legacySince });
+      }
+      await sweepStore.latestStrictProof();
+      oldFastProof = await sweepStore.latestStrictFrontProof();
+      fastStoreHealthy = recordFollows(legacy, anchor) && pendingReadable && pendingRevocations.length === 0 && legacyUnconfirmed === 0
+        && (legacy === null || legacy.unconfirmed === 0) && !(round?.pending?.length)
+        && sweepStore.refused === 0;
+    } catch {
+      // Do not append a fresh empty/partial record over unreadable pending or
+      // rewrite state: that would turn the next invocation into a false cold start.
+      stateReason ??= 'TRAIN_SWEEP_STATE_UNREADABLE';
+    }
+  }
   const cursor = before.incrementalCursor;
   let full = { ...before.full };
   // Generation 15 (DESIGN 60, option c1): was main rewritten since this node last saw it (the main tip the last run of this mode
@@ -181,7 +218,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     } catch (e) { history = e?.code === 'github_http_404' ? 'rewritten' : 'unknown'; }
   }
   if (history === 'unknown') stateReason ??= 'TRAIN_MAIN_HISTORY_UNREADABLE';
-  const allPending = history === 'rewritten' ? 'TRAIN_MAIN_REWRITTEN' : before.allPending ?? (history === 'none' ? 'TRAIN_NO_MAIN_RECORD' : null);
+  const allPending = history === 'rewritten' ? 'TRAIN_MAIN_REWRITTEN' : before.allPending ?? (legacyUnconfirmed > 0 ? 'TRAIN_LEGACY_REVOKE_PENDING'
+    : history === 'none' ? 'TRAIN_NO_MAIN_RECORD' : null);
   const onSinceMs = job.onSince ? Date.parse(job.onSince) : null;
   // Only a full sweep of this node counts (via 'sweep'). §41.6's watermark take-over is not used (review R2 B1): the stream
   // (revocations_list) lists open publications only, so another node's published greens are invisible to an incremental
@@ -191,6 +229,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const start = () => ({ ...freshFull(), state: 'running', via: 'sweep', startedAt: at, onSince: job.onSince, mainSha,
     ...(allPending ? { scope: 'all', scopeReason: allPending } : { scope: 'current' }) });
   const abandon = reason => ({ ...full, state: 'abandoned', reason, completedAt: null });
+  if (legacyUnconfirmed > 0 && (full.scope !== 'all' || !full.startedAt || Date.parse(full.startedAt) < Date.parse(legacySince)))
+    full = abandon('TRAIN_LEGACY_REVOKE_PENDING');
   // A rewrite voids the round in progress and the one completed (DESIGN 60.2): on mode then starts a round of scope 'all' at once and
   // is TRAIN_TAKEOVER_SWEEP_PENDING (no green) until it completes; revoke-only leaves that to the next on run; shadow restarts too.
   if (history === 'rewritten' && ['running', 'complete'].includes(full.state)) full = abandon('TRAIN_MAIN_REWRITTEN');
@@ -205,23 +245,41 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       || (full.state === 'complete' && started - Date.parse(full.completedAt) > job.fullSweepMaxMs)) full = start();
   }
   const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
+  const frontFastEligible = job.mode === 'on' && !sinceOn(full) && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy
+    && front?.headContainsMain === true && front?.state === 'open' && front.draft === false && front.mergeable === true
+    && front.testMerge?.parentsOk === true && holder?.takenAt && !stateReason && !ledgerReason
+    && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN';
+  const frontIdentity = frontFastEligible ? strictIdentity({ job, holder, headSha: front.headSha, mainSha, scope: full.scope }) : null;
+  const priorDutyFast = oldFastProof && oldFastProof.sourceManifestSha256 === job.sourceManifestSha256
+    && oldFastProof.onSince === job.onSince && oldFastProof.settingsDigest === frontIdentity?.settingsDigest;
+  // The immediate bootstrap is granted once per duty/settings, never renewed by
+  // certificate expiry, front changes or a monotonically advancing main.
+  // The durable round anchor also consumes that one scheduling exemption:
+  // failure to append the independent certificate must not starve full work.
+  const dutyAlreadyAnchored = before.mainSha !== null && before.full.onSince === job.onSince;
+  const frontFastOnly = frontFastEligible && !priorDutyFast && !dutyAlreadyAnchored;
   let stream = null;
-  try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
-  const strictEnabled = job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
+  if (!frontFastOnly) try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
+  const strictOwnsPending = pendingRevocations.every(t => legacyStrictPending.some(p => p.checkRunId === t.checkRunId && p.headSha === t.headSha));
+  const strictEnabled = legacyUnconfirmed === 0 && strictOwnsPending && !frontFastEligible && job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && !stateReason && !ledgerReason
     && typeof sweepStore?.readStrictRound === 'function' && typeof sweepStore?.writeStrictRound === 'function' && typeof sweepStore?.appendStrictProof === 'function';
   const strict = strictEnabled ? await runStrictLane({ identity: strictIdentity({ job, holder, headSha: frontHead.headSha, mainSha,
     scope: allPending ? 'all' : 'current' }), job, sweepStore, github, native, entries, stream, own, appId, clock, sleep, started, until, ledger,
     revokeHead: !!job.revokeHeadRequestId, fx }) : null;
+  if (strict) try { pendingRevocations = (await sweepStore.readPendingRevocations())?.targets ?? []; }
+  catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNREADABLE'; }
   // A running full sweep gets its own share of the time: the incremental part never starves it (review R2 M2).
-  const wantSegment = full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
-  let incremental = await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
-    until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2 : started + (wantSegment ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
+  const wantSegment = !frontFastOnly && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
+  let incremental = frontFastOnly ? { complete: false, reason: 'TRAIN_HISTORY_DEFERRED', targets: [], progress: null, newest: null }
+    : await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
+      until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2 : started + (wantSegment ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
   if (incremental.complete && (stateReason || (acting && ledgerReason))) incremental = { ...incremental, complete: false, reason: stateReason ?? ledgerReason };
   const segment = wantSegment && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope }) : null;
   const byId = new Map();
   for (const t of [...incremental.targets, ...(segment?.targets ?? [])]) byId.set(t.checkRunId, t);
-  let targets = [...byId.values()].sort((a, b) => a.checkRunId - b.checkRunId);
+  let targets = [...pendingRevocations, ...[...byId.values()].sort((a, b) => a.checkRunId - b.checkRunId)
+    .filter(t => !pendingRevocations.some(p => p.checkRunId === t.checkRunId))];
 
   let revoked = [], unconfirmed = [], leftover = 0, othersRefused = false;
   if (acting && targets.length) {
@@ -233,10 +291,16 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     }
     const batch = targets.slice(0, Math.max(0, MAX_REVOKES_PER_RUN - (strict?.attempted ?? 0)));
     leftover = targets.length - batch.length;
-    const r = await revokeGreens({ github, targets: batch, appId, mainSha, ledger, own, clock, sleep, writeUntil: until.write, readUntil: until.read });
+    const r = !pendingReadable ? { revoked: [], unconfirmed: batch.map(t => ({ checkRunId: t.checkRunId,
+      code: 'TRAIN_PENDING_REVOCATIONS_UNREADABLE' })), sideEffects: 0, pendingStateFailed: true }
+      : await revokeGreens({ github, targets: batch, appId, mainSha, ledger, own, clock, sleep, writeUntil: until.write, readUntil: until.read,
+        pendingStore: sweepStore, pendingJob: job });
     revoked = r.revoked; unconfirmed = r.unconfirmed; fx.n += r.sideEffects;
+    if (r.pendingStateFailed) stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNWRITTEN';
+    try { pendingRevocations = (await sweepStore.readPendingRevocations())?.targets ?? []; }
+    catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNREADABLE'; }
   }
-  const confirmed = unconfirmed.length === 0 && leftover === 0 && !othersRefused && (strict?.unconfirmed ?? 0) === 0;
+  const confirmed = unconfirmed.length === 0 && pendingRevocations.length === 0 && leftover === 0 && !othersRefused && (strict?.unconfirmed ?? 0) === 0;
   const incrementalOk = incremental.complete && (!acting || confirmed);
   const segmentOk = !segment || segment.ok;
   const sweepComplete = incremental.complete && segmentOk && leftover === 0;
@@ -255,6 +319,16 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       if (segment.reachedEnd && incrementalOk) { full = { ...full, state: 'complete', completedAt: isoOf(clock()) }; completedNow = true; }
     } else full = counted;
   }
+  if (legacyUnconfirmed > 0 && completedNow && full.scope === 'all' && confirmed && !stateReason) {
+    try {
+      const last = await sweepStore.readPendingRevocations();
+      if (last && Date.parse(last.writtenAt) > clock()) throw Error('future_pending');
+      if (last && Date.parse(last.writtenAt) === clock()) await sleep(1);
+      await sweepStore.writePendingRevocations({ repo: job.repo, writtenAt: isoOf(clock()), runId: job.runId,
+        targets: pendingRevocations, legacyUnconfirmed: 0, legacySince: null });
+      legacyUnconfirmed = 0; legacySince = null;
+    } catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNWRITTEN'; }
+  }
   // The cursor: the newest pull seen when the pass completed; otherwise as far as every pull was judged (progress), so a
   // backlog advances run by run. Acting, only when this run's revocations are all confirmed.
   const advance = !acting || confirmed;
@@ -263,18 +337,20 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const after = { mode, incrementalCursor: !advance ? before.incrementalCursor : incrementalOk ? (incremental.newest ?? cursor)
     : (incremental.progress ?? before.incrementalCursor), full, inMain: sweeper.inMain(), mainSha, allPending: completedNow && full.scope === 'all' ? null : allPending };
   let fullStateWritten = false;
-  if (sweepStore && !stateReason && JSON.stringify(after) !== JSON.stringify({ mode, incrementalCursor: before.incrementalCursor, full: before.full, inMain: before.inMain,
-    mainSha: before.mainSha, allPending: before.allPending })) {
+  const fullStateNeedsWrite = JSON.stringify(after) !== JSON.stringify({ mode, incrementalCursor: before.incrementalCursor, full: before.full, inMain: before.inMain,
+    mainSha: before.mainSha, allPending: before.allPending });
+  if (sweepStore && !stateReason && fullStateNeedsWrite) {
     try { await sweepStore.writeFullSweep({ writtenAt: isoOf(clock()), runId: job.runId, ...after }); fullStateWritten = true; } catch { /* the next run starts from the older cursor */ }
   }
   const fullSweepSinceOn = acting && sinceOn(full);
   // The independent lane proves only eligible non-front greens; background deferred work and its real full state stay intact.
   const strictClean = strict?.ready === true && unconfirmed.length === 0 && !othersRefused && (strict?.unconfirmed ?? 0) === 0;
   let strictReady = false, strictSummary = strictReadiness({ backgroundAllPending: after.allPending });
+  let strictFrontReady = false, frontSummary = strictFrontReadiness({ backgroundAllPending: after.allPending });
 
   // ---- the proof (on, revoke-only): stage 8's single-green evidence for this front, clean or not ----
   let proofWritten = false;
-  if (acting && sweepStore) {
+  if (acting && sweepStore && !stateReason) {
     const since = holder ? normal(holder.since ?? holder.takenAt) : null;
     const bound = frontHead && holder.pr && (since || job.mode === 'revoke-only');
     try {
@@ -298,7 +374,18 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       } catch { /* missing durable limited proof never opens a batch */ }
     }
   }
-  const takeoverPending = job.mode === 'on' && !fullSweepSinceOn && !strictReady;
+  if (frontFastEligible && pendingRevocations.length === 0 && !stateReason && (fullStateWritten || (!fullStateNeedsWrite && before.mainSha === mainSha))
+    && unconfirmed.length === 0 && leftover === 0 && !othersRefused && proofWritten) {
+    const writtenAt = isoOf(clock());
+    try {
+      const proofRef = await sweepStore.appendStrictFrontProof({ ...frontIdentity, writtenAt, runId: job.runId,
+        historyCoverage: false, knownUnconfirmed: 0, sweepFreshMs: job.sweepFreshMs, slotHardCapMinutes: job.slotHardCapMinutes });
+      frontSummary = strictFrontReadiness({ identity: frontIdentity, state: 'ready', proofRef, writtenAt,
+        sweepFreshMs: job.sweepFreshMs, backgroundAllPending: after.allPending });
+      strictFrontReady = true;
+    } catch { /* The independently durable front proof is mandatory. */ }
+  }
+  const takeoverPending = job.mode === 'on' && !fullSweepSinceOn && !strictReady && !strictFrontReady;
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [];
@@ -350,7 +437,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (requestPause) decision = requestPause;
   else if (lostDuty) decision = 'NOT_ON_DUTY';
   else if (unconfirmed.length || (strict?.unconfirmed ?? 0)) decision = 'TRAIN_REVOKE_UNCONFIRMED';
-  else if ((!sweepComplete && !strictReady) || !proofWritten) decision = 'TRAIN_SWEEP_INCOMPLETE';
+  else if ((!sweepComplete && !strictReady && !strictFrontReady) || !proofWritten) decision = 'TRAIN_SWEEP_INCOMPLETE';
   else if (othersRefused) decision = 'NOT_ON_DUTY';
   else if (job.mode === 'revoke-only') decision = 'REVOKE_ONLY_DONE';
   else if (takeoverPending) decision = 'TRAIN_TAKEOVER_SWEEP_PENDING';
@@ -367,13 +454,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     catch { /* cleanup is best effort; the ledger stays as it is */ }
   }
   let progress = null;
-  if (strict?.round?.scope === 'all' && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
+  if (strict?.round && ['all', 'current'].includes(strict.round.scope) && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
     nextPage: strict.round.nextPage, nextIndex: strict.round.nextIndex, revoked: strict.round.coverage.revoked, advanced: strict.advanced, at: isoOf(clock()) });
-  else if (full.scope === 'all' && full.state === 'running' && allPending) progress = sweepProgress({ identity: { repo: job.repo, mainSha: full.mainSha,
-    sourceManifestSha256: job.sourceManifestSha256, onSince: job.onSince }, startedAt: full.startedAt, nextPage: full.nextPage, nextIndex: full.nextIndex,
+  else if (['all', 'current'].includes(full.scope) && full.state === 'running' && !sinceOn(full)) progress = sweepProgress({ identity: { repo: job.repo, mainSha: full.mainSha,
+    sourceManifestSha256: job.sourceManifestSha256, onSince: job.onSince }, scope: full.scope, startedAt: full.startedAt, nextPage: full.nextPage, nextIndex: full.nextIndex,
     revoked: full.revoked, advanced: fullStateWritten && (full.nextPage !== before.full.nextPage || full.nextIndex !== before.full.nextIndex || full.revoked > before.full.revoked), at: isoOf(clock()) });
   // A long segment can outlive the GraphQL observation's 60-second freshness. Refresh only to authorize continuation
-  // after real required-all progress, with the same hard protected deadline (including credential acquisition/retries).
+  // after real required all/current progress, with the same protected deadline (including credential acquisition/retries).
   if (progress?.advanced === true && typeof github.readRateBudget === 'function' && clock() < until.read - 1000) {
     try { await github.readRateBudget({ until: until.read }); budgetReadFailed = false; } catch { budgetReadFailed = true; }
   }
@@ -383,6 +470,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     sweep: { ...sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: strictReady || sweepComplete, revoked: revoked.length + (strict?.revoked.length ?? 0),
       unconfirmed: strictReady ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),
       would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }), strictCoverage: strictSummary,
+      strictFrontReadiness: frontSummary,
       ...(providerBudget ? { providerBudget: budgetReadFailed ? { ...providerBudget, state: 'unknown', extraSlicesAllowed: false } : providerBudget } : {}),
       ...(progress ? { progress } : {}) } });
 }
@@ -398,19 +486,23 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // front's legitimate one stays for the role holder's sweep (§41.6a "由 Y 的接班清扫撤掉"). Revoked: this node's own ledgered
 // greens not in main that cannot be the front's green, either because their T (the ledger's baseSha) is not main's tip, or
 // because the green's head is not the current head of its PR, open (read now; a PR that cannot be read keeps its green).
-async function revokeOwnOnly({ github, ledger, appId, clock, sleep, started, until, fx }) {
+async function revokeOwnOnly({ github, ledger, appId, clock, sleep, started, until, fx, sweepStore, job }) {
   const out = { mainSha: null, targets: [], revoked: 0, unconfirmed: 0, summary: null };
   try {
     const { entries, refused } = await ledger.list();
     out.summary = { records: entries.length, refused: refused.length };
     const own = ledgerGreens(entries);
-    if (!own.size) return out;
+    const prior = await sweepStore.readPendingRevocations();
+    if (prior && prior.repo !== job.repo) return out;
+    out.targets = (prior?.targets ?? []).filter(t => t.own);
+    if (!own.size && !out.targets.length) return out;
     out.mainSha = (await github.readBranchHead('main')).sha;
     const sweeper = createSweeper({ github, appId, mainSha: out.mainSha, clock, until: started + SWEEP_BUDGET_MS });
     const candidates = (await sweeper.judge([...new Set([...own.values()].map(e => e.headSha))], { front: null, own })).filter(t => t.own);
     const heads = new Map();
     for (const t of candidates) {
       const entry = own.get(t.checkRunId);
+      if (out.targets.some(p => p.checkRunId === t.checkRunId)) continue;
       if (entry?.baseSha !== out.mainSha) { out.targets.push(t); continue; }
       if (!heads.has(entry.pr)) {
         let current = null;
@@ -421,8 +513,8 @@ async function revokeOwnOnly({ github, ledger, appId, clock, sleep, started, unt
       if (current !== null && current !== t.headSha) out.targets.push(t);
     }
     const r = await revokeGreens({ github, targets: out.targets.slice(0, MAX_REVOKES_PER_RUN), appId, mainSha: out.mainSha, ledger, own, clock, sleep,
-      writeUntil: until.write, readUntil: until.read });
-    out.revoked = r.revoked.length; out.unconfirmed = r.unconfirmed.length + Math.max(0, out.targets.length - MAX_REVOKES_PER_RUN); fx.n += r.sideEffects;
+      writeUntil: until.write, readUntil: until.read, pendingStore: sweepStore, pendingJob: job });
+    out.revoked = r.revoked.length; out.unconfirmed = r.unconfirmed.length + (r.pendingStateFailed ? 1 : 0) + Math.max(0, out.targets.length - MAX_REVOKES_PER_RUN); fx.n += r.sideEffects;
   } catch { /* nothing more without a readable ledger and main */ }
   return out;
 }

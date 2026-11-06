@@ -21,6 +21,7 @@ test('generation16 status distinguishes limited readiness, pending full and cont
   assert.deepEqual(read({ enabled: 'on', last: null, frontReadyMode: 'green', fullPending: 'false',
     backgroundAllPending: 1, maintenanceExtraUsed: -1, maintenanceExtraLimit: 201 }), { enabled: 'on', last: null });
   assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'full-sweep', fullPending: false }).fullPending, false);
+  assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'strict-current-front', fullPending: true }).frontReadyMode, 'strict-current-front');
 });
 
 test('C2 status carries observations without promoting held to ACTIVE or altering existing mode', () => {

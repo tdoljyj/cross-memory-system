@@ -4833,6 +4833,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ## 61. 第 16 代候选：strict coverage 与有界空闲续扫
 
+本节保留第16代的覆盖策略与实现历史。第17代当前front的strict路径见§62；多绿并存本身不构成未经测试树合入的反例。
+
 Task `98bddf93-f1ed-4983-b39e-bcbe10be1672`；基于 #1022 的 main `fcf22ff9`。
 本节描述待独立实现审查、正式 Source 接受及安装的候选；不改变已装策略，不代表已满足 30 分钟或 1–2 小时目标。
 
@@ -4877,3 +4879,31 @@ GitHub 的资源额度和 secondary 限制分开；遵守响应中的 reset/Retr
 必须用真实 `runTrain`、create-only store、Resident 行门禁及 fixture publisher/merge 演练“已有待合 PR → 启动 → 枚举/撤绿 → coverage → 恢复精确 front → Stage8 → green → 模拟合入”，记录时间线、请求数、前后台状态和拒绝原因；另测 strict 关闭、重开/改写、代次变化、损坏记录、额度/时钟/重启边界。纯模型只补充范围等价性，不替代调用链演练。
 
 保留的条件包括：完整候选枚举的实际工作量、main 改写到 full 的冻结、超过 250 commits/分页拒绝、200/day 与共享 provider 额度、Source 不一致、网络/角色/授权丢失、人工 HALT/Grant、Owner 登录后 companion 才可工作及丢失合并事件的旧恢复依赖。无法从本次局部优化推导所有场景 30 分钟内可合入；目标 1–2 小时必须以实测限定数据量、资源和故障假设。尚有需要 Owner 接受或另项修复的残余时，不宣称全 Task/SLO 通过。
+
+## 62. 第17代候选：当前front的strict路径与独立历史清扫
+
+Task `98bddf93-f1ed-4983-b39e-bcbe10be1672`，基于main `08e2efd5`。Owner决定 `496c92ba` 澄清 `9cfba8d6`：合入并独审通过后可先在DESK/TURING安装shadow，不阻塞合并；安装后在真实仓库分别实测冷启动和接管首次绿，两项均不超过30分钟，才另行将train切到on。任一未达标则保持关闭，可回退。本节描述候选，不是实测计时通过；模型不能代替验收。
+
+### 62.1 调整的是等待历史覆盖，不是当前发布准入
+
+第16代的旧图反例只证明strict不能保证只剩一个绿，不能单凭它推出strict持续开启时会合入未经测试的树。严格检查、required检查来源、既定合并规范与Runbook持续成立时，当前front可采用独立的strict当前subject路径。它仍运行现有试合并提交S的本地角色；每次发布保持实时T/H/S/tree、当前Source、duty、holder、真实Native claim generation、Owner准入、ticket/current/settlement和补偿检查。
+
+`sweep.strictFrontReadiness` 是合同 `clued.independent-ci.train-strict-front-readiness/1` 的调度观察，显式 `historyCoverage=false`，绑定repo/T/Source/settings/onSince/front PR/H/claim/since及有界时效。只有自身耐久enqueue记录绑定的S可用，不能让其它行绕过等待。它不表示旧绿已全部枚举或撤销，不改 `sweep.complete`、旧v1 `proofWritten`、`fullSweep.sinceOn` 或 `trainTakeoverDone` 的原义。重启、Source/duty/身份/期限变化后，先由Source刷新；磁盘上的轻量观察不恢复发布授权。
+
+### 62.2 快路径必须单独拒绝的状态
+
+strict关闭、不可读或App pin不符时不得使用本路径。Native既有ADMITTED可能允许frozen下的精确Owner批准，因此快路径每个发布边界还要显式拒绝frozen，不能把ADMITTED当作非frozen证明；原完整full路径的Owner语义不变。
+
+受保护full记录较新的损坏、同时间矛盾、main anchor未重新校准，以及已知main改写未完成full时，均不允许回退旧记录放行。真正空store仅代表历史未知，仍依赖Owner已接受的冻结Runbook与Native非frozen，不能声称机器已证明历史无改写。已有未确认撤销、legacy strict pending和不可读账本要独立保留；旧v1 `clean=false, unconfirmed=0` 可仅表示历史扫描未完，不能伪改clean，也不能将它等同已写撤销失败。
+
+关闭strict前先完成真实full仍是Owner操作前提。Stage8只阻止后续绿，companion的异步通知/暂停不能作为GitHub改规则前的同步硬门禁。main改写继续冻结到真实full，禁止用快路径或重装清状态绕过。旧授权已撤但静态check仍绿的暴露属于单独风险；不能假设所有原生合并入口都实时理解Native，也不能把尚未证实的坏合入当作现场事实。
+
+撤销结果使用独立的 `pending-revocations/1` 受保护记录在固定 App 约束下保存精确 check ID 和 head；普通、strict 及 off-duty 的自身检查撤销均先耐久写入 intent，再执行负面更新。目标不绑定会变的 Source 或 front，跨轮继续按精确 ID 双读回并确认账本后才耐久清除；清除写失败仍视为待确认。原每轮20个目标、截止时间与外部检查的实时 duty 权限保持不变。较新的 full、v1 和 front 证明必须按写入顺序一致，同毫秒但不同 run 的矛盾记录不能回退采用旧证明。
+
+升级前若只有未确认数量而没有可恢复的目标 ID，不能由下一次 partial 的零值洗掉。迁移记录保留不能关联到目标的旧未确认计数，并要求新的真实 `scope=all` 完成后才解除；这类恢复不保证30分钟。累计 `full.unconfirmed` 仍是指标，不充当当前待确认目标集合，也不伪造 full 完成。
+
+### 62.3 清扫进展和验收
+
+完整§60 all/current历史范围继续保留，快路径不删除force-push端点、closed-current或旧候选。已必需的current覆盖可与all相同有界续跑：真实耐久进展、同滚动200总账/E56额外账、同额度时效/hold和前台优先；routine current轮不获得无限加速。已知未确认撤销不能因前台先跑而丢失；前后台耗时与停止原因分别计量。
+
+验收分开记录历史覆盖、允许开批、本地扫描、Stage8真实首绿和实际可合并。旧PR的14分钟与15分34秒发布间隔只是样本，不能加在模型上冒充第17代实测。必须覆盖cold/current、普通partial旧投影、frozen、strict切换、main改写、损坏最新记录、claim/Source/front/S变化和重启负例；局部测试通过不表示现场30分钟目标或安装条件已满足。

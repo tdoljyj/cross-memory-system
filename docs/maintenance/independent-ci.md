@@ -61,6 +61,8 @@ node scripts/ci/local-verify.mjs --affected
 
 ## 应急与灾备的前置步骤（含合并列车）
 
+第17代候选的strict当前front路径见[常驻设计§62](../../work/independent-ci-resident-v1/DESIGN.md#62-第17代候选当前front的strict路径与独立历史清扫)。其轻量就绪不表示历史full已完成；本节的关闭strict、main改写冻结和灾备恢复要求仍须执行。Stage8与companion只控制后续发布或异步停止，不能代替关闭strict前先完成full的操作前提。候选未安装或未取得实际首绿计时前，不报告30分钟验收通过。
+
 依据：额度第二期设计 v0.5 §5.10（资料中心 `10_E_工程与平台/CI基础设施/常驻执行器额度第二期_含合并列车_设计说明_v0.5_20261022.md`，sha256 `bd20941b…6d64cb`）、[MergeAdmission v0.2](../../development/contracts/execution-admission/MergeAdmission.v0.2.md)（候选，未接受）、[GitConnectorWriteContract](../../development/contracts/repository/GitConnectorWriteContract.v0.1.md) 的 “Emergency or recovery”。
 
 **什么时候适用。**
