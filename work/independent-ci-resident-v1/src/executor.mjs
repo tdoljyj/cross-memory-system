@@ -1999,6 +1999,9 @@ export class ResidentExecutor {
     // this very onSince (facts /2 sweep.fullSweep: state complete, sinceOn), never from a decision that is merely no deferral.
     const full = summary.sweep?.fullSweep;
     const onSince = this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString();
+    // Generation 15 (DESIGN 60.2): main was rewritten: the take-over is not done until the round of scope all completes (the line below
+    // sets it again then), so no batch starts meanwhile whatever else a run decides (an incomplete sweep, an unconfirmed revocation).
+    if (full?.allPending === 'TRAIN_MAIN_REWRITTEN') this.trainTakeoverDone = false;
     if (!this.trainTakeoverDone && onSince !== null && input.onSince === onSince && full?.state === 'complete' && full.sinceOn === true) this.trainTakeoverDone = true;
     const rh = summary.actions?.revokeHead;
     if (revokeHead && rh?.requestId === revokeHead.requestId) {

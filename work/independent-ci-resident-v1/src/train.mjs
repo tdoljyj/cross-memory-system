@@ -34,6 +34,9 @@ export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH'])
 export const FRONT_BATCHES_PER_HEAD = 2;
 const SWEEP_KINDS = ['none', 'incremental', 'full-segment'];
 const FULL_STATES = ['none', 'running', 'complete', 'abandoned'];
+const FULL_SCOPES = ['all', 'current']; // generation 15 (DESIGN 60)
+const SWEEP_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
+const codeOrNull = v => (typeof v === 'string' && SWEEP_CODE.test(v) ? v : null);
 const DAY = 24 * 3600_000;
 const SHA = /^[0-9a-f]{40}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
@@ -104,7 +107,10 @@ export function openFrontBatchOf(o) {
 export function sweepOf(s) {
   if (!plain(s) || !SWEEP_KINDS.includes(s.kind) || typeof s.complete !== 'boolean' || !plain(s.fullSweep) || !FULL_STATES.includes(s.fullSweep.state)) return null;
   return Object.freeze({ kind: s.kind, complete: s.complete, revoked: count(s.revoked) ?? 0, unconfirmed: count(s.unconfirmed) ?? 0, wouldRevokeCount: count(s.wouldRevokeCount) ?? 0,
-    fullSweep: Object.freeze({ state: s.fullSweep.state, startedAt: isoOrNull(s.fullSweep.startedAt), completedAt: isoOrNull(s.fullSweep.completedAt), sinceOn: s.fullSweep.sinceOn === true }),
+    fullSweep: Object.freeze({ state: s.fullSweep.state, startedAt: isoOrNull(s.fullSweep.startedAt), completedAt: isoOrNull(s.fullSweep.completedAt), sinceOn: s.fullSweep.sinceOn === true,
+      // generation 15 (DESIGN 60): 'all' (every pull and commit) or 'current' (open pulls whole, closed unmerged heads), why, and why rounds
+      // enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded)
+      scope: FULL_SCOPES.includes(s.fullSweep.scope) ? s.fullSweep.scope : null, scopeReason: codeOrNull(s.fullSweep.scopeReason), allPending: codeOrNull(s.fullSweep.allPending) }),
     proofWritten: s.proofWritten === true });
 }
 
@@ -158,10 +164,13 @@ const ON_TEXT = {
   TRAIN_FRONT_BATCH_RUNNING: '车头批次进行中',
   TRAIN_SOURCE_UNREADABLE: '读不到各常驻节点的 Source，暂不开车',
 };
+// Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
+export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
 export function trainPageLine(summary, pr) {
   if (!summary || summary.front?.pr !== pr) return null;
   if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
-  const text = ON_TEXT[summary.decision] ?? null;
+  const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
+    : ON_TEXT[summary.decision] ?? null;
   return text ? `合并列车：你是车头。${text}。` : null;
 }
 
@@ -187,16 +196,20 @@ export function trainSweepView({ summary, previous = null, onSince = null }) {
   const s = summary?.sweep;
   if (!s) return previous;
   const completedAt = s.fullSweep.state === 'complete' && s.fullSweep.completedAt ? s.fullSweep.completedAt : (previous?.fullCompletedAt ?? null);
-  const sinceOn = s.fullSweep.state === 'complete' ? s.fullSweep.sinceOn === true : (previous?.fullSinceOn === true && previous?.onSince === onSince);
+  // generation 15 (DESIGN 60.2): main rewritten voids the full sweep since on until a round of scope 'all' completes
+  const sinceOn = s.fullSweep.allPending === 'TRAIN_MAIN_REWRITTEN' ? false
+    : s.fullSweep.state === 'complete' ? s.fullSweep.sinceOn === true : (previous?.fullSinceOn === true && previous?.onSince === onSince);
   return Object.freeze({ at: summary.at, mode: summary.mode, kind: s.kind, complete: s.complete, revoked: s.revoked, unconfirmed: s.unconfirmed, fullState: s.fullSweep.state,
-    fullCompletedAt: completedAt, fullSinceOn: sinceOn && summary.mode !== 'shadow', onSince });
+    fullCompletedAt: completedAt, fullSinceOn: sinceOn && summary.mode !== 'shadow', onSince,
+    fullScope: s.fullSweep.scope ?? null, fullScopeReason: s.fullSweep.scopeReason ?? null, fullAllPending: s.fullSweep.allPending ?? null });
 }
 // The status reader's copy of train.sweep, or null.
 export function parseTrainSweep(v) {
   if (!plain(v) || !RUN_MODES.includes(v.mode) || !SWEEP_KINDS.includes(v.kind) || typeof v.complete !== 'boolean' || !FULL_STATES.includes(v.fullState) || !Number.isFinite(Date.parse(v.at))) return null;
   return Object.freeze({ at: Date.parse(v.at), mode: v.mode, kind: v.kind, complete: v.complete, revoked: count(v.revoked) ?? 0, unconfirmed: count(v.unconfirmed) ?? 0, fullState: v.fullState,
     fullCompletedAt: Number.isFinite(Date.parse(v.fullCompletedAt)) ? Date.parse(v.fullCompletedAt) : null, fullSinceOn: v.fullSinceOn === true,
-    onSince: Number.isFinite(Date.parse(v.onSince)) ? Date.parse(v.onSince) : null });
+    onSince: Number.isFinite(Date.parse(v.onSince)) ? Date.parse(v.onSince) : null,
+    fullScope: FULL_SCOPES.includes(v.fullScope) ? v.fullScope : null, fullScopeReason: codeOrNull(v.fullScopeReason), fullAllPending: codeOrNull(v.fullAllPending) });
 }
 // The status reader's copy of train.revokeHead (DESIGN §41.3: the Owner's "撤车头" request and its result), or null.
 export function parseRevokeHead(v) {
