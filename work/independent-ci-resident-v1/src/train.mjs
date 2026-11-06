@@ -2,8 +2,9 @@
 // DESIGN §22.3; Owner decision 2eea28a1). Pure: when stage 10 is due, and what of its facts the status snapshot and
 // the PR page show. In shadow mode nothing here changes what the executor runs or publishes.
 //
-// Stage 10 is due when train.enabled is not 'off', no batch is running, the last run is at least
-// train.maintenanceEveryMs ago and fewer than train.maintenanceMaxPerDay ran in the last 24 hours. In step 3c-1 the
+// Routine stage 10 is due when train.enabled is not 'off', no batch is running, the last run is at least
+// train.maintenanceEveryMs ago and fewer than train.maintenanceMaxPerDay ran in the last 24 hours. Urgent refreshes and
+// bounded idle-progress extras may run earlier; both pay the unchanged rolling total cap (trainIdleExtraDue). In step 3c-1 the
 // executor also holds it under PAUSE and an intake pause (its PAUSE stops everything but reading triggers); design §4.3
 // lets a pause stop only new greens, which step 3c-2 takes up with the sweeps that must run during one. A run counts
 // whatever its ending. A clean failure (cleanup proven, no side effect, a clean ending) is tried again at the next due
@@ -45,6 +46,43 @@ const CLAIM = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^[A-Za-z0-9_-]{1,80
 const count = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const isoOrNull = v => (typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const exact = (v, keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
+const isoExact = v => isoOrNull(v) !== null && new Date(Date.parse(v)).toISOString() === v;
+export const TRAIN_STRICT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-readiness/1';
+const HEX64 = /^[0-9a-f]{64}$/;
+const STRICT_PROOF = /^strict-proof-\d{13}-[0-9a-f]{16}-[0-9a-f]{12}-[0-9a-f]{8}\.json$/;
+
+// This is a scheduling observation, never publication authority. Stage 8 revalidates live strict and the Native writer.
+export function strictCoverageOf(v) {
+  if (!exact(v, ['contract', 'state', 'repo', 'mainSha', 'sourceManifestSha256', 'settingsDigest', 'onSince', 'front', 'proofRef', 'writtenAt', 'expiresAt', 'backgroundAllPending', 'reason'])
+    || v.contract !== TRAIN_STRICT_READINESS_CONTRACT || !['none', 'running', 'ready', 'invalid'].includes(v.state)
+    || (v.backgroundAllPending !== null && codeOrNull(v.backgroundAllPending) === null) || (v.reason !== null && codeOrNull(v.reason) === null)) return null;
+  const front = v.front;
+  const bound = SHA.test(v.mainSha ?? '') && HEX64.test(v.sourceManifestSha256 ?? '') && HEX64.test(v.settingsDigest ?? '')
+    && typeof v.repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(v.repo) && isoExact(v.onSince)
+    && exact(front, ['pr', 'headSha', 'claimId', 'since']) && Number.isSafeInteger(front.pr) && front.pr > 0 && SHA.test(front.headSha ?? '')
+    && UUID.test(front.claimId ?? '') && isoExact(front.since);
+  if (v.state === 'none') {
+    if (!['repo', 'mainSha', 'sourceManifestSha256', 'settingsDigest', 'onSince', 'front', 'proofRef', 'writtenAt', 'expiresAt'].every(k => v[k] === null)) return null;
+  } else if (!bound) return null;
+  if (v.state === 'ready' ? !STRICT_PROOF.test(v.proofRef ?? '') || !isoExact(v.writtenAt) || !isoExact(v.expiresAt)
+    || !(Date.parse(v.expiresAt) > Date.parse(v.writtenAt)) || Date.parse(v.expiresAt) - Date.parse(v.writtenAt) > 3_600_000
+    : v.proofRef !== null || v.writtenAt !== null || v.expiresAt !== null) return null;
+  return Object.freeze({ contract: v.contract, state: v.state, repo: bound ? v.repo : null, mainSha: bound ? v.mainSha : null,
+    sourceManifestSha256: bound ? v.sourceManifestSha256 : null, settingsDigest: bound ? v.settingsDigest : null,
+    onSince: bound ? v.onSince : null, front: bound ? Object.freeze({ pr: front.pr, headSha: front.headSha, claimId: front.claimId, since: front.since }) : null,
+    proofRef: v.proofRef, writtenAt: v.writtenAt, expiresAt: v.expiresAt,
+    backgroundAllPending: v.backgroundAllPending, reason: v.reason });
+}
+
+export function strictCoverageMatches(v, { now, repo, sourceManifestSha256, settingsDigest, onSince, front, sweepFreshMs }) {
+  const r = strictCoverageOf(v);
+  if (!r || r.state !== 'ready' || !plain(front) || !Number.isFinite(now)) return false;
+  const written = Date.parse(r.writtenAt), expires = Date.parse(r.expiresAt);
+  return written >= Date.parse(r.onSince) && now >= written && now < expires && expires - written <= sweepFreshMs && r.repo === repo && r.sourceManifestSha256 === sourceManifestSha256
+    && r.settingsDigest === settingsDigest && r.onSince === onSince && r.mainSha === front.baseSha && r.front.pr === front.pr
+    && r.front.headSha === front.headSha && r.front.claimId === front.claimId && r.front.since === front.since;
+}
 
 // The mode of the next stage-10 run, or null (none), with why: train.enabled 'off' runs nothing; 'shadow' runs shadow on
 // every node; 'on' runs only on an ACTIVE node (STANDBY and UNCERTAIN: NOT_ON_DUTY), 'on' normally, 'revoke-only' under
@@ -63,6 +101,41 @@ export function trainDue({ train, now, runs = [], busy, urgent = false }) {
   if (recent.length >= train.maintenanceMaxPerDay) return false;
   const last = recent.length ? Math.max(...recent) : null;
   return last === null || urgent === true || now - last >= train.maintenanceEveryMs;
+}
+
+// A finite cadence exception for progress in the already-required all round, not a new sweep or an urgent flag.
+// Reserve the number of normal cadence calls that fit in one day; every extra also pays the unchanged total cap.
+export function trainIdleExtraDue({ train, now, runs = [], extraRuns = [], busy = false, urgent = false, frontWork = false,
+  progress = null, providerBudget = null, consumed = null }) {
+  if (!train || train.enabled !== 'on' || busy || urgent || frontWork || !Number.isFinite(now)) return false;
+  if (trainDue({ train, now, runs, busy })) return false;
+  const recent = runs.filter(at => at > now - DAY), extra = extraRuns.filter(at => at > now - DAY);
+  const allowance = Math.max(0, train.maintenanceMaxPerDay - Math.ceil(DAY / train.maintenanceEveryMs));
+  if (recent.length >= train.maintenanceMaxPerDay || extra.length >= allowance || recent.some(at => at > now)) return false;
+  if (!progress || progress.contract !== 'clued.independent-ci.train-sweep-progress/1' || progress.scope !== 'all' || progress.required !== true
+    || progress.advanced !== true || !HEX64.test(progress.roundId ?? '') || !HEX64.test(progress.token ?? '') || !isoOrNull(progress.at)
+    || Date.parse(progress.at) > now || now - Date.parse(progress.at) >= train.maintenanceEveryMs
+    || consumed === `${progress.roundId}:${progress.token}`) return false;
+  return providerBudgetOf(providerBudget, now)?.extraSlicesAllowed === true;
+}
+
+function progressOf(v) {
+  return exact(v, ['contract', 'roundId', 'scope', 'required', 'advanced', 'token', 'at']) && v.contract === 'clued.independent-ci.train-sweep-progress/1' && HEX64.test(v.roundId ?? '') && HEX64.test(v.token ?? '')
+    && v.scope === 'all' && v.required === true && typeof v.advanced === 'boolean' && isoExact(v.at)
+    ? Object.freeze({ contract: v.contract, roundId: v.roundId, scope: 'all', required: true, advanced: v.advanced, token: v.token, at: v.at }) : null;
+}
+
+export function providerBudgetOf(v, now = null) {
+  const resource = r => r === null || exact(r, ['limit', 'remaining', 'resetAt']) && count(r.limit) !== null && r.limit > 0
+    && count(r.remaining) !== null && r.remaining <= r.limit && isoExact(r.resetAt);
+  if (!exact(v, ['contract', 'state', 'requests', 'restRequests', 'graphqlRequests', 'rest', 'graphql', 'retryAt', 'observedAt', 'extraSlicesAllowed'])
+    || v.contract !== 'clued.independent-ci.train-provider-budget/1' || !['ok', 'low', 'unknown'].includes(v.state)
+    || !['requests', 'restRequests', 'graphqlRequests'].every(k => count(v[k]) !== null) || v.requests !== v.restRequests + v.graphqlRequests
+    || !resource(v.rest) || !resource(v.graphql) || !(v.retryAt === null || isoExact(v.retryAt)) || !(v.observedAt === null || isoExact(v.observedAt))
+    || typeof v.extraSlicesAllowed !== 'boolean' || v.extraSlicesAllowed !== (v.state === 'ok') || (v.state !== 'unknown' && v.observedAt === null)) return null;
+  if (v.state === 'ok' && now !== null && (!Number.isSafeInteger(now) || v.observedAt === null || Date.parse(v.observedAt) > now || now - Date.parse(v.observedAt) > 60_000
+    || v.retryAt !== null || ![v.rest, v.graphql].every(r => r !== null && Date.parse(r.resetAt) > now && r.remaining > Math.ceil(r.limit / 2)))) return null;
+  return Object.freeze({ ...v, rest: v.rest ? Object.freeze({ ...v.rest }) : null, graphql: v.graphql ? Object.freeze({ ...v.graphql }) : null });
 }
 
 // The resident's part of the train-run job /2 (INTERFACES §2): every field the derivation does not take from the install
@@ -106,12 +179,17 @@ export function openFrontBatchOf(o) {
 // facts /2 sweep -> the summary's copy, or null.
 export function sweepOf(s) {
   if (!plain(s) || !SWEEP_KINDS.includes(s.kind) || typeof s.complete !== 'boolean' || !plain(s.fullSweep) || !FULL_STATES.includes(s.fullSweep.state)) return null;
+  const strictCoverage = s.strictCoverage === undefined ? null : strictCoverageOf(s.strictCoverage);
+  if (s.strictCoverage !== undefined && strictCoverage === null) return null;
+  if (strictCoverage?.state === 'ready' && (s.complete !== true || s.proofWritten !== true || s.unconfirmed !== 0)) return null;
   return Object.freeze({ kind: s.kind, complete: s.complete, revoked: count(s.revoked) ?? 0, unconfirmed: count(s.unconfirmed) ?? 0, wouldRevokeCount: count(s.wouldRevokeCount) ?? 0,
     fullSweep: Object.freeze({ state: s.fullSweep.state, startedAt: isoOrNull(s.fullSweep.startedAt), completedAt: isoOrNull(s.fullSweep.completedAt), sinceOn: s.fullSweep.sinceOn === true,
       // generation 15 (DESIGN 60): 'all' (every pull and commit) or 'current' (open pulls whole, closed unmerged heads), why, and why rounds
       // enumerate everything until one of scope 'all' completes (main rewritten, no main tip recorded)
       scope: FULL_SCOPES.includes(s.fullSweep.scope) ? s.fullSweep.scope : null, scopeReason: codeOrNull(s.fullSweep.scopeReason), allPending: codeOrNull(s.fullSweep.allPending) }),
-    proofWritten: s.proofWritten === true });
+    proofWritten: s.proofWritten === true, ...(strictCoverage ? { strictCoverage } : {}),
+    ...(s.progress !== undefined ? { progress: progressOf(s.progress) } : {}),
+    ...(s.providerBudget !== undefined ? { providerBudget: providerBudgetOf(s.providerBudget) } : {}) });
 }
 
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,
@@ -137,7 +215,9 @@ export function trainSummary(f) {
   if (f.requestPause !== undefined && f.requestPause !== null && !REQUEST_PAUSE_CODES.includes(f.requestPause)) return null;
   const openFrontBatch = f.mode === 'on' && decision === 'OPEN_FRONT_BATCH' ? openFrontBatchOf(f.openFrontBatch) : null;
   if (f.mode === 'on' && decision === 'OPEN_FRONT_BATCH' && !openFrontBatch) return null;
-  return Object.freeze({ ...base, decision, sweep: sweepOf(f.sweep), actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch });
+  const sweep = sweepOf(f.sweep);
+  if (f.sweep?.strictCoverage !== undefined && !sweep) return null;
+  return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch });
 }
 
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
@@ -171,7 +251,9 @@ export function trainPageLine(summary, pr) {
   if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
     : ON_TEXT[summary.decision] ?? null;
-  return text ? `合并列车：你是车头。${text}。` : null;
+  const background = summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
+    ? '车头严格屏障已核验，后台全量清扫仍未完成。' : '';
+  return text ? `合并列车：你是车头。${text}。${background}` : null;
 }
 
 // The status reader's copy of a summary (untrusted bytes in state\status.json): the same fields with `at` in ms, or null.

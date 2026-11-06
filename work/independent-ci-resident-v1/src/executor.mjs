@@ -139,7 +139,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, trainDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -425,6 +425,10 @@ export class ResidentExecutor {
     this.trainFrontOutcome = null;
     this.frontBatches = new Map();
     this.frontKeys = new Map();
+    this.frontBindings = new Map();
+    this.trainStrictReadiness = null;
+    this.trainExtraRuns = [];
+    this.trainProgressConsumed = null;
     // The duty kept across restarts (receipt 'train-duty', review R3 M2): the restored one until this node is eligible again, and
     // the last one written.
     this.trainDutyCandidate = null;
@@ -445,7 +449,8 @@ export class ResidentExecutor {
     if (!this.trainEligible()) {
       const on = this.policy.train.enabled === 'on';
       if (!on || this.nodeMode() === 'STANDBY') {
-        this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null;
+        this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null; this.trainStrictReadiness = null;
+        this.trainProgressReady = false;
         if (this.trainSweep?.fullSinceOn === true) this.trainSweep = Object.freeze({ ...this.trainSweep, fullSinceOn: false });
         // A front row (S) belongs to the duty that ended (or to an install whose train is not on any more): it never runs
         // (review R3 MINOR 5).
@@ -460,10 +465,22 @@ export class ResidentExecutor {
     if (c) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (c.sweep) this.trainSweep = c.sweep; return; }
     this.trainOnSince = this.clock();
     this.trainTakeoverDone = false;
+    this.trainProgressReady = false;
   }
 
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
   trainTakeoverPending() { return this.trainEligible() && !this.trainTakeoverDone; }
+
+  // Only an S already bound by this node's enqueue receipt can use the limited scheduling exception. A PR/H match alone
+  // would accidentally revive an old claim or tenure. Restart restores those bindings, but always refreshes readiness first.
+  trainStrictFront(subject) {
+    if (!subject || !HEX40.test(subject.testSha ?? '') || !this.trainEligible()) return false;
+    const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
+    if (!front || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha) return false;
+    return strictCoverageMatches(this.trainStrictReadiness, { now: this.clock(), repo: this.policy.repo,
+      sourceManifestSha256: this.policy.sourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
+      onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString(), front, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs });
+  }
 
   // The front rows (S) of the run queue that are not running are dropped (queue.mjs#dropFronts; a view, persisted with the queue).
   dropFrontRows(code) { try { this.queue.dropFronts?.(code, this.clock()); } catch { /* a view */ } }
@@ -477,10 +494,11 @@ export class ResidentExecutor {
     if (this.policy.train.enabled !== 'on') return;
     const onSince = this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString();
     const sweep = this.trainSweep && this.trainSweep.onSince === onSince ? this.trainSweep : null;
-    const key = JSON.stringify([onSince, this.trainTakeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true]);
+    const key = JSON.stringify([onSince, this.trainTakeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true, this.trainStrictReadiness]);
     if (key === this.trainDutyKey) return;
     try {
-      await this.receipt('train-duty', { policyDigest: this.trainPolicyDigest(), onSince, takeoverDone: onSince !== null && this.trainTakeoverDone === true, sweep: onSince === null ? null : sweep });
+      await this.receipt('train-duty', { policyDigest: this.trainPolicyDigest(), onSince, takeoverDone: onSince !== null && this.trainTakeoverDone === true, sweep: onSince === null ? null : sweep,
+        strictCoverage: this.trainStrictReadiness });
       this.trainDutyKey = key;
     } catch { /* see above */ }
   }
@@ -510,9 +528,20 @@ export class ResidentExecutor {
 
   // null while new batches may start; otherwise the deferral stage 10 decided (DESIGN §41.6: no publication of any stage before
   // the take-over sweep; none while another node runs another Source).
-  trainGate() {
+  trainGate(subject = null) {
     if (!this.trainEligible()) return null;
+    const r = this.trainStrictReadiness;
+    const clockWindow = r && (this.clock() < Date.parse(r.writtenAt) ? 'future' : this.clock() >= Date.parse(r.expiresAt) ? 'expired' : null);
+    const refreshKey = clockWindow ? `${r.proofRef}:${clockWindow}` : null;
+    if (refreshKey && this.trainExpiredProof !== refreshKey) {
+      // A single refresh request per expired observation. A failed/unchanged refresh never creates a tick loop.
+      this.trainExpiredProof = refreshKey;
+      this.trainUrgent = true;
+    }
     const decision = this.trainLast?.mode === 'on' ? this.trainLast.decision : null;
+    // Source skew and unreadability still hold every row, even one whose previous strict proof has not expired.
+    if (['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(decision)) return { state: 'DEFERRED', reason: decision };
+    if (this.trainSweep?.fullAllPending !== 'TRAIN_MAIN_REWRITTEN' && this.trainStrictFront(subject)) return null;
     if (!this.trainTakeoverDone) return { state: 'DEFERRED', reason: TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? decision : 'TRAIN_TAKEOVER_SWEEP_PENDING' };
     return TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? { state: 'DEFERRED', reason: decision } : null;
   }
@@ -1421,6 +1450,15 @@ export class ResidentExecutor {
   // onSince and NOT_ON_DUTY only when they have a value.
   trainStatus() {
     const t = { enabled: this.policy.train.enabled, last: this.trainLast ?? null };
+    if (this.policy.train.enabled === 'on') {
+      const r = this.trainStrictReadiness;
+      const front = r?.front ? [...this.frontBindings.values()].find(f => this.trainStrictFront(f) && !this.trainGate(f)) : null;
+      t.frontReadyMode = front ? 'strict-coverage' : this.trainEligible() && this.trainTakeoverDone && !this.trainGate() ? 'full-sweep' : 'blocked';
+      t.fullPending = !this.trainTakeoverDone;
+      t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
+      t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
+      t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
+    }
     if (this.trainSweep) t.sweep = this.trainSweep;
     if (this.revokeHeadView) t.revokeHead = this.revokeHeadView;
     if (this.trainOnSince !== null) t.onSince = new Date(this.trainOnSince).toISOString();
@@ -1848,6 +1886,9 @@ export class ResidentExecutor {
       } catch { /* see above */ }
     }
     this.trainRuns = rows.filter(e => e.type === 'train-run-intent').map(e => Date.parse(e.value.at)).filter(Number.isFinite);
+    const intents = rows.filter(e => e.type === 'train-run-intent');
+    this.trainExtraRuns = intents.filter(e => e.value.body?.idleProgressExtra === true).map(e => Date.parse(e.value.at)).filter(Number.isFinite);
+    this.trainProgressConsumed = intents.findLast(e => e.value.body?.idleProgressExtra === true)?.value.body.progressKey ?? null;
     if (this.policy.train.enabled === 'on') { await this.trainFrontRecover(rows); await this.trainDutyRecover(); }
     return last?.type === 'train-run-intent' ? { state: 'HALTED', failureCode: 'TRAIN_STAGE_INTERRUPTED' } : null;
   }
@@ -1866,6 +1907,8 @@ export class ResidentExecutor {
         if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt });
         this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
         if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
+        const front = openFrontBatchOf(b);
+        if (front) this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
       }
       const [fo] = await this.receipts.latest(['train-front-outcome'], 1);
       const cleared = runs.some(e => e.type === 'train-run' && e.value.body?.frontOutcomeSeq === fo?.seq && e.value.body?.ok === true && e.value.body?.frontOutcomeCleared !== false);
@@ -1910,6 +1953,7 @@ export class ResidentExecutor {
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
       attempt: front.attempt, claimId: front.claimId, since: front.since });
+    this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
   }
 
@@ -1927,11 +1971,21 @@ export class ResidentExecutor {
     const train = this.policy.train;
     if (!this.trainRuns || train.enabled === 'off') return null;
     const now = this.clock();
+    if (Number.isSafeInteger(this.tickSeq) && this.trainMaintenanceTick === this.tickSeq) return null;
     this.trainRuns = this.trainRuns.filter(at => at > now - DAY);
     const active = !this.probing() || this.nodeMode() === 'ACTIVE';
     if (train.enabled === 'on' && !active) return null; // NOT_ON_DUTY (trainStatus)
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
-    if (!trainDue({ train, now, runs: this.trainRuns, busy: false, urgent })) return null;
+    const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent });
+    let idleProgressExtra = false;
+    if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true) {
+      const frontWork = this.queue.candidates(now).some(row => Object.hasOwn(row, 'testSha') && !this.trainGate(row))
+        || (await this.ledger.parkedEntries()).some(e => Object.hasOwn(e.reserved?.subject ?? {}, 'testSha')
+          && Ledger.parkedAt(e) && this.parkedDueAt(e) <= now && !this.trainGate(e.reserved?.subject));
+      idleProgressExtra = trainIdleExtraDue({ train, now, runs: this.trainRuns, extraRuns: this.trainExtraRuns, urgent: urgent || this.trainUrgent === true, frontWork,
+        progress: this.trainLast?.sweep?.progress, providerBudget: this.trainLast?.sweep?.providerBudget, consumed: this.trainProgressConsumed });
+    }
+    if (!routineDue && !idleProgressExtra) return null;
     let intakeHeld = false;
     if (!paused) {
       const held = await this.intakeGate();
@@ -1940,6 +1994,7 @@ export class ResidentExecutor {
     }
     const { mode } = trainRunMode({ enabled: train.enabled, active, paused, intakeHeld });
     if (!mode) return null;
+    if (idleProgressExtra && mode !== 'on') return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + this.policy.stageRunMilliseconds[TRAIN_STAGE - 1] + Math.max(this.policy.limits.stageMarginMs, TRAIN_HELPER_MARGIN_MS)) return null;
     const drift = await this.driftCode();
     if (drift) {
@@ -1951,8 +2006,13 @@ export class ResidentExecutor {
     const frontOutcome = mode === 'on' ? this.trainFrontOutcome : null;
     const input = trainRunInput({ mode, settings: trainSettings(train), onSince: this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
       frontOutcome: frontOutcome ? { pr: frontOutcome.pr, headSha: frontOutcome.headSha, testSha: frontOutcome.testSha, attempt: frontOutcome.attempt, code: frontOutcome.code } : null });
-    const intent = await this.receipt('train-run-intent', acting ? { mode: train.enabled, runMode: mode, input } : { mode: train.enabled });
+    const progress = this.trainLast?.sweep?.progress;
+    const progressKey = idleProgressExtra ? `${progress.roundId}:${progress.token}` : null;
+    const intent = await this.receipt('train-run-intent', acting ? { mode: train.enabled, runMode: mode, input,
+      ...(idleProgressExtra ? { idleProgressExtra: true, progressKey } : {}) } : { mode: train.enabled });
+    this.trainMaintenanceTick = this.tickSeq;
     this.trainRuns.push(now);
+    if (idleProgressExtra) { this.trainExtraRuns.push(now); this.trainProgressConsumed = progressKey; }
     this.trainUrgent = false;
     this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
     let r;
@@ -1986,6 +2046,9 @@ export class ResidentExecutor {
       // Any mode: stage 10 read the merge queue's head. A batch parked at B for that PR gets its next try without waiting out its back-off.
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
+    if (acting && (!summary || !clean)) this.trainStrictReadiness = null;
+    this.trainProgressReady = mode === 'on' && clean && summary?.sweep?.unconfirmed === 0 && !summary.requestPause
+      && !['TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(summary?.decision);
     await this.trainDutySave();
     // Generation 10: stage 10 reached GitHub only when its summary names main's commit (a run that is not on duty reads nothing).
     if (clean) await this.noteBreakerProbe(HEX40.test(summary?.mainSha ?? ''), 'train-run');
@@ -2003,6 +2066,10 @@ export class ResidentExecutor {
     // sets it again then), so no batch starts meanwhile whatever else a run decides (an incomplete sweep, an unconfirmed revocation).
     if (full?.allPending === 'TRAIN_MAIN_REWRITTEN') this.trainTakeoverDone = false;
     if (!this.trainTakeoverDone && onSince !== null && input.onSince === onSince && full?.state === 'complete' && full.sinceOn === true) this.trainTakeoverDone = true;
+    const coverage = summary.sweep?.strictCoverage;
+    this.trainStrictReadiness = mode === 'on' && input.onSince === onSince && summary.onDuty && summary.strict === true && summary.sweep?.complete === true
+      && summary.sweep.proofWritten === true && summary.sweep.unconfirmed === 0 && full?.allPending !== 'TRAIN_MAIN_REWRITTEN'
+      && coverage?.state === 'ready' && coverage.mainSha === summary.mainSha ? coverage : null;
     const rh = summary.actions?.revokeHead;
     if (revokeHead && rh?.requestId === revokeHead.requestId) {
       this.reportRevokeHead({ requestId: rh.requestId, state: rh.done ? 'done' : 'not-done', code: rh.done ? null : summary.decision });
@@ -2189,7 +2256,7 @@ export class ResidentExecutor {
   // still-waiting result when one only waits }.
   // hold: evaluate nothing (the train on's take-over sweep is pending); the status still shows them.
   async resumeParked({ hold = false } = {}) {
-    const entries = await this.ledger.parkedEntries();
+    let entries = await this.ledger.parkedEntries();
     // Generation 12 (DESIGN §56.3): after a restart, a parked batch's lease end comes back from its newest record (the last stage-8
     // try's, else the parking record at B, else the wait record at A), before anything below may return.
     // The newest record that has the field decides, also when it says none (null).
@@ -2206,7 +2273,8 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
-    if (entries.length === 0 || hold) return { acted: null, waiting: null };
+    if (hold) entries = entries.filter(e => this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject));
+    if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
       ? this.qualificationWaiting(entries.find(e => Ledger.qualificationHeldAt(e)).key) : null;
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
@@ -2520,7 +2588,11 @@ export class ResidentExecutor {
     // The train on (DESIGN §41.6): no new batch before the take-over sweep, nor while stage 10 says another node runs another
     // Source. A quiet result: stage 10 runs in this very tick.
     const trainHeld = this.trainGate();
-    if (trainHeld) { await this.persistQueue(); return trainHeld; }
+    if (trainHeld) {
+      rows = rows.filter(row => !this.trainGate(row));
+      attempts = attempts.filter(a => !this.trainGate(a.subject));
+      if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return trainHeld; }
+    }
     // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();

@@ -11,7 +11,8 @@
 // The installed policy's train.enabled reaches stages 1 and 8 through train-mode.mjs (default off).
 // Merge train (DESIGN §41.2): with the train on, a green also needs the single-green proof of stage 10 (trainHeadDecision).
 // Pure.
-import { isTrainFrontJobV2 } from '../job-v2.mjs';
+import { isTrainFrontJobV2, sameClaimGeneration, validateClaimGeneration } from '../job-v2.mjs';
+import { validateStrictProof } from './train-strict.mjs';
 
 export const TRAIN_MODES = Object.freeze(['off', 'shadow', 'on']);
 export const TRAIN_MODE_DEFAULT = 'off';
@@ -142,17 +143,36 @@ export function testMergeDecision({ pull, mergeCommit, job, testTree }) {
 //   pulls     the repository's PRs read now by updated time (github.mjs readPullsUpdatedSince: {complete, pulls: [{number,
 //             updatedAt}]}, back to the proof's cursor): no PR but the front updated after proof.prUpdatedCursor (a push, a
 //             reopen, a base change).
-export function trainHeadDecision({ job, claimId, holders, proof, storeRefused = 0, front, ledger, pulls, now }) {
+export function trainHeadDecision({ job, claimId, holders, proof, storeRefused = 0, front, ledger, pulls, now,
+  strictProof = null, strictStoreRefused = 0, liveRules = null, observedClaim = null, batchClaim = null, testTree = null }) {
   const no = TRAIN_SINGLE_GREEN_NOT_PROVEN, at = v => (typeof v === 'string' ? Date.parse(v) : NaN);
   if (!plain(job) || !isTrainFrontJobV2(job) || typeof claimId !== 'string' || !Number.isSafeInteger(now)) return no;
   if (!plain(holders) || holders.onDuty !== true || !Array.isArray(holders.holders) || holders.holders.length !== 1) return no;
   const h = holders.holders[0], since = at(h?.takenAt);
   if (!plain(h) || h.claimId !== claimId || h.pr !== job.pr || h.boundPr !== `${job.repo}#${job.pr}` || !Number.isFinite(since)) return no;
   if (!plain(proof) || proof.mode !== 'on' || proof.pr !== job.pr || proof.headSha !== job.headSha || proof.claimId !== claimId || proof.mainSha !== job.baseSha) return no;
+  let limited = false;
+  if (proof.fullSweepSinceOn !== true && liveRules?.strict === true && strictStoreRefused === 0) {
+    try {
+      validateStrictProof(strictProof);
+      validateClaimGeneration(observedClaim); validateClaimGeneration(batchClaim);
+      // This is the runtime exception binding, not an epoch stamped by Stage 10. Old batches with a changed claim
+      // generation fail here as well as the unchanged Native publisher boundary. New batches revalidate the exception.
+      limited = sameClaimGeneration(observedClaim, batchClaim) && observedClaim.claimId === claimId
+        && strictProof.repo === job.repo && strictProof.sourceManifestSha256 === job.sourceManifestSha256 && strictProof.mainSha === job.baseSha
+        && strictProof.front.pr === job.pr && strictProof.front.headSha === job.headSha && strictProof.front.claimId === claimId
+        && at(strictProof.front.since) === since && at(strictProof.onSince) <= at(strictProof.writtenAt)
+        && at(strictProof.writtenAt) >= at(proof.writtenAt) && at(strictProof.writtenAt) >= since && at(strictProof.writtenAt) <= now
+        && at(strictProof.writtenAt) >= now - strictProof.sweepFreshMs && strictProof.sweepFreshMs === proof.sweepFreshMs
+        && strictProof.slotHardCapMinutes === proof.slotHardCapMinutes;
+    } catch { limited = false; }
+  }
+  if (limited) proof = { ...proof, writtenAt: strictProof.writtenAt, prUpdatedCursor: strictProof.prUpdatedCursor };
   const written = at(proof.writtenAt), cursor = at(proof.prUpdatedCursor);
   if (at(proof.since) !== since || !(written >= since) || !(written <= now) || !Number.isSafeInteger(proof.sweepFreshMs) || !(written >= now - proof.sweepFreshMs)
-    || proof.clean !== true || proof.unconfirmed !== 0 || proof.fullSweepSinceOn !== true || !Number.isFinite(cursor) || storeRefused !== 0) return no;
-  if (!plain(front) || front.pr !== job.pr || front.headSha !== job.headSha || front.baseSha !== job.baseSha || front.testSha !== job.testSha || front.claimId !== claimId) return no;
+    || proof.clean !== true || proof.unconfirmed !== 0 || (proof.fullSweepSinceOn !== true && !limited) || !Number.isFinite(cursor) || storeRefused !== 0) return no;
+  if (!plain(front) || front.pr !== job.pr || front.headSha !== job.headSha || front.baseSha !== job.baseSha || front.testSha !== job.testSha || front.claimId !== claimId
+    || (limited && (at(front.since) !== since || !SHA.test(testTree ?? '') || front.testTree !== testTree))) return no;
   if (!plain(ledger) || !Array.isArray(ledger.entries) || !Array.isArray(ledger.refused) || ledger.refused.length !== 0
     || ledger.entries.some(r => !plain(r?.entry) || !Number.isFinite(at(r.entry.at)) || (at(r.entry.at) > written && r.entry.phase !== 'revoked'
       && !(r.entry.pr === job.pr && r.entry.headSha === job.headSha && r.entry.baseSha === job.baseSha)))) return no;

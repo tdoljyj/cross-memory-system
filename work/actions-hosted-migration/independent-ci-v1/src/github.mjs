@@ -1,4 +1,8 @@
 import { createHash, createSign } from 'node:crypto';
+// Shared with the optional modern controller's retry wrapper without adding a
+// module dependency to the legacy v1 Source's frozen closure.
+const READ_REQUEST_DEADLINE = Symbol.for('clued-read-request-deadline');
+const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -54,14 +58,37 @@ function jwt(appId, key, now) {
 // it is never passed to worker processes, manifests, PRs or loggers.
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
-  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait } = {}) {
+  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
     || typeof fetchImpl !== 'function' || !positive(maxPages) || maxPages > 100
     || typeof includeModeRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
-    || !Number.isSafeInteger(retryWindowMs) || retryWindowMs < 0 || retryWindowMs > 10_000) fail('invalid_checks_configuration');
+    || !Number.isSafeInteger(retryWindowMs) || retryWindowMs < 0 || retryWindowMs > 10_000 || typeof budgetObservedAtFetch !== 'boolean'
+    || (budgetObservedAtFetch && budgetObserver === null)
+    || (budgetObserver !== null && !['begin', 'observe', 'observeBody', 'seed', 'snapshot'].every(k => typeof budgetObserver?.[k] === 'function'))) fail('invalid_checks_configuration');
   const root = `https://api.github.com/repos/${repository}`;
+  // Optional telemetry is injected by the modern controller. A legacy consumer
+  // has no observer/capability and keeps its original request behavior.
+  let budgetBroken = false, fallbackRequests = 0, fallbackGraphql = 0;
+  const unknownBudget = () => ({ contract: 'clued.independent-ci.train-provider-budget/1', state: 'unknown', requests: fallbackRequests,
+    restRequests: fallbackRequests - fallbackGraphql, graphqlRequests: fallbackGraphql, rest: null, graphql: null,
+    retryAt: null, observedAt: null, extraSlicesAllowed: false });
+  const budgetCall = (method, ...args) => {
+    if (budgetBroken || !budgetObserver) return undefined;
+    try { return budgetObserver[method](...args); } catch { budgetBroken = true; return undefined; }
+  };
+  const budget = {
+    begin(url) { fallbackRequests++; if (new URL(url).pathname === '/graphql') fallbackGraphql++; budgetCall('begin', url); },
+    observe(...args) { budgetCall('observe', ...args); },
+    observeBody(...args) { budgetCall('observeBody', ...args); },
+    seed(...args) { budgetCall('seed', ...args); },
+    snapshot() { return budgetCall('snapshot') ?? unknownBudget(); }
+  };
+  let maintenanceRateControl = false;
+  const respectProviderHold = () => {
+    if (maintenanceRateControl && Date.parse(budget.snapshot().retryAt ?? '') > clock()) fail('github_rate_limited');
+  };
   let token = null;
   // Retry spending of this port: one entry per retried request, its upper bound
   // reserved while it runs and replaced by the actual time when it ends.
@@ -70,22 +97,29 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     for (let i = spent.length - 1; i >= 0; i--) if (spent[i].at + spent[i].ms <= now - RETRY_SPAN_MS) spent.splice(i, 1);
     return retryWindowMs - spent.reduce((sum, entry) => sum + entry.ms, 0);
   }
-  async function send(url, method, bearer, body, timeoutMs) {
+  async function send(url, method, bearer, body, timeoutMs, requestDeadline = null) {
     if (!(timeoutMs >= 1)) fail('github_transport_unconfirmed');
+    // Only the maintenance consumer opts in. Once the provider has told it to
+    // wait, another read/write in this invocation must not ignore that deadline.
+    respectProviderHold();
     let response;
     try {
+      if (!budgetObservedAtFetch) budget.begin(url);
       response = await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(Math.min(30_000, timeoutMs)),
+        ...(Number.isFinite(requestDeadline) ? { [READ_REQUEST_DEADLINE]: requestDeadline } : {}),
+        ...(maintenanceRateControl ? { [READ_REQUEST_GUARD]: respectProviderHold } : {}),
         headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${bearer}`,
           'x-github-api-version': '2022-11-28', 'user-agent': 'clued-independent-ci',
           ...(body ? { 'content-type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}) });
-    } catch (error) { throw transport(error, false); }
+    } catch (error) { if (error?.code === 'github_rate_limited') throw error; throw transport(error, false); }
+    if (!budgetObservedAtFetch) budget.observe(url, response);
     if (!response.ok) {
       if (method !== 'GET' && WRITE_AMBIGUOUS_STATUS.includes(response.status)) throw ambiguousWrite(response.status);
       fail(`github_http_${response.status}`);
     }
     // A reply arrived: the request was sent and, for a write, accepted.
-    try { return await response.json(); } catch (error) {
+    try { const body = await response.json(); budget.observeBody(url, body); return body; } catch (error) {
       if (transportFailure(error)) throw transport(error, true);
       fail('github_response_invalid');
     }
@@ -99,7 +133,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     const parsed = new URL(url);
     if (parsed.origin !== 'https://api.github.com' || parsed.username || parsed.password) fail('invalid_github_origin');
     let failure;
-    try { return await send(url, method, bearer, body, until === null ? 30_000 : until - clock()); } catch (error) { failure = error; }
+    try { return await send(url, method, bearer, body, until === null ? 30_000 : until - clock(), until); } catch (error) { failure = error; }
     if (!failure?.retryable || (!repeatable && !readBack)) throw failure;
     const opened = clock(), left = Math.min(available(opened), until === null ? Infinity : until - opened);
     if (!(left >= RETRY_DELAYS_MS[0] + MIN_ATTEMPT_MS)) throw failure;
@@ -117,7 +151,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
           if (failure.ambiguous) continue;
           if (!failure.unsent || !(retryUntil - clock() >= MIN_ATTEMPT_MS)) break;
         }
-        try { return await send(url, method, bearer, body, retryUntil - clock()); } catch (error) {
+        try { return await send(url, method, bearer, body, retryUntil - clock(), retryUntil); } catch (error) {
           if (!error?.retryable) throw error;
           failure = error;
         }
@@ -226,6 +260,15 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     return { complete: true, page, pulls, last: rows.length < perPage };
   }
   return Object.freeze({
+    rateBudget() { return budget.snapshot(); },
+    async readRateBudget({ until = null } = {}) {
+      if (until !== null && (!Number.isSafeInteger(until) || until <= clock())) fail('invalid_rate_budget_deadline');
+      maintenanceRateControl = true;
+      const body = await request('https://api.github.com/rate_limit', 'GET', await credential(until), undefined, { until });
+      if (until !== null && clock() >= until) fail('invalid_rate_budget_deadline');
+      budget.seed(body);
+      return budget.snapshot();
+    },
     // Protected controller use only: never hand this token to a job/worker/logger.
     async getInstallationToken() { return credential(); },
     async readAdmissionMode() {

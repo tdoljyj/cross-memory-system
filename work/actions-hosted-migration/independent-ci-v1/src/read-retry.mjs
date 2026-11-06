@@ -33,6 +33,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // readPost (generation 11, resident DESIGN 55): a POST that is a read by its exact URL and body (the caller decides; the controller
 // names the Native verify RPC without an action or with a listed read-only action), repeated like a GET. Every other POST/PATCH passes
 // through untouched, as before.
+export const READ_REQUEST_DEADLINE = Symbol.for('clued-read-request-deadline');
+export const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
 export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budgetMs = READ_RETRY_BUDGET_MS, attemptTimeoutMs = 30_000, sleep = wait, live = () => {}, onRetry = () => {}, deadlineAt = () => null, resetOn = () => false, readPost = () => false, now = () => Date.now() } = {}) {
   if (typeof fetchImpl !== 'function' || !Array.isArray(delaysMs) || !delaysMs.every(ms => Number.isSafeInteger(ms) && ms > 0)
     || !Number.isSafeInteger(budgetMs) || budgetMs < 0 || typeof sleep !== 'function' || typeof live !== 'function' || typeof deadlineAt !== 'function' || typeof resetOn !== 'function' || typeof readPost !== 'function' || typeof now !== 'function') throw new Error('read_retry_configuration_invalid');
@@ -44,10 +46,12 @@ export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budg
     if (!read) {
       try { return await fetchImpl(url, opts); } finally { if (resetOn(url, opts)) spent = 0; }
     }
+    let lastResponse = null, lastFailure = null;
     for (let attempt = 0; ; attempt++) {
       let response = null, failure = null;
       // What is left of the stage's own deadline (null: not known). An attempt never runs longer than that.
-      const deadline = deadlineAt();
+      const stageDeadline = deadlineAt(), requestDeadline = opts[READ_REQUEST_DEADLINE];
+      const deadline = Number.isFinite(requestDeadline) ? Math.min(requestDeadline, Number.isFinite(stageDeadline) ? stageDeadline : Infinity) : stageDeadline;
       const left = Number.isFinite(deadline) ? Math.max(1, deadline - now()) : null;
       const timeoutMs = left === null ? attemptTimeoutMs : Math.min(attemptTimeoutMs, left);
       // A repeat gets a fresh timeout in place of the first attempt's (which has been running while this waited); the
@@ -55,7 +59,16 @@ export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budg
       // signal and is only cut short when the deadline is nearer than that signal's.
       const attemptOpts = attempt === 0 ? (left !== null && left < attemptTimeoutMs ? { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) } : opts)
         : { ...opts, signal: AbortSignal.timeout(timeoutMs) };
+      // A delayed wake-up must not issue even a 1ms attempt after this request's
+      // own deadline. Leave the pre-existing no-request-deadline route unchanged.
+      if (Number.isFinite(requestDeadline) && now() >= requestDeadline) {
+        if (lastFailure) throw lastFailure;
+        if (lastResponse) return lastResponse;
+        throw Object.assign(new Error('read_request_deadline_expired'), { code: 'read_request_deadline_expired' });
+      }
+      if (typeof opts[READ_REQUEST_GUARD] === 'function') opts[READ_REQUEST_GUARD]();
       try { response = await fetchImpl(url, attemptOpts); } catch (error) { if (!networkFault(error)) throw error; failure = error; }
+      lastResponse = response; lastFailure = failure;
       if (response && !RETRYABLE_STATUSES.includes(response.status)) return response;
       const delay = delaysMs[attempt];
       const late = Number.isFinite(deadline) && now() + delay >= deadline;

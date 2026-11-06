@@ -20,6 +20,7 @@
 // The protected-layer pre-check (§41.4, MergeAdmission v0.2 §2.4: a protected-layer front H must contain T) runs in mode on
 // only: stage 10 sets front.protectedLayer from the PR's changed paths and the admission policy (train-maintenance.mjs);
 // shadow mode reports FRONT_NEEDS_MAIN_MERGE only from GitHub's own facts, as before.
+import { validStrictReadiness, validTrainProviderBudget, validSweepProgress } from './train-strict.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
   'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH']);
@@ -109,13 +110,16 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
 }
 
 const count = v => Number.isSafeInteger(v) && v >= 0;
-const validSweep = s => plain(s) && SWEEP_KINDS.includes(s.kind) && typeof s.complete === 'boolean' && ['revoked', 'unconfirmed', 'wouldRevokeCount', 'calls', 'ms'].every(k => count(s[k]))
+const validSweep = (s, now) => plain(s) && SWEEP_KINDS.includes(s.kind) && typeof s.complete === 'boolean' && ['revoked', 'unconfirmed', 'wouldRevokeCount', 'calls', 'ms'].every(k => count(s[k]))
   && typeof s.proofWritten === 'boolean' && plain(s.fullSweep) && ['none', 'running', 'complete', 'abandoned'].includes(s.fullSweep.state)
   && [s.fullSweep.startedAt, s.fullSweep.completedAt].every(v => v === null || iso(v)) && typeof s.fullSweep.sinceOn === 'boolean'
   && (s.fullSweep.reason === null || (typeof s.fullSweep.reason === 'string' && CODE.test(s.fullSweep.reason)))
   // generation 15 (DESIGN 60): what the round enumerates and why, and why rounds enumerate everything until one of scope 'all' completes
   && [undefined, null, 'all', 'current'].includes(s.fullSweep.scope) && (s.fullSweep.scopeReason == null || (typeof s.fullSweep.scopeReason === 'string' && CODE.test(s.fullSweep.scopeReason)))
-  && (s.fullSweep.allPending == null || (typeof s.fullSweep.allPending === 'string' && CODE.test(s.fullSweep.allPending)));
+  && (s.fullSweep.allPending == null || (typeof s.fullSweep.allPending === 'string' && CODE.test(s.fullSweep.allPending)))
+  && (s.strictCoverage === undefined || validStrictReadiness(s.strictCoverage))
+  && (s.providerBudget === undefined || validTrainProviderBudget(s.providerBudget, now + s.ms))
+  && (s.progress === undefined || validSweepProgress(s.progress));
 const validActions = a => plain(a) && ['touchedRunning', 'adopted', 'returned', 'failedReported', 'watermarkReported'].every(k => typeof a[k] === 'boolean') && count(a.keptAlive)
   && (a.revokeHead === null || (plain(a.revokeHead) && UUID.test(a.revokeHead.requestId ?? '') && typeof a.revokeHead.done === 'boolean'));
 const validBatch = b => plain(b) && Number.isSafeInteger(b.pr) && b.pr > 0 && ['headSha', 'baseSha', 'testSha', 'testTree'].every(k => SHA.test(b[k] ?? ''))
@@ -137,7 +141,7 @@ export function validateTrainFacts(f) {
     || !Array.isArray(f.wouldRevoke) || f.wouldRevoke.length > MAX_REVOKE_LISTED
     || !f.wouldRevoke.every(r => plain(r) && SHA.test(r.headSha ?? '') && Number.isSafeInteger(r.checkRunId) && r.checkRunId > 0)
     || !Number.isSafeInteger(f.wouldRevokeCount) || !plain(f.ledger)
-    || !DECISIONS.includes(f.decision) || !validSweep(f.sweep) || !validActions(f.actions) || !validNodes(f.nodes) || !count(f.nodesDropped)
+    || !DECISIONS.includes(f.decision) || !validSweep(f.sweep, Date.parse(f.at)) || !validActions(f.actions) || !validNodes(f.nodes) || !count(f.nodesDropped)
     || !(f.requestPause === null || (f.requestPause === 'TRAIN_LANDED_TREE_MISMATCH' && f.decision === 'TRAIN_LANDED_TREE_MISMATCH' && f.mode === 'on'))
     || !(f.openFrontBatch === null || (f.mode === 'on' && validBatch(f.openFrontBatch)))
     || (f.mode === 'on' && (f.decision === 'OPEN_FRONT_BATCH') !== (f.openFrontBatch !== null))

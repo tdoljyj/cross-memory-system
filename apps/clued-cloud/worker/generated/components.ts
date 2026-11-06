@@ -28,7 +28,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.13",
+  "script.independent-native-publication": "1.1.14",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.2",
   "script.source-only-workflow": "1.0.0",

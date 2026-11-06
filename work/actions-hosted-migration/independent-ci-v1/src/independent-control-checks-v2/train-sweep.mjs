@@ -92,13 +92,31 @@ export function revokeTargets({ greens, inMain, front, mainSha, own, revokeHead 
 }
 
 // One run's sweeper: GitHub reads with a cache of heads already known to be in main, a time bound and counters.
-export function createSweeper({ github, appId, mainSha, inMain = [], clock = Date.now, until = Infinity }) {
+export function createSweeper({ github, appId, mainSha, inMain = [], clock = Date.now, until = Infinity, strictCoverage = false }) {
   const contained = new Map(inMain.map(h => [h, true]));
-  const stats = { heads: 0, prs: 0, commits: 0 };
+  const comparisons = new Map();
+  const stats = { heads: 0, prs: 0, commits: 0, ...(strictCoverage ? { deferred: 0, eligible: 0 } : {}) };
   const late = () => clock() > until;
+  async function comparison(head) {
+    if (!comparisons.has(head)) comparisons.set(head, await github.readCompare(mainSha, head));
+    return comparisons.get(head);
+  }
+  // Direction matters: strict main is contained by H, not H contained by main. Unknown comparisons never defer a green.
+  async function eligibleOf(head) {
+    try {
+      const c = await comparison(head);
+      if (!Number.isSafeInteger(c?.aheadBy) || c.aheadBy < 0 || !Number.isSafeInteger(c?.behindBy) || c.behindBy < 0
+        || !['ahead', 'behind', 'identical', 'diverged'].includes(c.status)
+        || (c.status === 'identical' && (c.aheadBy !== 0 || c.behindBy !== 0))
+        || (c.status === 'ahead' && (c.aheadBy === 0 || c.behindBy !== 0))
+        || (c.status === 'behind' && (c.aheadBy !== 0 || c.behindBy === 0))
+        || (c.status === 'diverged' && (c.aheadBy === 0 || c.behindBy === 0))) fail('TRAIN_STRICT_COMPARE_UNREADABLE');
+      return c.behindBy === 0 && ['ahead', 'identical'].includes(c.status);
+    } catch { fail('TRAIN_STRICT_COMPARE_UNREADABLE'); }
+  }
   async function inMainOf(head) {
     if (contained.has(head)) return contained.get(head);
-    try { const c = await github.readCompare(mainSha, head); contained.set(head, c.aheadBy === 0 && ['behind', 'identical'].includes(c.status)); }
+    try { const c = await comparison(head); contained.set(head, c.aheadBy === 0 && ['behind', 'identical'].includes(c.status)); }
     // GitHub's compare answers 404 for a commit it no longer has (an old head after a force push, collected) and for one
     // with no common ancestor with main: neither is in main, so it is judged "not in main" (revoking is the stricter side;
     // review R2 minor 9). Every other failure stays unknown.
@@ -140,6 +158,10 @@ export function createSweeper({ github, appId, mainSha, inMain = [], clock = Dat
       if (contained.get(h) === true) continue;
       if (late()) fail('TRAIN_SWEEP_TIME_BOUND');
       stats.heads++;
+      if (strictCoverage) {
+        if (!(await eligibleOf(h))) { stats.deferred++; continue; }
+        stats.eligible++;
+      }
       const found = await greensOf(h);
       if (found.length) { await inMainOf(h); greens.push(...found); }
     }
@@ -147,7 +169,7 @@ export function createSweeper({ github, appId, mainSha, inMain = [], clock = Dat
     if (r.unknown.length) fail('TRAIN_MAIN_CONTAINMENT_UNREADABLE');
     return r.targets;
   }
-  return Object.freeze({ stats, late, judge, headsOfPull, forcePushHeadsOfPull, inMainOf, knownInMain: h => contained.get(h) === true,
+  return Object.freeze({ stats, late, judge, headsOfPull, forcePushHeadsOfPull, inMainOf, eligibleOf, knownInMain: h => contained.get(h) === true,
     inMain: () => [...contained].filter(([, v]) => v === true).map(([h]) => h) });
 }
 
@@ -218,6 +240,7 @@ export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, f
   try {
     for (;;) {
       const reply = await github.readPullsPage({ state: 'all', sort: 'created', direction: 'asc', page });
+      if (reply?.complete !== true || reply.page !== page || !Array.isArray(reply.pulls) || typeof reply.last !== 'boolean') fail('TRAIN_PULLS_INCOMPLETE');
       for (; index < reply.pulls.length; index++) {
         if (sweeper.late()) return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };
         const r = await fullSweepHeads(sweeper, reply.pulls[index], scope);
