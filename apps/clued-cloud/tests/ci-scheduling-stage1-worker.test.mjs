@@ -108,8 +108,8 @@ test('draining accepts trusted existing-job settlement, never new execution/publ
     assert.equal((await verify(await signed({ operation }), payload, principal, drain)).ok, true, operation);
   for (const operation of ['node_heartbeat', 'green_mirror_append'])
     assert.equal((await verify(await signed({ operation, job_id: null, execution_generation: 0 }), payload, principal, drain)).ok, true, operation);
-  for (const operation of ['job_lease', 'qualification_report', 'sealed_drop_take'])
-    assert.equal((await verify(await signed({ operation, ...(operation === 'qualification_report' ? { job_id: null, execution_generation: 0 } : {}) }),
+  for (const operation of ['job_lease', 'job_lease_next', 'qualification_report', 'sealed_drop_take'])
+    assert.equal((await verify(await signed({ operation, ...(['qualification_report', 'job_lease_next'].includes(operation) ? { job_id: null, execution_generation: 0 } : {}) }),
       payload, principal, drain)).code, 'PRINCIPAL_INVALID', operation);
   for (const operation of ['job_started', 'publish_prepare', 'stage8_try_begin', 'sealed_drop_send', 'train_front_set'])
     assert.equal((await verify(await signed({ operation }), payload, principal, drain)).code, 'PRINCIPAL_INVALID', operation);
@@ -136,7 +136,7 @@ test('2B: job-scoped operations name their job and jobless ones never do', async
   // Malformed envelopes cannot be signed through ciCommandSigningBytes; the verifier
   // refuses them while parsing, before any signature check.
   const malformed = async changes => ({ ...(await signed()), ...changes });
-  for (const operation of ['qualification_report', 'green_mirror_append', 'train_sweep_confirm', 'node_heartbeat']) {
+  for (const operation of ['qualification_report', 'green_mirror_append', 'train_sweep_confirm', 'node_heartbeat', 'job_lease_next']) {
     assert.equal((await verify(await malformed({ operation }))).code, 'INPUT_INVALID', operation + ' with a job');
     assert.equal((await verify(await signed({ operation, job_id: null, execution_generation: 0 }))).ok, true, operation);
   }

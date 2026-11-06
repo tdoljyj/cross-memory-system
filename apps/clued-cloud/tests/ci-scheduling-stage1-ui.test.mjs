@@ -348,3 +348,93 @@ test('credential-shaped public text is rejected locally and never echoed into fe
   f.change('ci-accepted-ref', 'Bearer fixture-token-123'); f.click('批准登记');
   assert.equal(f.calls.length, 1); assert.ok(f.text().includes('接受记录中不能包含密码、令牌或私钥'));
 });
+
+// T2A-2 (G4): the phase moves, the active pool, preference and availability.
+const ACTIVE_POOL = { version: 1, status: 'ACTIVE', mode: 'active', limits: LIMITS, phase: 2 };
+const phases = (phase, moves) => ({ phase_moves: { phase, moves } });
+
+test('T2A-2: a phase move shows what blocks it and is disabled until the server conditions hold', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await load(f, listed([node()], { pool: { version: 1, status: 'CONFIGURED_PREPARED', mode: 'prepared', limits: LIMITS },
+    ...phases(1, [{ target_phase: 2, attestations: ['two_node_assumptions_a1_a5_installed'], unmet: ['publisher_not_ready:' + BINDING, 'no_repository'] }]) }));
+  assert.ok(f.text().includes('当前阶段 1'));
+  assert.ok(f.text().includes('有发布者还没有资格有效、20 分钟内有心跳的已批准节点'));
+  assert.ok(f.text().includes('尚未登记仓库'));
+  assert.equal(Boolean(f.button('预览进入阶段 2').props.disabled), true);
+  assert.ok(f.text().includes('准备阶段 · 尚未启用调度'));
+});
+
+test('T2A-2: moving a phase needs an acceptance reference and every tick, then two steps; a wrong committed phase is UNKNOWN', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const listing = listed([node()], { pool: { version: 1, status: 'CONFIGURED_PREPARED', mode: 'prepared', limits: LIMITS },
+    ...phases(1, [{ target_phase: 2, attestations: ['two_node_assumptions_a1_a5_installed'], unmet: [] }]) });
+  await load(f, listing);
+  f.click('预览进入阶段 2'); assert.equal(f.calls.length, 1); assert.ok(f.text().includes('变更调度阶段前，请填写本次接受记录'));
+  f.change('ci-accepted-ref', 'decision:phase-2'); f.click('预览进入阶段 2');
+  assert.equal(f.calls.length, 1); assert.ok(f.text().includes('请逐项勾选这一步需要你确认的事项'));
+  assert.ok(f.text().includes('两节点假设清理 A1–A5（9cac75be）已随安装波上线'));
+  f.field('ci-attest-2-two_node_assumptions_a1_a5_installed').props.onChange({ target: { checked: true } }); f.render();
+  f.click('预览进入阶段 2');
+  const request = f.calls[1];
+  assert.equal(request.name, 'clued_ci_phase_confirmation_issue_v1');
+  assert.deepEqual(request.args.p_input, { project_id: PROJECT, base_version: 1, expected_phase: 1, target_phase: 2,
+    attestations: ['two_node_assumptions_a1_a5_installed'], accepted_ref: 'decision:phase-2' });
+  request.resolve(issued({ confirmation_view: { project_id: PROJECT, choices: { expected_phase: 1, target_phase: 2 } } })); await f.settle();
+  assert.ok(f.text().includes('确认调度阶段变更为 2'));
+  f.click('确认修改');
+  assert.equal(f.calls[2].name, 'clued_ci_phase_apply_v1');
+  assert.deepEqual(f.calls[2].args.p_input, { confirmation_token: 'fixture-token', view_digest: 'd'.repeat(64) });
+  f.calls[2].resolve({ status: 'committed', replayed: false, project_id: PROJECT, from_phase: 1, to_phase: 2, pool: { ...ACTIVE_POOL, version: 2 } }); await f.settle();
+  assert.ok(f.text().includes('调度阶段已变更为 2'));
+
+  const g = fixture(); t.after(() => g.unmount()); await load(g, listing);
+  g.change('ci-accepted-ref', 'decision:phase-2');
+  g.field('ci-attest-2-two_node_assumptions_a1_a5_installed').props.onChange({ target: { checked: true } }); g.render();
+  g.click('预览进入阶段 2'); g.calls[1].resolve(issued()); await g.settle(); g.click('确认修改');
+  g.calls[2].resolve({ status: 'committed', project_id: PROJECT, to_phase: 3, pool: { ...ACTIVE_POOL, version: 2 } }); await g.settle();
+  assert.ok(g.text().includes('修改结果尚未确认'));
+});
+
+test('T2A-2: a refused move names the unmet condition in words', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await load(f, listed([node()], { pool: ACTIVE_POOL, ...phases(2, [{ target_phase: 1, attestations: [], unmet: [] },
+    { target_phase: 3, attestations: ['stage2_exit_acceptance_passed'], unmet: ['phase2_under_3_days'] }]) }));
+  assert.ok(f.text().includes('调度阶段 2 · 已启用调度'));
+  assert.ok(f.text().includes('调度已启用，按已保存额度执行'));
+  assert.ok(f.text().includes('阶段 2 运行未满 3 天'));
+  f.change('ci-accepted-ref', 'decision:phase-1'); f.click('预览退回阶段 1');
+  assert.deepEqual(f.calls[1].args.p_input, { project_id: PROJECT, base_version: 1, expected_phase: 2, target_phase: 1, attestations: [], accepted_ref: 'decision:phase-1' });
+  f.calls[1].error({ message: 'CI_PHASE_CONDITION_UNMET:pool_not_drained', code: '55000' }); await f.settle();
+  assert.ok(f.text().includes('进入条件未满足：还有在跑的作业或已预留的发布键，请先排空。'));
+});
+
+test('T2A-2: malformed phase projections and active pools never enable mutation', async t => {
+  for (const extra of [{ phase_moves: { phase: 0, moves: [] } }, { phase_moves: { phase: 2, moves: [{ target_phase: 3, attestations: 'x', unmet: [] }] } },
+    { phase_moves: { phase: 2, moves: [{}, {}, {}] } }, { pool: { version: 1, status: 'CONFIGURED_PREPARED', mode: 'active', limits: LIMITS } },
+    { pool: { version: 1, status: 'ACTIVE', mode: 'prepared', limits: LIMITS } }, { pool: { version: 1, status: 'ACTIVE', mode: 'active', limits: {} } }]) {
+    const f = fixture(); t.after(() => f.unmount()); await load(f, listed([node()], extra));
+    assert.ok(f.text().includes('当前状态尚未完整读取'), JSON.stringify(extra));
+  }
+  const f = fixture(); t.after(() => f.unmount()); await load(f, listed([node()], { pool: { ...ACTIVE_POOL, limits: null } }));
+  assert.ok(f.text().includes('调度已启用，但额度尚未配置'));
+});
+
+test('T2A-2: a node shows its preference and availability; registration accepts both and rejects malformed windows locally', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await load(f, listed([node({ preference: 'relay', profile: { slot_count: 1, availability: { timezone: 'Asia/Shanghai',
+    windows: [{ days: [1, 2, 3, 4, 5], start: '09:00', end: '18:30' }] } } })]));
+  assert.ok(f.text().includes('中转（只领排队满 60 秒的作业）'));
+  assert.ok(f.text().includes('周一、周二、周三、周四、周五 09:00–18:30（Asia/Shanghai）'));
+  for (const availability of [{ timezone: 'UTC', windows: [] }, { timezone: 'UTC', windows: [{ days: [8], start: '09:00', end: '18:00' }] },
+    { timezone: 'UTC', windows: [{ days: [1], start: '9:00', end: '18:00' }] }, { timezone: 'UTC', windows: [{ days: [1], start: '09:00', end: '09:00' }] },
+    { timezone: 'UTC', windows: [{ days: [1, 1], start: '09:00', end: '18:00' }] }, { timezone: 'UTC' }]) {
+    const document = publicRegistration(); document.profile = { slot_count: 1, availability };
+    f.change('ci-registration', JSON.stringify(document)); f.click('提交登记'); assert.equal(f.calls.length, 1, JSON.stringify(availability));
+  }
+  const bad = publicRegistration(); bad.profile = { slot_count: 1, preference: 'first' };
+  f.change('ci-registration', JSON.stringify(bad)); f.click('提交登记'); assert.equal(f.calls.length, 1);
+  const valid = publicRegistration(); valid.profile = { slot_count: 1, preference: 'overflow',
+    availability: { timezone: 'Asia/Shanghai', windows: [{ days: [5], start: '22:00', end: '06:00' }, { days: [6, 7], start: '00:00', end: '24:00' }] } };
+  f.change('ci-registration', JSON.stringify(valid)); f.click('提交登记');
+  assert.equal(f.calls[1].name, 'clued_ci_node_registration_v1'); assert.deepEqual(f.calls[1].args.p_input.profile, valid.profile);
+});

@@ -15,10 +15,13 @@ const OPERATIONS = new Set([
   'sealed_drop_send', 'sealed_drop_take',
   // Unified scheduling 2B.
   'qualification_report', 'nonce_issue', 'job_lease', 'job_renew', 'green_mirror_append',
+  // Unified scheduling 2A (T2A-2): pull scheduling.
+  'job_lease_next',
 ]);
 // Operations without a job: everything else names its job and execution generation.
 const JOBLESS = new Set([
   'node_registration', 'node_heartbeat', 'qualification_report', 'train_sweep_confirm', 'green_mirror_append',
+  'job_lease_next',
 ]);
 const DRAINING_SETTLEMENT = new Set([
   'node_heartbeat', 'job_release', 'result_register', 'publish_observe', 'green_transition',
