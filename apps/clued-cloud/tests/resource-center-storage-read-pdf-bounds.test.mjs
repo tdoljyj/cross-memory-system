@@ -33,8 +33,9 @@ const child = path.join(directory, "child.mjs");
 await writeFile(child, `
 import { readFile } from "node:fs/promises";
 import v8 from "node:v8";
+import { pathToFileURL } from "node:url";
 const [bundle, file, maxText, timeMs] = process.argv.slice(2);
-const { extractPdfText } = await import(bundle);
+const { extractPdfText } = await import(pathToFileURL(bundle).href);
 const run = bytes => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: Number(maxText), ...(timeMs ? { time_ms: Number(timeMs) } : {}) });
 let peakBuffers = 0, peakHeap = 0, cmapCalls = 0, decoded = 0;
 try { await run(new Uint8Array(await readFile(file + ".warm"))); } catch {}
