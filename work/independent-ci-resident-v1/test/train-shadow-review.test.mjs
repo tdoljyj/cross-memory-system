@@ -207,6 +207,44 @@ test('G4 (Owner reading): >= 2 completions in the window, every abandonment expl
   assert.deepEqual([v, r.sweep.abandonedNotExplained.length], [NOT_MET, 1]);
 });
 
+test('--accept-abandoned: the Owner ruling on one named abandonment; it never widens beyond that sweep', async t => {
+  const receipts = await load(t, runs(8));
+  const sw = (startH, endMin, { state = 'complete', reason = null } = {}) => [sweepFacts(T0 + startH * H + MIN, 'running', { startedAt: iso(T0 + startH * H) }),
+    sweepFacts(T0 + startH * H + endMin * MIN, state, { startedAt: iso(T0 + startH * H), completedAt: state === 'complete' ? iso(T0 + startH * H + endMin * MIN) : null, reason })];
+  const bad = [...sw(0, 20), ...sw(7, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' }), ...sw(22, 20)];
+  const at = h => T0 + h * H;
+  const g = accept => review({ receipts, shadow: asRecords(bad), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: accept });
+  assert.equal(verdicts(g([])).G4, NOT_MET);
+  let r = g([at(14)]);
+  assert.deepEqual([verdicts(r).G4, r.sweep.abandonedAccepted, r.sweep.abandonedNotExplained, r.sweep.acceptedUnmatched], [MET, [{ startedAt: iso(T0 + 14 * H), reason: 'TRAIN_SWEEP_INCOMPLETE' }], [], []]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /1 次按 Owner 2026-11-06 裁定可接受（.*TRAIN_SWEEP_INCOMPLETE）、0 次记录里看不出是节奏慢/);
+  assert.match(renderPage(r), /Owner 2026-11-06 裁定可接受的全量扫描放弃：.*TRAIN_SWEEP_INCOMPLETE/);
+  // a start time that matches no abandonment changes nothing and is said so; so does a time that names a completed sweep
+  r = g([at(15), at(7)]);
+  assert.deepEqual([verdicts(r).G4, r.sweep.acceptedUnmatched.length, r.sweep.abandonedAccepted.length], [NOT_MET, 2, 0]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /在窗口内没有对应的放弃记录，没有生效/);
+  assert.match(renderPage(r), /没有对应记录、未生效的起点/);
+  // the ruling does not cover another unexplained abandonment, and does not turn a missing completion into a pass
+  const two = [...sw(0, 20), ...sw(7, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' }), ...sw(16, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' })];
+  r = review({ receipts, shadow: asRecords(two), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(14)] });
+  assert.deepEqual([verdicts(r).G4, r.sweep.abandonedNotExplained.map(x => x.startedAt)], [NOT_MET, [iso(T0 + 16 * H)]]);
+  r = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' })]), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(14)] });
+  assert.equal(verdicts(r).G4, INSUFFICIENT);
+  // an explicit, named ruling also applies to a sweep that looks stuck on errors (it is the Owner's call); without it that sweep stays unexplained
+  const stuck = [...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), sweepFacts(T0 + 2 * H, 'running', { startedAt: iso(T0 + H), incomplete: true }), ...sw(8, 20), ...sw(14, 20)];
+  r = review({ receipts, shadow: asRecords(stuck), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(1)] });
+  assert.deepEqual([verdicts(r).G4, r.sweep.abandonedAccepted.length], [MET, 1]);   // an explicit, named ruling does apply to it
+  assert.equal(verdicts(review({ receipts, shadow: asRecords(stuck), since: T0, now: T0 + 40 * H, chain: OK })).G4, NOT_MET);
+});
+
+test('--accept-abandoned on the command line: repeatable, strict ISO, shown on the page', async t => {
+  const dir = await chainOf(t, runs(2));
+  const out = await run(['--receipts', dir, '--accept-abandoned', '2026-11-05T16:06:30.001Z', '--accept-abandoned', '2026-11-05T01:00:00Z', '--since', iso(T0), '--now', iso(T0 + 3 * H)]);
+  assert.match(out, /# 影子审查/);
+  await assert.rejects(run(['--receipts', dir, '--accept-abandoned', 'tomorrow']), e => e.code === 'TIME_INVALID');
+  await assert.rejects(run(['--receipts', dir, '--accept-abandoned']), e => e.code === 'ARGUMENT_VALUE_MISSING');
+});
+
 test('queue residence is windowed by --since/--now, and an unusable marker is counted, not averaged', () => {
   const markers = [{ leftQueuedAt: iso(T0 + 10 * MIN), headLeftAt: iso(T0 + 20 * MIN) }, { leftQueuedAt: iso(T0 + 30 * MIN), headLeftAt: iso(T0 + 90 * MIN) },
     { leftQueuedAt: iso(T0 - 5 * H), headLeftAt: iso(T0 - 4 * H) }, { leftQueuedAt: iso(T0 + 40 * MIN), headLeftAt: iso(T0 + 30 * MIN) }, null, { headLeftAt: 5 }];

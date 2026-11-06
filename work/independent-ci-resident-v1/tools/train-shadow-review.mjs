@@ -1,7 +1,7 @@
 // Read-only: the shadow review before the merge train is switched on (DESIGN §41.9 step 3, §22.2 item 5; Task 67b41719).
 //   node train-shadow-review.mjs --receipts <resident state\receipts> [--shadow <train-shadow folder or its export>]
 //     [--status <status.json>] [--pulls <pulls.json>] [--queue-markers <markers.json>] [--since <iso>] [--now <iso>]
-//     [--nodes <expected node count, default 2>] [--json] [--no-verify]
+//     [--nodes <expected node count, default 2>] [--accept-abandoned <sweep start, ISO> (repeatable)] [--json] [--no-verify]
 // It reads the resident's receipt chain (train-run, batch-*, ...), the stage-10 shadow records (state\v2\train-shadow: readable by
 // clued-control and Administrators only, so run elevated or point --shadow at an export) and optional exports of public facts, and prints
 // ONE page for the Owner: whether the shadow observation gate of Task 67b41719 is met (each condition 满足 / 不满足 / 数据不够, with its
@@ -16,6 +16,9 @@
 // The same Decision: the GitHub recompute delay is not required before the train starts (still printed when it can be computed), the
 // second place's wait is the queue_marker residence (--queue-markers), the 6-hour full-sweep cap stays as it is.
 //
+// --accept-abandoned  records the Owner's ruling that ONE abandoned full sweep, named by its start time as the page prints it, is acceptable (an
+//                     incomplete read that failed closed). Only a sweep that was abandoned and is not already explained by the clock is affected;
+//                     the page shows the ruling next to the sweep, and a start time that matches nothing is reported, not ignored.
 // --pulls    JSON { "<pr>": { "mergedAt": iso } }                       (gh api repos/<repo>/pulls/<pr> --jq '{mergedAt: .merged_at}')
 // --queue-markers JSON [ { "leftQueuedAt": iso, "headLeftAt": iso } ]   (merge_measurement_events_v1, kind queue_marker, payload; read-only SQL)
 import fs from 'node:fs/promises';
@@ -30,6 +33,7 @@ export const MIN_FRONT_PRS = 3;
 export const MIN_FULL_SWEEPS = 2;
 export const FULL_SWEEP_MAX_MS = 21_600_000;   // the resident's policy default fullSweepMaxMs (6 hours); the records do not carry it
 const EXPIRY_REASONS = new Set(['TRAIN_FULL_SWEEP_EXPIRED']);
+export const OWNER_RULING = 'Owner 2026-11-06 裁定可接受';
 export const NODE_STALE_MS = 1_800_000; // three heartbeat intervals (DESIGN §41.6a)
 const RECEIPT_NAME = /^(\d{8})-([a-z0-9-]{1,48})\.json$/;
 const SHADOW_NAME = /^(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})\.json$/;
@@ -247,7 +251,7 @@ function recomputeDelay(shadowRuns) {
   return { samples: samples.length, medianMin: median(d), maxMin: d.length ? d.reduce((m, v) => Math.max(m, v), 0) : null };
 }
 
-function sweepStats(shadowRuns, since, status, now) {
+function sweepStats(shadowRuns, since, status, now, accepted = []) {
   const runs = shadowRuns.filter(s => s.facts.sweep?.kind === 'full-segment' && s.facts.sweep.fullSweep && (since === null || s.at >= since));
   const byStart = new Map();
   for (const s of runs) {
@@ -276,12 +280,17 @@ function sweepStats(shadowRuns, since, status, now) {
   // abandoned it, so the sweeping has stopped, which is not slow pacing either. Needs a --now that is really "now" (or the time of the copy).
   const tail = list[list.length - 1];
   if (tail?.state === 'running' && ms(tail.startedAt) !== null && now - ms(tail.startedAt) > FULL_SWEEP_MAX_MS + NODE_STALE_MS) { tail.state = 'abandoned'; tail.reason = 'RUNNING_PAST_CAP'; tail.cause = 'NOT_EXPLAINED'; }
+  // the Owner's ruling on a named abandonment (the wording of the page: Owner 2026-11-06 裁定可接受)
+  const acceptSet = new Set(accepted);
+  list.forEach(e => { if (e.state === 'abandoned' && e.cause === 'NOT_EXPLAINED' && acceptSet.has(ms(e.startedAt))) e.cause = 'ACCEPTED'; });
   const sweeps = list.map(e => ({ ...e, wallMin: e.state === 'complete' && ms(e.completedAt) !== null && ms(e.startedAt) !== null ? minutes(ms(e.completedAt) - ms(e.startedAt)) : null, activeMin: minutes(e.activeMs) }));
   const live = status?.train?.last?.sweep?.fullSweep ?? null, liveDone = ms(status?.train?.sweep?.fullCompletedAt);
   return { fromShadow: runs.length > 0, sweeps, completed: sweeps.filter(s => s.state === 'complete').length, abandoned: sweeps.filter(s => s.state === 'abandoned').length,
     abandonedReasons: countBy(sweeps.filter(s => s.state === 'abandoned'), s => s.reason ?? 'none'),
     abandonedExpired: sweeps.filter(s => s.state === 'abandoned' && s.cause === 'EXPIRED').length,
-    abandonedNotExplained: sweeps.filter(s => s.state === 'abandoned' && s.cause !== 'EXPIRED').map(s => ({ startedAt: s.startedAt, reason: s.reason ?? 'none', stalled: s.stalled })), running: sweeps.filter(s => s.state === 'running').length,
+    abandonedAccepted: sweeps.filter(s => s.state === 'abandoned' && s.cause === 'ACCEPTED').map(s => ({ startedAt: s.startedAt, reason: s.reason ?? 'none' })),
+    acceptedUnmatched: [...acceptSet].filter(t => !sweeps.some(s => s.cause === 'ACCEPTED' && ms(s.startedAt) === t)).map(iso),
+    abandonedNotExplained: sweeps.filter(s => s.state === 'abandoned' && s.cause !== 'EXPIRED' && s.cause !== 'ACCEPTED').map(s => ({ startedAt: s.startedAt, reason: s.reason ?? 'none', stalled: s.stalled })), running: sweeps.filter(s => s.state === 'running').length,
     statusFile: status ? { shadow: (str(status.train?.last?.mode, 20) ?? 'shadow') === 'shadow' && str(status.train?.enabled, 20) === 'shadow', state: str(live?.state, 20), startedAt: str(live?.startedAt, 40), lastCompletedAt: iso(liveDone) } : null };
 }
 
@@ -325,7 +334,7 @@ function gate({ since, window, sweep, anomaly, stats, nodes, shadowSweepRuns, ch
   const unexplained = sweep.abandonedNotExplained;
   add('G4', `全量扫描重复执行（窗口内完成 ≥ ${MIN_FULL_SWEEPS} 次，每次放弃或被替换都能解释为跑满 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时上限的节奏慢，而不是错误）——Owner 口径`,
     !shadowSweepRuns ? INSUFFICIENT : done >= MIN_FULL_SWEEPS ? (unexplained.length === 0 ? MET : NOT_MET) : INSUFFICIENT,
-    shadowSweepRuns ? `完成 ${done} 次；放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `，其中 ${sweep.abandonedExpired} 次是跑满上限（节奏慢）、${unexplained.length} 次记录里看不出是节奏慢${unexplained.length ? `：${unexplained.map(u => `${u.startedAt ?? '起点未知'} ${u.reason}${u.stalled ? '（期间有运行没扫完，可能卡在错误上）' : ''}`).join('；')}` : ''}` : ''}${done < MIN_FULL_SWEEPS ? `；窗口内还要再完成 ${MIN_FULL_SWEEPS - done} 次（一轮扫描最长 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时，完成后隔 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时才再开一轮）` : ''}` : '没有影子记录，数不出完成次数');
+    shadowSweepRuns ? `完成 ${done} 次；放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `，其中 ${sweep.abandonedExpired} 次是跑满上限（节奏慢）、${sweep.abandonedAccepted.length ? `${sweep.abandonedAccepted.length} 次按 ${OWNER_RULING}（${sweep.abandonedAccepted.map(u => `${u.startedAt} ${u.reason}`).join('；')}）、` : ''}${unexplained.length} 次记录里看不出是节奏慢${unexplained.length ? `：${unexplained.map(u => `${u.startedAt ?? '起点未知'} ${u.reason}${u.stalled ? '（期间有运行没扫完，可能卡在错误上）' : ''}`).join('；')}` : ''}` : ''}${sweep.acceptedUnmatched.length ? `；注意：裁定里的起点 ${sweep.acceptedUnmatched.join('、')} 在窗口内没有对应的放弃记录，没有生效` : ''}${done < MIN_FULL_SWEEPS ? `；窗口内还要再完成 ${MIN_FULL_SWEEPS - done} 次（一轮扫描最长 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时，完成后隔 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时才再开一轮）` : ''}` : '没有影子记录，数不出完成次数');
   const halted = anomaly.receiptsByKind.halt + anomaly.receiptsByKind['service-stop-prior-boot'] + anomaly.intentsWithoutClose + anomaly.interruptedRuns;
   add('G5', '窗口内第 10 段没有 HALT / 中断', window.runs === 0 ? INSUFFICIENT : halted === 0 ? MET : NOT_MET,
     `HALT ${anomaly.receiptsByKind.halt}，断电/崩溃后的停机记录 ${anomaly.receiptsByKind['service-stop-prior-boot']}，未收尾 ${anomaly.intentsWithoutClose}，被中断 ${anomaly.interruptedRuns}（另：批次熔断 ${anomaly.receiptsByKind['breaker-opened']} 次、服务停止 ${anomaly.receiptsByKind['service-stop']} 次，属批次管线，仅供参考）；第 10 段失败 ${anomaly.stage10Failures.length} 次${anomaly.stage10Failures.length ? `（${anomaly.stage10Failures.map(f => f.code).join(',')}）` : ''}`);
@@ -347,7 +356,7 @@ function gate({ since, window, sweep, anomaly, stats, nodes, shadowSweepRuns, ch
   return rows;
 }
 
-export function review({ receipts, shadow = [], status = null, pulls = null, markers = null, since = null, now = Date.now(), chain = { status: null, text: '未核验' }, unreadable = {}, expectNodes = 2 }) {
+export function review({ receipts, shadow = [], status = null, pulls = null, markers = null, since = null, now = Date.now(), chain = { status: null, text: '未核验' }, unreadable = {}, expectNodes = 2, acceptAbandoned = [] }) {
   const bad = { receipts: unreadable.receipts ?? 0, shadow: unreadable.shadow ?? 0 };
   // the exported API may be handed unsorted or partial input: order by time, give every receipt a body
   const records = shadow.map(s => ({ ...s, facts: sanitizeFacts(plain(s.facts) ? s.facts : {}) })).filter(s => s.facts.mode === 'shadow' || s.facts.mode === null).sort((a, b) => a.at - b.at);
@@ -356,7 +365,7 @@ export function review({ receipts, shadow = [], status = null, pulls = null, mar
   const window = windowStats(trainRuns, since, now);
   const batch = batchStats(receipts, since, now, window);
   const shadowWin = records.filter(s => (since === null || s.at >= since) && s.at <= now);
-  const sweep = sweepStats(shadowWin, since, status, now);
+  const sweep = sweepStats(shadowWin, since, status, now, acceptAbandoned);
   const anomaly = anomalies(receipts, window, since, now);
   const stats = { wouldRevoke: wouldRevokeStats(window.inWin, shadowWin), firstRunFailure: batch.frontFirstRun, headsPerPr: batch.headsPerPr, headsPerFrontPr: batch.headsPerFrontPr,
     greenToMerge: greenToMerge(window.inWin, pulls), queueResidence: queueResidence(markers, since, now), recompute: recomputeDelay(shadowWin),
@@ -391,6 +400,7 @@ export function renderPage(r) {
   L.push(`- GitHub 重算延迟：${s.recompute.samples ? `${s.recompute.samples} 个样本，中位数 ${s.recompute.medianMin} 分钟，最大 ${s.recompute.maxMin} 分钟（精度为一次运行间隔约 10 分钟）` : '没有样本（需要影子记录里 main 移动时有队首的样本；开车前不要求）'}`);
   const w = r.sweep;
   L.push(`- 全量扫描：${w.fromShadow ? `完成 ${w.completed}、放弃/被替换 ${w.abandoned}、进行中 ${w.running}` : '没有影子记录，时长和调用数算不出'}${w.sweeps.filter(x => x.state === 'complete').map(x => `；一次：墙钟 ${x.wallMin} 分钟、运行 ${x.activeMin} 分钟、${x.segments} 段、${x.calls} 次调用`).join('')}`);
+  if (w.abandonedAccepted.length || w.acceptedUnmatched.length) L.push(`- ${OWNER_RULING}的全量扫描放弃：${w.abandonedAccepted.map(u => `${u.startedAt} ${u.reason}`).join('；') || '无'}${w.acceptedUnmatched.length ? `；没有对应记录、未生效的起点：${w.acceptedUnmatched.join('、')}` : ''}`);
   L.push(`- 第 10 段结局：${Object.entries(r.window.wouldDo).map(([k, v]) => `${k} ${v}`).join('，') || '无'}`);
   if (r.nodes) L.push(`- 节点（${r.nodes.at}）：${r.nodes.nodes.map(n => `${n.node ?? '无'}（Source ${n.source ?? '无'}，${n.state ?? '?'}，${n.ageMin ?? '?'} 分钟前）`).join('；')}`);
   L.push('', '说明：只读工具，不改任何数据、不开任何开关；不满足/数据不够的项不会被当作满足。a3701d3d 还需要 Owner 批准（train=on）。');
@@ -399,7 +409,7 @@ export function renderPage(r) {
 
 // ---- command line ---------------------------------------------------------------------------------------------------------------
 
-const VALUE_FLAGS = ['--receipts', '--shadow', '--status', '--pulls', '--queue-markers', '--since', '--now', '--nodes'];
+const VALUE_FLAGS = ['--receipts', '--shadow', '--status', '--pulls', '--queue-markers', '--since', '--now', '--nodes', '--accept-abandoned'];
 function parseArgs(argv) {
   const opts = { json: false, verify: true };
   for (let i = 0; i < argv.length; i += 1) {
@@ -408,12 +418,14 @@ function parseArgs(argv) {
     if (!VALUE_FLAGS.includes(a)) fail('ARGUMENT_UNKNOWN', a);
     const v = argv[i + 1];
     if (v === undefined || v === '' || v.startsWith('--')) fail('ARGUMENT_VALUE_MISSING', a);
+    if (a === '--accept-abandoned') { (opts['accept-abandoned'] ??= []).push(v); i += 1; continue; }
     if (Object.hasOwn(opts, a.slice(2))) fail('ARGUMENT_DUPLICATE', a);
     opts[a.slice(2)] = v; i += 1;
   }
   if (!opts.receipts) fail('RECEIPTS_REQUIRED');
   for (const k of ['since', 'now']) if (opts[k] !== undefined && ms(opts[k]) === null) fail('TIME_INVALID', `--${k} (ISO 8601 with Z or an offset)`);
   if (opts.since !== undefined && opts.now !== undefined && ms(opts.since) > ms(opts.now)) fail('SINCE_AFTER_NOW');
+  for (const t of opts['accept-abandoned'] ?? []) if (ms(t) === null) fail('TIME_INVALID', '--accept-abandoned (ISO 8601 with Z or an offset)');
   if (opts.nodes !== undefined && !/^[1-9]\d?$/.test(opts.nodes)) fail('NODES_INVALID', '--nodes');
   return opts;
 }
@@ -430,7 +442,7 @@ export async function run(argv, { clock = Date.now } = {}) {
   }
   const report = review({ receipts, shadow: shadowLoaded.records, status: opts.status ? await readJson(opts.status, '--status', 'object') : null, pulls: opts.pulls ? await readJson(opts.pulls, '--pulls', 'object') : null,
     markers: opts['queue-markers'] ? await readJson(opts['queue-markers'], '--queue-markers', 'array') : null, since: opts.since ? ms(opts.since) : null, now: opts.now ? ms(opts.now) : clock(), chain,
-    unreadable: { receipts: badReceipts, shadow: shadowLoaded.unreadable }, expectNodes: opts.nodes ? Number(opts.nodes) : 2 });
+    unreadable: { receipts: badReceipts, shadow: shadowLoaded.unreadable }, expectNodes: opts.nodes ? Number(opts.nodes) : 2, acceptAbandoned: (opts['accept-abandoned'] ?? []).map(ms) });
   return opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderPage(report);
 }
 
