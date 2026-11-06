@@ -44,6 +44,7 @@ test('stage1 effects: exact signed intent, publication recovery and single-consu
     f.committed(await f.pool());await f.modelMode(4);
     const a=f.committed(await f.register());await f.approve(a.node_id);const node=a.node_id;
     await admin.query(`update clued_private.ci_nodes_v1 set qualification_status='verified',qualification_verified_at=now(),qualification_expires_at=now()+interval '1 hour',eligible_until=now()+interval '1 hour',hardening_observed=true,qualification_receipt_ref='fixture-reviewed-qualification' where node_id=$1`,[node]);
+    await f.live(node);
     const second=await f.trustedNode(),third=await f.trustedNode();
     let id,resultId,resultData,key;
     await t.test('nonce is 256 random bits, raw value is hash-only in storage, and wrong possession/domain has zero effect',async()=>{

@@ -495,10 +495,11 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
     assert.equal((await admin.query(`select ci_binding_id from clued_private.work_claim_execution_admissions_v1
       where claim_id=$1`, [guarded.claim.claim_id])).rows[0].ci_binding_id, ids.company);
     assert.deepEqual(await observe(), { status: 'ok', guard_required: true, epoch_current: true });
-    // The same row, not started yet: every exact-holder reader refuses it.
+    // The same row, not started yet: every exact-holder reader refuses it. The admission already issued while
+    // the row had started stays current (G9, 20261106150000: validity is the issue-time fact, not today's role).
     await admin.query(`update clued_private.binding_roles_v1 set effective_at=clock_timestamp()+interval '1 hour'
       where binding_id=$1 and revoked_at is null`, [ids.company]);
-    assert.deepEqual(await observe(), { status: 'ok', guard_required: true, epoch_current: false });
+    assert.deepEqual(await observe(), { status: 'ok', guard_required: true, epoch_current: true });
     v = await guardedVerify('company');
     assert.deepEqual([v.verdict, v.reasons, v.execution_authorized], ['REJECTED', ['admission_binding_required'], false]);
     assert.deepEqual(await holderOnly('company'), CLOSED);
