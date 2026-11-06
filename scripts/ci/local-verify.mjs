@@ -61,6 +61,12 @@
 // resolved. On a CI host (a machine in scripts/ci/self-hosted/node-profiles.json)
 // a run warns when the system drive is below the level at which the installed
 // watchdog starts the runners again.
+// On a host with the resident independent CI (DESK), a run waits before each
+// suite, on both sides, while the resident runs a batch (its status.json has
+// `current` set): they share the one WSL2 VM and the CPU, and a loaded host
+// made the resident's stage-2 relay give up (defect e0a5630d). The wait is
+// bounded (90 minutes, then the run goes on and says so) and prints why;
+// --no-yield skips it.
 //
 // A command that runs Node's test runner and ran no test is a failure, never a
 // pass (an entry point that exits 0 without running anything looks the same as
@@ -120,7 +126,7 @@ function git(args, { cwd, env = process.env, allowFail = false, raw = false, tim
 }
 
 export function parseArgs(argv) {
-  const options = { base: null, candidate: null, committed: false, suites: [], here: true, linux: false, fetch: true, freshBase: false };
+  const options = { base: null, candidate: null, committed: false, suites: [], here: true, linux: false, fetch: true, freshBase: false, yield: true };
   const valued = { '--base': 'base', '--candidate': 'candidate', '--suite': 'suites' };
   for (let i = 0; i < argv.length; i += 1) {
     const [arg, inline] = argv[i].startsWith('--') && argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], undefined];
@@ -140,6 +146,7 @@ export function parseArgs(argv) {
     else if (arg === '--linux-only') Object.assign(options, { linux: true, here: false });
     else if (arg === '--no-fetch') options.fetch = false;
     else if (arg === '--fresh-base') options.freshBase = true;
+    else if (arg === '--no-yield') options.yield = false;
     else throw new Error(`unknown option: ${arg}`);
   }
   return options;
@@ -792,6 +799,54 @@ export function refreshUmbrella(home, handle, { alive = processAlive, now = Date
 }
 
 // main: --base, else GitHub's main. GitHub's branches and tags are fetched
+// The resident independent CI's status page (defect e0a5630d), as either side of a run sees it.
+export const RESIDENT_STATUS = process.platform === 'win32' ? 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json'
+  : '/mnt/c/ProgramData/CluedIndependentCI/resident/state/status.json';
+export const YIELD_TIMEOUT_MS = 90 * 60_000; // longer than a resident batch normally runs
+const YIELD_POLL_MS = 30_000;
+const YIELD_REPORT_MS = 5 * 60_000;
+
+// What the resident runs now (`current` on its status page), or null: idle, not
+// installed here, or unreadable (nothing to yield to that can be seen).
+export function residentBusy({ file = RESIDENT_STATUS, readText = (name) => fs.readFileSync(name, 'utf8') } = {}) {
+  let current;
+  try {
+    current = JSON.parse(readText(file))?.current;
+  } catch {
+    return null;
+  }
+  if (current === null || current === undefined) return null;
+  const pr = Number.isSafeInteger(current.pr) ? `PR #${current.pr}` : 'a batch';
+  return Number.isSafeInteger(current.stage) ? `${pr} (stage ${current.stage})` : pr;
+}
+
+// Wait while the resident runs a batch, at most timeoutMs; true when it waited.
+export function yieldToResident(label, { busy = residentBusy, wait = sleep, now = Date.now, log = console.log, keepAlive = () => {},
+  timeoutMs = YIELD_TIMEOUT_MS, pollMs = YIELD_POLL_MS } = {}) {
+  let what = busy();
+  if (!what) return false;
+  const start = now();
+  let reported = -Infinity;
+  for (;;) {
+    const waited = now() - start;
+    if (waited >= timeoutMs) {
+      log(`local-verify: ${label}: the resident CI still runs ${what} after ${Math.round(waited / 60_000)} min; going on`);
+      return true;
+    }
+    if (now() - reported >= YIELD_REPORT_MS) {
+      log(`local-verify: ${label}: waiting: the resident CI runs ${what} on this host (same WSL VM and CPU); up to ${Math.round(timeoutMs / 60_000)} min, --no-yield skips this`);
+      reported = now();
+    }
+    keepAlive();
+    wait(Math.min(pollMs, timeoutMs - waited));
+    what = busy();
+    if (!what) {
+      log(`local-verify: ${label}: the resident CI is idle after ${Math.round((now() - start) / 1000)} s; going on`);
+      return true;
+    }
+  }
+}
+
 // either way (the Linux clone gets them); without a login or network the last
 // fetched copy is used, else origin's main.
 // The fetches of one repository take turns (two writing the same refs at once fail on ref locks).
@@ -1315,7 +1370,7 @@ const platformName = () => (process.platform === 'win32' ? 'windows' : 'linux');
 
 // The change is verified in a worktree of its own, removed afterwards: other runs
 // of the same commit, or of main, never share it.
-function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, run }) {
+function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, run, yieldTo }) {
   const platform = platformName();
   if (process.version !== `v${CI_NODE}`) console.log(`local-verify: ${platform}: Node ${process.version} here, CI uses v${CI_NODE}`);
   try {
@@ -1327,7 +1382,7 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
   fs.mkdirSync(temp, { recursive: true });
   run.update({ worktrees: [...run.run.worktrees, dir] });
   try {
-    return verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp });
+    return verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo });
   } finally {
     try {
       dropWorktree(root, dir, home);
@@ -1339,7 +1394,7 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
   }
 }
 
-function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp }) {
+function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo }) {
   const env = testEnvironment(process.env, { CI_BASE_SHA: main, TEMP: temp, TMP: temp, TMPDIR: temp });
   const knownLists = selector.readKnownFailures();
   const results = [];
@@ -1348,6 +1403,7 @@ function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase
     console.log(`local-verify: ${platform}: ${id} ...`);
     let outcome;
     try {
+      if (yieldTo) yieldToResident(`${platform}: ${id}`, { keepAlive: () => { run.touch(); refreshUmbrella(home, run); } });
       run.touch();
       refreshUmbrella(home, run);
       cleanWorktree(dir);
@@ -1379,7 +1435,7 @@ const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 // as this side (which needs nothing but Node; the change under test may not
 // have it) against that clone. Runs at the same time share the clone: they take
 // turns (flock) while they change its refs, and each uses refs of its own.
-export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, freshBase = false }) {
+export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, freshBase = false, yieldTo = true }) {
   return [
     'set -e',
     `repo="$HOME/${LINUX_HOME}/repo"`,
@@ -1410,7 +1466,7 @@ export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, 
     'tool=$(mktemp -d)',
     `cp ${quote(tool)} "$tool/local-verify.mjs"`,
     'cd "$repo"',
-    `node "$tool/local-verify.mjs" --candidate ${candidate} --base ${main} --no-fetch${freshBase ? ' --fresh-base' : ''}${suites.map((id) => ` --suite ${quote(id)}`).join('')}`,
+    `node "$tool/local-verify.mjs" --candidate ${candidate} --base ${main} --no-fetch${freshBase ? ' --fresh-base' : ''}${yieldTo ? '' : ' --no-yield'}${suites.map((id) => ` --suite ${quote(id)}`).join('')}`,
   ].join('\n');
 }
 
@@ -1524,7 +1580,7 @@ export function startLinux(options) {
   }
 }
 
-function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, distribution = DISTRIBUTION }) {
+function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, yieldTo, distribution = DISTRIBUTION }) {
   const names = wsl(['--list', '--quiet']);
   if (!String(names.stdout ?? '').split(/\r?\n/).map((name) => name.replace(/\0/g, '').trim()).includes(distribution)) {
     throw new Error(`${distribution} is not installed; run scripts/ci/setup-clued-dev-linux.ps1`);
@@ -1541,7 +1597,7 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, d
   const fd = fs.openSync(logFile, 'w');
   console.log(`local-verify: linux: running in ${distribution} (log ${logFile}; it may wait there for a place, the log says so)`);
   const script = linuxScript({ bundle: bundle && toWslPath(bundle), refs: toWslPath(refsFile), tool: toWslPath(toolFile), run, candidate, main,
-    suites, freshBase });
+    suites, freshBase, yieldTo });
   const child = spawnAsync('wsl.exe', ['-d', distribution, '--cd', '~', '--exec', '/bin/bash', '-lc', script],
     { stdio: ['ignore', fd, fd], windowsHide: true });
   const timer = setTimeout(() => child.kill(), LINUX_TIMEOUT_MS);
@@ -1630,9 +1686,9 @@ async function verifyChange({ options, root, home, change, run }) {
   const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}-${run.run.id}`);
   fs.mkdirSync(logs, { recursive: true });
   const linux = options.linux && suites.length
-    ? startLinux({ root, home, candidate, main: mainCommit, suites, logs, freshBase: options.freshBase })
+    ? startLinux({ root, home, candidate, main: mainCommit, suites, logs, freshBase: options.freshBase, yieldTo: options.yield })
     : null;
-  const results = options.here ? verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, run }) : [];
+  const results = options.here ? verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, run, yieldTo: options.yield }) : [];
   if (linux) results.push(...await linux);
   console.log('\nlocal-verify summary');
   for (const result of results) {

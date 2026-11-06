@@ -268,7 +268,7 @@ export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
 // anything because GitHub / Native were passingly unavailable (1 run + 3 repeats, at most 7 minutes more, inside the stage's own limit).
 export const PUBLICATION_RETRY_STAGES = Object.freeze([3, 5, 7]);
 export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
-// Generation 11 (DESIGN 54): the waits before an execution stage (4, 6) runs again in the same batch (classify.mjs#executionRetryable);
+// Generation 11 (DESIGN 54; stage 2: generation 14, DESIGN 58): the waits before an execution stage (2, 4, 6) runs again in the same batch (classify.mjs#executionRetryable);
 // two runs again at most, each its own stage run with its own cap.
 export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
 // Generation 13 (DESIGN §57.3, Task 3e2e12d7): the waits before the second bundle of a batch resumed from parking point A is built again
@@ -3162,7 +3162,7 @@ export class ResidentExecutor {
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), retry: again + 1 });
         }
-        // Generation 11 (DESIGN 54): an execution stage (4, 6) that ended with an environment fault proven to have published nothing
+        // Generation 11 (DESIGN 54): an execution stage (4, 6; stage 2 abandoned only, DESIGN 58) that ended with an environment fault proven to have published nothing
         // runs again in this batch, after a two-host quiescence proof and a retry-stage-N archive; its publication stage runs once,
         // afterwards. Anything not proven ends as before (the failure path below).
         for (let again = 0; again < EXECUTION_RETRY_MS.length && EXECUTION_RETRY_STAGES.includes(number) && r.ok !== true && !abort && !unconfirmed; again++) {

@@ -319,7 +319,7 @@ function probeRepository(t, { seconds }) {
 }
 
 function runTool({ dir, main, env, home, extra = {} }) {
-  const child = spawn(process.execPath, [TOOL, '--committed', '--no-fetch', '--base', main], { cwd: dir, windowsHide: true,
+  const child = spawn(process.execPath, [TOOL, '--committed', '--no-fetch', '--no-yield', '--base', main], { cwd: dir, windowsHide: true,
     env: { ...env, CLUED_LOCAL_VERIFY_HOME: home, ...extra } });
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });

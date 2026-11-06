@@ -317,13 +317,17 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false, re
 //     or GitHub / Native unreadable; full_admission_unavailable only with its transport flag), or the memory gate's refusal before the
 //     stage was invoked. A refusal about the PR (it changed or closed, refs moved, not admitted) is never retried.
 // The executor adds: no HALT, no drift, a two-host quiescence proof and a verified retry-stage-N archive before each run again.
-export const EXECUTION_RETRY_STAGES = Object.freeze([4, 6]);
+// Generation 14 (DESIGN 58, defect e0a5630d): stage 2 (gitleaks) runs again too, on the abandoned basis ONLY: a relay that a busy host
+// (a slow or hung wsl.exe) made the pump refuse, proven by the same DESIGN 27 facts to have published nothing (stage 3 has not run).
+// Its other endings keep their own path (the memory gate and the clean refusals: the one attempt 2 of DESIGN 32 / O-2, or as before).
+export const EXECUTION_RETRY_STAGES = Object.freeze([2, 4, 6]);
 export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
   ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
 export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null } = {}) {
   const no = reason => ({ retry: false, basis: null, reason });
   if (!EXECUTION_RETRY_STAGES.includes(stage)) return no('EXECUTION_RETRY_STAGE_NOT_LISTED');
   if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE');
+  if (stage === 2 && !scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return no('EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
   if (code === LINUX_MEMORY_NOT_READY) return { retry: true, basis: 'memory-gate', reason: null };
   if (scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return { retry: true, basis: 'abandoned-unpublished', reason: null };
   const o = outcome;

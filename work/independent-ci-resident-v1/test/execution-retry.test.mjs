@@ -45,10 +45,10 @@ function engineWith(n, answers, engine = fakeEngine()) {
   return engine;
 }
 
-test('the pure rule: stages 4 and 6 only; abandoned-unpublished, a clean environment refusal or the memory gate; never a refusal about the PR', () => {
-  assert.deepEqual([...EXECUTION_RETRY_STAGES], [4, 6]);
+test('the pure rule: stages 4 and 6 (and 2, abandoned only); abandoned-unpublished, a clean environment refusal or the memory gate; never a refusal about the PR', () => {
+  assert.deepEqual([...EXECUTION_RETRY_STAGES], [2, 4, 6]);
   assert.deepEqual(EXECUTION_RETRY_MS.map(ms => ms / 60_000), [1, 5]);
-  for (const stage of [1, 2, 3, 5, 7, 8, 9]) assert.equal(executionRetryable({ stage, code: lost().code, bridge: bridge(), proof: WINDOWS_CLEAN }).retry, false, String(stage));
+  for (const stage of [1, 3, 5, 7, 8, 9]) assert.equal(executionRetryable({ stage, code: lost().code, bridge: bridge(), proof: WINDOWS_CLEAN }).retry, false, String(stage));
   assert.deepEqual(executionRetryable({ stage: 4, code: lost().code, bridge: bridge(), proof: WINDOWS_CLEAN }), { retry: true, basis: 'abandoned-unpublished', reason: null });
   assert.equal(executionRetryable({ stage: 6, code: lost().code, bridge: bridge({ pumpQuiet: false }), proof: WINDOWS_CLEAN }).retry, false, 'the pump not quiet: no proof');
   assert.equal(executionRetryable({ stage: 6, code: lost().code, bridge: bridge({ pumpCode: 'COMPANION_HEARTBEAT_LOST' }), proof: WINDOWS_CLEAN }).retry, false, 'unprovable pump');
@@ -60,6 +60,66 @@ test('the pure rule: stages 4 and 6 only; abandoned-unpublished, a clean environ
   for (const o of [{ ...refused().outcome, sideEffects: 1 }, { ...refused().outcome, mayHavePublished: true }, { ...refused().outcome, status: 'UNCERTAIN' }, null])
     assert.equal(executionRetryable({ stage: 4, code: 'X', outcome: o, proof: WINDOWS_CLEAN }).retry, false, JSON.stringify(o));
   assert.deepEqual(executionRetryable({ stage: 6, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN }), { retry: true, basis: 'memory-gate', reason: null });
+});
+
+// Generation 14 (DESIGN 58, defect e0a5630d): the stage-2 relay a busy host made the pump refuse (11-06 #1007, 11-05 #1005, 11-04).
+const pumpLost2 = (o = {}) => ({ ok: false, code: 'BRIDGE_STAGE_STOPPED_PUMP_LOST', proof: WINDOWS_CLEAN, outcome: null, bridge: bridge({ stageCode: 'STAGE_OUTCOME_MISSING', ...o }) });
+test('the pure rule at stage 2: the abandoned basis only; the memory gate, clean refusals, a loud pump or a missing proof keep the path of before', () => {
+  const p = pumpLost2();
+  assert.deepEqual(executionRetryable({ stage: 2, code: p.code, bridge: p.bridge, proof: WINDOWS_CLEAN }), { retry: true, basis: 'abandoned-unpublished', reason: null });
+  assert.deepEqual(executionRetryable({ stage: 2, code: lost().code, bridge: bridge(), proof: WINDOWS_CLEAN }).basis, 'abandoned-unpublished');
+  const no = o => assert.deepEqual(executionRetryable({ stage: 2, proof: WINDOWS_CLEAN, ...o }).retry, false, JSON.stringify(o));
+  no({ code: LINUX_MEMORY_NOT_READY }); // keeps its one attempt 2 (DESIGN 32)
+  for (const reason of EXECUTION_RETRY_BLOCKED_REASONS) no({ code: 'STAGE_CHILD_REFUSED', outcome: refused(reason).outcome, bridge: refused(reason).bridge });
+  no({ code: p.code, bridge: bridge({ stopCode: null }) }); // the stop never reached the helper
+  no({ code: p.code, bridge: bridge({ pumpQuiet: false }) }); // the pump may still write
+  no({ code: p.code, bridge: bridge({ pumpCode: 'COMPANION_HEARTBEAT_LOST' }) }); // unprovable
+  no({ code: p.code, bridge: null });
+  // side effects or a possible publication under an ending the abandonment proof does not cover: never
+  no({ code: 'RELAY_PUBLICATION_UNCERTAIN', outcome: { ...refused().outcome, sideEffects: 1, mayHavePublished: true }, bridge: bridge() });
+  no({ code: 'STAGE_CHILD_TREE_UNCONFIRMED', bridge: bridge() });
+  assert.equal(executionRetryable({ stage: 2, code: p.code, bridge: p.bridge, proof: { windowsTreeZero: false, serviceOriginalStopped: true } }).retry, false, 'Windows half');
+  assert.equal(executionRetryable({ stage: 2, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN }).reason, 'EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
+  // the publisher of the same role never runs again here (it has its own DESIGN 51 rule)
+  assert.equal(executionRetryable({ stage: 3, code: p.code, bridge: p.bridge, proof: WINDOWS_CLEAN }).retry, false);
+});
+
+test('stage 2 (gitleaks): the relay abandoned once (pump lost, stopped); it runs again in the batch with its refs gate and the PR completes, stage 3 runs once', async t => {
+  const engine = engineWith(2, [pumpLost2()]);
+  const companion = fakeCompanion();
+  const sleeps = [];
+  const f = await executorFixture(t, { engine, companion, sleep: async ms => { sleeps.push(ms); await new Promise(r => setImmediate(r)); } });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
+  assert.deepEqual(stagesRun(engine), [1, 2, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(sleeps.includes(60_000), JSON.stringify(sleeps));
+  const [retry] = await bodies(f, 'execution-retry');
+  assert.deepEqual([retry.stage, retry.try, retry.basis, retry.failureCode, retry.archive], [2, 1, 'abandoned-unpublished', 'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'retry-stage-2-1']);
+  assert.ok(engine.calls.some(c => c[0] === 'archive-windows' && c[1] === 'retry-stage-2-1'));
+  assert.ok(companion.calls.some(c => c[0] === 'archive-linux' && c[1] === 'retry-stage-2-1'));
+  // the batch's first Linux stage keeps its refs gate on the run again; no between-roles archive
+  assert.deepEqual(engine.opts.filter(o => o[0] === 2).map(([, o]) => [o.betweenRoles, o.firstLinux, o.again ?? 0, typeof o.stillAllowed]), [[false, true, 0, 'function'], [false, true, 1, 'function']]);
+  assert.deepEqual((await bodies(f, 'attempt2-scheduled')), [], 'no attempt 2');
+  assert.deepEqual((await bodies(f, 'batch-terminal')).map(b => b.outcome), ['COMPLETED']);
+});
+
+test('stage 2: the runs again used up end exactly as before (FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED and the one attempt 2); a clean refusal is never run again', async t => {
+  let engine = engineWith(2, [pumpLost2(), pumpLost2(), pumpLost2()]);
+  let f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED]);
+  assert.deepEqual(stagesRun(engine), [1, 2, 2, 2]);
+  assert.deepEqual((await bodies(f, 'execution-retry')).map(b => b.archive), ['retry-stage-2-1', 'retry-stage-2-2']);
+  assert.equal(r.attempt2, batchKey(subject({ attempt: 2 })));
+  // a clean environment refusal at stage 2 is not run again here
+  engine = engineWith(2, [refused()]);
+  f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  await f.exec.tick();
+  assert.deepEqual(stagesRun(engine).filter(n => n === 2), [2]);
+  assert.deepEqual(await bodies(f, 'execution-retry'), []);
 });
 
 test('stage 4 (trivy): the Linux worker ended without its record once; the stage runs again in the batch and the PR completes, stage 5 runs once', async t => {
@@ -104,7 +164,7 @@ test('the runs again used up: the batch ends exactly as before (abandoned: FAILE
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
 });
 
-test('never retried: a refusal about the PR, a stage that is not 4 or 6, an unproven quiescence, an archive that is not verified', async t => {
+test('never retried: a refusal about the PR, a stage that is not listed, an unproven quiescence, an archive that is not verified', async t => {
   // a refusal about the PR
   let engine = engineWith(4, [refused('PR_NOT_OPEN_OR_CHANGED')]);
   let f = await executorFixture(t, { engine });
@@ -112,12 +172,12 @@ test('never retried: a refusal about the PR, a stage that is not 4 or 6, an unpr
   await f.exec.tick();
   assert.deepEqual(stagesRun(engine).filter(n => n === 4), [4]);
   assert.deepEqual(await bodies(f, 'execution-retry'), []);
-  // stage 2 keeps its own path (attempt 2), never a run again in the batch
-  engine = engineWith(2, [lost()]);
+  // a stage that is not listed (stage 3, the gitleaks publisher) never runs again by this rule
+  engine = engineWith(3, [lost()]);
   f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   await f.exec.tick();
-  assert.deepEqual(stagesRun(engine).filter(n => n === 2), [2]);
+  assert.deepEqual(stagesRun(engine).filter(n => n === 3), [3]);
   assert.deepEqual(await bodies(f, 'execution-retry'), []);
   // Linux never quiet: no archive, no run again; the failure path decides (here: the abandonment cannot prove quiescence either: HALT)
   engine = engineWith(4, [lost(), lost()]);
@@ -158,11 +218,11 @@ test('HALT or drift seen before the run again: no run again (prepareExecutionRet
 
 // ---- the run again of the same unit instance (clued-ci-worker@<jobId>): the facts of the run before are no evidence ----
 
-test('the mailbox carries `again` only on a relay-stage of stage 4 or 6, as 1 or 2; a first run never carries it', () => {
+test('the mailbox carries `again` only on a relay-stage (stage 2, 4 or 6), as 1 or 2; a first run never carries it', () => {
   const base = { contract: REQUEST_CONTRACT, requestId: SWAP, kind: 'relay-stage', createdAt: '2026-11-05T10:00:00Z', deadline: '2026-11-05T11:00:00Z', batchId: BATCH, jobId: JOB };
-  for (const [stage, again] of [[4, 1], [4, 2], [6, 1], [6, 2]]) assert.equal(validateRequest({ ...base, stage, again }).again, again);
+  for (const [stage, again] of [[2, 1], [2, 2], [4, 1], [4, 2], [6, 1], [6, 2]]) assert.equal(validateRequest({ ...base, stage, again }).again, again);
   assert.equal(Object.hasOwn(validateRequest({ ...base, stage: 4 }), 'again'), false);
-  for (const [stage, again] of [[2, 1], [4, 0], [4, 3], [6, '1'], [4, null], [4, 1.5]])
+  for (const [stage, again] of [[3, 1], [2, 0], [2, 3], [4, 0], [4, 3], [6, '1'], [4, null], [4, 1.5]])
     assert.throws(() => validateRequest({ ...base, stage, again }), /MAILBOX_RELAY_FIELDS_REFUSED/, `${stage}/${again}`);
   assert.throws(() => validateRequest({ kind: 'archive-linux', contract: REQUEST_CONTRACT, requestId: SWAP, createdAt: base.createdAt, deadline: base.deadline, batchId: BATCH, reason: 'x', again: 1 }), /MAILBOX_REQUEST_KEYS_REFUSED/);
 });
@@ -186,7 +246,7 @@ test('the engine: a run again goes to the pump as `again`, without the between-r
   assert.deepEqual([asked, seen.at(-1).again, seen.at(-1).number], [['check-refs'], 1, 6]);
   delete engine.companionMailbox;
   delete engine.versions;
-  for (const [n, o] of [[2, { again: 1 }], [5, { again: 1 }], [4, { again: 3 }], [4, { betweenRoles: true, again: 1 }], [6, { betweenRoles: true, firstLinux: false, again: 2 }]])
+  for (const [n, o] of [[3, { again: 1 }], [2, { again: 3 }], [5, { again: 1 }], [4, { again: 3 }], [4, { betweenRoles: true, again: 1 }], [6, { betweenRoles: true, firstLinux: false, again: 2 }]])
     await assert.rejects(engine.runStage(batch, { number: n, linuxWorker: true }, o), /RESIDENT_STAGE_AGAIN_INVALID/, `${n} ${JSON.stringify(o)}`);
   // the relay-stage request: `again` only on a run again
   const sent = [];

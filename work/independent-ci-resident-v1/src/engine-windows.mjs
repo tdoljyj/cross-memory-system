@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { CODE, HEX64, check, fail, parseBoundedJson, sha256, canonicalJson } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
-import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, EXECUTION_RETRY_STAGES, LINUX_MEMORY_NOT_READY } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
@@ -696,10 +696,10 @@ export class WindowsEngine {
     const firstLinux = opts ? opts.firstLinux === true : stage.number === 2;
     check(!betweenRoles || [4, 6].includes(stage.number), 'RESIDENT_BETWEEN_ROLES_STAGE_INVALID');
     check(!firstLinux || [2, 4, 6].includes(stage.number), 'RESIDENT_FIRST_LINUX_STAGE_INVALID');
-    // DESIGN 54: a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
+    // DESIGN 54 (stage 2: DESIGN 58): a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
     // took the run's records); the batch's first Linux stage keeps its refs gate and version check (firstLinux) on a run again too.
     const again = opts?.again ?? 0;
-    check(again === 0 || ([4, 6].includes(stage.number) && [1, 2].includes(again) && !betweenRoles), 'RESIDENT_STAGE_AGAIN_INVALID');
+    check(again === 0 || (EXECUTION_RETRY_STAGES.includes(stage.number) && [1, 2].includes(again) && !betweenRoles), 'RESIDENT_STAGE_AGAIN_INVALID');
     // Before the second and third Linux role, archive the previous role's protocol records on both
     // hosts, exactly as run-batch.ps1:81 does today; otherwise a stale issue.ready would be relayed.
     if (betweenRoles) {

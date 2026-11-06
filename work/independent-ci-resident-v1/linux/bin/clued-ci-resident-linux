@@ -23,7 +23,7 @@ quiescent); no process command line names the worker or a run directory.
 
 Archive scopes: "between-roles-N" moves only the protocol records (the existing linux-archive.py
 semantics); "retry-stage-N-K" (generation 11, DESIGN 54: the K-th run again, K 1 or 2, of an execution stage
-4 or 6 in the same batch; each its own archive instance) is a failure scope that moves the protocol records as found, formal-role.lock and all run
+2, 4 or 6 in the same batch (stage 2: generation 14, DESIGN 58); each its own archive instance) is a failure scope that moves the protocol records as found, formal-role.lock and all run
 directories but KEEPS this batch's workspaces and its ws-prep directory, which the run again needs;
 every other reason moves the protocol records, formal-role.lock, all run directories, this batch's
 workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
@@ -208,8 +208,8 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
     # Only the two exact between-role reasons are protocol-only; any other reason (including any
     # failure-derived text) archives the whole batch scene (third review, MAJOR 1).
     protocol_only = re.fullmatch(r'between-roles-[46]', reason) is not None
-    # Generation 11 (DESIGN 54): only the two exact reasons keep the workspaces; anything else is the full batch scene.
-    keep_workspaces = re.fullmatch(r'retry-stage-[46]-[12]', reason) is not None
+    # Generation 11 (DESIGN 54; stage 2: generation 14, DESIGN 58): only these exact reasons keep the workspaces; anything else is the full batch scene.
+    keep_workspaces = re.fullmatch(r'retry-stage-[246]-[12]', reason) is not None
     completed = protocol_only or reason == 'success-close'
     prefix = 'archive' if completed else 'failed'
     target = f'formal-spool/{prefix}-{batch_id[:12]}-{reason}-{nonce_hex}'
