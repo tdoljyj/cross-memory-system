@@ -175,14 +175,58 @@ test("FlateDecode content (the common case) decodes inside the guarded budget; b
   assert.equal(bidi.text, "# Page 1\nabc def ghi jkl mno");
 });
 
-test("decode bombs, operator bombs, oversized tokens and BrotliDecode fail with archive_limit_exceeded instead of partial text", async () => {
-  for (const [name, pdf] of [["operator bomb 100 MB", operatorBombPdf(100 * MiB)], ["text bomb 300 MB", textBombPdf(300 * MiB)],
-    ["ToUnicode bomb 200 MB (native DecompressionStream path)", toUnicodeBombPdf(200 * MiB)], ["200 references to one 1 MB stream", repeatedStreamPdf(200, MiB)],
-    ["one 1 MiB string", longStringPdf(MiB)], ["BrotliDecode 100 MB", brotliBombPdf(100 * MiB)]]) {
-    const started = Date.now();
-    await assert.rejects(extract(pdf), error => error.code === "archive_limit_exceeded", name);
-    assert.ok(Date.now() - started < 5000, `${name}: ${Date.now() - started} ms`);
+// "Aborts early" is measured as work, not as milliseconds: every unit of pdf.js work (a decoded
+// buffer, a token, an object ...) is announced to globalThis.__cluedPdfDecodeGuard before it is
+// done, so wrapping that function counts what the extraction was allowed to do. The counts depend
+// only on the PDF and the pinned pdf.js, never on machine load. The call's clock is fixed, so the
+// deadline cannot end the extraction either: only the resource limits can.
+async function meterGuard(run) {
+  await extract(latinPdf([["warm up: loads pdf.js, which installs the guard"]]));
+  const real = globalThis.__cluedPdfDecodeGuard;
+  assert.equal(typeof real, "function");
+  const meter = { calls: 0, refused: 0, firstRefusedKind: null, admittedDecodeBytes: 0 };
+  globalThis.__cluedPdfDecodeGuard = (kind, subject, bytes, code) => {
+    meter.calls++;
+    try {
+      const result = real(kind, subject, bytes, code);
+      if (kind === "decode") meter.admittedDecodeBytes += bytes;
+      return result;
+    } catch (error) {
+      meter.refused++; meter.firstRefusedKind ??= kind;
+      throw error;
+    }
+  };
+  try { return { outcome: await run(), meter }; } finally { globalThis.__cluedPdfDecodeGuard = real; }
+}
+
+test("decode bombs, operator bombs, oversized tokens and BrotliDecode fail with archive_limit_exceeded instead of partial text, after a bounded amount of work", async () => {
+  // admittedMax: decoded bytes the guard may admit before it refuses (a stream is capped at 16 MiB, one call
+  // at 48 MiB; far below what each bomb would decode). Observed with pdfjs-dist 6.3.289: 16 MiB, 16 MiB,
+  // 16 MiB, 48 MiB, 2 MiB, 16 MiB. refusedKind: where the guard stopped it.
+  const cases = [["operator bomb 100 MB", operatorBombPdf(100 * MiB), 16 * MiB, "decode"], ["text bomb 300 MB", textBombPdf(300 * MiB), 16 * MiB, "decode"],
+    ["ToUnicode bomb 200 MB (native DecompressionStream path)", toUnicodeBombPdf(200 * MiB), 16 * MiB, "decode"],
+    ["200 references to one 1 MB stream", repeatedStreamPdf(200, MiB), 48 * MiB, "decode"], ["one 1 MiB string", longStringPdf(MiB), 4 * MiB, "limit"],
+    ["BrotliDecode 100 MB", brotliBombPdf(100 * MiB), 16 * MiB, "decode"]];
+  for (const [name, pdf, admittedMax, refusedKind] of cases) {
+    const { meter } = await meterGuard(() => assert.rejects(extract(pdf, { clock: () => 0 }), error => error.code === "archive_limit_exceeded", name));
+    assert.equal(meter.firstRefusedKind, refusedKind, `${name}: refused at ${meter.firstRefusedKind}`);
+    assert.ok(meter.admittedDecodeBytes <= admittedMax, `${name}: ${meter.admittedDecodeBytes} decoded bytes admitted`);
+    // The guard counts every further call as refused, so a pdf.js loop that swallows the error and goes on
+    // (one call per token: hundreds of thousands) would show here; the real runs refuse a few hundred at most.
+    assert.ok(meter.refused >= 1 && meter.refused <= 1000, `${name}: ${meter.refused} refused calls`);
+    assert.ok(meter.calls <= 10000, `${name}: ${meter.calls} guard calls before the extraction ended`);
   }
+});
+
+test("the work meter counts what the guard admits and refuses", async () => {
+  // Outside an extraction the guard lets a token or a new name through and refuses anything else.
+  const { meter } = await meterGuard(() => {
+    const guard = globalThis.__cluedPdfDecodeGuard;
+    guard("token"); guard("primitive");
+    assert.throws(() => guard("decode", {}, 4096), error => error.cluedPdfLimit === true);
+    assert.throws(() => guard("limit"), error => error.cluedPdfLimit === true);
+  });
+  assert.deepEqual(meter, { calls: 4, refused: 2, firstRefusedKind: "decode", admittedDecodeBytes: 0 });
 });
 
 test("page text is streamed: the text limit cancels inside a page and the text is a prefix of the full text", async () => {
