@@ -196,6 +196,13 @@ test('the PR page text per head: running stage, queue position, outcome, HALT, s
   assert.match(describe({ pull: pull(), status: s(b => b.setCurrent({ key: 'a'.repeat(64), pr: 7, headSha: H(7), baseSha: MAIN, attempt: 1, stage: 4 })), now }).description, /第 4 段（trivy 扫描）/);
   const queued = describe({ pull: pull(), status: s(b => b.setPending([{ pr: 6, headSha: H(6), baseSha: MAIN }, { pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'DAILY_BATCH_LIMIT' }])), now });
   assert.deepEqual([queued.state, queued.description], ['pending', '排队第 2 位：今日执行批次额度已满，明天继续']);
+  // generation 15 (DESIGN 60.2): the take-over sweep after main was rewritten says why nothing goes green
+  const sweepView = pending => ({ at: new Date(now).toISOString(), mode: 'on', kind: 'full-segment', complete: true, revoked: 0, unconfirmed: 0, fullState: 'running',
+    fullCompletedAt: null, fullSinceOn: false, onSince: null, fullScope: 'all', fullScopeReason: pending, fullAllPending: pending });
+  const held = pending => describe({ pull: pull(), now, status: s(b => { b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN }]);
+    b.update({ queue: { depth: 1, generation: 'a'.repeat(12), hold: 'TRAIN_TAKEOVER_SWEEP_PENDING', live: 1, parkingFull: false }, train: { enabled: 'on', last: null, sweep: sweepView(pending) } }); }) }).description;
+  assert.match(held('TRAIN_MAIN_REWRITTEN'), /：main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿$/);
+  assert.match(held(null), /：合并列车接管扫描中$/);
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' })), now }).state, 'success');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'STAGE_CHILD_REFUSED', retry: 'new-commit' })), now }).state, 'failure');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'GITHUB_TRANSIENT_UNAVAILABLE', retry: 'attempt2' })), now }).state, 'pending');

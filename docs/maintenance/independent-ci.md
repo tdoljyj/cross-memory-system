@@ -92,6 +92,8 @@ node scripts/ci/local-verify.mjs --affected
    - 建议停用期间把仓库变量 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 MergeAdmission v0.1 §4.1 第 2 条写 Decision）。Agent 按合同在 `frozen` 下不合并、不开 auto-merge；脚本只能在停用前关一次 auto-merge，挡不住之后有人再打开或手动合并。
 2. 停用规则集、修 main、重新启用，回读规则集确认。**修 main 只用向前的提交**（例如 revert 提交）；列车开着时，不把 main 强推回旧提交。强推回旧提交之后，以前已合入、带着六项绿的 head 不再在 main 里，从它新开一个 PR 就能在清扫之前合入。万一必须回退：停用之前先把 `strict` 改回 true、状态切到 `frozen`，两样都保持到全量清扫完成。
 3. 重新启用之后、恢复列车之前，做一次**全量**清扫（不是增量）。main 已经在列车之外动过，所有旧绿都要撤销（包括停用前来不及撤的），列车从新的 main 尖端重新开始。切过 `frozen` 的，清扫完成后再切回。
+   - 第 15 代起（`work/independent-ci-resident-v1/DESIGN.md` §60.2）：第 10 段自己能发现 main 被改写，发现后作废开车后的全量清扫，自动开一轮扫全部 PR 和全部提交的清扫，完成之前不发新绿，状态页和 PR 页面会写明原因。但被改写时 strict 若是关的，companion 会立即暂停执行器，而暂停期间这一轮不会进行：先把 strict 开回 true，再恢复执行器，等这一轮完成后才关 strict。
+   - `fullAllPending` 挂着 `TRAIN_MAIN_REWRITTEN` 时，不要把常驻执行器回退到第 14 代（见 §60.2）。
 
 **灾备切换必需检查的来源**（下一节）：
 
