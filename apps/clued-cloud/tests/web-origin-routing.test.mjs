@@ -105,6 +105,8 @@ test("missing or malformed web origin configuration never enables an alias", asy
 
 test("beamingface.com and dev.beamingface.com are Native web aliases without their own issuer or storage callback", async () => {
   const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
+  // CLUED_OAUTH_ORIGIN and CLUED_STORAGE_GOOGLE_REDIRECT_URI are not in wrangler.production.jsonc
+  // (production values come from elsewhere), so the test injects them.
   const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy,
     CLUED_STORAGE_GOOGLE_REDIRECT_URI: web + "/storage/google/callback" };
   const unexpected = async () => { throw Error("request must not reach Native handler"); };
@@ -134,10 +136,18 @@ test("beamingface.com and dev.beamingface.com are Native web aliases without the
 test("look-alike hosts of the beamingface.com aliases are not admitted", async () => {
   const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
   const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy };
-  assert.equal(production.CLUED_WEB_ORIGINS.split(",").length, 4);
+  assert.deepEqual(production.CLUED_WEB_ORIGINS.split(",").sort(), ["https://beamingface.com", "https://dev.beamingface.com",
+    "https://kooyomi.com", "https://kooyumi.pixelgrav.com"]);
+  assert.deepEqual(config.routes.map(route => route.pattern).sort(), ["beamingface.com", "clued.pixelgrav.com",
+    "dev.beamingface.com", "kooyomi.com", "kooyumi.pixelgrav.com"]);
+  assert.ok(!config.routes.some(route => route.pattern === "www.beamingface.com"));
   for (const origin of ["https://www.beamingface.com", "https://beamingface.com.evil.test", "https://evilbeamingface.com",
-    "https://prod.beamingface.com", "http://beamingface.com", "http://dev.beamingface.com", "https://beamingface.com:8443"]) {
+    "https://prod.beamingface.com", "http://beamingface.com", "http://dev.beamingface.com", "https://beamingface.com:8443",
+    "https://dev-beamingface.com", "https://beamingface.com.evil.com", "https://beamingface.com.",
+    "https://x.dev.beamingface.com"]) {
     assert.equal(await routeWebOrigin(new Request(origin + "/"), production, async () => { throw Error("look-alike admitted"); }), null);
     assert.equal(routeStorageOrigin(new Request(origin + "/storage/admin"), production), null);
   }
+  // A URL with credentials is refused by Request before any router can see it.
+  assert.throws(() => new Request("https://beamingface.com@evil.test/"), TypeError);
 });
