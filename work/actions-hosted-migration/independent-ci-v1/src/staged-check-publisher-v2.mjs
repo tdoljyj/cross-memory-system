@@ -51,11 +51,38 @@ const ADMISSION_REASON = /^full_admission_[a-z_]{1,60}$/;
 // Whether a refusal before anything was recorded or written is only a passing fault of the sources (GitHub unreadable after the bounded read
 // retry, Native's claim observation or the admission port unavailable): then the entry says the stage is safe to run again (outcome.safeToRerun;
 // the resident re-invokes this publisher stage with the same signed result, DESIGN 51), never inferred from a code by the resident.
-const passingFault = error => { const r = reason(error); return verificationUnavailable(r) || r === 'native_claim_observation_unavailable' || (r === 'full_admission_not_proven' && verificationUnavailable(error?.admissionReason)); };
+const passingFault = error => { const r = reason(error); return verificationUnavailable(r) || r === 'native_claim_observation_unavailable'
+  || r === 'native_admission_aged_before_write' || r === 'publication_window_short_before_write' || r === 'protected_facts_reobservation_unavailable'
+  || (r === 'full_admission_not_proven' && verificationUnavailable(error?.admissionReason)); };
 const admissionOf = error => ({ ...(ADMISSION_REASON.test(error?.admissionReason ?? '') ? { admissionReason: error.admissionReason } : {}),
   ...(error?.admissionDiagnostic ? { admissionDiagnostic: error.admissionDiagnostic } : {}) });
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
 const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
+// The publisher's own reads for a copy of a create whose answer was lost, after the port's window (createOrAdopt): at once, then after
+// 10 s and 25 s more. They are GitHub reads after the write, before its confirmation: in production the confirmation's observation
+// window starts at its first observation (runtime/one-shot-v2.mjs, PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS, Owner Decision
+// 36946d8b), so these waits do not use it, and the delays themselves bound them.
+export const ADOPT_READ_DELAYS_MS = Object.freeze([0, 10_000, 25_000]);
+// What the confirmation after the write needs besides a boundary as long as the one before it: the GitHub read-back and the steps
+// between its two boundaries.
+export const CONFIRMATION_MARGIN_MS = 5_000;
+// What the write itself needs of the pre-write observation window after the last check before it (review round 6, MAJOR 1): the role
+// key and the journal (local), the reserve the recoverable publisher demands at the create (PUBLICATION_READBACK_RESERVE_MS, 2 s), and
+// WRITE_NATIVE_CALLS Native calls (prepareNativePublication's current-authority verify, and an active policy's publication begin),
+// each estimated as the slowest verify attempt of this publisher try before the write, answered or timed out (authority.slowestNativeReadMs).
+export const WRITE_MARGIN_MS = 5_000;
+export const WRITE_NATIVE_CALLS = 2;
+// Whether a failed create may have landed, as the GitHub port classifies it (github.mjs): a 5xx answer to the write (ambiguous) or a
+// transport failure after the request left this host. A definite refusal (a 4xx) or a failure proven before sending cannot have.
+const createMayHaveLanded = error => error?.retryable === true && error?.unsent !== true;
+// Whether a failed create is looked for at all (createOrAdopt): never for a Native publication (its handle says native: its runtime
+// recovers by the ticket and finishes it; adopting here would skip Native's finish), never when the port proved it was not sent, and
+// only when it may have landed.
+export const adoptReadAllowed = (error, nativeHandle) => nativeHandle?.native !== true && nativePublicationNoPostProof(error)?.notSent !== true
+  && createMayHaveLanded(error);
+// The shape discoverKnown demands of a check list it trusts: complete, bounded, plain checks with unique ids, all on this head.
+const checkListTrusted = (list, job) => list?.complete === true && Array.isArray(list.checks) && list.checks.length <= 10000
+  && list.checks.every(c => plain(c) && positive(c.id) && c.head_sha === job.headSha) && new Set(list.checks.map(c => c.id)).size === list.checks.length;
 const fresh = (facts, now) => retainedServerAnswerCurrent(facts)
   ?? (freshStamp(Date.parse(facts.observedAt), now) && Date.parse(facts.claimExpiresAt) > now);
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
@@ -83,7 +110,8 @@ export function slotBindingFor(job, mergeSlot) {
 // batchClaim: the sticky claim generation recorded by stage 1 for this batch (batch-claim-v2.mjs).
 // hostedVerifier: the installed hosted relay verifier (hosted-relay-v1/stage.mjs), for publishHosted only.
 export function createStagedCheckPublisherV2({ nativeAdmission, authority, github, journal, signers,
-  configuredChecks, readChangedPaths, protectedDeployment, batchClaim, clock = Date.now, domain = 'production', hostedVerifier = null } = {}) {
+  configuredChecks, readChangedPaths, protectedDeployment, batchClaim, clock = Date.now, domain = 'production', hostedVerifier = null,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const deployment = plain(protectedDeployment) ? structuredClone(protectedDeployment) : null;
   const checks = plain(configuredChecks) ? structuredClone(configuredChecks) : null;
   const configured = ['production', 'fixture'].includes(domain) && deployment?.enabled === true
@@ -129,11 +157,35 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     const list = await github.readChecks(job.headSha);
     if (list?.complete !== true || !Array.isArray(list.checks)) stop('check_readback_unconfirmed');
   }
+  // Generation 13 (DESIGN §57.4, Task a7951534): a create whose answer was lost (the port's own read-back, github.mjs, found no copy within
+  // its window) may still have landed: GitHub can show the check later. The publisher reads the head's checks again at
+  // ADOPT_READ_DELAYS_MS and adopts a copy that is exactly what it sent (App, name, head, external_id, completed, conclusion, title,
+  // summary); it never sends the create again. Only a failure that may have landed is looked for (createMayHaveLanded). None found:
+  // the original error, as before (the error path then finds any copy that is not exact and withdraws it). A create the port proved never sent is not looked for, and neither is a Native publication (a
+  // handle with native true: the create is Native's begin, the POST with its marker and Native's finish; its runtime has its own recovery, which
+  // finds the check by its ticket and finishes it, never POSTs again, and adopting it here would skip Native's finish).
+  async function createOrAdopt(payload, nativeHandle, definition, job, externalId) {
+    try { return await github.createCheck(payload, nativeHandle); }
+    catch (error) {
+      if (!adoptReadAllowed(error, nativeHandle)) throw error;
+      for (const delay of ADOPT_READ_DELAYS_MS) {
+        if (delay > 0) await sleep(delay);
+        let list = null;
+        try { list = await github.readChecks(job.headSha); } catch { continue; }
+        if (!checkListTrusted(list, job)) continue;
+        const copies = list.checks.filter(c => identity(c, definition, job, externalId));
+        if (copies.length > 1) break;
+        const copy = copies[0];
+        if (copy && copy.status === 'completed' && copy.conclusion === payload.conclusion && copy.output?.title === payload.output.title
+          && copy.output?.summary === payload.output.summary) return copy;
+        if (copy) break;
+      }
+      throw error;
+    }
+  }
   async function discoverKnown(definition, job, externalId) {
     const list = await github.readChecks(job.headSha);
-    if (list?.complete !== true || !Array.isArray(list.checks) || list.checks.length > 10000
-      || list.checks.some(c => !plain(c) || !positive(c.id) || c.head_sha !== job.headSha)
-      || new Set(list.checks.map(c => c.id)).size !== list.checks.length) stop('check_discovery_unconfirmed');
+    if (!checkListTrusted(list, job)) stop('check_discovery_unconfirmed');
     const matches = list.checks.filter(check => identity(check, definition, job, externalId));
     if (matches.length !== 1) stop('check_discovery_unconfirmed');
     return matches[0];
@@ -154,9 +206,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     }
     return { evidenceSha256: proof.envelope.attestationSha256, payload: { conclusion: 'success' }, signer: null };
   }
-  async function boundary(job, proof, definition, expectedEvidenceSha256 = null) {
-    const verified = await proofOf(job, proof);
-    if (expectedEvidenceSha256 && expectedEvidenceSha256 !== verified.evidenceSha256) stop('evidence_identity_conflict', true);
+  // The protected facts of the job, observed now and checked against the job, the batch claim, the qualification and the deployment.
+  async function observeFacts(job, verified) {
     const facts = await authority.observe(job, batchClaim);
     if (!plain(facts)) stop('protected_facts_unconfirmed');
     if (retainedServerAnswerCurrent(facts) === null && Number.isFinite(Date.parse(facts.claimExpiresAt)) && Date.parse(facts.claimExpiresAt) <= clock()) stop('protected_lease_expired', true);
@@ -169,6 +220,69 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || (verified.signer !== null && (verified.signer.sourceAcceptanceRef !== facts.sourceAcceptanceRef
         || verified.signer.qualificationRef !== facts.hostQualificationRef)))
       stop('protected_qualification_changed', true);
+    return facts;
+  }
+  // Generation 13 (DESIGN §57.2, Task 7b21f820): live authority is a Native answer at most FRESH_MS old (Decision 1100a0ed), and
+  // Native's complete admission, which runs after the protected facts were observed, may itself take longer. The facts are then observed
+  // once more, with every check of observeFacts and the same claim generation as `claim` (what the admission observed): the bound is
+  // never widened, and only a real change (another claim generation, an expired lease, a qualification or subject change) is a change
+  // of authorization. observeFacts refuses facts that are not fresh when they arrive (protected_facts_unconfirmed), so one observation
+  // is enough and there is no second. Its exhaustion (no answer in its window, or the publication's window spent) has a code of its
+  // own, protected_facts_reobservation_unavailable: it comes after a complete admission, so it is never the pre-admission exhaustion
+  // the recoverable publisher may run again in the same window (runtime/one-shot-v2.mjs); before the write it is a clean, rerunnable
+  // BLOCKED, after it the write is compensated as before (review round 2, MAJOR A).
+  async function liveFacts(job, verified, facts, claim) {
+    if (fresh(facts, clock())) return facts;
+    try { facts = await observeFacts(job, verified); }
+    catch (error) { if (reason(error) === 'native_claim_observation_unavailable') stop('protected_facts_reobservation_unavailable'); throw error; }
+    if (!sameClaimGeneration(facts.claim, claim)) stop('lease_observations_disagree', true);
+    return facts;
+  }
+  // What is left of the publication's pre-write observation window (authority.windowLeftMs, production only), or null; how much of it
+  // is used (authority.windowUsedMs), or null without a window; the window the confirmation after the write will have
+  // (authority.confirmationWindowMs, Owner Decision 36946d8b), or null without one.
+  const windowLeft = () => (typeof authority.windowLeftMs === 'function' ? authority.windowLeftMs() : null);
+  const windowUsed = () => (typeof authority.windowUsedMs === 'function' ? authority.windowUsedMs() : null);
+  const confirmationWindow = () => (typeof authority.confirmationWindowMs === 'function' ? authority.confirmationWindowMs() : null);
+  const slowestNativeRead = () => (typeof authority.slowestNativeReadMs === 'function' ? authority.slowestNativeReadMs() : 0);
+  // The Native admission must still be live when the check is written (the port refuses an older one: prepareNativePublication) and
+  // when the publication settles. Before anything is recorded an aged admission is a clean, rerunnable stop. After the write and its
+  // read-back, an aged admission is re-evaluated once, completely (boundary), and must bind exactly what the write was authorized
+  // under (bindingSha256, evidence); only a real change, or an admission that cannot be made live again, compensates the write.
+  // Generation 13 (DESIGN §57.2, Owner Decision 36946d8b): whether the write can still be made and confirmed. Production (null or absent
+  // methods: no windows) gives the observations before the write and those after it a window each. The write must fit what is left of
+  // the pre-write window (WRITE_MARGIN_MS plus WRITE_NATIVE_CALLS times the slowest Native read before it; review round 6, MAJOR 1);
+  // the confirmation, estimated as long as the boundary before the write (`confirmMs`: boundary().ms, the window it used from its first
+  // observation on) plus CONFIRMATION_MARGIN_MS, must fit the post-write window. A write that cannot is not made: the publication ends
+  // before anything is recorded, safe to run again with windows of its own (publication_window_short_before_write). Write steps slower
+  // than the estimate still meet the recoverable publisher's reserve at the create (guardNewPublication, unchanged: UNCERTAIN).
+  function writeFits(confirmMs) {
+    const left = windowLeft(), confirm = confirmationWindow();
+    return (left === null || left >= WRITE_MARGIN_MS + WRITE_NATIVE_CALLS * slowestNativeRead())
+      && (confirm === null || confirm >= confirmMs + CONFIRMATION_MARGIN_MS);
+  }
+  // Whether one more complete boundary, as long as `ms`, fits what is left of the pre-write window (a relay re-verifying another
+  // holder's settled publication before it writes anything; review round 6, MAJOR 1).
+  function boundaryFits(ms) {
+    const left = windowLeft();
+    return left === null || left >= ms + CONFIRMATION_MARGIN_MS;
+  }
+  async function liveAfterWrite(job, proof, definition, before, after) {
+    if (fresh(after.native, clock())) return after;
+    const again = await boundary(job, proof, definition);
+    if (again.bindingSha256 !== before.bindingSha256 || again.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
+    if (!fresh(again.native, clock())) stop('lease_expired_after_write', true);
+    return again;
+  }
+  async function boundary(job, proof, definition, expectedEvidenceSha256 = null) {
+    const verified = await proofOf(job, proof);
+    if (expectedEvidenceSha256 && expectedEvidenceSha256 !== verified.evidenceSha256) stop('evidence_identity_conflict', true);
+    // The time this boundary uses from its first observation on, that observation included (the proof checks before it, a hosted
+    // relay's GitHub reads, are not repeated after the write): the window's own monotonic clock in production (windowUsedMs: 0 before
+    // the window's first observation, which this one may be), the wall clock otherwise (review rounds 2 and 3, MINOR 1).
+    const wallAt = clock(), usedAt = windowUsed();
+    const used = () => { const now = windowUsed(); return usedAt !== null && now !== null ? Math.max(0, now - usedAt) : Math.max(0, clock() - wallAt); };
+    let facts = await observeFacts(job, verified);
     const pr = await github.readPullRequest(job.pr);
     if (pr.state !== 'open' || pr.head?.sha !== job.headSha || !prBaseAcceptedV2(job, pr.base?.sha) || pr.base?.ref !== 'main'
       || pr.head?.repo?.full_name !== job.repo || pr.base?.repo?.full_name !== job.repo) stop('github_subject_changed', true);
@@ -192,7 +306,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || !Array.isArray(native.workflowGateFindings) || native.workflowGateFindings.length) stop('full_admission_incomplete');
     // Generation, not expires_at: a renewal between the two observations is not a disagreement.
     if (!sameClaimGeneration(facts.claim, native.observedClaim)) stop('lease_observations_disagree', true);
-    if (!fresh(facts, clock())) stop('protected_facts_expired_during_admission');
+    facts = await liveFacts(job, verified, facts, native.observedClaim);
     if (proof.kind === 'signed') {
       try {
         const stillVerified = verifyResultV2({ job, envelope: proof.envelope, signers, now: clock(), domain });
@@ -203,7 +317,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     }
     // §38.8 n2: the PR base.sha read here is bound too, so the before and after reads of one publication must agree on it
     // (for a batch that tests the head it is T anyway; a train front batch reads it as a fact).
-    return { verified, native, packet, bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
+    return { verified, native, packet, facts, ms: used(), bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
       ...(native.publicationRequired ? { guarded: native.guarded, publicationRequired: true, headAuthorizationId: native.headAuthorizationId } : {}),
       mode: native.mode, mergeSlot: slotBindingFor(job, native.mergeSlot), ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
@@ -281,6 +395,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // read retry), the publication ends here with nothing in the journal, no K and nothing on GitHub, safe to run again, instead
         // of writing a check whose verification then cannot be done.
         await probeGithub(job);
+        if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
+        if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
@@ -309,12 +425,12 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-        const created = await github.createCheck(payload, nativeHandle);
+        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
-        const after = await boundary(job, { kind: 'signed', envelope }, definition);
+        let after = await boundary(job, { kind: 'signed', envelope }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
         await readback(known, definition, job, externalId, before.verified.payload.conclusion);
-        if (!fresh(after.native, clock())) stop('lease_expired_after_write', true);
+        after = await liveAfterWrite(job, { kind: 'signed', envelope }, definition, before, after);
         await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: before.verified.payload.conclusion,
           observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256,
           evidenceSha256: before.verified.evidenceSha256 });
@@ -380,7 +496,18 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         }
         before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
         if (await onGithubOnly(mutex, job, definition)) return result({ status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0 }, mutexKey, false);
+        if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
+        if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
+        // Review round 8, MINOR 1: a refusal before K while K is already another holder's (a newer run of a role the relay settled on
+        // this head, or a local publication) is that holder's: stage R would otherwise send the role to the local path, whose
+        // publication the same K refuses after a wasted scan. Said as it is (REFUSED role_already_published_on_head, this refusal as
+        // the detail); stage R HALTs on it. A K that cannot be read keeps the plain BLOCKED.
+        if (mutex) {
+          let holder = null;
+          try { holder = (await readRolePublication(journal, mutex)).holder; } catch { holder = null; }
+          if (holder && holder.effectKey !== key) return result({ status: 'REFUSED', ...(key ? { effectKey: key } : {}), reason: 'role_already_published_on_head', detail: reason(error), sideEffects: 0 }, mutexKey, false);
+        }
         return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0 }, mutexKey, false);
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0, held = false;
@@ -395,6 +522,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           const other = await readRolePublication(journal, mutex);
           const settled = other.holder?.path === 'relay' && other.holder.effectKey !== key ? await journal.read(other.holder.effectKey) : null;
           if (settled?.state === 'settled' && positive(settled.details?.checkRunId) && settled.subject?.roleMutexKey === mutexKey) {
+            // Its re-verification is a complete boundary inside the pre-write window. One that cannot fit would withdraw a legitimate
+            // settled check only for want of time: this relay stops instead, having written nothing (review round 6, MAJOR 1), with what
+            // is true: K is another holder's (review round 7, MINOR 2). Stage R HALTs on it (ROLE_ALREADY_PUBLISHED_ON_HEAD) and never
+            // sends the role to the local path, whose publication would be refused by the same K after a wasted scan.
+            if (!boundaryFits(before.ms)) return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', detail: 'publication_window_short_before_write', sideEffects: 0 }, mutexKey, false);
             return { ...(await reverifySettled({ key: other.holder.effectKey, settled, definition, job, externalId: other.holder.externalId, envelope })), roleMutex: { key: mutexKey, held: true } };
           }
           return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0 }, mutexKey, false);
@@ -414,12 +546,12 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
               + `Source manifest sha256 ${job.sourceManifestSha256}; attempt ${job.attempt}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-        const created = await github.createCheck(payload, nativeHandle);
+        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
-        const after = await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
+        let after = await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
         await readback(known, definition, job, externalId, 'success');
-        if (!fresh(after.native, clock())) stop('lease_expired_after_write', true);
+        after = await liveAfterWrite(job, { kind: 'hosted', envelope, fresh: false }, definition, before, after);
         await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', attestationSha256: envelope.attestationSha256,
           observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256,
           nativeObservationAfterSha256: after.native.observationSha256 });

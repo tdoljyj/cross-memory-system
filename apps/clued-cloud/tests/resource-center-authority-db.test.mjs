@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -890,7 +891,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     });
     await t.test("temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create", async (child) => {
       const tempParent = await fs.mkdtemp(path.join(os.tmpdir(), "clued-rc-acceptance-"));
-      child.after(() => fs.rm(tempParent, { recursive: true, force: true }));
+      child.after(() => removeTestDirectory(tempParent));
       const nativeRoot = path.join(tempParent, "Clued_资料中心");
       const nativeTrack = path.join(nativeRoot, "20_P_产品与体验");
       const nativeTopic = path.join(nativeTrack, "视觉探索");
@@ -1229,6 +1230,6 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
   } finally {
     if (anon) await anon.end();
     if (admin) await admin.end();
-    await server.stop();
+    await stopCluster(server);
   }
 });

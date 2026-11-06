@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -142,6 +143,6 @@ test('qualified activation drains legacy execution, preserves private holder and
     await assertGatewayCloseoutBoundary(admin);
   } finally {
     for(const client of clients) await client.end().catch(()=>{});
-    await server.stop().catch(()=>{});await fs.rm(dir,{recursive:true,force:true});
+    await stopCluster(server);await removeTestDirectory(dir);
   }
 });

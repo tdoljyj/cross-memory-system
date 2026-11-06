@@ -135,7 +135,7 @@ import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS,
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -271,6 +271,9 @@ export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
 // Generation 11 (DESIGN 54): the waits before an execution stage (4, 6) runs again in the same batch (classify.mjs#executionRetryable);
 // two runs again at most, each its own stage run with its own cap.
 export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
+// Generation 13 (DESIGN §57.3, Task 3e2e12d7): the waits before the second bundle of a batch resumed from parking point A is built again
+// after a network failure (the Source moves the failed gen-2\ aside); two builds again at most, then the batch ends as before.
+export const REBUNDLE_NETWORK_RETRY_MS = Object.freeze([60_000, 300_000]);
 // What a run again needs before its wait: the bounded quiescence proof and the two archives (each at its own request bound).
 const EXECUTION_RETRY_PREPARE_MS = ABORT_QUIESCENCE_WAIT_MS + 2 * ARCHIVE_LINUX_REQUEST_MS;
 // The refs gate's facts (DESIGN 55) for a stage-terminal receipt: only when it asked more than once or stopped asking; checked shapes only.
@@ -607,12 +610,13 @@ export class ResidentExecutor {
   }
 
   // After a wait of the refs gate (DESIGN 55): still no HALT, no drift, and the authority still covers this stage and the rest.
-  // true, or why not ('halt', 'drift', 'authority', 'error'); the authority also covers the next refs read (CHECK_REFS_REQUEST_MS).
-  async gateWaitStillAllowed(key, number) {
+  // true, or why not ('halt', 'drift', 'authority', 'error'); the authority also covers the next request (`nextMs`: the refs read,
+  // CHECK_REFS_REQUEST_MS, or a rebuild of the bundle and the workspaces after a network wait).
+  async gateWaitStillAllowed(key, number, nextMs = CHECK_REFS_REQUEST_MS) {
     try {
       if (await this.ledger.halted()) return 'halt';
       if (await this.driftCode()) return 'drift';
-      if (!this.executionRetryFitsAuthority(number, 0, { afterWait: true, extraMs: CHECK_REFS_REQUEST_MS })) return 'authority';
+      if (!this.executionRetryFitsAuthority(number, 0, { afterWait: true, extraMs: nextMs })) return 'authority';
       return true;
     } catch { return 'error'; }
   }
@@ -1064,6 +1068,23 @@ export class ResidentExecutor {
       try { stopCode = (await this.engine.stopOutcome(requestId)) ?? stopCode; } catch { /* unknown: not STOP_SENT */ }
     }
     return { result, abort, stopCode, unconfirmed };
+  }
+
+  // A retry's wait (publication, execution, a rebuild of the bundle) ends early when an Owner abort of this batch is filed: the poll
+  // looks every ABORT_POLL_MS, and the caller concludes the abort at its safe point right after the wait, as before, instead of waiting
+  // out up to 5 minutes (generation 13, review round 1). The poll is pendingAbort, the same read as watchAbort's: it may record a request
+  // it refuses (owner-request-refused), never accepts one; a failed poll waits on.
+  async retryWait(key, ms) {
+    let done = false, wake;
+    const woken = new Promise(resolve => { wake = resolve; });
+    const poll = (async () => {
+      while (!done) {
+        await Promise.race([this.sleep(ABORT_POLL_MS), woken]);
+        if (done) return;
+        try { if (await this.pendingAbort(key)) { wake(); return; } } catch { /* the next poll looks again */ }
+      }
+    })();
+    try { await Promise.race([this.sleep(ms), woken]); } finally { done = true; wake(); await poll; }
   }
 
   watchAbort(key, batch, number) {
@@ -1576,18 +1597,60 @@ export class ResidentExecutor {
 
   // C2 recovery is independent of CI accounting. An interrupted swap still HALTs; it never authorizes
   // a second swap or clears any head/scene. A bad public receipt cannot become a fresh role observation.
+  // Generation 13 (DESIGN §57.1, Owner Decision 2907d858): a probe interrupted by a restart or a power cut (its intent without a result)
+  // is recovered by itself while fewer than policy roleProbe.interruptedMax (/10; 1, i.e. HALT at once, under /9 and earlier) were
+  // interrupted in a row and the Windows side is quiet as a re-arm requires it (windowsQuiescence: no swap of THIS process in flight,
+  // the original runner service stopped): the intent is closed as interrupted, the role book is the one of the last probe that ended
+  // (nothing of the interrupted one is used), and the probe is due at once, with the role judged afresh. Otherwise, as before,
+  // ROLE_PROBE_INTERRUPTED HALTs for the Owner. A restarted process cannot see what the crashed one left running; a leftover swap that
+  // still holds the broker makes that fresh probe end BROKER_BUSY, which HALTs (ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED) before any role
+  // is judged. An earlier start that HALTed for this intent and crashed before its result is closed as halted, never recovered.
   async roleProbeRecover() {
     if (this.roleProbeRecovered || typeof this.engine.runRoleProbe !== 'function') return null;
     try {
-      const rows = await this.receipts.latest(['role-probe-intent', 'role-probe-result'], 2), last = rows.at(-1);
+      const max = this.policy.roleProbe?.interruptedMax ?? 1;
+      const rows = await this.receipts.latest(['role-probe-intent', 'role-probe-result'], 2 * max + 2), last = rows.at(-1);
       if (last?.type === 'role-probe-intent') {
-        await this.haltWith('ROLE_PROBE_INTERRUPTED', { intentSeq: last.seq });
-        await this.receipt('role-probe-result', { intentSeq: last.seq, deferred: false, ok: false, fact: null, state: this.roleProbe.snapshot() });
-        return { state: 'HALTED', failureCode: 'ROLE_PROBE_INTERRUPTED' };
+        const paired = i => i >= 1 && rows[i].type === 'role-probe-result' && rows[i - 1].type === 'role-probe-intent' && rows[i].value.body.intentSeq === rows[i - 1].seq;
+        // The role book of the last probe that ended, carried by every closing result since (review round 1, NIT): restored before any
+        // of them is written, so a halted interruption keeps it too and a later recovery never starts from an empty book.
+        if (paired(rows.length - 2)) this.roleProbe.restore(rows.at(-2).value.body.state);
+        // An earlier start that already HALTed for this very intent and crashed before its closing result (review round 1, MINOR 1):
+        // close it as it was decided, halted, with no notice. Never re-decided: the node is HALTed, not recovered.
+        const halt = await this.ledger.halted();
+        if (halt?.value?.code === 'ROLE_PROBE_INTERRUPTED' && halt.value.facts?.intentSeq === last.seq) {
+          await this.receipt('role-probe-result', { intentSeq: last.seq, deferred: false, ok: false, fact: null, interrupted: true, halted: true, state: this.roleProbe.snapshot() });
+          return { state: 'HALTED', failureCode: 'ROLE_PROBE_INTERRUPTED' };
+        }
+        // The interruptions in a row: this one and every earlier intent closed as interrupted and not HALTed, back to a probe that ended.
+        let interruptions = 1;
+        for (let i = rows.length - 2; paired(i) && rows[i].value.body.interrupted === true && rows[i].value.body.halted !== true; i -= 2) interruptions += 1;
+        let quiet = null;
+        if (interruptions < max) { try { quiet = await this.engine.windowsQuiescence(null); } catch { quiet = null; } }
+        if (!(interruptions < max && quiet?.windowsTreeZero === true && quiet?.serviceOriginalStopped === true)) {
+          await this.haltWith('ROLE_PROBE_INTERRUPTED', { intentSeq: last.seq, interruptions, interruptedMax: max,
+            windowsQuiet: quiet ? quiet.windowsTreeZero === true && quiet.serviceOriginalStopped === true : null });
+          await this.receipt('role-probe-result', { intentSeq: last.seq, deferred: false, ok: false, fact: null, interrupted: true, halted: true, state: this.roleProbe.snapshot() });
+          return { state: 'HALTED', failureCode: 'ROLE_PROBE_INTERRUPTED' };
+        }
+        this.roleProbe.markUrgent();
+        await this.receipt('role-probe-result', { intentSeq: last.seq, deferred: false, ok: false, fact: null, interrupted: true, halted: false, interruptions,
+          state: this.roleProbe.snapshot() });
+        // "Recovered by itself" is told only to a node that is not HALTed for something else: there the HALT is what the Owner sees
+        // (review round 2, NIT).
+        if (!halt) {
+          this.roleProbeNotices.push({ kind: 'role-probe-interrupted', key: `role-probe-interrupted:${last.seq}`, code: 'ROLE_PROBE_INTERRUPTED', at: new Date(this.clock()).toISOString() });
+          this.roleProbeNotices = this.roleProbeNotices.slice(-10);
+        }
+        this.roleProbeRecovered = true;
+        return null;
       }
       if (last) {
-        check(rows.length === 2 && rows[0].type === 'role-probe-intent' && last.value.body.intentSeq === rows[0].seq, 'ROLE_PROBE_BOOK_REFUSED');
+        check(rows.length >= 2 && rows.at(-2).type === 'role-probe-intent' && last.value.body.intentSeq === rows.at(-2).seq, 'ROLE_PROBE_BOOK_REFUSED');
         this.roleProbe.restore(last.value.body.state);
+        // A recovery whose fresh probe never ran (the executor stopped again right after closing the interruption): that probe is
+        // still due at once; the snapshot does not keep it (review round 2, NIT).
+        if (last.value.body.interrupted === true && last.value.body.halted !== true) this.roleProbe.markUrgent();
       }
       this.roleProbeRecovered = true;
     } catch {
@@ -3038,10 +3101,36 @@ export class ResidentExecutor {
         if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
       } else {
         this.atStage(0, 'rebundle');
-        const rb = await this.companion.rebuildBundle(batch);
+        let rb = await this.companion.rebuildBundle(batch);
+        // Generation 13 (DESIGN §57.3): a network step that failed is built again after REBUNDLE_NETWORK_RETRY_MS, each wait and rebuild
+        // allowed like an execution retry (review round 1, MINOR 3): no HALT, no Source drift, and the installed authority still covering
+        // the wait (before it), the rebuild and the workspaces after it at their bounds and every stage of the batch from the first local
+        // one at its cap.
+        const firstLocal = ROLE_STAGES[localRoles[0]][0], rebuildMs = REBUILD_BUNDLE_REQUEST_MS + PREPARE_WORKSPACES_REQUEST_MS;
+        for (let again = 0; again < REBUNDLE_NETWORK_RETRY_MS.length && rb?.ok !== true && rb?.code === BUNDLE_NETWORK_UNAVAILABLE; again++) {
+          const wait = REBUNDLE_NETWORK_RETRY_MS[again];
+          if (!this.executionRetryFitsAuthority(firstLocal, 0, { afterWait: true, extraMs: wait + rebuildMs })) {
+            await this.receipt('rebundle-retry-refused', { key, try: again + 1, step: 'before-wait-authority' });
+            break;
+          }
+          await this.receipt('rebundle-retry', { key, try: again + 1, afterMs: wait, failureCode: BUNDLE_NETWORK_UNAVAILABLE, companionJobTree: rb?.jobTree ?? null });
+          this.atStage(0, 'retry-wait');
+          await this.retryWait(key, wait);
+          if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
+          const still = await this.gateWaitStillAllowed(key, firstLocal, rebuildMs);
+          if (still !== true) {
+            await this.receipt('rebundle-retry-refused', { key, try: again + 1, step: `after-wait-${still}` });
+            break;
+          }
+          this.atStage(0, 'rebundle');
+          rb = await this.companion.rebuildBundle(batch);
+        }
         const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
-        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
-        if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
+        // The line to GitHub, and nothing else, as for the first bundle (DESIGN 53.3; review round 1, MINOR 6): the ending keeps it.
+        const bundleNetwork = code === 'PARKED_BUNDLE_TOO_OLD' && rb?.code === BUNDLE_NETWORK_UNAVAILABLE;
+        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null,
+          ...(bundleNetwork ? { network: true } : {}) });
+        if (code) return Object.assign(new StepFailure(0, code, {}, 'workspace', relayed), { bundleNetwork });
       }
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
@@ -3065,7 +3154,7 @@ export class ResidentExecutor {
         // Nothing is parked and nothing re-scanned; the Source starts from a clean journal (nothing was recorded) and re-proves everything.
         for (let again = 0; again < PUBLICATION_RETRY_MS.length && publicationRetryable(number, r) && !abort && !unconfirmed; again++) {
           await this.receipt('publication-retry', { key, stage: number, try: again + 1, afterMs: PUBLICATION_RETRY_MS[again], failureCode: validCode(r.code), reason: r.outcome?.reason ?? null });
-          await this.sleep(PUBLICATION_RETRY_MS[again]);
+          await this.retryWait(key, PUBLICATION_RETRY_MS[again]);
           if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
           this.atStage(number, 'stage');
           run = await this.runStageWatched(key, batch, number, { betweenRoles: false, firstLinux: false });
@@ -3081,7 +3170,7 @@ export class ResidentExecutor {
           if (!verdict.retry) break;
           if (!(await this.prepareExecutionRetry(key, batch, number, r, again, verdict.basis))) break;
           this.atStage(number, 'retry-wait'); // the status page: waiting to run the stage again, not running it
-          await this.sleep(EXECUTION_RETRY_MS[again]);
+          await this.retryWait(key, EXECUTION_RETRY_MS[again]);
           if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
           // A HALT or a drift that came during the wait: no run again (the failure path below ends the batch as before).
           if (!(await this.executionRetryStillAllowed(key, number, again))) break;
@@ -3260,7 +3349,7 @@ export class ResidentExecutor {
       reasonCodes: o?.diagnostic?.reasonCodes ?? null, nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? null,
       ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: failure.brokerNoLaunch === true,
       // Generation 10 (DESIGN 53.3): the ending was the line and nothing else (classify.mjs#networkFailure).
-      network: networkFailure({ code: failure.code, outcome: o, refsNoAnswer: failure.refsNoAnswer === true }) };
+      network: networkFailure({ code: failure.code, outcome: o, refsNoAnswer: failure.refsNoAnswer === true, bundleNetwork: failure.bundleNetwork === true }) };
   }
 
   async fail(key, batch, failure) {

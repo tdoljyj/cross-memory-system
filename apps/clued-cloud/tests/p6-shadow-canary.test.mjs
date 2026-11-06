@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, readdir, utimes } from "node:fs/promises";
 import net from "node:net";
@@ -939,7 +940,7 @@ test("G6-3A/G6-4 rebuild two same-seed PostgreSQL databases, replay writes, dry-
     assert.deepEqual(leftFingerprint.unsafe_public_grants, []);
     await Promise.all([assertTenantBRlsDenied(left.server), assertTenantBRlsDenied(right.server)]);
 
-    await right.server.stop();
+    await stopCluster(right.server);
     rightStopped = true;
     const backupDirectory = path.join(root, "backup-restore-copy");
     await cp(right.databaseDir, backupDirectory, { recursive: true, force: false, errorOnExist: true });
@@ -975,12 +976,12 @@ test("G6-3A/G6-4 rebuild two same-seed PostgreSQL databases, replay writes, dry-
       result: "PASS",
     });
 
-    await left.server.stop();
+    await stopCluster(left.server);
     leftStopped = true;
   } finally {
-    if (restored) await restored.stop().catch(() => {});
-    if (!leftStopped) await left.server.stop().catch(() => {});
-    if (!rightStopped) await right.server.stop().catch(() => {});
+    if (restored) await stopCluster(restored);
+    if (!leftStopped) await stopCluster(left.server);
+    if (!rightStopped) await stopCluster(right.server);
   }
 });
 

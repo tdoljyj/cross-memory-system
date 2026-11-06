@@ -534,12 +534,12 @@ test("refused backup CLI exits nonzero with inherited pipes so owned producer cl
   try {
     for(const [variant,file] of [["old",oldFile],["current",helper]]){
       const marker=path.join(base,variant+"-descendant");
-      const boot=`const ordinary=setTimeout;globalThis.setTimeout=(f,n,...a)=>ordinary(f,n===60000?500:n===5000||n===2000?30:n,...a);
-        process.argv=[process.execPath,${JSON.stringify(file)},'clued-production-backup-synthetic-pipe',${JSON.stringify(scratch)}];
-        await import(${JSON.stringify(pathToFileURL(file).href)});`;
+      // The CLI runs as the real entry point (import.meta.main, which a faked argv does not set); only the timers are shortened.
+      const preload=path.join(base,"shorter-timers.mjs");
+      writeFileSync(preload,"const ordinary=setTimeout;globalThis.setTimeout=(f,n,...a)=>ordinary(f,n===60000?500:n===5000||n===2000?30:n,...a);\n");
       let actual;
       try {
-        actual=spawnSync(process.execPath,["--input-type=module","-e",boot],{encoding:"utf8",timeout:2000,env:{...process.env,
+        actual=spawnSync(process.execPath,["--import",pathToFileURL(preload).href,file,"clued-production-backup-synthetic-pipe",scratch],{encoding:"utf8",timeout:2000,env:{...process.env,
           PATH:bin+path.delimiter+process.env.PATH,TEST_NODE_BINARY:process.execPath,MOCK_DOCKER_DRIVER:driver,MOCK_DESCENDANT:marker}});
       } finally {
         if(existsSync(marker)){const pid=Number(readFileSync(marker,"utf8"));assert.ok(Number.isSafeInteger(pid)&&pid>1);

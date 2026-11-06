@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -498,9 +499,9 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     const target = path.resolve(directory);
     if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith("clued-k-cont-")) throw new Error("Unsafe test cleanup");
-    await fs.rm(target, { recursive: true, force: true });
+    await removeTestDirectory(target);
   }
 });

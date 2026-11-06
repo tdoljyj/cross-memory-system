@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -552,8 +553,8 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
 
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });
 

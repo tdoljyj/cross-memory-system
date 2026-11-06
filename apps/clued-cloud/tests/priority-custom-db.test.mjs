@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -348,7 +349,7 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
       human(otherUser)), /custom_priority_record_not_found/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop();
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

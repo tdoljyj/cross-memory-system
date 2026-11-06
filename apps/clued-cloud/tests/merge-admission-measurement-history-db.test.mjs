@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import './merge-admission-measurement-capabilities-db.test.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -377,11 +378,11 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
     });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop();
+    await stopCluster(server);
     // Delete only the test-owned temporary directory after absolute boundary verification.
     const actual = await fs.realpath(directory);
     if (actual !== directory || !path.basename(actual).startsWith('clued-measurement-history-') ||
         path.dirname(actual) !== await fs.realpath(os.tmpdir())) throw new Error('test cleanup boundary changed');
-    await fs.rm(actual, { recursive: true, force: true });
+    await removeTestDirectory(actual);
   }
 });

@@ -277,6 +277,7 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 // there is (never from the class alone: BUNDLE_UNAVAILABLE, BROKER_* and NATIVE_ADMISSION_UNAVAILABLE also stand for faults that would
 // repeat). Used for the network release cap and the network cause of the breaker.
 //   - BUNDLE_UNAVAILABLE: the companion said a GitHub step of build-bundle.ps1 failed in git (companion.mjs#bundleNetworkRefusal);
+//   - PARKED_BUNDLE_TOO_OLD: the same of the second bundle (-Rebundle), after the executor's own waits (generation 13);
 //   - GITHUB_TRANSIENT_UNAVAILABLE: GitHub answered 500/502/503/504 or did not answer (not 429: a rate limit is no outage);
 //   - NATIVE_ADMISSION_UNAVAILABLE: the explicit Native read exhaustion; an observation incomplete or too old on a slow line (the mode
 //     or the observer could not be read in time, the observation expired before it was used: the same reasons the Source reads again
@@ -284,13 +285,20 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 //     whose diagnostic says it caught a transport fault (Source full-admission-v2.mjs#transportFault); a credential refused or an
 //     evaluator fault inside it is not;
 //   - ADMISSION_VERIFICATION_UNAVAILABLE: the Source maps only a passing cause to it (withdrawal-text.mjs#admissionVerificationRetryable).
-export const NETWORK_NATIVE_REASONS = Object.freeze(['native_claim_observation_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired']);
+// Generation 13 (DESIGN §57.2): two of the publisher's passing pre-write reasons are the line too: the facts observed once more after the
+// admission got no answer (the same Native read exhaustion, renamed), and the admission answer aged before the write (only the few
+// fixed-size reads after the admission were slow). publication_window_short_before_write is not: it says the boundary before the write
+// was long, which a slow complete admission alone can make, again and again (review round 4, MINOR 1).
+export const NETWORK_NATIVE_REASONS = Object.freeze(['native_claim_observation_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired',
+  'protected_facts_reobservation_unavailable', 'native_admission_aged_before_write']);
 export const NETWORK_GITHUB_REASONS = Object.freeze(['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed']);
 export function networkFailure({ code, outcome = null, bundleNetwork = false, refsNoAnswer = false }) {
   switch (code) {
     // Generation 11 (DESIGN 55): the refs gate got no answer from the line, also after its two waits (engine-windows.mjs#runStage).
     case 'REFS_GATE_UNCONFIRMED': return refsNoAnswer === true;
     case 'BUNDLE_UNAVAILABLE': return bundleNetwork === true;
+    // Generation 13 (DESIGN §57.3): the second bundle of a batch resumed from parking point A, still refused by the line after its waits.
+    case 'PARKED_BUNDLE_TOO_OLD': return bundleNetwork === true;
     case 'GITHUB_TRANSIENT_UNAVAILABLE': return NETWORK_GITHUB_REASONS.includes(outcome?.reason);
     case 'NATIVE_ADMISSION_UNAVAILABLE': return NETWORK_NATIVE_REASONS.includes(outcome?.reason) || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);
     case 'ADMISSION_VERIFICATION_UNAVAILABLE': return true;

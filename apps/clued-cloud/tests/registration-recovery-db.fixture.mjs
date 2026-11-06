@@ -1,4 +1,5 @@
 // Disposable PostgreSQL and synthetic identity/provider metadata only.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import {randomUUID,randomBytes,createHash} from "node:crypto";
 import fs from "node:fs/promises";
@@ -147,8 +148,8 @@ export async function withRegistrationDatabase(run){
    changeHead:(provider,bytes,version)=>{const item=files.get(provider);newRevision(item,Buffer.from(bytes));item.version=version;}});
  }finally{
   for(const c of clients.reverse())await c.end().catch(()=>{});
-  if(started)await Promise.race([server.stop(),new Promise(resolve=>setTimeout(resolve,5000))]);
+  if(started)await Promise.race([stopCluster(server),new Promise(resolve=>setTimeout(resolve,5000))]);
   const resolved=await fs.realpath(dir);assert.ok(resolved.startsWith(temp+path.sep),"cleanup remains inside the explicitly created temporary directory");
-  await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});
+  await removeTestDirectory(resolved);
  }
 }

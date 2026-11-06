@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -728,11 +729,11 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     const target = path.resolve(directory);
     if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith('clued-project-v2-')) {
       throw new Error('Unsafe test cleanup');
     }
-    await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    await removeTestDirectory(target);
   }
 });

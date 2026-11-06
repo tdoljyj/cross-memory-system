@@ -65,6 +65,14 @@ function world({ installedKey = K, v1 = true } = {}) {
 }
 const refusal = code => err => err.code === code;
 
+// Task 38140843: under a simulated Linux (process.platform faked on NTFS by the force-linux preload) chmod is not honoured and a
+// symlink needs a privilege, so the POSIX checks cannot hold; the tests that depend on them are skipped there with this reason.
+// On real Linux (CluedDev-Linux) and on Windows they run.
+const POSIX_UNHONOURED = process.platform !== 'win32' && (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-posix-probe-'));
+  try { const f = path.join(dir, 'p'); fs.writeFileSync(f, ''); fs.chmodSync(f, 0o600); return (fs.statSync(f).mode & 0o777) !== 0o600; }
+  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+})() && 'POSIX modes are not honoured by this file system (simulated Linux)';
 test('the original mode (v1 reference) still signs exactly as before', t => {
   const w = world(); t.after(w.cleanup);
   const r = signAll({ ...K, v1Dir: w.v1, inDir: w.in, outDir: w.out, now: new Date('2026-10-29T00:00:00.000Z') });
@@ -94,7 +102,7 @@ test('upgrade mode signs the derived policy against the installed v2 qualificati
     validateQualificationPayload(q.payload, policy, K.pubPem);
     const old = JSON.parse(fs.readFileSync(path.join(w.v2, `${role}.json`), 'utf8'));
     assert.deepEqual(Object.keys(policy).filter(k => canonicalJson(policy[k]) !== canonicalJson(old[k])).sort(), [...SOURCE_KEYS].sort());
-    if (process.platform !== 'win32') {
+    if (process.platform !== 'win32' && !POSIX_UNHONOURED) {
       assert.equal(fs.statSync(path.join(w.out, `${role}.json`)).mode & 0o777, 0o600);
       assert.equal(fs.statSync(w.out).mode & 0o777, 0o700);
     }

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -370,7 +371,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       values($1,null,$2,'c','c','https://x',now()+interval '1 day')`, [untouched, userId]), /authorizations_v12_issuance_request/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

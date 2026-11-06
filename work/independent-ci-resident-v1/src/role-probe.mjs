@@ -8,7 +8,7 @@ export const ROLE_PROBE_INTERVAL_MS = Object.freeze({ STANDBY: 15 * 60_000, ACTI
 export const ROLE_PROBE_CODES = Object.freeze({ held: 'ROLE_PROBE_HELD', 'not-held': 'ROLE_PROBE_NOT_HELD',
   uncertain: 'ROLE_PROBE_UNCERTAIN', connection: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', watchedHead: 'ROLE_PROBE_HELD_WATCHED_HEAD' });
 export const ROLE_PROBE_FACT_FIELDS = Object.freeze(['result', 'code']);
-export const ROLE_PROBE_NOTICE_KINDS = Object.freeze(['role-probe-uncertain', 'role-probe-connection']);
+export const ROLE_PROBE_NOTICE_KINDS = Object.freeze(['role-probe-uncertain', 'role-probe-connection', 'role-probe-interrupted']);
 
 // Generation 12 (DESIGN §56.2): a queue watch's held answer may name the watched PR as the merge-slot holder
 // (ROLE_PROBE_HELD_WATCHED_HEAD). For the node mode it is a plain held answer: roleBookFact turns it into one, so the book

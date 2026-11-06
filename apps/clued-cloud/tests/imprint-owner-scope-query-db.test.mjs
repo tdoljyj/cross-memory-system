@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -249,7 +250,7 @@ test('Native imprint query scope preserves lawful Owner source scope and all iso
     t.diagnostic(`complete chronological chain ${names.length} migrations; total ${Math.round(performance.now() - started)}ms`);
   } finally {
     for (const db of clients.reverse()) await db.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

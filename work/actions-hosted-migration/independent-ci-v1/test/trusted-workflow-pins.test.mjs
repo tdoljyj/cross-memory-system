@@ -273,3 +273,19 @@ test('gitleaks v4 prepare: only the active successor workflow with the 733 helpe
   assert.deepEqual(await attempt('tampered', tampered, [sha256(tampered)]), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] });
   assert.deepEqual(await attempt('undeclared', main, []), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] });
 });
+
+// Generation 13: `node --test` run bare in this directory takes test/fixtures/repin-trusted-workflows.mjs for a test file and runs it
+// with no arguments. Under the test runner (NODE_TEST_CONTEXT) that is a usage note and exit 0, not a false failure; run by a person or
+// a script with no or wrong arguments it still fails, exit 2 (review round 6, NIT 5).
+test('the repin tool: no arguments under the test runner is a usage note and exit 0; otherwise no or wrong arguments exit 2', () => {
+  const script = fileURLToPath(new URL('./fixtures/repin-trusted-workflows.mjs', import.meta.url));
+  const { NODE_TEST_CONTEXT: _runner, ...plainEnv } = process.env;
+  const underRunner = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { ...plainEnv, NODE_TEST_CONTEXT: 'child-v8' } });
+  assert.equal(underRunner.status, 0, underRunner.stderr);
+  assert.match(underRunner.stdout, /not a test; nothing done\. usage: --repo <dir>/);
+  for (const args of [[], ['--repo', '.']]) {
+    const plain = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env: plainEnv });
+    assert.equal(plain.status, 2, JSON.stringify(args));
+    assert.match(plain.stderr, /usage: --repo <dir>/);
+  }
+});

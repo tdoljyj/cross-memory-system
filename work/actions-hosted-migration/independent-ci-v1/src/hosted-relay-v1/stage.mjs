@@ -166,7 +166,8 @@ export function createHostedRelayStage({ registry, verifier, publisher, localInp
         }
         if (published?.status === 'REFUSED' && published.reason === 'role_already_published_on_head') {
           halt = RELAY_CODES.ROLE_ALREADY_PUBLISHED_ON_HEAD;
-          rows.push(row(role, 'HALT', { ...common, reason: halt, detail: published.reason }));
+          // The publisher's own refusal behind the held K when it gives one (generation 13, review round 8 MINOR 2), else the reason.
+          rows.push(row(role, 'HALT', { ...common, reason: halt, detail: published.detail ?? published.reason }));
           continue;
         }
         // Already on GitHub, unknown to this node (C4): nothing was sent and nothing more is published in this batch.
