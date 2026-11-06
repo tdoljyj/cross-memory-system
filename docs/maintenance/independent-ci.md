@@ -34,17 +34,17 @@
 
 ## 推送前的本地验证
 
-推送前用 `--affected` 验证，不要手选 `--suite`：
+推送前用 `--affected` 验证，不要手选 `--suite`（#1015 当时手选漏了 `offline-drill`，常驻执行器上失败，run 42177591049）：
 
 ```bash
 node scripts/ci/local-verify.mjs --affected
 ```
 
-- 它取分支相对 `main` 的改动路径（含工作区未提交的改动），用 `main` 上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和工作流 `ci-suites` 的 “Select suites” 步骤是同一段代码，不另抄一份；只跑选中的套件，Windows 和 CluedDev-Linux 两侧都跑。
-- 先打印选择结果和原因：每项检查一行，格式同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件再列出选中它的改动文件。
-- `--suite` 和 `--candidate` 不能与 `--affected` 同用；只想跑 Linux 一侧用 `--affected --linux-only`。
-- 手选套件会漏跑：#1015 当时漏了 `offline-drill`，常驻 CI 失败（run 42177591049）。
-- DESK 上常驻 CI 正在跑批次时，本地验证每个套件前会等它跑完（`--no-yield` 可跳过）。
+- **选择与 CI 一致。** 它取分支相对 GitHub `main` 的改动路径（先 fetch，也可用 `--base` 指定；含工作区未提交的改动，`--committed` 则不含），用 `main` 上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和 `clued-required-tests.yml` 里 `ci-suites` 的 “Select suites” 步骤调用的是同一个函数，不另抄一份；区别只是文件清单来自 git（合并基点到分支），不来自 GitHub API。
+- **只跑选中的套件，两侧都跑。** 对 `clued-required-tests.yml` 的三项检查 `ci-suites`、`clued-cloud-tests`、`migration-verify` 各选一次。`clued-cloud` 对任何改动都会选中。Windows 和 CluedDev-Linux 两侧同时跑；Linux 一侧需要先用 `setup-clued-dev-linux.ps1` 装好，没装好时 Linux 结果是 `unknown`，退出码为 1。只跑 Windows 一侧不加 `--affected`（默认选择相同）；只跑 Linux 一侧用 `--affected --linux-only`。
+- **先说明选了什么、为什么。** 每项检查打印一行，格式同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件下面列出选中它的改动文件。
+- **不能手选。** `--suite` 和 `--candidate` 不能与 `--affected` 同用。
+- DESK 上常驻执行器正在跑批次时，每个套件开始前会先等它跑完，两侧都等，最多 90 分钟（`--no-yield` 可跳过）。
 
 ## 失败、重试与归档
 
