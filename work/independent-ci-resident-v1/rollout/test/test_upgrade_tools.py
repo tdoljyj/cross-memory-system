@@ -138,6 +138,16 @@ class RolesDerived(unittest.TestCase):
         # the Source binding moved: entry, qualification and worker are B's
         self.assertNotEqual(out['rolesDerivedSha256']['trivy'], self.facts['roles']['trivy']['policySha256'])
 
+    def test_the_tree_is_left_as_it_was(self):
+        # Generation 13: loading the frozen tool left linux/bin/__pycache__ in the commit's tree, and build-upgrade.ps1's next attempt
+        # for the same commit (it reuses the tree and checks it blob by blob) was refused, TREE_NOT_THE_COMMIT_FILES
+        before = sorted(os.path.relpath(os.path.join(d, f), self.tree) for d, _, fs in os.walk(self.tree) for f in fs)
+        code, out, err = self.derive()
+        self.assertEqual(code, 0, (out, err))
+        after = sorted(os.path.relpath(os.path.join(d, f), self.tree) for d, _, fs in os.walk(self.tree) for f in fs)
+        self.assertEqual(after, before)
+        self.assertFalse(any('__pycache__' in d for d, _, _ in os.walk(self.tree)))
+
     def test_roles_copy_missing(self):
         # Generation 13: the root export of this generation has not run yet (an empty public-six directory) -> a coded refusal, no traceback
         empty = os.path.join(self.d, 'public-six-empty'); os.mkdir(empty)

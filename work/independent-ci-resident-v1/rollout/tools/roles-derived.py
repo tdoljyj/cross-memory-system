@@ -29,6 +29,10 @@ def load_tool(tree, installed_sha):
     tool_sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
     if tool_sha != installed_sha:
         refuse('LINUX_UPGRADE_TOOL_IS_NOT_THE_INSTALLED_ONE', tree=tool_sha, installed=installed_sha)
+    # Writes nothing, not even the bytecode cache: loading would otherwise leave linux/bin/__pycache__ in the commit's tree, which
+    # build-upgrade.ps1 reuses on purpose and checks blob by blob (tree.py), so the next attempt for the same commit was refused
+    # (TREE_NOT_THE_COMMIT_FILES, the generation 12 package, 2026-11-06). `python -I` ignores PYTHONDONTWRITEBYTECODE.
+    sys.dont_write_bytecode = True
     loader = importlib.machinery.SourceFileLoader('clued_ci_upgrade_linux', path)
     spec = importlib.util.spec_from_loader('clued_ci_upgrade_linux', loader)
     mod = importlib.util.module_from_spec(spec)

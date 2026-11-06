@@ -59,13 +59,19 @@ const admissionOf = error => ({ ...(ADMISSION_REASON.test(error?.admissionReason
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
 const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
 // The publisher's own reads for a copy of a create whose answer was lost, after the port's window (createOrAdopt): at once, then after
-// 10 s and 25 s more. Production shares one observation window between every observation of a publication, before and after the
-// write (runtime/one-shot-v2.mjs, PUBLICATION_OBSERVE_BUDGET_MS, Task a3ad42a9): a read is made only while the confirmation after it
-// still fits in what is left of that window (confirmationFits); one that would not is not made.
+// 10 s and 25 s more. They are GitHub reads after the write, before its confirmation: in production the confirmation's observation
+// window starts at its first observation (runtime/one-shot-v2.mjs, PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS, Owner Decision
+// 36946d8b), so these waits do not use it, and the delays themselves bound them.
 export const ADOPT_READ_DELAYS_MS = Object.freeze([0, 10_000, 25_000]);
-// What a confirmation after the write needs besides a boundary as long as the one before it: the GitHub read-back and the reserve the
-// recoverable publisher keeps before a write (PUBLICATION_READBACK_RESERVE_MS, 2 s).
+// What the confirmation after the write needs besides a boundary as long as the one before it: the GitHub read-back and the steps
+// between its two boundaries.
 export const CONFIRMATION_MARGIN_MS = 5_000;
+// What the write itself needs of the pre-write observation window after the last check before it (review round 6, MAJOR 1): the role
+// key and the journal (local), the reserve the recoverable publisher demands at the create (PUBLICATION_READBACK_RESERVE_MS, 2 s), and
+// WRITE_NATIVE_CALLS Native calls (prepareNativePublication's current-authority verify, and an active policy's publication begin),
+// each estimated as the slowest verify attempt of this publisher try before the write, answered or timed out (authority.slowestNativeReadMs).
+export const WRITE_MARGIN_MS = 5_000;
+export const WRITE_NATIVE_CALLS = 2;
 // Whether a failed create may have landed, as the GitHub port classifies it (github.mjs): a 5xx answer to the write (ambiguous) or a
 // transport failure after the request left this host. A definite refusal (a 4xx) or a failure proven before sending cannot have.
 const createMayHaveLanded = error => error?.retryable === true && error?.unsent !== true;
@@ -154,20 +160,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   // Generation 13 (DESIGN §57.4, Task a7951534): a create whose answer was lost (the port's own read-back, github.mjs, found no copy within
   // its window) may still have landed: GitHub can show the check later. The publisher reads the head's checks again at
   // ADOPT_READ_DELAYS_MS and adopts a copy that is exactly what it sent (App, name, head, external_id, completed, conclusion, title,
-  // summary); it never sends the create again. Only a failure that may have landed is looked for (createMayHaveLanded), and only while
-  // the confirmation still fits the publication's observation window (confirmationFits). None found: the original error, as before (the error path then finds any copy that is
-  // not exact and withdraws it). A create the port proved never sent is not looked for, and neither is a Native publication (a
+  // summary); it never sends the create again. Only a failure that may have landed is looked for (createMayHaveLanded). None found:
+  // the original error, as before (the error path then finds any copy that is not exact and withdraws it). A create the port proved never sent is not looked for, and neither is a Native publication (a
   // handle with native true: the create is Native's begin, the POST with its marker and Native's finish; its runtime has its own recovery, which
   // finds the check by its ticket and finishes it, never POSTs again, and adopting it here would skip Native's finish).
-  async function createOrAdopt(payload, nativeHandle, definition, job, externalId, confirmMs) {
+  async function createOrAdopt(payload, nativeHandle, definition, job, externalId) {
     try { return await github.createCheck(payload, nativeHandle); }
     catch (error) {
       if (!adoptReadAllowed(error, nativeHandle)) throw error;
       for (const delay of ADOPT_READ_DELAYS_MS) {
-        if (delay > 0) {
-          if (!confirmationFits(confirmMs, delay)) break;
-          await sleep(delay);
-        }
+        if (delay > 0) await sleep(delay);
         let list = null;
         try { list = await github.readChecks(job.headSha); } catch { continue; }
         if (!checkListTrusted(list, job)) continue;
@@ -236,21 +238,34 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (!sameClaimGeneration(facts.claim, claim)) stop('lease_observations_disagree', true);
     return facts;
   }
-  // What is left of the publication's one observation window (authority.windowLeftMs, production only), or null; how much of it is used
-  // (authority.windowUsedMs), or null without a window.
+  // What is left of the publication's pre-write observation window (authority.windowLeftMs, production only), or null; how much of it
+  // is used (authority.windowUsedMs), or null without a window; the window the confirmation after the write will have
+  // (authority.confirmationWindowMs, Owner Decision 36946d8b), or null without one.
   const windowLeft = () => (typeof authority.windowLeftMs === 'function' ? authority.windowLeftMs() : null);
   const windowUsed = () => (typeof authority.windowUsedMs === 'function' ? authority.windowUsedMs() : null);
+  const confirmationWindow = () => (typeof authority.confirmationWindowMs === 'function' ? authority.confirmationWindowMs() : null);
+  const slowestNativeRead = () => (typeof authority.slowestNativeReadMs === 'function' ? authority.slowestNativeReadMs() : 0);
   // The Native admission must still be live when the check is written (the port refuses an older one: prepareNativePublication) and
   // when the publication settles. Before anything is recorded an aged admission is a clean, rerunnable stop. After the write and its
   // read-back, an aged admission is re-evaluated once, completely (boundary), and must bind exactly what the write was authorized
   // under (bindingSha256, evidence); only a real change, or an admission that cannot be made live again, compensates the write.
-  // Generation 13 (DESIGN §57.2, review round 1): whether what is left of the publication's one observation window (authority.windowLeftMs,
-  // production only; null or absent: no window) still holds a confirmation after the write, estimated as long as the boundary before
-  // it (`confirmMs`: boundary().ms, the window it used from its first observation on) plus CONFIRMATION_MARGIN_MS, after `extraMs` more. A write whose confirmation cannot fit is not made: the
-  // publication ends before anything is recorded, safe to run again with a window of its own (publication_window_short_before_write).
-  function confirmationFits(confirmMs, extraMs = 0) {
+  // Generation 13 (DESIGN §57.2, Owner Decision 36946d8b): whether the write can still be made and confirmed. Production (null or absent
+  // methods: no windows) gives the observations before the write and those after it a window each. The write must fit what is left of
+  // the pre-write window (WRITE_MARGIN_MS plus WRITE_NATIVE_CALLS times the slowest Native read before it; review round 6, MAJOR 1);
+  // the confirmation, estimated as long as the boundary before the write (`confirmMs`: boundary().ms, the window it used from its first
+  // observation on) plus CONFIRMATION_MARGIN_MS, must fit the post-write window. A write that cannot is not made: the publication ends
+  // before anything is recorded, safe to run again with windows of its own (publication_window_short_before_write). Write steps slower
+  // than the estimate still meet the recoverable publisher's reserve at the create (guardNewPublication, unchanged: UNCERTAIN).
+  function writeFits(confirmMs) {
+    const left = windowLeft(), confirm = confirmationWindow();
+    return (left === null || left >= WRITE_MARGIN_MS + WRITE_NATIVE_CALLS * slowestNativeRead())
+      && (confirm === null || confirm >= confirmMs + CONFIRMATION_MARGIN_MS);
+  }
+  // Whether one more complete boundary, as long as `ms`, fits what is left of the pre-write window (a relay re-verifying another
+  // holder's settled publication before it writes anything; review round 6, MAJOR 1).
+  function boundaryFits(ms) {
     const left = windowLeft();
-    return left === null || left >= confirmMs + CONFIRMATION_MARGIN_MS + extraMs;
+    return left === null || left >= ms + CONFIRMATION_MARGIN_MS;
   }
   async function liveAfterWrite(job, proof, definition, before, after) {
     if (fresh(after.native, clock())) return after;
@@ -381,7 +396,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // of writing a check whose verification then cannot be done.
         await probeGithub(job);
         if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
-        if (!confirmationFits(before.ms)) stop('publication_window_short_before_write');
+        if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
@@ -410,7 +425,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, before.ms);
+        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
         let after = await boundary(job, { kind: 'signed', envelope }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
@@ -482,8 +497,17 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
         if (await onGithubOnly(mutex, job, definition)) return result({ status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0 }, mutexKey, false);
         if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
-        if (!confirmationFits(before.ms)) stop('publication_window_short_before_write');
+        if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
+        // Review round 8, MINOR 1: a refusal before K while K is already another holder's (a newer run of a role the relay settled on
+        // this head, or a local publication) is that holder's: stage R would otherwise send the role to the local path, whose
+        // publication the same K refuses after a wasted scan. Said as it is (REFUSED role_already_published_on_head, this refusal as
+        // the detail); stage R HALTs on it. A K that cannot be read keeps the plain BLOCKED.
+        if (mutex) {
+          let holder = null;
+          try { holder = (await readRolePublication(journal, mutex)).holder; } catch { holder = null; }
+          if (holder && holder.effectKey !== key) return result({ status: 'REFUSED', ...(key ? { effectKey: key } : {}), reason: 'role_already_published_on_head', detail: reason(error), sideEffects: 0 }, mutexKey, false);
+        }
         return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0 }, mutexKey, false);
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0, held = false;
@@ -498,6 +522,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           const other = await readRolePublication(journal, mutex);
           const settled = other.holder?.path === 'relay' && other.holder.effectKey !== key ? await journal.read(other.holder.effectKey) : null;
           if (settled?.state === 'settled' && positive(settled.details?.checkRunId) && settled.subject?.roleMutexKey === mutexKey) {
+            // Its re-verification is a complete boundary inside the pre-write window. One that cannot fit would withdraw a legitimate
+            // settled check only for want of time: this relay stops instead, having written nothing (review round 6, MAJOR 1), with what
+            // is true: K is another holder's (review round 7, MINOR 2). Stage R HALTs on it (ROLE_ALREADY_PUBLISHED_ON_HEAD) and never
+            // sends the role to the local path, whose publication would be refused by the same K after a wasted scan.
+            if (!boundaryFits(before.ms)) return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', detail: 'publication_window_short_before_write', sideEffects: 0 }, mutexKey, false);
             return { ...(await reverifySettled({ key: other.holder.effectKey, settled, definition, job, externalId: other.holder.externalId, envelope })), roleMutex: { key: mutexKey, held: true } };
           }
           return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0 }, mutexKey, false);
@@ -517,7 +546,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
               + `Source manifest sha256 ${job.sourceManifestSha256}; attempt ${job.attempt}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, before.ms);
+        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
         let after = await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);

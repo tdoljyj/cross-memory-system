@@ -85,11 +85,17 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
     const state = recoveryState?.();
     const windowStarted = monotonic();
     if (state && state.deadline === null) { state.startedAt = monotonic(); state.wallAnchorAt = new Date(clock()).toISOString(); state.deadline = state.startedAt + PUBLICATION_OBSERVE_BUDGET_MS; }
+    // Generation 13 (resident DESIGN §57.2, Owner Decision 36946d8b): once the check was sent, the observations that confirm it (the
+    // boundary after the write, and the one complete re-evaluation of an admission that aged during the read-back) share a window of
+    // their own, PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS, which starts at the first of them. The pre-write deadline above, its recovery
+    // and its audit are unchanged.
+    if (state?.written === true && state.postWriteDeadline === null) state.postWriteDeadline = monotonic() + PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS;
+    const cap = state ? (state.written === true ? state.postWriteDeadline : state.deadline) : Infinity;
     if (state) state.observationCalls++;
     const packet = await github.readChangedPaths(subject);
     const url = `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`;
     const request = JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } });
-    const deadline = Math.min((state ? windowStarted : monotonic()) + OBSERVE_BUDGET_MS, state?.deadline ?? Infinity);
+    const deadline = Math.min((state ? windowStarted : monotonic()) + OBSERVE_BUDGET_MS, cap);
     let lastTransient = false;
     const unavailable = data => {
       log('native_claim_observation_unavailable', data);
@@ -116,6 +122,11 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
         if (!transientFetchError(error)) stop('native_claim_observation_unconfirmed');
         cause = response ? 'body' : 'transport';
       }
+      // Generation 13 (resident DESIGN §57.2, review rounds 6 and 7, MAJOR 1): how long the slowest verify attempt of this publisher try
+      // took before the write, answered or not (a timeout says the line is at least that slow). The publisher estimates the Native calls
+      // between its last check and the write from it (writeFits). The recovery's second try starts it again (run below), so the first
+      // try's timeouts or slow answers never hold back the audited second round.
+      if (state && state.written !== true) state.slowestReadMs = Math.max(state.slowestReadMs, monotonic() - sentMono);
       if (cause === null) {
         let facts;
         try { facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, sentMono, nowMono: monotonic() }); }
@@ -150,10 +161,15 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
 // Task a3ad42a9, alternative A: one recovery of only the current publisher, inside the SAME
 // native helper/nonce. The original helper's absolute phase deadline and final cleanup receipt
 // remain authoritative. This is explicitly up to two pre-write observation rounds, not a 30 s
-// total promise: all observations, intervening guards and waits share one fixed 60 s deadline.
+// total promise: all pre-write observations, intervening guards and waits share one fixed 60 s deadline.
 // A crash never resumes this in-memory continuation; existing resident crash/HALT rules apply.
+// Generation 13 (resident DESIGN §57.2, Owner Decision 36946d8b): this deadline bounds the observations BEFORE the write only. It
+// used to bound the confirmation after the write too; that is a change of the a3ad42a9 bound, made by the Owner.
 export const PUBLICATION_OBSERVE_BUDGET_MS = 60000;
 export const PUBLICATION_READBACK_RESERVE_MS = OBSERVE_MIN_ATTEMPT_MS;
+// The observations after the write (protectedAuthority): a window of their own, started by the first of them. A confirmation that
+// cannot be made inside it compensates the write as before.
+export const PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS = 60000;
 const AUDIT_SCHEMA = 'clued.independent-ci.publication-recovery-audit/1';
 const auditBytesHash = bytes => createHash('sha256').update(bytes).digest('hex');
 const auditHash = value => /^[a-f0-9]{64}$/.test(value ?? '');
@@ -288,7 +304,7 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     return async (...args) => {
       safeLive();
       if (name === 'createCheck' || name === 'revokeCheck') markMutation();
-      if (name === 'createCheck') guardNewPublication();
+      if (name === 'createCheck') { guardNewPublication(); active.observation.written = true; }
       // Revocation and journal persistence are compensation, never bounded by the retry deadline.
       const result = await value.apply(githubPort, args);
       safeLive();
@@ -310,13 +326,18 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     active.observedJob = structuredClone(job);
     return baseAuthority.observe(job, claim);
   },
-  // Generation 13 (resident DESIGN §57.2): what is left of the publication's one observation window (PUBLICATION_OBSERVE_BUDGET_MS,
-  // shared by every observation before and after the write), null before its first observation. The publisher reads it before the
-  // write, so that a write whose confirmation cannot fit is not made (staged-check-publisher-v2.mjs#confirmationFits).
+  // Generation 13 (resident DESIGN §57.2): what is left of the publication's pre-write observation window (PUBLICATION_OBSERVE_BUDGET_MS),
+  // null before its first observation; and the window the confirmation after the write will have (PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS,
+  // Owner Decision 36946d8b). The publisher reads both before the write, so that a write that cannot be made, or whose confirmation
+  // cannot fit, is not made (staged-check-publisher-v2.mjs#writeFits).
   windowLeftMs() {
     const deadline = active?.observation?.deadline;
     return Number.isFinite(deadline) ? deadline - monotonic() : null;
   },
+  confirmationWindowMs() { return PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS; },
+  // How long the slowest Native verify attempt of this publisher try took before the write, answered or not; 0 before any (review
+  // rounds 6 and 7, MAJOR 1).
+  slowestNativeReadMs() { return active?.observation?.slowestReadMs ?? 0; },
   // How much of that window is used so far (0 before its first observation, which starts it): the publisher measures a boundary as
   // the difference, its first observation included (review round 3, MINOR 1).
   windowUsedMs() {
@@ -412,7 +433,7 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
       mayHavePublished: true, productionAuthorized: false, ...(method === 'publishHosted' ? { roleMutex: { key: null, held: true } } : {}) };
     usedRoles.add(roleId);
     const op = { method, input: structuredClone(input), inputSha256: digest(input), mutationAttempted: false,
-      evaluations: 0, unsafe: false, attempts: 1, observation: { deadline: null, startedAt: null, observationCalls: 0, verifyRequests: 0, exhaustion: null }, observedJob: null };
+      evaluations: 0, unsafe: false, attempts: 1, observation: { deadline: null, startedAt: null, observationCalls: 0, verifyRequests: 0, exhaustion: null, written: false, postWriteDeadline: null, slowestReadMs: 0 }, observedJob: null };
     active = op;
     let result;
     try {
@@ -428,14 +449,17 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
             // No new helper, nonce, job, evaluator operation or phase allowance is issued here.
             requireGuard(monotonic() + OBSERVE_MIN_ATTEMPT_MS <= op.observation.deadline && !op.unsafe && !op.mutationAttempted && op.evaluations === 0);
             safeLive();
-            op.attempts = 2; op.observation.exhaustion = null;
+            op.attempts = 2; op.observation.exhaustion = null; op.observation.slowestReadMs = 0;
             result = await publisher[method](op.input);
           } catch { op.unsafe = true; }
         }
       }
       if (op.intentSha256) { try { await persistAudit(op, 'result', result); } catch { op.unsafe = true; } }
       safeLog('publication_recovery_result', { jobId: op.observedJob?.id ?? null, publisherAttempts: op.attempts,
-        maxObservationMs: PUBLICATION_OBSERVE_BUDGET_MS, observationCalls: op.observation.observationCalls, verifyRequests: op.observation.verifyRequests,
+        maxObservationMs: PUBLICATION_OBSERVE_BUDGET_MS, maxPostWriteObservationMs: PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS,
+        postWriteObservationElapsedMs: op.observation.postWriteDeadline === null ? null : monotonic() - (op.observation.postWriteDeadline - PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS),
+        postWriteObservationRemainingMs: op.observation.postWriteDeadline === null ? null : Math.max(0, op.observation.postWriteDeadline - monotonic()),
+        observationCalls: op.observation.observationCalls, verifyRequests: op.observation.verifyRequests,
         observationElapsedMs: op.observation.startedAt === null ? 0 : monotonic() - op.observation.startedAt, observationBudgetRemainingMs: op.observation.deadline === null ? null : Math.max(0, op.observation.deadline - monotonic()),
         mutationAttempted: op.mutationAttempted, fullEvaluations: op.evaluations, status: result?.status ?? null, unconfirmed: op.unsafe });
     } catch { op.unsafe = true; }

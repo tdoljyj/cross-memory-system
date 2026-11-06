@@ -250,20 +250,38 @@ test('shared60s: a late wakeup does not start another observe round', async t =>
   assert.notEqual(r.status, 'SETTLED'); assert.equal(w.fetches.length, 1); assert.equal(intents(w).length, 0); assert.equal(w.checks.length, 0);
 });
 
-test('postwrite observation shares60s: late answer revokes the one Check and persists compensation beyond the deadline', async t => {
-  for (const exhaustedBeforeObserve of [false, true]) {
+// Generation 13 (DESIGN §57.2, Owner Decision 36946d8b): the observations after the write have a 60 s window of their own, started by
+// the first of them; the pre-write window, its recovery and its audit are unchanged.
+test('postwrite observation has its own window: late answer or a confirmation past that window revokes the one Check and persists compensation', async t => {
+  for (const late of ['answer', 'window']) {
     const w = await world(t);
-    w.state.onCreate = () => { if (exhaustedBeforeObserve) w.time.now += 30001; else w.state.fetchDelay = 30001; };
+    w.state.onCreate = () => {
+      if (late === 'answer') { w.state.fetchDelay = 30001; return; }
+      // the first observation after the write answers in 25 s; a 31 s read-back ages the admission; its re-evaluation answers 25 s
+      // later, past the post-write window (25 + 31 + 25 > 60)
+      w.state.fetchDelay = 25000; w.state.onReadChecks = () => { w.time.now += 31000; w.state.onReadChecks = null; };
+    };
     const r = await w.publisher.publish(w.input('trivy'));
     assert.equal(r.status, 'REVOKED', JSON.stringify(r)); assert.equal(w.checks.length, 1); assert.equal(w.checks[0].conclusion, 'failure');
     assert.equal(w.mutations.filter(x => x === 'create').length, 1); assert.equal(w.mutations.filter(x => x === 'revoke').length, 1);
     assert.equal((await w.rawJournal.read(w.key('trivy'))).state, 'revoked'); assert.equal(intents(w).length, 1); assert.equal(attempts(w), 2);
-    assert.ok(w.time.now - w.t0 > 60000); assert.ok(w.fetches.length <= 5);
+    assert.ok(w.time.now - w.t0 > 60000); assert.ok(w.fetches.length <= 6);
   }
 });
 
+test('postwrite observation has its own window: time spent between the write and its confirmation, past the pre-write deadline, does not withdraw the green', async t => {
+  const w = await world(t);
+  w.state.onCreate = () => { w.time.now += 30001; };
+  const r = await w.publisher.publish(w.input('trivy'));
+  assert.equal(r.status, 'SETTLED', JSON.stringify(r)); assert.equal(w.checks.length, 1); assert.equal(w.checks[0].conclusion, 'success');
+  assert.equal(w.mutations.filter(x => x === 'revoke').length, 0); assert.equal(attempts(w), 2);
+  assert.ok(w.time.now - w.t0 > 60000, 'the confirmation ran after the pre-write deadline');
+  const final = w.events.filter(e => e.kind === 'publication_recovery_result').at(-1);
+  assert.deepEqual([final.maxObservationMs, final.maxPostWriteObservationMs], [60000, 60000]);
+});
+
 test('a revoke attempt that cannot be confirmed stays UNCERTAIN and never POSTs the role again', async t => {
-  const w = await world(t); w.state.onCreate = () => { w.time.now += 30001; }; w.state.revokeFailure = true;
+  const w = await world(t); w.state.onCreate = () => { w.state.fetchDelay = 30001; }; w.state.revokeFailure = true;
   const r = await w.publisher.publish(w.input('trivy'));
   assert.equal(r.status, 'UNCERTAIN'); assert.equal(w.mutations.filter(x => x === 'create').length, 1);
   assert.equal(w.mutations.filter(x => x === 'revoke').length, 1); assert.equal(w.checks.length, 1); assert.equal(attempts(w), 2);
@@ -360,7 +378,7 @@ test('G10: real intent CreateNew/write/flush/readback failures preserve files an
 test('G10: result persistence failures cannot POST again or prevent known-Check compensation', async t => {
   for (const compensate of [false, true]) {
     const w = await world(t);
-    if (compensate) w.state.onCreate = () => { w.time.now += 30001; };
+    if (compensate) w.state.onCreate = () => { w.state.fetchDelay = 30001; };
     const { value: result, injected } = await withAuditIoFault(w.auditDir, 'result', 'flush', () => w.publisher.publish(w.input('trivy')));
     assert.equal(injected, true); assert.equal(result.status, 'UNCERTAIN'); assert.equal(w.checks.length, 1);
     assert.equal(w.mutations.filter(v => v === 'create').length, 1);

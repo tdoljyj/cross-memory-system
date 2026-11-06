@@ -1,9 +1,10 @@
 // Generation 13 (resident DESIGN §57.2, §57.4; review round 1, MAJOR 1-3): the stale-facts and adopted-copy paths of the publisher
 // as production assembles it, inside createRecoverableCheckPublisherV2 and its protected observation port (runtime/one-shot-v2.mjs).
-// Every protected observation of a publication, before and after the write, shares the fixed 60 s window of Task a3ad42a9 (unchanged):
-// a write whose confirmation, estimated as long as the boundary before it, would not fit what is left is not made (a clean, rerunnable
-// BLOCKED). The production publication port refuses an admission answer older than FRESH_MS (prepareNativePublication), which is why an
-// admission that aged before the write stops cleanly too.
+// The protected observations before the write share the fixed 60 s window of Task a3ad42a9; those after it, the confirmation, have a
+// 60 s window of their own, started by the first of them (Owner Decision 36946d8b, a change of the a3ad42a9 bound). A write that
+// cannot be made in what is left of the pre-write window, or whose confirmation, estimated as long as the boundary before it, would
+// not fit the post-write window, is not made (a clean, rerunnable BLOCKED). The production publication port refuses an admission
+// answer older than FRESH_MS (prepareNativePublication), which is why an admission that aged before the write stops cleanly too.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -16,7 +17,7 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { retainServerAnswerForFacts } from '../src/clock-skew.mjs';
 import { ADOPT_READ_DELAYS_MS, createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, PUBLICATION_OBSERVE_BUDGET_MS } from '../runtime/one-shot-v2.mjs';
+import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS } from '../runtime/one-shot-v2.mjs';
 import { createIndependentPublicationPort } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult, admittedFacts, subject } from './resident-v2-fixtures.mjs';
 
@@ -121,8 +122,9 @@ const run = (t, admissions, opts = () => ({})) => { const clock = { now: Date.no
 const outcome = r => [r.result.status, r.result.reason ?? null, r.checks.map(x => x.conclusion)];
 const lostCreate = () => Object.assign(new Error('github_http_502'), { code: 'github_http_502', retryable: true, unsent: false, ambiguous: true });
 
-test('one observation window for the whole publication, before and after the write (Task a3ad42a9, unchanged)', () => {
+test('one 60 s observation window before the write (Task a3ad42a9) and one of its own after it (Owner Decision 36946d8b)', () => {
   assert.equal(PUBLICATION_OBSERVE_BUDGET_MS, 60_000);
+  assert.equal(PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS, 60_000);
 });
 
 for (const [name, admissions] of [['fast before, 35 s after (the PR #1001 incident)', [5000, 35000]], ['fast before, 40 s after', [5000, 40000]]]) {
@@ -132,18 +134,26 @@ for (const [name, admissions] of [['fast before, 35 s after (the PR #1001 incide
   });
 }
 
-test('production wiring: a boundary so slow that a confirmation as long would not fit the window: nothing is written, a clean BLOCKED, safe to run again', async t => {
-  const r = await run(t, [40000, 40000]);
+// Owner Decision 36946d8b: the two cases the one shared window could not settle (40 s + 40 s was never written, 5 s + 56 s was withdrawn).
+for (const [name, admissions] of [['40 s before, 40 s after', [40000, 40000]], ['5 s before, 56 s after', [5000, 56000]]]) {
+  test(`production wiring: ${name}: the confirmation has its own window and the green stays (Owner Decision 36946d8b)`, async t => {
+    const r = await run(t, admissions);
+    assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+  });
+}
+
+test('production wiring: a boundary that leaves the write no room in the pre-write window: nothing is written, a clean BLOCKED, safe to run again', async t => {
+  const r = await run(t, [56000]);
   assert.deepEqual([...outcome(r), r.result.safeToRerun, r.result.sideEffects], ['BLOCKED', 'publication_window_short_before_write', [], true, 0], JSON.stringify(r.result));
 });
 
-test('production wiring: the estimate is the boundary before the write; a confirmation slower than it still cannot outlast the window and is withdrawn', async t => {
-  const r = await run(t, [5000, 56000]);
+test('production wiring: a confirmation that outlasts its own window is withdrawn', async t => {
+  const r = await run(t, [5000, 61000]);
   assert.deepEqual(outcome(r), ['REVOKED', 'protected_facts_reobservation_unavailable', ['failure']], JSON.stringify(r.result));
 });
 
 for (const [name, visibleAfter] of [['10 s', 10_000], ['25 s', 25_000]]) {
-  test(`production wiring: a lost create whose exact copy shows up ${name} later is adopted inside the window and settles`, async t => {
+  test(`production wiring: a lost create whose exact copy shows up ${name} later is adopted and settles`, async t => {
     const r = await run(t, [], clock => ({ changeGithub: gh => {
       let hidden = null, at = 0; const read = gh.readChecks.bind(gh);
       gh.createCheck = async body => { hidden = { id: 500, app: { id: 5368905 }, ...structuredClone(body) }; at = clock.now + visibleAfter; throw lostCreate(); };
@@ -154,15 +164,15 @@ for (const [name, visibleAfter] of [['10 s', 10_000], ['25 s', 25_000]]) {
   });
 }
 
-test('production wiring: no adopt read is made that would leave the confirmation no room in the window', async t => {
+test('production wiring: the adopt reads do not use the confirmation\'s window: all are made after a slow boundary, and a copy 25 s late still settles', async t => {
   const reads = [];
   const r = await run(t, [20000], clock => ({ changeGithub: gh => {
-    const read = gh.readChecks.bind(gh); let failed = false;
-    gh.createCheck = async () => { failed = true; throw lostCreate(); };
-    gh.readChecks = async head => { if (failed) reads.push(clock.now); return read(head); };
+    let hidden = null, at = 0; const read = gh.readChecks.bind(gh);
+    gh.createCheck = async body => { hidden = { id: 500, app: { id: 5368905 }, ...structuredClone(body) }; at = clock.now + 25_000; throw lostCreate(); };
+    gh.readChecks = async head => { if (hidden || at) reads.push(clock.now); if (hidden && clock.now >= at) { gh.checks.push(hidden); hidden = null; } return read(head); };
   } }));
-  assert.notEqual(r.result.status, 'SETTLED', JSON.stringify(r.result));
-  assert.ok(reads.length >= 1 && reads.length < 1 + ADOPT_READ_DELAYS_MS.length, `the late adopt reads were not made (${reads.length} reads)`);
+  assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+  assert.ok(reads.length >= ADOPT_READ_DELAYS_MS.length, `every adopt read was made (${reads.length} reads)`);
 });
 
 test('the production publication port refuses an admission answer older than FRESH_MS: an aged admission is never written under', async t => {
@@ -212,15 +222,16 @@ test('an UNCERTAIN of the recoverable publisher never carries the rerun flag of 
   assert.deepEqual([r.result.status, r.result.reason, r.result.mayHavePublished, 'safeToRerun' in r.result], ['UNCERTAIN', 'publication_recovery_unconfirmed', true, false], JSON.stringify(r.result));
 });
 
-// Review round 3, MINOR 1: the estimate counts the boundary's first observation too. Same slow line before and after the write:
-// observation 28 s (two 9 s timeouts, 1 s + 2 s waits, a 7 s answer), admission 6 s. Before the write 34 s of the window are used and
-// 26 s are left; a confirmation as long (34 s + 5 s) cannot fit: a clean, rerunnable BLOCKED, never a check withdrawn after the write.
-test('production wiring: the estimate includes the boundary\'s first observation, retries and waits included', async t => {
+// Review round 3, MINOR 1, with Owner Decision 36946d8b: the same slow line before and after the write, observation 28 s (two 9 s
+// timeouts, 1 s + 2 s waits, a 7 s answer) and admission 6 s. Under the one shared window this could not be written (34 s used, a
+// confirmation as long did not fit what was left); each side now has its own window and it settles. That the estimate counts the
+// boundary's first observation is test/stale-facts-publish.test.mjs (writeFits).
+test('production wiring: a slow line before and after the write settles: each side has its own window', async t => {
   const clock = { now: Date.now() };
   const slowObservation = (c, now) => [{ took: 9000, then: timeout() }, { took: 9000, then: timeout() }, () => ({ took: 7000, then: reply(200, verifyBody(c, now())) })];
   const steps = (c, now) => [...slowObservation(c, now), ...slowObservation(c, now), () => reply(200, verifyBody(c, now()))];
   const r = await publisherWith(t, steps, { recover: true, clock, admissions: [6000, 6000] });
-  assert.deepEqual([r.result.status, r.result.reason, r.result.safeToRerun, r.checks.length], ['BLOCKED', 'publication_window_short_before_write', true, 0], JSON.stringify(r.result));
+  assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
 });
 
 test('a check withdrawn because Native could not be read after the write says so: verification unavailable, never "authorization changed"', async () => {
@@ -231,4 +242,54 @@ test('a check withdrawn because Native could not be read after the write says so
     assert.equal(verificationUnavailable(cause), false, 'the read set of stage 1 and of safeToRerun is unchanged');
   }
   assert.equal(withdrawalTitle('Independent CI', 'authorization_binding_changed'), 'Independent CI authorization changed');
+});
+
+// Review round 6, MAJOR 1 and NIT 2: what is left of the pre-write window must hold the write's own Native calls, estimated from the
+// slowest round trip Native answered before it (WRITE_NATIVE_CALLS of them plus WRITE_MARGIN_MS). A 9 s round trip and a 30 s admission
+// leave 21 s, less than 5 + 2 x 9: nothing is written (the confirmation alone, 39 s + 5 s, would fit its own window). A 6 s round trip
+// leaves 24 s, more than 5 + 2 x 6: it settles.
+for (const [roundTrip, expected] of [[9000, 'BLOCKED'], [6000, 'SETTLED']]) {
+  test(`production wiring: a ${roundTrip / 1000} s Native round trip before the write and a 30 s admission: ${expected}`, async t => {
+    const clock = { now: Date.now() };
+    const steps = (c, now) => [() => ({ took: roundTrip, then: reply(200, verifyBody(c, now())) }), () => reply(200, verifyBody(c, now()))];
+    const r = await publisherWith(t, steps, { recover: true, clock, admissions: [30000, 0] });
+    if (expected === 'SETTLED') assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+    else assert.deepEqual([...outcome(r), r.result.safeToRerun, r.result.sideEffects], ['BLOCKED', 'publication_window_short_before_write', [], true, 0], JSON.stringify(r.result));
+  });
+}
+
+// Review round 6, MINOR 1: the post-write window starts at the first observation after the write, not at the write. A lost create whose
+// copy shows up 25 s later takes the adopt reads 35 s; the confirmation then needs 40 s more (an admission that long, and its facts
+// observed once more). From the write that is 75 s, past 60; from the first post-write observation it is 40 s: it settles.
+test('production wiring: the window of the confirmation starts at its first observation, after the adopt reads', async t => {
+  const r = await run(t, [5000, 40000], clock => ({ changeGithub: gh => {
+    let hidden = null, at = 0; const read = gh.readChecks.bind(gh);
+    gh.createCheck = async body => { hidden = { id: 500, app: { id: 5368905 }, ...structuredClone(body) }; at = clock.now + 25_000; throw lostCreate(); };
+    gh.readChecks = async head => { if (hidden && clock.now >= at) { gh.checks.push(hidden); hidden = null; } return read(head); };
+  } }));
+  assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+  assert.equal(r.checks.length, 1, 'never sent again');
+});
+
+// Review round 7, MAJOR 1: a timeout says the line is at least that slow. Two 9.5 s timeouts, a 1 s answer and a 25 s admission leave
+// 12 s of the pre-write window; the write's Native calls are estimated from the slowest attempt, timed out or not (5 + 2 x 9.5 s): nothing
+// is written, a clean BLOCKED. Counting only answered attempts (5 + 2 x 1 s) would write, and a write step as slow as the line would then
+// meet the reserve at the create (UNCERTAIN, the node HALTs).
+test('production wiring: timed-out attempts count in the estimate of the Native calls of the write', async t => {
+  const clock = { now: Date.now() };
+  const steps = (c, now) => [{ took: 9500, then: timeout() }, { took: 9500, then: timeout() }, () => ({ took: 1000, then: reply(200, verifyBody(c, now())) }), () => reply(200, verifyBody(c, now()))];
+  const r = await publisherWith(t, steps, { recover: true, clock, admissions: [25000, 0] });
+  assert.deepEqual([...outcome(r), r.result.safeToRerun, r.result.sideEffects], ['BLOCKED', 'publication_window_short_before_write', [], true, 0], JSON.stringify(r.result));
+});
+
+// Review round 7, MINOR 1: the a3ad42a9 recovery is unchanged. The first try is exhausted by slow 504 answers (9.5 s, 9.5 s, 7 s); the
+// second try answers at once and its admission takes 10 s, leaving about 21 s. Its estimate is its own (the first try's slow answers are
+// not carried over), so it writes and settles, as before generation 13.
+test('production wiring: the second try of the recovery estimates from its own observations and settles', async t => {
+  const clock = { now: Date.now() };
+  const steps = (c, now) => [{ took: 9500, then: reply(504, {}) }, { took: 9500, then: reply(504, {}) }, { took: 7000, then: reply(504, {}) }, () => reply(200, verifyBody(c, now()))];
+  const logs = [];
+  const r = await publisherWith(t, steps, { recover: true, clock, admissions: [10000, 0], log: (kind, data) => logs.push({ kind, data }) });
+  assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+  assert.equal(logs.filter(x => x.kind === 'publication_recovery_result').at(-1).data.publisherAttempts, 2);
 });
