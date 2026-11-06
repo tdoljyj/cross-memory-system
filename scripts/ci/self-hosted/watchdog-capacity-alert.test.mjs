@@ -120,3 +120,30 @@ test('the notification (Windows PowerShell 5.1) uses a registered application id
   const registered = powershell(['-Command', "Test-Path 'HKCU:\\Software\\Classes\\AppUserModelId\\Clued CI watchdog'"]);
   assert.equal(registered.stdout.trim(), 'True');
 });
+
+// Owner decision: the runners stop at 50 GB free on C: and start again at 60 GB, on every
+// host of the workstation profile; the profile, the tools that read it and the text
+// that describes it say the same.
+test('the workstation profile resumes the runners at 60 GB, stops them at 50, and every reader says so', () => {
+  const profiles = JSON.parse(fs.readFileSync(path.join(HERE, 'node-profiles.json'), 'utf8'));
+  const workstation = profiles.capacity_profiles['workstation-v1'];
+  assert.equal(workstation.suspend_c_free_gb, 50);
+  assert.equal(workstation.resume_c_free_gb, 60);
+  const readme = fs.readFileSync(path.join(HERE, 'README.md'), 'utf8');
+  assert.match(readme, /capacity suspend: host free memory < 6 GB or C: free < 50 GB\r?\ncapacity resume:  host free memory >= 10 GB and C: free >= 60 GB/);
+  const runbook = fs.readFileSync(path.join(HERE, '..', '..', '..', 'docs', 'maintenance', 'runner-configuration-and-operations.md'), 'utf8');
+  assert.match(runbook, /≥ 10 GiB \*\*且\*\* ≥ 60 GiB/);
+  assert.doesNotMatch(runbook, /50\/80 GiB/);
+});
+
+test('local-verify reads the 60 GB level of the real profile for the company host', async () => {
+  const { watchdogLevels } = await import('../local-verify.mjs');
+  const company = profiles().hosts.find((host) => host.host_id === 'company-primary');
+  const levels = watchdogLevels({ hostname: company.hostname, env: {}, profilesFile: path.join(HERE, 'node-profiles.json'), readText: (file) => {
+    if (file === company.watchdog_path) throw new Error('not installed in this test');
+    return fs.readFileSync(file, 'utf8');
+  } });
+  assert.deepEqual(levels, { suspend: 50, resume: 60 });
+});
+
+function profiles() { return JSON.parse(fs.readFileSync(path.join(HERE, 'node-profiles.json'), 'utf8')); }
