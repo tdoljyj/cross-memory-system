@@ -63,10 +63,14 @@ unlimited value. This input bound is not an accepted production quota.
 
 ## Signature candidate protocol
 
-`worker/ci-scheduling-v1.ts` is deliberately unreferenced by the active router.
-Its transport entry always refuses with `SIGNATURE_GATEWAY_NOT_ACTIVATED`.
-A future transport requires separate review and an atomic database context/nonce
-contract before importing this candidate into any service route.
+In Stage 1, `worker/ci-scheduling-v1.ts` was deliberately unreferenced by the
+active router. Unified scheduling 2B (Task `54969190`, migration
+`20261106090000_ci_node_gateway_v1.sql`) adds that transport:
+`worker/ci-node-gateway-v1.ts` serves `/v1/ci/node`. It verifies the node
+signature, then runs one database mutation that re-checks the signed identity
+under its locks, refuses a reused command nonce and keeps the signed command.
+Each project's gateway stays closed until the Owner opens it with a two-step
+pool confirmation (`SIGNATURE_GATEWAY_NOT_ACTIVATED` until then).
 The current signature candidate reads existing trusted node rows; it is not a
 self-service bootstrap path for a new node or an unapproved public key.
 

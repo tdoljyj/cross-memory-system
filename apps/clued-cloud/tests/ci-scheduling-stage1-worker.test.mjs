@@ -13,7 +13,7 @@ await build({ entryPoints: [path.join(cloud, 'worker/ci-scheduling-v1.ts')],
   outfile: path.join(directory, 'candidate.mjs'), bundle: true, platform: 'node', format: 'esm', logLevel: 'silent' });
 stop();
 const candidate = await import(pathToFileURL(path.join(directory, 'candidate.mjs')).href);
-const { ciCanonicalJson, ciCommandSigningBytes, ciIdentityFingerprint, verifyCiNodeCommand, ciSchedulingNodeTransportV1 } = candidate;
+const { ciCanonicalJson, ciCommandSigningBytes, ciIdentityFingerprint, verifyCiNodeCommand } = candidate;
 const now = 1800000000000;
 const ids = Array.from({ length: 5 }, (_, i) => `${i + 1}`.repeat(8) + '-1111-4111-8111-' + `${i + 1}`.repeat(12));
 const principal = { user_id: ids[0], project_id: ids[1], binding_id: ids[2], binding_generation: 1 };
@@ -104,8 +104,13 @@ test('expiry and revocation during cryptographic awaits refuse the command', asy
 
 test('draining accepts trusted existing-job settlement, never new execution/publication', async () => {
   const drain = async () => ({ ...node, state: 'draining' });
-  for (const operation of ['job_release', 'result_register', 'publish_observe', 'green_transition', 'node_heartbeat'])
+  for (const operation of ['job_release', 'result_register', 'publish_observe', 'green_transition', 'job_renew', 'nonce_issue'])
     assert.equal((await verify(await signed({ operation }), payload, principal, drain)).ok, true, operation);
+  for (const operation of ['node_heartbeat', 'green_mirror_append'])
+    assert.equal((await verify(await signed({ operation, job_id: null, execution_generation: 0 }), payload, principal, drain)).ok, true, operation);
+  for (const operation of ['job_lease', 'qualification_report', 'sealed_drop_take'])
+    assert.equal((await verify(await signed({ operation, ...(operation === 'qualification_report' ? { job_id: null, execution_generation: 0 } : {}) }),
+      payload, principal, drain)).code, 'PRINCIPAL_INVALID', operation);
   for (const operation of ['job_started', 'publish_prepare', 'stage8_try_begin', 'sealed_drop_send', 'train_front_set'])
     assert.equal((await verify(await signed({ operation }), payload, principal, drain)).code, 'PRINCIPAL_INVALID', operation);
 });
@@ -127,9 +132,38 @@ test('a lookup outage is a refusal and no request input survives as mutable auth
   assert.equal(result.ok, true); assert.equal(result.observation.payload_sha256, sha(payload));
 });
 
-test('transport remains refused with no runtime activation or database side effect', () => {
-  assert.deepEqual(ciSchedulingNodeTransportV1(), { status: 'refused', code: 'SIGNATURE_GATEWAY_NOT_ACTIVATED' });
-  assert.deepEqual(ciSchedulingNodeTransportV1({ enabled: true }), { status: 'refused', code: 'SIGNATURE_GATEWAY_NOT_ACTIVATED' });
+test('2B: job-scoped operations name their job and jobless ones never do', async () => {
+  // Malformed envelopes cannot be signed through ciCommandSigningBytes; the verifier
+  // refuses them while parsing, before any signature check.
+  const malformed = async changes => ({ ...(await signed()), ...changes });
+  for (const operation of ['qualification_report', 'green_mirror_append', 'train_sweep_confirm', 'node_heartbeat']) {
+    assert.equal((await verify(await malformed({ operation }))).code, 'INPUT_INVALID', operation + ' with a job');
+    assert.equal((await verify(await signed({ operation, job_id: null, execution_generation: 0 }))).ok, true, operation);
+  }
+  for (const operation of ['nonce_issue', 'job_lease', 'job_renew', 'job_started', 'result_register', 'publish_observe', 'sealed_drop_take'])
+    assert.equal((await verify(await malformed({ operation, job_id: null, execution_generation: 0 }))).code, 'INPUT_INVALID', operation + ' without a job');
+  assert.equal((await verify(await malformed({ operation: 'unknown_operation' }))).code, 'INPUT_INVALID');
+});
+
+test('2B: only a qualification report and a publisher\'s mirror record are accepted without a current qualification', async () => {
+  const report = { operation: 'qualification_report', job_id: null, execution_generation: 0 };
+  for (const changed of [{ qualification_verified: false }, { qualification_expires_at_ms: 0 }, { qualification_expires_at_ms: now }]) {
+    assert.equal((await verify(await signed(report), payload, principal, async () => ({ ...node, ...changed }))).ok, true, JSON.stringify(changed));
+    assert.equal((await verify(await signed(), payload, principal, async () => ({ ...node, ...changed }))).code, 'PRINCIPAL_INVALID');
+    assert.equal((await verify(await signed({ operation: 'green_mirror_append', job_id: null, execution_generation: 0 }), payload, principal,
+      async () => ({ ...node, ...changed }))).ok, true);
+    assert.equal((await verify(await signed({ operation: 'green_mirror_append', job_id: null, execution_generation: 0 }), payload, principal,
+      async () => ({ ...node, ...changed, state: 'draining' }))).ok, true);
+  }
+  for (const changed of [{ state: 'pending' }, { state: 'draining' }, { state: 'revoked' }, { binding_expires_at_ms: now }])
+    assert.equal((await verify(await signed(report), payload, principal, async () => ({ ...node, qualification_verified: false, ...changed }))).code,
+      'PRINCIPAL_INVALID', JSON.stringify(changed));
+});
+
+test('2B: mirror rows come only from approved publishers', async () => {
+  const mirror = { operation: 'green_mirror_append', job_id: null, execution_generation: 0 };
+  assert.equal((await verify(await signed(mirror), payload, principal, async () => ({ ...node, publisher_approved: false }))).code, 'SCOPE_DENIED');
+  assert.equal((await verify(await signed(mirror))).ok, true);
 });
 
 test.after(async () => {
