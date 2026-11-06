@@ -35,7 +35,6 @@ function fakeGithub(o = {}) {
   const state = { rules: trainRules(), pull: { state: 'open', merged: false, mergeable: true, merge_commit_sha: S }, commitError: null,
     commits: { [HEAD]: { sha: HEAD, tree: 'c'.repeat(40), parents: [BASE] }, [S]: { sha: S, tree: S_TREE, parents: [BASE, HEAD] } }, ...o };
   return { checks, state,
-    async readStatuses(headSha) { return { complete: true, headSha, statuses: [] }; },
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
     async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: OTHER, ref: 'main', repo: { full_name: REPO } } }; },
     async readBranchRules(branch) { return { complete: true, branch, rules: structuredClone(state.rules) }; },

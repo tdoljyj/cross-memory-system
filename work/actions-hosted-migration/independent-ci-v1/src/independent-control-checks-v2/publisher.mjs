@@ -399,9 +399,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           const ids = frontJobIdsV2(slotJob);
           if (ids && Array.isArray(inventory?.checks)) inventory.checks = inventory.checks.filter(c => c?.app?.id !== APP_ID
             || !REQUIRED_CHECK_NAMES.includes(c.name) || ofJobIds(c, ids));
-          let legacy;
-          try { legacy = await github.readStatuses(slotJob.headSha); } catch { legacy = { complete: false }; }
-          failures = requiredCheckFailure(rules.rules, inventory, slotJob.headSha, APP_ID, legacy);
+          failures = requiredCheckFailure(rules.rules, inventory, slotJob.headSha, APP_ID);
         } catch (e) { return { ready: false, reason: e.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE, polls, scheduling }; }
         if (failures.length) {
           let returned = null;

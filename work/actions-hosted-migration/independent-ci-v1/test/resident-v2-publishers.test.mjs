@@ -21,29 +21,24 @@ const iso = ms => new Date(ms).toISOString();
 const jobsFor = (attempt = 1, testSha = HEAD) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 
-test('required failures use exact head, pinned App and latest rerun across all required contexts', () => {
+test('required failures use exact head, pinned App and latest rerun across supported providers', () => {
   const rules = branchRules();
   rules[2].parameters.required_status_checks.push({ context: 'ci-suites', integration_id: 15368 });
   const check = (id, patch = {}) => ({ id, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: 'failure', ...patch });
-  const emptyStatuses = { complete: true, headSha: HEAD, statuses: [] };
-  const run = checks => requiredCheckFailure(rules, { complete: true, checks }, HEAD, 5368905, emptyStatuses);
-  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale'])
-    assert.deepEqual(run([check(1, { conclusion })]), ['ci-suites']);
+  const run = checks => requiredCheckFailure(rules, { complete: true, checks }, HEAD, 5368905);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']) assert.deepEqual(run([check(1, { conclusion })]), ['ci-suites']);
   for (const conclusion of ['success', 'neutral', 'skipped']) assert.deepEqual(run([check(1, { conclusion })]), []);
   assert.deepEqual(run([check(1), check(2, { status: 'in_progress', conclusion: null })]), []);
   assert.deepEqual(run([check(2, { conclusion: 'success' }), check(1)]), []);
   assert.deepEqual(run([check(1, { app: { id: 999 } }), check(2, { name: 'optional' })]), []);
   assert.throws(() => run([check(1, { head_sha: BASE })]), /REQUIRED_CHECKS_UNREADABLE/);
-  assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905, emptyStatuses), /REQUIRED_CHECKS_UNREADABLE/);
-  rules[2].parameters.required_status_checks.push({ context: 'legacy-ci', integration_id: null });
-  const legacy = statuses => requiredCheckFailure(rules, { complete: true, checks: [] }, HEAD, 5368905, { complete: true, headSha: HEAD, statuses });
-  const old = { id: 10, context: 'legacy-ci', state: 'error' };
-  assert.deepEqual(legacy([old]), ['legacy-ci']);
-  assert.deepEqual(legacy([old, { ...old, id: 11, state: 'pending' }]), []);
-  assert.deepEqual(legacy([{ ...old, id: 12, state: 'success' }, old]), []);
-  assert.throws(() => legacy([{ ...old, context: 'ci-suites' }]), /REQUIRED_CHECKS_UNREADABLE/, 'a status cannot prove the pinned publisher');
-  for (const statuses of [{ complete: false }, { complete: true, headSha: HEAD, statuses: [{ ...old, context: 'ci-suites' }] }])
-    assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: [check(1)] }, HEAD, 5368905, statuses), ['ci-suites'], 'known failures take priority over unrelated uncertainty');
+  assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905), /REQUIRED_CHECKS_UNREADABLE/);
+  for (const integration_id of [null, -1, 999]) {
+    rules[2].parameters.required_status_checks.push({ context: 'unknown-or-legacy-ci', integration_id });
+    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unsupported required provider must never be assumed clear');
+    assert.deepEqual(run([check(1)]), ['ci-suites'], 'known failures take priority over unrelated unsupported contexts');
+    rules[2].parameters.required_status_checks.pop();
+  }
 });
 
 test('failed required checks neither join nor extend, and an already queued claim returns its slot', async t => {
@@ -95,7 +90,6 @@ function fakeGithub(o = {}) {
   const state = { rules: branchRules(), rulesError: null, pull: { state: 'open', merged: false, mergeable: true, merge_commit_sha: TEST_MERGE },
     commits: { [HEAD]: { sha: HEAD, tree: TREE, parents: [BASE] }, [TEST_MERGE]: { sha: TEST_MERGE, tree: TREE, parents: [BASE, HEAD] } }, onCreate: null, ...o };
   return { fixture: true, checks, state,
-    async readStatuses(headSha) { return { complete: true, headSha, statuses: [] }; },
     async readChangedPaths(job) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };

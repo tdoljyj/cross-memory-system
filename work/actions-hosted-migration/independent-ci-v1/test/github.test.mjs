@@ -22,35 +22,6 @@ const tokenReply = now => ({ token: 'installation-token', expires_at: new Date(n
 const pr = { number: 7, state: 'open', changed_files: 1,
   head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
 
-test('legacy required status inventory is complete, exact-head and stable across pagination', async () => {
-  const route = `GET /repos/${REPO}/commits/${HEAD}/status`;
-  const rows = Array.from({ length: 101 }, (_, i) => ({ id: 101 - i, context: `ci-${i}`, state: 'success' }));
-  const page = statuses => reply({ sha: HEAD, total_count: rows.length, statuses });
-  const f = github({ faults: { [route]: [page(rows.slice(0, 100)), page(rows.slice(100)), page(rows.slice(0, 100))] } });
-  assert.deepEqual(await f.port({ includeStatusesRead: true }).readStatuses(HEAD), { complete: true, headSha: HEAD, statuses: rows });
-  assert.equal(f.calls[route], 3);
-  assert.equal(f.state.requestedPermissions.statuses, 'read', 'private repository status reads require the explicit read permission');
-  for (const bad of [
-    reply({ sha: BASE, total_count: 0, statuses: [] }),
-    reply({ sha: HEAD, total_count: 2, statuses: [rows[0]] }),
-    reply({ sha: HEAD, total_count: 2, statuses: [rows[0], rows[0]] }),
-    reply({ sha: HEAD, total_count: 1, statuses: [{ ...rows[0], state: 'unknown' }] }),
-  ]) {
-    const fixture = github({ faults: { [route]: [bad] } });
-    await assert.rejects(() => fixture.port({ includeStatusesRead: true }).readStatuses(HEAD));
-  }
-  const changed = github({ faults: { [route]: [reply({ sha: HEAD, total_count: 0, statuses: [] }), reply({ sha: HEAD, total_count: 1, statuses: [rows[0]] })] } });
-  await assert.rejects(() => changed.port({ includeStatusesRead: true }).readStatuses(HEAD), { code: 'statuses_pagination_changed' });
-  const bounded = github({ faults: { [route]: [page(rows.slice(0, 100))] } });
-  await assert.rejects(() => bounded.port({ maxPages: 1, includeStatusesRead: true }).readStatuses(HEAD), { code: 'statuses_page_limit' });
-  for (const permission of [undefined, 'write']) {
-    const token = tokenReply(Date.parse('2026-10-20T00:00:00Z'));
-    if (permission) token.permissions.statuses = permission;
-    const unauthorized = github({ faults: { [`POST /app/installations/${INSTALLATION_ID}/access_tokens`]: [reply(token)] } });
-    await assert.rejects(() => unauthorized.port({ includeStatusesRead: true }).readStatuses(HEAD), { code: 'unexpected_installation_token_scope' });
-  }
-});
-
 // A fake GitHub. `faults` maps "METHOD path" to a queue consumed one entry per
 // call: an Error is thrown, a function runs against the state, a response is
 // returned, null passes through to the real answer. Every call is counted.
@@ -65,12 +36,7 @@ function github({ faults = {}, checks = [] } = {}) {
     if (fault instanceof Error) throw fault;
     if (fault) return fault;
     if (key === 'GET /app') return reply({ id: APP_ID });
-    if (key === `POST /app/installations/${INSTALLATION_ID}/access_tokens`) {
-      const body = tokenReply(state.now);
-      state.requestedPermissions = JSON.parse(options.body).permissions;
-      if (JSON.parse(options.body).permissions.statuses === 'read') body.permissions.statuses = 'read';
-      return reply(body);
-    }
+    if (key === `POST /app/installations/${INSTALLATION_ID}/access_tokens`) return reply(tokenReply(state.now));
     if (key === 'GET /installation/repositories') return reply({ total_count: 1, repositories: [{ id: REPO_ID, full_name: REPO }] });
     if (key === `GET /repos/${REPO}/pulls/7`) return reply(pr);
     if (key === `GET /repos/${REPO}/pulls/7/files`) return reply([{ filename: 'a.txt', status: 'modified' }]);

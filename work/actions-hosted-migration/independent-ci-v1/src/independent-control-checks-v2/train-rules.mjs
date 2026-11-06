@@ -44,16 +44,9 @@ const check = (ok, code) => { if (!ok) fail(code); };
 
 // Only a confirmed terminal failure blocks queue participation. A newer rerun
 // supersedes an old failure; unrelated checks and another App's checks do not.
-export function requiredCheckFailure(rules, inventory, headSha, appId, legacy) {
+export function requiredCheckFailure(rules, inventory, headSha, appId) {
   rulesetFacts(rules, appId);
   check(inventory?.complete === true && Array.isArray(inventory.checks), REQUIRED_CHECKS_UNREADABLE);
-  let statusReadable = legacy?.complete === true && legacy.headSha === headSha && Array.isArray(legacy.statuses);
-  const statusIds = new Set();
-  for (const s of statusReadable ? legacy.statuses : []) {
-    if (!(plain(s) && Number.isSafeInteger(s.id) && s.id > 0 && !statusIds.has(s.id)
-      && typeof s.context === 'string' && ['success', 'pending', 'failure', 'error'].includes(s.state))) { statusReadable = false; break; }
-    statusIds.add(s.id);
-  }
   const seen = new Set();
   for (const c of inventory.checks) {
     check(plain(c) && Number.isSafeInteger(c.id) && c.id > 0 && !seen.has(c.id)
@@ -62,25 +55,21 @@ export function requiredCheckFailure(rules, inventory, headSha, appId, legacy) {
       && (c.status !== 'completed' || ['success', 'neutral', 'skipped', 'failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale'].includes(c.conclusion)), REQUIRED_CHECKS_UNREADABLE);
     seen.add(c.id);
   }
-  const failed = []; let uncertain = !statusReadable;
+  const failed = []; let uncertain = false;
   for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
     check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
       || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
+    // This repository's supported producers are the resident's six Native
+    // check-runs and GitHub Actions. Legacy/unpinned/unknown providers cannot
+    // be qualified from a check-run inventory; park instead of assuming green.
+    if (!(required.integration_id === 15368 || (required.integration_id === appId && REQUIRED_CHECK_NAMES.includes(required.context)))) uncertain = true;
     const matches = inventory.checks.filter(c => c.name === required.context
       && (!(required.integration_id > 0) || c.app.id === required.integration_id));
     const latest = matches.reduce((a, c) => !a || c.id > a.id ? c : a, null);
     if (latest?.status === 'completed' && !['success', 'neutral', 'skipped'].includes(latest.conclusion)) failed.push(required.context);
-    const status = statusReadable ? legacy.statuses.filter(s => s.context === required.context).reduce((a, s) => !a || s.id > a.id ? s : a, null) : null;
-    if (status && ['failure', 'error'].includes(status.state)) {
-      // The status API carries no integration_id. Never evict a pinned App's
-      // claim using an unproven publisher; uncertainty still prevents joining
-      // and extending. Unpinned required contexts can be decided exactly.
-      if (required.integration_id > 0) uncertain = true;
-      else failed.push(required.context);
-    }
   }
-  // A complete check-run inventory's proven failure remains proven even when
-  // another context's status cannot be attributed or its read is unavailable.
+  // A proven failed required check remains failed even if another provider
+  // is unsupported. An unknown-only configuration never joins or extends.
   check(failed.length > 0 || !uncertain, REQUIRED_CHECKS_UNREADABLE);
   return [...new Set(failed)].sort();
 }
