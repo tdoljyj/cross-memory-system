@@ -14,7 +14,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const SNAPSHOT_CONTRACT = "clued.two-level-five-view.snapshot";
 export const SNAPSHOT_SCHEMA_VERSION = 6;
@@ -1213,7 +1212,7 @@ async function main() {
   throw new Error("Usage: two-level-snapshot.mjs <build|validate|publish|rollback> [options]");
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

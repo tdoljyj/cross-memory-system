@@ -70,7 +70,7 @@ export async function stopRecordedLauncher(identity,trackingId=process.env.RUNNE
   const argv=fs.readFileSync(`${root}/cmdline`).toString().split('\0').filter(Boolean),cwd=fs.readlinkSync(`${root}/cwd`);
   const marker=fs.readFileSync(`${root}/environ`).toString().split('\0').find(item=>item.startsWith('RUNNER_TRACKING_ID='));
   if(group!==pid||launcherIdentity(pid)!==identity||!started||marker!==`RUNNER_TRACKING_ID=${trackingId}`||argv.length!==2||
-    path.resolve(cwd,argv[1])!==fileURLToPath(import.meta.url)||fs.realpathSync(`${root}/exe`)!==fs.realpathSync(process.execPath))throw Error('isolated launcher ownership mismatch');
+    fs.realpathSync(path.resolve(cwd,argv[1]))!==fs.realpathSync(fileURLToPath(import.meta.url))||fs.realpathSync(`${root}/exe`)!==fs.realpathSync(process.execPath))throw Error('isolated launcher ownership mismatch');
   process.kill(-pid,'SIGTERM');
   const deadline=Date.now()+5000;
   while(alive(pid)&&Date.now()<deadline)await delay(25);
@@ -187,7 +187,7 @@ async function start(){
     await launched.publishReady();
   }catch(error){console.error(error.message);await shutdown(1);}
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(import.meta.main??process.argv[1]?.split(/[\\/]/).pop()===decodeURIComponent(import.meta.url.split('/').pop())){
   try{if(process.argv[2]==='allocate')console.log(await allocateIsolatedPort());
     else if(process.argv[2]==='record')console.log(launcherIdentity(Number(process.argv[3])));
     else if(process.argv[2]==='ready'){

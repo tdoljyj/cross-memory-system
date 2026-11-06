@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -302,8 +303,8 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
       assert.deepEqual(await snapshot(),before);
     });
   }finally {
-    for(const client of clients)await client.end().catch(()=>{});await server.stop();
+    for(const client of clients)await client.end().catch(()=>{});await stopCluster(server);
     const actual=await fs.realpath(directory);assert.equal(actual,directory);assert.equal(path.dirname(actual),tempParent);
-    assert.ok(path.basename(actual).startsWith('clued-r9-capabilities-'));await fs.rm(actual,{recursive:true,force:true});
+    assert.ok(path.basename(actual).startsWith('clued-r9-capabilities-'));await removeTestDirectory(actual);
   }
 });

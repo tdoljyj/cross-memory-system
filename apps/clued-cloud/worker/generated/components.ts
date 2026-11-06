@@ -13,7 +13,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.run-python": "1.0.3",
   "hook.settings": "1.1.2",
   "script.runner-handover-qualifier": "1.0.0",
-  "script.components": "1.0.3",
+  "script.components": "1.0.4",
   "script.update-clued-skills": "1.0.2",
   "script.memory-sync": "1.0.1",
   "script.gated-proof-runtime": "1.0.5",
@@ -23,18 +23,18 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.handover-external-register": "1.0.3",
   "script.workflow-source-profile": "1.0.5",
   "script.kooyumi-plugin-bundle": "1.0.2",
-  "script.storage-google-redirect-cutover": "1.0.0",
+  "script.storage-google-redirect-cutover": "1.0.1",
   "script.storage-zip": "1.0.0",
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.6",
+  "script.independent-native-publication": "1.1.7",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.2",
   "script.source-only-workflow": "1.0.0",
   "script.control-workflow-source": "1.0.3",
   "script.required-applicability": "1.0.0",
   "script.standard-runner-actor-source": "1.0.0",
-  "ci.temporary-storage-lifecycle": "1.0.0"
+  "ci.temporary-storage-lifecycle": "1.0.1"
 };
 export const MCP_SERVER_VERSION = "0.9.0";

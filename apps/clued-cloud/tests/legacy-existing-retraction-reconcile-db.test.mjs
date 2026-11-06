@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -87,7 +88,7 @@ test('existing explicit retraction reconciliation is exact, private and does not
     await assert.rejects(() => admin.query('select clued_private.reconcile_existing_retraction_v1($1,$2,$3)', [userId, laterSource.event_id, wrongSuccessor.event_id]), /existing_retraction_source_invalid/);
     await admin.end();
   } finally {
-    await server.stop().catch(() => {});
-    await fs.rm(dir, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(dir);
   }
 });

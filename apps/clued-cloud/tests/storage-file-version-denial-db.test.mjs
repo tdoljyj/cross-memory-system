@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -99,9 +100,9 @@ test("file-version diagnosis on the current full migration chain remains read-on
   } finally {
     if (caller) await caller.end().catch(() => {});
     if (admin) await admin.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
     assert.ok(path.basename(directory).startsWith("clued-file-version-db-"));
-    await fs.rm(directory, { recursive: true, force: true });
+    await removeTestDirectory(directory);
   }
 });

@@ -1,4 +1,5 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -255,8 +256,8 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
    assert.ok(readOnly.every(e=>!e.actions.includes('close')&&!e.actions.includes('restore')));
   });
  }finally{
-  for(const db of clients.reverse())await db.end().catch(()=>{});await server.stop().catch(()=>{});
+  for(const db of clients.reverse())await db.end().catch(()=>{});await stopCluster(server);
   const target=path.resolve(dir);if(path.dirname(target)!==path.resolve(os.tmpdir())||!path.basename(target).startsWith('clued-auth-v12-'))throw Error('Unsafe test cleanup');
-  await fs.rm(target,{recursive:true,force:true});
+  await removeTestDirectory(target);
  }
 });

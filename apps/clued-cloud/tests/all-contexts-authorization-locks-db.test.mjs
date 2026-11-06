@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -500,7 +501,7 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
       assert.ok(value.contexts.some((row) => row.id === cid));
     });
   } finally {
-    await Promise.allSettled(clients.map((db) => db.end())); await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await Promise.allSettled(clients.map((db) => db.end())); await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

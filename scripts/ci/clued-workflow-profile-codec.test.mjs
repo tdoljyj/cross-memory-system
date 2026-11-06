@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import test from 'node:test';
+import {scannerMatches,assertRegistryScannerClean,REGISTRY_FILES,MAX_LINE_CHARS} from './clued-registry-scan-guard.mjs';
 import {decodeWorkflowProfiles,encodeWorkflowProfiles,parseWorkflowProfiles,serializeWorkflowProfiles,
   registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,
   REQUIRED_TESTS_SOURCE,
@@ -169,4 +174,174 @@ test('literal credential structure remains visible and detectable in /3 plaintex
   const disk=serializeWorkflowProfiles(fixture(synthetic+'\n'));
   assert.equal(detections(disk).length,1);
   assert.equal(root(parseWorkflowProfiles(disk)).source_yaml,synthetic+'\n');
+});
+
+// Task b7765949: registering a gitleaks.yml Source must not add a gitleaks finding. The upstream
+// rules are run over the exact bytes of both registries (clued-registry-scan-guard.mjs), never
+// relaxed, never allow-listed; a registration that would loop is refused before it is committed.
+// This file is itself scanned: the download command's name is assembled from parts so that no
+// fixture here puts it within reach of a user option (the guard's own rule would flag this file).
+const CMD=['cur','l'].join('');
+const RULE_USER=CMD+'-auth-user',RULE_HEADER=CMD+'-auth-header';
+const GITLEAKS_YML='.github/workflows/gitleaks.yml';
+const DOCKER_USER='docker run --user=65532:65532 image';
+const registryText=name=>fs.readFileSync(new URL(name,import.meta.url),'utf8');
+const REPIN=/\b[0-9a-f]{64}\b/g;
+const repin=(text,tag)=>text.replace(REPIN,h=>hash(tag+h));
+// The newest registered gitleaks.yml Source and its Roles are the template of the next registration, so
+// this keeps working after the next successor is registered.
+function template() {
+  const rows=read().workflows[GITLEAKS_YML].accepted_sources;
+  const live=workflowBlob(fs.readFileSync(new URL('../../.github/workflows/gitleaks.yml',import.meta.url),'utf8').replace(/\r\n/g,'\n'));
+  // The registered form of the workflow as it is on disk; before its registration lands, the newest registered one.
+  const row=rows.find(source=>source.workflow_blob===live)??rows.at(-1);
+  assert.equal(row.registration_status,'registered');
+  assert.ok(Array.isArray(specs.workflows[GITLEAKS_YML].sources[row.workflow_blob]));
+  return row;
+}
+// The registration commit's two registry files with `successorText` registered as a new accepted Source of
+// gitleaks.yml, built the way the registrations are: the semantic profile re-serialized (/3), the role
+// specs re-written as JSON with two-space indent.
+function registerSuccessor(successorText,tag='repin') {
+  const semantic=read(),entry=semantic.workflows[GITLEAKS_YML];
+  const last=template();
+  const blob=workflowBlob(successorText);
+  entry.accepted_sources.push({...structuredClone(last),source_yaml:successorText,workflow_blob:blob,
+    source_sha256:hash(successorText)});
+  const roles=structuredClone(specs),sources=roles.workflows[GITLEAKS_YML].sources;
+  sources[blob]=structuredClone(sources[last.workflow_blob]).map(role=>{
+    const definition=JSON.parse(repin(JSON.stringify(role.definition),tag));
+    return {...role,definition,definition_sha256:roleDefinitionDigest(definition)};
+  });
+  return {profiles:serializeWorkflowProfiles(semantic),roleSpecs:JSON.stringify(roles,null,2)+'\n',blob};
+}
+const withGap=(gap,option=DOCKER_USER)=>[CMD+' -fsS https://invalid.example -o /dev/null',...Array(gap).fill('x'),option].join('\n');
+
+test('the committed registries carry no upstream download-command auth match',()=>{
+  const profiles=registryText('./clued-gated-proof-profiles.json'),roleSpecs=registryText('./clued-gated-proof-role-specs.json');
+  assert.deepEqual(scannerMatches(profiles),[]);
+  assert.deepEqual(scannerMatches(roleSpecs),[]);
+  assertRegistryScannerClean({profiles,roleSpecs});
+  assert.deepEqual(REGISTRY_FILES,['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json']);
+});
+
+test('registering the hosted gitleaks.yml successor (repinned scan inputs) leaves both registries gitleaks-clean',()=>{
+  const last=template();
+  const successor=repin(last.source_yaml,'repin');
+  assert.ok(last.source_yaml.match(REPIN).length>=5,'the repin changes the scan input pins');
+  assert.notEqual(successor,last.source_yaml);
+  const registered=registerSuccessor(successor);
+  assert.notEqual(registered.blob,last.workflow_blob);
+  // The workflow's own shape: the download command and the docker user option are in the Source, only the
+  // registered form decides whether they match.
+  assert.match(successor,new RegExp('\\b'+CMD+'\\b'));assert.match(successor,/--user=65532:65532/);
+  assert.deepEqual(scannerMatches(registered.profiles),[]);
+  assert.deepEqual(scannerMatches(registered.roleSpecs),[]);
+  assertRegistryScannerClean({profiles:registered.profiles,roleSpecs:registered.roleSpecs});
+  // The registered form round-trips: what is committed is what the readers decode.
+  const source=registeredWorkflowSource(parseWorkflowProfiles(registered.profiles),GITLEAKS_YML,registered.blob);
+  assert.equal(source.passed,true);assert.equal(source.profile.source_yaml,successor);
+  assert.equal(rolesForSource(JSON.parse(registered.roleSpecs),GITLEAKS_YML,registered.blob).length,last.primary_ids.length);
+});
+
+test('the same Source embedded as one escaped JSON line is exactly what looped before /3, and the guard reports it',()=>{
+  const successor=repin(template().source_yaml,'repin');
+  const oneLine=JSON.stringify({source_yaml:successor});
+  assert.ok(scannerMatches(oneLine).length>=1,'legacy single-line form matches an upstream rule');
+  assert.throws(()=>assertRegistryScannerClean({'legacy.json':oneLine}),e=>e.code==='REGISTRY_SCANNER_MATCH'&&
+    e.findings.every(f=>f.file==='legacy.json'&&Number.isSafeInteger(f.line))&&!e.message.includes('65532'));
+});
+
+test('the user rule reaches exactly five lines after the command: 5 newlines match, 6 do not',()=>{
+  // Boundary measured against the pinned scanner image (v8.30.1) as well, see the registration notes.
+  assert.deepEqual(scannerMatches(withGap(0)),[{rule:RULE_USER,line:1}]);
+  assert.deepEqual(scannerMatches(withGap(4)),[{rule:RULE_USER,line:1}]);
+  assert.deepEqual(scannerMatches(withGap(5)),[]);
+  assert.deepEqual(scannerMatches(withGap(8)),[]);
+  // Same line, either spelling of the option, and the short form.
+  for(const option of ['--user=65532:65532','--user 65532:65532','-u 65532:65532'])
+    assert.deepEqual(scannerMatches(`${CMD} -fsS https://invalid.example ${option} `).map(m=>m.rule),[RULE_USER]);
+  // Go's `.` takes every character but LF, JS's also stops at CR and U+2028.
+  assert.deepEqual(scannerMatches(`${CMD} x\u2028 ${DOCKER_USER}`).map(m=>m.rule),[RULE_USER]);
+  assert.deepEqual(scannerMatches(`${CMD} x\r ${DOCKER_USER}`).map(m=>m.rule),[RULE_USER]);
+});
+
+test('the header rule is part of the guard',()=>{
+  const bearer=`${CMD} -fsS -H 'Authorization: Bearer abcdefgh12345678' https://invalid.example\n`;
+  assert.deepEqual(scannerMatches(bearer),[{rule:RULE_HEADER,line:1}]);
+  assert.deepEqual(scannerMatches(`${CMD} -fsS \\\n  -H 'Authorization: Bearer abcdefgh12345678' \\\n  https://invalid.example\n`),[{rule:RULE_HEADER,line:1}]);
+  assert.deepEqual(scannerMatches(`${CMD} -fsS -H "authorization: bearer abcdefgh12345678" https://invalid.example
+`),[{rule:RULE_HEADER,line:1}]);
+  // Variable references are not values: the registered Sources' own header lines stay clean.
+  assert.deepEqual(scannerMatches(`${CMD} -fsS -H "Authorization: Bearer $TOKEN" https://invalid.example\n`),[]);
+  assert.throws(()=>assertRegistryScannerClean({'h.json':bearer}),e=>e.findings[0].rule===RULE_HEADER);
+  assert.throws(()=>assertRegistryScannerClean({'long.json':(CMD+' ').repeat(70000)}),e=>/scan limit/.test(e.message)&&!/registration loop/.test(e.message));
+});
+
+test('a Source whose download command and --user option are within five lines is refused, not registered by ignore',()=>{
+  // Fabricated, non-credential text. The pair is a numeric docker uid:gid.
+  const base=template().source_yaml;
+  const near=registerSuccessor(base+'\n# near\n'+withGap(2)+'\n','near');
+  assert.ok(scannerMatches(near.profiles).some(m=>m.rule===RULE_USER));
+  assert.throws(()=>assertRegistryScannerClean({profiles:near.profiles}),e=>e instanceof Error&&e.code==='REGISTRY_SCANNER_MATCH');
+  // The same pair six lines apart in /3 profile lines is not a match.
+  assert.deepEqual(scannerMatches(registerSuccessor(base+'\n# far\n'+withGap(5)+'\n','far').profiles),[]);
+});
+
+test('role specs keep one escaped line per run step, so the pair in one step is refused whatever the distance',()=>{
+  const roles=structuredClone(specs),sources=roles.workflows[GITLEAKS_YML].sources;
+  const job=structuredClone(sources[template().workflow_blob][0]);
+  const step=job.definition.steps.find(s=>typeof s.run==='string');
+  // An escaped `\n` + name has no word boundary before the name, so the command follows `&&` as scripts write it.
+  step.run=step.run+'\ntrue && '+withGap(20)+'\n';
+  sources['0000000000000000000000000000000000000001']=[job];
+  const text=JSON.stringify(roles,null,2)+'\n';
+  assert.ok(scannerMatches(text).some(m=>m.rule===RULE_USER),'one-line run text is within the rule reach');
+  assert.throws(()=>assertRegistryScannerClean({roleSpecs:text}),e=>e.code==='REGISTRY_SCANNER_MATCH');
+  // The same two commands in different run steps are separate JSON lines, more than five apart.
+  const split=structuredClone(roles);
+  const parts=split.workflows[GITLEAKS_YML].sources['0000000000000000000000000000000000000001'][0];
+  const target=parts.definition.steps.find(s=>typeof s.run==='string');
+  const cut=target.run.indexOf(DOCKER_USER);
+  const tail=target.run.slice(cut);
+  target.run=target.run.slice(0,cut);
+  parts.definition.steps.push({name:'a'},{name:'b'},{name:'c'},{name:'d'},{name:'e'},{name:'second',run:tail});
+  assert.deepEqual(scannerMatches(JSON.stringify(split,null,2)+'\n').filter(m=>m.rule===RULE_USER),[]);
+});
+
+test('a line too long to scan in bounded time is refused outright',()=>{
+  const line=(CMD+' ').repeat(70000);
+  assert.ok(line.length>MAX_LINE_CHARS);
+  assert.deepEqual(scannerMatches('ok\n'+line+'\n'),[{rule:'line-too-long',line:2}]);
+});
+
+test('no reviewed fingerprint or ignore entry covers a registry file except the three historical /2 findings',()=>{
+  const toml=fs.readFileSync(new URL('../../.gitleaks.toml',import.meta.url),'utf8');
+  const entries=[...toml.matchAll(/^# clued-reviewed-finding: (\{.*\})$/gm)].map(m=>JSON.parse(m[1]).fingerprint)
+    .filter(fp=>/clued-gated-proof-(profiles|role-specs)\.json/.test(fp)).sort();
+  const registry='scripts/ci/clued-gated-proof-profiles.json';
+  assert.deepEqual(entries,[
+    `cc353e29a32b991696df95d5fc3f9b9d107e8d1c:${registry}:${RULE_USER}:3829`,
+    `cc353e29a32b991696df95d5fc3f9b9d107e8d1c:${registry}:${RULE_USER}:5538`,
+    `d94cd486e29a7362888fc32cd807ceb38890acb6:${registry}:${RULE_USER}:3829`]);
+  const ignore=fs.readFileSync(new URL('../../.gitleaksignore',import.meta.url),'utf8');
+  assert.doesNotMatch(ignore,/clued-gated-proof-(profiles|role-specs)/);
+  // The rules themselves stay the default set: no allowlist may name the registries or the rules.
+  assert.doesNotMatch(toml.replace(/^#.*$/gm,''),new RegExp('clued-gated-proof|'+CMD+'-auth'));
+});
+
+test('the guard command exits 1 with the rule and line for a looping file and 0 for the registries',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'scan-guard-'));
+  try {
+    const bad=path.join(dir,'bad.json');
+    fs.writeFileSync(bad,JSON.stringify({source_yaml:`${CMD} -fsS https://invalid.example && ${DOCKER_USER}\n`},null,1));
+    const guard=fileURLToPath(new URL('./clued-registry-scan-guard.mjs',import.meta.url));
+    const failed=spawnSync(process.execPath,[guard,bad],{encoding:'utf8'});
+    assert.equal(failed.status,1);assert.match(failed.stderr,new RegExp('REGISTRY_SCANNER_MATCH: .*bad\\.json:\\d+ '+RULE_USER));
+    const passed=spawnSync(process.execPath,[guard],{encoding:'utf8'});
+    assert.equal(passed.status,0,passed.stderr);assert.match(passed.stdout,/no \S+-auth match/);
+    // Reached through a differently spelled path (a relative one) the command still runs.
+    const relative=spawnSync(process.execPath,[path.relative(process.cwd(),guard),bad],{encoding:'utf8'});
+    assert.equal(relative.status,1,relative.stderr);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });

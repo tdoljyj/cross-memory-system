@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const BACKUP_SCHEMAS = Object.freeze(['public', 'clued_private', 'clued_watchdog', 'supabase_migrations']);
 const selected = "('public','clued_private','clued_watchdog','supabase_migrations')";
@@ -519,7 +518,7 @@ async function main() {
     throw error;
   }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch(error => { console.error('::error::Production backup scope verification refused; no verified backup evidence');
     console.error(JSON.stringify({ ...backupFailureDiagnostic(error),event:'refused' })); process.exitCode = 1; });
 }

@@ -98,3 +98,13 @@ bound of six prior generations. Older map-only history retains its bound of four
 the separate PR execution-template bound is unchanged. Historical descriptor and
 cache identities remain exact, and a seventh prior generation is refused before
 network reads. These observations grant no execution or metric authority.
+
+The registry pins the exact bytes of the current generation. Its history was already
+at capacity (six source generations per producer, four prior admission Sources, four
+prior execution Sources) when it was re-pinned after drifting from 9e9d3fa66, so
+the re-pin replaced that generation instead of retaining it. Two generations are
+therefore not retained: the admission script `b413917364fc` and the execution
+Source with profiles `cdaf73165378` / role specs `7cddf4abf791` (the producer
+source maps registered at 9e9d3fa66 are dropped with them). Generations between
+that registration and the re-pin were never registered. The drift guard is
+`merge-admission-source-producer.test.mjs`, which runs in `clued-cloud-tests`.

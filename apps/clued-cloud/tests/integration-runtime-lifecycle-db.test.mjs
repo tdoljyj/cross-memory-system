@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -2237,7 +2238,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     t.diagnostic(JSON.stringify({ source_after: sourceAfter }));
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    await stopCluster(server);
+    await removeTestDirectory(directory).catch(() => {});
   }
 });

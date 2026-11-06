@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -175,13 +176,13 @@ test('Native Owner validates a Project Task with a registered Global intent thro
       assert.equal(g.uses, 0); assert.equal(g.revoked_at, null); assert.equal(g.request_id, REQUEST);
     });
   } finally {
-    if (db) await db.end(); await server.stop();
+    if (db) await db.end(); await stopCluster(server);
     if (proc) assert.ok(proc.exitCode !== null || proc.signalCode !== null);
     assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
     assert.ok((await fs.realpath(dir)).startsWith(root + path.sep));
     assert.equal((await fs.lstat(dir)).isSymbolicLink(), false);
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir, 'Ownership.json'), 'utf8')), ownership);
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
     for (const [k, v] of Object.entries(oldTemp)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });

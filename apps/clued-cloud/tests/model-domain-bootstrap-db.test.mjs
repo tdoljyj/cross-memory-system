@@ -1,3 +1,4 @@
+import { removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -380,7 +381,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
     }
     if(cleanup) {
       const actual=await ownedBoundary();
-      await fs.rm(actual,{recursive:true,force:true});
+      await removeTestDirectory(actual);
       console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',...stopDiagnostic,full_source_positive:'NOT_RUN_FIXED_CANONICAL_OWNER_SOURCES_UNAVAILABLE',actual_production_or_model_effects:0}));
     } else {
       const diagnostic={run_id:runId,pid:ownProcess?.pid??null,database_dir:databaseDir,...stopDiagnostic,reason:'Own process exit and identity were not proven; directory preserved'};

@@ -15,7 +15,9 @@ still says which version it is.
 
 `check` fails when a component's files no longer match its recorded digest or
 its marker, and, with --base, when a component changed against the base
-manifest without a higher version. `bump` raises a version and rewrites its
+manifest without a higher version. A --base that does not resolve to a commit
+(not fetched, misspelled, all zeros or empty) is an error and a non-zero exit, never
+a skipped comparison (Task 18af3b76). `bump` raises a version and rewrites its
 marker; `update` re-records the digests. A content change therefore ships as:
 edit -> bump -> update -> commit. Task 6dfd7560 (Owner Decision 967df3da).
 """
@@ -29,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
@@ -136,13 +138,60 @@ def component_status(component: dict, root: Path = ROOT) -> dict:
     return status
 
 
-def base_manifest(ref: str, root: Path = ROOT) -> dict | None:
+class BaseRefError(Exception):
+    """The --base ref cannot be used, so no comparison can be made."""
+
+
+def git_failure(done: subprocess.CompletedProcess) -> str:
+    detail = (done.stderr or "").strip()
+    return f" (git: {detail})" if detail else ""
+
+
+def resolve_base(ref: str, root: Path = ROOT) -> str:
+    """The commit a --base ref names; anything else is an error, never a skipped comparison."""
+    if not ref.strip():
+        raise BaseRefError("base ref is empty; pass a git ref such as origin/main")
+    if ref.startswith("-"):
+        raise BaseRefError(f"base ref {ref!r} looks like an option, not a git ref")
     try:
-        text = subprocess.run(["git", "show", f"{ref}:{MANIFEST.as_posix()}"], cwd=root,
-                              capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return json.loads(text)
+        done = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"],
+                              cwd=root, capture_output=True, text=True)
+    except OSError as error:
+        raise BaseRefError(f"cannot run git to resolve base ref {ref!r}: {error}") from error
+    commit = done.stdout.strip()
+    if done.returncode != 0 or not commit:
+        raise BaseRefError(f"base ref {ref!r} does not resolve to a commit "
+                           f"(not fetched, misspelled, or all zeros); nothing was compared{git_failure(done)}")
+    return commit
+
+
+def base_manifest(ref: str, root: Path = ROOT) -> dict | None:
+    """The manifest at the base ref; None only when that commit exists and holds no manifest file."""
+    commit = resolve_base(ref, root)
+    where = f"{MANIFEST.as_posix()} at base ref {ref!r}"
+    try:
+        # ls-tree separates "the path is not in that tree" (exit 0, no output) from a git failure.
+        listed = subprocess.run(["git", "ls-tree", "--name-only", commit, "--", MANIFEST.as_posix()], cwd=root,
+                                capture_output=True, text=True, encoding="utf-8")
+        if listed.returncode != 0:
+            raise BaseRefError(f"cannot read the tree of base ref {ref!r}{git_failure(listed)}")
+        if not listed.stdout.strip():
+            return None
+        shown = subprocess.run(["git", "show", f"{commit}:{MANIFEST.as_posix()}"], cwd=root, capture_output=True,
+                               text=True, encoding="utf-8")
+    except OSError as error:
+        raise BaseRefError(f"cannot read {where}: {error}") from error
+    if shown.returncode != 0:
+        raise BaseRefError(f"cannot read {where}{git_failure(shown)}")
+    try:
+        data = json.loads(shown.stdout)
+    except ValueError as error:
+        raise BaseRefError(f"{where} is not valid JSON: {error}") from error
+    components = data.get("components") if isinstance(data, dict) else None
+    if not isinstance(components, list) or not all(isinstance(c, dict) and "id" in c and "version" in c
+                                                    for c in components):
+        raise BaseRefError(f"{where} is not a component manifest (an object with a components list)")
+    return data
 
 
 def against_base(data: dict, base: dict) -> list[str]:
@@ -185,10 +234,17 @@ def check(root: Path = ROOT, base_ref: str | None = None) -> list[str]:
         problems.append("duplicate component ids")
     for component in data["components"]:
         problems += [f"{component['id']}: {p}" for p in component_status(component, root)["problems"]]
-    if base_ref:
-        base = base_manifest(base_ref, root)
-        if base is not None:
-            problems += against_base(data, base)
+    if base_ref is not None:  # an empty --base is an error too, not "no base"
+        try:
+            base = base_manifest(base_ref, root)
+        except BaseRefError as error:
+            problems.append(str(error))
+        else:
+            if base is None:
+                print(f"clued-components: base ref {base_ref!r} holds no {MANIFEST.as_posix()}; "
+                      "nothing was compared", file=sys.stderr)
+            else:
+                problems += against_base(data, base)
     return problems
 
 
