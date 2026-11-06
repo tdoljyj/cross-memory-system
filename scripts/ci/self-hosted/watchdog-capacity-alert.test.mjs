@@ -111,6 +111,28 @@ test('a marker an earlier watchdog left is removed by one that starts with the r
   assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split(/\r?\n/), ['ALERT marker of an earlier watchdog removed: the runners are not held back'], 'said once, nothing when there was none');
 });
 
+test('a marker that cannot be written does not hide the alert: the ALERT line says so, the next try is in 5 minutes; a restart while held back keeps the time the hold began', { skip }, (t) => {
+  const { dir, text } = render(t);
+  const { file, log, marker } = harness(dir, text, (target) => [
+    // the file the marker is written to first is a directory: writing it fails
+    `New-Item -ItemType Directory -Force -Path '${target}.tmp' | Out-Null`,
+    "Send-CapacityAlert 'Suspend' 'C: 49.8 GB free'",
+    "'minutes=' + [int](((Get-Date) - $lastAlert).TotalMinutes)",
+    `Remove-Item -LiteralPath '${target}.tmp' -Recurse -Force`,
+    "$holdSince = '2026-11-05T01:00:00.0000000+08:00'",
+    "Send-CapacityAlert 'Reminder' 'C: 51.0 GB free'",
+    `'since=' + (Get-Content -LiteralPath '${target}' -Raw | ConvertFrom-Json).since`,
+    "'minutes2=' + [int](((Get-Date) - $lastAlert).TotalMinutes)",
+  ].join('\n'));
+  const result = powershell(['-File', file], { CLUED_WATCHDOG_NO_TOAST: '1' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ['minutes=25', 'since=2026-11-05T01:00:00.0000000+08:00', 'minutes2=0'], 'a failed write is tried again after 5 minutes (30 - 25 elapsed); the first alert of a restart takes the hold\'s start from the state');
+  const lines = fs.readFileSync(log, 'utf8').trim().split(/\r?\n/);
+  assert.match(lines[0], /^ALERT Suspend: Linux runners are stopped for low capacity \(C: 49\.8 GB free\) \(the marker file was not written: /);
+  assert.match(lines[1], /^ALERT Reminder: .*C: 51\.0 GB free\)$/);
+  assert.equal(fs.existsSync(marker), true, 'written at the second try');
+});
+
 test('the notification (Windows PowerShell 5.1) uses a registered application id and raises no error', { skip: skip || (process.env.CLUED_TEST_TOAST === '1' ? false : 'set CLUED_TEST_TOAST=1: it shows a notification on the desktop') }, (t) => {
   const { dir, text } = render(t);
   const { file, log } = harness(dir, text, () => "Show-Toast '[test] Clued CI watchdog notification check' 'defect 2102f7e1: ignore this test notification'");
