@@ -60,26 +60,27 @@ test('the eligibility matrix: stage x code x STOP_SENT x Windows half x quiet pu
   for (const code of SCANNER_ABANDON_ENDINGS) for (const stage of [2, 4, 6]) assert.equal(decideFailure({ code, stage, proof: CLEAN_PROOF, started: true }).klass, 'UNKNOWN', `${code}@${stage}`);
 });
 
-test('the 10-28 ending at stage 2: FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, archived scanner-abandoned, no HALT, never published, one attempt 2', async t => {
+test('the 10-28 ending at stage 2: two runs again in the batch (DESIGN 59), then FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, archived scanner-abandoned, no HALT, never published, one attempt 2', async t => {
   const engine = fakeEngine({ stages: { 2: stopped() } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode, r.originalCode], ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
   assert.equal(await f.ledger.halted(), null);
-  assert.deepEqual(stagesRun(engine), [1, 2], 'nothing after stage 2 ran');
+  assert.deepEqual(stagesRun(engine), [1, 2, 2, 2], 'the run and two runs again; nothing after stage 2 ran');
   const s = await f.ledger.state(KEY);
   const facts = s.terminal.facts;
   assert.deepEqual([s.outcome, facts.failureCode, facts.basis, facts.originalCode, facts.pumpCode, facts.stopCode, facts.stageCode, facts.stage, facts.class, facts.retry, facts.breaker],
     ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, 'scanner-abandon-quiescence-proven', 'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'RELAY_REFUSED_NO_RETRY', 'STOP_SENT', 'STAGE_OUTCOME_MISSING', 2, 'environment', 'attempt2', 'counts']);
-  assert.deepEqual(engine.calls.filter(c => c[0] === 'archive-windows').map(c => c[1]), [SCANNER_ABANDON_ARCHIVE_REASON]);
-  assert.deepEqual(f.companion.calls.filter(c => c[0] === 'archive-linux').map(c => c[1]), [SCANNER_ABANDON_ARCHIVE_REASON]);
+  assert.deepEqual(engine.calls.filter(c => c[0] === 'archive-windows').map(c => c[1]), ['retry-stage-2-1', 'retry-stage-2-2', SCANNER_ABANDON_ARCHIVE_REASON]);
+  assert.deepEqual(f.companion.calls.filter(c => c[0] === 'archive-linux').map(c => c[1]), ['retry-stage-2-1', 'retry-stage-2-2', SCANNER_ABANDON_ARCHIVE_REASON]);
   assert.equal(await f.ledger.headBurned(headKey(subject())), true, 'the head is burned (same Source, same attempt)');
   assert.deepEqual(mayHavePublished({}, s), { published: false, basis: 'failed-clean-stage-2' });
   assert.equal(await f.executedHeads.published(subject()), false, 'never recorded as executed: a new Source may run it');
   // the receipts: what the observer saw, the stage-terminal with its bridge facts, then the terminal
-  assert.deepEqual((await bodies(f, 'bridge-pump-lost')).map(b => [b.stage, b.failureCode]), [[2, 'RELAY_REFUSED_NO_RETRY']]);
-  assert.deepEqual((await bodies(f, 'bridge-stop-requested')).map(b => [b.stage, b.requestId]), [[2, SWAP]]);
+  assert.deepEqual((await bodies(f, 'bridge-pump-lost')).map(b => [b.stage, b.failureCode]), Array(3).fill([2, 'RELAY_REFUSED_NO_RETRY']));
+  assert.deepEqual((await bodies(f, 'bridge-stop-requested')).map(b => [b.stage, b.requestId]), Array(3).fill([2, SWAP]));
+  assert.deepEqual((await bodies(f, 'execution-retry')).map(b => [b.stage, b.try, b.basis]), [[2, 1, 'abandoned-unpublished'], [2, 2, 'abandoned-unpublished']]);
   assert.deepEqual((await bodies(f, 'stage-terminal')).find(b => b.stage === 2).bridge, bridge());
   assert.deepEqual((await bodies(f, 'batch-terminal')).map(b => [b.outcome, b.failureCode, b.class, b.originalCode]), [['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, 'environment', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']]);
   // Owner decision eaa7d5e4: stage 2 gets the one attempt 2
@@ -91,7 +92,8 @@ test('the 10-28 ending at stage 2: FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, ar
 test('stage 2: attempt 2 runs once after the delay; an attempt 2 abandoned again gets no attempt 3', async t => {
   const engine = fakeEngine();
   let n = 0;
-  engine.runStage = async (batch, stage) => { engine.calls.push(['stage', stage.number]); return stage.number === 2 && ++n <= 2 ? stopped() : { ok: true }; };
+  // each attempt: the run and its two runs again in the batch (DESIGN 59)
+  engine.runStage = async (batch, stage) => { engine.calls.push(['stage', stage.number]); return stage.number === 2 && ++n <= 6 ? stopped() : { ok: true }; };
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.ok((await f.exec.tick()).attempt2);
@@ -100,9 +102,9 @@ test('stage 2: attempt 2 runs once after the delay; an attempt 2 abandoned again
   assert.deepEqual([second.state, second.failureCode, second.attempt2], ['FAILED_CLEAN', BRIDGE_ABANDONED_UNPUBLISHED, undefined]);
   f.advance(600_000);
   assert.equal((await f.exec.tick()).state, 'IDLE');
-  assert.deepEqual(stagesRun(engine), [1, 2, 1, 2]);
+  assert.deepEqual(stagesRun(engine), [1, 2, 2, 2, 1, 2, 2, 2]);
   // and one whose attempt 2 runs through completes
-  const g = await executorFixture(t, { engine: (() => { const e = fakeEngine(); let m = 0; e.runStage = async (b, s) => { e.calls.push(['stage', s.number]); return s.number === 2 && ++m === 1 ? stopped() : { ok: true }; }; return e; })() });
+  const g = await executorFixture(t, { engine: (() => { const e = fakeEngine(); let m = 0; e.runStage = async (b, s) => { e.calls.push(['stage', s.number]); return s.number === 2 && ++m <= 3 ? stopped() : { ok: true }; }; return e; })() });
   await g.drop(triggerBytes());
   await g.exec.tick();
   g.advance(600_000);
@@ -140,7 +142,9 @@ test('quiescence not proven within 5 minutes HALTs with the original code; the s
   const s = await f.ledger.state(KEY);
   assert.deepEqual([s.outcome, s.terminal.facts.failureCode, s.terminal.facts.basis, s.terminal.facts.originalCode], ['FAILED_UNKNOWN', 'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'scanner-abandon-quiescence-unproven', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
   assert.equal((await f.ledger.halted()).value.code, 'BRIDGE_STAGE_STOPPED_PUMP_LOST');
-  assert.equal(companion.calls.filter(c => c[0] === 'quiescence').length, 1 + ABORT_QUIESCENCE_ATTEMPTS, 'the failure proof, then the bounded re-check');
+  // the failure proof, then the bounded re-check of the run again (DESIGN 59: refused, no archive), then that of the failure path
+  assert.equal(companion.calls.filter(c => c[0] === 'quiescence').length, 1 + 2 * ABORT_QUIESCENCE_ATTEMPTS, 'the failure proof, then the bounded re-checks');
+  assert.deepEqual((await bodies(f, 'execution-retry-refused')).map(b => [b.stage, b.step]), [[2, 'quiescence']]);
   assert.equal(f.engine.calls.filter(c => c[0] === 'archive-windows').length + companion.calls.filter(c => c[0] === 'archive-linux').length, 0, 'nothing archived');
   assert.equal((await f.ledger.pendingAttempts2()).length, 0);
 });
