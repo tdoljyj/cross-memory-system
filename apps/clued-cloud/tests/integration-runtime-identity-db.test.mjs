@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -1682,7 +1683,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop();
+    await stopCluster(server);
   }
 });
 
@@ -1771,6 +1772,6 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
   } finally {
     if (gateway) await gateway.end().catch(()=>{});
     if (db) await db.end().catch(() => {});
-    await server.stop();
+    await stopCluster(server);
   }
 });

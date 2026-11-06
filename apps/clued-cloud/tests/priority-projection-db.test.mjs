@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -132,7 +133,7 @@ test("M1 priority updates and legacy list ordering stay aligned after repairing 
   } finally {
     await anon?.end();
     await admin?.end();
-    await server.stop();
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

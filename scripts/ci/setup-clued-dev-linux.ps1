@@ -28,17 +28,126 @@
 # Runs as the current user (wsl --import needs no elevation). Safe to run
 # again: each step checks what is already there, and verified downloads are
 # reused.
+# Where it goes (defect 2102f7e1): the distribution's virtual disk grows to well
+# over 13 GB and local-verify keeps about 10 GB more, so both live on a data drive,
+# never on the system drive. The CI host's watchdog stops the self-hosted runners
+# when C: has less than 50 GB free (it starts them again at 65 GB), and this
+# distribution once took the host below that. -DataRoot (default: \clued-dev on
+# the first fixed drive after the system drive, or the CLUED_DEV_ROOT variable,
+# which local-verify reads too) holds wsl\<Name> and download; -InstallDir and
+# -DownloadDir set either one. Before anything is downloaded or imported, the free
+# space of the target drive is checked (on the system drive the watchdog's 50 GB
+# are kept free on top of -RequiredFreeGB); -AllowSystemDrive lifts the refusal to
+# use the system drive, -Plan only prints the places and the free space.
 #Requires -Version 7.3
 param(
     [string]$Name = 'CluedDev-Linux',
-    # Under the profile, not %LOCALAPPDATA%: a packaged app (such as the one an
-    # agent runs in) sees AppData redirected into its package.
-    [string]$InstallDir = (Join-Path $env:USERPROFILE 'WSL\CluedDev-Linux'),
-    [string]$DownloadDir = (Join-Path $env:USERPROFILE '.cache\clued-dev-linux-download')
+    [string]$DataRoot,
+    [string]$InstallDir,
+    [string]$DownloadDir,
+    # The virtual disk reached 13.6 GB; room to grow.
+    [double]$RequiredFreeGB = 30,
+    [switch]$AllowSystemDrive,
+    [switch]$Plan
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $env:WSL_UTF8 = '1'
+
+# What the CI host's watchdog keeps free on the system drive (it pauses the
+# runners below this).
+$WatchdogSuspendGB = 50
+$SystemRoot = [IO.Path]::GetPathRoot($env:SystemRoot)
+
+# \clued-dev on the first fixed drive after the system drive, or $null.
+function Get-DefaultDataRoot {
+    if ($env:CLUED_DEV_ROOT) { return $env:CLUED_DEV_ROOT }
+    $system = $SystemRoot.TrimEnd('\').ToUpperInvariant()
+    $drive = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' |
+        Where-Object { $_.DeviceID.ToUpperInvariant() -ne $system -and $_.DeviceID -ge 'D:' } |
+        Sort-Object DeviceID | Select-Object -First 1
+    if ($drive) { return "$($drive.DeviceID)\clued-dev" }
+    return $null
+}
+
+function Get-FreeGB([string]$Path) {
+    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path))
+    if ($root.StartsWith('\\')) { return [double]::PositiveInfinity } # a network path: not ours to judge
+    return [math]::Round(([IO.DriveInfo]::new($root)).AvailableFreeSpace / 1GB, 1)
+}
+
+function Test-OnSystemDrive([string]$Path) {
+    return [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)) -ieq $SystemRoot
+}
+
+# Refuses when $Path's drive cannot take $NeedGB more (on the system drive: on
+# top of what the watchdog keeps free).
+function Assert-DiskRoom([string]$Path, [double]$NeedGB, [string]$What) {
+    $free = Get-FreeGB $Path
+    $reserve = if (Test-OnSystemDrive $Path) { $WatchdogSuspendGB } else { 0 }
+    if ($free - $reserve -lt $NeedGB) {
+        $kept = if ($reserve -gt 0) { " and the $reserve GB the CI watchdog keeps free on it" } else { '' }
+        throw "$What needs $NeedGB GB$kept, but $Path has $free GB free; choose another drive with -DataRoot (or CLUED_DEV_ROOT), or free space first"
+    }
+}
+
+# Where an existing distribution keeps its virtual disk, or $null.
+function Get-DistributionBasePath {
+    foreach ($key in Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue) {
+        $properties = Get-ItemProperty -LiteralPath $key.PSPath
+        if ($properties.DistributionName -ceq $Name) { return ([string]$properties.BasePath) -replace '^\\\\\?\\', '' }
+    }
+    return $null
+}
+
+# Where things go. A refusal only matters when something is to be installed: an
+# existing distribution is checked and left alone on a machine with one drive too.
+$placeError = $null
+try {
+    if (-not $DataRoot -and (-not $InstallDir -or -not $DownloadDir)) {
+        $DataRoot = Get-DefaultDataRoot
+        if (-not $DataRoot) {
+            if (-not $AllowSystemDrive) {
+                throw 'There is no fixed drive besides the system drive: pass -DataRoot (or set CLUED_DEV_ROOT), or -AllowSystemDrive to use the system drive'
+            }
+            $DataRoot = Join-Path $env:USERPROFILE 'clued-dev'
+        }
+    }
+    if (-not $InstallDir) { $InstallDir = Join-Path $DataRoot "wsl\$Name" }
+    if (-not $DownloadDir) { $DownloadDir = Join-Path $DataRoot 'download' }
+    foreach ($place in $InstallDir, $DownloadDir) {
+        if ((Test-OnSystemDrive $place) -and -not $AllowSystemDrive) {
+            throw "$place is on the system drive ($SystemRoot): its free space is what the CI host's watchdog guards. Use another drive, or pass -AllowSystemDrive"
+        }
+    }
+}
+catch { $placeError = $_ }
+
+$existingBase = Get-DistributionBasePath
+if ($placeError -and -not $existingBase) { throw $placeError }
+if ($existingBase -and (Test-OnSystemDrive $existingBase)) {
+    $target = if ($InstallDir) { $InstallDir } else { '<a folder on another drive>' }
+    Write-Warning "$Name keeps its virtual disk on the system drive ($existingBase). Move it when every WSL distribution may stop (wsl --shutdown stops them all, the CI runners' CluedCI-Linux too): wsl --shutdown, then wsl --manage $Name --move $target"
+}
+# local-verify's cache used to live here, on the system drive
+$oldCache = Join-Path $env:USERPROFILE '.cache\clued-local-verify'
+if ((Test-Path -LiteralPath $oldCache) -and -not ((Get-Item -LiteralPath $oldCache -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Write-Warning "$oldCache is a directory on the system drive (up to 10 GB). local-verify now keeps its cache under the data root (<data root>\cache\clued-local-verify); move it there or delete it"
+}
+
+if ($Plan) {
+    $problem = $null
+    if (-not $existingBase) {
+        try { Assert-DiskRoom $InstallDir $RequiredFreeGB "The virtual disk of $Name" } catch { $problem = $_.Exception.Message }
+    }
+    [pscustomobject]@{
+        SpaceProblem = $problem
+        Name = $Name; DataRoot = $DataRoot; InstallDir = $InstallDir; DownloadDir = $DownloadDir
+        InstallDirFreeGB = if ($InstallDir) { Get-FreeGB $InstallDir } else { $null }; RequiredFreeGB = $RequiredFreeGB
+        InstallDirOnSystemDrive = if ($InstallDir) { Test-OnSystemDrive $InstallDir } else { $null }; ExistingBasePath = $existingBase
+    } | ConvertTo-Json -Compress
+    return
+}
 
 $UbuntuBase = 'https://cloud-images.ubuntu.com/wsl/releases/24.04/20240423'
 $RootfsName = 'ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz'
@@ -78,12 +187,14 @@ function Get-CheckedSha256([string]$SumsUrl, [string]$File, [string]$Pinned) {
 # Downloads $Url to $DownloadDir unless a copy with the expected digest is
 # already there; a partial or wrong file is replaced, never used.
 function Get-VerifiedFile([string]$Url, [string]$File, [string]$Expected) {
+    if (-not $DownloadDir) { throw $placeError }
     New-Item -ItemType Directory -Force -Path $DownloadDir | Out-Null
     $target = Join-Path $DownloadDir $File
     if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $Expected) {
         Write-Host "Reusing verified $File"
         return $target
     }
+    Assert-DiskRoom $DownloadDir 1 "Downloading $File"
     $partial = "$target.partial"
     for ($attempt = 1; ; $attempt++) {
         try {
@@ -119,6 +230,8 @@ function Invoke-InDistribution([string]$User, [string[]]$Command) {
 $restart = $false
 
 if (-not (Test-Distribution)) {
+    # before anything is downloaded
+    Assert-DiskRoom $InstallDir $RequiredFreeGB "The virtual disk of $Name"
     $rootfs = Get-VerifiedFile "$UbuntuBase/$RootfsName" $RootfsName (Get-CheckedSha256 "$UbuntuBase/SHA256SUMS" $RootfsName $RootfsSha256)
     if ((Test-Path -LiteralPath $InstallDir) -and (Get-ChildItem -LiteralPath $InstallDir -Force | Select-Object -First 1)) {
         throw "$InstallDir is not empty; remove it or pass -InstallDir"

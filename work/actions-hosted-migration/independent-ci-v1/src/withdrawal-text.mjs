@@ -8,6 +8,12 @@
 // a 501 or any other 5xx is not one of them and keeps the ordinary wording; the entry's safeToRerun (staged-check-publisher-v2) uses the same set.
 const READ_UNAVAILABLE = /^(?:github_http_(?:500|502|503|504)|github_transport_unconfirmed|full_admission_unavailable)$/;
 export const verificationUnavailable = cause => READ_UNAVAILABLE.test(cause ?? '');
+// Generation 13 (resident DESIGN §57.2; review round 3): Native's protected observation after the write got no answer in its window
+// (native_claim_observation_unavailable), or the facts observed once more after the admission did not (protected_facts_reobservation_
+// unavailable). Nothing was found to have changed either: the words say so. Kept apart from READ_UNAVAILABLE, which stage 1's
+// admissionVerificationRetryable and the entry's safeToRerun also use.
+const NATIVE_READ_UNAVAILABLE = Object.freeze(['native_claim_observation_unavailable', 'protected_facts_reobservation_unavailable']);
+const withdrawalUnavailable = cause => verificationUnavailable(cause) || NATIVE_READ_UNAVAILABLE.includes(cause);
 // Generation 10 (resident DESIGN 53.6): the stage-1 work admission's verification after its own write is read again (bounded) and, when
 // it still cannot be done, its withdrawal is the transient ADMISSION_VERIFICATION_UNAVAILABLE (stage-fact.mjs) only for a PASSING cause:
 //   - GitHub not readable (500/502/503/504, no transport);
@@ -25,8 +31,8 @@ export const admissionVerificationRetryable = (cause, diagnostic = null) => (cau
 // (default: the read set above; the work admission also passes its reread reasons), 'failed' when the verification after the write
 // could not be completed for another reason that says nothing about the authorization either (generation 10: a full_admission_unavailable
 // that caught no transport fault: a refused credential, an evaluator fault), false when the authorization changed.
-export const withdrawalTitle = (subject, cause, unavailable = verificationUnavailable(cause)) => unavailable === 'failed' ? `${subject} check withdrawn: verification failed`
+export const withdrawalTitle = (subject, cause, unavailable = withdrawalUnavailable(cause)) => unavailable === 'failed' ? `${subject} check withdrawn: verification failed`
   : unavailable ? `${subject} check withdrawn: verification unavailable` : `${subject} authorization changed`;
-export const withdrawalNote = (cause, unavailable = verificationUnavailable(cause)) => unavailable === 'failed'
+export const withdrawalNote = (cause, unavailable = withdrawalUnavailable(cause)) => unavailable === 'failed'
   ? ' The verification after the write could not be completed (the admission evaluation failed); no change of the authorization was observed. The check is withdrawn rather than left unverified.'
   : unavailable ? ' GitHub or Native could not be read in time to confirm the authorization after the write; no change of it was observed. The check is withdrawn rather than left unverified.' : '';

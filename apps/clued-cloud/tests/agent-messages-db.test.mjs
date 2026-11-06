@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -348,10 +349,10 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
 
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     const resolved = path.resolve(directory);
     assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()));
     assert.ok(path.basename(resolved).startsWith('clued-agent-messages-'));
-    await fs.rm(resolved, { recursive: true, force: true }).catch(() => {});
+    await removeTestDirectory(resolved).catch(() => {});
   }
 });

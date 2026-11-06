@@ -157,13 +157,13 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "945a548dda51452567cf3587457b4d523c27ea7d483710f1f82ea0b5e01e81f7",
+      "content_sha256": "ee380f2d2a21cfd7c52d83ad9a131738de5841edfd04cce97ab470a9a4af8892",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -330,14 +330,14 @@
     {
       "id": "script.storage-google-redirect-cutover",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Generate bounded, exact-client CAS configuration SQL for the original Google Storage callback cutover; no credential access.",
       "root": "apps/clued-cloud",
       "files": [
         "scripts/storage-google-redirect-cutover.mjs",
         "tests/storage-google-redirect-cutover.test.mjs"
       ],
-      "content_sha256": "84d033529b8fc691d81262df37ec224a7b1c84c3ce284c724bd03aee104e7496",
+      "content_sha256": "11a114db0b8615ac50ec3288f73c7ee76334092cc4c3e854c7000a79f1a58649",
       "version_marker": {
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"
@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.7",
+      "version": "1.1.9",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "5892529929ab9fbfe821d41b9c974fc0005246eb928b0c7de1979373b44e450c"
+      "content_sha256": "bb874221aefb2b886fc5993a9083f3dafb7bab47e966cd19a5306c38b5e8022e"
     },
     {
       "id": "script.resource-maintenance",
@@ -804,7 +804,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -815,7 +815,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "08d94d93d61b2531f00702cfd686cdf4d6d27a75caa1d3f0aa756914314b9a48"
+      "content_sha256": "17c3de25171b216f4704f9f67f614ecc54aa672d74a385c7956fd5fbd5f27ea1"
     }
   ]
 }

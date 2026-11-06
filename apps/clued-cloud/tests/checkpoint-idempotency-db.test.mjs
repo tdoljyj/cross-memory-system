@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -107,8 +108,8 @@ test('checkpoint replay binds effective payload and context inside the existing 
    assert.equal((await admin.query("select proacl::text value from pg_proc where oid='public.clued_mcp_commit_checkpoint(text,jsonb)'::regprocedure")).rows[0].value,acl);
   });
  } finally {
-  for(const db of clients.reverse())await db.end().catch(()=>{});await server.stop().catch(()=>{});
+  for(const db of clients.reverse())await db.end().catch(()=>{});await stopCluster(server);
   const target=path.resolve(dir);if(path.dirname(target)!==path.resolve(os.tmpdir())||!path.basename(target).startsWith('clued-checkpoint-idempotency-'))throw Error('Unsafe test cleanup');
-  await fs.rm(target,{recursive:true,force:true});
+  await removeTestDirectory(target);
  }
 });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -86,8 +87,8 @@ test('checkpoint replay returns its unique original Receipt without changing sto
    assert.deepEqual(await functionSecurity(),security);
   });
  } finally {
-  for(const db of clients.reverse())await db.end().catch(()=>{});await server.stop().catch(()=>{});
+  for(const db of clients.reverse())await db.end().catch(()=>{});await stopCluster(server);
   const target=path.resolve(dir);if(path.dirname(target)!==path.resolve(os.tmpdir())||!path.basename(target).startsWith('clued-checkpoint-receipt-'))throw Error('Unsafe test cleanup');
-  await fs.rm(target,{recursive:true,force:true});
+  await removeTestDirectory(target);
  }
 });

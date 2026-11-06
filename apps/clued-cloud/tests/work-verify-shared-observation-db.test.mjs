@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -239,10 +240,10 @@ test('ordinary work verification shares observations without weakening writer, r
     });
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
-    await server.stop();
+    await stopCluster(server);
     const resolved = path.resolve(directory);
     assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()));
     assert.ok(path.basename(resolved).startsWith('clued-verify-shared-'));
-    await fs.rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 });
+    await removeTestDirectory(resolved);
   }
 });

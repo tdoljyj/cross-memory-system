@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -239,7 +240,7 @@ test('handed-over claim: exact head authorization requires the new private key, 
     await assertGatewayCloseoutBoundary(admin);
   }finally{
     for(const client of clients)await client.end().catch(()=>{});
-    await server.stop().catch(()=>{}); await fs.rm(dir,{recursive:true,force:true});
+    await stopCluster(server); await removeTestDirectory(dir);
   }
 });
 
@@ -402,7 +403,7 @@ test('no-page handover: private receiving proof, default On, Off enforced, no id
     assert.equal((await admin.query('select execution_epoch from clued_private.work_claims_v1 where claim_id=$1',[claim.claim_id])).rows[0].execution_epoch,'4');
     await assertGatewayCloseoutBoundary(admin);
     assert.notEqual(receiverBinding,binding);
-  }finally{for(const c of clients)await c.end().catch(()=>{});await server.stop().catch(()=>{});await fs.rm(dir,{recursive:true,force:true});}
+  }finally{for(const c of clients)await c.end().catch(()=>{});await stopCluster(server);await removeTestDirectory(dir);}
 });
 
 test('async storage handover uses the actual cloud executor and original recovery journal',{timeout:300000},async t=>{
@@ -433,5 +434,5 @@ test('async storage handover uses the actual cloud executor and original recover
       '{"rationale":"fixture only"}','{}','{}','user_explicit','fixture')`,[decision,user,project,'project:'+project]);
     await testAccountCloud(t,admin,server,user,decision,{handoverOnly:true});
     await assertGatewayCloseoutBoundary(admin);
-  }finally{await admin?.end().catch(()=>{});await server.stop().catch(()=>{});await fs.rm(dir,{recursive:true,force:true});}
+  }finally{await admin?.end().catch(()=>{});await stopCluster(server);await removeTestDirectory(dir);}
 });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -179,9 +180,9 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
     });
   } finally {
     for (const db of clients.reverse()) await db.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     const target = path.resolve(dir);
     if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith('clued-auth-closeout-')) throw new Error('Unsafe test cleanup');
-    await fs.rm(target, { recursive: true, force: true });
+    await removeTestDirectory(target);
   }
 });

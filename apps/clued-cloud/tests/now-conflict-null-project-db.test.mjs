@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -121,6 +122,6 @@ test("project now-task writes ignore Global now tasks and still detect real conf
     committed(await update(projectScope, projectNext, 2, "next"));
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

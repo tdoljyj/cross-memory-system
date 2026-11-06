@@ -141,3 +141,15 @@ test('local start binds the exact job and issue id; Native and local permissions
     assert.throws(() => localScanStart({ ...f.job, role: 'other' }, id), { code: 'SCAN_START_GRANT_REFUSED' });
   }
 });
+
+// Task b26468dc: the issuer tests skip off Windows, so this one shows the production path still refuses there.
+test('off Windows the issuer context is refused: FORMAL_WINDOWS_CONTROLLER_REQUIRED', () => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true, enumerable: true, writable: false });
+  try {
+    const fx = fixtureRecord({}, { paths: REQUIRED_SOURCE_PATHS }), record = validateRecordV2(fx.docs, { now: Date.now() });
+    const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD,
+      sourceManifestSha256: record.config.sourceManifestSha256, createdAt: new Date(Date.now() - 60000).toISOString(), attempt: 1 }).trivy;
+    assert.throws(() => createWindowsContext({ inputs: { jobs: [job], record }, policyText: '{}', sourceRoot: 'C:\\fixture', live() {} }), { code: 'FORMAL_WINDOWS_CONTROLLER_REQUIRED' });
+  } finally { Object.defineProperty(process, 'platform', original); }
+});

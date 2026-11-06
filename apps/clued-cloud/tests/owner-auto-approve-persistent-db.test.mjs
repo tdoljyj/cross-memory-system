@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -189,6 +190,6 @@ test('persistent auto-approval upgrades installed timed state without rewriting 
     // still queued, so a failing lock assertion cannot deadlock test cleanup.
     await Promise.allSettled(clients.map((c) => c.query('rollback')));
     for (const c of clients.reverse()) await c.end().catch(() => {});
-    await server.stop().catch(() => {}); await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server); await removeTestDirectory(directory);
   }
 });

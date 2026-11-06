@@ -321,6 +321,6 @@ export async function main(argv = process.argv.slice(2)) {
   return evidence.verdict === 'PASS' ? 0 : 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   process.exitCode = await main();
 }

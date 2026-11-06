@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -480,7 +481,7 @@ test('Native source/history search: real revisions, exact qualifications, full m
     t.diagnostic('Applied complete chronological migration chain: ' + names.length);
   } finally {
     for (const db of clients.reverse()) await db.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });
