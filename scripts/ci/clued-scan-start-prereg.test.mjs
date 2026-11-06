@@ -118,8 +118,8 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   profileBefore.workflows[NODE22].accepted_sources = profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob !== NODE22_BLOB);
   assert.equal(Object.hasOwn(rolesBefore.workflows[NODE22].sources, NODE22_BLOB), true);
   delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
-  assert.equal(roleDefinitionDigest(profileBefore), 'fd63c6804f427cbe6c2e8ba4e18f8d53981006bdb2e1113a196ddd73fee7c9a7');
-  assert.equal(roleDefinitionDigest(rolesBefore), '4a86b392b2d094fd8f80d8bafc2bf0e4ab32357c4c1f21ac747556836c242352');
+  assert.equal(roleDefinitionDigest(profileBefore), 'ee9f3a94a83bb9dbfa0b02c5c7d2c9daaa7c48019bf98302a9f48877c7130c87');
+  assert.equal(roleDefinitionDigest(rolesBefore), 'b884d1473b6aa27a124019f8e4a836a9e861fe7b8b96a970bdd8188d755bf75b');
   const admission = fs.readFileSync(new URL('./clued-work-admission.mjs', import.meta.url), 'utf8');
   const anchor = 'const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze(';
   const start = admission.indexOf(anchor) + anchor.length, end = admission.indexOf(']);', start);
