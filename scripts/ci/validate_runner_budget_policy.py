@@ -388,11 +388,18 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
                                          'gitleaks-trusted-self-hosted': 'ae8cea670f38536ff6f5ef5b5be17cd990b49702a0e18f00fae36b9d3598285a'}}},
  'clued-merge-slot-ci.yml': {'kind': 'legacy',
                              'source_commit': 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db',
-                             'workflow_sha256': '670c8e3bee253df7811cf35699213d94d548698178e3e1fb1a5789399c63b261',
+                             'workflow_sha256': 'f8ae06eb8a2e1cbe6b0ff91514067f7c216f6551fdf8cf3a8c24e0715a53abfa',
                              'predecessor': {'control_sha256': '500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f',
                                              'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}},
-                             'successor': {'control_sha256': 'efbfbb17509f923eb395982aa700f85c38ff35f8c61783ea25d3e4025d21af43',
+                             'successor': {'control_sha256': '9c7974ece331a8d86524ab75301f86159ffd6d01cbc2684d24417d2a92ac94ed',
                                            'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}}}}
+
+# The clued-merge-slot-ci.yml successor above is the home-linux-01 retirement
+# Source (Owner Decision 2907d858): it differs from the previous successor
+# (workflow 670c8e3b..., control efbfbb17...) only by removing the one
+# "Clued handover hook qualification / home-linux-01" workflow_run signal. The
+# report job hash, hosted route, permissions and every other trigger stay frozen,
+# and the original debt row above is untouched. No new hosted debt is added.
 
 # Owner Decision bc6fdad1: GitHub treats every check run that carries a
 # required check's name as that required check, whatever its integration, so a

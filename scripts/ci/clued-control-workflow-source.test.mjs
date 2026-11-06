@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,RETIRED_CONSUMER_OBSERVER_SOURCE,
   compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
-import {parseWorkflowProfiles,roleDefinitionDigest,serializeWorkflowProfiles,workflowBlob} from './clued-workflow-profile.mjs';
+import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
 const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
 const root=new URL('../../',import.meta.url),file=DISPATCHER_CHOICE_SOURCE.file;
@@ -109,27 +109,8 @@ test('only modified exact legacy to choice successor is a registered transition'
     assert.equal(registeredControlWorkflowTransition(r,file,a,b,{change}).passed,false);
 });
 
-// Step 1 of the home-linux-01 retirement registers the successor Source while
-// main still runs the old merge-slot workflow. The three files step 2 changes
-// are pinned at exactly the bytes that removing the retired workflow's entries
-// gives; every other pin is the actual file.
-const RETIRED_WORKFLOW='.github/workflows/clued-work-handover-qualification-home-linux-01.yml';
-const retiredStepTwoBytes=()=>{
-  const read=name=>fs.readFileSync(new URL(name,root),'utf8');
-  const coverage=JSON.parse(read('.github/actions/ci-temporary-storage/coverage.json'));
-  assert.ok(Object.hasOwn(coverage.workflows,RETIRED_WORKFLOW.split('/').at(-1)));
-  delete coverage.workflows[RETIRED_WORKFLOW.split('/').at(-1)];
-  const profiles=parseWorkflowProfiles(fs.readFileSync(new URL('scripts/ci/clued-gated-proof-profiles.json',root)));
-  assert.ok(Object.hasOwn(profiles.workflows,RETIRED_WORKFLOW));delete profiles.workflows[RETIRED_WORKFLOW];
-  const specs=JSON.parse(read('scripts/ci/clued-gated-proof-role-specs.json'));
-  assert.ok(Object.hasOwn(specs.workflows,RETIRED_WORKFLOW));delete specs.workflows[RETIRED_WORKFLOW];
-  return {'.github/actions/ci-temporary-storage/coverage.json':JSON.stringify(coverage,null,2)+'\n',
-    'scripts/ci/clued-gated-proof-profiles.json':serializeWorkflowProfiles(profiles),
-    'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(specs,null,2)+'\n'};
-};
-
-test('retirement dependency snapshot binds actual implementation Git bytes and the exact pending retirement bytes',()=>{
-  const pins=RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs,pending=retiredStepTwoBytes();
+test('current retirement dependency snapshot binds actual implementation Git bytes without self-referential authority',()=>{
+  const pins=RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs;
   assert.equal(Object.keys(pins).length,28);
   for(const name of ['.github/actions/ci-temporary-storage/check-workflows.mjs',
     '.github/actions/ci-temporary-storage/coverage.json','scripts/ci/clued-handover-native-entry.mjs',
@@ -139,38 +120,33 @@ test('retirement dependency snapshot binds actual implementation Git bytes and t
   assert.ok(pins['scripts/runner/qualify-standard-runner-actor.mjs']);
   assert.equal(pins[CONTROL_WORKFLOW_SOURCE_PATH],undefined);
   assert.equal(pins['scripts/ci/clued-control-workflow-source.mjs'],undefined);
-  for(const name of Object.keys(pending))assert.ok(Object.hasOwn(pins,name),name);
-  for(const [name,blob]of Object.entries(pins)){
-    const actual=workflowBlob(fs.readFileSync(new URL(name,root),'utf8'));
-    if(Object.hasOwn(pending,name)){assert.equal(workflowBlob(pending[name]),blob,name);assert.notEqual(actual,blob,name);}
-    else assert.equal(actual,blob,name);
-  }
+  for(const [name,blob]of Object.entries(pins))assert.equal(workflowBlob(fs.readFileSync(new URL(name,root),'utf8')),blob,name);
 });
 
-test('pending retirement Source is the actual main merge-slot Source minus only the retired consumer signal',()=>{
+
+test('retirement removes only the retired live consumer while preserving the fifteen old Source records',()=>{
   const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;
   const head=rows.find(s=>s.source_kind==='retired_consumer_observer_successor');
   const previous=rows.find(s=>s.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob);
-  const actual=fs.readFileSync(new URL(f,root),'utf8'),retired=RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow;
   assert.equal(Object.values(r.workflows).reduce((n,x)=>n+x.sources.length,0),16);
-  assert.equal(rows.length,4);assert.equal(head.operation,'retire_completed_consumer_signal');
-  assert.equal(workflowBlob(actual),RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob);
-  assert.equal(previous.source_kind,'completion_observer_successor');assert.equal(previous.source_yaml,actual);
-  const line=`      - ${retired}\n`;
-  assert.equal(actual.split(line).length,2);assert.equal(head.source_yaml,actual.replace(line,''));
-  assert.equal(workflowBlob(head.source_yaml),RETIRED_CONSUMER_OBSERVER_SOURCE.workflow_blob);
+  assert.equal(rows.length,4);assert.equal(head.source_yaml,fs.readFileSync(new URL(f,root),'utf8'));
+  assert.equal(head.operation,'retire_completed_consumer_signal');
   const before=structuredClone(previous.workflow_definition),after=structuredClone(head.workflow_definition);
+  const retired=RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow;
   assert.equal(before.on.workflow_run.workflows.filter(x=>x===retired).length,1);
   assert.equal(after.on.workflow_run.workflows.includes(retired),false);
   before.on.workflow_run.workflows=before.on.workflow_run.workflows.filter(x=>x!==retired);
   assert.deepEqual(after,before);assert.deepEqual(head.role_digests,previous.role_digests);
-  for(const text of [actual,head.source_yaml]){
-    const current=sourceResult(r,text,f);assert.equal(current.passed,true);
-    for(const key of ['execution_authority','dispatch_authority','production_authority','canonical_authority','runner_hook_exception'])assert.equal(current.authority_boundary[key],false);
+  const current=sourceResult(r,head.source_yaml,f);assert.equal(current.passed,true);
+  for(const key of ['execution_authority','dispatch_authority','production_authority','canonical_authority','runner_hook_exception'])assert.equal(current.authority_boundary[key],false);
+  const removed='.github/workflows/clued-work-handover-qualification-home-linux-01.yml';
+  assert.equal(fs.existsSync(new URL(removed,root)),false);
+  for(const name of ['clued-gated-proof-profiles.json','clued-gated-proof-role-specs.json']){
+    const active=JSON.parse(fs.readFileSync(new URL('scripts/ci/'+name,root)));
+    assert.equal(active.workflows[removed],undefined);
   }
-  assert.equal(registeredControlWorkflowTransition(r,f,head.source_yaml,actual,{change:{filename:f,status:'modified'}}).passed,true);
-  // The retired consumer still runs until step 2 removes it with its signal.
-  assert.equal(fs.readFileSync(new URL(RETIRED_WORKFLOW,root),'utf8').split('\n')[0],`name: ${retired}`);
+  const coverage=JSON.parse(fs.readFileSync(new URL('.github/actions/ci-temporary-storage/coverage.json',root)));
+  assert.equal(coverage.workflows[removed.split('/').at(-1)],undefined);
 });
 
 test('retirement transition requires exact actual-main legacy or completion predecessor, modified path and complete unchanged Role',()=>{
