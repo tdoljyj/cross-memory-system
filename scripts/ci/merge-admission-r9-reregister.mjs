@@ -48,21 +48,38 @@ export function appendRotating(list,entry,cap){
   return {list:next,dropped};
 }
 
-// Whether `live` (oldest first) is `sealed` with the oldest entries dropped and newer ones appended.
-// Sealed entries that are still retained must appear in order. A sealed entry missing from the middle
-// is only legitimate when it came back later as a newer generation (a revert A->B->A re-appends it),
-// and entries equal to `current` are exempt (a history never repeats the current generation).
-// This protects the sealed part only; entries registered after the seal are checked by the helper itself.
-export function sealedWindowAgrees(sealed,live,current=()=>false){
+// Whether `live` (oldest first) is `sealed` with its oldest entries rotated out and newer ones appended.
+// live = front + rest. `front` is the part of the sealed history that survived: it must appear unchanged and in
+// order. Everything sealed that is older than front[0] was rotated out, which needs at least that many appended
+// entries (so the oldest entries cannot simply be deleted). A sealed entry newer than front[0] that is missing
+// was removed because it became the current generation again; it must then be back in `rest` as a newer
+// generation, as decided by `reappears(missing, entry)` (nothing reappears by default); `rest` may not contain
+// a copy of a sealed entry otherwise. Entries equal to
+// `current` are exempt: a history never repeats the current generation. This protects the sealed part only;
+// what a pull request appended is checked by re-deriving the registry from main (see the helper test).
+export function sealedWindowAgrees(sealed,live,{current=()=>false,reappears=()=>false}={}){
   const S=sealed.filter(e=>!current(e));
   if(!S.length)return true;
   if(!live.length)return false;
-  const k=S.findIndex(e=>same(e,live[0]));
-  if(k<0)return !live.some(e=>S.some(s=>same(s,e)));
-  let j=0;const missing=[];
-  for(let i=k;i<S.length;i+=1){if(j<live.length&&same(S[i],live[j]))j+=1;else missing.push(S[i]);}
-  const rest=live.slice(j);
-  return missing.every(m=>rest.some(r=>same(r,m)));
+  for(let split=0;split<=live.length;split+=1){
+    const front=live.slice(0,split),rest=live.slice(split),matched=[];
+    let at=-1,ok=true;
+    for(const entry of front){
+      const i=S.findIndex((s,index)=>index>at&&same(s,entry));
+      if(i<0){ok=false;break;}
+      matched.push(i);at=i;
+    }
+    if(!ok)continue;
+    const rotatedOut=front.length?matched[0]:S.length;
+    if(rotatedOut>rest.length)continue;
+    const missing=S.map((entry,index)=>({entry,index})).filter(({index})=>index>=rotatedOut&&!matched.includes(index));
+    if(!missing.every(({entry})=>rest.some(r=>reappears(entry,r))))continue;
+    // An appended entry that is byte-identical to a sealed one is a copy of it, not a new generation, unless that
+    // is exactly how a reappearance of an entry that left the history looks.
+    const copies=rest.every(r=>S.every((s,index)=>!same(s,r)||(!matched.includes(index)&&reappears(s,r))));
+    if(copies)return true;
+  }
+  return false;
 }
 
 // Pins read from bytes: read(path) -> Buffer|string. Paths come from `cfg`.
@@ -209,6 +226,10 @@ export const MANUAL_REVIEW=[
 
 const git=(root,args,buffer=false)=>{const out=execFileSync('git',args,{cwd:root,maxBuffer:64*1024*1024,stdio:['ignore','pipe','pipe']});return buffer?out:out.toString('utf8').trim();};
 const gitOk=(root,args)=>{try{execFileSync('git',args,{cwd:root,stdio:'ignore'});return true;}catch{return false;}};
+// Refs that normally hold main; used to notice a --base that is behind what the branch already merged.
+export function knownMainRefs(root){
+  try{return git(root,['for-each-ref','--format=%(refname)','refs/heads/main','refs/remotes/*/main','refs/local-verify/github/main']).split('\n').filter(Boolean);}catch{return [];}
+}
 
 function parseArgs(argv){
   const o={write:false,base:'origin/main',oldCheckout:null,root:null,help:false};
@@ -232,23 +253,32 @@ export const USAGE=`Usage: ${R9_REREGISTER_COMMAND.replace(' --write','')} [--ch
 
 // Everything except writing: the registry this checkout should contain, derived from main's registry.
 export function plan(root,{base='origin/main',oldCheckout=null}={}){
-  const baseSha=(()=>{try{return git(root,['rev-parse','--verify','--end-of-options',`${base}^{commit}`]);}catch{fail('R9_REREGISTER_BASE_MISSING',`cannot resolve --base ${base}; fetch main first and pass --base FETCH_HEAD (or the ref you fetched)`);}})();
+  const baseSha=(()=>{try{return git(root,['rev-parse','--verify',`${base}^{commit}`]);}catch{fail('R9_REREGISTER_BASE_MISSING',`cannot resolve --base ${base}; fetch main first and pass --base FETCH_HEAD (or the ref you fetched)`);}})();
   if(!gitOk(root,['merge-base','--is-ancestor',baseSha,'HEAD']))fail('R9_REREGISTER_BASE_NOT_MERGED',`HEAD does not contain ${baseSha.slice(0,12)}; merge or rebase onto it first`);
+  // A base older than a main commit this branch already contains would silently lose the generation registered in between.
+  for(const ref of knownMainRefs(root)){
+    const sha=(()=>{try{return git(root,['rev-parse','--verify',`${ref}^{commit}`]);}catch{return null;}})();
+    if(sha&&sha!==baseSha&&gitOk(root,['merge-base','--is-ancestor',sha,'HEAD'])&&!gitOk(root,['merge-base','--is-ancestor',sha,baseSha]))
+      fail('R9_REREGISTER_BASE_BEHIND',`HEAD contains ${ref} (${sha.slice(0,12)}) which is newer than --base ${base} (${baseSha.slice(0,12)}); use the newer main as --base`);
+  }
   if(oldCheckout===null&&git(root,['rev-parse','--is-shallow-repository'])==='true')
     fail('R9_REREGISTER_SHALLOW','this is a shallow clone, so the commit that registered the current generation cannot be found; fetch full history or pass --old-checkout');
-  const registered=oldCheckout??git(root,['log','-1','--first-parent','--format=%H',baseSha,'--',R9_REGISTRY_PATH]);
+  const registered=oldCheckout??git(root,['rev-list','-1','--first-parent',baseSha,'--',R9_REGISTRY_PATH]);
   if(!SHA1.test(registered))fail('R9_REREGISTER_CHECKOUT_INVALID','could not determine the commit that registered the current generation; pass --old-checkout');
   if(!gitOk(root,['merge-base','--is-ancestor',registered,baseSha]))fail('R9_REREGISTER_CHECKOUT_INVALID',`${registered} is not on ${base}`);
-  const atBase=p=>git(root,['show',`${baseSha}:${p}`],true);
-  if(!atBase(R9_REGISTRY_PATH).equals(git(root,['show',`${registered}:${R9_REGISTRY_PATH}`],true)))fail('R9_REREGISTER_CHECKOUT_INVALID',`${registered.slice(0,12)} did not register the registry that ${base} holds`);
+  const blobAt=(rev)=>(p)=>git(root,['cat-file','blob',`${rev}:${p}`],true),atBase=blobAt(baseSha);
+  if(!atBase(R9_REGISTRY_PATH).equals(blobAt(registered)(R9_REGISTRY_PATH)))fail('R9_REREGISTER_CHECKOUT_INVALID',`${registered.slice(0,12)} did not register the registry that ${base} holds`);
   const baseConfig=JSON.parse(atBase(R9_REGISTRY_PATH).toString('utf8'));
   if(!same(computePins(baseConfig,atBase),registeredPins(baseConfig)))fail('R9_REREGISTER_BASE_STALE',`${base} pins bytes that its own files do not have; fix main first`);
+  // The history anchors the replaced generation at `registered`, so its pinned files must have the pinned bytes there too.
+  if(registered!==baseSha&&!same(computePins(baseConfig,blobAt(registered)),registeredPins(baseConfig)))
+    fail('R9_REREGISTER_CHECKOUT_INVALID',`the files pinned by ${base} do not have the pinned bytes at ${registered.slice(0,12)}`);
   const file=path.join(root,R9_REGISTRY_PATH),current=fs.readFileSync(file,'utf8'),workingConfig=JSON.parse(current);
   // The pins must be the bytes CI checks out. Git normalizes line endings, so a CRLF working file would pin a hash CI never sees.
   const pinned=new Set([R9_REGISTRY_PATH,...Object.values(R9_EXECUTION_FILES),workingConfig.publisher_role.workflow_path,
     ...ADMISSION_KINDS.map(k=>workingConfig.admission_source[k+'_path']),...workingConfig.natural_producers.flatMap(d=>Object.keys(d.source_blobs??{}))]);
   for(const p of pinned){
-    const eol=git(root,['ls-files','--eol','--',p]);
+    const eol=git(root,['--literal-pathspecs','ls-files','--eol','--',p]);
     if(/^i\/(lf|none)\s+w\/(crlf|mixed)\b/.test(eol.trim()))fail('R9_REREGISTER_CRLF',`${p} has CRLF line endings in the working tree but LF in the index; convert it to LF before re-registering`);
   }
   const result=reregister({baseConfig,workingConfig,read:p=>fs.readFileSync(path.join(root,p)),oldCheckout:registered});

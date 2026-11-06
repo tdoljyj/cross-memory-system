@@ -359,7 +359,7 @@ test('runtime loader validates the current Source registry against actual bytes 
     assert.ok(old);
     // The sealed 80bd559f generations, oldest first. History only appends new generations and drops the oldest.
     const sealedVersions=[...old.previous_source_versions,{job_name:old.job_name,source_blobs:old.source_blobs}];
-    assert.ok(sealedWindowAgrees(sealedVersions,d.previous_source_versions,v=>sameMap(v.source_blobs,d.source_blobs)),
+    assert.ok(sealedWindowAgrees(sealedVersions,d.previous_source_versions,{current:v=>sameMap(v.source_blobs,d.source_blobs),reappears:(m,r)=>sameMap(m.source_blobs,r.source_blobs)}),
       d.workflow_path+' previous_source_versions is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
   }
   assertHistoryInvariants(cfg);
@@ -372,6 +372,7 @@ test('runtime loader validates the current Source registry against actual bytes 
   });
   assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
   assert.equal(sha256(JSON.stringify(previous.previous_admission_sources.slice(0,2))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
+  // Admission entries are only ever appended (each carries its own checkout), so nothing may go missing or reappear.
   const sealedAdmission=[...previous.previous_admission_sources,{...previous.admission_source,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'}];
   assert.ok(sealedWindowAgrees(sealedAdmission,cfg.previous_admission_sources),
     'previous_admission_sources is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
@@ -382,6 +383,9 @@ test('runtime loader validates the current Source registry against actual bytes 
   const unchanged=withoutAdmission(cfg),sealedUnchanged=withoutAdmission(previous);
   assert.deepEqual(unchangedPublisher(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))),
     unchangedPublisher(Object.fromEntries(Object.entries(sealedUnchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))));
+  assert.equal(JSON.stringify(unchangedPublisher(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))))),
+    JSON.stringify(unchangedPublisher(Object.fromEntries(Object.entries(sealedUnchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))))),'key order of the hand-owned fields');
+  assert.deepEqual(Object.keys(cfg.execution_source),Object.keys(previous.execution_source));
   assert.equal(sha256(JSON.stringify({...sealedUnchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
     'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
   // History is bounded (R9_HISTORY_CAPS) and rotates: re-registration appends the replaced generation and drops the
@@ -391,7 +395,10 @@ test('runtime loader validates the current Source registry against actual bytes 
     'R9 registry is stale: execution_source.profiles_sha256 no longer matches scripts/ci/clued-gated-proof-profiles.json'+HOW);
   assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))),
     'R9 registry is stale: execution_source.role_specs_sha256 no longer matches scripts/ci/clued-gated-proof-role-specs.json'+HOW);
-  assert.ok(sealedWindowAgrees(previous.previous_execution_sources,cfg.previous_execution_sources,e=>e.profiles_sha256===cfg.execution_source.profiles_sha256&&e.role_specs_sha256===cfg.execution_source.role_specs_sha256),
+  // The sealed execution_source of 80bd559f itself is not part of this chain: it was replaced before rotation existed.
+  const samePair=(a,b)=>a.profiles_sha256===b.profiles_sha256&&a.role_specs_sha256===b.role_specs_sha256;
+  assert.ok(sealedWindowAgrees(previous.previous_execution_sources,cfg.previous_execution_sources,
+    {current:e=>samePair(e,cfg.execution_source),reappears:(m,r)=>samePair(m,r)&&m.source_checkout_sha!==r.source_checkout_sha}),
     'previous_execution_sources is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
