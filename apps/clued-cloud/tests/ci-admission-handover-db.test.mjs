@@ -156,9 +156,6 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.ci_phase_3_to_4_v1(uuid,uuid,integer,jsonb)', 'clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
       // 20261031090000 (merge train 2b): the one-click handover now calls this core.
       'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
-      // 20261106150000 (T2A-2, phase move 1->2): every unrevoked resident ci-admission row, started or not, must have
-      // a ready publisher node; counting a row that has not started yet only adds a condition (checked below).
-      'clued_private.ci_phase_move_unmet_v1(uuid,uuid,integer,integer)',
     ].sort(),'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
     const started = (sig) => readers.find((r) => r.sig === sig).prosrc.split('effective_at<=clock_timestamp()').length - 1;
     assert.equal(started('clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)'), 1);
@@ -166,7 +163,6 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
     // ci_duty_admits_v1: the started-row test and the not-parking publisher test; ci_duty_holder_v1: the single holder row.
     assert.equal(started('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)'), 2);
     assert.equal(started('clued_private.ci_duty_holder_v1(uuid,uuid)'), 1);
-    assert.equal(started('clued_private.ci_phase_move_unmet_v1(uuid,uuid,integer,integer)'), 0);
     assert.match(readers.find((r) => r.sig === 'clued_headless_binding_issue_v1(jsonb)').prosrc,
       /greatest\(e\.effective_at,v_now\),e\.purpose/);
 

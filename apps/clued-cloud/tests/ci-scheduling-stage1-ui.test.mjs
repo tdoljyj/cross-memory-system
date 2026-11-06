@@ -356,9 +356,12 @@ const phases = (phase, moves) => ({ phase_moves: { phase, moves } });
 test('T2A-2: a phase move shows what blocks it and is disabled until the server conditions hold', async t => {
   const f = fixture(); t.after(() => f.unmount());
   await load(f, listed([node()], { pool: { version: 1, status: 'CONFIGURED_PREPARED', mode: 'prepared', limits: LIMITS },
-    ...phases(1, [{ target_phase: 2, attestations: ['two_node_assumptions_a1_a5_installed'], unmet: ['publisher_not_ready:' + BINDING, 'no_repository'] }]) }));
+    ...phases(1, [{ target_phase: 2, attestations: ['two_node_assumptions_a1_a5_installed'],
+      unmet: ['duty_holder_not_ready', 'publisher_not_ready:' + NODE, 'lease_sweep_not_running', 'no_repository'] }]) }));
   assert.ok(f.text().includes('当前阶段 1'));
-  assert.ok(f.text().includes('有发布者还没有资格有效、20 分钟内有心跳的已批准节点'));
+  assert.ok(f.text().includes('当班的发布者在本项目还没有资格有效、20 分钟内有心跳的已批准节点'));
+  assert.ok(f.text().includes('有已批准的发布者节点资格失效或 20 分钟内没有心跳'));
+  assert.ok(f.text().includes('租约清扫最近 5 分钟没有运行'));
   assert.ok(f.text().includes('尚未登记仓库'));
   assert.equal(Boolean(f.button('预览进入阶段 2').props.disabled), true);
   assert.ok(f.text().includes('准备阶段 · 尚未启用调度'));

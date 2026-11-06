@@ -5,6 +5,10 @@
 -- duty handover (G9).
 -- Design: PR #969 DESIGN.md r4 3.3, 5.4, 6.3, 6.4; Task 5500739b acceptance 3
 -- (outside its window a node gets no job). Builds on 2B (20261106090000).
+-- Owner Decision be3aa3f9 (Q-A1..Q-A4): the page offers phase moves 1<->2<->3
+-- only; 2->1 is refused while work runs or a publication key is reserved; a
+-- node's preference comes from its registered profile (changing it means
+-- registering again); an availability window gates new leases only.
 --
 -- Behaviour at phase 1 (production on 2026-11-06: no pool_policy row at all):
 -- pool mode stays 'prepared', so enqueue, lease and lease-next keep refusing
@@ -15,8 +19,14 @@
 --     another node, and every rule of the lease-next filter (G1/G6, so the
 --     filter cannot be bypassed by naming a job);
 --   * an admission issued while its issuer was on duty stays valid after a
---     handover (G9); admissions issued before this migration keep the previous
---     rule (the issuer must hold the role now).
+--     handover (G9); a node of the issuer's connection revoked (in the job's
+--     project) after the admission was issued voids it; admissions issued
+--     before this migration keep the previous rule (the issuer must hold the
+--     role now). This also applies to the 2a execution observation
+--     (work_claim_execution_current_v1) used by the resident executor today;
+--   * the node profile accepts two more keys (availability, preference) and
+--     registration copies the preference into the node row;
+--   * clued_ci_nodes_v1 also returns phase_moves; ci_nodes_v1 gains revoked_at.
 --
 -- Phase moves (G4): one Owner two-step confirmation per step of +-1 between
 -- phases 1, 2 and 3, with the expected phase. 3<->4 stays with T2A's private
@@ -40,6 +50,25 @@ alter table clued_private.ci_jobs_v1
   add column required_capabilities text[] not null default '{}' check(clued_private.ci_capabilities_valid_v1(required_capabilities)),
   add column queued_at timestamptz not null default clock_timestamp(),
   add column retry_of_job_id uuid;
+update clued_private.ci_jobs_v1 set queued_at=created_at;
+
+-- When a node was revoked (G9 voids only admissions issued before it). Existing
+-- revoked rows: their last update was the revocation.
+alter table clued_private.ci_nodes_v1 add column revoked_at timestamptz;
+update clued_private.ci_nodes_v1 set revoked_at=updated_at where state='revoked';
+alter table clued_private.ci_nodes_v1 add constraint ci_nodes_v1_revoked_at_check check((state='revoked')=(revoked_at is not null));
+create function clued_private.ci_node_revoked_at_v1() returns trigger language plpgsql set search_path='' as $$ begin
+  if new.state='revoked' and old.state is distinct from 'revoked' then new.revoked_at:=clock_timestamp();
+  elsif old.state='revoked' then new.revoked_at:=old.revoked_at; end if;
+  return new;
+end $$;
+create trigger ci_nodes_v1_revoked_at before update on clued_private.ci_nodes_v1 for each row execute function clued_private.ci_node_revoked_at_v1();
+
+-- G2: the sweep records each run, so the 1->2 move can require that it runs.
+create table clued_private.ci_lease_sweep_watchdog_v1 (
+  singleton boolean primary key default true check(singleton), last_tick_at timestamptz not null, ticks bigint not null default 1);
+alter table clued_private.ci_lease_sweep_watchdog_v1 enable row level security;
+revoke all on clued_private.ci_lease_sweep_watchdog_v1 from public,anon,authenticated,service_role,clued_worker_gateway;
 
 -- G9: whether the issuer was on duty when the admission was issued, recorded by
 -- the insert itself (null: issued before this migration).
@@ -71,13 +100,15 @@ create trigger work_claim_execution_admissions_issue_fact_v1 before insert or up
   for each row execute function clued_private.ci_admission_issue_fact_v1();
 
 -- Valid now: issued on duty, issuer's connection live (checked by the callers),
--- and no node of the issuer revoked since. Legacy rows: the previous rule.
+-- and no node of the issuer's connection revoked since it was issued (in the
+-- job's project when it is known). Legacy rows: the previous rule.
 create function clued_private.ci_admission_issue_valid_v1(u uuid,e clued_private.work_claim_execution_admissions_v1,p uuid default null) returns boolean
 language sql stable security definer set search_path='' as $$
   select case when e.admission_id is null then false
     when e.issuer_on_duty is null then clued_private.ci_duty_admits_v1(u,e.ci_binding_id,'admission_role',p)
     else e.issuer_on_duty and not exists(select 1 from clued_private.ci_nodes_v1 n
-      where n.user_id=u and n.binding_id=e.ci_binding_id and n.state='revoked') end
+      where n.user_id=u and n.binding_id=e.ci_binding_id and n.state='revoked' and n.revoked_at>=e.created_at
+        and (p is null or n.project_id=p)) end
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -226,6 +257,37 @@ language plpgsql stable security definer set search_path='' as $$ declare code t
   return code;
 end $$;
 
+-- A queued job that can never be leased again (its claim, head authorization or
+-- admission moved on for good): null while it may still become leasable (for
+-- example a claim handover still pending).
+create function clued_private.ci_job_stale_v1(j clued_private.ci_jobs_v1) returns text
+language sql stable security definer set search_path='' as $$
+  select case
+    when c.claim_id is null or c.fence is distinct from j.claim_fence or c.execution_epoch is distinct from j.execution_epoch
+      or c.status not in ('ACTIVE','DRAINING') or c.expires_at<=clock_timestamp() or c.outcome='not_adopted'
+      or exists(select 1 from clued_private.work_claims_v1 newer where newer.user_id=j.user_id and newer.task_id=c.task_id and newer.fence>c.fence)
+      then 'CI_CLAIM_NOT_CURRENT'
+    when not exists(select 1 from clued_private.work_claim_head_authorizations_v1 a where a.authorization_id=j.head_authorization_id and a.revoked_at is null)
+      then 'CI_HEAD_AUTHORIZATION_NOT_CURRENT'
+    when not exists(select 1 from clued_private.work_claim_execution_admissions_v1 e join public.clued_agent_bindings b on b.id=e.ci_binding_id
+        where e.admission_id=j.admission_id and clued_private.binding_live_v1(b) and clued_private.ci_admission_issue_valid_v1(j.user_id,e,j.project_id))
+      then 'CI_ADMISSION_BINDING_NOT_CURRENT'
+  end
+  from (select 1) one left join clued_private.work_claims_v1 c on c.user_id=j.user_id and c.claim_id=j.claim_id
+$$;
+
+-- The queue in DESIGN 6.3 order: priority, then the head batch of 2a's merge
+-- queue (its single source: work_claim_merge_queue_current_v1), then queue time.
+create function clued_private.ci_job_candidates_v1(u uuid,p uuid,at timestamptz,lim integer) returns setof clued_private.ci_jobs_v1
+language sql stable security definer set search_path='' as $$
+  with heads as materialized (select array(select (clued_private.work_claim_merge_queue_current_v1(u,r)->'head'->>'claim_id')::uuid
+      from unnest(clued_private.work_claim_merge_queue_refs_v1(u,null)) r) ids)
+  select x.* from clued_private.ci_jobs_v1 x cross join heads h
+  where x.user_id=u and x.project_id=p and x.state='queued' and x.kind<>'maintenance' and x.eligible_after<=at
+  order by x.priority,(x.claim_id=any(h.ids)) desc,x.queued_at,x.created_at,x.job_id
+  limit lim
+$$;
+
 -- What a node is told about the job it leased.
 create function clued_private.ci_job_public_v1(j clued_private.ci_jobs_v1) returns jsonb
 language sql stable set search_path='' as $$
@@ -276,7 +338,9 @@ $a$  perform clued_private.ci_claim_current_v1(u,j);$a$,
 $r$  if p_input ? 'required_capabilities' then
     if jsonb_typeof(p_input->'required_capabilities') is distinct from 'array'
       or exists(select 1 from jsonb_array_elements(p_input->'required_capabilities') x where jsonb_typeof(x)<>'string')
-      or not clued_private.ci_capabilities_valid_v1(array(select jsonb_array_elements_text(p_input->'required_capabilities'))) then
+      or not clued_private.ci_capabilities_valid_v1(array(select jsonb_array_elements_text(p_input->'required_capabilities')))
+      or array(select jsonb_array_elements_text(p_input->'required_capabilities'))
+        <>array(select x from jsonb_array_elements_text(p_input->'required_capabilities') x order by 1) then
       raise exception 'CI_JOB_SCALAR_INVALID' using errcode='22023'; end if;
     update clued_private.ci_jobs_v1 set required_capabilities=array(select jsonb_array_elements_text(p_input->'required_capabilities'))
       where job_id=j.job_id returning * into j;
@@ -314,12 +378,13 @@ $r$'node_list',clued_private.ci_node_list_view_v1(u,p),'phase_moves',clued_priva
 -- ---------------------------------------------------------------------------
 -- G1: lease the next job (DESIGN 6.3). One transaction; the lease itself is
 -- Stage 1's ci_job_lease_v1 (quota, claim, Source and every recheck unchanged).
--- A candidate whose lease fails (a stale claim, a quota) is skipped in its own
--- subtransaction; at most 16 are tried.
+-- A candidate whose lease fails is skipped in its own subtransaction. One that
+-- can never be leased again (ci_job_stale_v1) is invalidated with a receipt and
+-- does not count; after 16 other failures lease-next stops.
 create function clued_private.ci_job_lease_next_v1(u uuid,p uuid,node uuid) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare q clued_private.ci_quota_counters_v1; n clued_private.ci_nodes_v1; j clued_private.ci_jobs_v1; t timestamptz;
-  res jsonb; tried integer:=0; skipped jsonb:='[]'::jsonb; code text;
+  res jsonb; tried integer:=0; failed integer:=0; skipped jsonb:='[]'::jsonb; code text; stale text; r uuid;
 begin
   perform clued_private.work_claim_lock(u);
   q:=clued_private.ci_policy_v1(u,p);
@@ -329,14 +394,9 @@ begin
       where holder_node_id=node and state='current' and expires_at>clock_timestamp()) then
     return jsonb_build_object('state','none','reason','CI_NODE_CAPACITY_UNAVAILABLE','tried',0); end if;
   t:=clock_timestamp();
-  for j in select x.* from clued_private.ci_jobs_v1 x where x.user_id=u and x.project_id=p and x.state='queued'
-      and x.kind<>'maintenance' and x.eligible_after<=t
-    order by x.priority,
-      exists(select 1 from clued_private.work_claim_merge_front_v1 f where f.user_id=u and f.claim_id=x.claim_id) desc,
-      x.queued_at,x.created_at,x.job_id
-    limit 500 loop
+  for j in select * from clued_private.ci_job_candidates_v1(u,p,t,500) loop
     continue when clued_private.ci_job_lease_fit_v1(j,n,t) is not null;
-    exit when tried>=16;
+    exit when failed>=16;
     tried:=tried+1;
     begin
       res:=clued_private.ci_job_lease_v1(u,p,node,j.job_id,j.version);
@@ -344,9 +404,18 @@ begin
       return res||jsonb_build_object('state','leased','tried',tried,'job',clued_private.ci_job_public_v1(j));
     exception when others then
       code:=case when sqlerrm ~ '^[A-Z][A-Z0-9_]{2,80}(:[A-Za-z0-9_]{1,80})?$' then sqlerrm else 'CI_LEASE_FAILED' end;
+    end;
+    stale:=clued_private.ci_job_stale_v1(j);
+    if stale is not null then
+      r:=clued_private.ci_receipt_v1(u,p,'ci_job_invalidated',j.job_id::text,jsonb_build_object('reason',stale,'lease_error',code));
+      update clued_private.ci_jobs_v1 set state='invalidated',version=version+1,updated_at=clock_timestamp(),receipt_id=r
+        where job_id=j.job_id and state='queued';
+      skipped:=skipped||jsonb_build_array(jsonb_build_object('job_id',j.job_id,'error_code',stale,'invalidated',true));
+    else
+      failed:=failed+1;
       skipped:=skipped||jsonb_build_array(jsonb_build_object('job_id',j.job_id,'error_code',code));
       exit when code in ('CI_NODE_NOT_ELIGIBLE','CI_BINDING_UNAVAILABLE','CI_SCHEDULING_NOT_ACTIVATED');
-    end;
+    end if;
   end loop;
   return jsonb_build_object('state','none','tried',tried,'skipped',skipped);
 end $$;
@@ -361,14 +430,15 @@ end $$;
 create function clued_private.ci_job_lease_expire_v1(u uuid,p uuid,id uuid,g bigint) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare l clued_private.ci_job_leases_v1; j clued_private.ci_jobs_v1; q clued_private.ci_quota_counters_v1; inp jsonb; nid uuid;
-  r uuid; outcome text; head_key boolean; keyed boolean;
+  r uuid; outcome text; head_key boolean; keyed boolean; produced boolean;
 begin
   q:=clued_private.ci_policy_v1(u,p);
   select * into l from clued_private.ci_job_leases_v1 where user_id=u and project_id=p and job_id=id and generation=g;
   if not found or l.state<>'current' or l.expires_at>clock_timestamp() then return jsonb_build_object('outcome','not_expired'); end if;
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
   keyed:=exists(select 1 from clued_private.ci_publish_keys_v1 k where k.job_id=id);
-  perform clued_private.ci_job_release_v1(u,p,l.holder_node_id,id,g,'LEASE_EXPIRED',
+  produced:=exists(select 1 from clued_private.ci_result_index_v1 x where x.job_id=id and x.execution_generation=g);
+  perform clued_private.ci_job_release_v1(u,p,l.holder_node_id,id,g,case when l.started_at is null then 'LEASE_EXPIRED' else 'LEASE_LOST_AFTER_START' end,
     case when j.state='observed' then 'success' else 'environment' end,'lease_expired',true);
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
   if l.started_at is null then
@@ -378,9 +448,14 @@ begin
       where job_id=id and current_generation=g and state='canceled';
     return jsonb_build_object('outcome','restored','job_id',id,'receipt_id',r);
   end if;
-  -- Started and lost (DESIGN 6.4 rule 3). Publication-bearing jobs never move.
+  -- Started and lost (DESIGN 6.4 rule 3). Publication-bearing jobs never move. A
+  -- job that already produced results is not run again: its results can no
+  -- longer be published (no current lease), so they are invalidated.
   head_key:=j.kind='combination_execution' and j.combination_mode not in ('depth2','depth3');
-  if keyed or j.state<>'failed' or j.kind not in ('delegated_scan','github_f_pr','combination_execution') then outcome:='lost_no_retry';
+  if produced then
+    update clued_private.ci_result_index_v1 set state='invalidated' where job_id=id and execution_generation=g and state='available';
+  end if;
+  if keyed or produced or j.state<>'failed' or j.kind not in ('delegated_scan','github_f_pr','combination_execution') then outcome:='lost_no_retry';
   elsif head_key and clued_private.ci_duty_phase_value_v1(q.policy)>=4 then outcome:='lost_head_burned';
   elsif j.attempt>=2 then outcome:='lost_final';
   else
@@ -394,14 +469,15 @@ begin
     begin
       nid:=clued_private.ci_job_enqueue_v1(u,p,inp);
       update clued_private.ci_jobs_v1 set retry_of_job_id=id,excluded_node_ids=array(select distinct x from unnest(j.excluded_node_ids||l.holder_node_id) x),
-        required_memory_mb=j.required_memory_mb,priority=j.priority,version=version+1 where job_id=nid and retry_of_job_id is null;
+        required_memory_mb=j.required_memory_mb,priority=j.priority,requested_node_id=j.requested_node_id,stage8_limit=j.stage8_limit,
+        eligible_after=greatest(j.eligible_after,clock_timestamp()),version=version+1 where job_id=nid and retry_of_job_id is null;
       outcome:='retried';
     exception when others then
       outcome:='lost_retry_refused';
     end;
   end if;
   r:=clued_private.ci_receipt_v1(u,p,'ci_job_lease_lost',id::text,jsonb_build_object('generation',g,'holder_node_id',l.holder_node_id,
-    'outcome',outcome,'retry_job_id',nid,'job_state',j.state,'alert',outcome<>'retried'));
+    'outcome',outcome,'retry_job_id',nid,'job_state',j.state,'results_invalidated',produced,'alert',outcome<>'retried'));
   return jsonb_build_object('outcome',outcome,'job_id',id,'retry_job_id',nid,'receipt_id',r);
 end $$;
 
@@ -434,6 +510,8 @@ create function clued_private.ci_job_lease_sweep_v1() returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare u uuid; out jsonb:='[]'::jsonb; err text;
 begin
+  insert into clued_private.ci_lease_sweep_watchdog_v1(singleton,last_tick_at,ticks) values(true,clock_timestamp(),1)
+  on conflict (singleton) do update set last_tick_at=excluded.last_tick_at,ticks=clued_private.ci_lease_sweep_watchdog_v1.ticks+1;
   for u in select distinct user_id from clued_private.ci_job_leases_v1 where state='current' and expires_at<=clock_timestamp()
       union select distinct user_id from clued_private.ci_result_index_v1 where state='available' and expires_at<=clock_timestamp() order by 1 loop
     begin
@@ -472,16 +550,18 @@ begin
     if not exists(select 1 from clued_private.ci_quota_counters_v1 x where x.user_id=u and x.project_id=p and x.row_kind='repo_registration') then
       out:=out||'no_repository'::text; end if;
     if clued_private.ci_duty_ambiguous_v1(u) then out:=out||'several_ci_projects'::text; end if;
-    -- Every publisher (an unrevoked resident ci-admission row) has a ready,
-    -- publisher-approved node in this project.
-    if not exists(select 1 from clued_private.binding_roles_v1 x where x.user_id=u and x.role='ci-admission' and x.revoked_at is null
-        and x.purpose in ('resident-node','unspecified')) then out:=out||'no_publisher'::text; end if;
-    for r in select distinct x.binding_id from clued_private.binding_roles_v1 x where x.user_id=u and x.role='ci-admission' and x.revoked_at is null
-        and x.purpose in ('resident-node','unspecified') order by 1 loop
-      if not exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=u and n.project_id=p and n.binding_id=r.binding_id
-          and n.publisher_approved and clued_private.ci_node_ready_v1(n)) then
-        out:=out||('publisher_not_ready:'||r.binding_id)::text; end if;
+    -- DESIGN 6.1: every publisher registered and alive. The one on duty
+    -- (ci_duty_holder_v1) has a ready node here, and so does every other active
+    -- publisher-approved node of the project.
+    if not exists(select 1 from clued_private.ci_duty_holder_v1(u,p) h join clued_private.ci_nodes_v1 n on n.user_id=u and n.project_id=p
+        and n.binding_id=h.binding_id and n.publisher_approved and clued_private.ci_node_ready_v1(n)) then
+      out:=out||'duty_holder_not_ready'::text; end if;
+    for r in select n.node_id from clued_private.ci_nodes_v1 n where n.user_id=u and n.project_id=p and n.state='active' and n.publisher_approved
+        and not clued_private.ci_node_ready_v1(n) order by n.created_at,n.node_id loop
+      out:=out||('publisher_not_ready:'||r.node_id)::text;
     end loop;
+    if not exists(select 1 from clued_private.ci_lease_sweep_watchdog_v1 w where w.last_tick_at>clock_timestamp()-interval '5 minutes') then
+      out:=out||'lease_sweep_not_running'::text; end if;
   elsif p_from=2 and p_to=3 then
     select max(x.created_at) into since from public.clued_audit_receipts x where x.user_id=u and x.context_key='project:'||p
       and x.operation='ci_phase_move' and x.metadata->>'to_phase'='2';
@@ -490,8 +570,9 @@ begin
         and (k.state='unknown' or k.state='reserved' and k.landing_deadline_at<=clock_timestamp())) then
       out:=out||'unknown_publication_in_phase2'::text; end if;
   elsif p_from=2 and p_to=1 then
-    if exists(select 1 from clued_private.ci_jobs_v1 j where j.user_id=u and j.project_id=p
-        and j.state in ('leased','started','result_ready','publication_pending','observed'))
+    -- Running work: a current, unexpired lease (an expired one is the sweep's),
+    -- or a reserved publication key.
+    if exists(select 1 from clued_private.ci_job_leases_v1 l where l.user_id=u and l.project_id=p and l.state='current' and l.expires_at>clock_timestamp())
       or exists(select 1 from clued_private.ci_publish_keys_v1 k where k.user_id=u and k.project_id=p and k.state='reserved') then
       out:=out||'pool_not_drained'::text; end if;
   end if;
@@ -628,6 +709,7 @@ do $function_acl$ declare s regprocedure; begin
     where (n.nspname='clued_private' and p.proname=any(array['ci_capabilities_valid_v1','ci_admission_issue_fact_v1','ci_admission_issue_valid_v1',
       'ci_node_live_v1','ci_clock_minutes_v1','ci_node_available_v1','ci_profile_v1','ci_job_needs_v1','ci_node_exclusions_v1','ci_job_fit_v1',
       'ci_node_ready_v1','ci_job_exclusion_waived_v1','ci_job_lease_fit_v1','ci_job_public_v1','ci_job_lease_next_v1','ci_job_lease_expire_v1',
+      'ci_node_revoked_at_v1','ci_job_stale_v1','ci_job_candidates_v1',
       'ci_job_lease_sweep_account_v1','ci_job_lease_sweep_v1','ci_phase_attestations_v1','ci_phase_move_unmet_v1','ci_phase_moves_view_v1',
       'ci_phase_request_v1','ci_phase_external_prerequisites_v1']))
     or (n.nspname='public' and p.proname=any(array['clued_ci_phase_confirmation_issue_v1','clued_ci_phase_apply_v1'])) loop

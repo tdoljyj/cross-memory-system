@@ -55,10 +55,7 @@ const ALLOWED={
   admits:['clued_private.ci_duty_admits_v1'],
   roleRead:['clued_private.binding_role_handover_check_v1','clued_private.binding_role_handover_core_v1','clued_private.binding_role_handover_view_v1',
     'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_admits_v1','clued_private.ci_duty_holder_v1',
-    'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1',
-    // T2A-2 (20261106150000): the 1->2 move lists every resident ci-admission row to require a ready node for each;
-    // it decides no duty and admits nobody.
-    'clued_private.ci_phase_move_unmet_v1'],
+    'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
   holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1'],
   mergeSlot:['clued_private.work_claim_ci_lease_extend_v1','clued_private.work_claim_ci_queue_join_v1','public.clued_work_claim_adopt_v1',
