@@ -4651,5 +4651,5 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 1. **新策略 /10**：已签策略改动的字段只有 `contract`（/9 → /10）和新增的 `roleProbe.interruptedMax = 3`；其余与已装的 /9 相同（安装时的三个 manifest 哈希和 `ownerAcceptance.decisionRef` 照每次安装更新）。
 2. **行为变化**：/10 下观察或探测被中断最多自动恢复 2 次（第 3 次连续中断停机）；所有策略下：发布时受保护事实过期改为再观察一次、不撤回；写后核对另有 60 s 观察窗口（写前 60 s 不变，Owner Decision `36946d8b`），写前窗口放不下写入或写后窗口放不下写后核对就不写（BLOCKED、可重跑）；写后读回期间准入过期改为完整重评一次；写前这几种暂时情况在阶段事实里是暂时码 `NATIVE_ADMISSION_UNAVAILABLE`（以前是终局的 `PUBLICATION_BLOCKED`；其中两种算线路故障，见 §57.2）：本地发布（阶段 3/5/7）带 `safeToRerun`，在同一批里按 §51 重跑（30 s、90 s、300 s），三次都失败照样烧 head，不走 attempt 2（`attempts.mjs` 只许阶段 0–2）；托管中继（阶段 9）照中继规则退回本地运行该角色，但角色键已在别的持有者手里时，中继阶段以 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 停机（行的 `detail` 是真正的原因，例如 `publication_window_short_before_write`），不再交给本地白跑一次扫描；第二次打包断网后在同批重建两次（每次先查 HALT、漂移和授权）；重试的等待中 Owner 中止立即生效；稍后出现的完全一致副本被采用；`-Final` 构建要求 Source 提交在 GitHub 分支上。
-3. **组件**：`script.independent-native-publication` 1.1.6 → 1.1.7（发布者改动）。
+3. **组件**：`script.independent-native-publication` 1.1.7 → 1.1.8（发布者改动；1.1.7 已随 #1006 发布）。
 4. **对审过界限的修改（Owner 已决定）**：写后核对单独给 60 s（Owner Decision `36946d8b`），修改了 Task `a3ad42a9` 写前写后共用 60 s 的界限；写前 60 s、它的恢复和审计不变（§57.2）。Owner 已确认（Decision `36946d8b` v2）：60 s 管写后的观察，从写后第一次观察起算；创建回复丢失时找副本的读在它之前、不占它（写后总时长见 §57.2）。
