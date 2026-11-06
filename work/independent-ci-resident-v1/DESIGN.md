@@ -4697,6 +4697,9 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 - `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑，含签发者自己的 `PUBLICATION_UNCERTAIN`；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、放弃证明覆盖不到的有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；重跑后以内存闸门或 refs 移动结束时停止重跑、按各自的码结束并排 attempt 2；mailbox 与引擎的 `again` 规则含第 2 段。
 - `test/scanner-abandon.test.mjs`：第 2 段的 10-28 结束先重跑两次再 `FAILED_CLEAN`；attempt 2 也各有两次重跑；静止证明不成立时先写 refused 再 HALT。
+- `drill/offline-drill.mjs`（incident-20261028-replay）：
+  - 结果：真实的 companion 泵、引擎和执行器下，第 2 段重跑两次，每次结束都一样，最后 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`、不 HALT、排一次 attempt 2；回执里有两张 `execution-retry`，两边都有 `retry-stage-2-1/2` 归档，内存闸门在每次调用前各读一次（共 3 次）。
+  - 演练的模拟世界原来只能跑一次第 2 段：签发者每次调用都用同一个 broker 请求号，旧的 `.stop` 让重跑一开始就结束，而这次运行找不到在途的 swap、没有 `STOP_SENT`，于是 HALT（PR #1015 的 ci-suites 就是这样失败的）。现在改成与生产一致：`invoke-stage.mjs` 每次调用用 `randomUUID()`；worker 单元每次 `start` 都是一次新运行，有新的 InvocationID 和启动时间。
 - `test/test_linux_tool.py`：`retry-stage-2-1/2` 保留工作区，`retry-stage-2-3`、`retry-stage-3-1` 不保留。
 - `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次、停在 A 的 `relay-wait`、从 A 继续时页面仍是 `WAITING`、`retry-wait`、页面过期、页面无时间）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按剩余额度截断、额度用完不等）；`verifySuites` 每个套件先让路、整次运行共用一份额度、`--no-yield` 时不问；Linux 脚本传 `--no-yield`。
 

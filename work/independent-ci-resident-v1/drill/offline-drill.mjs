@@ -598,7 +598,8 @@ async function incidentReplay(variant) {
     relayScript: 'C:\\drill\\relay-public.ps1', bundleScript: 'C:\\drill\\build-bundle.ps1', windowsSpool: SPOOL, bridgeManifestSha256: '9'.repeat(64),
     nodeProfileSha256: '8'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   const receipt2 = fields => JSON.stringify({ contract: 'clued.independent-ci.formal-public-relay-receipt/2', status: 'BLOCKED', processId: 1, exitCode: 1, terminalConfirmed: true, failureCode: null, childError: null, ...fields });
-  const w = { issued: false, startedAt: null, ready: new Map(), received: new Map(), exitedAt: null, alive: true };
+  // runs: the starts of the worker unit (generation 14, DESIGN 59: stage 2 may run again in the batch; each start is a new invocation)
+  const w = { issued: false, startedAt: null, ready: new Map(), received: new Map(), exitedAt: null, alive: true, runs: 0 };
   const workerActive = () => w.startedAt !== null && vt.now >= w.startedAt + 3000 && (variant === 'worker-active' || w.exitedAt === null || vt.now < w.exitedAt);
   const never = () => new Promise(() => {});
   const crun = async a => {
@@ -619,10 +620,13 @@ async function incidentReplay(variant) {
       if (mode === 'SendResponse') w.ready.set(seq + 1, vt.now + 20_000);
       return { code: 0, stdout: receipt2({ status: 'PUBLIC_RECORD_TRANSFERRED', exitCode: 0 }) };
     }
-    if (s.includes('start --no-block')) { w.startedAt = vt.now; w.ready.set(1, vt.now + 10_000); return { code: 0, stdout: '' }; }
+    if (s.includes('start --no-block')) {
+      Object.assign(w, { startedAt: vt.now, ready: new Map([[1, vt.now + 10_000]]), received: new Map(), exitedAt: null, runs: w.runs + 1 });
+      return { code: 0, stdout: '' };
+    }
     if (a.some(x => x.startsWith('--property=ActiveState'))) {
       if (w.startedAt === null || vt.now < w.startedAt + 3000) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
-      return { code: 0, stdout: `ActiveState=${workerActive() ? 'active' : 'failed'}\nInvocationID=${'b'.repeat(32)}\nExecMainStartTimestampMonotonic=4242\n` };
+      return { code: 0, stdout: `ActiveState=${workerActive() ? 'active' : 'failed'}\nInvocationID=${String(w.runs % 10).repeat(32)}\nExecMainStartTimestampMonotonic=${4242 + w.runs}\n` };
     }
     if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) {
       // the worker's challenge records (they stay after it exits); round 3's challenge is never answered: it exits 120 s later
@@ -667,13 +671,15 @@ ${zone(variant === 'memory-low' ? 0 : 900)}` };
   for (const n of ['derive-batch.mjs', 'invoke-stage.mjs', 'archive-windows-spool.ps1']) await fs.writeFile(path.join(sourceRoot, 'work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2', n), '// drill');
   const brokerRoot = path.join(iRoot, 'broker');
   for (const d of ['requests', 'responses']) await fs.mkdir(path.join(brokerRoot, d), { recursive: true });
-  const SWAP_ID = '0d0d0d0d-0000-4000-8000-000000000929';
+  // invoke-stage.mjs takes a new random request id for every invocation; here the n-th invocation of stage 2 gets ...92n
+  let swaps = 0;
   const SC = { qc: 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n',
     queryex: 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n' };
   const exists = async p => fs.access(p).then(() => true, () => false);
   const wrun = async a => {
     if (a[0].endsWith('sc.exe')) return { code: 0, stdout: SC[a[1]] };
     const manifest = a[a.indexOf('--work-manifest-sha256') + 1];
+    const SWAP_ID = `0d0d0d0d-0000-4000-8000-00000000092${++swaps}`;
     // the issuer takes its swap and issues; then it waits for a result or a blocked record that never comes
     await fs.writeFile(path.join(brokerRoot, 'requests', `${SWAP_ID}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: 2, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
     await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP_ID}.taken`), Buffer.from([1]));
@@ -739,13 +745,15 @@ ${zone(variant === 'memory-low' ? 0 : 900)}` };
 
 {
   const inc = await incidentReplay('replay');
-  await step('incident-20261028-replay: relay fails at round 3, the pump answers, the stage is stopped: FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, no HALT', async () => ({ state: inc.r.state, failureCode: inc.r.failureCode }),
+  await step('incident-20261028-replay: relay fails at round 3, the pump answers, the stage is stopped; it runs again twice in the batch (DESIGN 59), each time the same: FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, no HALT', async () => ({ state: inc.r.state, failureCode: inc.r.failureCode }),
     r => r.state === 'FAILED_CLEAN' && r.failureCode === 'BRIDGE_ABANDONED_UNPUBLISHED' && inc.halted === null && inc.s?.terminal?.facts?.stage === 2
       && inc.s.terminal.facts.originalCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && inc.s.terminal.facts.pumpCode === 'RELAY_REFUSED_NO_RETRY' && inc.s.terminal.facts.stopCode === 'STOP_SENT');
-  await step('  from the relay failure to the end of the stage within 5 minutes (one stop file, 60 s grace after the pump answered)', async () => ({ state: `${Math.round((inc.log.stageEndedAt - inc.log.failedAt) / 1000)} s` }),
-    () => inc.log.failedAt !== null && inc.log.stageEndedAt - inc.log.failedAt <= 5 * 60_000 && inc.stopFiles === 1);
-  await step('  receipts: bridge-pump-lost, bridge-stop-requested, the scene archived scanner-abandoned on both hosts, one attempt 2 (stage 2)', async () => ({ state: inc.types.filter(x => x.startsWith('bridge-') || x === 'attempt2-scheduled').join(',') }),
-    () => inc.types.includes('bridge-pump-lost') && inc.types.includes('bridge-stop-requested') && inc.types.includes('attempt2-scheduled')
+  await step('  from the relay failure to the end of the stage within 5 minutes (one stop file per run, three runs; 60 s grace after the pump answered)', async () => ({ state: `${Math.round((inc.log.stageEndedAt - inc.log.failedAt) / 1000)} s, ${inc.stopFiles} stop files` }),
+    () => inc.log.failedAt !== null && inc.log.stageEndedAt - inc.log.failedAt <= 5 * 60_000 && inc.stopFiles === 3);
+  await step('  receipts: per run bridge-pump-lost and bridge-stop-requested, two execution-retry (retry-stage-2-1, -2 on both hosts), then the scene archived scanner-abandoned on both hosts, one attempt 2 (stage 2)', async () => ({ state: inc.types.filter(x => x.startsWith('bridge-') || x === 'execution-retry' || x === 'attempt2-scheduled').join(',') }),
+    () => inc.types.filter(x => x === 'bridge-pump-lost').length === 3 && inc.types.filter(x => x === 'bridge-stop-requested').length === 3
+      && inc.types.filter(x => x === 'execution-retry').length === 2 && !inc.types.includes('execution-retry-refused') && inc.types.includes('attempt2-scheduled')
+      && ['retry-stage-2-1', 'retry-stage-2-2'].every(x => inc.log.archiveReasons.includes(x) && inc.log.archiveReasons.includes(`windows:${x}`))
       && inc.log.archiveReasons.includes('windows:scanner-abandoned') && inc.log.archiveReasons.includes('scanner-abandoned') && inc.pending.length === 1);
   const active = await incidentReplay('worker-active');
   await step('incident variant: the worker stays active, quiescence is never proven: HALT within the 5-minute bound, original code kept', async () => ({ state: active.r.state, failureCode: active.r.failureCode }),
@@ -756,8 +764,8 @@ ${zone(variant === 'memory-low' ? 0 : 900)}` };
     r => r.state === 'HALTED' && r.failureCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && dead.cancelReasons.includes('heartbeat-lost') && dead.stopFiles === 1
       && dead.log.stopAt - dead.log.diedAt <= 3 * 60_000 + 30_000 && dead.log.stageEndedAt - dead.log.diedAt < 10 * 60_000
       && !dead.log.archiveReasons.some(x => x.includes('scanner-abandoned')) && dead.halted?.value?.code === 'BRIDGE_STAGE_STOPPED_PUMP_LOST');
-  await step('  the memory gate read the VM once before stage 2 in each run above (plenty free: no wait)', async () => ({ state: [inc, active, dead].map(x => x.log.memoryReads).join(',') }),
-    () => [inc, active, dead].every(x => x.log.memoryReads === 1));
+  await step('  the memory gate read the VM once before each invocation of stage 2 above (plenty free: no wait): three in the replay (two runs again), one in each variant', async () => ({ state: [inc, active, dead].map(x => x.log.memoryReads).join(',') }),
+    () => inc.log.memoryReads === 3 && active.log.memoryReads === 1 && dead.log.memoryReads === 1);
   const low = await incidentReplay('memory-low');
   await step('memory gate (DESIGN §32): no free order-7 block for 6 minutes -> stage 2 never invoked, FAILED_CLEAN LINUX_MEMORY_NOT_READY, no HALT, one attempt 2', async () => ({ state: low.r.state, failureCode: low.r.failureCode, reason: `${low.r.failureCode} after ${low.log.memoryReads} reads in ${Math.round((low.log.gateEndedAt - low.log.gateStartedAt) / 1000)} s` }),
     r => r.state === 'FAILED_CLEAN' && r.failureCode === 'LINUX_MEMORY_NOT_READY' && low.halted === null && low.issued === false && low.log.memoryReads === 7
