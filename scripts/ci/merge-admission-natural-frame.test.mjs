@@ -22,6 +22,7 @@ const {collectNaturalSourceArtifacts}=await import('./merge-admission-natural-in
 const {collectNativeActivity}=await import('./merge-admission-native-activity.mjs');
 const C=await import('./merge-admission-r9-collector.mjs');
 const {emptyNativePopulationStore}=await import('./merge-admission-native-population.mjs');
+const {R9_HISTORY_CAPS}=await import('./merge-admission-r9-reregister.mjs');
 const h=x=>createHash('sha256').update(x).digest('hex'),blob=x=>createHash('sha1').update('blob '+Buffer.byteLength(x)+'\0').update(x).digest('hex');
 const repository='tdoljyj/cross-memory-system',subject='891ea2e7a68e0a3201b64a8fd173f4d50a4c18dc',head='a'.repeat(40),base='b'.repeat(40),
   scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:'+repository+':main'},uid='10000000-0000-4000-8000-000000000001';
@@ -290,7 +291,8 @@ test('a fifth exact historical generation preserves every prior descriptor and c
 
 test('dispatch Source successor retains six exact prior generations; a seventh unique prior map is refused before HTTP',async()=>{
   const f=namedSuccessorFixture({publisherSuccessor:true}),r=await f.collect();
-  assert.equal(f.descriptor.previous_source_versions.length,6);
+  // The re-registration helper rotates at this exact capacity; the intake accepts it and refuses one more.
+  assert.equal(f.descriptor.previous_source_versions.length,R9_HISTORY_CAPS.previous_source_versions);
   assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,7);
   for(const [i,row]of f.rows.entries())assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(row.descriptor)));
   const d=structuredClone(f.descriptor);

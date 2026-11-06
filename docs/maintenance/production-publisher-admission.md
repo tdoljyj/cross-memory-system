@@ -106,5 +106,49 @@ the re-pin replaced that generation instead of retaining it. Two generations are
 therefore not retained: the admission script `b413917364fc` and the execution
 Source with profiles `cdaf73165378` / role specs `7cddf4abf791` (the producer
 source maps registered at 9e9d3fa66 are dropped with them). Generations between
-that registration and the re-pin were never registered. The drift guard is
-`merge-admission-source-producer.test.mjs`, which runs in `clued-cloud-tests`.
+that registration and the re-pin were never registered. That loss happened before
+the history rotated. The drift guard is `merge-admission-source-producer.test.mjs`, which
+runs in `clued-cloud-tests`; its failure message gives the re-registration command.
+
+## Re-registering after a pinned file changes
+
+Any change to a file the registry pins makes `merge-admission-source-producer.test.mjs`
+fail with "R9 registry is stale". Do not edit the pins by hand: the replaced
+generation has to be remembered, or observations made by it stop authenticating.
+Run the helper from a checkout that contains the current main and its full history:
+
+```
+git fetch https://github.com/tdoljyj/cross-memory-system.git main
+node scripts/ci/merge-admission-r9-reregister.mjs --base FETCH_HEAD          # report, exit 1 when stale
+node scripts/ci/merge-admission-r9-reregister.mjs --base FETCH_HEAD --write  # rewrite the registry
+```
+
+`--base` defaults to `origin/main`. The history is always rotated from the registry on
+that base, never from the working copy, so the command is idempotent and several local
+re-pins before merging still count as one generation. The replaced generation is
+registered at the last first-parent commit of the base that touched the registry
+(`--old-checkout` overrides it); the helper refuses a base that does not contain its own
+pins, a checkout already in the history, and a branch that lacks the base.
+
+Each history is oldest first and bounded (`R9_HISTORY_CAPS` in the helper, tied by tests
+to the loader and natural intake): 4 previous admission Sources, 4 previous execution
+Sources and 6 previous source generations per producer. A new generation is appended
+and, beyond the bound, the **oldest generation is dropped**. The helper prints every
+dropped generation; observations made only by a dropped generation no longer
+authenticate, so say so in the pull request. The sealed 80bd559f fixture stays
+unchanged: the tests require the live history to be that fixture with the oldest entries
+dropped and newer ones appended (`sealedWindowAgrees`), so rotation never needs a fixture
+edit.
+
+| Recomputed by the helper | Reviewed by hand (never touched) |
+| --- | --- |
+| `admission_source` blobs (script, workflow, reverify workflow, policy) | `admission_source` paths, `app_id`, grammar |
+| `execution_source` sha256 of the profiles and role specs | execution file paths |
+| per producer `workflow_blob` and `source_blobs` | `job_id`, `job_name`, `required_steps`, `source_paths`, new producers |
+| `publisher_role.workflow_blob` and `workflow_source_sha256` | publisher job fields |
+| `previous_admission_sources`, `previous_execution_sources`, `previous_source_versions` | `scope`, `forward_epoch`, `clock`, `operation_coverage`, bindings, every `registration_status` |
+
+A renamed job, a changed `source_paths` set or a new producer cannot be rotated
+mechanically (every history map must cover the same paths): the helper refuses and the
+change needs its own review. Raising a capacity needs a change to the loader or intake
+first.
