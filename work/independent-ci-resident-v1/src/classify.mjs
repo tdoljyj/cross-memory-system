@@ -306,7 +306,7 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false, re
   }
 }
 
-// Generation 11 (DESIGN 54): the execution stages 4 and 6 run again IN THE SAME BATCH after an ending that says nothing about the PR and
+// Generation 11 (DESIGN 54): the execution stages 4 and 6 (and 2, abandoned only: DESIGN 58) run again IN THE SAME BATCH after an ending that says nothing about the PR and
 // is proven to have published nothing; stage 3 already published, so an attempt 2 is impossible (DESIGN 53.12), and a new commit is
 // what this replaces. The stage's own publication (5 or 7) has not run: it runs once, after the run that succeeds, on that run's signed
 // result. Two kinds of ending qualify:
@@ -327,9 +327,10 @@ export function executionRetryable({ stage, code, outcome = null, bridge = null,
   const no = reason => ({ retry: false, basis: null, reason });
   if (!EXECUTION_RETRY_STAGES.includes(stage)) return no('EXECUTION_RETRY_STAGE_NOT_LISTED');
   if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE');
-  if (stage === 2 && !scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return no('EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
+  const abandoned = scannerAbandonEligible({ stage, code, bridge, proof }).eligible;
+  if (stage === 2 && !abandoned) return no('EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
   if (code === LINUX_MEMORY_NOT_READY) return { retry: true, basis: 'memory-gate', reason: null };
-  if (scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return { retry: true, basis: 'abandoned-unpublished', reason: null };
+  if (abandoned) return { retry: true, basis: 'abandoned-unpublished', reason: null };
   const o = outcome;
   if (o?.status !== 'BLOCKED' || o.sideEffects !== 0 || o.mayHavePublished !== false) return no('EXECUTION_RETRY_NOT_A_CLEAN_REFUSAL');
   const transport = o.reason === 'full_admission_unavailable' && o.diagnostic?.transport === true;

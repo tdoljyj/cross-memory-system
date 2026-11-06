@@ -78,6 +78,11 @@ test('the pure rule at stage 2: the abandoned basis only; the memory gate, clean
   // side effects or a possible publication under an ending the abandonment proof does not cover: never
   no({ code: 'RELAY_PUBLICATION_UNCERTAIN', outcome: { ...refused().outcome, sideEffects: 1, mayHavePublished: true }, bridge: bridge() });
   no({ code: 'STAGE_CHILD_TREE_UNCONFIRMED', bridge: bridge() });
+  // the issuer's own UNCERTAIN (the Source maps any side effect or possible publication to it) IS run again, exactly as at stages 4/6 and
+  // as attempt 2 already does: the DESIGN 27 proof is structural (the issuer cannot write a check; stage 3, the only publisher, has not run)
+  const uncertain = { status: 'UNCERTAIN', reason: 'BRIDGE_RESULT_DEADLINE', sideEffects: 1, mayHavePublished: true };
+  assert.deepEqual(executionRetryable({ stage: 2, code: 'PUBLICATION_UNCERTAIN', outcome: uncertain, bridge: bridge({ stopRequestId: null, stopCode: null, stageCode: 'PUBLICATION_UNCERTAIN' }), proof: WINDOWS_CLEAN }).basis,
+    'abandoned-unpublished');
   assert.equal(executionRetryable({ stage: 2, code: p.code, bridge: p.bridge, proof: { windowsTreeZero: false, serviceOriginalStopped: true } }).retry, false, 'Windows half');
   assert.equal(executionRetryable({ stage: 2, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN }).reason, 'EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
   // the publisher of the same role never runs again here (it has its own DESIGN 51 rule)
@@ -120,6 +125,21 @@ test('stage 2: the runs again used up end exactly as before (FAILED_CLEAN BRIDGE
   await f.exec.tick();
   assert.deepEqual(stagesRun(engine).filter(n => n === 2), [2]);
   assert.deepEqual(await bodies(f, 'execution-retry'), []);
+});
+
+test('stage 2: a run again that ends otherwise stops the runs again and ends by its own code (memory gate, refs moved: the one attempt 2)', async t => {
+  const memory = { ok: false, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN, memoryGate: { checks: 3, order: 9, blocks: 0, low: true, ready: false, waitedMs: 1, refused: true } };
+  const moved = { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN };
+  for (const [second, failureCode] of [[memory, LINUX_MEMORY_NOT_READY], [moved, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE']]) {
+    const engine = engineWith(2, [pumpLost2(), second]);
+    const f = await executorFixture(t, { engine });
+    await f.drop(triggerBytes());
+    const r = await f.exec.tick();
+    assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', failureCode], JSON.stringify(r));
+    assert.deepEqual(stagesRun(engine), [1, 2, 2], failureCode);
+    assert.deepEqual((await bodies(f, 'execution-retry')).map(b => [b.stage, b.try, b.basis]), [[2, 1, 'abandoned-unpublished']], failureCode);
+    assert.equal(r.attempt2, batchKey(subject({ attempt: 2 })), failureCode);
+  }
 });
 
 test('stage 4 (trivy): the Linux worker ended without its record once; the stage runs again in the batch and the PR completes, stage 5 runs once', async t => {

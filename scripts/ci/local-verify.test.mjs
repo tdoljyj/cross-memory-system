@@ -13,7 +13,7 @@ import * as selection from './ci-required-selection.mjs';
 import { acquireLock, bundleFor, cacheHome, changedFiles, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
   killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
   readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
-  toWslPath, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
+  toWslPath, verifySuites, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
 
 // A repository in a temporary directory, isolated from the user's git configuration.
 function repository(t, name = 'repo') {
@@ -66,51 +66,72 @@ test('options: values inline or next, platforms, fetch and fresh main results; m
 });
 
 // Defect e0a5630d: a run waits before each suite while the resident CI on this host runs a batch (same WSL VM, same CPU).
-test('the resident is busy only while its status page names a batch; idle, missing or unreadable is not busy', () => {
-  const read = (value) => () => (value instanceof Error ? (() => { throw value; })() : value);
-  assert.equal(residentBusy({ readText: read(JSON.stringify({ current: null, executor: { state: 'IDLE' } })) }), null);
-  assert.equal(residentBusy({ readText: read(JSON.stringify({ executor: { state: 'IDLE' } })) }), null);
-  assert.equal(residentBusy({ readText: read(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })) }), null, 'no resident on this machine');
-  assert.equal(residentBusy({ readText: read('{"current": {"pr": 1') }), null, 'a torn write');
-  assert.equal(residentBusy({ readText: read(JSON.stringify({ current: { pr: 1007, headSha: 'd'.repeat(40), stage: 2 } })) }), 'PR #1007 (stage 2)');
-  assert.equal(residentBusy({ readText: read(JSON.stringify({ current: { pr: 1007, stage: null } })) }), 'PR #1007');
-  assert.equal(residentBusy({ readText: read(JSON.stringify({ current: {} })) }), 'a batch');
+test('the resident is busy only while a fresh status page names a batch that is not only waiting; idle, stale, missing or unreadable is not busy', () => {
+  const T = Date.parse('2026-11-06T02:20:00Z');
+  const page = (o) => () => JSON.stringify({ writtenAt: new Date(T - 15_000).toISOString(), executor: { state: 'RUNNING' }, ...o });
+  const busy = (readText, now = () => T) => residentBusy({ readText, now });
+  assert.equal(busy(page({ current: null, executor: { state: 'IDLE' } })), null);
+  assert.equal(busy(page({})), null);
+  assert.equal(busy(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }), null, 'no resident on this machine');
+  assert.equal(busy(() => '{"current": {"pr": 1'), null, 'a torn write');
+  assert.equal(busy(page({ current: { pr: 1007, headSha: 'd'.repeat(40), stage: 2 } })), 'PR #1007 (stage 2)');
+  assert.equal(busy(page({ current: { pr: 1007, stage: null } })), 'PR #1007');
+  assert.equal(busy(page({ current: {} })), 'a batch');
+  assert.equal(busy(page({ current: 'x' })), null);
+  assert.equal(busy(page({ current: { pr: 1007, stage: 9 }, executor: { state: 'WAITING' } })), null, 'a batch that only waits (a hosted relay) runs nothing here');
+  assert.equal(busy(page({ current: { pr: 1007, stage: 2 } }), () => T + 5 * 60_000), null, 'a page not rewritten for five minutes: the service is not running');
+  assert.equal(busy(page({ current: { pr: 1007, stage: 2 } }), () => T + 4 * 60_000), 'PR #1007 (stage 2)');
+  assert.equal(busy(page({ current: { pr: 1007, stage: 2 }, writtenAt: undefined })), null, 'no time on the page');
   let asked;
   residentBusy({ readText: (file) => { asked = file; return '{}'; } });
   assert.equal(asked, RESIDENT_STATUS);
-  assert.ok(RESIDENT_STATUS.endsWith(process.platform === 'win32' ? '\\resident\\state\\status.json' : '/resident/state/status.json'));
+  assert.equal(RESIDENT_STATUS, process.platform === 'win32' ? 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json'
+    : '/mnt/c/ProgramData/CluedIndependentCI/resident/state/status.json');
 });
 
-test('yielding: waits while the resident runs, says why, keeps the run alive, goes on when it is idle or after the bound', () => {
+test('yielding: waits while the resident runs, says why, keeps the run alive, goes on when it is idle or the wait is used up', () => {
   const clock = () => {
     let t = 0;
     return { now: () => t, wait: (ms) => { t += ms; } };
   };
   // idle: no wait, no line
   let lines = [];
-  assert.equal(yieldToResident('windows: x', { busy: () => null, log: (l) => lines.push(l), wait: () => assert.fail('no wait') }), false);
+  assert.equal(yieldToResident('windows: x', { busy: () => null, log: (l) => lines.push(l), wait: () => assert.fail('no wait') }), 0);
   assert.deepEqual(lines, []);
   // busy for three looks, then idle
   let c = clock();
   let looks = 0, alive = 0;
   lines = [];
-  assert.equal(yieldToResident('linux: ci-suites', { ...c, busy: () => (++looks <= 3 ? 'PR #1007 (stage 2)' : null), log: (l) => lines.push(l), keepAlive: () => { alive += 1; } }), true);
-  assert.equal(c.now(), 3 * 30_000);
+  assert.equal(yieldToResident('linux: ci-suites', { ...c, busy: () => (++looks <= 3 ? 'PR #1007 (stage 2)' : null), log: (l) => lines.push(l), keepAlive: () => { alive += 1; } }), 3 * 30_000);
   assert.equal(alive, 3, 'the run stays alive while it waits');
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /^local-verify: linux: ci-suites: waiting: the resident CI runs PR #1007 \(stage 2\) on this host .*up to 90 min, --no-yield skips this$/);
+  assert.match(lines[0], /^local-verify: linux: ci-suites: waiting: the resident CI runs PR #1007 \(stage 2\) on this host .*up to 90 min more, --no-yield skips this$/);
   assert.match(lines[1], /the resident CI is idle after 90 s; going on$/);
   // busy past the bound: goes on, says so; a line every five minutes meanwhile
   c = clock();
   lines = [];
-  assert.equal(yieldToResident('windows: clued-cloud', { ...c, busy: () => 'PR #1', log: (l) => lines.push(l) }), true);
-  assert.equal(c.now(), YIELD_TIMEOUT_MS);
+  assert.equal(yieldToResident('windows: clued-cloud', { ...c, busy: () => 'PR #1', log: (l) => lines.push(l) }), YIELD_TIMEOUT_MS);
   assert.equal(lines.filter((l) => l.includes('waiting:')).length, YIELD_TIMEOUT_MS / (5 * 60_000));
-  assert.match(lines.at(-1), /still runs PR #1 after 90 min; going on$/);
-  // a bound that is not a whole number of polls is kept exactly
+  assert.match(lines.at(-1), /still runs PR #1; this run's 90 min of waiting for it are used up; going on$/);
+  // what is left of the run's wait is kept exactly; none left: no wait at all
   c = clock();
-  yieldToResident('x', { ...c, busy: () => 'PR #1', log: () => {}, timeoutMs: 45_000 });
-  assert.equal(c.now(), 45_000);
+  assert.equal(yieldToResident('x', { ...c, busy: () => 'PR #1', log: () => {}, timeoutMs: 45_000 }), 45_000);
+  lines = [];
+  assert.equal(yieldToResident('x', { busy: () => 'PR #1', log: (l) => lines.push(l), wait: () => assert.fail('no wait'), timeoutMs: 0 }), 0);
+  assert.equal(lines.length, 1);
+});
+
+test('each suite first yields to the resident, from one wait for the whole run; --no-yield (null) never asks', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-yield-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const args = { root: home, home, selector: { readKnownFailures: () => ({}) }, main: 'b'.repeat(40), dir: path.join(home, 'missing'), suites: ['one', 'two', 'three'],
+    logs: home, freshBase: false, run: { run: { pid: process.pid }, touch: () => {} }, platform: 'windows', temp: home };
+  const asked = [];
+  const results = verifySuites({ ...args, yieldTo: (label, o) => { asked.push([label, o.timeoutMs, typeof o.keepAlive]); return 20 * 60_000; } });
+  assert.deepEqual(asked, [['windows: one', YIELD_TIMEOUT_MS, 'function'], ['windows: two', YIELD_TIMEOUT_MS - 20 * 60_000, 'function'],
+    ['windows: three', YIELD_TIMEOUT_MS - 40 * 60_000, 'function']]);
+  assert.equal(results.length, 3, 'every suite still gets its verdict (here: the worktree is missing)');
+  assert.equal(verifySuites({ ...args, yieldTo: null }).length, 3);
 });
 
 test('Windows starts npm through its CLI next to node.exe (npm.cmd needs a shell); elsewhere npm itself', () => {
@@ -175,7 +196,7 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
   assert.ok(script.includes(`cp '/mnt/c/L/tool.mjs' "$tool/local-verify.mjs"`), 'the same tool on both sides, whatever the change holds');
   assert.ok(script.endsWith(`--candidate ${candidate} --base ${main} --no-fetch --fresh-base --suite 'clued-cloud' --suite 'x'\\''y'`));
-  assert.ok(linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: ['a'], yieldTo: false }).endsWith("--no-fetch --no-yield --suite 'a'"),
+  assert.ok(linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: ['a'], noYield: true }).endsWith("--no-fetch --no-yield --suite 'a'"),
     'the Linux side skips the wait for the resident too when asked');
   const without = linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: [] });
   assert.ok(!without.includes('bundle') && without.includes("done < '/r' | git"), 'refs are set even when no bundle is needed');

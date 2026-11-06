@@ -4072,7 +4072,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **本代的做法（快修）。** 从源头消除这两类失败（53.11）：断流的 DB 下载不再变成 `UNCERTAIN`/保留锁，能回退就回退；旧锁可证明失效时自动回收。剩下的第 4、6 段失败（例如锁确实被占用、72 小时内没有可用 DB）仍按原规则结束。
 - **不需要新提交的恢复路径（第 11 代已实现，见 §54；与这里的原设想有出入）。** 在**同一批次内**原地重跑执行段（第 4 或 6 段）。实现的条件以 §54.1、§54.2 为准：§27 的静止与“未发布”证明、或干净的环境拒绝，两台主机静止，按 `retry-stage-N-K` 归档，有界次数与退避，安装授权要够用。原设想里“读 GitHub 确认该角色没有检查”没有实现：第 5、7 段还没有跑，本批次不可能已有该角色的检查；扫描许可也不需要（`NATIVE_SCAN_START_REQUIRED = false`）。独立审核的结论见第 11 代的汇报。
 
-## 54. 第 4、6 段同批次原地重跑（第 11 代；Decision `4f5f35d3`：发现的缺陷全部修掉；承接 §53.12）
+## 54. 第 4、6 段同批次原地重跑（第 11 代；Decision `4f5f35d3`：发现的缺陷全部修掉；承接 §53.12；第 14 代起含第 2 段，见 §58）
 
 第 4 段（trivy）和第 6 段（contract-placement）是执行段：只在 Linux 上真跑扫描器，把签名结果放进 spool，**自己不发布任何检查**；检查由其后的第 5、7 段发布。第 3 段已经发布了 gitleaks，所以这两段失败后不能有第 2 次尝试（§53.12）。
 
@@ -4087,7 +4087,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 54.1 规则（`classify.mjs#executionRetryable`，纯函数）
 
-只适用于第 4、6 段（`EXECUTION_RETRY_STAGES`），并且 Windows 一半的证明（`windowsTreeZero` 且 `serviceOriginalStopped`）必须齐全。满足下列之一才重跑：
+只适用于第 4、6 段（`EXECUTION_RETRY_STAGES`；第 14 代起含第 2 段，只限放弃证明，见 §58），并且 Windows 一半的证明（`windowsTreeZero` 且 `serviceOriginalStopped`）必须齐全。满足下列之一才重跑：
 
 - **memory-gate：** 内存闸门在调用之前就拒绝了（`LINUX_MEMORY_NOT_READY`），本段什么都没跑。
 - **abandoned-unpublished：** §27 的扫描放弃证明成立（`scannerAbandonEligible`：结束码在允许表里、泵的码可证明、需要时有 `STOP_SENT`、泵已安静）。例子是 11-05 head `46f6e452` 的 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。
@@ -4142,14 +4142,14 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **systemd 单元** `clued-ci-worker@<jobId>`：`Type=oneshot`、`Restart=no`，处于 failed 的单元可以再次 start。
 - **伴随进程的“已运行”证据（本代发现并修掉的缺陷）：**
   - 问题：上次运行留下的单元事实（failed，或 inactive 加上次的 InvocationID 和启动时间）原来会被 `workerRanEvidence` 当成“这次已运行”。`start --no-block` 之后，systemd 在负载下可能几秒后才真正启动；这期间泵读到旧事实，判为“已运行并已结束”，列表为空时就误报 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。而新 worker 其实正要开始，最终静止证明失败，导致 HALT。
-  - 修法：重跑时 relay-stage 请求带 `again`（只允许第 4、6 段，取值 1 或 2；首跑永远不带，见 `mailbox.mjs#validateRequest`）。泵在启动之前先读一次单元事实作为基线，只认相对基线的变化（`companion.mjs#workerRanSince`）：运行中的状态，或者新的 InvocationID 并且有新的主进程启动时间或已 failed。
+  - 修法：重跑时 relay-stage 请求带 `again`（只允许第 4、6 段，第 14 代起含第 2 段（§58），取值 1 或 2；首跑永远不带，见 `mailbox.mjs#validateRequest`）。泵在启动之前先读一次单元事实作为基线，只认相对基线的变化（`companion.mjs#workerRanSince`）：运行中的状态，或者新的 InvocationID 并且有新的主进程启动时间或已 failed。
   - 基线读不到时，只认运行中的状态，记录照常算证据。这是失败即关闭：最坏情况是快速结束的 worker 被报成 `LINUX_WORKER_NOT_STARTED`，之后仍要过静止证明。
   - 首跑不读基线，行为与原来完全一样，也不多一次 wsl.exe 调用。
 - **引擎缓存的停止请求：** 见 54.2，每次调用时清掉。
 
 ### 54.4 归档（`linux/bin/clued-ci-resident-linux`）
 
-只有 `retry-stage-4-1`、`retry-stage-4-2`、`retry-stage-6-1`、`retry-stage-6-2` 这四个确切原因保留工作区，范围记为 `stage-retry`，前缀 `failed`。它不算完成范围，所以：
+只有 `retry-stage-4-1`、`retry-stage-4-2`、`retry-stage-6-1`、`retry-stage-6-2` 这四个确切原因保留工作区（第 14 代起加上 `retry-stage-2-1`、`retry-stage-2-2`，见 §58），范围记为 `stage-retry`，前缀 `failed`。它不算完成范围，所以：
 
 - 半对照样移走并报告；
 - 未知的叶子留在原处（`remainderLeftInPlace`），只报告。
@@ -4170,7 +4170,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - 第 4 段 worker 断了一次之后重跑成功：阶段序列为 `[1,2,3,4,4,5,6,7,8]`，第 5 段只跑一次，两边都归档为 `retry-stage-4-1`，回执齐全。
 - 第 6 段两次干净的环境拒绝：等待 1 分钟和 5 分钟，归档原因依次为 `-1`、`-2`。
 - 重跑用完：按原样结束，head 被烧。
-- 不重跑的情形：关于 PR 的拒绝、第 2 段、静止不成立（HALT）、归档没有核实、归档目录不是本次原因的（模拟回放），这些都会写 refused 回执并列出已做的 Windows 归档。
+- 不重跑的情形：关于 PR 的拒绝、第 2 段（第 14 代起第 2 段的放弃会重跑，见 §58）、静止不成立（HALT）、归档没有核实、归档目录不是本次原因的（模拟回放），这些都会写 refused 回执并列出已做的 Windows 归档。
 - 内存闸门。
 - 重跑之前或等待期间出现 HALT 或漂移。
 - 安装授权不够。
@@ -4660,24 +4660,26 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 58.1 修法一：第 2 段也走 §54 的同批次重跑（只限放弃证明）
 
-- `classify.mjs#EXECUTION_RETRY_STAGES` 由 `[4, 6]` 改为 `[2, 4, 6]`；第 2 段**只**接受 `abandoned-unpublished` 依据（`scannerAbandonEligible` 成立：结束码在 §27 允许表里、泵的码可证明、需要时有 `STOP_SENT`、Windows 一半证明齐全、泵已安静），否则 `EXECUTION_RETRY_STAGE2_NOT_ABANDONED`。第 2 段的内存闸门拒绝和干净拒绝不在这里重跑，仍走原路径（内存闸门：§32 的 attempt 2）。
+- `classify.mjs#EXECUTION_RETRY_STAGES` 由 `[4, 6]` 改为 `[2, 4, 6]`；第 2 段**只**接受 `abandoned-unpublished` 依据（`scannerAbandonEligible` 成立：结束码在 §27 允许表里、泵的码可证明、需要时有 `STOP_SENT`、Windows 一半证明齐全、泵已安静），否则 `EXECUTION_RETRY_STAGE2_NOT_ABANDONED`（Windows 一半证明不全时先报 `EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE`）。第 2 段的内存闸门拒绝和干净拒绝不在这里重跑，仍走原路径（内存闸门：§32 的 attempt 2）。
+- 签发者自己的 `PUBLICATION_UNCERTAIN`（Source 把有副作用或可能已发布的结果都映射成它）也在 §27 允许表里，所以同样重跑，与第 4、6 段和 attempt 2 一致。
 - “什么都没发布”的依据与 §27 相同：第 2 段唯一的 Windows 进程是扫描签发者，写不了检查；Linux worker 没有 GitHub 凭据；签名结果只有经同批第 3 段才变成检查，而第 3 段只在第 2 段成功之后才跑一次。重跑之前照 §54.2：无 HALT、无漂移、授权够、两台主机静止、两边 `retry-stage-2-K` 归档核实、写 `execution-retry` 回执；任何一步不成立就写 `execution-retry-refused` 并按原路径结束。
 - 等待 60 s、300 s，最多 2 次（`EXECUTION_RETRY_MS`，不变）。第 2 段是批次第一个 Linux 段，重跑时 refs 闸门和版本检查照样再过（`firstLinux`）。
 - 两次都用完：与以前完全相同，`FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，并且仍有那一次 attempt 2（attempt 2 里同样有两次批次内重跑）。
+- 同一个作业再跑一次（照 §54.3 逐项核对 gitleaks）：运行目录 `runs/gitleaks-<jobId>` 重跑会冲突，由 `stage-retry` 归档移走；对保留工作区的 git 命令带 `--no-optional-locks`，不改工作区；`NATIVE_SCAN_START_REQUIRED = false`，没有一次性的 Native 许可。gitleaks 在 intent 和 outcome 里写 `automaticRetryAllowed:false`，指的是 Source 自己不重试；常驻层的重跑（与 attempt 2 一样）在此之上另有 §27 的证明。
 - 随之放开的守卫：`engine-windows.mjs#runStage` 和 `mailbox.mjs#validateRequest` 允许第 2 段带 `again`（1 或 2）；Linux 工具 `retry-stage-[246]-[12]` 保留工作区（`stage-retry` 范围）。§54.3 的同一单元重跑处理（`workerRanSince` 基线）对第 2 段同样适用。
 - 与 §50 不变量 ① 的关系：第 2 段重跑扫描已由 O-2（Owner Decision `eaa7d5e4`，attempt 2）覆盖；本节只是把它提前到同一批次内，发布仍只一次（第 3 段只跑一次）。
 - 没有改 companion 的中继分类（缺陷描述的 B 方案）：批次内重跑已覆盖“什么都没写”的放弃情形，且不放宽任何“已写入不得重发”的规则；不改签名策略（仍是 /10），不新增策略字段。
 
 ### 58.2 修法二：local-verify 让路（`scripts/ci/local-verify.mjs`，不在常驻包内）
 
-常驻在跑批次（`C:\ProgramData\CluedIndependentCI\resident\state\status.json` 的 `current` 非空；WSL 内读 `/mnt/c/...` 同一文件）时，local-verify 在每个套件开始前等待，Windows 和 Linux 两侧都等；每 30 s 看一次，每 5 分钟打印一次原因，最多 90 分钟，之后照常继续并说明；`--no-yield` 关闭（传给 Linux 侧）。文件不存在、读不了或不是 JSON 都算空闲（别的机器没有常驻）。工具自己的并发测试带 `--no-yield`，不会在常驻 CI 里等常驻。
+常驻在跑批次（`C:\ProgramData\CluedIndependentCI\resident\state\status.json` 的 `current` 非空；WSL 内读 `/mnt/c/...` 同一文件）时，local-verify 在每个套件开始前等待，Windows 和 Linux 两侧都等；每 30 s 看一次，每 5 分钟打印一次原因；每一侧整次运行合计最多等 90 分钟（不是每个套件），用完照常继续并说明；Linux 子进程的超时相应加 90 分钟；`--no-yield` 关闭（传给 Linux 侧）。文件不存在、读不了、不是 JSON、5 分钟没重写（服务停了，页面停在最后一次）或执行器是 `WAITING`（例如等托管中继，本机什么都没跑）都算空闲。等待时保留自己的运行名额，排在后面的运行也跟着等。工具自己的并发测试带 `--no-yield`，不会在常驻 CI 里等常驻。
 
 ### 58.3 测试
 
-- `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；mailbox 与引擎的 `again` 规则含第 2 段。
+- `test/execution-retry.test.mjs`：第 2 段纯规则（放弃 → 重跑，含签发者自己的 `PUBLICATION_UNCERTAIN`；内存闸门、干净拒绝、未 `STOP_SENT`、泵不安静、泵不可证明、无桥事实、放弃证明覆盖不到的有副作用或可能已发布的结束、Windows 证明不全 → 不重跑；第 3 段不重跑）；第 2 段放弃一次后重跑成功（阶段序列 `[1,2,2,3,…,8]`，第 3 段只跑一次，`retry-stage-2-1` 归档，重跑保留 refs 闸门，无 attempt 2）；重跑用完按原样结束并排 attempt 2；干净拒绝不重跑；重跑后以内存闸门或 refs 移动结束时停止重跑、按各自的码结束并排 attempt 2；mailbox 与引擎的 `again` 规则含第 2 段。
 - `test/scanner-abandon.test.mjs`：第 2 段的 10-28 结束先重跑两次再 `FAILED_CLEAN`；attempt 2 也各有两次重跑；静止证明不成立时先写 refused 再 HALT。
 - `test/test_linux_tool.py`：`retry-stage-2-1/2` 保留工作区，`retry-stage-2-3`、`retry-stage-3-1` 不保留。
-- `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按上限截断）；Linux 脚本传 `--no-yield`。
+- `scripts/ci/local-verify.test.mjs`：`--no-yield`；`residentBusy`（空闲、缺文件、半写、有批次、`WAITING`、页面过期、页面无时间）；`yieldToResident`（空闲不等、等到空闲、到上限继续、保持运行存活、按剩余额度截断、额度用完不等）；`verifySuites` 每个套件先让路、整次运行共用一份额度、`--no-yield` 时不问；Linux 脚本传 `--no-yield`。
 
 ### 58.4 安装
 
