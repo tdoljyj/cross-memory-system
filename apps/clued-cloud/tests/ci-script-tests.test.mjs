@@ -58,7 +58,7 @@ test('the admission script and the runner hook read the application public Supab
   const { url, key } = resolveSupabasePublicConfig({});
   assert.deepEqual(resolvePublicSupabaseConfig({}, ROOT), { url, key, source: PUBLIC_CONFIG_SOURCE });
   // The runner hook's size limit and pattern (scripts/runner/clued-runner-job-started.mjs, decideWithCurrentEpoch).
-  // It measures the GitHub contents API's base64, which has a newline after every 60 characters.
+  // It measures the GitHub contents API's base64, which ends every line of up to 60 characters (the last included) with a newline.
   const text = readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8');
   const base64 = Buffer.from(text).toString('base64');
   assert.ok(base64.length + Math.ceil(base64.length / 60) <= 32768, `${PUBLIC_CONFIG_SOURCE} is over the runner hook's 32768-character limit`);
