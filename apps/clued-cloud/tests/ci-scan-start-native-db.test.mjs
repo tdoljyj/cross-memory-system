@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
-import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES} from './worker-gateway-caller-fixture.mjs';
+import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES} from './worker-gateway-caller-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
@@ -132,7 +132,8 @@ test('physical scan-start Native K: real transactions, exact existing authority 
     await t.test('gateway surface expands by exactly two narrow RPCs; all existing command bytes preserved',async()=>{
       const names=async role=>(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace
         and has_function_privilege($1,p.oid,'EXECUTE') order by 1`,[role])).rows.map(r=>r.s.replace(/^public\./,''));
-      assert.deepEqual(await names('clued_worker_gateway'),[...WORKER_SIGNATURES,...newGateway].sort());
+      // The later CI node gateway (20261106090000) adds its own two serving-Worker RPCs.
+      assert.deepEqual(await names('clued_worker_gateway'),[...WORKER_SIGNATURES,...newGateway,...CI_NODE_GATEWAY_SIGNATURES].sort());
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
       assert.deepEqual(anon,CI_SIGNATURES);

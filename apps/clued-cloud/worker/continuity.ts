@@ -4,6 +4,7 @@ import { withCanonicalMcpError } from "./mcp-error-envelope";
 import { handleMcpProfile, mcpProfileTool, McpProfileError, type McpProfile } from "./mcp-profile";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { CI_SCAN_START_PATH, handleCiScanStartV1 } from "./ci-scan-start-v1";
+import { handleCiNodeGatewayV1, isCiNodeGatewayPath } from "./ci-node-gateway-v1";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
   type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
@@ -4054,6 +4055,7 @@ export async function handleContinuityRequest(
   // credential flow. Keep its transient runtime credentials out of general
   // tracing, projection invalidation and response decoration.
   if (new URL(request.url).pathname === CI_SCAN_START_PATH) return handleCiScanStartV1(request, env);
+  if (isCiNodeGatewayPath(new URL(request.url).pathname)) return handleCiNodeGatewayV1(request, env);
   const trace = createNativeReadTrace(request);
   const response = await handleContinuityRequestInner(request, env, ctx, trace);
   if (response) trace?.complete(response);
