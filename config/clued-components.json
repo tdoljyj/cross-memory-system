@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.8",
+      "version": "1.1.9",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "3ede09c6c7a13a2a800487cc55224f88dd5f10dfb2ba54a59fc6459973591c59"
+      "content_sha256": "26aac87ca18c67daddc74fd06621420c1b3881b27496f4c8568530055e4b807b"
     },
     {
       "id": "script.resource-maintenance",
@@ -611,7 +611,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -627,7 +627,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "65cf3f00160f08413e1d485501525efb75dfa20be65841ee65f4c8cac8c834f1"
+      "content_sha256": "3a1ba372775682788caa54d5edafb698278e6492af152fe8ef5b64f2b818a380"
     },
     {
       "id": "script.required-applicability",
@@ -804,7 +804,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -815,7 +815,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "17c3de25171b216f4704f9f67f614ecc54aa672d74a385c7956fd5fbd5f27ea1"
+      "content_sha256": "e7a46659462d78677e24fb28fb075d304e840ba8fefb6611d38468fc9ce6064c"
     }
   ]
 }
