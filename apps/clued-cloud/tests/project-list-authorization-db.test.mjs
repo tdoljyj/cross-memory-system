@@ -1,4 +1,5 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -117,8 +118,8 @@ test('project list uses current explicit Canonical project consent in real Postg
    await denied(anon.query('select * from clued_private.authorization_entries_v12'));
   });
  } finally {
-  for(const db of clients.reverse())await db.end().catch(()=>{});await server.stop().catch(()=>{});
+  for(const db of clients.reverse())await db.end().catch(()=>{});await stopCluster(server);
   const target=path.resolve(dir);if(path.dirname(target)!==path.resolve(os.tmpdir())||!path.basename(target).startsWith('clued-project-list-'))throw Error('Unsafe test cleanup');
-  await fs.rm(target,{recursive:true,force:true});
+  await removeTestDirectory(target);
  }
 });

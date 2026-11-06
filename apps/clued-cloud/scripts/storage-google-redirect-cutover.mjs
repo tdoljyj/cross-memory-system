@@ -1,8 +1,7 @@
 // Offline SQL generation only. No database, provider, or credential access.
 import { readFile, stat } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 const CONTRACT = 'kooyumi.storage-google-redirect-cutover/1';
 export const GOOGLE_CLIENT_ID = '980987540427-hu235tq06q94cak7hsm9a6ds88kvpdig.apps.googleusercontent.com';
 export const OLD_CALLBACK = 'https://clued.pixelgrav.com/storage/google/callback';
@@ -147,7 +146,7 @@ export async function main(args) {
   return buildCutoverSql(input);
 }
 
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main(process.argv.slice(2)).then(sql => process.stdout.write(sql)).catch(error => {
     // Never echo untrusted metadata or file contents, including parse errors.
     process.stderr.write(error.message.startsWith('usage:') ? error.message + '\n'

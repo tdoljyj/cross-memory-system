@@ -1,6 +1,7 @@
 // Actual disposable PostgreSQL, original executor and Worker recovery. The
 // provider transport and elapsed-time fixtures are synthetic; no production
 // authorization, Drive file or machine synchronization state is asserted.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -251,8 +252,8 @@ test('legacy directory: real P5 attempts and independent before recovery',{timeo
     if(!child.kill('SIGTERM')){clearTimeout(timer);reject(Error('Own disposable PostgreSQL shutdown refused'));}
    });server.process=undefined;
   }
-  if(started)await server.stop();const resolved=await fs.realpath(directory).catch(()=>null);
+  if(started)await stopCluster(server);const resolved=await fs.realpath(directory).catch(()=>null);
   if(resolved&&path.dirname(resolved)===parent&&path.basename(resolved).startsWith('kooyumi-legacy-directory-'))
-   await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+   await removeTestDirectory(resolved);
  }
 });

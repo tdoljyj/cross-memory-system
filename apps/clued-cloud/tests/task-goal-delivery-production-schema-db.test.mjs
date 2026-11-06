@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -288,9 +289,9 @@ test('D01 optional Binding expiry matches the production schema and retains actu
     });
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     // This exact directory was allocated by this test; reject a changed target.
-    if (await fs.realpath(directory).catch(() => null) === directory) await fs.rm(directory, { recursive: true, force: true });
+    if (await fs.realpath(directory).catch(() => null) === directory) await removeTestDirectory(directory);
   }
 });
 

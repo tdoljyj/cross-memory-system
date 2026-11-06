@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -452,6 +453,6 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     await Promise.allSettled(clients.map((client) => client.end()));
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

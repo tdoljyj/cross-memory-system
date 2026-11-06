@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -1218,7 +1219,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     const target = path.resolve(directory);
     assert.equal(path.dirname(target), path.resolve(os.tmpdir()));
     assert.ok(path.basename(target).startsWith('clued-all-contexts-'));
-    await server.stop().catch(() => {});
-    await fs.rm(target, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(target);
   }
 });

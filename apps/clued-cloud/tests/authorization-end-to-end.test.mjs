@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -146,6 +147,6 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
   } finally {
     globalThis.fetch = originalFetch;
     for (const connection of connections) await connection.end();
-    await server.stop();
+    await stopCluster(server);
   }
 });

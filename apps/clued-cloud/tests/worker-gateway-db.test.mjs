@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -568,8 +569,8 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
     throw error;
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    try { await fs.rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
+    await stopCluster(server);
+    try { await removeTestDirectory(directory); }
     catch (error) { if (!failure) throw error; process.stderr.write(`Gateway fixture cleanup: ${error.code}\n`); }
   }
 });

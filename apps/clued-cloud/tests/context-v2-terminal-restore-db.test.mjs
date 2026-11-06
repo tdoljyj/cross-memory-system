@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -232,7 +233,7 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
     assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

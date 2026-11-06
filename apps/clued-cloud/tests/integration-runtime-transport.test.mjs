@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -356,6 +357,6 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     globalThis.fetch = previousFetch;
     Date.now = previousNow;
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

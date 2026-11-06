@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -396,7 +397,7 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
     assert.equal((await nativeToken(forA.token_id)).consume_outcome, 'rejected');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    await stopCluster(server);
+    await removeTestDirectory(directory).catch(() => {});
   }
 });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -455,7 +456,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
     });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {}); await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server); await removeTestDirectory(directory);
   }
 });
 function uuidTest(value) { return typeof value === 'string' && /^[0-9a-f-]{36}$/.test(value); }

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -245,10 +246,10 @@ test('three-state master control: actual PostgreSQL migrations and Native author
       await set(full.connection,true);assert.equal((await status(full.connection)).state,'on');
     });
   }finally{
-    await Promise.allSettled(clients.map(c=>c.end()));if(started)await server.stop();
+    await Promise.allSettled(clients.map(c=>c.end()));if(started)await stopCluster(server);
     const actual=await fs.realpath(dir);
     if(actual!==dir||path.dirname(actual)!==tempParent||!path.basename(actual).startsWith('clued-master-control-'))
       throw new Error('test database directory identity changed; refusing cleanup');
-    await fs.rm(actual,{recursive:true,force:true,maxRetries:20,retryDelay:250});
+    await removeTestDirectory(actual);
   }
 });

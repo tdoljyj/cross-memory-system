@@ -1,6 +1,7 @@
 // issuer-credentials: disposable embedded PostgreSQL with extracted issuer tables/functions only.
 // Synthetic verifiers use real stage/activate paths; expired/staged/retired cases test refusal.
 // This fixture never enables test credential grants or accesses a live service.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -300,10 +301,10 @@ test('provision SQL enforces ownership, isolated registration and immutable repl
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
     const resolved = path.resolve(directory);
     const temporaryRoot = path.resolve(os.tmpdir()) + path.sep;
     assert.ok(resolved.startsWith(temporaryRoot) && path.basename(resolved).startsWith('kooyumi-provision-test-'));
-    await fs.rm(resolved, { recursive: true, force: true });
+    await removeTestDirectory(resolved);
   }
 });

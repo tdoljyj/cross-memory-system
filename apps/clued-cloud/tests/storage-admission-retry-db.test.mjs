@@ -1,5 +1,6 @@
 // Real disposable PostgreSQL. Synthetic identities/time/Drive transport only;
 // these tests never query production, change a real grant or mutate Google.
+import { removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -276,7 +277,8 @@ test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:
   if(cleanup){
    retainedChild?.stdin?.destroy();retainedChild?.stdout?.destroy();retainedChild?.stderr?.destroy();
    const actual=await ownedBoundary();
-   await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
+   // This fixture's evidence says the directory was removed: retry through the shared helper, then keep proving it.
+   await removeTestDirectory(actual);
    await assert.rejects(fs.lstat(actual),{code:'ENOENT'});
    console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',
     fixture_directory:directory,retained_child_pid:retainedChild?.pid??null,...diagnostic,directory_removed:true,

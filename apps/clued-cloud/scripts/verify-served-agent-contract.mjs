@@ -4,8 +4,6 @@
 // contract is live without a manual readback.
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const PRODUCTION_ORIGIN = 'https://kooyumi.pixelgrav.com';
 const contractSource = new URL('../../../protocol/agent/agent-contract.md', import.meta.url);
@@ -73,7 +71,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : 'served_agent_contract_unexpected_error'}\n`);
     process.exitCode = 1;

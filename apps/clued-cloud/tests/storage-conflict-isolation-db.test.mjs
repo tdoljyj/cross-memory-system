@@ -1,6 +1,7 @@
 // issuer-credentials: disposable PostgreSQL only. Synthetic issuer credentials,
 // users and provider metadata exercise the actual migration and caller boundary;
 // no production connection, Google request, secret or file body is used.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -953,7 +954,7 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
  }catch(error){console.error(error.message);if(error.cause)console.error(error.cause.message);throw error;
  }finally{
   for(const c of clients.reverse())await c.end().catch(()=>{});
-  if(started)await Promise.race([server.stop(),new Promise(resolve=>setTimeout(resolve,5000))]);
-  await fs.rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:200});
+  if(started)await Promise.race([stopCluster(server),new Promise(resolve=>setTimeout(resolve,5000))]);
+  await removeTestDirectory(dir);
  }
 });
