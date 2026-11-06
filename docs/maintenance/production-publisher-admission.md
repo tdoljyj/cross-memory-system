@@ -115,30 +115,47 @@ runs in `clued-cloud-tests`; its failure message gives the re-registration comma
 Any change to a file the registry pins makes `merge-admission-source-producer.test.mjs`
 fail with "R9 registry is stale". Do not edit the pins by hand: the replaced
 generation has to be remembered, or observations made by it stop authenticating.
-Run the helper from a checkout that contains the current main and its full history:
+Run the helper from a full (not shallow) checkout that contains the current main:
 
 ```
 git fetch https://github.com/tdoljyj/cross-memory-system.git main
+git merge FETCH_HEAD
 node scripts/ci/merge-admission-r9-reregister.mjs --base FETCH_HEAD          # report, exit 1 when stale
 node scripts/ci/merge-admission-r9-reregister.mjs --base FETCH_HEAD --write  # rewrite the registry
 ```
 
-`--base` defaults to `origin/main`. The history is always rotated from the registry on
-that base, never from the working copy, so the command is idempotent and several local
-re-pins before merging still count as one generation. The replaced generation is
-registered at the last first-parent commit of the base that touched the registry
-(`--old-checkout` overrides it); the helper refuses a base that does not contain its own
-pins, a checkout already in the history, and a branch that lacks the base.
+`--base` defaults to `origin/main`. History is always rotated from the registry on that
+base, never from the working copy, so the command is idempotent and several local
+re-pins before merging still count as one generation. It refuses a base the branch does
+not contain, a shallow clone (the registering commit cannot be found there; pass
+`--old-checkout` if you know it), CRLF working files (CI hashes the LF the repository
+stores), a base whose own files disagree with its registry, and a checkout that is
+already in a history.
 
-Each history is oldest first and bounded (`R9_HISTORY_CAPS` in the helper, tied by tests
-to the loader and natural intake): 4 previous admission Sources, 4 previous execution
-Sources and 6 previous source generations per producer. A new generation is appended
-and, beyond the bound, the **oldest generation is dropped**. The helper prints every
-dropped generation; observations made only by a dropped generation no longer
-authenticate, so say so in the pull request. The sealed 80bd559f fixture stays
-unchanged: the tests require the live history to be that fixture with the oldest entries
-dropped and newer ones appended (`sealedWindowAgrees`), so rotation never needs a fixture
-edit.
+The replaced generation is recorded at the last first-parent commit of the base that
+touched the registry, which is where it was registered (the convention of the 80bd559f
+entries). Admission and execution Sources are looked up by that exact checkout, so
+observations from other commits of the old generation are not anchored; pass
+`--old-checkout` to anchor a different main commit that holds the same bytes.
+
+Each history is oldest first and bounded (`R9_HISTORY_CAPS` in the helper): 4 previous
+execution Sources and 6 previous source generations per producer are limits of the
+loader and the natural intake and the tests tie them to those consumers; 4 previous
+admission Sources is the registry's own bound. A new generation is appended and,
+beyond the bound, the **oldest generation is dropped**. The helper prints every
+generation that leaves a history; observations made only by a dropped generation no
+longer authenticate, so say so in the pull request. Two further removals are
+mechanical: the loader and the intake refuse an execution pair or source map that
+equals the current one, so after going back to an earlier generation that entry leaves
+the history (an admission entry never does, because it carries its own checkout).
+
+The sealed 80bd559f fixture stays unchanged: the tests require every live history to
+be that fixture with its oldest entries dropped and newer ones appended
+(`sealedWindowAgrees`), so rotation never needs a fixture edit. That check only covers
+the sealed part. What a pull request appended is verified by running the helper:
+`merge-admission-r9-reregister.test.mjs` re-derives the registry from main when the
+checkout has full history and a main ref (`origin/main`, or `CLUED_R9_BASE`), and is
+skipped in shallow CI checkouts. Run the command before pushing.
 
 | Recomputed by the helper | Reviewed by hand (never touched) |
 | --- | --- |
@@ -148,7 +165,9 @@ edit.
 | `publisher_role.workflow_blob` and `workflow_source_sha256` | publisher job fields |
 | `previous_admission_sources`, `previous_execution_sources`, `previous_source_versions` | `scope`, `forward_epoch`, `clock`, `operation_coverage`, bindings, every `registration_status` |
 
-A renamed job, a changed `source_paths` set or a new producer cannot be rotated
-mechanically (every history map must cover the same paths): the helper refuses and the
-change needs its own review. Raising a capacity needs a change to the loader or intake
-first.
+A renamed job, a changed `source_paths` set, a new producer, a legacy
+`previous_source_blobs` history or a registry without `previous_execution_sources`
+cannot be rotated mechanically: the helper refuses and the change needs its own
+review. A history field is only written where the registry already has it (adding
+`previous_execution_sources` switches the loader to the v2 expectations). Raising a
+capacity needs a change to the loader or intake first.

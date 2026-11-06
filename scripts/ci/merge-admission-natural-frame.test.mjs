@@ -593,8 +593,11 @@ test('v2 actual 595 old22 replay preserves ac90 while current Source selects exa
     assert.equal(rolesRaw,show('scripts/ci/clued-gated-proof-role-specs.json'));
     assert.equal(sealed.historical_workflow_tree,execFileSync('git',['ls-tree','-r',oldTip,'--','.github/workflows'],{cwd:repo,encoding:'utf8',windowsHide:true}));
   }
+  // The reviewed selector comes from the sealed 80bd559f registry: the live history rotates, so this generation may
+  // already have been rotated out of it. While it is still retained it must be that exact selector.
   const cfg=JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/merge-admission-r9-source.json'),'utf8')),
-    reviewed=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
+    reviewed=JSON.parse(loadPublisherSourceHistoryFixture()).previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
+  const retained=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);if(retained)assert.deepEqual(retained,reviewed);
   assert.equal(h(profilesRaw),reviewed.profiles_sha256);assert.equal(h(rolesRaw),reviewed.role_specs_sha256);
   // This replay's "current" side is the sealed predecessor (80bd559f), not today's registry execution_source.
   const sealedExecution=JSON.parse(loadPublisherSourceHistoryFixture()).execution_source;

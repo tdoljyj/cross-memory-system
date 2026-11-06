@@ -28,9 +28,9 @@ import {fileURLToPath} from 'node:url';
 
 export const R9_REGISTRY_PATH='scripts/ci/merge-admission-r9-source.json';
 export const R9_REREGISTER_COMMAND='node scripts/ci/merge-admission-r9-reregister.mjs --write';
-// Capacities enforced by the runtime consumers: the loader (previous_execution_sources),
-// merge-admission-natural-intake.mjs (previous_source_versions) and the sealed registry
-// design (previous_admission_sources). Tests tie each value to its consumer.
+// Capacities: previous_execution_sources is enforced by the loader and previous_source_versions by
+// merge-admission-natural-intake.mjs (tests tie both to the consumer). previous_admission_sources is
+// the registry's own bound (runtime only caps all admission sources at 20); only the tests hold it.
 export const R9_HISTORY_CAPS=Object.freeze({previous_admission_sources:4,previous_execution_sources:4,previous_source_versions:6});
 export const R9_EXECUTION_FILES=Object.freeze({profiles_sha256:'scripts/ci/clued-gated-proof-profiles.json',role_specs_sha256:'scripts/ci/clued-gated-proof-role-specs.json'});
 const ADMISSION_KINDS=['script','workflow','reverify_workflow','policy'];
@@ -48,26 +48,35 @@ export function appendRotating(list,entry,cap){
   return {list:next,dropped};
 }
 
-// Whether `live` (oldest first) is `sealed` with oldest entries dropped and newer ones appended.
-// `sealed` are the generations of an immutable earlier registry; entries equal to `current`
-// are exempt because re-registration removes a history entry that became the current one.
+// Whether `live` (oldest first) is `sealed` with the oldest entries dropped and newer ones appended.
+// Sealed entries that are still retained must appear in order. A sealed entry missing from the middle
+// is only legitimate when it came back later as a newer generation (a revert A->B->A re-appends it),
+// and entries equal to `current` are exempt (a history never repeats the current generation).
+// This protects the sealed part only; entries registered after the seal are checked by the helper itself.
 export function sealedWindowAgrees(sealed,live,current=()=>false){
-  const S=sealed.filter(e=>!current(e)),at=live.length?S.findIndex(e=>same(e,live[0])):-1;
-  if(at<0)return !live.some(e=>S.some(s=>same(s,e)));
-  const tail=S.slice(at);
-  return live.length>=tail.length&&tail.every((e,i)=>same(e,live[i]));
+  const S=sealed.filter(e=>!current(e));
+  if(!S.length)return true;
+  if(!live.length)return false;
+  const k=S.findIndex(e=>same(e,live[0]));
+  if(k<0)return !live.some(e=>S.some(s=>same(s,e)));
+  let j=0;const missing=[];
+  for(let i=k;i<S.length;i+=1){if(j<live.length&&same(S[i],live[j]))j+=1;else missing.push(S[i]);}
+  const rest=live.slice(j);
+  return missing.every(m=>rest.some(r=>same(r,m)));
 }
 
 // Pins read from bytes: read(path) -> Buffer|string. Paths come from `cfg`.
 export function computePins(cfg,read){
   const blob=p=>{let b;try{b=read(p);}catch(error){fail('R9_REREGISTER_FILE_MISSING',`${p} (${error.message})`);}return gitBlobSha(b);};
   const admission=Object.fromEntries(ADMISSION_KINDS.map(k=>[k+'_blob',blob(cfg.admission_source[k+'_path'])]));
-  const execution=Object.fromEntries(Object.entries(R9_EXECUTION_FILES).map(([k,p])=>[k,sha256Hex(read(p))]));
+  const bytes=p=>{try{return read(p);}catch(error){fail('R9_REREGISTER_FILE_MISSING',`${p} (${error.message})`);}};
+  const execution=Object.fromEntries(Object.entries(R9_EXECUTION_FILES).map(([k,p])=>[k,sha256Hex(bytes(p))]));
   const producers=cfg.natural_producers.map(d=>{
+    if(d.source_blobs===null||typeof d.source_blobs!=='object')fail('R9_REREGISTER_PRODUCER_NEW',`${d.workflow_path}#${d.job_id} has no source_blobs; register it by hand`);
     const source_blobs=Object.fromEntries(Object.keys(d.source_blobs).map(p=>[p,blob(p)]));
     return {workflow_path:d.workflow_path,job_id:d.job_id,source_blobs};
   });
-  const wf=read(cfg.publisher_role.workflow_path);
+  const wf=bytes(cfg.publisher_role.workflow_path);
   return {admission,execution,producers,publisher:{workflow_blob:gitBlobSha(wf),workflow_source_sha256:sha256Hex(wf)}};
 }
 // The same shape, as currently written in the registry.
@@ -98,6 +107,7 @@ export function assertHistoryInvariants(cfg){
     execCheckouts.add(e.source_checkout_sha);pairs.add(pair);
   }
   for(const d of cfg.natural_producers){
+    if(Object.hasOwn(d,'previous_source_versions')&&(Object.hasOwn(d,'previous_source_blobs')||Object.hasOwn(d,'previous_job_name')))bad(`${d.workflow_path} mixes previous_source_versions with the legacy previous_source_blobs/previous_job_name`);
     const versions=d.previous_source_versions??[],paths=[...d.source_paths].sort().join('|'),seen=new Set([JSON.stringify(canonical(d.source_blobs))]);
     if(!Array.isArray(versions)||versions.length>caps.previous_source_versions)bad(`${d.workflow_path} previous_source_versions must hold at most ${caps.previous_source_versions}`);
     if(Object.keys(d.source_blobs).sort().join('|')!==paths||!d.source_paths.includes(d.workflow_path)||d.source_blobs[d.workflow_path]!==d.workflow_blob)bad(`${d.workflow_path} current source_blobs do not match source_paths`);
@@ -116,61 +126,69 @@ export function assertHistoryInvariants(cfg){
 // the files the registry pins, oldCheckout a commit on main whose tree holds baseConfig's pins.
 export function reregister({baseConfig,workingConfig,read,oldCheckout}){
   if(!SHA1.test(oldCheckout??''))fail('R9_REREGISTER_CHECKOUT_INVALID','the old generation needs a 40-hex main commit');
-  const base=baseConfig,work=workingConfig,next=structuredClone(work),changes=[],dropped=[],kept=[];
+  const base=baseConfig,work=workingConfig,next=structuredClone(work),changes=[],dropped=[];
   const branch=String(base.scope?.queue_ref??'').split(':').at(-1)||'main',pins=computePins(work,read),caps=R9_HISTORY_CAPS;
-  const same40=(a,b,keys)=>keys.every(k=>a[k]===b[k]);
+  const match=(a,b,keys)=>keys.every(k=>a[k]===b[k]);
 
-  // admission_source -> previous_admission_sources
+  // admission_source -> previous_admission_sources. Admission sources are looked up by source_checkout_sha, so
+  // every replaced generation keeps its own checkout even when its bytes equal another entry (revert A->B->A).
   const aKeys=ADMISSION_KINDS.map(k=>k+'_blob'),oldA=base.admission_source;
   Object.assign(next.admission_source,pins.admission);
-  let pas=(base.previous_admission_sources??[]).filter(e=>!same40(e,pins.admission,aKeys));
+  let pas=structuredClone(base.previous_admission_sources??[]);
   if(aKeys.some(k=>oldA[k]!==pins.admission[k])){
     changes.push('admission_source: '+aKeys.filter(k=>oldA[k]!==pins.admission[k]).join(', ')+' re-pinned');
-    if(pas.some(e=>same40(e,oldA,aKeys)))kept.push('previous_admission_sources already retains the replaced generation');
-    else{
-      if(pas.some(e=>e.source_checkout_sha===oldCheckout))fail('R9_REREGISTER_CHECKOUT_REUSED',`previous_admission_sources already has ${oldCheckout}`);
-      const r=appendRotating(pas,{...oldA,source_checkout_sha:oldCheckout,default_branch:branch},caps.previous_admission_sources);
-      pas=r.list;for(const e of r.dropped)dropped.push({list:'previous_admission_sources',checkout:e.source_checkout_sha,script_blob:e.script_blob});
-      changes.push(`previous_admission_sources: + ${oldCheckout.slice(0,12)}`);
-    }
+    if(pas.some(e=>e.source_checkout_sha===oldCheckout))fail('R9_REREGISTER_CHECKOUT_REUSED',`previous_admission_sources already has ${oldCheckout}`);
+    const r=appendRotating(pas,{...oldA,source_checkout_sha:oldCheckout,default_branch:branch},caps.previous_admission_sources);
+    pas=r.list;for(const e of r.dropped)dropped.push({list:'previous_admission_sources',reason:'capacity',checkout:e.source_checkout_sha,script_blob:e.script_blob});
+    changes.push(`previous_admission_sources: + ${oldCheckout.slice(0,12)}`);
   }
-  next.previous_admission_sources=pas;
+  if(Object.hasOwn(base,'previous_admission_sources')||pas.length)next.previous_admission_sources=pas;else delete next.previous_admission_sources;
 
-  // execution_source -> previous_execution_sources
+  // execution_source -> previous_execution_sources. The loader refuses a history entry whose profile/role pair
+  // equals the current one, so an entry that became current again leaves the history.
   const oldE=base.execution_source,newE=pins.execution,eKeys=Object.keys(R9_EXECUTION_FILES);
   next.execution_source={...work.execution_source,...newE};
-  let pes=(base.previous_execution_sources??[]).filter(e=>!same40(e,newE,eKeys));
-  if(eKeys.some(k=>oldE[k]!==newE[k])){
-    changes.push('execution_source: '+eKeys.filter(k=>oldE[k]!==newE[k]).join(', ')+' re-pinned');
-    if(pes.some(e=>same40(e,oldE,eKeys)))kept.push('previous_execution_sources already retains the replaced generation');
-    else{
+  const hasExec=Object.hasOwn(base,'previous_execution_sources'),executionChanged=eKeys.some(k=>oldE[k]!==newE[k]);
+  if(!hasExec&&executionChanged)fail('R9_REREGISTER_SCHEMA_MANUAL','the registry has no previous_execution_sources; adding it switches the loader to the v2 expectations, so do it by hand');
+  if(hasExec){
+    let pes=[];
+    for(const e of base.previous_execution_sources){
+      if(match(e,newE,eKeys))dropped.push({list:'previous_execution_sources',reason:'became the current generation',checkout:e.source_checkout_sha,profiles_sha256:e.profiles_sha256});
+      else pes.push(structuredClone(e));
+    }
+    if(executionChanged){
+      changes.push('execution_source: '+eKeys.filter(k=>oldE[k]!==newE[k]).join(', ')+' re-pinned');
       if(pes.some(e=>e.source_checkout_sha===oldCheckout))fail('R9_REREGISTER_CHECKOUT_REUSED',`previous_execution_sources already has ${oldCheckout}`);
       const r=appendRotating(pes,{source_checkout_sha:oldCheckout,profiles_sha256:oldE.profiles_sha256,role_specs_sha256:oldE.role_specs_sha256},caps.previous_execution_sources);
-      pes=r.list;for(const e of r.dropped)dropped.push({list:'previous_execution_sources',checkout:e.source_checkout_sha,profiles_sha256:e.profiles_sha256});
+      pes=r.list;for(const e of r.dropped)dropped.push({list:'previous_execution_sources',reason:'capacity',checkout:e.source_checkout_sha,profiles_sha256:e.profiles_sha256});
       changes.push(`previous_execution_sources: + ${oldCheckout.slice(0,12)}`);
     }
+    next.previous_execution_sources=pes;
   }
-  next.previous_execution_sources=pes;
 
-  // natural_producers -> previous_source_versions
+  // natural_producers -> previous_source_versions (same exclusion of the current map as the intake applies)
   next.natural_producers.forEach((d,i)=>{
     const key=`${d.workflow_path}#${d.job_id}`,b=base.natural_producers.find(x=>x.workflow_path===d.workflow_path&&x.job_id===d.job_id);
     if(!b)fail('R9_REREGISTER_PRODUCER_NEW',`${key} is not on main; register a new producer by hand`);
-    if(Object.keys(b.source_blobs).sort().join('|')!==[...d.source_paths].sort().join('|'))
+    if(b.source_blobs===null||typeof b.source_blobs!=='object'||Object.keys(b.source_blobs).sort().join('|')!==[...d.source_paths].sort().join('|'))
       fail('R9_REREGISTER_SOURCE_PATHS_CHANGED',`${key}: source_paths differs from main's pinned set; every history map must cover the same paths, so this needs a manual decision`);
     const source_blobs=pins.producers[i].source_blobs;
     d.source_blobs=source_blobs;d.workflow_blob=source_blobs[d.workflow_path];
     if(d.workflow_blob===undefined)fail('R9_REREGISTER_SOURCE_PATHS_CHANGED',`${key}: source_paths must contain the workflow itself`);
-    let versions=(b.previous_source_versions??[]).filter(v=>!same(v.source_blobs,source_blobs));
-    if(!same(b.source_blobs,source_blobs)){
-      const changed=Object.keys(source_blobs).filter(p=>b.source_blobs[p]!==source_blobs[p]);
-      changes.push(`${key}: ${changed.length} source file(s) re-pinned`);
-      if(versions.some(v=>same(v.source_blobs,b.source_blobs)))kept.push(`${key} already retains the replaced generation`);
-      else{
-        const r=appendRotating(versions,{job_name:b.job_name,source_blobs:b.source_blobs},caps.previous_source_versions);
-        versions=r.list;for(const v of r.dropped)dropped.push({list:`${key} previous_source_versions`,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path]});
-        changes.push(`${key} previous_source_versions: + ${b.job_name}`);
-      }
+    const blobsChanged=!same(b.source_blobs,source_blobs),hasVersions=Object.hasOwn(b,'previous_source_versions');
+    if(blobsChanged&&(Object.hasOwn(b,'previous_source_blobs')||Object.hasOwn(b,'previous_job_name')))
+      fail('R9_REREGISTER_SCHEMA_MANUAL',`${key} still uses the legacy previous_source_blobs/previous_job_name history; convert it by hand`);
+    if(!hasVersions&&!blobsChanged){delete d.previous_source_versions;return;}
+    let versions=[];
+    for(const v of b.previous_source_versions??[]){
+      if(same(v.source_blobs,source_blobs))dropped.push({list:`${key} previous_source_versions`,reason:'became the current generation',job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path]});
+      else versions.push(structuredClone(v));
+    }
+    if(blobsChanged){
+      changes.push(`${key}: ${Object.keys(source_blobs).filter(p=>b.source_blobs[p]!==source_blobs[p]).length} source file(s) re-pinned`);
+      const r=appendRotating(versions,{job_name:b.job_name,source_blobs:b.source_blobs},caps.previous_source_versions);
+      versions=r.list;for(const v of r.dropped)dropped.push({list:`${key} previous_source_versions`,reason:'capacity',job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path]});
+      changes.push(`${key} previous_source_versions: + ${b.job_name}`);
     }
     d.previous_source_versions=versions;
   });
@@ -180,7 +198,7 @@ export function reregister({baseConfig,workingConfig,read,oldCheckout}){
   if(oldP.workflow_blob!==pins.publisher.workflow_blob||oldP.workflow_source_sha256!==pins.publisher.workflow_source_sha256)changes.push('publisher_role: workflow_blob, workflow_source_sha256 re-pinned');
 
   assertHistoryInvariants(next);
-  return {config:next,changes,dropped,kept};
+  return {config:next,changes,dropped};
 }
 
 export const MANUAL_REVIEW=[
@@ -195,7 +213,7 @@ const gitOk=(root,args)=>{try{execFileSync('git',args,{cwd:root,stdio:'ignore'})
 function parseArgs(argv){
   const o={write:false,base:'origin/main',oldCheckout:null,root:null,help:false};
   for(let i=0;i<argv.length;i+=1){
-    const a=argv[i],value=()=>{if(i+1>=argv.length||argv[i+1].startsWith('--'))fail('R9_REREGISTER_USAGE',`${a} needs a value`);return argv[++i];};
+    const a=argv[i],value=()=>{if(i+1>=argv.length||argv[i+1].startsWith('-'))fail('R9_REREGISTER_USAGE',`${a} needs a value that does not start with "-"`);return argv[++i];};
     if(a==='--write')o.write=true;else if(a==='--check')o.write=false;else if(a==='--base')o.base=value();
     else if(a==='--old-checkout')o.oldCheckout=value();else if(a==='--root')o.root=value();else if(a==='--help'||a==='-h')o.help=true;
     else fail('R9_REREGISTER_USAGE',`unknown argument ${a}`);
@@ -203,41 +221,57 @@ function parseArgs(argv){
   return o;
 }
 
-export const USAGE=`Usage: ${R9_REREGISTER_COMMAND.replace(' --write','')} [--write] [--base <ref>] [--old-checkout <sha>] [--root <dir>]
-  (default)        report what is stale and exit 1; nothing is written
+export const USAGE=`Usage: ${R9_REREGISTER_COMMAND.replace(' --write','')} [--check | --write] [--base <ref>] [--old-checkout <sha>] [--root <dir>]
+  --check          (default) report what is stale and exit 1; nothing is written
   --write          rewrite ${R9_REGISTRY_PATH}
   --base <ref>     the up to date main to rotate history from (default origin/main; after
                    "git fetch https://github.com/<owner>/<repo>.git main" use --base FETCH_HEAD)
   --old-checkout   the main commit that registered the generation being replaced
-                   (default: the last first-parent commit of --base that touched the registry)`;
+                   (default: the last first-parent commit of --base that touched the registry;
+                   refused in a shallow clone, where that commit cannot be known)`;
+
+// Everything except writing: the registry this checkout should contain, derived from main's registry.
+export function plan(root,{base='origin/main',oldCheckout=null}={}){
+  const baseSha=(()=>{try{return git(root,['rev-parse','--verify','--end-of-options',`${base}^{commit}`]);}catch{fail('R9_REREGISTER_BASE_MISSING',`cannot resolve --base ${base}; fetch main first and pass --base FETCH_HEAD (or the ref you fetched)`);}})();
+  if(!gitOk(root,['merge-base','--is-ancestor',baseSha,'HEAD']))fail('R9_REREGISTER_BASE_NOT_MERGED',`HEAD does not contain ${baseSha.slice(0,12)}; merge or rebase onto it first`);
+  if(oldCheckout===null&&git(root,['rev-parse','--is-shallow-repository'])==='true')
+    fail('R9_REREGISTER_SHALLOW','this is a shallow clone, so the commit that registered the current generation cannot be found; fetch full history or pass --old-checkout');
+  const registered=oldCheckout??git(root,['log','-1','--first-parent','--format=%H',baseSha,'--',R9_REGISTRY_PATH]);
+  if(!SHA1.test(registered))fail('R9_REREGISTER_CHECKOUT_INVALID','could not determine the commit that registered the current generation; pass --old-checkout');
+  if(!gitOk(root,['merge-base','--is-ancestor',registered,baseSha]))fail('R9_REREGISTER_CHECKOUT_INVALID',`${registered} is not on ${base}`);
+  const atBase=p=>git(root,['show',`${baseSha}:${p}`],true);
+  if(!atBase(R9_REGISTRY_PATH).equals(git(root,['show',`${registered}:${R9_REGISTRY_PATH}`],true)))fail('R9_REREGISTER_CHECKOUT_INVALID',`${registered.slice(0,12)} did not register the registry that ${base} holds`);
+  const baseConfig=JSON.parse(atBase(R9_REGISTRY_PATH).toString('utf8'));
+  if(!same(computePins(baseConfig,atBase),registeredPins(baseConfig)))fail('R9_REREGISTER_BASE_STALE',`${base} pins bytes that its own files do not have; fix main first`);
+  const file=path.join(root,R9_REGISTRY_PATH),current=fs.readFileSync(file,'utf8'),workingConfig=JSON.parse(current);
+  // The pins must be the bytes CI checks out. Git normalizes line endings, so a CRLF working file would pin a hash CI never sees.
+  const pinned=new Set([R9_REGISTRY_PATH,...Object.values(R9_EXECUTION_FILES),workingConfig.publisher_role.workflow_path,
+    ...ADMISSION_KINDS.map(k=>workingConfig.admission_source[k+'_path']),...workingConfig.natural_producers.flatMap(d=>Object.keys(d.source_blobs??{}))]);
+  for(const p of pinned){
+    const eol=git(root,['ls-files','--eol','--',p]);
+    if(/^i\/(lf|none)\s+w\/(crlf|mixed)\b/.test(eol.trim()))fail('R9_REREGISTER_CRLF',`${p} has CRLF line endings in the working tree but LF in the index; convert it to LF before re-registering`);
+  }
+  const result=reregister({baseConfig,workingConfig,read:p=>fs.readFileSync(path.join(root,p)),oldCheckout:registered});
+  const text=JSON.stringify(result.config,null,2)+'\n';
+  return {baseSha,oldCheckout:registered,baseConfig,workingConfig,result,text,current,upToDate:text===current,file};
+}
 
 export async function main(argv,{log=console.log}={}){
   const o=parseArgs(argv);
   if(o.help){log(USAGE);return 0;}
   const root=path.resolve(o.root??git(process.cwd(),['rev-parse','--show-toplevel']));
-  const baseSha=(()=>{try{return git(root,['rev-parse','--verify',`${o.base}^{commit}`]);}catch{fail('R9_REREGISTER_BASE_MISSING',`cannot resolve --base ${o.base}; fetch main first and pass --base FETCH_HEAD (or the ref you fetched)`);}})();
-  if(!gitOk(root,['merge-base','--is-ancestor',baseSha,'HEAD']))fail('R9_REREGISTER_BASE_NOT_MERGED',`HEAD does not contain ${baseSha.slice(0,12)}; merge or rebase onto it first`);
-  const oldCheckout=o.oldCheckout??git(root,['log','-1','--first-parent','--format=%H',baseSha,'--',R9_REGISTRY_PATH]);
-  if(!SHA1.test(oldCheckout))fail('R9_REREGISTER_CHECKOUT_INVALID','could not determine the commit that registered the current generation; pass --old-checkout');
-  if(!gitOk(root,['merge-base','--is-ancestor',oldCheckout,baseSha]))fail('R9_REREGISTER_CHECKOUT_INVALID',`${oldCheckout} is not on ${o.base}`);
-  const atBase=p=>git(root,['show',`${baseSha}:${p}`],true);
-  if(!atBase(R9_REGISTRY_PATH).equals(git(root,['show',`${oldCheckout}:${R9_REGISTRY_PATH}`],true)))fail('R9_REREGISTER_CHECKOUT_INVALID',`${oldCheckout.slice(0,12)} did not register the registry that ${o.base} holds`);
-  const baseConfig=JSON.parse(atBase(R9_REGISTRY_PATH).toString('utf8'));
-  if(!same(computePins(baseConfig,atBase),registeredPins(baseConfig)))fail('R9_REREGISTER_BASE_STALE',`${o.base} pins bytes that its own files do not have; fix main first`);
-  const file=path.join(root,R9_REGISTRY_PATH),current=fs.readFileSync(file,'utf8'),workingConfig=JSON.parse(current);
-  const result=reregister({baseConfig,workingConfig,read:p=>fs.readFileSync(path.join(root,p)),oldCheckout});
-  const text=JSON.stringify(result.config,null,2)+'\n';
-  if(text===current){log(`R9 registry is up to date with the files it pins (history rotated from ${baseSha.slice(0,12)}).`);return 0;}
-  log(`R9 registry ${o.write?'re-registered':'is stale'} (base ${baseSha.slice(0,12)}, replaced generation registered at ${oldCheckout.slice(0,12)}):`);
-  for(const c of result.changes)log('  '+c);
-  for(const k of result.kept)log('  note: '+k);
-  if(result.dropped.length){
-    log('  DROPPED (capacity reached; observations made only by these generations stop authenticating):');
-    for(const d of result.dropped)log('    '+JSON.stringify(d));
+  if(o.oldCheckout!==null&&!SHA1.test(o.oldCheckout))fail('R9_REREGISTER_CHECKOUT_INVALID','--old-checkout needs a 40-hex commit');
+  const p=plan(root,{base:o.base,oldCheckout:o.oldCheckout});
+  if(p.upToDate){log(`R9 registry is up to date with the files it pins (history rotated from ${p.baseSha.slice(0,12)}).`);return 0;}
+  log(`R9 registry ${o.write?'re-registered':'is stale'} (base ${p.baseSha.slice(0,12)}, replaced generation registered at ${p.oldCheckout.slice(0,12)}):`);
+  for(const c of p.result.changes)log('  '+c);
+  if(p.result.dropped.length){
+    log('  LEAVING THE HISTORY (observations made only by these generations stop authenticating):');
+    for(const d of p.result.dropped)log('    '+JSON.stringify(d));
   }
   log('  Review by hand (never recomputed):');for(const m of MANUAL_REVIEW)log('    - '+m);
   if(!o.write){log(`Run: ${R9_REREGISTER_COMMAND}  (then review the diff and commit)`);return 1;}
-  fs.writeFileSync(file,text);log(`wrote ${R9_REGISTRY_PATH}; review the diff, then run node --test scripts/ci/merge-admission-source-producer.test.mjs`);return 0;
+  fs.writeFileSync(p.file,p.text);log(`wrote ${R9_REGISTRY_PATH}; review the diff, then run node --test scripts/ci/merge-admission-source-producer.test.mjs`);return 0;
 }
 
 const entry=(()=>{try{return fs.realpathSync(process.argv[1])===fs.realpathSync(fileURLToPath(import.meta.url));}catch{return false;}})();

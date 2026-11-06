@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {
-  R9_HISTORY_CAPS,R9_REGISTRY_PATH,R9_REREGISTER_COMMAND,appendRotating,assertHistoryInvariants,computePins,gitBlobSha,main,registeredPins,reregister,sealedWindowAgrees,
+  R9_HISTORY_CAPS,R9_REGISTRY_PATH,R9_REREGISTER_COMMAND,appendRotating,assertHistoryInvariants,computePins,gitBlobSha,main,plan,registeredPins,reregister,sealedWindowAgrees,
 } from './merge-admission-r9-reregister.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),repo=path.resolve(here,'../..');
@@ -57,8 +57,17 @@ test('sealedWindowAgrees accepts appended/rotated histories and refuses edits to
   assert.equal(sealedWindowAgrees(sealed,['b','x','d','e']),false,'hole inside the retained part');
   assert.equal(sealedWindowAgrees(sealed,['c','d','e'],()=>false),true);
   assert.equal(sealedWindowAgrees(sealed,['a','b','d'],e=>e==='c'),true,'an entry that became current is exempt');
-  assert.equal(sealedWindowAgrees(sealed,[]),true);
+  assert.equal(sealedWindowAgrees(sealed,[]),false,'a nonempty sealed history cannot become empty');
+  assert.equal(sealedWindowAgrees([],[]),true);
   assert.equal(sealedWindowAgrees([{k:1,v:2}],[{v:2,k:1}]),true,'key order is irrelevant');
+  // A->B->A: the reverted-to entry leaves the middle and comes back as the newest generation.
+  const six=['s1','s2','s3','s4','s5','s6'];
+  assert.equal(sealedWindowAgrees(six,['s1','s2','s4','s5','s6','C']),false,'a hole that never came back');
+  assert.equal(sealedWindowAgrees(six,['s2','s4','s5','s6','C','s3']),true,'a hole that came back as a newer generation');
+  assert.equal(sealedWindowAgrees(six,['s1','s2','s4','s5','s6','s3']),true);
+  assert.equal(sealedWindowAgrees(six,['s2','s4','s5','s6','C','x']),false,'the hole did not come back');
+  assert.equal(sealedWindowAgrees(six,['s2','s4','s5','s6','s3','s1']),true,'two holes came back');
+  assert.equal(sealedWindowAgrees(six,['s3','s4','s5','s6','n1','TAMPERED']),true,'entries after the seal are not this function\'s business');
 });
 
 test('re-registering the real registry against its own bytes changes nothing (formatting included)', () => {
@@ -119,25 +128,39 @@ test('history is bounded: the oldest generation is dropped, reported, and the re
   assert.ok(dropped.every(d=>typeof d.list==='string'));
 });
 
-test('going back to a retained generation removes it from the history instead of duplicating the current one', () => {
+test('going back to an earlier generation keeps every admission checkout and reports what left the other histories', () => {
   const a=filesAt(0),b=filesAt(1);
   const first=reregister({baseConfig:configFor(a),workingConfig:configFor(a),read:readFrom(b),oldCheckout:hex(1)}).config;
   const back=reregister({baseConfig:first,workingConfig:first,read:readFrom(a),oldCheckout:hex(2)});
   assertHistoryInvariants(back.config);
   assert.deepEqual(back.config.admission_source,configFor(a).admission_source);
-  assert.ok(back.config.previous_admission_sources.every(e=>e.script_blob!==back.config.admission_source.script_blob));
+  // Admission sources are found by checkout: A@1 stays (it is where A ran) and B@2 is added.
+  assert.deepEqual(back.config.previous_admission_sources.map(e=>e.source_checkout_sha),[hex(1),hex(2)]);
+  assert.equal(back.config.previous_admission_sources[0].script_blob,back.config.admission_source.script_blob);
+  // The loader and intake refuse a history entry equal to the current one, so those leave, visibly.
   assert.ok(back.config.previous_execution_sources.every(e=>e.profiles_sha256!==back.config.execution_source.profiles_sha256));
-  assert.equal(back.config.previous_admission_sources.at(-1).source_checkout_sha,hex(2));
+  assert.ok(back.dropped.some(d=>d.list==='previous_execution_sources'&&d.reason==='became the current generation'&&d.checkout===hex(1)));
+  assert.ok(back.dropped.some(d=>/previous_source_versions/.test(d.list)&&d.reason==='became the current generation'));
+  assert.deepEqual(back.config.natural_producers[0].previous_source_versions.map(v=>v.source_blobs['p/src.mjs']),[gitBlobSha('ps@1')]);
 });
 
-test('an already retained generation is not added twice', () => {
-  const a=filesAt(0),b=filesAt(1),c=filesAt(2);
-  const one=reregister({baseConfig:configFor(a),workingConfig:configFor(a),read:readFrom(b),oldCheckout:hex(1)}).config;
-  // B was retained when A came back; moving on to C with B as base replaces B by its own successor only once.
-  const two=reregister({baseConfig:one,workingConfig:one,read:readFrom(c),oldCheckout:hex(2)});
-  const identities=two.config.natural_producers[0].previous_source_versions.map(v=>JSON.stringify(v.source_blobs));
-  assert.equal(new Set(identities).size,identities.length);
-  assertHistoryInvariants(two.config);
+test('histories are only written where the registry already has them', () => {
+  const files=filesAt(0),base=configFor(files);delete base.previous_execution_sources;delete base.natural_producers[0].previous_source_versions;
+  const same=reregister({baseConfig:base,workingConfig:base,read:readFrom(files),oldCheckout:hex(1)});
+  assert.equal(Object.hasOwn(same.config,'previous_execution_sources'),false,'adding it would switch the loader to the v2 expectations');
+  assert.equal(Object.hasOwn(same.config.natural_producers[0],'previous_source_versions'),false);
+  const moved=filesAt(0);moved.set('p/src.mjs','new');
+  const producer=reregister({baseConfig:base,workingConfig:base,read:readFrom(moved),oldCheckout:hex(1)});
+  assert.equal(producer.config.natural_producers[0].previous_source_versions.length,1);
+  const exec=filesAt(0);exec.set('scripts/ci/clued-gated-proof-profiles.json','{"p":2}');
+  assert.throws(()=>reregister({baseConfig:base,workingConfig:base,read:readFrom(exec),oldCheckout:hex(1)}),/R9_REREGISTER_SCHEMA_MANUAL/);
+  const legacy=configFor(files);delete legacy.natural_producers[0].previous_source_versions;legacy.natural_producers[0].previous_source_blobs=[];
+  assert.throws(()=>reregister({baseConfig:legacy,workingConfig:legacy,read:readFrom(moved),oldCheckout:hex(1)}),/R9_REREGISTER_SCHEMA_MANUAL/);
+  assert.doesNotThrow(()=>reregister({baseConfig:legacy,workingConfig:legacy,read:readFrom(files),oldCheckout:hex(1)}),'unchanged legacy producers are left alone');
+  const mixed=structuredClone(base);mixed.natural_producers[0].previous_source_versions=[];mixed.natural_producers[0].previous_job_name='x';
+  assert.throws(()=>assertHistoryInvariants(mixed),/R9_HISTORY_INVALID/);
+  const bare=structuredClone(base);delete bare.natural_producers[0].source_blobs;
+  assert.throws(()=>reregister({baseConfig:bare,workingConfig:bare,read:readFrom(files),oldCheckout:hex(1)}),/R9_REREGISTER_PRODUCER_NEW/);
 });
 
 test('fields the helper does not own are kept from the working copy', () => {
@@ -159,13 +182,15 @@ test('refuses what needs a human: reused checkout, changed source paths, a new p
   assert.throws(()=>reregister({baseConfig:base,workingConfig:added,read,oldCheckout:hex(1)}),/R9_REREGISTER_PRODUCER_NEW/);
   const missing=filesAt(1);missing.delete('p/src.mjs');
   assert.throws(()=>reregister({baseConfig:base,workingConfig:base,read:readFrom(missing),oldCheckout:hex(1)}),/R9_REREGISTER_FILE_MISSING: p\/src\.mjs/);
+  const noProfiles=filesAt(1);noProfiles.delete('scripts/ci/clued-gated-proof-profiles.json');
+  assert.throws(()=>reregister({baseConfig:base,workingConfig:base,read:readFrom(noProfiles),oldCheckout:hex(1)}),/R9_REREGISTER_FILE_MISSING: scripts\/ci\/clued-gated-proof-profiles\.json/);
   for(const bad of [undefined,'abc','g'.repeat(40),'A'.repeat(40)])assert.throws(()=>reregister({baseConfig:base,workingConfig:base,read,oldCheckout:bad}),/R9_REREGISTER_CHECKOUT_INVALID/);
   const renamed=structuredClone(base);renamed.natural_producers[0].job_name='renamed';
   assert.throws(()=>reregister({baseConfig:withHistory,workingConfig:renamed,read:readFrom(filesAt(2)),oldCheckout:hex(2)}),/R9_HISTORY_INVALID/,
     'a renamed job whose history keeps the old name is something the runtime would refuse');
 });
 
-test('history invariants match what the runtime consumers refuse', () => {
+test('history invariants reject every shape the loader, the intake or the registry design refuse', () => {
   const ok=reregister({baseConfig:configFor(filesAt(0)),workingConfig:configFor(filesAt(0)),read:readFrom(filesAt(1)),oldCheckout:hex(1)}).config;
   assertHistoryInvariants(ok);
   const mutate=(fn)=>{const c=structuredClone(ok);fn(c);return c;};
@@ -175,6 +200,7 @@ test('history invariants match what the runtime consumers refuse', () => {
     'admission extra key':c=>{c.previous_admission_sources[0].source_authenticated=true;},
     'execution over capacity':c=>{c.previous_execution_sources=Array.from({length:R9_HISTORY_CAPS.previous_execution_sources+1},(_,i)=>({source_checkout_sha:hex(i+3),profiles_sha256:String(i).repeat(64),role_specs_sha256:'b'.repeat(64)}));},
     'execution equals current pair':c=>{c.previous_execution_sources[0]={...c.previous_execution_sources[0],...c.execution_source};},
+    'admission checkout of the wrong length':c=>{c.previous_admission_sources[0].source_checkout_sha='a'.repeat(39);},
     'execution duplicate pair':c=>{c.previous_execution_sources.push({...c.previous_execution_sources[0],source_checkout_sha:hex(9)});},
     'execution bad checkout':c=>{c.previous_execution_sources[0].source_checkout_sha='g'.repeat(40);},
     'versions over capacity':c=>{c.natural_producers[0].previous_source_versions=Array.from({length:R9_HISTORY_CAPS.previous_source_versions+1},(_,i)=>({job_name:'build',source_blobs:{'p/wf.yml':String(i).repeat(40),'p/src.mjs':'e'.repeat(40)}}));},
@@ -231,11 +257,14 @@ test('command line: reports, writes, and is idempotent against main-derived hist
     await assert.rejects(cli(dir,'--base','HEAD','--old-checkout','nothex'),/R9_REREGISTER_CHECKOUT_INVALID/);
     await assert.rejects(cli(dir,'--bogus'),/R9_REREGISTER_USAGE/);
     await assert.rejects(cli(dir,'--base'),/R9_REREGISTER_USAGE/);
+    await assert.rejects(cli(dir,'--base','--write'),/R9_REREGISTER_USAGE/);
+    await assert.rejects(cli(dir,'--base','-x'),/R9_REREGISTER_USAGE/);
+    await assert.rejects(cli(dir,'--base','HEAD','--old-checkout',hex(7)),/R9_REREGISTER_CHECKOUT_INVALID/);
 
     // A main whose own files disagree with its registry cannot be rotated from.
     writeTree(dir,new Map([['a/script.mjs','changed without re-registering']]));
     gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','stale main');
-    await assert.rejects(cli(dir,'--base','HEAD'),/R9_REREGISTER_BASE_STALE|R9_REREGISTER_CHECKOUT_INVALID/);
+    await assert.rejects(cli(dir,'--base','HEAD'),/R9_REREGISTER_BASE_STALE/);
   }finally{fs.rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 });
 
@@ -245,4 +274,72 @@ test('command line: --help and bad arguments behave when run as a script', () =>
   assert.equal(help.status,0);assert.match(help.stdout,/--write/);assert.match(help.stdout,/--base/);
   const bad=spawnSync(process.execPath,[script,'--nope'],{encoding:'utf8'});
   assert.equal(bad.status,2);assert.match(bad.stderr,/R9_REREGISTER_USAGE/);
+});
+
+function repoWithRegistry(prefix){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),prefix));
+  gitIn(dir,'init','-q','-b','main');gitIn(dir,'config','core.autocrlf','false');
+  writeTree(dir,new Map([['.gitattributes','* text eol=lf\n'],...filesAt(0)]));
+  fs.mkdirSync(path.join(dir,'scripts/ci'),{recursive:true});
+  fs.writeFileSync(path.join(dir,R9_REGISTRY_PATH),JSON.stringify(configFor(filesAt(0)),null,2)+'\n');
+  gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','register generation 0');
+  return dir;
+}
+const cleanup=(dir)=>fs.rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+
+test('command line: a base the branch does not contain, a shallow clone and CRLF pins are refused', async () => {
+  const dir=repoWithRegistry('r9-reregister-guards-'),clone=dir+'-shallow';
+  try{
+    const first=gitIn(dir,'rev-parse','HEAD');
+    writeTree(dir,new Map([['unrelated.txt','x']]));gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','later main commit');
+    gitIn(dir,'checkout','-q','-b','behind',first);
+    await assert.rejects(cli(dir,'--base','main'),/R9_REREGISTER_BASE_NOT_MERGED/);
+    gitIn(dir,'checkout','-q','main');
+
+    // The commit that registered a generation is unknowable in a shallow clone: the boundary commit looks like a root.
+    gitIn(dir,'clone','-q','--depth','1',pathToFileURL(dir).href,clone);
+    await assert.rejects(cli(clone,'--base','HEAD'),/R9_REREGISTER_SHALLOW/);
+    const r=await cli(clone,'--base','HEAD','--old-checkout',gitIn(clone,'rev-parse','HEAD'));assert.equal(r.code,0,r.out);
+
+    // Git stores LF; a CRLF working file would pin a hash CI never sees.
+    fs.writeFileSync(path.join(dir,'a/script.mjs'),'s@0\r\nmore\r\n');
+    await assert.rejects(cli(dir,'--base','HEAD'),/R9_REREGISTER_CRLF.*a\/script\.mjs/);
+  }finally{cleanup(dir);cleanup(clone);}
+});
+
+
+test('command line: the replaced generation is the registering commit on the first-parent line, also through merges', async () => {
+  const dir=repoWithRegistry('r9-reregister-merge-');
+  try{
+    gitIn(dir,'checkout','-q','-b','feature');
+    const next=filesAt(0);next.set('a/script.mjs','generation one script');writeTree(dir,next);
+    let r=await cli(dir,'--base','main','--write');assert.equal(r.code,0,r.out);
+    gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','change the admission script');
+    gitIn(dir,'checkout','-q','main');writeTree(dir,new Map([['side.txt','y']]));gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','main moves');
+    gitIn(dir,'merge','-q','--no-ff','-m','merge feature','feature');
+    const merge=gitIn(dir,'rev-parse','HEAD');
+    r=await cli(dir,'--base','HEAD');assert.equal(r.code,0,r.out);
+
+    // The next change is rotated from the merge commit, which is the first-parent commit that registered generation one.
+    gitIn(dir,'checkout','-q','-b','second');
+    writeTree(dir,new Map([['a/script.mjs','generation two script']]));
+    r=await cli(dir,'--base','main','--write');assert.equal(r.code,0,r.out);
+    const written=JSON.parse(fs.readFileSync(path.join(dir,R9_REGISTRY_PATH),'utf8'));
+    assert.deepEqual(written.previous_admission_sources.map(e=>e.source_checkout_sha).slice(-1),[merge]);
+    assert.equal(written.previous_admission_sources.length,2);
+  }finally{cleanup(dir);}
+});
+
+test('this checkout holds exactly the registry the helper derives from main (needs full history and a resolvable main)', (t) => {
+  const refs=[process.env.CLUED_R9_BASE,'origin/main','refs/local-verify/github/main'].filter(Boolean);
+  for(const ref of refs){
+    let base;
+    try{base=execFileSync('git',['merge-base','HEAD',ref],{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{continue;}
+    let p;
+    try{p=plan(repo,{base});}
+    catch(error){if(/R9_REREGISTER_(SHALLOW|BASE_|CHECKOUT_INVALID)/.test(error.message))continue;throw error;}
+    assert.ok(p.upToDate,`${R9_REGISTRY_PATH} is not what the helper derives from ${ref}@${base.slice(0,12)}: ${p.result.changes.join('; ')||'history differs'}. Run: ${R9_REREGISTER_COMMAND}`);
+    return;
+  }
+  t.skip('no full-history main to rotate from (shallow clone or no main ref)');
 });

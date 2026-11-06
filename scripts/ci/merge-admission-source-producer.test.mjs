@@ -372,14 +372,17 @@ test('runtime loader validates the current Source registry against actual bytes 
   });
   assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
   assert.equal(sha256(JSON.stringify(previous.previous_admission_sources.slice(0,2))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
-  const blobsOf=(a,b)=>['script','workflow','reverify_workflow','policy'].every(k=>a[k+'_blob']===b[k+'_blob']);
   const sealedAdmission=[...previous.previous_admission_sources,{...previous.admission_source,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'}];
-  assert.ok(sealedWindowAgrees(sealedAdmission,cfg.previous_admission_sources,e=>blobsOf(e,cfg.admission_source)),
+  assert.ok(sealedWindowAgrees(sealedAdmission,cfg.previous_admission_sources),
     'previous_admission_sources is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
-  const unchanged=Object.fromEntries(Object.entries(cfg).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
-  assert.deepEqual(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))),
-    Object.fromEntries(Object.entries(previous).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers','execution_source','previous_execution_sources'].includes(key))));
-  assert.equal(sha256(JSON.stringify({...unchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
+  // Everything the helper does not re-pin (forward epoch, clock, coverage, bindings, publisher job fields) stays
+  // exactly the sealed value; the publisher workflow pins move with the publisher workflow (and are checked above).
+  const withoutAdmission=o=>Object.fromEntries(Object.entries(o).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
+  const unchangedPublisher=o=>({...o,publisher_role:Object.fromEntries(Object.entries(o.publisher_role).filter(([key])=>!['workflow_blob','workflow_source_sha256'].includes(key)))});
+  const unchanged=withoutAdmission(cfg),sealedUnchanged=withoutAdmission(previous);
+  assert.deepEqual(unchangedPublisher(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))),
+    unchangedPublisher(Object.fromEntries(Object.entries(sealedUnchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))));
+  assert.equal(sha256(JSON.stringify({...sealedUnchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
     'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
   // History is bounded (R9_HISTORY_CAPS) and rotates: re-registration appends the replaced generation and drops the
   // oldest one beyond the capacity. The two generations registered at 9e9d3fa66 (admission script b413917364fc,
@@ -447,7 +450,8 @@ test('sealed Source history rejects changed metadata, corrupted bytes and decomp
 test('execution history capacity is exactly the one the re-registration helper rotates at',async()=>{
   const original=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),cap=R9_HISTORY_CAPS.previous_execution_sources;
   // Unique checkouts and unique profile/role pairs, so only the count can decide.
-  const history=n=>Array.from({length:n},(_,i)=>({source_checkout_sha:String(i+1).repeat(40),profiles_sha256:String(i+1).repeat(64),role_specs_sha256:String(i+2).repeat(64)}));
+  const hex=(i,n)=>i.toString(16).padStart(n,'0');
+  const history=n=>Array.from({length:n},(_,i)=>({source_checkout_sha:hex(i+1,40),profiles_sha256:hex(i+1,64),role_specs_sha256:hex(i+2,64)}));
   const load=async n=>loadIndependentR9RuntimeInputs({request:runtimeFixture(null,{...original,previous_execution_sources:history(n)}).request,
     budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
   assert.equal((await load(cap)).reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');
