@@ -60,7 +60,7 @@ test('the eligibility matrix: stage x code x STOP_SENT x Windows half x quiet pu
   for (const code of SCANNER_ABANDON_ENDINGS) for (const stage of [2, 4, 6]) assert.equal(decideFailure({ code, stage, proof: CLEAN_PROOF, started: true }).klass, 'UNKNOWN', `${code}@${stage}`);
 });
 
-test('the 10-28 ending at stage 2: two runs again in the batch (DESIGN 58), then FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, archived scanner-abandoned, no HALT, never published, one attempt 2', async t => {
+test('the 10-28 ending at stage 2: two runs again in the batch (DESIGN 59), then FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, archived scanner-abandoned, no HALT, never published, one attempt 2', async t => {
   const engine = fakeEngine({ stages: { 2: stopped() } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
@@ -92,7 +92,7 @@ test('the 10-28 ending at stage 2: two runs again in the batch (DESIGN 58), then
 test('stage 2: attempt 2 runs once after the delay; an attempt 2 abandoned again gets no attempt 3', async t => {
   const engine = fakeEngine();
   let n = 0;
-  // each attempt: the run and its two runs again in the batch (DESIGN 58)
+  // each attempt: the run and its two runs again in the batch (DESIGN 59)
   engine.runStage = async (batch, stage) => { engine.calls.push(['stage', stage.number]); return stage.number === 2 && ++n <= 6 ? stopped() : { ok: true }; };
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
@@ -142,7 +142,7 @@ test('quiescence not proven within 5 minutes HALTs with the original code; the s
   const s = await f.ledger.state(KEY);
   assert.deepEqual([s.outcome, s.terminal.facts.failureCode, s.terminal.facts.basis, s.terminal.facts.originalCode], ['FAILED_UNKNOWN', 'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'scanner-abandon-quiescence-unproven', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
   assert.equal((await f.ledger.halted()).value.code, 'BRIDGE_STAGE_STOPPED_PUMP_LOST');
-  // the failure proof, then the bounded re-check of the run again (DESIGN 58: refused, no archive), then that of the failure path
+  // the failure proof, then the bounded re-check of the run again (DESIGN 59: refused, no archive), then that of the failure path
   assert.equal(companion.calls.filter(c => c[0] === 'quiescence').length, 1 + 2 * ABORT_QUIESCENCE_ATTEMPTS, 'the failure proof, then the bounded re-checks');
   assert.deepEqual((await bodies(f, 'execution-retry-refused')).map(b => [b.stage, b.step]), [[2, 'quiescence']]);
   assert.equal(f.engine.calls.filter(c => c[0] === 'archive-windows').length + companion.calls.filter(c => c[0] === 'archive-linux').length, 0, 'nothing archived');

@@ -62,7 +62,7 @@ test('the pure rule: stages 4 and 6 (and 2, abandoned only); abandoned-unpublish
   assert.deepEqual(executionRetryable({ stage: 6, code: LINUX_MEMORY_NOT_READY, proof: WINDOWS_CLEAN }), { retry: true, basis: 'memory-gate', reason: null });
 });
 
-// Generation 14 (DESIGN 58, defect e0a5630d): the stage-2 relay a busy host made the pump refuse (11-06 #1007, 11-05 #1005, 11-04).
+// Generation 14 (DESIGN 59, defect e0a5630d): the stage-2 relay a busy host made the pump refuse (11-06 #1007, 11-05 #1005, 11-04).
 const pumpLost2 = (o = {}) => ({ ok: false, code: 'BRIDGE_STAGE_STOPPED_PUMP_LOST', proof: WINDOWS_CLEAN, outcome: null, bridge: bridge({ stageCode: 'STAGE_OUTCOME_MISSING', ...o }) });
 test('the pure rule at stage 2: the abandoned basis only; the memory gate, clean refusals, a loud pump or a missing proof keep the path of before', () => {
   const p = pumpLost2();

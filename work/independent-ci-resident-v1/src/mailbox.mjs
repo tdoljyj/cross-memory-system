@@ -91,7 +91,7 @@ const REQUEST_FIELDS = {
 
 export function validateRequest(v) {
   check(v && KINDS.includes(v.kind), 'MAILBOX_REQUEST_KIND_REFUSED');
-  // DESIGN 54/58: a relay-stage of a run again (stages 2, 4 and 6: every relay-stage) carries `again` (1 or 2); a first run never carries it.
+  // DESIGN 54/59: a relay-stage of a run again (stages 2, 4 and 6: every relay-stage) carries `again` (1 or 2); a first run never carries it.
   const again = v.kind === 'relay-stage' && Object.hasOwn(v, 'again');
   exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind], ...(again ? ['again'] : [])], 'MAILBOX_REQUEST_KEYS_REFUSED');
   check(v.contract === REQUEST_CONTRACT && UUID.test(v.requestId), 'MAILBOX_REQUEST_IDENTITY_REFUSED');

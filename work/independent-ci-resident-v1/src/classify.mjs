@@ -306,7 +306,7 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false, re
   }
 }
 
-// Generation 11 (DESIGN 54): the execution stages 4 and 6 (and 2, abandoned only: DESIGN 58) run again IN THE SAME BATCH after an ending that says nothing about the PR and
+// Generation 11 (DESIGN 54): the execution stages 4 and 6 (and 2, abandoned only: DESIGN 59) run again IN THE SAME BATCH after an ending that says nothing about the PR and
 // is proven to have published nothing; stage 3 already published, so an attempt 2 is impossible (DESIGN 53.12), and a new commit is
 // what this replaces. The stage's own publication (5 or 7) has not run: it runs once, after the run that succeeds, on that run's signed
 // result. Two kinds of ending qualify:
@@ -317,7 +317,7 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false, re
 //     or GitHub / Native unreadable; full_admission_unavailable only with its transport flag), or the memory gate's refusal before the
 //     stage was invoked. A refusal about the PR (it changed or closed, refs moved, not admitted) is never retried.
 // The executor adds: no HALT, no drift, a two-host quiescence proof and a verified retry-stage-N archive before each run again.
-// Generation 14 (DESIGN 58, defect e0a5630d): stage 2 (gitleaks) runs again too, on the abandoned basis ONLY: a relay that a busy host
+// Generation 14 (DESIGN 59, defect e0a5630d): stage 2 (gitleaks) runs again too, on the abandoned basis ONLY: a relay that a busy host
 // (a slow or hung wsl.exe) made the pump refuse, proven by the same DESIGN 27 facts to have published nothing (stage 3 has not run).
 // Its other endings keep their own path (the memory gate and the clean refusals: the one attempt 2 of DESIGN 32 / O-2, or as before).
 export const EXECUTION_RETRY_STAGES = Object.freeze([2, 4, 6]);

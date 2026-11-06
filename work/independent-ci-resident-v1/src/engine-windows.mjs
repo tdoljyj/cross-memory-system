@@ -696,7 +696,7 @@ export class WindowsEngine {
     const firstLinux = opts ? opts.firstLinux === true : stage.number === 2;
     check(!betweenRoles || [4, 6].includes(stage.number), 'RESIDENT_BETWEEN_ROLES_STAGE_INVALID');
     check(!firstLinux || [2, 4, 6].includes(stage.number), 'RESIDENT_FIRST_LINUX_STAGE_INVALID');
-    // DESIGN 54 (stage 2: DESIGN 58): a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
+    // DESIGN 54 (stage 2: DESIGN 59): a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
     // took the run's records); the batch's first Linux stage keeps its refs gate and version check (firstLinux) on a run again too.
     const again = opts?.again ?? 0;
     check(again === 0 || (EXECUTION_RETRY_STAGES.includes(stage.number) && [1, 2].includes(again) && !betweenRoles), 'RESIDENT_STAGE_AGAIN_INVALID');

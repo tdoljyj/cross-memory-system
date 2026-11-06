@@ -107,7 +107,7 @@ class Archive(unittest.TestCase):
         self.assertIn(f'runs/gitleaks-{JOB}', [m['from'] for m in full['moves']])
 
     def test_retry_stage_keeps_the_workspaces_and_moves_protocol_role_lock_and_runs(self):
-        # Generation 11 (DESIGN 54; stage 2: DESIGN 58): an execution stage run again in the same batch keeps what the run again needs.
+        # Generation 11 (DESIGN 54; stage 2: DESIGN 59): an execution stage run again in the same batch keeps what the run again needs.
         r = pathlib.Path(self.root)
         (r / 'formal-spool' / 'outgoing' / 'challenge-01.json').write_text('{}')  # a half pair: a failure scope takes it as found
         (r / 'workspaces').mkdir(exist_ok=True)
