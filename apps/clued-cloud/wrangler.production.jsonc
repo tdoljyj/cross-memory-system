@@ -4,11 +4,13 @@
   "routes": [
     { "pattern": "clued.pixelgrav.com", "custom_domain": true },
     { "pattern": "kooyumi.pixelgrav.com", "custom_domain": true },
-    { "pattern": "kooyomi.com", "custom_domain": true }
+    { "pattern": "kooyomi.com", "custom_domain": true },
+    { "pattern": "beamingface.com", "custom_domain": true },
+    { "pattern": "dev.beamingface.com", "custom_domain": true }
   ],
   "vars": {
     "KOOYUMI_OAUTH_ORIGIN": "https://kooyumi.pixelgrav.com",
-    "CLUED_WEB_ORIGINS": "https://kooyumi.pixelgrav.com,https://kooyomi.com",
+    "CLUED_WEB_ORIGINS": "https://kooyumi.pixelgrav.com,https://kooyomi.com,https://beamingface.com,https://dev.beamingface.com",
     "CLUED_MODEL_DOMAIN_SOURCE_V1": "true",
     "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": "true"
   },

@@ -129,7 +129,7 @@ import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breaker
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
+import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
@@ -3169,6 +3169,7 @@ export class ResidentExecutor {
           const verdict = executionRetryable({ stage: number, code: validCode(r.code), outcome: r.outcome ?? null, bridge: r.bridge ? bridgeFacts(r.bridge) : null, proof: r.proof });
           if (!verdict.retry) break;
           if (!(await this.prepareExecutionRetry(key, batch, number, r, again, verdict.basis))) break;
+          const abandoned = r;
           this.atStage(number, 'retry-wait'); // the status page: waiting to run the stage again, not running it
           await this.retryWait(key, EXECUTION_RETRY_MS[again]);
           if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
@@ -3182,6 +3183,16 @@ export class ResidentExecutor {
           ({ result: r, abort, stopCode, unconfirmed } = run);
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), ...refsGateFacts(r), executionRetry: again + 1 });
+          // DESIGN 59.1: stage 2's own gates refused the run again before it ran: the batch ends on the abandoned run, as without it. The
+          // receipt names the substitution (and a refs gate without an answer: the ending is counted as environment, as before generation 14).
+          if (number === 2 && r.ok !== true && !abort && !unconfirmed && STAGE2_RETRY_KEEPS_ABANDONED.includes(validCode(r.code))) {
+            try {
+              await this.receipt('execution-retry-refused', { key, stage: number, try: again + 1, step: 'gate', failureCode: validCode(r.code), kept: 'abandoned',
+                ...(r.refsNoAnswer === true ? { refsNoAnswer: true } : {}) });
+            } catch { /* the batch still ends on the abandoned run */ }
+            r = abandoned;
+            break;
+          }
         }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
