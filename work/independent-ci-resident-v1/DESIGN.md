@@ -4702,4 +4702,4 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 59.4 安装
 
-常驻代码改动（`classify.mjs`、`executor.mjs` 注释、`engine-windows.mjs`、`mailbox.mjs`、Linux 工具）；`upgrader/src/` 及其传递依赖（`canonical`、`store`、`upgrade-mailbox`、`intake-pause`、`inbox`、`instance-lock`）一个字节未动。行为变化需 Owner 在安装第 14 代时确认：第 2 段放弃后同批次内最多再跑两次扫描。
+常驻代码改动（`classify.mjs`、`executor.mjs` 注释、`engine-windows.mjs`、`mailbox.mjs`、Linux 工具）；`upgrader/src/` 及其传递依赖（`canonical`、`store`、`upgrade-mailbox`、`intake-pause`、`inbox`、`instance-lock`）一个字节未动。组件：`script.independent-native-publication` 1.1.9 → 1.1.10（它的文件清单含 `engine-windows.mjs`、`executor.mjs`；`clued_components.py bump` + `update`，并重新生成 `components.ts`）。行为变化需 Owner 在安装第 14 代时确认：第 2 段放弃后同批次内最多再跑两次扫描。
