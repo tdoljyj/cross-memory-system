@@ -10,8 +10,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import vm from 'node:vm';
-import ts from 'typescript';
+import { resolveSupabasePublicConfig } from '../app/supabase-public-config.ts';
 import { classifyTests, importSpecifiers } from '../scripts/select-tests.mjs';
 import { SUITE_COMMANDS } from '../../../scripts/ci/ci-required-selection.mjs';
 import { PUBLIC_CONFIG_SOURCE, resolvePublicSupabaseConfig } from '../../../scripts/ci/clued-work-admission.mjs';
@@ -29,7 +28,8 @@ for (const file of classifyTests(TESTS).unit) {
 // The admission self-tests run in their own suite whenever their code changes
 // (ci-required-selection.test.mjs holds its triggers to their imports), keep
 // their own known failures, and print GitHub annotations, so they are not run
-// again here. The one file they read outside those triggers is checked below.
+// again here. The one file they read outside those triggers (the application's
+// public Supabase default) is checked below for both patterns that read it.
 // Other suite-listed tests, such as the selection test, check the whole
 // repository but run only when a few files change: they stay here.
 for (const command of SUITE_COMMANDS['admission-self-tests']) {
@@ -50,14 +50,14 @@ const files = ['scripts/ci', 'scripts/ci/self-hosted']
 
 for (const file of files) await import(pathToFileURL(file).href);
 
-// The admission scripts (and through them the admission self-tests) read the
-// application's public Supabase default from its source text.
-test('the admission scripts read the application public Supabase default', () => {
-  const source = ts.transpileModule(readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  const exports = {};
-  vm.runInNewContext(source, { exports, URL, Error });
-  const { url, key } = exports.resolveSupabasePublicConfig({});
+// The admission script and the runner hook (and with them the admission
+// self-tests) read the application's public Supabase default from its source
+// text, each with its own pattern.
+test('the admission script and the runner hook read the application public Supabase default', () => {
+  const { url, key } = resolveSupabasePublicConfig({});
   assert.deepEqual(resolvePublicSupabaseConfig({}, ROOT), { url, key, source: PUBLIC_CONFIG_SOURCE });
+  // The runner hook's pattern (scripts/runner/clued-runner-job-started.mjs, decideWithCurrentEpoch).
+  const runner = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/
+    .exec(readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8'));
+  assert.deepEqual(runner?.slice(1), [url, key]);
 });
