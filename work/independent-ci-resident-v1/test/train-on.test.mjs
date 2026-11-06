@@ -136,6 +136,26 @@ test('facts /2: a summary only with a decision in on; OPEN_FRONT_BATCH only with
   assert.throws(() => answer('on', { sweep: { ...NO_SWEEP, fullSweep: { ...NO_SWEEP.fullSweep, scope: 'some' } } }), /invalid_train_facts/);
 });
 
+test('executor, on: main rewritten after the take-over holds new batches again until the round of scope all completes, whatever the run decides', async t => {
+  const rewritten = (decision, state = 'running') => ({ decision, sweep: { ...NO_SWEEP, kind: 'full-segment', complete: false, fullSweep: { state, startedAt: new Date(T0).toISOString(),
+    completedAt: null, sinceOn: false, reason: null, scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN', allPending: 'TRAIN_MAIN_REWRITTEN' } } });
+  const e = scripted([mode => answer(mode, DONE, 0), mode => answer(mode, rewritten('TRAIN_SWEEP_INCOMPLETE'), 0), mode => answer(mode, rewritten('TRAIN_REVOKE_UNCONFIRMED'), 0),
+    mode => answer(mode, DONE, 0)]);
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  withInput(e);
+  await f.exec.tick();
+  assert.equal(f.exec.trainTakeoverDone, true, 'the take-over sweep completed');
+  assert.equal(f.exec.trainGate(), null);
+  for (const decision of ['TRAIN_SWEEP_INCOMPLETE', 'TRAIN_REVOKE_UNCONFIRMED']) {
+    f.advance(10 * MIN);
+    await f.exec.tick();
+    assert.deepEqual([f.exec.trainTakeoverDone, f.exec.trainGate()], [false, { state: 'DEFERRED', reason: 'TRAIN_TAKEOVER_SWEEP_PENDING' }], decision);
+  }
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  assert.deepEqual([f.exec.trainTakeoverDone, f.exec.trainGate()], [true, null], 'the round of scope all completed since on');
+});
+
 test('executor, on: the take-over sweep holds new batches; an on-mode run with side effects is a normal ending and lets them go', async t => {
   const e = scripted([mode => answer(mode, { decision: 'TRAIN_TAKEOVER_SWEEP_PENDING' }, 3), mode => answer(mode, DONE, 2)]);
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
