@@ -3331,7 +3331,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - KooYomi 独立发布流水里 `kooyumi-merge-slot` 的发布（`work_claim_publications_v1` 有 `head_sha` 与 `check_run_id`，迁移 `20261011131755`；身份里有检查名，迁移 `20261029050000`）：每个常驻节点发的都在里面，所以它是撤销的来源，不只是对照。别的节点的台账没有直接通道，由流水代替：本节点的台账加上流水，就覆盖了所有节点的台账（41.10）；
   - 自上次清扫以来 GitHub 上更新过的 PR（`pulls?state=all&sort=updated&direction=desc`，翻到上次清扫的时刻为止）：当前 head、PR 的全部提交（普通推送换下的旧 head 在里面）、强推前后的提交（GraphQL `HeadRefForcePushedEvent`），重新打开或改了 base 的 PR 同样处理。
   - 对这些提交列出 App 5368905 的 `kooyumi-merge-slot` 成功，按上面“撤谁”处理；在 main 里的（判法同 `train-maintenance.mjs:59`）不撤。去掉 30 个的截断：列不完就是清扫不完整。
-- **全量清扫**：所有 PR（open 与 closed，全部分页）的当前 head、全部提交、强推前后的提交，加上本节点台账和整条发布流水，逐个列 App 5368905 的 `kooyumi-merge-slot`，按“撤谁”处理。REST 的 `pulls/{n}/commits` 最多返回 250 个提交：超过的 PR 算不完整，整轮作废并通知 Owner（GraphQL 是否同样限 250：未核实）。一次第 10 段 5 分钟放不下，所以分段：游标存在 `state\v2\train-sweep\`（clued-control，只新建，写法同台账）；一轮从开始到完成不得超过 `train.fullSweepMaxMs`（暂定 6 小时，第 9 步的影子演练实测后定），超了作废重来；完成时写证明（开始与完成时刻、main 尖端、车头、读过的 PR 与提交数、撤了几个、是否全部确认）。
+- **全量清扫**（第 15 代起按 §60 选择每轮读什么）：所有 PR（open 与 closed，全部分页）的当前 head、全部提交、强推前后的提交，加上本节点台账和整条发布流水，逐个列 App 5368905 的 `kooyumi-merge-slot`，按“撤谁”处理。REST 的 `pulls/{n}/commits` 最多返回 250 个提交：超过的 PR 算不完整，整轮作废并通知 Owner（GraphQL 是否同样限 250：未核实）。一次第 10 段 5 分钟放不下，所以分段：游标存在 `state\v2\train-sweep\`（clued-control，只新建，写法同台账）；一轮从开始到完成不得超过 `train.fullSweepMaxMs`（暂定 6 小时，第 9 步的影子演练实测后定），超了作废重来；完成时写证明（开始与完成时刻、main 尖端、车头、读过的 PR 与提交数、撤了几个、是否全部确认）。
 - **读不到就失败关闭**：任何一页不完整（分页没到底、`complete` 不是 true、GraphQL 报错、限额、流水读不全）整轮作废，不写“干净”的证明；状态和 PR 页面显示“清扫未完成”。
 - **台账清理**（§19.7 N2）：一个作用键最后阶段是两次读回确认的 `revoked`，或 `merged` 且 head 已在 main，超过 14 天就整组移到 `green-ledger\closed\<yyyy-mm>\`（同一 ACL）；列出只看顶层。台账只是来源之一，清理错了由流水和 GitHub 枚举兜住。
 - **只撤模式**：train-run 的 mode 加 `revoke-only`。PAUSE 时执行器在 `executor.mjs:1096-1097` 返回 PAUSED 之前跑它（v0.2 §4.3），节奏同第 10 段。它管“撤谁”的三种（旧绿、main 在列车外移动后的车头绿、撤车头请求），做增量清扫、写证明；不开批次，不 touch、adopt、return，不保活。HALT 时不跑（41.10）。
@@ -4710,3 +4710,56 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 ### 59.4 安装
 
 常驻代码改动（`classify.mjs`、`executor.mjs` 注释、`engine-windows.mjs`、`mailbox.mjs`、Linux 工具）；`upgrader/src/` 及其传递依赖（`canonical`、`store`、`upgrade-mailbox`、`intake-pause`、`inbox`、`instance-lock`）一个字节未动。组件：`script.independent-native-publication` 1.1.9 → 1.1.10（它的文件清单含 `engine-windows.mjs`、`executor.mjs`；`clued_components.py bump` + `update`，并重新生成 `components.ts`）。行为变化需 Owner 在安装第 14 代时确认：第 2 段放弃后同批次内最多再跑两次扫描；每次重跑本身也可能以自己的停机类结束收场（例如签发者未确认），所以一个 head 第 2 段的运行次数从最多 2 次（首跑加 attempt 2）变为最多 6 次。
+
+## 60. 第 15 代：全量清扫平时只读开着的 PR 和关闭未合并 PR 的当前 head；main 被改写或没有记录时照旧读全部（Owner Decision `fb39ec73` v2，方案 c 与 c1）
+
+**为什么改。** 原来的全量清扫读所有 PR（开着的和关着的）的全部提交和强推前后的提交，约 1000 个 PR，一轮 4.5–5.5 小时，两次碰到 6 小时上限被放弃，主机负载也重（Task 67b41719 的影子数据）。开车（train=on）要先完成一轮全量清扫。
+
+### 60.1 每轮读什么（`train-sweep.mjs#fullSweepHeads`，Source）
+
+- 列表和游标不变：仍按 `pulls?state=all&sort=created&direction=asc` 分页，游标（`nextPage`、`nextIndex`）照旧。这个列表只在末尾增长，所以游标稳定；第 14 代留下的进行中游标在第 15 代下接着用。
+- 一轮的 `scope`：
+  - **`current`**（平时）：
+    - 开着的 PR：照旧读全部提交和强推前后的提交；超过 250 个提交仍使整轮作废。
+    - 关闭未合并的 PR：只判当前 head。
+    - 已合并的 PR：不读（它的提交都在 main 里）。
+    - 列表给出的 PR 若既不是开着的，也不是"关闭且合并与否明确"的，整轮作废（`TRAIN_PULLS_INCOMPLETE`）。
+  - **`all`**：与第 14 代以前完全相同，所有 PR 的全部提交和强推前后的提交。
+- **为什么 `current` 够用：**
+  - 关闭的 PR 合不进 main。要合，必须先重新打开它（或推送它的分支），或者新开一个 head 指向某个旧提交的 PR。这三种操作都会更新 PR 的 `updated_at`，所以每次第 10 段的增量清扫都能看到，按"撤谁"撤掉。
+  - 关闭的 PR 一旦重新打开，它的当前 head 当场就可以合，这正是要防的。
+  - 实例：#936 在 10-29 关闭、未合并，当前 head `df659f1c94` 上 App 5368905 的 `kooyumi-merge-slot` 仍是 success（check run 123183250791），比 main 多 31 个提交、不在 main 里。影子记录里，它只在全量清扫的分段中出现（6 次），增量清扫从没找到它：它不在发布流水里，也不在台账里，#936 也早已不再更新。所以关闭未合并 PR 的当前 head 必须由全量清扫去判。
+- **剩下的窗口：** 两次清扫之间有人重新打开 PR 并立刻合并。下一次第 10 段的增量清扫会撤掉这条绿，但那时可能已经合入。这个窗口在第 15 代之前对任何 PR 都同样存在，本节没有让它变大；train=on 时 strict 关闭，所以靠的是"旧绿已在全量清扫时撤掉"。
+
+### 60.2 什么时候读全部（方案 c1，`train-maintenance.mjs`）
+
+- **main 被改写过：** 每次第 10 段都把这次看到的 main 尖端记进这个模式的清扫状态（`mainSha`）。下一次运行先比较：上次的尖端不是当前 main 的祖先（compare 的 `behindBy` 不为 0，或上次的尖端 GitHub 已没有、返回 404），就是 main 被改写过。这时：
+  - 跨运行的"已在 main 里"缓存（`inMain`）立即作废（第 14 代以前已有的隐患：main 被改写后，缓存会把已经离开 main 的 head 当成仍在 main，从而不撤）；
+  - 正在进行的一轮作废并重开（`TRAIN_MAIN_REWRITTEN`）；
+  - 记下 `mainRewritten`，直到一轮 `all` 完成才清掉。期间开始的每一轮都是 `all`（`scopeReason: TRAIN_MAIN_REWRITTEN`）。
+- **为什么要读全部：** 运维文档 `docs/maintenance/independent-ci.md` 第 93 行写明，main 万一被强推回旧提交，"以前已合入、带着六项绿的 head 不再在 main 里，从它新开一个 PR 就能在清扫之前合入"，要先开回 `strict`、切 `frozen`，并保持到全量清扫完成。这时已合并 PR 的提交已经不在 main 里，`current` 读不到它们，所以必须读全部。
+- **为什么不只判已合并 PR 的当前 head（方案 c3）：** main 被改写之后，离开 main 的不只是已合并 PR 的 head，还有它们更早的提交（以前的 head 和普通推送换下的提交）。这些提交以前因为在 main 里从没被撤过，上面可能还有绿。只判当前 head 漏掉了它们，所以 c3 不完整。
+- **没有记录时：** 这个模式第一次运行（例如第一次 on 模式的全量清扫），或状态是第 15 代之前写的（没有 `mainSha`），这一轮也是 `all`（`scopeReason: TRAIN_NO_MAIN_RECORD`）。之后各轮就有了参照。
+- **读不出时：** main 的历史读不出（compare 失败，404 除外），这次运行的清扫算不完整（`TRAIN_MAIN_HISTORY_UNREADABLE`），不发绿、什么都不记，下次运行再比。这次也不信任缓存。
+- **不会自动开新一轮：** 开车后本节点的全量清扫已经完成，之后才发现 main 被改写，并不会因此自动开一轮新的全量清扫，只把 `mainRewritten` 挂起，直到下一轮。运维文档在回退之后要求做一次全量清扫，那一轮就是 `all`。挂起期间状态里能看到。
+- **Owner 能看到什么：** 每轮的 `scope`、`scopeReason`，以及挂起中的 `mainRewritten`，记在全量清扫的记录里（`train-sweep-store.mjs` 的 full 记录，即全量清扫的证明），也带进第 10 段的事实和常驻状态 `train.sweep`（`fullScope`、`fullScopeReason`、`mainRewritten`）。第 8 段读的单绿证明（proof）不变。
+- 记录格式向后兼容：第 14 代写的记录（没有新字段）照样能读，读作"没有 main 记录、没有改写、本轮 `scope` 为 `all`"；新旧字段混用的记录拒收。
+
+### 60.3 测试
+
+- `work/actions-hosted-migration/independent-ci-v1/test/train-sweep.test.mjs`：
+  - **main 快进：** `current`。开着的 PR 读全部；关闭未合并 PR 的当前 head 被撤（#936 那种形状）；它的历史不读；已合并 PR 不读；当前 head 在 main 里的不撤；只对开着的 PR 读提交和强推；本次 main 尖端记入状态；合并状态不明的 PR 让整轮作废。
+  - **没有 main 记录：** `all`，所有 PR 的全部提交，与以前相同。第 14 代的进行中记录照样能读，以 `all` 从原游标接着扫。
+  - **main 被改写：** 缓存作废（已合并 PR 离开 main 的 head 被撤）；进行中的 `current` 轮从头重开为 `all`；完成后 `mainRewritten` 清掉。开车后的全量清扫已完成时，改写只挂起，跨运行保持，状态里能看到；一轮 `all` 跨多次运行完成后才清掉。
+  - **main 历史读不出：** 本次不完整、记录不变；404 视为改写。
+  - **增量仍兜住：** 重新打开的 PR 历史里的旧绿、新 PR 指向带旧绿的提交，都由增量清扫撤掉。
+  - **存储：** 第 14 代与第 15 代的记录都能读，混用和越界值拒收。
+- `work/independent-ci-resident-v1/test/train-on.test.mjs`：新字段带进状态，旧 Source 的事实显示为空，越界值不显示。
+
+### 60.4 安装
+
+- Source 改动：`train-sweep.mjs`、`train-maintenance.mjs`、`train-sweep-store.mjs`、`train-facts.mjs`。
+- 常驻改动：`train.mjs`，只把新字段带进状态。
+- `upgrader/src/` 及其传递依赖未动。
+- 不改签名策略字段。第 15 代与 train=on 的策略一起安装（主会话安排）。
+- **注意：** 开车后第一轮 on 模式的全量清扫没有 main 记录，按 60.2 仍是 `all`，时间与以前相同；之后的各轮才是几分钟。

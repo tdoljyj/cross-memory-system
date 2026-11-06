@@ -7,11 +7,13 @@
 //   Incremental sweep (every run): this node's ledgered heads whose last phase is posted, settled or merged; the heads of
 //     the KooYomi publication stream (every node's publications); every pull updated since the cursor: its head, all its
 //     commits, the before/after of its force pushes. No truncation: a bound reached is an incomplete sweep.
-//   Full sweep (segmented over runs, cursor in train-sweep-store.mjs): every pull of the listing, oldest first; an open pull
-//     the same as above (a pull with more than 250 commits, REST's limit, voids the round); a closed unmerged pull its current
-//     head only; a merged pull nothing (its commits are in main). Generation 15 (Owner Decision fb39ec73 v2, option c): a green
-//     a closed pull's history keeps cannot be merged without a push or a reopen, both of which the incremental sweep sees; its
-//     current head can (a reopen at once), e.g. #936's df659f1c (2026-11-06).
+//   Full sweep (segmented over runs, cursor in train-sweep-store.mjs): every pull of the listing, oldest first. A round of
+//     scope 'all' reads every pull the same as above (a pull with more than 250 commits, REST's limit, voids the round). A
+//     round of scope 'current' (generation 15, Owner Decision fb39ec73 v2, option c1; DESIGN 60) reads an open pull the
+//     same way, a closed unmerged pull's current head only and a merged pull not at all (its commits are in main): a green a
+//     closed pull's history keeps cannot be merged without a push or a reopen, both of which the incremental sweep sees; its
+//     current head can (a reopen at once), e.g. #936's df659f1c (2026-11-06). train-maintenance.mjs chooses 'all' when main
+//     was rewritten (merged heads may have left main) or no main tip is recorded yet.
 //   Revoke one (revokeGreens): GET the run (App, name, head, success); PATCH failure with the reason; read back; read back
 //     again 30 s later. Both read-backs must show this revocation; anything else is unconfirmed.
 // Any read that is incomplete fails the sweep closed (never "clean").
@@ -186,10 +188,10 @@ export async function incrementalSweep({ sweeper, github, entries, stream, curso
   return reason ? { complete: false, reason, targets, newest: null, progress } : { complete: true, reason: null, targets, newest: newest ?? cursor, progress };
 }
 
-// The heads the full sweep judges for one listed pull: an open pull's every head, a closed unmerged pull's current head, a
-// merged pull's none. -> { tooMany, heads }.
-export async function fullSweepHeads(sweeper, pull) {
-  if (pull.state === 'open') return sweeper.headsOfPull(pull.number);
+// The heads the full sweep judges for one listed pull. Scope 'all': every pull's every head. Scope 'current': an open pull's
+// every head, a closed unmerged pull's current head, a merged pull's none. -> { tooMany, heads }.
+export async function fullSweepHeads(sweeper, pull, scope = 'current') {
+  if (scope === 'all' || pull.state === 'open') return sweeper.headsOfPull(pull.number);
   if (pull.state === 'closed' && pull.merged === true) return { tooMany: false, heads: [] };
   if (pull.state === 'closed' && pull.merged === false) return { tooMany: false, heads: [pull.headSha] };
   fail('TRAIN_PULLS_INCOMPLETE');
@@ -198,7 +200,8 @@ export async function fullSweepHeads(sweeper, pull) {
 // One full-sweep segment from the cursor {nextPage, nextIndex}: pulls oldest first (open and closed: the listing only grows at
 // its end, so the cursor stays stable), until the time bound or the revoke cap would be passed. -> { ok, reason, tooMany,
 // targets, nextPage, nextIndex, reachedEnd }. A pull is consumed whole or not at all, so the cursor never splits one.
-export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, front, own, revokeCap = MAX_REVOKES_PER_RUN }) {
+export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, front, own, scope = 'all', revokeCap = MAX_REVOKES_PER_RUN }) {
+  if (!['all', 'current'].includes(scope)) fail('TRAIN_FULL_SWEEP_SCOPE_INVALID');
   const targets = [];
   let page = nextPage, index = nextIndex;
   try {
@@ -206,7 +209,7 @@ export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, f
       const reply = await github.readPullsPage({ state: 'all', sort: 'created', direction: 'asc', page });
       for (; index < reply.pulls.length; index++) {
         if (sweeper.late()) return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };
-        const r = await fullSweepHeads(sweeper, reply.pulls[index]);
+        const r = await fullSweepHeads(sweeper, reply.pulls[index], scope);
         if (r.tooMany) return { ok: false, reason: 'TRAIN_PULL_OVER_250_COMMITS', tooMany: true, targets: [], nextPage, nextIndex, reachedEnd: false };
         const found = await sweeper.judge(r.heads, { front, own });
         if (targets.length + found.length > revokeCap && targets.length > 0) return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };

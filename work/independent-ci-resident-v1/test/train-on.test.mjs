@@ -120,6 +120,17 @@ test('facts /2: a summary only with a decision in on; OPEN_FRONT_BATCH only with
   assert.equal(trainSweepView({ summary: trainSummary(answer('on').train), previous: view, onSince: new Date(T0).toISOString() }).fullSinceOn, false, 'a new take-over starts over');
   const read = parseTrainSweep(JSON.parse(JSON.stringify(view)));
   assert.deepEqual([read.fullSinceOn, read.fullCompletedAt], [true, T0]);
+  // generation 15 (DESIGN 60): what the round enumerates and why, and a rewrite of main still pending, reach the status
+  assert.deepEqual([view.fullScope, view.fullScopeReason, view.mainRewritten, read.fullScope, read.mainRewritten], [null, null, false, null, false], 'a Source before generation 15');
+  const all = trainSummary(answer('on', { sweep: { ...NO_SWEEP, kind: 'full-segment', complete: true, fullSweep: { state: 'running', startedAt: new Date(T0 - MIN).toISOString(),
+    completedAt: null, sinceOn: false, reason: null, scope: 'all', scopeReason: 'TRAIN_MAIN_REWRITTEN', mainRewritten: true } } }).train);
+  const v15 = parseTrainSweep(JSON.parse(JSON.stringify(trainSweepView({ summary: all, onSince: view.onSince }))));
+  assert.deepEqual([v15.fullState, v15.fullScope, v15.fullScopeReason, v15.mainRewritten], ['running', 'all', 'TRAIN_MAIN_REWRITTEN', true]);
+  // the Source refuses facts with other values; a summary built past it still shows none of them
+  const base = answer('on').train;
+  const odd = trainSummary({ ...base, sweep: { ...base.sweep, fullSweep: { ...base.sweep.fullSweep, scope: 'some', scopeReason: 'lower case', mainRewritten: 'yes' } } });
+  assert.deepEqual([odd.sweep.fullSweep.scope, odd.sweep.fullSweep.scopeReason, odd.sweep.fullSweep.mainRewritten], [null, null, false], 'anything else is not shown');
+  assert.throws(() => answer('on', { sweep: { ...NO_SWEEP, fullSweep: { ...NO_SWEEP.fullSweep, scope: 'some' } } }), /invalid_train_facts/);
 });
 
 test('executor, on: the take-over sweep holds new batches; an on-mode run with side effects is a normal ending and lets them go', async t => {
