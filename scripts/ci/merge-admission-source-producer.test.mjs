@@ -28,6 +28,7 @@ const {evaluate,reverify,appCheck,postAppCheck}=await import('./clued-work-admis
 const {appRequest}=await import('./clued-managed-auto-merge.mjs');
 const {runRecordedHolderOperation}=await import('./clued-merge-executor.mjs');
 const {collectNaturalSourceArtifacts,mapNaturalSourceEvents}=await import('./merge-admission-natural-intake.mjs');
+const {R9_HISTORY_CAPS,R9_REREGISTER_COMMAND,assertHistoryInvariants,sealedWindowAgrees}=await import('./merge-admission-r9-reregister.mjs');
 const head='a'.repeat(40),base='b'.repeat(40),at='2026-10-11T06:00:03.000Z';
 const env={GITHUB_REPOSITORY:'tdoljyj/cross-memory-system',GITHUB_RUN_ID:'42',GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'admission',GITHUB_SHA:base};
 const recorder=write=>createNaturalRecorder({env,sourcePath:'scripts/ci/clued-work-admission.mjs',now:()=>at,write});
@@ -351,62 +352,79 @@ test('runtime loader validates the current Source registry against actual bytes 
       fetchImpl:()=>{throw Error('SOURCE_ONLY_MOCK_MUST_NOT_ENTER_CLOCK');}});
   // Drift guard: every file the registry pins must still have the registered bytes. A failure here means a
   // registered file changed without scripts/ci/merge-admission-r9-source.json (the loader then refuses it).
+  // The helper re-pins AND rotates the bounded history; a hand edit of a pin silently loses a generation.
+  const HOW=' - run `'+R9_REREGISTER_COMMAND+'` (needs full git history and a fetched main; add --base <ref> when origin/main is not current), review the diff and commit';
   const pinned=(registered,file)=>{const now=gitBlob(fs.readFileSync(path.join(repo,file)));assert.equal(registered,now,
-    'R9 registry is stale: '+file+' is now blob '+now+' but '+R9_RUNTIME_CONFIG+' pins '+registered+'; re-pin the current blob (and execution_source hashes if profiles/role specs changed)');};
+    'R9 registry is stale: '+file+' is now blob '+now+' but '+R9_RUNTIME_CONFIG+' pins '+registered+HOW);};
   for(const k of ['script','workflow','reverify_workflow','policy'])pinned(cfg.admission_source[k+'_blob'],cfg.admission_source[k+'_path']);
   {const p=cfg.publisher_role,wf=fs.readFileSync(path.join(repo,p.workflow_path));pinned(p.workflow_blob,p.workflow_path);
-    assert.equal(p.workflow_source_sha256,sha256(wf),'R9 registry is stale: publisher_role.workflow_source_sha256 does not match '+p.workflow_path);}
+    assert.equal(p.workflow_source_sha256,sha256(wf),'R9 registry is stale: publisher_role.workflow_source_sha256 does not match '+p.workflow_path+HOW);}
+  const sameMap=(a,b)=>JSON.stringify(Object.entries(a).sort())===JSON.stringify(Object.entries(b).sort());
   for(const d of cfg.natural_producers){
     pinned(d.workflow_blob,d.workflow_path);
     assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
     for(const p of d.source_paths)pinned(d.source_blobs[p],p);
     assert.equal(Object.hasOwn(d,'previous_source_blobs'),false);assert.equal(Object.hasOwn(d,'previous_job_name'),false);
-    assert.equal(d.previous_source_versions.length,6);
+    assert.ok(d.previous_source_versions.length<=R9_HISTORY_CAPS.previous_source_versions);
     const old=previous.natural_producers.find(p=>p.workflow_path===d.workflow_path&&p.job_id===d.job_id);
-    assert.ok(old);assert.deepEqual(d.previous_source_versions.slice(0,5),old.previous_source_versions);
-    assert.deepEqual(d.previous_source_versions[5],{job_name:old.job_name,source_blobs:old.source_blobs});
-    assert.deepEqual(d.previous_source_versions.slice(0,4).map(v=>v.job_name),d.job_id==='clued-work-admission'
-      ?['clued-work-admission','clued-work-admission','clued-work-admission','kooyumi-work-admission']:Array(4).fill(d.job_name));
+    assert.ok(old);
+    // The sealed 80bd559f generations, oldest first. History only appends new generations and drops the oldest.
+    const sealedVersions=[...old.previous_source_versions,{job_name:old.job_name,source_blobs:old.source_blobs}];
+    assert.ok(sealedWindowAgrees(sealedVersions,d.previous_source_versions,{current:v=>sameMap(v.source_blobs,d.source_blobs),reappears:(m,r)=>sameMap(m.source_blobs,r.source_blobs)}),
+      d.workflow_path+' previous_source_versions is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
   }
-  // These regression-only digests come from immutable main 462f74c3, before
-  // this successor. They prove the 20 old expanded descriptors and untouched
-  // clock/epoch/receipts remain byte-identical; they grant no Source qualification.
-  const oldDescriptors=cfg.natural_producers.map(d=>{
+  assertHistoryInvariants(cfg);
+  // These regression-only digests come from immutable main 462f74c3 and are computed from the sealed 80bd559f
+  // registry, so history rotation cannot change them. They prove the 20 old expanded descriptors and the first
+  // admission generations stay byte-identical in the sealed fixture; they grant no Source qualification.
+  const oldDescriptors=previous.natural_producers.map(d=>{
     const {previous_source_versions,...base}=d;
     return previous_source_versions.slice(0,4).map(v=>({...base,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path],source_blobs:v.source_blobs}));
   });
   assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
-  assert.deepEqual(cfg.previous_admission_sources.slice(0,-1),previous.previous_admission_sources);
-  assert.equal(sha256(JSON.stringify(cfg.previous_admission_sources.slice(0,2))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
-  const unchanged=Object.fromEntries(Object.entries(cfg).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
-  assert.deepEqual(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))),
-    Object.fromEntries(Object.entries(previous).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers','execution_source','previous_execution_sources'].includes(key))));
-  assert.equal(sha256(JSON.stringify({...unchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
+  assert.equal(sha256(JSON.stringify(previous.previous_admission_sources.slice(0,2))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
+  // Admission entries are only ever appended (each carries its own checkout), so nothing may go missing or reappear.
+  const sealedAdmission=[...previous.previous_admission_sources,{...previous.admission_source,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'}];
+  assert.ok(sealedWindowAgrees(sealedAdmission,cfg.previous_admission_sources),
+    'previous_admission_sources is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
+  // Everything the helper does not re-pin (forward epoch, clock, coverage, bindings, publisher job fields) stays
+  // exactly the sealed value; the publisher workflow pins move with the publisher workflow (and are checked above).
+  const withoutAdmission=o=>Object.fromEntries(Object.entries(o).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
+  const unchangedPublisher=o=>({...o,publisher_role:Object.fromEntries(Object.entries(o.publisher_role).filter(([key])=>!['workflow_blob','workflow_source_sha256'].includes(key)))});
+  const unchanged=withoutAdmission(cfg),sealedUnchanged=withoutAdmission(previous);
+  assert.deepEqual(unchangedPublisher(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))),
+    unchangedPublisher(Object.fromEntries(Object.entries(sealedUnchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key)))));
+  assert.equal(JSON.stringify(unchangedPublisher(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))))),
+    JSON.stringify(unchangedPublisher(Object.fromEntries(Object.entries(sealedUnchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))))),'key order of the hand-owned fields');
+  assert.deepEqual(Object.keys(cfg.execution_source),Object.keys(previous.execution_source));
+  assert.equal(sha256(JSON.stringify({...sealedUnchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
     'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
-  // Intentional loss: previous_admission_sources (4) and previous_execution_sources (4) were already full when
-  // this registry was re-pinned to the current bytes, so the generation registered at 9e9d3fa66 was replaced rather
-  // than retained: admission script b413917364fc and execution_source cdaf73165378/7cddf4abf791. Raising the
-  // capacity or rotating the oldest entry needs its own change; the history stays pinned to the sealed 80bd559f.
-  assert.deepEqual(cfg.previous_admission_sources.at(-1),{...cfg.admission_source,
-    script_blob:previous.admission_source.script_blob,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'});
+  // History is bounded (R9_HISTORY_CAPS) and rotates: re-registration appends the replaced generation and drops the
+  // oldest one beyond the capacity. The two generations registered at 9e9d3fa66 (admission script b413917364fc,
+  // execution_source cdaf73165378/7cddf4abf791) were lost once, before rotation existed, and are not retained.
   assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))),
-    'R9 registry is stale: execution_source.profiles_sha256 no longer matches scripts/ci/clued-gated-proof-profiles.json; re-pin it in '+R9_RUNTIME_CONFIG);
+    'R9 registry is stale: execution_source.profiles_sha256 no longer matches scripts/ci/clued-gated-proof-profiles.json'+HOW);
   assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))),
-    'R9 registry is stale: execution_source.role_specs_sha256 no longer matches scripts/ci/clued-gated-proof-role-specs.json; re-pin it in '+R9_RUNTIME_CONFIG);
+    'R9 registry is stale: execution_source.role_specs_sha256 no longer matches scripts/ci/clued-gated-proof-role-specs.json'+HOW);
+  // The sealed execution_source of 80bd559f itself is not part of this chain: it was replaced before rotation existed.
+  const samePair=(a,b)=>a.profiles_sha256===b.profiles_sha256&&a.role_specs_sha256===b.role_specs_sha256;
+  assert.ok(sealedWindowAgrees(previous.previous_execution_sources,cfg.previous_execution_sources,
+    {current:e=>samePair(e,cfg.execution_source),reappears:(m,r)=>samePair(m,r)&&m.source_checkout_sha!==r.source_checkout_sha}),
+    'previous_execution_sources is not the sealed 80bd559f history with the oldest dropped and newer generations appended');
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
   assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
-  assert.equal(cfg.previous_admission_sources.length,4);assert.equal(expected.admission_sources.length,5);
+  assert.ok(cfg.previous_admission_sources.length<=R9_HISTORY_CAPS.previous_admission_sources);assert.equal(expected.admission_sources.length,1+cfg.previous_admission_sources.length);
   // The current execution_source is bound to the actual profile/role bytes above; it must not be
   // frozen to the sealed predecessor's value, or every profile edit would fail this test.
-  assert.deepEqual(cfg.previous_execution_sources,previous.previous_execution_sources);
   assert.deepEqual(expected.admission_sources[0],{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'});
   assert.deepEqual(expected.admission_sources.slice(1),cfg.previous_admission_sources);
-  const old=expected.admission_sources.find(s=>s.source_checkout_sha==='ea7d09330583e3fc417997b621579de16fee239e');assert.ok(old);assert.equal(old.default_branch,'main');
-  const beforeRename=expected.admission_sources.find(s=>s.source_checkout_sha==='90b9e5acfdf5e459bf5a188ff1ebb7a729f2a305');
-  assert.ok(beforeRename);assert.equal(beforeRename.default_branch,'main');
-  assert.equal(old.grammar,'clued.work-admission.evaluate-observation/1');
-  for(const k of ['script','workflow','reverify_workflow','policy']){assert.equal(old[k+'_path'],cfg.admission_source[k+'_path']);assert.match(old[k+'_blob'],/^[a-f0-9]{40}$/);}
+  // Which generations are retained depends on how often the registry rotated, so check every retained one.
+  assert.ok(cfg.previous_admission_sources.length>0);
+  for(const old of cfg.previous_admission_sources){
+    assert.equal(old.default_branch,'main');assert.equal(old.grammar,'clued.work-admission.evaluate-observation/1');
+    for(const k of ['script','workflow','reverify_workflow','policy']){assert.equal(old[k+'_path'],cfg.admission_source[k+'_path']);assert.match(old[k+'_blob'],/^[a-f0-9]{40}$/);}
+  }
   assert.deepEqual(r.natural_selection.execution_source_templates,[expected.execution_source,...cfg.previous_execution_sources]);
   const snapshot=r.natural_selection.current_execution_snapshot;
   const file='.github/workflows/clued-handover-external-qualification.yml',actualBlob=gitBlob(f.files.get(file)),
@@ -445,6 +463,17 @@ test('sealed Source history rejects changed metadata, corrupted bytes and decomp
   ]){
     const changed=structuredClone(document);mutate(changed);assert.throws(()=>decodeSourceHistoryFixture(changed),undefined,label);
   }
+});
+
+test('execution history capacity is exactly the one the re-registration helper rotates at',async()=>{
+  const original=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),cap=R9_HISTORY_CAPS.previous_execution_sources;
+  // Unique checkouts and unique profile/role pairs, so only the count can decide.
+  const hex=(i,n)=>i.toString(16).padStart(n,'0');
+  const history=n=>Array.from({length:n},(_,i)=>({source_checkout_sha:hex(i+1,40),profiles_sha256:hex(i+1,64),role_specs_sha256:hex(i+2,64)}));
+  const load=async n=>loadIndependentR9RuntimeInputs({request:runtimeFixture(null,{...original,previous_execution_sources:history(n)}).request,
+    budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
+  assert.equal((await load(cap)).reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');
+  const over=await load(cap+1);assert.equal(over.status,'PARTIAL');assert.equal(over.reason_code,'INDEPENDENT_R9_SOURCE_CONFIG_INVALID');
 });
 
 test('runtime execution history requires a bounded unique list of exact checkout and profile/role hash selectors before clock use',async()=>{
