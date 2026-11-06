@@ -29,7 +29,8 @@ for (const file of classifyTests(TESTS).unit) {
 // (ci-required-selection.test.mjs holds its triggers to their imports), keep
 // their own known failures, and print GitHub annotations, so they are not run
 // again here. The one file they read outside those triggers (the application's
-// public Supabase default) is checked below for both patterns that read it.
+// public Supabase default) is checked below as both readers parse it and as
+// the admission self-test checks it.
 // Other suite-listed tests, such as the selection test, check the whole
 // repository but run only when a few files change: they stay here.
 for (const command of SUITE_COMMANDS['admission-self-tests']) {
@@ -60,4 +61,6 @@ test('the admission script and the runner hook read the application public Supab
   const runner = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/
     .exec(readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8'));
   assert.deepEqual(runner?.slice(1), [url, key]);
+  // The admission self-test's own check of the default (scripts/ci/clued-work-admission.test.mjs).
+  assert.match(url, /^https:\/\/[a-z]+\.supabase\.co$/);
 });
