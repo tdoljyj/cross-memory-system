@@ -57,11 +57,12 @@ import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
-  trainHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
+  trainHeadDecision, strictFrontHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
   requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
+import { strictFrontSourceHealthy, recordFollows } from './train-strict.mjs';
 
 export const APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 export const CONTROL_CHECKS_V2 = Object.freeze({
@@ -203,7 +204,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   // §41.2 trainHeadReady (train on, merge-slot job): read in this run, after the queue head and the test merge held. A
   // read that fails proves nothing (null), so it is TRAIN_SINGLE_GREEN_NOT_PROVEN like every unmet condition.
-  async function trainHead(job, train, observedClaim) {
+  async function trainHead(job, train, observedClaim, nativeMode) {
     const read = async f => { try { return await f(); } catch { return null; } };
     const holders = await read(() => slotNative?.holders()), proof = await read(() => sweepStore?.latestProof());
     const strictProof = train?.ruleset?.strict === true && proof?.fullSweepSinceOn !== true ? await read(() => sweepStore?.latestStrictProof?.()) : null;
@@ -211,18 +212,53 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const storeRefused = Number.isSafeInteger(sweepStore?.refused) ? sweepStore.refused : 1;
     const strictStoreRefused = Number.isSafeInteger(sweepStore?.strictRefused) ? sweepStore.strictRefused : 1;
     const list = await read(() => greenLedger?.list?.());
+    let fastLegacy = null, fullState = null, round = null, integrityReadable = false;
+    const unproven = () => ({ reason: TRAIN_SINGLE_GREEN_NOT_PROVEN, proof, strictProof });
+    // Integrity failures are not a missing optional fast certificate. Never
+    // fall back through an older v1/coverage record over known unreadable or
+    // pending state. Healthy complete-full records keep their frozen semantics.
+    if (typeof sweepStore?.latestProofStrict === 'function' && typeof sweepStore?.readFullSweepStrict === 'function'
+      && typeof sweepStore?.readStrictRound === 'function') {
+      try {
+        fastLegacy = await sweepStore.latestProofStrict();
+        fullState = await sweepStore.readFullSweepStrict('on');
+        round = await sweepStore.readStrictRound();
+        await sweepStore.latestStrictProof();
+        const pending = await sweepStore.readPendingRevocations();
+        if (pending && (pending.repo !== job.repo || pending.targets.length !== 0 || pending.legacyUnconfirmed !== 0)) return unproven();
+        integrityReadable = true;
+      } catch { return unproven(); }
+      if (!recordFollows(fastLegacy, fullState) || (fastLegacy !== null && fastLegacy.unconfirmed !== 0) || round?.pending?.length
+        || fullState?.allPending === 'TRAIN_MAIN_REWRITTEN' || fullState?.full?.reason === 'TRAIN_MAIN_REWRITTEN') return unproven();
+    }
+    if (train?.ruleset?.strict === true && proof?.fullSweepSinceOn !== true) {
+      let frontProof = null;
+      if (typeof sweepStore?.latestStrictFrontProof === 'function') {
+        try { frontProof = await sweepStore.latestStrictFrontProof(); }
+        catch { return unproven(); }
+      }
+      try {
+        const status = await slotNative.nodesStatus(), main = await github.readBranchHead('main');
+        const reason = strictFrontHeadDecision({ job, holders, frontProof, proof: fastLegacy, fullState, front, ledger: list, now: clock(),
+          liveRules: train.ruleset, liveMainSha: main?.sha, observedClaim, batchClaim, testTree: train.testTree, nativeMode,
+          sourceHealthy: strictFrontSourceHealthy(status, job.sourceManifestSha256, clock()),
+          storeHealthy: integrityReadable && sweepStore.refused === 0 && !(round?.pending?.length) });
+        if (reason === null) return { reason: null, proof: frontProof, strictProof: null, frontOnly: true };
+      } catch { /* Unknown/torn pending state cannot authorize this route. */ }
+    }
     const cursor = strictProof?.prUpdatedCursor ?? proof?.prUpdatedCursor;
     const pulls = cursor && typeof pullsUpdatedSince === 'function' ? await read(() => pullsUpdatedSince(cursor)) : null;
     return { reason: trainHeadDecision({ job, claimId: batchClaim?.claimId, holders, proof, storeRefused, front, ledger: list, pulls, now: clock(),
       strictProof, strictStoreRefused, liveRules: train?.ruleset, observedClaim, batchClaim, testTree: train?.testTree }), proof, strictProof };
   }
-  async function revalidateStrictException(job, train, observedClaim) {
-    if (!train?.strictException) return;
+  async function revalidateStrictException(job, train, facts) {
+    if (!train?.strictException && !train?.strictFrontException) return;
     const liveTrain = await trainFacts(job);
     check(!liveTrain.reason && liveTrain.ruleset?.strict === true, TRAIN_SINGLE_GREEN_NOT_PROVEN);
-    const current = await trainHead(job, liveTrain, observedClaim);
+    const current = await trainHead(job, liveTrain, facts.observedClaim, facts.mode?.state);
     check(!current.reason, TRAIN_SINGLE_GREEN_NOT_PROVEN);
-    record('native_strict_exception_bound', { jobId: job.id, claim: claimGeneration(observedClaim),
+    check(!train.strictFrontException || current.frontOnly === true, TRAIN_SINGLE_GREEN_NOT_PROVEN);
+    record(train.strictFrontException ? 'native_strict_front_bound' : 'native_strict_exception_bound', { jobId: job.id, claim: claimGeneration(facts.observedClaim),
       sourceManifestSha256: job.sourceManifestSha256, baseSha: job.baseSha, headSha: job.headSha, testSha: job.testSha, testTree: liveTrain.testTree,
       coverageSha256: digest(current.strictProof ?? current.proof) });
   }
@@ -305,7 +341,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       previous = await journal.read(key);
       if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       before = await boundary(job);
-      await revalidateStrictException(job, train, before.facts.observedClaim);
+      await revalidateStrictException(job, train, before.facts);
       if (previous) { await readback(job, externalId, previous.details.checkRunId, 'success'); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production }; }
       if (await onGithubOnly(job)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB, sideEffects: 0, productionAuthorized: false };
     } catch (e) {
@@ -329,7 +365,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
       if (train) await ledger('posted', job, train, key, externalId, known.id);
       const after = await boundary(job); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
-      await revalidateStrictException(job, train, after.facts.observedClaim);
+      await revalidateStrictException(job, train, after.facts);
       await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
       // Step 3a, rule 3 after the write: an open PR whose test merge is now definitely something else loses the green.
       const written = train && job.role === 'control-merge-slot' ? await afterWrite(job, train) : null;
@@ -436,12 +472,13 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         const train = await trainFacts(slotJob);
         // §41.2: with the train on, only a green the single-green proof covers; not waited out (the next stage 10 decides).
         if (!train.reason && trainOn) {
-          const proven = await trainHead(slotJob, train, observed.observedClaim);
+          const proven = await trainHead(slotJob, train, observed.observedClaim, observed.mode?.state);
           // A queue head the train or the rules hold is still a claim whose admission passed: its lease is extended once before the run
           // ends (review round 29, MINOR 1).
           if (proven.reason) { record('native_train_not_ready', { jobId: slotJob.id, reason: proven.reason }); await extendOnce(); return { ready: false, reason: proven.reason, polls, scheduling }; }
           train.proof = proven.proof;
-          train.strictException = proven.proof?.fullSweepSinceOn !== true && proven.strictProof !== null;
+          train.strictException = proven.proof?.fullSweepSinceOn !== true && proven.strictProof !== null && proven.frontOnly !== true;
+          train.strictFrontException = proven.frontOnly === true;
         }
         if (!train.reason) { await extendOnce(); return { ready: true, polls, scheduling, train }; }
         record('native_train_not_ready', { jobId: slotJob.id, reason: train.reason });

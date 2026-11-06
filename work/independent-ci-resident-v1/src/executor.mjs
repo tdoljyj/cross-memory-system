@@ -139,7 +139,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -427,6 +427,7 @@ export class ResidentExecutor {
     this.frontKeys = new Map();
     this.frontBindings = new Map();
     this.trainStrictReadiness = null;
+    this.trainStrictFrontReadiness = null;
     this.trainExtraRuns = [];
     this.trainProgressConsumed = null;
     // The duty kept across restarts (receipt 'train-duty', review R3 M2): the restored one until this node is eligible again, and
@@ -449,7 +450,7 @@ export class ResidentExecutor {
     if (!this.trainEligible()) {
       const on = this.policy.train.enabled === 'on';
       if (!on || this.nodeMode() === 'STANDBY') {
-        this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null; this.trainStrictReadiness = null;
+        this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null; this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null;
         this.trainProgressReady = false;
         if (this.trainSweep?.fullSinceOn === true) this.trainSweep = Object.freeze({ ...this.trainSweep, fullSinceOn: false });
         // A front row (S) belongs to the duty that ended (or to an install whose train is not on any more): it never runs
@@ -477,9 +478,10 @@ export class ResidentExecutor {
     if (!subject || !HEX40.test(subject.testSha ?? '') || !this.trainEligible()) return false;
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
     if (!front || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha) return false;
-    return strictCoverageMatches(this.trainStrictReadiness, { now: this.clock(), repo: this.policy.repo,
+    const context = { now: this.clock(), repo: this.policy.repo,
       sourceManifestSha256: this.policy.sourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
-      onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString(), front, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs });
+      onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString(), front, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs };
+    return strictCoverageMatches(this.trainStrictReadiness, context) || strictFrontReadinessMatches(this.trainStrictFrontReadiness, context);
   }
 
   // The front rows (S) of the run queue that are not running are dropped (queue.mjs#dropFronts; a view, persisted with the queue).
@@ -494,11 +496,11 @@ export class ResidentExecutor {
     if (this.policy.train.enabled !== 'on') return;
     const onSince = this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString();
     const sweep = this.trainSweep && this.trainSweep.onSince === onSince ? this.trainSweep : null;
-    const key = JSON.stringify([onSince, this.trainTakeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true, this.trainStrictReadiness]);
+    const key = JSON.stringify([onSince, this.trainTakeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true, this.trainStrictReadiness, this.trainStrictFrontReadiness]);
     if (key === this.trainDutyKey) return;
     try {
       await this.receipt('train-duty', { policyDigest: this.trainPolicyDigest(), onSince, takeoverDone: onSince !== null && this.trainTakeoverDone === true, sweep: onSince === null ? null : sweep,
-        strictCoverage: this.trainStrictReadiness });
+        strictCoverage: this.trainStrictReadiness, strictFrontReadiness: this.trainStrictFrontReadiness });
       this.trainDutyKey = key;
     } catch { /* see above */ }
   }
@@ -530,9 +532,10 @@ export class ResidentExecutor {
   // the take-over sweep; none while another node runs another Source).
   trainGate(subject = null) {
     if (!this.trainEligible()) return null;
-    const r = this.trainStrictReadiness;
-    const clockWindow = r && (this.clock() < Date.parse(r.writtenAt) ? 'future' : this.clock() >= Date.parse(r.expiresAt) ? 'expired' : null);
-    const refreshKey = clockWindow ? `${r.proofRef}:${clockWindow}` : null;
+    const refreshKey = [this.trainStrictReadiness, this.trainStrictFrontReadiness].filter(Boolean).map(r => {
+      const window = this.clock() < Date.parse(r.writtenAt) ? 'future' : this.clock() >= Date.parse(r.expiresAt) ? 'expired' : null;
+      return window ? `${r.proofRef}:${window}` : null;
+    }).filter(Boolean).join('|') || null;
     if (refreshKey && this.trainExpiredProof !== refreshKey) {
       // A single refresh request per expired observation. A failed/unchanged refresh never creates a tick loop.
       this.trainExpiredProof = refreshKey;
@@ -1451,9 +1454,10 @@ export class ResidentExecutor {
   trainStatus() {
     const t = { enabled: this.policy.train.enabled, last: this.trainLast ?? null };
     if (this.policy.train.enabled === 'on') {
-      const r = this.trainStrictReadiness;
+      const r = this.trainStrictFrontReadiness ?? this.trainStrictReadiness;
       const front = r?.front ? [...this.frontBindings.values()].find(f => this.trainStrictFront(f) && !this.trainGate(f)) : null;
-      t.frontReadyMode = front ? 'strict-coverage' : this.trainEligible() && this.trainTakeoverDone && !this.trainGate() ? 'full-sweep' : 'blocked';
+      t.frontReadyMode = front ? this.trainStrictFrontReadiness ? 'strict-current-front' : 'strict-coverage'
+        : this.trainEligible() && this.trainTakeoverDone && !this.trainGate() ? 'full-sweep' : 'blocked';
       t.fullPending = !this.trainTakeoverDone;
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
@@ -2046,7 +2050,7 @@ export class ResidentExecutor {
       // Any mode: stage 10 read the merge queue's head. A batch parked at B for that PR gets its next try without waiting out its back-off.
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
-    if (acting && (!summary || !clean)) this.trainStrictReadiness = null;
+    if (acting && (!summary || !clean)) { this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null; }
     this.trainProgressReady = mode === 'on' && clean && summary?.sweep?.unconfirmed === 0 && !summary.requestPause
       && !['TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(summary?.decision);
     await this.trainDutySave();
@@ -2070,6 +2074,10 @@ export class ResidentExecutor {
     this.trainStrictReadiness = mode === 'on' && input.onSince === onSince && summary.onDuty && summary.strict === true && summary.sweep?.complete === true
       && summary.sweep.proofWritten === true && summary.sweep.unconfirmed === 0 && full?.allPending !== 'TRAIN_MAIN_REWRITTEN'
       && coverage?.state === 'ready' && coverage.mainSha === summary.mainSha ? coverage : null;
+    const currentFront = summary.sweep?.strictFrontReadiness;
+    this.trainStrictFrontReadiness = mode === 'on' && input.onSince === onSince && summary.onDuty && summary.strict === true
+      && summary.sweep?.unconfirmed === 0 && full?.allPending !== 'TRAIN_MAIN_REWRITTEN'
+      && currentFront?.state === 'ready' && currentFront.mainSha === summary.mainSha ? currentFront : null;
     const rh = summary.actions?.revokeHead;
     if (revokeHead && rh?.requestId === revokeHead.requestId) {
       this.reportRevokeHead({ requestId: rh.requestId, state: rh.done ? 'done' : 'not-done', code: rh.done ? null : summary.decision });

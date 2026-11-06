@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.14",
+      "version": "1.1.15",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -519,6 +519,7 @@
         "work/actions-hosted-migration/independent-ci-v1/test/train-gen16-offline.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-run.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-strict-front.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-strict.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v2/adapter.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/adapter.mjs",
@@ -575,7 +576,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "b197f68259ccb17af74245f210eea159637ecc2d6a724081007d990fa6ce4c66"
+      "content_sha256": "33c0338544fa519e50b00188fbfb914a260cb1444a9d0ef438152dc4d73fa426"
     },
     {
       "id": "script.resource-maintenance",

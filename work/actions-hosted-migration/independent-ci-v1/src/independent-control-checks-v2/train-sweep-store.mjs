@@ -9,6 +9,9 @@
 //                                         (at most two per head, §41.4; T, S and S's tree for the landing check)
 //   strict-proof-<ms>-<runId>-<nonce>.json limited non-front coverage; never a v1 full-sweep proof or cross-epoch authority
 //   strict-round-<ms>-<runId>-<nonce>.json independent coverage cursor, including unresolved two-readback revocations
+//   strict-front-proof-<ms>-<runId>-<nonce>.json current subject only; explicitly no historical coverage
+//   pending-revocations-<ms>-<runId>-<nonce>.json bounded exact-ID negative intents, preserved across duty/Source changes;
+//                                         an old count without IDs stays latched until a real complete all round
 // Legacy readers take the newest valid record and count unreadable names (`torn`; `refused` for newer proofs/fronts).
 // Strict readers refuse a torn record at or after the newest valid timestamp, and refuse contradictory valid records
 // at that timestamp: neither a run id nor a nonce proves ordering. Unknown pending state is never silently discarded.
@@ -17,11 +20,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonical } from '../proof.mjs';
-import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, validateStrictProof, validateStrictRound, sameStrictIdentity } from './train-strict.mjs';
+import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, STRICT_FRONT_PROOF_CONTRACT, validateStrictProof, validateStrictRound, validateStrictFrontProof, sameStrictIdentity } from './train-strict.mjs';
 
 export const SWEEP_PROOF_CONTRACT = 'clued.independent-ci.train-sweep-proof/1';
 export const FULL_SWEEP_CONTRACT = 'clued.independent-ci.train-full-sweep/1';
 export const FRONT_BATCH_CONTRACT = 'clued.independent-ci.train-front-batch/1';
+export const PENDING_REVOCATIONS_CONTRACT = 'clued.independent-ci.pending-revocations/1';
 export const PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'pr', 'headSha', 'claimId', 'since', 'mainSha', 'clean', 'unconfirmed',
   'fullSweepSinceOn', 'slotHardCapMinutes', 'sweepFreshMs', 'prUpdatedCursor']);
 // Generation 15 (DESIGN 60): the state also records the main tip this run saw (mainSha) and why rounds enumerate everything until
@@ -41,7 +45,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -82,8 +86,19 @@ export function validateFrontBatch(r) {
   return r;
 }
 
+export function validatePendingRevocations(r) {
+  if (!exact(r, ['contract', 'writtenAt', 'runId', 'repo', 'targets', 'legacyUnconfirmed', 'legacySince']) || r.contract !== PENDING_REVOCATIONS_CONTRACT
+    || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r.repo ?? '')
+    || !count(r.legacyUnconfirmed) || !(r.legacyUnconfirmed === 0 ? r.legacySince === null : iso(r.legacySince))
+    || !Array.isArray(r.targets) || r.targets.length > 20 || new Set(r.targets.map(t => t?.checkRunId)).size !== r.targets.length
+    || !r.targets.every(t => exact(t, ['checkRunId', 'headSha', 'reason', 'own']) && Number.isSafeInteger(t.checkRunId) && t.checkRunId > 0
+      && SHA.test(t.headSha ?? '') && CODE.test(t.reason ?? '') && typeof t.own === 'boolean')) fail('invalid_pending_revocations');
+  return r;
+}
+
 const KIND = { proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
-  front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound] };
+  front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound],
+  'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations] };
 
 export class TrainSweepStore {
   static async open(directory) {
@@ -146,12 +161,35 @@ export class TrainSweepStore {
     return out;
   }
   async appendProof(p) { return this.write('proof', { contract: SWEEP_PROOF_CONTRACT, ...p }); }
+  async writePendingRevocations(p) { return this.write('pending-revocations', { contract: PENDING_REVOCATIONS_CONTRACT, legacyUnconfirmed: 0, legacySince: null, ...p }); }
+  async readPendingRevocations() {
+    const records = await this.read('pending-revocations', 1, () => true, true), p = records[0] ?? null;
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_PENDING_REVOCATIONS_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === 'pending-revocations' && (p === null || t.ms >= Date.parse(p.writtenAt))))
+      fail('TRAIN_PENDING_REVOCATIONS_UNREADABLE');
+    return p;
+  }
   async latestProof() {
     const p = (await this.read('proof', 1))[0] ?? null;
     if (p) this.newestProofMs = Date.parse(p.writtenAt);
     return p;
   }
+  async latestProofStrict() {
+    const records = await this.read('proof', 1, () => true, true), p = records[0] ?? null;
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_SWEEP_PROOF_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === 'proof' && (p === null || t.ms >= Date.parse(p.writtenAt))))
+      fail('TRAIN_SWEEP_PROOF_UNREADABLE');
+    return p;
+  }
   async appendStrictProof(p) { return this.write('strict-proof', { contract: STRICT_PROOF_CONTRACT, ...p }); }
+  async appendStrictFrontProof(p) { return this.write('strict-front-proof', { contract: STRICT_FRONT_PROOF_CONTRACT, ...p }); }
+  async latestStrictFrontProof() {
+    const records = await this.read('strict-front-proof', 1, () => true, true), p = records[0] ?? null;
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_STRICT_FRONT_PROOF_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === 'strict-front-proof' && (p === null || t.ms >= Date.parse(p.writtenAt))))
+      fail('TRAIN_STRICT_FRONT_PROOF_UNREADABLE');
+    return p;
+  }
   async latestStrictProof() {
     const records = await this.read('strict-proof', 1, () => true, true);
     const p = records[0] ?? null;
@@ -181,6 +219,15 @@ export class TrainSweepStore {
   async writeStrictRound(p) { return this.write('strict-round', { contract: STRICT_ROUND_CONTRACT, ...p }); }
   // mode: 'on' (also the revoke-only runs' incremental cursor) or 'shadow'.
   async readFullSweep(mode = 'on') { return (await this.read(`full-${mode}`, 1))[0] ?? null; }
+  // Front-only authority must never recover an older non-rewrite anchor over a
+  // newer torn rewrite/pending record. Legacy full readers retain their format.
+  async readFullSweepStrict(mode = 'on') {
+    const kind = `full-${mode}`, records = await this.read(kind, 1, () => true, true), p = records[0] ?? null;
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_FULL_STATE_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === kind && (p === null || t.ms >= Date.parse(p.writtenAt))))
+      fail('TRAIN_FULL_STATE_UNREADABLE');
+    return p;
+  }
   async writeFullSweep(s) { return this.write(`full-${s?.mode}`, { contract: FULL_SWEEP_CONTRACT, ...s, inMain: (s?.inMain ?? []).slice(-MAX_IN_MAIN) }); }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
   // This node's front batches of one head, newest first.
