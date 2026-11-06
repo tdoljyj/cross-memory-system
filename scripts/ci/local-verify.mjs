@@ -5,7 +5,8 @@
 // reports only the failures the change brings: a suite that fails is run again
 // on main, and each failing command is compared with the same command there.
 //
-//   node scripts/ci/local-verify.mjs --affected [--base <commit>] [--committed] [--linux-only] [--no-fetch] [--fresh-base] [--no-yield]
+//   node scripts/ci/local-verify.mjs --affected [--base <commit>] [--committed] [--linux-only]
+//                                    [--no-fetch] [--fresh-base] [--no-yield]
 //   node scripts/ci/local-verify.mjs [--base <commit>] [--committed] [--suite <id>]...
 //                                    [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]
 //
@@ -21,7 +22,7 @@
 //                 "could not compare" and the exit status 1). It prints the line CI
 //                 logs for each check ("ci-suites: selected by changed paths;
 //                 suites: ...") and, for each suite, the changed files that picked
-//                 it. --linux-only keeps the run to the Linux side.
+//                 it (a default run prints the same). --linux-only keeps the run to the Linux side.
 //   --base        the main commit to verify against; default: GitHub's main,
 //                 fetched first (--no-fetch uses the last fetched copy).
 //   --committed   verify HEAD only; by default the working tree's changes and

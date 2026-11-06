@@ -41,8 +41,8 @@ node scripts/ci/local-verify.mjs --affected
 ```
 
 - **选择与 CI 一致。** 它取分支相对 GitHub `main`（先 fetch；也可用 `--base` 指定）的改动路径（含工作区未提交的改动，`--committed` 则不含），用 `main`（或 `--base`）上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和 `clued-required-tests.yml` 里 `ci-suites` 的 “Select suites” 步骤调用的是同一个函数，不另抄一份；区别只是文件清单来自 git（合并基点到分支），不来自 GitHub API。
-- **只跑选中的套件，两侧都跑。** 对 `clued-required-tests.yml` 的三项检查 `ci-suites`、`clued-cloud-tests`、`migration-verify` 各选一次。有任何改动文件时都会选中 `clued-cloud`。Windows 和 CluedDev-Linux 两侧同时跑；Linux 一侧需要先用 `setup-clued-dev-linux.ps1` 装好，没装好时摘要里 Linux 一侧显示 `COULD NOT COMPARE`，Windows 一侧照常跑，但退出码恒为 1；要干净的退出码，用不加 `--affected` 的默认运行（它只跑 Windows 一侧，选择相同）；只跑 Linux 一侧用 `--affected --linux-only`。
-- **先说明选了什么、为什么。** 每项检查打印一行，文字同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件下面列出选中它的改动文件，最多三个（每个顶层目录的第一个优先），其余写 `... (N more)`。
+- **只跑选中的套件，两侧都跑。** 对 `clued-required-tests.yml` 的三项检查 `ci-suites`、`clued-cloud-tests`、`migration-verify` 各选一次。有任何改动文件时都会选中 `clued-cloud`。Windows 和 CluedDev-Linux 两侧同时跑；Linux 一侧需要先用 `setup-clued-dev-linux.ps1` 装好，没装好时摘要里 Linux 一侧显示 `COULD NOT COMPARE`，Windows 一侧照常跑，但只要选中了套件，退出码就是 1；要干净的退出码，用不加 `--affected` 的默认运行（它只跑 Windows 一侧，选择相同）；只跑 Linux 一侧用 `--affected --linux-only`。
+- **先说明选了什么、为什么。** 每项检查打印一行，文字同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件下面列出选中它的改动文件，最多三个（每个顶层目录的第一个优先），其余写 `... (N more)`。不加 `--affected` 的默认运行打印的内容相同。
 - **不能手选。** `--suite` 和 `--candidate` 不能与 `--affected` 同用。
 - DESK 上常驻执行器正在跑批次时，每个套件开始前先让路、等它跑完；每一侧合计最多等 90 分钟，用完照常继续（`--no-yield` 可跳过）。
 

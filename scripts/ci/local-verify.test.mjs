@@ -750,6 +750,17 @@ test('--affected: a change only to the application selects no ci-suites suite, a
   assert.ok(unknown.lines.every((line) => !line.startsWith('  ')));
 });
 
+test('--affected lists at most three files per suite, the first of each top-level directory leading, and counts the rest', () => {
+  const lines = (files) => selectAffected(selection, files).lines.filter((line) => line.startsWith('  resident-node: '));
+  assert.deepEqual(lines(['scripts/ci/a.mjs', 'scripts/ci/b.mjs', 'work/independent-ci-resident-v1/x.mjs']),
+    ['  resident-node: scripts/ci/a.mjs, work/independent-ci-resident-v1/x.mjs, scripts/ci/b.mjs'], 'three or fewer: no count');
+  assert.deepEqual(lines(['scripts/ci/a.mjs', 'scripts/ci/b.mjs', 'scripts/ci/c.mjs', 'scripts/ci/d.mjs']),
+    ['  resident-node: scripts/ci/a.mjs, scripts/ci/b.mjs, scripts/ci/c.mjs, ... (1 more)']);
+  assert.deepEqual(lines(['.gitleaks.toml', 'scripts/ci/a.mjs', 'scripts/runner/b.mjs', 'work/independent-ci-resident-v1/x.mjs']),
+    ['  resident-node: .gitleaks.toml, scripts/ci/a.mjs, work/independent-ci-resident-v1/x.mjs, ... (1 more)'],
+    'a file in the root is its own group; a second file of a directory comes after the others');
+});
+
 test('--affected asks the selection it is given and holds no list of its own', () => {
   const asked = [];
   const selector = { SUITES: { 'ci-suites': {}, 'clued-cloud-tests': {}, 'migration-verify': {}, 'later-check': {} }, selectSuites: (check, files) => {
