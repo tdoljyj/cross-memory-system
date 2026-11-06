@@ -14,6 +14,7 @@ import {canonical} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
 import {validateRemoteSnapshot} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 import {validateScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
+import {CLOCK_SKEW_MS} from '../../src/clock-skew.mjs';
 
 export const MAX_BYTES=1048576;
 export const ISSUE_CONTRACT='clued.independent-ci.protected-job-issue/2';
@@ -26,6 +27,13 @@ export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
 // sometimes takes 25-45 s (PR #915 stage 4, 2026-10-23), so a response's admission and refs snapshot are fresh at its
 // issuance and the response only has to arrive inside this window (Owner decision 6f1fb753, validateResponse).
 export const CALLBACK_WINDOW_MS=120000;
+// Clock skew between the two hosts (Decision 1100a0ed; clock-skew.mjs CLOCK_SKEW_MS, 5 s). Windows stamps are read on
+// Linux and Linux stamps on Windows, each with its own clock; DESK's two clocks are not one: systemd-timesyncd steps the WSL
+// clock by 0.4-1.1 s every 32 s, and it sat 0.3-2.0 s ahead of Windows (2026-11-04, DESIGN §47). 5 s is a margin of 2.5, not more. The tolerance covers only the
+// direction in which a skewed clock turns a valid stamp into a refusal: "not in this host's future" and "not before the
+// stamp that caused it". Every upper bound (a window's end, now - stamp <= CALLBACK_WINDOW_MS, expiresAt) is unchanged, so
+// no packet lives longer than before, and stamps made by one host are still compared exactly with each other.
+export const BRIDGE_CLOCK_SKEW_MS=CLOCK_SKEW_MS;
 const REPO='tdoljyj/cross-memory-system',HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/;
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ISSUE=['contract','domain','issueId','nonce','job','issuedAt','expiresAt','sourceAcceptanceRef','hostQualificationRef','admission','remoteRefs'];
@@ -96,7 +104,7 @@ function initialValid(issue){
 export function validateIssue(issue,now=Date.now()){
   nowValid(now);packetShape(issue);check(issue.contract===ISSUE_CONTRACT,'BRIDGE_ISSUE_REQUIRED');jobValid(issue.job);
   check(UUID.test(issue.issueId??'')&&HASH.test(issue.nonce??'')&&text(issue.sourceAcceptanceRef)&&text(issue.hostQualificationRef),'BRIDGE_ISSUE_BINDING_REQUIRED');
-  check(time(issue.issuedAt)<=now&&time(issue.issuedAt)>=Date.parse(issue.job.createdAt)&&time(issue.expiresAt)>now&&time(issue.expiresAt)>time(issue.issuedAt),'BRIDGE_ISSUE_EXPIRED');
+  check(time(issue.issuedAt)<=now+BRIDGE_CLOCK_SKEW_MS&&time(issue.issuedAt)>=Date.parse(issue.job.createdAt)&&time(issue.expiresAt)>now&&time(issue.expiresAt)>time(issue.issuedAt),'BRIDGE_ISSUE_EXPIRED');
   initialValid(issue);raw(issue);return issue;
 }
 export function validateChallenge(issue,challenge,now=Date.now()){
@@ -106,14 +114,14 @@ export function validateChallenge(issue,challenge,now=Date.now()){
   check(Number.isSafeInteger(challenge.sequence)&&challenge.sequence>=1&&challenge.sequence<=32&&HASH.test(challenge.nonce??'')
     &&['admission','remote-refs','scan-start'].includes(challenge.action)&&(challenge.action!=='remote-refs'||issue.job.role==='gitleaks'),'BRIDGE_CHALLENGE_ACTION_REQUIRED');
   const at=time(challenge.createdAt),end=time(challenge.deadline);
-  check(at>=time(issue.issuedAt)&&at<=now&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(issue.expiresAt),'BRIDGE_CHALLENGE_EXPIRED');
+  check(at+BRIDGE_CLOCK_SKEW_MS>=time(issue.issuedAt)&&at<=now+BRIDGE_CLOCK_SKEW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(issue.expiresAt),'BRIDGE_CHALLENGE_EXPIRED');
   raw(challenge);return challenge;
 }
 export function validateResponse(issue,challenge,response,now=Date.now()){
   validateChallenge(issue,challenge,now);packetShape(response);check(response.contract===RESPONSE_CONTRACT,'BRIDGE_RESPONSE_REQUIRED');
   check(response.challengeSha256===digest(challenge)&&response.issueSha256===digest(issue)&&response.sequence===challenge.sequence&&response.nonce===challenge.nonce,'BRIDGE_RESPONSE_BINDING_CHANGED');
   const at=time(response.issuedAt),end=time(response.expiresAt);
-  check(at>=time(challenge.createdAt)&&at<=now&&now-at<=CALLBACK_WINDOW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
+  check(at+BRIDGE_CLOCK_SKEW_MS>=time(challenge.createdAt)&&at<=now+BRIDGE_CLOCK_SKEW_MS&&now-at<=CALLBACK_WINDOW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
   if(challenge.action==='admission'||challenge.action==='scan-start'){
     // Fresh when issued, like the issue's admission (Owner Decision 6f1fb753): the 30 s bound is measured at issuedAt,
     // and the response itself must still be inside its window (above). The claim outlives the arrival (end > now).
@@ -136,7 +144,7 @@ export function validateResponse(issue,challenge,response,now=Date.now()){
 export function validateBlocked(issue,blocked,now=Date.now()){
   packetShape(blocked);check(blocked.contract===BLOCKED_CONTRACT,'BRIDGE_BLOCKED_REQUIRED');
   check(blocked.issueSha256===digest(issue)&&/^[A-Z][A-Z0-9_]{1,79}$/.test(blocked.reason??'')&&blocked.sideEffectsMayHaveStarted===false,'BRIDGE_BLOCKED_BINDING_CHANGED');
-  const at=time(blocked.observedAt);check(at>=time(issue.issuedAt)&&at<=now,'BRIDGE_BLOCKED_TIME_INVALID');
+  const at=time(blocked.observedAt);check(at+BRIDGE_CLOCK_SKEW_MS>=time(issue.issuedAt)&&at<=now+BRIDGE_CLOCK_SKEW_MS,'BRIDGE_BLOCKED_TIME_INVALID');
   raw(blocked);return blocked;
 }
 const frozen=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(frozen);Object.freeze(v);}return v;};

@@ -22,8 +22,11 @@ the bridge nonce label is exited or dead (docker ps -a; created/running/paused/r
 quiescent); no process command line names the worker or a run directory.
 
 Archive scopes: "between-roles-N" moves only the protocol records (the existing linux-archive.py
-semantics); every other reason moves the protocol records, formal-role.lock, all run directories,
-this batch's workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
+semantics); "retry-stage-N-K" (generation 11, DESIGN 54: the K-th run again, K 1 or 2, of an execution stage
+4 or 6 in the same batch; each its own archive instance) is a failure scope that moves the protocol records as found, formal-role.lock and all run
+directories but KEEPS this batch's workspaces and its ws-prep directory, which the run again needs;
+every other reason moves the protocol records, formal-role.lock, all run directories, this batch's
+workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
 is deleted.
 
 Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-spool.ps1:
@@ -205,6 +208,8 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
     # Only the two exact between-role reasons are protocol-only; any other reason (including any
     # failure-derived text) archives the whole batch scene (third review, MAJOR 1).
     protocol_only = re.fullmatch(r'between-roles-[46]', reason) is not None
+    # Generation 11 (DESIGN 54): only the two exact reasons keep the workspaces; anything else is the full batch scene.
+    keep_workspaces = re.fullmatch(r'retry-stage-[46]-[12]', reason) is not None
     completed = protocol_only or reason == 'success-close'
     prefix = 'archive' if completed else 'failed'
     target = f'formal-spool/{prefix}-{batch_id[:12]}-{reason}-{nonce_hex}'
@@ -236,19 +241,20 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
             _protected_dir(runs)
             for name in sorted(os.listdir(runs)):
                 moves.append(_leaf(root, f'runs/{name}', target, f'run-{name}'))
-        if os.path.lexists(os.path.join(root, 'workspaces')):
-            _protected_dir(os.path.join(root, 'workspaces'))
-        for j in sorted(job_ids):
-            if os.path.lexists(os.path.join(root, 'workspaces', j)):
-                moves.append(_leaf(root, f'workspaces/{j}', target, f'workspace-{j}'))
-        if os.path.lexists(os.path.join(root, f'ws-prep-{batch_id}')):
-            moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
+        if not keep_workspaces:
+            if os.path.lexists(os.path.join(root, 'workspaces')):
+                _protected_dir(os.path.join(root, 'workspaces'))
+            for j in sorted(job_ids):
+                if os.path.lexists(os.path.join(root, 'workspaces', j)):
+                    moves.append(_leaf(root, f'workspaces/{j}', target, f'workspace-{j}'))
+            if os.path.lexists(os.path.join(root, f'ws-prep-{batch_id}')):
+                moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
     flats = [m['to'] for m in moves]
     need(len(set(flats)) == len(flats), 'ARCHIVE_FLAT_NAME_COLLISION')
     # S35: a success-close archive keeps the commit SHA and manifest hash of each candidate tree instead of the tree.
     slim = reason == 'success-close'
     return {'contract': 'clued.independent-ci.resident-linux-archive/3', 'batchId': batch_id, 'reason': reason,
-            'scope': 'protocol' if protocol_only else 'batch', 'completed': completed, 'target': target, 'moves': moves,
+            'scope': 'protocol' if protocol_only else ('stage-retry' if keep_workspaces else 'batch'), 'completed': completed, 'target': target, 'moves': moves,
             'remainderLeftInPlace': unknown, 'halfPairs': halves, 'slimCandidates': slim, 'deletesAnything': slim}
 
 

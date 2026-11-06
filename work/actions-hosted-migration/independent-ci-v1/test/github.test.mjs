@@ -412,3 +412,62 @@ test('readChangedPaths: base.sha is a fact for a train front batch only, and bot
     assert.deepEqual((await github().port().readChangedPaths(exact)).paths, ['a.txt']);
   }
 });
+
+// ---- Generation 11 (resident DESIGN 55): a 5xx answer to a write is read back, never sent again ----
+
+test('a 502 to the check POST after GitHub stored the run: the read-back returns that copy, nothing is sent twice', async () => {
+  const landed = state => { state.checks.push({ ...publication, id: state.nextId++, app: { id: APP_ID } }); return reply({ message: 'Bad Gateway' }, 502); };
+  const fake = github({ faults: { [postKey]: [landed] } });
+  assert.equal((await fake.port().createCheck(publication)).external_id, publication.external_id);
+  assert.equal(fake.calls[postKey], 1);
+  assert.equal(fake.calls[listKey], 1);
+  assert.equal(fake.state.checks.length, 1);
+});
+
+test('a 503 to the check POST when nothing was stored: read back, never sent again, the 503 stands', async () => {
+  for (const status of [500, 502, 503, 504]) {
+    const fake = github({ faults: { [postKey]: [reply({}, status)] } });
+    await assert.rejects(fake.port().createCheck(publication), { code: `github_http_${status}` });
+    assert.equal(fake.calls[postKey], 1, String(status));
+    assert.ok(fake.calls[listKey] >= 1, String(status));
+    assert.equal(fake.state.checks.length, 0);
+  }
+});
+
+test('a 504 to the revocation PATCH: applied -> the read-back returns it; not applied -> never patched twice', async () => {
+  const applied = state => { Object.assign(state.checks[0], revocation); return reply({}, 504); };
+  const fake = github({ checks: [ours()], faults: { [patchKey]: [applied] } });
+  assert.equal((await fake.port().revokeCheck(600, revocation)).conclusion, 'failure');
+  assert.equal(fake.calls[patchKey], 1);
+  const pending = github({ checks: [ours()], faults: { [patchKey]: [reply({}, 504)] } });
+  await assert.rejects(pending.port().revokeCheck(600, revocation), { code: 'github_http_504' });
+  assert.equal(pending.calls[patchKey], 1);
+  assert.equal(pending.state.checks[0].conclusion, 'success');
+});
+
+test('other statuses of a write stay final without a read-back; a read-back that fails keeps the 5xx', async () => {
+  for (const status of [400, 401, 403, 404, 409, 422, 429, 501]) {
+    const fake = github({ faults: { [postKey]: [reply({}, status)] } });
+    await assert.rejects(fake.port().createCheck(publication), { code: `github_http_${status}` });
+    assert.equal(fake.calls[listKey], undefined, String(status));
+  }
+  const blind = github({ faults: { [postKey]: [reply({}, 502)], [listKey]: [reply({}, 500)] } });
+  await assert.rejects(blind.port().createCheck(publication), { code: 'github_http_502' });
+  assert.equal(blind.calls[postKey], 1);
+});
+
+test('a 504 to the check POST whose run shows up only at the second read-back is taken, never sent again (review MINOR-5)', async () => {
+  let reads = 0;
+  const late = state => { reads += 1; if (reads === 2) state.checks.push({ ...publication, id: state.nextId++, app: { id: APP_ID } }); return null; };
+  const fake = github({ faults: { [postKey]: [reply({}, 504)], [listKey]: [late, late, late] } });
+  assert.equal((await fake.port().createCheck(publication)).external_id, publication.external_id);
+  assert.equal(fake.calls[postKey], 1);
+  assert.equal(fake.calls[listKey], 2);
+});
+
+test('a 5xx to a POST that is a read (the installation-token mint) is sent again like a cut connection (review MINOR-6)', async () => {
+  const mintKey = `POST /app/installations/${INSTALLATION_ID}/access_tokens`;
+  const fake = github({ faults: { [mintKey]: [reply({}, 502)] } });
+  assert.equal((await fake.port().readPullRequest(7)).number, 7);
+  assert.equal(fake.calls[mintKey], 2);
+});

@@ -132,6 +132,14 @@ public static class PureTestsV2 {
    var probePr=new Dictionary<string,object>(probe);probePr["pr"]=1;Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(probePr,new string('c',64),(string)probe["runId"],new string('d',64)),"probe-no-pr");
    Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(probe,new string('c',64),(string)probe["runId"],new string('e',64)),"probe-profile-pin");
    Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(probe,"role-probe-run",new string('c',64)),"probe-no-formal-job");
+   // Generation 12 (resident DESIGN 56.2): role-probe-run/2 carries only watchPr, bound into the id; /1 stays exactly as above.
+   var watch=new Dictionary<string,object>(probe);watch["contract"]="clued.independent-ci.role-probe-run/2";watch["watchPr"]=884;watch["id"]=FormalPublicBoundaryV2.RoleProbeRunId(watch);
+   Yes((string)watch["id"]!=(string)probe["id"],"watch-id-differs");FormalPublicBoundaryV2.ValidateRoleProbeRun(watch,new string('c',64),(string)watch["runId"],new string('d',64));n++;
+   var watchMoved=new Dictionary<string,object>(watch);watchMoved["watchPr"]=885;Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(watchMoved,new string('c',64),(string)watch["runId"],new string('d',64)),"watch-id-binds-pr");
+   foreach(object bad in new object[]{0,-1,10000000000L,"884"}){var w=new Dictionary<string,object>(watch);w["watchPr"]=bad;Refuse(()=>{w["id"]=FormalPublicBoundaryV2.RoleProbeRunId(w);FormalPublicBoundaryV2.ValidateRoleProbeRun(w,new string('c',64),(string)watch["runId"],new string('d',64));},"watch-pr-range");}
+   var watchNoPr=new Dictionary<string,object>(watch);watchNoPr.Remove("watchPr");Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(watchNoPr,new string('c',64),(string)watch["runId"],new string('d',64)),"watch-needs-pr");
+   var v1Pr=new Dictionary<string,object>(probe);v1Pr["watchPr"]=884;Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(v1Pr,new string('c',64),(string)probe["runId"],new string('d',64)),"v1-no-watch-pr");
+   var watchV3=new Dictionary<string,object>(watch);watchV3["contract"]="clued.independent-ci.role-probe-run/3";Refuse(()=>FormalPublicBoundaryV2.ValidateRoleProbeRun(watchV3,new string('c',64),(string)watch["runId"],new string('d',64)),"watch-contract-fixed");
    foreach(object o in (object[])fixture["trainRuns"]){var run=(Dictionary<string,object>)o;string trId=(string)run["runId"],tm=(string)run["sourceManifestSha256"];
     Yes(FormalPublicBoundaryV2.TrainRunId(run)==(string)run["id"],"train-run-id");FormalPublicBoundaryV2.ValidateTrainRun(run,tm,trId);
     var on=new Dictionary<string,object>(run);on["mode"]="on";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(on,tm,trId),"train-run-on-without-since");

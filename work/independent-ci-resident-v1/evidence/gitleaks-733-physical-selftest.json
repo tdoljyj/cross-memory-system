@@ -1,0 +1,119 @@
+{
+  "schema": "clued.gitleaks-physical-selftest-record/1",
+  "decision": "98fec682",
+  "ran_at_utc": "2026-11-04T16:45:30Z",
+  "host": "wsl -d CluedCI-Linux",
+  "image": "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f",
+  "docker_run_options": "run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges (temporary directory, bind mounts read-only)",
+  "bytes": {
+    ".gitleaks.toml": "55d9299006ddacf2c48cd171edc87b6f00e0e002d43fa0c36e692f7662f01a06",
+    "scripts/ci/reviewed_gitleaks.py": "a604c77c92aabcf2abe1919c2930c34bb6d82633cba84995e4156c033c70bbe7",
+    "scripts/ci/reviewed_gitleaks_historical.py": "ed2a198650173a2d5f469e2094e02ce3c6301421b2186460c212281a0d2a8cd6",
+    "reviewed_ignore_sha256": "51d18a93ba783848ab6bd60e496a1ceb9fcb82d901533f0bd8114189a99edd6b",
+    "records": 733
+  },
+  "self_test_return": {
+    "baseline_detection": true,
+    "exact_history_only": true,
+    "new_commit_detection": true,
+    "different_path_detection": true,
+    "scheduling_marker_new_commit_detection": true,
+    "scheduling_marker_different_path_detection": true,
+    "role_probe_new_commit_detection": true,
+    "role_probe_different_path_detection": true,
+    "role_probe_different_line_detection": true,
+    "valid_private_key_detection": true,
+    "historical_json_new_commit_detection": true,
+    "historical_json_different_path_detection": true,
+    "historical_json_different_line_detection": true,
+    "genuine_curl_credential_detection": true
+  },
+  "physical_scans": [
+    {
+      "scan": 1,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 2
+    },
+    {
+      "scan": 2,
+      "network": "none",
+      "exit_code": 0,
+      "findings": 0
+    },
+    {
+      "scan": 3,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 4
+    },
+    {
+      "scan": 4,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 7
+    },
+    {
+      "scan": 5,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 10
+    },
+    {
+      "scan": 6,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 11
+    },
+    {
+      "scan": 7,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 12
+    },
+    {
+      "scan": 8,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 13
+    },
+    {
+      "scan": 9,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 14
+    },
+    {
+      "scan": 10,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 16
+    },
+    {
+      "scan": 11,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 18
+    },
+    {
+      "scan": 12,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 20
+    },
+    {
+      "scan": 13,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 21
+    },
+    {
+      "scan": 14,
+      "network": "none",
+      "exit_code": 1,
+      "findings": 22
+    }
+  ],
+  "d94cd486_new_commit_step_scan": 13,
+  "contains": "keys, booleans, scan numbers, exit codes and finding counts only; no match text, no credential"
+}

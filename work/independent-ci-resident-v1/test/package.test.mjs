@@ -211,3 +211,22 @@ test('the upgrader copy follows relative imports only inside src/ and upgrader/s
   await assert.rejects(upgraderCopy(base), { code: 'PACKAGE_UPGRADER_IMPORT_REFUSED' });
   assert.deepEqual(await importClosure(base, ['src/d.mjs']), ['src/d.mjs']);
 });
+
+test('package: the panel trigger is on unless switched off, and only for the panel\'s own repository (a configuration that names another repository is refused)', async t => {
+  const i = await inputs(t);
+  const roles = { gitleaks: '1'.repeat(64), trivy: '2'.repeat(64), 'contract-placement': '3'.repeat(64) };
+  const build = async (name, change) => {
+    const companion = JSON.parse(await fs.readFile(i.companionFile, 'utf8'));
+    change(companion);
+    const file = path.join(i.root, `companion-${name}.json`);
+    await fs.writeFile(file, JSON.stringify(companion));
+    return buildPackage({ out: path.join(i.root, `pkg-${name}`), policyFile: i.policyFile, companionFile: file, nodeExe: i.node, recordDir: i.record,
+      stateCompat: { schema: 2, readableBySchemas: [1, 2] }, sourceV2: { commit: 'f'.repeat(40), bundle: i.bundle, rolesDerivedSha256: roles } });
+  };
+  await build('default', () => {});
+  await assert.rejects(build('other-repo', c => { c.repo = 'tdoljyj/other-repo'; }), { code: 'PACKAGE_PANEL_DISPATCH_REPO_MISMATCH' });
+  await assert.rejects(build('bad-key', c => { c.panelDispatch = { workflow: 'x.yml' }; }), { code: 'COMPANION_PANEL_DISPATCH_CONFIG_INVALID' });
+  await build('off-other-repo', c => { c.repo = 'tdoljyj/other-repo'; c.panelDispatch = { enabled: false }; });
+  const kept = JSON.parse(await fs.readFile(path.join(i.root, 'pkg-off-other-repo', 'config', 'companion.json'), 'utf8'));
+  assert.deepEqual(kept.panelDispatch, { enabled: false });
+});

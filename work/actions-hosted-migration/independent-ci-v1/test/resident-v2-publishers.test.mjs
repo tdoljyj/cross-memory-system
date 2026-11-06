@@ -537,3 +537,232 @@ test('scanner publisher v2 (step 3c-2a): the PR base.sha is a fact for a train f
   assert.notEqual(head.status, 'SETTLED');
   assert.equal((await run(jobsFor().trivy, fakeGithub())).status, 'SETTLED');
 });
+
+// Generation 12 (resident DESIGN 56.4): a claim outside the merge queue is put in it once per run with the CI identity, and a short lease
+// is extended once; neither is a side effect of the stage, and a failure changes nothing of the not-ready answer.
+test('control pair v2 (generation 12): not in the queue -> one join; a short lease -> one extension; still a clean not-ready run', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now(), joined = false;
+  const calls = [], records = [];
+  const claimAssist = {
+    joinQueue: async a => { calls.push(['join', a]); joined = true; return { ok: true, joined: true, reason: null }; },
+    extendLease: async a => { calls.push(['extend', a]); return { ok: true, extended: true, reason: null }; },
+  };
+  const facts = () => ({ ciRetryAfter: null, mergeQueue: joined ? { entered: true, state: 'waiting', position: 2 } : { entered: false, state: null, position: null },
+    claimExpiresAt: iso(time + 20 * 60_000) });
+  const adm = fakeAdmission((job, packet, opts) => { opts.scheduling?.(facts()); return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 }); });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record: (k, d) => records.push([k, d]), authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, github.checks.length], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, 0], 'joined: now it waits behind another claim');
+  assert.deepEqual(calls.map(x => x[0]), ['extend', 'join'], 'each once per run');
+  assert.deepEqual(calls[1][1], { pr: 888, headSha: HEAD });
+  assert.equal(calls[0][1].minutes, 180);
+  assert.ok(records.some(([k, d]) => k === 'native_queue_join' && d.joined === true));
+
+  // the door does not know the actions yet / the network is cut: the answer is what it was without them
+  for (const answer of [{ ok: false, code: 'CLAIM_ASSIST_NOT_DEPLOYED' }, { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' }]) {
+    joined = false;
+    const failing = { joinQueue: async () => answer, extendLease: async () => answer };
+    const pub2 = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+      clock: () => time, sleep: async ms => { time += ms; }, claimAssist: failing });
+    const r2 = await pub2.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+    assert.deepEqual([r2.status, r2.reason, r2.sideEffects, github.checks.length], ['BLOCKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 0, 0], answer.code);
+  }
+});
+
+test('control pair v2 (generation 12, review round 2): the reported lease end is what Native answered; main moved -> no join; a log that throws changes nothing', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const extended = iso(time + 150 * 60_000);
+  const calls = [];
+  const claimAssist = {
+    joinQueue: async () => { calls.push('join'); return { ok: true, joined: false, reason: 'head_not_admitted' }; },
+    extendLease: async () => { calls.push('extend'); return { ok: true, extended: true, expiresAt: extended, reason: null }; },
+  };
+  const short = () => ({ ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: iso(time + 20 * 60_000) });
+  // one observation only (the window ends after the first poll): the answer carries the extended end, not the one seen before it
+  const adm = fakeAdmission((job, packet, opts) => { opts.scheduling?.(short()); return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 }); });
+  // the new records (the join's and the extension's) throw, as a full observation log would
+  const throwing = kind => { if (['native_queue_join', 'native_lease_extend'].includes(kind)) throw new Error('OBSERVATION_LOG_BOUNDARY'); };
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record: throwing, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + QUEUE_POLL_MS - 1 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 0], 'a throwing log is still a clean not-ready run');
+  assert.equal(r.scheduling.claimExpiresAt, extended);
+  assert.deepEqual(calls, ['extend', 'join']);
+
+  // main moved under the batch: it ends at once, and its claim never takes a place in the queue
+  calls.length = 0;
+  const moved = fakeAdmission((job, packet, opts) => {
+    opts.scheduling?.(short());
+    const { observationSha256, ...f } = admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 });
+    const g = { ...f, mergeSlot: { ...f.mergeSlot, state: 'not_needed', tip: '9'.repeat(40) } };
+    return { ...g, observationSha256: digest(g) };
+  });
+  const pub2 = createFixtureControlPublisherV2({ github, journal, admission: moved, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r2 = await pub2.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r2.status, r2.reason, r2.sideEffects], ['BLOCKED', 'RESIDENT_BASE_MOVED', 0]);
+  assert.deepEqual(calls, [], 'no join and no extension for a batch that cannot merge');
+});
+
+test('control pair v2 (generation 12, Decision 207c0cd0 v4): an observation whose admission did not pass never joins or extends', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const calls = [];
+  const claimAssist = { joinQueue: async () => { calls.push('join'); return { ok: true, joined: true }; }, extendLease: async () => { calls.push('extend'); return { ok: true, extended: true }; } };
+  // Native is reached and tells the scheduling facts (not in the queue, a short lease), but the admission does not pass (not final)
+  const notAdmitted = fakeAdmission((job, packet, opts) => { opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: iso(time + 5 * 60_000) });
+    return blocked('full_admission_unavailable'); });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: notAdmitted, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r.status, r.sideEffects], ['BLOCKED', 0]);
+  assert.deepEqual(calls, [], 'nothing without a passed admission in this run');
+});
+
+test('control pair v2 (generation 12, review round 11): a join on the last poll is followed by one more observation, which re-verifies the head', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now(), joined = false, observations = 0;
+  const claimAssist = { joinQueue: async () => { joined = true; return { ok: true, joined: true, reason: null }; }, extendLease: async () => ({ ok: true, extended: false, reason: 'already_extended' }) };
+  const adm = fakeAdmission((job, packet, opts) => {
+    observations++;
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: joined ? { entered: true, state: 'waiting', position: 2 } : { entered: false, state: null, position: null }, claimExpiresAt: iso(time + 4 * 3600_000) });
+    return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  // a window that ends after the first poll
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + QUEUE_POLL_MS - 1 });
+  assert.equal(observations, 2, 'one more observation after the join, although the window was over');
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.scheduling.mergeQueue.entered], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, true]);
+  // a join that did not join (already queued, refused, not deployed) adds no observation
+  observations = 0; joined = false;
+  const pub2 = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist: { joinQueue: async () => ({ ok: false, code: 'CLAIM_ASSIST_NOT_DEPLOYED' }), extendLease: async () => ({ ok: false, code: 'CLAIM_ASSIST_NOT_DEPLOYED' }) } });
+  await pub2.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + QUEUE_POLL_MS - 1 });
+  assert.equal(observations, 1);
+});
+
+test('control pair v2 (generation 12, review round 12): a head that holds the slot on the observation after the join publishes as usual, after the window', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now(), joined = false;
+  const claimAssist = { joinQueue: async () => { joined = true; time += 40_000; return { ok: true, joined: true, reason: null }; }, extendLease: async () => ({ ok: true, extended: false, reason: 'already_extended' }) };
+  const adm = fakeAdmission((job, packet, opts) => {
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: joined ? { entered: true, state: 'head', position: 1 } : { entered: false, state: null, position: null }, claimExpiresAt: iso(time + 4 * 3600_000) });
+    return admitted(job, c, packet, { mergeQueueHead: joined, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const start = time;
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: start + QUEUE_POLL_MS - 1 });
+  assert.equal(r.status, 'SETTLED');
+  assert.ok(time > start + QUEUE_POLL_MS - 1, 'published after the window');
+  assert.deepEqual(github.checks.map(x => x.name), ['kooyumi-admission-verified', 'kooyumi-merge-slot']);
+});
+
+test('control pair v2 (generation 12, review round 19): a claim already at the queue head still gets its short lease extended once, and publishes', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const calls = [];
+  const claimAssist = {
+    joinQueue: async () => { calls.push('join'); return { ok: true, joined: true, reason: null }; },
+    extendLease: async a => { calls.push(['extend', a.minutes]); return { ok: true, extended: true, expiresAt: iso(time + 180 * 60_000), reason: null }; },
+  };
+  const adm = fakeAdmission((job, packet, opts) => {
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: iso(time + 20 * 60_000) });
+    return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.equal(r.status, 'SETTLED');
+  assert.deepEqual(calls, [['extend', 180]], 'extended once on the ready path; no join for a claim already in the queue');
+  assert.deepEqual(github.checks.map(x => x.name), ['kooyumi-admission-verified', 'kooyumi-merge-slot']);
+});
+
+test('control pair v2 (generation 12, review round 20): a ready try that meets a transient fault after the extension reports the new lease end, without a queue place', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const extended = iso(time + 180 * 60_000);
+  const claimAssist = {
+    joinQueue: async () => ({ ok: true, joined: true, reason: null }),
+    extendLease: async () => ({ ok: true, extended: true, expiresAt: extended, reason: null }),
+  };
+  const adm = fakeAdmission((job, packet, opts, n) => {
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: iso(time + 20 * 60_000) });
+    if (n > 1) throw Object.assign(new Error('native_claim_observation_unavailable'), { code: 'native_claim_observation_unavailable' });
+    return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'native_claim_observation_unavailable', 0]);
+  assert.deepEqual(r.scheduling, { ciRetryAfter: null, mergeQueue: null, claimExpiresAt: extended });
+  assert.equal(github.checks.length, 0);
+});
+
+test('control pair v2 (generation 12, review round 24): a join followed by a failed observation is reported in the queue at an unknown place, not as not joined', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now(), joined = false;
+  const claimAssist = { joinQueue: async () => { joined = true; return { ok: true, joined: true, reason: null }; }, extendLease: async () => ({ ok: true, extended: false, reason: 'already_extended' }) };
+  const adm = fakeAdmission((job, packet, opts) => {
+    if (joined) throw Object.assign(new Error('native_claim_observation_unavailable'), { code: 'native_claim_observation_unavailable' });
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: iso(time + 4 * 3600_000) });
+    return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, claimAssist });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + QUEUE_POLL_MS - 1 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0]);
+  assert.deepEqual(r.scheduling.mergeQueue, { entered: true, state: 'waiting', position: null });
+});
+
+test('control pair v2 (generation 12, review rounds 27 and 28): an unwritable green ledger after a ready head answers the whole facts (the queue place too) with the extended lease end', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const exp = iso(time + 20 * 60_000), extended = iso(time + 180 * 60_000);
+  const adm = fakeAdmission((job, packet, opts) => {
+    opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: exp });
+    return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 });
+  });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+    clock: () => time, sleep: async ms => { time += ms; }, greenLedger: memoryLedger({ fail: true }),
+    claimAssist: { joinQueue: async () => ({ ok: true, joined: false, reason: 'already_queued' }), extendLease: async () => ({ ok: true, extended: true, expiresAt: extended, reason: null }) } });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, github.checks.length], ['BLOCKED', 'GREEN_LEDGER_UNAVAILABLE', 0, 0]);
+  assert.deepEqual(r.scheduling, { ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: extended });
+});
+
+test('control pair v2 (generation 12, review round 29): a queue head the rules or the train hold still gets its short lease extended once', async t => {
+  for (const [name, github, trainMode, reason] of [
+    ['rules', fakeGithub({ rules: branchRules({ strict: false }) }), 'off', 'STRICT_OFF_WITHOUT_TRAIN'],
+    ['train', fakeGithub({ rules: branchRules({ strict: false, methods: ['merge'] }) }), 'on', 'TRAIN_SINGLE_GREEN_NOT_PROVEN']]) {
+    const jobs = jobsFor(), c = claim();
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    let time = Date.now();
+    const calls = [], extended = iso(time + 180 * 60_000);
+    const claimAssist = { joinQueue: async () => { calls.push('join'); return { ok: true, joined: true }; },
+      extendLease: async () => { calls.push('extend'); return { ok: true, extended: true, expiresAt: extended, reason: null }; } };
+    const adm = fakeAdmission((job, packet, opts) => {
+      opts.scheduling?.({ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: iso(time + 20 * 60_000) });
+      return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 });
+    });
+    const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c),
+      clock: () => time, sleep: async ms => { time += ms; }, claimAssist, trainMode, greenLedger: memoryLedger() });
+    const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+    assert.deepEqual([r.status, r.reason, r.sideEffects, github.checks.length], ['BLOCKED', reason, 0, 0], name);
+    assert.deepEqual(calls, ['extend'], name);
+    assert.equal(r.scheduling.claimExpiresAt, extended, name);
+  }
+});

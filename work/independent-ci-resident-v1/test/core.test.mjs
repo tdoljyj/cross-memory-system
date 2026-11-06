@@ -265,6 +265,14 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   assert.deepEqual([u.started, u.startedByPr.get(1), u.evaluations, u.waitingRetries], [1, 1, 2, 1]);
   assert.deepEqual([u.reevaluations.get(`2:${'2'.repeat(40)}`), u.releasesByHead.get('2'.repeat(40)), u.releasesByHead.get('3'.repeat(40)), u.releasesByHead.get('4'.repeat(40)), u.releasesByHead.get('5'.repeat(40))],
     [1, 2, undefined, 1, undefined]);
+  // generation 10 (DESIGN 53.3): a network release (facts.network) counts in networkReleasesByHead, whatever the breaker, and only when
+  // the caller separates them (a /9 policy); otherwise it counts as before
+  await release(s(7, 7), 'queued', 'BUNDLE_UNAVAILABLE', { class: 'environment', breakerState: 'closed', network: true });
+  await release(s(7, 7, { baseSha: '6'.repeat(40) }), 'queued', 'BUNDLE_UNAVAILABLE', { class: 'environment', breakerState: 'open', network: true });
+  const sep = await ledger.usage(0, { separateNetwork: true }), old = await ledger.usage(0);
+  assert.deepEqual([sep.networkReleasesByHead.get('7'.repeat(40)), sep.releasesByHead.get('7'.repeat(40)), sep.releasesByHead.get('4'.repeat(40))], [2, undefined, 1]);
+  assert.deepEqual([old.networkReleasesByHead.get('7'.repeat(40)), old.releasesByHead.get('7'.repeat(40))], [undefined, 1], 'without /9: the old rule (open breaker: not counted)');
+  assert.equal(sep.evaluations, old.evaluations, 'a network release is no evaluation either way');
   await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
   now += 86_400_001;
   assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');

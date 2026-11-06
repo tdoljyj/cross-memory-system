@@ -28,8 +28,8 @@ const notReady = (code, mergeQueue = { entered: false, state: null, position: nu
   outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue }, safeToRerun: false } });
 // An engine whose stage 8 answers from a list (then success); every other stage succeeds. With `only` (a batch key) the
 // list answers that batch alone.
-function stage8Engine(answers, only = null) {
-  const engine = fakeEngine();
+function stage8Engine(answers, only = null, script = {}) {
+  const engine = fakeEngine(script);
   const base = engine.runStage;
   let i = 0;
   engine.runStage = async (batch, stage, o) => (stage.number === 8 && i < answers.length && (only === null || batch.key === only)
@@ -538,6 +538,62 @@ test('final check n2: alternating main tips nudge once each, not every 5 minutes
   assert.deepEqual(seen, [2, 3, 3, 3]);
 });
 
+// ---- Task 867250db: stage 10 reads the merge queue's head; a batch parked for that PR is tried at once ----
+
+const shadowPolicy = () => rawPolicy({ train: { enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200 } });
+// Stage 10 facts whose merge-queue head (holders[0]) is `front`.
+const trainWithFront = front => () => ({ ok: true, runId: `${'7'.repeat(16)}-${'0'.repeat(12)}`, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
+  train: { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: '2026-10-23T05:00:00.000Z', onDuty: true, mainSha: null, rules: null,
+    front: front ? { claimId: 'c', ...front } : null, wouldDo: front ? 'FRONT_TEST_MERGE_NOT_READY' : 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } });
+const hintFixture = async (t, front) => {
+  const answers = [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 })];
+  const f = await executorFixture(t, { policy: shadowPolicy(), engine: stage8Engine(answers, KEY, { train: trainWithFront(front) }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  return { f, tries: async () => (await f.ledger.state(KEY)).tries.length };
+};
+
+test('867250db: stage 10 sees the parked PR at the merge queue head: its stage-8 try is due now, not after the 10-minute back-off', async t => {
+  const { f, tries } = await hintFixture(t, { pr: 884, headSha: HEAD });
+  f.advance(2 * MIN);
+  assert.equal((await f.exec.tick()).state, 'IDLE', 'this tick runs stage 10 (the batch itself rests)');
+  assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === 10).length, 1);
+  assert.equal(await tries(), 1);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.position, await tries()], ['PARKED', 1, 2], 'tried two minutes after the first try; the claim is first: the one-minute cadence follows');
+  assert.equal(r.until - f.clock(), PARK_HEAD_RETRY_MS);
+});
+
+test('867250db: no hint for another PR, another head or an empty queue: the back-off stands', async t => {
+  for (const front of [null, { pr: 900, headSha: HEAD }, { pr: 884, headSha: H(7) }, { pr: 884, headSha: null }]) {
+    const { f, tries } = await hintFixture(t, front);
+    f.advance(2 * MIN);
+    await f.exec.tick();
+    await f.exec.tick();
+    assert.equal(await tries(), 1, JSON.stringify(front));
+    f.advance(8 * MIN);
+    await f.exec.tick();
+    assert.equal(await tries(), 2, `${JSON.stringify(front)}: its 10-minute back-off`);
+  }
+});
+
+test('867250db: no tight loop: one hint never makes a try less than PARK_HEAD_RETRY_MS after the last try ended', async t => {
+  const { f, tries } = await hintFixture(t, { pr: 884, headSha: HEAD });
+  f.advance(10_000);
+  await f.exec.tick(); // stage 10 hints 10 seconds after the first try
+  await f.exec.tick();
+  await f.exec.tick();
+  assert.equal(await tries(), 1, 'not yet');
+  f.advance(PARK_HEAD_RETRY_MS - 10_000 - 1);
+  await f.exec.tick();
+  assert.equal(await tries(), 1, 'one millisecond short');
+  f.advance(1);
+  await f.exec.tick();
+  assert.equal(await tries(), 2);
+  // the hint is spent by the try: another stage 10 run is 10 minutes away, so nothing else is due before the claim's minute cadence
+  assert.equal((await f.ledger.state(KEY)).tries[1].ended.position, 1);
+});
+
 test('final check n6: a later entry failing after its acceptance stops the drain with what it ended, then HALTs', async t => {
   // the Owner abort's own path fails on the second entry (accepted, not concluded), or so does its UNKNOWN ending
   for (const where of ['owner-abort', 'unknown']) {
@@ -747,4 +803,25 @@ test('4a: the next try finds an unsettled journal entry (RECONCILIATION_REQUIRED
   g.advance(MIN);
   const c = await g.exec.tick();
   assert.deepEqual([c.state, c.failureCode, c.attempt2], ['FAILED_CLEAN', 'BATCH_CLAIM_CHANGED', undefined]);
+});
+
+// Generation 12, review round 28: the green ledger's not-ready answer of a queue head keeps the queue place (publisher.mjs), so the
+// head is tried again in 60 s and the try is not counted, as in generation 11.
+test('review round 28: GREEN_LEDGER_UNAVAILABLE at the queue head parks for the 60-second head retry, uncounted', async t => {
+  const { PARK_HEAD_RETRY_MS: HEAD_MS } = await import('../src/executor.mjs');
+  const helpers = await import('./helpers.mjs');
+  const answer = { ok: false, code: 'GREEN_LEDGER_UNAVAILABLE', proof: helpers.WINDOWS_CLEAN, brokerNoLaunch: false,
+    outcome: { status: 'BLOCKED', reason: 'GREEN_LEDGER_UNAVAILABLE', sideEffects: 0, mayHavePublished: false, diagnostic: null,
+      scheduling: { ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: null }, safeToRerun: false } };
+  const engine = helpers.fakeEngine({});
+  const base = engine.runStage;
+  let i = 0;
+  engine.runStage = async (b, s, o) => (s.number === 8 && i++ === 0 ? answer : base(b, s, o));
+  const f = await helpers.executorFixture(t, { engine });
+  await f.drop(helpers.triggerBytes());
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'PARKED');
+  assert.equal(r.until - f.clock(), HEAD_MS);
+  const [entry] = await f.ledger.parkedEntries();
+  assert.equal(ResidentExecutor.lastTry(entry).position, 1);
 });

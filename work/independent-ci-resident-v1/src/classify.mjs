@@ -17,8 +17,10 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // (attempts.mjs; Owner decision 1b5d3687).
 // NATIVE_ADMISSION_UNAVAILABLE also covers explicit protected-observation exhaustion, but only after the Source
 // proved BLOCKED/zero effects/no possible publication. It does not widen attempts.mjs's stage 0/1/2 boundary.
+// ADMISSION_VERIFICATION_UNAVAILABLE (generation 10, DESIGN 53.6): stage 1 withdrew its own admission check because it could not be
+// verified (GitHub or Native unreadable after the bounded re-reads); attempt 2 re-proves it under new job ids instead of a burned head.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE']);
 // Why the roles of a train front batch (a subject with testSha) stay local: a relay reason, not a failure (§41.4, §38.8 m1);
 // listed with the codes so every table knows it.
 export const RELAY_TRAIN_FRONT_LOCAL = 'RELAY_TRAIN_FRONT_LOCAL';
@@ -208,6 +210,10 @@ export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn',
 export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
 const LOWER = /^[a-z][a-z0-9_]{0,63}$/, REASON = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
+// Stage 1 of these two transient codes is released (not burned into attempt 2) when the entry proves it wrote nothing: DESIGN 49.
+export const STAGE1_TRANSIENT_RELEASE_CODES = Object.freeze(['GITHUB_TRANSIENT_UNAVAILABLE', 'NATIVE_ADMISSION_UNAVAILABLE']);
+const stage1TransientRelease = r => STAGE1_TRANSIENT_RELEASE_CODES.includes(r.code) && Array.isArray(r.stages) && r.stages.length === 1 && r.stages[0] === 1
+  && r.disposition === 'release-if-safe' && r.retry === 'new-trigger';
 export function validateFailureTable(t) {
   check(t && t.contract === FAILURE_TABLE_CONTRACT && Array.isArray(t.rows) && t.rows.length > 0, 'FAILURE_TABLE_INVALID');
   for (const r of t.rows) {
@@ -225,7 +231,8 @@ export function validateFailureTable(t) {
       && (!r.disposition.startsWith('release') || (Array.isArray(r.stages) && r.stages.every(s => s <= 1)))
       // the one automatic attempt 2 only follows a transient code, and every transient code may select it; besides, a resident
       // code of ATTEMPT2_RESIDENT_CODES may, on a row of exactly its listed stages (Owner decision eaa7d5e4)
-      && (TRANSIENT.has(r.code) ? r.retry === 'attempt2' : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
+      // (one exception: the stage-1 release of GITHUB_TRANSIENT_UNAVAILABLE and NATIVE_ADMISSION_UNAVAILABLE, which write nothing: STAGE1_TRANSIENT_RELEASE)
+      && (TRANSIENT.has(r.code) ? (r.retry === 'attempt2' || stage1TransientRelease(r)) : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
   }
   return t;
 }
@@ -256,13 +263,67 @@ export function failureRow({ code, stage, phase = 'stage', reason = null, diagno
 //     per key (unexecutedMaxPer24h) is gone with policy /4: a wait (failure-table class waiting) is bounded by the
 //     waits' own budget (waitingRetriesPer24h a day, every PR together), any other release by the head's release cap
 //     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED; an environment release while the breaker is
-//     not closed is not counted), a supersession by nothing (nothing about the PR was decided).
+//     not closed is not counted), a supersession by nothing (nothing about the PR was decided). Generation 10 (DESIGN 53.3), only
+//     under a policy with breaker.network (/9): a release that networkFailure below says was the network counts towards its own cap
+//     instead (breaker.network.releasesPerHeadPer24h, every 10 minutes: queue.mjs#NETWORK_BACKOFF_MS), never towards this one.
 export const UNEXECUTED_REASON_RULES = Object.freeze({
   NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' }), evidence: 'stage-1 outcome safeToRerun' }),
   BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
   BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
   SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),
 });
+
+// Generation 10 (DESIGN 53.3, 53.4): whether an ending was the line to GitHub or Native and nothing else, from the most specific fact
+// there is (never from the class alone: BUNDLE_UNAVAILABLE, BROKER_* and NATIVE_ADMISSION_UNAVAILABLE also stand for faults that would
+// repeat). Used for the network release cap and the network cause of the breaker.
+//   - BUNDLE_UNAVAILABLE: the companion said a GitHub step of build-bundle.ps1 failed in git (companion.mjs#bundleNetworkRefusal);
+//   - GITHUB_TRANSIENT_UNAVAILABLE: GitHub answered 500/502/503/504 or did not answer (not 429: a rate limit is no outage);
+//   - NATIVE_ADMISSION_UNAVAILABLE: the explicit Native read exhaustion; an observation incomplete or too old on a slow line (the mode
+//     or the observer could not be read in time, the observation expired before it was used: the same reasons the Source reads again
+//     after the write, withdrawal-text.mjs ADMISSION_REREAD_REASONS, so the two sides of the write agree); or a full_admission_unavailable
+//     whose diagnostic says it caught a transport fault (Source full-admission-v2.mjs#transportFault); a credential refused or an
+//     evaluator fault inside it is not;
+//   - ADMISSION_VERIFICATION_UNAVAILABLE: the Source maps only a passing cause to it (withdrawal-text.mjs#admissionVerificationRetryable).
+export const NETWORK_NATIVE_REASONS = Object.freeze(['native_claim_observation_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired']);
+export const NETWORK_GITHUB_REASONS = Object.freeze(['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed']);
+export function networkFailure({ code, outcome = null, bundleNetwork = false, refsNoAnswer = false }) {
+  switch (code) {
+    // Generation 11 (DESIGN 55): the refs gate got no answer from the line, also after its two waits (engine-windows.mjs#runStage).
+    case 'REFS_GATE_UNCONFIRMED': return refsNoAnswer === true;
+    case 'BUNDLE_UNAVAILABLE': return bundleNetwork === true;
+    case 'GITHUB_TRANSIENT_UNAVAILABLE': return NETWORK_GITHUB_REASONS.includes(outcome?.reason);
+    case 'NATIVE_ADMISSION_UNAVAILABLE': return NETWORK_NATIVE_REASONS.includes(outcome?.reason) || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);
+    case 'ADMISSION_VERIFICATION_UNAVAILABLE': return true;
+    default: return false;
+  }
+}
+
+// Generation 11 (DESIGN 54): the execution stages 4 and 6 run again IN THE SAME BATCH after an ending that says nothing about the PR and
+// is proven to have published nothing; stage 3 already published, so an attempt 2 is impossible (DESIGN 53.12), and a new commit is
+// what this replaces. The stage's own publication (5 or 7) has not run: it runs once, after the run that succeeds, on that run's signed
+// result. Two kinds of ending qualify:
+//   - abandoned: the scanner-abandonment proof of DESIGN 27 holds (scannerAbandonEligible: an allow-listed ending, the pump code
+//     provable, STOP_SENT where needed, the Windows half of the proof, a quiet pump), e.g. LINUX_WORKER_ENDED_WITHOUT_RECORD;
+//   - clean: a BLOCKED outcome with zero side effects that may not have published, the Windows half of the proof, and a reason that is
+//     the environment (EXECUTION_RETRY_BLOCKED_REASONS: the Linux side refused its preparation, a callback deadline, the remote refs
+//     or GitHub / Native unreadable; full_admission_unavailable only with its transport flag), or the memory gate's refusal before the
+//     stage was invoked. A refusal about the PR (it changed or closed, refs moved, not admitted) is never retried.
+// The executor adds: no HALT, no drift, a two-host quiescence proof and a verified retry-stage-N archive before each run again.
+export const EXECUTION_RETRY_STAGES = Object.freeze([4, 6]);
+export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
+  ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
+export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null } = {}) {
+  const no = reason => ({ retry: false, basis: null, reason });
+  if (!EXECUTION_RETRY_STAGES.includes(stage)) return no('EXECUTION_RETRY_STAGE_NOT_LISTED');
+  if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE');
+  if (code === LINUX_MEMORY_NOT_READY) return { retry: true, basis: 'memory-gate', reason: null };
+  if (scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return { retry: true, basis: 'abandoned-unpublished', reason: null };
+  const o = outcome;
+  if (o?.status !== 'BLOCKED' || o.sideEffects !== 0 || o.mayHavePublished !== false) return no('EXECUTION_RETRY_NOT_A_CLEAN_REFUSAL');
+  const transport = o.reason === 'full_admission_unavailable' && o.diagnostic?.transport === true;
+  if (!EXECUTION_RETRY_BLOCKED_REASONS.includes(o.reason) && !transport) return no('EXECUTION_RETRY_REASON_NOT_ENVIRONMENT');
+  return { retry: true, basis: 'clean-refusal', reason: null };
+}
 
 // The failure decision of the executor (phase 1). release: the unexecuted reason to close the reservation with, or
 // null. A release needs the table's release-if-safe row, an entry that did not reach 10-started, the Windows half of

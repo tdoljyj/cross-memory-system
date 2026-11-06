@@ -62,7 +62,10 @@ test('minutes available: 1 -> R (gitleaks, trivy relayed) -> placement locally -
   assert.deepEqual([r.state, r.relayed, r.local], ['COMPLETED', ['gitleaks', 'trivy'], ['contract-placement']]);
   assert.deepEqual(stagesRun(engine), [1, 9, 6, 7, 8]);
   assert.deepEqual(engine.relayRoles, ['gitleaks', 'trivy']);
-  assert.deepEqual(engine.opts.find(([n]) => n === 6)[1], { betweenRoles: false, firstLinux: true }, 'placement is the first local Linux role: refs gate, no between-roles archive');
+  // (generation 11, DESIGN 55: the first Linux stage also carries the executor's check for the refs gate's waits)
+  const { stillAllowed, ...opts6 } = engine.opts.find(([n]) => n === 6)[1];
+  assert.equal(typeof stillAllowed, 'function');
+  assert.deepEqual(opts6, { betweenRoles: false, firstLinux: true }, 'placement is the first local Linux role: refs gate, no between-roles archive');
   const ts = (await types(f)).filter(x => !['service-start'].includes(x));
   const at = x => ts.indexOf(x);
   assert.ok(at('batch-started') < at('relay-plan-intent') && at('relay-plan-intent') < at('relay-attested') && at('relay-attested') < at('relay-local-fallback'));

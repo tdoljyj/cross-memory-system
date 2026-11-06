@@ -546,3 +546,117 @@ test('C5 re-review: ACTIVE again owes no 已交班; a check ending passes later 
   for (let i = 0; i < 3; i++) { await u.d.prepare({ status: s, pulls: [pull(1), pull(2)], now: u.now() }); u.advance(5 * MIN); }
   assert.equal(u.memory.probeAt, s.node.probe.at, 'done after the third failed read');
 });
+
+// Generation 12 (DESIGN §56.2), review round 27, MINOR 2: the queue watch confirms the role every 30 s; the take-over check over more
+// heads than one pass reads still ends, and a new one starts at most every TAKEOVER_RECHECK_MS while the node stays ACTIVE.
+test('review round 27: role confirmations every 30 s never keep the take-over check from ending; rechecks are spaced', async () => {
+  const { TAKEOVER_RECHECK_MS, TAKEOVER_READS_PER_PASS } = await import('../src/node-duty.mjs');
+  const HX = n => n.toString(16).padStart(40, 'a');
+  const run = async ({ onDuty }) => {
+    let time = NOW, statusReads = 0;
+    const statuses = onDuty ? { [HX(12)]: [gh('company-01', '当班：运行中：第 3 段（gitleaks 发布）', NOW - MIN)] } : {};
+    const d = new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\gh.exe', clock: () => time, memory: freshMemory(), fallbackName: 'turing',
+      timeoutMs: 15_000, inBudget: () => true, staleMs: 5 * MIN, writeRequest: async () => {},
+      run: async argv => {
+        const url = argv[4];
+        if (url === 'user') return { code: 0, stdout: `${OWNER}\n` };
+        const head = /commits\/([0-9a-f]{40})\//.exec(url)?.[1];
+        if (url.includes('/statuses')) { statusReads++; return { code: 0, stdout: JSON.stringify(statuses[head] ?? []) }; }
+        return { code: 0, stdout: '0\n' };
+      } });
+    d.memory.mode = 'ACTIVE';
+    const pulls = Array.from({ length: 15 }, (_, i) => ({ pr: i + 1, headSha: HX(i + 1), eligible: true }));
+    let lockedAt = null;
+    for (let i = 0; i < 30; i++) {
+      const probeAt = NOW + Math.floor((time - NOW) / 30_000) * 30_000;
+      const status = { writtenAt: time - 5_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, breaker: { state: 'closed' },
+        node: { name: 'turing', source: null, mode: 'ACTIVE', probe: { at: probeAt, result: 'held', failures: 0, failingSince: null } }, current: null, pending: [], recent: [] };
+      const p = await d.prepare({ status, pulls, now: time });
+      if (p.lock && lockedAt === null) lockedAt = (time - NOW) / MIN;
+      time += MIN;
+    }
+    return { lockedAt, statusReads };
+  };
+  assert.ok(15 > TAKEOVER_READS_PER_PASS, 'more heads than one pass reads');
+  const found = await run({ onDuty: true });
+  assert.ok(found.lockedAt !== null && found.lockedAt <= 2, `locked within two passes: ${JSON.stringify(found)}`);
+  // nobody else on duty: 30 minutes of confirmations every 30 s read each head once per check, a check at most every 15 minutes
+  const quiet = await run({ onDuty: false });
+  assert.equal(quiet.lockedAt, null);
+  assert.equal(quiet.statusReads, 15 * Math.ceil(30 * MIN / TAKEOVER_RECHECK_MS), JSON.stringify(quiet));
+});
+
+// Review round 28, NIT 2: when a take-over check starts at once (a node that just became ACTIVE, a restarted companion, a check that was
+// dropped before its end).
+test('review round 28: a check starts at once after STANDBY -> ACTIVE, after a companion restart, and after a dropped check', async () => {
+  const HX = n => n.toString(16).padStart(40, 'a');
+  const mk = (memory, statuses, c) => new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\gh.exe', clock: () => c.t, memory, fallbackName: 'turing', timeoutMs: 15_000,
+    inBudget: () => true, staleMs: 5 * MIN, writeRequest: async () => {},
+    run: async argv => { const url = argv[4]; if (url === 'user') return { code: 0, stdout: OWNER + '\n' };
+      const head = /commits\/([0-9a-f]{40})\//.exec(url)?.[1]; if (url.includes('/statuses')) return { code: 0, stdout: JSON.stringify(statuses.v[head] ?? []) }; return { code: 0, stdout: '0\n' }; } });
+  const st = (t, mode, probeAt, result = mode === 'ACTIVE' ? 'held' : 'not-held') => ({ writtenAt: t - 5000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null,
+    breaker: { state: 'closed' }, node: { name: 'turing', source: null, mode, probe: { at: probeAt, result, failures: 0, failingSince: null } }, current: null, pending: [], recent: [] });
+  const pulls = n => Array.from({ length: n }, (_, i) => ({ pr: i + 1, headSha: HX(i + 1), eligible: true }));
+  // STANDBY -> ACTIVE within 15 minutes of the last check
+  {
+    const c = { t: NOW }, statuses = { v: {} }, m = freshMemory(); m.mode = 'ACTIVE';
+    const d = mk(m, statuses, c);
+    await d.prepare({ status: st(c.t, 'ACTIVE', NOW), pulls: pulls(3), now: c.t });
+    assert.equal(m.probeAt, NOW);
+    c.t += 2 * MIN; await d.prepare({ status: st(c.t, 'STANDBY', c.t), pulls: pulls(3), now: c.t });
+    statuses.v[HX(2)] = [gh('company-01', '当班：排队第 1 位', c.t)];
+    c.t += 2 * MIN;
+    assert.equal((await d.prepare({ status: st(c.t, 'ACTIVE', c.t), pulls: pulls(3), now: c.t })).lock?.reason, 'takeover-refused');
+  }
+  // a restarted companion (the spacing is in memory only)
+  {
+    const c = { t: NOW }, statuses = { v: {} }, m = freshMemory(); m.mode = 'ACTIVE';
+    await mk(m, statuses, c).prepare({ status: st(c.t, 'ACTIVE', NOW), pulls: pulls(3), now: c.t });
+    statuses.v[HX(1)] = [gh('company-01', '当班：排队第 1 位', c.t)];
+    c.t += MIN;
+    assert.equal((await mk(m, statuses, c).prepare({ status: st(c.t, 'ACTIVE', c.t), pulls: pulls(3), now: c.t })).lock?.reason, 'dual-active');
+  }
+  // an uncertain probe drops a check in progress: the next confirmation starts a new one at once, not 15 minutes later
+  {
+    const c = { t: NOW }, statuses = { v: {} }, m = freshMemory(); m.mode = 'ACTIVE';
+    const d = mk(m, statuses, c);
+    let lockedAt = null;
+    for (let i = 0; i < 20 && lockedAt === null; i++) {
+      statuses.v[HX(12)] = [gh('company-01', '当班：排队第 1 位', c.t - MIN)];
+      const p = await d.prepare({ status: st(c.t, 'ACTIVE', c.t, i === 1 ? 'uncertain' : 'held'), pulls: pulls(15), now: c.t });
+      if (p.lock) lockedAt = (c.t - NOW) / MIN;
+      c.t += MIN;
+    }
+    assert.equal(lockedAt, 3);
+  }
+});
+
+test('review round 29: ACTIVE -> UNCERTAIN -> ACTIVE, or an executor started again, checks at once after a completed check', async () => {
+  const HX = n => n.toString(16).padStart(40, 'a');
+  const mk = (memory, statuses, c) => new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\gh.exe', clock: () => c.t, memory, fallbackName: 'turing', timeoutMs: 15_000,
+    inBudget: () => true, staleMs: 5 * MIN, writeRequest: async () => {},
+    run: async argv => { const url = argv[4]; if (url === 'user') return { code: 0, stdout: OWNER + '\n' };
+      const head = /commits\/([0-9a-f]{40})\//.exec(url)?.[1]; if (url.includes('/statuses')) return { code: 0, stdout: JSON.stringify(statuses.v[head] ?? []) }; return { code: 0, stdout: '0\n' }; } });
+  const st = (t, mode, probeAt, pid = 100) => ({ writtenAt: t - 5000, pid, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, breaker: { state: 'closed' },
+    node: { name: 'turing', source: null, mode, probe: { at: probeAt, result: mode === 'ACTIVE' ? 'held' : 'uncertain', failures: 0, failingSince: null } }, current: null, pending: [], recent: [] });
+  const pulls = Array.from({ length: 3 }, (_, i) => ({ pr: i + 1, headSha: HX(i + 1), eligible: true }));
+  for (const via of ['uncertain', 'pid']) {
+    const c = { t: NOW }, statuses = { v: {} }, m = freshMemory(); m.mode = 'ACTIVE';
+    const d = mk(m, statuses, c);
+    await d.prepare({ status: st(c.t, 'ACTIVE', NOW), pulls, now: c.t });
+    assert.equal(m.probeAt, NOW, 'the first check is done');
+    c.t += 2 * MIN;
+    if (via === 'uncertain') await d.prepare({ status: st(c.t, 'UNCERTAIN', NOW), pulls, now: c.t });
+    statuses.v[HX(1)] = [gh('company-01', '当班：排队第 1 位', c.t)];
+    c.t += MIN;
+    const p = await d.prepare({ status: st(c.t, 'ACTIVE', c.t, via === 'pid' ? 200 : 100), pulls, now: c.t });
+    assert.equal(p.lock?.reason, 'dual-active', via);
+  }
+  // the same executor, ACTIVE throughout: spaced (no new check within TAKEOVER_RECHECK_MS)
+  const c = { t: NOW }, statuses = { v: {} }, m = freshMemory(); m.mode = 'ACTIVE';
+  const d = mk(m, statuses, c);
+  await d.prepare({ status: st(c.t, 'ACTIVE', NOW), pulls, now: c.t });
+  statuses.v[HX(1)] = [gh('company-01', '当班：排队第 1 位', c.t)];
+  c.t += 3 * MIN;
+  assert.equal((await d.prepare({ status: st(c.t, 'ACTIVE', c.t), pulls, now: c.t })).lock, null);
+});

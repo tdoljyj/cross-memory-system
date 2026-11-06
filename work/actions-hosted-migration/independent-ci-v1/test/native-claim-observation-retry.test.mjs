@@ -539,7 +539,7 @@ test('recovery: refuses a new K or Check without the explicit 2000ms post-write 
       const read = gh.readPullRequest;
       gh.readPullRequest = async n => { prReads++; clock.now = started + 60000 - PUBLICATION_READBACK_RESERVE_MS + 1; return read(n); };
     } });
-  assert.equal(prReads, 1);
+  assert.equal(prReads, 2, 'the boundary read and the write-ahead probe (DESIGN 51 B); the reserve guard then refuses the write');
   assert.equal(r.result.status, 'UNCERTAIN');
   assert.equal(r.checks.length, 0);
   assert.equal(await r.journal.read(r.key), null);

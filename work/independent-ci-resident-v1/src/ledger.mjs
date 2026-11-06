@@ -231,10 +231,12 @@ export class Ledger {
   }
 
   // The hosted wait record: written once, right after 10-started, before anything else of the batch.
-  async beginWait(key, { t0, batch }) {
+  async beginWait(key, { t0, batch, claimExpiresAt = null }) {
     const s = await this.state(key);
     check(s.state === 'STARTED' && !s.wait && !s.planIntent && !s.abort && Number.isSafeInteger(t0) && t0 > 0 && batch && typeof batch.batchId === 'string', 'RELAY_WAIT_REQUIRES_STARTED_ENTRY', s.state);
-    await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock) });
+    // claimExpiresAt (generation 12, DESIGN §56.3): stage 1's lease end, a view only (restored for the renewal reminder after a restart).
+    await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock),
+      ...(typeof claimExpiresAt === 'string' ? { claimExpiresAt } : {}) });
   }
 
   // Restrictive parking before Stage 1. No 10-started, head burn or cleanup
@@ -508,8 +510,11 @@ export class Ledger {
 
   // The run queue's daily budgets for the window since sinceMs, from the ledger alone (one pass; see the header).
   // A record that cannot be read counts as one more execution or evaluation (never a wedge, never a free pass).
-  async usage(sinceMs) {
-    const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 };
+  // separateNetwork (generation 10, DESIGN 53.3: the policy names breaker.network): a release whose facts say network (classify.mjs
+  // #networkFailure) counts in networkReleasesByHead, whatever the breaker's state, and never in releasesByHead.
+  async usage(sinceMs, { separateNetwork = false } = {}) {
+    const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(),
+      networkReleasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
     // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
     // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
@@ -538,6 +543,7 @@ export class Ledger {
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
+      if (separateNetwork && facts?.network === true) { if (reason && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
       if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;

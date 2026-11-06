@@ -25,12 +25,18 @@
   and records FAILED_CLEAN OWNER_ABORTED. It never publishes or retracts a check and never kills a
   process; when quiescence cannot be proven the batch HALTs as before and needs a re-arm.
 
+  -Request ReleaseBreaker -Reason <text> (generation 10, DESIGN 53.4): the run queue's circuit breaker is open (inspect shows it under
+  `breaker`) and the Owner knows the fault is gone (for example the network is back). The service makes the breaker's trial due now and
+  records the request with its reason in the receipts (owner-request, kind breaker-release). It never closes the breaker: one trial
+  batch must still get past the place that failed. A breaker that is not open refuses the request (BREAKER_NOT_OPEN), so a late or
+  repeated request changes nothing.
+
   Residual, unchanged from today: any elevated .NET process of the Owner (including this one and the
   per-batch UAC launch it replaces) inherits the Owner's environment, e.g. COR_ENABLE_PROFILING;
   DESIGN.md §14 R10.
 #>
 [CmdletBinding()]
-param([ValidateSet('Rearm', 'Resume', 'Abort')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
+param([ValidateSet('Rearm', 'Resume', 'Abort', 'ReleaseBreaker')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -61,6 +67,9 @@ $body = if ($Request -eq 'Rearm') {
   # ValidatePattern ignores case; the service accepts lower-case hex only.
   if ($BatchKey -cnotmatch '^[0-9a-f]{64}$' -or $ExpectedLedgerEntrySha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'LOWER_CASE_HEX_REQUIRED' }
   [ordered]@{ batchKey = $BatchKey; by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-abort/1'; ledgerEntrySha256 = $ExpectedLedgerEntrySha256; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
+} elseif ($Request -eq 'ReleaseBreaker') {
+  if (-not $Reason) { throw 'BREAKER_RELEASE_REASON_REQUIRED' }
+  [ordered]@{ by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-breaker-release/1'; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
 } else {
   if (-not $ExpectedPausedSha256) { throw 'REVIEWED_PAUSE_REQUIRED' }
   [ordered]@{ by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-resume/1'; nonce = $hex; pausedSha256 = $ExpectedPausedSha256; requestedAt = $now.ToString('o') }

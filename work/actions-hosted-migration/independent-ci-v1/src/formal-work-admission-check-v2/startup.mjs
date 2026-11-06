@@ -8,6 +8,7 @@ import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGi
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from '../independent-control-checks-v2/train-mode.mjs';
+import { createClaimAssistNative, stage1WithLease } from '../independent-control-checks-v2/claim-assist-native.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   return runEntry({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
@@ -26,8 +27,15 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     // holders, touch and sweep-proof ports for the front batch's second touch running.
     const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
     const { slotNative = null, sweepStore = null } = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github });
-    return createProductionWorkAdmissionPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaims,
-      trainMode, trainModeUnreadable, slotNative, sweepStore, scanStartRegistrySha256: ports.scanStartRegistrySha256 }).publish(job);
+    const result = await createProductionWorkAdmissionPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaims,
+      trainMode, trainModeUnreadable, slotNative, sweepStore, scanStartRegistrySha256: ports.scanStartRegistrySha256,
+      // Generation 10: the held record's end (runEntry sets it), so a re-read wait never leaves the withdrawal without time.
+      deadlineAt: () => live.deadlineAt ?? null }).publish(job);
+    // Generation 12 (resident DESIGN 56.4): an admitted batch whose claim's lease is shorter than STAGE1_LEASE_MINUTES gets it extended
+    // with the CI identity (claim-assist-native.mjs#stage1WithLease). Not part of the publication: only the reported lease end changes,
+    // to what Native answered; never throws.
+    try { return await stage1WithLease({ result, claimAssist: createClaimAssistNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken }), job,
+      now: Date.now(), record: log }); } catch { return result; }
   } });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();
