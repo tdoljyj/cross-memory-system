@@ -57,9 +57,10 @@ for (const file of files) await import(pathToFileURL(file).href);
 test('the admission script and the runner hook read the application public Supabase default', () => {
   const { url, key } = resolveSupabasePublicConfig({});
   assert.deepEqual(resolvePublicSupabaseConfig({}, ROOT), { url, key, source: PUBLIC_CONFIG_SOURCE });
-  // The runner hook's pattern (scripts/runner/clued-runner-job-started.mjs, decideWithCurrentEpoch).
-  const runner = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/
-    .exec(readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8'));
+  // The runner hook's size limit and pattern (scripts/runner/clued-runner-job-started.mjs, decideWithCurrentEpoch).
+  const text = readFileSync(path.join(ROOT, PUBLIC_CONFIG_SOURCE), 'utf8');
+  assert.ok(Buffer.from(text).toString('base64').length <= 32768);
+  const runner = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(text);
   assert.deepEqual(runner?.slice(1), [url, key]);
   // The admission self-test's own check of the default (scripts/ci/clued-work-admission.test.mjs).
   assert.match(url, /^https:\/\/[a-z]+\.supabase\.co$/);
