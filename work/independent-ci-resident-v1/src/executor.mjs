@@ -3183,8 +3183,16 @@ export class ResidentExecutor {
           ({ result: r, abort, stopCode, unconfirmed } = run);
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), ...refsGateFacts(r), executionRetry: again + 1 });
-          // DESIGN 59.1: stage 2's own gates refused the run again before it ran: the batch ends on the abandoned run, as without it.
-          if (number === 2 && r.ok !== true && !abort && !unconfirmed && STAGE2_RETRY_KEEPS_ABANDONED.includes(validCode(r.code))) { r = abandoned; break; }
+          // DESIGN 59.1: stage 2's own gates refused the run again before it ran: the batch ends on the abandoned run, as without it. The
+          // receipt names the substitution (and a refs gate without an answer: the ending is counted as environment, as before generation 14).
+          if (number === 2 && r.ok !== true && !abort && !unconfirmed && STAGE2_RETRY_KEEPS_ABANDONED.includes(validCode(r.code))) {
+            try {
+              await this.receipt('execution-retry-refused', { key, stage: number, try: again + 1, step: 'gate', failureCode: validCode(r.code), kept: 'abandoned',
+                ...(r.refsNoAnswer === true ? { refsNoAnswer: true } : {}) });
+            } catch { /* the batch still ends on the abandoned run */ }
+            r = abandoned;
+            break;
+          }
         }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });

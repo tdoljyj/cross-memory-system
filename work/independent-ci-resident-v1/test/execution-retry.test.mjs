@@ -137,7 +137,14 @@ test('stage 2: a run again refused before it ran by the refs gate (no answer) or
     assert.deepEqual(stagesRun(engine), [1, 2, 2], code);
     assert.equal(r.attempt2, batchKey(subject({ attempt: 2 })), `${code}: the one attempt 2 is kept`);
     assert.deepEqual((await bodies(f, 'stage-terminal')).filter(b => b.stage === 2).map(b => [b.failureCode, b.executionRetry ?? 0]), [['BRIDGE_STAGE_STOPPED_PUMP_LOST', 0], [code, 1]], code);
+    assert.deepEqual((await bodies(f, 'execution-retry-refused')).map(b => [b.stage, b.try, b.step, b.failureCode, b.kept, b.refsNoAnswer ?? false]), [[2, 1, 'gate', code, 'abandoned', false]], code);
   }
+  // the refs gate without an answer is named in that receipt
+  const engine = engineWith(2, [pumpLost2(), { ok: false, code: 'REFS_GATE_UNCONFIRMED', proof: WINDOWS_CLEAN, refsNoAnswer: true }]);
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).failureCode, BRIDGE_ABANDONED_UNPUBLISHED);
+  assert.deepEqual((await bodies(f, 'execution-retry-refused')).map(b => b.refsNoAnswer), [true]);
 });
 
 test('stage 2: a run again that ends otherwise stops the runs again and ends by its own code (memory gate, refs moved: the one attempt 2)', async t => {

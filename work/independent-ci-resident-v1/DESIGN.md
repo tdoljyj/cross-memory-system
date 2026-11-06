@@ -4683,7 +4683,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - 签发者自己的 `PUBLICATION_UNCERTAIN`（Source 把有副作用或可能已发布的结果都映射成它）也在 §27 允许表里，所以同样重跑，与第 4、6 段和 attempt 2 一致。
 - “什么都没发布”的依据与 §27 相同：第 2 段唯一的 Windows 进程是扫描签发者，写不了检查；Linux worker 没有 GitHub 凭据；签名结果只有经同批第 3 段才变成检查，而第 3 段只在第 2 段成功之后才跑一次。重跑之前照 §54.2：无 HALT、无漂移、授权够、两台主机静止、两边 `retry-stage-2-K` 归档核实、写 `execution-retry` 回执；任何一步不成立就写 `execution-retry-refused` 并按原路径结束。
 - 等待 60 s、300 s，最多 2 次（`EXECUTION_RETRY_MS`，不变）。第 2 段是批次第一个 Linux 段，重跑时 refs 闸门和版本检查照样再过（`firstLinux`）。
-- 第 2 段是批次的第一个 Linux 段，重跑前还要再过它自己的闸门。如果闸门在什么都没跑之前就拒绝了重跑（refs 闸门没有应答 `REFS_GATE_UNCONFIRMED`，或版本不一致 `UPGRADE_VERSION_SKEW`），批次按被放弃的那次运行结束（`STAGE2_RETRY_KEEPS_ABANDONED`），即与不重跑时一样：`BRIDGE_ABANDONED_UNPUBLISHED`，并保留那一次 attempt 2。原因：这两个码都会烧 head（new-commit），重跑不能让批次比不重跑结束得更差（独立审查 MINOR 1）。
+- 第 2 段是批次的第一个 Linux 段，重跑前还要再过它自己的闸门。如果闸门在什么都没跑之前就拒绝了重跑（refs 闸门没有应答 `REFS_GATE_UNCONFIRMED`，或版本不一致 `UPGRADE_VERSION_SKEW`），批次按被放弃的那次运行结束（`STAGE2_RETRY_KEEPS_ABANDONED`），即与不重跑时一样：`BRIDGE_ABANDONED_UNPUBLISHED`，并保留那一次 attempt 2。原因：这两个码都会烧 head（new-commit），重跑不能让批次比不重跑结束得更差（独立审查 MINOR 1）。这时写一张 `execution-retry-refused` 回执（`step: 'gate'`、重跑的码、`kept: 'abandoned'`；refs 闸门无应答时带 `refsNoAnswer`），然后结束。这一结束算环境失败，不算网络失败（熔断器不按网络处理），与第 14 代之前相同。
 - 静止证明不成立（例如 worker 一直活着）时，先是重跑前的静止证明被拒（`execution-retry-refused`），再是放弃路径自己的静止证明，然后才 HALT。两次各有 5 分钟上限，所以最坏约 10 分钟才 HALT，以前约 5 分钟。
 - 两次都用完：与以前完全相同，`FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，并且仍有那一次 attempt 2（attempt 2 里同样有两次批次内重跑）。
 - 同一个作业再跑一次（照 §54.3 逐项核对 gitleaks）：运行目录 `runs/gitleaks-<jobId>` 重跑会冲突，由 `stage-retry` 归档移走；对保留工作区的 git 命令带 `--no-optional-locks`，不改工作区；`NATIVE_SCAN_START_REQUIRED = false`，没有一次性的 Native 许可。gitleaks 在 intent 和 outcome 里写 `automaticRetryAllowed:false`，指的是 Source 自己不重试；常驻层的重跑（与 attempt 2 一样）在此之上另有 §27 的证明。
