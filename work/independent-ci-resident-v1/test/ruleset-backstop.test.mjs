@@ -72,7 +72,7 @@ test('companion wiring: gh reads main\'s rules, the pause goes into the requests
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-backstop-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.mkdir(path.join(root, 'requests'));
-  const store = await LocalStore.open(path.join(root, 'companion-store.json'));
+  const store = await LocalStore.open(path.join(root, 'companion-store.json'), () => now);
   const calls = [];
   let reply = { code: 0, stdout: JSON.stringify(rules({ strict: false })) };
   const run = async (argv, opts) => { calls.push(argv); return argv[0].endsWith('gh.exe') ? reply : { code: 0, stdout: '' }; };
