@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import os
 import shutil
@@ -132,6 +133,34 @@ class CheckTest(unittest.TestCase):
         write(skill, "  path: C:\\x 1.0.0\nbody\n")
         cc.bump("pkg", "1.1.0", self.repo.dir)
         self.assertEqual(skill.read_text(), "  path: C:\\x 1.1.0\nbody\n")
+
+    def test_bump_and_update_write_lf_only(self):
+        # On Windows write_text turns "\n" into CRLF; the R9 re-registration helper refuses such files.
+        root = self.repo.dir
+        skill = root / "pkg" / "SKILL.md"
+        skill.write_bytes(b'---\r\nname: x\r\nmetadata:\r\n  version: "1.0.0"\r\n---\r\nbody\r\n')
+        (root / "tool.py").write_text("print(2)\n")
+        cc.bump("pkg", "1.1.0", root)
+        cc.update(root)
+        for path in (skill, root / cc.MANIFEST):
+            self.assertNotIn(b"\r", path.read_bytes(), path.name)
+        self.assertEqual(cc.check(root), [])
+
+    def test_bump_and_update_write_lf_where_text_mode_translates(self):
+        # The same check on every platform: make a text-mode write translate "\n" to CRLF, as Windows does.
+        real_open = io.open
+
+        def windows_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, *args, **kwargs):
+            if "w" in mode and "b" not in mode and newline is None:
+                newline = "\r\n"
+            return real_open(file, mode, buffering, encoding, errors, newline, *args, **kwargs)
+
+        write(self.repo.dir / "pkg" / "references" / "a.md", "changed\n")
+        with mock.patch("io.open", windows_open), mock.patch("builtins.open", windows_open):
+            cc.bump("pkg", "1.1.0", self.repo.dir)
+            cc.update(self.repo.dir)
+        for path in (self.repo.dir / "pkg" / "SKILL.md", self.repo.dir / cc.MANIFEST):
+            self.assertNotIn(b"\r", path.read_bytes(), path.name)
 
     def test_bump_refuses_lower_or_equal(self):
         with self.assertRaises(SystemExit):

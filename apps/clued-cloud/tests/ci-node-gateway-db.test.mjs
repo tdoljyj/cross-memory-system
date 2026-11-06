@@ -51,6 +51,7 @@ test('unified scheduling 2B: node gateway, qualification, node list, G7/G10 and 
     const reg = { ...f.registration(), binding_id: bindingId, identity_public_jwk: identity, publisher_requested: publisher, scan_signing_requested: scan };
     const r = f.committed(await f.native('clued_ci_node_registration_v1', reg));
     const encryption = (await sql('select encryption_fingerprint from clued_private.ci_nodes_v1 where node_id=$1', [r.node_id])).encryption_fingerprint;
+    await f.live(r.node_id); // G5 (T2A-2): node operations need a fresh heartbeat.
     return { id: r.node_id, token, key: pair.privateKey, publicKey: pair.publicKey, identity, fingerprint: await ciIdentityFingerprint(identity), reg, encryption, bindingId };
   }
   const nodeRow = id => sql('select * from clued_private.ci_nodes_v1 where node_id=$1', [id]);
@@ -267,6 +268,23 @@ test('unified scheduling 2B: node gateway, qualification, node list, G7/G10 and 
       assert.equal((await sql('select state from clued_private.ci_jobs_v1 where job_id=$1', [job])).state, 'result_ready');
       // The signed job is the one acted on: another, unleased job has no current lease for this node.
       refused(await send(a, 'job_started', {}, { job: await f.enqueue(), g }), 'CI_LEASE_NOT_CURRENT');
+    });
+
+    await t.test('T2A-2: job_lease_next through the gateway leases the next queued job and names it; a job id is refused', async () => {
+      const queued = (await sql("select array_agg(job_id::text order by queued_at,created_at,job_id) ids from clued_private.ci_jobs_v1 where user_id=$1 and state='queued'", [user])).ids;
+      assert.ok(queued?.length >= 1);
+      // The signer refuses a jobless operation naming a job; the database refuses it too.
+      const c = { ...(await command(a, 'job_lease_next', {})), job_id: queued[0], execution_generation: 1 };
+      const direct = (await gw.query('select public.clued_ci_node_command_v1($1,$2::jsonb,$3::jsonb,$4::jsonb) v', [hex(a.token), JSON.stringify(c), '{}',
+        JSON.stringify({ operation: c.operation, node_id: a.id, payload_sha256: c.payload_sha256, nonce_sha256: hex(c.nonce), verified_at_ms: Date.now() })])).rows[0].v;
+      assert.equal(direct.error_code, 'CI_COMMAND_INVALID');
+      refused(await send(a, 'job_lease_next', { extra: true }), 'CI_INPUT_INVALID');
+      const leased = committed(await send(a, 'job_lease_next', {}));
+      assert.equal(leased.state, 'leased'); assert.equal(leased.job_id, queued[0]); assert.equal(leased.job.job_id, queued[0]);
+      for (let i = 1; i < queued.length; i++) assert.equal(committed(await send(a, 'job_lease_next', {})).job_id, queued[i]);
+      assert.deepEqual(committed(await send(a, 'job_lease_next', {})), { state: 'none', tried: 0, skipped: [] });
+      await admin.query("update clued_private.ci_job_leases_v1 set state='released',terminal_at=now() where job_id=any($1::uuid[]) and state='current'", [queued]);
+      await admin.query("update clued_private.ci_jobs_v1 set state='canceled' where job_id=any($1::uuid[])", [queued]);
     });
 
     await t.test('revocation narrows the list: the node is withdrawn, its unpublished work invalidated; no older version restores it', async () => {
