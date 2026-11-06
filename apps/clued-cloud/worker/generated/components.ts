@@ -32,7 +32,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.2",
   "script.source-only-workflow": "1.0.0",
-  "script.control-workflow-source": "1.0.3",
+  "script.control-workflow-source": "1.0.4",
   "script.required-applicability": "1.0.0",
   "script.standard-runner-actor-source": "1.0.0",
   "ci.temporary-storage-lifecycle": "1.0.1"
