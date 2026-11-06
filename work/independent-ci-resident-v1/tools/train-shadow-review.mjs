@@ -9,9 +9,12 @@
 // text on stdout. A condition whose data is absent or unreadable is 数据不够 (or 不满足), never 满足.
 //
 // Gate (Owner Decision 21072374, 2026-11-01): at least 1 hour AND at least 3 real front PRs of shadow observation by a Source whose full
-// sweep works; the full sweep completes and repeats; no abnormal stop. The window starts at --since (the install of that Source). The
-// "repeat" reading (two completed full sweeps, none replaced or abandoned without finishing) is this tool's interpretation and is printed
-// as such. A shadow full sweep is restarted only after fullSweepMaxMs (6 hours by default), so two sweeps take about that long.
+// sweep works; the full sweep completes and repeats; no abnormal stop. The window starts at --since (the install of that Source).
+// The Owner's reading of "repeats" (Clued Decision 合并列车开车口径, 2026-11-06): at least MIN_FULL_SWEEPS completed full sweeps inside the
+// window, and every sweep that was abandoned or replaced inside it is explained by slow pacing (it ran out the fullSweepMaxMs clock) and not
+// by an error (a failed segment or any other abandonment reason). An abandonment that the records cannot tie to the clock is NOT explained.
+// The same Decision: the GitHub recompute delay is not required before the train starts (still printed when it can be computed), the
+// second place's wait is the queue_marker residence (--queue-markers), the 6-hour full-sweep cap stays as it is.
 //
 // --pulls    JSON { "<pr>": { "mergedAt": iso } }                       (gh api repos/<repo>/pulls/<pr> --jq '{mergedAt: .merged_at}')
 // --queue-markers JSON [ { "leftQueuedAt": iso, "headLeftAt": iso } ]   (merge_measurement_events_v1, kind queue_marker, payload; read-only SQL)
@@ -25,6 +28,8 @@ export const REVIEW_CONTRACT = 'clued.independent-ci.train-shadow-review/1';
 export const MIN_WINDOW_MS = 3_600_000;
 export const MIN_FRONT_PRS = 3;
 export const MIN_FULL_SWEEPS = 2;
+export const FULL_SWEEP_MAX_MS = 21_600_000;   // the resident's policy default fullSweepMaxMs (6 hours); the records do not carry it
+const EXPIRY_REASONS = new Set(['TRAIN_FULL_SWEEP_EXPIRED']);
 export const NODE_STALE_MS = 1_800_000; // three heartbeat intervals (DESIGN §41.6a)
 const RECEIPT_NAME = /^(\d{8})-([a-z0-9-]{1,48})\.json$/;
 const SHADOW_NAME = /^(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})\.json$/;
@@ -81,7 +86,7 @@ export async function loadReceipts(dir) {
 // The facts of one shadow record reduced to the typed fields this tool reads; anything of the wrong type becomes null / absent, so a
 // damaged record can neither crash the report nor add up as garbage. Facts /1 (no sweep, no nodes) and /2 are both fine.
 export function sanitizeFacts(f) {
-  const sweep = plain(f.sweep) && SWEEP_KINDS.has(f.sweep.kind) ? { kind: f.sweep.kind, calls: int(f.sweep.calls) ?? 0, ms: int(f.sweep.ms) ?? 0,
+  const sweep = plain(f.sweep) && SWEEP_KINDS.has(f.sweep.kind) ? { kind: f.sweep.kind, complete: typeof f.sweep.complete === 'boolean' ? f.sweep.complete : null, calls: int(f.sweep.calls) ?? 0, ms: int(f.sweep.ms) ?? 0,
     fullSweep: plain(f.sweep.fullSweep) ? { state: SWEEP_STATES.has(f.sweep.fullSweep.state) ? f.sweep.fullSweep.state : 'none', startedAt: ms(f.sweep.fullSweep.startedAt) === null ? null : f.sweep.fullSweep.startedAt,
       completedAt: ms(f.sweep.fullSweep.completedAt) === null ? null : f.sweep.fullSweep.completedAt, reason: str(f.sweep.fullSweep.reason, 80) } : null } : null;
   const front = plain(f.front) ? { pr: int(f.front.pr), headSha: SHA40.test(f.front.headSha ?? '') ? f.front.headSha : null, green: typeof f.front.green === 'boolean' ? f.front.green : null,
@@ -242,24 +247,41 @@ function recomputeDelay(shadowRuns) {
   return { samples: samples.length, medianMin: median(d), maxMin: d.length ? d.reduce((m, v) => Math.max(m, v), 0) : null };
 }
 
-function sweepStats(shadowRuns, since, status) {
+function sweepStats(shadowRuns, since, status, now) {
   const runs = shadowRuns.filter(s => s.facts.sweep?.kind === 'full-segment' && s.facts.sweep.fullSweep && (since === null || s.at >= since));
   const byStart = new Map();
   for (const s of runs) {
     const fsw = s.facts.sweep.fullSweep, key = fsw.startedAt ?? `run:${s.runId}`;
-    const e = byStart.get(key) ?? { startedAt: fsw.startedAt, segments: 0, calls: 0, activeMs: 0, state: 'running', completedAt: null, reason: null };
+    const e = byStart.get(key) ?? { startedAt: fsw.startedAt, segments: 0, calls: 0, activeMs: 0, state: 'running', completedAt: null, reason: null, stalled: false };
     e.segments += 1; e.calls = Math.min(Number.MAX_SAFE_INTEGER, e.calls + s.facts.sweep.calls); e.activeMs = Math.min(Number.MAX_SAFE_INTEGER, e.activeMs + s.facts.sweep.ms);
-    if (fsw.state === 'complete' || fsw.state === 'abandoned') { e.state = fsw.state; e.completedAt = fsw.completedAt ?? iso(s.at); e.reason = fsw.reason; }
+    // a run of a still-running sweep whose sweep did not complete (the incremental part failed), or that does not say: the sweep may be stuck, not slow
+    if (fsw.state === 'running' && s.facts.sweep.complete !== true) e.stalled = true;
+    if (fsw.state === 'complete' || fsw.state === 'abandoned') { e.state = fsw.state; e.completedAt = fsw.completedAt ?? iso(s.at); e.reason = fsw.reason; e.endAt = s.at; }
     byStart.set(key, e);
   }
   // The resident abandons an expired shadow sweep and starts the next one in the same run, so the records may never show "abandoned":
   // a sweep still 'running' when a later one began was replaced without finishing.
   const list = [...byStart.values()];
   list.forEach((e, i) => { if (e.state === 'running' && i < list.length - 1) { e.state = 'abandoned'; e.reason = 'REPLACED_WITHOUT_FINISHING'; } });
+  // Why a sweep was abandoned: EXPIRED = it ran out the fullSweepMaxMs clock (slow pacing: the sweep needs a fixed number of segments and
+  // too few runs happened in time) and none of its runs reported a failed sweep; anything else (a failed segment, an early replacement, a
+  // sweep that was stuck on errors, ...) is not explained by the clock. The resident expires a sweep only when it is OLDER than the cap.
+  list.forEach((e, i) => {
+    if (e.state !== 'abandoned') return;
+    const next = list[i + 1], end = EXPIRY_REASONS.has(e.reason) ? (e.endAt ?? null) : e.reason === 'REPLACED_WITHOUT_FINISHING' && next ? ms(next.startedAt) : null;
+    const span = end !== null && ms(e.startedAt) !== null ? end - ms(e.startedAt) : null;
+    e.cause = !e.stalled && span !== null && span > FULL_SWEEP_MAX_MS ? 'EXPIRED' : 'NOT_EXPLAINED';
+  });
+  // The last sweep still running past the cap (plus three run intervals: the resident replaces an expired sweep at its next run): no run has
+  // abandoned it, so the sweeping has stopped, which is not slow pacing either. Needs a --now that is really "now" (or the time of the copy).
+  const tail = list[list.length - 1];
+  if (tail?.state === 'running' && ms(tail.startedAt) !== null && now - ms(tail.startedAt) > FULL_SWEEP_MAX_MS + NODE_STALE_MS) { tail.state = 'abandoned'; tail.reason = 'RUNNING_PAST_CAP'; tail.cause = 'NOT_EXPLAINED'; }
   const sweeps = list.map(e => ({ ...e, wallMin: e.state === 'complete' && ms(e.completedAt) !== null && ms(e.startedAt) !== null ? minutes(ms(e.completedAt) - ms(e.startedAt)) : null, activeMin: minutes(e.activeMs) }));
   const live = status?.train?.last?.sweep?.fullSweep ?? null, liveDone = ms(status?.train?.sweep?.fullCompletedAt);
   return { fromShadow: runs.length > 0, sweeps, completed: sweeps.filter(s => s.state === 'complete').length, abandoned: sweeps.filter(s => s.state === 'abandoned').length,
-    abandonedReasons: countBy(sweeps.filter(s => s.state === 'abandoned'), s => s.reason ?? 'none'), running: sweeps.filter(s => s.state === 'running').length,
+    abandonedReasons: countBy(sweeps.filter(s => s.state === 'abandoned'), s => s.reason ?? 'none'),
+    abandonedExpired: sweeps.filter(s => s.state === 'abandoned' && s.cause === 'EXPIRED').length,
+    abandonedNotExplained: sweeps.filter(s => s.state === 'abandoned' && s.cause !== 'EXPIRED').map(s => ({ startedAt: s.startedAt, reason: s.reason ?? 'none', stalled: s.stalled })), running: sweeps.filter(s => s.state === 'running').length,
     statusFile: status ? { shadow: (str(status.train?.last?.mode, 20) ?? 'shadow') === 'shadow' && str(status.train?.enabled, 20) === 'shadow', state: str(live?.state, 20), startedAt: str(live?.startedAt, 40), lastCompletedAt: iso(liveDone) } : null };
 }
 
@@ -300,8 +322,10 @@ function gate({ since, window, sweep, anomaly, stats, nodes, shadowSweepRuns, ch
   const done = sweep.completed;
   add('G3', '完整全量扫描至少完成 1 次', done >= 1 ? MET : statusDone && !shadowSweepRuns ? MET : shadowSweepRuns && sweep.abandoned > 0 && sweep.running === 0 ? NOT_MET : INSUFFICIENT,
     shadowSweepRuns ? `影子记录里完成 ${done} 次、放弃 ${sweep.abandoned} 次、进行中 ${sweep.running} 次` : `没有全量扫描的影子记录；状态文件：${sweep.statusFile ? `${sweep.statusFile.state ?? '?'}，上次完成 ${sweep.statusFile.lastCompletedAt ?? '无'}（状态文件只记最近一次）` : '未提供'}`);
-  add('G4', `全量扫描重复执行（完成 ≥ ${MIN_FULL_SWEEPS} 次，其间没有未完成就被替换或放弃）——本工具对“重复执行”的解读`, !shadowSweepRuns ? INSUFFICIENT : done >= MIN_FULL_SWEEPS && sweep.abandoned === 0 ? MET : (done >= MIN_FULL_SWEEPS ? NOT_MET : INSUFFICIENT),
-    shadowSweepRuns ? `完成 ${done} 次，放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `（${JSON.stringify(sweep.abandonedReasons)}）` : ''}；影子阶段扫描最长 6 小时、完成后 6 小时才再开一轮，所以至少要观察约 6 小时以上` : '没有影子记录，数不出完成次数');
+  const unexplained = sweep.abandonedNotExplained;
+  add('G4', `全量扫描重复执行（窗口内完成 ≥ ${MIN_FULL_SWEEPS} 次，每次放弃或被替换都能解释为跑满 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时上限的节奏慢，而不是错误）——Owner 口径`,
+    !shadowSweepRuns ? INSUFFICIENT : done >= MIN_FULL_SWEEPS ? (unexplained.length === 0 ? MET : NOT_MET) : INSUFFICIENT,
+    shadowSweepRuns ? `完成 ${done} 次；放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `，其中 ${sweep.abandonedExpired} 次是跑满上限（节奏慢）、${unexplained.length} 次记录里看不出是节奏慢${unexplained.length ? `：${unexplained.map(u => `${u.startedAt ?? '起点未知'} ${u.reason}${u.stalled ? '（期间有运行没扫完，可能卡在错误上）' : ''}`).join('；')}` : ''}` : ''}${done < MIN_FULL_SWEEPS ? `；窗口内还要再完成 ${MIN_FULL_SWEEPS - done} 次（一轮扫描最长 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时，完成后隔 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时才再开一轮）` : ''}` : '没有影子记录，数不出完成次数');
   const halted = anomaly.receiptsByKind.halt + anomaly.receiptsByKind['service-stop-prior-boot'] + anomaly.intentsWithoutClose + anomaly.interruptedRuns;
   add('G5', '窗口内第 10 段没有 HALT / 中断', window.runs === 0 ? INSUFFICIENT : halted === 0 ? MET : NOT_MET,
     `HALT ${anomaly.receiptsByKind.halt}，断电/崩溃后的停机记录 ${anomaly.receiptsByKind['service-stop-prior-boot']}，未收尾 ${anomaly.intentsWithoutClose}，被中断 ${anomaly.interruptedRuns}（另：批次熔断 ${anomaly.receiptsByKind['breaker-opened']} 次、服务停止 ${anomaly.receiptsByKind['service-stop']} 次，属批次管线，仅供参考）；第 10 段失败 ${anomaly.stage10Failures.length} 次${anomaly.stage10Failures.length ? `（${anomaly.stage10Failures.map(f => f.code).join(',')}）` : ''}`);
@@ -311,9 +335,9 @@ function gate({ since, window, sweep, anomaly, stats, nodes, shadowSweepRuns, ch
   if (stats.wouldRevoke.runs === 0) missing.push('会撤销个数');
   if (!stats.greenToMerge.samples?.length) missing.push('车头变绿到合入的空档');
   if (!sweep.sweeps.some(s => s.wallMin !== null)) missing.push('全量扫描时长（要影子记录）');
-  if (!stats.recompute.samples) missing.push('GitHub 重算延迟（要影子记录）');
+  // The GitHub recompute delay is not required before the train starts (Owner Decision, 2026-11-06): printed when it can be computed.
   if (!stats.queueResidence?.samples) missing.push('第 2 位的等待（影子记录不含第二位，用 --queue-markers 的排队停留代替）');
-  add('G6', '设计 §22.2 第 5 条的各项统计都能算出', missing.length ? INSUFFICIENT : MET, missing.length ? `算不出：${missing.join('、')}` : '全部算出');
+  add('G6', '设计 §22.2 第 5 条的各项统计都能算出（GitHub 重算延迟开车前不要求）', missing.length ? INSUFFICIENT : MET, `${missing.length ? `算不出：${missing.join('、')}` : '全部算出'}${stats.recompute.samples ? '' : '；GitHub 重算延迟没有样本，Owner 已定开车前不要求'}`);
   if (nodes && nodes.heard > 0) {
     add('G7', `每个常驻节点的心跳正常（30 分钟内），且看到 ${expectNodes} 个节点`, nodes.stale.length ? NOT_MET : nodes.heard < expectNodes ? INSUFFICIENT : MET,
       `${nodes.nodes.map(n => `${n.node ?? '无'}: ${n.ageMin ?? '?'} 分钟前`).join('；')}`);
@@ -332,7 +356,7 @@ export function review({ receipts, shadow = [], status = null, pulls = null, mar
   const window = windowStats(trainRuns, since, now);
   const batch = batchStats(receipts, since, now, window);
   const shadowWin = records.filter(s => (since === null || s.at >= since) && s.at <= now);
-  const sweep = sweepStats(shadowWin, since, status);
+  const sweep = sweepStats(shadowWin, since, status, now);
   const anomaly = anomalies(receipts, window, since, now);
   const stats = { wouldRevoke: wouldRevokeStats(window.inWin, shadowWin), firstRunFailure: batch.frontFirstRun, headsPerPr: batch.headsPerPr, headsPerFrontPr: batch.headsPerFrontPr,
     greenToMerge: greenToMerge(window.inWin, pulls), queueResidence: queueResidence(markers, since, now), recompute: recomputeDelay(shadowWin),
@@ -364,7 +388,7 @@ export function renderPage(r) {
   const g = s.greenToMerge;
   L.push(`- 车头变绿到合入：${g.samples?.length ? `${g.samples.length} 个样本（另 ${g.unmerged} 个没有样本），中位数 ${g.median} 分钟，最大 ${g.max} 分钟（${g.note}）` : `数据不够（${g.note}）`}`);
   L.push(`- 第 2 位的等待：数据不够（${s.secondPlaceWait.note}）${s.queueResidence ? `；排队停留 ${s.queueResidence.samples} 个样本${s.queueResidence.dropped ? `（${s.queueResidence.dropped} 条不可用）` : ''}，中位数 ${s.queueResidence.medianMin} 分钟，最大 ${s.queueResidence.maxMin} 分钟` : ''}`);
-  L.push(`- GitHub 重算延迟：${s.recompute.samples ? `${s.recompute.samples} 个样本，中位数 ${s.recompute.medianMin} 分钟，最大 ${s.recompute.maxMin} 分钟（精度为一次运行间隔约 10 分钟）` : '数据不够（需要影子记录里 main 移动时有队首的样本）'}`);
+  L.push(`- GitHub 重算延迟：${s.recompute.samples ? `${s.recompute.samples} 个样本，中位数 ${s.recompute.medianMin} 分钟，最大 ${s.recompute.maxMin} 分钟（精度为一次运行间隔约 10 分钟）` : '没有样本（需要影子记录里 main 移动时有队首的样本；开车前不要求）'}`);
   const w = r.sweep;
   L.push(`- 全量扫描：${w.fromShadow ? `完成 ${w.completed}、放弃/被替换 ${w.abandoned}、进行中 ${w.running}` : '没有影子记录，时长和调用数算不出'}${w.sweeps.filter(x => x.state === 'complete').map(x => `；一次：墙钟 ${x.wallMin} 分钟、运行 ${x.activeMin} 分钟、${x.segments} 段、${x.calls} 次调用`).join('')}`);
   L.push(`- 第 10 段结局：${Object.entries(r.window.wouldDo).map(([k, v]) => `${k} ${v}`).join('，') || '无'}`);

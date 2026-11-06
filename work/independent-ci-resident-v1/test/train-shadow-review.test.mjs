@@ -43,8 +43,8 @@ const batch = (at, key, pr, head, outcome, { attempt = 1, code = null } = {}) =>
 
 const facts = (at, over = {}) => ({ runId: `${String(at).padStart(16, '0')}-${'ab'.repeat(6)}`, at,
   facts: { contract: 'clued.independent-ci.train-facts/2', mode: 'shadow', at: iso(at), onDuty: true, mainSha: sha('a'), front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0, nodes: null, ...over } });
-const sweepFacts = (at, state, { startedAt = iso(T0), completedAt = null, reason = null, calls = 18, msRun = 25_000 } = {}) => facts(at, {
-  sweep: { kind: 'full-segment', complete: state === 'complete', revoked: 0, unconfirmed: 0, wouldRevokeCount: 0, calls, ms: msRun, proofWritten: false, fullSweep: { state, startedAt, completedAt, sinceOn: false, reason } } });
+const sweepFacts = (at, state, { startedAt = iso(T0), completedAt = null, reason = null, calls = 18, msRun = 25_000, incomplete = false } = {}) => facts(at, {
+  sweep: { kind: 'full-segment', complete: !incomplete && state !== 'abandoned', revoked: 0, unconfirmed: 0, wouldRevokeCount: 0, calls, ms: msRun, proofWritten: false, fullSweep: { state, startedAt, completedAt, sinceOn: false, reason } } });
 const node = (name, source, at) => ({ node: name, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: iso(at) });
 
 test('G1: 59 minutes is not enough, 60 is (NaN/offset-free); G2: 2 front PRs are not enough, 3 are', async t => {
@@ -139,6 +139,74 @@ test('front green to merge: the last unbroken green run starts the gap; no merge
   assert.deepEqual(review({ receipts, since: T0, now: T0 + 5 * H, chain: OK, pulls: { 10: { mergedAt: 'not a time' } } }).stats.greenToMerge.samples, []);
 });
 
+test('G4 (Owner reading): >= 2 completions in the window, every abandonment explained by the clock (>= 6 h), not by an error', async t => {
+  const receipts = await load(t, runs(8));
+  const sw = (startH, endMin, { state = 'complete', reason = null } = {}) => [sweepFacts(T0 + startH * H + MIN, 'running', { startedAt: iso(T0 + startH * H) }),
+    sweepFacts(T0 + startH * H + endMin * MIN, state, { startedAt: iso(T0 + startH * H), completedAt: state === 'complete' ? iso(T0 + startH * H + endMin * MIN) : null, reason })];
+  const g4 = shadow => { const r = review({ receipts, shadow: asRecords(shadow), since: T0, now: T0 + 40 * H, chain: OK }); return [verdicts(r).G4, r]; };
+  // two completions with an expired sweep between them: replaced after 6 h 1 min (the resident expires a sweep only when it is older than the cap) -> explained
+  let [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), ...sw(7 + 1 / 60, 20), ...sw(14, 20)]);
+  assert.deepEqual([v, r.sweep.completed, r.sweep.abandoned, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained], [MET, 3, 1, 1, []]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /完成 3 次；放弃.被替换 1 次，其中 1 次是跑满上限（节奏慢）、0 次记录里看不出是节奏慢/);
+  // replaced after exactly 6 h or after 5 h 59 min: it did not run out the clock -> not explained
+  for (const startH of [7, 6.99]) {
+    [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), ...sw(startH, 20), ...sw(14, 20)]);
+    assert.deepEqual([startH, v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.length], [startH, NOT_MET, 0, 1]);
+  }
+  // a sweep stuck on errors (its runs report an unfinished sweep) is not slow, even when it is replaced after 6 h
+  const stuck = at => sweepFacts(at, 'running', { startedAt: iso(T0 + H), incomplete: true });
+  [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), stuck(T0 + 2 * H), ...sw(8, 20), ...sw(14, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.map(x => x.stalled)], [NOT_MET, 0, [true]]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /REPLACED_WITHOUT_FINISHING（期间有运行没扫完/);
+  // ... while a failed run elsewhere (another sweep, or the replacement itself) does not taint the slow one
+  [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), ...sw(8, 20), sweepFacts(T0 + 8 * H + 30 * MIN, 'running', { startedAt: iso(T0 + 8 * H), incomplete: true }), ...sw(14.5, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedExpired], [MET, 1]);
+  // a recorded TRAIN_FULL_SWEEP_EXPIRED abandonment is explained by itself; a recorded failed segment or any other reason is not
+  const expired = (startH, ageMin) => [sweepFacts(T0 + startH * H + MIN, 'running', { startedAt: iso(T0 + startH * H) }), sweepFacts(T0 + startH * H + ageMin * MIN, 'abandoned', { startedAt: iso(T0 + startH * H), reason: 'TRAIN_FULL_SWEEP_EXPIRED' })];
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), ...expired(14, 361)]);
+  assert.deepEqual([v, r.sweep.completed, r.sweep.abandonedExpired], [MET, 2, 1]);
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), ...expired(14, 360)]);        // exactly the cap: not older than it
+  assert.deepEqual([v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.length], [NOT_MET, 0, 1]);
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), ...expired(14, 60)]);         // a recorded expiry one hour in is not believed
+  assert.deepEqual([v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.length], [NOT_MET, 0, 1]);
+  for (const reason of ['TRAIN_SWEEP_INCOMPLETE', 'TRAIN_PULL_OVER_250_COMMITS', 'TRAIN_FULL_SWEEP_BEFORE_ON', null]) {
+    [v, r] = g4([...sw(0, 20), ...sw(7, 20), ...sw(14, 5, { state: 'abandoned', reason })]);
+    assert.deepEqual([reason, v, r.sweep.abandonedNotExplained.length], [reason, NOT_MET, 1]);
+  }
+  // a recorded failed segment followed by a sweep 6+ hours later is still an error, not the clock
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' }), ...sw(22, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.map(x => x.reason)], [NOT_MET, 0, ['TRAIN_SWEEP_INCOMPLETE']]);
+  // one explained and one unexplained abandonment: still not met, and the evidence names the unexplained one only
+  [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), ...sw(8, 20), ...sw(15, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' }), ...sw(30, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.map(x => x.reason)], [NOT_MET, 1, ['TRAIN_SWEEP_INCOMPLETE']]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, new RegExp(`1 次记录里看不出是节奏慢：${iso(T0 + 15 * H)} TRAIN_SWEEP_INCOMPLETE`));
+  // fewer than two completions is still short of data, however the abandonments are explained; no shadow records at all too
+  [v] = g4([...sw(0, 20), ...sw(7, 5, { state: 'abandoned', reason: 'TRAIN_FULL_SWEEP_EXPIRED' })]);
+  assert.equal(v, INSUFFICIENT);
+  [v, r] = g4([]);
+  assert.equal(v, INSUFFICIENT);
+  // a run that does not say whether its sweep completed is not proof that the sweep was merely slow
+  const silentComplete = at => { const rec = sweepFacts(at, 'running', { startedAt: iso(T0 + H) }); delete rec.facts.sweep.complete; return rec; };
+  [v, r] = g4([...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), silentComplete(T0 + 2 * H), ...sw(8, 20), ...sw(14, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedNotExplained.map(x => x.stalled)], [NOT_MET, [true]]);
+  // a recorded expiry is judged by the time of the record, not by a completedAt it carries
+  const lying = sweepFacts(T0 + H + 30 * MIN, 'abandoned', { startedAt: iso(T0 + H), reason: 'TRAIN_FULL_SWEEP_EXPIRED', completedAt: iso(T0 + 8 * H) });
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + H + MIN, 'running', { startedAt: iso(T0 + H) }), lying]);
+  assert.deepEqual([r.sweep.abandonedExpired, r.sweep.abandonedNotExplained.length], [0, 1]);
+  // the last sweep still running past the cap at --now: nothing abandoned it, so the sweeping stopped -> not explained (fresh one is fine)
+  [v, r] = g4([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + 14 * H, 'running', { startedAt: iso(T0 + 14 * H) })]);
+  assert.deepEqual([v, r.sweep.abandonedNotExplained.map(x => x.reason)], [NOT_MET, ['RUNNING_PAST_CAP']]);
+  for (const [lateMin, verdict] of [[6 * 60 + 30, MET], [6 * 60 + 31, NOT_MET]]) {    // the cap plus 30 minutes of grace
+    const edge = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + 14 * H, 'running', { startedAt: iso(T0 + 14 * H) })]), since: T0, now: T0 + 14 * H + lateMin * MIN, chain: OK });
+    assert.deepEqual([lateMin, verdicts(edge).G4], [lateMin, verdict]);
+  }
+  const fresh = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + 14 * H, 'running', { startedAt: iso(T0 + 14 * H) })]), since: T0, now: T0 + 14 * H + 5 * H, chain: OK });
+  assert.deepEqual([verdicts(fresh).G4, fresh.sweep.running], [MET, 1]);
+  // a replaced sweep with no start time cannot be tied to the clock
+  [v, r] = g4([...sw(0, 20), ...sw(14, 20), sweepFacts(T0 + 30 * H, 'running', { startedAt: null }), ...sw(31, 20)]);
+  assert.deepEqual([v, r.sweep.abandonedNotExplained.length], [NOT_MET, 1]);
+});
+
 test('queue residence is windowed by --since/--now, and an unusable marker is counted, not averaged', () => {
   const markers = [{ leftQueuedAt: iso(T0 + 10 * MIN), headLeftAt: iso(T0 + 20 * MIN) }, { leftQueuedAt: iso(T0 + 30 * MIN), headLeftAt: iso(T0 + 90 * MIN) },
     { leftQueuedAt: iso(T0 - 5 * H), headLeftAt: iso(T0 - 4 * H) }, { leftQueuedAt: iso(T0 + 40 * MIN), headLeftAt: iso(T0 + 30 * MIN) }, null, { headLeftAt: 5 }];
@@ -159,11 +227,13 @@ test('full sweeps: segments of one sweep are one sweep; a sweep replaced without
   const recorded = [...done, sweepFacts(T0 + 4 * H, 'abandoned', { startedAt: iso(T0 + 3.5 * H), reason: 'TRAIN_SWEEP_INCOMPLETE' })];
   r = review({ receipts, shadow: asRecords(recorded), since: T0, now: T0 + 5 * H, chain: OK });
   assert.deepEqual([r.sweep.abandoned, r.sweep.abandonedReasons, verdicts(r).G4], [1, { TRAIN_SWEEP_INCOMPLETE: 1 }, NOT_MET]);
+  assert.deepEqual([r.sweep.abandonedExpired, r.sweep.abandonedNotExplained], [0, [{ startedAt: iso(T0 + 3.5 * H), reason: 'TRAIN_SWEEP_INCOMPLETE', stalled: false }]]);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /1 次记录里看不出是节奏慢：.*TRAIN_SWEEP_INCOMPLETE/);
   // the resident abandons an expired shadow sweep and starts the next in the same run: the first one just stops showing up
   const silent = [sweepFacts(T0 + 2 * MIN, 'running', { startedAt: s1 }), sweepFacts(T0 + 7 * H, 'running', { startedAt: iso(T0 + 7 * H) }), sweepFacts(T0 + 7 * H + 20 * MIN, 'complete', { startedAt: iso(T0 + 7 * H), completedAt: iso(T0 + 7 * H + 20 * MIN) }),
     sweepFacts(T0 + 14 * H, 'running', { startedAt: iso(T0 + 14 * H) }), sweepFacts(T0 + 14 * H + 20 * MIN, 'complete', { startedAt: iso(T0 + 14 * H), completedAt: iso(T0 + 14 * H + 20 * MIN) })];
   r = review({ receipts, shadow: asRecords(silent), since: T0, now: T0 + 20 * H, chain: OK });
-  assert.deepEqual([r.sweep.completed, r.sweep.abandoned, r.sweep.abandonedReasons, verdicts(r).G4], [2, 1, { REPLACED_WITHOUT_FINISHING: 1 }, NOT_MET]);
+  assert.deepEqual([r.sweep.completed, r.sweep.abandoned, r.sweep.abandonedReasons, r.sweep.abandonedExpired, verdicts(r).G4], [2, 1, { REPLACED_WITHOUT_FINISHING: 1 }, 1, MET]);
   const none = review({ receipts, shadow: asRecords([sweepFacts(T0 + 2 * MIN, 'abandoned', { reason: 'TRAIN_SWEEP_INCOMPLETE' })]), since: T0, now: T0 + 5 * H, chain: OK });
   assert.equal(verdicts(none).G3, NOT_MET);
 });
@@ -257,7 +327,7 @@ test('G5: a HALT, an older unclosed intent, or an interrupted run fail it; only 
   assert.deepEqual([transient, rt.anomaly.stage10Failures.map(f => f.code)], [MET, ['GITHUB_TRANSIENT_UNAVAILABLE']]);
 });
 
-test('the verdict: every gate must be met; the second place and the recompute delay need data too', async t => {
+test('the verdict: every gate must be met; the second place needs data (the queue residence), the recompute delay does not', async t => {
   const fronts = Object.fromEntries([3, 4, 5].map((k, i) => [k, [800 + i, 'FRONT_GREEN_WAIT_MERGE']]));
   const receipts = await load(t, [...runs(8, fronts), ...batch(T0 + 1 * MIN, 1, 800, sha('1'), 'COMPLETED')]);
   const s1 = iso(T0 + MIN), s2 = iso(T0 + H);
@@ -267,11 +337,15 @@ test('the verdict: every gate must be met; the second place and the recompute de
   const markers = [{ leftQueuedAt: iso(T0 + 5 * MIN), headLeftAt: iso(T0 + 16 * MIN) }];
   const common = { receipts, pulls, markers, since: T0, now: T0 + 76 * MIN, chain: OK };
   const noRecompute = review({ ...common, shadow });
-  assert.deepEqual(verdicts(noRecompute), { GC: MET, G1: MET, G2: MET, G3: MET, G4: MET, G5: MET, G6: INSUFFICIENT, G7: MET, G8: MET });
-  assert.deepEqual([noRecompute.canEnterTrainOn, noRecompute.blocking], [false, ['G6']]);
-  assert.match(renderPage(noRecompute), /还不能进入 a3701d3d 开车：1 项未满足或数据不够（G6）/);
+  assert.deepEqual(verdicts(noRecompute), { GC: MET, G1: MET, G2: MET, G3: MET, G4: MET, G5: MET, G6: MET, G7: MET, G8: MET });
+  assert.equal(noRecompute.stats.recompute.samples, 0);
+  assert.match(noRecompute.gates.find(g => g.id === 'G6').evidence, /重算延迟没有样本，Owner 已定开车前不要求/);
+  assert.deepEqual([noRecompute.canEnterTrainOn, noRecompute.blocking], [true, []]);
+  assert.match(renderPage(noRecompute), /影子观察条件全部满足/);
   const noQueue = review({ ...common, shadow: [...shadow], markers: null });
   assert.match(noQueue.gates.find(g => g.id === 'G6').evidence, /第 2 位的等待/);
+  assert.deepEqual([noQueue.canEnterTrainOn, noQueue.blocking], [false, ['G6']]);
+  assert.match(renderPage(noQueue), /还不能进入 a3701d3d 开车：1 项未满足或数据不够（G6）/);
   const front = (ok, o = {}) => ({ claimId: 'x', pr: 800, headSha: sha('8'), green: false, testMergeParentsOk: ok, ...o });
   const moving = [...shadow, ...asRecords([facts(T0 + 20 * MIN, { front: front(true) }), facts(T0 + 30 * MIN, { mainSha: sha('d'), front: front(false) }), facts(T0 + 40 * MIN, { mainSha: sha('d'), front: front(true) })])];
   const ok = review({ ...common, shadow: moving });
