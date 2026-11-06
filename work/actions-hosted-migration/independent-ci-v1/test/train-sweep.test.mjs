@@ -359,6 +359,48 @@ test('full sweep: a pull over 250 commits voids the round (no restart), a missin
   assert.equal(d.facts.sweep.fullSweep.startedAt, iso(NOW), 'a new round since onSince');
 });
 
+// Generation 15 (Owner Decision fb39ec73 v2, option c): the full sweep reads an open pull whole, a closed unmerged pull's current
+// head only, a merged pull not at all; what it leaves out is the incremental sweep's (a reopen or a push updates the pull).
+test('full sweep: an open pull whole, a closed unmerged pull its current head only (the #936 df659f1c shape), a merged pull nothing', async t => {
+  const e = await setup(t, { fullDone: false });
+  const old = iso(NOW - 86_400_000);
+  const O0 = sha(0x40000), O1 = sha(0x40001), C0 = sha(0x40010), C1 = sha(0x40011), CP = sha(0x40012), M0 = sha(0x40020), M1 = sha(0x40021), MP = sha(0x40022), K1 = sha(0x40031);
+  e.gh.pull(1, { head: O1, commits: [O0, O1], updated: old });
+  // #936 on 2026-11-06: closed unmerged, its head df659f1c carrying a kooyumi-merge-slot success that is not in main
+  e.gh.pull(2, { state: 'closed', head: C1, commits: [C0, C1], forcePushes: [{ before: CP, after: C1 }], updated: old });
+  // merged: its commits are in main (the fake leaves M0 and MP out of main only to show that they are not looked at)
+  e.gh.pull(3, { state: 'closed', merged: true, head: M1, commits: [M0, M1], forcePushes: [{ before: MP, after: M1 }], updated: old });
+  e.gh.pull(4, { state: 'closed', head: K1, updated: old });
+  e.gh.world.inMain.add(M1); e.gh.world.inMain.add(K1);
+  for (const [id, h] of [[41, O0], [42, C1], [43, C0], [44, CP], [45, K1], [46, M0], [47, MP]]) e.gh.green(id, h);
+  const read = new Set();
+  e.gh.world.hooks.pushes = n => read.add(n);
+  const { facts } = await e.run();
+  assert.equal(facts.sweep.fullSweep.state, 'complete');
+  assert.deepEqual([...e.gh.world.writes].sort((a, b) => a - b), [41, 42],
+    'the open pull\'s old commit and the closed unmerged head; not that pull\'s history, not its head in main, not the merged pull');
+  assert.deepEqual([...read].sort((a, b) => a - b), [1, 910], 'commits and force pushes are read for open pulls only');
+  assert.deepEqual(facts.wouldRevoke.map(r => [r.checkRunId, r.reason]).sort((a, b) => a[0] - b[0]), [[41, 'NOT_FRONT_HEAD'], [42, 'NOT_FRONT_HEAD']]);
+  // a pull the listing reports neither open nor closed is not guessed at: the round is void
+  const odd = await setup(t, { fullDone: false });
+  odd.gh.pull(5, { state: 'closed', merged: 'unknown', head: sha(0x40041), updated: old });
+  const realPage = odd.gh.readPullsPage;
+  odd.gh.readPullsPage = async o => { const r = await realPage(o); return { ...r, pulls: r.pulls.map(p => (p.number === 5 ? { ...p, merged: null } : p)) }; };
+  const v = await odd.run();
+  assert.deepEqual([v.facts.sweep.fullSweep.state, v.facts.sweep.fullSweep.reason], ['abandoned', 'TRAIN_PULLS_INCOMPLETE']);
+});
+
+test('incremental sweep still covers what the full sweep leaves to it: a reopened pull\'s old green beyond its head, a new pull at an old green commit', async t => {
+  const e = await setup(t);
+  const recent = iso(NOW - 60_000), R0 = sha(0x50000), R1 = sha(0x50001), X = sha(0x50010);
+  e.gh.pull(951, { head: R1, commits: [R0, R1], updated: recent }); // closed unmerged, then reopened: open again and updated
+  e.gh.pull(952, { head: X, updated: recent });                     // new, its head an old commit that carries a green (df659f1c's way back)
+  e.gh.green(51, R0); e.gh.green(52, X);
+  const { facts } = await e.run();
+  assert.deepEqual([facts.sweep.kind, facts.sweep.complete], ['incremental', true]);
+  assert.deepEqual([...e.gh.world.writes].sort((a, b) => a - b), [51, 52]);
+});
+
 test('take-over with a watermark present: still a full on-mode sweep (the stream cannot show other nodes\' published greens; review R2 B1)', async t => {
   const e = await setup(t, { fullDone: false, native: { nodes: [], watermark: { completedAt: iso(NOW - 7_200_000), updatedCursor: iso(NOW - 5_400_000), mainSha: T } } });
   e.gh.pull(920, { head: sha(0x920), updated: iso(NOW - 5_000_000) });
