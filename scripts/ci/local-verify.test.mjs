@@ -710,11 +710,11 @@ const PR_1015_FILES = [
   'work/independent-ci-resident-v1/test/scanner-abandon.test.mjs',
   'work/independent-ci-resident-v1/test/test_linux_tool.py',
 ];
-// The seven ci-suites suites below are the regression lock: they are what the real
-// run selected for this change, so a change to the selection that alters them is to be looked at.
 const forCheck = (picked, check) => picked.selections.find((entry) => entry.check === check);
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
+  // The literal list of seven below is the regression lock: it is what the real run
+  // selected for #1015, so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
@@ -785,7 +785,7 @@ test('--affected: the branch against main, as the pull request lists it, picks t
   // a rename counts under both names, as the pull request lists it
   assert.deepEqual(chosen(moved).files.filter((file) => file.endsWith('moved.ts')),
     ['apps/clued-cloud/src/moved.ts', 'work/independent-ci-resident-v1/drill/moved.ts']);
-  // and what is chosen is what the Linux hand-over runs, one --suite each
+  // and the Linux hand-over's command line carries each chosen suite as a --suite
   const candidate = 'a'.repeat(40);
   const script = linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: chosen(drill).suites });
   assert.ok(script.endsWith(chosen(drill).suites.map((id) => ` --suite '${id}'`).join('')));

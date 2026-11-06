@@ -14,13 +14,14 @@
 //                 selection plus --linux, and it refuses --suite and --candidate,
 //                 so the suites cannot be hand-picked: the files the branch
 //                 changes against main select them with the required checks' own
-//                 selectSuites (ci-required-selection.mjs of main, the call the
-//                 "Select suites" step of ci-suites makes), and only those run, on
-//                 Windows and in CluedDev-Linux (from Windows; on a host without
-//                 that side, here alone). It prints the line CI logs for each check
-//                 ("ci-suites: selected by changed paths; suites: ...") and, for
-//                 each suite, the changed files that picked it. --linux-only keeps
-//                 the run to the Linux side.
+//                 selectSuites (ci-required-selection.mjs of main, or of --base; the
+//                 call the "Select suites" step of ci-suites makes), and only those
+//                 run, on Windows and in CluedDev-Linux (on a non-Windows host, here
+//                 alone; on Windows without CluedDev-Linux the Linux result is
+//                 "could not compare" and the exit status 1). It prints the line CI
+//                 logs for each check ("ci-suites: selected by changed paths;
+//                 suites: ...") and, for each suite, the changed files that picked
+//                 it. --linux-only keeps the run to the Linux side.
 //   --base        the main commit to verify against; default: GitHub's main,
 //                 fetched first (--no-fetch uses the last fetched copy).
 //   --committed   verify HEAD only; by default the working tree's changes and
@@ -953,10 +954,11 @@ export function changedFiles(root, change, main, limit) {
 // no list of checks, suites or paths is kept here (only the format of the log
 // line is). `lines` are what CI logs for each check, then, for each selected
 // suite, the changed files that picked it (found by asking the same selection
-// about each file alone), the first of each top-level directory first. A change
+// about each file alone), the first of each top-level directory (a file in the
+// root counts as its own) first. A change
 // to the selection or the workflow picks every suite, so it shows under all of them.
-export function selectAffected(selector, files, { checks = Object.keys(selector.SUITES), show = 3 } = {}) {
-  const selections = checks.map((check) => ({ check, ...selector.selectSuites(check, files) }));
+export function selectAffected(selector, files, { show = 3 } = {}) {
+  const selections = Object.keys(selector.SUITES).map((check) => ({ check, ...selector.selectSuites(check, files) }));
   const lines = [];
   for (const { check, reason, suites } of selections) {
     lines.push(`${check}: ${reason}; suites: ${suites.join(', ') || 'none'}`);
@@ -964,7 +966,8 @@ export function selectAffected(selector, files, { checks = Object.keys(selector.
     const each = files.map((file) => ({ file, picks: selector.selectSuites(check, [file]).suites }));
     for (const id of suites) {
       const hits = each.filter((entry) => entry.picks.includes(id)).map((entry) => entry.file);
-      const firsts = hits.filter((file, index) => hits.findIndex((other) => other.split('/')[0] === file.split('/')[0]) === index);
+      const seen = new Set();
+      const firsts = hits.filter((file) => !seen.has(file.split('/')[0]) && seen.add(file.split('/')[0]));
       const shown = [...firsts, ...hits.filter((file) => !firsts.includes(file))].slice(0, show);
       lines.push(`  ${id}: ${shown.join(', ')}${hits.length > shown.length ? `, ... (${hits.length} files)` : ''}`);
     }
@@ -1749,6 +1752,7 @@ async function verifyChange({ options, root, home, change, run }) {
     console.log(`local-verify: ${chosen.files === null ? 'more files than GitHub lists' : `${chosen.files.length} changed file(s)`}`);
     for (const line of chosen.lines) console.log(`  ${line}`);
     console.log(`local-verify: suites: ${suites.join(', ') || 'none'}`);
+    if (!suites.length) console.log('local-verify: nothing to verify: no changed file selects a suite');
   }
   for (const id of suites) if (!selector.SUITE_COMMANDS[id]) throw new Error(`unknown suite: ${id}`);
   const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}-${run.run.id}`);
