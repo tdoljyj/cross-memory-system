@@ -369,16 +369,30 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
       const child = await own({ kind: 'delegated_scan', parent_job_id: parent, parent_lease_generation: 1 });
       assert.equal((await next(nC)).job_id, child); await started(nC, child);
       const childJob = await job(child);
-      await one(`insert into clued_private.ci_result_index_v1(user_id,project_id,job_id,execution_generation,producer_node_id,result_kind,result_digest,certificate_digest,
-        signature_envelope,source_sha,combination_sha256,qualification_ref,produced_at,expires_at) values($1,$2,$3,1,$4,'gitleaks',$5,$5,'{}',$6,$7,'q',now(),now()+interval '1 hour')
-        returning result_id`, [user, project, child, nC, digest('consumed'), childJob.source_sha, childJob.combination_sha256]);
+      const childResult = kind => one(`insert into clued_private.ci_result_index_v1(user_id,project_id,job_id,execution_generation,producer_node_id,result_kind,result_digest,certificate_digest,
+        signature_envelope,source_sha,combination_sha256,qualification_ref,produced_at,expires_at) values($1,$2,$3,1,$4,$8,$5,$5,'{}',$6,$7,'q',now(),now()+interval '1 hour')
+        returning result_id`, [user, project, child, nC, digest('consumed ' + kind), childJob.source_sha, childJob.combination_sha256, kind]);
+      await childResult('gitleaks'); await childResult('trivy');
       const parentKey = crypto.randomUUID(); const parentJob = await job(parent);
       await admin.query(`insert into clued_private.ci_publish_keys_v1(key_id,user_id,project_id,registration_ref,repository_id,head_sha,check_name,app_id,job_id,publisher_node_id,
         execution_generation,request_digest,external_id,state,landing_deadline_at) values($1,$2,$3,$4,$5,$6,'gitleaks',5368905,$7,$8,1,$9,$10,'posted',now())`,
         [parentKey, user, project, parentJob.registration_ref, parentJob.repository_id, parentJob.head_sha, parent, nB, digest('parent key'), 'fixture:' + parentKey]);
+      // gitleaks published by the parent, trivy not yet: the child still runs again.
+      await admin.query("update clued_private.ci_job_leases_v1 set expires_at=now()+interval '10 minutes' where job_id=$1", [child]);
+      const savepoint = await one('select count(*) n from clued_private.ci_jobs_v1');
+      await admin.query('begin');
+      await expire(child);
+      const partly = (await sweep()).accounts[0].leases.find(x => x.job_id === child);
+      assert.equal(partly.outcome, 'retried', 'trivy has no parent key yet');
+      await admin.query('rollback');
+      assert.equal((await one('select count(*) n from clued_private.ci_jobs_v1')).n, savepoint.n);
+      const trivyKey = crypto.randomUUID();
+      await admin.query(`insert into clued_private.ci_publish_keys_v1(key_id,user_id,project_id,registration_ref,repository_id,head_sha,check_name,app_id,job_id,publisher_node_id,
+        execution_generation,request_digest,external_id,state,landing_deadline_at) values($1,$2,$3,$4,$5,$6,'trivy',5368905,$7,$8,1,$9,$10,'posted',now())`,
+        [trivyKey, user, project, parentJob.registration_ref, parentJob.repository_id, parentJob.head_sha, parent, nB, digest('parent trivy key'), 'fixture:' + trivyKey]);
       await expire(child);
       const consumedChild = (await sweep()).accounts[0].leases.find(x => x.job_id === child);
-      assert.deepEqual([consumedChild.outcome, consumedChild.retry_job_id], ['lost_no_retry', null]);
+      assert.deepEqual([consumedChild.outcome, consumedChild.retry_job_id], ['lost_no_retry', null], 'every kind it produced is already published');
       // control: no retry
       await clearQueue();
       const control = await own({ kind: 'control' }); assert.equal((await next(nB)).job_id, control);
@@ -502,7 +516,7 @@ test('unified scheduling 2A (T2A-2): lease-next, sweep, phase moves, liveness, p
       await admin.query('delete from clued_private.work_claims_v1 where claim_id=$1', [copy]);
       assert.equal(await stale(), null);
       await admin.query("update clued_private.work_claims_v1 set write_set=write_set||array['other/**'] where claim_id=$1", [claim.claim_id]);
-      assert.equal(await stale(), 'CI_EXECUTION_ADMISSION_NOT_CURRENT');
+      assert.equal(await stale(), null, 'changed claim resources are not stale: a renew can restore them');
       await admin.query("update clued_private.work_claims_v1 set write_set=$2 where claim_id=$1", [claim.claim_id, claim.write_set]);
       assert.equal(await stale(), null);
       // From here the fixture claim is not used again.

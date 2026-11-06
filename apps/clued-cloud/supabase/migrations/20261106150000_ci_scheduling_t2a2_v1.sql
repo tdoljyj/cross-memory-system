@@ -261,9 +261,10 @@ end $$;
 -- ci_claim_current_v1 that no later event can undo (claim ended, draining,
 -- fenced or moved to a new execution epoch (an execution handover moves it at
 -- once), superseded by a newer single claim of the Task, holder connection
--- revoked; head authorization revoked; admission's issuer gone or the claim's
--- resources changed since). Null while it may still become leasable: an older
--- copy of a race (copies share the Task's fence sequence), a quota.
+-- revoked; head authorization revoked; admission's issuer gone). Null while it
+-- may still become leasable: an older copy of a race (copies share the Task's
+-- fence sequence), claim resources that differ from the admission's (a renew can
+-- restore them), a quota.
 create function clued_private.ci_job_stale_v1(j clued_private.ci_jobs_v1) returns text
 language sql stable security definer set search_path='' as $$
   select case
@@ -274,9 +275,6 @@ language sql stable security definer set search_path='' as $$
       then 'CI_CLAIM_NOT_CURRENT'
     when not exists(select 1 from clued_private.work_claim_head_authorizations_v1 a where a.authorization_id=j.head_authorization_id and a.revoked_at is null)
       then 'CI_HEAD_AUTHORIZATION_NOT_CURRENT'
-    when not exists(select 1 from clued_private.work_claim_execution_admissions_v1 e where e.admission_id=j.admission_id
-        and e.resources_digest=clued_private.m1_sha256(jsonb_build_object('write_set',c.write_set,'trigger_refs',c.trigger_refs)))
-      then 'CI_EXECUTION_ADMISSION_NOT_CURRENT'
     when not exists(select 1 from clued_private.work_claim_execution_admissions_v1 e join public.clued_agent_bindings b on b.id=e.ci_binding_id
         where e.admission_id=j.admission_id and clued_private.binding_live_v1(b) and clued_private.ci_admission_issue_valid_v1(j.user_id,e,j.project_id))
       then 'CI_ADMISSION_BINDING_NOT_CURRENT'
@@ -446,8 +444,9 @@ begin
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
   keyed:=exists(select 1 from clued_private.ci_publish_keys_v1 k where k.job_id=id);
   produced:=exists(select 1 from clued_private.ci_result_index_v1 x where x.job_id=id and x.execution_generation=g);
-  consumed:=exists(select 1 from clued_private.ci_result_index_v1 x join clued_private.ci_publish_keys_v1 k
-    on k.user_id=u and k.job_id=j.parent_job_id and k.check_name=x.result_kind where x.job_id=id and x.execution_generation=g);
+  -- Every kind it produced already reserved by the parent: nothing left to run.
+  consumed:=produced and not exists(select 1 from clued_private.ci_result_index_v1 x where x.job_id=id and x.execution_generation=g
+    and not exists(select 1 from clued_private.ci_publish_keys_v1 k where k.user_id=u and k.job_id=j.parent_job_id and k.check_name=x.result_kind));
   perform clued_private.ci_job_release_v1(u,p,l.holder_node_id,id,g,case when l.started_at is null then 'LEASE_EXPIRED' else 'LEASE_LOST_AFTER_START' end,
     case when j.state='observed' then 'success' else 'environment' end,'lease_expired',true);
   select * into j from clued_private.ci_jobs_v1 where job_id=id;
@@ -461,7 +460,7 @@ begin
   -- Started and lost (DESIGN 6.4 rule 3). Publication-bearing jobs never move.
   -- Results already produced can no longer be published (no current lease):
   -- they are invalidated, and the retry runs again from scratch, unless the
-  -- parent job already reserved a publication from them.
+  -- parent job already reserved a publication for every kind produced.
   head_key:=j.kind='combination_execution' and j.combination_mode not in ('depth2','depth3');
   if produced then
     update clued_private.ci_result_index_v1 set state='invalidated' where job_id=id and execution_generation=g and state='available';
