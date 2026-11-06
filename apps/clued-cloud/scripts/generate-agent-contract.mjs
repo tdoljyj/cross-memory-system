@@ -5,7 +5,6 @@
 // component versions the service reports). `--check` exits 1 when a committed
 // module is out of date.
 import { readFile, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 
 const source = new URL("../../../protocol/agent/agent-contract.md", import.meta.url);
@@ -44,7 +43,7 @@ export async function renderComponentsModule() {
   ].join("\n");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   const outputs = [
     ["worker/generated/agent-contract.ts", target, await renderAgentContractModule()],
     ["worker/generated/components.ts", componentsTarget, await renderComponentsModule()],

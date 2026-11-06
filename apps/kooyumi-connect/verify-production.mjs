@@ -1,6 +1,4 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sha256 } from './build-release.mjs';
 import { verifyServedAgentContract } from '../clued-cloud/scripts/verify-served-agent-contract.mjs';
 
@@ -77,6 +75,6 @@ async function main() {
   await writeFile(evidence, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
   process.stdout.write(JSON.stringify(result) + '\n');
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
 }
