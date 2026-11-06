@@ -458,7 +458,9 @@ export class Companion {
         const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
         if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN' && v.generation === 2) return { ok: true, code: null };
         await this.noteBundleRefusal('rebuild-bundle', r);
-        return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'BUNDLE_UNAVAILABLE' };
+        // Generation 13 (DESIGN §57.3): a network step that failed is said so, as for the first bundle; the executor runs it again.
+        return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'
+          : bundleNetworkRefusal(r) ? BUNDLE_NETWORK_UNAVAILABLE : 'BUNDLE_UNAVAILABLE' };
       }
       case 'prepare-workspaces': {
         const r = await this.run(this.a.startWait('clued-ci-wsprep', request.batchId), { timeoutMs: 20 * 60_000 });

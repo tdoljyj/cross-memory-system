@@ -305,7 +305,8 @@ test('generation 10: every failedAttempts/seed key the companion logs is one bui
   assert.match(ps, /\$given=\[ordered\]@\{attempt=\(\$n\+1\);reason=\$reason;stage=\$script:stage;git=\$script:lastGit;failedAfterSeconds=\[int\]\$elapsed\}/);
   assert.match(ps, /\$script:lastGit=\[ordered\]@\{label=\$Label;exitCode=\$p\.ExitCode;stderrChars=\$err\.Length\}/);
   assert.match(ps, /\$seedReport=\[ordered\]@\{enabled=\$true;used=\$false;reason=\$null;discarded=\$false;[^}]*networkFailureNoted=\$false\}/);
-  assert.match(ps, /stage=\$stage;reason=\$code;hint=[^\n]+;git=\$lastGit;created=\$created\n  storeAttempts=\$attempts;firstAttempt=\$firstAttempt;failedAttempts=@\(\$failedAttempts\);seed=\$seedReport;/);
+  // generation 13 (DESIGN 57.3): setAside sits between created and the counts
+  assert.match(ps, /stage=\$stage;reason=\$code;hint=[^\n]+;git=\$lastGit;created=\$created;setAside=\$setAside\n  storeAttempts=\$attempts;firstAttempt=\$firstAttempt;failedAttempts=@\(\$failedAttempts\);seed=\$seedReport;/);
 });
 
 test('a failing log never changes the answer of a refused build-bundle', async () => {
@@ -335,5 +336,15 @@ test('generation 10: only a GitHub step that failed in git is BUNDLE_NETWORK_UNA
     const rg = rig({ script });
     assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code });
     assert.equal(rg.logs.length, 1, 'logged either way');
+  }
+});
+
+test('generation 13: the second bundle answers BUNDLE_NETWORK_UNAVAILABLE for a failed GitHub step too; refs that moved stay REMOTE_REFS_CHANGED_SINCE_BUNDLE', async () => {
+  for (const [script, code] of [[() => refusal({ git: { label: 'fetch', exitCode: 128 } }), BUNDLE_NETWORK_UNAVAILABLE],
+    [() => refusal({ git: { label: 'ls-remote', exitCode: 128 } }), BUNDLE_NETWORK_UNAVAILABLE],
+    [() => refusal({ reason: 'REMOTE_HEAD_MOVED', git: null }), 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'],
+    [() => refusal({ git: { label: 'cat-file', exitCode: 128 } }), 'BUNDLE_UNAVAILABLE'], [() => ({ code: null, timedOut: true, stdout: '' }), 'BUNDLE_UNAVAILABLE']]) {
+    const rg = rig({ script });
+    assert.deepEqual(await rg.c.handle(request('rebuild-bundle')), { ok: false, code });
   }
 });

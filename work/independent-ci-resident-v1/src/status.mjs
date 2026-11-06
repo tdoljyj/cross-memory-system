@@ -57,7 +57,7 @@ const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
 export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
-  'stage8-rules', 'role-probe-uncertain', 'role-probe-connection',
+  'stage8-rules', 'role-probe-uncertain', 'role-probe-connection', 'role-probe-interrupted',
   // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',

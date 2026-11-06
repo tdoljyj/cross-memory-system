@@ -50,6 +50,10 @@ generation and the first bundle. The batch's refs must still be its own: main st
 the head H (REMOTE_HEAD_MOVED otherwise). Only with a complete first generation (REBUNDLE_REQUIRES_FIRST_GENERATION), never
 twice (gen-2\ must not exist). -CheckRefs and prepare-workspaces.py use the newest complete generation; a gen-2\ without its
 receipt is refused, never skipped (BUNDLE_GENERATION_INCOMPLETE).
+Generation 13 (DESIGN §57.3, Task 3e2e12d7): a second generation that failed (a network cut) leaves gen-2\ without its receipt. The
+next -Rebundle moves it aside, by rename only, to gen-2-failed-<n>\ (n 1..$Gen2FailedMax, the first that does not exist; a real
+directory, never a link), so it can run again; gen-2\ with its receipt is still never built twice. Nothing reads gen-2-failed-<n>\
+(it goes with the batch's directory).
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs,[switch]$Rebundle)
@@ -61,7 +65,7 @@ $Root=Join-Path $Resident ('bundles\'+$BatchId)
 $Git='C:\Program Files\Git\cmd\git.exe'
 $Url='https://github.com/tdoljyj/cross-memory-system.git'
 $FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$FetchDir3=Join-Path $Root 'fetch-3.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
-$Gen2Name='gen-2';$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path $Root $Gen2Name;$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
+$Gen2Name='gen-2';$Gen2FailedMax=3;$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path $Root $Gen2Name;$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
@@ -86,7 +90,7 @@ $SeedAfterNetworkFailureSeconds=21600
 $SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
 $seedUse=$false;$seedAttempt=$false;$seedBusy=$false;$seedLockHeld=$false;$seedAvailable=$false
 $seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null;networkFailureNoted=$false}
-$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null;$reviewedCommits=@()
+$stage='fixed-preflight';$created=@();$writesStarted=$false;$setAside=$null;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null;$reviewedCommits=@()
 # Reviewed commits that GitHub serves only because a branch still carries them (Decision 98fec682). Git stderr is never read,
 # so the hint cannot say which commit is missing: it is given when the reviewed set contains such a commit and the step that
 # fetches or reads the reviewed commits failed. It names public facts only (a short commit id and a branch name).
@@ -105,6 +109,22 @@ function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();
 function Hash-File([string]$Path){$a=[Security.Cryptography.SHA256]::Create();$s=[IO.File]::Open($Path,'Open','Read','Read');try{return ([BitConverter]::ToString($a.ComputeHash($s))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose();$a.Dispose()}}
 function Hash-Text([string]$Text){return Hash-Bytes ((New-Object Text.UTF8Encoding($false)).GetBytes($Text))}
 function Absent([string]$Path){if(Test-Path -LiteralPath $Path){throw 'FIXED_TARGET_ALREADY_EXISTS'}}
+# A gen-2\ of an earlier -Rebundle that ended without its receipt: renamed to the first free gen-2-failed-<n>\ (DESIGN §57.3). Only a
+# real directory (no reparse point) whose receipt does not exist; a complete gen-2\ stays and Absent refuses it as before.
+function Move-FailedGen2{
+ # the batch's root first: never rename inside a link (review round 2, NIT)
+ $b=Get-Item -LiteralPath $Gen1Root -Force
+ if(-not $b.PSIsContainer -or ($b.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXED_REAL_BUNDLE_ROOT_REQUIRED'}
+ if(-not (Test-Path -LiteralPath $Gen2Root)){return $null}
+ $g=Get-Item -LiteralPath $Gen2Root -Force
+ if(-not $g.PSIsContainer -or ($g.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXED_REAL_BUNDLE_ROOT_REQUIRED'}
+ if(Test-Path -LiteralPath $Gen2Receipt){return $null}
+ for($n=1;$n -le $Gen2FailedMax;$n++){
+  $to=Join-Path $Gen1Root ("$Gen2Name-failed-$n")
+  if(-not (Test-Path -LiteralPath $to)){[IO.Directory]::Move($Gen2Root,$to);return ("$Gen2Name-failed-$n")}
+ }
+ throw 'REBUNDLE_FAILED_GENERATIONS_EXHAUSTED'
+}
 function Quote-Arg([string]$A){
  if($A.Contains('"')){throw 'GIT_ARGUMENT_QUOTE_REFUSED'}
  if($A.Length -eq 0 -or $A -match '\s'){return '"'+($A -replace '(\\+)$','$1$1')+'"'}
@@ -472,7 +492,11 @@ function Build-Store([string]$Dir){
  # The one inconsistency a push between the fetch and the ls-remote makes; Fetch-Store retries only this one.
  if(-not (Same-Map $local $remote)){$script:refsDiffer=Ref-Diff $local $remote;throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
  if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
- foreach($s in @($Head,$Base,$desc.value.sourceCommit)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
+ # Generation 13 (DESIGN §57.6, Task 3edfc598): the installed Source commit is read from the store fetched from GitHub; one that GitHub
+ # does not have (a Source built from an unpushed local branch) is said so by name, not as a failed git step: push that branch.
+ $sourceType=$null;try{$sourceType=(Invoke-Git 'source-cat-file' ($Common+@($gd,'cat-file','-t',$desc.value.sourceCommit))).Trim()}catch{if($_.Exception.Message -cne 'GIT_STEP_FAILED'){throw}}
+ if($sourceType -cne 'commit'){throw 'SOURCE_COMMIT_NOT_ON_REMOTE'}
+ foreach($s in @($Head,$Base)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
  foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
   if(($k.StartsWith('refs/heads/') -and $t -cne 'commit') -or ($k.StartsWith('refs/tags/') -and $t -cne 'commit' -and $t -cne 'tag')){throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'}}
  $branchesAtHead=@($local.Keys|Where-Object{$_.StartsWith('refs/heads/') -and $local[$_] -ceq $Head}|Sort-Object)
@@ -581,6 +605,7 @@ try{
   if(-not (Test-Path -LiteralPath $Gen1Receipt -PathType Leaf)){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
   $previous=Read-BundleReceipt $Gen1Receipt $desc.sha256
   if($null -ne $previous.PSObject.Properties['generation']){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
+  $stage='failed-second-generation';$setAside=Move-FailedGen2;if($null -ne $setAside){$writesStarted=$true}
   $Root=$Gen2Root;$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$FetchDir3=Join-Path $Root 'fetch-3.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=$Gen2Receipt
  }
  $ri=Get-Item -LiteralPath (Split-Path -Parent $Root) -Force;if(-not $ri.PSIsContainer -or ($ri.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXED_REAL_BUNDLE_ROOT_REQUIRED'}
@@ -620,10 +645,16 @@ try{
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
  Seed-Update $store
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt;seed=$seedReport}|ConvertTo-Json -Depth 4 -Compress
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt;seed=$seedReport;setAside=$setAside}|ConvertTo-Json -Depth 4 -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
- [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;hint=(Branch-Only-Hint $stage $code $reviewedCommits);git=$lastGit;created=$created
-  storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
+ # Generation 13 (DESIGN 57.3; review round 1): what is on disk after a refusal. A second generation's partial state is set aside by
+ # the next -Rebundle (Move-FailedGen2), and the resident runs -Rebundle again after a git step failed on the line; a first generation's
+ # is never retried. A failed gen-2\ this run set aside (setAside) is a write already. automaticRetryAllowed says what
+ # the resident does: it runs -Rebundle again only when the whole fetch or the ls-remote failed (companion.mjs BUNDLE_NETWORK_STEPS).
+ $failStatus=if($writesStarted){if($Rebundle){'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE'}else{'PARTIAL_STATE_PRESERVED_NO_RETRY'}}else{'REFUSED_BEFORE_WRITE'}
+ [ordered]@{status=$failStatus;stage=$stage;reason=$code;hint=(Branch-Only-Hint $stage $code $reviewedCommits);git=$lastGit;created=$created;setAside=$setAside
+  storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false
+  automaticRetryAllowed=([bool]$Rebundle -and $code -ceq 'GIT_STEP_FAILED' -and $null -ne $lastGit -and @('fetch','ls-remote') -ccontains $lastGit.label)}|ConvertTo-Json -Depth 5 -Compress;exit 2
 }

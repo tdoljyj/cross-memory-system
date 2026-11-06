@@ -27,6 +27,8 @@ $Here = Split-Path -Parent $PSCommandPath
 $RI = Join-Path (Split-Path -Parent $Here) 'reinstall'
 $Placeholders = @('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
 if ($Final -and ($Placeholders -contains $DecisionRef -or $Placeholders -contains $ReceiptRef)) { throw 'FINAL_NEEDS_THE_REAL_OWNER_DECISION_AND_RECEIPT' }
+# ValidatePattern ignores case: a commit in capitals would pass it and be refused later under another name (review round 1, NIT).
+if ($Commit -cnotmatch '^[0-9a-f]{40}$') { throw 'COMMIT_MUST_BE_40_LOWERCASE_HEX' }
 function Write-New([string]$Path, [string]$Text) {   # create-only, like every other output of the toolchain
   $f = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
   try { $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Text); $f.Write($bytes, 0, $bytes.Length) } finally { $f.Dispose() }
@@ -72,6 +74,23 @@ if (-not (Test-Path -LiteralPath $tree)) {
   Remove-Item -LiteralPath $tar
 }
 & python -I (Join-Path $RI 'tools\tree.py') $Repo $Commit $tree; if ($LASTEXITCODE) { throw 'TREE_NOT_THE_COMMIT' }
+
+# 2b. Generation 13 (DESIGN §57.6, Task 3edfc598): a FINAL package's commit must be on a branch of GitHub. Every batch builds its bundle
+#     from GitHub and reads the installed Source commit's .gitleaks.toml from it; a commit only on an unpushed local branch ends every
+#     batch BUNDLE_UNAVAILABLE (generation 9, 0521cb9f). Push the branch first. A DRAFT may be built from any local commit.
+#     The repository is the one the commit's own build-bundle.ps1 fetches every bundle from ($Url), and it must be the companion
+#     input's repo too (review round 2, NIT): the two never disagree in a package.
+if ($Final) {
+  $bb = [IO.File]::ReadAllText((Join-Path $tree 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\build-bundle.ps1'))
+  $urls = @([regex]::Matches($bb, "(?m)^\`$Url='(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git)'") | ForEach-Object { $_.Groups[1].Value })
+  if ($urls.Count -ne 1) { throw 'BUILD_BUNDLE_URL_NOT_FOUND' }
+  $bundleRepo = (Get-Content -LiteralPath $cfg.companionInput -Raw | ConvertFrom-Json).repo
+  if (-not ($bundleRepo -is [string]) -or $bundleRepo -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'COMPANION_INPUT_REPO_REFUSED' }
+  if ($urls[0] -cne ('https://github.com/' + $bundleRepo + '.git')) { throw 'BUILD_BUNDLE_URL_NOT_THE_COMPANION_REPO' }
+  $onGithub = & python -I (Join-Path $Here 'tools\source-on-github.py') $urls[0] $Commit
+  if ($LASTEXITCODE -eq 3) { throw 'SOURCE_COMMIT_NOT_ON_GITHUB_PUSH_THE_BRANCH_FIRST' }
+  if ($LASTEXITCODE) { $onGithub; throw 'SOURCE_COMMIT_ON_GITHUB_UNCONFIRMED' }
+}
 
 # 3. the record: the installed references (no --ref), the commit's Source
 $closure = Join-Path $tree 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\source-closure.json'

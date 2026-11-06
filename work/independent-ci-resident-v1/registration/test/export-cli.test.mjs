@@ -14,6 +14,14 @@ import { validateRegistration } from '../registration-core.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PS = path.resolve(here, '../export-node-registration.ps1');
 const BINDING = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
+// Task 38140843: under a simulated Linux (process.platform faked on NTFS by the force-linux preload) chmod is not honoured and a
+// symlink needs a privilege, so the POSIX checks cannot hold; the tests that depend on them are skipped there with this reason.
+// On real Linux (CluedDev-Linux) and on Windows they run.
+const POSIX_UNHONOURED = process.platform !== 'win32' && (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-posix-probe-'));
+  try { const f = path.join(dir, 'p'); fs.writeFileSync(f, ''); fs.chmodSync(f, 0o600); return (fs.statSync(f).mode & 0o777) !== 0o600; }
+  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+})() && 'POSIX modes are not honoured by this file system (simulated Linux)';
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clued-node-reg-'));
 const listing = dir => fs.readdirSync(dir).sort();
 const sink = () => { let text = ''; return { write: chunk => { text += chunk; }, get text() { return text; } }; };
@@ -44,7 +52,7 @@ test('export without keys is KEY_MISSING and creates nothing', () => {
   assert.deepEqual(listing(dir), []);
 });
 
-test('init-keys needs explicit confirmation and never replaces an existing key', () => {
+test('init-keys needs explicit confirmation and never replaces an existing key', { skip: POSIX_UNHONOURED }, () => {
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
   assert.throws(() => initLinuxKeys(keyDir, {}), /CONFIRMATION_REQUIRED/);
@@ -67,7 +75,7 @@ test('init-keys needs explicit confirmation and never replaces an existing key',
   assert.equal(fs.readFileSync(path.join(keyDir, 'identity.key.pem'), 'utf8'), before['identity.key.pem']);
 });
 
-test('init-keys leaves no partial key set when publishing fails', () => {
+test('init-keys leaves no partial key set when publishing fails', { skip: POSIX_UNHONOURED }, () => {
   // An existing empty directory: one of our names appears just before publishing; only that intruder remains afterwards.
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
@@ -87,7 +95,7 @@ test('init-keys leaves no partial key set when publishing fails', () => {
   assert.throws(() => initLinuxKeys(keyDir2, { confirm: true }), /KEY_EXISTS/);
 });
 
-test('public files must be regular files no one else can write (POSIX)', { skip: process.platform === 'win32' && 'POSIX modes and symlinks' }, () => {
+test('public files must be regular files no one else can write (POSIX)', { skip: process.platform === 'win32' ? 'POSIX modes and symlinks' : POSIX_UNHONOURED }, () => {
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
   initLinuxKeys(keyDir, { confirm: true });
@@ -116,7 +124,7 @@ test('--facts is refused on Linux and the two outputs must be different files', 
   assert.equal(fs.existsSync(path.join(dir, 'same.json')), false);
 });
 
-test('export reads only the public files and produces a page-valid document; outputs are never overwritten', () => {
+test('export reads only the public files and produces a page-valid document; outputs are never overwritten', { skip: POSIX_UNHONOURED }, () => {
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
   initLinuxKeys(keyDir, { confirm: true });
@@ -152,7 +160,7 @@ test('export reads only the public files and produces a page-valid document; out
   }
 });
 
-test('the Source is never guessed on Linux and both sources cannot be given together', () => {
+test('the Source is never guessed on Linux and both sources cannot be given together', { skip: POSIX_UNHONOURED }, () => {
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
   initLinuxKeys(keyDir, { confirm: true });

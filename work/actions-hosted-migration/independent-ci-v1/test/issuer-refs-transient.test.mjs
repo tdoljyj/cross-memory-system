@@ -130,8 +130,22 @@ async function put(root, name, bytes) {
 // simulated worker watches the issuer's collections before it ends its round unanswered.
 const SPOOL_WAIT_MS = 8000;
 const NO_ANSWER_WAIT_MS = 8000;
+// The simulated Linux side reads a bridge file the way the real one does (mailbox.mjs#read): only once its complete-public-file marker is
+// complete, then exactly the bytes the marker names. The issuer creates a file before it writes its bytes (mailbox.mjs#exclusive), so a
+// read as soon as the file exists can see it empty while the write is still queued (BRIDGE_BYTE_BOUND when the machine is busy:
+// several local-verify runs at once). A marker still being written is not complete yet either.
 async function waitFor(file, ms = SPOOL_WAIT_MS) {
-  for (const until = performance.now() + ms; ;) { try { return await fs.readFile(file); } catch (e) { if (e.code !== 'ENOENT' || performance.now() > until) throw e; } await new Promise(r => setTimeout(r, 50)); }
+  const ready = file.replace(/\.json$/, '.ready.json');
+  for (const until = performance.now() + ms; ;) {
+    let marker = null;
+    try { marker = JSON.parse(await fs.readFile(ready, 'utf8')); } catch (e) { if (!(e.code === 'ENOENT' || e instanceof SyntaxError) || performance.now() > until) throw e; }
+    if (marker) {
+      const bytes = await fs.readFile(file);
+      assert.deepEqual([bytes.length, sha(bytes)], [marker.bytes, marker.sha256], 'the bytes the marker names');
+      return bytes;
+    }
+    await new Promise(r => setTimeout(r, 50));
+  }
 }
 const exists = file => fs.lstat(file).then(() => true, () => false);
 // The simulated Linux side runs beside runIssuer and is awaited after it. Its failure aborts runIssuer (pass

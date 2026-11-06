@@ -47,6 +47,12 @@ const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
 // within 3 min, a second of at most 5 min, and slack.
 export const ARCHIVE_LINUX_REQUEST_MS = 14 * 60_000;
 export const CHECK_REFS_REQUEST_MS = 9 * 60_000;
+// rebuild-bundle (DESIGN §37): the companion's own 30 min bound on build-bundle.ps1 -Rebundle, and slack. The executor also reserves it
+// in the authority check before a rebuild after a network wait (generation 13, DESIGN §57.3).
+export const REBUILD_BUNDLE_REQUEST_MS = 35 * 60_000;
+// prepare-workspaces: the companion's own 20 min bound on the unit, the quiescence reads after it, and slack. A rebuild after a network
+// wait reserves it too: the workspaces follow the rebuilt bundle (review round 2, MINOR 2).
+export const PREPARE_WORKSPACES_REQUEST_MS = 25 * 60_000;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
   'archive-prune', 'rebuild-bundle']);
 // rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
