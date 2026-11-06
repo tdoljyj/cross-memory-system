@@ -11,7 +11,7 @@
 //
 //   --affected    the way to verify before a push (task 70e5f450: a hand-picked
 //                 --suite list missed offline-drill for #1015). It is the default
-//                 selection plus --linux, and it refuses --suite and --candidate,
+//                 selection plus --linux (on Windows), and it refuses --suite and --candidate,
 //                 so the suites cannot be hand-picked: the files the branch
 //                 changes against main select them with the required checks' own
 //                 selectSuites (ci-required-selection.mjs of main, or of --base; the
@@ -955,8 +955,8 @@ export function changedFiles(root, change, main, limit) {
 // line is). `lines` are what CI logs for each check, then, for each selected
 // suite, the changed files that picked it (found by asking the same selection
 // about each file alone), the first of each top-level directory (a file in the
-// root counts as its own) first. A change
-// to the selection or the workflow picks every suite, so it shows under all of them.
+// root counts as its own) first. A change to the selection or the workflow picks
+// every suite, so it shows under all of them.
 export function selectAffected(selector, files, { show = 3 } = {}) {
   const selections = Object.keys(selector.SUITES).map((check) => ({ check, ...selector.selectSuites(check, files) }));
   const lines = [];
@@ -966,10 +966,11 @@ export function selectAffected(selector, files, { show = 3 } = {}) {
     const each = files.map((file) => ({ file, picks: selector.selectSuites(check, [file]).suites }));
     for (const id of suites) {
       const hits = each.filter((entry) => entry.picks.includes(id)).map((entry) => entry.file);
-      const seen = new Set();
-      const firsts = hits.filter((file) => !seen.has(file.split('/')[0]) && seen.add(file.split('/')[0]));
-      const shown = [...firsts, ...hits.filter((file) => !firsts.includes(file))].slice(0, show);
-      lines.push(`  ${id}: ${shown.join(', ')}${hits.length > shown.length ? `, ... (${hits.length} files)` : ''}`);
+      const directories = new Set();
+      const firsts = hits.filter((file) => !directories.has(file.split('/')[0]) && directories.add(file.split('/')[0]));
+      const leading = new Set(firsts);
+      const shown = [...firsts, ...hits.filter((file) => !leading.has(file))].slice(0, show);
+      lines.push(`  ${id}: ${shown.join(', ')}${hits.length > shown.length ? `, ... (${hits.length - shown.length} more)` : ''}`);
     }
   }
   return { suites: selections.flatMap((entry) => entry.suites), selections, lines };

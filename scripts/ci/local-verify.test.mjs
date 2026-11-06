@@ -726,7 +726,7 @@ test('--affected selects exactly what the ci-suites job selects, from the select
   assert.equal(picked.lines[0],
     'ci-suites: selected by changed paths; suites: resident-node, resident-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests');
   // the first file of each top-level directory leads, so the resident's own files show too
-  assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(\d+ files\)$/.test(line)), picked.lines.join('\n'));
+  assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));
   for (const id of Object.keys(selection.SUITES['ci-suites'])) {
     assert.equal(picked.lines.some((line) => line.startsWith(`  ${id}: `)), forCheck(picked, 'ci-suites').suites.includes(id), `${id} is explained exactly when it is selected`);
@@ -785,7 +785,7 @@ test('--affected: the branch against main, as the pull request lists it, picks t
   // a rename counts under both names, as the pull request lists it
   assert.deepEqual(chosen(moved).files.filter((file) => file.endsWith('moved.ts')),
     ['apps/clued-cloud/src/moved.ts', 'work/independent-ci-resident-v1/drill/moved.ts']);
-  // and the Linux hand-over's command line carries each chosen suite as a --suite
+  // linuxScript turns each chosen suite into a --suite of the Linux run's command line
   const candidate = 'a'.repeat(40);
   const script = linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: chosen(drill).suites });
   assert.ok(script.endsWith(chosen(drill).suites.map((id) => ` --suite '${id}'`).join('')));
