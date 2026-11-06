@@ -65,6 +65,7 @@ test('the rendered watchdog parses (Windows PowerShell 5.1) and alerts on every 
   const host = profiles.hosts.find((entry) => entry.host_id === 'company-primary');
   const capacity = profiles.capacity_profiles[host.capacity_profile];
   assert.ok(text.includes(`$suspendDisk=${capacity.suspend_c_free_gb}; $resumeDisk=${capacity.resume_c_free_gb};`));
+  assert.match(text, /Log \("Thresholds: C: stops below \{0\} GB, resumes at \{1\} GB; memory stops below \{2\} GB, resumes at \{3\} GB" -f \$suspendDisk,\$resumeDisk,\$suspendMem,\$resumeMem\)/, 'a start logs the levels it works with');
 });
 
 test('the alert block: an ALERT line, a marker file (UTF-8 without a byte order mark) while suspended, kept since the first alert, removed on resume', { skip }, (t) => {
@@ -110,6 +111,28 @@ test('a marker an earlier watchdog left is removed by one that starts with the r
   assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split(/\r?\n/), ['ALERT marker of an earlier watchdog removed: the runners are not held back'], 'said once, nothing when there was none');
 });
 
+test('a marker that cannot be written does not hide the alert: the ALERT line says so, the next try is in 5 minutes; a restart while held back keeps the time the hold began', { skip }, (t) => {
+  const { dir, text } = render(t);
+  const { file, log, marker } = harness(dir, text, (target) => [
+    // the file the marker is written to first is a directory: writing it fails
+    `New-Item -ItemType Directory -Force -Path '${target}.tmp' | Out-Null`,
+    "Send-CapacityAlert 'Suspend' 'C: 49.8 GB free'",
+    "'minutes=' + [int](((Get-Date) - $lastAlert).TotalMinutes)",
+    `Remove-Item -LiteralPath '${target}.tmp' -Recurse -Force`,
+    "$holdSince = '2026-11-05T01:00:00.0000000+08:00'",
+    "Send-CapacityAlert 'Reminder' 'C: 51.0 GB free'",
+    `'since=' + (Get-Content -LiteralPath '${target}' -Raw | ConvertFrom-Json).since`,
+    "'minutes2=' + [int](((Get-Date) - $lastAlert).TotalMinutes)",
+  ].join('\n'));
+  const result = powershell(['-File', file], { CLUED_WATCHDOG_NO_TOAST: '1' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ['minutes=25', 'since=2026-11-05T01:00:00.0000000+08:00', 'minutes2=0'], 'a failed write is tried again after 5 minutes (30 - 25 elapsed); the first alert of a restart takes the hold\'s start from the state');
+  const lines = fs.readFileSync(log, 'utf8').trim().split(/\r?\n/);
+  assert.match(lines[0], /^ALERT Suspend: Linux runners are stopped for low capacity \(C: 49\.8 GB free\) \(the marker file was not written: /);
+  assert.match(lines[1], /^ALERT Reminder: .*C: 51\.0 GB free\)$/);
+  assert.equal(fs.existsSync(marker), true, 'written at the second try');
+});
+
 test('the notification (Windows PowerShell 5.1) uses a registered application id and raises no error', { skip: skip || (process.env.CLUED_TEST_TOAST === '1' ? false : 'set CLUED_TEST_TOAST=1: it shows a notification on the desktop') }, (t) => {
   const { dir, text } = render(t);
   const { file, log } = harness(dir, text, () => "Show-Toast '[test] Clued CI watchdog notification check' 'defect 2102f7e1: ignore this test notification'");
@@ -120,3 +143,30 @@ test('the notification (Windows PowerShell 5.1) uses a registered application id
   const registered = powershell(['-Command', "Test-Path 'HKCU:\\Software\\Classes\\AppUserModelId\\Clued CI watchdog'"]);
   assert.equal(registered.stdout.trim(), 'True');
 });
+
+// Owner decision: the runners stop at 50 GB free on C: and start again at 60 GB, on every
+// host of the workstation profile; the profile, the tools that read it and the text
+// that describes it say the same.
+test('the workstation profile resumes the runners at 60 GB, stops them at 50, and every reader says so', () => {
+  const profiles = JSON.parse(fs.readFileSync(path.join(HERE, 'node-profiles.json'), 'utf8'));
+  const workstation = profiles.capacity_profiles['workstation-v1'];
+  assert.equal(workstation.suspend_c_free_gb, 50);
+  assert.equal(workstation.resume_c_free_gb, 60);
+  const readme = fs.readFileSync(path.join(HERE, 'README.md'), 'utf8');
+  assert.match(readme, /capacity suspend: host free memory < 6 GB or C: free < 50 GB\r?\ncapacity resume:  host free memory >= 10 GB and C: free >= 60 GB/);
+  const runbook = fs.readFileSync(path.join(HERE, '..', '..', '..', 'docs', 'maintenance', 'runner-configuration-and-operations.md'), 'utf8');
+  assert.match(runbook, /≥ 10 GiB \*\*且\*\* ≥ 60 GiB/);
+  assert.doesNotMatch(runbook, /50\/80 GiB/);
+});
+
+test('local-verify reads the 60 GB level of the real profile for the company host', async () => {
+  const { watchdogLevels } = await import('../local-verify.mjs');
+  const company = profiles().hosts.find((host) => host.host_id === 'company-primary');
+  const levels = watchdogLevels({ hostname: company.hostname, env: {}, profilesFile: path.join(HERE, 'node-profiles.json'), readText: (file) => {
+    if (file === company.watchdog_path) throw new Error('not installed in this test');
+    return fs.readFileSync(file, 'utf8');
+  } });
+  assert.deepEqual(levels, { suspend: 50, resume: 60 });
+});
+
+function profiles() { return JSON.parse(fs.readFileSync(path.join(HERE, 'node-profiles.json'), 'utf8')); }

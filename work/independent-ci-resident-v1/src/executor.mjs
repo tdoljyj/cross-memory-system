@@ -129,7 +129,7 @@ import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breaker
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
+import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
@@ -268,7 +268,7 @@ export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
 // anything because GitHub / Native were passingly unavailable (1 run + 3 repeats, at most 7 minutes more, inside the stage's own limit).
 export const PUBLICATION_RETRY_STAGES = Object.freeze([3, 5, 7]);
 export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
-// Generation 11 (DESIGN 54): the waits before an execution stage (4, 6) runs again in the same batch (classify.mjs#executionRetryable);
+// Generation 11 (DESIGN 54; stage 2: generation 14, DESIGN 59): the waits before an execution stage (2, 4, 6) runs again in the same batch (classify.mjs#executionRetryable);
 // two runs again at most, each its own stage run with its own cap.
 export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
 // Generation 13 (DESIGN §57.3, Task 3e2e12d7): the waits before the second bundle of a batch resumed from parking point A is built again
@@ -3162,13 +3162,14 @@ export class ResidentExecutor {
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), retry: again + 1 });
         }
-        // Generation 11 (DESIGN 54): an execution stage (4, 6) that ended with an environment fault proven to have published nothing
+        // Generation 11 (DESIGN 54): an execution stage (4, 6; stage 2 abandoned only, DESIGN 59) that ended with an environment fault proven to have published nothing
         // runs again in this batch, after a two-host quiescence proof and a retry-stage-N archive; its publication stage runs once,
         // afterwards. Anything not proven ends as before (the failure path below).
         for (let again = 0; again < EXECUTION_RETRY_MS.length && EXECUTION_RETRY_STAGES.includes(number) && r.ok !== true && !abort && !unconfirmed; again++) {
           const verdict = executionRetryable({ stage: number, code: validCode(r.code), outcome: r.outcome ?? null, bridge: r.bridge ? bridgeFacts(r.bridge) : null, proof: r.proof });
           if (!verdict.retry) break;
           if (!(await this.prepareExecutionRetry(key, batch, number, r, again, verdict.basis))) break;
+          const abandoned = r;
           this.atStage(number, 'retry-wait'); // the status page: waiting to run the stage again, not running it
           await this.retryWait(key, EXECUTION_RETRY_MS[again]);
           if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
@@ -3182,6 +3183,16 @@ export class ResidentExecutor {
           ({ result: r, abort, stopCode, unconfirmed } = run);
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), ...refsGateFacts(r), executionRetry: again + 1 });
+          // DESIGN 59.1: stage 2's own gates refused the run again before it ran: the batch ends on the abandoned run, as without it. The
+          // receipt names the substitution (and a refs gate without an answer: the ending is counted as environment, as before generation 14).
+          if (number === 2 && r.ok !== true && !abort && !unconfirmed && STAGE2_RETRY_KEEPS_ABANDONED.includes(validCode(r.code))) {
+            try {
+              await this.receipt('execution-retry-refused', { key, stage: number, try: again + 1, step: 'gate', failureCode: validCode(r.code), kept: 'abandoned',
+                ...(r.refsNoAnswer === true ? { refsNoAnswer: true } : {}) });
+            } catch { /* the batch still ends on the abandoned run */ }
+            r = abandoned;
+            break;
+          }
         }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });

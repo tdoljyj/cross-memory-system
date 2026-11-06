@@ -85,7 +85,7 @@ function Log-Deferral([string]$m){if($m -ne $script:lastDeferral){Log $m; $scrip
 # suspend writes an ALERT line, a marker file for panels and scripts (present
 # exactly while the runners are held back) and a desktop notification, repeated
 # every $alertEveryMinutes while the hold lasts; the resume removes the marker.
-$alertFile='C:\clued-ci\state\capacity-alert.json'; $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue; $firstLoop=$true
+$alertFile='C:\clued-ci\state\capacity-alert.json'; $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue; $firstLoop=$true; $holdSince=$null
 function Show-Toast([string]$title,[string]$text){
   if($env:CLUED_WATCHDOG_NO_TOAST){return}
   try{
@@ -102,25 +102,36 @@ function Show-Toast([string]$title,[string]$text){
 function Send-CapacityAlert([string]$kind,[string]$detail){
   try{
     if($kind -eq 'Resume'){
-      Remove-Item -LiteralPath $alertFile -Force -ErrorAction SilentlyContinue
-      Log ("ALERT cleared: runners resumed ({0})" -f $detail); Show-Toast 'Clued CI runners resumed' $detail; return
+      $note=''
+      try{if(Test-Path -LiteralPath $alertFile){Remove-Item -LiteralPath $alertFile -Force -ErrorAction Stop}}catch{$note=' (the marker file could not be removed: '+$_.Exception.Message+')'}
+      Log ("ALERT cleared: runners resumed ({0}){1}" -f $detail,$note); Show-Toast 'Clued CI runners resumed' $detail; return
     }
-    $script:lastAlert=Get-Date
-    $since=$script:lastAlert.ToString('o')
-    if($kind -eq 'Reminder' -and (Test-Path -LiteralPath $alertFile)){try{$since=(Get-Content -LiteralPath $alertFile -Raw | ConvertFrom-Json).since}catch{}}
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) | Out-Null
-    $tmp=$alertFile+'.tmp'
-    # UTF-8 without a byte order mark, which JSON readers refuse (Set-Content -Encoding UTF8 writes one in Windows PowerShell)
-    [IO.File]::WriteAllText($tmp,([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $tmp -Destination $alertFile -Force
-    Log ("ALERT {0}: Linux runners are stopped for low capacity ({1})" -f $kind,$detail)
+    $now=Get-Date
+    # the hold began when the persisted state says so (a restart while held back), else now
+    $since=$now.ToString('o')
+    if($kind -eq 'Reminder'){
+      if($holdSince){$since=$holdSince}
+      if(Test-Path -LiteralPath $alertFile){try{$since=(Get-Content -LiteralPath $alertFile -Raw | ConvertFrom-Json).since}catch{}}
+    }
+    $written=$true; $markerNote=''
+    try{
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $alertFile) -ErrorAction Stop | Out-Null
+      $tmp=$alertFile+'.tmp'
+      # UTF-8 without a byte order mark, which JSON readers refuse (Set-Content -Encoding UTF8 writes one in Windows PowerShell)
+      [IO.File]::WriteAllText($tmp,([pscustomobject]@{state='capacity-suspended';since=$since;detail=$detail;host=$env:COMPUTERNAME} | ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
+      Move-Item -LiteralPath $tmp -Destination $alertFile -Force -ErrorAction Stop
+    }catch{$written=$false; $markerNote=' (the marker file was not written: '+$_.Exception.Message+')'}
+    # a marker that could not be written is tried again in 5 minutes, not after $alertEveryMinutes; the line and the notification are there either way
+    if($written){$script:lastAlert=$now}else{$script:lastAlert=$now.AddMinutes(5-$alertEveryMinutes)}
+    Log ("ALERT {0}: Linux runners are stopped for low capacity ({1}){2}" -f $kind,$detail,$markerNote)
     Show-Toast 'Clued CI runners are stopped' $detail
   }catch{Log ("Capacity alert failed: {0}" -f $_.Exception.Message)}
 }
 # A marker an earlier watchdog left is true only while the runners are held back: a watchdog that starts
 # with them running (the machine restarted and the space came back) clears it.
 function Clear-StaleCapacityAlert{
-  if(Test-Path -LiteralPath $alertFile){Remove-Item -LiteralPath $alertFile -Force -ErrorAction SilentlyContinue; Log 'ALERT marker of an earlier watchdog removed: the runners are not held back'}
+  try{if(Test-Path -LiteralPath $alertFile){Remove-Item -LiteralPath $alertFile -Force -ErrorAction Stop; Log 'ALERT marker of an earlier watchdog removed: the runners are not held back'}}
+  catch{Log ("ALERT marker of an earlier watchdog could not be removed: {0}" -f $_.Exception.Message)}
 }
 # END capacity-alert
 function Test-LinuxBusy {
@@ -144,6 +155,8 @@ function Test-LinuxBusy {
   return $false
 }
 Log 'Clued P13 host watchdog started.'
+# the levels it works with, in the log: what a restart took over is readable without opening the script
+Log ("Thresholds: C: stops below {0} GB, resumes at {1} GB; memory stops below {2} GB, resumes at {3} GB" -f $suspendDisk,$resumeDisk,$suspendMem,$resumeMem)
 try{while($true){
   $os=Get-CimInstance Win32_OperatingSystem; $freeMem=[math]::Round($os.FreePhysicalMemory*1KB/1GB,2); $freeDisk=[math]::Round((Get-PSDrive C).Free/1GB,1)
   $belowSuspend=($freeMem -lt $suspendMem -or $freeDisk -lt $suspendDisk)

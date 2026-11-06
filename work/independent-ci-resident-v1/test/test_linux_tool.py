@@ -107,13 +107,13 @@ class Archive(unittest.TestCase):
         self.assertIn(f'runs/gitleaks-{JOB}', [m['from'] for m in full['moves']])
 
     def test_retry_stage_keeps_the_workspaces_and_moves_protocol_role_lock_and_runs(self):
-        # Generation 11 (DESIGN 54): an execution stage run again in the same batch keeps what the run again needs.
+        # Generation 11 (DESIGN 54; stage 2: DESIGN 59): an execution stage run again in the same batch keeps what the run again needs.
         r = pathlib.Path(self.root)
         (r / 'formal-spool' / 'outgoing' / 'challenge-01.json').write_text('{}')  # a half pair: a failure scope takes it as found
         (r / 'workspaces').mkdir(exist_ok=True)
         (r / 'workspaces' / JOB).mkdir(exist_ok=True)
         (r / f'ws-prep-{BATCH}').mkdir(exist_ok=True)
-        for reason in ('retry-stage-4-1', 'retry-stage-4-2', 'retry-stage-6-1', 'retry-stage-6-2'):
+        for reason in ('retry-stage-2-1', 'retry-stage-2-2', 'retry-stage-4-1', 'retry-stage-4-2', 'retry-stage-6-1', 'retry-stage-6-2'):
             plan = tool.plan_archive(self.root, BATCH, reason, [JOB], 'a' * 12)
             self.assertEqual((plan['scope'], plan['completed']), ('stage-retry', False))
             self.assertTrue(plan['target'].startswith(f'formal-spool/failed-{BATCH[:12]}-{reason}-'))
@@ -128,8 +128,8 @@ class Archive(unittest.TestCase):
         self.assertTrue((r / f'ws-prep-{BATCH}').is_dir())
         self.assertFalse((r / 'formal-role.lock').exists())
         self.assertEqual(os.listdir(r / 'formal-spool' / 'outgoing'), [])
-        # only the four exact reasons keep the workspaces
-        for reason in ('retry-stage-4', 'retry-stage-2-1', 'retry-stage-46-1', 'retry-stage-4-x', 'retry-stage-4-3', 'retry-stage-4-12'):
+        # only the six exact reasons keep the workspaces
+        for reason in ('retry-stage-4', 'retry-stage-3-1', 'retry-stage-2-3', 'retry-stage-46-1', 'retry-stage-4-x', 'retry-stage-4-3', 'retry-stage-4-12'):
             self.assertEqual(tool.plan_archive(self.root, BATCH, reason, [JOB], 'b' * 12)['scope'], 'batch', reason)
 
     def test_completed_scopes_refuse_unknown_leaves_and_half_pairs_failure_scopes_report_them(self):
