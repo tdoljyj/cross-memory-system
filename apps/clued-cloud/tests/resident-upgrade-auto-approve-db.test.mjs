@@ -185,8 +185,11 @@ test('resident upgrade: approved automatically under the switch, once per node p
     const B1 = resource('node-b', 'a');
     r = await upgrade('node-b', B1, uuid());
     assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
-    // The window is the node's, not the Binding's: node-b's upgrader re-marked as a new Binding shares it.
-    await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [ids['node-b']]);
+    // The window is the node's, not the Binding's: the Owner unmarks node-b's upgrader and marks a new Binding
+    // of node-b; it shares the window.
+    await admin.query(`update clued_private.binding_roles_v1 set revoked_at=now(),revoked_receipt_id=$2
+      where binding_id=$1 and role='resident-upgrade'`, [ids['node-b'], roleReceipt]);
+    await assert.rejects(upgrade('node-b', resource('node-b', 'e'), uuid()), /owner_grant_door_binding_not_authorized/);
     await bind('node-b-new', ['context:read'], 'node-b');
     await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
       values($1,$2,'resident-upgrade',now()-interval '1 minute',$3,now()-interval '1 minute','unspecified')`, [owner, ids['node-b-new'], roleReceipt]);
@@ -210,10 +213,11 @@ test('resident upgrade: approved automatically under the switch, once per node p
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending']);
     const late = r.owner_request.request_id;
     // Now: the request is 2 hours old (opened 23 hours after the grant), the grant 25 hours old.
-    await admin.query(`update clued_private.owner_requests_v1 set created_at=clock_timestamp()-interval '2 hours',
-      expires_at=clock_timestamp()+interval '22 hours' where id=$1`, [late]);
-    await admin.query(`update clued_private.owner_grants_v1 set granted_at=clock_timestamp()-interval '25 hours',
-      expires_at=clock_timestamp()-interval '1 hour' where id=$1`, [gC]);
+    // One clock reading per statement (now()), so the table checks see exactly 24 hours.
+    await admin.query(`update clued_private.owner_requests_v1 set created_at=now()-interval '2 hours',
+      expires_at=now()+interval '22 hours' where id=$1`, [late]);
+    await admin.query(`update clued_private.owner_grants_v1 set granted_at=now()-interval '25 hours',
+      expires_at=now()-interval '1 hour' where id=$1`, [gC]);
     r = await upgrade('node-a', resource('node-a', 'd'), opLate);
     assert.deepEqual([r.consumed, r.owner_request.request_id, r.owner_request.status], [false, late, 'pending'],
       'opened within the window: the Owner decides, however long the upgrader keeps asking');
