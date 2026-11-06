@@ -25,7 +25,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const APP_ROOT = path.resolve(here, '../..');
@@ -133,13 +133,16 @@ export function fileSeeds(source) {
 // deterministic fixture.
 const PROPERTY_LAYER = (name) => /^P1 /.test(name) ? 'P1' : /\(P2 facts layer\)|^P2 coverage/.test(name) ? 'P2' : null;
 
+// Evidence paths are repository paths on every host, including Windows.
+const relativeFile = (file) => path.relative(APP_ROOT, file).split(path.sep).join('/');
+
 // events: the ndjson-reporter stream. Returns the evidence object (without run metadata).
 export function buildEvidence({ criteria, events, seedsByFile = {}, exitStatus = 0, unparsedEvents = 0 }) {
   // A test that completes right after a test one level deeper in the same file is that test's parent: a
   // container, not evidence of its own. Only leaves prove an ID; a failing parent still fails it.
   const last = new Map();
   const results = events.filter((e) => e.type === 'test:pass' || e.type === 'test:fail').map((e) => {
-    const file = e.file ? path.relative(APP_ROOT, e.file) : null;
+    const file = e.file ? relativeFile(e.file) : null;
     const previous = last.get(file);
     last.set(file, e);
     return {
@@ -257,14 +260,14 @@ export async function main(argv = process.argv.slice(2)) {
   const contractText = fs.readFileSync(path.join(REPO_ROOT, CONTRACT), 'utf8');
   const criteria = parseContract(contractText);
   const files = args.files.map((f) => path.resolve(APP_ROOT, f));
-  const seedsByFile = Object.fromEntries(files.map((f) => [path.relative(APP_ROOT, f), fileSeeds(fs.readFileSync(f, 'utf8'))]));
+  const seedsByFile = Object.fromEntries(files.map((f) => [relativeFile(f), fileSeeds(fs.readFileSync(f, 'utf8'))]));
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-gate-evidence-'));
   const stream = path.join(scratch, 'events.ndjson');
   const startedAt = new Date().toISOString();
   // the same CLI the per-suite npm scripts use, one file at a time; the spec report goes to stderr
   const run = spawnSync(process.execPath, ['--test', '--test-force-exit', '--test-concurrency=1',
     '--test-reporter=spec', '--test-reporter-destination=stderr',
-    `--test-reporter=${path.join(here, 'ndjson-reporter.mjs')}`, `--test-reporter-destination=${stream}`,
+    `--test-reporter=${pathToFileURL(path.join(here, 'ndjson-reporter.mjs')).href}`, `--test-reporter-destination=${stream}`,
     ...files], { cwd: APP_ROOT, stdio: ['ignore', 'inherit', 'inherit'], env: childEnv() });
   // a truncated line (a killed runner) is counted, and fails the verdict, rather than losing the document
   const events = [];
@@ -302,7 +305,7 @@ export async function main(argv = process.argv.slice(2)) {
     run: {
       started_at: startedAt, finished_at: new Date().toISOString(), node: process.version,
       property_mode: process.env.CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL === '1' ? 'nightly' : 'ci',
-      files: files.map((f) => ({ path: path.relative(APP_ROOT, f), sha256: sha256(fs.readFileSync(f)) })),
+      files: files.map((f) => ({ path: relativeFile(f), sha256: sha256(fs.readFileSync(f)) })),
     },
     ...evidence,
   };
