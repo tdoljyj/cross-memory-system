@@ -18,6 +18,8 @@ export const TRAIN_MODE_DEFAULT = 'off';
 export const REQUIRED_CHECK_NAMES = Object.freeze(['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot']);
 // Not ready, with zero side effects and before any journal write: the resident parks the batch and tries again.
 export const RULESET_UNREADABLE = 'RULESET_UNREADABLE';
+export const REQUIRED_CHECK_FAILED = 'REQUIRED_CHECK_FAILED';
+export const REQUIRED_CHECKS_UNREADABLE = 'REQUIRED_CHECKS_UNREADABLE';
 export const STRICT_OFF_WITHOUT_TRAIN = 'STRICT_OFF_WITHOUT_TRAIN';
 export const MERGE_METHODS_NOT_MERGE_ONLY = 'MERGE_METHODS_NOT_MERGE_ONLY';
 export const TRAIN_TEST_MERGE_NOT_READY = 'TRAIN_TEST_MERGE_NOT_READY';
@@ -39,6 +41,49 @@ const SHA = /^[a-f0-9]{40}$/;
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
+
+// Only a confirmed terminal failure blocks queue participation. A newer rerun
+// supersedes an old failure; unrelated checks and another App's checks do not.
+export function requiredCheckFailure(rules, inventory, headSha, appId, legacy) {
+  rulesetFacts(rules, appId);
+  check(inventory?.complete === true && Array.isArray(inventory.checks), REQUIRED_CHECKS_UNREADABLE);
+  let statusReadable = legacy?.complete === true && legacy.headSha === headSha && Array.isArray(legacy.statuses);
+  const statusIds = new Set();
+  for (const s of statusReadable ? legacy.statuses : []) {
+    if (!(plain(s) && Number.isSafeInteger(s.id) && s.id > 0 && !statusIds.has(s.id)
+      && typeof s.context === 'string' && ['success', 'pending', 'failure', 'error'].includes(s.state))) { statusReadable = false; break; }
+    statusIds.add(s.id);
+  }
+  const seen = new Set();
+  for (const c of inventory.checks) {
+    check(plain(c) && Number.isSafeInteger(c.id) && c.id > 0 && !seen.has(c.id)
+      && c.head_sha === headSha && typeof c.name === 'string' && Number.isSafeInteger(c.app?.id)
+      && ['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(c.status)
+      && (c.status !== 'completed' || ['success', 'neutral', 'skipped', 'failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale'].includes(c.conclusion)), REQUIRED_CHECKS_UNREADABLE);
+    seen.add(c.id);
+  }
+  const failed = []; let uncertain = !statusReadable;
+  for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
+    check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
+      || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
+    const matches = inventory.checks.filter(c => c.name === required.context
+      && (!(required.integration_id > 0) || c.app.id === required.integration_id));
+    const latest = matches.reduce((a, c) => !a || c.id > a.id ? c : a, null);
+    if (latest?.status === 'completed' && !['success', 'neutral', 'skipped'].includes(latest.conclusion)) failed.push(required.context);
+    const status = statusReadable ? legacy.statuses.filter(s => s.context === required.context).reduce((a, s) => !a || s.id > a.id ? s : a, null) : null;
+    if (status && ['failure', 'error'].includes(status.state)) {
+      // The status API carries no integration_id. Never evict a pinned App's
+      // claim using an unproven publisher; uncertainty still prevents joining
+      // and extending. Unpinned required contexts can be decided exactly.
+      if (required.integration_id > 0) uncertain = true;
+      else failed.push(required.context);
+    }
+  }
+  // A complete check-run inventory's proven failure remains proven even when
+  // another context's status cannot be attributed or its read is unavailable.
+  check(failed.length > 0 || !uncertain, REQUIRED_CHECKS_UNREADABLE);
+  return [...new Set(failed)].sort();
+}
 
 // The rules GitHub applies to main, reduced to the three facts stage 8 needs. Anything that is not exactly understood is
 // unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks missing or pinned to another

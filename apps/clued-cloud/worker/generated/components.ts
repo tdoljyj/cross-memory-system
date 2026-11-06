@@ -4,7 +4,7 @@ export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
   "skill.clued": "1.0.25",
-  "agent-contract": "54",
+  "agent-contract": "55",
   "mcp.server": "0.9.0",
   "hook.runner-job-started": "1.0.2",
   "hook.capture-guard": "1.0.4",
@@ -28,7 +28,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.11",
+  "script.independent-native-publication": "1.1.12",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.2",
   "script.source-only-workflow": "1.0.0",

@@ -54,12 +54,12 @@ function jwt(appId, key, now) {
 // it is never passed to worker processes, manifests, PRs or loggers.
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
-  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait } = {}) {
+  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, includeStatusesRead = false, retryWindowMs = 4_000, sleep = wait } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
     || typeof fetchImpl !== 'function' || !positive(maxPages) || maxPages > 100
-    || typeof includeModeRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
+    || typeof includeModeRead !== 'boolean' || typeof includeStatusesRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
     || !Number.isSafeInteger(retryWindowMs) || retryWindowMs < 0 || retryWindowMs > 10_000) fail('invalid_checks_configuration');
   const root = `https://api.github.com/repos/${repository}`;
   let token = null;
@@ -134,6 +134,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     const app = await request('https://api.github.com/app', 'GET', appJwt, undefined, { until });
     if (app.id !== appId) fail('unexpected_app_identity');
     const requested = { checks: 'write', contents: 'read', pull_requests: 'read',
+      ...(includeStatusesRead ? { statuses: 'read' } : {}),
       ...(includeModeRead ? { actions_variables: 'read', environments: 'read' } : {}) };
     // Minting changes no repository state; a token whose reply was lost is never
     // seen or used and expires by itself, so this exchange repeats like a read.
@@ -286,6 +287,34 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    // Legacy commit statuses are independent of check-runs. Use a full SHA,
+    // bounded pagination, and confirm the head/count again before returning.
+    async readStatuses(headSha) {
+      if (!sha.test(headSha ?? '')) fail('invalid_head');
+      if (!includeStatusesRead) fail('statuses_read_not_configured');
+      const statuses = [], seen = new Set(); let total = null;
+      for (let page = 1; page <= maxPages; page++) {
+        const result = await scoped(`/commits/${headSha}/status?per_page=100&page=${page}`);
+        if (result.sha !== headSha || !Number.isSafeInteger(result.total_count) || result.total_count < 0
+          || !Array.isArray(result.statuses) || result.statuses.length > 100
+          || (total !== null && total !== result.total_count)) fail('statuses_pagination_changed');
+        total = result.total_count;
+        for (const s of result.statuses) {
+          if (!positive(s?.id) || seen.has(s.id) || typeof s.context !== 'string'
+            || !['success', 'pending', 'failure', 'error'].includes(s.state)) fail('invalid_status_set');
+          seen.add(s.id); statuses.push(s);
+        }
+        if (statuses.length > total) fail('statuses_pagination_changed');
+        if (statuses.length === total) {
+          const confirm = await scoped(`/commits/${headSha}/status?per_page=100&page=1`);
+          if (confirm.sha !== headSha || confirm.total_count !== total || !Array.isArray(confirm.statuses)
+            || JSON.stringify(confirm.statuses) !== JSON.stringify(statuses.slice(0, 100))) fail('statuses_pagination_changed');
+          return { complete: true, headSha, statuses };
+        }
+        if (result.statuses.length < 100) fail('incomplete_statuses');
+      }
+      fail('statuses_page_limit');
+    },
     // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
     // read-back (resident primary/standby design v0.4 §6.2; published-on-github-v2.mjs). Complete, or refused.
     async readAppChecks(headSha) { return inventory(headSha, null, null, true); },

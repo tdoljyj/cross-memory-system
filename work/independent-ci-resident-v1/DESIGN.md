@@ -4359,8 +4359,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - `merge_queue_join {action, scope, pr_ref, head_sha}`：把 `merge:<repo>:main` 加进 `trigger_refs`（排到队尾；失效或出队后重新排队，与持有者续租时相同）。不动租约、fence、`lease_version`、`progress_ref`、持有者、续租次数、执行纪元；已在队列里就什么也不写；`trigger_refs` 已满时干净地拒绝（`trigger_refs_full`）。写一条 Receipt `WORK_CLAIM_MERGE_QUEUE_JOINED_BY_CI`。
   - `lease_extend {action, scope, pr_ref, head_sha, minutes}`：`minutes` 为 1..180，到期时间改为 least（max（原到期，现在 + minutes），认领的硬上限 24 h）。已过期的认领不复活，每个认领 5 分钟内最多真正延长一次。同样不动 `lease_version` 和 fence，所以持有者下一次 `clued_work_renew` 不会因 CAS 被拒。写一条 Receipt `WORK_CLAIM_LEASE_EXTENDED_BY_CI`。
 - **持有者续租的三处改动**（前两处是 Owner 认定的缺陷，一并修了；第三处是审查中发现的）：
-  - 持有者带着自己的 `trigger_refs` 续租时，**CI 加上的** `merge:<repo>:main` 保留，队列位置不变。只有 CI 真正加上的引用才算 CI 的：CI 只是让持有者自己加的引用重新排队时，它仍是持有者的。已经离开认领的合并引用（合入、关闭、CI 失败）不会被加回来，之后持有者自己再加的就是持有者的。所以：CI 加上的引用还在时，持有者要离开队列只能释放认领；持有者自己的引用，续租时不带它就离开。
-    - 续租时如果保留 CI 的引用会让 `trigger_refs` 超过 50 个，续租以 `work_claim_trigger_refs_invalid`（22023）拒绝，什么也不改。
+  - 持有者续租显式提供 `trigger_refs` 时，整个列表被替换，包括 **CI 加上的** `merge:<repo>:main`；不带该引用就退队，工作认领保持 ACTIVE。不传 `trigger_refs` 则保留原引用和排位。成功续租退队后清除 CI 引用标记；拒绝续租不改变有效标记。CI 重新排队中的临时退队仍保留标记。
+  - 第 8 段入队、续期、发布前，读取完整的当前 head check-runs、传统 commit statuses 和 live 必需检查配置，按 context、App pin 和最新 id 判断终态失败。确认失败不入队、不延长，已入队则归还槽位；新重跑中或成功覆盖旧失败，非必需检查不影响队列。传统 status 不含 integration_id：未固定 App 的必需 context 可据此判断；固定 App 的同名失败 status 无法证明发布者，按不可确认处理，不入队、不续期，也不据此退队。若已有完整 check-run 清单证明另一个必需检查失败，该确定失败优先，不被 status 的读取/发布者歧义覆盖。新增并严格回读核验最小 `statuses:read`，未变更 GitHub 写权限；App 或安装令牌不具备读取权限时 fail closed，正式 Source 资格验证须覆盖该读取。
   - 持有者续租时，新的到期时间取 least（max（现有到期，现在 + 2 h），硬上限），不会把 CI 延长的租约截短。
   - CI 把租约延到硬上限后，持有者的续租照样接受（记下进度、引用和写集，到期时间保持在上限），不再以 `work_claim_hard_deadline` 拒绝；没有 CI 延长时，到了上限仍照旧拒绝。
 - **入队的另一个效果**：入队改变 `trigger_refs`，和持有者续租一样：受保护的认领之前的执行准入摘要会对不上，直到 head 再验证一次。第 8 段的每次观察都会经准入评估器再 verify 一次（带 `target_branch`），所以入队后的下一次观察就会重新对上。入队成功后，这次尝试马上再观察一次，即使它的 90 s 已经用完（仍受这一段自己的期限约束），把执行准入重新记上；这次观察若碰上一时的 GitHub 或 Native 故障，就等下一次尝试再记。这次观察时如果已经排到队首，就照常发布。这次观察失败时，答复按“已在队列里、位置不明”给出（`RESIDENT_QUEUE_HEAD_NOT_REACHED`），不说没入队。

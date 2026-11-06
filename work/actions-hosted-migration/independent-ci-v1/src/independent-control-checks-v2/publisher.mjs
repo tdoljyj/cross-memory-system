@@ -57,9 +57,10 @@ import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
-  trainHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested } from './train-rules.mjs';
+  trainHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
+  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
-import { ROLE_ALREADY_ON_GITHUB, publishedNames } from '../published-on-github-v2.mjs';
+import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
 
 export const APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
@@ -73,6 +74,7 @@ export const MERGE_SLOT_WINDOW_MS = 45 * 60_000;
 export const STAGE8_CHECK_MS = 90_000;
 // Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
 export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
+  REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE,
   // Phase 2, step 3a: the live branch rules and test merge, and the green ledger (all before any journal write).
   RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY, GREEN_LEDGER_UNAVAILABLE,
   // Merge train (§41.2): the batch waits for the next stage 10; a front job whose stage directory's train mode could not be
@@ -383,6 +385,38 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         }
       }
       lastTrain = null;
+      if (observed) {
+        // Before joining, extending or publishing, inspect the current head's
+        // required checks. Failed work must give the next claim its turn.
+        let failures;
+        try {
+          let rules;
+          try { rules = await github.readBranchRules('main'); } catch { throw Object.assign(new Error(RULESET_UNREADABLE), { code: RULESET_UNREADABLE }); }
+          check(rules?.complete === true, RULESET_UNREADABLE);
+          const inventory = await github.readChecks(slotJob.headSha);
+          // A train front (H,S) has its own Native six-check identity. Project
+          // CI checks still apply to H regardless of their publishing App.
+          const ids = frontJobIdsV2(slotJob);
+          if (ids && Array.isArray(inventory?.checks)) inventory.checks = inventory.checks.filter(c => c?.app?.id !== APP_ID
+            || !REQUIRED_CHECK_NAMES.includes(c.name) || ofJobIds(c, ids));
+          let legacy;
+          try { legacy = await github.readStatuses(slotJob.headSha); } catch { legacy = { complete: false }; }
+          failures = requiredCheckFailure(rules.rules, inventory, slotJob.headSha, APP_ID, legacy);
+        } catch (e) { return { ready: false, reason: e.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE, polls, scheduling }; }
+        if (failures.length) {
+          let returned = null;
+          if (scheduling?.mergeQueue?.entered === true && slotNative?.returnSlot) {
+            try {
+              const pull = await github.readPullRequest(slotJob.pr);
+              check(pull?.state === 'open' && pull.head?.sha === slotJob.headSha, REQUIRED_CHECKS_UNREADABLE);
+              returned = await slotNative.returnSlot({ pr: slotJob.pr });
+            } catch { returned = { ok: false }; }
+            if (returned?.onDuty === true && returned.returned === true) scheduling = { ...scheduling, mergeQueue: { entered: false, state: null, position: null } };
+          }
+          try { record('native_required_check_failed', { jobId: slotJob.id, failures, returned }); } catch { /* best-effort */ }
+          return { ready: false, reason: REQUIRED_CHECK_FAILED, polls, scheduling };
+        }
+      }
       if (observed && queueHeadReady(slotJob, observed, clock())) {
         // Step 3a: the queue head may write only under live rules that still hold main, on a test merge of exactly [T, H].
         const train = await trainFacts(slotJob);

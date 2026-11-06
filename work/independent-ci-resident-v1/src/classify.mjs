@@ -37,7 +37,7 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   'RELAY_STAGE_REFUSED',
   // Stage 8 not ready (phase 2, step 2): parked and tried again; final only when main moved or the tries ran out.
-  'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED',
+  'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE',
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (parked and tried again), and a
   // test merge of exactly [T, H] that is not the tested tree (final for the head).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',

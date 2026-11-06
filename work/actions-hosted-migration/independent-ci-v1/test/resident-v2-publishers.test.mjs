@@ -14,11 +14,59 @@ import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.m
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
 const jobsFor = (attempt = 1, testSha = HEAD) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
+
+test('required failures use exact head, pinned App and latest rerun across all required contexts', () => {
+  const rules = branchRules();
+  rules[2].parameters.required_status_checks.push({ context: 'ci-suites', integration_id: 15368 });
+  const check = (id, patch = {}) => ({ id, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: 'failure', ...patch });
+  const emptyStatuses = { complete: true, headSha: HEAD, statuses: [] };
+  const run = checks => requiredCheckFailure(rules, { complete: true, checks }, HEAD, 5368905, emptyStatuses);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale'])
+    assert.deepEqual(run([check(1, { conclusion })]), ['ci-suites']);
+  for (const conclusion of ['success', 'neutral', 'skipped']) assert.deepEqual(run([check(1, { conclusion })]), []);
+  assert.deepEqual(run([check(1), check(2, { status: 'in_progress', conclusion: null })]), []);
+  assert.deepEqual(run([check(2, { conclusion: 'success' }), check(1)]), []);
+  assert.deepEqual(run([check(1, { app: { id: 999 } }), check(2, { name: 'optional' })]), []);
+  assert.throws(() => run([check(1, { head_sha: BASE })]), /REQUIRED_CHECKS_UNREADABLE/);
+  assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905, emptyStatuses), /REQUIRED_CHECKS_UNREADABLE/);
+  rules[2].parameters.required_status_checks.push({ context: 'legacy-ci', integration_id: null });
+  const legacy = statuses => requiredCheckFailure(rules, { complete: true, checks: [] }, HEAD, 5368905, { complete: true, headSha: HEAD, statuses });
+  const old = { id: 10, context: 'legacy-ci', state: 'error' };
+  assert.deepEqual(legacy([old]), ['legacy-ci']);
+  assert.deepEqual(legacy([old, { ...old, id: 11, state: 'pending' }]), []);
+  assert.deepEqual(legacy([{ ...old, id: 12, state: 'success' }, old]), []);
+  assert.throws(() => legacy([{ ...old, context: 'ci-suites' }]), /REQUIRED_CHECKS_UNREADABLE/, 'a status cannot prove the pinned publisher');
+  for (const statuses of [{ complete: false }, { complete: true, headSha: HEAD, statuses: [{ ...old, context: 'ci-suites' }] }])
+    assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: [check(1)] }, HEAD, 5368905, statuses), ['ci-suites'], 'known failures take priority over unrelated uncertainty');
+});
+
+test('failed required checks neither join nor extend, and an already queued claim returns its slot', async t => {
+  for (const entered of [false, true]) {
+    const jobs = jobsFor(), c = claim(), github = fakeGithub();
+    github.state.rules[2].parameters.required_status_checks.push({ context: 'ci-suites', integration_id: 15368 });
+    github.checks.push({ id: 1, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: 'failure' });
+    const calls = [], time = Date.now();
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    const adm = fakeAdmission((job, packet, opts) => {
+      opts.scheduling?.({ mergeQueue: { entered, state: entered ? 'head' : null, position: entered ? 1 : null }, claimExpiresAt: iso(time + 60_000) });
+      return admitted(job, c, packet, { mergeQueueHead: entered, observedAt: time });
+    });
+    const pub = createFixtureControlPublisherV2({ github, journal, admission: adm, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time,
+      claimAssist: { joinQueue: async () => calls.push('join'), extendLease: async () => calls.push('extend') },
+      slotNative: { returnSlot: async args => { calls.push(['return', args]); return { onDuty: true, returned: true }; } } });
+    const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+    assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'REQUIRED_CHECK_FAILED', 0]);
+    assert.deepEqual(calls, entered ? [['return', { pr: 888 }]] : []);
+    assert.equal(r.scheduling.mergeQueue.entered, false);
+    assert.equal(github.checks.length, 1, 'no control checks were published');
+  }
+});
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
 const SLOT_UNTIL = Date.now() + 3600_000; // Native's merge-slot deadline does not move between observations
@@ -47,6 +95,7 @@ function fakeGithub(o = {}) {
   const state = { rules: branchRules(), rulesError: null, pull: { state: 'open', merged: false, mergeable: true, merge_commit_sha: TEST_MERGE },
     commits: { [HEAD]: { sha: HEAD, tree: TREE, parents: [BASE] }, [TEST_MERGE]: { sha: TEST_MERGE, tree: TREE, parents: [BASE, HEAD] } }, onCreate: null, ...o };
   return { fixture: true, checks, state,
+    async readStatuses(headSha) { return { complete: true, headSha, statuses: [] }; },
     async readChangedPaths(job) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };
@@ -378,11 +427,11 @@ test('control pair v2 (step 3a): live branch rules decide before anything is wri
   assert.deepEqual([off.r.status, off.r.reason, off.r.sideEffects, off.github.checks.length, off.greenLedger.records.length, off.r.polls], ['BLOCKED', 'STRICT_OFF_WITHOUT_TRAIN', 0, 0, 0, 1]);
   assert.equal(stage8Code(off.r), 'STRICT_OFF_WITHOUT_TRAIN');
   // a required check pinned to another integration (a disaster-recovery switch), one missing, no required checks at all
-  // (the ruleset disabled), or a read that fails: unreadable, waited out inside the window, nothing written
+  // (the ruleset disabled), or a read that fails: unreadable, no queue writes or publication
   for (const github of [fakeGithub({ rules: branchRules({ pinned: 5164952 }) }), fakeGithub({ rules: branchRules({ names: SIX.slice(1) }) }),
     fakeGithub({ rules: [] }), fakeGithub({ rulesError: 'github_http_403' })]) {
     const u = await pairRun(t, { github });
-    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls > 1], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0, 0, true]);
+    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0, 0, 1]);
     assert.equal(stage8Code(u.r), 'RULESET_UNREADABLE');
   }
   // the rules as they are today (strict on, all six pinned): the pair is written

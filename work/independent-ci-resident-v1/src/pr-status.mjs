@@ -124,7 +124,9 @@ function rowHold(status, row, now) {
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
-const PARKED_TEXT = Object.freeze({ RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
+  REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
+  RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',

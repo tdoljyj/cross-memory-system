@@ -45,6 +45,7 @@ function fakeGithub(seed = [], { narrowed = true } = {}) {
     async readBranchRules(branch) { return { complete: true, branch, rules: structuredClone(RULES) }; },
     async readGitCommit(sha) { if (!COMMITS[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(COMMITS[sha]); },
     async readChecks(head) { calls.readChecks++; return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
+    async readStatuses(headSha) { return { complete: true, headSha, statuses: [] }; },
     async createCheck(body) { calls.createCheck++; const c = { id: next++, app: { id: APP }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
     async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
   if (narrowed) port.readAppChecks = async head => { calls.readAppChecks++; return { complete: true, checks: checks.filter(c => c.head_sha === head && c.app.id === APP).map(c => structuredClone(c)) }; };

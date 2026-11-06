@@ -55,8 +55,10 @@ export async function readStageTrainModeFact(stageDir) {
 // The ports stages 1 and 8 need with the train on (§41.2, §41.4), built only then: the merge-slot port with the node's CI
 // token (holders, touch), the sweep proof store (state\v2\train-sweep, clued-control only; loaded only then; one that
 // cannot be opened is no proof) and GitHub's PRs by updated time. Off and shadow: none, nothing is loaded.
-export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null }) {
-  if (trainMode !== 'on') return {};
+export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null, queueReturn = false }) {
+  // Stage 8 must return failed queued PRs in every mode. This port is lazy:
+  // constructing it neither reads train state nor makes a Native request.
+  if (trainMode !== 'on') return queueReturn ? { slotNative: createMergeSlotNative({ config: record.config, fetchImpl, nativeToken }) } : {};
   let sweepStore = null;
   try { sweepStore = await (openStore ?? (async dir => (await import('./train-sweep-store.mjs')).TrainSweepStore.open(dir)))(sweepDir); } catch { /* not proven */ }
   return { slotNative: createMergeSlotNative({ config: record.config, fetchImpl, nativeToken }), sweepStore,
