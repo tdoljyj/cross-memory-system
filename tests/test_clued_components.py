@@ -133,6 +133,18 @@ class CheckTest(unittest.TestCase):
         cc.bump("pkg", "1.1.0", self.repo.dir)
         self.assertEqual(skill.read_text(), "  path: C:\\x 1.1.0\nbody\n")
 
+    def test_bump_and_update_write_lf_only(self):
+        # On Windows write_text turns "\n" into CRLF; the R9 re-registration helper refuses such files.
+        root = self.repo.dir
+        skill = root / "pkg" / "SKILL.md"
+        skill.write_bytes(b'---\r\nname: x\r\nmetadata:\r\n  version: "1.0.0"\r\n---\r\nbody\r\n')
+        (root / "tool.py").write_text("print(2)\n")
+        cc.bump("pkg", "1.1.0", root)
+        cc.update(root)
+        for path in (skill, root / cc.MANIFEST):
+            self.assertNotIn(b"\r", path.read_bytes(), path.name)
+        self.assertEqual(cc.check(root), [])
+
     def test_bump_refuses_lower_or_equal(self):
         with self.assertRaises(SystemExit):
             cc.bump("pkg", "1.0.0", self.repo.dir)

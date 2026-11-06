@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
@@ -64,8 +64,15 @@ def load_manifest(root: Path = ROOT) -> dict:
     return data
 
 
+def write_lf(path: Path, text: str) -> None:
+    """The repository is eol=lf and the R9 re-registration helper refuses CRLF, so
+    never let Windows turn a line feed into CRLF (Path.write_text only takes newline= from Python 3.10)."""
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
 def save_manifest(data: dict, root: Path = ROOT) -> None:
-    (root / MANIFEST).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_lf(root / MANIFEST, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def component_files(base: Path, patterns: list[str]) -> list[Path]:
@@ -263,7 +270,7 @@ def bump(component_id: str, version: str, root: Path = ROOT) -> None:
         if not regex.search(text):
             raise SystemExit(f"{path} has no version marker {marker['pattern']!r}")
         line = marker["pattern"].replace("{version}", version)
-        path.write_text(regex.sub(lambda _: line, text, count=1), encoding="utf-8")
+        write_lf(path, regex.sub(lambda _: line, text, count=1))
     component["version"] = version
     save_manifest(data, root)
 
