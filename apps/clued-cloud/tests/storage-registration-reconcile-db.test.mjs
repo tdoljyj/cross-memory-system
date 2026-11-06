@@ -1,5 +1,6 @@
 // Real disposable PostgreSQL. Synthetic identities/time/Drive transport only;
 // these tests never query production, change a real grant or mutate Google.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -390,12 +391,12 @@ test('registration reconciliation: actual program authority, independent of the 
    // embedded-postgres.stop resolves on exit, before its Windows stdio has
    // necessarily closed. Wait for producer close before deleting its scratch.
    const producer=server.process,closed=producer?once(producer,'close'):Promise.resolve();
-   await server.stop();
+   await stopCluster(server);
    producer?.stdin?.destroy();producer?.stdout?.destroy();producer?.stderr?.destroy();
    await closed;
   }
   const actual=await fs.realpath(directory);assert.equal(path.dirname(actual).toLowerCase(),parent.toLowerCase());
   assert.ok(path.basename(actual).startsWith('kooyumi-registration-db-'));
-  await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
+  await removeTestDirectory(actual);
  }
 });

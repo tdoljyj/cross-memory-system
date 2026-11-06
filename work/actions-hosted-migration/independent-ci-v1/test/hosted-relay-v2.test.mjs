@@ -9,6 +9,9 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { digest as digestOf } from '../src/proof.mjs';
+import { relayExternalId } from '../src/hosted-relay-v1/attest.mjs';
+import { claimRolePublication, rolePublicationKey } from '../src/effect-journal.mjs';
 import { canonical } from '../src/proof.mjs';
 import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { deriveBatch, deriveRelayStage, residentBatchKey, writeBatch, writeRelayStage, main as deriveMain } from '../src/resident-v2/derive-batch.mjs';
@@ -217,19 +220,21 @@ const REFS = { sourceAcceptanceRef: 'a1a1a1a1-0000-4000-8000-000000000001', host
   ownerAuthorizationRef: 'a1a1a1a1-0000-4000-8000-000000000003', publisherQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000004',
   ciPrincipalQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000005' };
 const BINDING = '11111111-2222-4333-8444-555555555555';
-// wrapGithub: the GitHub port the v2 publisher sees (the world's own by default).
-function v2World({ claimFence = 3, wrapGithub = g => g } = {}) {
+// wrapGithub: the GitHub port the v2 publisher sees (the world's own by default). admissionMs: how long each complete admission takes
+// (the world's clock moves). w.state.windowLeft, when set, is what production's pre-write observation window has left (windowLeftMs).
+function v2World({ claimFence = 3, wrapGithub = g => g, admissionMs = 0 } = {}) {
   const w = createWorld();
   const iso = ms => new Date(ms).toISOString();
   const observed = () => ({ claimId: CLAIM, fence: claimFence, epoch: 1, expiresAt: iso(w.state.now + 3_600_000) });
   const nativeAdmission = { fixture: true, async evaluatePr(job, packet, opts) {
     if (w.state.faults.native) return { contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason: 'full_admission_rejected' };
+    w.state.now += admissionMs;
     return admittedFacts(job, observed(), packet, { domain: 'fixture', batchClaim: opts?.batchClaim ?? null, observedAt: w.state.now, slotUntil: w.state.now + 3_600_000 });
   } };
   const authority = { fixture: true, async observe(job) {
     return { ...subjectOfV2(job), ...REFS, ciPrincipalBindingId: BINDING, sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true,
       observedAt: iso(w.state.now), claimExpiresAt: observed().expiresAt, claim: claimGeneration(observed()) };
-  } };
+  }, windowLeftMs: () => w.state.windowLeft ?? null };
   const signer = signerKeys();
   const signers = new Map([['fixture-key', { domain: 'fixture', publicKeyPem: signer.publicKeyPem, runtimeId: 'fixture-runtime', qualificationRef: REFS.hostQualificationRef, sourceAcceptanceRef: REFS.sourceAcceptanceRef }]]);
   const batchClaim = { claimId: CLAIM, fence: 3, epoch: 1 };
@@ -247,7 +252,7 @@ function v2World({ claimFence = 3, wrapGithub = g => g } = {}) {
     return { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', signature: sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url'), payload };
   };
   const subjectOf = () => ({ repo: REPO, pr: 7, headSha: H, baseSha: B, claimId: CLAIM, fence: 3, epoch: 1, sourceManifestSha256: MANIFEST });
-  return { w, publisher, stage, localJob, signed, subjectOf };
+  return { w, publisher, stage, localJob, signed, subjectOf, localInputPins };
 }
 const rowsOf = r => Object.fromEntries(r.roles.map(x => [x.role, x.reason ? `${x.outcome}:${x.reason}` : x.outcome]));
 
@@ -400,4 +405,82 @@ test('C4 stage-fact catalogue: both codes are clean and final, and only on a cle
   assert.equal(outcomeFailureCode(o('ROLE_ALREADY_ON_GITHUB'), 8), 'ROLE_ALREADY_ON_GITHUB');
   assert.equal(outcomeFailureCode(o('role_already_on_github', 1), 3), 'PUBLICATION_UNCERTAIN', 'a write may have happened: never clean');
   assert.equal(outcomeFailureCode({ status: 'UNCERTAIN', reason: 'ROLE_ALREADY_ON_GITHUB', sideEffects: 1, mayHavePublished: true }, 8), 'PUBLICATION_UNCERTAIN');
+});
+
+// Generation 13 (DESIGN §57.2, review round 6 MAJOR 1): a newer run attempt of a role the relay already settled on this head resolves to
+// that publication by re-verifying it, a complete boundary inside the pre-write observation window. With too little of the window left
+// for one, the relay stops having written nothing, says what is true (K is another holder's: REFUSED role_already_published_on_head,
+// review round 7 MINOR 2) and the settled check stays; with enough, it is re-verified and stays settled.
+test('v2 relay: re-verifying another run\'s settled publication needs room for a complete boundary in the pre-write window', async t => {
+  for (const [left, expected] of [[15_000, 'REFUSED'], [60_000, 'SETTLED']]) {
+    const v = v2World({ admissionMs: 20_000 }); v.w.allHosted();
+    const journal = await journalFor(t);
+    const real = v.w.verifier();
+    const verifier = { fixture: true, registrySha256: real.registrySha256, publisherAppId: real.publisherAppId,
+      async confirm(e) { return { confirmed: true, attestationSha256: e.attestationSha256 }; } };
+    const { verdicts } = await real.attest({ subject: v.subjectOf(), roles: ['gitleaks'] });
+    const first = await v.publisher(journal, verifier).publishHosted({ subject: v.subjectOf(), attempt: 1, envelope: verdicts.gitleaks.envelope });
+    assert.equal(first.status, 'SETTLED', JSON.stringify(first));
+    const { attestationSha256: _old, ...rest } = { ...verdicts.gitleaks.envelope, runAttempt: '2' };
+    v.w.state.windowLeft = left;
+    const newer = await v.publisher(journal, verifier).publishHosted({ subject: v.subjectOf(), attempt: 1, envelope: { ...rest, attestationSha256: digestOf(rest) } });
+    if (expected === 'REFUSED') assert.deepEqual([newer.status, newer.reason, newer.detail, newer.sideEffects, newer.roleMutex.held],
+      ['REFUSED', 'role_already_published_on_head', 'publication_window_short_before_write', 0, false], JSON.stringify(newer));
+    else assert.deepEqual([newer.status, newer.checkRunId], ['SETTLED', first.checkRunId], JSON.stringify(newer));
+    const checks = published(v.w.state);
+    assert.deepEqual(checks.map(c => c.conclusion), ['success'], 'the settled check is never withdrawn for want of time');
+  }
+});
+
+// Review rounds 7 and 8 (MINOR 2 / MINOR 1 and 2): through stage R, a newer run that cannot use the window HALTs the stage
+// (ROLE_ALREADY_PUBLISHED_ON_HEAD) with the real cause as the row's detail, whether the window was too short for its re-verification
+// after K was refused (15 s left) or already for the write before K (4 s left); the role is never sent to the local path (whose
+// publication the same K would refuse after a wasted scan), and the settled check is not withdrawn.
+for (const left of [15_000, 4_000]) test(`v2 relay stage: a newer run with ${left / 1000} s of the window left HALTs the stage with the window as its detail, never LOCAL_REQUIRED`, async t => {
+  const v = v2World({ admissionMs: 20_000 }); v.w.allHosted();
+  const journal = await journalFor(t);
+  const first = await v.stage(journal).run({ subject: v.subjectOf(), attempt: 1, roles: ['gitleaks'] });
+  assert.deepEqual(rowsOf(first), { gitleaks: 'RELAYED' });
+  const real = v.w.verifier();
+  const newerRun = { ...real, fixture: true, registrySha256: real.registrySha256, publisherAppId: real.publisherAppId,
+    async attest(input) {
+      const out = await real.attest(input);
+      const { attestationSha256: _old, ...rest } = { ...out.verdicts.gitleaks.envelope, runAttempt: '2' };
+      return { ...out, verdicts: { ...out.verdicts, gitleaks: { ...out.verdicts.gitleaks, envelope: { ...rest, attestationSha256: digestOf(rest) } } } };
+    },
+    async confirm(e) { return { confirmed: true, attestationSha256: e.attestationSha256 }; } };
+  v.w.state.windowLeft = left;
+  const stage = createHostedRelayStage({ registry: v.w.registry, verifier: newerRun, publisher: v.publisher(journal, newerRun), localInputPins: v.localInputPins });
+  const r = await stage.run({ subject: v.subjectOf(), attempt: 1, roles: ['gitleaks'] });
+  assert.deepEqual([r.status, r.code, rowsOf(r), r.roles[0].detail], ['HALT', 'ROLE_ALREADY_PUBLISHED_ON_HEAD', { gitleaks: 'HALT:ROLE_ALREADY_PUBLISHED_ON_HEAD' },
+    'publication_window_short_before_write'], JSON.stringify(r));
+  assert.deepEqual(published(v.w.state).map(c => c.conclusion), ['success'], 'the settled check stays');
+});
+
+// Review round 9, NIT 2: the two cases in which a refusal before K stays the plain BLOCKED (the role stays local): K cannot be read, and
+// K is this relay's own effect key (claimed by an earlier try that stopped before its own record).
+test('v2 relay: a refusal before K stays BLOCKED when K cannot be read or is held by this relay itself', async t => {
+  const mutex = { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905 };
+  const roleKey = rolePublicationKey(mutex);
+  for (const kind of ['unreadable', 'own']) {
+    const v = v2World(); v.w.allHosted();
+    const raw = await journalFor(t);
+    const journal = { read: async k => { if (kind === 'unreadable' && k === roleKey) throw Object.assign(new Error('journal_read_unconfirmed'), { code: 'journal_read_unconfirmed' }); return raw.read(k); },
+      begin: (...a) => raw.begin(...a), transition: (...a) => raw.transition(...a) };
+    const real = v.w.verifier();
+    const verifier = { fixture: true, registrySha256: real.registrySha256, publisherAppId: real.publisherAppId,
+      async confirm(e) { return { confirmed: true, attestationSha256: e.attestationSha256 }; } };
+    const { verdicts } = await real.attest({ subject: v.subjectOf(), roles: ['gitleaks'] });
+    const envelope = verdicts.gitleaks.envelope;
+    if (kind === 'own') {
+      const externalId = relayExternalId({ role: 'gitleaks', headSha: H, runId: envelope.runId, runAttempt: envelope.runAttempt });
+      const key = digestOf({ action: 'hosted-relay-check/2', roleMutexKey: roleKey, externalId, definition: { name: 'gitleaks', appId: 5368905 } });
+      await claimRolePublication(raw, mutex, { path: 'relay', effectKey: key, externalId });
+      v.w.state.windowLeft = 4_000; // the write cannot fit: a refusal before K
+    }
+    const r = await v.publisher(journal, verifier).publishHosted({ subject: v.subjectOf(), attempt: 1, envelope });
+    assert.deepEqual([r.status, r.reason, r.sideEffects, r.roleMutex.held],
+      ['BLOCKED', kind === 'own' ? 'publication_window_short_before_write' : 'journal_read_unconfirmed', 0, false], JSON.stringify(r));
+    assert.equal(published(v.w.state).length, 0);
+  }
 });

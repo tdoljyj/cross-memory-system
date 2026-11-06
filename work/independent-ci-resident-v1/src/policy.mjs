@@ -60,8 +60,13 @@ import { pinnedNodeProfile } from './node-profile.mjs';
 export const POLICY_CONTRACT_V7 = 'clued.independent-ci.resident-policy/7';
 export const POLICY_CONTRACT_V8 = 'clued.independent-ci.resident-policy/8';
 export const POLICY_CONTRACT_V9 = 'clued.independent-ci.resident-policy/9';
+// /10 (generation 13, DESIGN §57.1, Owner Decision 2907d858): /9 and roleProbe.interruptedMax, the role probes (a queue watch is one)
+// interrupted in a row (a restart or a power cut in the middle of one) after which the executor HALTs; fewer are recovered by itself.
+export const POLICY_CONTRACT_V10 = 'clued.independent-ci.resident-policy/10';
 export const POLICY_CONTRACT = POLICY_CONTRACT_V7;
-export const POLICY_CONTRACTS = Object.freeze([POLICY_CONTRACT_V7, POLICY_CONTRACT_V8, POLICY_CONTRACT_V9]);
+export const POLICY_CONTRACTS = Object.freeze([POLICY_CONTRACT_V7, POLICY_CONTRACT_V8, POLICY_CONTRACT_V9, POLICY_CONTRACT_V10]);
+// The contracts that carry breaker.network (/9 and later).
+const NETWORK_CONTRACTS = Object.freeze([POLICY_CONTRACT_V9, POLICY_CONTRACT_V10]);
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -95,7 +100,8 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay', 'node', 'nodeProfileSha256'], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay', 'node', 'nodeProfileSha256',
+    ...(p?.contract === POLICY_CONTRACT_V10 ? ['roleProbe'] : [])], 'POLICY_KEYS_INVALID');
   check(POLICY_CONTRACTS.includes(p.contract), 'POLICY_CONTRACT_INVALID');
   const node = pinnedNodeProfile(p.node, p.nodeProfileSha256);
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
@@ -118,10 +124,11 @@ export function validatePolicy(p) {
   check(int(p.limits.inboxMaxFiles, 1, 256), 'POLICY_INBOX_BOUND_INVALID');
   check(int(p.limits.unexecutedCooldownMs, 60_000, 86_400_000), 'POLICY_COOLDOWN_INVALID');
   check(int(p.limits.stageMarginMs, 60_000, 900_000), 'POLICY_MARGIN_INVALID');
-  exactKeys(p.breaker, ['consecutive', 'windowCount', 'windowMs', 'backoffMs', ...(p.contract === POLICY_CONTRACT_V9 ? ['network'] : [])], 'POLICY_BREAKER_KEYS_INVALID');
+  exactKeys(p.breaker, ['consecutive', 'windowCount', 'windowMs', 'backoffMs', ...(NETWORK_CONTRACTS.includes(p.contract) ? ['network'] : [])], 'POLICY_BREAKER_KEYS_INVALID');
   check(int(p.breaker.consecutive, 1, 10) && int(p.breaker.windowCount, 1, 20) && int(p.breaker.windowMs, 60_000, 86_400_000)
     && delayList(p.breaker.backoffMs), 'POLICY_BREAKER_INVALID');
-  if (p.contract === POLICY_CONTRACT_V9) validateBreakerNetwork(p.breaker);
+  if (NETWORK_CONTRACTS.includes(p.contract)) validateBreakerNetwork(p.breaker);
+  if (p.contract === POLICY_CONTRACT_V10) validateRoleProbe(p.roleProbe);
   exactKeys(p.stage8, ['mode'], 'POLICY_STAGE8_KEYS_INVALID');
   check(p.stage8.mode === 'park', 'POLICY_STAGE8_MODE_INVALID');
   exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
@@ -148,6 +155,12 @@ export function validatePolicy(p) {
   return Object.freeze({ ...p, node, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
 }
 
+// roleProbe (contract /10): interruptedMax 1 HALTs at the first interrupted probe (the behaviour of /9 and earlier); up to 10.
+export function validateRoleProbe(r) {
+  exactKeys(r, ['interruptedMax'], 'POLICY_ROLE_PROBE_KEYS_INVALID');
+  check(int(r.interruptedMax, 1, 10), 'POLICY_ROLE_PROBE_INVALID');
+  return r;
+}
 const delayList = a => Array.isArray(a) && a.length >= 1 && a.length <= 6 && a.every((ms, i) => int(ms, 60_000, 86_400_000) && (i === 0 || a[i - 1] <= ms));
 // breaker.network (contract /9, generation 10): the network breaker's trial delay (never longer than the policy's own first wait), the
 // read-only probes that bring its trial forward and the network release cap per head.

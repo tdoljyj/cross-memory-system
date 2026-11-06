@@ -4301,7 +4301,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 几个批次按各自到期的先后轮流。每天最多 `QUEUE_WATCH_MAX_PER_DAY`（1440）次，只数真正发出的换跑；这个计数只在内存里，重启后清零。
   - 因为不空闲或安装授权快到期而没能开始的观察，不算数，`QUEUE_WATCH_MS` 内也不再试。
   - 每次换跑都带着角色探测原有的风险：没有确认事实就 HALT。按上面的节奏，一个批次在 B 停 2 小时，最多约 105 次换跑，之后每小时 12 次。
-  - 观察和普通角色探测一样先写 `role-probe-intent`：换跑中途主机重启、断电或执行器崩溃，下次启动时以 `ROLE_PROBE_INTERRUPTED` 停机（`executor.mjs#roleProbeRecover`），要 Owner 复位。正常停服务（`STOP-REQUESTED`）会等当前 tick 跑完，不会触发。第 11 代 ACTIVE 时停靠批次旁边不跑定时探测，现在批次停在 B 的前 30 分钟每次探测结束 30 s 后又观察，探测时间占比升高，这类停机的机会也随之升高。是否接受这个代价、或改成观察中断不停机，交 Owner 决定；本代不改恢复规则。
+  - 观察和普通角色探测一样先写 `role-probe-intent`：换跑中途主机重启、断电或执行器崩溃，下次启动时以 `ROLE_PROBE_INTERRUPTED` 停机（`executor.mjs#roleProbeRecover`），要 Owner 复位。正常停服务（`STOP-REQUESTED`）会等当前 tick 跑完，不会触发。第 11 代 ACTIVE 时停靠批次旁边不跑定时探测，现在批次停在 B 的前 30 分钟每次探测结束 30 s 后又观察，探测时间占比升高，这类停机的机会也随之升高。是否接受这个代价、或改成观察中断不停机，交 Owner 决定；本代不改恢复规则。（第 13 代：Owner Decision `2907d858` 改成自动恢复，见 §57.1。）
 - **探测多回答什么。**
   - Source v2 的 `role-probe-run/2` 多一个 `watchPr` 字段；意图清单相应变成 `role-probe-intent/2`。
   - 探测本来就读一次 `clued_work_merge_slot_holders_v1`。在值班的情况下，如果唯一的持槽者绑定的正好是 `<repo>#watchPr`，就回答 `ROLE_PROBE_HELD_WATCHED_HEAD`（`merge-slot-native.mjs#parseRoleProbe`）。
@@ -4558,3 +4558,98 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 网络退避的文字；非网络退避的文字不变；
   - 签名随排队行变化，行不变时签名也不变；
   - 断网时写失败，文字一变马上重写，同样的文字 2 分钟后重写。
+
+## 57. 第 13 代：中断自动恢复、发布时事实过期、第 11 代遗留（Owner Decision `2907d858`；Decision `4f5f35d3`：发现的缺陷全部修掉）
+
+分支 `claude/resident-gen13`，从第 12 代的 `c217fe6e` 切出。
+
+### 57.1 角色探测被中断后自动恢复（Task `6104ca37`，Owner Decision `2907d858`）
+
+- **以前**：角色探测（排队观察也是一次角色探测）写了 `role-probe-intent`、还没写结果时主机重启、断电或执行器崩溃，下次启动以 `ROLE_PROBE_INTERRUPTED` 停机，要 Owner 复位（§56.2）。
+- **现在**（`executor.mjs#roleProbeRecover`）：
+  - 数连续中断的次数：这一次，加上之前每个被记成“中断、未停机”的探测，一直数到一次正常结束的探测（或一次 Owner 复位过的停机）为止。
+  - 次数少于策略的 `roleProbe.interruptedMax`，且 Windows 一侧满足复位时同样的要求（`engine.windowsQuiescence`：本进程没有换跑在进行，原始 runner 服务已停），就自己恢复。重启后的新进程看不到崩溃前那个进程留下的子进程：遗留的换跑如果还占着 broker，紧接着的新探测会得到 `BROKER_BUSY`，以 `ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED` 停机，不会在换跑进行中改判角色。恢复时：把这次意图记成 `interrupted: true, halted: false` 的结果；角色账回到上一次正常结束的探测（中断那次的半截结果一概不用）；探测设为立即到期，角色重新判定（判定规则不变）；给 Owner 一条通知 `role-probe-interrupted`（每次中断一条）。
+  - 否则照旧停机，结果记成 `interrupted: true, halted: true`（Owner 复位后从头数）。读不到安静与否也停机。停机的结果同样带着上一次正常结束的探测的角色账，复位后再被中断时恢复的不是空账（审查第 1 轮 NIT）。
+  - 上一次启动已经为这次意图写下 `ROLE_PROBE_INTERRUPTED` 停机、还没写结果就崩溃：下次启动按已作的决定补记 `halted: true` 的结果，不发通知，不当作一次未停机的中断（审查第 1 轮 MINOR 1）。
+  - 节点已因别的原因停机时，照样补记恢复结果，但不发“已自动恢复”的通知，Owner 看到的是那次停机（审查第 2 轮 NIT）。
+  - 写下恢复结果后、新探测跑之前又停了：下次启动看到最后一条是“中断、未停机”的结果，探测仍设为立即到期（快照不保存这个标记；审查第 2 轮 NIT）。
+- **策略 /10**（`policy.mjs`）：/9 的全部字段加 `roleProbe.interruptedMax`（1–10）。1 表示第一次中断就停机，即 /9 及以前的行为；/9 及以前没有这个字段，行为不变。示例 `config/policy.v10.example.json` = /9 示例 + `roleProbe.interruptedMax = 3`。
+- 测试：`test/probe-interrupt.test.mjs`。
+
+### 57.2 发布时 Native 准入事实超过 30 秒不再撤回绿（Task `7b21f820`）
+
+- **现象**：2026-11-05 PR #1001 head `5abcb6f5`，第 5 段发了 trivy 绿之后，核对时 `protected_facts_expired_during_admission`，撤回、作废 head。原因：活的授权是不超过 `FRESH_MS`（30 s）的 Native 答复（Decision `1100a0ed`），而完整准入评估本身就可能超过 30 s；受保护事实是在准入之前观察的。
+- **修法**（Source v2 `staged-check-publisher-v2.mjs`），30 s 的界限不放宽：
+  - **准入之后**（`liveFacts`）：受保护事实过期就再观察一次，做和第一次一样的全部核对（主体、批次认领、资格、部署引用），认领代次必须和准入观察到的相同。`observeFacts` 本身拒绝到手时就不新鲜的答复，所以一次就够，没有第二次。只有真的授权变化（换了认领代次、租约过期、资格或主体变化）才停下或撤回。
+  - 这次再观察读不到（Native 无答复、或窗口用完）有自己的码 `protected_facts_reobservation_unavailable`：写前是干净的 BLOCKED、可重跑；写后照旧撤回。它不是准入之前那种可在同一窗口里再试一次的耗尽，所以外层的可恢复发布者不会把它当成不明结果（UNCERTAIN 会让节点停机；审查第 2 轮 MAJOR A）。外层发布者给出的 UNCERTAIN 一律不带 `safeToRerun`。
+  - **写之前、记任何东西之前**：准入答复已过 30 s（写前的步骤慢了）：`native_admission_aged_before_write`，干净的 BLOCKED，可重跑（§51 的 `safeToRerun`）。生产端口本来就拒绝用过期的准入答复写（`prepareNativePublication`），重新观察受保护事实救不了它。日志之后到写之间仍有原来的 `lease_expired_before_write`。
+  - **写后读回之后**（`liveAfterWrite`）：准入答复在读回期间过了 30 s：重新做一次完整的边界核对（观察、PR、路径、准入），绑定（`bindingSha256`、证据）必须与写时完全相同；变了，或新答复仍不新鲜，照旧撤回（`authorization_binding_changed` / `lease_expired_after_write`）。
+- **生产里的观察窗口：写前 60 s，写后另给 60 s**（Owner Decision `36946d8b`；审查第 1 轮 MAJOR 1–3）。生产的发布者外面是 `createRecoverableCheckPublisherV2`。
+  - **这是对 Task `a3ad42a9` 审过的界限的修改。** 原来一次发布的所有受保护观察，写前写后，共用一个 60 s 期限（`PUBLICATION_OBSERVE_BUDGET_MS`）。这样两次准入都要 40 s 时永远写不出去（每次都 BLOCKED，重跑仍一样），准入 5 s + 56 s 时写了又撤回。Owner 决定：写前的 60 s 不变，决定所用事实的新鲜度不放宽；写后核对单独给 60 s。
+  - **写前**（不变）：`PUBLICATION_OBSERVE_BUDGET_MS` 只管写之前的观察，它的单次恢复（第二轮观察）、审计记录（`publication-recovery-audit/1` 的 `clock` 仍是这个窗口）和写时的 2 s 预留（`guardNewPublication`，不足就 UNCERTAIN）都不变。
+  - **写后**（`runtime/one-shot-v2.mjs#protectedAuthority`）：检查发出之后（`createCheck` 经过外层发布者），写后核对的观察（写后的边界核对，以及读回期间准入过期时那一次完整重评）共用自己的窗口 `PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS`（60 s），从写后第一次观察开始计时。每次观察仍有自己的 30 s（`OBSERVE_BUDGET_MS`）。写后核对在这个窗口里做不完，照旧撤回。观察次数计数（`observationCalls`、`verifyRequests`）写前写后合计；结果日志多三项：`maxPostWriteObservationMs`、写后窗口已用和剩余（`postWriteObservationElapsedMs`、`postWriteObservationRemainingMs`，写后还没观察时为 null；`observationBudgetRemainingMs` 仍是写前窗口的；审查第 6 轮 NIT 3）。
+  - **60 s 管的是写后的观察，不是写后的总时长**（审查第 6 轮 MINOR 2）。一个还没核对的绿检查在 GitHub 上挂着的最长时间是这几段之和：端口自己的读回（§55.1）；创建回复丢失时找副本（§57.4：等待共 35 s，加三次 GitHub 读，每次受 §49 的有界读重试限住）；写后观察窗口 60 s；窗口里最后一次观察之后的准入评估和读回。最后这段不受窗口限：准入评估不会在窗口到期时被截断，它按自己的超时跑完；跑完后事实若超过 `FRESH_MS`（30 s）就要再观察，窗口已过就撤回。所以这一段的长度就是那一次准入本身的时长（例如一次 90 s 的准入，会让还没核对的绿检查再挂 90 s 才被撤回），加读回（审查第 7 轮 MINOR 3）。找副本的读不占写后窗口：60 s 只管写后的观察，从写后第一次观察起算。这一点已由 Owner 确认（Decision `36946d8b` v2，2026-11-06），由测试 `the window of the confirmation starts at its first observation` 守住。
+  - **写之前、记任何东西之前多查一步**（`staged-check-publisher-v2.mjs#writeFits`）：写前窗口剩下的要放得下写入本身：`WRITE_MARGIN_MS`（5 s：角色键、journal 和外层要求的 2 s 预留）加 `WRITE_NATIVE_CALLS`（2）次 Native 调用（`prepareNativePublication` 里的当前授权核对 `native.current`，它和受保护观察是同一个 verify RPC；active 策略下还有 Native 的 begin），每次按这一轮发布者尝试写前最慢的一次 Native verify 尝试的用时估计（`slowestNativeReadMs`；有答复的和超时的都算，超时说明线路至少这么慢；`native.current` 是同一个 RPC；审查第 6、7 轮 MAJOR 1）。恢复的第二轮从零重新计（只看它自己的观察），所以第一轮的超时或慢答复不会拦住审过的第二轮（G10 测试；审查第 7 轮 MINOR 1）。以前共用窗口时这一步的余量是“写前边界的时长加 5 s”，随线路快慢自然变大；分开窗口后改成按实测往返估，否则写前离期限不远、线路又慢时，会在外层的 2 s 预留处变成 UNCERTAIN、节点停机。比估计还慢的写入步骤仍由 `guardNewPublication` 兜住（不变，UNCERTAIN）。写后窗口要放得下写后核对，估计为写前那次边界核对从它第一次观察起（含这次观察本身的重试和等待）用掉的时间（`windowUsedMs` 的差，窗口自己的单调钟；没有窗口时用墙钟；托管中继在第一次观察之前的 GitHub 读不算，写后不再做；审查第 2、3 轮 MINOR 1）加 `CONFIRMATION_MARGIN_MS`（5 s，读回和两次边界之间的步骤）。任一放不下就不写：`publication_window_short_before_write`，干净的 BLOCKED。本地发布可重跑（重跑有自己的新窗口）；托管中继的 BLOCKED 照中继的规则退回本地运行该角色（角色键不在别人手里时；已在别人手里则返回 REFUSED，中继阶段以 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 停机，行的 `detail` 是原因，见下文）。决定第一个条件的是写前窗口一共用掉多少（含恢复的第一轮和写前探测），不只是这一次边界核对；两个条件分开写，窗口长度不同时也对（审查第 6 轮 NIT 1）。
+  - **托管中继重验别人已结算的发布**（审查第 6 轮 MAJOR 1）：同一 head 上同一角色已由中继另一个运行结算时，`publishHosted` 拿不到角色键，转而重验那次发布，这是写前窗口里又一次完整的边界核对。窗口剩下的放不下一次和写前那次一样长的边界（`boundaryFits`，加 `CONFIRMATION_MARGIN_MS`）时，中继什么都不写，不去撤回那个合法的已结算检查（以前共用窗口时，写前的检查本身就留了这么多时间），并如实返回 `REFUSED role_already_published_on_head`（`detail` 为 `publication_window_short_before_write`）：角色键确实在另一次运行手里。中继阶段因此以 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 停机（HALT，Owner 复位），不把这个角色交给本地：本地发布会被同一个角色键拒绝，白跑一次扫描之后照样是这个停机码（审查第 7 轮 MINOR 2）。
+  - **角色键之前的其他拒绝也一样**（审查第 8 轮 MINOR 1）：`publishHosted` 在拿角色键之前因任何原因拒绝（写前窗口放不下写入、准入过期、再观察读不到、证明未确认等）时，先读一下角色键；它已在别的持有者手里（同一角色已由中继另一次运行或本地发布持有），就同样返回 `REFUSED role_already_published_on_head`，`detail` 是原来的拒绝原因，阶段停机，不交给本地白跑（以前共用窗口时写前检查放不下，正是走的这条白跑的路，结局是同一个停机码）。角色键读不到时照旧返回 BLOCKED。
+  - 中继阶段写停机行时，`detail` 取发布者给的原因（`published.detail`，没有才用 `reason`），所以 Owner 看到的是 `publication_window_short_before_write` 之类的真正原因，而不是看起来像双持有者冲突的 `role_already_published_on_head`（`hosted-relay-v1/stage.mjs`；审查第 8 轮 MINOR 2）。
+  - 这几种停机只在同一 head 上同一角色已有持有者、又来了它的更新中继运行时出现。
+  - 写前这三种暂时情况（`native_admission_aged_before_write`、`publication_window_short_before_write`、`protected_facts_reobservation_unavailable`）在阶段事实里都是暂时码 `NATIVE_ADMISSION_UNAVAILABLE`（`stage-fact.mjs#outcomeFailureCode`，只在什么都没写的干净 BLOCKED 上），与准入前的观察耗尽相同。其中再观察读不到和准入过期常驻算作线路故障（`classify.mjs#NETWORK_NATIVE_REASONS`）；窗口放不下不算，它说明写前那次边界核对长，单是完整准入慢就会反复出现（审查第 3 轮 MINOR 3、第 4 轮 MINOR 1）。这只影响阶段 3/5/7 烧 head 时熔断记的原因：网络原因的熔断按第 10 代的试运行节奏，其他原因逐级退避。这几个码只出现在阶段 3/5/7/9，不会走到放行，所以与网络放行上限无关（审查第 4 轮 NIT）。
+  - 写后因 Native 读不到（`native_claim_observation_unavailable`、`protected_facts_reobservation_unavailable`）而撤回的检查，标题和说明写“verification unavailable”，不写“authorization changed”（`withdrawal-text.mjs`；阶段 1 的重读判断和 `safeToRerun` 用的读集合不变；审查第 3 轮 NIT）。
+  - 生产接线下的结果（`test/stale-facts-production-wiring.test.mjs`）：准入 5 s + 35 s（#1001 的情形）、5 s + 40 s、40 s + 40 s、5 s + 56 s：结算；写前准入 56 s：不写、BLOCKED 可重跑；5 s + 61 s：写后超窗，撤回；写前写后各 34 s 的慢线路：结算（共用窗口时不写）；写前 Native 往返 9 s、准入 30 s：只因写入余量不够而不写，往返 6 s：结算；两次 9.5 s 超时、1 s 答复、准入 25 s：不写（超时计入估计）；第一轮被三个慢 504 用尽、第二轮立即答复、准入 10 s：结算（第二轮自己估计）；5 s + 40 s 且创建回复丢失、副本 25 s 后才出现：结算（写后窗口从写后第一次观察起算；从写入起算就会撤回；审查第 6 轮 MINOR 1）。中继重验：`test/hosted-relay-v2.test.mjs`（发布者层面和经过中继阶段两层）。
+  - 以前写前离期限不足 2 s 时由 `guardNewPublication` 在日志处拒绝（UNCERTAIN）；现在 `writeFits` 先拒绝，什么都没记（BLOCKED、可重跑），`guardNewPublication` 留作最后一道。
+- 测试：`test/stale-facts-publish.test.mjs`（慢准入、写后慢读回的完整重评、重评见到真变化或仍不新鲜、写前准入过期、再观察仍不新鲜或读不到、`writeFits` 的两个条件及估计含第一次观察）、`test/stale-facts-production-wiring.test.mjs`（生产接线：两个窗口、再观察 503 或准入超过整个窗口时干净 BLOCKED、写后慢读回的完整重评、外层 UNCERTAIN 不带 `safeToRerun`、生产端口拒绝过期准入）、常驻 `test/publication-recovery.test.mjs`（写后答复超时或超出写后窗口时撤回并记补偿；写与写后核对之间过了写前期限仍结算；写前窗口的恢复和审计不变）。
+
+### 57.3 停靠点 A 的第二次打包断网后可重试（Task `3e2e12d7`）
+
+- **以前**：`build-bundle.ps1 -Rebundle` 在取数前就建了 `gen-2\`；断网后留下没有 receipt 的 `gen-2\`，再跑被 `FIXED_TARGET_ALREADY_EXISTS` 拒绝，批次以 `PARKED_BUNDLE_TOO_OLD` 结束，烧 head。
+- **Source**：`-Rebundle` 先把没有 receipt 的 `gen-2\` 改名为第一个空着的 `gen-2-failed-<n>\`（n 1–3，只改名、不删除；必须是真目录，不是链接或文件；用完返回 `REBUNDLE_FAILED_GENERATIONS_EXHAUSTED`）。有 receipt 的 `gen-2\` 照旧不能再建。`-CheckRefs` 和 `prepare-workspaces.py` 只认 `gen-2\`，不读 `gen-2-failed-*`。
+  - 改名之前先查批次根目录是真目录、不是链接（审查第 2 轮 NIT）。
+  - 输出如实（审查第 1、2 轮 NIT）：成功和失败的答复都带 `setAside`（这次改名到哪，没有为 null）；改名本身就是一次写，之后被拒的第二代是 `PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE`（第一代仍是 `PARTIAL_STATE_PRESERVED_NO_RETRY`）；`automaticRetryAllowed` 只在 `-Rebundle` 且整体 fetch 或 ls-remote 失败时为 true，与常驻实际重建的条件（companion `BUNDLE_NETWORK_STEPS`）相同。companion 只读 `reason` 和 `git`，不受影响。
+- **常驻**：companion 的 `rebuild-bundle` 对网络步骤失败答 `BUNDLE_NETWORK_UNAVAILABLE`（与第一次打包相同）；执行器在同一批里等 `REBUNDLE_NETWORK_RETRY_MS`（1 分钟、5 分钟）再建，每次一条 `rebundle-retry` 回执。其他拒绝不重建。
+  - 每次等之前，已装授权（策略 `validUntil`）要放得下等待、一次重建和随后准备工作区的上限（`REBUILD_BUNDLE_REQUEST_MS` 35 分钟、`PREPARE_WORKSPACES_REQUEST_MS` 25 分钟；审查第 2 轮 MINOR 2）和从第一个本地阶段起的全部阶段；等之后，像执行重试一样再查：没有 HALT、Source 没漂移、授权仍放得下重建和后面的阶段（`gateWaitStillAllowed`）。不满足就记 `rebundle-retry-refused`（`step`）并照旧结束（审查第 1 轮 MINOR 3）。
+  - 等待期间每 `ABORT_POLL_MS` 看一次 Owner 中止，有就立即结束等待，在等待之后的安全点照常中止（`retryWait`；发布重试、执行重试的等待也一样，审查第 1 轮 NIT）。
+  - 网络仍不通、最终失败时，结尾带网络标记（`batch-rebundled` 的 `network: true`，`classify.mjs#networkFailure` 对 `PARKED_BUNDLE_TOO_OLD` 加 `bundleNetwork`），与第一次打包和第 10 代的网络容错一致（审查第 1 轮 MINOR 6）。
+- 测试：`windows/test-build-bundle.ps1`（改名、上限、完整的不动、链接和文件拒绝、端到端重建、`setAside`、断网时第二代的状态和 `automaticRetryAllowed`）、`test/rebundle.test.mjs`（重建、仍不通、网络标记、HALT/漂移/授权到期停止重建、等待中中止）、`test/halt-timeouts.test.mjs`。
+
+### 57.4 发布者采用稍后才出现的完全一致副本（Task `a7951534`）
+
+- **以前**：创建检查的回复丢了（5xx），端口自己的读回（§55.1）在窗口里没看到副本，发布者就去找；找到同身份的副本也会撤回、烧 head。
+- **现在**（`staged-check-publisher-v2.mjs#createOrAdopt`）：创建失败、且失败可能已落地（端口归为 `retryable` 且不是证明未发出的：5xx 或发出后的传输失败）时，发布者在 `ADOPT_READ_DELAYS_MS`（立即、再过 10 s、再过 25 s）再读 head 的检查。读到的列表要和 `discoverKnown` 要求的一样可信（完整、有上限、编号唯一、都在这个 head 上）；找到恰好一个、和发出的内容完全一致（App、名称、head、external_id、completed、结论、title、summary）的副本就采用，照常做写后核对和结算；**永远不重发创建**。没有、不一致或多个：照旧（找到不一致的就撤回）。明确的拒绝（4xx）或证明未发出的失败不等、不找。
+- 这些读在检查发出之后、写后第一次观察之前，不用写后核对的窗口（§57.2，Owner Decision `36946d8b`），由 `ADOPT_READ_DELAYS_MS` 的等待（共 35 s）和每次读自己的 §49 有界读重试限住（审查第 6 轮 MINOR 2；写后总时长见 §57.2）。原来写前写后共用窗口时，每次等待前要查窗口还放不放得下写后核对（审查第 1 轮 MAJOR 3），现在不再需要。采用之后的写后核对照 §57.2 在自己的窗口里做，做不完照旧撤回。
+- 哪些失败要找副本由 `adoptReadAllowed` 决定（有单元测试，含 Native 句柄这一支）。
+- 端口证明从未发出的、以及 Native 发布（`active` 策略，句柄 `native: true`）不走这里：Native 发布的创建包含 Native 的 begin、带标记的 POST 和 Native 的 finish，它的运行时有自己的恢复（按票据找检查再 finish，不再 POST），在这里采用会跳过 finish。这一部分属于 57.5。
+- 测试：`test/publisher-adopt-copy.test.mjs`、`test/stale-facts-production-wiring.test.mjs`（生产接线下 10 s、25 s 后出现的副本被采用；写前边界慢时找副本的读照样都做）。
+
+### 57.5 Native 写类 RPC 回复丢失时的读回与安全重发（Task `21fbe23b`，只设计，等 Owner 批准）
+
+只做了调研和要批准的点，没有实现。结论：`publication_finish`、`publication_reconcile`、`independent_legacy_drain_finish` 对完全相同的重发会重放原来的结果；`publication_begin_independent` 只在 `controller_id` 也相同时重放；`scan_start_independent` 的重发得到 `consumed` 和 `launch_allowed: false`，不是重放，所以只有它要新迁移加只读读回（审查第 1 轮 NIT 更正）。问题在客户端把所有非 200 归成一个码、从不重发，finish 或 begin 的回复一丢就烧 head。逐项事实、四个批准点（A1 finish、A2 reconcile/drain、A3 begin、A4 scan_start）和需先做的实验见共享笔记 `gen13-21fbe23b-approval-points.md`（交主会话统一问 Owner）。
+
+### 57.6 升级不再接受 GitHub 上没有的 Source 提交（Task `3edfc598`）
+
+- **以前**：第 9 代用只在本地分支上的提交 `0521cb9f` 构建并安装，每个批次读 `<sourceCommit>:.gitleaks.toml` 时都失败，`BUNDLE_UNAVAILABLE`。
+- **构建**：`rollout/build-upgrade.ps1 -Final` 在核对完提交树之后跑 `rollout/tools/source-on-github.py`。仓库地址取自这个提交自己的 `build-bundle.ps1`（`$Url`，每个批次的包都从它取），并且必须等于构建配置 companion 输入的 `repo`，两者不一致就拒绝（`BUILD_BUNDLE_URL_NOT_THE_COMPANION_REPO`；审查第 2 轮 NIT）。工具把这个仓库所有分支的提交（`--filter=tree:0`，只要提交）取进一个临时裸库，再看这个提交在不在分支到达的提交列表里（`rev-list --all --missing=allow-promisor`）。从不按 SHA 去查它：临时库是部分克隆，git 会按需去远端补取缺的对象，连不可达的也能取到（`GIT_NO_LAZY_FETCH` 只有 git 2.44 起才认，留作第二道）。取数有上限（600 s，外加 git 的低速中止），挂住就是读不到，超时时连同它启动的 `git-remote-https` 整个进程树一起结束，临时目录才删得掉。git 用 `build-bundle.ps1` 同一个固定路径（Git for Windows），没有时才用 PATH 里的。不在：`SOURCE_COMMIT_NOT_ON_GITHUB_PUSH_THE_BRANCH_FIRST`；读不到：`SOURCE_COMMIT_ON_GITHUB_UNCONFIRMED`。草稿包不查。提交号必须是 40 位小写十六进制（`COMMIT_MUST_BE_40_LOWERCASE_HEX`；PowerShell 的 `ValidatePattern` 不分大小写）。
+- **打包**：`build-bundle.ps1` 先单独查已装的 Source 提交，取到的库里没有就以 `SOURCE_COMMIT_NOT_ON_REMOTE` 拒绝（以前是 git 步骤失败）。这个码进 companion 的本机日志（`bundle-refusal` 的 `reason`）。
+- **运维**：companion 日志在 Owner 自己的配置目录 `%LOCALAPPDATA%\CluedIndependentCI\companion-log\relay-YYYYMMDD.jsonl`（§23 的位置，UTC 日期），由 Owner 在自己的会话里读，代理账户读不到；看到 `SOURCE_COMMIT_NOT_ON_REMOTE` 就把那个提交所在的分支推到 GitHub。
+- 测试：`rollout/test/test_upgrade_tools.py`（`SourceOnGithub`：不带 `GIT_NO_LAZY_FETCH` 也判对，已手工验证；挂住的取数连子进程一起结束）、`windows/test-build-bundle.ps1`。
+
+### 57.7 其他
+
+- **`b26468dc`**（ci-scan-start-bridge 9 个测试在非 Windows 上失败）：main #989 把 issuer 上下文改成按需构造、驱动 issuer 的测试加了 WINDOWS 跳过，第 12 代补了剩下的一条。第 13 代加一条测试，证明生产路径在非 Windows 上仍以 `FORMAL_WINDOWS_CONTROLLER_REQUIRED` 拒绝。模拟 Linux 下：6 通过、5 跳过；Windows：11 通过。
+- **`38140843`**（模拟 Linux 下 6 个 POSIX 权限测试失败）：在真 Linux（CluedDev-Linux，`c217fe6e`）上实跑，19 通过、1 跳过、0 失败。测试改为先探一下文件系统是否真的遵守 POSIX 权限位，不遵守（模拟 Linux）就带原因跳过；真 Linux、Windows 照常跑。
+- **`c7064327`**（scan-start-prereg 在 gen8 Source 上失败）：已过时。原因是第 8 代起的常驻分支带着从未进 main 的 Codex 退役 home-linux-01 目录改动；第 12 代合并时已恢复成 main（§52 第 6 条、合并提交说明），`c217fe6e` 在真 Linux 上这个测试 16/16 通过。
+
+- **`0fdb6f7b`**（两条 issuer 测试在机器繁忙时偶发失败：`issuer-refs-transient.test.mjs` 报 `BRIDGE_BYTE_BOUND`，`resident-v2-bridge` 的 “Linux clean blocked record”）：根因在测试，不在产品。issuer 写桥文件是先建文件、再写字节、最后写 `.ready.json` 标记（`mailbox.mjs#exclusive`），真 Linux 侧只在标记写完后才读；测试里模拟 Linux 侧的 `waitFor` 却在文件一出现就读。线程池繁忙时字节还没写进去，读到空文件，`decode` 报 `BRIDGE_BYTE_BOUND`。用一个让数据写入比建文件晚 300 ms 的预载可以稳定复现（两文件 21 个失败）。修法：两个测试文件的 `waitFor` 照真协议等标记完整，再读它指定的字节并核对长度和摘要；没有加大超时，没有进 known-failures。复现预载下 49/49，叠加满载 CPU 连跑 20 次全过。
+
+- **`rollout/tools/roles-derived.py` 缺副本时给拒绝码**（打第 12 代包时发现）：每一代安装都会在 Linux 侧重新派生并重签角色文件，所以每一代打包前都要由 root 把**这一代**现装的 roles-v3 导出一份（`tools/derive-public-export.py` 生成导出脚本，Owner 以 UAC 运行一次）。导出还没运行时 public-six 目录是空的，原来会抛出 Python 的 `FileNotFoundError`；现在报 `INSTALLED_ROLES_COPY_MISSING`（带角色和文件名），读不了报 `INSTALLED_ROLES_COPY_UNREADABLE`；version facts 缺失或不是 JSON 也统一报 `LINUX_VERSION_FACTS_REFUSED`。测试见 `rollout/test/test_upgrade_tools.py` 的 `test_roles_copy_missing`。
+
+- **`roles-derived.py` 不再往提交树里写字节码缓存**（打第 12 代 Final 包时发现，2026-11-06）：它载入树里冻结的 `linux/bin/clued-ci-upgrade-linux` 时，Python 顺手写下 `linux/bin/__pycache__`。`build-upgrade.ps1` 对同一提交的下一次尝试有意复用这棵树、并逐个 blob 核对（`tree.py`），于是被 `TREE_NOT_THE_COMMIT_FILES` 拒绝（第 12 代先打 DRAFT、再打 Final 时就是这样）。`python -I` 不认 `PYTHONDONTWRITEBYTECODE`，所以工具自己在载入前设 `sys.dont_write_bytecode`。旧工具已经弄脏的树要先改名放到一边（不删），脚本会重新解出一棵。测试：`test_the_tree_is_left_as_it_was`。
+
+- **`test/fixtures/repin-trusted-workflows.mjs` 不带参数时不再算失败**（第 13 代全量测试时发现）：在 Source v2 目录里直接跑 `node --test`，默认匹配规则把 `test/` 下所有文件都当测试，这个要带参数的开发工具因此以 2 退出，成了一个假失败。现在由测试运行器（子进程带 `NODE_TEST_CONTEXT`）完全不带参数地运行时，它打印用法、说明自己不是测试，以 0 退出；人或脚本不带参数或参数给错仍以 2 退出，不会把用错当成功（审查第 6 轮 NIT 5）。没有移出 `test/`：被钉住的运行时文件 `worker/trusted-workflows.mjs` 的生成标记里写着这个路径。测试：`test/trusted-workflow-pins.test.mjs`。直接跑 `node --test` 现在全部通过（审查第 6 轮 NIT 6）。
+
+### 57.8 安装第 13 代时要 Owner 批准的内容
+
+1. **新策略 /10**：已签策略改动的字段只有 `contract`（/9 → /10）和新增的 `roleProbe.interruptedMax = 3`；其余与已装的 /9 相同（安装时的三个 manifest 哈希和 `ownerAcceptance.decisionRef` 照每次安装更新）。
+2. **行为变化**：/10 下观察或探测被中断最多自动恢复 2 次（第 3 次连续中断停机）；所有策略下：发布时受保护事实过期改为再观察一次、不撤回；写后核对另有 60 s 观察窗口（写前 60 s 不变，Owner Decision `36946d8b`），写前窗口放不下写入或写后窗口放不下写后核对就不写（BLOCKED、可重跑）；写后读回期间准入过期改为完整重评一次；写前这几种暂时情况在阶段事实里是暂时码 `NATIVE_ADMISSION_UNAVAILABLE`（以前是终局的 `PUBLICATION_BLOCKED`；其中两种算线路故障，见 §57.2）：本地发布（阶段 3/5/7）带 `safeToRerun`，在同一批里按 §51 重跑（30 s、90 s、300 s），三次都失败照样烧 head，不走 attempt 2（`attempts.mjs` 只许阶段 0–2）；托管中继（阶段 9）照中继规则退回本地运行该角色，但角色键已在别的持有者手里时，中继阶段以 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 停机（行的 `detail` 是真正的原因，例如 `publication_window_short_before_write`），不再交给本地白跑一次扫描；第二次打包断网后在同批重建两次（每次先查 HALT、漂移和授权）；重试的等待中 Owner 中止立即生效；稍后出现的完全一致副本被采用；`-Final` 构建要求 Source 提交在 GitHub 分支上。
+3. **组件**：`script.independent-native-publication` 1.1.7 → 1.1.8（发布者改动；1.1.7 已随 #1006 发布）。
+4. **对审过界限的修改（Owner 已决定）**：写后核对单独给 60 s（Owner Decision `36946d8b`），修改了 Task `a3ad42a9` 写前写后共用 60 s 的界限；写前 60 s、它的恢复和审计不变（§57.2）。Owner 已确认（Decision `36946d8b` v2）：60 s 管写后的观察，从写后第一次观察起算；创建回复丢失时找副本的读在它之前、不占它（写后总时长见 §57.2）。

@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -191,6 +192,6 @@ test('Integration status: scaled latest evidence preserves results and uses bind
     assert.deepEqual(await results(), before);
   } finally {
     await admin?.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

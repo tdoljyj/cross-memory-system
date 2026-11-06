@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, readdir, readFile } from 'node:fs/promises';
@@ -141,6 +142,6 @@ test('independent real PostgreSQL negative access boundaries', { timeout: 120000
     });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
+    await stopCluster(server);
   }
 });

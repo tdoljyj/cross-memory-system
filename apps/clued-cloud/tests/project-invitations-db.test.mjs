@@ -1,4 +1,5 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -333,8 +334,8 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    assert.equal(stored,crypto.createHash('sha256').update(invitation.invite_token).digest('hex'));
   });
  }finally{
-  for(const db of clients.reverse())await db.end().catch(()=>{});await server.stop().catch(()=>{});
+  for(const db of clients.reverse())await db.end().catch(()=>{});await stopCluster(server);
   const target=path.resolve(dir);if(path.dirname(target)!==path.resolve(os.tmpdir())||!path.basename(target).startsWith('clued-auth-v13-'))throw Error('Unsafe test cleanup');
-  await fs.rm(target,{recursive:true,force:true});
+  await removeTestDirectory(target);
  }
 });

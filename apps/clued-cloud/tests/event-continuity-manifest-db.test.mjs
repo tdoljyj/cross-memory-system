@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -344,7 +345,7 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     assert.deepEqual(await carrier(9295), { carrier_state: 'RESOLVED_CONTINUITY_ONLY', v: 2 });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

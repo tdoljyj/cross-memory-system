@@ -3,7 +3,10 @@
 // It rewrites the rows between the BEGIN/END markers of worker/trusted-workflows.mjs (the one table every formal
 // role, role policy and signed-result check derives its accepted set from) and test/fixtures/trusted-workflows.json
 // (the exact bytes the tests build trusted Sources from). `--check` writes nothing and exits 1 when either differs.
-// Development tool only: no runtime module imports it.
+// Development tool only: no runtime module imports it. Run by the test runner with no arguments at all (`node --test` run bare in this
+// directory takes every file under test/ for a test file, and this one is not; the runner marks its children with NODE_TEST_CONTEXT), it
+// prints its usage and exits 0 (generation 13). Run by a person or a script with no or wrong arguments, it still exits 2 (review round 6).
+// It stays here: worker/trusted-workflows.mjs, a pinned runtime file, names this path in its generated markers.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -94,14 +97,17 @@ function workflowSuccessorTableText(current, successor, file, begin, finish, nam
 export const successorTableText = (current, successor = null) => workflowSuccessorTableText(current, successor, TRUSTED_WORKFLOW_PATHS.gitleaks, SUCCESSOR_BEGIN, SUCCESSOR_END, 'GITLEAKS_SUCCESSOR_ROW');
 export const trivySuccessorTableText = (current, successor = null) => workflowSuccessorTableText(current, successor, TRUSTED_WORKFLOW_PATHS.trivy, TRIVY_BEGIN, TRIVY_END, 'TRIVY_SUCCESSOR_ROW');
 
+export const USAGE = 'usage: --repo <dir> --main <rev> --pr-b <rev> [--gitleaks-successor <rev>] [--trivy-successor <rev>] [--check]';
+
 export function main(argv = process.argv.slice(2)) {
+  if (argv.length === 0 && process.env.NODE_TEST_CONTEXT) { console.log(`repin-trusted-workflows.mjs: a development tool, not a test; nothing done. ${USAGE}`); return 0; }
   const options = {};
   for (let index = 0; index < argv.length; index++) {
     if (argv[index] === '--check') { options.check = true; continue; }
-    if (!['--repo', '--main', '--pr-b', '--gitleaks-successor', '--trivy-successor'].includes(argv[index]) || argv[index + 1] === undefined) fail('usage: --repo <dir> --main <rev> --pr-b <rev> [--gitleaks-successor <rev>] [--trivy-successor <rev>] [--check]');
+    if (!['--repo', '--main', '--pr-b', '--gitleaks-successor', '--trivy-successor'].includes(argv[index]) || argv[index + 1] === undefined) fail(USAGE);
     options[argv[index]] = argv[++index];
   }
-  if (!options['--repo'] || !options['--main'] || !options['--pr-b']) fail('usage: --repo <dir> --main <rev> --pr-b <rev> [--check]');
+  if (!options['--repo'] || !options['--main'] || !options['--pr-b']) fail(USAGE);
   const versions = readVersions(options['--repo'], { main: options['--main'], 'pr-b': options['--pr-b'] });
   const successors = fs.existsSync(FIXTURE_FILE) ? JSON.parse(fs.readFileSync(FIXTURE_FILE, 'utf8')).successors ?? {} : {};
   if (options['--gitleaks-successor']) successors.gitleaks729 = readGitleaksSuccessor(options['--repo'], options['--gitleaks-successor']);

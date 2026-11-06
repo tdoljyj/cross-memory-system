@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -127,7 +128,7 @@ test('approved legacy successor requires live whole-table owner proof and exact 
     await assert.rejects(() => admin.query('select clued_private.reconcile_approved_legacy_successor_v1($1,637,638)', [userId]), /approved_successor_adjudication_invalid|approved_successor_owner_proof_invalid/);
     await admin.end();
   } finally {
-    await server.stop().catch(() => {});
-    await fs.rm(dir, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(dir);
   }
 });

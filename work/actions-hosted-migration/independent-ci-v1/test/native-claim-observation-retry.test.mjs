@@ -539,8 +539,12 @@ test('recovery: refuses a new K or Check without the explicit 2000ms post-write 
       const read = gh.readPullRequest;
       gh.readPullRequest = async n => { prReads++; clock.now = started + 60000 - PUBLICATION_READBACK_RESERVE_MS + 1; return read(n); };
     } });
-  assert.equal(prReads, 2, 'the boundary read and the write-ahead probe (DESIGN 51 B); the reserve guard then refuses the write');
-  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(prReads, 2, 'the boundary read and the write-ahead probe (DESIGN 51 B); then the write is refused');
+  // Generation 13 (resident DESIGN §57.2): the publisher's own window check (writeFits: what is left of the pre-write window must hold
+  // the write, WRITE_MARGIN_MS with the reserve plus WRITE_NATIVE_CALLS times the slowest Native read) refuses first, before anything
+  // is recorded: a clean BLOCKED, safe to run again.
+  // The reserve guard at the journal (guardNewPublication) stays the last line behind it.
+  assert.deepEqual([r.result.status, r.result.reason, r.result.safeToRerun], ['BLOCKED', 'publication_window_short_before_write', true], JSON.stringify(r.result));
   assert.equal(r.checks.length, 0);
   assert.equal(await r.journal.read(r.key), null);
 });

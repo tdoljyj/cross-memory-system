@@ -9,7 +9,7 @@ import { Mailbox } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
 import { PARKED_A_REASON } from '../src/executor.mjs';
 import { StatusBoard } from '../src/status.mjs';
-import { HEAD, RELAY_ON, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, RELAY_ON, SOURCE, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);
@@ -164,4 +164,127 @@ test('companion: rebuild-bundle runs the fixed -Rebundle command and maps the sc
     assert.deepEqual([r.ok, r.code], [ok, code], answer.stdout);
     assert.ok(log.some(a => a.includes('-Rebundle')));
   }
+});
+
+// Generation 13 (DESIGN §57.3, Task 3e2e12d7): a network failure of the second bundle is built again in the same batch (the Source moves
+// the failed gen-2\ aside); after the waits it ends as before.
+test('generation 13: a network failure of the second bundle is built again after the waits, and the batch goes on', async t => {
+  const { REBUNDLE_NETWORK_RETRY_MS } = await import('../src/executor.mjs');
+  const companion = withRebundle(n => n < 2 ? { ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' } : { ok: true, code: null });
+  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const slept = [];
+  const sleep = f.exec.sleep.bind(f.exec);
+  f.exec.sleep = async ms => { slept.push(ms); return sleep(ms); };
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(61 * MIN);
+  hostedSuccess(f);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(companion.rebuilds, 3);
+  assert.deepEqual(slept.filter(ms => REBUNDLE_NETWORK_RETRY_MS.includes(ms)), [...REBUNDLE_NETWORK_RETRY_MS]);
+  assert.equal((await receiptTypes(f)).filter(x => x === 'rebundle-retry').length, 2);
+  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8]);
+});
+
+test('generation 13: the network still down after the waits ends the batch as before; another refusal is never built again', async t => {
+  const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(61 * MIN);
+  hostedSuccess(f);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode, down.rebuilds], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD', 3]);
+  const other = withRebundle(() => ({ ok: false, code: 'BUNDLE_UNAVAILABLE' }));
+  const g = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: other });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'WAITING');
+  g.advance(61 * MIN);
+  hostedSuccess(g);
+  await g.exec.tick();
+  assert.equal(other.rebuilds, 1);
+});
+
+test('generation 13: a rebuild that still fails on the line keeps the network marker on the ending (review round 1, MINOR 6)', async t => {
+  const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(61 * MIN);
+  hostedSuccess(f);
+  assert.equal((await f.exec.tick()).failureCode, 'PARKED_BUNDLE_TOO_OLD');
+  const rebundled = (await f.receipts.latest(['batch-rebundled'], 1))[0].value.body;
+  assert.deepEqual([rebundled.failureCode, rebundled.network], ['PARKED_BUNDLE_TOO_OLD', true]);
+  const { networkFailure } = await import('../src/classify.mjs');
+  assert.equal(networkFailure({ code: 'PARKED_BUNDLE_TOO_OLD', bundleNetwork: true }), true);
+  assert.equal(networkFailure({ code: 'PARKED_BUNDLE_TOO_OLD' }), false, 'another refusal of the second bundle is no network fault');
+});
+
+test('generation 13: each rebuild after a wait is allowed like an execution retry: a HALT, a drift or the authority ending stops it (review round 1, MINOR 3)', async t => {
+  const types = async f => (await f.receipts.latest(['rebundle-retry-refused'], 1))[0]?.value.body.step ?? null;
+  // a HALT latched during the wait
+  const halted = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: halted });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(61 * MIN);
+  hostedSuccess(f);
+  const sleep = f.exec.sleep.bind(f.exec);
+  f.exec.sleep = async ms => { await sleep(ms); if (ms === 60_000) await f.ledger.halt('OWNER_TEST_HALT', {}); };
+  await f.exec.tick();
+  assert.deepEqual([halted.rebuilds, await types(f)], [1, 'after-wait-halt']);
+  // the installed Source drifted during the wait
+  const drifted = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const d = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: drifted });
+  await d.drop(triggerBytes());
+  assert.equal((await d.exec.tick()).state, 'WAITING');
+  d.advance(61 * MIN);
+  hostedSuccess(d);
+  const dsleep = d.exec.sleep.bind(d.exec), drift = d.exec.driftCode.bind(d.exec);
+  let moved = false;
+  d.exec.driftCode = async () => moved ? 'SOURCE_DRIFT' : drift();
+  d.exec.sleep = async ms => { await dsleep(ms); if (ms === 60_000) moved = true; };
+  await d.exec.tick();
+  assert.deepEqual([drifted.rebuilds, await types(d)], [1, 'after-wait-drift']);
+  // the authority would not cover the wait, the rebuild and the stages: no wait at all
+  const short = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const g = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: short });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'WAITING');
+  g.advance(61 * MIN);
+  hostedSuccess(g);
+  const slept = [];
+  const gsleep = g.exec.sleep.bind(g.exec);
+  g.exec.sleep = async ms => { slept.push(ms); return gsleep(ms); };
+  const fits = g.exec.executionRetryFitsAuthority.bind(g.exec);
+  const asked = [];
+  g.exec.executionRetryFitsAuthority = (number, again, opts = {}) => { asked.push(opts.extraMs ?? 0); return (opts.extraMs ?? 0) >= 35 * MIN ? false : fits(number, again, opts); };
+  const r = await g.exec.tick();
+  assert.deepEqual([r.failureCode, short.rebuilds, await types(g)], ['PARKED_BUNDLE_TOO_OLD', 1, 'before-wait-authority']);
+  // the wait, the rebuild (35 min) and the workspaces after it (25 min) are all reserved (review round 2, MINOR 2)
+  assert.ok(asked.includes(60_000 + 35 * MIN + 25 * MIN), JSON.stringify(asked));
+  assert.equal(slept.filter(ms => ms === 60_000).length, 0);
+});
+
+test('generation 13: an Owner abort filed during the wait before a rebuild ends the batch at once, not after the wait (review round 1, NIT)', async t => {
+  const { batchKey } = await import('../src/ledger.mjs');
+  const { abortRequest, writeOwnerRequest } = await import('../tools/rearm-tool.mjs');
+  const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
+  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(61 * MIN);
+  hostedSuccess(f);
+  const key = batchKey({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1 });
+  const fast = f.exec.sleep.bind(f.exec);
+  let filed = false;
+  f.exec.sleep = async ms => {
+    if (ms !== 60_000) return fast(ms);
+    if (!filed) { filed = true; const latest = await f.ledger.latestRecord(key);
+      await writeOwnerRequest(path.join(f.root, 'owner'), abortRequest({ batchKey: key, expectedLedgerEntrySha256: latest.sha256, reason: 'enough', by: 'S-1-5-21-1-2-3-1001' }, f.clock), f.clock); }
+    return new Promise(() => {}); // a wait that would never end by itself
+  };
+  const r = await f.exec.tick();
+  assert.equal(r.failureCode, 'OWNER_ABORTED', JSON.stringify(r));
+  assert.equal(down.rebuilds, 1, 'never built again');
 });

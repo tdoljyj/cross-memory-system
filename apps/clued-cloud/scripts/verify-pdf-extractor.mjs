@@ -7,8 +7,6 @@
 // missing binding, an extractor of another version or a failed round trip
 // blocks the release.
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const PRODUCTION_ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const CHECK_PATH = '/v1/storage/pdf-extractor/check';
@@ -74,7 +72,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : 'pdf_extractor_unexpected_error'}\n`);
     process.exitCode = 1;

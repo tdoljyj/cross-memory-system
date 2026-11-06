@@ -135,6 +135,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // Only the bounded, explicit Native read exhaustion is transient. The status/effect guards above exclude
   // any sent or uncertain publication; refusal and unconfirmed replies keep their existing final semantics.
   if (r === 'native_claim_observation_unavailable') return 'NATIVE_ADMISSION_UNAVAILABLE';
+  // Generation 13 (resident DESIGN §57.2): the admission could not be used in time before anything was written (it aged, the window
+  // would not hold the confirmation, or the facts observed again after it got no answer). Passing, like the exhaustion above.
+  if (r === 'protected_facts_reobservation_unavailable' || r === 'native_admission_aged_before_write' || r === 'publication_window_short_before_write') return 'NATIVE_ADMISSION_UNAVAILABLE';
   if (r === 'evidence_identity_conflict' || r === 'EVIDENCE_IDENTITY_CONFLICT') return 'EVIDENCE_IDENTITY_CONFLICT';
   // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).

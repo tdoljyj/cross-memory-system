@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -254,10 +255,10 @@ test('temporary gateway probe reports real invoker settings and closes permanent
     } catch (error) { failure = error; throw error; }
     finally {
       for (const db of clients.reverse()) await db.end().catch(() => {});
-      await server.stop().catch(() => {});
+      await stopCluster(server);
       assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
       assert.ok(path.basename(directory).startsWith('clued-gateway-request-context-'));
-      try { await fs.rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
+      try { await removeTestDirectory(directory); }
       catch (error) { if (!failure) throw error; }
     }
   });

@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -154,6 +155,6 @@ test('formal target clock: current full chain, complete atomic publisher install
       current_chain_sha256:hash(JSON.stringify(chain.map(x=>({name:x.name,sha256:hash(x.text)})))),
       sql_sha256:hash(sql),node:process.versions.node,pg:(await db.query("select current_setting('server_version') v")).rows[0].v,
       full_new_atomic_install:true,source_authenticated:false,official_metric:false,t0:null,production:false}));
-  }finally{for(const c of clients)await c.end().catch(()=>{});await server.stop();const actual=await fs.realpath(directory);assert.equal(actual,directory);
-    assert.equal(path.dirname(actual),parent);assert.ok(path.basename(actual).startsWith('clued-clock-target-'));await fs.rm(actual,{recursive:true,force:true});}
+  }finally{for(const c of clients)await c.end().catch(()=>{});await stopCluster(server);const actual=await fs.realpath(directory);assert.equal(actual,directory);
+    assert.equal(path.dirname(actual),parent);assert.ok(path.basename(actual).startsWith('clued-clock-target-'));await removeTestDirectory(actual);}
 });

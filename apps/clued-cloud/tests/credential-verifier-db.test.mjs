@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -175,7 +176,7 @@ test('Binding and Resource Center credentials are stored as verifiers', { timeou
     assert.equal((await admin.query(`select count(*)::int n from pg_trigger where tgname='credential_verifier_normalize_v1'`)).rows[0].n, 0);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

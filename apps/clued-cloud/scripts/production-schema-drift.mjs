@@ -27,7 +27,6 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import {
   SNAPSHOT_CONTRACT, catalogSqlPath, productionChain, readRepository, readSnapshot, repositoryChain, snapshotPath,
 } from './production-schema-chain.mjs';
@@ -517,7 +516,7 @@ export function printSummary(report, write = (line) => console.log(line)) {
   if (report.repository_only) write(`repository-only columns and functions (tests see them, production does not): ${report.repository_only.length}`);
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

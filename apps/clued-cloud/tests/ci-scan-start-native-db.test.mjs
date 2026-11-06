@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -383,7 +384,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
     for(const c of clients.reverse())await c.end().catch(()=>{});
     const actual=await fs.realpath(dir).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
     if(actual!==null){assert.equal(actual,dir);assert.equal(path.dirname(actual),parent);}
-    await server.stop().catch(()=>{});
-    if(actual!==null)await fs.rm(dir,{recursive:true,force:true});
+    await stopCluster(server);
+    if(actual!==null)await removeTestDirectory(dir);
   }
 });
