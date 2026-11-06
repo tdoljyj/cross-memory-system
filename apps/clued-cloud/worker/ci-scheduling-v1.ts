@@ -1,7 +1,10 @@
-// Stage 1 candidate only: not imported by the Worker router or either existing gateway.
+// The node command signature protocol. Since unified scheduling 2B it is imported by the
+// CI node gateway (ci-node-gateway-v1.ts), which owns the transport and the database call.
 // A mathematical signature check grants no execution authority and consumes no nonce.
 export const CI_SIGNATURE_PROTOCOL = 'clued.ci-node-command/1';
 const MAX_BYTES = 65536;
+// A payload may carry a full 64 KiB sealed-drop ciphertext as base64 (Stage 1 cap).
+export const CI_MAX_PAYLOAD_BYTES = 131072;
 const MAX_NODES = 4096;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -10,9 +13,22 @@ const OPERATIONS = new Set([
   'stage8_try_begin', 'result_register', 'publish_prepare', 'publish_observe',
   'green_transition', 'train_front_set', 'train_sweep_confirm',
   'sealed_drop_send', 'sealed_drop_take',
+  // Unified scheduling 2B.
+  'qualification_report', 'nonce_issue', 'job_lease', 'job_renew', 'green_mirror_append',
+]);
+// Operations without a job: everything else names its job and execution generation.
+const JOBLESS = new Set([
+  'node_registration', 'node_heartbeat', 'qualification_report', 'train_sweep_confirm', 'green_mirror_append',
 ]);
 const DRAINING_SETTLEMENT = new Set([
   'node_heartbeat', 'job_release', 'result_register', 'publish_observe', 'green_transition',
+  'job_renew', 'nonce_issue', 'green_mirror_append',
+]);
+// Accepted without a current qualification: the report that creates one, and a
+// publisher's mirror records (a draining publisher must record how its greens end).
+const WITHOUT_QUALIFICATION = new Set(['qualification_report', 'green_mirror_append']);
+const PUBLISHER_ONLY = new Set([
+  'publish_prepare', 'publish_observe', 'green_transition', 'train_sweep_confirm', 'sealed_drop_take', 'green_mirror_append',
 ]);
 type JsonObject = { [key: string]: unknown };
 export type CiSignatureError = 'INPUT_INVALID' | 'SIGNATURE_INVALID' | 'PRINCIPAL_INVALID'
@@ -55,12 +71,12 @@ function scalarText(value: string): void {
 }
 // Versioned subset: Unicode scalar strings, safe integers only, UTF-16 sorted object
 // keys, no toJSON/prototypes/accessors, max depth 16. This is not general RFC8785.
-export function ciCanonicalJson(value: unknown): string {
+export function ciCanonicalJson(value: unknown, maxBytes: number = MAX_BYTES): string {
   let count = 0;
   let characters = 0;
   const emit = (text: string): string => {
     characters += text.length;
-    if (characters > MAX_BYTES) invalid();
+    if (characters > maxBytes) invalid();
     return text;
   };
   const visit = (entry: unknown, depth: number): string => {
@@ -69,7 +85,7 @@ export function ciCanonicalJson(value: unknown): string {
     if (typeof entry === 'boolean') return emit(entry ? 'true' : 'false');
     if (typeof entry === 'number') { integer(entry, -Number.MAX_SAFE_INTEGER); return emit(String(entry)); }
     if (typeof entry === 'string') {
-      if (entry.length > MAX_BYTES) invalid();
+      if (entry.length > maxBytes) invalid();
       scalarText(entry); return emit(JSON.stringify(entry));
     }
     if (Array.isArray(entry)) {
@@ -94,7 +110,7 @@ export function ciCanonicalJson(value: unknown): string {
     }).join(',') + '}';
   };
   const result = visit(value, 0);
-  if (new TextEncoder().encode(result).byteLength > MAX_BYTES) invalid();
+  if (new TextEncoder().encode(result).byteLength > maxBytes) invalid();
   return result;
 }
 async function digest(text: string): Promise<string> {
@@ -152,7 +168,7 @@ function command(value: unknown): Command {
   for (const key of ['key_fingerprint', 'payload_sha256']) string(input[key], SHA256);
   base64url(input.nonce, 32); base64url(input.signature, 64);
   if (input.job_id !== null) string(input.job_id, UUID);
-  if (input.operation !== 'node_registration' && input.operation !== 'node_heartbeat' && input.job_id === null) invalid();
+  if (JOBLESS.has(input.operation) !== (input.job_id === null)) invalid();
   if (input.job_id !== null && integer(input.execution_generation) < 1) invalid();
   if (integer(input.expires_at_ms) <= integer(input.issued_at_ms)
     || integer(input.expires_at_ms) - integer(input.issued_at_ms) > 120000) invalid();
@@ -170,11 +186,14 @@ function matches(node: CiTrustedNodeSnapshot | null, input: Command, principal: 
   if (node.project_id !== principal.project_id) invalid('SCOPE_DENIED');
   if (node.version !== input.node_version || node.key_version !== input.key_version
     || node.identity_fingerprint !== input.key_fingerprint) invalid('STALE_VERSION');
-  if ((node.state !== 'active' && !(node.state === 'draining' && DRAINING_SETTLEMENT.has(input.operation))) || !node.qualification_verified
-    || !Number.isFinite(node.binding_expires_at_ms) || !Number.isFinite(node.qualification_expires_at_ms)
-    || node.binding_expires_at_ms <= now || node.qualification_expires_at_ms <= now) invalid('PRINCIPAL_INVALID');
-  if (['publish_prepare', 'publish_observe', 'green_transition', 'train_sweep_confirm', 'sealed_drop_take'].includes(input.operation)
-    && !node.publisher_approved) invalid('SCOPE_DENIED');
+  // A qualification report is how an approved (active) node becomes qualified; a
+  // mirror record needs only an approved publisher on a live Binding.
+  const unqualified = WITHOUT_QUALIFICATION.has(input.operation);
+  if ((node.state !== 'active' && !(node.state === 'draining' && DRAINING_SETTLEMENT.has(input.operation)))
+    || !Number.isFinite(node.binding_expires_at_ms) || node.binding_expires_at_ms <= now
+    || (!unqualified && (!node.qualification_verified || !Number.isFinite(node.qualification_expires_at_ms)
+      || node.qualification_expires_at_ms <= now))) invalid('PRINCIPAL_INVALID');
+  if (PUBLISHER_ONLY.has(input.operation) && !node.publisher_approved) invalid('SCOPE_DENIED');
   if (input.issued_at_ms > now || input.expires_at_ms <= now) invalid('COMMAND_EXPIRED');
   return node;
 }
@@ -191,7 +210,7 @@ export async function verifyCiNodeCommand(
   try {
     // Snapshot caller-owned objects before the first await; no mutable input crosses it.
     const parsed = command(JSON.parse(ciCanonicalJson(input)));
-    const canonicalPayload = ciCanonicalJson(payload);
+    const canonicalPayload = ciCanonicalJson(payload, CI_MAX_PAYLOAD_BYTES);
     const actor = Object.freeze({ ...principal });
     for (const key of ['user_id', 'project_id', 'binding_id'] as const) string(actor[key], UUID);
     integer(actor.binding_generation, 1);
@@ -217,10 +236,4 @@ export async function verifyCiNodeCommand(
   } catch (error) {
     return { ok: false, code: error instanceof InvalidCommand ? error.code : 'TRUST_LOOKUP_FAILED' };
   }
-}
-// No activation option, database callback, HTTP route, or env flag in Stage 1.
-// A separately reviewed transport must establish and clear a trusted transaction
-// context and atomically consume the nonce with the private-core mutation.
-export function ciSchedulingNodeTransportV1(): { status: 'refused'; code: 'SIGNATURE_GATEWAY_NOT_ACTIVATED' } {
-  return { status: 'refused', code: 'SIGNATURE_GATEWAY_NOT_ACTIVATED' };
 }
