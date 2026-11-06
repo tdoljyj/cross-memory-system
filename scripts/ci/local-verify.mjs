@@ -19,10 +19,11 @@
 //                 call the "Select suites" step of ci-suites makes), and only those
 //                 run, on Windows and in CluedDev-Linux (on a non-Windows host, here
 //                 alone; on Windows without CluedDev-Linux the Linux result is
-//                 "could not compare" and the exit status 1). It prints the line CI
+//                 "could not compare" and, when a suite is selected, the exit status 1). It prints the line CI
 //                 logs for each check ("ci-suites: selected by changed paths;
 //                 suites: ...") and, for each suite, the changed files that picked
-//                 it (a default run prints the same). --linux-only keeps the run to the Linux side.
+//                 it (a default run prints the same). --linux-only keeps the run
+//                 to the Linux side.
 //   --base        the main commit to verify against; default: GitHub's main,
 //                 fetched first (--no-fetch uses the last fetched copy).
 //   --committed   verify HEAD only; by default the working tree's changes and
