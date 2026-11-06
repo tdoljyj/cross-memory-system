@@ -12,14 +12,32 @@ const claimRenewal = JSON.parse(await readFile(new URL('./fixtures/agent-contrac
 const sessionTitle = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v51-v52-map.json', import.meta.url), 'utf8'));
 const branding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v52-v53-map.json', import.meta.url), 'utf8'));
 const ciQueueAssist = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v53-v54-map.json', import.meta.url), 'utf8'));
+const ciQueueParticipation = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v54-v55-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
 // three scoped replacements separately, followed by exact v49 review and v50
 // runtime additions, the v51 claim-renewal clarification, the v52 title
-// metadata correction, the v53 display-name changes and the v54 resident CI queue assist. Undo only these declared
+// metadata correction, the v53 display-name changes, the v54 resident CI queue assist,
+// and the v55 queue participation and explicit holder removal. Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v54Source() {
+  assert.equal(ciQueueParticipation.schema, 'clued.agent-contract-ci-queue-participation-successor/1');
+  assert.equal(ciQueueParticipation.source_version, 54);
+  assert.equal(ciQueueParticipation.target_version, 55);
+  assert.deepEqual(ciQueueParticipation.edits.map(row => row.id), ['version', 'ci-queue-participation', 'ci-queue-leave']);
+  assert.equal(sha256(source), ciQueueParticipation.target_document_normalized_sha256);
+  let restored = source;
+  for (const { id, before, after } of [...ciQueueParticipation.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact queue participation successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), ciQueueParticipation.source_document_normalized_sha256);
+  return restored;
+}
+
 function v53Source() {
+  const source = v54Source();
   assert.equal(ciQueueAssist.schema, 'clued.agent-contract-ci-queue-assist-successor/1');
   assert.equal(ciQueueAssist.source_version, 53);
   assert.equal(ciQueueAssist.target_version, 54);
@@ -144,7 +162,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v54 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v55 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

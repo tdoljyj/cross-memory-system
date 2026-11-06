@@ -117,6 +117,19 @@ test('train mode channel: the resident writes one exact record into the stage di
   // off and shadow build no train port and load nothing
   for (const trainMode of ['off', 'shadow']) assert.deepEqual(await trainPortsV2({ trainMode, record: null, fetchImpl: null, nativeToken: null, github: null }), {});
   const record = { config: { supabaseUrl: 'https://x.supabase.co', publishableKey: 'pk', scope: 'project:p', repository: REPO } };
+  for (const trainMode of ['off', 'shadow']) {
+    const requests = [], returnedClaim = randomUUID();
+    const port = await trainPortsV2({ trainMode, record, nativeToken: 'clued_bnd_fixture', queueReturn: true,
+      openStore: async () => { throw new Error('off-mode must not load sweep state'); },
+      fetchImpl: async (url, options) => { requests.push({ url, input: JSON.parse(options.body).p_input });
+        return Response.json({ status: 'ok', pr_ref: `${REPO}#888`, returned: true, merge_slot_returned: [returnedClaim] }); } });
+    assert.equal(requests.length, 0, 'constructing a queue return port performs no I/O');
+    assert.deepEqual(await port.slotNative.returnSlot({ pr: 888 }), { onDuty: true, returned: true, claims: [returnedClaim] });
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /\/clued_work_merge_slot_return_v1$/);
+    assert.deepEqual(requests[0].input, { scope: 'project:p', pr_ref: `${REPO}#888` });
+    assert.deepEqual(Object.keys(port), ['slotNative'], 'ordinary mode does not enable train sweeping');
+  }
   const on = await trainPortsV2({ trainMode: 'on', record, fetchImpl: async () => { throw new Error('no network'); }, nativeToken: 'clued_bnd_x', github: { readPullsUpdatedSince: async () => 'pulls' },
     openStore: async () => { throw new Error('EACCES'); } });
   assert.deepEqual([typeof on.slotNative.holders, typeof on.slotNative.touch, on.sweepStore, await on.pullsUpdatedSince('2026-10-31T00:00:00.000Z')], ['function', 'function', null, 'pulls']);

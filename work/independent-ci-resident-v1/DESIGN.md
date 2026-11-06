@@ -4359,8 +4359,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - `merge_queue_join {action, scope, pr_ref, head_sha}`：把 `merge:<repo>:main` 加进 `trigger_refs`（排到队尾；失效或出队后重新排队，与持有者续租时相同）。不动租约、fence、`lease_version`、`progress_ref`、持有者、续租次数、执行纪元；已在队列里就什么也不写；`trigger_refs` 已满时干净地拒绝（`trigger_refs_full`）。写一条 Receipt `WORK_CLAIM_MERGE_QUEUE_JOINED_BY_CI`。
   - `lease_extend {action, scope, pr_ref, head_sha, minutes}`：`minutes` 为 1..180，到期时间改为 least（max（原到期，现在 + minutes），认领的硬上限 24 h）。已过期的认领不复活，每个认领 5 分钟内最多真正延长一次。同样不动 `lease_version` 和 fence，所以持有者下一次 `clued_work_renew` 不会因 CAS 被拒。写一条 Receipt `WORK_CLAIM_LEASE_EXTENDED_BY_CI`。
 - **持有者续租的三处改动**（前两处是 Owner 认定的缺陷，一并修了；第三处是审查中发现的）：
-  - 持有者带着自己的 `trigger_refs` 续租时，**CI 加上的** `merge:<repo>:main` 保留，队列位置不变。只有 CI 真正加上的引用才算 CI 的：CI 只是让持有者自己加的引用重新排队时，它仍是持有者的。已经离开认领的合并引用（合入、关闭、CI 失败）不会被加回来，之后持有者自己再加的就是持有者的。所以：CI 加上的引用还在时，持有者要离开队列只能释放认领；持有者自己的引用，续租时不带它就离开。
-    - 续租时如果保留 CI 的引用会让 `trigger_refs` 超过 50 个，续租以 `work_claim_trigger_refs_invalid`（22023）拒绝，什么也不改。
+  - 持有者续租显式提供 `trigger_refs` 时，整个列表被替换，包括 **CI 加上的** `merge:<repo>:main`；不带该引用就退队，工作认领保持 ACTIVE。不传 `trigger_refs` 则保留原引用和排位。成功续租退队后清除 CI 引用标记；拒绝续租不改变有效标记。CI 重新排队中的临时退队仍保留标记。
+  - 第 8 段入队、续期、发布前，读取完整的当前 head check-runs 和 live 必需检查配置，按 context、App pin 和最新 id 判断终态失败。支持本仓库当前提供者：App 5368905 的六项 Native check-runs，以及 GitHub Actions App 15368 的项目 CI（现行 ci-suites、clued-cloud-tests、migration-verify）。确认失败不入队、不延长，已入队则归还槽位；新重跑中或成功覆盖旧失败，非必需检查不影响队列。规则引入 legacy、未固定 App 或未知提供者时，不把缺少 check-run 当成功，返回不可确认并停止入队/延长；已确认的其他必需检查失败优先退位。只确认失败才自动退位，短暂读取故障不误退健康队首。无需读取传统 statuses，也不增加 GitHub App 权限。
   - 持有者续租时，新的到期时间取 least（max（现有到期，现在 + 2 h），硬上限），不会把 CI 延长的租约截短。
   - CI 把租约延到硬上限后，持有者的续租照样接受（记下进度、引用和写集，到期时间保持在上限），不再以 `work_claim_hard_deadline` 拒绝；没有 CI 延长时，到了上限仍照旧拒绝。
 - **入队的另一个效果**：入队改变 `trigger_refs`，和持有者续租一样：受保护的认领之前的执行准入摘要会对不上，直到 head 再验证一次。第 8 段的每次观察都会经准入评估器再 verify 一次（带 `target_branch`），所以入队后的下一次观察就会重新对上。入队成功后，这次尝试马上再观察一次，即使它的 90 s 已经用完（仍受这一段自己的期限约束），把执行准入重新记上；这次观察若碰上一时的 GitHub 或 Native 故障，就等下一次尝试再记。这次观察时如果已经排到队首，就照常发布。这次观察失败时，答复按“已在队列里、位置不明”给出（`RESIDENT_QUEUE_HEAD_NOT_REACHED`），不说没入队。

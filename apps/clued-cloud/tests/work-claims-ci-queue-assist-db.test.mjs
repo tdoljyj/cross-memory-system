@@ -289,14 +289,14 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     assert.deepEqual(order(await queueOf()), [a.claim_id, b.claim_id]);
     assert.equal((await join('node', pr2, HEAD('b'))).reason, 'already_queued');
 
-    // --- The holder's renewal: its own lease_version still works, and a list without the CI's ref keeps it. ---
+    // --- Explicitly retaining the CI ref keeps the existing queue place. ---
     const queuedAt = (await row(a)).merge_queued_at;
-    const aRenewed = await renew('h1', aBound, { trigger_refs: ['task:a'] });
+    const aRenewed = await renew('h1', aBound, { trigger_refs: ['task:a', SLOT] });
     assert.equal(aRenewed.lease_version, aBound.lease_version + 1);
     assert.deepEqual(aRenewed.trigger_refs, [SLOT, 'task:a'].sort(), 'the CI merge ref is kept');
     assert.deepEqual((await row(a)).merge_queued_at, queuedAt, 'its place is unchanged');
     assert.deepEqual(order(await queueOf()), [a.claim_id, b.claim_id]);
-    const bRenewed = await renew('h2', await row(b).then((r) => ({ claim_id: b.claim_id, ...r })), { trigger_refs: ['task:b', 'task:b2'] });
+    const bRenewed = await renew('h2', await row(b).then((r) => ({ claim_id: b.claim_id, ...r })), { trigger_refs: ['task:b', 'task:b2', SLOT] });
     assert.deepEqual(bRenewed.trigger_refs, [SLOT, 'task:b', 'task:b2'].sort(), 'kept beside a changed list');
     assert.deepEqual(order(await queueOf()), [a.claim_id, b.claim_id], 'a waiting place is kept too');
 
@@ -325,10 +325,10 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     joinReceipts = await receipts('work_claim_merge_queue_join_by_ci');
     assert.deepEqual(joinReceipts.map((r) => [r.object_id, r.metadata.rejoined, r.metadata.previous_state]),
       [[a.claim_id, false, 'none'], [b.claim_id, false, 'none'], [a.claim_id, true, 'lapsed']]);
-    // The CI rejoined its own ref: the ref stays the CI's, and a renewal without it keeps it and the place.
+    // The CI rejoined its own ref: explicitly keeping it preserves the place.
     assert.deepEqual((await admin.query('select merge_ref from clued_private.work_claim_ci_merge_refs_v1 where claim_id=$1',
       [a.claim_id])).rows, [{ merge_ref: SLOT }]);
-    const aKept = await renew('h1', await row(a).then((x) => ({ claim_id: a.claim_id, ...x })), { trigger_refs: ['task:a'] });
+    const aKept = await renew('h1', await row(a).then((x) => ({ claim_id: a.claim_id, ...x })), { trigger_refs: ['task:a', SLOT] });
     assert.deepEqual(aKept.trigger_refs, [SLOT, 'task:a'].sort());
     assert.deepEqual((await row(a)).merge_queued_at, aRejoined.merge_queued_at, 'the place is kept');
     assert.deepEqual(order(await queueOf()), [b.claim_id, a.claim_id]);
@@ -513,18 +513,18 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     assert.match(plan, /Index Cond: [^|]*created_at >= /, plan);
     console.log(`work_claim_ci_extended_to_v1 lookup plan: ${plan}`);
 
-    // --- Keeping the CI's ref would make 51 refs: the renewal is refused with 22023. ---
+    // --- Replacing 50 refs can drop the CI ref without silently creating a 51st. ---
     const u = await live('U', `${REPO}#20`, HEAD('0'), 'h5');
     await admin.query(`update clued_private.work_claims_v1 set trigger_refs=$2 where claim_id=$1`,
       [u.claim_id, Array.from({ length: 49 }, (_, i) => `u:${String(i).padStart(2, '0')}`)]);
     assert.equal((await join('node', `${REPO}#20`, HEAD('0'))).joined, true);
     assert.equal((await row(u)).trigger_refs.length, 50);
     const uRow = await row(u);
-    await assert.rejects(() => agent('h5', 'clued_work_renew_v1', { scope: 'global', claim_id: u.claim_id,
+    const uReplaced = committed(await agent('h5', 'clued_work_renew_v1', { scope: 'global', claim_id: u.claim_id,
       fence: Number(uRow.fence), lease_version: Number(uRow.lease_version), progress_ref: uuid(),
-      trigger_refs: Array.from({ length: 50 }, (_, i) => `u:${String(i).padStart(2, '0')}`) }),
-    (error) => /work_claim_trigger_refs_invalid/.test(error.message) && error.code === '22023');
-    assert.deepEqual(await row(u), uRow, 'the refused renewal changed nothing');
+      trigger_refs: Array.from({ length: 50 }, (_, i) => `u:${String(i).padStart(2, '0')}`) }));
+    assert.equal(uReplaced.claim.trigger_refs.length, 50);
+    assert.ok(!uReplaced.claim.trigger_refs.includes(SLOT));
 
     // --- The CI's ref left with the slot; one the holder adds again is the holder's own and leaves on renewal. ---
     const q = await live('Q', `${REPO}#24`, HEAD('7'), 'h5');
@@ -615,6 +615,20 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
       [w.claim_id])).rows, [], 'a rejoin does not make the ref the CI one');
     const wLeft = await renew('w1', wJoined, { trigger_refs: ['task:w'] });
     assert.deepEqual([wLeft.trigger_refs, wLeft.merge_queue], [['task:w'], null], 'the holder leaves the queue by renewing');
+
+    // A CI-added head can explicitly leave without releasing its work claim;
+    // the next waiting claim becomes head in the same transaction.
+    await admit('wnode', w, `${REPO}#41`, HEAD('4'));
+    assert.equal((await join('wnode', `${REPO}#41`, HEAD('4'))).joined, true);
+    const successor = await claim('w1', 'Successor');
+    await admit('wnode', successor, `${REPO}#42`, HEAD('5'));
+    assert.equal((await join('wnode', `${REPO}#42`, HEAD('5'))).merge_queue[0].state, 'waiting');
+    const retained = await renew('w1', wLeft, {});
+    assert.ok(retained.trigger_refs.includes(SLOT), 'omitting the field preserves the CI-added place');
+    const left = await renew('w1', retained, { trigger_refs: ['task:w'] });
+    assert.deepEqual([left.trigger_refs, left.status, left.merge_queue], [['task:w'], 'ACTIVE', null]);
+    assert.deepEqual(await ciRow(w), [], 'successful explicit removal clears the CI marker');
+    assert.equal((await join('wnode', `${REPO}#42`, HEAD('5'))).merge_queue[0].state, 'head');
 
     await assertGatewayCloseoutBoundary(admin);
   } finally {
