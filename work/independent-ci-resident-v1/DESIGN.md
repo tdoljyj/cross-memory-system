@@ -4653,3 +4653,20 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 2. **行为变化**：/10 下观察或探测被中断最多自动恢复 2 次（第 3 次连续中断停机）；所有策略下：发布时受保护事实过期改为再观察一次、不撤回；写后核对另有 60 s 观察窗口（写前 60 s 不变，Owner Decision `36946d8b`），写前窗口放不下写入或写后窗口放不下写后核对就不写（BLOCKED、可重跑）；写后读回期间准入过期改为完整重评一次；写前这几种暂时情况在阶段事实里是暂时码 `NATIVE_ADMISSION_UNAVAILABLE`（以前是终局的 `PUBLICATION_BLOCKED`；其中两种算线路故障，见 §57.2）：本地发布（阶段 3/5/7）带 `safeToRerun`，在同一批里按 §51 重跑（30 s、90 s、300 s），三次都失败照样烧 head，不走 attempt 2（`attempts.mjs` 只许阶段 0–2）；托管中继（阶段 9）照中继规则退回本地运行该角色，但角色键已在别的持有者手里时，中继阶段以 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 停机（行的 `detail` 是真正的原因，例如 `publication_window_short_before_write`），不再交给本地白跑一次扫描；第二次打包断网后在同批重建两次（每次先查 HALT、漂移和授权）；重试的等待中 Owner 中止立即生效；稍后出现的完全一致副本被采用；`-Final` 构建要求 Source 提交在 GitHub 分支上。
 3. **组件**：`script.independent-native-publication` 1.1.7 → 1.1.8（发布者改动；1.1.7 已随 #1006 发布）。
 4. **对审过界限的修改（Owner 已决定）**：写后核对单独给 60 s（Owner Decision `36946d8b`），修改了 Task `a3ad42a9` 写前写后共用 60 s 的界限；写前 60 s、它的恢复和审计不变（§57.2）。Owner 已确认（Decision `36946d8b` v2）：60 s 管写后的观察，从写后第一次观察起算；创建回复丢失时找副本的读在它之前、不占它（写后总时长见 §57.2）。
+
+## 58. 常驻升级纳入 Owner 自动审批（Task `ceeaa7c3`；Owner Decision `f8aff2f9`，取代 Decision `3ce5200c` 第 2 项）
+
+- **以前**：`ci.resident_upgrade` 永不自动批准（`3ce5200c` 第 2 项），每次升级 Owner 都要在确认页点一次。
+- **现在**（迁移 `20261106040000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
+  - 开关开着时，门（`owner_grant_resident_upgrade_door_v1`）为它打开或找到的请求调用 `owner_auto_approve_request_v1`。批准范围：一次、一次使用、24 小时，只给发起请求的连接，只限精确的节点与包。批准后在同一次调用里直接消费。
+  - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，多一个 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
+  - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。第二次照旧等 Owner 批准，这样反复重试的失败升级或打错的包会交到 Owner 手里。
+  - 开关关着时全部走人工。
+- **不变的部分**：
+  - `3ce5200c` 的第 1、3、4、5 项不变：每节点独立升级连接、HALT 时延后、stateCompat 不能回读就在 ACCEPT 拒、时间参数 24h/120/60。
+  - `connection.permission`（会自我提权）和 DatasetSplit 的 4 项（会伪造 Owner 认定）仍然只能人工批准。
+- **升级代理不改**：`upgrader/src/grant-client.mjs` 里"永不自动批准"那段注释没动。`upgrader/src/*` 是冻结通道（§34.8、§42.1 c），改任何一个字节都会让之后的包变成 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`。客户端本来就只是轮询门：门返回已消费就继续，它不区分这次 Grant 是 Owner 点的还是开关给的。所以注释的语义以本节为准，等轨 2 的代理自更新（§42.5.3）时再改。
+- **测试**：
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同节点 24 小时内第二次走人工；另一节点、过了 24 小时都会再自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `owner-grants-resident-upgrade-door-db`：把开关关掉后，验证人工路径。
+  - `owner-auto-approve-db`：covers 和 excluded 两个列表。
