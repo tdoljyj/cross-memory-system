@@ -222,7 +222,7 @@ test('--accept-abandoned: the Owner ruling on one named abandonment; it never wi
   // a start time that matches no abandonment changes nothing and is said so; so does a time that names a completed sweep
   r = g([at(15), at(7)]);
   assert.deepEqual([verdicts(r).G4, r.sweep.acceptedUnmatched.length, r.sweep.abandonedAccepted.length], [NOT_MET, 2, 0]);
-  assert.match(r.gates.find(g => g.id === 'G4').evidence, /在窗口内没有对应的放弃记录，没有生效/);
+  assert.match(r.gates.find(g => g.id === 'G4').evidence, /在窗口内没有对应的、需要裁定的放弃记录.*没有生效/);
   assert.match(renderPage(r), /没有对应记录、未生效的起点/);
   // the ruling does not cover another unexplained abandonment, and does not turn a missing completion into a pass
   const two = [...sw(0, 20), ...sw(7, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' }), ...sw(16, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' })];
@@ -230,17 +230,32 @@ test('--accept-abandoned: the Owner ruling on one named abandonment; it never wi
   assert.deepEqual([verdicts(r).G4, r.sweep.abandonedNotExplained.map(x => x.startedAt)], [NOT_MET, [iso(T0 + 16 * H)]]);
   r = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(14, 5, { state: 'abandoned', reason: 'TRAIN_SWEEP_INCOMPLETE' })]), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(14)] });
   assert.equal(verdicts(r).G4, INSUFFICIENT);
-  // an explicit, named ruling also applies to a sweep that looks stuck on errors (it is the Owner's call); without it that sweep stays unexplained
+  // the ruling covers a RECORDED abandonment only: naming a sweep the tool merely inferred as replaced (stuck or not), or one still running, changes nothing
   const stuck = [...sw(0, 20), sweepFacts(T0 + H, 'running', { startedAt: iso(T0 + H) }), sweepFacts(T0 + 2 * H, 'running', { startedAt: iso(T0 + H), incomplete: true }), ...sw(8, 20), ...sw(14, 20)];
   r = review({ receipts, shadow: asRecords(stuck), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(1)] });
-  assert.deepEqual([verdicts(r).G4, r.sweep.abandonedAccepted.length], [MET, 1]);   // an explicit, named ruling does apply to it
-  assert.equal(verdicts(review({ receipts, shadow: asRecords(stuck), since: T0, now: T0 + 40 * H, chain: OK })).G4, NOT_MET);
+  assert.deepEqual([verdicts(r).G4, r.sweep.abandonedAccepted.length, r.sweep.acceptedUnmatched], [NOT_MET, 0, [iso(T0 + H)]]);
+  const past = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + 14 * H, 'running', { startedAt: iso(T0 + 14 * H) })]), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [at(14)] });
+  assert.deepEqual([verdicts(past).G4, past.sweep.abandonedAccepted.length], [NOT_MET, 0]);
+  // junk in the list (null, NaN) matches nothing, in particular not a sweep without a start time
+  const noStart = review({ receipts, shadow: asRecords([...sw(0, 20), ...sw(7, 20), sweepFacts(T0 + 14 * H, 'abandoned', { startedAt: null, reason: 'X' })]), since: T0, now: T0 + 40 * H, chain: OK, acceptAbandoned: [null, NaN, 'x'] });
+  assert.deepEqual([verdicts(noStart).G4, noStart.sweep.abandonedAccepted.length], [NOT_MET, 0]);
 });
 
 test('--accept-abandoned on the command line: repeatable, strict ISO, shown on the page', async t => {
   const dir = await chainOf(t, runs(2));
-  const out = await run(['--receipts', dir, '--accept-abandoned', '2026-11-05T16:06:30.001Z', '--accept-abandoned', '2026-11-05T01:00:00Z', '--since', iso(T0), '--now', iso(T0 + 3 * H)]);
-  assert.match(out, /# 影子审查/);
+  const shadowDir = await tempRoot(t);
+  const rec = (startH, endMin, state, reason) => { const f = sweepFacts(T0 + startH * H + endMin * MIN, state, { startedAt: iso(T0 + startH * H), reason, completedAt: state === 'complete' ? iso(T0 + startH * H + endMin * MIN) : null }); return f; };
+  for (const f of [rec(0, 20, 'complete'), rec(7, 20, 'complete'), rec(14, 5, 'abandoned', 'TRAIN_SWEEP_INCOMPLETE')]) {
+    await fs.writeFile(path.join(shadowDir, `${String(f.at).padStart(13, '0')}-${'a'.repeat(16)}-${'b'.repeat(12)}.json`), JSON.stringify({ runId: f.runId, facts: f.facts }));
+  }
+  const base = ['--receipts', dir, '--shadow', shadowDir, '--since', iso(T0), '--now', iso(T0 + 40 * H), '--json'];
+  const g4 = out => JSON.parse(out).gates.find(g => g.id === 'G4').verdict;
+  assert.equal(g4(await run(base)), NOT_MET);
+  const withRuling = await run([...base, '--accept-abandoned', iso(T0 + 14 * H), '--accept-abandoned', iso(T0 + 3 * H)]);
+  assert.deepEqual([g4(withRuling), JSON.parse(withRuling).sweep.abandonedAccepted.length, JSON.parse(withRuling).sweep.acceptedUnmatched], [MET, 1, [iso(T0 + 3 * H)]]);
+  const page = await run(base.filter(a => a !== '--json').concat(['--accept-abandoned', iso(T0 + 14 * H)]));
+  assert.match(page, /Owner 2026-11-06 裁定可接受的全量扫描放弃：/);
+  const out = page;
   await assert.rejects(run(['--receipts', dir, '--accept-abandoned', 'tomorrow']), e => e.code === 'TIME_INVALID');
   await assert.rejects(run(['--receipts', dir, '--accept-abandoned']), e => e.code === 'ARGUMENT_VALUE_MISSING');
 });

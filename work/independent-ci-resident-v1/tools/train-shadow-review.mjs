@@ -17,7 +17,8 @@
 // second place's wait is the queue_marker residence (--queue-markers), the 6-hour full-sweep cap stays as it is.
 //
 // --accept-abandoned  records the Owner's ruling that ONE abandoned full sweep, named by its start time as the page prints it, is acceptable (an
-//                     incomplete read that failed closed). Only a sweep that was abandoned and is not already explained by the clock is affected;
+//                     incomplete read that failed closed). Only a RECORDED abandonment that is not already explained by the clock is affected
+//                     (not a sweep the tool inferred as replaced or overdue);
 //                     the page shows the ruling next to the sweep, and a start time that matches nothing is reported, not ignored.
 // --pulls    JSON { "<pr>": { "mergedAt": iso } }                       (gh api repos/<repo>/pulls/<pr> --jq '{mergedAt: .merged_at}')
 // --queue-markers JSON [ { "leftQueuedAt": iso, "headLeftAt": iso } ]   (merge_measurement_events_v1, kind queue_marker, payload; read-only SQL)
@@ -266,7 +267,7 @@ function sweepStats(shadowRuns, since, status, now, accepted = []) {
   // The resident abandons an expired shadow sweep and starts the next one in the same run, so the records may never show "abandoned":
   // a sweep still 'running' when a later one began was replaced without finishing.
   const list = [...byStart.values()];
-  list.forEach((e, i) => { if (e.state === 'running' && i < list.length - 1) { e.state = 'abandoned'; e.reason = 'REPLACED_WITHOUT_FINISHING'; } });
+  list.forEach((e, i) => { if (e.state === 'running' && i < list.length - 1) { e.state = 'abandoned'; e.reason = 'REPLACED_WITHOUT_FINISHING'; e.inferred = true; } });
   // Why a sweep was abandoned: EXPIRED = it ran out the fullSweepMaxMs clock (slow pacing: the sweep needs a fixed number of segments and
   // too few runs happened in time) and none of its runs reported a failed sweep; anything else (a failed segment, an early replacement, a
   // sweep that was stuck on errors, ...) is not explained by the clock. The resident expires a sweep only when it is OLDER than the cap.
@@ -279,10 +280,11 @@ function sweepStats(shadowRuns, since, status, now, accepted = []) {
   // The last sweep still running past the cap (plus three run intervals: the resident replaces an expired sweep at its next run): no run has
   // abandoned it, so the sweeping has stopped, which is not slow pacing either. Needs a --now that is really "now" (or the time of the copy).
   const tail = list[list.length - 1];
-  if (tail?.state === 'running' && ms(tail.startedAt) !== null && now - ms(tail.startedAt) > FULL_SWEEP_MAX_MS + NODE_STALE_MS) { tail.state = 'abandoned'; tail.reason = 'RUNNING_PAST_CAP'; tail.cause = 'NOT_EXPLAINED'; }
+  if (tail?.state === 'running' && ms(tail.startedAt) !== null && now - ms(tail.startedAt) > FULL_SWEEP_MAX_MS + NODE_STALE_MS) { tail.state = 'abandoned'; tail.reason = 'RUNNING_PAST_CAP'; tail.cause = 'NOT_EXPLAINED'; tail.inferred = true; }
   // the Owner's ruling on a named abandonment (the wording of the page: Owner 2026-11-06 裁定可接受)
-  const acceptSet = new Set(accepted);
-  list.forEach(e => { if (e.state === 'abandoned' && e.cause === 'NOT_EXPLAINED' && acceptSet.has(ms(e.startedAt))) e.cause = 'ACCEPTED'; });
+  // (only an abandonment the resident RECORDED: a sweep the tool inferred as replaced or overdue is not what the Owner ruled on)
+  const acceptSet = new Set(accepted.filter(Number.isFinite));
+  list.forEach(e => { if (e.state === 'abandoned' && !e.inferred && e.cause === 'NOT_EXPLAINED' && acceptSet.has(ms(e.startedAt))) e.cause = 'ACCEPTED'; });
   const sweeps = list.map(e => ({ ...e, wallMin: e.state === 'complete' && ms(e.completedAt) !== null && ms(e.startedAt) !== null ? minutes(ms(e.completedAt) - ms(e.startedAt)) : null, activeMin: minutes(e.activeMs) }));
   const live = status?.train?.last?.sweep?.fullSweep ?? null, liveDone = ms(status?.train?.sweep?.fullCompletedAt);
   return { fromShadow: runs.length > 0, sweeps, completed: sweeps.filter(s => s.state === 'complete').length, abandoned: sweeps.filter(s => s.state === 'abandoned').length,
@@ -334,7 +336,7 @@ function gate({ since, window, sweep, anomaly, stats, nodes, shadowSweepRuns, ch
   const unexplained = sweep.abandonedNotExplained;
   add('G4', `全量扫描重复执行（窗口内完成 ≥ ${MIN_FULL_SWEEPS} 次，每次放弃或被替换都能解释为跑满 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时上限的节奏慢，而不是错误）——Owner 口径`,
     !shadowSweepRuns ? INSUFFICIENT : done >= MIN_FULL_SWEEPS ? (unexplained.length === 0 ? MET : NOT_MET) : INSUFFICIENT,
-    shadowSweepRuns ? `完成 ${done} 次；放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `，其中 ${sweep.abandonedExpired} 次是跑满上限（节奏慢）、${sweep.abandonedAccepted.length ? `${sweep.abandonedAccepted.length} 次按 ${OWNER_RULING}（${sweep.abandonedAccepted.map(u => `${u.startedAt} ${u.reason}`).join('；')}）、` : ''}${unexplained.length} 次记录里看不出是节奏慢${unexplained.length ? `：${unexplained.map(u => `${u.startedAt ?? '起点未知'} ${u.reason}${u.stalled ? '（期间有运行没扫完，可能卡在错误上）' : ''}`).join('；')}` : ''}` : ''}${sweep.acceptedUnmatched.length ? `；注意：裁定里的起点 ${sweep.acceptedUnmatched.join('、')} 在窗口内没有对应的放弃记录，没有生效` : ''}${done < MIN_FULL_SWEEPS ? `；窗口内还要再完成 ${MIN_FULL_SWEEPS - done} 次（一轮扫描最长 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时，完成后隔 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时才再开一轮）` : ''}` : '没有影子记录，数不出完成次数');
+    shadowSweepRuns ? `完成 ${done} 次；放弃/被替换 ${sweep.abandoned} 次${sweep.abandoned ? `，其中 ${sweep.abandonedExpired} 次是跑满上限（节奏慢）、${sweep.abandonedAccepted.length ? `${sweep.abandonedAccepted.length} 次按 ${OWNER_RULING}（${sweep.abandonedAccepted.map(u => `${u.startedAt} ${u.reason}`).join('；')}）、` : ''}${unexplained.length} 次记录里看不出是节奏慢${unexplained.length ? `：${unexplained.map(u => `${u.startedAt ?? '起点未知'} ${u.reason}${u.stalled ? '（期间有运行没扫完，可能卡在错误上）' : ''}`).join('；')}` : ''}` : ''}${sweep.acceptedUnmatched.length ? `；注意：裁定里的起点 ${sweep.acceptedUnmatched.join('、')} 在窗口内没有对应的、需要裁定的放弃记录（记录里的放弃，且不是已被时钟解释的），没有生效` : ''}${done < MIN_FULL_SWEEPS ? `；窗口内还要再完成 ${MIN_FULL_SWEEPS - done} 次（一轮扫描最长 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时，完成后隔 ${FULL_SWEEP_MAX_MS / 3_600_000} 小时才再开一轮）` : ''}` : '没有影子记录，数不出完成次数');
   const halted = anomaly.receiptsByKind.halt + anomaly.receiptsByKind['service-stop-prior-boot'] + anomaly.intentsWithoutClose + anomaly.interruptedRuns;
   add('G5', '窗口内第 10 段没有 HALT / 中断', window.runs === 0 ? INSUFFICIENT : halted === 0 ? MET : NOT_MET,
     `HALT ${anomaly.receiptsByKind.halt}，断电/崩溃后的停机记录 ${anomaly.receiptsByKind['service-stop-prior-boot']}，未收尾 ${anomaly.intentsWithoutClose}，被中断 ${anomaly.interruptedRuns}（另：批次熔断 ${anomaly.receiptsByKind['breaker-opened']} 次、服务停止 ${anomaly.receiptsByKind['service-stop']} 次，属批次管线，仅供参考）；第 10 段失败 ${anomaly.stage10Failures.length} 次${anomaly.stage10Failures.length ? `（${anomaly.stage10Failures.map(f => f.code).join(',')}）` : ''}`);
