@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -1923,13 +1924,13 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
       // attach an exit listener after the event has already fired.
       server.process = undefined;
       if (path.dirname(databaseDir) === os.tmpdir() && path.basename(databaseDir).startsWith('clued-p5-pg-')) {
-        await fs.rm(databaseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        await removeTestDirectory(databaseDir);
       }
     } else {
-      await server.stop().catch(() => {});
+      await stopCluster(server);
     }
     if (path.dirname(bundleDir) === os.tmpdir() && path.basename(bundleDir).startsWith('clued-p5-worker-')) {
-      await fs.rm(bundleDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await removeTestDirectory(bundleDir);
     }
   }
 });

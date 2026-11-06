@@ -1,3 +1,4 @@
+import { stopCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -41,6 +42,6 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
     assert.ok((await db.query("select to_regprocedure('public.clued_authorization_status_v12(text)') is not null ready")).rows[0].ready);
   } finally {
     if (db) await db.end();
-    await server.stop();
+    await stopCluster(server);
   }
 });

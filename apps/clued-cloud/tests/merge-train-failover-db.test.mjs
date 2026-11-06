@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -1120,7 +1121,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    await stopCluster(server);
+    await removeTestDirectory(directory);
   }
 });

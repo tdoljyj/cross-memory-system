@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -292,10 +293,10 @@ for (const profile of ['production-m1', 'all-repository-migrations']) {
         migrations:names,migration_sha256:crypto.createHash('sha256').update(await fs.readFile(path.join(root,'supabase/migrations',migration))).digest('hex')});
     } finally {
       for (const db of clients.reverse()) await db.end().catch(()=>{});
-      await server.stop().catch(()=>{});
+      await stopCluster(server);
       const cleanupTarget = path.resolve(directory);
       if (path.dirname(cleanupTarget) !== path.resolve(os.tmpdir()) || !path.basename(cleanupTarget).startsWith('clued-context-v11-')) throw new Error('Unsafe test cleanup target');
-      await fs.rm(cleanupTarget,{recursive:true,force:true});
+      await removeTestDirectory(cleanupTarget);
       if (process.env.CLUED_CONTEXT_EVIDENCE) {
         await fs.mkdir(path.dirname(process.env.CLUED_CONTEXT_EVIDENCE),{recursive:true});
         await fs.writeFile(process.env.CLUED_CONTEXT_EVIDENCE,JSON.stringify({schema:'clued.context-v11.db-evidence/1',results:evidence},null,2));

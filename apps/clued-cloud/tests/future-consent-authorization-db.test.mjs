@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -356,7 +357,7 @@ test('future-only owned consent policies: real full-chain PostgreSQL and concurr
     const target = path.resolve(directory);
     assert.equal(path.dirname(target), path.resolve(os.tmpdir()));
     assert.ok(path.basename(target).startsWith('clued-future-consent-'));
-    await server.stop().catch(() => {});
-    await fs.rm(target, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(target);
   }
 });

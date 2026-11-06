@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -253,14 +254,14 @@ test('Bootstrap claim admits a Global intent only with the same Binding actual G
       await noEffects();
     });
   } finally {
-    if (db) await db.end(); await server.stop();
+    if (db) await db.end(); await stopCluster(server);
     child ??= server.process;
     if (child) assert.ok(child.exitCode !== null || child.signalCode !== null);
     assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
     assert.ok((await fs.realpath(directory)).startsWith(root + path.sep));
     assert.equal((await fs.lstat(directory)).isSymbolicLink(), false);
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory, 'Ownership.json'), 'utf8')), ownership);
-    await fs.rm(directory, { recursive: true, force: true });
+    await removeTestDirectory(directory);
     for (const [key, value] of Object.entries(oldTemp)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }

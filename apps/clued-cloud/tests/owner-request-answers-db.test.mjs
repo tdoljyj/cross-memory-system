@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -240,7 +241,7 @@ test('owner answers: a decided request reaches the session that asked, once, nev
       'select clued_private.owner_answer_count_v1($1,$2,null)', [userId, bindingIds.claude]), /permission denied/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    await stopCluster(server);
+    await removeTestDirectory(directory).catch(() => {});
   }
 });

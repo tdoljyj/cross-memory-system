@@ -1,3 +1,4 @@
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -123,7 +124,7 @@ test('legacy create notification reconciliation requires exact source and produc
     await assert.rejects(() => admin.query('select clued_private.reconcile_legacy_create_notifications_v1($1,$2) result', [userId, 'global']), /legacy_create_receipt_not_unique/);
   } finally {
     for (const client of clients) await client.end().catch(() => {});
-    await server.stop().catch(() => {});
-    await fs.rm(dir, { recursive: true, force: true });
+    await stopCluster(server);
+    await removeTestDirectory(dir);
   }
 });
