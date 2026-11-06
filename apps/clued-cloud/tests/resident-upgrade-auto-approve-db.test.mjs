@@ -79,10 +79,10 @@ test('resident upgrade: approved automatically under the switch, once per node p
     const owner = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'resident-auto@example.invalid',now())`, [owner]);
     const tokens = {}; const ids = {};
-    const bind = async (name, scopes) => {
+    const bind = async (name, scopes, agentName = name) => {
       tokens[name] = hash();
       ids[name] = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-        values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [owner, name, tokens[name], scopes])).rows[0].id;
+        values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [owner, agentName, tokens[name], scopes])).rows[0].id;
     };
     const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts
       (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
@@ -154,8 +154,9 @@ test('resident upgrade: approved automatically under the switch, once per node p
     const used = await receipt(r.grant.receipt_id);
     assert.ok(used);
     assert.deepEqual([used.operation, used.binding_id, used.metadata.receipt_kind, used.metadata.door, used.metadata.op_id,
-      used.metadata.resources, used.metadata.auto_approved, used.metadata.grant_id],
-    ['owner_grant_use', ids['node-a'], 'OWNER_GRANT_USED', 'resident-upgrader', op1, [A1], true, g1.id]);
+      used.metadata.resources, used.metadata.grant_id, used.metadata.use, used.metadata.max_uses],
+    ['owner_grant_use', ids['node-a'], 'OWNER_GRANT_USED', 'resident-upgrader', op1, [A1], g1.id, 1, 1]);
+    assert.ok(!('auto_approved' in used.metadata), 'the use receipt is the existing one of the door');
     // The same op replays its use; nothing new is granted.
     const useReceipt = r.grant.receipt_id;
     r = await upgrade('node-a', A1, op1);
@@ -184,11 +185,40 @@ test('resident upgrade: approved automatically under the switch, once per node p
     const B1 = resource('node-b', 'a');
     r = await upgrade('node-b', B1, uuid());
     assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
+    // The window is the node's, not the Binding's: node-b's upgrader re-marked as a new Binding shares it.
+    await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [ids['node-b']]);
+    await bind('node-b-new', ['context:read'], 'node-b');
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
+      values($1,$2,'resident-upgrade',now()-interval '1 minute',$3,now()-interval '1 minute','unspecified')`, [owner, ids['node-b-new'], roleReceipt]);
+    r = await upgrade('node-b-new', resource('node-b', 'e'), uuid());
+    assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending'], 'a new Binding of node-b waits for the Owner');
+    // A request of another node name is not held by node-b's window.
+    r = await upgrade('node-c', resource('node-c', 'e'), uuid());
+    assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
+    await admin.query(`update clued_private.owner_grants_v1 set granted_at=granted_at-interval '25 hours',
+      expires_at=expires_at-interval '25 hours' where grantee_binding_id=$1`, [ids['node-c']]);
 
     // --- After 24 hours the node is approved automatically again. ---
     await admin.query(`update clued_private.owner_grants_v1 set granted_at=granted_at-interval '25 hours',
       expires_at=expires_at-interval '25 hours' where id=$1`, [g1.id]);
     r = await upgrade('node-a', resource('node-a', 'c'), uuid());
+    assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
+    const gC = r.grant.grant_id;
+    // A request opened inside that grant's 24 hours stays the Owner's even when the upgrader asks again after them.
+    const opLate = uuid();
+    r = await upgrade('node-a', resource('node-a', 'd'), opLate);
+    assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending']);
+    const late = r.owner_request.request_id;
+    // Now: the request is 2 hours old (opened 23 hours after the grant), the grant 25 hours old.
+    await admin.query(`update clued_private.owner_requests_v1 set created_at=clock_timestamp()-interval '2 hours',
+      expires_at=clock_timestamp()+interval '22 hours' where id=$1`, [late]);
+    await admin.query(`update clued_private.owner_grants_v1 set granted_at=clock_timestamp()-interval '25 hours',
+      expires_at=clock_timestamp()-interval '1 hour' where id=$1`, [gC]);
+    r = await upgrade('node-a', resource('node-a', 'd'), opLate);
+    assert.deepEqual([r.consumed, r.owner_request.request_id, r.owner_request.status], [false, late, 'pending'],
+      'opened within the window: the Owner decides, however long the upgrader keeps asking');
+    // A request opened after the window is approved automatically again.
+    r = await upgrade('node-a', resource('node-a', 'f'), uuid());
     assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
 
     // --- Switch off: the Owner approves; on again: the same op's waiting request goes through. ---
@@ -196,9 +226,10 @@ test('resident upgrade: approved automatically under the switch, once per node p
     committed(await native('clued_owner_auto_approve_set_v1', { enabled: false, base_version: list.auto_approve.version }));
     const C1 = resource('node-c', 'a');
     const opC = uuid();
+    const cBefore = await grantsOf(ids['node-c']);
     r = await upgrade('node-c', C1, opC);
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending']);
-    assert.equal(await grantsOf(ids['node-c']), 0);
+    assert.equal(await grantsOf(ids['node-c']), cBefore);
     list = await native('clued_owner_grants_list_v1', {});
     committed(await native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: list.auto_approve.version }));
     r = await upgrade('node-c', C1, opC);
@@ -208,7 +239,7 @@ test('resident upgrade: approved automatically under the switch, once per node p
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: r.grant.grant_id }));
     r = await upgrade('node-c', C1, opC);
     assert.deepEqual([r.consumed, r.revoked], [false, true]);
-    assert.equal(await grantsOf(ids['node-c']), 1);
+    assert.equal(await grantsOf(ids['node-c']), cBefore + 1);
 
     // --- Rejected and expired requests are never approved automatically. ---
     await admin.query(`update clued_private.owner_grants_v1 set granted_at=granted_at-interval '25 hours',
@@ -216,16 +247,16 @@ test('resident upgrade: approved automatically under the switch, once per node p
     committed(await native('clued_owner_auto_approve_set_v1', { enabled: false,
       base_version: (await native('clued_owner_grants_list_v1', {})).auto_approve.version }));
     const opR = uuid(); const opE = uuid();
-    const toReject = (await upgrade('node-b', resource('node-b', 'b'), opR)).owner_request;
-    const toExpire = (await upgrade('node-b', resource('node-b', 'c'), opE)).owner_request;
+    const toReject = (await upgrade('node-b-new', resource('node-b', 'b'), opR)).owner_request;
+    const toExpire = (await upgrade('node-b-new', resource('node-b', 'c'), opE)).owner_request;
     committed(await native('clued_owner_request_reject_v1', { request_id: toReject.request_id }));
     await admin.query(`update clued_private.owner_requests_v1 set expires_at=greatest(created_at+interval '1 millisecond',clock_timestamp())
       where id=$1`, [toExpire.request_id]);
     committed(await native('clued_owner_auto_approve_set_v1', { enabled: true,
       base_version: (await native('clued_owner_grants_list_v1', {})).auto_approve.version }));
-    r = await upgrade('node-b', resource('node-b', 'b'), opR);
+    r = await upgrade('node-b-new', resource('node-b', 'b'), opR);
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'rejected']);
-    r = await upgrade('node-b', resource('node-b', 'c'), opE);
+    r = await upgrade('node-b-new', resource('node-b', 'c'), opE);
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'expired']);
 
     // --- Only a marked node's upgrader reaches the door: the switch grants nobody else anything. ---
@@ -234,7 +265,7 @@ test('resident upgrade: approved automatically under the switch, once per node p
       await assert.rejects(upgrade(who, resource(who === 'plain' ? 'plain' : 'claude', 'a'), uuid()),
         (error) => error.code === '42501' && /owner_grant_door_binding_not_authorized/.test(error.message), who);
     }
-    await assert.rejects(upgrade('node-b', resource('node-a', 'd'), uuid()), /owner_grant_door_resources_invalid/);
+    await assert.rejects(upgrade('node-b-new', resource('node-a', 'd'), uuid()), /owner_grant_door_resources_invalid/);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where action=$1`, [ACTION])).rows[0].n, before);
 
     // --- connection.permission and dataset_split stay the Owner's: the registry and the CHECK above; the

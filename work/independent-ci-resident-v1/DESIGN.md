@@ -4659,14 +4659,16 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **以前**：`ci.resident_upgrade` 永不自动批准（`3ce5200c` 第 2 项），每次升级 Owner 都要在确认页点一次。
 - **现在**（迁移 `20261106040000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
   - 开关开着时，门（`owner_grant_resident_upgrade_door_v1`）为它打开或找到的请求调用 `owner_auto_approve_request_v1`。批准范围：一次、一次使用、24 小时，只给发起请求的连接，只限精确的节点与包。批准后在同一次调用里直接消费。
-  - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，多一个 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
-  - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。第二次照旧等 Owner 批准，这样反复重试的失败升级或打错的包会交到 Owner 手里。
+  - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，内容不变（这次 Grant 从哪来，看它的 `auto_approve_id`）。门的答复和发布门一样带 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
+  - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。
+    - 按 Grant 资源里的节点名算，不按连接算：同一节点重新标记的新连接也共用这 24 小时。
+    - 从请求打开的时刻算：在某次自动批准之后、或它之前 24 小时内打开的请求，直到被决定或过期，都只能由 Owner 批准，升级代理再怎么反复询问也不会变成自动。这样反复重试的失败升级或打错的包会交到 Owner 手里。
   - 开关关着时全部走人工。
 - **不变的部分**：
   - `3ce5200c` 的第 1、3、4、5 项不变：每节点独立升级连接、HALT 时延后、stateCompat 不能回读就在 ACCEPT 拒、时间参数 24h/120/60。
   - `connection.permission`（会自我提权）和 DatasetSplit 的 4 项（会伪造 Owner 认定）仍然只能人工批准。
 - **升级代理不改**：`upgrader/src/grant-client.mjs` 里"永不自动批准"那段注释没动。`upgrader/src/*` 是冻结通道（§34.8、§42.1 c），改任何一个字节都会让之后的包变成 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`。客户端本来就只是轮询门：门返回已消费就继续，它不区分这次 Grant 是 Owner 点的还是开关给的。所以注释的语义以本节为准，等轨 2 的代理自更新（§42.5.3）时再改。
 - **测试**：
-  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同节点 24 小时内第二次走人工；另一节点、过了 24 小时都会再自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同节点 24 小时内第二次走人工；窗口内打开的请求在窗口过后再问仍走人工；同一节点的新连接共用窗口；另一节点、过了 24 小时都会再自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
   - `owner-grants-resident-upgrade-door-db`：把开关关掉后，验证人工路径。
   - `owner-auto-approve-db`：covers 和 excluded 两个列表。
