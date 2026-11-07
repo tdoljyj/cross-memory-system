@@ -43,8 +43,9 @@ test('classification neither accepts another family/path/repository nor manufact
 
 test('the seven pre-existing controller families keep their separate exact Source contract',()=>{
   const old=JSON.parse(fs.readFileSync(new URL('../../'+CONTROL_WORKFLOW_SOURCE_PATH,import.meta.url)));
-  assert.equal(Object.keys(CONTROL_WORKFLOW_FILES).length,7);
-  for(const file of Object.keys(CONTROL_WORKFLOW_FILES))for(const entry of old.workflows[file].sources){
+  const historical=Object.keys(CONTROL_WORKFLOW_FILES).filter(file=>file!=='.github/workflows/clued-merge-reconcile.yml');
+  assert.equal(historical.length,7);
+  for(const file of historical)for(const entry of old.workflows[file].sources){
     assert.equal(registeredControlWorkflowSource(old,file,entry.source_yaml).passed,true,file);
     refused(classify(load(),file,entry.source_yaml));
   }
