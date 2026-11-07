@@ -40,7 +40,7 @@ async function scenario(t, { strictFlip = false, staleGeneration = false } = {})
   assert.ok(facts.openFrontBatch, JSON.stringify(facts));
   const train = { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS,
     frontBatchBudgetMs: job.frontBatchBudgetMs, slotHardCapMinutes: job.slotHardCapMinutes,
-    sweepFreshMs: job.sweepFreshMs, fullSweepMaxMs: job.fullSweepMaxMs };
+    sweepFreshMs: job.sweepFreshMs, fullSweepMaxMs: job.fullSweepMaxMs, sweep: 'gate' };
   const resident = await executorFixture(t, { now: NOW, policy: rawPolicy({ contract: POLICY_CONTRACT_V8, train, sourceManifestSha256: SOURCE }) });
   resident.advance(e.now - NOW);
   const summary = trainSummary(facts); assert.ok(summary);

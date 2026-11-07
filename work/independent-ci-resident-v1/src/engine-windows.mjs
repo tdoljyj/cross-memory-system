@@ -508,8 +508,8 @@ export class WindowsEngine {
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
   // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
   // fresh random values (the derivation checks their shape); the fact carries the train facts.
-  // Step 3c-2b (train-run job /2, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
-  // installed train settings, onSince, frontOutcome, revokeHeadRequestId); everything but the mode goes as one JSON object in
+  // Step 3c-2b (train-run job /2, /3 since DESIGN §65, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
+  // installed train settings, onSince, frontOutcome, revokeHeadRequestId, sweep); everything but the mode goes as one JSON object in
   // --train-params (Source v2 train-run.mjs#TRAIN_RUN_PARAMS, in that order); the derivation adds the record's repo and Source,
   // the run id and createdAt (makeTrainRun). Modes on and revoke-only need it; a call without it is a shadow run of step
   // 3c-1's argv (which a /2 derivation refuses: the executor always passes it).

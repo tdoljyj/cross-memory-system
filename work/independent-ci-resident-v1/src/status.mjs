@@ -264,7 +264,9 @@ function trainOf(t) {
   if (t?.notOnDuty === true) out.notOnDuty = true;
   // Generation 16: readiness is narrower than a completed full sweep. These are
   // display facts only; the executor and Source independently check authority.
-  if (['blocked', 'strict-coverage', 'strict-current-front', 'full-sweep'].includes(t?.frontReadyMode)) out.frontReadyMode = t.frontReadyMode;
+  if (['blocked', 'strict-coverage', 'strict-current-front', 'full-sweep', 'strict-permanent'].includes(t?.frontReadyMode)) out.frontReadyMode = t.frontReadyMode;
+  // DESIGN §65: the policy's train.sweep (strict-permanent mode is 'audit' or 'off'); the companion's ruleset backstop reads it.
+  if (['gate', 'audit', 'off'].includes(t?.sweepMode)) out.sweepMode = t.sweepMode;
   for (const k of ['fullPending', 'backgroundAllPending']) if (typeof t?.[k] === 'boolean') out[k] = t[k];
   for (const k of ['maintenanceExtraUsed', 'maintenanceExtraLimit'])
     if (Number.isSafeInteger(t?.[k]) && t[k] >= 0 && t[k] <= 200) out[k] = t[k];

@@ -53,6 +53,12 @@
 //     the Owner releases the breaker).
 // /7 and /8 stay accepted exactly as they were: without breaker.network the breaker and the release cap behave as before (the Owner's
 // release request works under any contract). Changing these numbers is a new policy (new hash, the Owner's UAC), never a per-batch input.
+// train.sweep (/8 and later, optional; strict-permanent mode, Owner decision 9e2511fe, DESIGN §65): what the full sweep is for in train on:
+//   'gate'   the take-over full sweep gates every batch and may cover a green with strict off (DESIGN §41, §60-§62): the way back;
+//   'audit'  strict stays on for good: no full sweep gates anything, one full round a day runs as a background audit;
+//   'off'    the same without the audit rounds.
+// A policy without it is TRAIN_SWEEP_DEFAULT, the Owner's decision ('audit'); the policy digest of such a policy is unchanged. An older
+// resident refuses a policy that names it (POLICY_TRAIN_KEYS_INVALID), so it never runs the gate by mistake.
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
@@ -92,6 +98,9 @@ export const TRAIN_MODES_V8 = Object.freeze(['off', 'shadow', 'on']);
 // (Source v2 train-run.mjs TRAIN_RUN_SHADOW_DEFAULTS names the same numbers.)
 export const TRAIN_DEFAULTS = Object.freeze({ slotHardCapMinutes: 120, frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000 });
 export const TRAIN_V8_KEYS = Object.freeze(['enabled', 'nonFrontRuns', 'maintenanceEveryMs', 'maintenanceMaxPerDay', ...Object.keys(TRAIN_DEFAULTS)]);
+// DESIGN §65 (Source v2 train-run.mjs TRAIN_RUN_SWEEPS names the same values).
+export const TRAIN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
+export const TRAIN_SWEEP_DEFAULT = 'audit';
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 
@@ -182,18 +191,22 @@ export function validateTrain(t) {
 // train (contract /8, DESIGN §41.7): 'on' is accepted; the four new settings are bounded like the train-run job /2 bounds
 // them (INTERFACES §2), and a front batch's budget must fit inside the slot's hard cap.
 export function validateTrainV8(t) {
-  exactKeys(t, [...TRAIN_V8_KEYS], 'POLICY_TRAIN_KEYS_INVALID');
+  exactKeys(t, [...TRAIN_V8_KEYS, ...(Object.hasOwn(t ?? {}, 'sweep') ? ['sweep'] : [])], 'POLICY_TRAIN_KEYS_INVALID');
+  check(!Object.hasOwn(t, 'sweep') || TRAIN_SWEEPS.includes(t.sweep), 'POLICY_TRAIN_INVALID');
   check(TRAIN_MODES_V8.includes(t.enabled) && typeof t.nonFrontRuns === 'boolean' && int(t.maintenanceEveryMs, 60_000, 3_600_000) && int(t.maintenanceMaxPerDay, 0, 200), 'POLICY_TRAIN_INVALID');
   check(int(t.slotHardCapMinutes, 60, 180) && int(t.frontBatchBudgetMs, 60_000, 10_800_000) && int(t.sweepFreshMs, 60_000, 3_600_000) && int(t.fullSweepMaxMs, 600_000, 86_400_000)
     && t.frontBatchBudgetMs < t.slotHardCapMinutes * 60_000, 'POLICY_TRAIN_INVALID');
   return t;
 }
 
-// The train settings of an installed policy (/8 its own, /7 TRAIN_DEFAULTS): what the train-run job /2 carries.
+// The train settings of an installed policy (/8 its own, /7 TRAIN_DEFAULTS): the clocks the train-run job carries (and Source v2
+// train-strict.mjs#strictSettingsDigest digests; the sweep mode is carried beside them, trainSweepMode).
 export function trainSettings(train) {
   const own = k => (Object.hasOwn(train ?? {}, k) ? train[k] : TRAIN_DEFAULTS[k]);
   return Object.freeze({ slotHardCapMinutes: own('slotHardCapMinutes'), frontBatchBudgetMs: own('frontBatchBudgetMs'), sweepFreshMs: own('sweepFreshMs'), fullSweepMaxMs: own('fullSweepMaxMs') });
 }
+// DESIGN §65: the policy's train.sweep, or the Owner's default (train-run /3 `sweep`). /7 (off or shadow only) carries the default too.
+export function trainSweepMode(train) { return Object.hasOwn(train ?? {}, 'sweep') ? train.sweep : TRAIN_SWEEP_DEFAULT; }
 
 // relay: { enabled, roles (a non-empty ordered subset of the registry's relayable roles), wait (§7.2) }.
 export function validateRelay(r) {

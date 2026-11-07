@@ -8,7 +8,7 @@ import { executorFixture, fakeEngine, rawPolicy, HEAD, BASE, SOURCE, CI_SOURCE }
 
 const MIN = 60_000, DAY = 24 * 60 * MIN, NOW = Date.parse('2026-10-20T12:00:00Z');
 const iso = n => new Date(n).toISOString();
-const train = { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS };
+const train = { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, sweep: 'gate' };
 const policy = () => rawPolicy({ contract: POLICY_CONTRACT_V8, train });
 const front = { pr: 910, headSha: HEAD, baseSha: BASE, testSha: '5'.repeat(40), testTree: '6'.repeat(40),
   claimId: '0a1b2c3d-0000-4000-8000-0000000000aa', since: iso(NOW), attempt: 1 };

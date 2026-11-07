@@ -9,16 +9,22 @@
 // finally failed front batch (flat fields, all null or all set; §41.4 "touch failed"); an accepted revoke-head
 // request (§41.3). /1 is no longer produced or accepted. FormalPublicBoundaryV2.cs#ValidateTrainRun is the same
 // table (test/fixtures/train-run-cases.json runs on both sides).
+// Contract /3 (strict-permanent mode, Owner decision 9e2511fe, resident DESIGN §65): /2 plus `sweep`, the policy's train.sweep:
+//   gate   the take-over full sweep gates every batch and the full-sweep proof can cover a green with strict off (§41, §60-§62);
+//   audit  strict stays on for good: no full sweep gates anything; a full round is a background audit at most once a day;
+//   off    the same without the audit rounds.
+// /2 is no longer produced or accepted (the resident and the Source change together).
 import { createHash } from 'node:crypto';
 import { digest } from '../proof.mjs';
 
-export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/2';
+export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/3';
 export const TRAIN_RUN_KEY_CONTRACT = 'clued.independent-ci.train-run-key/1';
 export const TRAIN_RUN_ROLE = 'train-run';
 export const TRAIN_RUN_FIELDS = Object.freeze(['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs',
-  'sweepFreshMs', 'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId']);
+  'sweepFreshMs', 'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
 export const TRAIN_RUN_IDENTITY = Object.freeze(TRAIN_RUN_FIELDS.filter(k => !['contract', 'id', 'createdAt'].includes(k)));
 export const TRAIN_RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
+export const TRAIN_RUN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 // The fields after the four of /1: what the resident passes (derive-batch.mjs --train-params).
 export const TRAIN_RUN_PARAMS = Object.freeze(TRAIN_RUN_IDENTITY.slice(4));
 const FRONT = Object.freeze(['frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode']);
@@ -26,7 +32,7 @@ const FRONT = Object.freeze(['frontPr', 'frontHeadSha', 'frontTestSha', 'frontAt
 export const TRAIN_RUN_BOUNDS = Object.freeze({ slotHardCapMinutes: [60, 180], frontBatchBudgetMs: [60_000, 10_800_000], sweepFreshMs: [60_000, 3_600_000], fullSweepMaxMs: [600_000, 86_400_000] });
 // Shadow derivations that name no params (fixtures, derive-batch.mjs#deriveTrainRun only; the CLI always takes them).
 export const TRAIN_RUN_SHADOW_DEFAULTS = Object.freeze({ slotHardCapMinutes: 120, frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000,
-  onSince: null, frontPr: null, frontHeadSha: null, frontTestSha: null, frontAttempt: null, frontCode: null, revokeHeadRequestId: null });
+  onSince: null, frontPr: null, frontHeadSha: null, frontTestSha: null, frontAttempt: null, frontCode: null, revokeHeadRequestId: null, sweep: 'gate' });
 
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
@@ -64,6 +70,7 @@ export function validateTrainRun(job) {
     || !(job.onSince === null || isoMs(job.onSince)) || (job.mode === 'shadow' && job.onSince !== null) || (job.mode === 'on' && job.onSince === null)
     || !(FRONT.every(k => job[k] === null) || (job.mode === 'on' && frontOutcome(job)))
     || !(job.revokeHeadRequestId === null || (job.mode !== 'shadow' && typeof job.revokeHeadRequestId === 'string' && UUID.test(job.revokeHeadRequestId)))
+    || !TRAIN_RUN_SWEEPS.includes(job.sweep)
     || job.id !== trainRunJobId(job)) fail('invalid_train_run');
   return job;
 }
