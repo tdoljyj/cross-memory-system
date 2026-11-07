@@ -2,7 +2,7 @@
 hashes with the frozen Linux tool's own code. No host access, no WSL, no root, no key.
   python -I -m unittest discover -s test -p "test_*.py"     (from rollout/)
 """
-import datetime, hashlib, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
+import base64, datetime, hashlib, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RO = os.path.dirname(HERE)
@@ -126,17 +126,133 @@ class RolesDerived(unittest.TestCase):
             json.dump(facts, open(self.facts_file, 'w'))
         return run('roles-derived.py', self.tree, self.repo, self.commit['B'], self.roles, self.manifest_file, ci or sha(self.new_manifest), self.facts_file)
 
-    def test_the_hashes_the_linux_stage_will_derive(self):
-        code, out, err = self.derive()
-        self.assertEqual(code, 0, (out, err))
-        want = {}
+    def want(self):
+        out = {}
         for role in fx.ROLES:
             pol, pay = self.installed[role]
             new_pol, _ = tool.derive_role(role, pol, pay, sha(self.new_manifest), json.loads(self.new_manifest), lambda rel: sha(fx.SOURCE['B'][rel]))
-            want[role] = sha(tool.canonical_bytes(new_pol))
-        self.assertEqual(out['rolesDerivedSha256'], want)
+            out[role] = sha(tool.canonical_bytes(new_pol))
+        return out
+
+    def test_the_hashes_the_linux_stage_will_derive(self):
+        code, out, err = self.derive()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(out['rolesDerivedSha256'], self.want())
         # the Source binding moved: entry, qualification and worker are B's
         self.assertNotEqual(out['rolesDerivedSha256']['trivy'], self.facts['roles']['trivy']['policySha256'])
+        # no companion copy next to the facts: the configured directory, and the answer says why
+        self.assertEqual([out['copySource'], out['notice']['code']], ['configured-directory', 'ROLES_PUBLIC_COPY_MISSING'])
+
+    # ---- DESIGN §63 (Task 3ea699f6): the companion's copy next to the facts, no root export with UAC ----
+
+    NAMES = tuple(n for r in ('gitleaks', 'trivy', 'contract-placement') for n in (r + '.json', r + '.qualification.json'))
+
+    def companion_doc(self, generation=1, files=None):
+        files = files or {n: open(os.path.join(self.roles, n), 'rb').read() for n in self.NAMES}
+        return {'contract': 'clued.independent-ci.linux-roles-public/1', 'generation': generation, 'factsObservedAt': self.facts['observedAt'],
+                'observedAt': self.facts['observedAt'], 'files': {n: {'sha256': sha(b), 'base64': base64.b64encode(b).decode()} for n, b in files.items()}}
+
+    def write_copy(self, doc, raw=None):
+        path = os.path.join(os.path.dirname(self.facts_file), 'roles-public.json')
+        open(path, 'wb').write(raw if raw is not None else (json.dumps(doc, sort_keys=True, separators=(',', ':')) + '\n').encode())
+        return path
+
+    def derive_without_export(self):
+        """The configured directory is an empty public-six directory: the root export of this generation never ran."""
+        empty = os.path.join(self.d, 'public-six-never-exported')
+        os.makedirs(empty, exist_ok=True)
+        return run('roles-derived.py', self.tree, self.repo, self.commit['B'], empty, self.manifest_file, sha(self.new_manifest), self.facts_file)
+
+    def test_companion_copy_is_used_without_any_export(self):
+        self.write_copy(self.companion_doc())
+        code, out, err = self.derive_without_export()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(out['rolesDerivedSha256'], self.want())
+        self.assertEqual(out['copySource'], 'companion')
+        self.assertNotIn('notice', out)
+
+    def test_companion_copy_changed_or_stale_is_refused_never_passed_over(self):
+        # the configured directory is current all along: a bad companion copy is still refused, never replaced by it
+        good = self.companion_doc()
+        other = dict(good['files']); other['trivy.json'] = {'sha256': sha(b'{"role":"trivy"}\n'), 'base64': base64.b64encode(b'{"role":"trivy"}\n').decode()}
+        cases = [
+            ({**good, 'files': other}, None, 'INSTALLED_ROLES_COPY_NOT_CURRENT'),                       # changed, entry made to match: the facts catch it
+            ({**good, 'files': {**good['files'], 'gitleaks.json': {**good['files']['gitleaks.json'], 'sha256': 'f' * 64}}}, None, 'ROLES_PUBLIC_COPY_REFUSED'),
+            ({**good, 'files': {k: v for k, v in good['files'].items() if k != 'trivy.qualification.json'}}, None, 'ROLES_PUBLIC_COPY_REFUSED'),
+            ({**good, 'files': {**good['files'], 'trivy.json': {**good['files']['trivy.json'], 'base64': good['files']['trivy.json']['base64'] + '\n'}}}, None, 'ROLES_PUBLIC_COPY_REFUSED'),
+            ({**good, 'contract': 'clued.independent-ci.linux-roles-public/2'}, None, 'ROLES_PUBLIC_COPY_REFUSED'),
+            ({**good, 'extra': 1}, None, 'ROLES_PUBLIC_COPY_REFUSED'),
+            (None, b'not json', 'ROLES_PUBLIC_COPY_REFUSED'),
+            (None, b'\xff\xfe{}', 'ROLES_PUBLIC_COPY_REFUSED'),
+            (None, b'', 'ROLES_PUBLIC_COPY_REFUSED'),
+        ]
+        for i, (doc, raw, want) in enumerate(cases):
+            self.write_copy(doc, raw)
+            code, out, _ = self.derive()
+            self.assertEqual([code, out['code']], [1, want], (i, out))
+        # stale: the copy of this generation's facts, but the facts name newer files (same generation: nothing legitimate does this)
+        self.write_copy(good)
+        newer = json.loads(json.dumps(self.facts)); newer['roles']['contract-placement']['qualificationSha256'] = 'a' * 64
+        code, out, _ = self.derive(facts=newer)
+        self.assertEqual([code, out['code'], out['role'], out['file'], out['copySource']], [1, 'INSTALLED_ROLES_COPY_NOT_CURRENT', 'contract-placement', 'qualification', 'companion'])
+
+    def test_companion_copy_missing_or_of_another_generation_falls_back_with_a_notice(self):
+        # absent (a companion older than the fix): the configured directory, as before
+        code, out, err = self.derive()
+        self.assertEqual([code, out['copySource'], out['notice']['code']], [0, 'configured-directory', 'ROLES_PUBLIC_COPY_MISSING'], err)
+        self.assertIn('linux.installedRoles', out['notice']['hint'])
+        # ... and when that directory was never exported either: the old refusal, with the notice
+        code, out, _ = self.derive_without_export()
+        self.assertEqual([code, out['code'], out['notice']['code']], [1, 'INSTALLED_ROLES_COPY_MISSING', 'ROLES_PUBLIC_COPY_MISSING'])
+        # another generation (the facts are newer than the copy, or a rollback to an older companion): fallback, never the copy
+        self.write_copy(self.companion_doc(generation=7, files={n: b'{"older":true}\n' for n in self.NAMES}))
+        code, out, err = self.derive()
+        self.assertEqual([code, out['copySource'], out['notice']['code'], out['notice']['copyGeneration'], out['notice']['factsGeneration']],
+                         [0, 'configured-directory', 'ROLES_PUBLIC_COPY_OTHER_GENERATION', 7, 1], err)
+        self.assertEqual(out['rolesDerivedSha256'], self.want())
+        code, out, _ = self.derive_without_export()
+        self.assertEqual([code, out['code'], out['notice']['code']], [1, 'INSTALLED_ROLES_COPY_MISSING', 'ROLES_PUBLIC_COPY_OTHER_GENERATION'])
+
+    @unittest.skipUnless(shutil.which('node'), 'node is required')
+    def test_install_then_build_next_package_needs_no_uac(self):
+        """The path end to end: the new generation's companion (the real UpgradeLane) reads the facts and the six live role files with
+        its fixed root argv (a fake WSL that serves root's roles-v3), writes version-facts.json and roles-public.json into
+        upgrade/mailbox/responses/; roles-derived.py then derives from that copy while the configured directory stays empty (no
+        export, no UAC). Before the fix the same build was refused INSTALLED_ROLES_COPY_MISSING."""
+        mailbox = os.path.join(self.d, 'resident', 'upgrade', 'mailbox')
+        os.makedirs(os.path.join(mailbox, 'requests')); os.makedirs(os.path.join(mailbox, 'responses'))
+        facts = json.loads(json.dumps(self.facts)); facts.pop('observedAt')
+        script = os.path.join(self.d, 'lane.mjs')
+        src = 'file:///' + os.path.join(RES, 'src').replace('\\', '/').lstrip('/')
+        open(script, 'w', encoding='utf-8').write(f'''
+import fs from 'node:fs';
+import {{ UpgradeLane }} from '{src}/companion.mjs';
+import {{ UpgradeMailbox, UPGRADE_TOOL_PATH }} from '{src}/upgrade-mailbox.mjs';
+const [mailbox, roles, factsJson] = process.argv.slice(2);
+const cfg = {{ wslExe: 'C:\\\\Windows\\\\System32\\\\wsl.exe', distribution: 'CluedResident-Linux' }};
+const reads = [];
+const run = async a => {{
+  const linux = a.slice(a.indexOf('LC_ALL=C') + 1);
+  if (a[3] !== '--user' || a[4] !== 'root') return {{ code: 1, stdout: '' }};
+  if (linux[0] === UPGRADE_TOOL_PATH && linux[1] === 'version-facts') return {{ code: 0, stdout: JSON.stringify({{ ...JSON.parse(factsJson), observedAt: new Date().toISOString() }}) + '\\n' }};
+  if (linux[0] === '/usr/bin/base64' && linux[1] === '-w' && linux[2] === '0' && linux[3] === '--' && linux[4].startsWith('/etc/clued-independent-ci/roles-v3/')) {{
+    reads.push(linux[4]);
+    return {{ code: 0, stdout: fs.readFileSync(roles + '/' + linux[4].split('/').pop()).toString('base64') }};
+  }}
+  return {{ code: 1, stdout: '' }};
+}};
+const lane = new UpgradeLane({{ cfg, mailbox: await UpgradeMailbox.open(mailbox), run, clock: Date.now }});
+const step = await lane.step();
+console.log(JSON.stringify({{ step, rolesPublic: lane.rolesPublic, reads }}));
+''')
+        p = subprocess.run(['node', script, mailbox, self.roles, json.dumps(facts)], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        lane = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual([lane['step']['facts'], lane['rolesPublic'], len(lane['reads'])], [True, 'written', 6])
+        self.facts_file = os.path.join(mailbox, 'responses', 'version-facts.json')
+        code, out, err = self.derive_without_export()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual([out['copySource'], out['rolesDerivedSha256']], ['companion', self.want()])
 
     def test_the_tree_is_left_as_it_was(self):
         # Generation 13: loading the frozen tool left linux/bin/__pycache__ in the commit's tree, and build-upgrade.ps1's next attempt
