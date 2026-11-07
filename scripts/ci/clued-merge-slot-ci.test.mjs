@@ -171,7 +171,9 @@ const controlRegistry=()=>JSON.parse(fs.readFileSync(path.join(ROOT,CONTROL_WORK
 const shaJson=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 test('all historical seven-family Source and Role values retain their immutable complete digests',()=>{
-  const r=controlRegistry();assert.equal(Object.keys(r.workflows).length,7);
+  const r=controlRegistry();
+  const historical=Object.keys(r.workflows).filter(file=>file!=='.github/workflows/clued-merge-reconcile.yml');
+  assert.equal(historical.length,7);
   for(const pin of CONTROL_HISTORY_SOURCE_DIGESTS_186){
     const source=r.workflows[pin.file].sources.find(s=>s.workflow_blob===pin.blob);
     assert.ok(source,pin.file+': historical Source retained');

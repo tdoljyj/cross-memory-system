@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.2';
+export const COMPONENT_VERSION='1.0.3';
 export const NON_PR_CONTROL_SOURCE_PATH='scripts/ci/clued-non-pr-control-sources.json';
 export const NON_PR_CONTROL_SOURCE_SCHEMA='clued.non-pr-control-sources/1';
 export const NON_PR_CONTROL_MAX_BYTES=524288;

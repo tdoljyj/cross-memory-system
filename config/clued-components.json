@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.15",
+      "version": "1.1.16",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -576,7 +576,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "33c0338544fa519e50b00188fbfb914a260cb1444a9d0ef438152dc4d73fa426"
+      "content_sha256": "c7ea04d81fbe1d2e7cddaab0efba45e8c31d4ac4a8e97186aea5557dddcd1e78"
     },
     {
       "id": "script.resource-maintenance",
@@ -598,7 +598,7 @@
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -610,7 +610,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "c3fb56890dbb8b446ab1abdb9461db107429b46ca80af97c327f92fbd2f7d57e"
+      "content_sha256": "f7c6df82b4c79d29521a71ea88ad08f2b768c517676d53fe0fc3a0bedf370f3d"
     },
     {
       "id": "script.source-only-workflow",
@@ -631,7 +631,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -641,13 +641,14 @@
         "scripts/ci/clued-merge-slot-ci.test.mjs",
         ".github/workflows/clued-merge-slot-ci.yml",
         "scripts/ci/clued-control-workflow-source.test.mjs",
-        ".github/workflows/clued-work-admission-dispatch.yml"
+        ".github/workflows/clued-work-admission-dispatch.yml",
+        "scripts/ci/clued-control-workflow-reconcile-source.test.mjs"
       ],
       "version_marker": {
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "3a1ba372775682788caa54d5edafb698278e6492af152fe8ef5b64f2b818a380"
+      "content_sha256": "0a8ba4fd014815ac629b7d8b145d0fb6bf3b5fec6457f89f11cf088aec711875"
     },
     {
       "id": "script.required-applicability",
