@@ -5503,3 +5503,8 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 | MINOR | StartBoundary 依赖区域设置 | 改正：用 InvariantCulture |
 | MINOR | `-CompanionInteractive` 和提权 verify 的回退路径没有先等任务停止 | 改正：统一用 `Invoke-CompanionStopAndFallback` |
 | MINOR | 手册 T8 没写所有者检查；ClearHistory 会清空全部剪贴板历史 | 改正手册 |
+
+**第三轮复核**：上一轮的 MAJOR 和 7 条 MINOR 确认已解决，没有新的 BLOCKER、MAJOR、MINOR。两条低优先级建议：
+
+1. 切换进程在凭据框开着时被意外结束，回退之后 Owner 才输入密码，会留下没有标记的密码模式。已改：注册小程序在交出密码前核对标记仍在、标记里的 PID 就是它的父进程且启动时刻相同，否则拒绝（`PENDING_MARKER_*`）。
+2. 不提权的 verify 读不到切换进程的启动时刻，进行中的切换会显示成“需要提权运行”。只影响显示，保留。

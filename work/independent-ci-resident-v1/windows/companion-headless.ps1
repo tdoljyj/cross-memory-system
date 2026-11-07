@@ -244,6 +244,8 @@ function Get-InjectVariables {
   @($names + $hkcu | Sort-Object -Unique)
 }
 # The registrar with a cleared, fixed environment (no profiler, no COMPlus_ knob of the Owner's session reaches it). Returns its stdout.
+# The registrar's parent is this process: it checks that the pending marker names this process (pid and start time) right before it
+# hands the password over (review round 3), so the marker must be written by this same process (Write-CompanionPending uses $PID).
 function Invoke-CompanionRegistrar([string]$root, [string[]]$arguments) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'

@@ -92,6 +92,20 @@ public static class RegistrarCore {
   public static string Sha256Text(string t) {
     using (SHA256 h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(Encoding.UTF8.GetBytes(t))).Replace("-", "").ToLowerInvariant();
   }
+  // Review round 3: the password is handed over only while the switch that started this program still runs and still holds its
+  // pending marker (install\companion-headless-pending.json): the marker's pid is this program's parent and its start time matches.
+  // Otherwise a fall-back may already have run (the switch ended while the box was open), and a password task would be left with no
+  // marker and no fall-back task. null: matches; else the code.
+  public static string PendingRefusal(string markerJson, int parentPid, string parentStartUtc) {
+    if (markerJson == null) return "PENDING_MARKER_MISSING";
+    Dictionary<string, object> d;
+    try { d = new JavaScriptSerializer().DeserializeObject(markerJson) as Dictionary<string, object>; } catch { return "PENDING_MARKER_UNREADABLE"; }
+    object pid, start, contract;
+    if (d == null || !d.TryGetValue("contract", out contract) || (contract as string) != "clued.independent-ci.companion-headless-pending/1") return "PENDING_MARKER_UNREADABLE";
+    if (!d.TryGetValue("pid", out pid) || !(pid is int) || (int)pid != parentPid) return "PENDING_MARKER_NOT_THIS_SWITCH";
+    if (!d.TryGetValue("processStart", out start) || parentStartUtc == null || (start as string) != parentStartUtc) return "PENDING_MARKER_NOT_THIS_SWITCH";
+    return null;
+  }
   // The node profile's owner SID from record\acceptance.json (admin-only; the install wrote it).
   public static string OwnerSidFromAcceptance(string json) {
     Dictionary<string, object> d = new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string, object>;
@@ -127,6 +141,8 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION { public IntPtr ExitStatus, PebBaseAddress, AffinityMask, BasePriority, UniqueProcessId, InheritedFromUniqueProcessId; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int cls, ref PROCESS_BASIC_INFORMATION info, int length, out int returned);
   [DllImport("ole32.dll")] static extern int CoInitializeEx(IntPtr reserved, int coinit);
   [DllImport("ole32.dll")] static extern int CoInitializeSecurity(IntPtr sd, int auth, IntPtr svc, IntPtr reserved, int authnLevel, int impLevel, IntPtr authList, int caps, IntPtr reserved3);
 
@@ -223,6 +239,9 @@ public static class CluedCompanionTaskRegistrar {
       string account = RegistrarCore.QualifiedAccount(user.ToString(), domain.ToString(), Environment.MachineName);
       string sid = account == null ? null : SidOf(account);
       if (sid == null || sid != ownerSid) { Print("ACCOUNT_MISMATCH", null); return 2; }
+      // Review round 3: only while the switch that started us still holds its marker (checked after the box, right before the hand-over).
+      string pendingWhy = CurrentPendingRefusal(root);
+      if (pendingWhy != null) { Print(pendingWhy, null); return 2; }
       // pwLen counts the terminating NUL when there is one.
       uint chars = pwLen;
       if (chars > 0 && Marshal.ReadInt16(pw, (int)(chars - 1) * 2) == 0) chars -= 1;
@@ -262,6 +281,16 @@ public static class CluedCompanionTaskRegistrar {
       if (pDef != IntPtr.Zero) Marshal.Release(pDef);
       if (pFolder != IntPtr.Zero) Marshal.Release(pFolder);
     }
+  }
+  static string CurrentPendingRefusal(string root) {
+    string marker = null;
+    try { string f = root + @"\install\companion-headless-pending.json"; if (System.IO.File.Exists(f)) marker = System.IO.File.ReadAllText(f, new UTF8Encoding(false, true)); } catch { return "PENDING_MARKER_UNREADABLE"; }
+    PROCESS_BASIC_INFORMATION pbi = new PROCESS_BASIC_INFORMATION(); int got;
+    if (NtQueryInformationProcess(GetCurrentProcess(), 0, ref pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out got) != 0) return "PARENT_UNREADABLE";
+    int ppid = (int)pbi.InheritedFromUniqueProcessId.ToInt64();
+    string start = null;
+    try { start = System.Diagnostics.Process.GetProcessById(ppid).StartTime.ToUniversalTime().ToString("o"); } catch { start = null; }
+    return RegistrarCore.PendingRefusal(marker, ppid, start);
   }
   static object Get(object o, string name, object index) { return o.GetType().InvokeMember(name, System.Reflection.BindingFlags.GetProperty, null, o, new[] { index }); }
 

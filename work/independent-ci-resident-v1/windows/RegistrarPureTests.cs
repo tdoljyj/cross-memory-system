@@ -36,6 +36,14 @@ public static class RegistrarPureTests {
     Ok(threw, "xml-owner-sid-shape");
     Ok(RegistrarCore.TaskSddl(Owner) == "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;" + Owner + ")", "sddl-owner-read-only");
 
+    // review round 3: the password only while the switch that started the registrar still holds its marker
+    string mk = "{\"contract\":\"clued.independent-ci.companion-headless-pending/1\",\"pid\":4242,\"processStart\":\"2026-11-07T12:00:00.0000000Z\"}";
+    Ok(RegistrarCore.PendingRefusal(mk, 4242, "2026-11-07T12:00:00.0000000Z") == null, "pending-this-switch");
+    Ok(RegistrarCore.PendingRefusal(null, 4242, "2026-11-07T12:00:00.0000000Z") == "PENDING_MARKER_MISSING", "pending-missing");
+    Ok(RegistrarCore.PendingRefusal(mk, 4243, "2026-11-07T12:00:00.0000000Z") == "PENDING_MARKER_NOT_THIS_SWITCH", "pending-other-parent");
+    Ok(RegistrarCore.PendingRefusal(mk, 4242, "2026-11-07T12:00:01.0000000Z") == "PENDING_MARKER_NOT_THIS_SWITCH", "pending-pid-reused");
+    Ok(RegistrarCore.PendingRefusal(mk, 4242, null) == "PENDING_MARKER_NOT_THIS_SWITCH", "pending-parent-gone");
+    Ok(RegistrarCore.PendingRefusal("{}", 4242, "x") == "PENDING_MARKER_UNREADABLE", "pending-shape");
     // codes only
     Ok(RegistrarCore.RegisterCode(0) == "REGISTERED", "code-registered");
     Ok(RegistrarCore.RegisterCode(unchecked((int)0x8007052E)) == "LOGON_REJECTED", "code-logon-rejected");
