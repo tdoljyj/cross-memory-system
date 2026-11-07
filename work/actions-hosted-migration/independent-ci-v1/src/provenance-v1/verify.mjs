@@ -6,7 +6,6 @@
 // file was found and every one verified. It writes nothing, signs nothing, contacts nothing.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { verifyDsse } from './dsse.mjs';
@@ -85,4 +84,4 @@ export async function main(argv = process.argv.slice(2), out = process.stdout) {
   }
   return report.ok ? 0 : 1;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();
+if (import.meta.main) process.exitCode = await main();
