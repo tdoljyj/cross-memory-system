@@ -59,6 +59,10 @@
 //   'off'    the same without the audit rounds.
 // A policy without it is TRAIN_SWEEP_DEFAULT, the Owner's decision ('audit'); the policy digest of such a policy is unchanged. An older
 // resident refuses a policy that names it (POLICY_TRAIN_KEYS_INVALID), so it never runs the gate by mistake.
+// train.landing and train.batchMax (/8 and later, optional; bors-style landing, DESIGN §66): 'github-merge' (default: stage 8 writes the
+// merge-slot green and GitHub merges, §65) or 'push' (stage 8 fast-forwards main to the tested S itself); batchMax 1..4 (default 1) PRs
+// per batch, more than 1 only with push. push needs strict-permanent mode (sweep audit or off). Neither key written: the policy and its
+// digest are unchanged; an older resident refuses a policy that names one (POLICY_TRAIN_KEYS_INVALID).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
@@ -101,6 +105,10 @@ export const TRAIN_V8_KEYS = Object.freeze(['enabled', 'nonFrontRuns', 'maintena
 // DESIGN §65 (Source v2 train-run.mjs TRAIN_RUN_SWEEPS names the same values).
 export const TRAIN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 export const TRAIN_SWEEP_DEFAULT = 'audit';
+// DESIGN §66 (Source v2 train-landing.mjs LANDING_MODES, BATCH_MAX_LIMIT name the same values).
+export const TRAIN_LANDINGS = Object.freeze(['github-merge', 'push']);
+export const TRAIN_LANDING_DEFAULT = 'github-merge';
+export const TRAIN_BATCH_MAX_LIMIT = 4;
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 
@@ -191,8 +199,13 @@ export function validateTrain(t) {
 // train (contract /8, DESIGN §41.7): 'on' is accepted; the four new settings are bounded like the train-run job /2 bounds
 // them (INTERFACES §2), and a front batch's budget must fit inside the slot's hard cap.
 export function validateTrainV8(t) {
-  exactKeys(t, [...TRAIN_V8_KEYS, ...(Object.hasOwn(t ?? {}, 'sweep') ? ['sweep'] : [])], 'POLICY_TRAIN_KEYS_INVALID');
+  exactKeys(t, [...TRAIN_V8_KEYS, ...['sweep', 'landing', 'batchMax'].filter(k => Object.hasOwn(t ?? {}, k))], 'POLICY_TRAIN_KEYS_INVALID');
   check(!Object.hasOwn(t, 'sweep') || TRAIN_SWEEPS.includes(t.sweep), 'POLICY_TRAIN_INVALID');
+  check(!Object.hasOwn(t, 'landing') || TRAIN_LANDINGS.includes(t.landing), 'POLICY_TRAIN_INVALID');
+  check(!Object.hasOwn(t, 'batchMax') || int(t.batchMax, 1, TRAIN_BATCH_MAX_LIMIT), 'POLICY_TRAIN_INVALID');
+  // DESIGN §66.2: push only in strict-permanent mode; a batch of several PRs only with push.
+  check(trainLandingMode(t) !== 'push' || trainSweepMode(t) !== 'gate', 'POLICY_TRAIN_INVALID');
+  check(trainBatchMax(t) === 1 || trainLandingMode(t) === 'push', 'POLICY_TRAIN_INVALID');
   check(TRAIN_MODES_V8.includes(t.enabled) && typeof t.nonFrontRuns === 'boolean' && int(t.maintenanceEveryMs, 60_000, 3_600_000) && int(t.maintenanceMaxPerDay, 0, 200), 'POLICY_TRAIN_INVALID');
   check(int(t.slotHardCapMinutes, 60, 180) && int(t.frontBatchBudgetMs, 60_000, 10_800_000) && int(t.sweepFreshMs, 60_000, 3_600_000) && int(t.fullSweepMaxMs, 600_000, 86_400_000)
     && t.frontBatchBudgetMs < t.slotHardCapMinutes * 60_000, 'POLICY_TRAIN_INVALID');
@@ -207,6 +220,10 @@ export function trainSettings(train) {
 }
 // DESIGN §65: the policy's train.sweep, or the Owner's default (train-run /3 `sweep`). /7 (off or shadow only) carries the default too.
 export function trainSweepMode(train) { return Object.hasOwn(train ?? {}, 'sweep') ? train.sweep : TRAIN_SWEEP_DEFAULT; }
+// DESIGN §66: the policy's train.landing and train.batchMax, or their defaults (github-merge, 1); what stages 8 and 10 get as train-landing.json.
+export function trainLandingMode(train) { return Object.hasOwn(train ?? {}, 'landing') ? train.landing : TRAIN_LANDING_DEFAULT; }
+export function trainBatchMax(train) { return Object.hasOwn(train ?? {}, 'batchMax') ? train.batchMax : 1; }
+export function installedTrainLanding(policy) { return { landing: trainLandingMode(policy?.train), batchMax: trainBatchMax(policy?.train) }; }
 
 // relay: { enabled, roles (a non-empty ordered subset of the registry's relayable roles), wait (§7.2) }.
 export function validateRelay(r) {

@@ -237,6 +237,12 @@ export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
 // succeeded in the same attempt, so a failure there is much more likely a commit GitHub no longer serves (a deleted branch, a test merge
 // GitHub dropped) than the line: it stays BUNDLE_UNAVAILABLE.
 export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote']);
+// DESIGN §67 (review 2): build-bundle.ps1's refusals of a batch of several PRs that say a member moved on after stage 10 composed the
+// batch (its branch no longer at the member's head, or GitHub's PR head another commit). Nothing about the front or the node was
+// decided: the executor releases the batch like a supersession (TRAIN_BATCH_MEMBER_MOVED: no release cap, no breaker) and drops
+// that S; stage 10 composes again. Every other refusal stays BUNDLE_UNAVAILABLE.
+export const BUNDLE_MEMBER_MOVED_REASONS = Object.freeze(['BATCH_MEMBER_NOT_BRANCH_TIP', 'BATCH_MEMBER_NOT_PR_HEAD']);
+export const TRAIN_BATCH_MEMBER_MOVED = 'TRAIN_BATCH_MEMBER_MOVED';
 export const BUNDLE_NETWORK_UNAVAILABLE = 'BUNDLE_NETWORK_UNAVAILABLE';
 export function bundleNetworkRefusal(runner) {
   if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return false;
@@ -455,9 +461,10 @@ export class Companion {
     switch (request.kind) {
       case 'build-bundle': {
         const r = await this.run(this.a.bundle(request.batchId), { timeoutMs: 30 * 60_000 });
-        const v = r.code === 0 ? json(r.stdout) : null;
-        if (v?.status === 'BUNDLE_WRITTEN') return { ok: true, code: null };
+        const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
+        if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN') return { ok: true, code: null };
         await this.noteBundleRefusal('build-bundle', r);
+        if (r.code === 2 && BUNDLE_MEMBER_MOVED_REASONS.includes(v?.reason)) return { ok: false, code: TRAIN_BATCH_MEMBER_MOVED };
         return { ok: false, code: bundleNetworkRefusal(r) ? BUNDLE_NETWORK_UNAVAILABLE : 'BUNDLE_UNAVAILABLE' };
       }
       // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean

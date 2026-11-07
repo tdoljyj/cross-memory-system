@@ -26,7 +26,7 @@ import { RELAY_TIMEOUT_MS } from './companion.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
-import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, validateTrainRunInput } from './train.mjs';
+import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, chainOfFront, validateTrainRunInput } from './train.mjs';
 
 // How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
 export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
@@ -36,11 +36,27 @@ export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
 // (Source v2 invoke-stage.mjs#prepareStageDirectory, train-mode.mjs#stageTrainModeText). No file is 'off'.
 export function installedTrainMode(policy) { return ['off', 'shadow', 'on'].includes(policy?.train?.enabled) ? policy.train.enabled : 'off'; }
 export const TRAIN_MODE_STAGES = Object.freeze([1, 8]);
+// DESIGN §66: stages 8 and 10 learn the installed train.landing and train.batchMax through train-landing.json (Source v2 train-landing.mjs).
+// The invoker gets --train-landing only when it is not the default (github-merge, 1): no file is github-merge.
+export const TRAIN_LANDING_STAGES = Object.freeze([8, 10]);
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
 // subject names its own S (step 3c-2).
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
+// DESIGN §67: a train front batch of several PRs (S is their cumulative merge on T) is described as /4: /3's fields plus S's tree
+// (testTree) and the members [{pr, headSha}] in merge order, the front first. Its job ids are /3's (S names the whole chain).
+// Written only for a batch whose stage 10 named members, and stage 10 names members only when this engine told it the installed
+// components take /4 (batchChainSupported).
+export const DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4';
+// The literals batchChainSupported looks for in the installed Source v2 (resident-v2/): the bundle and the workspace preparation take
+// /4, and the invoker takes the stage-10 argument ':chain' (Source v2 invoke-stage.mjs#parseLandingArg).
+export const BATCH_CHAIN_SOURCE_MARKERS = Object.freeze([
+  ['build-bundle.ps1', "$ChainContract='clued.independent-ci.resident-batch-descriptor/4'"],
+  ['prepare-workspaces.py', "DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'"],
+  ['invoke-stage.mjs', "export const TRAIN_LANDING_CHAIN_ARG = 'chain';"],
+]);
+export const TRAIN_LANDING_CHAIN_SUFFIX = ':chain';
 // The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
 // only from this list, and none of them is an attempt-2 transient code.
 export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
@@ -261,18 +277,25 @@ export const REFS_GATE_RETRY_MS = Object.freeze([60_000, 300_000]);
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe },
-  //          trainMode (installedTrainMode(policy); absent: stages 1 and 8 get no train-mode.json, i.e. 'off') }
+  //          trainMode (installedTrainMode(policy); absent: stages 1 and 8 get no train-mode.json, i.e. 'off'),
+  //          trainLanding (policy.mjs#installedTrainLanding; absent or the default: no train-landing.json, i.e. github-merge) }
   constructor({ node, nodeProfileSha256, ...ports }) {
     this.node = pinnedNodeProfile(node, nodeProfileSha256);
     this.nodeProfileSha256 = nodeProfileSha256;
     Object.assign(this, ports);
     check(this.trainMode === undefined || ['off', 'shadow', 'on'].includes(this.trainMode), 'RESIDENT_TRAIN_MODE_INVALID');
+    check(this.trainLanding === undefined || (['github-merge', 'push'].includes(this.trainLanding?.landing) && Number.isSafeInteger(this.trainLanding.batchMax)
+      && this.trainLanding.batchMax >= 1 && this.trainLanding.batchMax <= 4), 'RESIDENT_TRAIN_MODE_INVALID');
   }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
 
   // The invoker's --train-mode for stages 1 and 8 (DESIGN §41.2); nothing for any other stage.
-  trainModeArgs(number) { return this.trainMode !== undefined && TRAIN_MODE_STAGES.includes(number) ? ['--train-mode', this.trainMode] : []; }
+  trainModeArgs(number) {
+    const landing = this.trainLanding !== undefined && TRAIN_LANDING_STAGES.includes(number) && (this.trainLanding.landing !== 'github-merge' || this.trainLanding.batchMax !== 1)
+      ? ['--train-landing', `${this.trainLanding.landing}:${this.trainLanding.batchMax}`] : [];
+    return [...(this.trainMode !== undefined && TRAIN_MODE_STAGES.includes(number) ? ['--train-mode', this.trainMode] : []), ...landing];
+  }
 
   // The config pin the invoker sends the broker for this stage: the plan hash recorded in the stage package's work
   // manifest, read only after the manifest's own bytes matched the pin derived with the batch.
@@ -423,6 +446,48 @@ export class WindowsEngine {
   // executor watches only when both say yes. A definite answer (both read, or a file missing) is kept for the engine's life (the
   // installed Source does not change under a running service); a read that failed otherwise (a file held by an antivirus or a backup)
   // is no for now and read again after QUEUE_WATCH_SUPPORT_RETRY_MS (review round 33, MINOR 1).
+  // DESIGN §67: whether a batch of several PRs can run on this node, i.e. whether every installed component that reads a descriptor
+  // takes /4: (1) the installed Source v2 (its build-bundle.ps1, which the companion runs, prepare-workspaces.py, which Linux root runs
+  // from the same Source commit, and invoke-stage.mjs, which must take ':chain') carries BATCH_CHAIN_SOURCE_MARKERS; (2) the Linux side
+  // runs this very generation: the versions view (status.mjs#versionsView, upgrade-mailbox.mjs#consistent) says the two sides are
+  // consistent (same generation, Source and Linux manifest, pins ok, facts fresh) and the Linux side's Source is this one. The Linux
+  // archive tool of the same generation takes /4 (clued-ci-resident-linux DESCRIPTOR_CHAIN_CONTRACT) and this engine writes it. Anything
+  // that cannot be read, or no versions port, is no: stage 10 then composes one PR per batch (fail closed). It reads the build-bundle.ps1
+  // under paths.sourceRoot: the companion's bundleScript points into the same <root>\source\<ciSourceManifestSha256>\ (companion.mjs
+  // COMPANION_PATH_KEYS, DESIGN §33); a companion left on an older Source refuses /4 (DESCRIPTOR_REFUSED), never accepts it. The Source half is kept
+  // like queueWatchSupported's (a definite answer for the engine's life, a failed read retried after QUEUE_WATCH_SUPPORT_RETRY_MS); the
+  // versions half is read fresh every time.
+  async batchChainSupported() {
+    if (typeof this.versions !== 'function') return false;
+    if (this.batchChainSourceKnown === undefined) {
+      const now = typeof this.clock === 'function' ? this.clock() : Date.now();
+      if (Number.isFinite(this.batchChainReadFailedAt) && now >= this.batchChainReadFailedAt && now - this.batchChainReadFailedAt < QUEUE_WATCH_SUPPORT_RETRY_MS) return false;
+      try {
+        let all = true;
+        for (const [name, marker] of BATCH_CHAIN_SOURCE_MARKERS) if (!(await fs.readFile(this.v2(name), 'utf8')).includes(marker)) all = false;
+        this.batchChainSourceKnown = all;
+      } catch (error) {
+        if (error?.code === 'ENOENT') this.batchChainSourceKnown = false;
+        else { this.batchChainReadFailedAt = now; return false; }
+      }
+    }
+    if (this.batchChainSourceKnown !== true) return false;
+    let v = null;
+    try { v = await this.versions(); } catch { return false; }
+    return v?.consistent === true && /^[0-9a-f]{64}$/.test(v.windows?.ciSourceManifestSha256 ?? '') && v.linux?.ciSourceManifestSha256 === v.windows.ciSourceManifestSha256;
+  }
+
+  // The invoker's arguments for a stage: trainModeArgs, and for stage 10 in push mode with batchMax > 1 the ':chain' suffix when
+  // batchChainSupported says yes (DESIGN §67; without it stage 10 composes one PR per batch, as before).
+  async stageArgs(number) {
+    const args = this.trainModeArgs(number);
+    if (number !== 10 || this.trainLanding?.landing !== 'push' || !(this.trainLanding.batchMax > 1)) return args;
+    const i = args.indexOf('--train-landing');
+    let chain = false;
+    try { chain = i >= 0 && typeof args[i + 1] === 'string' && (await this.batchChainSupported()) === true; } catch { chain = false; }
+    return chain ? [...args.slice(0, i + 1), `${args[i + 1]}${TRAIN_LANDING_CHAIN_SUFFIX}`, ...args.slice(i + 2)] : args;
+  }
+
   async queueWatchSupported() {
     if (this.queueWatchKnown !== undefined) return this.queueWatchKnown;
     const now = typeof this.clock === 'function' ? this.clock() : Date.now();
@@ -443,7 +508,8 @@ export class WindowsEngine {
     return originalStopped(qc, q, this.node);
   }
 
-  async derive(subject, key) {
+  // chain (DESIGN §67, optional): chainOfFront's {members, testTree} of a front batch of several PRs; the descriptor is then /4.
+  async derive(subject, key, chain = null) {
     const entry = await this.requireV2('derive-batch.mjs');
     const batchId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
     const out = path.join(this.paths.workRoot, batchId);
@@ -460,13 +526,15 @@ export class WindowsEngine {
       && v.testSha === (Object.hasOwn(subject, 'testSha') ? subject.testSha : subject.headSha), 'RESIDENT_DERIVATION_REFUSED');
     const linuxJobIds = v.stages.filter(s => [2, 4, 6].includes(s.number)).map(s => s.jobId);
     check(linuxJobIds.length === 3 && linuxJobIds.every(j => HEX64.test(j)), 'RESIDENT_DERIVATION_REFUSED');
-    // Public descriptor (/3) for the companion's bundle and ws-prep, and (through /mnt/c, read-only) the
-    // Linux units: everything they re-derive job ids from, nothing they could execute.
+    // Public descriptor (/3, or /4 for a batch of several PRs) for the companion's bundle and ws-prep, and (through /mnt/c, read-only)
+    // the Linux units: everything they re-derive job ids from, nothing they could execute.
+    const c = chain === null ? null : chainOfFront(subject, { ...chain, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha });
+    check(chain === null || c !== null, 'RESIDENT_DERIVATION_REFUSED');
     const dir = path.join(this.paths.outboxRoot, batchId);
     await ensureDir(dir);
-    await writeNew(path.join(dir, 'descriptor.json'), { contract: DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
-      headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha, attempt: subject.attempt, ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit,
-      gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
+    await writeNew(path.join(dir, 'descriptor.json'), { contract: c ? DESCRIPTOR_CHAIN_CONTRACT : DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
+      headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
+      ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit, gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
     return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256 };
   }
 
@@ -814,7 +882,7 @@ export class WindowsEngine {
       let r;
       try {
         r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-          '--batch-key', batch.key, ...this.trainModeArgs(stage.number)], { timeoutMs: stage.runMilliseconds + 360_000 });
+          '--batch-key', batch.key, ...(await this.stageArgs(stage.number))], { timeoutMs: stage.runMilliseconds + 360_000 });
       } finally {
         await observer?.stop();
       }

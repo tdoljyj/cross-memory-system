@@ -464,6 +464,8 @@
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing-port.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-strict.mjs",
