@@ -14,6 +14,8 @@ const CLI = path.join(here, 'check-pinned-registries.mjs');
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (dir, message) => { git(dir, 'add', '-A'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', message); };
 const cli = (root, ...args) => spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+// The checks that need no installed dependencies; pdf-cmaps and imprint-rules are "could not check" without npm ci.
+const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin'].flatMap((id) => ['--only', id]);
 const matches = (file) => PINNED_REGISTRY_PATHS.some((p) => globToRegExp(p).test(file));
 
 const R9 = 'scripts/ci/merge-admission-r9-source.json';
@@ -62,7 +64,7 @@ test('every file the R9 and reconcile registries pin is covered by the selection
 test('an up to date tree passes', () => {
   const dir = registeredCopy();
   try {
-    const r = cli(dir, '--base', 'HEAD');
+    const r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /ok\s+components/);
     assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/);
@@ -76,7 +78,7 @@ test('changing a pinned file names the stale registries and the commands that fi
     // Pinned by the R9 registry and part of the reconcile closure.
     fs.appendFileSync(path.join(dir, 'scripts/ci/merge-admission-source-producer.mjs'), '\n// changed after registration\n');
 
-    let r = cli(dir, '--base', 'HEAD');
+    let r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+r9\s+\(scripts\/ci\/merge-admission-r9-source\.json\)/);
     assert.match(r.stdout, /regenerate: node scripts\/ci\/merge-admission-r9-reregister\.mjs --write --base HEAD/);
@@ -95,24 +97,24 @@ test('changing a pinned file names the stale registries and the commands that fi
     // installed everywhere; its effect on the registry is applied directly.
     const fix = spawnSync(process.execPath, [path.join(dir, 'scripts/ci/merge-admission-r9-reregister.mjs'), '--write', '--base', 'HEAD'], { cwd: dir, encoding: 'utf8' });
     assert.equal(fix.status, 0, fix.stdout + fix.stderr);
-    r = cli(dir, '--base', 'HEAD');
+    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1); assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /STALE\s+reconcile/);
     refreshReconcile(dir);
     // The reconcile registry is itself a file of the script.merge-reconciliation component, so the registries
     // chase each other: regenerating it makes the component digest stale, and the check says so.
-    r = cli(dir, '--base', 'HEAD');
+    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1, r.stdout); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /STALE\s+components/);
     // The full chain the check prints: bump (the bump edits the version marker, a locked file), regenerate the
     // reconcile registry, update the digests, then check again.
     const py = (...args) => { const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', ...args], { cwd: dir, encoding: 'utf8' }); assert.equal(x.status, 0, x.stdout + x.stderr); };
     py('bump', 'script.merge-reconciliation', '99.0.0');
-    r = cli(dir, '--base', 'HEAD');
+    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1); assert.match(r.stdout, /STALE\s+reconcile/);
     refreshReconcile(dir);
     py('update');
     const gen = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stdout + gen.stderr);
-    r = cli(dir, '--base', 'HEAD');
+    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
 });
@@ -167,9 +169,11 @@ test('this checkout has no stale pinned registry (needs full history and a resol
   const reconcile = await checkAll({ root: repo, only: ['reconcile'] });
   assert.equal(byId(reconcile, 'reconcile').status, 'ok', render(reconcile));
   const full = await checkAll({ root: repo });
-  const unchecked = full.results.filter((r) => r.status === 'unchecked');
-  if (unchecked.length) return t.skip(unchecked.map((r) => `${r.id}: ${r.reason}`).join('; '));
-  assert.deepEqual(full.results.map((r) => r.status), CHECK_IDS.map(() => 'ok'), render(full));
+  const core = full.results.filter((r) => r.status === 'unchecked' && ['r9', 'components'].includes(r.id));
+  if (core.length) return t.skip(core.map((r) => `${r.id}: ${r.reason}`).join('; '));
+  // pdf-cmaps and imprint-rules are "could not check" without npm ci; anything that was checked must be current.
+  assert.deepEqual(full.results.filter((r) => r.status === 'stale').map((r) => r.id), [], render(full));
+  assert.deepEqual(full.results.map((r) => r.id), CHECK_IDS);
 });
 
 // Generated files. Each has a generator with --check and a CI test that fails when the committed output is old.
