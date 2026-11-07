@@ -80,17 +80,18 @@ async function readableSeal(dir){for(const item of await fs.readdir(dir,{withFil
 export function placementPlan(config,accepted,snapshot,requestFile,entryFile){
   validateTools(accepted.tools);return freeze({profile:PROFILE,image:config.image,executable:config.containerNodeExecutable,cwd:'/scratch',args:['/control/contract-placement-entry.mjs'],mounts:[[snapshot,'/input'],[requestFile,'/request/job.json'],[entryFile,'/control/contract-placement-entry.mjs']],limits:LIMITS,network:'none',user:'65532:65532',rootfsReadOnly:true,credentialsMounted:false});
 }
-// M4 scan result cache (DESIGN 65): every input that can change the placement verdict. The fixed commands read the
-// tested tree (the sealed workspace and git_tree(--head)) and the base tree (git_tree(--base)); both trees are keyed.
-// The image, the in-image node, the five tool pins and esbuild version, the Host node and git, the command template
-// (every byte of every fixed command except the two commit ids), the limits, the trusted workflow, the whole Source
-// manifest and the qualified runtime and acceptance references are keyed. null when any is missing: no lookup, no store.
+// M4 scan result cache (DESIGN 65): the inputs the fixed placement check itself reads (the tested and base trees, image,
+// in-image node, tool pins, esbuild version, Host node, git and Docker, command template, limits, workflow, Source and
+// the qualified runtime and acceptance references). This key is NOT complete by construction: the container runs the
+// candidate's own code, which can also read the packed commit history, /request/job.json and the wall clock (DESIGN
+// 65.1). So placement is never served from the cache: cacheSettings keeps its switch off and the signer and the Windows
+// issuer refuse a placement cacheHit; the key and the hit path stay for a later closed-input design.
 export function placementResultKey({job,config,accepted,prepared,baseTreeSha}){
   let commandTemplateSha256=null;try{commandTemplateSha256=placementCommandTemplateSha256(fixedCommands(job,accepted.tools),job);}catch{}
   return cacheKey('contract-placement',{repo:job?.repo,profile:PROFILE,sourceManifestSha256:job?.sourceManifestSha256,sourceSha:prepared?.sourceSha,
     workflowSha256:accepted?.workflowSha256,runtimeIdentity:config?.runtimeIdentity,hostAcceptanceRef:config?.hostAcceptanceRef,sourceAcceptanceRef:config?.sourceAcceptanceRef,
     testTreeSha:prepared?.candidateTreeSha,baseTreeSha,image:config?.image,containerNodeSha256:config?.containerNodeSha256,nodeExecutableSha256:config?.nodeExecutableSha256,
-    gitExecutableSha256:config?.gitExecutableSha256,toolPinsSha256:accepted?.tools?digest(accepted.tools):null,esbuildVersion:accepted?.esbuildVersion,
+    gitExecutableSha256:config?.gitExecutableSha256,dockerExecutableSha256:config?.dockerExecutableSha256,toolPinsSha256:accepted?.tools?digest(accepted.tools):null,esbuildVersion:accepted?.esbuildVersion,
     commandTemplateSha256,limitsSha256:digest(LIMITS)});
 }
 // From the plan to the unsigned observation. A hit (DESIGN 65) takes the same admission before the grant, the same grant,
@@ -139,10 +140,9 @@ export function createFormalContractPlacementAdapter({admissionPort,scanStartPor
       const {observation,resultCache:cacheFacts,resultKey}=await executePlacement({job,config,accepted,prepared,sealed,plan,before,again,expires,signal,scanStartPort,
         scanStartRecord:grant=>durableNew(path.join(run,'scan-start.json'),grant),nativeScanStartRequired,resultCache,baseTreeSha,onTouched:()=>{touched=true;}});
       await durableNew(path.join(run,'observation.json'),observation);
-      // Only a real run is stored, after its observation is durable; a failed store never changes this result.
-      const stored=resultKey&&!observation.cacheHit?await resultCache.store(resultKey,observation):{stored:false,reason:observation.cacheHit?'SCAN_RESULT_CACHE_HIT_NOT_STORED':cacheFacts.lookup};
-      try{await durableNew(path.join(run,'result-cache.json'),{contract:'clued.independent-ci.scan-result-cache-run/1',subject:subjectOf(job),enabled:resultCache.enabled,...cacheFacts,cacheHit:observation.cacheHit??null,stored:stored.stored,storeReason:stored.reason,observationSha256:digest(observation)});}catch{}
-      actual.add(observation);return{status:'ACTUAL_PLACEMENT_OBSERVED_UNSIGNED',observation,formalEligible:false,checksWritten:false,qualificationIssued:false,resultCache:cacheFacts,resultCacheStored:stored.stored};
+      // Placement is never stored (CACHE_HIT_ROLES); the run still records why the cache was not used.
+      try{await durableNew(path.join(run,'result-cache.json'),{contract:'clued.independent-ci.scan-result-cache-run/1',subject:subjectOf(job),enabled:resultCache.enabled,...cacheFacts,cacheHit:null,keyUsable:resultKey!==null,observationSha256:digest(observation)});}catch{}
+      actual.add(observation);return{status:'ACTUAL_PLACEMENT_OBSERVED_UNSIGNED',observation,formalEligible:false,checksWritten:false,qualificationIssued:false,resultCache:cacheFacts};
     }catch(e){const outcome={status:created?'UNCERTAIN':'BLOCKED',reason:safe(e),sideEffectsMayHaveStarted:created||touched,automaticRetryAllowed:false,formalEligible:false,checksWritten:false,qualificationIssued:false};if(created)try{await durableNew(path.join(run,'uncertain.json'),outcome);}catch{outcome.receiptPersistenceConfirmed=false;}return outcome;}
   }});
 }
