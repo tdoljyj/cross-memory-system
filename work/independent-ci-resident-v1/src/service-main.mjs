@@ -167,7 +167,8 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
     // (DESIGN §7.3, §35). Without a companion heartbeat nothing is asked of the companion, so this never waits for its timeout.
     if (['IDLE', 'DEFERRED', 'PAUSED', 'WAITING'].includes(result.state)) { try { await betweenBatches(); } catch { /* a reminder is advisory */ } }
     if (once) return 0;
-    await sleep(RESTING_STATES.includes(result.state) ? 15_000 : 2_000);
+    // `immediate`: stage 10 just decided a batch is to open (executor.mjs tickBatchDue); the short sleep, not the resting one.
+    await sleep(RESTING_STATES.includes(result.state) && result.immediate !== true ? 15_000 : 2_000);
   }
 }
 

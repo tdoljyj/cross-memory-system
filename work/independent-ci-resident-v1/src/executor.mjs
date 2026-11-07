@@ -1509,7 +1509,15 @@ export class ResidentExecutor {
     if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
     this.tickBusy = true;
     this.tickSeq = (this.tickSeq ?? 0) + 1;
-    try { const result = await this.tickInner(); await this.reportTick(result); return result; }
+    this.tickBatchDue = false;
+    try {
+      let result = await this.tickInner();
+      // Stage 10 just named a batch to open now (OPEN_FRONT_BATCH queued, or a front-bind pending): the loop must not rest 15 s first.
+      // The state stays the resting one for the status board; `immediate` only tells the service loop to sleep the short interval.
+      if (this.tickBatchDue === true && result && typeof result === 'object') result = { ...result, immediate: true };
+      await this.reportTick(result);
+      return result;
+    }
     finally { this.tickBusy = false; }
   }
 
@@ -2258,7 +2266,9 @@ export class ResidentExecutor {
         await this.receipt('paused', source);
       }
     }
-    if (mode === 'on' && summary.openFrontBatch) await this.enqueueFront(summary.openFrontBatch);
+    if (mode === 'on' && summary.openFrontBatch && await this.enqueueFront(summary.openFrontBatch) !== null) this.tickBatchDue = true;
+    // A front-bind to run (frontBind on the summary): the binding run is due in the next tick, not after a resting sleep.
+    if (mode === 'on' && summary.frontBind) this.tickBatchDue = true;
     // TRAIN_FRONT_BATCH_RUNNING: this node's front batch still runs and stage 10 refreshed its sweep proof; nothing to enqueue,
     // but a front batch of that head parked at B gets its next stage-8 try now (parkedDueAt), within the usual try budgets.
     if (mode === 'on' && summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && summary.front?.pr) await this.nudgeFrontParked(summary.front);

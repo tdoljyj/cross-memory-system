@@ -58,6 +58,11 @@ export const WORKER_START_WAIT_MS = 5 * 60_000;
 export const LISTING_MIN_MS = 1000;
 export const LISTING_CAP_MS = WORKER_FACTS_EVERY_MS;
 export const LISTING_QUIET_DIVISOR = 2;
+// Hot window (DESIGN §31.5, the hot-window paragraph): for HOT_WINDOW_MS after a callback round was answered (SendResponse relayed) the
+// next challenge is likely to follow soon, so the listing pause is capped at HOT_LISTING_CAP_MS instead of LISTING_CAP_MS. Outside
+// the window the back-off is unchanged.
+export const HOT_WINDOW_MS = 60_000;
+export const HOT_LISTING_CAP_MS = 3000;
 // After a failed callback round, the hand-over of the worker's blocked record is looked for at most this far apart (its window
 // is CALLBACK_WINDOW_MS + 30 s; DESIGN §31.5).
 export const HANDOVER_LISTING_CAP_MS = 5000;
@@ -759,7 +764,7 @@ export class Companion {
       const firstSeen = new Map();
       const seenAt = (names, seq, anchor) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names !== null) firstSeen.set(seq, anchor); return anchor; };
       // Pace of the listing (DESIGN §31.5): what has happened last (the start, a changed listing, a relayed record).
-      let eventAt = startedAt, lowerBound = startCalledAt, previousNames = null;
+      let eventAt = startedAt, lowerBound = startCalledAt, previousNames = null, hotUntil = -Infinity;
       // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
       // retries, is not.
       const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
@@ -795,6 +800,7 @@ export class Companion {
               lowerBound = Math.max(lowerBound, sendingAt);
               sequence += 1;
               eventAt = this.clock();
+              hotUntil = eventAt + HOT_WINDOW_MS;
               continue;
             }
           }
@@ -806,7 +812,7 @@ export class Companion {
             fail('LINUX_WORKER_ENDED_WITHOUT_RECORD');
           }
           // Every second right after anything happened, then less and less often (DESIGN §31.5): a listing is a wsl.exe start.
-          await this.sleep(names === null ? 100 : this.paceListing({ quietMs: this.clock() - eventAt, untilFactsMs: worker.factsAt - this.clock() }));
+          await this.sleep(names === null ? 100 : this.paceListing({ quietMs: this.clock() - eventAt, untilFactsMs: worker.factsAt - this.clock(), capMs: this.clock() < hotUntil ? HOT_LISTING_CAP_MS : LISTING_CAP_MS }));
         }
       } catch (error) {
         // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
