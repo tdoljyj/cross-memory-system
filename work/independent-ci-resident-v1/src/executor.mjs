@@ -491,7 +491,9 @@ export class ResidentExecutor {
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
     if (!front || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha) return false;
     const context = { now: this.clock(), repo: this.policy.repo,
-      sourceManifestSha256: this.policy.sourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
+      // Stage 10 binds its observations to the CI Source it runs (the install record's source-manifest.json), never to the
+      // resident's own Windows Source manifest (generation 21 field defect: the two always differ, so no front was ever admitted).
+      sourceManifestSha256: this.policy.ciSourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
       onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString(), front, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs };
     return strictCoverageMatches(this.trainStrictReadiness, context) || strictFrontReadinessMatches(this.trainStrictFrontReadiness, context);
   }

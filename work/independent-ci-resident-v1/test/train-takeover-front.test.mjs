@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
-import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, relayedRow, triggerBytes, RELAY_ON, SOURCE } from './helpers.mjs';
+import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, relayedRow, triggerBytes, RELAY_ON, SOURCE, CI_SOURCE } from './helpers.mjs';
 import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
@@ -29,7 +29,7 @@ const body = claim => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: 
 const slotGreen = (e, head) => [...e.gh.world.checks.values()].find(c => c.app.id === 5368905 && c.name === 'kooyumi-merge-slot' && c.head_sha === head
   && c.status === 'completed' && c.conclusion === 'success');
 
-// The world: GitHub (strict on, merge only, App-pinned required checks), Native (one ACTIVE node of this Source), a history that
+// The world: GitHub (strict on, merge only, App-pinned required checks), Native (one ACTIVE node of this CI Source), a history that
 // keeps the full sweep running for hours (every full-sweep page read outlasts the stage's sweep budget), and an empty queue.
 // quick: every full-sweep page read is instant, so the take-over sweep completes within a few stage-10 runs (the steady state).
 async function world(t, { quick = false } = {}) {
@@ -43,7 +43,7 @@ async function world(t, { quick = false } = {}) {
   e.gh.readPullRequest = async n => { const p = e.gh.world.pulls.get(n); return { ...(await read(n)), body: p.body ?? null, draft: p.draft === true,
     head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: p.headRepo ?? REPO } } }; };
   e.native.port.nodesStatus = async () => ({ deployed: true, onDuty: true, dropped: 0,
-    nodes: [{ node: { name: 'fixture-node', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(e.now) } }] });
+    nodes: [{ node: { name: 'fixture-node', sourceManifestSha256: CI_SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(e.now) } }] });
   return e;
 }
 
@@ -55,13 +55,16 @@ function engineFor(e, at, script = {}) {
   const engine = fakeEngine(script);
   engine.subjects = subjects;
   engine.stages = stages;
-  engine.derive = async (subject, key) => { engine.calls.push(['derive', key]); subjects.set(key, subject); return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: 'c'.repeat(64) }; };
+  // As the real derivation (Source v2 derive-batch.mjs): the batch subject and key carry the resident's installed-files manifest
+  // (policy sourceManifestSha256, SOURCE), while every job of the batch carries the install record's CI Source (CI_SOURCE).
+  engine.derive = async (subject, key) => { engine.calls.push(['derive', key]); subjects.set(key, subject);
+    return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: CI_SOURCE }; };
   engine.runTrainStage = async (mode, input) => {
     engine.calls.push(['stage', 10, mode]);
     e.now = at.clock();
     const { mode: m, ...params } = input;
     const runId = `${(++run).toString(16).padStart(16, '0')}-0123456789ab`;
-    const job = makeTrainRun({ repo: REPO, runId, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
+    const job = makeTrainRun({ repo: REPO, runId, mode: m, sourceManifestSha256: CI_SOURCE, createdAt: iso(e.now), ...params });
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
       claimScope: SCOPE });
     at.advance(e.now - at.clock());
@@ -87,8 +90,11 @@ function engineFor(e, at, script = {}) {
     e.now = at.clock();
     for (const [i, name] of ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement'].entries()) e.gh.green(10 + i, subject.headSha, { name });
     const claim = { claimId: CLAIM, fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) };
+    // The field model (generation 21, PR #1029): the batch subject names SOURCE, its stage-8 jobs (stage-08/jobs.json) name CI_SOURCE,
+    // the same Source as stage 10's proof and the node heartbeat. One SOURCE everywhere hid the executor's mismatch.
+    assert.equal(subject.sourceManifestSha256, SOURCE);
     const jobs = batchJobsV2({ repo: REPO, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha,
-      sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 });
+      sourceManifestSha256: CI_SOURCE, createdAt: iso(e.now), attempt: 1 });
     const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: await EffectJournal.open(path.join(await tempDir(at.t), 'effects')),
       trainMode: 'on', batchClaim: claimGeneration(claim), slotNative: e.native.port, sweepStore: e.store, greenLedger: e.ledger,
       pullsUpdatedSince: cursor => e.gh.readPullsUpdatedSince(cursor),
