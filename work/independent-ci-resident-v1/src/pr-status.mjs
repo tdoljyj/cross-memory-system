@@ -581,7 +581,10 @@ export class PrStatusReporter {
           if (x.restart) this.duty.restartOwed?.delete(x.headSha);
           if (x.context === context) remember(x.headSha, x.want);
           if (x.handover) delete this.store.data.node.handover[x.headSha];
+          // Task 63c3c879: a reminder written stays owed an end (node-duty.mjs#standbyDoneText) until that is written.
+          if (x.standbyDone) delete (this.store.data.node.standby ??= {})[x.standbyDone];
           if (!x.remind) continue;
+          (this.store.data.node.standby ??= {})[x.headSha] = { pr: x.remind.pr, at: new Date(now).toISOString() };
           // §5.3: written once and shown once per (PR, head, reason); a toast that cannot be shown now is owed (m6).
           this.store.data.node.reminded[x.remind.key] = new Date(now).toISOString();
           const toast = { key: x.remind.key, title: `PR #${x.remind.pr}：当班节点没接手`, body: `${x.want.description}。${TAKEOVER_TIME_TEXT}` };

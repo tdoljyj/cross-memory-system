@@ -1988,6 +1988,8 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 提醒写在备用 context，并发 Windows 通知，建议 Owner 移交 ci-admission；它不会自行移交。每个 `(PR, head, reason)` 在本地保留窗口内只提醒一次，相关记忆保留 24 小时。一个 head 的 statuses 成功读到后缓存 5 分钟；读取失败不更新缓存时间，可以在下一轮报告时再试（正常轮询约 1 分钟）。每轮最多尝试读 10 个 head，并受读取前的预算检查约束。
 
+提醒的结束（Task `63c3c879`，PR #1027）：提醒写的是 pending，GitHub 会把任何 pending 的 commit status（即使不是 required）算作未完成，mergeStateStatus 变 UNSTABLE。现在每条已写出的提醒都记在 companion 记忆 `standby` 里，直到它被结束：本节点转为 ACTIVE（“<节点> 已接班，备用提醒结束”）、PR 不再符合条件（“备用节点 <节点>，不参与本 PR”），或 STANDBY 再读这个 head 时有正面证据表明当班节点已接手——它在该 head 上 30 分钟内写了当班/双活停机，或 App `5368905` 已发布 `kooyumi-work-admission`（“备用节点 <节点>，不参与本 PR：当班节点已接手”）。三种都在同一备用 context 上写 success；读取失败或未知不结束。已不打开的 head 直接忘记、不写。升级前的记忆没有 `standby` 时，从 24 小时内的 `reminded` 键恢复待结束的提醒。
+
 时间口径与通知一致：移交后，对方空闲或停摆时，本节点下一次角色探测通常在 15 分钟内接班；对方仍在跑批时，要等它发现角色已失去并写“已交班”。这不是固定的最长接班时间。确定的 ACTIVE / STANDBY 转换及连续至少三次不确定的角色探测也有通知，UNCERTAIN 本身不算一次确定模式转换。
 
 ### 23.4 接班核对及其边界
