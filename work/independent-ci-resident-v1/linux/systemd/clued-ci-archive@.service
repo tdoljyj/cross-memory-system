@@ -3,7 +3,10 @@
 # success-close). The tool proves quiescence itself before moving anything: every clued-ci unit is
 # inactive and its cgroup is empty, no container carrying the bridge nonce label is running, and no
 # process names the worker or a run directory. This replaces today's "kernel booted after the last
-# write" proof, which needed `wsl --shutdown`. Nothing is deleted; renames use RENAME_NOREPLACE.
+# write" proof, which needed `wsl --shutdown`. No file is deleted; renames use RENAME_NOREPLACE.
+# L2 (DESIGN 65.4): before anything moves, a failure-scope archive records every leftover exited/dead container carrying the
+# nonce label (inspect + diff, under resident/container-sweep/<instance>/) and removes it; a completed scope that meets one
+# refuses and changes nothing.
 [Unit]
 Description=Clued independent CI Linux archive %i
 

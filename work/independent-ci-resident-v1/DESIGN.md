@@ -344,6 +344,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   - 要移哪些工作区，由描述符的**内容**重算作业 id（与 `prepare-workspaces.py` 同一公式），描述符自带的 `linuxJobIds` 只用来比对，不一致就拒绝；描述符用一个 `O_NOFOLLOW` 句柄读，长度取自这个句柄（MINOR-8）；
   - Source v2（S14，教训 b22/b28）：目标是归档目录里的**扁平名字**（`incoming-<叶子>`、`outgoing-<叶子>`、`run-<名字>`、`workspace-<作业 id>`、`ws-prep-<批次>`、`formal-role.lock`），不再建 `runs/`、`workspaces/` 子目录（`runs/` 前缀把 b28 弄坏过）；“完成型”范围（`between-roles-N`、`success-close`）遇到未知叶子、半对记录或还被持有的 `formal-role.lock` 时一个都不移，原样留给失败路径；失败范围照原样归档并报告留在原处的东西；目录树移动前清点、移动后核对；中途失败写持久的 partial 状态（`verified: false`），不会是“没有状态”。
 - **目录名**：失败用 `failed-<key12>-<reason>-<12hex>`，收尾和角色间用 `archive-…`，都必须是新目录。
+- **L2（§65.5）**：失败型归档在改名之前，先给遗留的带标签容器取证（inspect + diff），再删除；完成型范围遇到这种容器就拒绝。文件仍然只改名。
 
 ### 6.5 HALT 与复位
 
@@ -1034,7 +1035,7 @@ v0.5 时的记录：
 
 ## 14. 风险与残余问题
 
-- **R1 contract-placement 会在容器里运行 PR 的测试和构建**（`container-entry.mjs:33-70`）。这是现状，隔离只有容器：uid 65532、无网络、只读、cap-drop ALL、不挂密钥。本设计不扩大它，但对这个角色，“PR 代码只当数据”并不成立。
+- **R1 contract-placement 会在容器里运行 PR 的测试和构建**（`container-entry.mjs:33-70`）。这是现状，隔离只有容器：uid 65532、无网络、只读、cap-drop ALL、不挂密钥。本设计不扩大它，但对这个角色，“PR 代码只当数据”并不成立。容器每个作业新建、跑完即删；L2（§65）补上主机侧的起点干净和最小可见，真正加强这一项的是 §65.2 的 C1（gVisor，Source 改动，交 Owner）。
 - **R2 Linux 用同一把 Ed25519 密钥签 qualification 和结果**，任何 root 进程都能读到。常驻前后一样。可以后续拆成两把。
 - **R3 磁盘增长**：只改名、不删除，工作区副本会一直累积。需要 Owner 定保留规则（§15 D5）。
 - **R4 companion 依赖 Owner 登录。** 没有登录时只推迟，不会出错。
@@ -5067,3 +5068,174 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
 - 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
 - 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。
+
+## 65. L2：Linux 执行机用完即弃（优化方案 `bf57ff10` L2，分支 `claude/linux-ephemeral-workers`）
+
+范围：只改常驻层 Linux 侧：`linux/bin/clued-ci-resident-linux`、`linux/systemd/clued-ci-worker@.service`、`clued-ci-archive@.service` 的说明文字，以及新测试 `test/test_ephemeral_view.py`。不改 Source v2，不改 upgrader，不加新 unit 名。
+
+### 65.1 结论先说
+
+- PR 代码本来就只在“每个作业新建、跑完即删”的容器里执行。`verify-worker.mjs#createArguments` 给出的条件是：`--pull=never`、按 digest 钉住的镜像、`--read-only`、`/scratch` tmpfs、`--network=none`（trivy 缓存容器除外：它联网，只写自己新建的 staging）、`--cap-drop=ALL`、`no-new-privileges`、2 GiB、2 CPU、128 pids、`--log-driver=none`；跑完 `rm --force`，再按 nonce 标签和名字各列一次确认为空。所以方案里“每批新建容器 + 只读根 + tmpfs + 固定 digest”这一项，粒度比“每批”还细，早已做到。
+- 缺的是主机侧，有三处：
+  1. 受信 worker（root）能看到所有历史批次留在磁盘上的东西；
+  2. worker 能写工具链和常驻工具的状态；
+  3. 复位之后，下一批可以在上一批的遗留容器还在时开始。
+- L2 补这三处：每次 unit 启动时新建一个只含本作业所需内容的视图（65.3）；角色开始前必须一个带标签的容器都没有（65.4）；失败型归档先取证、再删遗留容器（65.5）。每批开销小于 1.5 秒，走原地升级通道，不重签角色。
+- 每批克隆一个 WSL 快照：不推荐（65.2）。
+
+### 65.2 跨批次残留逐项，以及方案比较
+
+| 状态 | 今天 | L2 之后 |
+|---|---|---|
+| 镜像层（`/var/lib/docker`） | 长期保留，按 digest 使用，层内容不逐批复核 | **保留**（缓存）；不复核层内容是残余（65.9） |
+| 容器 | 每个作业删除并确认；quiescence 接受 exited/dead，复位后的下一批可以在它们还在时开始 | **清掉**：worker 开始前要求一个都没有；失败型归档取证后删除 |
+| 卷 | 没有（拒绝带 Volumes 的镜像，inspect 核对只有 bind 和 tmpfs） | 不变 |
+| 容器内 /tmp、/scratch | 根文件系统只读；/scratch 是每个容器自己的 tmpfs | 不变（已是用完即弃） |
+| 主机 /tmp、SysV IPC | `PrivateTmp=yes`；IPC 与主机共享 | `PrivateTmp`、`PrivateIPC` 每次新建 |
+| 工作区 | 每批归档时改名移走；rearm 时如果没有描述符，就留在原处；worker 看得到全部 | 保留在归档里；**worker 只看得到本作业自己的一个** |
+| runs/、spool 记录、`formal-role.lock`、`ws-prep-<批次>` | 每批归档移走；ws-prep 预检要求它们为空 | 不变 |
+| 历史归档 `archive-*`、`failed-*`（含 PR 字节） | 保留，按 §35 修剪；worker 看得到 | 保留（审计用）；**worker 看不到** |
+| git 缓存 | Linux 侧没有长期缓存（ws-prep 的镜像库随批次归档）；Windows 侧有 seed.git（§10.1） | 不变 |
+| trivy DB 与检查包 | 长期保留 | **保留**（缓存），worker 视图里仍可写 |
+| 工具链 node | worker 可写 | **只读** |
+| `resident/`（归档状态、保留回执、`upgrade/current.json`）、旧流程留下的 `verify-spool`、`verify-once-state`、`trusted-source` | worker 可写 | **worker 看不到** |
+| `/mnt`（drvfs，即 C 盘）、`/run/WSL`（interop） | worker 能读整个 C 盘，也能经 interop 以 Owner 身份启动 Windows 程序 | **worker 看不到** |
+| 日志与回执（journald、archive-status） | 保留 | 不变（审计用） |
+| 密钥、qualification、角色策略（`/etc`） | 只读 | 不变 |
+| 内核、dockerd、WSL 工具 VM | 长期运行 | 残余（65.9） |
+
+依据与数据来源：
+- 只读读取本机注册表得到 VHDX 大小：CluedResident-Linux 50.24 GiB，CluedCI-Linux 71.80 GiB。
+- 本机顺序复制 2 GiB 实测 3.18 GiB/s。这个数含缓存，偏乐观。
+- 视图建立的耗时，来自一次 `unshare -m` 演练（65.6）。
+
+| | A. 每个作业新容器 + 每次 unit 新视图（**推荐**） | B. 每批克隆 WSL 发行版 | C1. placement 改用 gVisor |
+|---|---|---|---|
+| 对 PR 代码的隔离 | 与今天相同 | **不比 A 强**。理由：<br>• 所有发行版共用一个工具 VM 和内核，发行版运行在初始用户命名空间里，root 有 `CAP_SYS_ADMIN`，所有发行版的 VHD 都以块设备挂在同一个 VM 里；<br>• WSL 不是安全边界；<br>• 逃逸后的 root 还能经 interop 和 `/mnt/c` 以 Owner 身份落到 Windows 上（§3.3 已接受这条边界）。 | 明显更强 |
+| 跨批次残留 | 主机侧逐项清掉或藏起；内核和 VM 残余 | 发行版文件系统每批全新（镜像层、`/etc`、`/opt`、`daemon.json` 都是新的）；内核和 VM 残余与 A 相同 | 同 A |
+| 每批开销 | 每个 Exec 建一次视图，实测 17 ms（含 unshare 进程本身），3 个 worker × 2 个 Exec 共 6 次；worker 守卫每次多一次 `docker ps`，估 0.1–0.3 s，共 3 次。合计 < 1.5 s，不到 17–25 分钟批次的 0.15% | 复制：<br>• 原样复制 50 GiB，按实测速度至少 16 s，冷数据约 34 s；<br>• 精简模板（镜像约 1–2 GiB 加系统）估计可降到 5–10 GiB，几秒钟。<br>另加：注册、冷启动 systemd 和 dockerd 估 5–15 s，页缓存回填；trivy DB 不共享就每批重下（网络会抖）。<br>合计约 0.5–4 分钟。原样复制时每批写盘 50 GiB。差分 VHDX 在 WSL 上能否用未验证，需要 Hyper-V 模块和管理员 | 容器启动多 0.1–0.3 s；placement 估慢 10–50%（第 6 段多 0.3–1.5 分钟） |
+| §31.5（wsl.exe 次数） | 不增加 | 每批至少多 4 次（import、start、terminate、unregister），每个新发行版还有自己的 init 和 9p/hv_sock 通道 | 不变 |
+| §32（内存闸） | 不变 | 变差：冷启动正落在已知会因 order-5/7 连续块不足而失败的共享 VM 上；内存闸要挪到启动之后，并重定阈值 | 每个容器的 sentry 多约 50–100 MB |
+| 改动与上线 | 2 个文件加测试；原地升级；不重签 | 改 companion 固定 argv、node profile（发行版名进 `nodeProfileSha256` 和中继描述符）、安装与卸载、维护模板；Source 重签；整套重装；Owner UAC | Source 改动（钉 Runtime）、装 runsc、改 daemon.json；重签；需要 Owner Decision |
+
+其他几个选项：
+
+- **userns-remap**：DockerRootDir 会变成 `/var/lib/docker/<uid>.<gid>`，被 Source 的 `info.DockerRootDir` 核对拒绝。
+- **rootless docker**：套接字不再是 `/run/docker.sock`，qualification 会拒绝。两者都是 Source 改动。
+- **C1 只靠 `daemon.json` 的 `default-runtime=runsc`**：`inspectContainer` 不核对 Runtime，所以可以不改 Source；但运行时既没被钉住，也没被核对，换了也看不出来。要做必须由 Owner 明确决定，不能悄悄做。
+- **逐批复核镜像层**：`docker save` 后核对 `rootfs.diff_ids`。能发现磁盘上被篡改的层，但做核对的 dockerd 本身也在可能被攻破的主机上，只是辅助手段（65.9）。
+
+GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner 主机上执行。这里 PR 代码从不在主机上执行，所以“用完即弃”的单位本来就是容器。L2 补的是主机侧的起点干净和最小可见。
+
+**推荐 A**：开销最小；对 PR 代码的隔离与 B 相同，B 并不加强逃逸防护；B 的实际收益中，除“每批全新的镜像层和系统文件”外，A 都覆盖了。
+**C1** 是唯一真正加强 §14 R1 的选项，单列为后续提议，交 Owner 决定。
+
+### 65.3 worker 的视图（`clued-ci-worker@.service`）
+
+- 用的 systemd 设置：
+  - `TemporaryFileSystem=…/formal-spool:ro`，再用 `BindPaths=-…/incoming -…/outgoing` 绑回来；
+  - `TemporaryFileSystem=…/workspaces:ro`，再用 `BindPaths=-…/workspaces/%i` 绑回本作业的一个；
+  - `TemporaryFileSystem=/mnt:ro`；
+  - `ReadOnlyPaths=-…/toolchain-build-legacy-v1`；
+  - `InaccessiblePaths=-…/resident -…/verify-spool -…/verify-once-state -…/trusted-source -/run/WSL`；
+  - `PrivateIPC=yes`。
+  需要 systemd ≥ 248；节点是 255。
+- **何时建、何时销毁**：每条 Exec（守卫和 worker）各自按这份配置新建一个挂载命名空间；进程退出，命名空间就跟着消失，成功和失败都一样。bind 的源按主机原路径解析。tmpfs 的只读是第二遍才设，而且不递归，所以绑回来的目录保持可写。
+- **有意不变的**：
+  - state 根可写：Source 的 `SERIAL_LOCK` 固定在 `/var/lib/clued-independent-ci/formal-role.lock`，必须建在真实目录里；
+  - runs/ 和 trivy 缓存根仍是真实路径：dockerd 在主机命名空间里解析所有 bind 源（gitleaks、trivy、placement、自检、缓存容器的挂载源都在 runs/、缓存根或 `/opt` 下，没有一个落在被遮住的路径里）；
+  - 本作业的工作区仍可写：Source 里没有证明它只读。
+- **为什么失败路径不变**：每条路径都带 `-`，路径不存在时不会在命名空间建立阶段失败（226/NAMESPACE），而是像今天一样由 worker 自己的检查拒绝。
+- **工具链挪不走**：它是挂载点，可写的 state 根也不能把它改名或删除（EBUSY）。
+
+### 65.4 角色开始前一个遗留容器都没有
+
+- 只在 worker 的守卫里做：任何状态的带标签容器（含 trivy 缓存容器，同一个标签）都拒绝，码是 `EARLIER_CONTAINER_PRESENT`，输出里列出容器 id。docker 读不到时隔 2 s 再读，共 3 次，仍读不到就拒绝 `DOCKER_READ_UNCONFIRMED`。
+- 拒绝之后的走向：今天的守卫失败路径，即 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。第 2、4、6 段可以按放弃处理（`classify.mjs`），进入同批重跑；重跑前的 `retry-stage-N-K` 归档是失败型，会清扫，重跑就能通过，所以能自愈。
+- ws-prep 不查（复审 M1）：它的拒绝是 `WORKSPACE_PREPARATION_REFUSED`，会烧 head、要求推新提交，不该为与 PR 无关的残留付这个代价。
+- 连带好处：trivy `prepare.lock` 的回收条件之一是“一个带标签的容器都没有”（`cache.mjs` 的 `cacheContainersNone`），清扫之后不会再被旧容器挡住（R6）。
+
+### 65.5 归档取证后清掉遗留容器（改变了 §6.4 的“只改名、不删除”）
+
+- **顺序**：quiescence 之后、计划和改名之前，也在写任何状态文件之前。所以清扫失败时这个实例可以原样再跑（复审 B1）；复位用的固定实例名 `<batch>_rearm-*` 不会被一次 docker 抖动永久卡死。
+- **完成型范围**（`between-roles-4/6`、`success-close`）：遇到容器就拒绝 `CONTAINER_PRESENT_PRESERVED`，什么都不删、不移，现场留给失败路径（b22/b28 的规则，复审 m2）。
+- **失败型范围**：
+  - 所有容器必须是 exited 或 dead，否则拒绝 `CONTAINER_NOT_QUIET`，一个都不删；
+  - 每个容器用完整 id 执行 `docker inspect`，核对 Id 和 `clued.verify.nonce` 标签（`CONTAINER_IDENTITY_UNCONFIRMED`），再执行 `docker diff`（读不到就记 null），连同状态一起写成 create-only 的证据文件 `resident/container-sweep/<实例>/container-<id>-<随机>.json`；
+  - 然后 `docker rm --volumes <id>`，不加 `--force`；
+  - 最后再列一次，必须为空，否则拒绝 `CONTAINER_SWEEP_UNCONFIRMED`；
+  - 每次尝试的证据都保留。
+- **结果字段**：`containersSwept: [{id, state, evidence, evidenceSha256, diffEntries}]`；`deleted` 算上清扫掉的容器；`deletesAnything` 如实填写。companion 只读 `verified` 和 `directory`，Windows 侧不受影响。
+- **docker 只用四个子命令**：ps、inspect、diff、rm（`DOCKER_VERBS`，其他的直接拒绝 `DOCKER_VERB_REFUSED`；输出上限 1 MiB）。从不碰镜像、具名卷和网络，镜像缓存不受影响。
+- **与 §6.4 的关系**：
+  - 文件仍然只改名；
+  - 被删的是运行时对象，删之前它的全部元数据先进了证据目录；
+  - 容器根文件系统只读，`/scratch` 是 tmpfs，`docker diff` 的实测结果也写进证据；
+  - 先例是 §35.5 的瘦身。
+  §6.4 来自复审 X1，这一改变要由 Owner 确认（65.8）。
+
+**删不掉的容器**（复审 M3）：容器卡在 dead 状态、rm 返回失败时，归档和守卫的拒绝输出里有容器 id（journald）。Owner 的处置：
+1. 在节点上以 root 执行 `docker inspect <id>`，确认它带 `clued.verify.nonce` 标签；
+2. 执行 `docker rm -f <id>`，必要时先重启 docker.service；
+3. 按 §6.5 复位。复位时的归档会再清扫一次并留下证据。
+
+### 65.6 测试与演练
+
+- `test/test_ephemeral_view.py`，20 个测试：
+  - unit 文件逐条断言；
+  - 视图模型：把 unit 的设置按“越具体越优先”作用到一棵假的主机目录树上；
+  - **两批场景**：第 1 批失败，留下锁、工作区、runs、spool 记录和一个遗留容器。真实的 `main(['archive', …])` 第一次因为 `rm` 失败被拒，此时没有状态文件、什么都没移、证据已写下；同一实例第二次清扫成功并归档整批。第 2 批 trivy worker 的视图里，第 1 批写下的文件一个都看不到（历史归档、别的工作区、resident、`/mnt`、`/run/WSL` 都看不到），trivy DB 可见且可写（缓存命中仍有效），工具链只读；视图内检查 `view_facts` 判 ok，`view-check` 命令只在视图完全符合时退出 0；
+  - 去掉视图设置时，检查能逐项报错；
+  - 完成型范围遇到容器时拒绝且什么都不改；
+  - 清扫：顺序、证据哈希、running/created 拒绝、身份不符拒绝、rm 失败带 id 拒绝且第二次能完成、diff 读不到时照常删除、删除后又冒出来的容器拒绝、docker 子命令白名单、畸形列表；
+  - 守卫：任何状态都拒绝、读两次失败后第三次成功、三次都失败就拒绝、只有 worker 守卫读 docker、归档里各步的先后顺序。
+- **内核演练**：一次，在 CluedDev-Linux 里以 root 跑 `unshare -m`，只用新建的 /tmp 目录。这次是在协调会话禁止 WSL 实验之前做的，之后没有再跑。按 65.3 的设置建 tmpfs 加 bind，结果：
+  - 建立耗时 17 ms；
+  - 历史归档和别的工作区看不到；本作业工作区可读写；resident 看不到；工具链可读，但不可写、不可改名；spool 里不能新建名字；
+  - outgoing 可写并落到主机；锁文件落在主机 state 根；缓存和 runs 可写；
+  - 作业期间主机写进 incoming 的新文件经 bind 可见；
+  - 命名空间结束后挂载残留 0，在 tmpfs 里写下的东西消失。
+- **没有在真机 systemd 上验证**：本机不安装、不改系统；协调会话也禁止在 WSL 里实验。上线演练时用 65.7 的探针补上。
+
+### 65.7 上线
+
+- **通道**：resident-v1（工具与 manifest）和三个 unit 文件都是 `clued-ci-upgrade-linux` 的 ITEMS，原地升级就能换，切换后会 `daemon-reload`。包不带 `sourceV2`，Source 清单哈希不变，角色 qualification 不绑定 unit 文件。所以**不重签 Linux 角色，不整套重装**。
+- **切换前的探针**，在一台节点上以 root 跑，与新 unit 完全相同的视图设置（复审 M2）：
+
+  ```bash
+  T=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux; J=<64 位十六进制，最好是某个现存工作区的作业 id>
+  mapfile -t P < <($T view-properties --instance $J | python3.12 -I -c 'import json,sys;print("\n".join(json.load(sys.stdin)["properties"]))')
+  systemd-run --wait --pipe --collect "${P[@]}" $T view-check --instance $J
+  ```
+
+  `view-check` 逐条核对 65.3 说的“看不到”和“可写”，退出码 0 才算通过。之后再跑一次真实批次，作为端到端确认。
+- **Owner 要做的**：
+  1. 确认 65.5 对 §6.4 的改变；
+  2. 按常规批准一次原地升级；
+  3. 决定是否把 C1 立项。
+
+### 65.8 独立审核
+
+审核结论 PASS-WITH-FIXES，全部修掉：
+
+| 复审项 | 修法 |
+|---|---|
+| B1：清扫放在改名之后，一次 docker 失败会永久卡死固定的复位实例 | 挪到计划之前，并且不写状态 |
+| M1：ws-prep 前查容器会烧 head | 只在 worker 守卫查，docker 读不到时重读 |
+| M2：测试测不到 systemd 本身 | 加 `view-properties` 和 `view-check` 探针，写进上线步骤 |
+| M3：删不掉的容器卡死整个系统 | 拒绝输出带容器 id；写 Owner 处置流程（65.5） |
+| m1：视图漏了几处 | 加 `/mnt`、`/run/WSL`、旧流程目录、`PrivateIPC` |
+| m2：完成型归档不该清扫 | 完成型范围拒绝 |
+| m3：用短 ID 删容器 | 用完整 id，删前核对 Id 和标签，输出有上限 |
+| m4：“可写层里没有 PR 内容”没有实测 | 加 `docker diff` |
+| m5：“只改名”的承诺变了 | 改了说明和字段，交 Owner 确认 |
+| m6、m7：B 的估算和漏掉的选项 | 修正比较表 |
+| m8：prepare.lock 回收的连带效果 | 写入 65.4 |
+| NIT | 改了措辞 |
+
+### 65.9 残余
+
+- **内核、VM、dockerd 长期运行**：容器逃逸后的 root 可以持久化，包括篡改镜像层，而 dockerd 不逐批复核层内容。B 也挡不住，这一项要靠 C1。
+- **worker 持有 docker socket**：代码执行级的漏洞可以绕过视图（例如起一个特权容器）。视图挡的是“写到不该写的路径”这一类原语，以及受信代码自己误读误写。
+- **state 根仍可写**：worker 能在 state 根新建条目；`ws-prep-<批次>` 和 `resident-uninstalled-*` 这类动态名字没有藏起来。rearm 且没有描述符时留下的工作区不在保留规则里，磁盘会一直涨。
+- **不带标签的容器**不在“起点干净”的检查范围内。

@@ -10,6 +10,14 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   archive-status --instance <batchId>_<reason>         the receipt of exactly that archive run
   archive-usage                                        bytes kept by earlier archives (50 GB reminder)
   archive-prune                                        one retention pass of the spool archives (DESIGN S35)
+  view-properties --instance <jobId>                   the worker unit's file-system view as systemd-run --property arguments
+  view-check --instance <jobId>                        run inside that view: does it hide and expose what DESIGN 65.2 says
+
+L2, every batch and role starts clean (DESIGN 65): the worker's guard refuses while any container carrying the bridge nonce
+label exists, in any state (EARLIER_CONTAINER_PRESENT, with the ids); a failure-scope archive records each such exited/dead
+container (inspect + diff) under resident/container-sweep/<instance>/ and removes it (docker rm --volumes) before it plans or
+moves anything, so a refusal there leaves the instance runnable again; a completed scope that meets one refuses and changes
+nothing (CONTAINER_PRESENT_PRESERVED). Containers are the only thing removed this way: never an image, volume or network.
 
 Threat model: WSL root is reachable from the Owner's own user session (wsl -u root), so these facts
 are as trustworthy as the Owner/root boundary accepted in constraint 4fedfc84, no more. What this tool
@@ -26,8 +34,8 @@ semantics); "retry-stage-N-K" (generation 11, DESIGN 54: the K-th run again, K 1
 2, 4 or 6 in the same batch (stage 2: generation 14, DESIGN 59); each its own archive instance) is a failure scope that moves the protocol records as found, formal-role.lock and all run
 directories but KEEPS this batch's workspaces and its ws-prep directory, which the run again needs;
 every other reason moves the protocol records, formal-role.lock, all run directories, this batch's
-workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
-is deleted.
+workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); no file is deleted (a
+success-close slims candidate trees, S35; a failure scope removes leftover containers after recording them, DESIGN 65.4).
 
 Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-spool.ps1:
   - destinations are FLAT names directly inside the archive directory (incoming-<leaf>,
@@ -98,9 +106,10 @@ RETENTION_RULE = {'classBudgetBytes': 20 * GIB, 'minKeepPerClass': 10, 'maxDelet
 
 
 class Refused(Exception):
-    def __init__(self, code):
+    def __init__(self, code, details=None):
         super().__init__(code)
         self.code = code
+        self.details = details  # printed with the refusal (journal), e.g. the container ids that block (DESIGN 65.4)
 
 
 def need(cond, code):
@@ -210,7 +219,7 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
     protocol_only = re.fullmatch(r'between-roles-[46]', reason) is not None
     # Generation 11 (DESIGN 54; stage 2: generation 14, DESIGN 59): only these exact reasons keep the workspaces; anything else is the full batch scene.
     keep_workspaces = re.fullmatch(r'retry-stage-[246]-[12]', reason) is not None
-    completed = protocol_only or reason == 'success-close'
+    completed = archive_scope_completed(reason)
     prefix = 'archive' if completed else 'failed'
     target = f'formal-spool/{prefix}-{batch_id[:12]}-{reason}-{nonce_hex}'
     _protected_dir(root)
@@ -391,8 +400,10 @@ def apply_archive(root, plan, rename=rename_noreplace):
     slimmed, slim_kept = [], []
     if plan.get('slimCandidates'):  # only after every move was verified; the moved trees themselves are already proven
         slimmed, slim_kept = slim_success_archive(target, [os.path.basename(m['to']) for m in plan['moves'] if m['isDir']])
-    result = {'verified': True, 'moved': moved, 'deleted': len(slimmed), 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
-              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs'], 'slimmed': slimmed, 'slimKept': slim_kept}
+    swept = plan.get('containersSwept', [])  # removed before any move, each with its evidence file (DESIGN 65.4)
+    result = {'verified': True, 'moved': moved, 'deleted': len(slimmed) + len(swept), 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
+              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs'], 'slimmed': slimmed, 'slimKept': slim_kept,
+              'containersSwept': swept}
     _durable_new(os.path.join(target, 'receipt.json'), result)
     return result
 
@@ -615,6 +626,168 @@ def verify_pins(manifest):
         need(sha256_file(f['installedPath']) == f['sha256'], 'RESIDENT_LINUX_PIN_CHANGED')
 
 
+# ---------- L2: a clean start for every batch and role (DESIGN 65) ----------
+
+NONCE_LABEL = 'clued.verify.nonce'
+# Every container any role creates carries this label (verify-worker.mjs#createArguments, formal-trivy-v3/docker.mjs); full ids.
+NONCE_LIST = ['ps', '--all', '--no-trunc', '--filter', f'label={NONCE_LABEL}', '--format', '{{.ID}} {{.State}}']
+# The only docker sub-commands this tool runs. Never rmi, image, prune, volume, network, system: the image store is a cache.
+DOCKER_VERBS = ('ps', 'inspect', 'diff', 'rm')
+CONTAINER_ID = re.compile(r'^[0-9a-f]{64}$')
+SWEEP_CONTRACT = 'clued.independent-ci.resident-linux-container-sweep/1'
+VIEW_CONTRACT = 'clued.independent-ci.worker-view-check/1'
+MAX_DOCKER_OUT = 1 << 20
+TRIVY_CACHE = '/var/lib/clued-independent-ci-trivy-cache'
+WORKER_UNIT_FILE = '/etc/systemd/system/clued-ci-worker@.service'
+# The [Service] settings that build the worker's file-system view; view-properties hands exactly these to systemd-run.
+VIEW_KEYS = ('ProtectSystem', 'ProtectHome', 'PrivateTmp', 'PrivateIPC', 'ReadWritePaths', 'ReadOnlyPaths', 'InaccessiblePaths',
+             'TemporaryFileSystem', 'BindPaths')
+LEGACY_STATE = ('verify-spool', 'verify-once-state', 'trusted-source')
+
+
+def archive_scope_completed(reason):
+    """between-roles-4/6 and success-close are the completed scopes (b22/b28): they preserve an unexpected scene."""
+    return re.fullmatch(r'between-roles-[46]', reason) is not None or reason == 'success-close'
+
+
+def parse_nonce_list(text):
+    rows = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split()
+        need(len(parts) == 2 and CONTAINER_ID.fullmatch(parts[0]) is not None, 'DOCKER_READ_UNCONFIRMED')
+        rows.append((parts[0], parts[1]))
+    return rows
+
+
+def list_nonce(docker):
+    code, out = docker(NONCE_LIST)
+    need(code == 0, 'DOCKER_READ_UNCONFIRMED')
+    return parse_nonce_list(out)
+
+
+def guard_no_earlier_containers(docker, sleep=time.sleep, tries=3, pause_s=2.0):
+    """A worker starts only when no labelled container exists in ANY state: nothing an earlier batch or role ran is still there.
+    An unreadable list is asked again (three reads, 2 s apart) before refusing."""
+    for attempt in range(tries):
+        try:
+            rows = list_nonce(docker)
+            break
+        except Refused:
+            if attempt == tries - 1:
+                raise
+            sleep(pause_s)
+    if rows:
+        raise Refused('EARLIER_CONTAINER_PRESENT', [f'{cid} {state}' for cid, state in rows])
+    return {'containersPresent': 0}
+
+
+def sweep_containers(docker, evidence_dir, completed, now=lambda: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())):
+    """Archive step (DESIGN 65.4), after quiescence and BEFORE anything is moved or any status is written, so a refusal leaves the
+    instance runnable again. A completed scope with a labelled container refuses and changes nothing; a failure scope records each
+    exited/dead container (docker inspect + docker diff) in a create-only evidence file, removes it (docker rm --volumes, no
+    --force), and proves the list empty afterwards."""
+    rows = list_nonce(docker)
+    if not rows:
+        return []
+    ids = [f'{cid} {state}' for cid, state in rows]
+    if completed:
+        raise Refused('CONTAINER_PRESENT_PRESERVED', ids)
+    if any(state not in ('exited', 'dead') for _, state in rows):
+        raise Refused('CONTAINER_NOT_QUIET', ids)
+    parent = os.path.dirname(evidence_dir)
+    _protected_dir(os.path.dirname(parent))  # resident/: checked before anything is created below it
+    for d in (parent, evidence_dir):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        _protected_dir(d)
+    swept = []
+    for cid, state in rows:
+        code, out = docker(['inspect', '--type', 'container', cid])
+        if code != 0:
+            raise Refused('CONTAINER_SWEEP_UNCONFIRMED', ids)
+        try:
+            inspect = json.loads(out)
+        except ValueError:
+            raise Refused('CONTAINER_SWEEP_UNCONFIRMED', ids)
+        one = isinstance(inspect, list) and len(inspect) == 1 and isinstance(inspect[0], dict)
+        labels = ((inspect[0].get('Config') or {}).get('Labels') or {}) if one else {}
+        if not (one and inspect[0].get('Id') == cid and NONCE_LABEL in labels):
+            raise Refused('CONTAINER_IDENTITY_UNCONFIRMED', ids)
+        dcode, diff = docker(['diff', cid])  # measured, not assumed: what the container's writable layer holds
+        record = {'contract': SWEEP_CONTRACT, 'id': cid, 'state': state, 'observedAt': now(), 'inspect': inspect[0],
+                  'diff': diff.splitlines() if dcode == 0 else None, 'diffExitCode': dcode}
+        name = f'container-{cid}-{secrets.token_hex(6)}.json'
+        _durable_new(os.path.join(evidence_dir, name), record)
+        code, _ = docker(['rm', '--volumes', cid])
+        if code != 0:
+            raise Refused('CONTAINER_SWEEP_UNCONFIRMED', ids)
+        swept.append({'id': cid, 'state': state, 'evidence': name, 'evidenceSha256': sha256_file(os.path.join(evidence_dir, name)),
+                      'diffEntries': None if record['diff'] is None else len(record['diff'])})
+    left = list_nonce(docker)
+    if left:
+        raise Refused('CONTAINER_SWEEP_UNCONFIRMED', [f'{cid} {state}' for cid, state in left])
+    return swept
+
+
+def namespace_properties(unit_text, job_id):
+    """systemd-run --property arguments carrying exactly the worker unit's file-system view for one job id (rehearsal probe,
+    DESIGN 65.7). Only the %i specifier is allowed in these settings."""
+    need(JOB_ID.fullmatch(job_id) is not None, 'WORKER_INSTANCE_REFUSED')
+    props = []
+    for line in unit_text.splitlines():
+        key, sep, value = line.partition('=')
+        if sep and key in VIEW_KEYS:
+            need('%' not in value.replace('%i', ''), 'VIEW_SPECIFIER_REFUSED')
+            props.append(f'--property={key}={value.replace("%i", job_id)}')
+    need(any(p.startswith('--property=TemporaryFileSystem=') for p in props), 'VIEW_SETTINGS_MISSING')
+    return props
+
+
+def view_facts(job_id, entries, writable):
+    """What a worker run must see (DESIGN 65.2), read from inside its namespace. entries(path) -> sorted names or None (absent or not
+    readable); writable(path) -> bool. Pure; the CLI view-check feeds it os.listdir / os.access."""
+    need(JOB_ID.fullmatch(job_id) is not None, 'WORKER_INSTANCE_REFUSED')
+    hidden = lambda p: entries(p) in (None, [])
+    fails = []
+
+    def want(cond, code):
+        if not cond:
+            fails.append(code)
+    spool, ws = entries(SPOOL), entries(f'{STATE}/workspaces')
+    want(spool is not None and set(spool) <= {'incoming', 'outgoing'}, 'EARLIER_ARCHIVES_VISIBLE')
+    want(ws is not None and set(ws) <= {job_id}, 'OTHER_WORKSPACES_VISIBLE')
+    want(hidden(RESIDENT_STATE), 'RESIDENT_STATE_VISIBLE')
+    want(all(hidden(f'{STATE}/{n}') for n in LEGACY_STATE), 'LEGACY_STATE_VISIBLE')
+    want(hidden('/mnt') and hidden('/run/WSL'), 'WINDOWS_PATHS_VISIBLE')
+    want(not writable(f'{STATE}/toolchain-build-legacy-v1'), 'TOOLCHAIN_WRITABLE')
+    want(not writable(SPOOL) and not writable(f'{STATE}/workspaces'), 'VIEW_ROOT_WRITABLE')
+    want(not writable('/etc/clued-independent-ci') and not writable(OPT), 'TRUSTED_TREE_WRITABLE')
+    want(writable(STATE), 'STATE_ROOT_NOT_WRITABLE')  # formal-role.lock (Source SERIAL_LOCK) is created here
+    for p in (f'{SPOOL}/incoming', f'{SPOOL}/outgoing', f'{STATE}/runs', f'{STATE}/workspaces/{job_id}', TRIVY_CACHE):
+        if entries(p) is not None:
+            want(writable(p), 'NOT_WRITABLE:' + p)
+    return {'contract': VIEW_CONTRACT, 'jobId': job_id, 'ok': not fails, 'failures': fails}
+
+
+def _entries(path):
+    try:
+        return sorted(os.listdir(path))
+    except OSError:
+        return None
+
+
+def docker_port(argv, timeout=60):
+    """One docker call with a fixed verb, a time limit and a 1 MiB output bound; (exit code, stdout)."""
+    need(isinstance(argv, list) and argv and argv[0] in DOCKER_VERBS, 'DOCKER_VERB_REFUSED')
+    try:
+        r = subprocess.run([DOCKER] + argv, env=ENV, capture_output=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return 124, ''
+    need(len(r.stdout) <= MAX_DOCKER_OUT, 'DOCKER_OUTPUT_BOUND')
+    return r.returncode, r.stdout.decode('utf-8', 'replace')
+
+
 # ---------- host commands (Linux, root) ----------
 
 def unit_name(kind, instance):
@@ -642,7 +815,7 @@ def cgroup_events(unit):
 
 
 def nonce_containers():
-    code, out = run([DOCKER, 'ps', '--all', '--filter', 'label=clued.verify.nonce', '--format', '{{.ID}} {{.State}}'], timeout=60)
+    code, out = run([DOCKER] + NONCE_LIST, timeout=60)
     need(code == 0, 'DOCKER_READ_UNCONFIRMED')
     return [l for l in out.splitlines() if l.strip()]
 
@@ -738,7 +911,19 @@ def main(argv):
         if unit == 'worker':
             issue = json.load(open(f'{SPOOL}/incoming/issue.json'))
             need(issue.get('job', {}).get('id') == parsed['jobId'], 'WORKER_INSTANCE_NOT_THE_ISSUED_JOB')
+            # DESIGN 65.3: only the worker checks (a refusal there is an abandoned stage whose retry archive sweeps); ws-prep does
+            # not, since its refusal burns the head (review M1).
+            guard_no_earlier_containers(docker_port)
         return {'status': 'GUARD_PASSED', 'unit': unit}
+    if cmd == 'view-properties':
+        inst = args.get('--instance', '')
+        with open(WORKER_UNIT_FILE) as f:
+            return {'contract': VIEW_CONTRACT, 'properties': namespace_properties(f.read(), inst)}
+    if cmd == 'view-check':  # exit 0 only when the view is exactly as DESIGN 65.3 says
+        facts = view_facts(args.get('--instance', ''), _entries, lambda p: os.access(p, os.W_OK))
+        if not facts['ok']:
+            raise Refused('WORKER_VIEW_CHECK_FAILED', facts['failures'])
+        return facts
     if cmd == 'quiescence':
         need(BATCH_ID.fullmatch(args.get('--batch', '')), 'BATCH_REFUSED')
         return quiescence()
@@ -752,6 +937,8 @@ def main(argv):
             return earlier
         q = quiescence(self_unit=unit_name('archive', inst))
         need(q['linuxUnitsInactive'] and q['containersZero'], 'ARCHIVE_REQUIRES_QUIESCENCE')
+        # DESIGN 65.4: before planning and before any status is written, so a refusal here leaves the instance runnable (review B1).
+        swept = sweep_containers(docker_port, f'{RESIDENT_STATE}/container-sweep/{inst}', archive_scope_completed(parsed['reason']))
         # A re-arm of a quarantined entry may not know the batch's descriptor; then workspaces are
         # left in place (only an identical job id could collide with them, and that head is burned).
         if parsed['reason'].startswith('rearm-') and not os.path.lexists(f"{DESCRIPTORS}/{parsed['batchId']}/descriptor.json"):
@@ -759,6 +946,8 @@ def main(argv):
         else:
             job_ids = descriptor_job_ids(read_descriptor_bytes(parsed['batchId']), parsed['batchId'])
         plan = plan_archive(STATE, parsed['batchId'], parsed['reason'], job_ids, secrets.token_hex(6))
+        plan['containersSwept'] = swept
+        plan['deletesAnything'] = plan['deletesAnything'] or bool(swept)
         try:
             result = apply_archive(STATE, plan)
         except Refused as e:  # one status per instance, create-only, durable: partial is never "missing"
@@ -790,7 +979,7 @@ if __name__ == '__main__':
         print(json.dumps(main(sys.argv[1:]), sort_keys=True))
         sys.exit(0)
     except Refused as e:
-        print(json.dumps({'status': 'REFUSED', 'code': e.code}))
+        print(json.dumps({'status': 'REFUSED', 'code': e.code, **({'details': e.details} if e.details is not None else {})}, sort_keys=True))
         sys.exit(1)
     except (OSError, ValueError, KeyError) as e:
         print(json.dumps({'status': 'REFUSED', 'code': 'LINUX_TOOL_UNCONFIRMED', 'kind': type(e).__name__}))
