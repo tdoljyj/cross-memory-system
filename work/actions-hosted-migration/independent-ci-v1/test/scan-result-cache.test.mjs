@@ -381,7 +381,7 @@ test('placement and gitleaks observations carrying cacheHit are refused by the s
 const workerUrl=new URL('../worker/protected-job-bridge-v4/linux-worker.mjs',import.meta.url),W='globalThis.__scanCacheWorkerHarness';
 const stub=lines=>'data:text/javascript;base64,'+Buffer.from(lines.join('\n')).toString('base64');
 let workerSource=await fs.readFile(workerUrl,'utf8');
-for(const [relative,lines] of Object.entries({'./boundary.mjs':[`export async function loadLinuxContext(){return ${W}.context;}`,`export function takeAcceptedBridgeContext(c){return c;}`],
+for(const [relative,lines] of Object.entries({'./boundary.mjs':[`export async function loadLinuxContext(){return ${W}.context;}`,`export async function loadLinuxRelayContext(){return ${W}.context;}`,`export function takeAcceptedBridgeContext(c){return c;}`],
   './mailbox.mjs':[`export async function openAcceptedMailbox(){return ${W}.box;}`,`export function takeActualMailbox(b){return b;}`],
   './signed-result.mjs':[`export async function signActualBridgeResult(context,issue,observation){${W}.events.push('sign');return {signed:observation};}`],
   '../formal-gitleaks-v4/adapter.mjs':[`export function createFormalGitleaksAdapter(ports){return ${W}.adapter(ports);}`],
