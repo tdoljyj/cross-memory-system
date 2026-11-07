@@ -137,7 +137,7 @@
     "scripts/ci/activity-conflict-caller.test.mjs": "bd76fd78a32350c892f8c2e13ed44902741835e0f858b7c409032cff77c8cddc",
     "scripts/ci/admission-self-test-lists.test.mjs": "7d9d7506d4ab9b34574fcd243f151f3d7bc8b1f007f4d57c980bac54bd42f08d",
     "scripts/ci/check-pinned-registries.mjs": "41a2d48ba4a6109260c1492e6a5d740732b3a078879ea7d352ef4bf5b173b8e5",
-    "scripts/ci/check-pinned-registries.test.mjs": "47f40b1bbebcc6021bb6f302f237f070034ecb98400b625ae06e14c0c4c01085",
+    "scripts/ci/check-pinned-registries.test.mjs": "b2bb20b14523552482942cd2494a55a3ac949ac7252ad6ef724e06aa07661ea2",
     "scripts/ci/check_active_doc_links.py": "45ba8e59e126406a59e46078b20a5c3aa1b1b1abf60f8f84849f197c439c77c5",
     "scripts/ci/check_contract_placement.py": "18a5c02a7f39e397c0d4cd6273620dd5ed91a2a12351ed3639ab7986533ba007",
     "scripts/ci/check_design_refs.py": "448c6db2491582d12691998a51455610bf5b4dc6eec2048325f716b62db0b543",

@@ -101,8 +101,14 @@ test('changing a pinned file names the stale registries and the commands that fi
     // chase each other: regenerating it makes the component digest stale, and the check says so.
     r = cli(dir, '--base', 'HEAD');
     assert.equal(r.status, 1, r.stdout); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /STALE\s+components/);
-    const update = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', 'update'], { cwd: dir, encoding: 'utf8' });
-    assert.equal(update.status, 0, update.stdout + update.stderr);
+    // The full chain the check prints: bump (the bump edits the version marker, a locked file), regenerate the
+    // reconcile registry, update the digests, then check again.
+    const py = (...args) => { const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', ...args], { cwd: dir, encoding: 'utf8' }); assert.equal(x.status, 0, x.stdout + x.stderr); };
+    py('bump', 'script.merge-reconciliation', '99.0.0');
+    r = cli(dir, '--base', 'HEAD');
+    assert.equal(r.status, 1); assert.match(r.stdout, /STALE\s+reconcile/);
+    refreshReconcile(dir);
+    py('update');
     r = cli(dir, '--base', 'HEAD');
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
