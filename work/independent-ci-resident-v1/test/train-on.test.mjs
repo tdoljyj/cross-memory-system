@@ -800,3 +800,16 @@ test('defect a8910e41: after the take-over the head bound in this duty runs no o
   await f.exec.tick();
   assert.ok(f.engine.calls.some(c => c[0] === 'derive'), 'the head runs like any other');
 });
+
+test('service loop: after stage 10 gives OPEN_FRONT_BATCH the next sleep is the short one, not the 15 s resting one', async t => {
+  const { serviceLoop } = await import('../src/service-main.mjs');
+  const front = { pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: TREE, claimId: CLAIM, since: new Date(T0 - MIN).toISOString(), attempt: 1 };
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: mode => answer(mode, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: front }, 1) }) });
+  const slept = [];
+  let ticks = 0;
+  const exec = { tick: async () => { ticks += 1; return f.exec.tick(); } };
+  await serviceLoop({ exec, lock: { touch: async () => {} }, sleep: async ms => { slept.push(ms); f.advance(ms); }, stopRequested: async () => ticks >= 1 && slept.length >= 1,
+    acknowledgeStop: async () => {}, onLoopException: async () => {}, betweenBatches: async () => {} });
+  assert.equal(f.queue.row(884).current.testSha, S, 'the front batch was queued');
+  assert.deepEqual(slept, [2_000], 'a batch is to open: the short sleep');
+});

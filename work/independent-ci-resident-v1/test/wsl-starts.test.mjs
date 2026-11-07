@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Mailbox } from '../src/mailbox.mjs';
 import {
-  CALLBACK_WINDOW_MS, CHALLENGE_RESERVE_MS, COMPANION_CONFIG_CONTRACT, Companion, HANDOVER_LISTING_CAP_MS, LINUX_INCOMING, LINUX_OUTGOING, LISTING_CAP_MS, LISTING_MIN_MS,
+  CALLBACK_WINDOW_MS, CHALLENGE_RESERVE_MS, COMPANION_CONFIG_CONTRACT, Companion, HANDOVER_LISTING_CAP_MS, HOT_LISTING_CAP_MS, HOT_WINDOW_MS, LINUX_INCOMING, LINUX_OUTGOING, LISTING_CAP_MS, LISTING_MIN_MS,
   WORKER_FACTS_EVERY_MS, WORKER_START_WAIT_MS, listingDelayMs, validateCompanionConfig,
 } from '../src/companion.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
@@ -98,8 +98,9 @@ test('wsl.exe starts of a typical stage, before and after: the listings drop to 
   // eslint-disable-next-line no-console
   t.diagnostic(`typical stage (${Math.round(before.elapsed / 1000)} s): wsl.exe starts before ${JSON.stringify(before.starts)} = ${before.total}, after ${JSON.stringify(after.starts)} = ${after.total}; relay calls ${before.relays.length} / ${after.relays.length}`);
   assert.ok(before.starts.listing >= 150, `before: about one listing a second (${before.starts.listing})`);
-  assert.ok(after.starts.listing * 4 <= before.starts.listing, `listings ${before.starts.listing} -> ${after.starts.listing}`);
-  assert.ok(after.total * 3 <= before.total, `all starts ${before.total} -> ${after.total}`);
+  // the hot window after each callback round (DESIGN §31.5) costs about seven more listings per round than the plain back-off
+  assert.ok(after.starts.listing * 2.5 <= before.starts.listing, `listings ${before.starts.listing} -> ${after.starts.listing}`);
+  assert.ok(after.total * 2 <= before.total, `all starts ${before.total} -> ${after.total}`);
   // the same transfers, the same relay calls: only the polling got rarer
   assert.deepEqual(after.relays.map(r => r.m).filter(m => m !== 'ReceiveChallenge' && m !== 'ReceiveResult'), before.relays.map(r => r.m).filter(m => m !== 'ReceiveChallenge' && m !== 'ReceiveResult'));
 });
@@ -120,7 +121,7 @@ test('wsl.exe starts of a stage that runs nearly its 45 minutes, before and afte
   const after = await stage(t, FULL);
   t.diagnostic(`45-minute stage: before ${JSON.stringify(before.starts)} = ${before.total}, after ${JSON.stringify(after.starts)} = ${after.total}; relay calls ${before.relays.length} / ${after.relays.length}`);
   assert.deepEqual([after.answer.ok, after.answer.code], [true, null]);
-  assert.ok(after.starts.listing * 10 <= before.starts.listing, `listings ${before.starts.listing} -> ${after.starts.listing}`);
+  assert.ok(after.starts.listing * 9 <= before.starts.listing, `listings ${before.starts.listing} -> ${after.starts.listing}`);
   assert.ok(after.total * 5 <= before.total, `all starts ${before.total} -> ${after.total}`);
 });
 
@@ -216,4 +217,22 @@ test('the hand-over of the worker\'s blocked record is looked for at the hand-ov
     sleep: async ms => { now += ms; }, clock: () => now });
   assert.equal(await none.handOverBlocked(T0 + 45 * 60_000), false);
   assert.ok(now - T0 >= CALLBACK_WINDOW_MS + 30_000 && now - T0 < CALLBACK_WINDOW_MS + 30_000 + HANDOVER_LISTING_CAP_MS + 1000, `${now - T0} ms`);
+});
+
+test('hot window: after a callback round is answered, listings are at most HOT_LISTING_CAP_MS apart for HOT_WINDOW_MS, then the back-off returns', async t => {
+  // challenge 2 is answered about 75 s in; challenge 3 comes after a long scan, so the listings in between show the pace
+  const r = await stage(t, { challengesAt: [4_000, 70_000, 400_000], resultAt: 403_000, endsAt: 406_000 });
+  assert.deepEqual([r.answer.ok, r.answer.code], [true, null]);
+  const responses = r.relays.filter(x => x.m === 'SendResponse');
+  const roundEnd = responses[1].at - T0 + RELAY_CALL_MS + T0; // the second round ends when its SendResponse returns
+  const gaps = (from, to) => r.listingAt.map((at, i) => [at, r.listingAt[i + 1] - at]).filter(([at, g]) => at >= from && at < to && Number.isFinite(g)).map(([, g]) => g);
+  const inside = gaps(roundEnd, roundEnd + HOT_WINDOW_MS - HOT_LISTING_CAP_MS - 2 * WSL_CALL_MS);
+  assert.ok(inside.length >= 15, `listings in the window: ${inside.length}`);
+  assert.ok(Math.max(...inside) <= HOT_LISTING_CAP_MS + WSL_CALL_MS + 100, `inside the window the longest gap is ${Math.max(...inside)} ms`);
+  const after = gaps(roundEnd + HOT_WINDOW_MS + 60_000, roundEnd + 300_000);
+  assert.ok(Math.max(...after) > HOT_LISTING_CAP_MS * 2, `after the window the back-off is back: ${Math.max(...after)} ms`);
+  assert.ok(Math.max(...after) <= LISTING_CAP_MS + WSL_CALL_MS + 100);
+  // a challenge made inside the window is found within the hot cap
+  const near = await stage(t, { challengesAt: [4_000, 70_000, 70_000 + 5_000 + 40_000], resultAt: 125_000, endsAt: 128_000 });
+  assert.ok(Math.max(...near.lateness.slice(2)) <= HOT_LISTING_CAP_MS + 2 * WSL_CALL_MS + 100, `${near.lateness}`);
 });
