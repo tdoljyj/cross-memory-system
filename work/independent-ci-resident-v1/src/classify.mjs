@@ -271,6 +271,8 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
   BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
   BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
   SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),
+  // Defect a8910e41: the take-over binding run's own end after stage 1 (DESIGN §62.4); nothing against the PR, so no release cap.
+  TRAIN_FRONT_BOUND: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: null }), evidence: 'the take-over binding run ended on purpose after its stage 1' }),
 });
 
 // Generation 10 (DESIGN 53.3, 53.4): whether an ending was the line to GitHub or Native and nothing else, from the most specific fact

@@ -94,6 +94,10 @@ test('resident subject: S joins the subject and the batch key only for a front b
   assert.equal(d.result.testSha, S);
   for (const [n, text] of Object.entries(d.files)) if (n.endsWith('/jobs.json')) for (const j of JSON.parse(text)) assert.deepEqual([j.headSha, j.baseSha, j.testSha], [HEAD, BASE, S]);
   assert.deepEqual(JSON.parse(d.files['batch.json']).subject, f);
+  // Two Source identities (resident DESIGN §7.1): the subject and key carry the resident's installed-files manifest, every job (the
+  // stage-8 merge-slot job too) carries the install record's CI Source, the one stage 10's proof and the node heartbeat name.
+  assert.notEqual(d.result.ciSourceManifestSha256, f.sourceManifestSha256);
+  for (const [n, text] of Object.entries(d.files)) if (n.endsWith('/jobs.json')) for (const j of JSON.parse(text)) assert.equal(j.sourceManifestSha256, d.result.ciSourceManifestSha256, n);
   // the key must be the subject's own: the head-only key does not derive a front batch
   const headKey = residentBatchKey(s);
   assert.throws(() => deriveBatch({ recordDocs: r.docs, subject: f, batchKey: headKey, batchId: headKey.slice(0, 16) + '-123456789abc', now: NOW }), { code: 'RESIDENT_BATCH_KEY_MISMATCH' });

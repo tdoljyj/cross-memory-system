@@ -14,6 +14,7 @@ import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
+import { ROLES_PUBLIC_LINUX_DIR, ROLES_PUBLIC_NAMES, ROLES_PUBLIC_TIMEOUT_MS, readRolesPublic, rolePublicBytes, rolesPublicCurrent, rolesPublicDocument, rolesPublicWanted, writeRolesPublic } from './roles-public.mjs';
 
 export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
 // The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
@@ -57,6 +58,11 @@ export const WORKER_START_WAIT_MS = 5 * 60_000;
 export const LISTING_MIN_MS = 1000;
 export const LISTING_CAP_MS = WORKER_FACTS_EVERY_MS;
 export const LISTING_QUIET_DIVISOR = 2;
+// Hot window (DESIGN §31.5, the hot-window paragraph): for HOT_WINDOW_MS after a callback round was answered (SendResponse relayed) the
+// next challenge is likely to follow soon, so the listing pause is capped at HOT_LISTING_CAP_MS instead of LISTING_CAP_MS. Outside
+// the window the back-off is unchanged.
+export const HOT_WINDOW_MS = 60_000;
+export const HOT_LISTING_CAP_MS = 3000;
 // After a failed callback round, the hand-over of the worker's blocked record is looked for at most this far apart (its window
 // is CALLBACK_WINDOW_MS + 30 s; DESIGN §31.5).
 export const HANDOVER_LISTING_CAP_MS = 5000;
@@ -354,6 +360,9 @@ export function argv(cfg) {
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
     // DESIGN §34: the frozen upgrade tool, as root, with the fixed path and arguments that pass upgradeToolArgvOk only.
     upgradeTool: args => { check(upgradeToolArgvOk(args), 'COMPANION_UPGRADE_TOOL_ARGS_INVALID'); return wsl(UPGRADE_TOOL_PATH, ...args); },
+    // DESIGN §63 (Task 3ea699f6): one of the six PUBLIC live role files, base64 on one line, as root and read-only; the name is one of
+    // the six fixed ones (roles-public.mjs#ROLES_PUBLIC_NAMES), nothing variable reaches the path.
+    rolePublic: name => { check(ROLES_PUBLIC_NAMES.includes(name), 'COMPANION_ROLE_PUBLIC_NAME_INVALID'); return wsl('/usr/bin/base64', '-w', '0', '--', `${ROLES_PUBLIC_LINUX_DIR}/${name}`); },
   };
 }
 
@@ -755,7 +764,7 @@ export class Companion {
       const firstSeen = new Map();
       const seenAt = (names, seq, anchor) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names !== null) firstSeen.set(seq, anchor); return anchor; };
       // Pace of the listing (DESIGN §31.5): what has happened last (the start, a changed listing, a relayed record).
-      let eventAt = startedAt, lowerBound = startCalledAt, previousNames = null;
+      let eventAt = startedAt, lowerBound = startCalledAt, previousNames = null, hotUntil = -Infinity;
       // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
       // retries, is not.
       const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
@@ -791,6 +800,7 @@ export class Companion {
               lowerBound = Math.max(lowerBound, sendingAt);
               sequence += 1;
               eventAt = this.clock();
+              hotUntil = eventAt + HOT_WINDOW_MS;
               continue;
             }
           }
@@ -802,7 +812,7 @@ export class Companion {
             fail('LINUX_WORKER_ENDED_WITHOUT_RECORD');
           }
           // Every second right after anything happened, then less and less often (DESIGN §31.5): a listing is a wsl.exe start.
-          await this.sleep(names === null ? 100 : this.paceListing({ quietMs: this.clock() - eventAt, untilFactsMs: worker.factsAt - this.clock() }));
+          await this.sleep(names === null ? 100 : this.paceListing({ quietMs: this.clock() - eventAt, untilFactsMs: worker.factsAt - this.clock(), capMs: this.clock() < hotUntil ? HOT_LISTING_CAP_MS : LISTING_CAP_MS }));
         }
       } catch (error) {
         // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
@@ -896,7 +906,33 @@ export class UpgradeLane {
     try { validateVersionFacts(response.result); await box.writeVersionFacts(response.result); } catch { return false; }
     this.factsAt = this.clock();
     this.factsDue = false;
+    await this.refreshRolesPublic(box, response.result);
     return true;
+  }
+
+  // DESIGN §63 (Task 3ea699f6): right after facts are written, the public copy of the six live role files in
+  // responses\roles-public.json, when the copy there is not the one these facts name (in practice once per generation: the first
+  // facts after a switch or rollback, or the new companion's first facts). Each file is read with the fixed argv rolePublic and
+  // taken only when its bytes hash to these facts; the first failure leaves the copy as it was (the next facts try again). Facts
+  // that do not name all six files, or a mailbox without a responses directory, copy nothing. Never throws; the outcome is kept in
+  // this.rolesPublic for logs and tests: 'current' | 'written' | 'skipped' | 'failed'.
+  async refreshRolesPublic(box, facts) {
+    try {
+      const want = rolesPublicWanted(facts);
+      if (!want || typeof box?.responses !== 'string') return (this.rolesPublic = 'skipped');
+      if (rolesPublicCurrent(await readRolesPublic(box.responses), facts)) return (this.rolesPublic = 'current');
+      const files = {};
+      for (const name of ROLES_PUBLIC_NAMES) {
+        const r = await this.run(this.a.rolePublic(name), { timeoutMs: ROLES_PUBLIC_TIMEOUT_MS });
+        const bytes = r && r.code === 0 && !r.timedOut && !r.refused ? rolePublicBytes(r.stdout, want[name]) : null;
+        if (!bytes) return (this.rolesPublic = 'failed');
+        files[name] = bytes;
+      }
+      await writeRolesPublic(box.responses, rolesPublicDocument(facts, files, this.clock()));
+      return (this.rolesPublic = 'written');
+    } catch {
+      return (this.rolesPublic = 'failed');
+    }
   }
 
   // Due (never written, or a switch or rollback asked for it) or older than VERSION_FACTS_REFRESH_MS; a failed read waits VERSION_FACTS_RETRY_MS.

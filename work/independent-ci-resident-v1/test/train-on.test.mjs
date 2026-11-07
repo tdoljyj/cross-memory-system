@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, trainSettings, validatePolicy } from '../src/policy.mjs';
-import { DECISIONS, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
+import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
@@ -689,4 +689,160 @@ test('round-2 review MINOR 1: a node that ran no stage 10 for longer than fullSw
   const g = await executorFixture(t, { root: f.root, policy: policyV8(), now: late });
   await g.exec.tick();
   assert.deepEqual([g.exec.trainOnSince, g.exec.trainTakeoverDone], [late, false]);
+});
+
+// Defect b0426896 (field, 08:02:39 -> 08:12:44): after the upgrade's restart the resident starts under the upgrader's PAUSE; the first
+// stage 10 runs revoke-only (REVOKE_ONLY_DONE, wouldDo NO_FRONT) and used up the urgency the new eligibility had set, so the first
+// on-mode run after the resume waited a whole maintenanceEveryMs while the queue's head PR sat there. Once the pause is lifted
+// (upgrade-resumed, or the last intake hold resumed) and no on-mode stage 10 ran yet in this duty (or the last one was revoke-only),
+// stage 10 is due at once: the first on run happens within a minute of the resume, and the head PR's front batch goes in.
+test('defect b0426896: install -> upgrade PAUSE (revoke-only) -> upgrade-resumed: the first on run within a minute, the head PR goes in', async t => {
+  const { upgradeResumeRequest } = await import('../src/upgrade-mailbox.mjs');
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: m => m === 'revoke-only' ? answer(m, { decision: 'REVOKE_ONLY_DONE' }, 0)
+    : answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  // the upgrader paused the resident before its restart; the head PR's trigger is waiting
+  await f.ledger.pause({ reason: 'upgrade', requestSha256: 'a'.repeat(64) });
+  await f.drop(triggerBytes({ pr: 884, headSha: HEAD }));
+  assert.equal((await f.exec.tick()).state, 'PAUSED');
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only']);
+  assert.equal((await ofType(f.receipts, 'train-run')).at(-1).decision, 'REVOKE_ONLY_DONE');
+  // still paused a minute later: nothing more runs (revoke-only keeps its own cadence)
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only']);
+  f.advance(MIN);
+  const paused = await f.ledger.paused();
+  await f.drop(Buffer.from(JSON.stringify(upgradeResumeRequest({ pausedSha256: paused.sha256, opId: CLAIM, generation: 3 }, f.clock))), 'owner');
+  const resumedAt = f.clock();
+  for (let i = 0; i < 2 && !e.inputs.some(x => x.mode === 'on'); i += 1) { await f.exec.tick(); if (!e.inputs.some(x => x.mode === 'on')) f.advance(30_000); }
+  assert.equal(await f.ledger.paused(), null);
+  assert.equal((await f.receipts.latest(['upgrade-resumed'], 5)).length, 1);
+  const on = (await f.receipts.latest(['train-run-intent'], 50)).find(r => r.value.body.runMode === 'on');
+  assert.ok(on, 'an on-mode stage 10 ran after the resume');
+  assert.ok(Date.parse(on.value.at) - resumedAt <= MIN, `the first on run ${(Date.parse(on.value.at) - resumedAt) / 1000}s after the resume`);
+  // the head PR's front batch is queued and reserved
+  assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => [b.pr, b.testSha]), [[884, S]]);
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual((await ofType(f.receipts, 'batch-reserved')).map(b => [b.subject.pr, b.subject.headSha, b.subject.testSha]), [[884, HEAD, S]], 'the front batch (H, S) of the head PR started');
+  // no repeat: the urgency was spent by that on run, the next one keeps its cadence
+  const runs = e.inputs.length;
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.equal(e.inputs.length, runs);
+});
+
+test('defect b0426896: an intake hold left after the upgrade-resume keeps revoke-only; its intake-resumed makes the first on run due at once', async t => {
+  const { intakePauseRequest, intakeResumeRequest } = await import('../src/intake-pause.mjs');
+  const { upgradeResumeRequest } = await import('../src/upgrade-mailbox.mjs');
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: m => m === 'revoke-only' ? answer(m, { decision: 'REVOKE_ONLY_DONE' }, 0) : answer(m, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.ledger.pause({ reason: 'upgrade', requestSha256: 'a'.repeat(64) });
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'version-skew', minutes: 120, reason: 'UPGRADE_VERSION_SKEW' }, f.clock)), 'requests');
+  await f.exec.tick();
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only']);
+  f.advance(2 * MIN);
+  const paused = await f.ledger.paused();
+  await f.drop(Buffer.from(JSON.stringify(upgradeResumeRequest({ pausedSha256: paused.sha256, opId: CLAIM, generation: 3 }, f.clock))), 'owner');
+  await f.exec.tick();
+  assert.equal(await f.ledger.paused(), null);
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only'], 'the intake hold still holds: no extra revoke-only run, no on run');
+  f.advance(2 * MIN);
+  await f.drop(JSON.stringify(intakeResumeRequest({ holder: 'version-skew', reason: 'VERSIONS_CONSISTENT' }, f.clock)), 'requests');
+  const resumedAt = f.clock();
+  await f.exec.tick();
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only', 'on'], 'the first on run in the tick of the intake-resumed');
+  const on = (await f.receipts.latest(['train-run-intent'], 50)).find(r => r.value.body.runMode === 'on');
+  assert.ok(Date.parse(on.value.at) - resumedAt <= MIN);
+});
+
+test('defect b0426896: the resume urgency never passes the daily cap and never runs a second time in the same duty', async t => {
+  const { upgradeResumeRequest } = await import('../src/upgrade-mailbox.mjs');
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: m => m === 'revoke-only' ? answer(m, { decision: 'REVOKE_ONLY_DONE' }, 0) : answer(m, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8({ maintenanceMaxPerDay: 1 }), engine: e.engine });
+  await f.ledger.pause({ reason: 'upgrade', requestSha256: 'a'.repeat(64) });
+  await f.exec.tick();
+  f.advance(MIN);
+  const paused = await f.ledger.paused();
+  await f.drop(Buffer.from(JSON.stringify(upgradeResumeRequest({ pausedSha256: paused.sha256, opId: CLAIM, generation: 3 }, f.clock))), 'owner');
+  await f.exec.tick();
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual(e.inputs.map(x => x.mode), ['revoke-only'], 'the one run of the day was spent; the resume does not add one');
+  // an on run already happened in this duty and was not followed by revoke-only: a later PAUSE/resume pair adds nothing
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
+  const h = await executorFixture(t, { policy: policyV8(), engine: g.engine });
+  await h.exec.tick();
+  assert.deepEqual(g.inputs.map(x => x.mode), ['on']);
+  h.advance(MIN);
+  await h.ledger.pause({ reason: 'owner', requestSha256: 'b'.repeat(64) });
+  await h.ledger.resume((await h.ledger.paused()).sha256, 'S-1-5-32-544');
+  await h.exec.tick();
+  assert.deepEqual(g.inputs.map(x => x.mode), ['on'], 'no on run before its cadence');
+});
+
+test('defect a8910e41: after the take-over the head bound in this duty runs no ordinary batch; the marker never outlives the duty', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  assert.equal(f.exec.trainTakeoverDone, true);
+  f.exec.frontBound.set(`884:${HEAD}`, f.clock());
+  await f.drop(triggerBytes({ pr: 884, headSha: HEAD }));
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.reason], ['DEFERRED', 'TRAIN_FRONT_BOUND_HEAD']);
+  assert.deepEqual(f.engine.calls.filter(c => c[0] === 'derive'), [], 'no ordinary batch of the bound head in this duty');
+  assert.equal(f.queue.row(884).state, 'QUEUED', 'the row stays');
+  // a marker from before this duty's onSince holds nothing
+  f.exec.frontBound.set(`884:${HEAD}`, f.exec.trainOnSince - 1);
+  f.advance(5 * MIN);
+  await f.exec.tick();
+  assert.ok(f.engine.calls.some(c => c[0] === 'derive'), 'the head runs like any other');
+});
+
+test('service loop: after stage 10 gives OPEN_FRONT_BATCH the next sleep is the short one, not the 15 s resting one', async t => {
+  const { serviceLoop } = await import('../src/service-main.mjs');
+  const front = { pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: TREE, claimId: CLAIM, since: new Date(T0 - MIN).toISOString(), attempt: 1 };
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: mode => answer(mode, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: front }, 1) }) });
+  const slept = [];
+  let ticks = 0;
+  const exec = { tick: async () => { ticks += 1; return f.exec.tick(); } };
+  await serviceLoop({ exec, lock: { touch: async () => {} }, sleep: async ms => { slept.push(ms); f.advance(ms); }, stopRequested: async () => ticks >= 1 && slept.length >= 1,
+    acknowledgeStop: async () => {}, onLoopException: async () => {}, betweenBatches: async () => {} });
+  assert.equal(f.queue.row(884).current.testSha, S, 'the front batch was queued');
+  assert.deepEqual(slept, [2_000], 'a batch is to open: the short sleep');
+});
+
+test('defect: a TRAIN_SOURCE_MISMATCH or TRAIN_SOURCE_UNREADABLE run is re-checked after 2 minutes, not 10; the daily cap still holds', async t => {
+  for (const decision of ['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']) {
+    const e = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, e.inputs.length === 2 ? { ...DONE, decision } : DONE, 0) }) });
+    const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+    await f.exec.tick();
+    f.advance(10 * MIN);
+    await f.exec.tick();
+    assert.equal(f.exec.trainLast.decision, decision);
+    assert.equal(e.inputs.length, 2);
+    f.advance(MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 2, 'not yet: 1 minute');
+    f.advance(MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 3, `${decision}: due 2 minutes after`);
+    assert.equal(f.exec.trainLast.decision, 'NO_FRONT', 'the peer is ready now; back to the normal cadence');
+    f.advance(2 * MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 3, 'a normal run keeps the 10 minute cadence');
+  }
+  // the daily cap is not bypassed
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, { ...DONE, decision: 'TRAIN_SOURCE_MISMATCH' }, 0) }) });
+  const h = await executorFixture(t, { policy: policyV8({ maintenanceMaxPerDay: 2 }), engine: g.engine });
+  await h.exec.tick();
+  h.advance(2 * MIN);
+  await h.exec.tick();
+  assert.equal(g.inputs.length, 2);
+  h.advance(2 * MIN);
+  await h.exec.tick();
+  assert.equal(g.inputs.length, 2, 'cap of 2 per day holds');
+  assert.equal(trainDue({ train: onTrain({ maintenanceMaxPerDay: 2 }), now: T0 + 5 * MIN, runs: [T0, T0 + 2 * MIN], busy: false, recheck: true }), false);
 });

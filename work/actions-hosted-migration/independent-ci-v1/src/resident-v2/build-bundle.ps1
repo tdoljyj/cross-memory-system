@@ -130,14 +130,17 @@ function Quote-Arg([string]$A){
  if($A.Length -eq 0 -or $A -match '\s'){return '"'+($A -replace '(\\+)$','$1$1')+'"'}
  return $A
 }
-function Invoke-Git([string]$Label,[string[]]$GitArgs){
+# $InputText (optional) is written to git's standard input after both output readers have started, then input is closed.
+function Invoke-Git([string]$Label,[string[]]$GitArgs,[string]$InputText=''){
  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=$Git;$psi.Arguments=((@($GitArgs)|ForEach-Object{Quote-Arg $_})-join ' ')
  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
  $psi.StandardOutputEncoding=New-Object Text.UTF8Encoding($false);$psi.StandardErrorEncoding=New-Object Text.UTF8Encoding($false);$psi.WorkingDirectory=$Root
  foreach($k in @($psi.EnvironmentVariables.Keys)){if($k -match '^(?i)GIT_'){$psi.EnvironmentVariables.Remove($k)}}
  $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT']='0';$psi.EnvironmentVariables['LANG']='C';$psi.EnvironmentVariables['LC_ALL']='C'
- $p=New-Object Diagnostics.Process;$p.StartInfo=$psi;if(-not $p.Start()){throw 'GIT_START_UNCONFIRMED'};$p.StandardInput.Close()
- $o=$p.StandardOutput.ReadToEndAsync();$e=$p.StandardError.ReadToEndAsync();$p.WaitForExit();$out=$o.Result;$err=$e.Result
+ $p=New-Object Diagnostics.Process;$p.StartInfo=$psi;if(-not $p.Start()){throw 'GIT_START_UNCONFIRMED'}
+ $o=$p.StandardOutput.ReadToEndAsync();$e=$p.StandardError.ReadToEndAsync()
+ if($InputText.Length -gt 0){$p.StandardInput.Write($InputText)};$p.StandardInput.Close()
+ $p.WaitForExit();$out=$o.Result;$err=$e.Result
  # Stderr is never printed: it is counted only, so no credential/URL text can leak.
  $script:lastGit=[ordered]@{label=$Label;exitCode=$p.ExitCode;stderrChars=$err.Length}
  if($p.ExitCode -ne 0){throw 'GIT_STEP_FAILED'}
@@ -472,6 +475,26 @@ function Seed-Update($Store){
 # One complete attempt at the fetched store, in a fresh bare repository of its own ($Dir must not exist yet): all heads
 # and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back, then (train
 # front batch only) the tested commit S by SHA with its parents [T, H].
+# The ref target types of a store in one git process (cat-file --batch-check) instead of one cat-file -t per ref (CI Source
+# round-trip trim: 405 refs, 12-17 s of process starts per bundle). The answer is used only when it is complete and consistent:
+# one '<sha> <type> <size>' line per distinct target, in order, every type a known object type. Anything else (a missing
+# object, an unexpected line, git failing or not starting) returns $null, and Build-Store then runs the per-ref cat-file -t
+# loop exactly as before, so every refusal, failed step and diagnostic stays the one it always was.
+function Ref-Target-Types([string]$Gd,$Refs){
+ $shas=New-Object 'Collections.Generic.List[string]';$seen=New-RefMap
+ foreach($v in $Refs.Values){if(-not $seen.ContainsKey($v)){$seen[$v]=$v;$shas.Add($v)}}
+ if($shas.Count -eq 0){return $null}
+ try{$out=Invoke-Git 'ref-types' ($Common+@($Gd,'cat-file','--batch-check')) (($shas -join "`n")+"`n")}catch{return $null}
+ $lines=@($out -split "`n"|Where-Object{$_ -ne ''});if($lines.Count -ne $shas.Count){return $null}
+ $types=New-RefMap
+ for($i=0;$i -lt $shas.Count;$i++){$f=$lines[$i].Split(' ')
+  if($f.Count -ne 3 -or $f[0] -cne $shas[$i] -or $f[1] -cnotmatch '\A(commit|tag|tree|blob)\z' -or $f[2] -cnotmatch '\A[0-9]+\z'){return $null};$types[$shas[$i]]=$f[1]}
+ return ,$types
+}
+# What Build-Store accepts as the target of a formal ref (heads: a commit; tags: a commit or an annotated tag).
+function Ref-Type-Allowed([string]$Name,[string]$Type){
+ return -not (($Name.StartsWith('refs/heads/') -and $Type -cne 'commit') -or ($Name.StartsWith('refs/tags/') -and $Type -cne 'commit' -and $Type -cne 'tag'))
+}
 function Build-Store([string]$Dir){
  $script:stage='fresh-bare-repository';$script:refsDiffer=$null;Absent $Dir
  $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$Dir));$script:created+=$Dir
@@ -497,8 +520,11 @@ function Build-Store([string]$Dir){
  $sourceType=$null;try{$sourceType=(Invoke-Git 'source-cat-file' ($Common+@($gd,'cat-file','-t',$desc.value.sourceCommit))).Trim()}catch{if($_.Exception.Message -cne 'GIT_STEP_FAILED'){throw}}
  if($sourceType -cne 'commit'){throw 'SOURCE_COMMIT_NOT_ON_REMOTE'}
  foreach($s in @($Head,$Base)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
- foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
-  if(($k.StartsWith('refs/heads/') -and $t -cne 'commit') -or ($k.StartsWith('refs/tags/') -and $t -cne 'commit' -and $t -cne 'tag')){throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'}}
+ # One batch answer when every ref passes; otherwise (or with no usable answer) the per-ref loop decides, unchanged.
+ $types=Ref-Target-Types $gd $local
+ if($null -ne $types){foreach($k in $local.Keys){if(-not (Ref-Type-Allowed $k $types[$local[$k]])){$types=$null;break}}}
+ if($null -eq $types){foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
+  if(($k.StartsWith('refs/heads/') -and $t -cne 'commit') -or ($k.StartsWith('refs/tags/') -and $t -cne 'commit' -and $t -cne 'tag')){throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'}}}
  $branchesAtHead=@($local.Keys|Where-Object{$_.StartsWith('refs/heads/') -and $local[$_] -ceq $Head}|Sort-Object)
  $script:stage='reviewed-commit-set'
  # From the INSTALLED Source commit's .gitleaks.toml (pinned by the record), never from the PR head.

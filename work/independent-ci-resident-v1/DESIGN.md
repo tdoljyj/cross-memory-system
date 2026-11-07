@@ -732,6 +732,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
   - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
   - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
+- 后续（§64.2）：签名前 bridge 不再固定多发一轮准入挑战，适配器自己的“后”准入在 30 秒单调时钟内、完整 v2 检查通过时直接复用，否则照旧重发。
 
 ---
 
@@ -877,6 +878,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
    - `-CheckRefs` 的 ls-remote 也带低速限制，但不重来：它失败就是 `REMOTE_REFS_UNAVAILABLE`，由常驻侧照旧分类。
    - 慢但不停（一直略高于 1000 字节/秒）的传输：脚本本身没有总时限，到 companion 的时限由作业宿主连同进程树一起结束；邮箱通道不再停摆，第 0 段失败只关 Windows、不 HALT（§24，Task `8e1f07d3`）。
    - 测试：`windows/test-build-bundle.ps1` 从脚本的语法树取出 `Invoke-Git`、`Build-Store`、`Fetch-Store`，对一个本地 file:// 远端和一个只接受连接、从不回应的回环端口跑真实 git（低速窗口在测试里改成 2 秒）：卡住后在新库里成功、已审查提交那一步卡住、不卡、两次都卡（没有第 3 次）、过了 10 分钟才卡（不重来）、脚本自己的拒绝（不重来）；另把脚本复制一份、只换常驻目录、远端和 git 路径，跑完整主块、`-CheckRefs` 和同一批次的第二次运行（只新建），共 50 例。`CI/test/resident-v2-build-bundle.test.mjs` 在任何主机上钉住这些固定值。
+   - **ref 目标类型一次查完**（§64.1）：`Build-Store` 用一次 `cat-file --batch-check` 查全部 ref 的目标类型，不再每个 ref 起一个 `cat-file -t`；批量答复有任何异常就退回原来的逐个查，判定与诊断不变。
    - 生效要重装（Source v2 文件）。
 3. 第 1 段准入之后写 `10-started`。
 4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。MINOR-7：候选的 head 树先在对象库里核对模式（只许 100644、100755），**然后**才检出，检出带 `core.symlinks=false`、`core.protectNTFS`、`core.protectHFS`，所以 root 从不写出符号链接或子模块。（以非 root 身份检出没有采用：工作区必须是 root:root，换身份要加 chown 步骤，留作 P2 评估。）
@@ -1988,6 +1990,8 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 提醒写在备用 context，并发 Windows 通知，建议 Owner 移交 ci-admission；它不会自行移交。每个 `(PR, head, reason)` 在本地保留窗口内只提醒一次，相关记忆保留 24 小时。一个 head 的 statuses 成功读到后缓存 5 分钟；读取失败不更新缓存时间，可以在下一轮报告时再试（正常轮询约 1 分钟）。每轮最多尝试读 10 个 head，并受读取前的预算检查约束。
 
+提醒的结束（Task `63c3c879`，PR #1027）：提醒写的是 pending，GitHub 会把任何 pending 的 commit status（即使不是 required）算作未完成，mergeStateStatus 变 UNSTABLE。现在每条已写出的提醒都记在 companion 记忆 `standby` 里，直到它被结束：本节点转为 ACTIVE（“<节点> 已接班，备用提醒结束”）、PR 不再符合条件（“备用节点 <节点>，不参与本 PR”），或 STANDBY 再读这个 head 时有正面证据表明当班节点已接手——它在该 head 上 30 分钟内写了当班/双活停机，或 App `5368905` 已发布 `kooyumi-work-admission`（“备用节点 <节点>，不参与本 PR：当班节点已接手”）。三种都在同一备用 context 上写 success；读取失败或未知不结束。已不打开的 head 直接忘记、不写。升级前的记忆没有 `standby` 时，从 24 小时内的 `reminded` 键恢复待结束的提醒。
+
 时间口径与通知一致：移交后，对方空闲或停摆时，本节点下一次角色探测通常在 15 分钟内接班；对方仍在跑批时，要等它发现角色已失去并写“已交班”。这不是固定的最长接班时间。确定的 ACTIVE / STANDBY 转换及连续至少三次不确定的角色探测也有通知，UNCERTAIN 本身不算一次确定模式转换。
 
 ### 23.4 接班核对及其边界
@@ -2767,6 +2771,8 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 泵结束后等 worker unit 消失的循环原来每 0.5 s 读一次 `unitFacts`，最长 30 s：改为 0.5、1、2 s 然后每 2 s，同样的 30 s 上限，最多约 17 次。
 - 测试可以传端口 `listingDelay`，`() => 1000` 就是改动前的节奏；生产不传。
 - 一次一个子进程、作业宿主限时、固定 argv 三条约束原样保留：没有新的子进程种类，没有新的 argv。
+
+**热窗口（回合之后）。** 一轮回调（`SendResponse`）刚转完的 `HOT_WINDOW_MS` = 60 s 内，列表间隔的上限从 15 s 降到 `HOT_LISTING_CAP_MS` = 3 s（公式不变，只是上限）；窗口过后照旧退避到 15 s。理由：扫描期间挑战之间有空档，间隔被拉满，实测单次拾取最长 12.2 s，20 轮合计约 35 s。每个回合多约 7 次列表（典型段列表 35 → 56、总数 54 → 75，仍是 §31.5 前 184 的 0.41；45 分钟段 376 → 389）；仍是同一种 argv、一次一个子进程，`unitFacts` 的 15 s 节奏不变（睡眠仍被截到下一次读之前），hv_sock 通道数按 wsl.exe 启动数线性增加，没有越过 §31.5 的约束。§32 的内存闸不受影响（它只在段开始前读，不经泵）。测试：`test/wsl-starts.test.mjs` 的热窗口一条；其余启动数断言的倍数相应放宽（列表 4 → 2.5 倍，总数 3 → 2 倍，45 分钟段列表 10 → 9 倍）。
 
 **每个回合增加的最坏延迟，以及为什么仍在预算之内。**
 
@@ -3735,6 +3741,8 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 ## 45. 三个扫描并行？分析结论：常驻层不能安全做到，最小的可行办法是 Source 级的“多角色扫描段”（Task `c59e697c`，第 8 代，分析稿，未改任何运行代码）
 
 范围：基于第 7 代 `b88ee755`。任务要求在常驻节点内让 gitleaks、trivy、contract-placement 的执行段（第 2、4、6 段）并行，再按现有顺序发布。本节逐项核对共享资源，结论是：**只改常驻层，任何并行都会被下面五处单例挡住；没有任何一处能靠“只把发布串行”绕开**，因为发布段（第 3、5、7 段）本身也要占同一个交换槽。没有写并行的代码：并行逻辑放在常驻层就是死代码，放进 Source 就是一次 Source 变更（新 Source 清单、Owner Decision、UAC、Grant），要先由 Owner 选。
+
+> 后续（§64.3）：trivy 三个扫描器之间紧挨着的“后/前”准入已合并为一次（上一个的“后”就是下一个的“前”），每个扫描器的 pre/post 准入哈希记在观察里，观察合同因此升到 `/3`。
 
 ### 45.1 五处单例（读代码得到的事实）
 
@@ -4923,4 +4931,139 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 
 时间：从 PR 被第10段看到起，绑定批次（bundle + 第1段）约数分钟，随后一次第10段（urgent）开车头批次，车头批次仍完整跑一遍（约20分钟，§41.4）。离线端到端测试 `test/train-takeover-front.test.mjs` 用真实 executor + 真实 Source v2 第10段/清扫存储/第8段发布者，在 full sweep 仍 running 时拿到 merge-slot success；现场是否 ≤30 分钟仍需实测（§62 开头）。
 
-残余：认领 trailer 只写在 head 提交信息里（本修法与合并执行器一样只读 PR 正文）、或该 PR 不在最近更新的10个开着的 PR 里时，不产生 `frontBind`，仍等 full sweep。`nonFrontRuns=false` 时调度只放 S 行，绑定批次同样不会跑；接管完成后、`nonFrontRuns=true` 时普通批次跑完第1–7段停在 B（`TRAIN_SINGLE_GREEN_NOT_PROVEN`），其 row 占位使 `offerFront` 返回 busy，车头批次要等它结束（按代码推断，未实测）：这两点不在本次修复范围，另行立项。
+残余：认领 trailer 只写在 head 提交信息里（本修法与合并执行器一样只读 PR 正文）、或该 PR 不在最近更新的10个开着的 PR 里时，不产生 `frontBind`，仍等 full sweep。`nonFrontRuns=false` 时调度只放 S 行、绑定批次同样不会跑（Task `7100ff62`），以及接管完成后普通批次停在 B 占住 row（Task `ad19ef19`）：两点均已在 §62.5 修复。
+
+### 62.5 列车车头的两处后续缺陷（Task `7100ff62`、`ad19ef19`，2026-11-07）
+
+`nonFrontRuns=false`（Task `7100ff62`）：调度在 `nonFrontRuns=false` 时只放带 S 的行，§62.4 的绑定批次（队首 PR、attempt 1、不带 S）被 `TRAIN_NON_FRONT_RUNS_OFF` 挡住，认领绑不上，冷启动又回到等 full sweep。绑定批次本质是车头的前置，不是“非车头批次”：现在该过滤也放行 `trainFrontBind` 认可的那一行（同样只到第1段），其它不带 S 的行和 attempt 2 照旧推迟。端到端测试 `test/train-takeover-front.test.mjs` 增加 `nonFrontRuns false` 变体：修复前没有任何阶段运行、拿不到 merge-slot；修复后与 `true` 相同。
+
+稳态车头被同 PR 普通批次阻塞（Task `ad19ef19`，已证实）：接管完成后、`nonFrontRuns=true`，认领为队首的新 PR 先跑普通批次（不带 S）：第1段绑定认领，第1–7段通过，第8段 `TRAIN_SINGLE_GREEN_NOT_PROVEN` 停在 B。train on 下这一结果永远不会变：`trainHeadDecision`/`strictFrontHeadDecision` 只接受车头作业（带 S）。第10段随后读到已绑定的 holder，计入车头尝试并 touch running 后给出 `OPEN_FRONT_BATCH`；`offerFront` 因该 PR 的 row 正在 running 返回 busy（`TRAIN_FRONT_PR_BUSY`），而第10段此后一直说 `TRAIN_FRONT_BATCH_RUNNING`、不再开车头，直到 running 时钟或 slot 到期。离线端到端测试（稳态 + 队首新 PR 推入，真实 executor + Source v2 第10段 + 第8段发布者）修复前 60 分钟内没有 merge-slot success。
+
+修法：`enqueueFront` 在 `offerFront` 之前，若该 PR 正在 running 的是同一 head、不带 S 的普通批次，且它停在停车点 A（第1段之后的 hosted wait）或 B（第1–7段之后），就在该停车点以 `TRAIN_FRONT_TAKES_OVER`（clean-final、burn、new-commit、不计熔断；A 处为第1段结束，B 处为只动 Windows 的第8段结束，与 `PARKED_AUTHORITY_EXPIRING`/停车到期同一路径）干净结束它，并写 `train-front-takes-over` 回执，然后照常 `offerFront`。车头批次 (H, S) 有自己的 head key，不受普通 head 已烧影响；第8段的实时检查全部不变。不在停车点的批次（第10段运行时不会有）或其它 head 的批次不动，`offerFront` 照旧决定。修复后同一测试约 2 分钟（模拟时间）拿到 merge-slot success，并且没有 busy 拒绝。
+
+残余：停车点 A 只在 relay 开启时出现；relay 开启时车头批次本身会因 Owner 规则 41ab823a 停在 `RELAY_PROVIDER_TRANSFER_REQUIRED`（与本修法无关，出货策略 relay 关闭）。离线测试的阶段不耗时，现场“普通批次第1–7段约20分钟 + 车头批次约20分钟”仍可能超过30分钟目标：普通批次在第1–7段期间（无安全点）不会被打断，这一段需要现场实测后再决定是否让队首 PR 的普通批次在第1段后就让位。（已在 §62.6 让位。）
+
+### 62.6 稳态下队首 PR 的普通批次在第1段后让位（§62.5 残余，第 12 项，2026-11-07）
+
+现象：train=on、接管已完成、`nonFrontRuns=true`，认领为队首的新 PR 先跑普通批次（不带 S）的第1–7段（现场约 13–15 分钟），之后第10段才开车头批次 (H, S)；train on 下普通批次永远拿不到 `kooyumi-merge-slot`（§62.5），这段工作全部作废。
+
+修法（只改常驻层 `executor.mjs#trainFrontYield`，不改 Source，不碰 `enqueueFront`/调度）：普通批次第1段成功后、`markStarted` 之前，同时满足下列条件就让位：
+- policy `train.enabled=on`、本节点当班（`trainEligible`）、接管已完成、main 未改写（`fullAllPending` 不是 `TRAIN_MAIN_REWRITTEN`）；
+- 最新一次第10段是 on 模式、`onDuty=true`、读到 strict 为 true；
+- 该行 attempt 1、不带 S；
+- 第1段自己的结局 `SETTLED`，且 Native 在这次准入里报的合并队列条目（`outcome.scheduling.mergeQueue`，Source `queue-facts.mjs#mergeQueueEntryV2`）是 `entered=true`、`state=head`、位置为 1 或未给出。
+
+让位与 §62.4 绑定批次的结束完全同一条路：写 `train-front-yield` 回执（key、PR、head、队列条目，尽力而为），以 `TRAIN_FRONT_CLAIM_BOUND`（第1段，Windows-only）结束，`fail()` 在两端证明齐全时释放成 `TRAIN_FRONT_BOUND`（NOT_EXECUTED，不烧 head、不计熔断），写 `train-front-bound` 回执并设 `frontBound`：本次当班内这个 head 不再跑普通批次，也不会被第二次绑定；第10段立刻到期（`trainAskAfterBind` 计一次 + `frontBindEnd` 的 urgent，受每日上限约束）。之后的第10段读到已绑定的 holder，给出 `OPEN_FRONT_BATCH`，车头批次 (H, S) 跑第1–8段；车头批次有自己的 head key，第8段的实时 strict/holder/claim generation/Source/frozen/ticket 检查全部不变。
+
+不让位的情形（行为与修复前相同）：不是队首（`waiting`、`lapsed`、`out`、`none`，或 head 但位置不是 1）；第1段结局没有队列条目（Native 没答、旧 Source）——这时仍由 §62.5 的停车点接替兜底；shadow、off；接管未完成（那是 §62.4 绑定批次的事）；attempt 2；带 S 的车头批次；最新一次第10段不是 on、不当班或 strict 不是 true。
+
+安全论证：队列条目只用于调度，从不当授权；让位只会让普通批次少跑，不会多发任何检查。让位后的结局与修复前在 merge 上等价：修复前普通批次在第1段后 `markStarted` 烧掉 head，第8段必然 `TRAIN_SINGLE_GREEN_NOT_PROVEN`；修复后 head 不烧但在当班内由 `frontBound` 挡住，合并只能经车头批次。若第10段随后因故不开车头（如 strict 刚被关），该 PR 与修复前一样拿不到绿，差别只是普通批次的 gitleaks/trivy/placement 检查不再先发到 H 上（车头批次会发）。
+
+测试（`test/train-takeover-front.test.mjs`，真实 executor + Source v2 第10段/清扫存储/第8段发布者，假引擎的第1段按 Native holder 报队列条目）：
+- 稳态端到端：接管完成、队列空，新 PR 到达 → 普通批次只跑第1段（断言没有第2段）→ `train-front-yield`、`TRAIN_FRONT_CLAIM_BOUND`/`TRAIN_FRONT_BOUND` → 第10段 `OPEN_FRONT_BATCH` → 车头批次第1–8段 → merge-slot 绿，没有 busy 拒绝、没有 `TRAIN_FRONT_TAKES_OVER`。修复前该测试失败（普通批次跑了第1–8段）。
+- 保护：认领不是队首的 PR 照常跑第1–8段、不让位；shadow 与 off 下即使第1段说是队首也跑完8段；`trainFrontYield` 对接管未完成、attempt 2、带 S、非队首/位置 2/未入队/无结局、strict 非 true、最新运行非 on 都拒绝。
+- §62.5 的两条测试改为“第1段不报队列条目”变体，继续钉住停车点 A、B 的接替路径。
+
+残余：节省的是普通批次第2–7段（现场约 13–15 分钟）；车头批次本身仍完整一遍。现场 ≤30 分钟仍需实测（§62 开头）。
+
+### 62.7 wsprep 与第1段并发：不做（第 5 项分析）
+
+实测 wsprep 排在第1段之后串行约 14.5 秒。结论：**不做**，理由是与现有不变量冲突，不是工作量问题：
+1. **§24.4 的不变量“工作区准备在第1段之后才做”**：第1段之前（含 `before-stage-1` 安全点的取代与 Owner 中止、bundle 失败）释放的批次只归档 Windows（`closeOrThrow(batch, { linux: false })`），不等 companion 的任何答复，companion 忙或不在都不会把释放变成 `UNEXECUTED_CLOSE_UNCONFIRMED`/HALT。并发后这些释放全部要等 wsprep 结束并做 Linux 归档，正是 §24.4 拿掉的 HALT 来源；§62.4/§62.6 的 `TRAIN_FRONT_BOUND` 释放和第1段的未准入释放都依赖“只动了 Windows”（`windowsOnly`、断路器的 Windows-only 位置）。
+2. **准入在先**：§10.1 的顺序是第1段准入 → `10-started` → wsprep。wsprep 由 root 对 PR 的树做 fsck、模式检查和检出；放到准入之前，等于让未准入（Native 拒绝、Owner 未批）的 PR 内容先进 Linux root 工作区，扩大暴露面。
+3. **wsprep 依赖第1段之后才知道的东西**：只有存在本地 Linux 角色时才做（第R段之后的 `25-plan`）；停车点 A 之后可能重新打 bundle（§37）再做；第1段后让位/绑定的批次（§62.4、§62.6）根本不需要工作区。提前做在这些路径上都是白做，还要补清理。
+4. **单例**：Linux 侧本身不冲突（第1段不起 Linux unit、不拿角色锁），但 companion 邮箱 lane 一次一个请求（§45.1 第5项），wsprep 占着 lane 时第1段之后的 `check-refs`/归档要排队，并发窗口有限。
+改动面也超过中等：`drive()` 的并发与异常、`fail()` 第0/1段各释放路径改为带 Linux 收尾、重启恢复中“已预留未开始但 Linux 有工作区”的新状态。14.5 秒的收益不抵这些风险，维持串行。
+
+### 62.8 车头批次第一次刷新不再补扫描段（第 23 代现场，2026-11-07 PR #1032）
+
+现象：接管期间，第10段 10:04:31 给出 `OPEN_FRONT_BATCH`，这一轮按 Task e30b5a36 的规则跳过了接管 full sweep 的扫描段；车头批次 10:05:04–10:19:22 跑完第1–7段，strict-front 证明（`sweepFreshMs` 15 分钟）只剩约 9 秒，不足 `FRONT_PROOF_MARGIN_MS`（3 分钟），常驻层写 `train-front-proof-refresh` 并跑第10段刷新。刷新轮 10:19:22–10:21:59 共 2 分 37 秒，几乎全花在扫描段上：旧规则下刷新轮只有在“上一轮数过扫描段”时才能跳过，而上一轮正是跳过了的开车轮。第8段 10:22:52 出绿。
+
+1. **证明不依赖本轮扫描段。** `train-maintenance.mjs` 写 `strict-front-proof` 的条件是 `frontFastEligible`（实时 strict、Source、受保护记录、main 历史已知未改写）、没有待确认撤销、没有 `stateReason`、全量状态已写或本轮无需写且 main 未变、没有未确认/剩余撤销、本轮 proof 已写；没有一条要求本轮跑了增量或扫描段（证明本身 `historyCoverage=false`，§62.1）。第8段 `strictFrontHeadDecision` 读的是该证明的时效、holder/claim generation、实时 strict 与 main、Source、全量状态锚点（mainSha、onSince、未改写）、`recordFollows`（证明晚于全量记录与 proof），以及无待撤销；跳过扫描段的轮次不写全量记录，证明自然晚于旧记录。所以刷新轮跳过扫描段仍能有效刷新证明（原有测试已覆盖“上一轮扫过时刷新轮跳过”的情形）。
+2. **防饿死不变量。** 目的是接管 full sweep 有界地向前推进（§62.3：前台优先但有界，`fullSweepMaxMs` 到期还会作废重来，不能被无限推迟）。“最近 N 分钟扫过就可跳”不解决本例：本例上一次数到扫描段是开车轮之前的那一轮，刷新时已超过 15 分钟，而且时间窗会让较长车头批次期间的多次刷新连续跳过、降低推进速率。改为按轮数计：
+   - 新增 `roundsSinceSegment`：从最新的全量记录（本轮开始时读到的那一条，且其 calls 比同一轮的前一条多，即数到了扫描段）找到它那一轮，在最新的几条 proof 里数它之后还有几轮；找不到、没数到、有坏记录或读不了一律按无穷大处理（不跳）。
+   - 刷新轮：原条件（全量状态保持不变、本轮不写）之外，“上一轮数到扫描段”**或**“上一轮正是开这个批次的那一轮（最新车头批次记录的 runId 等于最新 proof 的 runId），且最近数到扫描段之后至多两轮”。所以只有每个批次的第一次刷新能接在跳过的绑定轮、开车轮之后跳过；之后的刷新仍隔一轮跳一次。
+   - 开车轮：原条件之外加同一界限（之后至多两轮）。以前开车轮只受“同一车头未被判过”约束，一串事先已绑定的车头（例如 train on 之前跑过第1段的 PR）可以连续跳过；现在不会。
+   - 绑定轮不变（上一轮数到扫描段才跳）。
+   结论：任何时候至多连续三轮（绑定、开车、第一次刷新）跳过扫描段，第四轮必须数一段；新到的 PR 每个周期仍至少数一段（下一个绑定轮必须扫），推进速率与修改前相同，只是把这一段从第8段之前挪到批次之后。跳过轮照旧要求没有待确认撤销、strict 等实时条件全部成立，不写全量状态。§62.3 的有界续跑与“已知未确认撤销不能因前台先跑而丢失”不受影响。
+3. **余量 3 分钟不缩。** 本例刷新时证明只剩约 9 秒，任何余量都会触发刷新，缩小余量对本例没有收益。第8段对证明是实时复核的：发布者在写 `kooyumi-merge-slot` 之前（`boundary` 后 `revalidateStrictException`）和写入之后（再次 `revalidateStrictException`）各用当时的时钟判一次 `strictFrontHeadDecision`。证明若在写前过期，第8段以 `TRAIN_SINGLE_GREEN_NOT_PROVEN`（BLOCKED、零副作用）停在 B，刷新后重试，白跑一次第8段；若在写入之后、回读之前过期，已发出的绿要按“已知成功、一次有界负面更新”撤回，这是更坏的结果。第8段现场约 53 秒，第10段为一次第8段尝试预留 `STAGE8_ATTEMPT_MS` 90 秒，3 分钟余量约是现场的三倍、预留的两倍；缩到 2 分钟只覆盖剩余时间落在 2–3 分钟这一窄区间的批次，收益很小，风险是写后撤绿，所以不动。
+4. **改法与测试。** 只改 Source v2 `train-maintenance.mjs`（`MAX_SKIPS_BEFORE_SKIP = 2`、`roundsSinceSegment`、开车/刷新两条跳过条件），常驻层不改。
+   - 常驻层端到端 `test/train-takeover-front.test.mjs` 的 gen 22 用例补断言：车头批次第1–7段超过证明时效 → 刷新轮不读全量页、模拟耗时 0 s（修复前 160 s，读 1 页）→ 第一次第8段出绿（模拟首绿 1420 s → 1260 s）→ 之后一轮重新读全量页，接管完成。修复前该断言失败。
+   - Source v2 `test/train-strict-front.test.mjs`：e30b5a36 用例改为“开车后的第一次刷新跳过、再下一轮必扫，之后隔一轮”；新增“连续三轮跳过后，新车头（同一 PR 的新 head）的开车轮必须读全量页；上一轮扫过时则照常跳过”。只去掉开车轮的新界限时该子用例失败。
+   残余：轮次之间的间隔不受此界限约束（车头批次期间常驻层不跑第10段），所以界限是“连续轮数”，不是墙钟时间；现场是否省下这 2.6 分钟仍需实测。
+
+## 63. 打下一代升级包不再需要 UAC 导出角色副本（缺陷 Task `3ea699f6`）
+
+### 63.1 问题
+
+每装一代，Linux 侧都会重新派生、重签三个角色（gitleaks、trivy、contract-placement）的 policy 和 qualification（`/etc/clued-independent-ci/roles-v3`，root 0700/0600）。打下一代包时 `rollout/tools/roles-derived.py` 要按节点自己的 version facts（`roles.<role>.policySha256` / `qualificationSha256`）逐字节核对这六个文件，而非特权的 Owner 读不到它们，只能每代、每台节点用 `tools/derive-public-export.py` 生成一次 root 导出脚本、Owner 点 UAC 运行（§57.7）。于是每次升级 Owner 要点两次（UAC 加升级批准）。
+
+### 63.2 修法：companion 顺手写一份公开副本
+
+version facts 本来就是 companion（Owner 会话、非提权的计划任务）用冻结 root 工具 `clued-ci-upgrade-linux version-facts` 读出、整份写进 `upgrade\mailbox\responses\version-facts.json` 的，约每 5 分钟一次，切代/回滚后立即一次。现在 companion 每次写完 facts，紧接着检查同目录的 `roles-public.json`（`src/roles-public.mjs`，合同 `clued.independent-ci.linux-roles-public/1`）：
+
+- 已经是这份 facts 的（同代次、六个文件的 sha256 都等于 facts）：什么都不读；平时就是这样，不多开 wsl.exe。
+- 不是（实际上每代一次：切代后的第一份 facts，或新 companion 的第一份 facts）：用固定 argv `wsl --user root --exec /usr/bin/env -i ... /usr/bin/base64 -w 0 -- /etc/clued-independent-ci/roles-v3/<六个固定文件名之一>` 逐个读（`companion.mjs#argv().rolePublic`，文件名只能是六个之一，路径里没有任何可变部分），每个文件的字节必须哈希等于刚读的 facts，否则整份放弃、旧副本原样保留，下次 facts 再试；六个都对才“临时文件 + rename”整份替换（同 `writeVersionFacts`）。
+- facts 没写全六个文件或没有代次、mailbox 没有 responses 目录：什么都不做。
+
+`roles-derived.py` 先看 facts 旁边的 `roles-public.json`：
+
+- 在且代次等于 facts：只用它。每个文件必须先等于自己条目的 sha256（否则 `ROLES_PUBLIC_COPY_REFUSED`），再逐字节等于 facts（否则仍是 `INSTALLED_ROLES_COPY_NOT_CURRENT`，带 `copySource: companion`）。被改过的副本一律拒绝，**不会**改用配置目录绕过去。
+- 缺失（companion 早于本修复）或代次不同（facts 比副本新，例如刚切代 companion 还没刷新；或回滚到旧 companion）：回退到配置的 `linux.installedRoles`，照旧核对；回答带 `notice`（`ROLES_PUBLIC_COPY_MISSING` / `ROLES_PUBLIC_COPY_OTHER_GENERATION` 和提示），`build-upgrade.ps1` 打成 Warning，输出 JSON 加 `rolesCopySource`。
+
+### 63.3 安全
+
+- 哈希核对没有放宽：不论副本从哪来，六个文件都要逐字节等于 facts；facts 仍须是 1 小时内的、冻结工具哈希仍须一致。
+- 副本只由已装的 companion 产出（随常驻包安装、受包清单约束的代码），root 侧只是对六个固定路径做只读 `base64`；不执行任何拿来的代码，不经过 Claude 或其他 Agent 的 root 操作。
+- 读的只有六个 PUBLIC 文件（policy 与带签名的 qualification）；签名私钥、App 私钥、token 都不在 roles-v3，也不在 argv 能指到的地方。
+- 副本和 facts 同在 `responses\`（Owner 可改、resident 只读），信任级别与 facts 相同，没有新增可写入口；副本只是“方便读到的字节”，不是授权来源。
+- 不改冻结的 Linux 升级工具、不改 `src/upgrade-mailbox.mjs` 及 upgrader 冻结副本里的任何模块（`upgrader/src/**` 及其引入的 `src/canonical|inbox|instance-lock|intake-pause|store|upgrade-mailbox.mjs`），upgrader 副本的 manifestSha256 不变。
+
+### 63.4 安装与过渡
+
+- 只是常驻包（companion）的改动，原地升级即可，不用整套重装；`roles-derived.py`、`build-upgrade.ps1` 在仓库里直接生效。
+- 装上带本修复的那一代之后：新 companion 启动后的第一轮就写 facts 和副本（通常一分钟内，最迟一个 facts 周期 5 分钟；某次读失败则下一个 facts 周期再试），之后立即可以打下一代包，不需要 UAC。
+- 打**带本修复的这一代**的包时，节点上跑的还是旧 companion，没有副本：仍要按旧流程导出一次（回退路径照旧可用）。此后不再需要。
+- 回滚到不带本修复的代：旧 companion 不再刷新副本，副本代次与 facts 不同，自动回退到配置目录。
+
+### 63.5 测试
+
+`test/roles-public.test.mjs`（固定 argv、装后首份 facts 即写副本、平时零读取、切代重写、字节不符或读超时不写且保留旧副本、缺字段不读、文档篡改拒绝）；`rollout/test/test_upgrade_tools.py` 的 `test_companion_copy_is_used_without_any_export`、`test_companion_copy_changed_or_stale_is_refused_never_passed_over`、`test_companion_copy_missing_or_of_another_generation_falls_back_with_a_notice`、`test_install_then_build_next_package_needs_no_uac`（真实 `UpgradeLane` 写副本 → `roles-derived.py` 在配置目录为空时成功；修复前同一情形是 `INSTALLED_ROLES_COPY_MISSING`）。
+
+## 64. CI Source 去掉三处纯重复的往返（第 20 代候选，分支 `claude/source-roundtrip-trim`）
+
+**实测**（PR #1029 车头批次）：耗时大头不是扫描本身，而是 20 轮“Linux 发挑战、Windows 做完整准入”的往返，每轮约 15–17 秒，其中至少 6 轮紧挨着重复；另外 build-bundle 对 405 个 ref 逐个起 git 进程，车头批次空耗 16.6 秒、绑定批次 12.2 秒。三处都只删重复，不放宽任何核对。
+
+### 64.1 build-bundle：ref 目标类型批量查（`CI/src/resident-v2/build-bundle.ps1`）
+
+- `Build-Store` 在“fetch 后读回”这一段要核对每个 ref 的目标类型（heads 必须是 commit，tags 是 commit 或 annotated tag，否则 `REMOTE_REF_TARGET_TYPE_UNSUPPORTED`）。以前每个 ref 一次 `cat-file -t`，现在先由 `Ref-Target-Types` 一次 `cat-file --batch-check`（去重后的目标 SHA 从标准输入写入；`Invoke-Git` 新增可选的 `$InputText`，在两个输出读取都开始之后再写入并关闭输入，不会管道互锁）。
+- **批量答复只在完整、一致时采用**：每个不同目标恰好一行 `<sha> <type> <size>`、顺序一致、类型是已知对象类型，且按 `Ref-Type-Allowed` 每个 ref 都通过。**任何异常都退回逐个查**：缺对象（`missing`）、行数或格式不对、git 失败或没能启动、或者有任何一个 ref 会被拒，`Build-Store` 都原样运行原来的逐个 `cat-file -t` 循环，于是每一种拒绝的错误码、失败步骤（`lastGit.label = 'cat-file'`）和阶段都与以前完全相同。head/base 原有的两次 `cat-file -t` 不变。`ref-types` 不连远端，不是网络步骤，不重试。
+- 结果：405 个 ref 从 407 个 git 进程变成 3 个（批量 1 + head/base 2）。
+
+### 64.2 bridge：签名前复用适配器的“后”准入（`CI/worker/protected-job-bridge-v4/linux-worker.mjs`）
+
+- 以前适配器的“扫描后”准入做完、返回观察后，worker 在 `session.finish` 和签名之前又单独发一轮准入挑战，答复也不用（3 个角色各 1 轮，约 47 秒）。观察里的 `postAdmissionSha256` 本来就是适配器那一次。
+- 现在 worker 记下最后一次准入回调的答复对象和发挑战时刻（本机单调时钟 `performance.now()`）。签名前由 `adapterFinalAdmission` 判断能否复用，**三条全满足才复用**：
+  1. 它正是观察的 `postAdmissionSha256` 指的那一次（同一个 `observationSha256`）；
+  2. 从发出那轮挑战算起不超过 **30 秒单调时钟**（`FINAL_ADMISSION_REUSE_MAX_MS` = `clock-skew.mjs` 的 `FRESH_MS`；时钟倒退也算不满足）；发挑战早于 Windows 签出，所以这个年龄只会高估；
+  3. 在 issue 的批次 claim 代次下仍通过**完整的 v2 检查**（`validateFormalAdmissionV2`，含 §7.9 的签出时刻新鲜度与 claim 未过期）。
+- 任何一条不满足就**照旧再发一轮挑战**（超时重发）。Linux 上下文与角色授权在 `session.finish`（重读角色策略）和签名器（核对接受 ref 与资格 ref）里照旧再核一次；Windows 签发方收到签名结果后的完整准入不变。
+
+### 64.3 trivy：相邻扫描器的准入串接（`CI/worker/formal-trivy-v4/adapter.mjs`）
+
+- 以前每个扫描器前后各一次准入，再加最终一次：1 + 3×2 + 1 = 8 轮。上一个扫描器的“后”准入和下一个扫描器的“前”准入之间、最后一个的“后”准入和最终准入之间没有任何工作（实测 3 轮约 49 秒）。
+- 现在上一个扫描器的“后”准入直接当下一个扫描器的“前”准入，最后一个的“后”准入当最终准入（`carriedAdmission`）：5 轮。角色开头的那次准入仍单独一轮（它和第一个扫描器之间有扫描许可的取得与记录）。
+- **复用规则与 §64.2 相同**：从请求那次准入起不超过 30 秒单调时钟（`CARRIED_ADMISSION_MAX_AGE_MS` = `FRESH_MS`），并且此刻仍通过完整的 v2 检查（同一批次 claim 代次）；否则重新发挑战。“每个扫描器前后都有新鲜准入”这一性质不变。
+- **观察里每个扫描器记录两项**：`scans[i].preAdmissionSha256`、`scans[i].postAdmissionSha256`；复用时 `scans[i+1].preAdmissionSha256 = scans[i].postAdmissionSha256`，观察的 `postAdmissionSha256` 等于 `scans[2].postAdmissionSha256`。超出窗口重发时两者不同。扫描未完整提前结束时，该项只有 `preAdmissionSha256`（那是 uncertain 记录，不是观察）。
+- **trivy 观察合同升到 `/3`**（Owner 决定，Clued decision 已记）：生产方 `formal-trivy-v4/adapter.mjs` 写 `clued.independent-ci.formal-scanner-observation/3`（`TRIVY_OBSERVATION_CONTRACT`）。校验方一起改，trivy **只接受 `/3`**：
+  1. Linux 签名器与 Windows 签发方收结果的校验共用 `protected-job-bridge-v4/signed-result.mjs#observationFacts`（签名前由 `signActualBridgeResult` 调用；Windows 侧 `windows-issuer.mjs` 经 `verifySignedBridgeResult` 调用）：trivy 要求 `/3`，并要求观察的 `preAdmissionSha256`、`postAdmissionSha256` 和每个扫描器的 `preAdmissionSha256`、`postAdmissionSha256` 都是 64 位小写十六进制（否则 `ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED`）；不要求 `scans[i+1].pre = scans[i].post`，因为超出窗口重发时两者本来就不同。gitleaks 仍是 scanner-observation `/2`，contract-placement 仍是 check-observation `/2`，trivy 的 `/2` 和 gitleaks 的 `/3` 都以 `ACTUAL_FORMAL_PROFILE_REQUIRED` 拒绝。
+  2. 角色串行槽 `formal-fixed-role-policy-v3/policy.mjs#validateCleanupObservation`（`session.finish`）：trivy 观察必须是 `/3`，否则 `ACTUAL_ROLE_CLEANUP_UNCONFIRMED`。
+  3. 再往后没有按观察合同号分派的地方：发布段（`resident-v2/invoke-stage.mjs#readSpoolResult`）只取签名信封，`proof-v2.mjs` 核对的是载荷（`profile`、`executionObservationSha256` 等），载荷里没有观察合同号；merge-admission、Native 侧（`scripts/ci`）不读观察。所以信封与结果合同（`protected-job-result/2`、信封 `/2`）不变。
+  - **不保留 `/2` 过渡**：观察只在同一个批次的同一个阶段里生产和校验（Linux 生产、签名，Windows 签发方在同一阶段内校验），签名器、签发方和角色策略都属于同一个 CI Source 清单，按 §42 在批次之间整体换代，两侧桥文件按字节受理；新 Source 装好后不会再产生 `/2`，旧批次已发布的结果在重新发布时也只读信封、不再校验观察。所以只接受 `/3`。
+  - 测试：`test/resident-v2-bridge.test.mjs` 的 trivy 夹具改为 `/3` 并带每个扫描器的哈希；新增签名器、签发方校验、角色槽三处都拒绝 trivy `/2`、缺失或格式不对的每扫描器哈希被拒、串接与重发两种形状都接受；gitleaks 用例确认 `/3` 被拒；`test/formal-trivy-scan-start-window.test.mjs` 断言生产方写 `/3`。
+
+### 64.4 省多少、安装、测试
+
+- 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
+- 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
+- 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。

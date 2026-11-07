@@ -211,6 +211,10 @@ test('the PR page text per head: running stage, queue position, outcome, HALT, s
   assert.equal(gone.state, 'pending');
   assert.match(gone.description, /不用推新提交/);
   assert.match(describe({ pull: pull(), status: s(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'TRAIN_NON_FRONT_RUNS_OFF' }])), now }).description, /只跑车头批次/);
+  // defect a8910e41: the binding run is released (NOT_EXECUTED) and its head waits within the duty: the same words, no new commit asked for
+  const boundRun = describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_EXECUTED', code: 'TRAIN_FRONT_CLAIM_BOUND', klass: 'queue', retry: 'new-trigger' })), now });
+  assert.deepEqual([boundRun.state, /已为队首认领绑定此 PR.*不用推新提交/.test(boundRun.description)], ['pending', true]);
+  assert.match(describe({ pull: pull(), status: s(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'TRAIN_FRONT_BOUND_HEAD' }])), now }).description, /已为队首认领绑定/);
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_ADMITTED', code: 'OWNER_REVIEW_REQUIRED', klass: 'waiting' })), now }).state, 'pending');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'IGNORED', code: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' })), now }), null, 'what was written stays');
   assert.equal(describe({ pull: pull(), status: s(b => b.update({ halt: { code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', at: '2026-10-22T08:00:00Z' } })), now }).state, 'error');
@@ -446,6 +450,46 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   assert.equal(again.collision, 'resident-standby/turing (info only)');
   assert.deepEqual(validateStatusConfig({ node: 'company-01' }), { prStatus: true, notifications: true, node: 'company-01' });
   assert.throws(() => validateStatusConfig({ node: 'Company 01' }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
+});
+
+// Task 63c3c879 (PR #1027): end to end over the reporter: the STANDBY's resident-standby/<node> reminder (pending) is followed by a success
+// on the same context once the node on duty picked the head up, so GitHub no longer counts a pending status on the PR.
+test('Task 63c3c879: the STANDBY reminder under resident-standby/<node> does not stay pending', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-23T06:00:00Z');
+  const calls = [];
+  let other = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    if (argv[4]?.includes('/check-runs?')) return { code: 0, stdout: '0\n' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const store = await LocalStore.open(path.join(root, 's.json'), () => now);
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, notifications: false });
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+  const node = () => ({ name: 'turing', mode: 'STANDBY', probe: { at: new Date(now - 30_000).toISOString(), result: 'not-held', failures: 0, failingSince: null } });
+  const status = () => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: node() }); }, now);
+  const standbyPosts = () => calls.filter(a => a.includes('POST') && a.some(x => x.includes(`repos/${REPO}/statuses/${H(7)}`)) && a.includes(`context=${standbyContext('turing')}`))
+    .map(a => [a.find(x => x.startsWith('state=')), a.find(x => x.startsWith('description='))]);
+  await reporter.pass({ pulls, status: status() });
+  now += 31 * 60_000;
+  await reporter.pass({ pulls, status: status() });
+  assert.deepEqual(standbyPosts().map(p => p[0]), ['state=pending'], 'the reminder');
+  assert.ok(reporter.store.data.node.standby[H(7)], 'owed an end');
+  // the node on duty takes the head up
+  now += 6 * 60_000;
+  other = [{ context: 'resident-queue/company-01 (info only)', state: 'pending', description: '当班：运行中：第 3 段（gitleaks 发布）', created_at: new Date(now - 60_000).toISOString(), login: 'tdoljyj' }];
+  await reporter.pass({ pulls, status: status() });
+  assert.deepEqual(standbyPosts().at(-1), ['state=success', 'description=备用节点 turing，不参与本 PR：当班节点已接手']);
+  assert.deepEqual(reporter.store.data.node.standby, {});
+  now += 6 * 60_000;
+  await reporter.pass({ pulls, status: status() });
+  assert.equal(standbyPosts().length, 2, 'ended once');
 });
 
 test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; a reminder toast owed is shown later; refreshes stop at 900', async t => {

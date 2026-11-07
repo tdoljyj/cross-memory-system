@@ -411,7 +411,9 @@ test('take-over front binding: nothing is named without strict, healthy Source a
       if (change === 'draft') e.gh.world.pulls.get(910).draft = true;
       if (change === 'fork') e.gh.world.pulls.get(910).headRepo = 'someone/fork';
       if (change === 'beyond-reads') for (let n = 0; n < FRONT_BIND_MAX_READS; n++) e.gh.pull(920 + n, { updated: iso(NOW) });
-      if (change === 'full-done') e.slowFull = false; // the take-over full sweep completes in this run: the ordinary path, no exception
+      // The take-over full sweep can complete at once: the ordinary path, no exception. (Task e30b5a36: the round that names the binding
+      // defers the segment, so the full sweep completes in the next round, which names nothing.)
+      if (change === 'full-done') { e.slowFull = false; assert.equal((await e.bind(job)).facts.frontBind?.pr, 910); }
       if (change === 'shadow') job = jobOf({ createdAt: iso(e.now), mode: 'shadow', onSince: null });
       const r = await e.bind(job);
       assert.equal(r.facts.frontBind, undefined, JSON.stringify(r.facts));
@@ -425,4 +427,129 @@ test('take-over front binding: the facts admit it only in on, at TRAIN_TAKEOVER_
     { frontBind: { ...facts.frontBind, claimId: '99999999-8888-4777-8666-555555555555' } }, { frontBind: { ...facts.frontBind, extra: 1 } },
     { frontBind: { ...facts.frontBind, headSha: 'x' } }, { frontBind: null }])
     assert.throws(() => validateTrainFacts({ ...facts, ...patch }), { code: 'invalid_train_facts' }, JSON.stringify(patch));
+});
+
+// ---- Task e30b5a36 (generation 22 cold start): the rounds that name the binding and open the front skip the full-sweep segment ----
+// In the field each of those two stage-10 rounds spent about 2.6 minutes, nearly all in the take-over full-sweep segment, on the cold
+// start's critical path. The segment now waits for the next rounds (the front batch's running rounds and after), which still advance
+// the take-over full sweep to its end; every strict, revocation, Source and store condition is unchanged.
+const created = e => e.gh.world.calls.filter(c => c === 'pulls-created').length;
+const runIdOf = n => `${n.toString(16).padStart(16, '0')}-0123456789ab`;
+async function takeoverRunning(t) {
+  const e = await unbound(t);
+  for (let n = 1; n <= 300; n++) e.gh.pull(n, { state: 'closed', head: sha(0x9000 + n), updated: iso(NOW - 30 * 86_400_000) });
+  // Each full-sweep page read takes 100 s: a segment reads and judges one page of 100 pulls per round (the field's minutes-long segment).
+  e.pageMs = 100_000;
+  e.gh.world.hooks.pullsPage = sort => { if (sort === 'created') e.now += e.pageMs; };
+  let n = 0;
+  e.round = async () => {
+    e.now += 5 * 60_000;
+    const before = created(e);
+    const r = await e.bind(jobOf({ createdAt: iso(e.now), runId: runIdOf(++n) }));
+    return { ...r, created: created(e) - before, full: (await e.store.readFullSweepStrict('on')).full };
+  };
+  // train=on: the take-over full sweep starts and runs (one full-sweep page per round); the queue is empty.
+  e.native.holders = [];
+  for (let i = 0; i < 2; i++) assert.ok((await e.round()).created > 0);
+  e.native.holders = undefined;
+  return e;
+}
+
+test('take-over front (task e30b5a36): the binding round and the OPEN_FRONT_BATCH round read no full-sweep page; later rounds finish the full sweep', async t => {
+  const e = await takeoverRunning(t);
+  const anchored = (await e.store.readFullSweepStrict('on')).full;
+  assert.equal(anchored.state, 'running');
+  const bind = await e.round();
+  assert.deepEqual([bind.facts.decision, bind.facts.wouldDo], ['TRAIN_TAKEOVER_SWEEP_PENDING', 'FRONT_NOT_BOUND']);
+  assert.deepEqual(bind.facts.frontBind, { pr: 910, headSha: H, claimId: CLAIM });
+  assert.equal(bind.created, 0, 'the binding round reads no full-sweep page');
+  assert.equal(bind.facts.sweep.complete, true, 'its incremental sweep still ran and completed');
+  assert.deepEqual([bind.full.nextPage, bind.full.nextIndex, bind.full.startedAt], [anchored.nextPage, anchored.nextIndex, anchored.startedAt],
+    'a skipped round records no full-sweep progress');
+  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+  const open = await e.round();
+  assert.equal(open.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(open.facts));
+  assert.ok(open.facts.openFrontBatch);
+  assert.equal(open.facts.sweep.strictFrontReadiness.state, 'ready');
+  assert.equal(open.created, 0, 'the OPEN_FRONT_BATCH round reads no full-sweep page');
+  assert.deepEqual([open.full.nextPage, open.full.nextIndex], [anchored.nextPage, anchored.nextIndex]);
+  // Generation 23 (PR #1032, DESIGN §62.8): the batch's first refresh, right after its open round, skips the segment too (the binding and
+  // the open are the only two rounds after the last segment), and still renews the strict-front observation.
+  const first = await e.round();
+  assert.equal(first.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(first.facts));
+  assert.equal(first.facts.sweep.strictFrontReadiness.state, 'ready');
+  assert.ok(Date.parse(first.facts.sweep.strictFrontReadiness.writtenAt) > Date.parse(open.facts.sweep.strictFrontReadiness.writtenAt), 'a fresh observation');
+  assert.equal(first.created, 0, 'the first refresh round after the open reads no full-sweep page');
+  assert.deepEqual([first.full.nextPage, first.full.nextIndex], [anchored.nextPage, anchored.nextIndex]);
+  // Three rounds in a row skipped it: the next round reads full-sweep pages, and the take-over full sweep goes on to its end.
+  const running = await e.round();
+  assert.equal(running.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(running.facts));
+  assert.ok(running.created > 0, 'the round after three skipped rounds reads full-sweep pages');
+  assert.ok(running.full.nextPage > anchored.nextPage, JSON.stringify(running.full));
+  // Task e30b5a36 (addition): a round that only refreshes the running front batch's strict-front observation (TRAIN_FRONT_BATCH_RUNNING,
+  // e.g. the resident's refresh before stage 8) skips the segment too, when the round before it swept; the round after it sweeps again.
+  const refresh = await e.round();
+  assert.equal(refresh.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(refresh.facts));
+  assert.equal(refresh.facts.sweep.strictFrontReadiness.state, 'ready');
+  assert.ok(Date.parse(refresh.facts.sweep.strictFrontReadiness.writtenAt) > Date.parse(running.facts.sweep.strictFrontReadiness.writtenAt), 'a fresh observation');
+  assert.equal(refresh.created, 0, 'the refresh round reads no full-sweep page');
+  assert.deepEqual([refresh.full.nextPage, refresh.full.nextIndex], [running.full.nextPage, running.full.nextIndex]);
+  const again = await e.round();
+  assert.equal(again.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(again.facts));
+  assert.ok(again.created > 0, 'the round after a skipped refresh sweeps');
+  assert.ok(again.full.state === 'complete' || again.full.nextPage > refresh.full.nextPage, JSON.stringify(again.full));
+  e.pageMs = 0;
+  let last = again;
+  for (let i = 0; i < 6 && last.full.state !== 'complete'; i++) last = await e.round();
+  assert.equal(last.full.state, 'complete', JSON.stringify(last.full));
+  assert.equal(last.facts.sweep.fullSweep.sinceOn, true);
+});
+
+test('take-over front (task e30b5a36): a binding that never binds, or an open that opens nothing, cannot starve the full sweep', async t => {
+  await t.test('binding named again and again', async t => {
+    const e = await takeoverRunning(t);
+    const rounds = [];
+    for (let i = 0; i < 10 && rounds.at(-1)?.full.state !== 'complete'; i++) rounds.push(await e.round());
+    const pending = rounds.slice(0, -1);
+    for (const r of pending) assert.deepEqual(r.facts.frontBind, { pr: 910, headSha: H, claimId: CLAIM }, JSON.stringify(r.facts));
+    assert.deepEqual(pending.map(r => r.created > 0), pending.map((r, i) => i % 2 === 1), 'at most every other round skips the segment');
+    assert.equal(rounds.at(-1).full.state, 'complete', JSON.stringify(rounds.at(-1).full));
+    assert.equal(rounds.at(-1).facts.frontBind, undefined, 'the completed take-over needs no binding exception');
+  });
+  // Generation 23 (PR #1032, DESIGN §62.8): the first refresh may follow the skipped binding and open rounds, so an open now has a bound of
+  // its own: after three rounds in a row skipped the segment (bind, open, first refresh), the open of the next front (here a new head of the
+  // bound PR, a front no round judged yet) reads full-sweep pages; before generation 23 any open of a front not judged before skipped.
+  await t.test('an open right after three skipped rounds', async t => {
+    for (const skippedBefore of [true, false]) await t.test(`three skipped before: ${skippedBefore}`, async () => {
+      const e = await takeoverRunning(t);
+      const H2 = sha(0x4242), S2 = sha(0x4343);
+      e.gh.world.commits.set(S2, { sha: S2, tree: sha(0x4444), parents: [T, H2] });
+      assert.equal((await e.round()).created, 0, 'the binding round skips');
+      e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+      const open = await e.round();
+      assert.deepEqual([open.facts.decision, open.created], ['OPEN_FRONT_BATCH', 0]);
+      const refresh = await e.round();
+      assert.deepEqual([refresh.facts.decision, refresh.created], ['TRAIN_FRONT_BATCH_RUNNING', 0], 'the first refresh skips');
+      if (!skippedBefore) assert.ok((await e.round()).created > 0, 'the round after them sweeps');
+      // The PR gets a new head: a new front, judged by no round yet, with no batch of its own.
+      const pr = e.gh.world.pulls.get(910);
+      Object.assign(pr, { head: H2, mergeCommitSha: S2, updated: iso(e.now) });
+      const next = await e.round();
+      assert.equal(next.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(next.facts));
+      assert.equal(next.facts.openFrontBatch.headSha, H2);
+      if (skippedBefore) assert.ok(next.created > 0, 'three rounds in a row skipped: the open reads full-sweep pages');
+      else assert.equal(next.created, 0, 'the round before counted a segment: the open skips');
+    });
+  });
+  await t.test('touch running refused', async t => {
+    const e = await takeoverRunning(t);
+    e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+    e.native.port.touch = async i => { e.native.calls.push(['touch', i]); return { onDuty: true, touched: false, until: e.native.holder.mergeSlotUntil, claims: [CLAIM], returned: null }; };
+    const first = await e.round();
+    assert.equal(first.facts.decision, 'TRAIN_FRONT_BUDGET_SHORT', JSON.stringify(first.facts));
+    assert.equal(first.created, 0);
+    const second = await e.round();
+    assert.ok(second.created > 0, 'the same front judged again without a batch: the segment runs');
+    assert.ok(second.full.nextPage > first.full.nextPage, JSON.stringify(second.full));
+  });
 });

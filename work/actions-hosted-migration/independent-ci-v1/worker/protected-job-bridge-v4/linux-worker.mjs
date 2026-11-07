@@ -6,9 +6,12 @@
 // an adapter that ended BLOCKED before any scanner touched the PR (before preparing it, or trivy's clean cache
 // refusal) releases the serial role slot and publishes a
 // 'blocked' record, so the Windows issuer ends the stage cleanly instead of waiting out its deadline.
+// CI Source round-trip trim: before signing, the adapter's own post admission (the observation's postAdmissionSha256, the
+// admission callback answered just before) is used when it is still fresh (adapterFinalAdmission); only otherwise is one more
+// admission challenge written. The Windows issuer still makes its complete admission after the signed result arrives.
 import {loadLinuxContext,takeAcceptedBridgeContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
-import {validateIssue,makeChallenge,validateResponse,makeBlocked,decode,encode,digest} from './protocol.mjs';
+import {validateIssue,makeChallenge,validateResponse,makeBlocked,decode,encode,digest,issueGeneration} from './protocol.mjs';
 import {signActualBridgeResult} from './signed-result.mjs';
 import {createFormalGitleaksAdapter} from '../formal-gitleaks-v4/adapter.mjs';
 import {createFormalTrivyAdapter} from '../formal-trivy-v4/adapter.mjs';
@@ -16,7 +19,7 @@ import {createFormalContractPlacementAdapter} from '../formal-contract-placement
 import {openFixedRoleSession,takeActualRoleSession} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 import {canonical} from '../../src/proof.mjs';
-import {noteBridgeResponseTimes,noteBridgeRefsTimes} from '../../src/admission-facts-v2.mjs';
+import {noteBridgeResponseTimes,noteBridgeRefsTimes,validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
 import {validateScanStartGrant,noteScanStartResponseWindow,NATIVE_SCAN_START_REQUIRED,localScanStart} from '../../src/scan-start-v1/grant.mjs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -35,6 +38,17 @@ export const isCleanBlocked=r=>r?.status==='BLOCKED'&&r.sideEffectsMayHaveStarte
 export const callbackValue=(action,response)=>action==='scan-start'
   ?noteScanStartResponseWindow(response.scanStart,response)
   :action==='admission'?noteBridgeResponseTimes(response.admission,response):noteBridgeRefsTimes(response.remoteRefs,response);
+// The freshness window of the adapter's final admission at signing: clock-skew.mjs FRESH_MS, on this host's monotonic clock
+// from the moment its challenge was written (no later than the Windows issuance), like formal-trivy-v4 carriedAdmission.
+export const FINAL_ADMISSION_REUSE_MAX_MS=30_000;
+// Pure: the last admission callback answer may stand in for a new challenge before signing when it is exactly the
+// admission the observation names as its post admission, inside the window, and still accepted by the full v2 check under
+// the issue's claim generation. null means write one more admission challenge.
+export function adapterFinalAdmission(job,generation,held,observation,{now=Date.now(),nowMono}={}){
+  if(!held||!/^[a-f0-9]{64}$/.test(observation?.postAdmissionSha256??'')||held.facts?.observationSha256!==observation.postAdmissionSha256)return null;
+  const age=nowMono-held.sentMono;if(!(Number.isFinite(age)&&age>=0&&age<=FINAL_ADMISSION_REUSE_MAX_MS))return null;
+  try{validateFormalAdmissionV2(job,held.facts,now,{batchClaim:generation});return held;}catch{return null;}
+}
 export async function executeProtectedIssuedJob(options={}){
   let locked=false,executionMayHaveStarted=false;
   try{
@@ -42,13 +56,13 @@ export async function executeProtectedIssuedJob(options={}){
     const selectedJob=await readFixedIssueJob();const context=await loadLinuxContext(selectedJob);takeAcceptedBridgeContext(context);const box=takeActualMailbox(await openAcceptedMailbox(context));await box.lock();locked=true;
     const issue=validateIssue(decode(await box.read('issue'))),job=issue.job;
     check(job.role===context.role&&job.sourceManifestSha256===context.config.sourceManifestSha256&&issue.sourceAcceptanceRef===context.sourceAcceptanceRef&&issue.hostQualificationRef===context.hostQualificationRef,'FORMAL_ISSUE_QUALIFICATION_CHANGED');
-    let sequence=0,scanStartRequested=false;
+    let sequence=0,scanStartRequested=false,lastAdmission=null;const monotonic=()=>performance.now();
     const callback=async(action,subject)=>{check(canonical(subject)===canonical(job),'FORMAL_CALLBACK_SUBJECT_CHANGED');
       if(action==='scan-start'){check(!scanStartRequested,'SCAN_START_ONCE_REQUIRED');scanStartRequested=true;}
       const fresh=await loadLinuxContext(job);check(fresh.sourceAcceptanceRef===context.sourceAcceptanceRef&&fresh.hostQualificationRef===context.hostQualificationRef&&fresh.config.sourceManifestSha256===job.sourceManifestSha256,'FORMAL_CALLBACK_AUTHORITY_CHANGED');
-      const request=makeChallenge(issue,action,++sequence),suffix=String(sequence).padStart(2,'0');await box.write('challenge-'+suffix,encode(request));
+      const request=makeChallenge(issue,action,++sequence),suffix=String(sequence).padStart(2,'0'),sentMono=monotonic();await box.write('challenge-'+suffix,encode(request));
       const response=validateResponse(issue,request,decode(await box.wait('response-'+suffix,{deadline:Date.parse(request.deadline),signal})));
-      return callbackValue(action,response);
+      const value=callbackValue(action,response);if(action==='admission')lastAdmission={facts:value,sentMono};return value;
     };
     // Adapters cannot prepare until their first callback gets a fresh actual
     // production response through the accepted Root-protected relay.
@@ -67,7 +81,8 @@ export async function executeProtectedIssuedJob(options={}){
       return{status:'CLEAN_BLOCKED_PUBLISHED',reason,issueSha256:digest(issue),preparationStarted:false,automaticRetryAllowed:false,bridgeLockRetained:true,checksWritten:false,qualificationIssued:false};
     }
     check(result?.observation,'ACTUAL_SCANNER_OBSERVATION_MISSING');
-    await callback('admission',job);await session.finish(result.observation);const signed=await signActualBridgeResult(context,issue,result.observation);
+    if(!adapterFinalAdmission(job,issueGeneration(issue),lastAdmission,result.observation,{now:Date.now(),nowMono:monotonic()}))await callback('admission',job);
+    await session.finish(result.observation);const signed=await signActualBridgeResult(context,issue,result.observation);
     const bytes=Buffer.from(canonical(signed));await box.write('result',bytes);
     return{status:'ACTUAL_SIGNED_ROLE_RESULT_EMITTED',issueSha256:digest(issue),resultSha256:digest(signed),cleanupConfirmed:true,checksWritten:false,qualificationIssued:false,automaticRetryAllowed:false};
   }catch(e){return{status:locked?'UNCERTAIN':'BLOCKED',reason:safe(e),executionMayHaveStarted,automaticRetryAllowed:false,checksWritten:false,qualificationIssued:false};}

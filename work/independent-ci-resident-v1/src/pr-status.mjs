@@ -87,7 +87,8 @@ export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleak
   7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
-  REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑' });
+  REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑',
+  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑' });
 // A per-row hold that is not a limit running out by itself (no "自动重试" promised).
 const HELD_TEXT = Object.freeze({ RELAY_QUALIFICATION_HELD: '本提交被托管资格保护扣住' });
 // The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
@@ -294,6 +295,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
         // DESIGN §62.4: the take-over binding run ended after stage 1 on purpose; the front batch follows on the test merge commit.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
+        // DESIGN §62.5: the ordinary batch gave way to the front batch of the same head, which runs on the test merge commit.
+        if (recent.code === 'TRAIN_FRONT_TAKES_OVER') return { state: 'pending', description: '合并列车：车头批次接替此提交的普通批次，在试合并提交上跑，不用推新提交' };
         if (recent.code === 'TRAIN_TEST_COMMIT_GONE') return { state: 'pending', description: 'GitHub 已重算试合并：下一次第 10 段重读后开第二次车头批次，不用推新提交' };
         // Primary/standby C4: App 5368905 had already published on this head (another node or install).
         if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };
@@ -306,7 +309,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后自动重试' };
         if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后自动重试`) };
         return { state: 'failure', description: clip(`未准入（${code}）：修正后编辑 PR 再试`) };
-      case 'NOT_EXECUTED': return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
+      case 'NOT_EXECUTED':
+        // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
+        if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
+        return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
         // An executed head proposed again: what was written for it stays.
@@ -579,7 +585,10 @@ export class PrStatusReporter {
           if (x.restart) this.duty.restartOwed?.delete(x.headSha);
           if (x.context === context) remember(x.headSha, x.want);
           if (x.handover) delete this.store.data.node.handover[x.headSha];
+          // Task 63c3c879: a reminder written stays owed an end (node-duty.mjs#standbyDoneText) until that is written.
+          if (x.standbyDone) delete (this.store.data.node.standby ??= {})[x.standbyDone];
           if (!x.remind) continue;
+          (this.store.data.node.standby ??= {})[x.headSha] = { pr: x.remind.pr, at: new Date(now).toISOString() };
           // §5.3: written once and shown once per (PR, head, reason); a toast that cannot be shown now is owed (m6).
           this.store.data.node.reminded[x.remind.key] = new Date(now).toISOString();
           const toast = { key: x.remind.key, title: `PR #${x.remind.pr}：当班节点没接手`, body: `${x.want.description}。${TAKEOVER_TIME_TEXT}` };

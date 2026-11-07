@@ -45,6 +45,9 @@ export const TRAIN_FACTS_STATUS = 'TRAIN_FACTS';
 export const RUNNING_CLOCK_MS = 90 * 60_000;
 export const STAGE8_ATTEMPT_MS = 90_000;
 export const MAX_FRONT_BATCHES_PER_HEAD = 2;
+// Generation 23 (DESIGN §62.8): an open or a batch's first refresh skips the take-over full-sweep segment only when at most this many
+// rounds came after the newest round that counted one, so at most MAX_SKIPS_BEFORE_SKIP + 1 rounds in a row skip it.
+export const MAX_SKIPS_BEFORE_SKIP = 2;
 // Nodes whose heartbeat is older than this are not compared (§41.6).
 export const SOURCE_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
 export const KEEPALIVE_MAX_PRS = 50;
@@ -182,7 +185,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const stored = state ?? { mode, incrementalCursor: null, full: freshFull(), inMain: [] };
   const before = { mainSha: null, allPending: null, ...stored, full: { scope: 'all', scopeReason: null, ...stored.full } };
   let fastStoreHealthy = false, oldFastProof = null, pendingRevocations = [], pendingReadable = false, pendingRecord = null,
-    legacyStrictPending = [], legacyUnconfirmed = 0, legacySince = null;
+    legacyStrictPending = [], legacyUnconfirmed = 0, legacySince = null, lastProof = null, lastFull = null;
   if (acting && typeof sweepStore?.readPendingRevocations === 'function') {
     try {
       const pending = await sweepStore.readPendingRevocations();
@@ -194,8 +197,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   if (acting && typeof sweepStore?.readFullSweepStrict === 'function') {
     try {
-      const anchor = await sweepStore.readFullSweepStrict(mode);
-      const legacy = await sweepStore.latestProofStrict(), round = await sweepStore.readStrictRound();
+      const anchor = lastFull = await sweepStore.readFullSweepStrict(mode);
+      const legacy = lastProof = await sweepStore.latestProofStrict(), round = await sweepStore.readStrictRound();
       legacyStrictPending = round?.pending ?? [];
       // IDs from another run do not identify which old effects contributed to
       // this count. An unrelated B cannot discharge an unknown legacy A.
@@ -274,8 +277,57 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // failure to append the independent certificate must not starve full work.
   const dutyAlreadyAnchored = before.mainSha !== null && before.full.onSince === job.onSince;
   const frontFastOnly = frontFastEligible && !priorDutyFast && !dutyAlreadyAnchored;
+  // Task e30b5a36 (generation 22 cold start): a round that will open the front batch, or that will only name the binding of an unbound
+  // head claim, skips the full-sweep segment, so neither waits for it (about 2.6 minutes each in the field) on the critical path. The
+  // segment goes on in the next rounds (the front batch's running rounds and after). Every condition stays as it is: only work this
+  // round's outcome does not need is left out.
+  //   open: the same live strict-front conditions as above (frontFastEligible: strict, Source, store, history), no pending revocation,
+  //     the front would be OPEN_FRONT_BATCH and openFront's checks before its writes pass (no running batch of this head, attempts
+  //     left, the budget). Its history is deferred as for the bootstrap above (the strict-front observation needs none). Starvation
+  //     bound: not when the last round already judged this very front (claim, head, main) and no batch of it was counted since; a
+  //     running batch's rounds never skip, and a head gets at most MAX_FRONT_BATCHES_PER_HEAD batches.
+  //   refresh: the same, but this head's front batch is counted and still running (TRAIN_FRONT_BATCH_RUNNING: the round only renews the
+  //     strict-front observation, e.g. the resident's refresh before stage 8). Starvation bound: only when this round's full-sweep state
+  //     stays as recorded (same main, same round), so it writes none, and either the last round counted a full-sweep segment (below) or
+  //     (generation 23, PR #1032, DESIGN §62.8) the last round is the one that opened this very batch and at most two rounds came after
+  //     the newest round that counted a segment (the binding and the open of this front). So only a batch's first refresh may follow
+  //     skipped rounds; later refresh rounds skip at most every other round as before.
+  //   Since generation 23 an open skips too only when at most two rounds came after the newest round that counted a segment: no more
+  //     than three rounds in a row skip the segment (bind, open, first refresh), and the round after them counts one.
+  //   binding: frontBindEligible's conditions known before the sweeps, and the one PR naming the claim found now. The incremental sweep
+  //     still runs (the binding needs a complete, confirmed one: TRAIN_SWEEP_INCOMPLETE otherwise), with the share it has beside a
+  //     segment. Starvation bound: only when the last round counted a full-sweep segment (or no round wrote a proof yet); such a round
+  //     writes no full-sweep state, so the next round sweeps (at most every other round skips).
+  // "The last round counted a segment": the newest proof and the newest full-sweep record are of one run, and that record's calls grew
+  // over the record before it in the same round (only a counted segment adds calls; a round start resets them to 0).
+  let previousBatches = null, bindRows = null, bindFound = null;
+  if (frontFastEligible && !frontFastOnly && pendingRevocations.length === 0 && full.state === 'running') {
+    try { previousBatches = await sweepStore.frontBatches({ pr: holder.pr, headSha: front.headSha }); } catch { previousBatches = null; }
+  }
+  const lastBatchMs = previousBatches?.[0] ? Date.parse(previousBatches[0].writtenAt) : -Infinity;
+  const judgedBefore = lastProof?.mode === 'on' && lastProof.pr === holder?.pr && lastProof.headSha === front?.headSha && lastProof.claimId === holder?.claimId
+    && lastProof.mainSha === mainSha && Date.parse(lastProof.writtenAt) > lastBatchMs;
+  const frontPlan = Array.isArray(previousBatches) && !(job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
+    && decideShadow({ onDuty: true, holders: duty.holders, holder, front, rules, mainSha }) === 'OPEN_FRONT_BATCH'
+    ? frontBatchPlan({ job, holder, front, mainSha, previous: previousBatches, keptAlive: [], clock }).refusal : 'NONE';
+  const skippedSince = async () => roundsSinceSegment({ sweepStore, mode, lastFull });
+  const frontOpenSkip = frontPlan === null && !judgedBefore && await skippedSince() <= MAX_SKIPS_BEFORE_SKIP;
+  const firstRefresh = previousBatches?.[0]?.runId === lastProof?.runId && lastProof?.mode === 'on';
+  const frontRefreshSkip = frontPlan === 'TRAIN_FRONT_BATCH_RUNNING' && history === 'same' && allPending === before.allPending
+    && JSON.stringify(full) === JSON.stringify(before.full)
+    && (await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }) || (firstRefresh && await skippedSince() <= MAX_SKIPS_BEFORE_SKIP));
+  const bindCandidate = job.mode === 'on' && !sinceOn(full) && full.state === 'running' && holder !== null && holder.boundPr === null && !!holder.takenAt
+    && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason
+    && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0
+    && (lastProof === null || await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }));
+  if (bindCandidate) {
+    try { bindRows = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls; } catch { bindRows = null; }
+    if (Array.isArray(bindRows)) bindFound = await findFrontBind({ github, job, holder, rows: bindRows, claimScope, until: until.read, clock });
+  }
+  const frontBindSkip = bindFound !== null;
+  const historyDeferred = frontFastOnly || frontOpenSkip || frontRefreshSkip;
   let stream = null;
-  if (!frontFastOnly) try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
+  if (!historyDeferred) try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
   const strictOwnsPending = pendingRevocations.every(t => legacyStrictPending.some(p => p.checkRunId === t.checkRunId && p.headSha === t.headSha));
   const strictEnabled = legacyUnconfirmed === 0 && strictOwnsPending && !frontFastEligible && job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && !stateReason && !ledgerReason
@@ -286,10 +338,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   if (strict) try { pendingRevocations = (await sweepStore.readPendingRevocations())?.targets ?? []; }
   catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNREADABLE'; }
   // A running full sweep gets its own share of the time: the incremental part never starves it (review R2 M2).
-  const wantSegment = !frontFastOnly && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
-  let incremental = frontFastOnly ? { complete: false, reason: 'TRAIN_HISTORY_DEFERRED', targets: [], progress: null, newest: null }
+  const wantSegment = !historyDeferred && !frontBindSkip && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
+  let incremental = historyDeferred ? { complete: false, reason: 'TRAIN_HISTORY_DEFERRED', targets: [], progress: null, newest: null }
     : await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
-      until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2 : started + (wantSegment ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
+      until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2
+        : started + (wantSegment || frontBindSkip ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
   if (incremental.complete && (stateReason || (acting && ledgerReason))) incremental = { ...incremental, complete: false, reason: stateReason ?? ledgerReason };
   const segment = wantSegment && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope }) : null;
   const byId = new Map();
@@ -355,7 +408,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   let fullStateWritten = false;
   const fullStateNeedsWrite = JSON.stringify(after) !== JSON.stringify({ mode, incrementalCursor: before.incrementalCursor, full: before.full, inMain: before.inMain,
     mainSha: before.mainSha, allPending: before.allPending });
-  if (sweepStore && !stateReason && fullStateNeedsWrite) {
+  // A binding or refresh round that skipped the segment writes none (their starvation bound above); the next round recomputes it.
+  if (sweepStore && !stateReason && fullStateNeedsWrite && !frontBindSkip && !frontRefreshSkip) {
     try { await sweepStore.writeFullSweep({ writtenAt: isoOf(clock()), runId: job.runId, ...after }); fullStateWritten = true; } catch { /* the next run starts from the older cursor */ }
   }
   const fullSweepSinceOn = acting && sinceOn(full);
@@ -413,7 +467,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       } catch { /* not deployed, refused or unreadable: informational only (no take-over uses it) */ }
     }
     try {
-      openRows = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls;
+      openRows = bindRows ?? (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls;
       const open = openRows.map(p => p.number);
       if (holder?.pr && front?.state === 'open' && !open.includes(holder.pr)) open.splice(KEEPALIVE_MAX_PRS - 1, 1, holder.pr);
       if (open.length) {
@@ -455,7 +509,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const frontBindEligible = takeoverPending && !lostDuty && holder !== null && holder.boundPr === null && !!holder.takenAt && job.revokeHeadRequestId === null
       && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason && history !== 'rewritten' && history !== 'unknown'
       && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0 && unconfirmed.length === 0 && leftover === 0 && !othersRefused && proofWritten;
-    if (frontBindEligible && Array.isArray(openRows)) frontBind = await findFrontBind({ github, job, holder, rows: openRows, claimScope, until: until.read, clock });
+    if (frontBindEligible && Array.isArray(openRows)) frontBind = Array.isArray(bindRows) ? bindFound
+      : await findFrontBind({ github, job, holder, rows: openRows, claimScope, until: until.read, clock });
   }
   const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules, mainSha });
   if (!acting) decision = wouldDo;
@@ -562,6 +617,49 @@ async function revokeOwnOnly({ github, ledger, appId, clock, sleep, started, unt
   return out;
 }
 
+// Task e30b5a36: did the last stage-10 round count a full-sweep segment? Its proof (the newest) and the newest full-sweep record are
+// of one run, and that record's calls grew over the record before it of the same round. Anything unreadable: no.
+async function lastRoundSwept({ sweepStore, mode, lastProof, lastFull }) {
+  if (!lastProof || !lastFull || lastProof.runId !== lastFull.runId || typeof sweepStore?.read !== 'function') return false;
+  try {
+    const [newest, older = null] = await sweepStore.read(`full-${mode}`, 2);
+    if (newest?.runId !== lastFull.runId || newest.writtenAt !== lastFull.writtenAt) return false;
+    return newest.full.calls > (older && older.full.startedAt === newest.full.startedAt ? older.full.calls : 0);
+  } catch { return false; }
+}
+
+// Generation 23 (PR #1032, DESIGN §62.8): how many stage-10 rounds (their proofs, newest first) came after the newest round that counted a
+// full-sweep segment: 0 when the last round counted one. That round is the newest full-sweep record's run (this run's starting record),
+// when its calls grew over the record before it in the same round. Not found among the newest proofs, nothing counted, a torn record or
+// anything unreadable: Infinity (no skip).
+async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
+  if (!lastFull || typeof sweepStore?.read !== 'function') return Infinity;
+  try {
+    const [newest, older = null] = await sweepStore.read(`full-${mode}`, 2);
+    if (newest?.runId !== lastFull.runId || newest.writtenAt !== lastFull.writtenAt
+      || !(newest.full.calls > (older && older.full.startedAt === newest.full.startedAt ? older.full.calls : 0))) return Infinity;
+    const proofs = await sweepStore.read('proof', MAX_SKIPS_BEFORE_SKIP + 1);
+    const i = proofs.findIndex(p => p.runId === newest.runId);
+    return i < 0 || sweepStore.refused !== 0 ? Infinity : i;
+  } catch { return Infinity; }
+}
+
+// openFront's checks before any write (pure; also stage 10's forecast before the sweeps, task e30b5a36): the refusal, or null.
+function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock }) {
+  const last = previous[0] ?? null;
+  const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+  if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
+    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING' };
+  if (previous.length >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
+  // Without the claim's kept-alive lease (keepalive failed or did not name it; review R2 minor 3) the lease bound is the
+  // read-back after touch running (openFront): a merge-slot clock never runs past the claim lease (§41.4 "现状").
+  const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
+  const need = job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
+  const left = now => Math.min(now + RUNNING_CLOCK_MS, Date.parse(since) + job.slotHardCapMinutes * 60_000, expires ? Date.parse(expires) : Infinity) - now;
+  if (!since || !(left(clock()) >= need)) return { refusal: 'TRAIN_FRONT_BUDGET_SHORT' };
+  return { refusal: null, since, need };
+}
+
 // §41.4 hard cap: open the front batch only with time for it, after touch running and a read-back of the moved clock.
 // The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its attempt
 // not reported finished by the executor's frontOutcome) is not opened again (review R2 M1): this run refreshed the proof for
@@ -572,17 +670,8 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   const no = decision => ({ decision, openFrontBatch: null });
   let previous;
   try { previous = await sweepStore.frontBatches({ pr: holder.pr, headSha: front.headSha }); } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const last = previous[0] ?? null;
-  const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
-  if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
-    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return no('TRAIN_FRONT_BATCH_RUNNING');
-  if (previous.length >= MAX_FRONT_BATCHES_PER_HEAD) return no('TRAIN_FRONT_ATTEMPTS_USED');
-  // Without the claim's kept-alive lease (keepalive failed or did not name it; review R2 minor 3) the lease bound is the
-  // read-back after touch running below: a merge-slot clock never runs past the claim lease (§41.4 "现状").
-  const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
-  const need = job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
-  const left = now => Math.min(now + RUNNING_CLOCK_MS, Date.parse(since) + job.slotHardCapMinutes * 60_000, expires ? Date.parse(expires) : Infinity) - now;
-  if (!since || !(left(clock()) >= need)) return no('TRAIN_FRONT_BUDGET_SHORT');
+  const { refusal, since, need } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock });
+  if (refusal) return no(refusal);
   let touched;
   try { fx.n++; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
   catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }

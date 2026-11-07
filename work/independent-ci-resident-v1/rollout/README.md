@@ -16,6 +16,7 @@ powershell -NoProfile -File rollout\build-upgrade.ps1 -Config ... -Commit ... -I
 ```
 
 - 构建配置与 `reinstall/` 相同（`reinstall/README.md` 第 2 节）。`linux.installedManifest`、`linux.installedRoles` 必须是**现装**的副本：角色副本按节点自己的 version facts 逐个核对哈希。
+- 角色副本（DESIGN §63）：优先读 companion 写在 version facts 旁边的 `upgrade\mailbox\responses\roles-public.json`，不再需要以 UAC 运行 root 导出。它缺失（companion 早于这次修复）或代次与 facts 不同（刚切代、companion 还没刷新）时，才回退到 `linux.installedRoles`，并打印 `ROLES_PUBLIC_COPY_MISSING` / `ROLES_PUBLIC_COPY_OTHER_GENERATION` 警告；输出 JSON 的 `rolesCopySource` 写明用的是哪一份。两种来源都按 facts 逐字节核对。
 - `-InstalledPackage`：节点现在跑的那个包（它的 `package-manifest.json` 哈希必须等于 `upgrade\current.json` 的 `packageManifestSha256`）。record 的 9 个接受 ref 和 `acceptedAt` 原样沿用它的（Decision `b1dd8a84`）；这次升级的 Owner 接受是 `-DecisionRef`/`-ReceiptRef`，写进 policy 的 `ownerAcceptance`、包的 `acceptance.decisionRef`，再进 request 和 Grant。
 - 不带 `--fresh-install`；带 `--source-v2`（只含 `refs/heads/accepted` 的 bundle，和用冻结 Linux 工具自己的 `derive_role` 算出的角色哈希，`tools/roles-derived.py`）。
 - 同样的输入构建两次，包 sha 必须相同；节点身份、节点档案必须与现装包相同。
@@ -69,5 +70,5 @@ python -I -m unittest discover -s rollout/test -p "test_*.py"
 - `build-upgrade.ps1`（和 `reinstall/build.ps1`）开头调用 `reinstall/tools/set-aside-leftovers.py`：同一 stem 上一次**失败**的尝试留下的输出（create-only 会挡住下一次）被改名到 `<workDir>\failed-attempts\<UTC>\`，不删除；已完成的尝试（`upgrade\precheck.<stem>.*.json` / `build-complete.*`）永远不动，换 `-Tag`。git archive 一律用 Python `tarfile` 解包（Windows `tar.exe` 解不了中文路径）。
 - `INSTALL-BATCHES.md`：装机批次方案（只是方案）：哪些改动要整套重装（动冻结的升级代理文件）、哪些原地升级，如何排进最少的批次。
 - `windows/test-upgrade-system.ps1`：以 LocalSystem 跑 Compile 的一次 UAC 测试（改升级通道或 Source v2 Windows 代码时必跑）。
-- `tools/derive-public-export.py`：从上一代已审的 public-export 派生下一代的参数化生成器（原 `make_export23x.py` 一类）。
+- `tools/derive-public-export.py`：从上一代已审的 public-export 派生下一代的参数化生成器（原 `make_export23x.py` 一类）。装上带 DESIGN §63 的常驻代之后，打下一代包不再需要它；只在 companion 副本不可用时作为回退。
 

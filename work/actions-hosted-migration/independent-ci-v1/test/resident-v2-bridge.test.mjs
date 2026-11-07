@@ -22,7 +22,7 @@ import { callbackValue, cleanBlockedReason, isCleanBlocked } from '../worker/pro
 import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
 import { bridgeManifest, BRIDGE_MANIFEST_CONTRACT } from '../worker/protected-job-bridge-v4/bridge-manifest.mjs';
 import { validatePolicyShape, validateQualificationPayload, qualificationDeadline, LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
-import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
+import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES, validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS, REVIEWED_HISTORY_PROOF } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, admittedFacts, hex } from './resident-v2-fixtures.mjs';
@@ -47,8 +47,12 @@ const facts = (job, c, batch = c) => admittedFacts(job, c, PACKET, { batchClaim:
 
 function trivyObservation(job, { exitCode = 0, startedAt = Date.now() - 20_000 } = {}) {
   const log = () => ({ sha256: hex(32), bytes: 10, truncated: false });
-  const scans = [0, 1, 2].map(i => ({ scanner: ['vuln', 'misconfig', 'secret'][i], complete: true, cleanupConfirmed: true, exitCode: i === 2 ? exitCode : 0, startedAt: iso(startedAt + i), logs: { stdout: log(), stderr: log() } }));
-  return { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false, profile: 'required-trivy-three-scanners/1',
+  // Contract /3 (DESIGN 64.3): every scanner records its pre and post admission; a carried one makes scans[i+1].pre = scans[i].post.
+  const admissions = [hex(32), hex(32), hex(32), hex(32)];
+  const scans = [0, 1, 2].map(i => ({ scanner: ['vuln', 'misconfig', 'secret'][i], complete: true, cleanupConfirmed: true, exitCode: i === 2 ? exitCode : 0, startedAt: iso(startedAt + i), logs: { stdout: log(), stderr: log() },
+    preAdmissionSha256: admissions[i], postAdmissionSha256: admissions[i + 1] }));
+  return { contract: 'clued.independent-ci.formal-scanner-observation/3', domain: 'production-observation', fixture: false, profile: 'required-trivy-three-scanners/1',
+    preAdmissionSha256: hex(32), postAdmissionSha256: admissions[3],
     subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
     sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), scans, conclusion: exitCode === 0 ? 'success' : 'failure',
     cleanup: { containersRemoved: true, wholeContainerTreesStopped: true, snapshotRemoved: true, observedAt: iso(Date.now() - 2000) },
@@ -73,6 +77,8 @@ test('gitleaks signed result v4 binds the exact 733/104/175/130 proof and reject
     formalEligible: false, checksWritten: false, qualificationIssued: false };
   const wrapper = signedWrapper(issue, observation, signer);
   assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  // gitleaks keeps /2; trivy's /3 (DESIGN 64.3) is not a gitleaks contract
+  assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: { ...observation, contract: 'clued.independent-ci.formal-scanner-observation/3' } }, signers: record.signers }), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
   for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, requiredHistoricalExceptions: 729 }, { ...observation, requiredHistoricalExceptions: 732 }, { ...observation, reviewedHistoryProof: undefined },
     ...Object.keys(REVIEWED_HISTORY_PROOF).map(key => ({ ...observation, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF, [key]: null } }))]) {
     assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: changed }, signers: record.signers }),
@@ -175,6 +181,32 @@ test('signed result v4: the wrapper binds the issue, the v2 subject and the obse
   assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, contract: 'clued.independent-ci.protected-job-result/1' }, signers: record.signers }), { code: 'SIGNED_BRIDGE_RESULT_BINDING_REQUIRED' });
   const v1Obs = { ...trivyObservation(job), contract: 'clued.independent-ci.formal-scanner-observation/1' };
   assert.throws(() => observationFacts(issue, v1Obs), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
+});
+
+// Owner decision (DESIGN 64.3): the trivy observation is contract /3, required by the Linux signer, the Windows issuer's
+// verification (verifySignedBridgeResult) and the role session (validateCleanupObservation); /2 is no longer accepted for
+// trivy. gitleaks keeps its /2 (test above).
+test('trivy observation /3: per-scanner pre/post admission hashes required; trivy /2 refused by signer, issuer and role session', () => {
+  const { jobs, signer, record } = setup(), job = jobs.trivy, c = claim();
+  const issue = makeIssue(job, facts(job, c), null, { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef, hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(Date.now() + 600000) });
+  const observation = trivyObservation(job), wrapper = signedWrapper(issue, observation, signer);
+  assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  assert.equal(validateCleanupObservation(job, observation), observation);
+  // scans[i+1].pre = scans[i].post when carried; distinct when asked again: both are /3
+  const carried = { ...observation, scans: observation.scans.map((s, i) => i ? { ...s, preAdmissionSha256: observation.scans[i - 1].postAdmissionSha256 } : s) };
+  const asked = { ...observation, scans: observation.scans.map((s, i) => i ? { ...s, preAdmissionSha256: hex(32) } : s) };
+  for (const o of [carried, asked]) assert.ok(observationFacts(issue, o));
+  const v2 = { ...observation, contract: 'clued.independent-ci.formal-scanner-observation/2' };
+  assert.throws(() => observationFacts(issue, v2), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
+  assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: v2 }, signers: record.signers }), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
+  assert.throws(() => validateCleanupObservation(job, v2), { code: 'ACTUAL_ROLE_CLEANUP_UNCONFIRMED' });
+  for (const key of ['preAdmissionSha256', 'postAdmissionSha256']) {
+    for (const bad of [undefined, 'x', 'A'.repeat(64)]) {
+      const scans = observation.scans.map((s, i) => i === 1 ? { ...s, [key]: bad } : s);
+      assert.throws(() => observationFacts(issue, { ...observation, scans }), { code: 'ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED' }, key);
+      assert.throws(() => observationFacts(issue, { ...observation, [key]: bad }), { code: 'ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED' }, 'top-level ' + key);
+    }
+  }
 });
 
 // PR-A x PR-B: the Source v2 placement path accepts exactly the two reviewed contract-placement.yml
