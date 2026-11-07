@@ -15,9 +15,11 @@ import { assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.m
 // 20261106100000_resident_upgrade_auto_approve_v1, Task ceeaa7c3, Owner Decision
 // f8aff2f9): with the switch on the resident-upgrader door approves the request it
 // opens with the switch's high-risk rule (once, one use, 24 hours, the requesting
-// Binding, the exact resource) and uses the grant in the same call; a node gets at
-// most one automatic approval in 24 hours; with the switch off the Owner approves.
-// connection.permission and the model.dataset_split.* actions stay manual.
+// Binding, the exact resource) and uses the grant in the same call; with the switch
+// off the Owner approves. connection.permission and the model.dataset_split.*
+// actions stay manual. Since 20261107090000 (Owner Decision 56371a46) a node gets up
+// to six automatic approvals in 24 hours and the same package asked again is the
+// Owner's; the six, the window and the guards are resident-upgrade-auto-approve-v2-db.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261106100000_resident_upgrade_auto_approve_v1.sql';
@@ -39,7 +41,7 @@ async function freePort() {
   return port;
 }
 
-test('resident upgrade: approved automatically under the switch, once per node per 24 hours; manual when off',
+test('resident upgrade: approved automatically under the switch, counted by node; manual when off',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-upgrade-auto-'));
   const server = new EmbeddedPostgres({
@@ -166,8 +168,8 @@ test('resident upgrade: approved automatically under the switch, once per node p
     list = await native('clued_owner_grants_list_v1', {});
     assert.ok(!list.pending_requests.some((x) => x.action === ACTION));
 
-    // --- A second request of the same node within 24 hours: the Owner's. ---
-    const A2 = resource('node-a', 'b');
+    // --- The same package again, with a new op: the Owner's (20261107090000). ---
+    const A2 = A1;
     const op2 = uuid();
     r = await upgrade('node-a', A2, op2);
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending']);
@@ -181,19 +183,19 @@ test('resident upgrade: approved automatically under the switch, once per node p
     assert.deepEqual([r.consumed, r.grant.grant_id, r.auto_approved], [true, byOwner.grant.grant_id, undefined]);
     assert.equal((await grantRow(byOwner.grant.grant_id)).auto_approve_id, null, 'the Owner gave this one');
 
-    // --- Another node has its own 24 hours. ---
+    // --- Another node is counted on its own. ---
     const B1 = resource('node-b', 'a');
     r = await upgrade('node-b', B1, uuid());
     assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
-    // The window is the node's, not the Binding's: the Owner unmarks node-b's upgrader and marks a new Binding
-    // of node-b; it shares the window.
+    // Counted by the node, not the Binding: the Owner unmarks node-b's upgrader and marks a new Binding
+    // of node-b; asking for node-b's last package again is the Owner's from it too.
     await admin.query(`update clued_private.binding_roles_v1 set revoked_at=now(),revoked_receipt_id=$2
       where binding_id=$1 and role='resident-upgrade'`, [ids['node-b'], roleReceipt]);
     await assert.rejects(upgrade('node-b', resource('node-b', 'e'), uuid()), /owner_grant_door_binding_not_authorized/);
     await bind('node-b-new', ['context:read'], 'node-b');
     await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
       values($1,$2,'resident-upgrade',now()-interval '1 minute',$3,now()-interval '1 minute','unspecified')`, [owner, ids['node-b-new'], roleReceipt]);
-    r = await upgrade('node-b-new', resource('node-b', 'e'), uuid());
+    r = await upgrade('node-b-new', B1, uuid());
     assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending'], 'a new Binding of node-b waits for the Owner');
     // A request of another node name is not held by node-b's window.
     r = await upgrade('node-c', resource('node-c', 'e'), uuid());
@@ -201,29 +203,11 @@ test('resident upgrade: approved automatically under the switch, once per node p
     await admin.query(`update clued_private.owner_grants_v1 set granted_at=granted_at-interval '25 hours',
       expires_at=expires_at-interval '25 hours' where grantee_binding_id=$1`, [ids['node-c']]);
 
-    // --- After 24 hours the node is approved automatically again. ---
-    await admin.query(`update clued_private.owner_grants_v1 set granted_at=granted_at-interval '25 hours',
-      expires_at=expires_at-interval '25 hours' where id=$1`, [g1.id]);
+    // --- After the Owner's grant, the node's next package is approved automatically again. ---
     r = await upgrade('node-a', resource('node-a', 'c'), uuid());
     assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
-    const gC = r.grant.grant_id;
-    // A request opened inside that grant's 24 hours stays the Owner's even when the upgrader asks again after them.
-    const opLate = uuid();
-    r = await upgrade('node-a', resource('node-a', 'd'), opLate);
-    assert.deepEqual([r.consumed, r.owner_request.status], [false, 'pending']);
-    const late = r.owner_request.request_id;
-    // Now: the request is 2 hours old (opened 23 hours after the grant), the grant 25 hours old.
-    // One clock reading per statement (now()), so the table checks see exactly 24 hours.
-    await admin.query(`update clued_private.owner_requests_v1 set created_at=now()-interval '2 hours',
-      expires_at=now()+interval '22 hours' where id=$1`, [late]);
-    await admin.query(`update clued_private.owner_grants_v1 set granted_at=now()-interval '25 hours',
-      expires_at=now()-interval '1 hour' where id=$1`, [gC]);
-    r = await upgrade('node-a', resource('node-a', 'd'), opLate);
-    assert.deepEqual([r.consumed, r.owner_request.request_id, r.owner_request.status], [false, late, 'pending'],
-      'opened within the window: the Owner decides, however long the upgrader keeps asking');
-    // A request opened after the window is approved automatically again.
     r = await upgrade('node-a', resource('node-a', 'f'), uuid());
-    assert.deepEqual([r.consumed, r.auto_approved], [true, true]);
+    assert.deepEqual([r.consumed, r.auto_approved], [true, true], 'more than one automatic approval in 24 hours');
 
     // --- Switch off: the Owner approves; on again: the same op's waiting request goes through. ---
     list = await native('clued_owner_grants_list_v1', {});

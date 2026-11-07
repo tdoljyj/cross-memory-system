@@ -4668,16 +4668,19 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **现在**（迁移 `20261106100000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
   - 开关开着时，门（`owner_grant_resident_upgrade_door_v1`）为它打开或找到的请求调用 `owner_auto_approve_request_v1`。批准范围：一次、一次使用、24 小时，只给发起请求的连接，只限精确的节点与包。批准后在同一次调用里直接消费。
   - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，内容不变（这次 Grant 从哪来，看它的 `auto_approve_id`）。门的答复和发布门一样带 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
-  - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。
-    - 按 Grant 资源里的节点名算，不按连接算：同一节点重新标记的新连接也共用这 24 小时。
-    - 从请求打开的时刻算：在某次自动批准之后、或它之前 24 小时内打开的请求，直到被决定或过期，都只能由 Owner 批准，升级代理再怎么反复询问也不会变成自动。这样反复重试的失败升级或打错的包会交到 Owner 手里。
+  - 本动作自己的规则（最初是"同一节点 24 小时内最多自动批准一次"；迁移 `20261107090000_resident_upgrade_auto_approve_v2.sql` 按 Owner Decision `56371a46` 放宽为下面三条）。三条都按 Grant 或请求资源里的节点名算，不按连接算：同一节点重新标记的新连接也共用。三条都满足才自动，否则请求交 Owner：
+    1. **同一节点 24 小时内最多自动批准 6 次**。从请求打开的时刻算：在第 6 次自动批准之后、或它之前 24 小时内打开的请求，直到被决定或过期，都只能由 Owner 批准，升级代理再怎么反复询问也不会变成自动。
+    2. **上一次自动批准的升级没有成功，交 Owner**。数据库里没有升级成败的事实：门写完 `OWNER_GRANT_USED` 之后，升级代理不再向数据库回报任何东西（结果只在节点本地的 journal 里），也没有别的表或回执记升级 outcome。所以按 Decision 的退路判定：本请求打开之前该节点最近的一张本动作 Grant 如果是自动批的，且还没用掉（`uses < max_uses`），或者已用掉但和本请求是同一个包（同一节点又对同一个包发请求），就当作上次升级没有成功。最近一张是 Owner 在确认页批的，不拦：那是 Owner 自己看过之后的决定。门在批准的同一次调用里就消费自动 Grant，所以"自动批了却没用掉"本身就是异常。
+    3. **连续对同一个包重复请求，交 Owner**：该节点上一个本动作请求（任何状态）和本请求是同一个包。
+    - 第 1、3 条的事实在请求打开时就定了或只增不减，被它们拦下的请求一直归 Owner；被第 2 条"没用掉"拦下的请求，等那张 Grant 被用于另一个包之后可以通过。
   - 开关关着时全部走人工。
 - **不变的部分**：
   - `3ce5200c` 的第 1、3、4、5 项不变：每节点独立升级连接、HALT 时延后、stateCompat 不能回读就在 ACCEPT 拒、时间参数 24h/120/60。
   - `connection.permission`（会自我提权）和 DatasetSplit 的 4 项（会伪造 Owner 认定）仍然只能人工批准。
 - **升级代理不改**：`upgrader/src/grant-client.mjs` 里"永不自动批准"那段注释没动。`upgrader/src/*` 是冻结通道（§34.8、§42.1 c），改任何一个字节都会让之后的包变成 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`。客户端本来就只是轮询门：门返回已消费就继续，它不区分这次 Grant 是 Owner 点的还是开关给的。所以注释的语义以本节为准，等轨 2 的代理自更新（§42.5.3）时再改。
 - **测试**：
-  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同节点 24 小时内第二次走人工；窗口内打开的请求在窗口过后再问仍走人工；同一节点的新连接共用窗口；另一节点、过了 24 小时都会再自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同一个包换 op 再请求走人工，Owner 批准后消费；同一节点的新连接也按节点算；另一节点单独算；Owner 批过之后下一个包又自动，24 小时内可以多次自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-v2-db.test.mjs`（`20261107090000`）：第 1 到 6 次自动、第 7 次走人工且再问仍是人工、另一节点不受影响、窗口内打开的请求窗口过后再问仍走人工、窗口外的新请求又自动；上一张自动 Grant 没用掉走人工，Owner 批准并用掉后下一个包又自动；上一张自动 Grant 的包再请求走人工（中间隔着一个被拒的别的包）；上一个请求同包走人工（之前没有任何 Grant）；自动 Grant 仍守高风险规则；connection.permission 与 DatasetSplit 仍是人工。四个判定（6 次、自动 Grant 没用掉、上张自动 Grant 同包、上个请求同包）各自被测试钉住：逐个去掉，只有对应的子测试失败。
   - `owner-grants-resident-upgrade-door-db`：把开关关掉后，验证人工路径。
   - `owner-auto-approve-db`：covers 和 excluded 两个列表。
 
