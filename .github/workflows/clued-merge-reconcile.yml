@@ -1,0 +1,53 @@
+name: clued-merge-reconcile
+run-name: clued-merge-reconcile ${{ inputs.reconcile_request_id }}
+
+# Task 3a0e4219. A durable companion lane supplies the wake-up, so recovery
+# does not depend on completion events, another push, or GitHub's cron.
+# Source registration is integrity evidence only. The dedicated controller's
+# independent Host qualification and normal runner hook remain prerequisites.
+on:
+  workflow_dispatch:
+    inputs:
+      reconcile_request_id:
+        description: Wake-up identity only; never a PR, head or permission
+        type: string
+        required: true
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    name: clued-merge-reconcile
+    runs-on: [self-hosted, Windows, X64, clued-controller-windows-v1, trust-internal]
+    timeout-minutes: 10
+    environment: clued-admission
+    concurrency:
+      group: clued-merge-executor
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Verify the exact reconciliation Source before loading operation credentials
+        run: node scripts/ci/clued-merge-reconcile-source.mjs
+      - name: Re-observe the queue and use the original guarded operations
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-merge-reconcile.mjs
+      # Evidence stays in the qualified controller's protected local spool.
+      # No official Artifact, cache, hosted runner or paid fallback is added.

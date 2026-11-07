@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.16",
+      "version": "1.1.17",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -576,7 +576,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "c7ea04d81fbe1d2e7cddaab0efba45e8c31d4ac4a8e97186aea5557dddcd1e78"
+      "content_sha256": "684d5b255c0e1e7d2cb10d57cc47c25842449aa917d4ca58844e90712e30274f"
     },
     {
       "id": "script.resource-maintenance",
@@ -631,7 +631,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -648,7 +648,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0a8ba4fd014815ac629b7d8b145d0fb6bf3b5fec6457f89f11cf088aec711875"
+      "content_sha256": "efbcea51a30c6798e2db2018769f0ebcfed2ceef8d7e80cbc3e0cfefde6091f5"
     },
     {
       "id": "script.required-applicability",
@@ -825,7 +825,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -836,7 +836,29 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "e7a46659462d78677e24fb28fb075d304e840ba8fefb6611d38468fc9ce6064c"
+      "content_sha256": "c0ac939bbd508fd28b56ed3c16e08aa92ba9fc4d89fbde576cc200a2917ec6d0"
+    },
+    {
+      "id": "script.merge-reconciliation",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
+      "root": ".",
+      "files": [
+        ".github/workflows/clued-merge-reconcile.yml",
+        "docs/maintenance/clued-merge-executor.md",
+        "scripts/ci/clued-merge-executor.mjs",
+        "scripts/ci/clued-merge-reconcile*",
+        "work/independent-ci-resident-v1/src/companion-main.mjs",
+        "work/independent-ci-resident-v1/src/merge-reconcile*.mjs",
+        "work/independent-ci-resident-v1/test/merge-reconcile.test.mjs",
+        "work/independent-ci-resident-v1/tools/build-package.mjs"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-merge-reconcile.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "76d7d45dea2047c07061650f1d19ab2db625ff4866ae5343a9a9a6e40fcb5e03"
     }
   ]
 }

@@ -387,13 +387,21 @@ test('actual frozen registry gitleaks/trivy closures and full tracked inventory 
   assert.ok(inventory.filter(entry => entry.type !== 'tree').length >= 9000, 'use the real repository scale');
   for (const role of ['gitleaks', 'trivy']) {
     const accepted = registry.roles[role]; assert.ok(accepted.closure.length >= 26 && accepted.closure.length <= 64);
-    // Only these closure files may differ from the frozen 732 hosted generation: they are re-pinned by the reviewed-set changes
-    // (Decision 98fec682). Their live bytes are used with live digests (this test measures the fetch budget, not the freeze);
-    // every other closure file must still equal its frozen sha256 and blob id in the working tree.
+    // The reviewed-set successors use live digests (Decision 98fec682).
+    // The lifecycle inventory has since gained a separately reviewed workflow;
+    // this frozen scan fixture still reads its exact historical Git object.
+    // Neither the accepted registry nor its pins are rewritten by this test.
     const REPINNED = new Set(['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/reviewed_gitleaks_historical.py']);
     const closure = clone(accepted.closure);
     const closureFiles = new Map(closure.map(entry => {
-      const bytes = readFileSync(path.join(repoRoot, entry.path));
+      const historicalCoverage = entry.path === '.github/actions/ci-temporary-storage/coverage.json';
+      if (historicalCoverage) {
+        assert.equal(entry.blob, '12f0ff5aca09df465aa0461d493485c3ed2c65b1');
+        assert.equal(entry.sha256, '55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be');
+      }
+      const bytes = historicalCoverage
+        ? execFileSync('git', ['cat-file', 'blob', entry.blob], { cwd: repoRoot })
+        : readFileSync(path.join(repoRoot, entry.path));
       const blob = hex(Buffer.concat([Buffer.from('blob ' + bytes.length + '\0'), bytes]), 'sha1');
       if (REPINNED.has(entry.path)) { entry.sha256 = hex(bytes); entry.blob = blob; }
       else {

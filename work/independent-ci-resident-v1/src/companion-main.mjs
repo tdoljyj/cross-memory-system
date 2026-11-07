@@ -23,6 +23,8 @@ import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSigna
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
+import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
+import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
@@ -42,6 +44,7 @@ export const COMPANION_LOCK_TOUCH_MS = 60_000;
 // The compute panel's five-minute trigger (DESIGN §43, panel-dispatch.mjs) looks this often whether it is due; it dispatches at most every
 // five minutes. Its own Runner: a slow GitHub never delays the heartbeat or the mailbox.
 export const PANEL_DISPATCH_LANE_EVERY_MS = 30_000;
+export const MERGE_RECONCILE_LANE_EVERY_MS = 30_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
@@ -289,6 +292,16 @@ export async function main(args = process.argv.slice(2)) {
       notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
+  // Off in existing packages. Enabling belongs to a separately accepted
+  // package and dedicated-controller rollout, never to this local candidate.
+  const mergeConfig=validateMergeReconcileConfig(raw.mergeReconcile);
+  check(!mergeConfig.enabled||raw.repo===MERGE_RECONCILE_REPO,'COMPANION_MERGE_RECONCILE_REPO_INVALID');
+  const mergeRunner=new Runner({env:{...process.env},jobHost});
+  const mergeIdentity={nodeName:cfg.node.nodeName,repo:raw.repo,pinnedSource:MERGE_RECONCILE_WORKFLOW_SHA256};
+  const mergeReconcile=mergeConfig.enabled?new MergeReconciler({...mergeIdentity,ghExe:raw.ghExe,clock:Date.now,
+    run:(a,o)=>mergeRunner.run(a,o),readStatus:()=>readStatus(values.root),
+    notify:async(key,title,body)=>{await mergeRunner.run(toastArgv(cfg.powershellExe,title,body),{timeoutMs:15_000});},
+    state:await MergeReconcileState.open(path.join(cfg.node.ownerProfileDirectory,'AppData','Local','CluedIndependentCI','companion-merge-reconcile.json'),mergeIdentity)}):null;
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
@@ -313,6 +326,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
+      ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {

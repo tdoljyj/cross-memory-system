@@ -13,3 +13,52 @@
 通知覆盖实际退回的合并位。超时、非队首失败、冲突及评审通知保持实施决定 `6678e107`、`5d7d3913` 的边界。
 
 合入、迁移、发布及验收结果由持有会话当场记录到 KooYomi；CI 绿色、队首或本地测试本身不能代替实际合入和生产发布的证据。
+# 完成事件丢失的持久恢复候选（Task `3a0e4219`）
+
+SourceA精确登记前置已在PR #1025合入，main提交为
+`2eb6ad77af4214643fd7c852fade1fbbbed6385f`；A没有实际工作流或运行lane。
+后继B可以先正常推送和建PR。执行B正式八阶段CI的节点须先通过正常升级入口，
+接受并安装包含A的Source；main合入不会热更新已安装的evaluator。
+自有完整性清单不能代替可信准入登记；本地测试中的`gate=[]`也不是线上资格（Task `3a0e4219`）。
+
+正式reader沿`service-main.mjs`的policy Source目录加载，`full-admission-v2.mjs`
+相对导入其中的`clued-work-admission.mjs`，后者只读自身相邻可信registry。
+仍运行旧Source的执行节点会拒绝新增工作流；standby节点不因B建PR而必须重复安装。
+正常中间构包使用`work/independent-ci-resident-v1/rollout/build-upgrade.ps1`，
+输入是执行节点既有公开Config、上面的A-only提交和当前InstalledPackage目录。
+`-Final -DecisionRef -ReceiptRef`须对应覆盖实际新主体的决定/Receipt；字段有值不等于授权。
+入口生成新Source/evaluator pins、accepted bundle、Linux角色及两次确定性构包，
+再走节点本机precheck、精确包Grant与正常升级，不手改已安装代码或pins。
+这项CI前置与B合入后的专用控制器资格、旧在途对账、账本预置及B运行包启用分别验收。
+
+`companion.mergeReconcile` 与源码 activation 均缺省关闭。本候选以独立伴随 lane 每5分钟唤醒固定
+`clued-merge-reconcile.yml`，不依赖 completion、后续 push 或 GitHub cron。
+唤醒消息只含 UUID，不含 PR/head 或授权；每次仍由原 slot reporter 和 executor
+实时重读 Native、FIFO、Owner、规则、检查及 Source，按原预期 head 执行。
+merge/update/rerun 的发送意图在出站前同步落盘；结果不明时不重复发送。
+activation开启后，所有旧自动executor入口在任何读取或副作用之前只返回DELEGATED，
+唯一自动执行者是带持久包装的新入口；关闭时原自动行为保留。
+明确Owner手工操作是单独显式意图，保留原实时门禁，不冒充自动恢复或复用许可。
+未知发送需要 Native 正证据收敛；缺正证据保持 UNKNOWN，不承诺无条件恢复上界。
+
+工作流只指向专用自托管 Windows 控制器，沿用 `clued-admission` environment、
+原 App 与原生工作流 token，和原执行器共用串行组。新增完整 Source/Role 清单
+`scripts/ci/clued-merge-reconcile-source.json` 只证明受审字节完整性，不授执行、
+调度或 Host 权限。不得从普通池标签、匹配 SHA 或测试通过推断主机已合格。
+实际启用先完成原控制器迁移/隔离资格、准确 Source 接受及正常包升级门禁，
+先排空所有旧执行任务并对账手工/自动未知操作，确认入口guard已接受后再激活（Task `3a0e4219`）；
+本地候选不安装、不改线上配置，不借独立 CI App 的身份执行原合并控制。
+
+执行端固定已实读TURING机器身份摘要及公开journal epoch，不能用同标签的另一台机器新建空账本。
+资格安装须预建受保护 `C:\ProgramData\CluedControl\merge-reconcile` 及同epoch预算账本，并接入已有
+保留/收集政策。观察原包原样写此自有 spool，不新增官方 Artifact/缓存/付费后备。
+上限2000个 spool 项、2000个操作意图，达到上限明确停止，不能静默删未解决意图。
+未知操作的解除必须依据原 Native 结果与精确主体，不能靠删 budget 文件重跑。
+生产入口拒绝缺失/错epoch账本；换Host或epoch必须受审恢复原意图，不能静默初始化。
+
+每小时最多12次 dispatch、60次 companion 读取；执行端持久上限1500次 API/小时、
+250次/周期，GitHub剩余额度低于750时保留额度。429/限流遵守 Retry-After，
+时钟回退、状态损坏或写盘失败停止出站，重启不清账本。不执行扫描角色。
+在当班、主机资格/权限/Source均有效、无不明在途动作、API及队列可用且预算足够时，
+再次观察界为5分钟加调度排队和原执行预算；断网、额度拒绝或未知在途不保证成功时限。
+PR变化、主线前进、队首失败/已合并均由原执行器的现场守卫处理，旧事件不赋权。
