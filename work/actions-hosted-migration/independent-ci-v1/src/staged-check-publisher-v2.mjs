@@ -35,9 +35,31 @@ import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admissio
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
-import { withdrawalTitle, withdrawalNote, verificationUnavailable } from './withdrawal-text.mjs';
+import { withdrawalTitle, withdrawalNote, verificationUnavailable, withdrawnForUnavailability } from './withdrawal-text.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
+// Generation 28 (resident docs/adr/0015, defect 664cc8eb; field #1037 head 26ac75e4, stage 7): a publication withdrawn only because its
+// verification after the write could not be read (GitHub or Native did not answer in time) and with no change of its authorization observed
+// used to end the head for good (PUBLICATION_REVOKED, the head burned). Such a withdrawal is now followed, at the resident's next try of the
+// same stage (the bounded publication retry, executor.mjs PUBLICATION_RETRY_MS), by a REPUBLICATION: a new, completely re-proven publication of
+// the same signed result under its own effect key and external_id, never a re-send of the withdrawn one.
+//   - only from publish() (the local staged path), only after the withdrawal itself was confirmed (REVOKED: the PATCH to failure read back,
+//     the effect recorded revoked), only for a cause withdrawnForUnavailability names, only without a Native publication (staged policy:
+//     a Native publication's own ledger has one publication per job and is not re-entered here);
+//   - the revoked record says so (details.republishable) and the result says so (republishSafe, the resident's only signal);
+//   - republication n (1..MAX_REPUBLICATIONS) has effect key republicationKey(original, n) and the ORIGINAL external_id: every reader of
+//     the head's checks (GitHub's required checks, stage 8, the merge executor's clued-merge-slot-ci.mjs#independentCheckBindsPullRequest)
+//     counts the newest check of the role, and its pinned external_id formats stay as they are. The publisher's own identity reads
+//     (discoverKnown, createOrAdopt) skip the checks it withdrew before (withdrawn: their check ids from the revoked records), so a lost
+//     create answer of a republication is found exactly as a first publication's;
+//   - K(head, role) keeps its original holder (the local path, the original key), so the relay stays excluded exactly as before;
+//   - it starts with the complete boundary before any write, like a first publication: a changed authorization refuses there (nothing
+//     written), an unreadable source ends BLOCKED and safe to run again, as before; a republication withdrawn again for unavailability may be
+//     followed by the next one, at most MAX_REPUBLICATIONS in all, and a withdrawal for any other cause stays final (PUBLICATION_REVOKED).
+// "Withdraw first, publish again afterwards" holds: a republication is only reachable from a revoked record.
+export const MAX_REPUBLICATIONS = 3;
+export const republicationKey = (originalKey, n) => digest({ action: 'staged-independent-check-republication/2', effectKey: originalKey, republication: n });
+const republishable = record => record?.state === 'revoked' && record.details?.republishable === true;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
@@ -164,7 +186,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   // the original error, as before (the error path then finds any copy that is not exact and withdraws it). A create the port proved never sent is not looked for, and neither is a Native publication (a
   // handle with native true: the create is Native's begin, the POST with its marker and Native's finish; its runtime has its own recovery, which
   // finds the check by its ticket and finishes it, never POSTs again, and adopting it here would skip Native's finish).
-  async function createOrAdopt(payload, nativeHandle, definition, job, externalId) {
+  async function createOrAdopt(payload, nativeHandle, definition, job, externalId, withdrawn = new Set()) {
     try { return await github.createCheck(payload, nativeHandle); }
     catch (error) {
       if (!adoptReadAllowed(error, nativeHandle)) throw error;
@@ -173,7 +195,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         let list = null;
         try { list = await github.readChecks(job.headSha); } catch { continue; }
         if (!checkListTrusted(list, job)) continue;
-        const copies = list.checks.filter(c => identity(c, definition, job, externalId));
+        const copies = list.checks.filter(c => identity(c, definition, job, externalId) && !withdrawn.has(c.id));
         if (copies.length > 1) break;
         const copy = copies[0];
         if (copy && copy.status === 'completed' && copy.conclusion === payload.conclusion && copy.output?.title === payload.output.title
@@ -183,10 +205,10 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       throw error;
     }
   }
-  async function discoverKnown(definition, job, externalId) {
+  async function discoverKnown(definition, job, externalId, withdrawn = new Set()) {
     const list = await github.readChecks(job.headSha);
     if (!checkListTrusted(list, job)) stop('check_discovery_unconfirmed');
-    const matches = list.checks.filter(check => identity(check, definition, job, externalId));
+    const matches = list.checks.filter(check => identity(check, definition, job, externalId) && !withdrawn.has(check.id));
     if (matches.length !== 1) stop('check_discovery_unconfirmed');
     return matches[0];
   }
@@ -338,9 +360,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   async function transition(key, phase, next, details) {
     try { return await journal.transition(key, phase, next, details); } catch { return null; }
   }
-  async function revoke({ key, phase, known, definition, job, externalId, cause, sideEffects, admissionReason, admissionDiagnostic }) {
+  // republish: { n } when publish() may follow this withdrawal by republication n + 1 (a staged publication withdrawn after its write).
+  async function revoke({ key, phase, known, definition, job, externalId, cause, sideEffects, admissionReason, admissionDiagnostic, republish = null }) {
     // full_admission_not_proven hides the port's own reason; wording follows that reason when it is known.
     const whyWithdrawn = cause === 'full_admission_not_proven' && admissionReason ? admissionReason : cause;
+    const again = republish !== null && withdrawnForUnavailability(whyWithdrawn);
     const revocationKey = digest({ action: 'staged-independent-check-revoke/2', effectKey: key, checkRunId: known.id });
     let revocationPhase = 'intent', revocationLogged = false;
     try {
@@ -360,8 +384,10 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       if (revocationLogged) await journal.transition(revocationKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key);
       if (!['sent', 'uncertain', 'settled'].includes(current?.state)) stop('revocation_state_unconfirmed');
-      await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionReason ? { admissionReason } : {}), ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
-      return { status: 'REVOKED', effectKey: key, checkRunId: known.id, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), sideEffects, productionAuthorized: false };
+      await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionReason ? { admissionReason } : {}), ...(admissionDiagnostic ? { admissionDiagnostic } : {}),
+        ...(again ? { republishable: true } : {}) });
+      return { status: 'REVOKED', effectKey: key, checkRunId: known.id, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), sideEffects, productionAuthorized: false,
+        ...(republish?.n ? { republication: republish.n } : {}), ...(again && republish.n < MAX_REPUBLICATIONS ? { republishSafe: true } : {}) };
     } catch {
       if (revocationPhase === 'sent') await transition(revocationKey, 'sent', 'uncertain', { reason: 'revocation_unconfirmed', checkRunId: known.id });
       if (phase === 'sent') await transition(key, 'sent', 'uncertain', { reason: 'revocation_unconfirmed', checkRunId: known.id, externalId });
@@ -372,7 +398,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     fixture: domain === 'fixture',
     async publish(input) {
       if (!configured) return { status: 'BLOCKED', reason: 'staged_publisher_not_configured', sideEffects: 0, productionAuthorized: false };
-      let job, envelope, definition, key, mutex, externalId, previous, before;
+      let job, envelope, definition, key, mutex, externalId, previous, before, original = null, republication = 0;
+      const withdrawn = new Set();
       try {
         if (!plain(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, 'job') || !Object.hasOwn(input, 'envelope')) stop('publication_input_invalid');
         job = structuredClone(input.job); envelope = structuredClone(input.envelope); validateJobV2(job);
@@ -383,14 +410,32 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId, ...(isTrainFrontJobV2(job) ? { testSha: job.testSha } : {}) };
         externalId = scanExternalIdV2(job);
         previous = await journal.read(key);
-        if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
-        before = await boundary(job, { kind: 'signed', envelope }, definition, previous?.subject.evidenceSha256);
+        if (previous && previous.state !== 'settled') {
+          if (!republishable(previous)) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+          // Generation 28 (ADR 0015): the original was withdrawn for unavailability only. The first republication that is not itself so
+          // withdrawn is this publication's own: absent (publish it now), settled (re-verified like any settled publication) or anything
+          // else (as for the original: REVOKED or RECONCILIATION_REQUIRED, never a further one). The signed result must be the original's.
+          original = { key, externalId, evidenceSha256: previous.subject?.evidenceSha256 ?? null };
+          if (positive(previous.details?.checkRunId)) withdrawn.add(previous.details.checkRunId);
+          let slot = null;
+          for (let n = 1; n <= MAX_REPUBLICATIONS && !slot; n++) {
+            const k = republicationKey(original.key, n), record = await journal.read(k);
+            if (!record || record.state === 'settled') slot = { n, k, record };
+            else if (!republishable(record)) return { status: record.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: k, republication: n, sideEffects: 0, productionAuthorized: false };
+            else if (positive(record.details?.checkRunId)) withdrawn.add(record.details.checkRunId);
+          }
+          if (!slot) return { status: 'REVOKED', effectKey: key, reason: 'republication_limit_reached', sideEffects: 0, productionAuthorized: false };
+          republication = slot.n; key = slot.k; previous = slot.record;
+        }
+        before = await boundary(job, { kind: 'signed', envelope }, definition, previous?.subject.evidenceSha256 ?? original?.evidenceSha256 ?? null);
         if (previous) {
           if (previous.subject.evidenceSha256 !== before.verified.evidenceSha256) stop('evidence_identity_conflict', true);
           await readback({ id: previous.details.checkRunId }, definition, job, externalId, previous.details.conclusion);
           return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: domain === 'production', mode: 'staged' };
         }
-        if (await onGithubOnly(mutex, job, definition)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0, productionAuthorized: false };
+        // A republication publishes only what the original did: never under a Native publication (see MAX_REPUBLICATIONS).
+        if (republication && before.native.publicationRequired === true) stop('republication_native_unsupported');
+        if (!original && await onGithubOnly(mutex, job, definition)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0, productionAuthorized: false };
         // DESIGN 51 (B): GitHub must answer once more, right before anything is recorded or written. If it cannot (after the bounded
         // read retry), the publication ends here with nothing in the journal, no K and nothing on GitHub, safe to run again, instead
         // of writing a check whose verification then cannot be done.
@@ -402,30 +447,32 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
           return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
         }
-        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
+        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}),
+          ...(republication ? { republication } : {}), sideEffects: 0, productionAuthorized: false };
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0;
       try {
         // K(head, role) first: a hosted relay that already holds this role on this head refuses the local
         // publication before its own key exists (free-minutes design §7.4).
         try {
-          await claimRolePublication(journal, mutex, { path: 'local', effectKey: key, externalId });
+          // A republication holds K under the original holder (the same record: an existing claim, never a conflict).
+          await claimRolePublication(journal, mutex, { path: 'local', effectKey: original?.key ?? key, externalId: original?.externalId ?? externalId });
         } catch (error) {
           if (error?.code === 'role_already_published_on_head') return { status: 'BLOCKED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0, productionAuthorized: false };
           throw error;
         }
         const intent = await journal.begin(key, { subject: subjectOfV2(job), definition, evidenceSha256: before.verified.evidenceSha256,
           observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256, externalId,
-          compensation: 'known-check-patch-failure-on-any-unsettled-write' });
+          compensation: 'known-check-patch-failure-on-any-unsettled-write', ...(republication ? { republicationOf: original.key, republication } : {}) });
         if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
         await journal.transition(key, 'intent', 'authorized', { observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256 }); phase = 'authorized';
         if (!fresh(before.native, clock())) stop('lease_expired_before_write', true);
         const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: before.verified.payload.conclusion,
           external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
-            summary: `Independent CI job ${job.id} (attempt ${job.attempt}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
+            summary: `Independent CI job ${job.id} (attempt ${job.attempt}${republication ? `, republication ${republication} after a withdrawn verification` : ''}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId);
+        const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, withdrawn);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
         let after = await boundary(job, { kind: 'signed', envelope }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
@@ -434,7 +481,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: before.verified.payload.conclusion,
           observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256,
           evidenceSha256: before.verified.evidenceSha256 });
-        return { status: 'SETTLED', mode: 'staged', effectKey: key, checkRunId: known.id, evidenceSha256: before.verified.evidenceSha256,
+        return { status: 'SETTLED', mode: 'staged', effectKey: key, checkRunId: known.id, evidenceSha256: before.verified.evidenceSha256, ...(republication ? { republication } : {}),
           nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256, sideEffects, productionAuthorized: domain === 'production' };
       } catch (error) {
         if (sent && !known && sideEffects === 1 && nativePublicationNoPostProof(error)?.notSent === true) {
@@ -442,12 +489,13 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
         }
         if (sent && !known) {
-          try { known = await discoverKnown(definition, job, externalId); }
+          try { known = await discoverKnown(definition, job, externalId, withdrawn); }
           catch { /* UNCERTAIN records local uncertainty; it cannot revoke a remote success. */ }
         }
-        if (sent && known) return revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects, ...admissionOf(error) });
+        if (sent && known) return revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects, ...admissionOf(error),
+          republish: before.native.publicationRequired === true ? null : { n: republication } });
         await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: reason(error), ...(known ? { checkRunId: known.id, externalId } : {}) });
-        return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), sideEffects, productionAuthorized: false };
+        return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), ...(republication ? { republication } : {}), sideEffects, productionAuthorized: false };
       }
     },
     // Hosted relay publication (design S17/S18, rules E9 and E10), v2. Input:

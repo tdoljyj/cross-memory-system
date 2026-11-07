@@ -128,6 +128,10 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // zero side effects) and the scheduling facts Native reported (ci_retry_after, merge-queue entry). The resident
     // releases a stage only on this flag, never by inferring it from a reason code.
     safeToRerun: status === 'BLOCKED' && sideEffects === 0 && r.safeToRerun === true, scheduling: sanitizeSchedulingV2(r.scheduling),
+    // Generation 28 (resident docs/adr/0015): a scanner publisher's own "the withdrawal was for unavailability only, a republication may
+    // follow" (staged-check-publisher-v2.mjs#revoke), only ever on a REVOKED ending of a check publisher. The resident runs the stage again on
+    // this flag alone, within its bounded publication retry; it never infers it from a reason code.
+    ...(status === 'REVOKED' && plan?.entryRole === 'check-publisher' && r.republishSafe === true ? { republishSafe: true } : {}),
     // Stage R only: the per-role relay plan rows (hosted-relay-v1/relay-plan.mjs); a row set that does not
     // validate is written as an empty list, which the resident reads as "plan unconfirmed" (UNKNOWN).
     relay: plan?.entryRole === 'relay-publisher' ? (validateRelayPlanRows(r.relay) ?? []) : null,

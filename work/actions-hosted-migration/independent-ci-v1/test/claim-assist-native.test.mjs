@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
-import { CLAIM_ASSIST_BODY_MAX, DOOR_RPC, EXTEND_ACTION, JOIN_ACTION, STAGE1_LEASE_MINUTES, STAGE8_LEASE_MINUTES, createClaimAssistNative, extendLeaseIfShort, leaseAfter, stage1WithLease } from '../src/independent-control-checks-v2/claim-assist-native.mjs';
+import { CLAIM_ASSIST_BODY_MAX, DOOR_RPC, EXTEND_ACTION, JOIN_ACTION, STAGE1_LEASE_MINUTES, STAGE8_LEASE_MINUTES, createClaimAssistNative, extendLeaseIfShort, leaseAfter, stage1WithLease, stage1FrontRequeue } from '../src/independent-control-checks-v2/claim-assist-native.mjs';
+import { batchJobsV2 } from '../src/job-v2.mjs';
 import { controllerPorts, nativeReadPost } from '../src/resident-v2/entry-runtime.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -17,7 +18,7 @@ const port = fetchImpl => createClaimAssistNative({ config, fetchImpl, nativeTok
 test('join and extend are actions of the CI door (clued_work_verify_v1): the CI token hash, the scope, the PR ref and the head; never the token itself', async () => {
   const sent = [];
   const p = port(async (url, init) => { sent.push({ url, init }); return new Response(JSON.stringify({ status: 'ok', joined: true, extended: true }), { status: 200 }); });
-  assert.deepEqual(await p.joinQueue({ pr: 884, headSha: HEAD }), { ok: true, joined: true, reason: null });
+  assert.deepEqual(await p.joinQueue({ pr: 884, headSha: HEAD }), { ok: true, joined: true, reason: null, mergeQueue: null });
   assert.deepEqual(await p.extendLease({ pr: 884, headSha: HEAD, minutes: 150 }), { ok: true, extended: true, expiresAt: null, reason: null });
   assert.deepEqual(sent.map(x => x.url), [0, 1].map(() => `https://abcdefghijklmnopqrst.supabase.co/rest/v1/rpc/${DOOR_RPC}`));
   assert.deepEqual(JSON.parse(sent[0].init.body), { p_token_hash: digest('clued_bnd_secret'), p_input: { action: JOIN_ACTION, scope: 'project:p', pr_ref: `${REPO}#884`, head_sha: HEAD } });
@@ -42,8 +43,8 @@ test('every failure is named, never thrown: not deployed, refused, 5xx, cut netw
   const cut = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }); };
   assert.deepEqual(await port(cut).joinQueue(one), { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' });
   assert.deepEqual(await port(async () => new Response('not json', { status: 200 })).joinQueue(one), { ok: false, code: 'CLAIM_ASSIST_REFUSED' });
-  assert.deepEqual(await port(reply(200, { status: 'ok', joined: false, reason: 'claim_not_bound' })).joinQueue(one), { ok: true, joined: false, reason: 'claim_not_bound' });
-  assert.deepEqual(await port(reply(200, { status: 'ok', joined: false, reason: 'Free Text!' })).joinQueue(one), { ok: true, joined: false, reason: null });
+  assert.deepEqual(await port(reply(200, { status: 'ok', joined: false, reason: 'claim_not_bound' })).joinQueue(one), { ok: true, joined: false, reason: 'claim_not_bound', mergeQueue: null });
+  assert.deepEqual(await port(reply(200, { status: 'ok', joined: false, reason: 'Free Text!' })).joinQueue(one), { ok: true, joined: false, reason: null, mergeQueue: null });
   let called = 0;
   const counting = port(async () => { called++; return new Response('{}', { status: 200 }); });
   for (const m of [0, 181, 1.5, '30']) assert.deepEqual(await counting.extendLease({ ...one, minutes: m }), { ok: false, code: 'CLAIM_ASSIST_REFUSED' });
@@ -114,4 +115,64 @@ test('review round 27: a line cut while the 200 answer is read is unreachable, n
   const c = createClaimAssistNative({ config: { supabaseUrl: 'https://x.supabase.co', publishableKey: 'k', scope: 's', repository: 'tdoljyj/cross-memory-system' }, fetchImpl: async () => cutBody(), nativeToken: 't' });
   assert.deepEqual(await c.joinQueue({ pr: 1, headSha: 'a'.repeat(40) }), { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' });
   assert.deepEqual(await c.extendLease({ pr: 1, headSha: 'a'.repeat(40), minutes: 180 }), { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' });
+});
+
+// ---- Generation 28 (resident docs/adr/0016, defect 1b31b06b): the train front's PR joins the queue again at its new head's stage 1 ----
+const OLD = 'b'.repeat(40), CLAIM_ID = '4607c9bb-3c3e-4bfe-aff0-5d8a892b605c';
+const queueView = (state, position) => [{ ref: `merge:${REPO}:main`, length: 1, head: { claim_id: CLAIM_ID }, state, position, ahead: [] }];
+test('gen 28: joinQueue reports the claim\'s queue entry from the answer\'s merge_queue (head, waiting, none) and null when the answer names none', async () => {
+  const one = { pr: 884, headSha: HEAD };
+  assert.deepEqual((await port(reply(200, { status: 'ok', joined: true, merge_queue: queueView('head', 1) })).joinQueue(one)).mergeQueue, { entered: true, state: 'head', position: 1 });
+  assert.deepEqual((await port(reply(200, { status: 'ok', joined: true, merge_queue: queueView('waiting', 3) })).joinQueue(one)).mergeQueue, { entered: true, state: 'waiting', position: 3 });
+  assert.deepEqual((await port(reply(200, { status: 'ok', joined: false, reason: 'already_queued', merge_queue: null })).joinQueue(one)).mergeQueue, { entered: false, state: null, position: null });
+  assert.equal((await port(reply(200, { status: 'ok', joined: true, merge_queue: 'x' })).joinQueue(one)).mergeQueue, null);
+  assert.equal((await port(reply(200, { status: 'ok', joined: true })).joinQueue(one)).mergeQueue, null);
+});
+
+test('gen 28: stage1FrontRequeue joins only for the PR of this node\'s newest front batch, at another head, under this claim, outside the queue', async () => {
+  const jobs = batchJobsV2({ repo: REPO, pr: 1037, headSha: HEAD, baseSha: 'c'.repeat(40), testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: new Date().toISOString(), attempt: 1 });
+  const job = jobs['work-admission'];
+  const out = { entered: false, state: null, position: null };
+  const settled = (mergeQueue = out) => ({ status: 'SETTLED', sideEffects: 1, scheduling: { ciRetryAfter: null, mergeQueue, claimExpiresAt: null } });
+  const front = (o = {}) => ({ pr: 1037, headSha: OLD, claimId: CLAIM_ID, ...o });
+  const world = ({ latest = front(), answer = { ok: true, joined: true, reason: null, mergeQueue: { entered: true, state: 'head', position: 1 } } } = {}) => {
+    const calls = [], logs = [];
+    return { calls, logs, args: { job, trainMode: 'on', batchClaim: { claimId: CLAIM_ID, fence: 2, epoch: 1 }, record: (k, v) => logs.push([k, v]),
+      sweepStore: { async latestFrontBatch() { if (latest instanceof Error) throw latest; return latest; } },
+      claimAssist: { async joinQueue(i) { calls.push(i); if (answer instanceof Error) throw answer; return answer; } } } };
+  };
+  // the field case: the old head's front batch returned the slot; the new head's stage 1 joins again and is first in the queue
+  let w = world();
+  let r = await stage1FrontRequeue({ ...w.args, result: settled() });
+  assert.deepEqual(r.scheduling.mergeQueue, { entered: true, state: 'head', position: 1 });
+  assert.deepEqual(w.calls, [{ pr: 1037, headSha: HEAD }]);
+  assert.equal(w.logs[0][0], 'native_front_requeue');
+  // others joined meanwhile: behind them (no head, so the resident does not give way)
+  w = world({ answer: { ok: true, joined: true, reason: null, mergeQueue: { entered: true, state: 'waiting', position: 2 } } });
+  assert.deepEqual((await stage1FrontRequeue({ ...w.args, result: settled() })).scheduling.mergeQueue, { entered: true, state: 'waiting', position: 2 });
+  // an answer without the view: in the queue at an unknown place, never the head
+  w = world({ answer: { ok: true, joined: true, reason: null, mergeQueue: null } });
+  assert.deepEqual((await stage1FrontRequeue({ ...w.args, result: settled() })).scheduling.mergeQueue, { entered: true, state: 'waiting', position: null });
+  // never: another PR's front is newer, the same head, another claim, no front at all, an unreadable store, the train not on, a front job,
+  // a claim already in the queue, no queue fact, a result that is not SETTLED; nothing is asked and the result is unchanged
+  for (const [label, o, result, extra] of [
+    ['other PR', { latest: front({ pr: 1036 }) }], ['same head', { latest: front({ headSha: HEAD }) }], ['other claim', { latest: front({ claimId: '11111111-2222-4333-8444-555555555555' }) }],
+    ['no front', { latest: null }], ['unreadable', { latest: Object.assign(new Error('TRAIN_FRONT_BATCH_UNREADABLE'), { code: 'TRAIN_FRONT_BATCH_UNREADABLE' }) }],
+    ['shadow', {}, settled(), { trainMode: 'shadow' }], ['off', {}, settled(), { trainMode: 'off' }],
+    ['front job', {}, settled(), { job: batchJobsV2({ repo: REPO, pr: 1037, headSha: HEAD, baseSha: 'c'.repeat(40), testSha: 'e'.repeat(40), sourceManifestSha256: 'd'.repeat(64), createdAt: new Date().toISOString(), attempt: 1 })['work-admission'] }],
+    ['in the queue', {}, settled({ entered: true, state: 'waiting', position: 2 })], ['no queue fact', {}, settled(null)],
+    ['blocked', {}, { status: 'BLOCKED', sideEffects: 0, scheduling: { mergeQueue: out } }], ['no batch claim', {}, settled(), { batchClaim: null }]]) {
+    w = world(o);
+    const given = result ?? settled();
+    r = await stage1FrontRequeue({ ...w.args, ...(extra ?? {}), result: given });
+    assert.equal(r, given, label);
+    assert.deepEqual(w.calls, [], label);
+  }
+  // a failed join changes nothing (logged only); a throwing port never throws out
+  for (const answer of [{ ok: false, code: 'CLAIM_ASSIST_REFUSED' }, new Error('boom')]) {
+    w = world({ answer });
+    const given = settled();
+    assert.equal(await stage1FrontRequeue({ ...w.args, result: given }), given);
+    assert.equal(w.logs.length, 1);
+  }
 });

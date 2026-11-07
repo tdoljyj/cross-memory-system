@@ -390,6 +390,8 @@ B 上的第 8 段尝试：
 
 非队首 PR 的普通批次照常跑第 1–7 段，停在 B。在列车模式下，只有车头批次能拿到合并位的绿。
 
+车头 PR 换了新 head（[ADR 0016](adr/0016-front-requeue-on-new-head.md)）：旧 head 的车头批次在第 8 段遇到 `REQUIRED_CHECK_FAILED` 时会还位，认领因此离开队列。新 head 的普通批次第 1 段 SETTLED 后，如果本节点最新的车头批次记录是这个 PR 的另一个 head、同一个认领，而 Native 说认领不在队列，就用 CI 身份 `merge_queue_join` 重新入队（`claim-assist-native.mjs#stage1FrontRequeue`）。入队应答说是队首、位置 1 时，照第 2 步让位。
+
 ### 7.4 第 8 段的当前车头路径
 
 `strictFrontHeadDecision` 在写前、写后各复核一次，要求：
@@ -459,11 +461,14 @@ B 上的第 8 段尝试：
 | 第 1 段后 CI 自动延长 | 剩余 < 90 分钟时 | `claim-assist-native.mjs#STAGE1_LEASE_MINUTES` |
 | 第 8 段 CI 自动延长 | 剩余 < 180 分钟时 | `STAGE8_LEASE_MINUTES` |
 | 第 8 段 CI 自动入队 | 不在队列时 `merge_queue_join` | `claim-assist-native.mjs` |
+| 第 1 段 CI 重新入队 | 车头 PR 的新 head：最新车头批次是本 PR 另一个 head、同一认领，且不在队列时（ADR 0016） | `claim-assist-native.mjs#stage1FrontRequeue` |
 | running 时钟 | `touch running` 后最长 90 分钟，受 `slotHardCapMinutes`（默认 120）约束 | 第 10 段 |
 | 绿之后的合并时间 | 30 分钟 | 服务端 |
 | 服务端保活 | 延长排队认领，不越过硬截止 | `clued_private.work_claim_merge_queue_keepalive_v1`（CI 命令门操作 `merge_queue_keepalive`） |
 
 开车头批次前，如果剩余时间小于 `frontBatchBudgetMs` 加一次第 8 段尝试，就不开（`TRAIN_FRONT_BUDGET_SHORT`）。
+
+合并位只由持有者续期和 `touch`（上表的 running/green）推后；`lease_extend` 和 keepalive 只延长租约。认领成为队首到第 10 段开车头之间没有延长，残余与建议见 ADR 0016。
 
 ---
 
@@ -498,7 +503,7 @@ B 上的第 8 段尝试：
 | 机制 | 适用 | 次数 / 间隔 | 代码 |
 |---|---|---|---|
 | 只读请求有界退避 | GitHub GET 遇 5xx 或网络错误；Native 读 | 1 / 2 / 4 / 8 秒，每进程两段各 20 秒 | `CI/read-retry.mjs` |
-| 发布段原地重跑 | 第 3/5/7 段零副作用、`safeToRerun` | 30 秒、90 秒、5 分钟 | `executor.mjs#publicationRetryable` |
+| 发布段原地重跑 | 第 3/5/7 段零副作用、`safeToRerun`；或写后核对读不到而撤回（`PUBLICATION_REVOKED` 且 `republishSafe`，重跑时以新效果键重新发布，最多 3 次，[ADR 0015](adr/0015-republish-after-unavailable-withdrawal.md)） | 30 秒、90 秒、5 分钟 | `executor.mjs#publicationRetryable`、`CI/staged-check-publisher-v2.mjs` |
 | 扫描段原地重跑 | 第 2/4/6 段：内存闸、证明没发布、干净拒绝 | 60 秒、300 秒 | `classify.mjs#executionRetryable` |
 | 自动收尾 | 第 2/4/6 段泵失联但能证明没发布 | 收为 `BRIDGE_ABANDONED_UNPUBLISHED`；第 2 段可排 attempt 2 | `provenCleanEnd` |
 | 第 8 段暂时失败 | 见 §6.3 | 3 次 | `stage8Try` |

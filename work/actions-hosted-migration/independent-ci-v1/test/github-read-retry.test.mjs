@@ -12,15 +12,17 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
-import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
+import { batchJobsV2, claimGeneration, subjectOfV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { createFixtureWorkAdmissionPublisherV2, refusalSafeToRerun, VERIFY_REREAD_DELAYS_MS, VERIFY_WAIT_WINDOW_MS, VERIFY_REVOKE_RESERVE_MS } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { transportFault } from '../src/full-admission-v2.mjs';
 import { sanitizeAdmissionDiagnosticV2 } from '../src/admission-facts-v2.mjs';
-import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
+import { createStagedCheckPublisherV2, MAX_REPUBLICATIONS, republicationKey } from '../src/staged-check-publisher-v2.mjs';
+import { readRolePublication } from '../src/effect-journal.mjs';
+import { independentCheckBindsPullRequest } from '../../../../scripts/ci/clued-merge-slot-ci.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { withReadRetry, READ_RETRY_DELAYS_MS, READ_RETRY_BUDGET_MS } from '../src/read-retry.mjs';
-import { withdrawalTitle, verificationUnavailable, admissionVerificationRetryable, ADMISSION_REREAD_REASONS } from '../src/withdrawal-text.mjs';
+import { withdrawalTitle, verificationUnavailable, admissionVerificationRetryable, ADMISSION_REREAD_REASONS, withdrawnForUnavailability } from '../src/withdrawal-text.mjs';
 import { NATIVE_READ_ACTIONS, controllerPorts, nativeReadPost } from '../src/resident-v2/entry-runtime.mjs';
 import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 import { outcomeFailureCode, outcomeFacts, TRANSIENT_CODES } from '../src/resident-v2/stage-fact.mjs';
@@ -591,4 +593,111 @@ test('role probe: the holders read cut by the network is asked again inside the 
   assert.deepEqual(sleeps, [1000, 2000]);
   assert.equal(r.status, 'BLOCKED');
   assert.equal(r.reason, 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', 'the third read answered');
+});
+
+// ---- Generation 28 (resident docs/adr/0015, defect 664cc8eb): a withdrawal for unavailability only is followed by a republication ----
+// Field #1037 head 26ac75e4, stage 7: contract-placement was written, the complete admission after the write timed out (Native/GitHub not
+// read in time), the check was withdrawn as "verification unavailable ... no change of it was observed", and the head was burned. Now the
+// withdrawn record says republishable, the result says republishSafe (the resident's only signal), and the next run of the stage publishes a
+// new, completely re-proven check under its own effect key (the original external_id: every reader counts the newest check of the role);
+// K(head, role) keeps its original holder.
+const observedOf = c => ({ claimId: c.claimId, fence: c.fence, epoch: c.epoch, expiresAt: c.expiresAt });
+// The first evaluation after the first write (the after-write boundary, the second evaluation of all) finds Native unreachable; every other
+// one admits. scannerWorld makes a new publisher (and admission port) for every run, so the count is the world's own (box.n).
+const afterWriteTimesOut = box => (j, packet, opts) => ((box.n = (box.n ?? 0) + 1) === 2 ? blocked('full_admission_unavailable', NATIVE_DOWN) : admitted(j, box.c, packet, { batchClaim: opts.batchClaim }));
+
+test('scanner publisher v2 (gen 28, 664cc8eb): the read after the write times out -> withdrawn, republishSafe; the next run republishes, settles, newest check green', async t => {
+  const box = {};
+  const w = await scannerWorld(t, 'contract-placement', afterWriteTimesOut(box));
+  box.c = observedOf(w.c);
+  const github = fakeGithub();
+  const first = await w.publish(github);
+  assert.deepEqual([first.status, first.reason, first.sideEffects, first.republishSafe], ['REVOKED', 'full_admission_not_proven', 2, true], JSON.stringify(first));
+  assert.match(github.checks[0].output.title, /withdrawn: verification unavailable/);
+  assert.equal((await w.journal.read(first.effectKey)).details.republishable, true);
+  // it travels through the entry's outcome record and the stage fact, and stays the clean final code (the resident decides on the flag)
+  const written = await writeOutcome({ receiptsRoot: await tempDir(t, 'clued-no-role-'), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 7, entryRole: 'check-publisher' }, jobIds: [], result: first });
+  assert.deepEqual([outcomeFacts(written).republishSafe, outcomeFacts(written).safeToRerun, outcomeFailureCode(written, 7)], [true, false, 'PUBLICATION_REVOKED']);
+  // only a check publisher's REVOKED carries it
+  const other = await writeOutcome({ receiptsRoot: await tempDir(t, 'clued-no-role-'), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 8, entryRole: 'control-pair' }, jobIds: [], result: first });
+  assert.equal(outcomeFacts(other).republishSafe, undefined);
+  // the resident's next try of the stage: a republication, completely re-proven, settled
+  const again = await w.publish(github);
+  assert.deepEqual([again.status, again.republication, again.sideEffects], ['SETTLED', 1, 1], JSON.stringify(again));
+  assert.equal(again.effectKey, republicationKey(first.effectKey, 1));
+  assert.deepEqual(github.checks.map(x => [x.conclusion, x.external_id]), [['failure', scanExternalIdV2(w.job)], ['success', scanExternalIdV2(w.job)]]);
+  assert.match(github.checks[1].output.summary, /republication 1 after a withdrawn verification/);
+  const newest = github.checks.reduce((a, x) => (x.id > a.id ? x : a));
+  assert.equal(newest.conclusion, 'success', 'the newest check of the role is the green one (GitHub and stage 8 count the newest)');
+  assert.equal(independentCheckBindsPullRequest(newest, { headSha: HEAD, prNumber: 888, repository: REPO }), true, 'the merge executor binds the republished check (its pinned id formats unchanged)');
+  // K(head, role) still names the original local holder: the relay stays excluded
+  const holder = (await readRolePublication(w.journal, { repo: REPO, headSha: HEAD, role: 'contract-placement', checkName: newest.name, appId: 5368905 })).holder;
+  assert.deepEqual([holder.path, holder.effectKey, holder.externalId], ['local', first.effectKey, scanExternalIdV2(w.job)]);
+  // a third run only re-verifies the settled republication: nothing posted
+  const third = await w.publish(github);
+  assert.deepEqual([third.status, third.sideEffects, github.checks.length], ['SETTLED', 0, 2], JSON.stringify(third));
+});
+
+test('scanner publisher v2 (gen 28): an authorization that really changed after the write is never republished', async t => {
+  const box = {};
+  const w = await scannerWorld(t, 'trivy', (j, packet, opts) => admitted(j, box.c, packet, { batchClaim: opts.batchClaim, ...((box.n = (box.n ?? 0) + 1) >= 2 ? { mode: { state: 'frozen' } } : {}) }));
+  box.c = observedOf(w.c);
+  const github = fakeGithub();
+  const first = await w.publish(github);
+  assert.deepEqual([first.status, first.reason, first.republishSafe], ['REVOKED', 'authorization_binding_changed', undefined], JSON.stringify(first));
+  assert.equal(github.checks[0].output.title, 'Independent CI authorization changed');
+  assert.equal((await w.journal.read(first.effectKey)).details.republishable, undefined);
+  const again = await w.publish(github);
+  assert.deepEqual([again.status, again.sideEffects, github.checks.length], ['REVOKED', 0, 1], 'final: nothing published again');
+});
+
+test('scanner publisher v2 (gen 28): at most three republications; the third withdrawn one is final', async t => {
+  const box = {};
+  const w = await scannerWorld(t, 'gitleaks', (j, packet, opts, n) => (n % 2 === 0 ? blocked('full_admission_unavailable', NATIVE_DOWN) : admitted(j, box.c, packet, { batchClaim: opts.batchClaim })));
+  box.c = observedOf(w.c);
+  assert.equal(MAX_REPUBLICATIONS, 3);
+  const github = fakeGithub(), seen = [];
+  for (let i = 0; i < 4; i++) { const r = await w.publish(github); seen.push([r.status, r.republication ?? 0, r.republishSafe ?? false]); }
+  assert.deepEqual(seen, [['REVOKED', 0, true], ['REVOKED', 1, true], ['REVOKED', 2, true], ['REVOKED', 3, false]]);
+  const last = await w.publish(github);
+  assert.deepEqual([last.status, last.reason, last.sideEffects], ['REVOKED', 'republication_limit_reached', 0]);
+  assert.deepEqual(github.checks.map(x => x.conclusion), ['failure', 'failure', 'failure', 'failure']);
+  assert.equal(new Set(github.checks.map(x => x.external_id)).size, 1, 'one external_id, the role own');
+});
+
+test('scanner publisher v2 (gen 28): a republication whose source is unreadable before the write ends BLOCKED, safe to run again, nothing written', async t => {
+  const box = { down: false };
+  const w = await scannerWorld(t, 'trivy', (j, packet, opts) => (box.down ? blocked('full_admission_unavailable', NATIVE_DOWN) : afterWriteTimesOut(box)(j, packet, opts)));
+  box.c = observedOf(w.c);
+  const github = fakeGithub();
+  assert.equal((await w.publish(github)).republishSafe, true);
+  box.down = true;
+  const blockedRun = await w.publish(github);
+  assert.deepEqual([blockedRun.status, blockedRun.sideEffects, blockedRun.safeToRerun, blockedRun.republication, github.checks.length], ['BLOCKED', 0, true, 1, 1], JSON.stringify(blockedRun));
+  assert.equal(await w.journal.read(blockedRun.effectKey), null, 'no republication record');
+  box.down = false;
+  const settled = await w.publish(github);
+  assert.deepEqual([settled.status, settled.republication, github.checks.map(x => x.conclusion)], ['SETTLED', 1, ['failure', 'success']], JSON.stringify(settled));
+});
+
+test('withdrawal text (gen 28): only a withdrawal that says "verification unavailable" may be republished', () => {
+  for (const cause of ['github_http_502', 'github_transport_unconfirmed', 'full_admission_unavailable', 'native_claim_observation_unavailable', 'protected_facts_reobservation_unavailable'])
+    assert.equal(withdrawnForUnavailability(cause), true, cause);
+  for (const cause of ['authorization_binding_changed', 'lease_expired_after_write', 'check_readback_unconfirmed', 'github_http_403', 'full_admission_rejected', 'full_admission_not_proven', null])
+    assert.equal(withdrawnForUnavailability(cause), false, String(cause));
+});
+
+test('scanner publisher v2 (gen 28): a republication whose create answer is lost is found by its id among the withdrawn checks of the same external_id', async t => {
+  const box = {};
+  const w = await scannerWorld(t, 'contract-placement', afterWriteTimesOut(box));
+  box.c = observedOf(w.c);
+  const github = fakeGithub();
+  assert.equal((await w.publish(github)).republishSafe, true);
+  // the republication's create lands on GitHub, but its answer is lost (a transport failure after the request left: may have landed)
+  const create = github.createCheck.bind(github);
+  github.createCheck = async body => { await create(body); throw Object.assign(new Error('github_transport_unconfirmed'), { code: 'github_transport_unconfirmed', retryable: true }); };
+  const r = await w.publish(github);
+  assert.deepEqual([r.status, r.republication, r.sideEffects], ['SETTLED', 1, 1], JSON.stringify(r));
+  assert.equal(r.checkRunId, github.checks[1].id, 'the new check, never the withdrawn one');
+  assert.deepEqual(github.checks.map(x => x.conclusion), ['failure', 'success']);
 });

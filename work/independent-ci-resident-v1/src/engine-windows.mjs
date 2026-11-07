@@ -165,6 +165,8 @@ export function parseStageOutcome(o) {
     scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue), claimExpiresAt: isoOrNull(s.claimExpiresAt) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
+    // Generation 28 (docs/adr/0015): the scanner publisher's "withdrawn for unavailability only, a republication may follow", only on REVOKED.
+    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
   };
 }
 

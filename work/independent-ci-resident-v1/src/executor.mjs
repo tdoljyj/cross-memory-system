@@ -302,9 +302,13 @@ const archiveNamedFor = (directory, reason) => typeof directory === 'string'
   && new RegExp(`(?:^|[\\\\/])failed-[0-9a-z]+-${reason}-[0-9a-f]{12}$`).test(directory);
 // Only the entry's own flag decides (never a code): a clean BLOCKED with zero side effects that published nothing, on a runner that read back
 // as the original and a Windows tree at zero.
+// Generation 28 (docs/adr/0015, defect 664cc8eb): or a withdrawal for unavailability only (PUBLICATION_REVOKED whose entry says republishSafe: the
+// check was withdrawn and the withdrawal read back, because GitHub or Native could not be read to confirm it, with no change of the
+// authorization observed). The next run of the stage publishes the role again under a new identity, completely re-proven (Source
+// staged-check-publisher-v2.mjs, republication); the same back-off and the same three repeats bound it.
 export const publicationRetryable = (number, r) => PUBLICATION_RETRY_STAGES.includes(number) && r?.ok === false && r.proof?.windowsTreeZero === true
-  && r.proof?.serviceOriginalStopped === true && r.outcome?.status === 'BLOCKED' && r.outcome.sideEffects === 0 && r.outcome.mayHavePublished === false
-  && r.outcome.safeToRerun === true;
+  && r.proof?.serviceOriginalStopped === true && ((r.outcome?.status === 'BLOCKED' && r.outcome.sideEffects === 0 && r.outcome.mayHavePublished === false
+  && r.outcome.safeToRerun === true) || (r.code === 'PUBLICATION_REVOKED' && r.outcome?.status === 'REVOKED' && r.outcome.republishSafe === true));
 // A backfill that keeps failing transiently (not a refused source) HALTs after this long (an antivirus or backup lock
 // of a few minutes only defers it).
 export const BACKFILL_PENDING_MAX_MS = 30 * 60_000;
@@ -389,6 +393,7 @@ const outcomeSummary = r => {
   const o = r?.outcome;
   if (!o && r?.brokerNoLaunch !== true) return null;
   return { status: o?.status ?? null, reason: o?.reason ?? null, sideEffects: o?.sideEffects ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: r?.brokerNoLaunch === true,
+    ...(o?.republishSafe === true ? { republishSafe: true } : {}),
     reasonCodes: o?.diagnostic?.reasonCodes ?? [], nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? [], ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null,
     mergeQueue: o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null };
 };
@@ -3569,6 +3574,8 @@ export class ResidentExecutor {
         // DESIGN 51 (C): a publisher stage (3, 5, 7) that ended before it wrote anything, because a source it reads was passingly unavailable and
         // its entry says so (outcome.safeToRerun), is run again with the same signed result (still in the spool), after a bounded back-off.
         // Nothing is parked and nothing re-scanned; the Source starts from a clean journal (nothing was recorded) and re-proves everything.
+        // Generation 28 (docs/adr/0015): the same for a stage whose check was withdrawn for unavailability only (outcome.republishSafe): the
+        // withdrawal is on record, and the Source's next run publishes a republication under a new identity, re-proving everything first.
         for (let again = 0; again < PUBLICATION_RETRY_MS.length && publicationRetryable(number, r) && !abort && !unconfirmed; again++) {
           await this.receipt('publication-retry', { key, stage: number, try: again + 1, afterMs: PUBLICATION_RETRY_MS[again], failureCode: validCode(r.code), reason: r.outcome?.reason ?? null });
           await this.retryWait(key, PUBLICATION_RETRY_MS[again]);

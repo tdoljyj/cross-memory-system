@@ -14,6 +14,12 @@ export const verificationUnavailable = cause => READ_UNAVAILABLE.test(cause ?? '
 // admissionVerificationRetryable and the entry's safeToRerun also use.
 const NATIVE_READ_UNAVAILABLE = Object.freeze(['native_claim_observation_unavailable', 'protected_facts_reobservation_unavailable']);
 const withdrawalUnavailable = cause => verificationUnavailable(cause) || NATIVE_READ_UNAVAILABLE.includes(cause);
+// Generation 28 (resident docs/adr/0015, defect 664cc8eb): whether a scanner publication was withdrawn ONLY because its verification after
+// the write could not be read, with no change of the authorization observed: exactly the causes whose withdrawal says "verification
+// unavailable ... no change of it was observed" (withdrawalTitle/withdrawalNote below). Such a withdrawal may be followed by one fresh,
+// completely re-proven publication of the same role (staged-check-publisher-v2.mjs#publish, republication). A withdrawal for any other
+// cause (the binding changed, the read-back disagrees, the lease could not be made live again) never is.
+export const withdrawnForUnavailability = cause => withdrawalUnavailable(cause);
 // Generation 10 (resident DESIGN 53.6): the stage-1 work admission's verification after its own write is read again (bounded) and, when
 // it still cannot be done, its withdrawal is the transient ADMISSION_VERIFICATION_UNAVAILABLE (stage-fact.mjs) only for a PASSING cause:
 //   - GitHub not readable (500/502/503/504, no transport);

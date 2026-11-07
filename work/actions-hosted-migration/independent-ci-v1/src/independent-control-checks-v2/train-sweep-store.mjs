@@ -232,4 +232,11 @@ export class TrainSweepStore {
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
   // This node's front batches of one head, newest first.
   async frontBatches({ pr, headSha }) { return this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha); }
+  // Generation 28 (resident docs/adr/0016): the newest front batch this node opened, of any PR, or null; a torn front record at or after it
+  // refuses (a newer front this node cannot read must not let an older one count as the newest).
+  async latestFrontBatch() {
+    const record = (await this.read('front', 1))[0] ?? null;
+    if ([...this.tornNames.values()].some(t => t.kind === 'front' && (record === null || t.ms >= Date.parse(record.writtenAt)))) fail('TRAIN_FRONT_BATCH_UNREADABLE');
+    return record;
+  }
 }

@@ -17,6 +17,8 @@
 // 404 / PGRST202 without the door) answers NOT_DEPLOYED; the door's {status:'rejected'} (not the CI admission binding) is REFUSED.
 // Neither action is a read (entry-runtime.mjs#nativeReadPost lists only the door's read actions), so no layer repeats them.
 import { digest } from '../proof.mjs';
+import { isTrainFrontJobV2 } from '../job-v2.mjs';
+import { mergeQueueEntryV2 } from './queue-facts.mjs';
 
 export const DOOR_RPC = 'clued_work_verify_v1';
 export const JOIN_ACTION = 'merge_queue_join';
@@ -75,9 +77,12 @@ export function createClaimAssistNative({ config, fetchImpl, nativeToken }) {
     try { return await call(action, { pr_ref: `${config.repository}#${pr}`, head_sha: headSha, ...extra }); } catch { return { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' }; }
   };
   return Object.freeze({
+    // mergeQueue (generation 28): the claim's merge-queue entry as the answer's merge_queue (the claim view's, as a renewal answers it) says
+    // it (queue-facts.mjs#mergeQueueEntryV2), or null when the answer names none or it does not normalize.
     async joinQueue({ pr, headSha } = {}) {
       const r = await safe(JOIN_ACTION, pr, headSha, {});
-      return r.ok ? { ok: true, joined: r.body.joined === true, reason: reasonOf(r.body) } : r;
+      return r.ok ? { ok: true, joined: r.body.joined === true, reason: reasonOf(r.body),
+        mergeQueue: Object.hasOwn(r.body, 'merge_queue') ? mergeQueueEntryV2({ merge_queue: r.body.merge_queue }, { repo: config.repository }) : null } : r;
     },
     // expiresAt: the lease end Native answered (normalized), else null.
     async extendLease({ pr, headSha, minutes } = {}) {
@@ -114,4 +119,35 @@ export async function stage1WithLease({ result, claimAssist, job, now, record = 
   const r = await extendLeaseIfShort({ claimAssist, job, claimExpiresAt: result.scheduling.claimExpiresAt, minutes: STAGE1_LEASE_MINUTES, now, record });
   if (!r) return result;
   return { ...result, scheduling: { ...result.scheduling, claimExpiresAt: leaseAfter(result.scheduling.claimExpiresAt, r) } };
+}
+
+// Generation 28 (resident docs/adr/0016, defect 1b31b06b; field #1037 15:30-16:09 on 2026-11-07): the train front's batch for an older head H1
+// rested at B with REQUIRED_CHECK_FAILED, and its stage 8 returned the merge slot (publisher.mjs#waitForQueueHead: failed work gives the next
+// claim its turn), which takes the merge ref off the claim: the claim left the queue. The PR then got a new head H2 (the fix). H2's ordinary
+// batch found the claim outside the queue at its stage 1 (mergeQueue entered false, rightly), so the resident did not give way after stage 1
+// (executor.mjs#trainFrontYield, DESIGN §62.6), stages 2-7 ran for nothing (13 minutes), and only H2's stage 8 joined the queue again.
+// Now, at H2's stage 1, after a SETTLED admission and with the train on, the claim joins the queue again (at its back, as stage 8 would) when
+// exactly this is true: this node's newest front batch (train-sweep-store.mjs#latestFrontBatch) is of this PR, of another head, under this
+// batch's claim, and Native says the claim is not in the queue now. Native's join answer then says where it stands; only when that is the
+// head (position 1) does the resident give way, with every condition of §62.6 unchanged.
+//   - Never for a PR this node never opened a front batch for, nor once another PR's front batch is newer: a PR that was not the queue head
+//     never joins here, so it never gives way here either (it joins at stage 8 as before).
+//   - Joining is not merging and grants nothing (the obligations above: a head whose admission just passed in this run); the front batch
+//     still runs stages 1-8 and stage 8 checks every live condition again; a queue that holds other claims puts this one behind them.
+//   - Not for a train front job (S != H; it is the front already), only with the train on, only when Native said entered false; any failure
+//     leaves the result exactly as it was (logged only).
+export async function stage1FrontRequeue({ result, job, trainMode, claimAssist, sweepStore, batchClaim, record = () => {} }) {
+  if (trainMode !== 'on' || result?.status !== 'SETTLED' || !plain(result.scheduling) || result.scheduling.mergeQueue?.entered !== false || !claimAssist
+    || typeof sweepStore?.latestFrontBatch !== 'function' || typeof batchClaim?.claimId !== 'string') return result;
+  try { if (isTrainFrontJobV2(job)) return result; } catch { return result; }
+  let front;
+  try { front = await sweepStore.latestFrontBatch(); } catch { return result; }
+  if (!front || front.pr !== job.pr || front.headSha === job.headSha || front.claimId !== batchClaim.claimId) return result;
+  let j;
+  try { j = await claimAssist.joinQueue({ pr: job.pr, headSha: job.headSha }); } catch { j = { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' }; }
+  try { record('native_front_requeue', { jobId: job.id, frontHeadSha: front.headSha, ok: j.ok === true, joined: j.joined === true, code: j.code ?? j.reason ?? null,
+    mergeQueue: j.mergeQueue ?? null }); } catch { /* a log only */ }
+  if (j.ok !== true) return result;
+  // In the queue now; where exactly only Native's answer says (an answer without its view: at an unknown place, never the head).
+  return { ...result, scheduling: { ...result.scheduling, mergeQueue: j.mergeQueue ?? { entered: true, state: 'waiting', position: null } } };
 }

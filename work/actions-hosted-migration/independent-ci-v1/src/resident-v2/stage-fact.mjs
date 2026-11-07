@@ -200,7 +200,9 @@ export function validateOutcome(o, { nonce, plan }) {
 export function outcomeFacts(o) {
   return { status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
     diagnostic: sanitizeAdmissionDiagnosticV2(o.diagnostic), scheduling: sanitizeSchedulingV2(o.scheduling),
-    safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false };
+    safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
+    // Generation 28 (resident docs/adr/0015): the check publisher's own republishSafe, only on a REVOKED ending (stage-inputs.mjs#writeOutcome).
+    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}) };
 }
 // The broker's refusals that it gives before any start, with the runner re-read as the original (no launch, state
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED
