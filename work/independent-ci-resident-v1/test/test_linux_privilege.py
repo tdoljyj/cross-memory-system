@@ -147,10 +147,33 @@ class WsPrepCheckout(unittest.TestCase):
             wsprep.tree_modes_regular('160000 commit ' + 'a' * 40 + '\tsub\0')
 
 
-BASH = shutil.which('bash')
+def find_bash():
+    r"""A bash these tests can run scripts with. On Windows the first `bash` on PATH can be C:\Windows\System32\bash.exe,
+    the WSL launcher: it runs /bin/bash of the default WSL distribution, which may have none (docker-desktop), so it is
+    skipped; Git for Windows' bash is used instead, or none (the tests are then skipped, with the reason shown)."""
+    if os.name != 'nt':
+        return shutil.which('bash')
+    system = os.path.normcase(os.path.normpath(os.environ.get('SystemRoot', r'C:\Windows')))
+    for folder in os.environ.get('PATH', '').split(os.pathsep):
+        norm = os.path.normcase(os.path.normpath(folder)) if folder else ''
+        if not norm or norm.startswith(system + os.sep) or 'windowsapps' in norm:
+            continue
+        for name in ('bash.exe', 'bash'):
+            if os.path.isfile(os.path.join(folder, name)):
+                return os.path.join(folder, name)
+    git = shutil.which('git')
+    if git:
+        for rel in (('..', '..', 'usr', 'bin', 'bash.exe'), ('..', 'bin', 'bash.exe')):
+            cand = os.path.normpath(os.path.join(os.path.dirname(git), *rel))
+            if os.path.isfile(cand):
+                return cand
+    return None
 
 
-@unittest.skipIf(BASH is None, 'no bash')
+BASH = find_bash()
+
+
+@unittest.skipIf(BASH is None, 'no usable bash (the WSL launcher in System32 is not one)')
 class LinuxInstaller(unittest.TestCase):
     SCRIPT = R / 'linux' / 'install-resident-linux.sh'
     FILES = ['bin/clued-ci-resident-linux', 'manifest.json', 'systemd/clued-ci-worker@.service', 'systemd/clued-ci-wsprep@.service', 'systemd/clued-ci-archive@.service']
