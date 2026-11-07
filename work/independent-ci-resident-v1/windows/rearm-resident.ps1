@@ -31,7 +31,7 @@
   batch must still get past the place that failed. A breaker that is not open refuses the request (BREAKER_NOT_OPEN), so a late or
   repeated request changes nothing.
 
-  M5 (ADR 0022 §4.4), the companion's log-on; elevated, the Owner's own account only, one at a time:
+  M5 (ADR 0022 section 4.4), the companion's log-on; elevated, the Owner's own account only, one at a time:
     -CompanionHeadless     switch the companion task to the password logon (the reinstall's last step, or to do it again). A read-only
                            preflight first; then an admin-only pending marker (install\companion-headless-pending.json); then
                            bin\CluedCompanionTaskRegistrar.exe shows the Windows credential box on the SECURE desktop (the password goes
@@ -63,7 +63,7 @@ if ($installed.residentManifestSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'INST
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevated = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-# M5: the companion's log-on (ADR 0022 §4.4). The functions are the installed copy's companion-headless.ps1, next to this one.
+# M5: the companion's log-on (ADR 0022 section 4.4). The functions are the installed copy's companion-headless.ps1, next to this one.
 $companionModes = @(@($CompanionHeadless, 'headless'), @($CompanionCredential, 'credential'), @($CompanionInteractive, 'interactive') | Where-Object { $_[0] })
 if ($companionModes.Count -gt 0) {
   if ($companionModes.Count -ne 1 -or $Request) { throw 'ONE_COMPANION_MODE_ONLY' }

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Read-only probe of the M5 prerequisites (ADR 0022 §6, Q1-Q4): for the Owner, whenever he wants it. It writes nothing,
+  Read-only probe of the M5 prerequisites (ADR 0022 section 6, Q1-Q4): for the Owner, whenever he wants it. It writes nothing,
   registers nothing, stores no credential and changes no setting. The Agent does not run it on the Owner's behalf.
 
 .DESCRIPTION

@@ -49,7 +49,7 @@
   The companion (src/companion-heartbeat.mjs readHeartbeatToken, called by CompanionHeartbeat.step on EVERY beat) reads the file fresh
   each time, so a RENEWED token is used by the next beat with no restart. A FIRST token is different: src/companion-main.mjs builds
   the heartbeat lane only if a token can be read when the companion starts, so after adding the first token the companion must be
-  restarted. The result says so (companionRestartNeeded). M5 (ADR 0022 §4.1): the Owner has read only on the task, so the
+  restarted. The result says so (companionRestartNeeded). M5 (ADR 0022 section 4.1): the Owner has read only on the task, so the
   restart is done from an elevated window: Stop-ScheduledTask then Start-ScheduledTask -TaskPath '\Clued\' -TaskName
   'CluedCIResidentCompanion' (logging off and on no longer restarts a password-logon companion).
   The Owner still links the connection on /bindings/failover (two-step confirmation); this tool makes no network call.

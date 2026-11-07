@@ -19,16 +19,16 @@ $CompanionPendingContract = 'clued.independent-ci.companion-headless-pending/1'
 $CompanionPendingFile = 'install\companion-headless-pending.json'
 $CompanionPendingStaleMinutes = 15
 $CompanionQualifySeconds = 480
-# LastTaskResult values that mean the password logon was refused (ADR 0022 §4.3), as unsigned 32-bit numbers.
+# LastTaskResult values that mean the password logon was refused (ADR 0022 section 4.3), as unsigned 32-bit numbers.
 $CompanionLogonFailureCodes = @(0x8007052EL, 0x8007052FL, 0x80070530L, 0x80070531L, 0x80070532L, 0x80070533L, 0x80070569L, 0x80070701L, 0x80070773L, 0x80070775L)   # L: int64, positive (a bare 0x8... literal is a negative Int32)
 $CompanionFallbackTaskName = 'CluedCIResidentCompanionFallback'
 # Variables that make a .NET or node process load foreign code (DESIGN.md section 14 R10; the reinstall launcher's Step-HostHygiene).
 $CompanionInjectVariables = '^(COR_ENABLE_PROFILING|COR_PROFILER|COR_PROFILER_PATH(_32|_64)?|CORECLR_.*|COMPlus_.*|DOTNET_.*|NODE_OPTIONS)$'
 
 # ---- Shared with install-resident.ps1 and upgrade-apply.ps1 (test-companion-headless.ps1 holds the copies identical) ----
-# The companion task's fixed action (ADR 0022 §4.2): the supervisor, with the root and nothing else.
+# The companion task's fixed action (ADR 0022 section 4.2): the supervisor, with the root and nothing else.
 function Get-SupervisorAction([string]$root) { [ordered]@{ path = (Join-Path $root 'bin\CluedCompanionSupervisor.exe'); arguments = ('"' + $root + '"') } }
-# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 §4.1).
+# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 section 4.1).
 function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerSid)" }
 # The companion child's arguments after node.exe, as the supervisor builds them (CompanionSupervisor.cs CommandLine); the generation
 # records keep this string as companionTaskArguments.
@@ -82,7 +82,7 @@ function Register-CompanionTaskInteractive([string]$root, [string]$ownerSid) {
   if (($t.Definition.Principal.RunLevel -ne 0) -or ($t.Definition.Principal.LogonType -ne 3) -or ($uidSid -cne $ownerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# The notifier task (ADR 0022 §4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
+# The notifier task (ADR 0022 section 4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
 # channel registers it again for every generation.
 function Get-NotifierAction([string]$root, [string]$residentSha) {
   [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
@@ -104,7 +104,7 @@ function Register-NotifierTask([string]$root, [string]$ownerSid, [string]$reside
   if (($t.Definition.Principal.RunLevel -ne 0) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'NOTIFIER_TASK_READBACK_MISMATCH' }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# What the companion task is now: mode 'password' (ADR 0022 §4.1, exactly), 'interactive' (the install's first registration or the
+# What the companion task is now: mode 'password' (ADR 0022 section 4.1, exactly), 'interactive' (the install's first registration or the
 # fall-back, exactly), 'other' (anything else: problems names what differs), or absent. Read-only; the Owner can read it (FR).
 function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
@@ -144,7 +144,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
 }
 function Test-CompanionLogonFailure($lastTaskResult) { $null -ne $lastTaskResult -and $CompanionLogonFailureCodes -contains ([int64]$lastTaskResult -band 0xFFFFFFFFL) }
 
-# ---- Lockout margin (ADR 0022 §4.1): net accounts, read without elevation ----
+# ---- Lockout margin (ADR 0022 section 4.1): net accounts, read without elevation ----
 # The lines are in a fixed order (threshold, duration, window are the 6th to 8th); a threshold that is not a number is "Never" (0).
 function ConvertFrom-NetAccounts([string]$text) {
   $lines = @(($text -split "`r?`n") | Where-Object { $_ -match ':' })
@@ -282,7 +282,7 @@ function Get-CompanionHeadlessPreflight([string]$root, $node) {
     companionGhConfig = $ghReady }
 }
 
-# ---- Qualification, from the elevated side (ADR 0022 §4.4 step 5): never the companion's own report alone ----
+# ---- Qualification, from the elevated side (ADR 0022 section 4.4 step 5): never the companion's own report alone ----
 function Get-CompanionProcessTree([string]$root) {
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
   $sup = Join-Path $root 'bin\CluedCompanionSupervisor.exe'; $node = Join-Path $root 'runtime\node.exe'

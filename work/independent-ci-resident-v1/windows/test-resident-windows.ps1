@@ -122,7 +122,7 @@ Yes ((Get-DaclPart 'O:DAG:DAD:(A;;FA;;;SY)S:(AU;FA;FA;;;WD)') -ceq 'D:(A;;FA;;;S
 Yes (-not (Test-ScSddl ($dacl.Replace(';;;SU)', ';;;WD)') + 'S:(AU;FA;FA;;;WD)') $dacl)) 'sddl-dacl-change-still-refused'
 foreach ($s in @('install-resident.ps1', 'uninstall-resident.ps1')) { Yes ($functions.ContainsKey($s + ':Get-DaclPart') -and $functions[$s + ':Get-DaclPart'] -ceq $functions['verify-resident.ps1:Get-DaclPart']) ('dacl-part-identical:' + $s) }
 
-# 4b. M5 (ADR 0022 §4): the companion task's action is the fixed supervisor (no generation, no console); the notifier still
+# 4b. M5 (ADR 0022 section 4): the companion task's action is the fixed supervisor (no generation, no console); the notifier still
 #     runs under the in-box conhost --headless (the real conhost hands node exactly these arguments); the uninstall stops the
 #     supervisor's instance, deletes both tasks and stops every process of the installed copy before the rename.
 foreach ($name in @('install-resident.ps1:Get-SupervisorAction', 'install-resident.ps1:Get-NotifierAction', 'install-resident.ps1:Get-CompanionLaunchArguments')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }

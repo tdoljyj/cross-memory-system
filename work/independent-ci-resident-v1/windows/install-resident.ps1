@@ -62,7 +62,7 @@
   Owner's next step (heartbeatNextStep): link that connection to this node on /bindings/failover, two-step confirmation. The install
   makes no network call for it and uses no token for it (merge train step 2b review).
 
-  M5, the companion without the Owner's log-on (ADR 0022 §4): the companion task's action is the fixed supervisor
+  M5, the companion without the Owner's log-on (ADR 0022 section 4): the companion task's action is the fixed supervisor
   bin\CluedCompanionSupervisor.exe "<root>" (compiled here with the task registrar bin\CluedCompanionTaskRegistrar.exe, step
   companion-supervisor); which generation it starts is config\companion-launch.json (step companion-launch, generation 1). The task is
   registered here with the Owner's interactive token and no password (step companion-task: the node works as before even if nothing
@@ -201,9 +201,9 @@ function Invoke-CompileRecipe([string]$compiler, [string]$fw, [string]$binOut, [
   $hashes
 }
 # ---- Shared with install-resident.ps1 and upgrade-apply.ps1 (test-companion-headless.ps1 holds the copies identical) ----
-# The companion task's fixed action (ADR 0022 §4.2): the supervisor, with the root and nothing else.
+# The companion task's fixed action (ADR 0022 section 4.2): the supervisor, with the root and nothing else.
 function Get-SupervisorAction([string]$root) { [ordered]@{ path = (Join-Path $root 'bin\CluedCompanionSupervisor.exe'); arguments = ('"' + $root + '"') } }
-# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 §4.1).
+# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 section 4.1).
 function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerSid)" }
 # The companion child's arguments after node.exe, as the supervisor builds them (CompanionSupervisor.cs CommandLine); the generation
 # records keep this string as companionTaskArguments.
@@ -257,7 +257,7 @@ function Register-CompanionTaskInteractive([string]$root, [string]$ownerSid) {
   if (($t.Definition.Principal.RunLevel -ne 0) -or ($t.Definition.Principal.LogonType -ne 3) -or ($uidSid -cne $ownerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# The notifier task (ADR 0022 §4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
+# The notifier task (ADR 0022 section 4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
 # channel registers it again for every generation.
 function Get-NotifierAction([string]$root, [string]$residentSha) {
   [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
@@ -279,7 +279,7 @@ function Register-NotifierTask([string]$root, [string]$ownerSid, [string]$reside
   if (($t.Definition.Principal.RunLevel -ne 0) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'NOTIFIER_TASK_READBACK_MISMATCH' }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# What the companion task is now: mode 'password' (ADR 0022 §4.1, exactly), 'interactive' (the install's first registration or the
+# What the companion task is now: mode 'password' (ADR 0022 section 4.1, exactly), 'interactive' (the install's first registration or the
 # fall-back, exactly), 'other' (anything else: problems names what differs), or absent. Read-only; the Owner can read it (FR).
 function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
@@ -317,7 +317,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $xmlSha = try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$task.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
   [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha; sdOwner = $sdOwner }
 }
-# The supervisor and the task registrar (ADR 0022 §4.2, §4.4), compiled like the job host: /noconfig, full reference paths, winexe,
+# The supervisor and the task registrar (ADR 0022 section 4.2, 4.4), compiled like the job host: /noconfig, full reference paths, winexe,
 # into the admin-only bin\. Install only: they carry no generation, and the upgrade channel never replaces them. Returns the hashes.
 function Invoke-CompanionSupervisorCompile([string]$compiler, [string]$fw, [string]$binOut, [string]$supervisorCs, [string]$registrarCs) {
   $hashes = [ordered]@{}
@@ -1008,7 +1008,7 @@ function Build-Plan {
       resident = [ordered]@{ name = $ServiceName; account = "NT SERVICE\$ServiceName"; start = 'delayed-auto'; sidType = 'unrestricted'; failure = 'restart once per day after 60 s, also on non-crash failure'; sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)' }
       broker = [ordered]@{ name = $BrokerName; account = 'LocalSystem'; start = 'auto'; sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)' }
     }
-    # M5 (ADR 0022 §4): the fixed supervisor action, first with the interactive token (no password); the password logon is
+    # M5 (ADR 0022 section 4): the fixed supervisor action, first with the interactive token (no password); the password logon is
     # rearm-resident.ps1 -CompanionHeadless, the reinstall launcher's last step. The Owner may read the task, not run it.
     companionTask = [ordered]@{ path = '\Clued\'; name = 'CluedCIResidentCompanion'; principal = $OwnerSid; runLevel = 'LeastPrivilege'; trigger = 'AtLogOn'; logonType = 'InteractiveToken'
       sddl = (Get-CompanionTaskSddl $OwnerSid); action = (Get-SupervisorAction $Root); passwordLogon = 'rearm-resident.ps1 -CompanionHeadless (the launcher''s last step)' }
@@ -1138,7 +1138,7 @@ Step 'service-hosts' {
   $hashes = Invoke-CompileRecipe $Csc $fw (Join-Path $Root 'bin') (Join-Path $Root 'helpers') (Join-Path $Root 'bin\ResidentServiceHost.cs') (Join-Path $Root 'bin\SwapBroker.cs') $v2 (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows\CompanionJobHost.cs'))
   foreach ($k in @($hashes.Keys)) { $script:receipt[$k] = $hashes[$k] }
 }
-# 3a. M5: the companion's supervisor and task registrar, from the installed resident copy (ADR 0022 §4.2, §4.4).
+# 3a. M5: the companion's supervisor and task registrar, from the installed resident copy (ADR 0022 section 4.2, 4.4).
 Step 'companion-supervisor' {
   $w = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows')
   $hashes = Invoke-CompanionSupervisorCompile $Csc 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\' (Join-Path $Root 'bin') (Join-Path $w 'CompanionSupervisor.cs') (Join-Path $w 'CompanionTaskRegistrar.cs')
@@ -1211,7 +1211,7 @@ Step 'source-v2-acl' {
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
 }
 # 6. M5: the launch file of generation 1 (the supervisor's one input), the notifier task, then the companion task with the interactive
-#    token and the supervisor's fixed action (ADR 0022 §4.4). The receipt's companionTaskAction is what the supervisor starts:
+#    token and the supervisor's fixed action (ADR 0022 section 4.4). The receipt's companionTaskAction is what the supervisor starts:
 #    node.exe and the companion's arguments (the generation record keeps the same string).
 Step 'companion-launch' {
   $entrySha = Sha256File (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\src\companion-main.mjs'))

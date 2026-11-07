@@ -19,7 +19,7 @@ elevated Windows PowerShell 5.1 started with -NoProfile. Without -RunApprovedIns
     preflight requires that the preview lists the state the uninstall just kept;
   9 only when a HALT was pinned (b9bba67e): the newly installed rearm-resident.ps1 requests its re-arm and waits for it.
     The quota phase 1 reinstall pins none (the installed resident is PAUSED): the step reports notNeeded. terminal.json
-  10 M5 (ADR 0022 §4.4): the newly installed rearm-resident.ps1 -CompanionHeadless, the last step: the Owner types his Windows
+  10 M5 (ADR 0022 section 4.4): the newly installed rearm-resident.ps1 -CompanionHeadless, the last step: the Owner types his Windows
     password once into the credential box on the SECURE desktop (the registrar hands it to the Task Scheduler; it never reaches this
     launcher), then the script qualifies the password-logon companion from the elevated side for up to 8 minutes and otherwise falls
     back to the interactive token by itself. Its result is recorded (companionHeadless); it never undoes the install.
@@ -806,7 +806,7 @@ function Step-Rearm {
   $Done.Add('rearm')
   $r
 }
-# M5 (ADR 0022 §4.4): the last step. The installed, package-pinned rearm-resident.ps1 -CompanionHeadless: preflight, pending
+# M5 (ADR 0022 section 4.4): the last step. The installed, package-pinned rearm-resident.ps1 -CompanionHeadless: preflight, pending
 # marker, the credential box on the secure desktop (CluedCompanionTaskRegistrar.exe; the password goes from there to the Task Scheduler
 # and nowhere else), the elevated side's qualification for up to 8 minutes, and the fall-back to the interactive token when it does not
 # pass. A failure is recorded; the node then runs as before the switch (interactive token) and the Owner can run the step again.

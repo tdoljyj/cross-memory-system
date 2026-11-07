@@ -32,7 +32,7 @@
                                   generation record. The files the command lines pin must already be in place. First, generation N's
                                   resident\<sha> and source\<sha> get their live parent's inheritance back (Repair-GenerationContentAcl: a
                                   rename out of upgrade\staged keeps the staged ACEs); the result carries contentAcl { repaired, resident, source }.
-    -Action WriteCompanionLaunch -Generation N   M5 (ADR 0022 §4.4): generation N's config\companion-launch.json, replaced
+    -Action WriteCompanionLaunch -Generation N   M5 (ADR 0022 section 4.4): generation N's config\companion-launch.json, replaced
                                   atomically, and the notifier task registered again for N. The companion task itself is NEVER
                                   registered here (it may hold the Owner's password, which this channel does not have): a task whose
                                   definition is neither the password one nor the interactive one is reported (companionTask.needsOwner,
@@ -166,9 +166,9 @@ function Invoke-CompileRecipe([string]$compiler, [string]$fw, [string]$binOut, [
   $hashes
 }
 # ---- Shared with install-resident.ps1 and upgrade-apply.ps1 (test-companion-headless.ps1 holds the copies identical) ----
-# The companion task's fixed action (ADR 0022 §4.2): the supervisor, with the root and nothing else.
+# The companion task's fixed action (ADR 0022 section 4.2): the supervisor, with the root and nothing else.
 function Get-SupervisorAction([string]$root) { [ordered]@{ path = (Join-Path $root 'bin\CluedCompanionSupervisor.exe'); arguments = ('"' + $root + '"') } }
-# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 §4.1).
+# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 section 4.1).
 function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerSid)" }
 # The companion child's arguments after node.exe, as the supervisor builds them (CompanionSupervisor.cs CommandLine); the generation
 # records keep this string as companionTaskArguments.
@@ -203,7 +203,7 @@ function Write-CompanionLaunch([string]$root, [string]$json) {
   if (Test-Path -LiteralPath $dest) { [IO.File]::Replace($tmp, $dest, [NullString]::Value) } else { [IO.File]::Move($tmp, $dest) }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# The notifier task (ADR 0022 §4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
+# The notifier task (ADR 0022 section 4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
 # channel registers it again for every generation.
 function Get-NotifierAction([string]$root, [string]$residentSha) {
   [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
@@ -225,7 +225,7 @@ function Register-NotifierTask([string]$root, [string]$ownerSid, [string]$reside
   if (($t.Definition.Principal.RunLevel -ne 0) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'NOTIFIER_TASK_READBACK_MISMATCH' }
   $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-# What the companion task is now: mode 'password' (ADR 0022 §4.1, exactly), 'interactive' (the install's first registration or the
+# What the companion task is now: mode 'password' (ADR 0022 section 4.1, exactly), 'interactive' (the install's first registration or the
 # fall-back, exactly), 'other' (anything else: problems names what differs), or absent. Read-only; the Owner can read it (FR).
 function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
@@ -706,7 +706,7 @@ function Invoke-SwitchScm($plan, [int]$g) {
   }
   [ordered]@{ replayed = (-not $did.resident.changed -and -not $did.broker.changed -and $acl.repaired -eq 0); generation = $g; resident = $did.resident; broker = $did.broker; contentAcl = $acl }
 }
-# M5 (ADR 0022 §4.4): generation N's launch file, replaced atomically; the notifier task for N. Never the companion task.
+# M5 (ADR 0022 section 4.4): generation N's launch file, replaced atomically; the notifier task for N. Never the companion task.
 function Invoke-WriteCompanionLaunch($plan, [int]$g) {
   $gen = Get-PlanGeneration $plan $g
   Assert-GenerationInPlace $Root $gen -Companion

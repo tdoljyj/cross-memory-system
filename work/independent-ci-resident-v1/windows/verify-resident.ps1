@@ -631,7 +631,7 @@ foreach ($m in @('config\source-installed-manifest.json', 'config\resident-insta
   Record ('package:' + $m) ($bad.Count -eq 0) $bad.Count
 }
 
-# ---- M5: the companion without the Owner's log-on (ADR 0022 §4.4) ----
+# ---- M5: the companion without the Owner's log-on (ADR 0022 section 4.4) ----
 # The functions are the installed copy's companion-headless.ps1 next to this file (its bytes are among the package files checked above).
 . (Join-Path $PSScriptRoot 'companion-headless.ps1')
 $companionOwnerSid = [string]$Node.ownerSid
@@ -642,14 +642,14 @@ $companionPending = Read-CompanionPending $Root
 if ($null -eq $companionPending) { Record 'companion-headless-pending' $true }
 elseif (Test-CompanionPendingAbandoned $companionPending ([DateTimeOffset]::UtcNow)) {
   if ($verifyIdentity.User.Value -ceq 'S-1-5-18') {
-    # Run by the upgrade channel (SYSTEM): it never touches the companion task (ADR 0022 §4.4); the SYSTEM fall-back task owns this.
+    # Run by the upgrade channel (SYSTEM): it never touches the companion task (ADR 0022 section 4.4); the SYSTEM fall-back task owns this.
     Record 'companion-headless-pending' (Test-CompanionFallbackTask) 'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'
   } elseif ($verifyCanFix) {
     try { $null = Invoke-CompanionStopAndFallback $Root $companionOwnerSid; try { Start-CompanionTask } catch { }; Record 'companion-headless-pending' $true 'STALE_MARKER_FELL_BACK' }
     catch { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_FALLBACK_FAILED' }
   } else { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_PENDING_STALE_RUN_ELEVATED' }
 } else { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS' }
-# The task: exactly the password definition (ADR 0022 §4.1) or exactly the interactive one (before the switch, after a fall-back).
+# The task: exactly the password definition (ADR 0022 section 4.1) or exactly the interactive one (before the switch, after a fall-back).
 $companionTask = Get-CompanionTaskFacts $Root $companionOwnerSid
 Record 'companion-task-present' ($companionTask.exists)
 Record 'companion-task' (@('password', 'interactive') -ccontains $companionTask.mode) ([string]$companionTask.mode + $(if (@($companionTask.problems).Count) { ':' + (@($companionTask.problems) -join ',') } else { '' }))
@@ -699,7 +699,7 @@ $ghProblem = try {
   else { $null }
 } catch { 'GH_CONFIG_MISSING' }
 Record 'companion-gh-config' ($null -eq $ghProblem) $ghProblem
-# Facts only (ADR 0022 §4.4): the Owner's password expiry, and BitLocker on C: (elevated only).
+# Facts only (ADR 0022 section 4.4): the Owner's password expiry, and BitLocker on C: (elevated only).
 $ownerUser = try { Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts\Microsoft.PowerShell.LocalAccounts.psd1' -ErrorAction Stop; Get-LocalUser -SID $companionOwnerSid -ErrorAction Stop } catch { $null }
 $bitlocker = if ($verifyCanFix) { try { [string](Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop).ProtectionStatus } catch { 'unreadable' } } else { 'not-elevated' }
 Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $ownerUser.PasswordExpires) { ([DateTime]$ownerUser.PasswordExpires).ToString('yyyy-MM-dd') } elseif ($ownerUser) { 'never' } else { 'unreadable' }) + ';bitlocker=' + $bitlocker)

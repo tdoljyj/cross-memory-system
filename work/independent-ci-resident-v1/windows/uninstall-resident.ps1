@@ -17,7 +17,7 @@
   The upgrade channel (018da927): CluedCIUpgrader is stopped first (its host ends the upgrader at a step boundary, at most 60 s) and
   deleted with the other two; an upgrade that is RUNNING or ROLLING_BACK (upgrade\status.json) refuses the uninstall. Its journal,
   generations, archive and token stay inside the renamed directory.
-  M5 (ADR 0022 §4.4): the companion task's running instance is stopped first (the supervisor, and with its job object the
+  M5 (ADR 0022 section 4.4): the companion task's running instance is stopped first (the supervisor, and with its job object the
   companion), then both tasks are deleted (\Clued\CluedCIResidentCompanion and \Clued\CluedCIResidentNotifier); the password the Task
   Scheduler stored for the companion task is deleted with it.
 #>

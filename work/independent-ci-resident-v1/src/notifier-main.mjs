@@ -9,8 +9,10 @@
 //
 //   node notifier-main.mjs --root C:\ProgramData\CluedIndependentCI\resident
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { check } from './canonical.mjs';
 import { toastArgv } from './pr-status.mjs';
@@ -110,6 +112,9 @@ export async function main(args = process.argv.slice(2)) {
   }
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+// The entry point, also behind a junction or a symlink (scripts/ci/main-entry-realpath.test.mjs): links resolved on both sides.
+// Not import.meta.main, which the installed runtime\node.exe may be too old for.
+const isEntryPoint = () => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntryPoint()) {
   main().catch(() => { process.exit(4); });
 }

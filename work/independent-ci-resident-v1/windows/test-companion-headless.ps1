@@ -1,5 +1,5 @@
 <#
-  Offline checks of M5, the companion without the Owner's log-on (ADR 0022 §7). Nothing on the host is read or changed: no
+  Offline checks of M5, the companion without the Owner's log-on (ADR 0022 section 7). Nothing on the host is read or changed: no
   task is registered or read, no credential box is shown, nothing outside the NEW scratch directory given by the caller is written.
   - one text: companion-headless.ps1's shared functions are install-resident.ps1's and upgrade-apply.ps1's (and companion-gh-login.ps1's
     folder rule); the upgrade channel never registers the companion task;
@@ -64,7 +64,7 @@ Yes (([IO.File]::ReadAllText((Join-Path $root 'config\companion-launch.json'))) 
 Yes (@(Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.tmp').Count -eq 0) 'launch-no-temporary-left'
 $na = Get-NotifierAction 'C:\ProgramData\CluedIndependentCI\resident' ('b' * 64)
 Yes ($na.path -ceq 'C:\Windows\System32\conhost.exe' -and $na.arguments.Contains('\src\notifier-main.mjs" --root "C:\ProgramData\CluedIndependentCI\resident"')) 'notifier-action'
-# the lockout rule (ADR 0022 §4.1): threshold 0, or >= 6 with a window under 15 minutes
+# the lockout rule (ADR 0022 section 4.1): threshold 0, or >= 6 with a window under 15 minutes
 $net = "Force user logoff how long after time expires?:       Never`r`nMinimum password age (days):                          0`r`nMaximum password age (days):                          42`r`nMinimum password length:                              0`r`nLength of password history maintained:                None`r`nLockout threshold:                                    10`r`nLockout duration (minutes):                           10`r`nLockout observation window (minutes):                 10`r`nComputer role:                                        WORKSTATION`r`nThe command completed successfully.`r`n"
 $p = ConvertFrom-NetAccounts $net
 Yes ($p.threshold -eq 10 -and $p.durationMinutes -eq 10 -and $p.windowMinutes -eq 10 -and (Test-LockoutMargin $p)) 'lockout-desk-today-passes'
@@ -82,7 +82,7 @@ Yes (Test-CompanionPendingStale $pm ([DateTimeOffset]::UtcNow.AddMinutes(16))) '
 Yes (Test-CompanionPendingStale ([pscustomobject]@{ startedAt = 'x' }) ([DateTimeOffset]::UtcNow)) 'pending-unreadable-time-is-stale'
 Yes ((Test-CompanionLogonFailure 0x8007052EL) -and (Test-CompanionLogonFailure 0x8007052E) -and (Test-CompanionLogonFailure ([int64]-2147023570)) -and -not (Test-CompanionLogonFailure 0)) 'logon-failure-codes'
 
-# 4. Order of the switch (ADR 0022 §4.4) and the fall-back (T6), by the code.
+# 4. Order of the switch (ADR 0022 section 4.4) and the fall-back (T6), by the code.
 $sw = $functions['companion-headless.ps1:Invoke-CompanionHeadless']
 $iPre = $sw.IndexOf('Get-CompanionHeadlessPreflight'); $iMark = $sw.IndexOf('Write-CompanionPending'); $iReg = $sw.IndexOf('register-password'); $iRun = $sw.IndexOf('Start-CompanionTask'); $iQual = $sw.IndexOf('Wait-CompanionQualified')
 Yes ($iPre -gt 0 -and $iPre -lt $iMark -and $iMark -lt $iReg -and $iReg -lt $iRun -and $iRun -lt $iQual) 'switch-order-preflight-marker-password-run-qualify'
@@ -128,7 +128,7 @@ Yes ($verify.IndexOf('Test-CompanionPendingAbandoned') -gt 0 -and $verify.IndexO
 $rearm = $texts['rearm-resident.ps1']
 Yes ($rearm.Contains("throw 'OWNER_ACCOUNT_REQUIRED'") -and $rearm.Contains("[switch]`$CompanionHeadless, [switch]`$CompanionCredential, [switch]`$CompanionInteractive") -and $rearm.Contains("if (-not `$elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }")) 'rearm-owner-elevated-only'
 
-# 5. The password never in PowerShell (ADR 0022 §4.4, T8).
+# 5. The password never in PowerShell (ADR 0022 section 4.4, T8).
 foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1')) {
   $code = & $codeOf $texts[$file]
   foreach ($bad in @('Get-Credential', 'Read-Host', 'SecureString', 'PSCredential', '-Password', 'NetworkCredential', 'Register-ScheduledTask')) { Yes (-not $code.Contains($bad)) ('no-password-in-powershell:' + $file + ':' + $bad) }

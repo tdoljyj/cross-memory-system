@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  M5 (ADR 0022 §4.4; review M1): the one-shot SYSTEM task \Clued\CluedCIResidentCompanionFallback runs this INSTALLED copy at
+  M5 (ADR 0022 section 4.4; review M1): the one-shot SYSTEM task \Clued\CluedCIResidentCompanionFallback runs this INSTALLED copy at
   boot and from 16 minutes after a switch began every 15 minutes. A pending marker (install\companion-headless-pending.json) that is
   abandoned (older than 15 minutes AND the switch that wrote it no longer runs: a restart, a closed window, an error after the password
   was registered) is rolled back: the companion task goes back to the interactive token (no password needed) and the marker goes. A

@@ -44,7 +44,7 @@ $codeOf = { param([string]$t) (@($t -split "`r?`n" | Where-Object { $_ -notmatch
 # 2. One text for what install and the upgrader share (a rollback is executed by the frozen copy, so both must build the same thing).
 foreach ($name in @('Sha256Bytes', 'Sha256Text', 'Sha256File', 'Invoke-Sc', 'Get-DaclPart', 'Assert-ServiceBinary', 'Write-New', 'Assert-NodeProfile', 'ConvertTo-NodeProfileCanonical',
     'Get-ResidentBinPath', 'Get-BrokerBinPath', 'Get-BrokerConfigJson', 'Invoke-CompileRecipe',
-    # M5 (ADR 0022 §4.4): the companion's launch file, task protection and notifier task, one text in both.
+    # M5 (ADR 0022 section 4.4): the companion's launch file, task protection and notifier task, one text in both.
     'Get-SupervisorAction', 'Get-CompanionTaskSddl', 'Get-CompanionLaunchArguments', 'Get-CompanionGhDirs', 'Get-CompanionPathDirs', 'Get-CompanionLaunchJson',
     'Write-CompanionLaunch', 'Get-NotifierAction', 'Register-NotifierTask', 'Get-CompanionTaskFacts')) {
   Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['upgrade-apply.ps1:' + $name]) ('shared-with-install:' + $name)
@@ -71,7 +71,7 @@ $raw = @([regex]::Matches($apply, '& \$Sc (?!@scArgs)([a-z]+)') | ForEach-Object
 Yes ((@($raw | Where-Object { @('qc', 'queryex') -cnotcontains $_ }).Count) -eq 0) 'apply-every-mutating-sc-call-is-exit-checked'
 Yes ($apply.Contains("@('config', `$pair[0], 'binPath=', `$pair[1].Replace('`"', '\`"'))") -and $apply.Contains('Assert-ServiceBinary $pair[0] $pair[1]')) 'apply-switch-writes-then-reads-back'
 Yes ($apply.Contains("[IO.Path]::GetFullPath(`$PSCommandPath) -match `$InstalledCopy") -and $apply.Contains("'S-1-5-18'")) 'apply-installed-copy-and-system-only'
-# M5 (ADR 0022 §4.0, §4.4; T5): the frozen channel never registers the companion task (it may hold the Owner's password):
+# M5 (ADR 0022 section 4.0, 4.4; T5): the frozen channel never registers the companion task (it may hold the Owner's password):
 # no Register-Companion* function, no RegisterTaskDefinition naming it, no -Action that does; it writes the launch file, and only the
 # notifier task (no password) is registered again. Upgrade, rollback and Recover go through Invoke-WriteCompanionLaunch.
 Yes (-not $applyCode.Contains("RegisterTaskDefinition('CluedCIResidentCompanion'") -and -not $applyCode.Contains('Register-CompanionTask') -and -not $applyCode.Contains('RegisterCompanionTask')) 'apply-never-registers-the-companion-task'
