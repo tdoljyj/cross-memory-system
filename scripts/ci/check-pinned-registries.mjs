@@ -16,6 +16,10 @@
 //   plugin     integrations/claude-code/clued/ (copies of skills/hooks)  build_claude_code_plugin.py
 //   pdf-cmaps  worker/generated/pdf-cmaps.ts                    generate-pdf-cmaps.mjs (needs npm ci in apps/clued-cloud)
 //   imprint-rules the imprint-rules block of a supabase migration   generate-imprint-domain-rules.mjs (needs npm ci)
+//   selector-pin  REQUIRED_SELECTOR_SOURCE (blob, sha256) in clued-required-applicability.mjs   re-pin by hand, bump script.required-applicability
+// selector-pin is the one hard-coded pin of another repository file that is safe to re-pin mechanically: the module reads the
+// trusted base's ci-required-selection.mjs and refuses unless it has exactly these bytes, so changing the selector without
+// moving the pin makes every applicability read return null (clued-required-applicability.test.mjs fails).
 // The last four are generated files, not pinned hashes: each generator has a --check mode and a test in CI that fails
 // when the committed output is out of date, so they fail the same way and are listed here for the same reason.
 // Looked at and deliberately not covered (no regeneration command, or not changed by editing a file): the
@@ -36,6 +40,7 @@
 // (reported, never silent); under GitHub Actions that is a warning and exit 0,
 // because clued-cloud-tests remains the authoritative check there.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -133,7 +138,27 @@ function checkGenerated(root, g) {
   return { id: g.id, status: 'stale', registry: g.registry, details: lines, fix: g.fix };
 }
 
-export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id)];
+export const SELECTOR_PIN_FIX = 'edit REQUIRED_SELECTOR_SOURCE in scripts/ci/clued-required-applicability.mjs to the blob and sha256 above, then: '
+  + `${PYTHON} scripts/clued_components.py bump script.required-applicability <next version>`;
+
+// The applicability module pins the exact bytes of the selector it trusts on the base. The module's own export is the
+// pin, the file in this checkout is what it pins.
+async function checkSelectorPin(root) {
+  const fix = SELECTOR_PIN_FIX;
+  let pin;
+  try { pin = (await import(pathToFileURL(path.join(root, 'scripts/ci/clued-required-applicability.mjs')).href)).REQUIRED_SELECTOR_SOURCE; } catch (error) {
+    return { id: 'selector-pin', status: 'unchecked', reason: `applicability module: ${error.message}`, fix };
+  }
+  let bytes;
+  try { bytes = fs.readFileSync(path.join(root, pin.path)); } catch (error) { return { id: 'selector-pin', status: 'stale', registry: 'scripts/ci/clued-required-applicability.mjs', details: [`pinned file unreadable: ${pin.path}`], fix }; }
+  const blob = createHash('sha1').update(`blob ${bytes.length}${String.fromCharCode(0)}`).update(bytes).digest('hex');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (blob === pin.blob && sha256 === pin.sha256) return { id: 'selector-pin', status: 'ok' };
+  return { id: 'selector-pin', status: 'stale', registry: 'scripts/ci/clued-required-applicability.mjs',
+    details: [`${pin.path} changed: pinned blob ${pin.blob}, now blob: '${blob}'`, `pinned sha256 ${pin.sha256}, now sha256: '${sha256}'`], fix };
+}
+
+export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id), 'selector-pin'];
 
 export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], env = process.env, knownMainRefs } = {}) {
   let refs = knownMainRefs;
@@ -145,6 +170,7 @@ export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], en
   if (want('reconcile')) results.push(await checkReconcile(root));
   if (want('components')) results.push(checkComponents(root, resolved));
   for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g));
+  if (want('selector-pin')) results.push(await checkSelectorPin(root));
   return { base: resolved, results };
 }
 
@@ -163,6 +189,7 @@ export function render({ base, results }) {
     out.push('fix sequence (repeat the check until nothing changes):');
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
+    if (stale.some((r) => r.id === 'selector-pin')) out.push(`  ${n++}. ${SELECTOR_PIN_FIX}`);
     if (stale.some((r) => r.id === 'components' && r.details?.some((d) => /\bbump\b/.test(d)))) out.push(`  ${n++}. ${PYTHON} scripts/clued_components.py bump <component id> <new version>   (the id and a higher version are in the message above)`);
     for (const g of GENERATED) if (g.id !== 'agent-contract' && stale.some((r) => r.id === g.id)) out.push(`  ${n++}. ${g.fix.replace(CLOUD_DEPS_HINT, '')}`);
     out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,

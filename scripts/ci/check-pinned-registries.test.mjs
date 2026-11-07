@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 const commit = (dir, message) => { git(dir, 'add', '-A'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', message); };
 const cli = (root, ...args) => spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
 // The checks that need no installed dependencies; pdf-cmaps and imprint-rules are "could not check" without npm ci.
-const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin'].flatMap((id) => ['--only', id]);
+const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin', 'selector-pin'].flatMap((id) => ['--only', id]);
 const matches = (file) => PINNED_REGISTRY_PATHS.some((p) => globToRegExp(p).test(file));
 
 const R9 = 'scripts/ci/merge-admission-r9-source.json';
@@ -67,7 +68,7 @@ test('an up to date tree passes', () => {
     const r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /ok\s+components/);
-    assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/);
+    assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/); assert.match(r.stdout, /ok\s+selector-pin/);
     assert.match(r.stdout, /all pinned registries are up to date/);
   } finally { /* the shared copy is reset by the next test */ }
 });
@@ -231,4 +232,24 @@ test('generators that need npm ci are "could not check" without it, and stale wh
     assert.match(r.stdout, /STALE\s+pdf-cmaps/); assert.match(r.stdout, /stub says out of date/); assert.match(r.stdout, /ok\s+imprint-rules/);
     assert.match(r.stdout, /fix sequence[\s\S]*generate-pdf-cmaps\.mjs\n/);
   } finally { fs.rmSync(path.join(dir, 'apps/clued-cloud/node_modules'), { recursive: true, force: true }); }
+});
+
+test('changing the selector without re-pinning it in the applicability module is stale; re-pinning clears it', () => {
+  const dir = registeredCopy();
+  try {
+    assert.equal(cli(dir, '--base', 'HEAD', '--only', 'selector-pin').status, 0);
+    fs.appendFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'), '\n// changed after the applicability module pinned it\n');
+    let r = cli(dir, '--base', 'HEAD', '--only', 'selector-pin');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /STALE\s+selector-pin\s+\(scripts\/ci\/clued-required-applicability\.mjs\)/);
+    assert.match(r.stdout, /now blob: '[0-9a-f]{40}'/); assert.match(r.stdout, /now sha256: '[0-9a-f]{64}'/);
+    assert.match(r.stdout, /clued_components\.py bump script\.required-applicability/);
+    // The pin the message asks for.
+    const bytes = fs.readFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'));
+    const blob = execFileSync('git', ['hash-object', '--stdin'], { input: bytes, encoding: 'utf8' }).trim();
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const file = path.join(dir, 'scripts/ci/clued-required-applicability.mjs');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/blob:'[0-9a-f]{40}'/, `blob:'${blob}'`).replace(/sha256:'[0-9a-f]{64}'/, `sha256:'${sha}'`));
+    r = cli(dir, '--base', 'HEAD', '--only', 'selector-pin'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally { /* the shared copy is reset by the next test */ }
 });

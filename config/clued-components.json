@@ -859,7 +859,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "8825133691638dd55b4d273ad238907444121a10cc881415fec01000b0c32db6"
+      "content_sha256": "b7140533e9404e9427bb0d4f80a00ba805f1468a94e8c4e438e4ff0929089efe"
     }
   ]
 }
