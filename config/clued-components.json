@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.18",
+      "version": "1.1.19",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -577,7 +577,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "9c20567d1e43ecd8b88a0e2bfeccd69e5257bfddcf6f301e2ba7442a1ab6c94c"
+      "content_sha256": "62af651ded0547797b9dea8d2260542880ddee38db97585be1473bccac4e458e"
     },
     {
       "id": "script.resource-maintenance",
@@ -842,7 +842,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -859,7 +859,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ab7fe4495bf9139021d21c3f1cd178888498a2b4d422e6afb37aac685ea9fb5e"
+      "content_sha256": "4845d5827d3ee890d958323faa7c2cef9333d52155e1881c6b3f408912922122"
     }
   ]
 }
