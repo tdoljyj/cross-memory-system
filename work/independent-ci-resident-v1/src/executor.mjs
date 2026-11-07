@@ -139,7 +139,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -2153,7 +2153,8 @@ export class ResidentExecutor {
       if (held === null) this.trainUrgent = true;
     }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
-    const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent });
+    const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
+    const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
     if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true) {
       const frontWork = this.queue.candidates(now).some(row => Object.hasOwn(row, 'testSha') && !this.trainGate(row))

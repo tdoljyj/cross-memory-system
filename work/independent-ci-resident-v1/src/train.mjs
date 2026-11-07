@@ -109,12 +109,16 @@ export function trainRunMode({ enabled, active, paused = false, intakeHeld = fal
   return { mode: paused || intakeHeld ? 'revoke-only' : 'on', notOnDuty: false };
 }
 
-export function trainDue({ train, now, runs = [], busy, urgent = false }) {
+// Peer-not-ready decisions (another node still on the old Source, or a status that could not be read) clear within minutes, so the
+// next run after one comes TRAIN_RECHECK_MS later, not a full maintenanceEveryMs. The daily cap, pause and halt are unchanged.
+export const TRAIN_RECHECK_MS = 2 * 60_000;
+export const TRAIN_RECHECK_DECISIONS = Object.freeze(['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
+export function trainDue({ train, now, runs = [], busy, urgent = false, recheck = false }) {
   if (!train || train.enabled === 'off' || busy) return false;
   const recent = runs.filter(at => at > now - DAY);
   if (recent.length >= train.maintenanceMaxPerDay) return false;
   const last = recent.length ? Math.max(...recent) : null;
-  return last === null || urgent === true || now - last >= train.maintenanceEveryMs;
+  return last === null || urgent === true || now - last >= (recheck === true ? Math.min(TRAIN_RECHECK_MS, train.maintenanceEveryMs) : train.maintenanceEveryMs);
 }
 
 // A finite cadence exception for an already-required all/current round, not a new sweep or an urgent flag.
