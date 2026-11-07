@@ -8,6 +8,8 @@
 // scanner's pre admission, or the final one, so that admission is carried over instead of asking the bridge again
 // (carriedAdmission). Every scanner still has a fresh admission right before and right after it, and the observation
 // records both per scanner (scans[i].preAdmissionSha256 / postAdmissionSha256; scans[i+1].pre is scans[i].post when carried).
+// That shape is observation contract /3 (Owner decision, DESIGN 64.3; TRIVY_OBSERVATION_CONTRACT): the signer, the Windows
+// issuer's verification and the role session accept only /3 for trivy. gitleaks keeps its /2.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +26,7 @@ import { actualDockerClient, NATIVE_IMAGE, runFixedScanner } from '../formal-tri
 import { createActualStorage, actualCachePort } from '../formal-trivy-v3/cache.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
+export const TRIVY_OBSERVATION_CONTRACT = 'clued.independent-ci.formal-scanner-observation/3';
 const JOB_TIMEOUT_MS = 25 * 60000; // Existing trusted trivy job ceiling.
 const PREFIX = 'work/actions-hosted-migration/independent-ci-v1/';
 const CLOSURE = ['worker/formal-trivy-v4/adapter.mjs', 'worker/formal-trivy-v3/docker.mjs', 'worker/formal-trivy-v3/cache.mjs',
@@ -133,7 +136,7 @@ async function executeScanners({ job, preparedRequest, snapshotDirectory, inputI
     scans[scans.length - 1] = { ...entry, postAdmissionSha256: after.facts.observationSha256 }; carried = after;
   }
   const post = (await freshAdmission(carried)).facts;
-  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: freeze({ contract: 'clued.independent-ci.formal-scanner-observation/2',
+  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: freeze({ contract: TRIVY_OBSERVATION_CONTRACT,
     domain: fixture ? 'fixture' : 'production-observation', fixture, profile: 'required-trivy-three-scanners/1', subject: subjectOf(job),
     sourceManifestSha256: job.sourceManifestSha256, sourceSha: preparedRequest.sourceSha, sourceTreeSha: preparedRequest.sourceTreeSha,
     candidateTreeSha: preparedRequest.candidateTreeSha, nonce: preparedRequest.nonce, requestSha256: digest(preparedRequest), inputInventorySha256: digest(inputInventory),

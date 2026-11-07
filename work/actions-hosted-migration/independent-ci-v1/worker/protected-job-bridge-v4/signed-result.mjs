@@ -3,6 +3,7 @@
 // the signer. Changes: v2 subjects and result/envelope contracts (proof-v2.mjs), wrapper contract /2 (read
 // by resident-v2/invoke-stage.mjs#readSpoolResult), observation contracts /2, qualification v2 deadline,
 // and no currentClaim: the claim is bound through the issue's admission facts, not the role policy.
+// trivy's observation is contract /3 (DESIGN 64.3): per-scanner pre and post admission hashes are required; /2 is refused.
 import fs from 'node:fs/promises';
 import {createPublicKey,sign} from 'node:crypto';
 import {canonical} from '../../src/proof.mjs';
@@ -11,7 +12,7 @@ import {verifyResultV2,RESULT_CONTRACT_V2,ENVELOPE_CONTRACT_V2} from '../../src/
 import {protectedPath,qualificationDeadline,QUALIFICATION_SCHEMA_V2} from '../qualification-v2.mjs';
 import {takeActualObservation as takeGitleaks} from '../formal-gitleaks-v4/adapter.mjs';
 import {REVIEWED_COMMITS,matchesReviewedHistoryProof} from '../formal-gitleaks-v4/required-history/prepare.mjs';
-import {takeActualObservation as takeTrivy} from '../formal-trivy-v4/adapter.mjs';
+import {takeActualObservation as takeTrivy,TRIVY_OBSERVATION_CONTRACT} from '../formal-trivy-v4/adapter.mjs';
 import {takeActualObservation as takePlacement,WORKFLOW_SHA256S as PLACEMENT_WORKFLOW_SHA256S} from '../formal-contract-placement-v2/adapter.mjs';
 import {loadFixedRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {takeAcceptedBridgeContext} from './boundary.mjs';
@@ -25,8 +26,8 @@ export function validateSigningTimes(issue,qualification,now=Date.now()){
   validateIssue(issue,now);
 }
 export function observationFacts(issue,o,now=Date.now()){
-  const gl=issue.job.role==='gitleaks',placement=issue.job.role==='contract-placement';
-  check(o?.contract===(placement?'clued.independent-ci.formal-check-observation/2':'clued.independent-ci.formal-scanner-observation/2')&&o.domain==='production-observation'&&o.fixture===false&&o.formalEligible===false&&o.qualificationIssued===false&&o.checksWritten===false&&
+  const gl=issue.job.role==='gitleaks',placement=issue.job.role==='contract-placement',sha=v=>/^[a-f0-9]{64}$/.test(v??'');
+  check(o?.contract===(placement?'clued.independent-ci.formal-check-observation/2':gl?'clued.independent-ci.formal-scanner-observation/2':TRIVY_OBSERVATION_CONTRACT)&&o.domain==='production-observation'&&o.fixture===false&&o.formalEligible===false&&o.qualificationIssued===false&&o.checksWritten===false&&
     canonical(o.subject)===canonical(subjectOfV2(issue.job))&&o.sourceManifestSha256===issue.job.sourceManifestSha256&&
     o.profile===(gl?'required-gitleaks-history/1':placement?'required-contract-placement/1':'required-trivy-three-scanners/1')&&/^[a-f0-9]{40}$/.test(o.sourceSha??''),'ACTUAL_FORMAL_PROFILE_REQUIRED');
   if(placement){const keys=['contract','domain','fixture','profile','subject','sourceSha','sourceTreeSha','candidateTreeSha','sourceManifestSha256','workflowSha256','image','imageId','runtimeIdentity','hostAcceptanceRef','sourceAcceptanceRef','nonce','requestSha256','headBasePackSha256','commandSequenceSha256','toolPinsSha256','preAdmissionSha256','postAdmissionSha256','conclusion','exitCode','startedAt','finishedAt','logs','cleanup','evidenceClass','formalEligible','checksWritten','qualificationIssued'];
@@ -37,6 +38,7 @@ export function observationFacts(issue,o,now=Date.now()){
   if(gl||placement){check((!gl||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
     start=o.startedAt;end=o.cleanup.observedAt;exit=o.exitCode;stdout=o.logs?.stdout?.sha256;stderr=o.logs?.stderr?.sha256;
   }else{check(o.scans?.length===3&&o.scans.every(s=>s.complete===true&&s.cleanupConfirmed===true&&Number.isInteger(s.exitCode))&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_THREE_SCANNERS_CLEANUP_REQUIRED');
+    check(sha(o.preAdmissionSha256)&&sha(o.postAdmissionSha256)&&o.scans.every(s=>sha(s.preAdmissionSha256)&&sha(s.postAdmissionSha256)),'ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED');
     start=new Date(Math.min(...o.scans.map(s=>Date.parse(s.startedAt)))).toISOString();end=o.cleanup.observedAt;exit=o.scans.find(s=>s.exitCode!==0)?.exitCode??0;
     stdout=digest(o.scans.map(s=>s.logs.stdout));stderr=digest(o.scans.map(s=>s.logs.stderr));}
   check(Number.isInteger(exit)&&exit>=0&&exit<=255&&(o.conclusion==='success')===(exit===0)&&Date.parse(start)>=Date.parse(issue.job.createdAt)&&Date.parse(end)>=Date.parse(start)&&Date.parse(end)<=now&&Date.parse(end)<=Date.parse(issue.expiresAt)&&

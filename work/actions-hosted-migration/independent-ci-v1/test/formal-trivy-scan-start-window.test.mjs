@@ -88,6 +88,7 @@ test("a scanner's post admission is the next scanner's pre admission: 5 admissio
   const c=context(t),r=await c.run();
   assert.equal(r.status,'THREE_SCANNERS_OBSERVED_UNSIGNED');assert.equal(r.observation.conclusion,'success');
   assert.deepEqual(c.starts,['vuln','secret','misconfig']);assert.equal(c.admissions,5);
+  assert.equal(r.observation.contract,'clued.independent-ci.formal-scanner-observation/3','per-scanner admissions are contract /3');
   const s=r.observation.scans,sha=/^[a-f0-9]{64}$/;
   assert.ok(s.every(x=>sha.test(x.preAdmissionSha256)&&sha.test(x.postAdmissionSha256)&&x.preAdmissionSha256!==x.postAdmissionSha256),'each scanner: a pre and a post admission');
   assert.equal(s[1].preAdmissionSha256,s[0].postAdmissionSha256);assert.equal(s[2].preAdmissionSha256,s[1].postAdmissionSha256);

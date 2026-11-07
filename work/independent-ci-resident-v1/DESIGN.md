@@ -3740,7 +3740,7 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 
 范围：基于第 7 代 `b88ee755`。任务要求在常驻节点内让 gitleaks、trivy、contract-placement 的执行段（第 2、4、6 段）并行，再按现有顺序发布。本节逐项核对共享资源，结论是：**只改常驻层，任何并行都会被下面五处单例挡住；没有任何一处能靠“只把发布串行”绕开**，因为发布段（第 3、5、7 段）本身也要占同一个交换槽。没有写并行的代码：并行逻辑放在常驻层就是死代码，放进 Source 就是一次 Source 变更（新 Source 清单、Owner Decision、UAC、Grant），要先由 Owner 选。
 
-> 后续（§64.3）：trivy 三个扫描器之间紧挨着的“后/前”准入已合并为一次（上一个的“后”就是下一个的“前”），每个扫描器的 pre/post 准入哈希记在观察里。
+> 后续（§64.3）：trivy 三个扫描器之间紧挨着的“后/前”准入已合并为一次（上一个的“后”就是下一个的“前”），每个扫描器的 pre/post 准入哈希记在观察里，观察合同因此升到 `/3`。
 
 ### 45.1 五处单例（读代码得到的事实）
 
@@ -5003,7 +5003,13 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 以前每个扫描器前后各一次准入，再加最终一次：1 + 3×2 + 1 = 8 轮。上一个扫描器的“后”准入和下一个扫描器的“前”准入之间、最后一个的“后”准入和最终准入之间没有任何工作（实测 3 轮约 49 秒）。
 - 现在上一个扫描器的“后”准入直接当下一个扫描器的“前”准入，最后一个的“后”准入当最终准入（`carriedAdmission`）：5 轮。角色开头的那次准入仍单独一轮（它和第一个扫描器之间有扫描许可的取得与记录）。
 - **复用规则与 §64.2 相同**：从请求那次准入起不超过 30 秒单调时钟（`CARRIED_ADMISSION_MAX_AGE_MS` = `FRESH_MS`），并且此刻仍通过完整的 v2 检查（同一批次 claim 代次）；否则重新发挑战。“每个扫描器前后都有新鲜准入”这一性质不变。
-- **观察里每个扫描器记录两项**：`scans[i].preAdmissionSha256`、`scans[i].postAdmissionSha256`；复用时 `scans[i+1].preAdmissionSha256 = scans[i].postAdmissionSha256`，观察的 `postAdmissionSha256` 等于 `scans[2].postAdmissionSha256`。超出窗口重发时两者不同。合同号仍是 `/2`：签名器与角色策略对 trivy 的 scans 项不做键集合核对，多出的两个字段不影响它们（是否升合同号由 Owner 决定）。扫描未完整提前结束时，该项只有 `preAdmissionSha256`。
+- **观察里每个扫描器记录两项**：`scans[i].preAdmissionSha256`、`scans[i].postAdmissionSha256`；复用时 `scans[i+1].preAdmissionSha256 = scans[i].postAdmissionSha256`，观察的 `postAdmissionSha256` 等于 `scans[2].postAdmissionSha256`。超出窗口重发时两者不同。扫描未完整提前结束时，该项只有 `preAdmissionSha256`（那是 uncertain 记录，不是观察）。
+- **trivy 观察合同升到 `/3`**（Owner 决定，Clued decision 已记）：生产方 `formal-trivy-v4/adapter.mjs` 写 `clued.independent-ci.formal-scanner-observation/3`（`TRIVY_OBSERVATION_CONTRACT`）。校验方一起改，trivy **只接受 `/3`**：
+  1. Linux 签名器与 Windows 签发方收结果的校验共用 `protected-job-bridge-v4/signed-result.mjs#observationFacts`（签名前由 `signActualBridgeResult` 调用；Windows 侧 `windows-issuer.mjs` 经 `verifySignedBridgeResult` 调用）：trivy 要求 `/3`，并要求观察的 `preAdmissionSha256`、`postAdmissionSha256` 和每个扫描器的 `preAdmissionSha256`、`postAdmissionSha256` 都是 64 位小写十六进制（否则 `ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED`）；不要求 `scans[i+1].pre = scans[i].post`，因为超出窗口重发时两者本来就不同。gitleaks 仍是 scanner-observation `/2`，contract-placement 仍是 check-observation `/2`，trivy 的 `/2` 和 gitleaks 的 `/3` 都以 `ACTUAL_FORMAL_PROFILE_REQUIRED` 拒绝。
+  2. 角色串行槽 `formal-fixed-role-policy-v3/policy.mjs#validateCleanupObservation`（`session.finish`）：trivy 观察必须是 `/3`，否则 `ACTUAL_ROLE_CLEANUP_UNCONFIRMED`。
+  3. 再往后没有按观察合同号分派的地方：发布段（`resident-v2/invoke-stage.mjs#readSpoolResult`）只取签名信封，`proof-v2.mjs` 核对的是载荷（`profile`、`executionObservationSha256` 等），载荷里没有观察合同号；merge-admission、Native 侧（`scripts/ci`）不读观察。所以信封与结果合同（`protected-job-result/2`、信封 `/2`）不变。
+  - **不保留 `/2` 过渡**：观察只在同一个批次的同一个阶段里生产和校验（Linux 生产、签名，Windows 签发方在同一阶段内校验），签名器、签发方和角色策略都属于同一个 CI Source 清单，按 §42 在批次之间整体换代，两侧桥文件按字节受理；新 Source 装好后不会再产生 `/2`，旧批次已发布的结果在重新发布时也只读信封、不再校验观察。所以只接受 `/3`。
+  - 测试：`test/resident-v2-bridge.test.mjs` 的 trivy 夹具改为 `/3` 并带每个扫描器的哈希；新增签名器、签发方校验、角色槽三处都拒绝 trivy `/2`、缺失或格式不对的每扫描器哈希被拒、串接与重发两种形状都接受；gitleaks 用例确认 `/3` 被拒；`test/formal-trivy-scan-start-window.test.mjs` 断言生产方写 `/3`。
 
 ### 64.4 省多少、安装、测试
 
