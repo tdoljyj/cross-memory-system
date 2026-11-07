@@ -62,6 +62,22 @@ const TESTED = /\bmain@([0-9a-f]{40}), tested ([0-9a-f]{40}) \(tree ([0-9a-f]{40
 const freshFull = () => ({ state: 'none', via: null, startedAt: null, completedAt: null, onSince: null, mainSha: null, nextPage: 1, nextIndex: 0, prs: 0, commits: 0,
   heads: 0, revoked: 0, unconfirmed: 0, wouldRevoke: 0, calls: 0, ms: 0, reason: null, scope: 'all', scopeReason: null });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Generation 19 field defect (DESIGN §62.4): while the take-over sweep runs, the merge queue's head claim may be bound to no PR yet
+// (only an admission stage 1 binds it, and the take-over gate holds every batch). Stage 10 then names the one open PR whose body
+// trailer names that claim (the merge executor reads the claim from the body only, too) so the resident may run that PR's stage 1
+// and nothing more. At most this many of the most recently updated open PRs into main are read per run.
+export const FRONT_BIND_MAX_READS = 10;
+// The trailers exactly as scripts/ci/clued-work-admission.mjs#parseClaimReference reads them (not imported: stage 10 does not load
+// the Windows evaluator; a test keeps the two equal).
+const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$/m;
+const SCOPE_TRAILER = /^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$/m;
+export function claimReferenceOf(text) {
+  if (typeof text !== 'string') return null;
+  const claim = CLAIM_TRAILER.exec(text);
+  if (!claim) return null;
+  const scope = SCOPE_TRAILER.exec(text);
+  return { claimId: claim[1].toLowerCase(), scope: scope ? scope[1] : 'global' };
+}
 
 // Shadow wrapper kept for the 3c-1 callers: the facts only.
 export async function readTrainFacts(ports) { return (await runTrain(ports)).facts; }
@@ -77,7 +93,7 @@ export async function runTrain(ports) {
 }
 
 async function runTrainCounted({ job, github: plainGithub, native, ledger, sweepStore = null, publications = null, appId = APP_ID, clock = Date.now, sleep = wait,
-  layerOfPaths = () => 'protected' }, fx) {
+  layerOfPaths = () => 'protected', claimScope = null }, fx) {
   validateTrainRun(job);
   const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
   const { github, counter } = countedGithub(plainGithub);
@@ -388,7 +404,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const takeoverPending = job.mode === 'on' && !fullSweepSinceOn && !strictReady && !strictFrontReady;
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
-  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [];
+  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null;
   if (job.mode === 'on') {
     if (completedNow && full.via === 'sweep' && after.incrementalCursor) {
       try {
@@ -397,7 +413,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       } catch { /* not deployed, refused or unreadable: informational only (no take-over uses it) */ }
     }
     try {
-      const open = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls.map(p => p.number);
+      openRows = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls;
+      const open = openRows.map(p => p.number);
       if (holder?.pr && front?.state === 'open' && !open.includes(holder.pr)) open.splice(KEEPALIVE_MAX_PRS - 1, 1, holder.pr);
       if (open.length) {
         fx.n++;
@@ -431,6 +448,14 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }
+    // DESIGN §62.4: the same live conditions as the strict current-front observation (strict confirmed now, every node on this
+    // Source, a healthy store, no pending or unconfirmed revocation, main's history known and not rewritten), for exactly one
+    // holder that Native has bound to no PR yet. Only a read: the resident runs that PR's stage 1, which binds the claim through
+    // Native's own verify; the next stage 10 then decides the front exactly as before.
+    const frontBindEligible = takeoverPending && !lostDuty && holder !== null && holder.boundPr === null && !!holder.takenAt && job.revokeHeadRequestId === null
+      && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason && history !== 'rewritten' && history !== 'unknown'
+      && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0 && unconfirmed.length === 0 && leftover === 0 && !othersRefused && proofWritten;
+    if (frontBindEligible && Array.isArray(openRows)) frontBind = await findFrontBind({ github, job, holder, rows: openRows, claimScope, until: until.read, clock });
   }
   const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules, mainSha });
   if (!acting) decision = wouldDo;
@@ -466,7 +491,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   const providerBudget = typeof github.rateBudget === 'function' ? github.rateBudget() : null;
   return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
-    ledger: summary, decision, openFrontBatch, requestPause,
+    ledger: summary, decision, openFrontBatch, requestPause, frontBind: decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' ? frontBind : null,
     sweep: { ...sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: strictReady || sweepComplete, revoked: revoked.length + (strict?.revoked.length ?? 0),
       unconfirmed: strictReady ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),
       would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }), strictCoverage: strictSummary,
@@ -481,6 +506,24 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
   fullSweep: { state: full?.state ?? 'none', startedAt: full?.startedAt ?? null, completedAt: full?.completedAt ?? null, sinceOn, reason: full?.reason ?? null,
     scope: full && full.state !== 'none' ? full.scope : null, scopeReason: full && full.state !== 'none' ? full.scopeReason : null, allPending },
   proofWritten, calls: counter.calls, ms: Math.max(0, clock() - started) });
+
+// DESIGN §62.4: the one open PR into main, from this repository and not a draft, whose body names the holder's claim (and this
+// install's scope), among the FRONT_BIND_MAX_READS most recently updated open PRs into main. None, two or more, a read that fails
+// or the stage's read deadline: null (nothing is proven unique, nothing runs).
+async function findFrontBind({ github, job, holder, rows, claimScope, until, clock }) {
+  const matches = [];
+  for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, FRONT_BIND_MAX_READS)) {
+    if (clock() >= until) return null;
+    let pull;
+    try { pull = await github.readPullRequest(row.number); } catch { return null; }
+    const ref = claimReferenceOf(pull?.body);
+    if (ref?.claimId === holder.claimId && (claimScope === null || ref.scope === claimScope)) matches.push(pull);
+  }
+  const p = matches.length === 1 ? matches[0] : null;
+  if (!p || !Number.isSafeInteger(p.number) || p.state !== 'open' || p.draft !== false || p.base?.ref !== 'main' || p.head?.repo?.full_name !== job.repo
+    || !SHA.test(p.head?.sha ?? '')) return null;
+  return { pr: p.number, headSha: p.head.sha, claimId: holder.claimId };
+}
 
 // No role (review R2 M3): the front is unknown here (holders answered admission_binding_required), so a green that may be the
 // front's legitimate one stays for the role holder's sweep (§41.6a "由 Y 的接班清扫撤掉"). Revoked: this node's own ledgered
@@ -593,7 +636,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const loaded = loadPolicy(held.policyText);
     const layerOfPaths = loaded.policy ? paths => layerOf(paths, loaded.policy) : () => 'protected';
     return settleTrain({
-      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths }),
+      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are

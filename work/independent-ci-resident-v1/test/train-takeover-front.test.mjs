@@ -1,0 +1,230 @@
+// Generation 19 field defect (2026-11-07, PR #1027): the train went on, its take-over full sweep began (hours long), the queue was
+// empty; then a PR was pushed whose claim was the merge queue's head. Nothing ever bound the claim to the PR (only an admission
+// stage 1 does, and the take-over gate held every batch), so stage 10 said FRONT_NOT_BOUND, never wrote the strict current-front
+// observation and never opened the front batch: the PR waited for the whole full sweep.
+// End to end over the real resident executor and the real Source v2 stage 10 (runTrain), sweep store, green ledger and stage-8
+// publisher, with offline GitHub and Native ports: the queue head's PR gets App 5368905's kooyumi-merge-slot success while the full
+// sweep is still running, and no other PR runs anything before the take-over sweep.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
+import { executorFixture, fakeEngine, rawPolicy, triggerBytes, SOURCE } from './helpers.mjs';
+import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
+import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
+import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
+import { makeTrainRun } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
+import { batchJobsV2, claimGeneration } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
+import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
+import { createFixtureControlPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+
+const MIN = 60_000;
+const SCOPE = 'project:00000000-0000-4000-8000-000000000000';
+const OTHER_CLAIM = '99999999-8888-4777-8666-555555555555';
+const PROOF = { windowsTreeZero: true, serviceOriginalStopped: true };
+const policy = () => rawPolicy({ contract: POLICY_CONTRACT_V8,
+  train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } });
+const body = claim => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${SCOPE}\n`;
+const slotGreen = (e, head) => [...e.gh.world.checks.values()].find(c => c.app.id === 5368905 && c.name === 'kooyumi-merge-slot' && c.head_sha === head
+  && c.status === 'completed' && c.conclusion === 'success');
+
+// The world: GitHub (strict on, merge only, App-pinned required checks), Native (one ACTIVE node of this Source), a history that
+// keeps the full sweep running for hours (every full-sweep page read outlasts the stage's sweep budget), and an empty queue.
+async function world(t) {
+  const e = await setup(t, { strict: true, fullDone: false, tick: 0 });
+  e.native.holders = [];
+  e.gh.world.pulls.delete(910);
+  for (let n = 1; n <= 300; n++) e.gh.pull(n, { state: 'closed', head: sha(0x9000 + n), updated: iso(NOW - 30 * 86_400_000) });
+  e.gh.world.hooks.pullsPage = sort => { if (sort === 'created') e.now += 160_000; };
+  // The PR as GitHub answers it, with its body and head repository (the fixture's PR read is reduced).
+  const read = e.gh.readPullRequest.bind(e.gh);
+  e.gh.readPullRequest = async n => { const p = e.gh.world.pulls.get(n); return { ...(await read(n)), body: p.body ?? null, draft: p.draft === true,
+    head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: p.headRepo ?? REPO } } }; };
+  e.native.port.nodesStatus = async () => ({ deployed: true, onDuty: true, dropped: 0,
+    nodes: [{ node: { name: 'fixture-node', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(e.now) } }] });
+  return e;
+}
+
+// The engine: stage 10 is the real Source v2 runTrain; stage 1 of a batch binds the PR's claim on Native (verify with pr_ref, as the
+// admission stage does) and publishes kooyumi-work-admission; stage 8 of a front batch is the real control publisher.
+function engineFor(e, at) {
+  const subjects = new Map(), stages = [];
+  let run = 0;
+  const engine = fakeEngine();
+  engine.subjects = subjects;
+  engine.stages = stages;
+  engine.derive = async (subject, key) => { engine.calls.push(['derive', key]); subjects.set(key, subject); return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: 'c'.repeat(64) }; };
+  engine.runTrainStage = async (mode, input) => {
+    engine.calls.push(['stage', 10, mode]);
+    e.now = at.clock();
+    const { mode: m, ...params } = input;
+    const runId = `${(++run).toString(16).padStart(16, '0')}-0123456789ab`;
+    const job = makeTrainRun({ repo: REPO, runId, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
+    const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
+      claimScope: SCOPE });
+    at.advance(e.now - at.clock());
+    engine.lastFacts = r.facts;
+    return { ok: true, runId, proof: PROOF, train: r.facts,
+      outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: r.sideEffects, mayHavePublished: r.sideEffects > 0, diagnostic: null, scheduling: null, safeToRerun: false } };
+  };
+  engine.runStage = async (batch, stage) => {
+    const subject = subjects.get(batch.key);
+    stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha ?? null, stage: stage.number });
+    engine.calls.push(['stage', stage.number]);
+    const ok = { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF };
+    if (stage.number === 1) {
+      const pr = e.gh.world.pulls.get(subject.pr);
+      // Native binds the claim the PR names to the PR (migration 20261003200000: only the ci-admission verify with pr_ref does).
+      if (pr.claim && e.native.holder?.claimId === pr.claim) e.native.holder = { ...e.native.holder, boundPr: `${REPO}#${subject.pr}`, pr: subject.pr };
+      e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
+      return ok;
+    }
+    if (stage.number !== 8) return ok;
+    if (!subject.testSha) return { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
+      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false } };
+    e.now = at.clock();
+    for (const [i, name] of ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement'].entries()) e.gh.green(10 + i, subject.headSha, { name });
+    const claim = { claimId: CLAIM, fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) };
+    const jobs = batchJobsV2({ repo: REPO, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha,
+      sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 });
+    const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: await EffectJournal.open(path.join(await tempDir(at.t), 'effects')),
+      trainMode: 'on', batchClaim: claimGeneration(claim), slotNative: e.native.port, sweepStore: e.store, greenLedger: e.ledger,
+      pullsUpdatedSince: cursor => e.gh.readPullsUpdatedSince(cursor),
+      admission: { async evaluatePr(job, packet, options) { const { observationSha256, ...facts } = admittedFacts(job, claim, packet,
+        { domain: 'fixture', mergeQueueHead: true, batchClaim: options?.batchClaim, observedAt: e.now, slotUntil: e.now + 600_000 });
+        return { ...facts, observationSha256: digest(facts) }; } },
+      assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep });
+    const published = await publisher.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: e.now + 90_000 });
+    at.advance(e.now - at.clock());
+    engine.published = published;
+    return published.status === 'SETTLED' ? ok : { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
+      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false } };
+  };
+  return engine;
+}
+
+test('take-over front (gen 19 PR #1027): a queue-head PR pushed after train=on gets the merge-slot green within 30 minutes while the full sweep still runs', async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+
+  // train=on has just taken effect: the take-over full sweep starts and runs (it needs hours here); the queue is empty.
+  for (let i = 0; i < 3; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.equal(f.exec.trainTakeoverDone, false);
+  assert.equal(engine.lastFacts.sweep.fullSweep.state, 'running', JSON.stringify(engine.lastFacts.sweep));
+  assert.equal(engine.lastFacts.wouldDo, 'NO_FRONT');
+
+  // The claim joins the merge queue and is its head (unbound: no admission ran for it yet); its PR is pushed. Another PR, whose claim
+  // is not the head, is pushed too.
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  e.gh.pull(911, { head: sha(0x7777), updated: iso(arrival), body: body(OTHER_CLAIM), claim: OTHER_CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  await f.drop(triggerBytes({ pr: 911, headSha: sha(0x7777), baseSha: T }));
+
+  let green = null, sweepAtGreen = null;
+  for (let i = 0; i < 40 && !green; i++) {
+    await f.exec.tick();
+    green = slotGreen(e, H);
+    if (green) sweepAtGreen = await e.store.readFullSweepStrict('on');
+    else f.advance(MIN);
+  }
+  const elapsed = f.clock() - arrival;
+  assert.ok(green, `no kooyumi-merge-slot success for the queue head's PR; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}; `
+    + `stages ${JSON.stringify(engine.stages)}`);
+  assert.ok(elapsed <= 30 * MIN, `first green after ${Math.round(elapsed / MIN)} minutes`);
+  t.diagnostic(`first kooyumi-merge-slot success ${Math.round(elapsed / 1000)} s (simulated) after the PR arrived; full sweep ${sweepAtGreen.full.state}`);
+  // It is the strict current-front route: the full sweep is still running and the take-over is not done.
+  assert.equal(f.exec.trainTakeoverDone, false);
+  assert.equal(sweepAtGreen.full.state, 'running');
+  assert.equal(f.exec.trainSweep.fullSinceOn, false);
+  assert.equal(engine.published.status, 'SETTLED');
+  // The PR's own run went only as far as binding the claim (stage 1), then the front batch (S) ran in full.
+  const own = engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage);
+  assert.deepEqual(own, [1], 'the binding run publishes stage 1 only');
+  const [bound] = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
+  assert.ok(bound, 'the binding run ends cleanly after stage 1');
+  assert.ok(engine.stages.some(s => s.pr === 910 && s.testSha === S && s.stage === 8));
+  // The PR whose claim is not the queue head runs nothing before the take-over sweep.
+  assert.deepEqual(engine.stages.filter(s => s.pr === 911), []);
+  assert.equal(f.queue.row(911).state, 'QUEUED');
+});
+
+test('take-over front: no binding run without strict, for a PR that names another claim, or for two PRs naming the head claim', async t => {
+  for (const change of ['strict-off', 'other-claim', 'ambiguous', 'draft']) await t.test(change, async t => {
+    const e = await world(t);
+    const at = { t };
+    const engine = engineFor(e, at);
+    const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+    Object.assign(at, { clock: f.clock, advance: f.advance });
+    await f.exec.trainRecover();
+    await f.exec.tick(); f.advance(10 * MIN);
+    if (change === 'strict-off') e.gh.world.strict = false;
+    const arrival = f.clock();
+    e.native.holders = undefined;
+    e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+    const named = change === 'other-claim' ? OTHER_CLAIM : CLAIM;
+    e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(named), claim: named, draft: change === 'draft' });
+    if (change === 'ambiguous') e.gh.pull(912, { head: sha(0x7778), updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+    await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+    for (let i = 0; i < 15; i++) { await f.exec.tick(); f.advance(MIN); }
+    assert.deepEqual(engine.stages, [], 'nothing runs before the take-over sweep');
+    assert.equal(engine.lastFacts.frontBind ?? null, null);
+    assert.equal(engine.lastFacts.wouldDo, 'FRONT_NOT_BOUND');
+  });
+});
+
+test('take-over front: the binding exception is this duty\'s fresh observation for exactly that head, never S, attempt 2, a stale or unconfirmed run', async t => {
+  const f = await executorFixture(t, { policy: policy(), now: NOW });
+  const subject = { pr: 910, headSha: H, baseSha: T };
+  const observed = (o = {}) => Object.freeze({ at: iso(f.clock()), mode: 'on', wouldDo: 'FRONT_NOT_BOUND', onDuty: true, front: null, mainSha: T, strict: true, wouldRevokeCount: 0,
+    decision: 'TRAIN_TAKEOVER_SWEEP_PENDING', sweep: null, actions: null, requestPause: null, openFrontBatch: null, frontBind: { pr: 910, headSha: H, claimId: CLAIM }, ...o });
+  f.exec.trainLast = observed();
+  assert.equal(f.exec.trainGate(subject), null, 'the named head of the unbound queue head claim');
+  assert.ok(f.exec.trainGate({ ...subject, headSha: sha(0x7777) }), 'another head of that PR');
+  assert.ok(f.exec.trainGate({ ...subject, pr: 911 }), 'another PR');
+  assert.ok(f.exec.trainGate({ ...subject, testSha: S }), 'a subject with S needs its own enqueue binding');
+  assert.ok(f.exec.trainGate({ ...subject, attempt: 2 }), 'never an attempt 2');
+  assert.equal(f.exec.trainGate()?.reason, 'TRAIN_TAKEOVER_SWEEP_PENDING', 'the global gate still holds everything else');
+  for (const o of [{ strict: false }, { strict: null }, { decision: 'TRAIN_SOURCE_MISMATCH' }, { decision: 'TRAIN_REVOKE_UNCONFIRMED' }, { mode: 'revoke-only' }, { onDuty: false },
+    { frontBind: undefined }, { at: iso(f.clock() - 15 * MIN) }, { at: iso(f.clock() + 1) }, { at: iso(NOW - 2 * 86_400_000) }]) {
+    f.exec.trainLast = observed(o);
+    assert.ok(f.exec.trainGate(subject), JSON.stringify(o));
+  }
+  f.exec.trainLast = observed();
+  f.exec.trainSweep = { fullAllPending: 'TRAIN_MAIN_REWRITTEN' };
+  assert.ok(f.exec.trainGate(subject), 'main rewritten: frozen until the real full sweep');
+  f.exec.trainSweep = null;
+  f.exec.trainTakeoverDone = true;
+  assert.equal(f.exec.trainFrontBind(subject), false, 'after the take-over the ordinary path applies');
+  f.exec.trainTakeoverDone = false;
+  // A stage-10 run that could not confirm it again (failed or unclean) drops it.
+  f.exec.engine.runTrainStage = async () => ({ ok: false, code: 'TRAIN_STAGE_REFUSED', proof: PROOF });
+  f.exec.trainUrgent = true;
+  await f.exec.trainRecover();
+  await f.exec.trainMaintenance();
+  assert.equal(f.exec.trainLast.frontBind, undefined);
+  assert.ok(f.exec.trainGate(subject));
+});
+
+test('take-over front: a binding run restarted between its stage 1 and its end still ends after stage 1', async t => {
+  const f = await executorFixture(t, { policy: policy(), now: NOW });
+  await f.exec.trainRecover();
+  f.exec.trainLast = Object.freeze({ at: iso(f.clock()), mode: 'on', wouldDo: 'FRONT_NOT_BOUND', onDuty: true, front: null, mainSha: T, strict: true, wouldRevokeCount: 0,
+    decision: 'TRAIN_TAKEOVER_SWEEP_PENDING', sweep: null, actions: null, requestPause: null, openFrontBatch: null, frontBind: { pr: 910, headSha: H, claimId: CLAIM } });
+  const key = 'f'.repeat(64);
+  await f.exec.receipt('train-front-bind', { key, pr: 910, headSha: H, baseSha: T, claimId: CLAIM });
+  const next = await executorFixture(t, { policy: policy(), root: f.root, now: NOW });
+  await next.exec.trainRecover();
+  assert.deepEqual(next.exec.frontBindKeys.get(key), { pr: 910, headSha: H });
+  const ended = next.exec.frontBindEnd(key);
+  assert.deepEqual([ended.code, ended.stageNumber, ended.windowsOnly], ['TRAIN_FRONT_CLAIM_BOUND', 1, true]);
+  assert.equal(next.exec.trainUrgent, true, 'stage 10 is due at once to open the front');
+  assert.equal(next.exec.frontBindKeys.has(key), false);
+});

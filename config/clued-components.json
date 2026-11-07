@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.17",
+      "version": "1.1.18",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -563,6 +563,7 @@
         "work/independent-ci-resident-v1/test/relay.test.mjs",
         "work/independent-ci-resident-v1/test/status.test.mjs",
         "work/independent-ci-resident-v1/test/train-strict-readiness.test.mjs",
+        "work/independent-ci-resident-v1/test/train-takeover-front.test.mjs",
         "work/independent-ci-resident-v1/test/train.test.mjs",
         "work/independent-ci-resident-v1/upgrader/src/machine.mjs",
         "work/independent-ci-resident-v1/upgrader/test/fixtures.mjs",
@@ -576,7 +577,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "684d5b255c0e1e7d2cb10d57cc47c25842449aa917d4ca58844e90712e30274f"
+      "content_sha256": "9c20567d1e43ecd8b88a0e2bfeccd69e5257bfddcf6f301e2ba7442a1ab6c94c"
     },
     {
       "id": "script.resource-maintenance",
@@ -841,7 +842,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -858,7 +859,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "818a4619a22e41055d8b458a2adf71cc8c78552aee740bf0fd72e0e74f4079a2"
+      "content_sha256": "973bcd54d4151e61002d78aa44cb792fb3d13ab2cc9958dab26baf65c1131b15"
     }
   ]
 }

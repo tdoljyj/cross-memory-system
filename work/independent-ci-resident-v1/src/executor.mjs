@@ -204,6 +204,10 @@ const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFI
 const FRONT_RECOVER_RECEIPTS = 512;
 // The train on with nonFrontRuns false (policy /8, DESIGN §41.9 item 6): every row but the front's waits, shown with this reason.
 export const TRAIN_NON_FRONT_DEFERRED = 'TRAIN_NON_FRONT_RUNS_OFF';
+// Generation 19 field defect (DESIGN §62.4): the clean end of a take-over binding run right after its stage 1 (the queue head's claim is
+// bound to its PR now; the front batch is stage 10's to open). Resident-side, never Source-mirrored.
+export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
+const FRONT_BIND_ASKED_MAX = 512;
 // Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
 // role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
 export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
@@ -428,6 +432,10 @@ export class ResidentExecutor {
     this.frontBindings = new Map();
     this.trainStrictReadiness = null;
     this.trainStrictFrontReadiness = null;
+    // DESIGN §62.4: the take-over binding runs (batch key -> { pr, headSha }; kept across a restart by receipt 'train-front-bind') and
+    // the held heads stage 10 was already asked about once.
+    this.frontBindKeys = new Map();
+    this.frontBindAsked = new Set();
     this.trainExtraRuns = [];
     this.trainProgressConsumed = null;
     // The duty kept across restarts (receipt 'train-duty', review R3 M2): the restored one until this node is eligible again, and
@@ -482,6 +490,44 @@ export class ResidentExecutor {
       sourceManifestSha256: this.policy.sourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
       onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString(), front, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs };
     return strictCoverageMatches(this.trainStrictReadiness, context) || strictFrontReadinessMatches(this.trainStrictFrontReadiness, context);
+  }
+
+  // Generation 19 field defect (DESIGN §62.4): during the take-over sweep the merge queue's head claim may be bound to no PR (only an
+  // admission stage 1 binds it, and the gate held every batch), so stage 10 could never name a front, write the strict current-front
+  // observation or open a front batch. The one exception: the attempt-1 subject (no S) of exactly the PR and head that this duty's
+  // newest stage 10 named as the unbound head claim's PR (frontBind: strict confirmed in that run, every node on this Source, healthy
+  // store, nothing pending or unconfirmed, main not rewritten), within sweepFreshMs of that run. That run goes as far as stage 1 only
+  // (frontBindEnd): it publishes the admission check and binds the claim through Native's verify; no scan or merge-slot check.
+  trainFrontBind(subject) {
+    if (!subject || Object.hasOwn(subject, 'testSha') || !HEX40.test(subject.headSha ?? '') || (subject.attempt !== undefined && subject.attempt !== 1)) return false;
+    if (!this.trainEligible() || this.trainTakeoverDone || this.trainOnSince === null || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN') return false;
+    const l = this.trainLast, b = l?.frontBind, at = Date.parse(l?.at ?? ''), now = this.clock();
+    if (!b || l.mode !== 'on' || l.onDuty !== true || l.strict !== true || l.decision !== 'TRAIN_TAKEOVER_SWEEP_PENDING') return false;
+    if (!(at >= this.trainOnSince) || !(now >= at) || now - at >= trainSettings(this.policy.train).sweepFreshMs) return false;
+    return b.pr === subject.pr && b.headSha === subject.headSha;
+  }
+
+  // A held head stage 10 has not been asked about while it says the queue head is unbound: stage 10 is due at once, once per head
+  // (bounded by the daily cap like every urgent run), so the binding run need not wait for the next routine run.
+  trainAskFrontBind(rows) {
+    const l = this.trainLast;
+    if (!this.trainEligible() || this.trainTakeoverDone || l?.mode !== 'on' || l.wouldDo !== 'FRONT_NOT_BOUND' || l.strict !== true) return;
+    for (const r of rows) {
+      if (Object.hasOwn(r, 'testSha') || this.trainFrontBind(r)) continue;
+      const k = `${r.pr}:${r.headSha}`;
+      if (this.frontBindAsked.has(k)) continue;
+      if (this.frontBindAsked.size >= FRONT_BIND_ASKED_MAX) this.frontBindAsked.clear();
+      this.frontBindAsked.add(k);
+      this.trainUrgent = true;
+    }
+  }
+
+  // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran, the head is burned for
+  // runs without S (failure table: clean-final, new-commit); the front batch (H, S) has its own head key. Stage 10 is due at once.
+  frontBindEnd(key) {
+    this.frontBindKeys.delete(key);
+    this.trainUrgent = true;
+    return Object.assign(new StepFailure(1, TRAIN_FRONT_CLAIM_BOUND, { windowsTreeZero: true }, 'stage', 0), { windowsOnly: true });
   }
 
   // The front rows (S) of the run queue that are not running are dropped (queue.mjs#dropFronts; a view, persisted with the queue).
@@ -545,6 +591,7 @@ export class ResidentExecutor {
     // Source skew and unreadability still hold every row, even one whose previous strict proof has not expired.
     if (['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(decision)) return { state: 'DEFERRED', reason: decision };
     if (this.trainSweep?.fullAllPending !== 'TRAIN_MAIN_REWRITTEN' && this.trainStrictFront(subject)) return null;
+    if (this.trainFrontBind(subject)) return null;
     if (!this.trainTakeoverDone) return { state: 'DEFERRED', reason: TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? decision : 'TRAIN_TAKEOVER_SWEEP_PENDING' };
     return TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? { state: 'DEFERRED', reason: decision } : null;
   }
@@ -1914,6 +1961,10 @@ export class ResidentExecutor {
         const front = openFrontBatchOf(b);
         if (front) this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
       }
+      for (const e of await this.receipts.latest(['train-front-bind'], FRONT_RECOVER_RECEIPTS)) {
+        const b = e.value.body;
+        if (HEX64.test(b?.key ?? '') && Number.isSafeInteger(b.pr) && HEX40.test(b.headSha ?? '')) this.frontBindKeys.set(b.key, { pr: b.pr, headSha: b.headSha });
+      }
       const [fo] = await this.receipts.latest(['train-front-outcome'], 1);
       const cleared = runs.some(e => e.type === 'train-run' && e.value.body?.frontOutcomeSeq === fo?.seq && e.value.body?.ok === true && e.value.body?.frontOutcomeCleared !== false);
       if (fo && !cleared && Date.parse(fo.value.at) > this.clock() - DAY) this.trainFrontOutcome = { ...fo.value.body.frontOutcome, seq: fo.seq, at: Date.parse(fo.value.at) };
@@ -2050,7 +2101,11 @@ export class ResidentExecutor {
       // Any mode: stage 10 read the merge queue's head. A batch parked at B for that PR gets its next try without waiting out its back-off.
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
-    if (acting && (!summary || !clean)) { this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null; }
+    if (acting && (!summary || !clean)) {
+      this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null;
+      // DESIGN §62.4: a binding observation never outlives a stage-10 run that could not confirm it again.
+      if (this.trainLast?.frontBind) { const { frontBind, ...rest } = this.trainLast; this.trainLast = Object.freeze(rest); }
+    }
     this.trainProgressReady = mode === 'on' && clean && summary?.sweep?.unconfirmed === 0 && !summary.requestPause
       && !['TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(summary?.decision);
     await this.trainDutySave();
@@ -2281,7 +2336,7 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
-    if (hold) entries = entries.filter(e => this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject));
+    if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
     if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
       ? this.qualificationWaiting(entries.find(e => Ledger.qualificationHeldAt(e)).key) : null;
@@ -2597,6 +2652,7 @@ export class ResidentExecutor {
     // Source. A quiet result: stage 10 runs in this very tick.
     const trainHeld = this.trainGate();
     if (trainHeld) {
+      this.trainAskFrontBind(rows);
       rows = rows.filter(row => !this.trainGate(row));
       attempts = attempts.filter(a => !this.trainGate(a.subject));
       if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return trainHeld; }
@@ -2787,6 +2843,11 @@ export class ResidentExecutor {
       return { state: 'IGNORED', key, reason: 'PR_CLOSED', next: true };
     }
 
+    // DESIGN §62.4: a take-over binding run is recorded before it is reserved (a restart ends it after stage 1 too).
+    if (this.trainFrontBind(subject)) {
+      await this.receipt('train-front-bind', { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, claimId: this.trainLast.frontBind.claimId });
+      this.frontBindKeys.set(key, { pr: subject.pr, headSha: subject.headSha });
+    } else this.frontBindKeys.delete(key); // an earlier binding run of this key that was released: this run is an ordinary one
     await this.ledger.reserve(key, subject, { origin: c.origin });
     await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
     this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock());
@@ -3164,6 +3225,7 @@ export class ResidentExecutor {
     if ((await this.qualificationHolds.inspect(subject)).held) return this.qualificationWaiting(key);
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
+    if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
     const plan = await this.relayPlan(key, subject, batch, t0);
     if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
