@@ -55,6 +55,8 @@ function engineFor(e, at, script = {}, { frontStageMs = 0 } = {}) {
   const engine = fakeEngine(script);
   engine.subjects = subjects;
   engine.stages = stages;
+  // Task e30b5a36: what each stage-10 run decided and how many full-sweep pages (pulls sorted by created) it read.
+  engine.trainRuns = [];
   // As the real derivation (Source v2 derive-batch.mjs): the batch subject and key carry the resident's installed-files manifest
   // (policy sourceManifestSha256, SOURCE), while every job of the batch carries the install record's CI Source (CI_SOURCE).
   engine.derive = async (subject, key) => { engine.calls.push(['derive', key]); subjects.set(key, subject);
@@ -65,8 +67,11 @@ function engineFor(e, at, script = {}, { frontStageMs = 0 } = {}) {
     const { mode: m, ...params } = input;
     const runId = `${(++run).toString(16).padStart(16, '0')}-0123456789ab`;
     const job = makeTrainRun({ repo: REPO, runId, mode: m, sourceManifestSha256: CI_SOURCE, createdAt: iso(e.now), ...params });
+    const created = () => e.gh.world.calls.filter(c => c === 'pulls-created').length, before = created(), began = e.now;
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
       claimScope: SCOPE });
+    engine.trainRuns.push({ decision: r.facts.decision, frontBind: r.facts.frontBind ?? null, open: r.facts.openFrontBatch !== null, created: created() - before,
+      ms: e.now - began, full: r.facts.sweep?.fullSweep?.state ?? null });
     at.advance(e.now - at.clock());
     engine.lastFacts = r.facts;
     return { ok: true, runId, proof: PROOF, train: r.facts,
@@ -169,6 +174,28 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
   // The PR whose claim is not the queue head runs nothing before the take-over sweep.
   assert.deepEqual(engine.stages.filter(s => s.pr === 911), []);
   assert.equal(f.queue.row(911).state, 'QUEUED');
+  // Task e30b5a36 (generation 22 cold start): the run that named the binding and the run that opened the front batch read no
+  // full-sweep page (each spent about 2.6 minutes on it in the field); the take-over full sweep waits for the following runs.
+  const bindRuns = engine.trainRuns.filter(r => r.frontBind), openRuns = engine.trainRuns.filter(r => r.decision === 'OPEN_FRONT_BATCH');
+  assert.ok(bindRuns.length >= 1 && openRuns.length >= 1, JSON.stringify(engine.trainRuns));
+  assert.deepEqual([...bindRuns, ...openRuns].map(r => r.created), [...bindRuns, ...openRuns].map(() => 0), JSON.stringify(engine.trainRuns));
+  t.diagnostic(`binding run ${bindRuns.map(r => r.ms / 1000)} s, open run ${openRuns.map(r => r.ms / 1000)} s (simulated)`);
+  // Those pages wait for the later runs: the take-over full sweep still advances to its end and the take-over completes (from here on
+  // a full-sweep page read is instant, as in the quick world, or this history would never end).
+  e.gh.world.hooks.pullsPage = null;
+  const after = engine.trainRuns.length;
+  for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.ok(engine.trainRuns.slice(after).some(r => r.created > 0), JSON.stringify(engine.trainRuns.slice(after)));
+  // A run that only refreshed the running front batch's observation (TRAIN_FRONT_BATCH_RUNNING) may skip the pages too, but only right
+  // after a run that read them: from the open run on, no two runs in a row skip.
+  const fromOpen = engine.trainRuns.slice(engine.trainRuns.indexOf(openRuns[0]));
+  t.diagnostic(`runs from the open: ${fromOpen.map(r => `${r.decision}:${r.created}`).join(' ')}`);
+  for (let i = 1; i < fromOpen.length; i++) if (fromOpen[i].created === 0 && fromOpen[i].full === 'running') {
+    assert.equal(fromOpen[i].decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(fromOpen));
+    assert.ok(fromOpen[i - 1].created > 0, JSON.stringify(fromOpen));
+  }
+  assert.equal(f.exec.trainTakeoverDone, true, `take-over not done: ${JSON.stringify(engine.lastFacts?.sweep)}`);
+  assert.equal((await e.store.readFullSweepStrict('on')).full.state, 'complete');
 });
 
 // Task ad19ef19: after the take-over (the steady state) with nonFrontRuns true, a new PR whose claim is the queue head runs an ordinary
