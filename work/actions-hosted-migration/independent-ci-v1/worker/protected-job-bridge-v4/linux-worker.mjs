@@ -52,6 +52,17 @@ export function adapterFinalAdmission(job,generation,held,observation,{now=Date.
   const age=nowMono-held.sentMono;if(!(Number.isFinite(age)&&age>=0&&age<=FINAL_ADMISSION_REUSE_MAX_MS))return null;
   try{validateFormalAdmissionV2(job,held.facts,now,{batchClaim:generation});return held;}catch{return null;}
 }
+// L4 (optimisation plan bf57ff10): an additional in-toto/SLSA provenance attestation of the result just written, signed with the same
+// existing result key and kept in the local Linux receipt directory (provenance-emit.mjs). Strictly best effort and after the
+// result record: a failure or a slow disk here never changes the outcome, the record or the return value. Loaded lazily so that
+// nothing of it is on the signing path.
+export const PROVENANCE_EMIT_BUDGET_MS=10_000;
+export async function emitProvenanceBestEffort(context,issue,observation,signed,{load=()=>import('./provenance-emit.mjs'),budgetMs=PROVENANCE_EMIT_BUDGET_MS}={}){
+  let timer;
+  try{const{emitProvenance}=await load();
+    return await Promise.race([emitProvenance(context,issue,observation,signed),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('PROVENANCE_EMIT_BUDGET')),budgetMs);})]);
+  }catch{return null;}finally{clearTimeout(timer);}
+}
 export async function executeProtectedIssuedJob(options={}){
   let locked=false,executionMayHaveStarted=false;
   try{
@@ -114,6 +125,7 @@ export async function executeProtectedIssuedJob(options={}){
     // M4 (DESIGN 68.2): a real successful trivy run is stored only now, with the envelope just signed; best effort, the
     // result already written is final whatever the store does.
     if(typeof result.storeSignedResult==='function')try{await result.storeSignedResult(signed);}catch{}
+    await emitProvenanceBestEffort(context,issue,result.observation,signed);
     return{status:'ACTUAL_SIGNED_ROLE_RESULT_EMITTED',issueSha256:digest(issue),resultSha256:digest(signed),cleanupConfirmed:true,checksWritten:false,qualificationIssued:false,automaticRetryAllowed:false};
   }catch(e){return{status:locked?'UNCERTAIN':'BLOCKED',reason:safe(e),executionMayHaveStarted,automaticRetryAllowed:false,checksWritten:false,qualificationIssued:false};}
 }
