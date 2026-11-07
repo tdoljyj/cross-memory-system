@@ -100,6 +100,7 @@ if ($plan.upgraderService) { & $Sc delete CluedCIUpgrader | Out-Null }
 # password goes with its definition.
 try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop } catch { }
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
+if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionFallback' -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionFallback' -Confirm:$false }
 if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction SilentlyContinue) {
   try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction Stop } catch { }
   Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -Confirm:$false

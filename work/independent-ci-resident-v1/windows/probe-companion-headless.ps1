@@ -85,7 +85,7 @@ $q2 = [ordered]@{ bootIdHere = $bootHere; bootIdBackground = $(if ($session) { $
   sameInstance = $(if (-not $inSession0) { 'not-yet' } elseif ($session -and $bootHere -and $session.bootId -ceq $bootHere) { $true } else { $false })
   ownersRootShellWorks = ($q1.wslTrue -eq 0) }
 # Q3: the companion's own gh login, from this session (the companion itself refuses to start without it)
-$ghEnv = @{ GH_CONFIG_DIR = $gh.gh; HOME = $gh.home; GIT_TERMINAL_PROMPT = '0'; GH_PROMPT_DISABLED = '1' }
+$ghEnv = @{ GH_CONFIG_DIR = $gh.gh; HOME = $gh.home; GIT_TERMINAL_PROMPT = '0'; GH_PROMPT_DISABLED = '1'; GH_NO_UPDATE_NOTIFIER = '1' }
 $q3 = [ordered]@{ ghAuthStatus = (Invoke-Read $GhExe @('auth', 'status', '--hostname', 'github.com') $ghEnv 60).exit
   gitLsRemote = (Invoke-Read $Git @('ls-remote', "https://github.com/$Repo", 'HEAD') $ghEnv 120).exit
   backgroundStarted = ($inSession0 -and $null -eq $(if ($supervisor) { $supervisor.lastRefusal } else { $null })) }
@@ -100,4 +100,4 @@ $task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanio
 $taskView = if ($task) { [ordered]@{ logonType = [string]$task.Principal.LogonType; runLevel = [string]$task.Principal.RunLevel; action = [string]@($task.Actions)[0].Execute
     lastTaskResult = $(try { '0x' + ('{0:X8}' -f ([int64](Get-ScheduledTaskInfo -InputObject $task).LastTaskResult -band 0xFFFFFFFFL)) } catch { $null }) } } else { $null }
 [ordered]@{ contract = 'clued.independent-ci.companion-headless-probe/1'; at = [DateTimeOffset]::UtcNow.ToString('o'); distribution = $Distribution; here = $here; task = $taskView
-  q1 = $q1; q2 = $q2; q3 = $q3; q4 = $q4; background = $background; writesAnything = $false } | ConvertTo-Json -Depth 6
+  q1 = $q1; q2 = $q2; q3 = $q3; q4 = $q4; background = $background; writesAnything = 'nothing-of-its-own (gh may keep its own state files)' } | ConvertTo-Json -Depth 6

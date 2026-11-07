@@ -5466,3 +5466,26 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 7. 提权一侧验收里的“Linux 侧事实”取 `upgrade\mailbox\responses\version-facts.json` 在切换开始后被重写过（companion 启动即以 root 跑一次只读工具）。
 8. 令牌直接写进专用目录的 `hosts.yml`，不用 `gh auth login`：gh 的凭据管理器条目按“主机 + 账号”区分，与 `GH_CONFIG_DIR` 无关，同一账号再登录会动到 Owner 和 Agent 共用的那一条。companion 只认 `github_pat_` 开头的令牌，读不到专用配置就不启动。
 9. 只读探针不能自己开一个密码登录的会话（那要密码），所以后台那一半读 companion 在会话 0 里记下的 `companion-session.json`（boot_id、docker）和 `supervisor.json`（会话号）；切换前显示 `not-yet`。真正的现场核对是切换本身：8 分钟内不通过就自动退回。
+10. 监督进程放开 node.exe 句柄的时机是子进程恢复运行之后；entry 和它导入的模块由 node 之后再读，真正保证它们不被换掉的是逐级核对过的管理员专用目录 ACL。
+
+**实现后的独立审核（general-purpose 子代理，只拿到代码和设计稿，只读）**
+
+| 级别 | 意见 | 处理 |
+|---|---|---|
+| BLOCKER | 验收的起点在凭据框之前，旧的交互实例在 Owner 输密码期间继续写心跳和 version-facts，新进程一出现就会被判通过 | 改正。起点改到旧实例结束、任务不再处于运行状态之后；心跳和 version-facts 必须晚于新 node 子进程自己的启动时间，子进程早于切换起点也不算 |
+| MAJOR | 待验收标记只在提权 verify 或再次切换时才回退；验收中重启或脚本出错，未验收的密码任务会一直跑 | 改正。写标记的同时登记一次性的 SYSTEM 回退任务 `\Clued\CluedCIResidentCompanionFallback`（开机后 2 分钟、开始后第 16 分钟），由已安装的 `companion-headless-fallback.ps1` 回退超过 15 分钟的标记并删除自己；验收通过即删除 |
+| MAJOR | 直接运行 rearm 时，注册小程序（.NET）会继承 HKCU\Environment 里的 `COR_ENABLE_PROFILING` 等变量，可被注入探查器截获密码 | 改正。注册小程序一律以清空后的固定环境启动（只有 SystemRoot、windir、SystemDrive、PATH）；预检发现这类变量（进程环境或 HKCU\Environment）就拒绝：`COMPANION_HEADLESS_INJECTION_VARIABLES` |
+| MINOR | 升级通道的 Verify（SYSTEM）遇到过期标记会重注册 companion 任务 | 改正。SYSTEM 运行的 verify 不碰任务，只确认回退任务在；Owner 提权运行的 verify 仍按 65.4.4 先退回 |
+| MINOR | Stop 之后立即 Run，IgnoreNew 可能忽略这次 Run | 改正。Run 前等任务不再处于运行状态（至多 30 秒） |
+| MINOR | 异常路径上含密码的 BSTR 未清零就释放 | 改正。`finally` 里按 `SysStringByteLen` 清零再释放 |
+| MINOR | 白名单从任务环境带入 SystemRoot、ComSpec、PATHEXT 等，可被 HKCU 覆盖 | 改正。这几项改为固定值，另加 SystemDrive |
+| MINOR | 剪贴板历史和云剪贴板里可能留有令牌 | 改正。脚本另调 WinRT 的 `ClearHistory()`；手册提醒云剪贴板 |
+| MINOR | 专用 hosts.yml 运行中丢了令牌时，gh 会回落到共享凭据里 Owner 的令牌 | 改正。companion 每 2 分钟复查一次，不通过就退出，由监督进程重启，启动检查拒绝（失败关闭） |
+| MINOR | 任务安全描述符的所有者没有钉死 | 部分处理。`Get-CompanionTaskFacts` 记下所有者（`sdOwner`）作为事实；是否能在注册时指定所有者要在真机上确认，列入 T8 |
+| MINOR | 登录失败码不全；注册小程序漏了 `0x80070530` | 改正。补 `0x80070530`、`0x80070531`、`0x80070701`、`0x80070773` |
+| MINOR | “账户不会被锁”说过头 | 改正手册措辞：任务本身不会锁账户；同用户的程序本来就能靠输错密码锁账户 |
+| MINOR | 令牌作为参数传给 PowerShell 函数，模块日志可能记下 | 改正。令牌只交给 .NET 方法 |
+| MINOR | 不提权 verify 遇到过期标记记为失败 | 保留（需要提权才能退回）；手册 T6 写明提权，或等回退任务 |
+| 建议 | `BY_HANDLE_FILE_INFORMATION` 结构偏移、探针的 `writesAnything`、文件头注释 | 已改 |
+| 建议 | 密码在 RPC 缓冲区和任务计划程序服务一侧的副本无法清零 | 接受，属于固有残留 |
+| 建议 | `suspiciousText` 容易绕过 | 接受：它只是减少误导，真正的规则是“只在安全桌面输入” |

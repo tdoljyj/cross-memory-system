@@ -63,6 +63,10 @@ public static class RegistrarCore {
       case 0: return "REGISTERED";
       case 0x8007052E: return "LOGON_REJECTED";
       case 0x8007052F: return "LOGON_REJECTED_ACCOUNT_RESTRICTION";
+      case 0x80070530: return "LOGON_REJECTED_LOGON_HOURS";
+      case 0x80070531: return "LOGON_REJECTED_WORKSTATION";
+      case 0x80070701: return "LOGON_REJECTED_ACCOUNT_EXPIRED";
+      case 0x80070773: return "LOGON_REJECTED_PASSWORD_MUST_CHANGE";
       case 0x80070532: return "LOGON_REJECTED_PASSWORD_EXPIRED";
       case 0x80070533: return "LOGON_REJECTED_ACCOUNT_DISABLED";
       case 0x80070569: return "LOGON_REJECTED_RIGHT_NOT_GRANTED";
@@ -114,6 +118,7 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("ole32.dll")] static extern void CoTaskMemFree(IntPtr p);
   [DllImport("oleaut32.dll")] static extern IntPtr SysAllocStringLen(IntPtr s, uint len);
   [DllImport("oleaut32.dll")] static extern void SysFreeString(IntPtr b);
+  [DllImport("oleaut32.dll")] static extern uint SysStringByteLen(IntPtr b);
   [DllImport("kernel32.dll", EntryPoint = "RtlZeroMemory")] static extern void ZeroMemory(IntPtr p, UIntPtr len);
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool LookupAccountNameW(string system, string account, byte[] sid, ref uint sidLen, StringBuilder domain, ref uint domainLen, out int use);
   [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
@@ -249,7 +254,8 @@ public static class CluedCompanionTaskRegistrar {
       return 0;
     } finally {
       if (pw != IntPtr.Zero) { ZeroMemory(pw, new UIntPtr(PwChars * 2)); Marshal.FreeHGlobal(pw); }
-      if (bstr != IntPtr.Zero) SysFreeString(bstr);
+      // Review MINOR 3: a BSTR still held here (an exception between its allocation and the call) is zeroed before it is freed.
+      if (bstr != IntPtr.Zero) { ZeroMemory(bstr, new UIntPtr(SysStringByteLen(bstr))); SysFreeString(bstr); }
       if (outBuf != IntPtr.Zero) { ZeroMemory(outBuf, new UIntPtr(outSize)); CoTaskMemFree(outBuf); }
       if (inBuf != IntPtr.Zero) { ZeroMemory(inBuf, new UIntPtr(inSize)); Marshal.FreeCoTaskMem(inBuf); }
       if (pTask != IntPtr.Zero) Marshal.Release(pTask);

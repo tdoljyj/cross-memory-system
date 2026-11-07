@@ -143,8 +143,12 @@ public static class SupervisorCore {
   }
 
   // Which variables of the task's environment the child keeps (names compared case-insensitively).
-  static readonly string[] KeepExact = { "SystemRoot", "windir", "ComSpec", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH",
+  // Review MINOR 4: the system paths are fixed values (HKCU\Environment could point them elsewhere): SystemRoot, windir, SystemDrive,
+  // ComSpec, PATHEXT and PATH are set, never taken over.
+  static readonly string[] KeepExact = { "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH",
     "USERNAME", "USERDOMAIN", "COMPUTERNAME", "TEMP", "TMP", "ProgramData", "NUMBER_OF_PROCESSORS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OS" };
+  static readonly string[][] Fixed = { new[] { "SystemRoot", @"C:\Windows" }, new[] { "windir", @"C:\Windows" }, new[] { "SystemDrive", "C:" },
+    new[] { "ComSpec", @"C:\Windows\System32\cmd.exe" }, new[] { "PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC" } };
   public static bool KeepVariable(string name) {
     if (string.IsNullOrEmpty(name)) return false;
     foreach (string k in KeepExact) if (string.Equals(name, k, StringComparison.OrdinalIgnoreCase)) return true;
@@ -161,6 +165,7 @@ public static class SupervisorCore {
       if (k == null || v == null || k.IndexOf('=') >= 0 || v.IndexOf('\0') >= 0 || !KeepVariable(k)) continue;
       env[k] = v;
     }
+    foreach (string[] f in Fixed) env[f[0]] = f[1];
     List<string> path = new List<string>(SystemPath);
     path.AddRange(spec.PathDirs);
     env["PATH"] = string.Join(";", path.ToArray());
@@ -193,7 +198,8 @@ public static class CluedCompanionSupervisor {
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDefaultDllDirectories(uint flags);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern uint GetFileAttributesW(string name);
-  [StructLayout(LayoutKind.Sequential)] struct BY_HANDLE_FILE_INFORMATION { public uint Attributes; public long Created, Accessed, Written; public uint Serial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
+  // FILETIME is two DWORDs (4-byte aligned), so each time is two uints here, not a long (which would be 8-byte aligned).
+  [StructLayout(LayoutKind.Sequential)] struct BY_HANDLE_FILE_INFORMATION { public uint Attributes, CreatedLow, CreatedHigh, AccessedLow, AccessedHigh, WrittenLow, WrittenHigh, Serial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(SafeFileHandle h, out BY_HANDLE_FILE_INFORMATION info);
   [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
   [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr info, int length, out int returned);
@@ -378,7 +384,8 @@ public static class CluedCompanionSupervisor {
     try {
       if (!AssignProcessToJobObject(job, pi.process)) { TerminateProcess(pi.process, 1); throw new SupervisorRefusal("CHILD_JOB_FAILED"); }
       if (ResumeThread(pi.thread) == 0xFFFFFFFF) { TerminateProcess(pi.process, 1); throw new SupervisorRefusal("CHILD_RESUME_FAILED"); }
-      // The child runs the bytes that were hashed: the handles are released only now.
+      // The handles are released only now: node.exe cannot be replaced between its hash and its start. (Review MINOR 11: the entry and the
+      // modules it imports are read by node later; what keeps them as hashed is the admin-only directory ACL checked above.)
       foreach (FileStream f in held) f.Dispose();
       held.Clear();
       WaitForSingleObject(pi.process, 0xFFFFFFFF);

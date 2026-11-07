@@ -51,7 +51,6 @@ function Get-CompanionGitConfig([string]$profileDir, [string]$ghExe) {
   (@('[include]', ("`tpath = " + (& $fwd (Join-Path $profileDir '.gitconfig'))), '[credential]', "`thelper =", ("`thelper = " + $helper),
     '[credential "https://github.com"]', "`thelper =", ("`thelper = " + $helper), '') -join "`n")
 }
-function Test-FineGrainedToken([string]$t) { $t -cmatch '^github_pat_[A-Za-z0-9_]{20,255}\z' }
 function Get-CompanionGhSddl([string]$ownerSid) { 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $ownerSid + ')' }
 function Write-Utf8([string]$path, [string]$text) {
   $tmp = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
@@ -66,7 +65,7 @@ function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
   foreach ($k in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR')) { $psi.EnvironmentVariables.Remove($k) }
   if (-not $own) { $psi.EnvironmentVariables['GH_CONFIG_DIR'] = $dirs.gh; $psi.EnvironmentVariables['HOME'] = $dirs.home }
-  $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'; $psi.EnvironmentVariables['GH_PROMPT_DISABLED'] = '1'
+  $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'; $psi.EnvironmentVariables['GH_PROMPT_DISABLED'] = '1'; $psi.EnvironmentVariables['GH_NO_UPDATE_NOTIFIER'] = '1'
   $p = [Diagnostics.Process]::Start($psi)
   $out = $p.StandardOutput.ReadToEndAsync(); $err = $p.StandardError.ReadToEndAsync()
   if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { }; return [ordered]@{ exit = 'timeout'; lines = @() } }
@@ -95,14 +94,19 @@ if ($Login) {
   }
   foreach ($d in @($dirs.gh, $dirs.home)) { [void][IO.Directory]::CreateDirectory($d) }
   Write-Utf8 (Join-Path $dirs.home '.gitconfig') (Get-CompanionGitConfig $profileDir $GhExe)
-  # The token: from the clipboard straight into hosts.yml; never printed, never in a variable longer than these lines.
+  # The token: from the clipboard straight into hosts.yml; never printed, never in a variable longer than these lines, and never passed
+  # as an argument to a PowerShell function or cmdlet (review MINOR 13: module logging records those), only to .NET methods.
   $token = ([string](Get-Clipboard -Raw)).Trim()
-  if (-not (Test-FineGrainedToken $token)) { $token = $null; throw 'CLIPBOARD_IS_NOT_A_FINE_GRAINED_TOKEN' }
-  Write-Utf8 (Join-Path $dirs.gh 'hosts.yml') ("github.com:`n    oauth_token: " + $token + "`n    git_protocol: https`n")
+  if ($token -cnotmatch '^github_pat_[A-Za-z0-9_]{20,255}\z') { $token = $null; throw 'CLIPBOARD_IS_NOT_A_FINE_GRAINED_TOKEN' }
+  $hostsPath = Join-Path $dirs.gh 'hosts.yml'; $hostsTmp = $hostsPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  [IO.File]::WriteAllText($hostsTmp, ("github.com:`n    oauth_token: " + $token + "`n    git_protocol: https`n"), (New-Object Text.UTF8Encoding($false)))
+  if (Test-Path -LiteralPath $hostsPath) { [IO.File]::Replace($hostsTmp, $hostsPath, [NullString]::Value) } else { [IO.File]::Move($hostsTmp, $hostsPath) }
   $length = $token.Length; $token = $null
+  # The clipboard, and (review MINOR 5) its history (Win+V) and cloud copy where Windows keeps them.
   try { Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Clipboard]::Clear() } catch { Set-Clipboard -Value ' ' }
+  $historyCleared = try { [void][Windows.ApplicationModel.DataTransfer.Clipboard, Windows.ApplicationModel.DataTransfer, ContentType = WindowsRuntime]; [Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory() } catch { $false }
   [GC]::Collect()
-  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'fine-grained'; tokenLength = $length; clipboardCleared = $true
+  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'fine-grained'; tokenLength = $length; clipboardCleared = $true; clipboardHistoryCleared = [bool]$historyCleared
     next = 'powershell.exe -NoProfile -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
   exit 0
 }
@@ -121,7 +125,7 @@ else {
 $hosts = Join-Path $dirs.gh 'hosts.yml'
 if (Test-Path -LiteralPath $hosts -PathType Leaf) {
   $m = [regex]::Match([IO.File]::ReadAllText($hosts), '(?m)^\s+oauth_token:\s*(\S+)\s*$')
-  $r.token = if (-not $m.Success) { 'none' } elseif (Test-FineGrainedToken $m.Groups[1].Value) { 'github_pat_ (length ' + $m.Groups[1].Value.Length + ')' } else { 'not-fine-grained' }
+  $r.token = if (-not $m.Success) { 'none' } elseif ($m.Groups[1].Value -cmatch '^github_pat_[A-Za-z0-9_]{20,255}\z') { 'github_pat_ (length ' + $m.Groups[1].Value.Length + ')' } else { 'not-fine-grained' }
   $m = $null
   if ($r.token -notlike 'github_pat_*') { $bad += 'token' }
 } else { $r.token = 'missing'; $bad += 'token' }

@@ -74,6 +74,8 @@ powershell.exe -NoProfile -File <仓库或安装包>\work\independent-ci-residen
 
 为什么不用 `gh auth login --with-token`：gh 在 Windows 凭据管理器里的条目按“主机 + GitHub 账号”区分，和 `GH_CONFIG_DIR` 无关。companion 的令牌和你的令牌属于同一个 GitHub 账号，再登录一次会动到你（和 Agent）正在用的那条凭据。即使加 `--insecure-storage`，gh 登录时也会先清掉“当前账号”那一条。直接写 `hosts.yml` 才能保证你和 Agent 的 gh 登录完全不变。
 
+脚本还会尽量清掉剪贴板历史（Win+V）。如果你开了“跨设备同步剪贴板”，请到“设置 → 系统 → 剪贴板”里点一次“清除”。
+
 这时可以关掉 GitHub 页面了。
 
 ### 1.5 只读验证
@@ -107,7 +109,7 @@ powershell.exe -NoProfile -File <同上路径>\companion-gh-login.ps1 -Check
      - `COMPANION_HEADLESS_QUALIFIED`：完成。
      - `COMPANION_HEADLESS_FELL_BACK`：没通过，已自动退回原来的登录方式。节点照常工作（和今天一样依赖登录）。原因在 `stdout` 里的 `result.failed`。处理后按第 3 节重做。
      - `COMPANION_HEADLESS_PREFLIGHT_REFUSED`：前提不满足，什么都没改。原因在 `result.preflight.refusals`。
-5. 中途窗口被关、机器重启：不用管。15 分钟后，下一次 verify 或下一次切换会自动退回原来的登录方式。
+5. 中途窗口被关、机器重启、脚本出错：不用管。切换一开始就登记了一个只做回退的 SYSTEM 任务（`\Clued\CluedCIResidentCompanionFallback`），它在开机时和开始后第 16 分钟运行：发现没验收完的切换超过 15 分钟，就退回原来的登录方式，然后删掉自己。提权运行 verify、或再运行一次切换，也会先做同样的退回。
 
 ---
 
@@ -133,7 +135,7 @@ powershell.exe -NoProfile -NonInteractive -File C:\ProgramData\CluedIndependentC
 
 ### 4.1 改了 Windows 密码
 
-不重设的话，companion 下次开机就登录不上（任务结果 `0x8007052E`）。下次你登录时，通知会显示“companion 无法登录（码 0x8007052E）”。账户不会被锁：自动触发只有开机和每 15 分钟一次，你也没有权限反复运行这个任务。
+不重设的话，companion 下次开机就登录不上（任务结果 `0x8007052E`）。下次你登录时，通知会显示“companion 无法登录（码 0x8007052E）”。这个任务自己不会把账户锁住：自动触发只有开机和每 15 分钟一次（都长于 10 分钟的观察窗口），普通会话也没有权限反复运行它。注意：本机任何以你身份运行的程序本来就能靠输错密码锁住你的账户（与本任务无关，今天也是如此）。
 
 重设：提权窗口，同第 3 节，把 `-CompanionHeadless` 换成 `-CompanionCredential`：
 
@@ -207,10 +209,10 @@ powershell.exe -NoProfile -File C:\ProgramData\CluedIndependentCI\resident\resid
 | T2 注销 | companion 运行时注销，再登录 | companion PID 不变（探针 `background.companionProcesses`），心跳空档 < 30 秒，正在跑的批次不受影响；再登录后没有第二个 companion，通知被显示并清空 |
 | T3 崩溃 | 提权窗口按 PID 结束 companion 的 node（探针里那个 PID，**不要按名字杀**）；连续结束 6 次；再结束监督进程 | 10 秒内拉起；退避封顶 60 秒、不放弃；结束监督进程后 companion 随之结束，15 分钟内由重复触发拉起；期间服务只推迟，不烧 head |
 | T4 凭据失效 | 改 Windows 密码但不重设，重启 | `LastTaskResult=0x8007052E`；两小时内事件 4740 为 0，4625 至多每 15 分钟 1 次；登录后看到通知；`-CompanionCredential` 后 5 分钟内有心跳 |
-| T4b 反复运行 | **普通窗口**连续执行 10 次 `schtasks /run /tn \Clued\CluedCIResidentCompanion` | 每次都“拒绝访问”，账户不会被锁 |
+| T4b 反复运行 | **普通窗口**连续执行 10 次 `schtasks /run /tn \Clued\CluedCIResidentCompanion` | 每次都“拒绝访问”，这个任务不会因此产生失败登录 |
 | T4c 令牌撤销 | 在 GitHub 上撤销 companion 的令牌 | companion 照常运行，打包按现有分类报 `BUNDLE_UNAVAILABLE`；换令牌按第 4.2 节 |
 | T5 升级之后 | 下一次原地升级、回滚、Recover 之后 | 任务的 XML 哈希不变（verify 的 `companion-task` 仍为 `password`）；新代际 90 秒内运行 |
-| T6 中途打断 | 第 3 节运行到“验收中”时关掉窗口；15 分钟后运行 verify | verify 记 `STALE_MARKER_FELL_BACK`，任务回到 InteractiveToken |
+| T6 中途打断 | 第 3 节运行到“验收中”时关掉窗口（另做一次：验收中重启） | 第 16 分钟（或开机后 2 分钟、标记已超过 15 分钟时）回退任务把任务改回 InteractiveToken，标记和回退任务都消失；或者 15 分钟后**提权**运行 verify，记 `STALE_MARKER_FELL_BACK` |
 | T7 快速启动 | 关机（不是重启）再开机，不登录 | ≤ 20 分钟能执行 |
 | T8 安全 | 普通窗口试改 launch 文件、`bin\`、任务；开着 PowerShell Transcription 和 ScriptBlock 日志跑一遍第 3 节；在通知队列里放一条要密码的文字 | 改不了；转录和事件日志里搜不到密码；那条通知被拦下；普通桌面上从不出现凭据框 |
 

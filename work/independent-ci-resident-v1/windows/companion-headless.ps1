@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
   M5 (DESIGN.md section 65): the companion without the Owner's log-on. Functions only; dot-sourced from the INSTALLED copy by
-  rearm-resident.ps1 (-CompanionHeadless, -CompanionCredential, -CompanionInteractive), verify-resident.ps1 and uninstall-resident.ps1.
+  rearm-resident.ps1 (-CompanionHeadless, -CompanionCredential, -CompanionInteractive), verify-resident.ps1 and
+  companion-headless-fallback.ps1 (the SYSTEM task that rolls a cut-off switch back).
   install-resident.ps1 and upgrade-apply.ps1 carry the functions they need as their own text, held identical to these by
   test-companion-headless.ps1 (an elevated script never dot-sources a file from a user-writable package directory).
 
@@ -19,7 +20,10 @@ $CompanionPendingFile = 'install\companion-headless-pending.json'
 $CompanionPendingStaleMinutes = 15
 $CompanionQualifySeconds = 480
 # LastTaskResult values that mean the password logon was refused (DESIGN 65.4.3), as unsigned 32-bit numbers.
-$CompanionLogonFailureCodes = @(0x8007052EL, 0x8007052FL, 0x80070530L, 0x80070532L, 0x80070533L, 0x80070569L, 0x80070775L)   # L: int64, positive (a bare 0x8... literal is a negative Int32)
+$CompanionLogonFailureCodes = @(0x8007052EL, 0x8007052FL, 0x80070530L, 0x80070531L, 0x80070532L, 0x80070533L, 0x80070569L, 0x80070701L, 0x80070773L, 0x80070775L)   # L: int64, positive (a bare 0x8... literal is a negative Int32)
+$CompanionFallbackTaskName = 'CluedCIResidentCompanionFallback'
+# Variables that make a .NET or node process load foreign code (DESIGN.md section 14 R10; the reinstall launcher's Step-HostHygiene).
+$CompanionInjectVariables = '^(COR_ENABLE_PROFILING|COR_PROFILER|COR_PROFILER_PATH(_32|_64)?|CORECLR_.*|COMPlus_.*|DOTNET_.*|NODE_OPTIONS)$'
 
 # ---- Shared with install-resident.ps1 and upgrade-apply.ps1 (test-companion-headless.ps1 holds the copies identical) ----
 # The companion task's fixed action (DESIGN 65.4.2): the supervisor, with the root and nothing else.
@@ -117,6 +121,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $sd = try { [string]$task.GetSecurityDescriptor(4) } catch { $null }   # DACL_SECURITY_INFORMATION
   $dacl = if ($sd) { $i = $sd.IndexOf('D:'); if ($i -ge 0) { $sd.Substring($i) } else { $sd } } else { $null }
   if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) { $p += 'sddl' }
+  $sdOwner = try { $o = [string]$task.GetSecurityDescriptor(1); if ($o -match '^O:([A-Z]{2}|S-1-[0-9-]+)') { $Matches[1] } else { $null } } catch { $null }   # OWNER_SECURITY_INFORMATION: a fact
   if ($d.Settings.MultipleInstances -ne 2) { $p += 'multiple-instances' }
   if ([string]$d.Settings.ExecutionTimeLimit -cne 'PT0S') { $p += 'time-limit' }
   if ($d.Settings.DisallowStartIfOnBatteries -or $d.Settings.StopIfGoingOnBatteries) { $p += 'batteries' }
@@ -135,7 +140,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   } else { $p += 'logon-type' }
   $s = [Security.Cryptography.SHA256]::Create()
   $xmlSha = try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$task.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
-  [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha }
+  [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha; sdOwner = $sdOwner }
 }
 function Test-CompanionLogonFailure($lastTaskResult) { $null -ne $lastTaskResult -and $CompanionLogonFailureCodes -contains ([int64]$lastTaskResult -band 0xFFFFFFFFL) }
 
@@ -178,7 +183,54 @@ function Write-CompanionPending([string]$root, [string]$mode, [string]$ownerSid)
 function Invoke-CompanionFallback([string]$root, [string]$ownerSid) {
   $xml = Register-CompanionTaskInteractive $root $ownerSid
   Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
+  Remove-CompanionFallbackTask
   [ordered]@{ fellBack = $true; taskXmlSha256 = $xml }
+}
+# Review M1: a cut-off switch (a restart, a closed window, an error after the password was registered) is rolled back without anyone:
+# together with the marker, a one-shot SYSTEM task runs the installed companion-headless-fallback.ps1 at boot and 16 minutes after the
+# start. That script rolls back only a marker older than 15 minutes, then deletes this task; a qualified switch deletes it at once.
+# No password: SYSTEM and the interactive definition need none.
+function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
+  $script = Join-Path $root ('resident\' + $residentSha + '\windows\companion-headless-fallback.ps1')
+  if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'COMPANION_FALLBACK_SCRIPT_MISSING' }
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $folder = $svc.GetFolder('\Clued')
+  $def = $svc.NewTask(0)
+  $def.Principal.UserId = 'S-1-5-18'; $def.Principal.LogonType = 5; $def.Principal.RunLevel = 1
+  $t = $def.Triggers.Create(1); $t.StartBoundary = [DateTime]::Now.AddMinutes($CompanionPendingStaleMinutes + 1).ToString('yyyy-MM-ddTHH:mm:ss')
+  $b = $def.Triggers.Create(8); $b.Delay = 'PT2M'
+  $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT10M'; $def.Settings.StartWhenAvailable = $true
+  $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
+  $a = $def.Actions.Create(0); $a.Path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  $a.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"'
+  $null = $folder.RegisterTaskDefinition($CompanionFallbackTaskName, $def, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+}
+function Remove-CompanionFallbackTask {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  try { $svc.GetFolder('\Clued').DeleteTask($CompanionFallbackTaskName, 0) } catch { }
+}
+function Test-CompanionFallbackTask {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  try { $null = $svc.GetFolder('\Clued').GetTask($CompanionFallbackTaskName); $true } catch { $false }
+}
+# Review M2: names of variables that would load foreign code into the registrar (a .NET program), in this process or in the Owner's
+# HKCU\Environment. The registrar is started with a cleared environment anyway (Invoke-CompanionRegistrar).
+function Get-InjectVariables {
+  $names = @(Get-ChildItem Env: | Where-Object { $_.Name -match $CompanionInjectVariables } | ForEach-Object { $_.Name })
+  $hkcu = try { @((Get-Item -LiteralPath 'HKCU:\Environment' -ErrorAction Stop).GetValueNames() | Where-Object { $_ -match $CompanionInjectVariables }) } catch { @() }
+  @($names + $hkcu | Sort-Object -Unique)
+}
+# The registrar with a cleared, fixed environment (no profiler, no COMPlus_ knob of the Owner's session reaches it). Returns its stdout.
+function Invoke-CompanionRegistrar([string]$root, [string[]]$arguments) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'
+  $psi.Arguments = (($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = 'C:\Windows\System32'
+  $psi.EnvironmentVariables.Clear()
+  foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('windir', 'C:\Windows'), @('SystemDrive', 'C:'), @('PATH', 'C:\Windows\System32'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
+  $p = [Diagnostics.Process]::Start($psi)
+  $out = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
+  $out
 }
 
 # ---- Preflight (read-only) ----
@@ -198,6 +250,8 @@ function Get-CompanionHeadlessPreflight([string]$root, $node) {
   $ghReady = (Test-Path -LiteralPath $hosts -PathType Leaf) -and (Test-Path -LiteralPath $gitconfig -PathType Leaf)
   if (-not $ghReady) { $refusals += 'COMPANION_GH_CONFIG_MISSING' }
   foreach ($exe in @('bin\CluedCompanionSupervisor.exe', 'bin\CluedCompanionTaskRegistrar.exe', 'config\companion-launch.json')) { if (-not (Test-Path -LiteralPath (Join-Path $root $exe) -PathType Leaf)) { $refusals += ('COMPANION_HEADLESS_NOT_INSTALLED:' + $exe) } }
+  $inject = @(Get-InjectVariables)
+  if ($inject.Count) { $refusals += ('COMPANION_HEADLESS_INJECTION_VARIABLES:' + ($inject -join ',')) }
   [ordered]@{ refusals = $refusals; disableDomainCreds = [int]$lsa; lockout = $lock
     owner = $(if ($user) { [ordered]@{ principalSource = [string]$user.PrincipalSource; passwordRequired = [bool]$user.PasswordRequired; passwordExpires = $(if ($user.PasswordExpires) { ([DateTime]$user.PasswordExpires).ToString('o') } else { $null }) } } else { $null })
     companionGhConfig = $ghReady }
@@ -213,7 +267,7 @@ function Get-CompanionProcessTree([string]$root) {
   [ordered]@{ supervisors = $sups; children = $children }
 }
 function Get-ProcessTokenFacts([string]$root, [int]$processId) {
-  $out = & (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe') token-facts $processId | Out-String
+  $out = Invoke-CompanionRegistrar $root @('token-facts', [string]$processId)
   try { $out | ConvertFrom-Json } catch { $null }
 }
 # One look: $null when everything holds, else the first check that does not. since: when the switch began (UTC).
@@ -223,6 +277,10 @@ function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTime
   if (@($tree.supervisors).Count -ne 1) { return 'supervisor-process' }
   $child = @($tree.children | Where-Object { ([string]$_.CommandLine).Contains('--config-sha256 ' + [string]$launch.configSha256) -and ([string]$_.CommandLine).Contains([string]$launch.entry) })
   if ($child.Count -ne 1) { return 'companion-process' }
+  # Review B1: the heartbeat and the Linux fact must come from THIS child: written after it started (an older instance kept writing both).
+  $childStart = [DateTimeOffset]::new([DateTime]$child[0].CreationDate)
+  if ($childStart -lt $since) { return 'companion-process-older-than-the-switch' }
+  $since = $childStart
   foreach ($p in @(@($tree.supervisors[0], (Join-Path $root 'bin\CluedCompanionSupervisor.exe')), @($child[0], [string]$launch.nodeExe))) {
     $f = Get-ProcessTokenFacts $root ([int]$p[0].ProcessId)
     if ($null -eq $f -or $f.code -cne 'TOKEN_FACTS') { return 'token-unreadable' }
@@ -259,6 +317,16 @@ function Stop-CompanionTask {
   $task = try { $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion') } catch { $null }
   if ($null -ne $task) { try { $task.Stop(0) } catch { } }
 }
+# Review MINOR 2: until the task's instance no longer counts as running (IgnoreNew would drop the next Run), at most 30 s.
+function Wait-CompanionTaskNotRunning {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $until = [DateTime]::UtcNow.AddSeconds(30)
+  while ([DateTime]::UtcNow -lt $until) {
+    $state = try { [int]$svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').State } catch { 0 }
+    if ($state -ne 4) { return }
+    Start-Sleep -Milliseconds 500
+  }
+}
 function Start-CompanionTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $null = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
@@ -277,9 +345,9 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   }
   $result.preflight = Get-CompanionHeadlessPreflight $root $node
   if (@($result.preflight.refusals).Count) { $result.failed = 'PREFLIGHT'; return $result }
-  $since = [DateTimeOffset]::UtcNow
   Write-CompanionPending $root $mode $ownerSid
-  $reg = & (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe') register-password $root | Out-String
+  Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
+  $reg = Invoke-CompanionRegistrar $root @('register-password', $root)
   $result.registrar = try { ($reg | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
   if ($result.registrar -cne 'REGISTERED') {
     # Nothing was changed (or a refused registration left the old definition): back to the known interactive definition anyway.
@@ -292,11 +360,15 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   Stop-CompanionTask
   $tree = Get-CompanionProcessTree $root
   foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+  Wait-CompanionTaskNotRunning
+  # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
+  $since = [DateTimeOffset]::UtcNow
   try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
   $why = Wait-CompanionQualified $root $ownerSid $since
   $result.task = Get-CompanionTaskFacts $root $ownerSid
   if ($null -eq $why -and $result.task.mode -ceq 'password') {
     Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force
+    Remove-CompanionFallbackTask
     $result.qualified = $true
     return $result
   }
@@ -304,6 +376,7 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   Stop-CompanionTask
   $tree = Get-CompanionProcessTree $root
   foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+  Wait-CompanionTaskNotRunning
   $null = Invoke-CompanionFallback $root $ownerSid
   # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
   try { Start-CompanionTask } catch { }

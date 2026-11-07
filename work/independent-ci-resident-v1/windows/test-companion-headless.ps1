@@ -22,7 +22,7 @@ function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $wha
 
 # 1. Parse; functions by file.
 $functions = @{}; $texts = @{}
-foreach ($file in @('companion-headless.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'rearm-resident.ps1', 'uninstall-resident.ps1', 'companion-gh-login.ps1', 'probe-companion-headless.ps1')) {
+foreach ($file in @('companion-headless.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'rearm-resident.ps1', 'uninstall-resident.ps1', 'companion-gh-login.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1')) {
   $tokens = $null; $errors = $null
   $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $here $file), [ref]$tokens, [ref]$errors)
   Yes ($errors.Count -eq 0) ('parse:' + $file)
@@ -86,6 +86,26 @@ Yes ((Test-CompanionLogonFailure 0x8007052EL) -and (Test-CompanionLogonFailure 0
 $sw = $functions['companion-headless.ps1:Invoke-CompanionHeadless']
 $iPre = $sw.IndexOf('Get-CompanionHeadlessPreflight'); $iMark = $sw.IndexOf('Write-CompanionPending'); $iReg = $sw.IndexOf('register-password'); $iRun = $sw.IndexOf('Start-CompanionTask'); $iQual = $sw.IndexOf('Wait-CompanionQualified')
 Yes ($iPre -gt 0 -and $iPre -lt $iMark -and $iMark -lt $iReg -and $iReg -lt $iRun -and $iRun -lt $iQual) 'switch-order-preflight-marker-password-run-qualify'
+# review M1: the SYSTEM fall-back task is registered with the marker, before the password; removed only when qualified (or by a fall-back)
+$iFb = $sw.IndexOf('Register-CompanionFallbackTask')
+Yes ($iFb -gt $iMark -and $iFb -lt $iReg) 'switch-registers-the-fallback-task-before-the-password'
+Yes ($functions['companion-headless.ps1:Invoke-CompanionFallback'].Contains('Remove-CompanionFallbackTask')) 'fallback-removes-the-fallback-task'
+$fbReg = $functions['companion-headless.ps1:Register-CompanionFallbackTask']
+Yes ($fbReg.Contains("UserId = 'S-1-5-18'") -and $fbReg.Contains('Triggers.Create(8)') -and $fbReg.Contains('Triggers.Create(1)') -and $fbReg.Contains("'D:P(A;;FA;;;SY)(A;;FA;;;BA)'") -and $fbReg.Contains('companion-headless-fallback.ps1')) 'fallback-task-system-boot-and-16-minutes-admin-only'
+$fb = $texts['companion-headless-fallback.ps1']
+Yes ($fb.Contains("throw 'SYSTEM_REQUIRED'") -and $fb.Contains("throw 'RUN_THE_INSTALLED_COPY'") -and $fb.IndexOf('Test-CompanionPendingStale') -lt $fb.IndexOf('Invoke-CompanionFallback') -and -not ($fb -match 'param\s*\(')) 'fallback-script-system-installed-stale-only-no-arguments'
+# review B1: the time the qualification counts from is taken after the old instance ended, and the child's own start bounds the signals
+$iSince = $sw.IndexOf('$since = [DateTimeOffset]::UtcNow')
+Yes ($iSince -gt $sw.IndexOf('Wait-CompanionTaskNotRunning') -and $iSince -lt $iRun) 'switch-counts-from-after-the-old-instance'
+Yes ($functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains("'companion-process-older-than-the-switch'") -and $functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains('$since = $childStart')) 'qualification-signals-after-the-child-started'
+# review M2: the registrar runs with a cleared environment; injection variables refuse the switch
+$ir = $functions['companion-headless.ps1:Invoke-CompanionRegistrar']
+Yes ($ir.Contains('$psi.EnvironmentVariables.Clear()') -and -not $ir.Contains('USERPROFILE')) 'registrar-cleared-environment'
+Yes ($functions['companion-headless.ps1:Get-CompanionHeadlessPreflight'].Contains('COMPANION_HEADLESS_INJECTION_VARIABLES')) 'preflight-refuses-injection-variables'
+foreach ($v in @('COR_ENABLE_PROFILING', 'COR_PROFILER_PATH_64', 'COMPlus_ReadyToRun', 'DOTNET_StartupHooks', 'NODE_OPTIONS')) { Yes ($v -match $CompanionInjectVariables) ('inject-variable:' + $v) }
+Yes (-not ('PATH' -match $CompanionInjectVariables)) 'inject-variable-not-path'
+$vt = $texts['verify-resident.ps1']
+Yes ($vt.Contains("'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'") -and $vt.IndexOf("-ceq 'S-1-5-18') {") -lt $vt.IndexOf('elseif ($verifyCanFix) {')) 'verify-as-system-never-touches-the-task'
 Yes ($sw.IndexOf('Read-CompanionPending') -lt $iPre -and $sw.Substring(0, $iPre).Contains('Invoke-CompanionFallback')) 'switch-first-rolls-back-an-earlier-marker'
 Yes (([regex]::Matches($sw, 'Invoke-CompanionFallback')).Count -ge 3 -and ([regex]::Matches($sw, "Remove-Item -LiteralPath \(Join-Path \`$root \`$CompanionPendingFile\)")).Count -eq 1) 'switch-removes-the-marker-only-when-qualified'
 $q = $functions['companion-headless.ps1:Test-CompanionQualifiedOnce']
@@ -97,11 +117,11 @@ $rearm = $texts['rearm-resident.ps1']
 Yes ($rearm.Contains("throw 'OWNER_ACCOUNT_REQUIRED'") -and $rearm.Contains("[switch]`$CompanionHeadless, [switch]`$CompanionCredential, [switch]`$CompanionInteractive") -and $rearm.Contains("if (-not `$elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }")) 'rearm-owner-elevated-only'
 
 # 5. The password never in PowerShell (DESIGN 65.4.4, T8).
-foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1', 'probe-companion-headless.ps1')) {
+foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1')) {
   $code = & $codeOf $texts[$file]
   foreach ($bad in @('Get-Credential', 'Read-Host', 'SecureString', 'PSCredential', '-Password', 'NetworkCredential', 'Register-ScheduledTask')) { Yes (-not $code.Contains($bad)) ('no-password-in-powershell:' + $file + ':' + $bad) }
 }
-Yes ($sw.Contains("register-password `$root | Out-String") -and $sw.Contains('ConvertFrom-Json).code')) 'switch-takes-only-the-registrar-code'
+Yes ($sw.Contains("Invoke-CompanionRegistrar `$root @('register-password', `$root)") -and $sw.Contains('ConvertFrom-Json).code')) 'switch-takes-only-the-registrar-code'
 $reg = [IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))
 Yes ($reg.Contains('CREDUIWIN_IN_CRED_ONLY | CREDUIWIN_SECURE_PROMPT') -and $reg.Contains('CREDUIWIN_SECURE_PROMPT = 0x1000') -and -not $reg.Contains('CredUIPromptForCredentials')) 'registrar-secure-desktop-only'
 Yes (-not ([regex]::IsMatch($reg, 'PtrToString\w*\(\s*pw\b')) -and -not ([regex]::IsMatch($reg, 'PtrToString\w*\(\s*bstr\b')) -and -not $reg.Contains('SecureString')) 'registrar-no-managed-copy-of-the-password'
@@ -146,7 +166,9 @@ if (Get-Command $NodeExe -ErrorAction SilentlyContinue) {
 }
 $login = & $codeOf $texts['companion-gh-login.ps1']
 Yes ($login.Contains("throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW'") -and $login.Contains("throw 'CLIPBOARD_IS_NOT_A_FINE_GRAINED_TOKEN'") -and -not $login.Contains('auth login') -and -not $login.Contains('auth token')) 'gh-login-owner-only-no-shared-keyring'
-Yes ($login.Contains('[Windows.Forms.Clipboard]::Clear()') -and $login.Contains('$token = $null')) 'gh-login-clears-the-clipboard'
+Yes ($login.Contains('[Windows.Forms.Clipboard]::Clear()') -and $login.Contains('ClearHistory()') -and $login.Contains('$token = $null')) 'gh-login-clears-the-clipboard-and-its-history'
+# review MINOR 13: the token is never an argument of a PowerShell function or cmdlet (only of .NET methods)
+Yes (-not ([regex]::IsMatch($login, '(?m)^\s*[A-Z][A-Za-z]+-[A-Za-z]+\b[^\r\n]*\$token\b')) -and -not $login.Contains('Test-FineGrainedToken')) 'gh-login-token-only-in-dotnet-calls'
 
 # 8. The probe writes nothing (read-only by construction).
 $probe = & $codeOf $texts['probe-companion-headless.ps1']

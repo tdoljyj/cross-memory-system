@@ -40,6 +40,7 @@ public static class RegistrarPureTests {
     Ok(RegistrarCore.RegisterCode(0) == "REGISTERED", "code-registered");
     Ok(RegistrarCore.RegisterCode(unchecked((int)0x8007052E)) == "LOGON_REJECTED", "code-logon-rejected");
     Ok(RegistrarCore.RegisterCode(unchecked((int)0x80070775)) == "LOGON_REJECTED_ACCOUNT_LOCKED", "code-locked");
+    Ok(RegistrarCore.RegisterCode(unchecked((int)0x80070530)) == "LOGON_REJECTED_LOGON_HOURS" && RegistrarCore.RegisterCode(unchecked((int)0x80070773)) == "LOGON_REJECTED_PASSWORD_MUST_CHANGE", "code-design-list");
     Ok(RegistrarCore.RegisterCode(unchecked((int)0x80041318)) == "REGISTER_FAILED", "code-other");
     Ok(RegistrarCore.Output("ACCOUNT_MISMATCH", null) == "{\"contract\":\"clued.independent-ci.companion-registrar/1\",\"code\":\"ACCOUNT_MISMATCH\"}", "output-code-only");
     Ok(RegistrarCore.Output("REGISTER_FAILED", "my secret password!") .IndexOf("secret") < 0, "output-drops-free-text");

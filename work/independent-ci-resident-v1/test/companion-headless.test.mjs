@@ -90,6 +90,8 @@ test('M5: the six notification sites write the queue; companion-main.mjs itself 
   // the token and gh-login checks come before the first heartbeat
   assert.ok(body.indexOf('assertNotElevated(') > 0 && body.indexOf('assertNotElevated(') < body.indexOf('startHeartbeat('));
   assert.ok(body.indexOf('assertGhIsolation(') > 0 && body.indexOf('assertGhIsolation(') < body.indexOf('startHeartbeat('));
+  // review MINOR 6: checked again while it runs; a failed check ends the companion (fail closed at the next start)
+  assert.match(body, /setInterval\(\(\) => \{\s*assertGhIsolation\([^)]*\)\.catch\(\(\) => \{ process\.exit\(5\); \}\);\s*\}, GH_RECHECK_EVERY_MS\)/);
   // the PR status reporter and the backstop take the queue
   const dir = path.join(await tempRoot(t), 'q');
   const queued = [];
@@ -110,7 +112,7 @@ test('M5: the six notification sites write the queue; companion-main.mjs itself 
 test('M5 notifier: a refused password logon, a missing heartbeat and repeated restarts are found; texts never ask for the password', () => {
   assert.equal(hresultHex(-2147023570), '0x8007052E');
   assert.equal(hresultHex(0x80070775), '0x80070775');
-  for (const c of [0x8007052E, 0x8007052F, 0x80070530, 0x80070532, 0x80070533, 0x80070569, 0x80070775]) assert.ok(logonFailure(c), c.toString(16));
+  for (const c of [0x8007052E, 0x8007052F, 0x80070530, 0x80070531, 0x80070532, 0x80070533, 0x80070569, 0x80070701, 0x80070773, 0x80070775]) assert.ok(logonFailure(c), c.toString(16));
   assert.equal(logonFailure(0), null); assert.equal(logonFailure(0x41301), null);
   const f = companionFindings({ task: { lastTaskResult: -2147023570, state: 3 }, heartbeatAt: null, exits: [], now: T0 });
   assert.deepEqual(f.map(x => x.key), ['companion-logon:0x8007052E']);

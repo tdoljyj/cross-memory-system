@@ -48,6 +48,8 @@ export const COMPANION_LOCK_TOUCH_MS = 60_000;
 // five minutes. Its own Runner: a slow GitHub never delays the heartbeat or the mailbox.
 export const PANEL_DISPATCH_LANE_EVERY_MS = 30_000;
 export const MERGE_RECONCILE_LANE_EVERY_MS = 30_000;
+// M5 (review MINOR 6): how often the companion checks again that its gh login is its own.
+export const GH_RECHECK_EVERY_MS = 2 * 60_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
@@ -334,6 +336,12 @@ export async function main(args = process.argv.slice(2)) {
   // companion alive that answers nothing.
   const beating = startHeartbeat(mailbox);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
+  // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
+  // would make gh fall back to the Owner's shared credential-store entry. A failed check ends the companion (the supervisor restarts it,
+  // and the start-up check then refuses: fail closed).
+  const ghRecheck = setInterval(() => {
+    assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe }).catch(() => { process.exit(5); });
+  }, GH_RECHECK_EVERY_MS);
   try {
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
@@ -376,6 +384,7 @@ export async function main(args = process.argv.slice(2)) {
   } finally {
     clearInterval(beating);
     clearInterval(lockAlive);
+    clearInterval(ghRecheck);
   }
 }
 

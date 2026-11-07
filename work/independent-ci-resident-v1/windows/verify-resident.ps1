@@ -641,7 +641,10 @@ $verifyCanFix = ($verifyIdentity.User.Value -ceq 'S-1-5-18') -or (New-Object Sec
 $companionPending = Read-CompanionPending $Root
 if ($null -eq $companionPending) { Record 'companion-headless-pending' $true }
 elseif (Test-CompanionPendingStale $companionPending ([DateTimeOffset]::UtcNow)) {
-  if ($verifyCanFix) {
+  if ($verifyIdentity.User.Value -ceq 'S-1-5-18') {
+    # Run by the upgrade channel (SYSTEM): it never touches the companion task (DESIGN 65.4.4); the SYSTEM fall-back task owns this.
+    Record 'companion-headless-pending' (Test-CompanionFallbackTask) 'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'
+  } elseif ($verifyCanFix) {
     try { Stop-CompanionTask; $null = Invoke-CompanionFallback $Root $companionOwnerSid; try { Start-CompanionTask } catch { }; Record 'companion-headless-pending' $true 'STALE_MARKER_FELL_BACK' }
     catch { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_FALLBACK_FAILED' }
   } else { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_PENDING_STALE_RUN_ELEVATED' }

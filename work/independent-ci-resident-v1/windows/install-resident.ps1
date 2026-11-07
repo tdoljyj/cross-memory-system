@@ -296,6 +296,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   $sd = try { [string]$task.GetSecurityDescriptor(4) } catch { $null }   # DACL_SECURITY_INFORMATION
   $dacl = if ($sd) { $i = $sd.IndexOf('D:'); if ($i -ge 0) { $sd.Substring($i) } else { $sd } } else { $null }
   if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) { $p += 'sddl' }
+  $sdOwner = try { $o = [string]$task.GetSecurityDescriptor(1); if ($o -match '^O:([A-Z]{2}|S-1-[0-9-]+)') { $Matches[1] } else { $null } } catch { $null }   # OWNER_SECURITY_INFORMATION: a fact
   if ($d.Settings.MultipleInstances -ne 2) { $p += 'multiple-instances' }
   if ([string]$d.Settings.ExecutionTimeLimit -cne 'PT0S') { $p += 'time-limit' }
   if ($d.Settings.DisallowStartIfOnBatteries -or $d.Settings.StopIfGoingOnBatteries) { $p += 'batteries' }
@@ -314,7 +315,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   } else { $p += 'logon-type' }
   $s = [Security.Cryptography.SHA256]::Create()
   $xmlSha = try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$task.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
-  [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha }
+  [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha; sdOwner = $sdOwner }
 }
 # The supervisor and the task registrar (DESIGN 65.4.2, 65.4.4), compiled like the job host: /noconfig, full reference paths, winexe,
 # into the admin-only bin\. Install only: they carry no generation, and the upgrade channel never replaces them. Returns the hashes.

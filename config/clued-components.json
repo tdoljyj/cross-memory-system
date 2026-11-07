@@ -577,7 +577,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "b8ce619f4a08919025f66389351244c0694bb1baad90696731bd0b2d4a109998"
+      "content_sha256": "fcef7595ae128ca22028af1f03f84580a5d85171f272a37e20570b68d28a72ea"
     },
     {
       "id": "script.resource-maintenance",
@@ -859,7 +859,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "eae0317ba957d8dd86f0a3f82e82273db23d885dca3fe01a469f4d902f06f5fe"
+      "content_sha256": "a03b824136e40651d6903843073dc5270b84b8315ab7dae1b375db879a589753"
     }
   ]
 }

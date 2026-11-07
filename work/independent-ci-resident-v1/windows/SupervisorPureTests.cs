@@ -102,6 +102,9 @@ public static class SupervisorPureTests {
     SortedDictionary<string, string> env = SupervisorCore.ChildEnvironment(parent, s);
     foreach (string bad in new[] { "NODE_OPTIONS", "GIT_CONFIG_GLOBAL", "GH_TOKEN", "PSModulePath", "COR_ENABLE_PROFILING" }) Ok(!env.ContainsKey(bad), "env-drops-" + bad);
     foreach (string good in new[] { "USERPROFILE", "LOCALAPPDATA", "SystemRoot", "TEMP", "HTTPS_PROXY", "PROCESSOR_ARCHITECTURE", "ProgramFiles(x86)" }) Ok(env.ContainsKey(good), "env-keeps-" + good);
+    Hashtable redirected = new Hashtable(parent); redirected["SystemRoot"] = @"C:\evil"; redirected["ComSpec"] = @"C:\evil\cmd.exe"; redirected["PATHEXT"] = ".EVIL";
+    SortedDictionary<string, string> env2 = SupervisorCore.ChildEnvironment(redirected, s);
+    Ok(env2["SystemRoot"] == @"C:\Windows" && env2["ComSpec"] == @"C:\Windows\System32\cmd.exe" && env2["PATHEXT"].StartsWith(".COM;.EXE") && env2["SystemDrive"] == "C:", "env-system-paths-fixed");
     Ok(env["PATH"] == @"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\GitHub CLI;C:\Program Files\Git\cmd", "env-path-reset");
     Ok(env["GH_CONFIG_DIR"] == s.GhConfigDir && env["HOME"] == s.HomeDir, "env-own-gh-login");
     int pathKeys = 0; foreach (string key in env.Keys) if (string.Equals(key, "PATH", StringComparison.OrdinalIgnoreCase)) pathKeys++;
