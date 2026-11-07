@@ -577,6 +577,21 @@ export class ResidentExecutor {
     this.frontBindAskedNote(`${subject.pr}:${subject.headSha}`);
   }
 
+  // DESIGN §62.6 (the residue of §62.5): after the take-over, train on, a head's ordinary batch (no S, attempt 1) whose stage 1 Native
+  // answered with the claim first in the merge queue gives way right after that stage 1: in train on only the front batch (H, S) can get
+  // the merge slot, and stage 10 opens it once the claim is bound (stage 1 just bound it), so stages 2-7 of the ordinary batch (13-15
+  // minutes in the field) would be thrown away. Only with the newest on-mode stage-10 run on duty and reading strict true, and main not
+  // rewritten. A head not first in the queue (or with no queue fact: Native not reached, an older Source) runs on as before; shadow and
+  // off never get here. The queue fact only schedules: stage 8's live strict/holder/claim checks of the front batch are unchanged.
+  trainFrontYield(subject, first) {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone || this.trainOnSince === null) return false;
+    if (!subject || Object.hasOwn(subject, 'testSha') || (subject.attempt ?? 1) !== 1 || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN') return false;
+    const l = this.trainLast;
+    if (l?.mode !== 'on' || l.onDuty !== true || l.strict !== true) return false;
+    const q = first?.outcome?.status === 'SETTLED' ? first.outcome.scheduling?.mergeQueue : null;
+    return q?.entered === true && q.state === 'head' && (q.position === 1 || q.position === null);
+  }
+
   // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran. Defect a8910e41: the
   // reservation is released (fail: TRAIN_FRONT_BOUND), the head is not burned, so it runs again once this duty is over (shadow, off,
   // another duty); within the duty the marker frontBound holds it (no second binding run, no ordinary batch). The front batch (H, S)
@@ -3323,6 +3338,12 @@ export class ResidentExecutor {
     // run that an older version left STARTED still ends in continueBatch, burned as before.
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     this.trainAskAfterBind(subject);
+    // DESIGN §62.6: in steady state the queue head's ordinary batch gives way right here (its stages 2-7 would only be thrown away when
+    // stage 10 opens the front batch (H, S)); it ends the binding run's way: released, not burned, frontBound holds the head.
+    if (this.trainFrontYield(subject, first)) {
+      try { await this.receipt('train-front-yield', { key, pr: subject.pr, headSha: subject.headSha, mergeQueue: first.outcome.scheduling.mergeQueue }); } catch { /* a view */ }
+      return this.frontBindEnd(key);
+    }
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });

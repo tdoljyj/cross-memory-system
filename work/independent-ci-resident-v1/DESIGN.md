@@ -4935,7 +4935,39 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 
 修法：`enqueueFront` 在 `offerFront` 之前，若该 PR 正在 running 的是同一 head、不带 S 的普通批次，且它停在停车点 A（第1段之后的 hosted wait）或 B（第1–7段之后），就在该停车点以 `TRAIN_FRONT_TAKES_OVER`（clean-final、burn、new-commit、不计熔断；A 处为第1段结束，B 处为只动 Windows 的第8段结束，与 `PARKED_AUTHORITY_EXPIRING`/停车到期同一路径）干净结束它，并写 `train-front-takes-over` 回执，然后照常 `offerFront`。车头批次 (H, S) 有自己的 head key，不受普通 head 已烧影响；第8段的实时检查全部不变。不在停车点的批次（第10段运行时不会有）或其它 head 的批次不动，`offerFront` 照旧决定。修复后同一测试约 2 分钟（模拟时间）拿到 merge-slot success，并且没有 busy 拒绝。
 
-残余：停车点 A 只在 relay 开启时出现；relay 开启时车头批次本身会因 Owner 规则 41ab823a 停在 `RELAY_PROVIDER_TRANSFER_REQUIRED`（与本修法无关，出货策略 relay 关闭）。离线测试的阶段不耗时，现场“普通批次第1–7段约20分钟 + 车头批次约20分钟”仍可能超过30分钟目标：普通批次在第1–7段期间（无安全点）不会被打断，这一段需要现场实测后再决定是否让队首 PR 的普通批次在第1段后就让位。
+残余：停车点 A 只在 relay 开启时出现；relay 开启时车头批次本身会因 Owner 规则 41ab823a 停在 `RELAY_PROVIDER_TRANSFER_REQUIRED`（与本修法无关，出货策略 relay 关闭）。离线测试的阶段不耗时，现场“普通批次第1–7段约20分钟 + 车头批次约20分钟”仍可能超过30分钟目标：普通批次在第1–7段期间（无安全点）不会被打断，这一段需要现场实测后再决定是否让队首 PR 的普通批次在第1段后就让位。（已在 §62.6 让位。）
+
+### 62.6 稳态下队首 PR 的普通批次在第1段后让位（§62.5 残余，第 12 项，2026-11-07）
+
+现象：train=on、接管已完成、`nonFrontRuns=true`，认领为队首的新 PR 先跑普通批次（不带 S）的第1–7段（现场约 13–15 分钟），之后第10段才开车头批次 (H, S)；train on 下普通批次永远拿不到 `kooyumi-merge-slot`（§62.5），这段工作全部作废。
+
+修法（只改常驻层 `executor.mjs#trainFrontYield`，不改 Source，不碰 `enqueueFront`/调度）：普通批次第1段成功后、`markStarted` 之前，同时满足下列条件就让位：
+- policy `train.enabled=on`、本节点当班（`trainEligible`）、接管已完成、main 未改写（`fullAllPending` 不是 `TRAIN_MAIN_REWRITTEN`）；
+- 最新一次第10段是 on 模式、`onDuty=true`、读到 strict 为 true；
+- 该行 attempt 1、不带 S；
+- 第1段自己的结局 `SETTLED`，且 Native 在这次准入里报的合并队列条目（`outcome.scheduling.mergeQueue`，Source `queue-facts.mjs#mergeQueueEntryV2`）是 `entered=true`、`state=head`、位置为 1 或未给出。
+
+让位与 §62.4 绑定批次的结束完全同一条路：写 `train-front-yield` 回执（key、PR、head、队列条目，尽力而为），以 `TRAIN_FRONT_CLAIM_BOUND`（第1段，Windows-only）结束，`fail()` 在两端证明齐全时释放成 `TRAIN_FRONT_BOUND`（NOT_EXECUTED，不烧 head、不计熔断），写 `train-front-bound` 回执并设 `frontBound`：本次当班内这个 head 不再跑普通批次，也不会被第二次绑定；第10段立刻到期（`trainAskAfterBind` 计一次 + `frontBindEnd` 的 urgent，受每日上限约束）。之后的第10段读到已绑定的 holder，给出 `OPEN_FRONT_BATCH`，车头批次 (H, S) 跑第1–8段；车头批次有自己的 head key，第8段的实时 strict/holder/claim generation/Source/frozen/ticket 检查全部不变。
+
+不让位的情形（行为与修复前相同）：不是队首（`waiting`、`lapsed`、`out`、`none`，或 head 但位置不是 1）；第1段结局没有队列条目（Native 没答、旧 Source）——这时仍由 §62.5 的停车点接替兜底；shadow、off；接管未完成（那是 §62.4 绑定批次的事）；attempt 2；带 S 的车头批次；最新一次第10段不是 on、不当班或 strict 不是 true。
+
+安全论证：队列条目只用于调度，从不当授权；让位只会让普通批次少跑，不会多发任何检查。让位后的结局与修复前在 merge 上等价：修复前普通批次在第1段后 `markStarted` 烧掉 head，第8段必然 `TRAIN_SINGLE_GREEN_NOT_PROVEN`；修复后 head 不烧但在当班内由 `frontBound` 挡住，合并只能经车头批次。若第10段随后因故不开车头（如 strict 刚被关），该 PR 与修复前一样拿不到绿，差别只是普通批次的 gitleaks/trivy/placement 检查不再先发到 H 上（车头批次会发）。
+
+测试（`test/train-takeover-front.test.mjs`，真实 executor + Source v2 第10段/清扫存储/第8段发布者，假引擎的第1段按 Native holder 报队列条目）：
+- 稳态端到端：接管完成、队列空，新 PR 到达 → 普通批次只跑第1段（断言没有第2段）→ `train-front-yield`、`TRAIN_FRONT_CLAIM_BOUND`/`TRAIN_FRONT_BOUND` → 第10段 `OPEN_FRONT_BATCH` → 车头批次第1–8段 → merge-slot 绿，没有 busy 拒绝、没有 `TRAIN_FRONT_TAKES_OVER`。修复前该测试失败（普通批次跑了第1–8段）。
+- 保护：认领不是队首的 PR 照常跑第1–8段、不让位；shadow 与 off 下即使第1段说是队首也跑完8段；`trainFrontYield` 对接管未完成、attempt 2、带 S、非队首/位置 2/未入队/无结局、strict 非 true、最新运行非 on 都拒绝。
+- §62.5 的两条测试改为“第1段不报队列条目”变体，继续钉住停车点 A、B 的接替路径。
+
+残余：节省的是普通批次第2–7段（现场约 13–15 分钟）；车头批次本身仍完整一遍。现场 ≤30 分钟仍需实测（§62 开头）。
+
+### 62.7 wsprep 与第1段并发：不做（第 5 项分析）
+
+实测 wsprep 排在第1段之后串行约 14.5 秒。结论：**不做**，理由是与现有不变量冲突，不是工作量问题：
+1. **§24.4 的不变量“工作区准备在第1段之后才做”**：第1段之前（含 `before-stage-1` 安全点的取代与 Owner 中止、bundle 失败）释放的批次只归档 Windows（`closeOrThrow(batch, { linux: false })`），不等 companion 的任何答复，companion 忙或不在都不会把释放变成 `UNEXECUTED_CLOSE_UNCONFIRMED`/HALT。并发后这些释放全部要等 wsprep 结束并做 Linux 归档，正是 §24.4 拿掉的 HALT 来源；§62.4/§62.6 的 `TRAIN_FRONT_BOUND` 释放和第1段的未准入释放都依赖“只动了 Windows”（`windowsOnly`、断路器的 Windows-only 位置）。
+2. **准入在先**：§10.1 的顺序是第1段准入 → `10-started` → wsprep。wsprep 由 root 对 PR 的树做 fsck、模式检查和检出；放到准入之前，等于让未准入（Native 拒绝、Owner 未批）的 PR 内容先进 Linux root 工作区，扩大暴露面。
+3. **wsprep 依赖第1段之后才知道的东西**：只有存在本地 Linux 角色时才做（第R段之后的 `25-plan`）；停车点 A 之后可能重新打 bundle（§37）再做；第1段后让位/绑定的批次（§62.4、§62.6）根本不需要工作区。提前做在这些路径上都是白做，还要补清理。
+4. **单例**：Linux 侧本身不冲突（第1段不起 Linux unit、不拿角色锁），但 companion 邮箱 lane 一次一个请求（§45.1 第5项），wsprep 占着 lane 时第1段之后的 `check-refs`/归档要排队，并发窗口有限。
+改动面也超过中等：`drive()` 的并发与异常、`fail()` 第0/1段各释放路径改为带 Linux 收尾、重启恢复中“已预留未开始但 Linux 有工作区”的新状态。14.5 秒的收益不抵这些风险，维持串行。
 
 ## 63. 打下一代升级包不再需要 UAC 导出角色副本（缺陷 Task `3ea699f6`）
 
