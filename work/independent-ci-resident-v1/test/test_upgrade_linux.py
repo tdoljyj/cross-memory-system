@@ -29,7 +29,30 @@ loader.exec_module(tool)
 
 GIT = shutil.which('git')
 NODE = shutil.which('node')
-BASH = shutil.which('bash')
+def find_bash():
+    r"""A bash these tests can run scripts with. On Windows the first `bash` on PATH can be C:\Windows\System32\bash.exe,
+    the WSL launcher: it runs /bin/bash of the default WSL distribution, which may have none (docker-desktop), so it is
+    skipped; Git for Windows' bash is used instead, or none (the tests are then skipped, with the reason shown)."""
+    if os.name != 'nt':
+        return shutil.which('bash')
+    system = os.path.normcase(os.path.normpath(os.environ.get('SystemRoot', r'C:\Windows')))
+    for folder in os.environ.get('PATH', '').split(os.pathsep):
+        norm = os.path.normcase(os.path.normpath(folder)) if folder else ''
+        if not norm or norm.startswith(system + os.sep) or 'windowsapps' in norm:
+            continue
+        for name in ('bash.exe', 'bash'):
+            if os.path.isfile(os.path.join(folder, name)):
+                return os.path.join(folder, name)
+    git = shutil.which('git')
+    if git:
+        for rel in (('..', '..', 'usr', 'bin', 'bash.exe'), ('..', 'bin', 'bash.exe')):
+            cand = os.path.normpath(os.path.join(os.path.dirname(git), *rel))
+            if os.path.isfile(cand):
+                return cand
+    return None
+
+
+BASH = find_bash()
 CI = tool.CI
 ROLES = tool.ROLES
 UNITS = tool.UNITS
@@ -586,7 +609,7 @@ class RetainTests(World):
         self.assertEqual(sorted(os.listdir(self.P['archive'])), sorted(['g1', 'g2'] + [f'next-{op}' for op in ops[:4]]))
 
 
-@unittest.skipIf(BASH is None, 'no bash')
+@unittest.skipIf(BASH is None, 'no usable bash (the WSL launcher in System32 is not one)')
 class ReinstallTests(World):
     """Review M3: a full reinstall (the only way the frozen channel changes) numbers both halves from 1 again."""
 
@@ -684,7 +707,7 @@ class Primitives(unittest.TestCase):
             self.assertIn(f'def {fn}(', up)
 
 
-@unittest.skipIf(BASH is None, 'no bash')
+@unittest.skipIf(BASH is None, 'no usable bash (the WSL launcher in System32 is not one)')
 class LinuxScripts(unittest.TestCase):
     def test_scripts_parse_and_the_upgrade_plan_binds_the_script_and_every_tool_file(self):
         for s in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):
