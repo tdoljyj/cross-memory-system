@@ -130,7 +130,7 @@ import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
 import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
-import { RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode } from './policy.mjs';
+import { RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
@@ -335,7 +335,9 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   // Step 3c-2b (DESIGN §41.2): the single green is not proven; the batch rests at B until the next stage 10. The stage
   // directory's train mode could not be read for a front job: it rests at B too.
-  'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE']);
+  'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE',
+  // DESIGN §66 (push): S's other-App checks still running, main's rules not yet set, the fast-forward refused while main is still T.
+  'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED']);
 // Stage-8 answers the Owner must hear about (step 3a): main's rules do not hold it for a green, or GitHub's merge of exactly
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
@@ -1602,6 +1604,7 @@ export class ResidentExecutor {
       t.fullPending = !this.trainTakeoverDone;
       // DESIGN §65: the companion's backstop reads it (strict off in strict-permanent mode: PAUSE at once, no grace).
       t.sweepMode = trainSweepMode(this.policy.train);
+      t.landing = trainLandingMode(this.policy.train); // DESIGN §66
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
@@ -2672,6 +2675,9 @@ export class ResidentExecutor {
       await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: s.parked.closed ?? null, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n });
       await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
       this.reportOutcome(subject, 'COMPLETED', { key });
+      // DESIGN §66.6: in push mode a front batch that completed stage 8 has landed main; stage 10 adopts its members right away
+      // (urgent, under the daily cap like every urgent run) instead of at the next routine run.
+      if (subject?.testSha && subject.testSha !== subject.headSha && trainLandingMode(this.policy.train) === 'push' && this.policy.train.enabled === 'on') this.trainUrgent = true;
       // Only stage 8 ran in this step: a Windows-only ending for the breaker (the parking itself told it about the rest).
       return { state: 'COMPLETED', key, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n,
         settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: false } };

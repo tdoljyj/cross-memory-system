@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, validatePolicy } from '../src/policy.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, trainLandingMode, trainBatchMax, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
 import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
@@ -869,4 +869,29 @@ test('defect: a TRAIN_SOURCE_MISMATCH or TRAIN_SOURCE_UNREADABLE run is re-check
   await h.exec.tick();
   assert.equal(g.inputs.length, 2, 'cap of 2 per day holds');
   assert.equal(trainDue({ train: onTrain({ maintenanceMaxPerDay: 2 }), now: T0 + 5 * MIN, runs: [T0, T0 + 2 * MIN], busy: false, recheck: true }), false);
+});
+
+// DESIGN §66 (bors-style landing): train.landing and train.batchMax are optional in /8 and later; neither written changes nothing.
+test('policy train.landing / train.batchMax: optional, defaults github-merge and 1; push only in strict-permanent mode; a batch only with push', () => {
+  const p = validatePolicy(policyV8({ sweep: 'audit' }));
+  assert.equal(Object.hasOwn(p.train, 'landing'), false, 'nothing is added to the installed policy');
+  assert.deepEqual([trainLandingMode(p.train), trainBatchMax(p.train)], ['github-merge', 1]);
+  assert.deepEqual(installedTrainLanding(p), { landing: 'github-merge', batchMax: 1 });
+  assert.deepEqual(installedTrainLanding(validatePolicy(policyV8({ sweep: 'off', landing: 'push', batchMax: 4 }))), { landing: 'push', batchMax: 4 });
+  assert.deepEqual(installedTrainLanding(validatePolicy(policyV8({ sweep: 'audit', landing: 'push' }))), { landing: 'push', batchMax: 1 });
+  for (const train of [{ sweep: 'gate', landing: 'push' }, { landing: 'push' } /* sweep gate in this fixture */, { sweep: 'audit', batchMax: 2 }, { sweep: 'audit', landing: 'github-merge', batchMax: 2 },
+    { sweep: 'audit', landing: 'push', batchMax: 5 }, { sweep: 'audit', landing: 'push', batchMax: 0 }, { sweep: 'audit', landing: 'merge' }, { sweep: 'audit', landing: null }])
+    assert.throws(() => validatePolicy(policyV8(train)), { code: 'POLICY_TRAIN_INVALID' }, JSON.stringify(train));
+  assert.throws(() => validatePolicy(rawPolicy({ train: { ...rawPolicy().train, landing: 'push' } })), { code: 'POLICY_TRAIN_KEYS_INVALID' }, '/7 never takes it');
+  assert.equal(Object.hasOwn(trainSettings(policyV8({ sweep: 'audit', landing: 'push' }).train), 'landing'), false, 'the clocks stay the four of /8');
+});
+
+test('push codes (DESIGN §66): every stage-8 landing code is in the resident tables and the Source table; the PR-attributable one feeds frontOutcome', () => {
+  const codes = ['TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH'];
+  for (const c of codes) {
+    assert.ok(TRAIN_CLEAN_CODES.includes(c) && SOURCE_TRAIN_CODES.includes(c), c);
+    assert.ok(failureRow({ code: c, stage: 8 }), c);
+  }
+  assert.equal(failureRow({ code: 'TRAIN_LANDING_CHECK_FAILED', stage: 8 }).class, 'deterministic-pr', 'bisection or touch failed follows');
+  for (const c of ['TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']) assert.equal(failureRow({ code: c, stage: 8 }).class, 'clean-final');
 });

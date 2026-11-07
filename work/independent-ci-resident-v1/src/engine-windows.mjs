@@ -36,6 +36,9 @@ export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
 // (Source v2 invoke-stage.mjs#prepareStageDirectory, train-mode.mjs#stageTrainModeText). No file is 'off'.
 export function installedTrainMode(policy) { return ['off', 'shadow', 'on'].includes(policy?.train?.enabled) ? policy.train.enabled : 'off'; }
 export const TRAIN_MODE_STAGES = Object.freeze([1, 8]);
+// DESIGN §66: stages 8 and 10 learn the installed train.landing and train.batchMax through train-landing.json (Source v2 train-landing.mjs).
+// The invoker gets --train-landing only when it is not the default (github-merge, 1): no file is github-merge.
+export const TRAIN_LANDING_STAGES = Object.freeze([8, 10]);
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
@@ -259,18 +262,25 @@ export const REFS_GATE_RETRY_MS = Object.freeze([60_000, 300_000]);
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe },
-  //          trainMode (installedTrainMode(policy); absent: stages 1 and 8 get no train-mode.json, i.e. 'off') }
+  //          trainMode (installedTrainMode(policy); absent: stages 1 and 8 get no train-mode.json, i.e. 'off'),
+  //          trainLanding (policy.mjs#installedTrainLanding; absent or the default: no train-landing.json, i.e. github-merge) }
   constructor({ node, nodeProfileSha256, ...ports }) {
     this.node = pinnedNodeProfile(node, nodeProfileSha256);
     this.nodeProfileSha256 = nodeProfileSha256;
     Object.assign(this, ports);
     check(this.trainMode === undefined || ['off', 'shadow', 'on'].includes(this.trainMode), 'RESIDENT_TRAIN_MODE_INVALID');
+    check(this.trainLanding === undefined || (['github-merge', 'push'].includes(this.trainLanding?.landing) && Number.isSafeInteger(this.trainLanding.batchMax)
+      && this.trainLanding.batchMax >= 1 && this.trainLanding.batchMax <= 4), 'RESIDENT_TRAIN_MODE_INVALID');
   }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
 
   // The invoker's --train-mode for stages 1 and 8 (DESIGN §41.2); nothing for any other stage.
-  trainModeArgs(number) { return this.trainMode !== undefined && TRAIN_MODE_STAGES.includes(number) ? ['--train-mode', this.trainMode] : []; }
+  trainModeArgs(number) {
+    const landing = this.trainLanding !== undefined && TRAIN_LANDING_STAGES.includes(number) && (this.trainLanding.landing !== 'github-merge' || this.trainLanding.batchMax !== 1)
+      ? ['--train-landing', `${this.trainLanding.landing}:${this.trainLanding.batchMax}`] : [];
+    return [...(this.trainMode !== undefined && TRAIN_MODE_STAGES.includes(number) ? ['--train-mode', this.trainMode] : []), ...landing];
+  }
 
   // The config pin the invoker sends the broker for this stage: the plan hash recorded in the stage package's work
   // manifest, read only after the manifest's own bytes matched the pin derived with the batch.

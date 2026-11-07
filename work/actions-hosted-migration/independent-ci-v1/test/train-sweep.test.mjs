@@ -316,7 +316,7 @@ test('revoke-only (under PAUSE): the revoke-head request takes the front\'s curr
 });
 
 // ---- the full sweep ----
-test('full sweep: segmented over runs within the stage cap, completes, reports the watermark; take-over pending until then', async t => {
+test('full sweep: segmented over runs within the stage cap, completes (no watermark report since DESIGN §66.9); take-over pending until then', async t => {
   const e = await setup(t, { fullDone: false, tick: 1000, native: { recorded: true } });
   for (let n = 1; n <= 70; n++) e.gh.pull(n, { head: sha(0x20000 + n), updated: iso(NOW - 86_400_000) });
   e.gh.green(61, sha(0x20000 + 65));
@@ -330,8 +330,9 @@ test('full sweep: segmented over runs within the stage cap, completes, reports t
   e.native.calls.length = 0;
   const second = await e.run();
   assert.deepEqual([second.facts.sweep.fullSweep.state, second.facts.sweep.fullSweep.sinceOn, e.gh.world.writes], ['complete', true, [61]]);
-  assert.deepEqual(e.native.calls.find(c => c[0] === 'watermark')?.[1]?.mainSha, T);
-  assert.equal(second.facts.actions.watermarkReported, true);
+  // DESIGN §66.9: the informational take-over watermark is no longer reported (no take-over ever read it).
+  assert.equal(e.native.calls.some(c => c[0] === 'watermark'), false);
+  assert.equal(second.facts.actions.watermarkReported, false);
   assert.equal(second.facts.decision, 'OPEN_FRONT_BATCH');
   assert.equal((await e.store.latestProof()).fullSweepSinceOn, true);
 });

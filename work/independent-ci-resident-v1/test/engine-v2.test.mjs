@@ -18,7 +18,7 @@ const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/
 const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
 const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
 
-async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, trainMode = undefined } = {}) {
+async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, trainMode = undefined, trainLanding = undefined } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -46,7 +46,7 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, tra
     async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
   };
   const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
-    ...(trainMode === undefined ? {} : { trainMode }),
+    ...(trainMode === undefined ? {} : { trainMode }), ...(trainLanding === undefined ? {} : { trainLanding }),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   return { root, engine, runs, sent };
@@ -144,6 +144,25 @@ test('the train mode channel (DESIGN §41.2): the installed policy reaches stage
     }
   }
   assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainMode: 'ON' }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
+});
+
+test('the train landing channel (DESIGN §66): push (or a batch) reaches stages 8 and 10 as train-landing.json; the default writes nothing', async t => {
+  const { prepareStageDirectory } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
+  const { readStageTrainLandingFact } = await import('../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs');
+  const { parseLandingArg } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
+  for (const [landing, expected] of [[{ landing: 'push', batchMax: 3 }, 'push:3'], [{ landing: 'github-merge', batchMax: 1 }, null], [undefined, null]]) {
+    const f = await engineFixture(t, { trainMode: 'on', ...(landing ? { trainLanding: landing } : {}) });
+    const batch = await f.engine.derive(subject, KEY);
+    for (const stage of [stages[0], stages[1], stages[7]]) await f.engine.runStage(batch, stage);
+    const invoked = f.runs.filter(a => a[1]?.endsWith('invoke-stage.mjs'));
+    const landingOf = a => (a.includes('--train-landing') ? a[a.indexOf('--train-landing') + 1] : null);
+    assert.deepEqual(invoked.map(landingOf), [null, null, expected], JSON.stringify(landing));
+    const dir = await prepareStageDirectory({ stageRoot: f.root, nonce: `${expected ?? 'none'}${landing ? 'x' : 'y'}`.replace(/[^0-9a-f]/g, 'a').padEnd(32, '0').slice(0, 32),
+      sealed: { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } }, trainLanding: parseLandingArg(landingOf(invoked[2]) ?? undefined) });
+    assert.deepEqual(await readStageTrainLandingFact(dir), expected ? { landing: 'push', batchMax: 3, unreadable: false } : { landing: 'github-merge', batchMax: 1, unreadable: false });
+  }
+  assert.equal(new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainLanding: { landing: 'push', batchMax: 2 } }).trainModeArgs(10).join(' '), '--train-landing push:2');
+  assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainLanding: { landing: 'push', batchMax: 9 } }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
 });
 
 test('stage 2 first proves no push since the bundle; a moved ref ends the stage cleanly before anything runs', async t => {
