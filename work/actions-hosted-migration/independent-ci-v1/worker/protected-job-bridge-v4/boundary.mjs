@@ -9,9 +9,9 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {validateJobV2,SCANNER_ROLES_V2} from '../../src/job-v2.mjs';
-import {protectedPath} from '../qualification-v2.mjs';
+import {protectedPath,loadQualifiedPolicyV2} from '../qualification-v2.mjs';
 import {validateRelayDescriptor} from './mailbox.mjs';
-import {loadFixedRolePolicy,takeActualRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
+import {loadFixedRolePolicy,takeActualRolePolicy,validateSelectedFacts,fixedPolicyPath} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 const P='work/actions-hosted-migration/independent-ci-v1/';
 const HASH=/^[a-f0-9]{64}$/,REPO='tdoljyj/cross-memory-system';
@@ -66,6 +66,33 @@ export async function loadLinuxContext(job=null){
   check(config.entryFile===fileURLToPath(new URL('./linux-worker.mjs',import.meta.url)),'FORMAL_LINUX_ENTRY_NOT_ACCEPTED');
   const descriptor=validateRelayDescriptor(manifest.roles[role].controllerRelay,{sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
   await checkLinuxSource(manifest.roles[role].sourceFiles,config.trustedSourceDirectory);
-  const context=freeze({side:'linux',role,...loaded,manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});contexts.add(context);return context;
+  // policy: the actual role policy this context was built from (openFixedRoleSession may reuse it; bf57ff10 P2 D).
+  const context=freeze({side:'linux',role,...loaded,policy:loaded,manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});contexts.add(context);return context;
+}
+// bf57ff10 P2 C (2026-11-07): the context of the public relay (relay-record.mjs), which only moves public bytes between
+// the fixed spools (no job, key, API or authority of its own). It keeps every check of the role policy, the Source
+// manifest and the qualification that loadLinuxContext makes: the root principal, loadQualifiedPolicyV2 (the protected
+// private policy file and its shape, the Docker socket, every runtime path, the pinned entry/docker/node/git/qualification/
+// worker/proof/job bytes, the manifest hash, the qualification signature and payload), validateSelectedFacts at the
+// current clock (Source context, qualification window, role pins and their required paths, role configuration), the
+// accepted relay descriptor, the entry file and the shape and completeness of the role's Source pins. It does NOT
+// re-hash the 162 pinned Source files or ask Git about the checkout (checkLinuxSource, trackedSource: about 1 s per relay
+// call): the Linux worker still does both in loadLinuxContext when it starts and again in every callback before it adopts
+// a response, so nothing a drifted Source could start, answer or sign gets past it. It is not an accepted bridge
+// context (never in `contexts`): it cannot open the accepted mailbox or reach the signer.
+export function relayContextOf(job,loaded,now=Date.now()){
+  const facts=validateSelectedFacts(job,loaded,now),{config}=loaded,role=job.role;
+  check(SCANNER_ROLES_V2.includes(role)&&facts.manifest.roles?.[role],'FORMAL_SCANNER_PROFILE_REQUIRED');
+  check(config.entryFile===fileURLToPath(new URL('./linux-worker.mjs',import.meta.url)),'FORMAL_LINUX_ENTRY_NOT_ACCEPTED');
+  const descriptor=validateRelayDescriptor(facts.manifest.roles[role].controllerRelay,{sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
+  validateSourcePins(facts.manifest.roles[role].sourceFiles);
+  return freeze({side:'linux-relay',role,config:structuredClone(config),manifest:facts.manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
+}
+export async function loadLinuxRelayContext(job=null){
+  check(process.platform==='linux'&&process.getuid?.()===0,'FORMAL_LINUX_CONTROLLER_REQUIRED');
+  job??=await readFixedIssueJob();validateJobV2(job);
+  const loaded=await loadQualifiedPolicyV2(fixedPolicyPath(job.role));
+  // As loadFixedRolePolicy: the clock is read again after every asynchronous read above.
+  return relayContextOf(job,loaded,Date.now());
 }
 export function takeAcceptedBridgeContext(context){check(contexts.has(context),'ACTUAL_ACCEPTED_BRIDGE_CONTEXT_REQUIRED');if(context.side==='windows')assertWindowsContextLive(context);return context;}

@@ -82,7 +82,7 @@ export const sourceRootOf = moduleUrl => sourceRootOfModule(moduleUrl) + path.se
 export function observationLog(directory, jobId) {
   fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, 'observations.jsonl');
-  return (kind, data) => {
+  const log = (kind, data) => {
     check(/^[a-z][a-z0-9_]{0,79}$/.test(kind), 'OBSERVATION_KIND_REFUSED');
     const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o600);
     try {
@@ -91,6 +91,19 @@ export function observationLog(directory, jobId) {
       check(fs.writeSync(fd, b) === b.length, 'OBSERVATION_LOG_UNCONFIRMED'); fs.fsyncSync(fd);
     } finally { fs.closeSync(fd); }
   };
+  // bf57ff10 P2: one line per fetch (controllerPorts): the job, the URL pattern (fetchUrlPattern: no value, no token),
+  // method, status, milliseconds and whether the immutable-read cache answered. Best-effort, unsynced, at most 16 MiB;
+  // never an input of any decision.
+  const timings = path.join(directory, 'fetch-timings.jsonl');
+  log.timing = ({ url, method, status, ms, cache = false }) => {
+    const fd = fs.openSync(timings, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o600);
+    try {
+      const s = fs.fstatSync(fd); if (!s.isFile() || s.nlink !== 1 || s.size >= 16 * 1024 * 1024) return;
+      fs.writeSync(fd, `${JSON.stringify({ at: new Date().toISOString(), jobId, url: String(url).slice(0, 240), method: String(method).slice(0, 8),
+        status: Number.isSafeInteger(status) ? status : null, ms: Number.isSafeInteger(ms) ? ms : null, cache: cache === true })}\n`);
+    } finally { fs.closeSync(fd); }
+  };
+  return log;
 }
 
 export async function controllerPrincipal(record) {
@@ -126,14 +139,64 @@ export function nativeReadPost(supabaseUrl) {
     return !Object.hasOwn(input, 'pr_ref') && (!Object.hasOwn(input, 'ci_dispatch') || input.ci_dispatch === false);
   };
 }
+// bf57ff10 P2 (2026-11-07): the URL pattern of a request for the timing log: fixed words only, never a value. The
+// repository, SHAs, numbers, file paths and query values are replaced by placeholders; another host is 'native'.
+export function fetchUrlPattern(url) {
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname === 'api.github.com' ? 'github' : 'native';
+    let p = u.pathname.replace(/^\/repos\/[^/]+\/[^/]+/, '/repos/{repo}').replace(/\/contents\/.*$/, '/contents/{path}')
+      .replace(/\/compare\/[^/]+$/, '/compare/{range}').replace(/\/[0-9a-f]{40}(?=\/|$)/g, '/{sha}').replace(/\/[0-9a-f]{64}(?=\/|$)/g, '/{sha256}')
+      .replace(/\/\d+(?=\/|$)/g, '/{n}');
+    if (host === 'native') p = p.replace(/^\/rest\/v1\/rpc\/([a-z0-9_]{1,80})$/, '/rpc/$1').replace(/^(?!\/rpc\/[a-z0-9_]+$).*$/, '/{other}');
+    if (!/^[A-Za-z0-9_{}/.-]{1,200}$/.test(p)) p = '/{other}';
+    const keys = [...new Set([...u.searchParams.keys()].filter(k => /^[a-z_]{1,32}$/.test(k)))].sort();
+    return `${host}${p}${keys.length ? `?${keys.join('&')}` : ''}`;
+  } catch { return 'unparsed'; }
+}
+// E3 (bf57ff10 P2): the GitHub reads that are fixed by commit SHAs and therefore never change: a compare of two SHAs,
+// one commit, and a file's contents at a SHA. Every other read (pulls, files, branches, check runs, variables, ...)
+// can change and is never cached.
+const IMMUTABLE_READ = /^https:\/\/api\.github\.com\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}(?:\?per_page=\d{1,3})?|commits\/[0-9a-f]{40}|contents\/[A-Za-z0-9_.@%+=,~/-]{1,1024}\?ref=[0-9a-f]{40})$/;
+export const immutableGitHubRead = (url, opts = {}) => String(opts?.method ?? 'GET').toUpperCase() === 'GET' && opts?.body === undefined && IMMUTABLE_READ.test(String(url));
+// Per-process cache of those reads only (one entry per URL and Accept header), around the retrying fetch. Only a
+// complete 200 answer is kept, from a clone the caller never sees, so the caller reads its own response exactly as
+// without the cache; a hit still asserts the held lease (live()) and returns a fresh Response of the same bytes.
+export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {}, maxEntries = 256 } = {}) {
+  const entries = new Map();
+  const key = (url, opts) => `${String(opts?.headers?.accept ?? '')} ${String(url)}`;
+  const cached = async (url, opts = {}) => {
+    if (!immutableGitHubRead(url, opts)) return fetchImpl(url, opts);
+    const k = key(url, opts), hit = entries.get(k);
+    if (hit) { live(); onHit(url); return new Response(hit.bytes, { status: 200, statusText: hit.statusText, headers: hit.headers }); }
+    const response = await fetchImpl(url, opts);
+    if (response?.status === 200 && response.ok === true && typeof response.clone === 'function' && entries.size < maxEntries) {
+      const copy = response.clone();
+      copy.arrayBuffer().then(bytes => { entries.set(k, { bytes: new Uint8Array(bytes), statusText: copy.statusText,
+        headers: [...copy.headers].filter(([name]) => ['content-type', 'etag', 'last-modified'].includes(name)) }); }, () => { /* an incomplete body is never kept */ });
+    }
+    return response;
+  };
+  cached.size = () => entries.size;
+  return cached;
+}
 export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
+  // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
+  const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
   const singleFetch = async (url, opts = {}) => {
     live(); budgetObserver.begin(url);
-    const response = await baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) });
+    const sent = monotonic();
+    let response;
+    try {
+      response = await baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) });
+    } catch (error) { timing(url, { method: String(opts?.method ?? 'GET').toUpperCase(), status: null, ms: Math.round(monotonic() - sent) }); throw error; }
+    timing(url, { method: String(opts?.method ?? 'GET').toUpperCase(), status: response?.status ?? null, ms: Math.round(monotonic() - sent) });
     budgetObserver.observe(url, response); return response;
   };
-  const fetchImpl = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), readPost: nativeReadPost(record.config.supabaseUrl), onRetry: r => { try { log(r.post ? 'native_read_retry' : 'github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
+  const retryingFetch = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), readPost: nativeReadPost(record.config.supabaseUrl), onRetry: r => { try { log(r.post ? 'native_read_retry' : 'github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
+  // E3 (bf57ff10 P2): SHA-fixed GitHub reads are fetched once per entry process (immutableReadCache); all else as before.
+  const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,

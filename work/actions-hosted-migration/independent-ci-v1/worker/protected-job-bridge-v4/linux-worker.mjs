@@ -9,6 +9,8 @@
 // CI Source round-trip trim: before signing, the adapter's own post admission (the observation's postAdmissionSha256, the
 // admission callback answered just before) is used when it is still fresh (adapterFinalAdmission); only otherwise is one more
 // admission challenge written. The Windows issuer still makes its complete admission after the signed result arrives.
+// bf57ff10 P2 D (2026-11-07): each callback's authority reload overlaps the wait for Windows (it must pass before the
+// response is used), and the start and the end no longer load the same role policy twice in a row.
 import {loadLinuxContext,takeAcceptedBridgeContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
 import {validateIssue,makeChallenge,validateResponse,makeBlocked,decode,encode,digest,issueGeneration} from './protocol.mjs';
@@ -59,9 +61,23 @@ export async function executeProtectedIssuedJob(options={}){
     let sequence=0,scanStartRequested=false,lastAdmission=null;const monotonic=()=>performance.now();
     const callback=async(action,subject)=>{check(canonical(subject)===canonical(job),'FORMAL_CALLBACK_SUBJECT_CHANGED');
       if(action==='scan-start'){check(!scanStartRequested,'SCAN_START_ONCE_REQUIRED');scanStartRequested=true;}
-      const fresh=await loadLinuxContext(job);check(fresh.sourceAcceptanceRef===context.sourceAcceptanceRef&&fresh.hostQualificationRef===context.hostQualificationRef&&fresh.config.sourceManifestSha256===job.sourceManifestSha256,'FORMAL_CALLBACK_AUTHORITY_CHANGED');
+      const authority=()=>loadLinuxContext(job).then(fresh=>{check(fresh.sourceAcceptanceRef===context.sourceAcceptanceRef&&fresh.hostQualificationRef===context.hostQualificationRef&&fresh.config.sourceManifestSha256===job.sourceManifestSha256,'FORMAL_CALLBACK_AUTHORITY_CHANGED');});
+      // bf57ff10 P2 D (2026-11-07): the full authority reload of this callback (role policy, Git and every pinned Source
+      // file, about 1.2 s) runs WHILE Windows answers, instead of before the challenge is written. Its result still gates
+      // everything that counts: no response is validated, handed to the adapter or followed by signing until it has
+      // passed, and its refusal wins over anything the wait reports (as when it ran first), so it fails closed with the
+      // same code. A refusal cuts the wait short. A scan-start asks Windows for a Native effect, so there the reload
+      // still completes before the challenge exists. The only new effect of a refusal: Windows may already have answered
+      // the written challenge (one more read-only admission or refs answer), which is never used.
+      let refused=null,authorityDone=null;
+      if(action==='scan-start')await authority();
+      else authorityDone=authority().then(()=>{},e=>{refused=e;});
       const request=makeChallenge(issue,action,++sequence),suffix=String(sequence).padStart(2,'0'),sentMono=monotonic();await box.write('challenge-'+suffix,encode(request));
-      const response=validateResponse(issue,request,decode(await box.wait('response-'+suffix,{deadline:Date.parse(request.deadline),signal})));
+      const stop=authorityDone?{get aborted(){return refused!==null||signal?.aborted===true;}}:signal;
+      const waited=await box.wait('response-'+suffix,{deadline:Date.parse(request.deadline),signal:stop}).then(raw=>({raw}),error=>({error}));
+      if(authorityDone){await authorityDone;if(refused)throw refused;}
+      if(waited.error)throw waited.error;
+      const response=validateResponse(issue,request,decode(waited.raw));
       const value=callbackValue(action,response);if(action==='admission')lastAdmission={facts:value,sentMono};return value;
     };
     // Adapters cannot prepare until their first callback gets a fresh actual
@@ -72,7 +88,9 @@ export async function executeProtectedIssuedJob(options={}){
       scanStartPort:async subject=>{if(!NATIVE_SCAN_START_REQUIRED){check(canonical(subject)===canonical(job),'FORMAL_CALLBACK_SUBJECT_CHANGED');
         check(!scanStartRequested,'SCAN_START_ONCE_REQUIRED');scanStartRequested=true;return localScanStart(job,issue.issueId);}
         const grant=await callback('scan-start',subject);validateScanStartGrant(grant,{job,executionId:issue.issueId});return grant;}});
-    const session=takeActualRoleSession(await openFixedRoleSession(job));
+    // bf57ff10 P2 D: the session reuses the actual role policy the context above was just built from (same job, re-checked
+    // at the current clock; anything else loads anew, policy.mjs#reusableRolePolicy); no adapter has run in between.
+    const session=takeActualRoleSession(await openFixedRoleSession(job,{preloaded:context.policy}));
     const adapter=job.role==='gitleaks'?createFormalGitleaksAdapter(ports):job.role==='trivy'?createFormalTrivyAdapter(ports):createFormalContractPlacementAdapter(ports);executionMayHaveStarted=true;
     const result=await adapter.execute(job,{signal});
     if(isCleanBlocked(result)){
@@ -82,7 +100,9 @@ export async function executeProtectedIssuedJob(options={}){
     }
     check(result?.observation,'ACTUAL_SCANNER_OBSERVATION_MISSING');
     if(!adapterFinalAdmission(job,issueGeneration(issue),lastAdmission,result.observation,{now:Date.now(),nowMono:monotonic()}))await callback('admission',job);
-    await session.finish(result.observation);const signed=await signActualBridgeResult(context,issue,result.observation);
+    // The signer reuses the role policy session.finish has just loaded AFTER the execution (bf57ff10 P2 D; it loaded it once
+    // more itself); every signing check, and the clock check right before signing, are unchanged.
+    await session.finish(result.observation);const signed=await signActualBridgeResult(context,issue,result.observation,{session});
     const bytes=Buffer.from(canonical(signed));await box.write('result',bytes);
     return{status:'ACTUAL_SIGNED_ROLE_RESULT_EMITTED',issueSha256:digest(issue),resultSha256:digest(signed),cleanupConfirmed:true,checksWritten:false,qualificationIssued:false,automaticRetryAllowed:false};
   }catch(e){return{status:locked?'UNCERTAIN':'BLOCKED',reason:safe(e),executionMayHaveStarted,automaticRetryAllowed:false,checksWritten:false,qualificationIssued:false};}

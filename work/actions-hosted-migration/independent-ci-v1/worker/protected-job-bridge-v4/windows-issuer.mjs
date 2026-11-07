@@ -82,11 +82,18 @@ export const PATHS_REFUSALS=Object.freeze(['invalid_pr_subject','pr_files_change
   'unexpected_app_identity','unexpected_installation_token_scope','unexpected_repository_scope','invalid_github_route']);
 export const changedPathsFailure=code=>code==='pr_subject_changed'?'full_admission_subject_changed':PATHS_REFUSALS.includes(code)?PATHS_REFUSED
   :code==='github_http_403'?GITHUB_FORBIDDEN:UNAVAILABLE_ADMISSION;
+// bf57ff10 P2 E1 (2026-11-07): the changed-paths read and the admission run side by side (they were one after the
+// other, about 3 GitHub round trips apart). The admission gets the read as a deferred packet (full-admission-v2.mjs): it
+// sends no Native RPC before the packet is complete and valid, and assembles its facts only after it. This function
+// answers only when both are complete; a failed read is still answered with its own mapped reason, whatever the
+// admission did, so every outcome is the old one.
 export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
-  let packet;
-  try{packet=await github.readChangedPaths(job);}
-  catch(e){return{status:'BLOCKED',reason:changedPathsFailure(e?.code),diagnostic:{phase:'changed_paths'}};}
-  return admission.evaluatePr(job,packet,{batchClaim});
+  const paths=Promise.resolve().then(()=>github.readChangedPaths(job)),read=paths.then(packet=>({packet}),error=>({error}));
+  const facts=Promise.resolve().then(()=>admission.evaluatePr(job,()=>paths,{batchClaim})),settled=facts.then(value=>({value}),error=>({error}));
+  const r=await read,f=await settled;
+  if(Object.hasOwn(r,'error'))return{status:'BLOCKED',reason:changedPathsFailure(r.error?.code),diagnostic:{phase:'changed_paths'}};
+  if(Object.hasOwn(f,'error'))throw f.error;
+  return f.value;
 };
 
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
@@ -163,13 +170,21 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       }
       check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
       // A transient refusal that outlasts this round's retries answers nothing: late, as above.
-      let current;
-      try{current=await admitted(Date.parse(challenge.deadline));}catch(e){if(RETRY_WAITS_MS.has(e?.code))return goLate(challenge);throw e;}
+      // bf57ff10 P2 E2 (2026-11-07): in a remote-refs round the admission and the refs collection run side by side (they
+      // were one after the other); both are judged only when both are complete, the admission's outcome first, exactly
+      // as before: its transient refusal is late, its other refusal fails, then the refs' unavailability is late and
+      // their other refusal fails. Each is still taken in full, and the response is made only from two complete answers.
+      const refsRound=challenge.action==='remote-refs';
+      const deadline=Date.parse(challenge.deadline);
+      const [admissionRead,refsRead]=await Promise.allSettled([admitted(deadline),refsRound?collectRefs({context,collect,until:deadline,clock,sleep}):null]);
+      if(admissionRead.status==='rejected'){const e=admissionRead.reason;if(RETRY_WAITS_MS.has(e?.code))return goLate(challenge);throw e;}
+      const current=admissionRead.value;
       // Remote refs still unavailable after collectRefs' retries: late as well (the worker has prepared nothing before
       // its refs callback, so it ends with its clean blocked record). A refusal still fails.
       let fresh=null;
-      if(challenge.action==='remote-refs'){
-        try{fresh=await collectRefs({context,collect,until:Date.parse(challenge.deadline),clock,sleep});}catch(e){if(e?.code===REFS_UNAVAILABLE)return goLate(challenge);throw e;}
+      if(refsRound){
+        if(refsRead.status==='rejected'){const e=refsRead.reason;if(e?.code===REFS_UNAVAILABLE)return goLate(challenge);throw e;}
+        fresh=refsRead.value;
       }
       let grant=null;
       if(challenge.action==='scan-start'){

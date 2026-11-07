@@ -256,6 +256,44 @@ test('issuer (gitleaks): a remote-refs callback retries a transient failure and 
   }
 });
 
+// bf57ff10 P2 E2 (2026-11-07): in a remote-refs round the admission and the refs collection run side by side; the answer
+// is made only from two complete results, and their outcomes are judged in the old order (the admission's first).
+test('issuer (gitleaks): a remote-refs round takes the admission and the refs side by side; both complete before the answer, the admission judged first', WINDOWS, async t => {
+  const BLOCKED_CLAIM = { status: 'BLOCKED', reason: 'full_admission_claim_changed' };
+  // [callback admission answer, callback refs plan step, answered?, outcome status, reason]
+  for (const [admission, refs, answered, status, reason] of [
+    ['ok', 'ok', true, 'BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'],
+    ['refused', 'REFS_PAGE_SHAPE_UNKNOWN', false, 'UNCERTAIN', 'full_admission_claim_changed'],
+    ['ok', 'REFS_PAGE_SHAPE_UNKNOWN', false, 'UNCERTAIN', 'REMOTE_REFS_REFUSED']]) {
+    const f = issuerFixture(t), root = await spool(t), events = [];
+    let evaluations = 0, collections = 0;
+    const evaluate = async () => { const n = ++evaluations; events.push(`admission-start:${n}`); await new Promise(r => setTimeout(r, 60)); events.push(`admission-end:${n}`);
+      return n > 1 && admission === 'refused' ? BLOCKED_CLAIM : facts(f.job, f.c); };
+    const collect = async () => { const n = ++collections; events.push(`refs-start:${n}`); await new Promise(r => setTimeout(r, 60)); events.push(`refs-end:${n}`);
+      if (n > 1 && refs !== 'ok') throw coded(refs); return refsSnapshot(); };
+    const linux = linuxSide(async () => {
+      const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+      const challenge = makeChallenge(issue, 'remote-refs', 1);
+      await put(root, 'challenge-01', encode(challenge));
+      if (!answered) return;
+      const response = validateResponse(issue, challenge, decode(await waitFor(path.join(root, 'outgoing', 'response-01.json'))));
+      events.push('response');
+      assert.ok(response.admission === undefined || response.admission === null);
+      assert.equal(response.remoteRefs.complete, true);
+      await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE')));
+    });
+    const r = await runIssuer({ context: f.context, evaluate, collect, box: await createFixtureMailbox(root, 'windows'), sleep: backoffSleep([]), signal: linux.signal,
+      stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
+    await linux;
+    assert.deepEqual([r.status, r.reason], [status, reason], `${admission}/${refs}`);
+    // the callback round: both started before either ended (they were one after the other: about 60 ms saved here per round)
+    const at = e => events.indexOf(e);
+    assert.ok(at('admission-start:2') < at('refs-end:2') && at('refs-start:2') < at('admission-end:2'), events.join());
+    if (answered) assert.ok(at('admission-end:2') < at('response') && at('refs-end:2') < at('response'), 'the answer only after both are complete');
+    assert.equal(await exists(path.join(root, 'outgoing', 'response-01.json')), answered);
+  }
+});
+
 // ---- 2. the refs snapshot is fresh at the response's issuance ----
 test('protocol v4: a remote-refs response is fresh at its issuance and only has to arrive inside its window; the adapter may measure from that issuance', () => {
   const { jobs } = setup(), gl = jobs.gitleaks, c = claim();
@@ -293,11 +331,12 @@ test('changed-paths read: transient GitHub is unavailable (retried); the port\'s
     assert.equal(changedPathsFailure(code), 'full_admission_paths_refused', code);
   assert.equal(changedPathsFailure('github_http_403'), 'full_admission_github_forbidden');
   assert.equal(changedPathsFailure('pr_subject_changed'), 'full_admission_subject_changed');
-  // through issuerEvaluate: no admission is evaluated without the paths
-  let evaluated = 0;
-  const admission = { evaluatePr: async () => { evaluated++; return { status: 'ADMITTED' }; } };
+  // through issuerEvaluate (bf57ff10 P2 E1): the admission now runs side by side with the read, but a failed read is still
+  // answered with its own reason, never with the admission's answer, and the deferred packet the admission waits for fails
+  let evaluated = 0, packetOutcome = null;
+  const admission = { evaluatePr: async (_job, packet) => { evaluated++; packetOutcome = await packet().then(() => 'arrived', e => e.code); return { status: 'ADMITTED' }; } };
   const r = await issuerEvaluate({ github: { readChangedPaths: async () => { throw coded('github_http_403'); } }, admission, job: {}, batchClaim: null })();
-  assert.deepEqual([r, evaluated], [{ status: 'BLOCKED', reason: 'full_admission_github_forbidden', diagnostic: { phase: 'changed_paths' } }, 0]);
+  assert.deepEqual([r, evaluated, packetOutcome], [{ status: 'BLOCKED', reason: 'full_admission_github_forbidden', diagnostic: { phase: 'changed_paths' } }, 1, 'github_http_403']);
   // stage fact (issuer stages 2, 4, 6; clean BLOCKED, zero side effects): refusals are STAGE_CHILD_REFUSED, never transient
   const blocked = reason => ({ status: 'BLOCKED', reason, sideEffects: 0, mayHavePublished: false });
   assert.deepEqual([...ISSUER_REFUSAL_REASONS].sort(), ['REMOTE_REFS_REFUSED', 'full_admission_github_forbidden', 'full_admission_paths_refused']);

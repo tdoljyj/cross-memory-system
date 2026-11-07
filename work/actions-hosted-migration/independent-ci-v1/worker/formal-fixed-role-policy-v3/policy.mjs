@@ -98,14 +98,33 @@ export async function loadFixedRolePolicy(job){
   validateSelectedFacts(job,loaded,Date.now());actual.add(value);return value;
 }
 export function takeActualRolePolicy(value){check(actual.has(value),'ACTUAL_FIXED_ROLE_POLICY_REQUIRED');return value;}
+// bf57ff10 P2 D (2026-11-07): an actual role policy loaded moments ago for the same job (the bridge context's, built
+// just before the session opens, with no adapter run in between) stands in for loading it all again. Only the actual
+// brand, the same canonical job and validateSelectedFacts at the current clock (qualification window included) make it
+// reusable; any doubt returns null and the caller loads anew, so every refusal stays the fresh load's own. isActual is
+// injectable for the offline tests only: the returned value is the caller's own object, never a new brand.
+export function reusableRolePolicy(job,candidate,{now=Date.now(),isActual=v=>actual.has(v)}={}){
+  try{
+    if(!candidate||!isActual(candidate)||canonical(candidate.job)!==canonical(job))return null;
+    validateSelectedFacts(job,{config:candidate.config,sourceManifestBytes:candidate.sourceManifestBytes,qualification:candidate.qualification},now);
+    return candidate;
+  }catch{return null;}
+}
+// The role policy session.finish loaded after the execution, once, for the signer of the same job (bf57ff10 P2 D).
+const finishedPolicies=new WeakMap();
+export function takeFinishedRolePolicy(session,job){
+  const value=sessions.has(session)?finishedPolicies.get(session):undefined;if(sessions.has(session))finishedPolicies.delete(session);
+  if(!value||!actual.has(value))return null;
+  try{return canonical(value.job)===canonical(job)?value:null;}catch{return null;}
+}
 export function validateCleanupObservation(job,o){
   fixedPolicyPath(job.role);check(o?.domain==='production-observation'&&o.fixture===false&&canonical(o.subject)===canonical(subjectOf(job))&&o.sourceManifestSha256===job.sourceManifestSha256&&o.formalEligible===false&&o.qualificationIssued===false&&o.checksWritten===false,'ACTUAL_ROLE_OBSERVATION_REQUIRED');
   // trivy: observation contract /3 only (DESIGN 64.3; formal-trivy-v4 TRIVY_OBSERVATION_CONTRACT, literal here: the policy imports no adapter).
   if(job.role==='trivy')check(o.contract==='clued.independent-ci.formal-scanner-observation/3'&&o.profile==='required-trivy-three-scanners/1'&&o.scans?.length===3&&o.scans.every(s=>s.cleanupConfirmed===true&&s.complete===true)&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');
   else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
 }
-export async function openFixedRoleSession(job){
-  const context=takeActualRolePolicy(await loadFixedRolePolicy(job));await protectedPath(path.dirname(SERIAL_LOCK),{directory:true});
+export async function openFixedRoleSession(job,{preloaded=null}={}){
+  const context=reusableRolePolicy(job,preloaded)??takeActualRolePolicy(await loadFixedRolePolicy(job));await protectedPath(path.dirname(SERIAL_LOCK),{directory:true});
   const token=randomUUID(),intent=Buffer.from(canonical({contract:'clued.independent-ci.fixed-role-serial-intent/2',token,subject:subjectOf(job),role:job.role,policyFile:context.policyFile,automaticRetryAllowed:false}));
   const h=await fsp.open(SERIAL_LOCK,'wx',0o600);try{await h.writeFile(intent);await h.sync();}finally{await h.close();}const parent=await fsp.open(path.dirname(SERIAL_LOCK),'r');try{await parent.sync();}finally{await parent.close();}
   let finished=false;const unlock=async()=>{await protectedPath(SERIAL_LOCK,{privateFile:true});check((await fsp.readFile(SERIAL_LOCK)).equals(intent),'SERIAL_ROLE_LOCK_CHANGED');await fsp.unlink(SERIAL_LOCK);const dir=await fsp.open(path.dirname(SERIAL_LOCK),'r');try{await dir.sync();}finally{await dir.close();}};
@@ -113,7 +132,7 @@ export async function openFixedRoleSession(job){
     const validator=job.role==='gitleaks'?await import('../formal-gitleaks-v4/adapter.mjs'):job.role==='trivy'?await import('../formal-trivy-v4/adapter.mjs'):await import('../formal-contract-placement-v2/adapter.mjs');
     validator.takeActualObservation(observation,job);validateCleanupObservation(job,observation);check(observation.runtimeIdentity===context.config.runtimeIdentity&&observation.hostAcceptanceRef===context.config.hostAcceptanceRef&&observation.sourceAcceptanceRef===context.config.sourceAcceptanceRef&&observation.image===context.config.image,'ACTUAL_ROLE_RUNTIME_CHANGED');
     const fresh=await loadFixedRolePolicy(job);check(fresh.policyFile===context.policyFile&&canonical(fresh.config)===canonical(context.config),'ROLE_AUTHORITY_CHANGED_AFTER_EXECUTION');
-    await unlock();finished=true;return{status:'ACTUAL_ROLE_SERIAL_SLOT_RELEASED',role:job.role,observationSha256:digest(observation),qualificationIssued:false,checksWritten:false};
+    await unlock();finishedPolicies.set(session,fresh);finished=true;return{status:'ACTUAL_ROLE_SERIAL_SLOT_RELEASED',role:job.role,observationSha256:digest(observation),qualificationIssued:false,checksWritten:false};
   },
   // Only after the adapter's own clean BLOCKED with sideEffectsMayHaveStarted===false (no scanner touched the
   // PR and no snapshot is retained; trivy's cache refusal may have run cache-only containers and keeps its run
