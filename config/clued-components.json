@@ -654,7 +654,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -665,7 +665,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "d7d607f2df1dbb10f9de15037f7cab2674b6501a19da1ddbb04dd459114941ce"
+      "content_sha256": "184fda3670d3ca9e42219f77f50f1fbc9219f3193834a2648934eb4d989bc51c"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -859,7 +859,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "81a17ba45adca31ce999ea6976bdd2e3a04dbb0146c40fa66cb7153c81074aa3"
+      "content_sha256": "b7b0167c3ef1a0d13b1b676cce6fd650db04ccf26423965e89716115ad3c4dc2"
     }
   ]
 }
