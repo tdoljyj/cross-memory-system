@@ -70,16 +70,19 @@ export async function loadLinuxContext(job=null){
   const context=freeze({side:'linux',role,...loaded,policy:loaded,manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});contexts.add(context);return context;
 }
 // bf57ff10 P2 C (2026-11-07): the context of the public relay (relay-record.mjs), which only moves public bytes between
-// the fixed spools (no job, key, API or authority of its own). It keeps every check of the role policy, the Source
-// manifest and the qualification that loadLinuxContext makes: the root principal, loadQualifiedPolicyV2 (the protected
-// private policy file and its shape, the Docker socket, every runtime path, the pinned entry/docker/node/git/qualification/
-// worker/proof/job bytes, the manifest hash, the qualification signature and payload), validateSelectedFacts at the
-// current clock (Source context, qualification window, role pins and their required paths, role configuration), the
-// accepted relay descriptor, the entry file and the shape and completeness of the role's Source pins. It does NOT
-// re-hash the 162 pinned Source files or ask Git about the checkout (checkLinuxSource, trackedSource: about 1 s per relay
-// call): the Linux worker still does both in loadLinuxContext when it starts and again in every callback before it adopts
-// a response, so nothing a drifted Source could start, answer or sign gets past it. It is not an accepted bridge
-// context (never in `contexts`): it cannot open the accepted mailbox or reach the signer.
+// the fixed spools (no job, key, API or authority of its own); the Linux worker also uses it as the part of each
+// callback's reload that must pass before a challenge is written (linux-worker.mjs, review MAJOR-1).
+// What it checks, as loadLinuxContext does: the root principal; loadQualifiedPolicyV2 (the protected private policy file
+// and its shape, the Docker socket, every runtime path, the pinned entry/docker/node/git/qualification/worker/proof/job
+// bytes, the running node, the manifest hash, the qualification signature and payload); validateSelectedFacts at the
+// current clock (Source context, qualification window, role pins and their required paths, role configuration); the
+// accepted relay descriptor; the entry file; the shape and completeness of the bridge's Source pins (validateSourcePins).
+// What it does NOT check, unlike loadLinuxContext / loadFixedRolePolicy (about 1 s together): the Git checkout
+// (trackedSource: no shared/shallow repository, HEAD = the manifest's sourceSha, the tree, `git hash-object` of every role
+// pin, a clean status), the bytes of the pinned Source files on disk (checkLinuxSource and trackedSource), trivy's cache
+// root (protectedPath of formalTrivy.cacheRoot) and gitleaks' host python pin. The Linux worker still makes all of these
+// in loadLinuxContext when it starts and in every callback before it adopts a response or signs. It is not an accepted
+// bridge context (never in `contexts`): it cannot open the accepted mailbox or reach the signer.
 export function relayContextOf(job,loaded,now=Date.now()){
   const facts=validateSelectedFacts(job,loaded,now),{config}=loaded,role=job.role;
   check(SCANNER_ROLES_V2.includes(role)&&facts.manifest.roles?.[role],'FORMAL_SCANNER_PROFILE_REQUIRED');

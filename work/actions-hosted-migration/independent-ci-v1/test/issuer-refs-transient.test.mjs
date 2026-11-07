@@ -294,6 +294,26 @@ test('issuer (gitleaks): a remote-refs round takes the admission and the refs si
   }
 });
 
+// review MINOR 6: refs taken beside a slow admission are collected once more after it when they aged past
+// ISSUE_FRESH_MARGIN_MS, so the answer is never staler than the sequential one was.
+test('issuer (gitleaks): refs that aged past the margin while the admission ran are collected again after it', WINDOWS, async t => {
+  const f = issuerFixture(t), root = await spool(t);
+  let skew = 0, evaluations = 0; const collected = [];
+  const evaluate = async () => { if (++evaluations === 2) { await new Promise(r => setTimeout(r, 30)); skew += 11_000; } return facts(f.job, f.c); };
+  const collect = async () => { const v = { ...refsSnapshot(Date.now() + skew), refs: [{ name: 'refs/heads/main', objectSha: BASE }, { name: `refs/tags/n${collected.length}`, objectSha: BASE }] }; collected.push(v); return v; };
+  const linux = linuxSide(async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'remote-refs', 1)));
+    const response = decode(await waitFor(path.join(root, 'outgoing', 'response-01.json')));
+    assert.deepEqual(response.remoteRefs, collected[2], 'the answer is the collection taken after the admission');
+    await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE')));
+  });
+  const r = await runIssuer({ context: f.context, evaluate, collect, box: await createFixtureMailbox(root, 'windows'), sleep: backoffSleep([]), signal: linux.signal,
+    clock: () => Date.now() + skew, stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, collected.length], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 3]);
+});
+
 // ---- 2. the refs snapshot is fresh at the response's issuance ----
 test('protocol v4: a remote-refs response is fresh at its issuance and only has to arrive inside its window; the adapter may measure from that issuance', () => {
   const { jobs } = setup(), gl = jobs.gitleaks, c = claim();

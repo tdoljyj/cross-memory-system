@@ -107,25 +107,33 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
     // (timedFetch below), and every answer given after the subject check waits for it and is replaced by
     // full_admission_subject_invalid when it failed or is invalid, which is what a given invalid packet returned before
     // anything else. The facts are assembled only after every read (mode, PR, packet, evaluation) is complete.
+    // The guarantee is "no Native contact without a valid packet" (Native verify carries pr_ref: a write); GitHub reads
+    // may run meanwhile, but once the packet has failed or is invalid every further read of this evaluation throws at
+    // once instead of being sent (review MINOR 2: no read budget spent on an answer that can no longer count).
     async evaluatePr(job, packet, options = {}) {
       if (!configured || typeof tokenProvider !== 'function' || typeof recorderProvider !== 'function'
         || typeof fetchImpl !== 'function' || typeof clock !== 'function') return blocked('full_admission_not_configured');
       const deferred = typeof packet === 'function';
-      const packetRead = deferred ? Promise.resolve().then(packet).then(value => ({ ok: true, value }), () => ({ ok: false })) : null;
+      let packetRefused = false;
+      const packetRead = deferred ? Promise.resolve().then(packet).then(value => ({ ok: true, value }), () => ({ ok: false }))
+        .then(p => { if (!p.ok || !packetValid(job, p.value)) packetRefused = true; return p; }) : null;
+      const refusedNow = () => { if (packetRefused) throw Object.assign(new Error('full_admission_packet_refused'), { code: 'full_admission_packet_refused' }); };
       const packetGate = async () => {
         const p = await packetRead;
         if (!p.ok || !packetValid(job, p.value)) throw Object.assign(new Error('full_admission_packet_refused'), { code: 'full_admission_packet_refused' });
         return p.value;
       };
       let pastSubject = false;
-      const answer = await evaluateWith(job, deferred ? null : packet, options, { deferred, packetGate, past: () => { pastSubject = true; } });
+      const answer = await evaluateWith(job, deferred ? null : packet, options, { deferred, packetGate, refusedNow, past: () => { pastSubject = true; } });
       if (!deferred || !pastSubject) return answer;
       const p = await packetRead;
       return p.ok && packetValid(job, p.value) ? answer : blocked('full_admission_subject_invalid');
     },
   });
-  async function evaluateWith(job, packet, options, { deferred, packetGate, past }) {
+  async function evaluateWith(job, packet, options, { deferred, packetGate, refusedNow, past }) {
       let phase = 'mode';
+      // Every GitHub read of a deferred-packet evaluation stops at once when the packet has already failed.
+      const readFetch = deferred ? (url, opts) => { refusedNow(); return fetchImpl(url, opts); } : fetchImpl;
       try {
         validateJobV2(job);
         const batchClaim = options?.batchClaim ?? null;
@@ -146,7 +154,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           && credentials.ciPrincipalQualificationRef === config.ciPrincipalQualificationRef;
         const modeRead = (async () => { const value = typeof modeProvider === 'function' ? await modeProvider() : config.modeObservation; return { value, at: clock() }; })();
         const principalRead = Promise.resolve().then(() => tokenProvider());
-        const prRead = principalRead.then(c => credentialsValid(c) ? githubJson(fetchImpl, { GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: c.githubToken }, `/repos/${REPO}/pulls/${job.pr}`) : null);
+        const prRead = principalRead.then(c => credentialsValid(c) ? githubJson(readFetch, { GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: c.githubToken }, `/repos/${REPO}/pulls/${job.pr}`) : null);
         const [modeResult, principalResult, prResult] = await Promise.allSettled([modeRead, principalRead, prRead]);
         if (modeResult.status === 'rejected') throw modeResult.reason;
         const mode = modeResult.value.value, modeReturnedAt = modeResult.value.at;
@@ -174,7 +182,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         const prBase = pr.base.sha;
         // A-strict: the claim is whatever the PR names NOW (body trailer, else head commit trailer).
         phase = 'claim_reference'; let reference = parseClaimReference(pr.body);
-        if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
+        if (!reference) reference = parseClaimReference((await githubJson(readFetch, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
         if (!reference || !uuid.test(reference.claim_id ?? '')) return blocked('full_admission_claim_missing');
         if (reference.scope !== config.scope || (batchClaim && reference.claim_id !== batchClaim.claimId)) return blocked('full_admission_claim_changed');
         // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
@@ -184,6 +192,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         // A deferred packet gates every Native RPC of the evaluation: none is sent before the packet is complete and valid.
         const timedFetch = async (url, opts) => {
           if (deferred && String(url).includes('/rest/v1/rpc/')) await packetGate();
+          else if (deferred) refusedNow();
           if (String(url).endsWith(`/rest/v1/rpc/${VERIFY_RPC}`)) verifySentMono = monotonic();
           return fetchImpl(url, opts);
         };
@@ -203,7 +212,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== prBase || outcome.pr_ref !== prRef
           || outcome.claim_id !== reference.claim_id || outcome.scope !== config.scope
           || digest([...outcome.changed_paths].sort()) !== digest([...packet.paths].sort())
-          || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
+          || !samePr(await githubJson(readFetch, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
         phase = 'native'; const claim = native?.claim;
         if (native?.status !== 'ok' || native.verdict !== 'ADMITTED' || native.execution_authorized !== true
           || !supportedNativeExecution(native.execution_policy, claim?.lease_key_required)

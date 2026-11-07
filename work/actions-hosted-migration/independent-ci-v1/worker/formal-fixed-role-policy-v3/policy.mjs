@@ -101,15 +101,16 @@ export function takeActualRolePolicy(value){check(actual.has(value),'ACTUAL_FIXE
 // bf57ff10 P2 D (2026-11-07): an actual role policy loaded moments ago for the same job (the bridge context's, built
 // just before the session opens, with no adapter run in between) stands in for loading it all again. Only the actual
 // brand, the same canonical job and validateSelectedFacts at the current clock (qualification window included) make it
-// reusable; any doubt returns null and the caller loads anew, so every refusal stays the fresh load's own. isActual is
-// injectable for the offline tests only: the returned value is the caller's own object, never a new brand.
-export function reusableRolePolicy(job,candidate,{now=Date.now(),isActual=v=>actual.has(v)}={}){
+// reusable; any doubt returns null and the caller loads anew, so every refusal stays the fresh load's own.
+// sameRolePolicyFacts: the pure part (no brand), for the offline tests; it grants nothing.
+export function sameRolePolicyFacts(job,candidate,now=Date.now()){
   try{
-    if(!candidate||!isActual(candidate)||canonical(candidate.job)!==canonical(job))return null;
+    if(!candidate||canonical(candidate.job)!==canonical(job))return false;
     validateSelectedFacts(job,{config:candidate.config,sourceManifestBytes:candidate.sourceManifestBytes,qualification:candidate.qualification},now);
-    return candidate;
-  }catch{return null;}
+    return true;
+  }catch{return false;}
 }
+export function reusableRolePolicy(job,candidate){return candidate&&actual.has(candidate)&&sameRolePolicyFacts(job,candidate,Date.now())?candidate:null;}
 // The role policy session.finish loaded after the execution, once, for the signer of the same job (bf57ff10 P2 D).
 const finishedPolicies=new WeakMap();
 export function takeFinishedRolePolicy(session,job){

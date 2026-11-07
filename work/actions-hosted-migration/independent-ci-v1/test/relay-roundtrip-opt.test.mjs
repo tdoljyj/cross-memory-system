@@ -25,7 +25,7 @@ import { createAclProbeMailbox, takeActualMailbox, spoolAclArgs, WINDOWS_ROOT, L
 import { issueBinding } from '../worker/protected-job-bridge-v4/relay-record.mjs';
 import { issuerEvaluate } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { makeIssue, makeResponse, encode, decode } from '../worker/protected-job-bridge-v4/protocol.mjs';
-import { requiredSourcePaths, reusableRolePolicy, takeFinishedRolePolicy } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
+import { requiredSourcePaths, reusableRolePolicy, sameRolePolicyFacts, takeFinishedRolePolicy } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
 import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { HEAD, BASE, admittedFacts, hex } from './resident-v2-fixtures.mjs';
@@ -181,6 +181,9 @@ test('B: absence, refusals and their order are the per-file ones', async t => {
   // the helper refuses only the data file: ready read and valid, then the data file's own refusal
   w = await probeWorld(t, ts => ts.some(f => f.endsWith('result.json') && !f.endsWith('ready.json'))); await w.put('result', Buffer.from('{}'));
   await assert.rejects(w.box.read('result'), { code: 2 }); assert.deepEqual(w.calls, [[R('result'), D('result')], [R('result')], [D('result')]]);
+  // the joint call refused while each file alone passes: the read still fails, with its fixed code (review MINOR 1)
+  w = await probeWorld(t, ts => ts.length === 2); await w.put('result', Buffer.from('{}'));
+  await assert.rejects(w.box.read('result'), { code: 'FORMAL_MAILBOX_ACL_JOINT_REFUSED' }); assert.deepEqual(w.calls, [[R('result'), D('result')], [R('result')], [D('result')]]);
   // an invalid ready marker wins over a refused data file, as when the marker was checked and read first
   w = await probeWorld(t, ts => ts.some(f => f.endsWith('result.json') && !f.endsWith('ready.json'))); await w.put('result', Buffer.from('{}'), '{"bytes":2}');
   await assert.rejects(w.box.read('result'), { code: 'FORMAL_MAILBOX_READY_REQUIRED' });
@@ -261,7 +264,7 @@ const workerUrl = new URL('linux-worker.mjs', BRIDGE);
 const stub = lines => 'data:text/javascript;base64,' + Buffer.from(lines.join('\n')).toString('base64');
 const H = 'globalThis.__roundTripHarness';
 const stubs = {
-  './boundary.mjs': stub([`export async function loadLinuxContext(job){return ${H}.load(job);}`, 'export function takeAcceptedBridgeContext(c){return c;}']),
+  './boundary.mjs': stub([`export async function loadLinuxContext(job){return ${H}.load(job);}`, `export async function loadLinuxRelayContext(job){return ${H}.relay(job);}`, 'export function takeAcceptedBridgeContext(c){return c;}']),
   './mailbox.mjs': stub([`export async function openAcceptedMailbox(){return ${H}.box;}`, 'export function takeActualMailbox(b){return b;}']),
   './signed-result.mjs': stub([`export async function signActualBridgeResult(context,issue,observation,options){${H}.signed.push(options);return {signed:true};}`]),
   '../formal-gitleaks-v4/adapter.mjs': stub([`export function createFormalGitleaksAdapter(ports){return ${H}.adapter(ports);}`]),
@@ -270,21 +273,30 @@ const stubs = {
   '../formal-fixed-role-policy-v3/policy.mjs': stub([`export async function openFixedRoleSession(job,options){${H}.opened.push(options);return ${H}.session;}`, 'export function takeActualRoleSession(s){return s;}']),
   './issue-job.mjs': stub([`export async function readFixedIssueJob(){return ${H}.job;}`]),
 };
-let workerSource = await fs.readFile(workerUrl, 'utf8');
-for (const [relative, url] of Object.entries(stubs)) { const quoted = `'${relative}'`; assert.equal(workerSource.split(quoted).length, 2, 'one import of ' + relative); workerSource = workerSource.replace(quoted, JSON.stringify(url)); }
-workerSource = workerSource.replace(/from (['"])(\.[^'"]+)\1/g, (_all, _q, relative) => `from ${JSON.stringify(new URL(relative, workerUrl).href)}`);
-const { executeProtectedIssuedJob } = await import('data:text/javascript;base64,' + Buffer.from(workerSource).toString('base64'));
+// nativeScanStart: the same worker with the Source requiring a Native scan start (grant.mjs NATIVE_SCAN_START_REQUIRED).
+async function loadWorker({ nativeScanStart = false } = {}) {
+  let source = await fs.readFile(workerUrl, 'utf8');
+  const all = { ...stubs };
+  if (nativeScanStart) { const grant = new URL('../../src/scan-start-v1/grant.mjs', workerUrl).href;
+    all['../../src/scan-start-v1/grant.mjs'] = stub([`export * from ${JSON.stringify(grant)};`, 'export const NATIVE_SCAN_START_REQUIRED=true;']); }
+  for (const [relative, url] of Object.entries(all)) { const quoted = `'${relative}'`; assert.equal(source.split(quoted).length, 2, 'one import of ' + relative); source = source.replace(quoted, JSON.stringify(url)); }
+  source = source.replace(/from (['"])(\.[^'"]+)\1/g, (_all, _q, relative) => `from ${JSON.stringify(new URL(relative, workerUrl).href)}`);
+  return (await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))).executeProtectedIssuedJob;
+}
+const executeProtectedIssuedJob = await loadWorker();
 
 const PACKET = { complete: true, paths: ['a.txt'] };
-// load(n): the n-th authority reload (0 = the start); answer(n): when the response to challenge n appears.
-function harness({ load = () => ({}), answer = async () => {}, adapterCalls = 1 } = {}) {
+// relay(n): the n-th callback's pre-challenge check (policy/manifest/qualification/refs); load(n): the n-th full
+// authority reload (0 = the start); answer(n): when the response to challenge n appears.
+function harness({ relay = () => ({}), load = () => ({}), answer = async () => {}, adapterCalls = 1, scanStart = false } = {}) {
   const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'e'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 }).trivy;
   const claim = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
   const context = { role: 'trivy', config: { sourceManifestSha256: job.sourceManifestSha256 }, sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), policy: { marker: 'start-policy' } };
   const issue = makeIssue(job, admittedFacts(job, claim, PACKET, { batchClaim: claim }), null, { sourceAcceptanceRef: context.sourceAcceptanceRef, hostQualificationRef: context.hostQualificationRef, expiresAt: iso(Date.now() + 600_000) });
   const files = new Map([['issue', Buffer.from(encode(issue))]]), events = [];
-  let loads = 0;
+  let loads = 0, relays = 0;
   const h = { job, context, events, signed: [], opened: [], adapterValues: [], adapterErrors: [],
+    relay: async () => { const n = relays++; events.push(`relay-start:${n}`); const v = await relay(n); events.push(`relay-end:${n}`); return { ...context, ...v }; },
     load: async () => { const n = loads++; events.push(`load-start:${n}`); const v = await load(n); events.push(`load-end:${n}`); return { ...context, ...v }; },
     box: { async lock() {}, async read(name) { return files.get(name); },
       async write(name, bytes) { files.set(name, Buffer.from(bytes)); events.push(`write:${name}`); },
@@ -296,8 +308,9 @@ function harness({ load = () => ({}), answer = async () => {}, adapterCalls = 1 
           const done = await Promise.race([gate.then(() => true), new Promise(r => setTimeout(() => r(false), 20))]);
           if (done) { events.push(`response:${n}`); return Buffer.from(encode(makeResponse(issue, challenge, admittedFacts(job, claim, PACKET, { batchClaim: claim }), null))); }
         } } },
-    session: { async finish(o) { events.push('finish'); }, async releaseClean() { events.push('release'); } },
+    session: { async finish() { events.push('finish'); }, async releaseClean() { events.push('release'); } },
     adapter: ports => ({ async execute(subject) {
+      if (scanStart) { try { await ports.scanStartPort(subject); } catch (e) { h.adapterErrors.push(e.code); throw e; } }
       let last;
       for (let i = 0; i < adapterCalls; i++) {
         try { last = await ports.admissionPort(subject); h.adapterValues.push(last); events.push('adapter-got-value'); } catch (e) { h.adapterErrors.push(e.code); throw e; }
@@ -306,55 +319,94 @@ function harness({ load = () => ({}), answer = async () => {}, adapterCalls = 1 
     } }) };
   globalThis.__roundTripHarness = h; return h;
 }
+const at = (h, e) => h.events.indexOf(e);
+const olderPost = h => { const adapter = h.adapter; h.adapter = ports => { const a = adapter(ports); return { async execute(s) { const o = await a.execute(s); return { ...o, observation: { ...o.observation, postAdmissionSha256: 'f'.repeat(64) } }; } }; }; };
 
-test('D: the authority reload runs while Windows answers, and the response is used only after it passed', async () => {
+test('D: policy, manifest, qualification and refs pass before the challenge; only the Source re-hash overlaps the wait', async () => {
   const slow = deferred();
   const h = harness({ load: n => n === 1 ? slow.promise.then(() => ({})) : {}, answer: async () => {} });
   const run = executeProtectedIssuedJob();
   for (let i = 0; i < 50 && !h.events.includes('response:1'); i++) await new Promise(r => setTimeout(r, 10));
-  assert.ok(h.events.indexOf('write:challenge-01') < h.events.indexOf('response:1'));
-  assert.ok(h.events.indexOf('load-start:1') < h.events.indexOf('write:challenge-01'), 'the reload started before the challenge');
-  assert.ok(!h.events.includes('load-end:1') && !h.events.includes('adapter-got-value'), 'the response waits for the reload; the adapter has nothing yet');
+  assert.ok(at(h, 'relay-end:0') < at(h, 'write:challenge-01'), 'the pre-challenge check completed before the challenge');
+  assert.ok(at(h, 'load-start:1') < at(h, 'write:challenge-01') && at(h, 'write:challenge-01') < at(h, 'response:1'));
+  assert.ok(!h.events.includes('load-end:1') && !h.events.includes('adapter-got-value'), 'the response waits for the re-hash; the adapter has nothing yet');
   slow.resolve();
   const r = await run;
   assert.equal(r.status, 'ACTUAL_SIGNED_ROLE_RESULT_EMITTED');
-  assert.ok(h.events.indexOf('load-end:1') < h.events.indexOf('adapter-got-value'));
-  assert.ok(h.events.indexOf('adapter-got-value') < h.events.indexOf('finish') && h.events.indexOf('finish') < h.events.length);
+  assert.ok(at(h, 'load-end:1') < at(h, 'adapter-got-value') && at(h, 'adapter-got-value') < at(h, 'finish'));
   // memoized start and end: the session reuses the start context's policy, the signer the session's post-execution load
   assert.deepEqual(h.opened, [{ preloaded: { marker: 'start-policy' } }]);
   assert.deepEqual(h.signed, [{ session: h.session }]);
 });
 
-test('D: an authority refusal fails closed with its own code: the response is never used and nothing is signed', async () => {
-  for (const [what, load] of [['changed refs', n => n === 1 ? { sourceAcceptanceRef: randomUUID() } : {}], ['changed manifest', n => n === 1 ? { config: { sourceManifestSha256: 'f'.repeat(64) } } : {}],
-    ['a Source drift', n => { if (n === 1) throw coded('ACTUAL_TRACKED_SOURCE_BYTES_CHANGED'); return {}; }]]) {
+test('D: a refusal of the pre-challenge check writes NO challenge; a Source drift found meanwhile is never used, nothing signed', async () => {
+  for (const [what, relay, code] of [['changed refs', n => n === 0 ? { sourceAcceptanceRef: randomUUID() } : {}, 'FORMAL_CALLBACK_AUTHORITY_CHANGED'],
+    ['changed manifest', n => n === 0 ? { config: { sourceManifestSha256: 'f'.repeat(64) } } : {}, 'FORMAL_CALLBACK_AUTHORITY_CHANGED'],
+    ['expired qualification', n => { if (n === 0) throw coded('ACTUAL_ROLE_QUALIFICATION_REQUIRED'); return {}; }, 'ACTUAL_ROLE_QUALIFICATION_REQUIRED']]) {
+    const h = harness({ relay });
+    const r = await executeProtectedIssuedJob();
+    assert.deepEqual([r.status, r.reason, h.adapterErrors, h.signed.length, h.events.some(e => e.startsWith('write:challenge'))], ['UNCERTAIN', code, [code], 0, false], what);
+    assert.ok(!h.events.includes('load-start:1'), `${what}: the re-hash never starts`);
+  }
+  for (const [what, load, code] of [['changed refs in the full reload', n => n === 1 ? { sourceAcceptanceRef: randomUUID() } : {}, 'FORMAL_CALLBACK_AUTHORITY_CHANGED'],
+    ['a Source drift', n => { if (n === 1) throw coded('ACTUAL_TRACKED_SOURCE_BYTES_CHANGED'); return {}; }, 'ACTUAL_TRACKED_SOURCE_BYTES_CHANGED']]) {
     const h = harness({ load });
     const r = await executeProtectedIssuedJob();
-    const code = what === 'a Source drift' ? 'ACTUAL_TRACKED_SOURCE_BYTES_CHANGED' : 'FORMAL_CALLBACK_AUTHORITY_CHANGED';
     assert.deepEqual([r.status, r.reason, h.adapterErrors, h.adapterValues.length, h.signed.length, h.events.includes('finish')], ['UNCERTAIN', code, [code], 0, 0, false], what);
   }
 });
 
-test('D: a refusal cuts the wait short and wins over the wait\'s own failure; a final-admission refusal stops the signing', async () => {
+test('D: a scan-start still completes the whole reload before its challenge; its refusal writes none', async () => {
+  const native = await loadWorker({ nativeScanStart: true });
+  const slow = deferred();
+  let h = harness({ scanStart: true, load: n => n === 1 ? slow.promise.then(() => ({})) : {} });
+  const run = native();
+  for (let i = 0; i < 30 && !h.events.includes('load-start:1'); i++) await new Promise(r => setTimeout(r, 10));
+  await new Promise(r => setTimeout(r, 30));
+  assert.ok(h.events.includes('load-start:1') && !h.events.some(e => e.startsWith('write:challenge')), 'no challenge while the reload runs');
+  slow.resolve(); await run;
+  assert.ok(at(h, 'load-end:1') < at(h, 'write:challenge-01'));
+  assert.ok(!h.events.includes('relay-start:0'), 'the scan-start round takes the full reload, not the split one');
+  h = harness({ scanStart: true, load: n => { if (n === 1) throw coded('ACTUAL_TRACKED_SOURCE_BYTES_CHANGED'); return {}; } });
+  const r = await native();
+  assert.deepEqual([r.reason, h.adapterErrors, h.events.some(e => e.startsWith('write:challenge'))], ['ACTUAL_TRACKED_SOURCE_BYTES_CHANGED', ['ACTUAL_TRACKED_SOURCE_BYTES_CHANGED'], false]);
+});
+
+test('D: a re-hash refusal cuts the wait short and wins over the write\'s or the wait\'s own failure; a final-admission refusal stops the signing', async () => {
   // Windows never answers: the refusal ends the wait at once instead of at the deadline, and its code is reported
   let h = harness({ load: n => { if (n === 1) return new Promise((_, no) => setTimeout(() => no(coded('ROLE_SOURCE_GIT_UNCONFIRMED')), 50)); return {}; }, answer: () => new Promise(() => {}) });
   const started = Date.now(); let r = await executeProtectedIssuedJob();
   assert.deepEqual([r.reason, h.adapterErrors, h.signed.length], ['ROLE_SOURCE_GIT_UNCONFIRMED', ['ROLE_SOURCE_GIT_UNCONFIRMED'], 0]);
   assert.ok(h.events.includes('wait-cut:1') && Date.now() - started < 5000);
-  // the wait fails first (deadline-like), the reload refuses later: the reload's code, as when it ran first
-  h = harness({ load: n => n === 1 ? new Promise((_, no) => setTimeout(() => no(coded('FORMAL_CALLBACK_AUTHORITY_CHANGED')), 150)) : {}, answer: () => Promise.reject(coded('FORMAL_MAILBOX_WAIT_UNCONFIRMED')) });
+  // the wait fails first (deadline-like), the re-hash refuses later: the re-hash's code, as when it ran first
+  h = harness({ load: n => n === 1 ? new Promise((_, no) => setTimeout(() => no(coded('FORMAL_CALLBACK_AUTHORITY_CHANGED')), 150)) : {} });
   h.box.wait = async () => { h.events.push('wait-failed'); throw coded('FORMAL_MAILBOX_WAIT_UNCONFIRMED'); };
   r = await executeProtectedIssuedJob();
   assert.deepEqual([r.reason, h.adapterErrors], ['FORMAL_CALLBACK_AUTHORITY_CHANGED', ['FORMAL_CALLBACK_AUTHORITY_CHANGED']]);
-  // the wait fails and the reload passes: the wait's own code
+  // the challenge write fails, the re-hash refuses later: the re-hash's code
+  h = harness({ load: n => n === 1 ? new Promise((_, no) => setTimeout(() => no(coded('ACTUAL_SOURCE_COMMIT_CHANGED')), 100)) : {} });
+  const write = h.box.write;
+  h.box.write = async (name, bytes) => { if (name.startsWith('challenge-')) throw coded('ENOSPC'); return write(name, bytes); };
+  r = await executeProtectedIssuedJob();
+  assert.deepEqual([r.reason, h.adapterErrors], ['ACTUAL_SOURCE_COMMIT_CHANGED', ['ACTUAL_SOURCE_COMMIT_CHANGED']]);
+  // the write fails and the re-hash passes: the write's own code
+  h = harness();
+  const write2 = h.box.write;
+  h.box.write = async (name, bytes) => { if (name.startsWith('challenge-')) throw coded('ENOSPC'); return write2(name, bytes); };
+  r = await executeProtectedIssuedJob();
+  assert.deepEqual([r.reason, h.adapterErrors], ['ENOSPC', ['ENOSPC']]);
+  // the wait fails and the re-hash passes: the wait's own code
   h = harness();
   h.box.wait = async () => { throw coded('FORMAL_MAILBOX_WAIT_UNCONFIRMED'); };
   r = await executeProtectedIssuedJob();
   assert.deepEqual([r.reason, h.adapterErrors], ['FORMAL_MAILBOX_WAIT_UNCONFIRMED', ['FORMAL_MAILBOX_WAIT_UNCONFIRMED']]);
-  // the observation names an older admission, so one more admission round runs before signing; its reload refuses: no signature
-  h = harness({ adapterCalls: 2, load: n => n === 3 ? { sourceAcceptanceRef: randomUUID() } : {} });
-  const adapter = h.adapter;
-  h.adapter = ports => { const a = adapter(ports); return { async execute(s) { const o = await a.execute(s); return { ...o, observation: { ...o.observation, postAdmissionSha256: 'f'.repeat(64) } }; } }; };
+  // the observation names an older admission, so one more admission round runs before signing; its check refuses: no
+  // challenge for it and no signature
+  h = harness({ adapterCalls: 2, relay: n => n === 2 ? { sourceAcceptanceRef: randomUUID() } : {} }); olderPost(h);
+  r = await executeProtectedIssuedJob();
+  assert.deepEqual([r.status, r.reason, h.signed.length, h.events.includes('finish'), h.events.includes('write:challenge-03')], ['UNCERTAIN', 'FORMAL_CALLBACK_AUTHORITY_CHANGED', 0, false, false]);
+  // and its re-hash refuses: the challenge went out, but nothing is signed
+  h = harness({ adapterCalls: 2, load: n => n === 3 ? { sourceAcceptanceRef: randomUUID() } : {} }); olderPost(h);
   r = await executeProtectedIssuedJob();
   assert.deepEqual([r.status, r.reason, h.signed.length, h.events.includes('finish')], ['UNCERTAIN', 'FORMAL_CALLBACK_AUTHORITY_CHANGED', 0, false]);
   assert.ok(h.events.includes('write:challenge-03'));
@@ -362,14 +414,14 @@ test('D: a refusal cuts the wait short and wins over the wait\'s own failure; a 
 
 test('D: the start and finish policies are reused only for the same actual job at the current clock', () => {
   const w = relayWorld(), loaded = { ...w.loaded, job: structuredClone(w.job) };
-  const actual = () => true;
-  assert.equal(reusableRolePolicy(w.job, loaded, { isActual: actual }), loaded);
+  assert.equal(sameRolePolicyFacts(w.job, loaded), true);
   assert.equal(reusableRolePolicy(w.job, loaded), null, 'not an actual brand: load anew');
-  assert.equal(reusableRolePolicy(w.job, null, { isActual: actual }), null);
-  assert.equal(reusableRolePolicy({ ...w.job, attempt: 2 }, loaded, { isActual: actual }), null, 'another job');
+  assert.equal(sameRolePolicyFacts(w.job, null), false);
+  assert.equal(sameRolePolicyFacts({ ...w.job, attempt: 2 }, loaded), false, 'another job');
   const expired = relayWorld({ expiresAt: Date.now() + 1000 }), old = { ...expired.loaded, job: expired.job };
-  assert.equal(reusableRolePolicy(expired.job, old, { isActual: actual, now: Date.now() + 2000 }), null, 'the qualification ran out since: load anew (which refuses)');
-  assert.equal(reusableRolePolicy(w.job, { ...loaded, config: { ...loaded.config, sourceManifestSha256: 'f'.repeat(64) } }, { isActual: actual }), null);
+  assert.equal(sameRolePolicyFacts(expired.job, old, Date.now() + 2000), false, 'the qualification ran out since: load anew (which refuses)');
+  assert.equal(sameRolePolicyFacts(w.job, { ...loaded, config: { ...loaded.config, sourceManifestSha256: 'f'.repeat(64) } }), false);
+  assert.equal(reusableRolePolicy.length, 2, 'no injectable brand check in the production API');
   assert.equal(takeFinishedRolePolicy({}, w.job), null, 'only a real finished session hands its policy to the signer');
 });
 
@@ -378,7 +430,7 @@ test('D: the start and finish policies are reused only for the same actual job a
 // ================================================================================================================
 const SCOPE = `project:${randomUUID()}`;
 const NATIVE_RPC = 'https://fixture.supabase.co/rest/v1/rpc/clued_work_verify_v1';
-function admissionWorld({ modeDelay = 0, modeThrows = null, modeValue = null, tokenThrows = null, credentials = null, prStatus = 200, nativeLog = [] } = {}) {
+function admissionWorld({ modeDelay = 0, modeThrows = null, modeValue = null, tokenThrows = null, credentials = null, prStatus = 200, nativeLog = [], githubReads = 0 } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const claimId = randomUUID(), prRef = `${REPO}#888`, events = [], counts = {};
   const pr = { number: 888, state: 'open', body: `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n`, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
@@ -399,6 +451,7 @@ function admissionWorld({ modeDelay = 0, modeThrows = null, modeValue = null, to
     // the evaluator's shape: GitHub reads, then the Native verify RPC through the fetch it is given, then its outcome
     evaluateImpl: async ({ fetchImpl: f, observation_recorder }) => {
       events.push('evaluate-start');
+      for (let i = 0; i < githubReads; i++) { await f(`https://api.github.com/repos/${REPO}/pulls/888/files?page=${i + 1}`, {}); await new Promise(r => setTimeout(r, 15)); }
       const reply = await (await f(NATIVE_RPC, { method: 'POST', body: '{}' })).json();
       observation_recorder.record('claim_verification', { result: { payload: reply } });
       return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: claimId, scope: SCOPE, changed_paths: ['a.txt'],
@@ -445,6 +498,24 @@ test('E1: a deferred packet that fails or is invalid is the old subject refusal,
     assert.deepEqual(late, given, 'a refusal of the job itself is the given-packet one');
   }
   assert.deepEqual(await w.port.evaluatePr(w.job, async () => w.packet, { extra: 1 }), await w.port.evaluatePr(w.job, w.packet, { extra: 1 }));
+});
+
+test('E1: once the deferred packet has failed, every further GitHub read of the evaluation stops at once; Native is never contacted', async () => {
+  const w = admissionWorld({ githubReads: 20 });
+  const r = await w.port.evaluatePr(w.job, () => new Promise((_, no) => setTimeout(() => no(coded('github_http_502')), 60)));
+  const files = w.events.filter(e => e === 'fetch:/pulls/888/files').length;
+  assert.deepEqual([r.reason, w.counts.native ?? 0], ['full_admission_subject_invalid', 0]);
+  assert.ok(files >= 1 && files < 10, `the evaluation stopped early: ${files} of 20 reads sent`);
+  // through the issuer: the read's own reason, and the evaluation it waits for ends early too
+  const w2 = admissionWorld({ githubReads: 20 }), started = Date.now();
+  const answer = await issuerEvaluate({ github: { readChangedPaths: () => new Promise((_, no) => setTimeout(() => no(coded('github_http_403')), 60)) }, admission: w2.port, job: w2.job, batchClaim: null })();
+  assert.deepEqual(answer, { status: 'BLOCKED', reason: 'full_admission_github_forbidden', diagnostic: { phase: 'changed_paths' } });
+  assert.ok(Date.now() - started < 20 * 15, 'not after all 20 reads');
+  assert.equal(w2.counts.native ?? 0, 0);
+  // a valid packet: every read goes out
+  const w3 = admissionWorld({ githubReads: 5 });
+  assert.equal((await w3.port.evaluatePr(w3.job, async () => w3.packet)).status, 'ADMITTED');
+  assert.equal(w3.events.filter(e => e === 'fetch:/pulls/888/files').length, 5);
 });
 
 test('E1: the mode read and the PR read run side by side; their results are judged in the old order with the old phases', async () => {
@@ -535,14 +606,30 @@ function countingFetch(status = 200) {
 const json = async r => JSON.parse(await r.text());
 const settle = () => new Promise(r => setTimeout(r, 10));
 
+const GJ = { headers: { accept: 'application/vnd.github+json' } };
 test('E3: only SHA-fixed reads are cached, per process; a hit still asserts the lease and returns the same bytes', async () => {
   const immutable = [`${GH}/compare/${A40}...${B40}`, `${GH}/compare/${A40}...${B40}?per_page=1`, `${GH}/commits/${A40}`, `${GH}/contents/.github/workflows/ci.yml?ref=${A40}`];
   const mutable = [`${GH}/pulls/888`, `${GH}/pulls/888/files?per_page=100&page=1`, `${GH}/branches/main`, `${GH}/commits/${A40}/check-runs?filter=all`, `${GH}/compare/main...${B40}`,
     `${GH}/contents/a.txt?ref=main`, `${GH}/commits/main`, `${GH}/commits/${A40}?x=1`, `${GH}/actions/variables?per_page=100&page=1`, `https://api.github.com/app`,
     `https://fixture.supabase.co/rest/v1/rpc/clued_work_verify_v1`, `https://evil.example/repos/${REPO}/commits/${A40}`];
-  for (const u of immutable) assert.equal(immutableGitHubRead(u), true, u);
-  for (const u of mutable) assert.equal(immutableGitHubRead(u), false, u);
-  assert.equal(immutableGitHubRead(immutable[2], { method: 'POST' }), false);
+  for (const u of immutable) assert.equal(immutableGitHubRead(u, GJ), true, u);
+  for (const u of mutable) assert.equal(immutableGitHubRead(u, GJ), false, u);
+  assert.equal(immutableGitHubRead(immutable[2], { ...GJ, method: 'POST' }), false);
+  // review MINOR 3: only the canonical form, no dot segments; only the GitHub JSON media type, however it is given
+  for (const u of [`${GH}/contents/../../../repos/x/y/commits/${A40}?ref=${A40}`, `${GH}/contents/a/./b?ref=${A40}`, `${GH}/contents/a/%2e%2e/b?ref=${A40}`,
+    `${GH}/contents/a/%2E/b?ref=${A40}`, `${GH}/contents/a//b?ref=${A40}`, `https://API.github.com/repos/${REPO}/commits/${A40}`])
+    assert.equal(immutableGitHubRead(u, GJ), false, u);
+  assert.equal(immutableGitHubRead(immutable[2], {}), false, 'no Accept');
+  for (const accept of ['application/vnd.github.raw', 'application/vnd.github+json, */*', '*/*', 'application/json'])
+    assert.equal(immutableGitHubRead(immutable[2], { headers: { accept } }), false, accept);
+  assert.equal(immutableGitHubRead(immutable[2], { headers: { Accept: 'application/vnd.github+json' } }), true, 'any case of the name');
+  assert.equal(immutableGitHubRead(immutable[2], { headers: new Headers({ Accept: 'application/vnd.github+json' }) }), true, 'a Headers instance');
+  assert.equal(immutableGitHubRead(immutable[2], { headers: new Headers({ Accept: 'application/vnd.github.raw' }) }), false);
+  assert.equal(immutableGitHubRead(immutable[2], { headers: { accept: 'application/vnd.github+json', ACCEPT: 'application/vnd.github.raw' } }), false, 'named twice');
+  // a hit keeps only three response headers
+  { const f = async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json', etag: '"x"', 'x-ratelimit-remaining': '1', 'last-modified': 'Sat' } });
+    const x = immutableReadCache(f); await x(immutable[2], GJ); await settle(); const hit = await x(immutable[2], GJ);
+    assert.deepEqual([...hit.headers.keys()].sort(), ['content-type', 'etag', 'last-modified']); }
   let lives = 0; const c = countingFetch(), cached = immutableReadCache(c.f, { live: () => { lives++; } });
   const first = await json(await cached(immutable[2], { headers: { accept: 'application/vnd.github+json' } })); await settle();
   const second = await json(await cached(immutable[2], { headers: { accept: 'application/vnd.github+json' } }));
@@ -551,9 +638,9 @@ test('E3: only SHA-fixed reads are cached, per process; a hit still asserts the 
   assert.equal(c.calls.length, 1 + 2 * mutable.length, 'every mutable read goes out every time');
   assert.equal(cached.size(), 1);
   // only a complete 200 is kept
-  for (const status of [404, 500, 201]) { const e = countingFetch(status), x = immutableReadCache(e.f); await x(immutable[0]); await settle(); await x(immutable[0]); assert.equal(e.calls.length, 2, String(status)); }
+  for (const status of [404, 500, 201]) { const e = countingFetch(status), x = immutableReadCache(e.f); await x(immutable[0], GJ); await settle(); await x(immutable[0], GJ); assert.equal(e.calls.length, 2, String(status)); }
   // another process (another cache) starts empty
-  const again = immutableReadCache(c.f); await again(immutable[2]); assert.equal(c.calls.length, 2 + 2 * mutable.length);
+  const again = immutableReadCache(c.f); await again(immutable[2], GJ); assert.equal(c.calls.length, 2 + 2 * mutable.length);
 });
 
 test('E3 + timing: controllerPorts serves a repeated SHA-fixed read from its cache and logs each fetch as a pattern only', async t => {
@@ -573,6 +660,11 @@ test('E3 + timing: controllerPorts serves a repeated SHA-fixed read from its cac
   assert.equal(fetchUrlPattern(`${GH}/contents/secret/dir/file.txt?ref=${A40}`), 'github/repos/{repo}/contents/{path}?ref');
   assert.equal(fetchUrlPattern(`${GH}/compare/${A40}...${B40}?per_page=1`), 'github/repos/{repo}/compare/{range}?per_page');
   assert.equal(fetchUrlPattern('https://abc.supabase.co/rest/v1/rpc/clued_work_verify_v1'), 'native/rpc/clued_work_verify_v1');
-  assert.equal(fetchUrlPattern('https://abc.supabase.co/rest/v1/table?select=*&token=x'), 'native/{other}?select&token');
+  assert.equal(fetchUrlPattern('https://abc.supabase.co/rest/v1/table?select=*&token=x'), 'native/rest/v1/{seg}?select&{key}');
+  // a fixed vocabulary only (review MINOR 4): unknown path words and query keys become placeholders
+  assert.equal(fetchUrlPattern('https://abc.supabase.co/rest/v1/rpc/secret_function_name'), 'native/rpc/{rpc}');
+  assert.equal(fetchUrlPattern(`https://api.github.com/user/ghs_SECRETTOKEN/whatever?access_token=x&page=2`), 'github/{seg}/{seg}/{seg}?page&{key}');
+  assert.equal(fetchUrlPattern(`${GH}/branches/feature-secret-name`), 'github/repos/{repo}/branches/{seg}');
+  assert.equal(fetchUrlPattern(`${GH}/environments/clued-admission/variables?per_page=100&page=1`), 'github/repos/{repo}/environments/clued-admission/variables?page&per_page');
   assert.equal(fetchUrlPattern('not a url'), 'unparsed');
 });

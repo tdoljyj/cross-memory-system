@@ -80,13 +80,15 @@ async function openFixed({side,root,fixtureOnly=false,nodeProfileSha256=null,acl
       // bf57ff10 P2 B (2026-11-07): on Windows the ready marker and its data file are checked by ONE helper call when both
       // exist (it was one call each: 0.86 s per record read). That call passes exactly when both per-file calls would; in
       // every other case (a file absent, or the joint call refused) the old per-file order below runs unchanged, so each
-      // absence (ENOENT, a normal wait), refusal and its precedence is the old one. Linux and fixtures are unchanged.
-      let checked=false;
+      // absence (ENOENT, a normal wait), refusal and its precedence is the old one. A refused joint call never passes:
+      // the per-file checks only decide which refusal is reported, and when each of them passes the read still fails
+      // with FORMAL_MAILBOX_ACL_JOINT_REFUSED (review MINOR 1). Linux and fixtures are unchanged.
+      let checked=false,jointRefused=false;
       if(windows&&(acl||!fixtureOnly)){await fsp.lstat(readyFile);let both=false;try{await fsp.lstat(dataFile);both=true;}catch{/* the old order reports it */}
-        if(both){try{await guard([readyFile,dataFile],root,o);checked=true;}catch{/* the old order decides which refusal */}}}
+        if(both){try{await guard([readyFile,dataFile],root,o);checked=true;}catch{jointRefused=true;/* the old order decides which refusal */}}}
       const ready=checked?await stableRead(readyFile):await safeFile(readyFile,root,o),r=JSON.parse(ready.toString('utf8'));
       check(canonical(r)===ready.toString('utf8')&&Object.keys(r).sort().join('|')==='bytes|contract|sha256'&&r.contract==='clued.independent-ci.complete-public-file/1'&&Number.isSafeInteger(r.bytes)&&r.bytes>0&&r.bytes<=MAX&&/^[a-f0-9]{64}$/.test(r.sha256??''),'FORMAL_MAILBOX_READY_REQUIRED');
-      const bytes=checked?await stableRead(dataFile):await safeFile(dataFile,root,o);check(bytes.length===r.bytes&&hash(bytes)===r.sha256,'FORMAL_MAILBOX_PACKET_CHANGED');return bytes;
+      const bytes=checked?await stableRead(dataFile):await safeFile(dataFile,root,o);check(bytes.length===r.bytes&&hash(bytes)===r.sha256,'FORMAL_MAILBOX_PACKET_CHANGED');check(!jointRefused,'FORMAL_MAILBOX_ACL_JOINT_REFUSED');return bytes;
     },
     async wait(name,{deadline,signal}={}){check(Number.isFinite(deadline),'FORMAL_MAILBOX_DEADLINE_REQUIRED');while(true){check(!signal?.aborted&&Date.now()<deadline,'FORMAL_MAILBOX_WAIT_UNCONFIRMED');try{return await box.read(name);}catch(e){if(e.code!=='ENOENT')throw e;}await new Promise(resolve=>setTimeout(resolve,100));}}
   });(fixtureOnly?fixture:actual).add(box);return box;

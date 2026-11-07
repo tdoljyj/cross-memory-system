@@ -139,35 +139,62 @@ export function nativeReadPost(supabaseUrl) {
     return !Object.hasOwn(input, 'pr_ref') && (!Object.hasOwn(input, 'ci_dispatch') || input.ci_dispatch === false);
   };
 }
-// bf57ff10 P2 (2026-11-07): the URL pattern of a request for the timing log: fixed words only, never a value. The
-// repository, SHAs, numbers, file paths and query values are replaced by placeholders; another host is 'native'.
+// bf57ff10 P2 (2026-11-07): the URL pattern of a request for the timing log, from a fixed vocabulary only (review
+// MINOR 4): a path word or query key outside it becomes {seg} / {key}; the repository, SHAs, numbers, file paths and
+// compare ranges are placeholders; query values are never kept; another host than api.github.com is 'native'.
+const PATH_WORDS = new Set(['repos', 'pulls', 'files', 'commits', 'check-runs', 'compare', 'contents', 'branches', 'actions', 'variables',
+  'environments', 'clued-admission', 'app', 'installations', 'access_tokens', 'installation', 'repositories', 'git', 'trees', 'rate_limit',
+  'graphql', 'annotations', 'runs', 'jobs', 'rules', 'events', 'issues', 'comments', 'timeline', 'rest', 'v1', 'rpc']);
+const RPC_WORDS = new Set(['clued_work_verify_v1', HOLDERS_RPC]);
+const QUERY_WORDS = new Set(['per_page', 'page', 'ref', 'filter', 'check_name', 'app_id', 'state', 'sort', 'direction', 'select']);
 export function fetchUrlPattern(url) {
   try {
-    const u = new URL(String(url));
-    const host = u.hostname === 'api.github.com' ? 'github' : 'native';
-    let p = u.pathname.replace(/^\/repos\/[^/]+\/[^/]+/, '/repos/{repo}').replace(/\/contents\/.*$/, '/contents/{path}')
-      .replace(/\/compare\/[^/]+$/, '/compare/{range}').replace(/\/[0-9a-f]{40}(?=\/|$)/g, '/{sha}').replace(/\/[0-9a-f]{64}(?=\/|$)/g, '/{sha256}')
-      .replace(/\/\d+(?=\/|$)/g, '/{n}');
-    if (host === 'native') p = p.replace(/^\/rest\/v1\/rpc\/([a-z0-9_]{1,80})$/, '/rpc/$1').replace(/^(?!\/rpc\/[a-z0-9_]+$).*$/, '/{other}');
-    if (!/^[A-Za-z0-9_{}/.-]{1,200}$/.test(p)) p = '/{other}';
-    const keys = [...new Set([...u.searchParams.keys()].filter(k => /^[a-z_]{1,32}$/.test(k)))].sort();
-    return `${host}${p}${keys.length ? `?${keys.join('&')}` : ''}`;
+    const u = new URL(String(url)), github = u.hostname === 'api.github.com', segs = u.pathname.split('/').filter(Boolean), out = [];
+    const word = s => /^[0-9a-f]{40}$/.test(s) ? '{sha}' : /^[0-9a-f]{64}$/.test(s) ? '{sha256}' : /^\d{1,19}$/.test(s) ? '{n}' : PATH_WORDS.has(s) ? s : '{seg}';
+    if (!github && segs.length === 4 && segs[0] === 'rest' && segs[1] === 'v1' && segs[2] === 'rpc') out.push('rpc', RPC_WORDS.has(segs[3]) ? segs[3] : '{rpc}');
+    else for (let i = 0; i < segs.length && i < 12; i++) {
+      if (github && i === 0 && segs[0] === 'repos') { out.push('repos', '{repo}'); i = 2; continue; }
+      if (segs[i] === 'contents') { out.push('contents', '{path}'); break; }
+      if (segs[i] === 'compare') { out.push('compare', '{range}'); break; }
+      out.push(word(segs[i]));
+    }
+    const keys = [...new Set([...u.searchParams.keys()].map(k => QUERY_WORDS.has(k) ? k : '{key}'))].sort();
+    return `${github ? 'github' : 'native'}/${out.join('/')}${keys.length ? `?${keys.join('&')}` : ''}`;
   } catch { return 'unparsed'; }
 }
 // E3 (bf57ff10 P2): the GitHub reads that are fixed by commit SHAs and therefore never change: a compare of two SHAs,
 // one commit, and a file's contents at a SHA. Every other read (pulls, files, branches, check runs, variables, ...)
-// can change and is never cached.
+// can change and is never cached. The URL must be in its canonical form (new URL(url).href === url) without an empty,
+// '.', '..' or percent-encoded dot segment, so no other path can be dressed up as one of these (review MINOR 3).
 const IMMUTABLE_READ = /^https:\/\/api\.github\.com\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}(?:\?per_page=\d{1,3})?|commits\/[0-9a-f]{40}|contents\/[A-Za-z0-9_.@%+=,~/-]{1,1024}\?ref=[0-9a-f]{40})$/;
-export const immutableGitHubRead = (url, opts = {}) => String(opts?.method ?? 'GET').toUpperCase() === 'GET' && opts?.body === undefined && IMMUTABLE_READ.test(String(url));
-// Per-process cache of those reads only (one entry per URL and Accept header), around the retrying fetch. Only a
-// complete 200 answer is kept, from a clone the caller never sees, so the caller reads its own response exactly as
-// without the cache; a hit still asserts the held lease (live()) and returns a fresh Response of the same bytes.
+export const GITHUB_JSON_ACCEPT = 'application/vnd.github+json';
+// The request's Accept header, from a Headers instance or a plain object (any case of the name); null when absent or
+// named twice.
+export function acceptOf(headers) {
+  if (!headers) return null;
+  if (typeof Headers === 'function' && headers instanceof Headers) return headers.get('accept');
+  if (typeof headers !== 'object' || Array.isArray(headers)) return null;
+  const names = Object.keys(headers).filter(k => k.toLowerCase() === 'accept');
+  return names.length === 1 && typeof headers[names[0]] === 'string' ? headers[names[0]] : null;
+}
+export function immutableGitHubRead(url, opts = {}) {
+  const u = String(url);
+  if (String(opts?.method ?? 'GET').toUpperCase() !== 'GET' || opts?.body !== undefined || acceptOf(opts?.headers) !== GITHUB_JSON_ACCEPT || !IMMUTABLE_READ.test(u)) return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.href === u && !parsed.pathname.split('/').slice(1).some(s => s === '' || s === '.' || s === '..' || /%2e/i.test(s));
+  } catch { return false; }
+}
+// Per-process cache of those reads only (one entry per URL; only requests whose Accept is exactly
+// application/vnd.github+json are cached), around the retrying fetch. Only a complete 200 answer is kept, from a clone
+// the caller never sees, so the caller reads its own response exactly as without the cache; a hit still asserts the held
+// lease (live()) and returns a fresh Response of the same bytes with status 200 and only three response headers kept
+// (content-type, etag, last-modified): no reader of these replies uses any other (github.mjs, the evaluator's githubJson).
 export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {}, maxEntries = 256 } = {}) {
   const entries = new Map();
-  const key = (url, opts) => `${String(opts?.headers?.accept ?? '')} ${String(url)}`;
   const cached = async (url, opts = {}) => {
     if (!immutableGitHubRead(url, opts)) return fetchImpl(url, opts);
-    const k = key(url, opts), hit = entries.get(k);
+    const k = String(url), hit = entries.get(k);
     if (hit) { live(); onHit(url); return new Response(hit.bytes, { status: 200, statusText: hit.statusText, headers: hit.headers }); }
     const response = await fetchImpl(url, opts);
     if (response?.status === 200 && response.ok === true && typeof response.clone === 'function' && entries.size < maxEntries) {
