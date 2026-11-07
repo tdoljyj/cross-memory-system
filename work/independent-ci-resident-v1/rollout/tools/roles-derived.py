@@ -8,14 +8,27 @@ record's source-manifest.json and the new commit's blobs (git cat-file, GIT_NO_R
 
 The installed copy must be current: every <role>.json hashes to the node's own Linux version facts (roles.<role>.policySha256).
 
+Which copy (DESIGN §63, Task 3ea699f6): the companion's roles-public.json next to the version facts (upgrade/mailbox/responses/),
+which a companion of this fix or later rewrites from the live roles-v3 whenever the facts name other role files, so no root export
+with UAC is needed any more. It is used whenever it is there and names the facts' generation; then every file must hash to its own
+entry AND to the facts (a copy that does not is refused, never passed over). Only when it is absent (a companion older than the fix)
+or names another generation (facts newer than the copy, or a rollback to an older companion) is the configured directory used, as
+before, and the answer carries a "notice" that says so. Either way every byte is checked against the facts.
+
   python -I roles-derived.py <tree> <repo> <commit40> <installed roles-v3 copy> <new record source-manifest.json> <ciSourceManifestSha256> <version-facts.json>
 """
-import datetime, hashlib, importlib.machinery, importlib.util, json, os, re, subprocess, sys
+import base64, binascii, datetime, hashlib, importlib.machinery, importlib.util, json, os, re, subprocess, sys
 
 TOOL = 'work/independent-ci-resident-v1/linux/bin/clued-ci-upgrade-linux'
 ROLES = ('gitleaks', 'trivy', 'contract-placement')
 FACTS_CONTRACT = 'clued.independent-ci.linux-version-facts/1'
 FACTS_MAX_AGE = datetime.timedelta(hours=1)   # the companion rewrites them every 5 minutes
+ROLES_PUBLIC_FILE = 'roles-public.json'        # src/roles-public.mjs
+ROLES_PUBLIC_CONTRACT = 'clued.independent-ci.linux-roles-public/1'
+ROLES_PUBLIC_NAMES = tuple(n for r in ROLES for n in (r + '.json', r + '.qualification.json'))
+ROLES_PUBLIC_MAX_BYTES = 192 * 1024
+ROLES_PUBLIC_FILE_MAX_BYTES = 16 * 1024
+HEX64 = re.compile(r'[0-9a-f]{64}')
 
 
 def refuse(code, **detail):
@@ -40,16 +53,60 @@ def load_tool(tree, installed_sha):
     return mod, tool_sha
 
 
-def read_copy(roles_dir, role, name):
+def read_copy(roles_dir, role, name, extra=None):
     """One file of root's copy of the installed roles-v3. A copy not made yet (an empty or missing public-six directory: the root
     export of THIS generation has not run) is a refusal with its code, never a traceback."""
     path = os.path.join(roles_dir, name)
     try:
         return open(path, 'rb').read()
     except FileNotFoundError:
-        refuse('INSTALLED_ROLES_COPY_MISSING', role=role, file=name, dir=roles_dir)
+        refuse('INSTALLED_ROLES_COPY_MISSING', role=role, file=name, dir=roles_dir, **(extra or {}))
     except OSError as e:
-        refuse('INSTALLED_ROLES_COPY_UNREADABLE', role=role, file=name, error=type(e).__name__)
+        refuse('INSTALLED_ROLES_COPY_UNREADABLE', role=role, file=name, error=type(e).__name__, **(extra or {}))
+
+
+def companion_copy(facts_file, generation):
+    """(files, notice): the six files of the companion's roles-public.json as {name: bytes}, or (None, notice) when it is absent or
+    names another generation than the facts. A copy that is there for this generation but is not well formed, or whose bytes do not
+    hash to its own entries, is a refusal (ROLES_PUBLIC_COPY_REFUSED): someone changed it, and it is never passed over."""
+    path = os.path.join(os.path.dirname(os.path.abspath(facts_file)), ROLES_PUBLIC_FILE)
+    try:
+        with open(path, 'rb') as f:
+            raw = f.read(ROLES_PUBLIC_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return None, {'code': 'ROLES_PUBLIC_COPY_MISSING', 'copy': path,
+                      'hint': 'the installed companion does not write the role copy (older than Task 3ea699f6): the configured '
+                              'linux.installedRoles directory, a root export of this generation, is used instead'}
+    except OSError as e:
+        refuse('ROLES_PUBLIC_COPY_REFUSED', copy=path, error=type(e).__name__)
+    try:
+        if not 0 < len(raw) <= ROLES_PUBLIC_MAX_BYTES:
+            raise ValueError('size')
+        doc = json.loads(raw.decode('utf-8'))
+        if not isinstance(doc, dict) or set(doc) != {'contract', 'generation', 'factsObservedAt', 'observedAt', 'files'} \
+                or doc['contract'] != ROLES_PUBLIC_CONTRACT or type(doc['generation']) is not int \
+                or not isinstance(doc['files'], dict) or set(doc['files']) != set(ROLES_PUBLIC_NAMES):
+            raise ValueError('shape')
+    except ValueError:   # UnicodeDecodeError and json.JSONDecodeError are ValueErrors too
+        refuse('ROLES_PUBLIC_COPY_REFUSED', copy=path)
+    if type(generation) is not int or doc['generation'] != generation:
+        return None, {'code': 'ROLES_PUBLIC_COPY_OTHER_GENERATION', 'copy': path, 'copyGeneration': doc['generation'], 'factsGeneration': generation,
+                      'hint': 'the companion rewrites the copy right after the first facts of a new generation (minutes after a switch): '
+                              'retry shortly; until then the configured linux.installedRoles directory is used'}
+    files = {}
+    for name in ROLES_PUBLIC_NAMES:
+        entry = doc['files'][name]
+        try:
+            if not isinstance(entry, dict) or set(entry) != {'sha256', 'base64'} or not isinstance(entry['sha256'], str) \
+                    or not HEX64.fullmatch(entry['sha256']) or not isinstance(entry['base64'], str):
+                raise ValueError('entry')
+            data = base64.b64decode(entry['base64'].encode('ascii'), validate=True)
+        except (ValueError, binascii.Error):   # UnicodeEncodeError is a ValueError
+            refuse('ROLES_PUBLIC_COPY_REFUSED', copy=path, file=name)
+        if not 0 < len(data) <= ROLES_PUBLIC_FILE_MAX_BYTES or hashlib.sha256(data).hexdigest() != entry['sha256']:
+            refuse('ROLES_PUBLIC_COPY_REFUSED', copy=path, file=name)
+        files[name] = data
+    return files, None
 
 
 def main(argv):
@@ -93,15 +150,21 @@ def main(argv):
             refuse('PINNED_FILE_MISSING_IN_NEW_COMMIT' if p.returncode else 'PINNED_FILE_EMPTY', path=rel)
         return hashlib.sha256(p.stdout).hexdigest()
 
+    companion, notice = companion_copy(facts_file, facts.get('generation'))
+    origin = {'copySource': 'companion' if companion is not None else 'configured-directory', **({'notice': notice} if notice else {})}
+
+    def copy_bytes(role, name):
+        return companion[name] if companion is not None else read_copy(roles_dir, role, name, origin)
+
     out = {}
     for role in ROLES:
-        pol_bytes = read_copy(roles_dir, role, role + '.json')
+        pol_bytes = copy_bytes(role, role + '.json')
         want = (facts['roles'].get(role) or {}).get('policySha256')
         if hashlib.sha256(pol_bytes).hexdigest() != want:
-            refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role)
-        q_bytes = read_copy(roles_dir, role, role + '.qualification.json')
+            refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role, **origin)
+        q_bytes = copy_bytes(role, role + '.qualification.json')
         if hashlib.sha256(q_bytes).hexdigest() != ((facts['roles'].get(role) or {}).get('qualificationSha256')):
-            refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role, file='qualification')
+            refuse('INSTALLED_ROLES_COPY_NOT_CURRENT', role=role, file='qualification', **origin)
         q = json.loads(q_bytes.decode('utf-8'))
         if not isinstance(q, dict) or set(q) != {'payload', 'signature'}:
             refuse('INSTALLED_QUALIFICATION_REFUSED', role=role)
@@ -110,7 +173,7 @@ def main(argv):
         except tool.Refused as e:
             refuse(e.code, role=role, **e.detail)
         out[role] = hashlib.sha256(tool.canonical_bytes(new_policy)).hexdigest()
-    print(json.dumps({'status': 'ROLES_DERIVED', 'rolesDerivedSha256': out, 'upgradeToolSha256': tool_sha}, sort_keys=True))
+    print(json.dumps({'status': 'ROLES_DERIVED', 'rolesDerivedSha256': out, 'upgradeToolSha256': tool_sha, **origin}, sort_keys=True))
     return 0
 
 

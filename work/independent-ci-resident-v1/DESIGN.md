@@ -4907,3 +4907,41 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 完整§60 all/current历史范围继续保留，快路径不删除force-push端点、closed-current或旧候选。已必需的current覆盖可与all相同有界续跑：真实耐久进展、同滚动200总账/E56额外账、同额度时效/hold和前台优先；routine current轮不获得无限加速。已知未确认撤销不能因前台先跑而丢失；前后台耗时与停止原因分别计量。
 
 验收分开记录历史覆盖、允许开批、本地扫描、Stage8真实首绿和实际可合并。旧PR的14分钟与15分34秒发布间隔只是样本，不能加在模型上冒充第17代实测。必须覆盖cold/current、普通partial旧投影、frozen、strict切换、main改写、损坏最新记录、claim/Source/front/S变化和重启负例；局部测试通过不表示现场30分钟目标或安装条件已满足。
+
+## 63. 打下一代升级包不再需要 UAC 导出角色副本（缺陷 Task `3ea699f6`）
+
+### 63.1 问题
+
+每装一代，Linux 侧都会重新派生、重签三个角色（gitleaks、trivy、contract-placement）的 policy 和 qualification（`/etc/clued-independent-ci/roles-v3`，root 0700/0600）。打下一代包时 `rollout/tools/roles-derived.py` 要按节点自己的 version facts（`roles.<role>.policySha256` / `qualificationSha256`）逐字节核对这六个文件，而非特权的 Owner 读不到它们，只能每代、每台节点用 `tools/derive-public-export.py` 生成一次 root 导出脚本、Owner 点 UAC 运行（§57.7）。于是每次升级 Owner 要点两次（UAC 加升级批准）。
+
+### 63.2 修法：companion 顺手写一份公开副本
+
+version facts 本来就是 companion（Owner 会话、非提权的计划任务）用冻结 root 工具 `clued-ci-upgrade-linux version-facts` 读出、整份写进 `upgrade\mailbox\responses\version-facts.json` 的，约每 5 分钟一次，切代/回滚后立即一次。现在 companion 每次写完 facts，紧接着检查同目录的 `roles-public.json`（`src/roles-public.mjs`，合同 `clued.independent-ci.linux-roles-public/1`）：
+
+- 已经是这份 facts 的（同代次、六个文件的 sha256 都等于 facts）：什么都不读；平时就是这样，不多开 wsl.exe。
+- 不是（实际上每代一次：切代后的第一份 facts，或新 companion 的第一份 facts）：用固定 argv `wsl --user root --exec /usr/bin/env -i ... /usr/bin/base64 -w 0 -- /etc/clued-independent-ci/roles-v3/<六个固定文件名之一>` 逐个读（`companion.mjs#argv().rolePublic`，文件名只能是六个之一，路径里没有任何可变部分），每个文件的字节必须哈希等于刚读的 facts，否则整份放弃、旧副本原样保留，下次 facts 再试；六个都对才“临时文件 + rename”整份替换（同 `writeVersionFacts`）。
+- facts 没写全六个文件或没有代次、mailbox 没有 responses 目录：什么都不做。
+
+`roles-derived.py` 先看 facts 旁边的 `roles-public.json`：
+
+- 在且代次等于 facts：只用它。每个文件必须先等于自己条目的 sha256（否则 `ROLES_PUBLIC_COPY_REFUSED`），再逐字节等于 facts（否则仍是 `INSTALLED_ROLES_COPY_NOT_CURRENT`，带 `copySource: companion`）。被改过的副本一律拒绝，**不会**改用配置目录绕过去。
+- 缺失（companion 早于本修复）或代次不同（facts 比副本新，例如刚切代 companion 还没刷新；或回滚到旧 companion）：回退到配置的 `linux.installedRoles`，照旧核对；回答带 `notice`（`ROLES_PUBLIC_COPY_MISSING` / `ROLES_PUBLIC_COPY_OTHER_GENERATION` 和提示），`build-upgrade.ps1` 打成 Warning，输出 JSON 加 `rolesCopySource`。
+
+### 63.3 安全
+
+- 哈希核对没有放宽：不论副本从哪来，六个文件都要逐字节等于 facts；facts 仍须是 1 小时内的、冻结工具哈希仍须一致。
+- 副本只由已装的 companion 产出（随常驻包安装、受包清单约束的代码），root 侧只是对六个固定路径做只读 `base64`；不执行任何拿来的代码，不经过 Claude 或其他 Agent 的 root 操作。
+- 读的只有六个 PUBLIC 文件（policy 与带签名的 qualification）；签名私钥、App 私钥、token 都不在 roles-v3，也不在 argv 能指到的地方。
+- 副本和 facts 同在 `responses\`（Owner 可改、resident 只读），信任级别与 facts 相同，没有新增可写入口；副本只是“方便读到的字节”，不是授权来源。
+- 不改冻结的 Linux 升级工具、不改 `src/upgrade-mailbox.mjs` 及 upgrader 冻结副本里的任何模块（`upgrader/src/**` 及其引入的 `src/canonical|inbox|instance-lock|intake-pause|store|upgrade-mailbox.mjs`），upgrader 副本的 manifestSha256 不变。
+
+### 63.4 安装与过渡
+
+- 只是常驻包（companion）的改动，原地升级即可，不用整套重装；`roles-derived.py`、`build-upgrade.ps1` 在仓库里直接生效。
+- 装上带本修复的那一代之后：新 companion 启动后的第一轮就写 facts 和副本（通常一分钟内，最迟一个 facts 周期 5 分钟；某次读失败则下一个 facts 周期再试），之后立即可以打下一代包，不需要 UAC。
+- 打**带本修复的这一代**的包时，节点上跑的还是旧 companion，没有副本：仍要按旧流程导出一次（回退路径照旧可用）。此后不再需要。
+- 回滚到不带本修复的代：旧 companion 不再刷新副本，副本代次与 facts 不同，自动回退到配置目录。
+
+### 63.5 测试
+
+`test/roles-public.test.mjs`（固定 argv、装后首份 facts 即写副本、平时零读取、切代重写、字节不符或读超时不写且保留旧副本、缺字段不读、文档篡改拒绝）；`rollout/test/test_upgrade_tools.py` 的 `test_companion_copy_is_used_without_any_export`、`test_companion_copy_changed_or_stale_is_refused_never_passed_over`、`test_companion_copy_missing_or_of_another_generation_falls_back_with_a_notice`、`test_install_then_build_next_package_needs_no_uac`（真实 `UpgradeLane` 写副本 → `roles-derived.py` 在配置目录为空时成功；修复前同一情形是 `INSTALLED_ROLES_COPY_MISSING`）。

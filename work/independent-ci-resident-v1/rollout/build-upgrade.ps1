@@ -122,9 +122,14 @@ if (-not (Test-Path -LiteralPath $bundle)) { & git -C $bare bundle create -q $bu
 & git -C $bare bundle verify -q $bundle; if ($LASTEXITCODE) { throw 'BUNDLE_VERIFY_FAILED' }
 $heads = @(& git bundle list-heads $bundle); if ($LASTEXITCODE -or $heads.Count -ne 1 -or $heads[0] -cne ($Commit + ' refs/heads/accepted')) { throw 'BUNDLE_NOT_ONLY_THE_ACCEPTED_COMMIT' }
 $facts = Join-Path $Root 'upgrade\mailbox\responses\version-facts.json'
+# DESIGN §63 (Task 3ea699f6): roles-derived.py reads the installed role files from the companion's copy next to the facts
+# (responses\roles-public.json, no UAC export) and falls back to linux.installedRoles only while that copy is absent or names
+# another generation; then its answer carries a notice, shown here.
 $rolesOut = & python -I (Join-Path $Here 'tools\roles-derived.py') $tree $Repo $Commit $cfg.linux.installedRoles (Join-Path $record 'source-manifest.json') $ciSha $facts
 if ($LASTEXITCODE) { $rolesOut; throw 'ROLES_DERIVATION_REFUSED' }
-$roles = ($rolesOut | ConvertFrom-Json).rolesDerivedSha256
+$rolesRes = $rolesOut | ConvertFrom-Json
+if (@($rolesRes.PSObject.Properties.Name) -ccontains 'notice') { Write-Warning ($rolesRes.notice.code + ': ' + $rolesRes.notice.hint) }
+$roles = $rolesRes.rolesDerivedSha256
 $sv = Join-Path $R ('build-inputs\source-v2.' + $stem + '.json')
 Write-New $sv (([ordered]@{ commit = $Commit; bundle = $bundle; rolesDerivedSha256 = [ordered]@{ gitleaks = $roles.gitleaks; trivy = $roles.trivy; 'contract-placement' = $roles.'contract-placement' } }) | ConvertTo-Json -Depth 4)
 $sc = Join-Path $R ('build-inputs\state-compat.' + $stem + '.json')
@@ -160,6 +165,6 @@ $p = $pre | ConvertFrom-Json
 $request = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $Root ('resident\' + $installedManifest.residentManifestSha256 + '\windows\request-upgrade.ps1')) + '" -PackageRoot "' + $pkg + '" -ExpectedPackageManifestSha256 ' + $pkgSha + ' -AcceptanceDecisionRef ' + $DecisionRef
 ([ordered]@{ status = $(if ($preExit -eq 0) { 'UPGRADE_PACKAGE_BUILT' } else { 'UPGRADE_PACKAGE_BUILT_PRECHECK_REFUSED' }); node = $cfg.node; final = [bool]$Final
   package = $pkg; packageManifestSha256 = $pkgSha; ciSourceManifestSha256 = $m.ciSourceManifestSha256; residentManifestSha256 = $m.residentManifestSha256
-  grantResource = ('ci-resident:' + $cfg.node + '/' + $pkgSha); precheck = $p.status; precheckCode = $(if ($p.PSObject.Properties.Name -contains 'code') { $p.code } else { $null })
+  grantResource = ('ci-resident:' + $cfg.node + '/' + $pkgSha); rolesCopySource = $rolesRes.copySource; precheck = $p.status; precheckCode = $(if ($p.PSObject.Properties.Name -contains 'code') { $p.code } else { $null })
   requestCommand = $(if ($Final -and $preExit -eq 0) { $request } else { $null }) } | ConvertTo-Json -Depth 4)
 if ($preExit -ne 0) { exit 1 }
