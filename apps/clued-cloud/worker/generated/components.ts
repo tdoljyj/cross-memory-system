@@ -30,7 +30,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.native617-entry": "1.0.3",
   "script.independent-native-publication": "1.1.16",
   "script.resource-maintenance": "1.0.1",
-  "script.non-pr-control-source": "1.0.2",
+  "script.non-pr-control-source": "1.0.3",
   "script.source-only-workflow": "1.0.0",
   "script.control-workflow-source": "1.0.6",
   "script.required-applicability": "1.0.0",
