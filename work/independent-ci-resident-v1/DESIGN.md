@@ -4908,6 +4908,23 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 
 验收分开记录历史覆盖、允许开批、本地扫描、Stage8真实首绿和实际可合并。旧PR的14分钟与15分34秒发布间隔只是样本，不能加在模型上冒充第17代实测。必须覆盖cold/current、普通partial旧投影、frozen、strict切换、main改写、损坏最新记录、claim/Source/front/S变化和重启负例；局部测试通过不表示现场30分钟目标或安装条件已满足。
 
+### 62.4 接管期间队首认领未绑定 PR（第19代现场缺陷，2026-11-07 PR #1027）
+
+现象：train=on 刚生效、接管 full sweep 在跑（约4小时）、队列为空；随后推上来的 PR 的认领是合并队列队首。第10段一直是 `TRAIN_TAKEOVER_SWEEP_PENDING`/`FRONT_NOT_BOUND`，`strictFrontReadiness` 为 none，PR 在常驻层一直 QUEUED，GitHub 上没有任何 App 5368905 的检查。
+
+根因链：认领的 `bound_pr` 只由 ci-admission 的 verify（带 `pr_ref`）绑定，也就是某个批次的第1段准入；接管期间 `trainGate` 除已绑定的车头 S 行外推迟一切批次，第1段不跑，认领绑不上；第10段 `decideShadow` 因 `!holder.pr` 给出 `FRONT_NOT_BOUND`，`frontFastEligible` 需要由 `holder.pr` 读到的 front，于是 strict-front 观察永远写不出、`takeoverPending` 一直为真，形成闭环。§62.1 的例外只覆盖“已由本节点 enqueue 记录绑定的 S”，没有覆盖“车头尚未绑定 PR”这一步；原有测试的 holder 都预先绑定了 PR，所以没有发现。
+
+修法（只补绑定这一步，不改发布准入）：
+- 第10段（on，接管未完成）在与 §62.1 strict-front 观察相同的实时条件下——本次运行读到 strict 为 true、全部节点同一 Source、受保护记录健康、没有待确认或未确认的撤销、main 历史已知且未改写、没有撤车头请求——当 holders 正好一个且该认领 `bound_pr` 为空时，在最近更新的至多10个开着的、合到 main 的 PR 里找正文 trailer 指向该认领（且 scope 等于本安装）的那一个：同仓库、非草稿、恰好一个才写入事实 `frontBind {pr, headSha, claimId}`（train facts /2 的可选字段，只在 `TRAIN_TAKEOVER_SWEEP_PENDING` + `FRONT_NOT_BOUND` 时允许）。它只是调度观察，没有任何写入。
+- 常驻层只对“本次当班、`sweepFreshMs` 内最新一次第10段点名的那个 PR 和 head、attempt 1、不带 S 的行”放行（`trainFrontBind`），并在预留前写 `train-front-bind` 回执。该批次只跑到第1段：准入发布 `kooyumi-work-admission` 并由 Native 的 verify 绑定认领；随即在 `before-relay-plan` 安全点以 `TRAIN_FRONT_CLAIM_BOUND`（clean-final、burn、new-commit、不计熔断）干净结束，不跑扫描，不发 `kooyumi-merge-slot`。重启后由回执恢复，同样在第1段后结束。第10段失败或不干净时立即丢弃该观察；被推迟的新 head 在第10段说 `FRONT_NOT_BOUND` 时触发一次 urgent（每个 head 一次，受每日上限约束）。
+- 之后的第10段读到已绑定的 holder，照 §62.1 原路写 strict-front 观察、touch running、开车头批次 (H, S)；车头批次的 head key 是 (H, S)，不受普通 head 已烧影响；第8段的实时 strict/holder/claim generation/Source/frozen/ticket 检查全部不变。
+
+安全论证：放开的只是车头本身的第1段，它在 §62.1 例外下本来就会由车头批次的第1段发布；单绿只取决于 `kooyumi-merge-slot`，而它仍只能由第8段在 strict 实时确认、holder 绑定到这个 PR、claim generation 不变、Native 非 frozen 时发出。没有放宽 strict 判断，没有跳过撤销，没有伪造 holder（绑定由 Native 自己的 verify 完成，常驻层和第10段都不写 holder），没有动冻结 pins，非队首 PR 仍被推迟。strict 关闭、来源不一致、有待撤销、main 改写或 full sweep 已完成时，不产生 `frontBind`，行为与修复前相同。
+
+时间：从 PR 被第10段看到起，绑定批次（bundle + 第1段）约数分钟，随后一次第10段（urgent）开车头批次，车头批次仍完整跑一遍（约20分钟，§41.4）。离线端到端测试 `test/train-takeover-front.test.mjs` 用真实 executor + 真实 Source v2 第10段/清扫存储/第8段发布者，在 full sweep 仍 running 时拿到 merge-slot success；现场是否 ≤30 分钟仍需实测（§62 开头）。
+
+残余：认领 trailer 只写在 head 提交信息里（本修法与合并执行器一样只读 PR 正文）、或该 PR 不在最近更新的10个开着的 PR 里时，不产生 `frontBind`，仍等 full sweep。`nonFrontRuns=false` 时调度只放 S 行，绑定批次同样不会跑；接管完成后、`nonFrontRuns=true` 时普通批次跑完第1–7段停在 B（`TRAIN_SINGLE_GREEN_NOT_PROVEN`），其 row 占位使 `offerFront` 返回 busy，车头批次要等它结束（按代码推断，未实测）：这两点不在本次修复范围，另行立项。
+
 ## 63. 打下一代升级包不再需要 UAC 导出角色副本（缺陷 Task `3ea699f6`）
 
 ### 63.1 问题

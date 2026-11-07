@@ -235,7 +235,15 @@ export function trainSummary(f) {
   if (f.mode === 'on' && decision === 'OPEN_FRONT_BATCH' && !openFrontBatch) return null;
   const sweep = sweepOf(f.sweep);
   if ((f.sweep?.strictCoverage !== undefined || f.sweep?.strictFrontReadiness !== undefined) && !sweep) return null;
-  return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch });
+  // DESIGN §62.4: the take-over front binding observation, kept by the executor only (a malformed one is none: no exception).
+  const frontBind = f.mode === 'on' && decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' ? frontBindOf(f.frontBind, f.front) : null;
+  return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
+    ...(frontBind ? { frontBind } : {}) });
+}
+
+function frontBindOf(b, front) {
+  return exact(b, ['pr', 'headSha', 'claimId']) && Number.isSafeInteger(b.pr) && b.pr > 0 && SHA.test(b.headSha ?? '') && UUID.test(b.claimId ?? '')
+    && front?.pr === null && front.claimId === b.claimId ? Object.freeze({ pr: b.pr, headSha: b.headSha, claimId: b.claimId }) : null;
 }
 
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).

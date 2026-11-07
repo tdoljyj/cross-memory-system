@@ -10,6 +10,9 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { validStrictFrontReadiness, strictIdentity } from '../src/independent-control-checks-v2/train-strict.mjs';
+import { runTrain, claimReferenceOf, FRONT_BIND_MAX_READS } from '../src/independent-control-checks-v2/train-maintenance.mjs';
+import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
+import { parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
 const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] };
 async function cold(t) { return setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 }); }
@@ -347,4 +350,79 @@ test('strict front: legacy foreign strict pending survives a lost-duty filter wi
   e.native.holder = { ...e.native.holder, takenAt: iso(NOW - 1000) }; e.now += 1000;
   await e.run(jobOf({ createdAt: iso(e.now) }));
   assert.deepEqual((await e.store.readStrictRound()).pending.map(p => p.checkRunId), [889]);
+});
+
+// ---- generation 19 field defect (DESIGN §62.4): the take-over front binding observation ----
+const BIND_SCOPE = 'project:00000000-0000-4000-8000-000000000000';
+const bindBody = (claim, scope = BIND_SCOPE) => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${scope}\n`;
+// A take-over in progress (the full sweep anchored and running), then an unbound head claim whose PR is open.
+async function unbound(t, { native = healthy } = {}) {
+  const e = await setup(t, { strict: true, fullDone: false, native: { ...native, holder: { boundPr: null, pr: null } }, tick: 1 });
+  e.gh.world.pulls.get(910).body = bindBody(CLAIM);
+  // The full sweep runs for hours: every full-sweep page read outlasts this stage's sweep budget.
+  e.gh.world.hooks.pullsPage = sort => { if (sort === 'created' && e.slowFull !== false) e.now += 160_000; };
+  const read = e.gh.readPullRequest.bind(e.gh);
+  e.gh.readPullRequest = async n => { const p = e.gh.world.pulls.get(n); return { ...(await read(n)), body: p.body ?? null, draft: p.draft === true,
+    head: { sha: p.head, repo: { full_name: p.headRepo ?? REPO } } }; };
+  e.bind = (job = jobOf({ createdAt: iso(e.now) })) => runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store,
+    publications: e.publications, clock: e.clock, sleep: e.sleep, claimScope: BIND_SCOPE });
+  return e;
+}
+
+test('take-over front binding: the trailer reader is the evaluator\'s', () => {
+  for (const text of [bindBody(CLAIM), bindBody(CLAIM.toUpperCase(), 'global'), `Clued-Work-Claim: ${CLAIM}`, 'Clued-Work-Claim: nope', `x\nClued-Work-Claim:\t${CLAIM} \n`, null, 7])
+    assert.deepEqual(claimReferenceOf(text), parseClaimReference(text) && { claimId: parseClaimReference(text).claim_id, scope: parseClaimReference(text).scope }, String(text));
+});
+
+test('take-over front binding: an unbound head claim names its one open PR; once bound, the strict front opens while the full sweep runs', async t => {
+  const e = await unbound(t);
+  const first = await e.bind();
+  assert.deepEqual([first.facts.decision, first.facts.wouldDo], ['TRAIN_TAKEOVER_SWEEP_PENDING', 'FRONT_NOT_BOUND']);
+  assert.deepEqual(first.facts.frontBind, { pr: 910, headSha: H, claimId: CLAIM });
+  assert.equal(validateTrainFacts(first.facts), first.facts);
+  assert.notEqual(first.facts.sweep.strictFrontReadiness.state, 'ready');
+  assert.equal(first.facts.openFrontBatch, null);
+  assert.ok(!e.native.kinds().includes('touch'), 'no slot write for an unbound claim');
+  // Stage 1 of that PR bound the claim (Native's verify with pr_ref): the next stage 10 decides the front exactly as before.
+  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+  e.now += 60_000;
+  const second = await e.bind();
+  assert.equal(second.facts.sweep.strictFrontReadiness.state, 'ready', JSON.stringify(second.facts));
+  assert.equal(second.facts.decision, 'OPEN_FRONT_BATCH');
+  assert.equal(second.facts.frontBind, undefined);
+  assert.equal(second.facts.sweep.fullSweep.sinceOn, false);
+  assert.equal(second.facts.sweep.fullSweep.state, 'running');
+});
+
+test('take-over front binding: nothing is named without strict, healthy Source and store, one holder, one PR, its scope and an open non-draft PR', async t => {
+  for (const change of ['strict-off', 'fleet', 'pending', 'revoke-head', 'two-holders', 'bound-elsewhere', 'ambiguous', 'scope', 'draft', 'fork', 'beyond-reads', 'full-done', 'shadow'])
+    await t.test(change, async t => {
+      const e = await unbound(t);
+      let job = jobOf({ createdAt: iso(e.now) });
+      if (change === 'strict-off') e.gh.world.strict = false;
+      if (change === 'fleet') e.native.status = { deployed: true, onDuty: true, dropped: 1, nodes: healthy.nodes };
+      if (change === 'pending') await e.store.writePendingRevocations({ repo: REPO, writtenAt: iso(NOW - 1), runId: RUN,
+        targets: [{ checkRunId: 777, headSha: sha(0x777), reason: 'TRAIN_OTHER_HEAD', own: true }], legacyUnconfirmed: 0, legacySince: null });
+      if (change === 'revoke-head') job = jobOf({ createdAt: iso(e.now), revokeHeadRequestId: '0a1b2c3d-0000-4000-8000-000000000001' });
+      if (change === 'two-holders') e.native.holders = [e.native.holder, { ...e.native.holder, claimId: '99999999-8888-4777-8666-555555555555' }];
+      if (change === 'bound-elsewhere') e.native.holder = { ...e.native.holder, boundPr: 'other/repo#3' };
+      if (change === 'ambiguous') e.gh.pull(912, { updated: iso(NOW), body: bindBody(CLAIM) });
+      if (change === 'scope') e.gh.world.pulls.get(910).body = bindBody(CLAIM, 'global');
+      if (change === 'draft') e.gh.world.pulls.get(910).draft = true;
+      if (change === 'fork') e.gh.world.pulls.get(910).headRepo = 'someone/fork';
+      if (change === 'beyond-reads') for (let n = 0; n < FRONT_BIND_MAX_READS; n++) e.gh.pull(920 + n, { updated: iso(NOW) });
+      if (change === 'full-done') e.slowFull = false; // the take-over full sweep completes in this run: the ordinary path, no exception
+      if (change === 'shadow') job = jobOf({ createdAt: iso(e.now), mode: 'shadow', onSince: null });
+      const r = await e.bind(job);
+      assert.equal(r.facts.frontBind, undefined, JSON.stringify(r.facts));
+    });
+});
+
+test('take-over front binding: the facts admit it only in on, at TRAIN_TAKEOVER_SWEEP_PENDING, for the unbound holder\'s claim', async t => {
+  const e = await unbound(t);
+  const { facts } = await e.bind();
+  for (const patch of [{ mode: 'shadow' }, { decision: 'TRAIN_SWEEP_INCOMPLETE' }, { wouldDo: 'OPEN_FRONT_BATCH' }, { front: { ...facts.front, pr: 910 } },
+    { frontBind: { ...facts.frontBind, claimId: '99999999-8888-4777-8666-555555555555' } }, { frontBind: { ...facts.frontBind, extra: 1 } },
+    { frontBind: { ...facts.frontBind, headSha: 'x' } }, { frontBind: null }])
+    assert.throws(() => validateTrainFacts({ ...facts, ...patch }), { code: 'invalid_train_facts' }, JSON.stringify(patch));
 });
