@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import {fileURLToPath} from 'node:url';
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 import {runExecutor} from './clued-merge-executor.mjs';
 import {exportNaturalArtifact} from './merge-admission-source-producer.mjs';
@@ -143,5 +142,5 @@ export async function main(env=process.env){
   console.log(JSON.stringify({status:result.status,request:result.request}));
   return result.status==='RECONCILED'?0:1;
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))
+if(import.meta.main)
   main().then(code=>{process.exitCode=code;},()=>{console.error('MERGE_RECONCILE_FAILED_CLOSED');process.exitCode=1;});

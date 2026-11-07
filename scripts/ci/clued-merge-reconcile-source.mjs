@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {fileURLToPath} from 'node:url';
 import {assertControllerIdentity} from './clued-merge-reconcile-host.mjs';
 import {readReconcileActivation} from './clued-merge-reconcile-gate.mjs';
 
@@ -55,7 +54,7 @@ export function verifyReconcileSource(workspace,read=fs.readFileSync){
   return source;
 }
 
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(import.meta.main){
   try{verifyReconcileSource(process.env.GITHUB_WORKSPACE??path.resolve('.'));assertControllerIdentity();
     if(!readReconcileActivation().enabled)throw Error('RECONCILE_NOT_ACTIVATED');
     console.log('MERGE_RECONCILE_SOURCE_AND_CONTROLLER_IDENTITY_ONLY');}
