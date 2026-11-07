@@ -38,8 +38,29 @@ ProtectSystem=strict
 # namespace setup: gitleaks and placement are unaffected, and a trivy job then ends UNCERTAIN (its role
 # session checks the cache root as a protected path), which halts the resident: fail closed.
 ReadWritePaths=/var/lib/clued-independent-ci -/var/lib/clued-independent-ci-trivy-cache
+# L2 (DESIGN 70.2): every run gets a view built when the unit starts and gone when its last process exits, success or failure.
+# Each Exec line builds it again from these settings. It shows only what this one job uses:
+#   - formal-spool: an empty read-only tmpfs with the live incoming/ and outgoing/ bound back in (the relay keeps writing
+#     responses into incoming/ during the job; outgoing/ takes challenges, the result and active.lock). Earlier batches'
+#     archive-*/failed-*/completed-* directories are not there;
+#   - workspaces: an empty read-only tmpfs with only this job's own workspaces/<jobId> (%i, which the guard checks against the
+#     issue) bound back in, writable as before. Other jobs' and batches' workspaces are not there;
+#   - the toolchain node is read-only (a mount point: the writable state root cannot rename it away); the resident tool's state
+#     and the legacy state directories are not there; /mnt (drvfs) is an empty tmpfs and /run/WSL (interop) is not there.
+# Unchanged on purpose: the state root stays writable (the Source's SERIAL_LOCK /var/lib/clued-independent-ci/formal-role.lock
+# must land on disk for the archive and ws-prep), runs/ and the trivy cache root stay real paths (dockerd resolves every bind
+# source in the host namespace, and the cache is kept across batches). Every path is '-': a missing one does not fail the unit at
+# namespace setup; the worker's own checks refuse it exactly as before.
+TemporaryFileSystem=/var/lib/clued-independent-ci/formal-spool:ro,mode=0755,nosuid,nodev,noexec
+BindPaths=-/var/lib/clued-independent-ci/formal-spool/incoming -/var/lib/clued-independent-ci/formal-spool/outgoing
+TemporaryFileSystem=/var/lib/clued-independent-ci/workspaces:ro,mode=0700,nosuid,nodev,noexec
+BindPaths=-/var/lib/clued-independent-ci/workspaces/%i
+TemporaryFileSystem=/mnt:ro,mode=0755,nosuid,nodev,noexec
+ReadOnlyPaths=-/var/lib/clued-independent-ci/toolchain-build-legacy-v1
+InaccessiblePaths=-/var/lib/clued-independent-ci/resident -/var/lib/clued-independent-ci/verify-spool -/var/lib/clued-independent-ci/verify-once-state -/var/lib/clued-independent-ci/trusted-source -/run/WSL
 ProtectHome=yes
 PrivateTmp=yes
+PrivateIPC=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
