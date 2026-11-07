@@ -1,3 +1,12 @@
+> **已冻结的历史档案（2026-11-07）。** 本文件到第 65 节为止，正文不再修改，只供按节号回查历史理由、复审记录和事故经过。
+> 现在实际生效的设计、决定和操作方法见 [`docs/`](docs/)：
+> - [docs/architecture.md](docs/architecture.md)：当前架构，按组件和数据流组织，每节标出代码文件；
+> - [docs/adr/](docs/adr/)：重要决定（背景、决定、理由、后果、Owner Decision 编号）；
+> - [docs/runbook.md](docs/runbook.md)：运维手册（装包、批准、Owner 请求、常见卡住情形、实测方法）；
+> - [docs/glossary.md](docs/glossary.md)：术语表。
+>
+> 两边说法不一致时，以代码为准，其次以 `docs/` 为准。新的设计变更写进 `docs/`（架构改动更新 architecture.md，新决定加一篇 ADR），不再追加到本文件。
+
 # TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.7（Source v2 与托管转发已离线实现，未安装）
 
 - 日期：2026-10-21（UTC）

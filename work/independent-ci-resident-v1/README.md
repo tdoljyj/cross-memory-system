@@ -7,7 +7,7 @@ KooYomi Task `79c32815`. Owner decisions: Decision `0d84ddbb`.
 >
 > **Before installing on a new node**, the controller account (`.\clued-control`, the node profile's `controllerSid`) must hold **Log on as a service** (`SeServiceLogonRight`); `install-resident.ps1 -Apply` refuses without it (`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`, also when it is denied by `SeDenyServiceLogonRight`) or when the rights cannot be read (`USER_RIGHTS_UNREADABLE`), and the reinstall launcher refuses before the uninstall (`CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED`). See [DESIGN.md §30.8](DESIGN.md).
 
-- Read first: [DESIGN.md](DESIGN.md) (Chinese).
+- Read first: [docs/architecture.md](docs/architecture.md) (current design), [docs/runbook.md](docs/runbook.md) (operations), [docs/adr/](docs/adr/) (decisions), [docs/glossary.md](docs/glossary.md) (Chinese). [DESIGN.md](DESIGN.md) is the frozen history (sections up to §65); the section references below point into it.
 - Nothing here has been installed or run on a host.
 - The Windows and Linux scripts are dry-run by default. Their `-Apply` / `--apply` modes need a reviewed plan hash, an elevated Owner token or root, and Source v2 (DESIGN.md §7).
 
