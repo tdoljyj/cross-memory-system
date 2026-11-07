@@ -214,7 +214,9 @@ test('an unconfirmed revocation: TRAIN_REVOKE_UNCONFIRMED, the proof says unconf
   assert.deepEqual([facts.decision, facts.sweep.unconfirmed, facts.openFrontBatch, sideEffects >= 1], ['TRAIN_REVOKE_UNCONFIRMED', 1, null, true]);
   const proof = await e.store.latestProof();
   assert.deepEqual([proof.clean, proof.unconfirmed, proof.pr, proof.headSha, proof.claimId], [false, 1, 910, H, CLAIM]);
-  assert.ok(!e.native.kinds().includes('touch'));
+  // Gen 28 (resident ADR 0017): the waiting front's slot (10 minutes left) is renewed by one touch running; no front batch is counted.
+  assert.deepEqual(e.native.calls.filter(c => c[0] === 'touch').map(c => c[1]), [{ pr: 910, headSha: H, ciState: 'running', hardCapMinutes: 120 }]);
+  assert.deepEqual([facts.actions.touchedRunning, (await e.store.frontBatches({ pr: 910, headSha: H })).length], [true, 0]);
 });
 
 // ---- the incremental sweep ----
@@ -316,13 +318,16 @@ test('revoke-only (under PAUSE): the revoke-head request takes the front\'s curr
 });
 
 // ---- the full sweep ----
-test('full sweep: segmented over runs within the stage cap, completes, reports the watermark; take-over pending until then', async t => {
+test('full sweep: segmented over runs within the stage cap, completes (no watermark report since ADR 0018 §9); take-over pending until then', async t => {
   const e = await setup(t, { fullDone: false, tick: 1000, native: { recorded: true } });
   for (let n = 1; n <= 70; n++) e.gh.pull(n, { head: sha(0x20000 + n), updated: iso(NOW - 86_400_000) });
   e.gh.green(61, sha(0x20000 + 65));
   const first = await e.run();
   assert.deepEqual([first.facts.decision, first.facts.sweep.kind, first.facts.sweep.fullSweep.state, first.facts.sweep.fullSweep.sinceOn], ['TRAIN_TAKEOVER_SWEEP_PENDING', 'full-segment', 'running', false]);
-  assert.ok(e.native.kinds().includes('keepalive') && !e.native.kinds().includes('touch'), 'keepalive runs while the take-over sweep is pending; no batch');
+  assert.ok(e.native.kinds().includes('keepalive'), 'keepalive runs while the take-over sweep is pending');
+  // Gen 28 (resident ADR 0017): the only touch is the slot renewal of the waiting front (10 minutes left); no batch.
+  assert.deepEqual(e.native.calls.filter(c => c[0] === 'touch').map(c => c[1]), [{ pr: 910, headSha: H, ciState: 'running', hardCapMinutes: 120 }], 'no batch, only the renewal');
+  assert.deepEqual([first.facts.openFrontBatch, (await e.store.frontBatches({ pr: 910, headSha: H })).length], [null, 0]);
   assert.ok(e.now - NOW < 300_000, 'one run stays within the 5-minute stage cap');
   const state = await e.store.readFullSweep('on');
   assert.ok(state.full.nextPage === 1 && state.full.nextIndex > 0 && state.full.nextIndex < 70, JSON.stringify(state.full));
@@ -330,8 +335,9 @@ test('full sweep: segmented over runs within the stage cap, completes, reports t
   e.native.calls.length = 0;
   const second = await e.run();
   assert.deepEqual([second.facts.sweep.fullSweep.state, second.facts.sweep.fullSweep.sinceOn, e.gh.world.writes], ['complete', true, [61]]);
-  assert.deepEqual(e.native.calls.find(c => c[0] === 'watermark')?.[1]?.mainSha, T);
-  assert.equal(second.facts.actions.watermarkReported, true);
+  // ADR 0018 §9: the informational take-over watermark is no longer reported (no take-over ever read it).
+  assert.equal(e.native.calls.some(c => c[0] === 'watermark'), false);
+  assert.equal(second.facts.actions.watermarkReported, false);
   assert.equal(second.facts.decision, 'OPEN_FRONT_BATCH');
   assert.equal((await e.store.latestProof()).fullSweepSinceOn, true);
 });
@@ -658,7 +664,11 @@ test('front batch refused: a 40-minute front under a 60-minute cap, a lease too 
   assert.equal((await stuck.store.frontBatches({ pr: 910, headSha: H })).length, 0, 'no batch, no attempt counted');
   const torn = await setup(t);
   torn.streamDown = true;
-  assert.deepEqual([(await torn.run()).facts.openFrontBatch, torn.native.kinds().includes('touch')], [null, false], 'S only after a confirmed sweep');
+  const tornRun = await torn.run();
+  // Gen 28 (resident ADR 0017): the incomplete sweep opens nothing; its one touch is the waiting front's slot renewal (10 minutes left).
+  assert.deepEqual([tornRun.facts.decision, tornRun.facts.openFrontBatch, torn.native.calls.filter(c => c[0] === 'touch').map(c => c[1])],
+    ['TRAIN_SWEEP_INCOMPLETE', null, [{ pr: 910, headSha: H, ciState: 'running', hardCapMinutes: 120 }]], 'S only after a confirmed sweep');
+  assert.equal((await torn.store.frontBatches({ pr: 910, headSha: H })).length, 0);
 });
 
 test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the proof, opens nothing and counts no attempt; stage 8 then proves the green (review R2 M1)', async t => {
@@ -789,6 +799,98 @@ test('touch failed only from frontOutcome, while this claim is the front and the
     await x.run();
     assert.ok(!x.native.calls.some(c => c[0] === 'touch' && c[1].ciState === 'failed'), JSON.stringify(o));
   }
+});
+
+// ---- generation 28 (resident ADR 0017): the 45-minute gap between becoming the queue head and the front batch's touch ----
+// Native lets a slot lapse at mergeSlotUntil: the fake's holders answer is empty from then on, like clued_work_merge_slot_holders_v1.
+const lapsing = e => {
+  const holders = e.native.port.holders;
+  e.native.port = { ...e.native.port, async holders() { const r = await holders(); return r.onDuty && !(Date.parse(e.native.holder.mergeSlotUntil) > e.now) ? { onDuty: true, holders: [] } : r; } };
+};
+const touchesOf = e => e.native.calls.filter(c => c[0] === 'touch').map(c => c[1]);
+const RUNNING_TOUCH = { pr: 910, headSha: H, ciState: 'running', hardCapMinutes: 120 };
+
+test('gen 28 field gap: the queue head waits for its front batch while stage 10 cannot open it; the slot is renewed once and the front is not lost', async t => {
+  // The head took the slot 35 minutes ago (45-minute slot: 10 minutes left). Stage 10 rounds every 5 minutes end TRAIN_SWEEP_INCOMPLETE
+  // (the publication stream is down), a conclusion that never touched; at +15 minutes the slot would have lapsed (before the fix:
+  // holders empty, NO_FRONT, the head lost). Now the first round renews it with touch running and the front batch opens at +15 minutes.
+  const e = await setup(t, { native: { holder: { takenAt: iso(NOW - 35 * 60_000), mergeSlotUntil: iso(NOW + 10 * 60_000) } } });
+  lapsing(e);
+  e.streamDown = true;
+  const rounds = [];
+  for (let i = 0; i < 3; i++) {
+    e.native.calls.length = 0;
+    const { facts, sideEffects } = await e.run();
+    validateTrainFacts(facts);
+    rounds.push([facts.decision, facts.wouldDo, facts.actions.touchedRunning, touchesOf(e).length, sideEffects]);
+    e.now += 5 * 60_000;
+  }
+  assert.deepEqual(rounds, [
+    ['TRAIN_SWEEP_INCOMPLETE', 'OPEN_FRONT_BATCH', true, 1, 2], // keepalive + the renewal
+    ['TRAIN_SWEEP_INCOMPLETE', 'OPEN_FRONT_BATCH', false, 0, 1], // 85 minutes left: no touch
+    ['TRAIN_SWEEP_INCOMPLETE', 'OPEN_FRONT_BATCH', false, 0, 1]]);
+  e.native.calls.length = 0;
+  e.streamDown = false;
+  assert.ok(e.now > NOW + 10 * 60_000, 'past the old end of the slot');
+  const opened = await e.run();
+  assert.equal(opened.facts.decision, 'OPEN_FRONT_BATCH', 'the head was not lost');
+  assert.deepEqual(opened.facts.openFrontBatch, { pr: 910, headSha: H, baseSha: T, testSha: S, testTree: TREE, claimId: CLAIM, since: iso(NOW - 35 * 60_000), attempt: 1 });
+  assert.deepEqual(touchesOf(e), [RUNNING_TOUCH], 'openFront\'s own touch only: one slot write a round');
+});
+
+test('gen 28: a front batch running or parked at stage 8 keeps its slot; at most one touch a round', async t => {
+  const e = await setup(t);
+  const first = await e.run();
+  assert.equal(first.facts.decision, 'OPEN_FRONT_BATCH');
+  assert.deepEqual(touchesOf(e), [RUNNING_TOUCH], 'openFront touched; the renewal does not touch a second time');
+  // 75 minutes later the batch is still parked at stage 8 (no frontOutcome); 15 minutes of the running clock are left.
+  e.now += 75 * 60_000;
+  e.native.calls.length = 0;
+  const parked = await e.run();
+  assert.deepEqual([parked.facts.decision, parked.facts.openFrontBatch, parked.facts.actions.touchedRunning, touchesOf(e)],
+    ['TRAIN_FRONT_BATCH_RUNNING', null, true, [RUNNING_TOUCH]]);
+  assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 1, 'no attempt counted');
+  // With more than 20 minutes left nothing is touched.
+  e.now += 5 * 60_000;
+  e.native.calls.length = 0;
+  await e.run();
+  assert.deepEqual(touchesOf(e), []);
+});
+
+test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, under the hard cap, lapsed, revoke-only, shadow); a refusal of the role is NOT_ON_DUTY', async t => {
+  const soon = { holder: { mergeSlotUntil: iso(NOW + 10 * 60_000) } };
+  const green = await setup(t, { native: soon });
+  green.gh.green(31, H);
+  assert.deepEqual([(await green.run()).facts.decision, touchesOf(green)], ['FRONT_GREEN_WAIT_MERGE', []]);
+  const greenClock = await setup(t, { native: { holder: { ...soon.holder, ciState: 'green', ciHeadSha: H } } });
+  greenClock.streamDown = true;
+  assert.deepEqual([(await greenClock.run()).facts.decision, touchesOf(greenClock)], ['TRAIN_SWEEP_INCOMPLETE', []], 'stage 8\'s green clock is never replaced by a renewal');
+  const behind = await setup(t, { native: soon, world: { behindHeads: new Set([H]) } });
+  assert.deepEqual([(await behind.run()).facts.decision, touchesOf(behind)], ['FRONT_NEEDS_MAIN_MERGE', []]);
+  const closed = await setup(t, { native: soon, front: { state: 'closed' } });
+  await closed.run();
+  assert.deepEqual(touchesOf(closed), [], 'closed: returned, never touched');
+  const unbound = await setup(t, { native: { holder: { ...soon.holder, pr: null, boundPr: null } } });
+  await unbound.run();
+  assert.deepEqual(touchesOf(unbound), [], 'Native touches bound claims only');
+  const capped = await setup(t, { job: { slotHardCapMinutes: 60 }, native: { holder: { takenAt: iso(NOW - 40 * 60_000), mergeSlotUntil: iso(NOW + 10 * 60_000) } } });
+  assert.deepEqual([(await capped.run()).facts.decision, touchesOf(capped)], ['TRAIN_FRONT_BUDGET_SHORT', []], 'the cap leaves no batch its budget: it gives way');
+  const lapsed = await setup(t, { native: { holder: { mergeSlotUntil: iso(NOW - 1000) } } });
+  lapsing(lapsed);
+  await lapsed.run();
+  assert.deepEqual(touchesOf(lapsed), [], 'a report never revives a lapsed slot');
+  const pause = await setup(t, { job: { mode: 'revoke-only' }, native: soon });
+  await pause.run();
+  assert.deepEqual(touchesOf(pause), [], 'revoke-only: no touch');
+  const shadow = await setup(t, { job: { mode: 'shadow', onSince: null }, native: soon });
+  await shadow.run();
+  assert.deepEqual(touchesOf(shadow), [], 'shadow: no write');
+  const lost = await setup(t, { native: soon });
+  lost.streamDown = true;
+  const touch = lost.native.port.touch;
+  lost.native.port = { ...lost.native.port, async touch(i) { await touch(i); return { onDuty: false, touched: false, until: null, claims: [], returned: null }; } };
+  const l = await lost.run();
+  assert.deepEqual([l.facts.decision, l.facts.actions.touchedRunning, l.sideEffects], ['NOT_ON_DUTY', false, 1]);
 });
 
 test('adopt when merged as [T, H] with S\'s tree; a different tree pauses the train; return only when closed unmerged', async t => {

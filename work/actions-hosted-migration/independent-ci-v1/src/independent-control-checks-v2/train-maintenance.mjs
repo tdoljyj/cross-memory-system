@@ -12,7 +12,9 @@
 //                segment, with revocations confirmed twice; the sweep proof; keepalive once; adopt, return or touch
 //                failed; the protected-layer check (H contains T); and for OPEN_FRONT_BATCH the hard-cap budget, touch
 //                running and its read-back, then the front batch (the executor's one source of S), unless this node's
-//                batch of the same S is still running. The watermark (informational) after a confirmed full sweep.
+//                batch of the same S is still running. The watermark (informational) after a confirmed full sweep. Generation 28
+//                (resident ADR 0017): a bound front that waits for its front batch, or whose front batch runs or is parked, gets
+//                one touch running when its merge slot has less than 20 minutes left (renewFrontSlot; one slot write a round).
 //   revoke-only  (under PAUSE; §41.3) the three kinds of revocation, the incremental sweep and the proof; no batch, no
 //                touch, adopt, return or keepalive.
 // The job's sweep (train-run /3; Owner decision 9e2511fe; resident DESIGN §65) says what the full sweep is for in mode on:
@@ -25,6 +27,14 @@
 //                one full round as a background audit at most once AUDIT_EVERY_MS (no expiry, segments only where §62.8 lets a round
 //                count one); off starts none of its own. A rewritten main still holds new batches until a round of scope all
 //                completes (§60.2): both start that round at once.
+// Push mode (resident ADR 0018; the stage file train-landing.json, train-landing.mjs): with train.landing 'push' and the landing
+// port, mode on also (a) adopts every member of each batch of this node whose S main now contains (riders first, the front last;
+// a member whose PR moved to another head is not adopted), (b) turns the executor's frontOutcome of a batch of several members into
+// bisection instead of touch failed, and (c) opens the front batch on the batch it composes: the front, then riders (open PRs into
+// main with this install's claim trailer and App 5368905's kooyumi-work-admission success on their head, by PR number, up to the
+// effective batch size), S = GitHub's test merge for one member or the cumulative merge on clued-train/staging.tmp for several,
+// clued-train/staging pointed at S (the CI trigger) and a landing-batch record. A strict head that does not contain main's tip is no
+// longer FRONT_NEEDS_MAIN_MERGE there (the train lands merge(T, H) itself); a protected-layer one still is.
 // A read that fails before anything was written ends the run BLOCKED with zero side effects; after the first write every
 // failure becomes a decision (TRAIN_REVOKE_UNCONFIRMED, TRAIN_SWEEP_INCOMPLETE, ...) or, if it still throws, UNCERTAIN with
 // the true count (settleTrain).
@@ -44,6 +54,9 @@ import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
+import { createLandingPort } from './train-landing-port.mjs';
+import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
   publicationHeads, revokeGreens } from './train-sweep.mjs';
 
@@ -55,6 +68,8 @@ export const TRAIN_FACTS_STATUS = 'TRAIN_FACTS';
 export const RUNNING_CLOCK_MS = 90 * 60_000;
 export const STAGE8_ATTEMPT_MS = 90_000;
 export const MAX_FRONT_BATCHES_PER_HEAD = 2;
+// Generation 28 (resident ADR 0017): a bound front's merge slot with less than this left is renewed (renewFrontSlot).
+export const SLOT_RENEW_BELOW_MS = 20 * 60_000;
 // Generation 23 (DESIGN §62.8): an open or a batch's first refresh skips the take-over full-sweep segment only when at most this many
 // rounds came after the newest round that counted one, so at most MAX_SKIPS_BEFORE_SKIP + 1 rounds in a row skip it.
 export const MAX_SKIPS_BEFORE_SKIP = 2;
@@ -111,11 +126,13 @@ export async function runTrain(ports) {
 }
 
 async function runTrainCounted({ job, github: plainGithub, native, ledger, sweepStore = null, publications = null, appId = APP_ID, clock = Date.now, sleep = wait,
-  layerOfPaths = () => 'protected', claimScope = null }, fx) {
+  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null }, fx) {
   validateTrainRun(job);
   const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
   // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
   const gating = job.sweep === 'gate', permanent = !gating;
+  // ADR 0018: push lands main itself (strict-permanent mode only; the landing port present; a stage file that could not be read is no push).
+  const push = job.mode === 'on' && permanent && trainLanding?.landing === 'push' && trainLanding.unreadable !== true && typeof landing?.fastForwardMain === 'function';
   const { github, counter } = countedGithub(plainGithub);
   const actions = { ...NO_ACTIONS, revokeHead: job.revokeHeadRequestId ? { requestId: job.revokeHeadRequestId, done: false } : null };
   const until = { write: started + REVOKE_WRITE_BEFORE_MS, read: started + STAGE_WORK_BEFORE_MS };
@@ -291,7 +308,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
   const frontFastEligible = job.mode === 'on' && !sinceOn(full) && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy
-    && front?.headContainsMain === true && front?.state === 'open' && front.draft === false && front.mergeable === true
+    // ADR 0018: push lands the tested merge(T, H) itself, so a head behind main is no reason against the observation there (strict merges
+    // only a head that contains T: that is github-merge's reason). A protected-layer head behind main is still FRONT_NEEDS_MAIN_MERGE.
+    && (push || front?.headContainsMain === true) && front?.state === 'open' && front.draft === false && front.mergeable === true
     && front.testMerge?.parentsOk === true && holder?.takenAt && !stateReason && !ledgerReason
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN';
   const frontIdentity = frontFastEligible ? strictIdentity({ job, holder, headSha: front.headSha, mainSha, scope: full.scope }) : null;
@@ -487,14 +506,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const takeoverPending = job.mode === 'on' && !strictReady && !strictFrontReady && (gating ? !fullSweepSinceOn : after.allPending === 'TRAIN_MAIN_REWRITTEN');
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
-  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null;
+  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
   if (job.mode === 'on') {
-    if (completedNow && full.via === 'sweep' && after.incrementalCursor) {
-      try {
-        const w = await native.reportSweepWatermark({ completedAt: full.completedAt, updatedCursor: after.incrementalCursor, mainSha });
-        if (w.recorded) { actions.watermarkReported = true; fx.n++; }
-      } catch { /* not deployed, refused or unreadable: informational only (no take-over uses it) */ }
-    }
+    // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
+    // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
     try {
       openRows = bindRows ?? (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls;
       const open = openRows.map(p => p.number);
@@ -505,9 +520,31 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
         if (!k.onDuty) { lostDuty = true; fx.n--; } else { keptAlive = k.keptAlive; actions.keptAlive = keptAlive.length; }
       }
     } catch { /* keepalive is best effort: the lease clocks still run */ }
-    if (!takeoverPending && !lostDuty && holder?.pr && front) {
+    let frontLanded = false;
+    if (push && !takeoverPending && !lostDuty) {
+      const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx });
+      landingFacts = l.facts;
+      if (l.lostDuty) lostDuty = true;
+      if (l.adopted.length) actions.adopted = true;
+      frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
+      landingState = l.state;
+    }
+    if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
-        if (front.merged) {
+        const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
+          ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
+        if (batchOfOutcome && batchOfOutcome.members.length > 1 && !landingState) {
+          // the landing state could not be read: neither bisect nor touch failed (the front is not alone to blame); the next run tries again
+        } else if (batchOfOutcome && batchOfOutcome.members.length > 1) {
+          // ADR 0018 §3: a batch of several members failed for a PR's own reason: bisect (the next batch takes the first half), no touch failed.
+          if (!landingState.handled.includes(job.frontTestSha)) {
+            const next = bisectAfter({ suspect: landingState.suspect, members: batchOfOutcome.members, landed: false });
+            landingState = { ...landingState, suspect: next.suspect, bad: [...landingState.bad, ...next.bad], handled: [...landingState.handled, job.frontTestSha] };
+            await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...landingState });
+          }
+          actions.failedReported = true;
+          landingFacts = { ...(landingFacts ?? {}), bisect: { failed: batchOfOutcome.members.map(m => m.pr), suspect: landingState.suspect?.map(m => m.pr) ?? null } };
+        } else if (front.merged) {
           // §41.4 adopt: merged as [T, H] with S's tree, T and S from this node's front batch or the green's own summary
           const record = (await sweepStore?.frontBatches({ pr: holder.pr, headSha: front.headSha }))?.[0] ?? null;
           const green = frontChecks.filter(c => c?.app?.id === appId && c.name === SLOT_CHECK && c.head_sha === front.headSha && c.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
@@ -525,7 +562,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           if (!r.onDuty) { lostDuty = true; fx.n--; } else actions.returned = r.returned === true;
         } else if (job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha) {
           // §41.4 touch failed: only from the executor's frontOutcome, while this claim is the front and the head is still H
-          fx.n++;
+          fx.n++; fx.slotTouched = true;
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         }
@@ -544,7 +581,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // latches PAUSE and tells the Owner; stage 8 writes no green either (no proof says fullSweepSinceOn, its strict route needs strict).
     if (permanent && rules !== null && rules.strict !== true && !requestPause) requestPause = 'TRAIN_STRICT_OFF';
   }
-  const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules, mainSha });
+  const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules: push && rules ? { ...rules, strict: false } : rules, mainSha });
   if (!acting) decision = wouldDo;
   else if (requestPause) decision = requestPause;
   else if (lostDuty) decision = 'NOT_ON_DUTY';
@@ -558,9 +595,17 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
-    const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx });
+    const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
+      pushing: push ? { github, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
   } else decision = wouldDo;
+  // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
+  // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
+  // Not after an adoption or a return in this round (push mode adopts a landed front before GitHub marks its PR merged).
+  if (job.mode === 'on' && !lostDuty && !requestPause && !fx.slotTouched && !actions.adopted && !actions.returned) {
+    const r = await renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx });
+    if (r === 'NOT_ON_DUTY') { lostDuty = true; decision = 'NOT_ON_DUTY'; } else if (r === 'TOUCHED') actions.touchedRunning = true;
+  }
 
   if (job.mode === 'on' && ledger && !lostDuty && clock() - started < CLEANUP_BEFORE_MS) {
     try { summary = { ...(summary ?? { records: 0, refused: 0 }), closed: (await closeGreenLedgerGroups({ ledger, inMain: sweeper.inMainOf, now: clock(), deadline: until.read, clock })).closed }; }
@@ -579,7 +624,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   const providerBudget = typeof github.rateBudget === 'function' ? github.rateBudget() : null;
   return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
-    ledger: summary, decision, openFrontBatch, requestPause, frontBind: decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' ? frontBind : null,
+    ledger: summary, decision, openFrontBatch, requestPause, frontBind: decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' ? frontBind : null, landing: landingFacts,
     sweep: { ...sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: strictReady || sweepComplete, revoked: revoked.length + (strict?.revoked.length ?? 0),
       unconfirmed: strictReady ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),
       would: targets.length, full, sinceOn: fullSweepSinceOn, proofWritten, counter, started, clock, allPending: after.allPending }), strictCoverage: strictSummary,
@@ -678,12 +723,12 @@ async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
 }
 
 // openFront's checks before any write (pure; also stage 10's forecast before the sweeps, task e30b5a36): the refusal, or null.
-function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock }) {
+function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used = previous.length }) {
   const last = previous[0] ?? null;
   const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
   if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
     && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING' };
-  if (previous.length >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
+  if (used >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
   // Without the claim's kept-alive lease (keepalive failed or did not name it; review R2 minor 3) the lease bound is the
   // read-back after touch running (openFront): a merge-slot clock never runs past the claim lease (§41.4 "现状").
   const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
@@ -699,14 +744,25 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
 // same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
 // infrastructure failure) counts as running until the holder's running clock or slot ends.
-async function openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx }) {
+async function openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
-  let previous;
-  try { previous = await sweepStore.frontBatches({ pr: holder.pr, headSha: front.headSha }); } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, since, need } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock });
+  let previous, used;
+  try {
+    previous = await sweepStore.frontBatches({ pr: holder.pr, headSha: front.headSha });
+    // ADR 0018 §3: in push mode a batch of several members that failed does not use up one of the front's own attempts (bisection would
+    // otherwise end the front before its own test alone).
+    used = previous.length;
+    if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
+  } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
+  const { refusal, since, need } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
   if (refusal) return no(refusal);
+  let composed = null;
+  if (pushing) {
+    composed = await composeBatch({ ...pushing, job, holder, front, mainSha, fx });
+    if (composed.refusal) return no(composed.refusal);
+  }
   let touched;
-  try { fx.n++; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
+  try { fx.n++; fx.slotTouched = true; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
   catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   if (!touched.onDuty) { fx.n--; return no('NOT_ON_DUTY'); }
   if (touched.touched !== true) return no('TRAIN_FRONT_BUDGET_SHORT');
@@ -716,11 +772,165 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   const h = again.onDuty && again.holders.length === 1 ? again.holders[0] : null;
   if (!h || h.claimId !== holder.claimId || h.pr !== holder.pr || !(Date.parse(h.mergeSlotUntil) > Date.parse(holder.mergeSlotUntil))
     || !(Date.parse(h.mergeSlotUntil) - clock() >= need)) return no('TRAIN_FRONT_BUDGET_SHORT');
-  const batch = { pr: holder.pr, headSha: front.headSha, baseSha: mainSha, testSha: front.testMerge.sha, testTree: front.testMerge.tree, claimId: holder.claimId, since,
-    attempt: previous.length + 1 };
+  const batch = { pr: holder.pr, headSha: front.headSha, baseSha: mainSha, testSha: composed?.testSha ?? front.testMerge.sha, testTree: composed?.testTree ?? front.testMerge.tree,
+    claimId: holder.claimId, since, attempt: Math.min(used, MAX_FRONT_BATCHES_PER_HEAD - 1) + 1 };
+  if (composed) {
+    try {
+      await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: batch.pr, frontHeadSha: batch.headSha, baseSha: batch.baseSha,
+        testSha: batch.testSha, testTree: batch.testTree, attempt: batch.attempt, members: composed.members });
+      if (composed.suspect !== composed.stateSuspect) await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...composed.state, suspect: composed.suspect });
+    } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
+  }
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
   try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
-  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: batch };
+  // ADR 0019: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
+  // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
+  const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
+  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: members ? { ...batch, members } : batch };
+}
+
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose body names a claim of this install and
+// whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
+// PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
+export const RIDER_MAX_READS = 10;
+async function findRiders({ github, job, rows, claimScope, holder, want }) {
+  const out = [];
+  if (want <= 0) return out;
+  const open = rows.filter(r => r?.state === 'open' && r.baseRef === 'main' && r.number !== holder.pr).sort((a, b) => a.number - b.number).slice(0, RIDER_MAX_READS);
+  for (const row of open) {
+    if (out.length >= want) break;
+    try {
+      const pull = await github.readPullRequest(row.number), ref = claimReferenceOf(pull?.body);
+      if (!ref || (claimScope !== null && ref.scope !== claimScope) || pull.state !== 'open' || pull.draft !== false || pull.base?.ref !== 'main'
+        || pull.head?.repo?.full_name !== job.repo || !SHA.test(pull.head?.sha ?? '') || ref.claimId === holder.claimId) continue;
+      const listed = await github.readChecks(pull.head.sha);
+      const admitted = (listed?.checks ?? []).filter(c => c?.app?.id === APP_ID && c.name === 'kooyumi-work-admission' && c.head_sha === pull.head.sha)
+        .sort((a, b) => b.id - a.id)[0];
+      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: ref.claimId });
+    } catch { break; }
+  }
+  return out;
+}
+
+// ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
+// Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
+// chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
+async function composeBatch({ github, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
+  if (!state) return { refusal: 'TRAIN_SWEEP_INCOMPLETE' };
+  const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
+  const candidates = max > 1 ? await findRiders({ github, job, rows, claimScope, holder, want: max - 1 }) : [];
+  const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
+  let members = picked.members, testSha = front.testMerge?.sha ?? null, testTree = front.testMerge?.tree ?? null;
+  try {
+    if (members.length > 1) {
+      fx.n++; await landing.pointRef(STAGING_TMP_REF, mainSha);
+      const kept = [], steps = [];
+      for (const m of members) {
+        fx.n++;
+        const r = await landing.mergeIntoTmp(m.headSha, `Merge train batch: #${m.pr} (${m.headSha.slice(0, 12)})`);
+        if (r.status === 201) { kept.push(m); steps.push(r.sha); testSha = r.sha; } else if (m === members[0]) return { refusal: 'FRONT_NEEDS_MAIN_MERGE' };
+      }
+      members = kept;
+      if (members.length === 1) { testSha = front.testMerge?.sha ?? null; testTree = front.testMerge?.tree ?? null; }
+      else {
+        // ADR 0019 (review 3): every step of the chain must be the commit this run's own merge returned (S1 on T, S2 on S1, ...).
+        const chain = await readBatchChain({ readGitCommit: s => github.readGitCommit(s), baseSha: mainSha, heads: members.map(m => m.headSha), testSha, steps });
+        if (!chain.ok) return { refusal: 'FRONT_TEST_MERGE_NOT_READY' };
+        testTree = chain.tree;
+      }
+    }
+    if (!SHA.test(testSha ?? '') || !SHA.test(testTree ?? '')) return { refusal: 'FRONT_TEST_MERGE_NOT_READY' };
+    fx.n++; await landing.pointRef(STAGING_REF, testSha);
+  } catch { return { refusal: 'FRONT_TEST_MERGE_NOT_READY' }; }
+  return { members, testSha, testTree, suspect: picked.suspect, stateSuspect: state.suspect, state };
+}
+
+// ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
+// the batch's head (merged, or open while GitHub has not marked it yet) is adopted with S, riders first and the front last. A batch is
+// recorded as adopted once each member was answered (adopted, or moved on to another head); the bisection learns from it once.
+async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx }) {
+  const out = { facts: null, adopted: [], lostDuty: false, state: null };
+  let state, batches;
+  try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
+  catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+  const notMarkedMerged = [], landed = [];
+  let changed = false;
+  for (const b of [...batches].reverse()) {
+    if (state.adopted.includes(b.testSha)) continue;
+    let cmp;
+    try { cmp = await github.readCompare(b.testSha, mainSha); } catch { continue; }
+    if (!(cmp?.status === 'identical' || (cmp?.status === 'ahead' && cmp.behindBy === 0))) continue;
+    let answered = true;
+    for (const m of [...b.members.slice(1), b.members[0]]) {
+      let pull;
+      try { pull = await github.readPullRequest(m.pr); } catch { answered = false; continue; }
+      if (pull?.head?.sha !== m.headSha || (pull.state !== 'open' && pull.merged !== true)) continue;
+      if (pull.merged !== true) notMarkedMerged.push(m.pr);
+      try {
+        fx.n++;
+        const a = await native.adopt({ pr: m.pr, mergeSha: b.testSha });
+        if (!a.onDuty) { fx.n--; out.lostDuty = true; answered = false; break; }
+        if (a.adopted) out.adopted.push(m.pr);
+      } catch { answered = false; }
+    }
+    if (out.lostDuty) break;
+    if (answered) {
+      const next = bisectAfter({ suspect: state.suspect, members: b.members, landed: true });
+      state = { ...state, suspect: next.suspect, bad: [...state.bad, ...next.bad], adopted: [...state.adopted, b.testSha] };
+      landed.push({ testSha: b.testSha, members: b.members.map(m => m.pr) });
+      changed = true;
+    }
+  }
+  if (changed) {
+    try { await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...state }); } catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNWRITTEN' }; }
+  }
+  out.state = state;
+  out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
+  return out;
+}
+
+// Generation 28 (resident ADR 0017, the 45-minute gap of ADR 0016): from the moment a claim becomes the queue head until stage 10's
+// OPEN_FRONT_BATCH touch, nothing moved the merge slot, so a front that stage 10 could not open for a while (other batches held the
+// executor, or rounds ended TRAIN_TAKEOVER_SWEEP_PENDING, TRAIN_FRONT_NOT_PROVEN, TRAIN_SWEEP_INCOMPLETE, ...) lost its slot when the
+// 45 minutes ran out. One touch running ("CI is reporting on its PR", Native's 90-minute clock, still bounded by the hard cap counted
+// from the slot's taking and by the claim lease) when all of these hold:
+//   - exactly one holder, bound to a PR of this repository (Native's touch matches bound_pr; an unbound head is §62.4's binding);
+//   - the PR is open and not merged, its head known, and no green on it (stage 8's 30-minute green clock is for the merge and a touch
+//     running would replace it): front.green false, and Native's CI state is not green on this head;
+//   - this node's newest front batch of this head and claim is not reported finished while Native's CI clock runs on this head (a
+//     front batch running or parked at stage 8), or the front waits for its front batch (wouldDo OPEN_FRONT_BATCH) and the hard cap
+//     still leaves that batch its budget (frontBatchPlan's need);
+//   - less than SLOT_RENEW_BELOW_MS of the slot is left (and it is still live: a report never revives a lapsed slot), and the hard
+//     cap leaves room past the current end (otherwise the touch could not move it);
+//   - no other merge-slot write this round (openFront's touch running, touch failed): at most one touch a round.
+// A front that is idle (draft, closed, conflicting, not containing main, green) is never renewed: it gives way when its time is up.
+// -> 'TOUCHED', 'NOT_TOUCHED', 'NOT_ON_DUTY' or null (not applicable). A reply that cannot be read counts as a write (the next
+// round reads the outcome).
+async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx }) {
+  if (!holder?.pr || !front || front.state !== 'open' || front.merged || !front.headSha || front.green) return null;
+  if (holder.ciState === 'green' && holder.ciHeadSha === front.headSha) return null;
+  const now = clock(), until = Date.parse(holder.mergeSlotUntil ?? '');
+  if (!(until > now) || !(until - now < SLOT_RENEW_BELOW_MS)) return null;
+  const since = Date.parse(normal(holder.since ?? holder.takenAt) ?? '');
+  const capUntil = Number.isFinite(since) ? since + job.slotHardCapMinutes * 60_000 : Infinity;
+  if (!(capUntil > until)) return null;
+  // A front batch of this head and claim that is not reported finished while Native's CI clock runs on this head: running or parked.
+  let batchLive = false;
+  if (holder.ciState === 'running' && holder.ciHeadSha === front.headSha) {
+    let last = null;
+    try { last = (await sweepStore?.frontBatches({ pr: holder.pr, headSha: front.headSha }))?.[0] ?? null; } catch { last = null; }
+    const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+    batchLive = !!last && !finished && last.claimId === holder.claimId;
+  }
+  // Waiting for the front batch counts only while the hard cap still leaves the batch its budget (frontBatchPlan's need): a front that
+  // can no longer be opened under the cap (TRAIN_FRONT_BUDGET_SHORT for good) gives way instead of holding the slot to the cap.
+  const waiting = wouldDo === 'OPEN_FRONT_BATCH' && capUntil - now >= job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
+  if (!batchLive && !waiting) return null;
+  let t;
+  try { fx.n++; fx.slotTouched = true; t = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
+  catch { return 'NOT_TOUCHED'; }
+  if (!t.onDuty) { fx.n--; return 'NOT_ON_DUTY'; }
+  return t.touched === true ? 'TOUCHED' : 'NOT_TOUCHED';
 }
 
 // After runTrain (review R2 M5): once a write happened, a later failure (the held record's lease, the shadow-store write) ends
@@ -757,8 +967,12 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     // §41.4: the front's layer by the held merge-admission policy; a policy that does not load judges every path protected.
     const loaded = loadPolicy(held.policyText);
     const layerOfPaths = loaded.policy ? paths => layerOf(paths, loaded.policy) : () => 'protected';
+    // ADR 0018: the stage file (stages 8 and 10) and, in push mode only, the landing port (the same App key, a contents-write token).
+    const trainLanding = await readStageTrainLandingFact(inputs.dir);
+    const landing = trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
+      repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
     return settleTrain({
-      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope }),
+      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope, landing, trainLanding }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are

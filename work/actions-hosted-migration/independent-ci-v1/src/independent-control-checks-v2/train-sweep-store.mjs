@@ -12,6 +12,10 @@
 //   strict-front-proof-<ms>-<runId>-<nonce>.json current subject only; explicitly no historical coverage
 //   pending-revocations-<ms>-<runId>-<nonce>.json bounded exact-ID negative intents, preserved across duty/Source changes;
 //                                         an old count without IDs stays latched until a real complete all round
+//   landing-batch-<ms>-<runId>-<nonce>.json clued.independent-ci.train-landing-batch/1 (push mode, resident ADR 0018 §3): one batch
+//                                         this node opened: T, S, S's tree and the members in batch order (the front first)
+//   landing-state-<ms>-<runId>-<nonce>.json clued.independent-ci.train-landing-state/1: the riders kept out (bad heads), the bisection
+//                                         suspect, the batches whose members were all adopted and the failures already handled
 // Legacy readers take the newest valid record and count unreadable names (`torn`; `refused` for newer proofs/fronts).
 // Strict readers refuse a torn record at or after the newest valid timestamp, and refuse contradictory valid records
 // at that timestamp: neither a run id nor a nonce proves ordering. Unknown pending state is never silently discarded.
@@ -20,12 +24,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonical } from '../proof.mjs';
+import { MAX_BAD, MAX_ADOPTED, BATCH_MAX_LIMIT } from './train-landing.mjs';
 import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, STRICT_FRONT_PROOF_CONTRACT, validateStrictProof, validateStrictRound, validateStrictFrontProof, sameStrictIdentity } from './train-strict.mjs';
 
 export const SWEEP_PROOF_CONTRACT = 'clued.independent-ci.train-sweep-proof/1';
 export const FULL_SWEEP_CONTRACT = 'clued.independent-ci.train-full-sweep/1';
 export const FRONT_BATCH_CONTRACT = 'clued.independent-ci.train-front-batch/1';
 export const PENDING_REVOCATIONS_CONTRACT = 'clued.independent-ci.pending-revocations/1';
+export const LANDING_BATCH_CONTRACT = 'clued.independent-ci.train-landing-batch/1';
+export const LANDING_STATE_CONTRACT = 'clued.independent-ci.train-landing-state/1';
+export const LANDING_BATCH_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'frontPr', 'frontHeadSha', 'baseSha', 'testSha', 'testTree', 'attempt', 'members']);
+export const LANDING_STATE_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'bad', 'suspect', 'adopted', 'handled']);
 export const PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'pr', 'headSha', 'claimId', 'since', 'mainSha', 'clean', 'unconfirmed',
   'fullSweepSinceOn', 'slotHardCapMinutes', 'sweepFreshMs', 'prUpdatedCursor']);
 // Generation 15 (DESIGN 60): the state also records the main tip this run saw (mainSha) and why rounds enumerate everything until
@@ -45,7 +54,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(landing-batch|landing-state|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -96,7 +105,25 @@ export function validatePendingRevocations(r) {
   return r;
 }
 
-const KIND = { proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
+const member = m => exact(m, ['pr', 'headSha', 'claimId']) && Number.isSafeInteger(m.pr) && m.pr > 0 && SHA.test(m.headSha ?? '') && UUID.test(m.claimId ?? '');
+const headRef = m => exact(m, ['pr', 'headSha']) && Number.isSafeInteger(m.pr) && m.pr > 0 && SHA.test(m.headSha ?? '');
+export function validateLandingBatch(r) {
+  if (!exact(r, LANDING_BATCH_FIELDS) || r.contract !== LANDING_BATCH_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '')
+    || !Number.isSafeInteger(r.frontPr) || r.frontPr < 1 || !['frontHeadSha', 'baseSha', 'testSha', 'testTree'].every(k => SHA.test(r[k] ?? '')) || ![1, 2].includes(r.attempt)
+    || !Array.isArray(r.members) || r.members.length < 1 || r.members.length > BATCH_MAX_LIMIT || !r.members.every(member)
+    || r.members[0].pr !== r.frontPr || r.members[0].headSha !== r.frontHeadSha || new Set(r.members.map(m => m.pr)).size !== r.members.length) fail('invalid_train_landing_batch');
+  return r;
+}
+export function validateLandingState(r) {
+  if (!exact(r, LANDING_STATE_FIELDS) || r.contract !== LANDING_STATE_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '')
+    || !Array.isArray(r.bad) || r.bad.length > MAX_BAD || !r.bad.every(headRef)
+    || !(r.suspect === null || (Array.isArray(r.suspect) && r.suspect.length >= 1 && r.suspect.length <= BATCH_MAX_LIMIT && r.suspect.every(headRef)))
+    || !Array.isArray(r.adopted) || r.adopted.length > MAX_ADOPTED || !r.adopted.every(s => SHA.test(s ?? ''))
+    || !Array.isArray(r.handled) || r.handled.length > MAX_ADOPTED || !r.handled.every(s => SHA.test(s ?? ''))) fail('invalid_train_landing_state');
+  return r;
+}
+
+const KIND = { 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
   front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound],
   'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations] };
 
@@ -229,7 +256,28 @@ export class TrainSweepStore {
     return p;
   }
   async writeFullSweep(s) { return this.write(`full-${s?.mode}`, { contract: FULL_SWEEP_CONTRACT, ...s, inMain: (s?.inMain ?? []).slice(-MAX_IN_MAIN) }); }
+  // Push mode (ADR 0018 §3): batch records, newest first (at most `limit`), and the landing state (newest valid; none: empty).
+  async appendLandingBatch(r) { return this.write('landing-batch', { contract: LANDING_BATCH_CONTRACT, ...r }); }
+  async landingBatches(limit = 20) { return this.read('landing-batch', limit); }
+  async landingBatchByTest(testSha) { return (await this.read('landing-batch', 1, r => r.testSha === testSha))[0] ?? null; }
+  async writeLandingState({ writtenAt, runId, bad, suspect, adopted, handled }) {
+    const r = { writtenAt, runId, bad, suspect, adopted, handled };
+    return this.write('landing-state', { contract: LANDING_STATE_CONTRACT, ...r, bad: r.bad.slice(-MAX_BAD), adopted: r.adopted.slice(-MAX_ADOPTED), handled: r.handled.slice(-MAX_ADOPTED) });
+  }
+  // A newer torn state is unreadable (never an older one in its place): the caller does not compose riders or bisect then.
+  async readLandingState() {
+    const records = await this.read('landing-state', 1), p = records[0] ?? null;
+    if ([...this.tornNames.values()].some(t => t.kind === 'landing-state' && (p === null || t.ms >= Date.parse(p.writtenAt)))) fail('TRAIN_LANDING_STATE_UNREADABLE');
+    return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled } : { bad: [], suspect: null, adopted: [], handled: [] };
+  }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
   // This node's front batches of one head, newest first.
   async frontBatches({ pr, headSha }) { return this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha); }
+  // Generation 28 (resident docs/adr/0016): the newest front batch this node opened, of any PR, or null; a torn front record at or after it
+  // refuses (a newer front this node cannot read must not let an older one count as the newest).
+  async latestFrontBatch() {
+    const record = (await this.read('front', 1))[0] ?? null;
+    if ([...this.tornNames.values()].some(t => t.kind === 'front' && (record === null || t.ms >= Date.parse(record.writtenAt)))) fail('TRAIN_FRONT_BATCH_UNREADABLE');
+    return record;
+  }
 }

@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.26",
+      "version": "1.1.27",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -464,6 +464,8 @@
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing-port.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-strict.mjs",
@@ -586,7 +588,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "eed30a4825eebaff7130a5ae9ef6a911a64cef54830f01d28ef25f167288feef"
+      "content_sha256": "78e89db8796d5eaa24ec1d166a6797eabd3108f8182565c423de8f0d7fa96b23"
     },
     {
       "id": "script.resource-maintenance",
@@ -851,7 +853,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -868,7 +870,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "451a160ec7f4450ccf0f899383046fc96ca475c1fde201cba1012181f4071524"
+      "content_sha256": "462647b9fc48c3e4442dfe8950aae095278abbae70ef77896d9184b273ef4482"
     }
   ]
 }

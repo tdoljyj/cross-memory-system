@@ -441,6 +441,10 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
       const exhausted = result?.status === 'BLOCKED' && result.reason === 'native_claim_observation_unavailable' && result.sideEffects === 0;
       if (exhausted) {
         if (!op.observation.exhaustion || result.mayHavePublished === true || op.mutationAttempted || op.evaluations !== 0 || op.unsafe) op.unsafe = true;
+        // Generation 28 (resident docs/adr/0015): a republication's effect key is not the original's and the original is on record (revoked),
+        // so the no-effect proof below cannot hold for it: no second attempt in this window; the clean BLOCKED goes back as it is and the
+        // resident's bounded publication retry runs the stage again.
+        else if (op.method === 'publish' && Number.isSafeInteger(result.republication) && result.republication > 0) { /* returned as is */ }
         else if (monotonic() + OBSERVE_MIN_ATTEMPT_MS <= op.observation.deadline) {
           try {
             const proof = await proveNoEffects(op, result);
@@ -465,8 +469,9 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     } catch { op.unsafe = true; }
     finally { active = null; }
     if (!op.unsafe) return result;
-    // An UNCERTAIN is never safe to run again: the flag of the result it replaces is dropped (review round 2, MAJOR A).
-    const { safeToRerun: _dropped, ...rest } = result ?? {};
+    // An UNCERTAIN is never safe to run again: the flag of the result it replaces is dropped (review round 2, MAJOR A), and so is a
+    // withdrawal's republishSafe (generation 28).
+    const { safeToRerun: _dropped, republishSafe: _droppedToo, ...rest } = result ?? {};
     return { ...rest, status: 'UNCERTAIN', reason: 'publication_recovery_unconfirmed', sideEffects: result?.sideEffects ?? 0,
       productionAuthorized: false, mayHavePublished: true, ...(method === 'publishHosted' ? { roleMutex: { key: result?.roleMutex?.key ?? null, held: true } } : {}) };
   };

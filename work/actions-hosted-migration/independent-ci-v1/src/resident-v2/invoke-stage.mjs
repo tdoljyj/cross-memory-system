@@ -29,6 +29,7 @@ import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs
 import { buildStageFact } from './stage-fact.mjs';
 import { TRAIN_MODES } from '../independent-control-checks-v2/train-rules.mjs';
 import { STAGE_TRAIN_MODE_FILE, TRAIN_MODE_STAGES, stageTrainModeText } from '../independent-control-checks-v2/train-mode.mjs';
+import { STAGE_TRAIN_LANDING_FILE, TRAIN_LANDING_STAGES, stageTrainLandingText, landingSettings } from '../independent-control-checks-v2/train-landing.mjs';
 import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_RECORD, WIN_SPOOL, WIN_STAGE, ENTRY_V2 } from './layout.mjs';
 
 export const RESULT_WRAPPER_CONTRACT_V2 = 'clued.independent-ci.protected-job-result/2';
@@ -74,7 +75,9 @@ export async function readSpoolResult(spoolRoot, job) {
 
 // trainMode (stages 1 and 8 only, DESIGN §41.2): the installed train.enabled, written create-only as train-mode.json, exactly
 // train-mode.mjs#stageTrainModeText; none is written otherwise (the stage then reads 'off').
-export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes = null, trainMode = null }) {
+// trainLanding (stages 8 and 10 only, resident ADR 0018): {landing, batchMax, batchChain}, written create-only as train-landing.json, exactly
+// train-landing.mjs#stageTrainLandingText; none is written otherwise (the stage then reads github-merge).
+export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes = null, trainMode = null, trainLanding = null }) {
   check(NONCE32.test(nonce), 'STAGE_NONCE_INVALID');
   const dir = path.join(stageRoot, nonce);
   await fs.mkdir(dir); // never recursive, never an existing directory
@@ -82,6 +85,7 @@ export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBy
   await writeNew(path.join(dir, 'jobs.json'), sealed.files['jobs.json']);
   if (resultBytes) await writeNew(path.join(dir, 'result.json'), resultBytes);
   if (trainMode !== null) await writeNew(path.join(dir, STAGE_TRAIN_MODE_FILE), Buffer.from(stageTrainModeText(trainMode), 'utf8'));
+  if (trainLanding !== null) await writeNew(path.join(dir, STAGE_TRAIN_LANDING_FILE), Buffer.from(stageTrainLandingText(trainLanding), 'utf8'));
   return dir;
 }
 
@@ -102,10 +106,11 @@ export async function askBroker({ brokerRoot, request, clock, sleep, waitUntil }
 
 export async function invokeStage({ batchDir, stage, workManifestSha256, batchKey, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
   spoolRoot = WIN_SPOOL, receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
-  nonce = randomBytes(16).toString('hex'), trainMode = null }) {
+  nonce = randomBytes(16).toString('hex'), trainMode = null, trainLanding = null }) {
   let sealed, controllerSid;
   try {
     check(Number.isSafeInteger(stage) && HEX64.test(batchKey ?? '') && (trainMode === null || TRAIN_MODES.includes(trainMode)), 'STAGE_PACKAGE_REFUSED');
+    if (trainLanding !== null) landingSettings(trainLanding);
     sealed = await readSealedStage(batchDir, stage, workManifestSha256);
     check(sealed.plan.batchKey === batchKey, 'STAGE_PACKAGE_REFUSED');
     const record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock() });
@@ -119,7 +124,8 @@ export async function invokeStage({ batchDir, stage, workManifestSha256, batchKe
     try { resultBytes = await readSpoolResult(spoolRoot, JSON.parse(sealed.files['jobs.json'].toString('utf8'))[0]); }
     catch { return buildStageFact({ stage, nonce, workManifestSha256, preflightCode: 'STAGE_INPUT_RESULT_MISSING' }); }
   }
-  await prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes, trainMode: TRAIN_MODE_STAGES.includes(stage) ? trainMode : null });
+  await prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes, trainMode: TRAIN_MODE_STAGES.includes(stage) ? trainMode : null,
+    trainLanding: TRAIN_LANDING_STAGES.includes(stage) ? trainLanding : null });
   const request = makeBrokerRequest({ stage, nonce, configSha256: sealed.planSha256, now: clock() });
   // The broker answers after the helper stopped and the original binary was restored; a missing
   // answer after the deadline plus restore time is unknown, never success.
@@ -316,16 +322,26 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
   }
   // --train-mode (optional; the resident passes it for stages 1 and 8, engine-windows.mjs#installedTrainMode): off|shadow|on.
+  // --train-landing (optional; stages 8 and 10, resident ADR 0018): <github-merge|push>:<batchMax>[:chain] (ADR 0019).
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
-    if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key', '--train-mode'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {
+    if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key', '--train-mode', '--train-landing'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {
       output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
     }
     args[argv[i]] = argv[i + 1];
   }
   const fact = await invokeStage({ batchDir: args['--batch-dir'], stage: Number(args['--stage']), workManifestSha256: args['--work-manifest-sha256'], batchKey: args['--batch-key'],
-    trainMode: args['--train-mode'] ?? null });
+    trainMode: args['--train-mode'] ?? null, trainLanding: parseLandingArg(args['--train-landing']) });
   output.write(JSON.stringify(fact) + '\n');
   return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
+}
+// '<landing>:<batchMax>[:chain]' -> {landing, batchMax, batchChain}; absent: null; malformed: an object invokeStage refuses
+// (STAGE_PACKAGE_REFUSED). ':chain' (resident ADR 0019): the resident found that the installed components take a descriptor /4 (a
+// member chain); the resident looks for this literal before it ever sends it, so an older invoker never sees it.
+export const TRAIN_LANDING_CHAIN_ARG = 'chain';
+export function parseLandingArg(v) {
+  if (v === undefined) return null;
+  const m = /^(github-merge|push):([1-9])(:chain)?$/.exec(v);
+  return m ? { landing: m[1], batchMax: Number(m[2]), batchChain: m[3] === `:${TRAIN_LANDING_CHAIN_ARG}` } : { landing: 'refused', batchMax: 0 };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();

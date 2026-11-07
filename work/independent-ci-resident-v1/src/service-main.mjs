@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { HEX64, UUID, check, parseBoundedJson, sha256 } from './canonical.mjs';
-import { validatePolicy } from './policy.mjs';
+import { validatePolicy, installedTrainLanding } from './policy.mjs';
 import { Ledger } from './ledger.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { Inbox, OwnerInbox } from './inbox.mjs';
@@ -78,6 +78,8 @@ export async function main(argv = process.argv.slice(2)) {
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
     // DESIGN §41.2: stages 1 and 8 learn the installed train.enabled through the stage directory (train-mode.json).
     trainMode: installedTrainMode(policy),
+    // ADR 0018: stages 8 and 10 learn train.landing and train.batchMax through the stage directory (train-landing.json).
+    trainLanding: installedTrainLanding(policy),
     paths: {
       sourceRoot,
       workRoot: path.join(root, 'work'),

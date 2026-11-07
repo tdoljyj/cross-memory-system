@@ -295,6 +295,8 @@ function trainOf(t) {
   if (['blocked', 'strict-coverage', 'strict-current-front', 'full-sweep', 'strict-permanent'].includes(t?.frontReadyMode)) out.frontReadyMode = t.frontReadyMode;
   // DESIGN §65: the policy's train.sweep (strict-permanent mode is 'audit' or 'off'); the companion's ruleset backstop reads it.
   if (['gate', 'audit', 'off'].includes(t?.sweepMode)) out.sweepMode = t.sweepMode;
+  // ADR 0018: the policy's train.landing (github-merge: GitHub merges after the merge-slot green; push: the train lands main itself).
+  if (['github-merge', 'push'].includes(t?.landing)) out.landing = t.landing;
   for (const k of ['fullPending', 'backgroundAllPending']) if (typeof t?.[k] === 'boolean') out[k] = t[k];
   for (const k of ['maintenanceExtraUsed', 'maintenanceExtraLimit'])
     if (Number.isSafeInteger(t?.[k]) && t[k] >= 0 && t[k] <= 200) out[k] = t[k];

@@ -192,6 +192,8 @@ Linux 段（2/4/6）额外经过：
 3. 版本兜底：两侧不一致时报 `UPGRADE_VERSION_SKEW`；
 4. companion 的泵：在两端 formal-spool 之间搬运 issue → challenge → response → result，并启动 worker unit。
 
+trivy 的扫描结果缓存（M4，DESIGN §68）：同一棵树、同样的工具与数据已经真跑并签过名的成功结论，在 24 小时内直接复用，不再启动三个扫描器容器；准入、扫描许可与签名照做。第 28 代起默认打开，根目录 `/var/lib/clued-independent-ci/scan-result-cache`，placement 与 gitleaks 不缓存（[ADR 0021](adr/0021-trivy-scan-result-cache-default-on.md)）。
+
 ### 4.4 第 1 段：准入
 
 代码：`CI/formal-work-admission-check-v2/`、`CI/full-admission-v2.mjs`、`scripts/ci/clued-work-admission.mjs`
@@ -357,6 +359,7 @@ B 上的第 8 段尝试：
 - **strict 永久开，合并方式只有 merge**（[ADR 0007](adr/0007-strict-permanent.md)）。GitHub 只合入包含 main 尖端 T 的 H，此时 merge(T, H) 的树就是 H 的树，测什么落什么。
 - **全量清扫不挡任何事**（[ADR 0008](adr/0008-full-sweep-audit.md)），每天最多一轮后台审计（`AUDIT_EVERY_MS` 24 小时）。
 - `gate` 模式保留为回退路径：一次 UAC 把策略写成 `train.sweep: "gate"`，回到旧的接管门（DESIGN §65.5）。
+- **落地方式 `train.landing`**（第 28 代，[ADR 0018](adr/0018-bors-landing.md)、[ADR 0019](adr/0019-train-batch-member-chain.md)）：默认 `github-merge`，第 8 段写 `kooyumi-merge-slot` 绿，由 GitHub 合并，和上面说的完全一样。`push` 是 bors 式落地：第 8 段在全部实时准入通过后，把测过的 S 快进推上 main；第 10 段组批（`train.batchMax`，默认 1）、生成累积合并、二分，并 adopt 每个成员。`push` 要求 `sweep` 是 `audit` 或 `off`，并且要先完成 ADR 0018 第 8 节的 App 权限、规则集和工作流前提；Owner 决定按 ADR 0010 的触发条件再打开。代码在 `CI/independent-control-checks-v2/train-landing.mjs`、`train-landing-port.mjs`。
 
 ### 7.2 车头与 S
 
@@ -389,6 +392,8 @@ B 上的第 8 段尝试：
    - 树不同 → `TRAIN_LANDED_TREE_MISMATCH`，锁 PAUSE 并通知 Owner。
 
 非队首 PR 的普通批次照常跑第 1–7 段，停在 B。在列车模式下，只有车头批次能拿到合并位的绿。
+
+车头 PR 换了新 head（[ADR 0016](adr/0016-front-requeue-on-new-head.md)）：旧 head 的车头批次在第 8 段遇到 `REQUIRED_CHECK_FAILED` 时会还位，认领因此离开队列。新 head 的普通批次第 1 段 SETTLED 后，如果本节点最新的车头批次记录是这个 PR 的另一个 head、同一个认领，而 Native 说认领不在队列，就用 CI 身份 `merge_queue_join` 重新入队（`claim-assist-native.mjs#stage1FrontRequeue`）。入队应答说是队首、位置 1 时，照第 2 步让位。
 
 ### 7.4 第 8 段的当前车头路径
 
@@ -459,11 +464,15 @@ B 上的第 8 段尝试：
 | 第 1 段后 CI 自动延长 | 剩余 < 90 分钟时 | `claim-assist-native.mjs#STAGE1_LEASE_MINUTES` |
 | 第 8 段 CI 自动延长 | 剩余 < 180 分钟时 | `STAGE8_LEASE_MINUTES` |
 | 第 8 段 CI 自动入队 | 不在队列时 `merge_queue_join` | `claim-assist-native.mjs` |
+| 第 1 段 CI 重新入队 | 车头 PR 的新 head：最新车头批次是本 PR 另一个 head、同一认领，且不在队列时（ADR 0016） | `claim-assist-native.mjs#stage1FrontRequeue` |
 | running 时钟 | `touch running` 后最长 90 分钟，受 `slotHardCapMinutes`（默认 120）约束 | 第 10 段 |
+| 第 10 段队位续期 | 已绑定的队首在等车头、或它的车头批次在跑/停靠，队位剩余 < 20 分钟时 `touch running` 一次；每轮最多一次合并位写入（ADR 0017） | `train-maintenance.mjs#renewFrontSlot` |
 | 绿之后的合并时间 | 30 分钟 | 服务端 |
 | 服务端保活 | 延长排队认领，不越过硬截止 | `clued_private.work_claim_merge_queue_keepalive_v1`（CI 命令门操作 `merge_queue_keepalive`） |
 
 开车头批次前，如果剩余时间小于 `frontBatchBudgetMs` 加一次第 8 段尝试，就不开（`TRAIN_FRONT_BUDGET_SHORT`）。
+
+合并位只由持有者续期和 `touch`（上表的 running/green）推后；`lease_extend` 和 keepalive 只延长租约。认领成为队首到第 10 段开车头之间原先没有延长（ADR 0016 的残余），第 28 代由第 10 段的队位续期补上（[ADR 0017](adr/0017-stage10-front-slot-renewal.md)）。
 
 ---
 
@@ -498,7 +507,7 @@ B 上的第 8 段尝试：
 | 机制 | 适用 | 次数 / 间隔 | 代码 |
 |---|---|---|---|
 | 只读请求有界退避 | GitHub GET 遇 5xx 或网络错误；Native 读 | 1 / 2 / 4 / 8 秒，每进程两段各 20 秒 | `CI/read-retry.mjs` |
-| 发布段原地重跑 | 第 3/5/7 段零副作用、`safeToRerun` | 30 秒、90 秒、5 分钟 | `executor.mjs#publicationRetryable` |
+| 发布段原地重跑 | 第 3/5/7 段零副作用、`safeToRerun`；或写后核对读不到而撤回（`PUBLICATION_REVOKED` 且 `republishSafe`，重跑时以新效果键重新发布，最多 3 次，[ADR 0015](adr/0015-republish-after-unavailable-withdrawal.md)） | 30 秒、90 秒、5 分钟 | `executor.mjs#publicationRetryable`、`CI/staged-check-publisher-v2.mjs` |
 | 扫描段原地重跑 | 第 2/4/6 段：内存闸、证明没发布、干净拒绝 | 60 秒、300 秒 | `classify.mjs#executionRetryable` |
 | 自动收尾 | 第 2/4/6 段泵失联但能证明没发布 | 收为 `BRIDGE_ABANDONED_UNPUBLISHED`；第 2 段可排 attempt 2 | `provenCleanEnd` |
 | 第 8 段暂时失败 | 见 §6.3 | 3 次 | `stage8Try` |
@@ -742,7 +751,8 @@ companion 由 Owner 登录时启动，单实例锁。每个通道有自己的 Ru
 | companion 无登录运行（B2） | 已决定，未实施 | Decision `9dc130c7` 第 3 项，Task `59f8ef81` |
 | companion 换细粒度 GitHub 令牌 | 已决定，未实施 | Decision `9dc130c7` 第 4 项 |
 | 准入票据（M1） | 不做，设计存档 | Decision `9dc130c7` 第 1 项，[ADR 0009](adr/0009-no-admission-ticket.md) |
-| bors 式列车 | Owner 已预授权，等触发条件满足 | Task `7d86cf41`，[ADR 0010](adr/0010-bors-preauthorized.md) |
+| bors 式列车（`train.landing = push`、`batchMax > 1`） | 第 28 代已实现，默认 `github-merge`、1；等 ADR 0010 的触发条件满足、上线前提做完再开 | Task `7d86cf41`，[ADR 0010](adr/0010-bors-preauthorized.md)、[0018](adr/0018-bors-landing.md)、[0019](adr/0019-train-batch-member-chain.md) |
+| 备用节点预检（L3） | 评估后不做 | [ADR 0020](adr/0020-standby-prechecks-not-implemented.md) |
 | 三个扫描并行 | 分析结论：常驻层做不到，需要 Source 级多角色扫描段 | DESIGN §45 |
 | 写后失败撤回后重发（方案 A） | 不建议做 | DESIGN §50 |
 

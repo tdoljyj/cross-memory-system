@@ -241,6 +241,143 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_chain_descriptor_shape(self):
+        """Resident ADR 0019: descriptor /4 names 2..4 members (the front first) and S's tree; anything else is refused. Its job ids are /3's."""
+        heads = ['5' * 40, '6' * 40, '7' * 40]
+        members = [{'pr': 888, 'headSha': heads[0]}, {'pr': 901, 'headSha': heads[1]}, {'pr': 902, 'headSha': heads[2]}]
+        d = descriptor(contract=pw.DESCRIPTOR_CHAIN_CONTRACT, headSha=heads[0], testSha='4' * 40, testTree='8' * 40, members=members)
+        self.assertEqual(pw.DESCRIPTOR_CHAIN_CONTRACT, 'clued.independent-ci.resident-batch-descriptor/4')
+        self.assertEqual(pw.validate_descriptor(d, BATCH)['trivy'], d['linuxJobIds'][1])
+        three = descriptor(headSha=heads[0], testSha='4' * 40)
+        self.assertEqual(d['linuxJobIds'], three['linuxJobIds'], 'the same job ids as /3: S names the whole chain')
+        self.assertEqual(pw.expected_test_refs(d), {'refs/clued-test/' + '4' * 40: '4' * 40})
+
+        def again(**o):
+            x = {**d, **o}
+            x['linuxJobIds'] = [pw.job_id_v2(x, r) for r in pw.LINUX_ROLES]
+            return x
+        for bad in (again(members=members[:1]), again(members=members + [{'pr': 903, 'headSha': '9' * 40}, {'pr': 904, 'headSha': 'a' * 40}]),
+                    again(members=members[1:] + members[:1]), again(members=[members[0], {'pr': 888, 'headSha': heads[1]}]),
+                    again(members=[members[0], {'pr': 901, 'headSha': heads[0]}]), again(members=[members[0], {'pr': 901, 'headSha': '4' * 40}]),
+                    again(members=[members[0], {'pr': 901, 'headSha': d['baseSha']}]), again(members=[members[0], {**members[1], 'claimId': 'x'}]),
+                    again(members=[members[0], {'pr': True, 'headSha': heads[1]}]), again(members=[members[0], {'pr': 901, 'headSha': 'X' * 40}]),
+                    again(members={'0': members[0]}), {k: v for k, v in d.items() if k != 'testTree'}, again(testTree='z' * 40), again(testSha=heads[0]),
+                    {k: v for k, v in d.items() if k != 'members'}):
+            with self.assertRaises(pw.Refused) as e:
+                pw.validate_descriptor(bad, BATCH)
+            self.assertEqual(e.exception.code, 'BATCH_CHAIN_DESCRIPTOR_REFUSED', bad)
+        # /3 is what it was: it never names members or a tree
+        for extra in ({'members': members}, {'testTree': '8' * 40}):
+            with self.assertRaises(pw.Refused) as e:
+                pw.validate_descriptor({**three, **extra}, BATCH)
+            self.assertEqual(e.exception.code, 'DESCRIPTOR_REFUSED')
+
+    def test_chain_receipt_binding(self):
+        """ADR 0019: a /4 bundle's receipt names the same members and tree (build-bundle.ps1 checked that chain); /3 receipts are unchanged."""
+        heads = ['5' * 40, '6' * 40]
+        members = [{'pr': 888, 'headSha': heads[0]}, {'pr': 901, 'headSha': heads[1]}]
+        d = descriptor(contract=pw.DESCRIPTOR_CHAIN_CONTRACT, headSha=heads[0], testSha='4' * 40, testTree='8' * 40, members=members)
+        now = time.time()
+        stamp = datetime.fromtimestamp(now - 60, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        r = {'contract': 'clued.independent-ci.resident-bundle-receipt/1', 'status': 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED', 'batchId': BATCH, 'descriptorSha256': 'f' * 64,
+             'headSha': d['headSha'], 'mainSha': d['baseSha'], 'sourceCommit': d['sourceCommit'], 'gitleaksTomlSha256': d['gitleaksTomlSha256'], 'prerequisites': 0, 'bundleVersion': 2,
+             'headPresent': True, 'basePresent': True, 'bundleSha256': 'a' * 64, 'refListSha256': 'b' * 64, 'reviewedRefListSha256': 'c' * 64, 'lsRemoteCompletedAt': stamp,
+             'testSha': d['testSha'], 'testRefCount': 1, 'testRefListSha256': 'd' * 64, 'chainMembers': members, 'testTree': '8' * 40}
+        self.assertIs(pw.validate_receipt(r, d, 'f' * 64, now), r)
+        for bad in ({k: v for k, v in r.items() if k != 'chainMembers'}, {k: v for k, v in r.items() if k != 'testTree'}, {**r, 'chainMembers': members[::-1]},
+                    {**r, 'chainMembers': members[:1]}, {**r, 'testTree': '9' * 40}):
+            with self.assertRaises(pw.Refused) as e:
+                pw.validate_receipt(bad, d, 'f' * 64, now)
+            self.assertEqual(e.exception.code, 'BUNDLE_RECEIPT_REFUSED')
+
+    @unittest.skipUnless(shutil.which('git'), 'git required')
+    def test_real_three_pr_chain(self):
+        """ADR 0019 on real objects: T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> S3 = merge(S2, H3) passes check_chain on a store and on a
+        candidate cloned from the bundle; a wrong parent, a third parent, a head that is not a member, members in another order or a
+        different count, another base, S's tree, a member head that is no branch tip are each refused."""
+        tmp = tempfile.mkdtemp(prefix='clued-wsprep-chain-')
+        real_git = pw.git
+        try:
+            env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 'f', 'GIT_AUTHOR_EMAIL': 'f@f', 'GIT_COMMITTER_NAME': 'f', 'GIT_COMMITTER_EMAIL': 'f@f'}
+            src = os.path.join(tmp, 'src')
+            os.mkdir(src)
+            run = lambda *a: subprocess.run(['git', '-C', src, *a], env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+            def put(name):
+                with open(os.path.join(src, name), 'w') as f:
+                    f.write(name + chr(10))
+                run('add', name)
+            run('init', '-q', '-b', 'main')
+            put('t.txt')
+            run('commit', '-q', '-m', 'T')
+            t = run('rev-parse', 'HEAD')
+            heads = []
+            for n in (1, 2, 3):
+                run('checkout', '-q', '-b', f'pr-{n}', t)
+                put(f'p{n}.txt')
+                run('commit', '-q', '-m', f'H{n}')
+                heads.append(run('rev-parse', 'HEAD'))
+            run('checkout', '-q', '--detach', t)
+            steps = []
+            for n in (1, 2, 3):
+                run('merge', '-q', '--no-ff', '-m', f'Merge train batch: H{n}', f'pr-{n}')
+                steps.append(run('rev-parse', 'HEAD'))
+            s = steps[-1]
+            tree = run('rev-parse', s + '^{tree}')
+            # a sibling of H2 on its own branch (a live tip, not a member), S2 with its parents swapped, and an octopus last step
+            run('checkout', '-q', '-b', 'other', t)
+            put('o.txt')
+            run('commit', '-q', '-m', 'O')
+            other = run('rev-parse', 'HEAD')
+            swapped = run('commit-tree', '-p', heads[1], '-p', steps[0], '-m', 'swapped', run('rev-parse', steps[1] + '^{tree}'))
+            s_swapped = run('commit-tree', '-p', swapped, '-p', heads[2], '-m', 'S3 on swapped', tree)
+            octo = run('commit-tree', '-p', steps[1], '-p', heads[2], '-p', other, '-m', 'octopus', tree)
+            run('checkout', '-q', 'main')
+            for x in (s, s_swapped, octo):
+                run('update-ref', 'refs/clued-test/' + x, x)
+            members = [{'pr': 900 + n, 'headSha': heads[n - 1]} for n in (1, 2, 3)]
+            d = descriptor(contract=pw.DESCRIPTOR_CHAIN_CONTRACT, pr=901, headSha=heads[0], baseSha=t, testSha=s, testTree=tree, members=members)
+            pw.validate_descriptor(d, BATCH)
+            formal = {}
+            for line in run('for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads/').splitlines():
+                sha, _, name = line.partition(' ')
+                formal[name] = sha
+            self.assertEqual(formal['refs/heads/main'], t)
+            pw.git = lambda args, cwd='/', timeout=300: subprocess.run(['git', *args], env=env, capture_output=True, text=True, check=True).stdout
+            pw.check_chain(['-C', src], d, formal)
+            # the same on a candidate cloned from a bundle that carries S under its test ref (as prepare() builds it)
+            bundle = os.path.join(tmp, 'all.bundle')
+            subprocess.run(['git', '-C', src, 'bundle', 'create', '--quiet', '--version=2', bundle, '--branches', '--tags', 'refs/clued-test/' + s], env=env, check=True, capture_output=True)
+            with open(bundle, 'rb') as f:
+                bformal, _, btest = pw.parse_bundle_header(f.read())
+            self.assertEqual(btest, pw.expected_test_refs(d))
+            self.assertTrue(pw.member_tips_ok(bformal, d))
+            cand = os.path.join(tmp, 'cand')
+            subprocess.run(['git', 'clone', '-q', '--no-checkout', '--', bundle, cand], env=env, check=True, capture_output=True)
+            subprocess.run(['git', '-C', cand, 'fetch', '-q', '--no-tags', '--', bundle, f'+refs/clued-test/{s}:refs/clued-test/{s}'], env=env, check=True, capture_output=True)
+            pw.check_chain(['-C', cand], d, bformal)
+            lines = lambda x: run('rev-list', '--parents', '-n', '1', x)
+            self.assertTrue(pw.chain_ok(lines, d))
+
+            def refused(code, formal_refs=formal, **o):
+                with self.assertRaises(pw.Refused) as e:
+                    pw.check_chain(['-C', src], {**d, **o}, formal_refs)
+                self.assertEqual(e.exception.code, code, o)
+            refused('BATCH_CHAIN_REQUIRED', testSha=s_swapped)
+            refused('BATCH_CHAIN_REQUIRED', testSha=octo)
+            refused('BATCH_CHAIN_REQUIRED', members=[members[0], {'pr': 902, 'headSha': other}, members[2]])
+            refused('BATCH_CHAIN_REQUIRED', members=[members[0], members[2], members[1]])
+            refused('BATCH_CHAIN_REQUIRED', members=members[:2])
+            refused('BATCH_CHAIN_REQUIRED', members=members + [{'pr': 904, 'headSha': other}])
+            refused('BATCH_CHAIN_REQUIRED', baseSha=heads[0])
+            refused('BATCH_TEST_TREE_CHANGED', testTree=run('rev-parse', t + '^{tree}'))
+            refused('BATCH_MEMBER_NOT_BRANCH_TIP', formal_refs={k: v for k, v in formal.items() if k != 'refs/heads/pr-2'})
+            # the /3 parents check still refuses a chain S, and /3 never reaches the chain check
+            self.assertFalse(pw.test_parents_ok(lines(s), descriptor(headSha=heads[0], baseSha=t, testSha=s)))
+        finally:
+            pw.git = real_git
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_formal_ref_names(self):
         for ok in ('refs/heads/main', 'refs/tags/v1.2', 'refs/heads/a/b-c'):
             self.assertTrue(pw.formal_ref_name_ok(ok))

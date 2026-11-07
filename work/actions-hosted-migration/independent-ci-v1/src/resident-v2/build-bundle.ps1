@@ -34,6 +34,14 @@ Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's
 commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
 S = H). Old test merges can disappear when GitHub recomputes: the fetch then fails like any network step, before the batch.
 
+A batch of several PRs (resident ADR 0019, descriptor /4): S is the train's cumulative merge T -> S1 = merge(T, H1) -> ... -> S, and
+the descriptor names the members (the front first, in merge order) and S's tree. Build-Store fetches S the same way, then walks back
+from S along first parents: exactly N steps to T, each step a commit with exactly two parents whose second is member k's head
+(BATCH_CHAIN_REQUIRED); S's tree must be the descriptor's (BATCH_TEST_TREE_CHANGED); every member head must be a commit in the store
+and the tip of a branch in the exact ls-remote list (BATCH_MEMBER_NOT_BRANCH_TIP); and GitHub's refs/pull/<n>/head of every member
+must be its head right now (one more ls-remote, BATCH_MEMBER_NOT_PR_HEAD). The receipt names the members and the tree, and
+prepare-workspaces.py takes a /4 bundle only with them. Descriptor /3 is checked exactly as before.
+
 Persistent seed (DESIGN §10.1, tier 2): behind a slow egress the full fetch of the repository is most of the build, so a verified
 copy of the last build's objects is kept in bundles\_seed\seed.git (same ACL as bundles\: the Owner's session writes, the
 resident and root only read; no new install step). A seeded attempt fetches the seed's refs into a fresh bare repository under
@@ -67,6 +75,8 @@ $Url='https://github.com/tdoljyj/cross-memory-system.git'
 $FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$FetchDir3=Join-Path $Root 'fetch-3.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
 $Gen2Name='gen-2';$Gen2FailedMax=3;$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path $Root $Gen2Name;$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
+# ADR 0019: the descriptor of a batch of several PRs (the resident engine-windows.mjs#batchChainSupported looks for this literal).
+$ChainContract='clued.independent-ci.resident-batch-descriptor/4';$ChainMembersMax=4
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
   '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=300')
@@ -77,7 +87,7 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
 # 300 s low-speed window. A first attempt that stalls as late as the end of the slowest complete transfer (533 s) therefore
 # fails at about 833 s, still inside the 900 s retry window (it was 600 s, which that stall missed: no retry at all),
 # and the second attempt has the rest of the 30 minutes: one complete transfer at the slowest rate plus one stall.
-$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=900;$MaxStoreAttempts=3
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test','ls-remote-members');$RetryWithinSeconds=900;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
 # The persistent seed. Under bundles\ so that it inherits bundles\'s ACL (Owner modify, resident read): installing it needs no ACL change.
 $SeedRoot=Join-Path $Resident 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git';$SeedNew=Join-Path $SeedRoot 'seed-new.git';$SeedLock=Join-Path $SeedRoot 'seed.lock';$SeedMeta=Join-Path $SeedRoot 'seed-meta.json'
@@ -170,6 +180,20 @@ function Split-Refs([string]$Text,[string]$Separator,[bool]$SkipPeeled,[bool]$Al
  return [pscustomobject]@{formal=$formal;reviewed=$reviewed;test=$test}
 }
 function Ref-Map([string]$Text,[string]$Separator,[bool]$SkipPeeled){return ,((Split-Refs $Text $Separator $SkipPeeled $false).formal)}
+# ADR 0019: the answer of `git ls-remote <url> refs/pull/<n>/head...` -> name -> sha of exactly the names asked for, each at most once.
+# ls-remote matches its patterns from the tail, so a branch named like refs/heads/refs/pull/<n>/head is listed too: such a line is
+# skipped (review suggestion 7), never taken; a name asked for that is missing or another commit is the caller's refusal.
+function Split-Pull-Heads([string]$Text,[string[]]$Wanted){
+ $m=New-RefMap
+ foreach($line in ($Text -split "`n")){
+  $l=$line.TrimEnd("`r");if($l.Length -eq 0){continue}
+  $parts=$l.Split([char[]]"`t",2);if($parts.Count -ne 2 -or $parts[0] -cnotmatch '\A[0-9a-f]{40}\z'){throw 'EXACT_REF_LINE_REQUIRED'}
+  if($Wanted -cnotcontains $parts[1]){continue}
+  if($m.ContainsKey($parts[1])){throw 'EXACT_REF_LINE_REQUIRED'}
+  $m[$parts[1]]=$parts[0]
+ }
+ return ,$m
+}
 function Same-Map($A,$B){if($A.Count -ne $B.Count){return $false};foreach($k in $A.Keys){if(-not $B.ContainsKey($k) -or $B[$k] -cne $A[$k]){return $false}};return $true}
 # The refs on which two maps disagree (missing on one side, or another object), ordinal-sorted, with their number.
 function Ref-Diff($A,$B){
@@ -220,13 +244,47 @@ function Bundle-Header([string]$Path){
  return (Split-Refs ($body -join "`n") ' ' $false $true)
 }
 # The public batch descriptor written by the resident at derivation (engine-windows.mjs). Untrusted
-# data for this script; it only selects the batch, head, base and Source commit.
+# data for this script; it only selects the batch, head, base and Source commit (and for /4 the members and S's tree).
 function Read-Descriptor{
  $i=Get-Item -LiteralPath $Descriptor -Force;if($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $i.Length -lt 1 -or $i.Length -gt 65536){throw 'DESCRIPTOR_REFUSED'}
  $raw=[IO.File]::ReadAllBytes($Descriptor);$d=(New-Object Text.UTF8Encoding($false,$true)).GetString($raw)|ConvertFrom-Json
- if($d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3' -or $d.testSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.batchId -cne $BatchId -or $d.repo -cne 'tdoljyj/cross-memory-system' -or $d.headSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.baseSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $d.gitleaksTomlSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'DESCRIPTOR_REFUSED'}
+ if(($d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3' -and $d.contract -cne $ChainContract) -or $d.testSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.batchId -cne $BatchId -or $d.repo -cne 'tdoljyj/cross-memory-system' -or $d.headSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.baseSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $d.gitleaksTomlSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'DESCRIPTOR_REFUSED'}
  # Step 3c-2: S != H only for a train front batch (GitHub's test merge of [T, H]); Build-Store fetches and checks it.
- return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw)}
+ # ADR 0019: /4 names the members and S's tree (Chain-Of); /3 never does.
+ $chain=$null
+ if($d.contract -ceq $ChainContract){$chain=Chain-Of $d}
+ elseif($null -ne $d.PSObject.Properties['members'] -or $null -ne $d.PSObject.Properties['testTree']){throw 'DESCRIPTOR_REFUSED'}
+ return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw);chain=$chain}
+}
+# ADR 0019: descriptor /4's own shape, the twin of prepare-workspaces.py#chain_members_ok: 2..4 members {pr, headSha}, the front (the
+# descriptor's pr and head) first, distinct PRs and heads, none of them T or S, and S's tree. -> {members, heads, testTree}.
+function Chain-Of($D){
+ # Strict mode: a property that is missing is read as null here, never an exception without a code.
+ $no='BATCH_CHAIN_DESCRIPTOR_REFUSED';$get={param($o,$n) $p=$o.PSObject.Properties[$n];if($null -eq $p){$null}else{$p.Value}}
+ $m=& $get $D 'members';$tree=& $get $D 'testTree';$pr=& $get $D 'pr'
+ if($null -eq $m -or $m -isnot [object[]] -or $m.Count -lt 2 -or $m.Count -gt $ChainMembersMax -or $tree -isnot [string] -or $tree -cnotmatch '\A[0-9a-f]{40}\z'){throw $no}
+ if($pr -isnot [int] -and $pr -isnot [long]){throw $no}
+ $members=@();$prs=New-Object 'Collections.Generic.HashSet[long]';$heads=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+ foreach($x in $m){
+  if($x -isnot [pscustomobject]){throw $no}
+  $names=[string[]]@($x.PSObject.Properties|ForEach-Object{$_.Name});[Array]::Sort($names,[StringComparer]::Ordinal)
+  if(($names -join '|') -cne 'headSha|pr' -or ($x.pr -isnot [int] -and $x.pr -isnot [long]) -or $x.pr -lt 1 -or $x.headSha -isnot [string] -or $x.headSha -cnotmatch '\A[0-9a-f]{40}\z'){throw $no}
+  if(-not $prs.Add([long]$x.pr) -or -not $heads.Add($x.headSha)){throw $no}
+  $members+=,([ordered]@{pr=[long]$x.pr;headSha=[string]$x.headSha})
+ }
+ if($members[0].pr -ne [long]$pr -or $members[0].headSha -cne $D.headSha -or $heads.Contains($D.testSha) -or $heads.Contains($D.baseSha) -or $D.testSha -ceq $D.baseSha){throw $no}
+ return [pscustomobject]@{members=$members;testTree=[string]$tree}
+}
+# ADR 0019 (pure over a reader): $ParentsOf.Invoke(sha) is `git rev-list --parents -n 1 <sha>`. From S back along first parents, step
+# k (N..1) must be exactly '<S_k> <S_(k-1)> <H_k>', and S_0 must be T. The twin of prepare-workspaces.py#chain_ok.
+function Chain-Ok([scriptblock]$ParentsOf,$Chain,[string]$TestSha,[string]$BaseSha){
+ $at=$TestSha
+ for($k=$Chain.members.Count-1;$k -ge 0;$k--){
+  $parts=@(([string](& $ParentsOf $at)).Trim().Split([char[]]' ',[StringSplitOptions]::RemoveEmptyEntries))
+  if($parts.Count -ne 3 -or $parts[0] -cne $at -or $parts[2] -cne $Chain.members[$k].headSha -or $parts[1] -cnotmatch '\A[0-9a-f]{40}\z'){return $false}
+  $at=$parts[1]
+ }
+ return ($at -ceq $BaseSha)
 }
 # A bundle receipt of this batch and descriptor (either generation).
 function Read-BundleReceipt([string]$Path,[string]$DescriptorSha){
@@ -550,8 +608,24 @@ function Build-Store([string]$Dir){
   if((Invoke-Git 'is-shallow-3' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
   foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $Dir $f)}
   if((Invoke-Git 'test-cat-file' ($Common+@($gd,'cat-file','-t',$Test))).Trim() -cne 'commit'){throw 'TEST_COMMIT_MISSING'}
-  # Design v0.5 §5.2: S is GitHub's merge of exactly [T, H], checked on the object itself.
-  if((Invoke-Git 'test-parents' ($Common+@($gd,'rev-list','--parents','-n','1',$Test))).Trim() -cne ($Test+' '+$Base+' '+$Head)){throw 'TEST_COMMIT_PARENTS_REQUIRED'}
+  if($null -eq $Chain){
+   # Design v0.5 §5.2: S is GitHub's merge of exactly [T, H], checked on the object itself.
+   if((Invoke-Git 'test-parents' ($Common+@($gd,'rev-list','--parents','-n','1',$Test))).Trim() -cne ($Test+' '+$Base+' '+$Head)){throw 'TEST_COMMIT_PARENTS_REQUIRED'}
+  }else{
+   # ADR 0019: the members' cumulative merge on T, their heads live branch tips and GitHub's PR heads, S's tree the descriptor's.
+   $script:stage='test-chain-readback'
+   if(-not (Chain-Ok {param($c) Invoke-Git 'test-parents' ($Common+@($gd,'rev-list','--parents','-n','1',$c))} $Chain $Test $Base)){throw 'BATCH_CHAIN_REQUIRED'}
+   if((Invoke-Git 'test-tree' ($Common+@($gd,'rev-parse','--verify',($Test+'^{tree}')))).Trim() -cne $Chain.testTree){throw 'BATCH_TEST_TREE_CHANGED'}
+   $tips=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal);foreach($k in $local.Keys){if($k.StartsWith('refs/heads/')){$null=$tips.Add($local[$k])}}
+   foreach($mb in $Chain.members){
+    if((Invoke-Git 'member-cat-file' ($Common+@($gd,'cat-file','-t',$mb.headSha))).Trim() -cne 'commit'){throw 'BATCH_MEMBER_COMMIT_MISSING'}
+    if(-not $tips.Contains($mb.headSha)){throw 'BATCH_MEMBER_NOT_BRANCH_TIP'}
+   }
+   $script:stage='ls-remote-member-pull-heads'
+   $wanted=[string[]]@($Chain.members|ForEach-Object{'refs/pull/'+$_.pr+'/head'})
+   $pulls=Split-Pull-Heads (Invoke-Git 'ls-remote-members' ($Common+@($gd,'ls-remote',$Url)+$wanted)) $wanted
+   foreach($mb in $Chain.members){$n='refs/pull/'+$mb.pr+'/head';if(-not $pulls.ContainsKey($n) -or $pulls[$n] -cne $mb.headSha){throw 'BATCH_MEMBER_NOT_PR_HEAD'}}
+  }
  }
  $final=Split-Refs (Invoke-Git 'for-each-ref-3' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false $true
  if(-not (Same-Map $final.formal $remote) -or -not (Same-Map $final.reviewed $expectedReviewed)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
@@ -616,7 +690,7 @@ try{
  if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'NON_ELEVATED_RUN_REQUIRED'}
  if(-not (Test-Path -LiteralPath $Git -PathType Leaf)){throw 'FIXED_GIT_FOR_WINDOWS_REQUIRED'}
  if($CheckRefs -and $Rebundle){throw 'ONE_MODE_REQUIRED'}
- $desc=Read-Descriptor;$Head=$desc.value.headSha;$Base=$desc.value.baseSha;$Test=$desc.value.testSha
+ $desc=Read-Descriptor;$Head=$desc.value.headSha;$Base=$desc.value.baseSha;$Test=$desc.value.testSha;$Chain=$desc.chain
  if($CheckRefs){
   $stage='check-refs'
   $rec=Read-BundleReceipt (Current-Receipt) $desc.sha256
@@ -668,6 +742,8 @@ try{
   gitExecutableSha256=$gitSha;gitVersion=$gitVersion
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
  if($Rebundle){$receipt['generation']=2;$receipt['previousBundleSha256']=$previous.bundleSha256;$receipt['previousRefListSha256']=$previous.refListSha256}
+ # ADR 0019: the chain this bundle was checked against (prepare-workspaces.py takes a /4 bundle only with the same members and tree).
+ if($null -ne $Chain){$receipt['chainMembers']=@($Chain.members);$receipt['testTree']=$Chain.testTree}
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
  Seed-Update $store

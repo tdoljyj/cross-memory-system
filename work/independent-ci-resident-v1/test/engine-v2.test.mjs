@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
+import { WindowsEngine, DESCRIPTOR_CONTRACT, DESCRIPTOR_CHAIN_CONTRACT, BATCH_CHAIN_SOURCE_MARKERS, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
 import { canonicalJson, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
@@ -18,7 +18,7 @@ const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/
 const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
 const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
 
-async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, trainMode = undefined } = {}) {
+async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, trainMode = undefined, trainLanding = undefined } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -46,7 +46,7 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, tra
     async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
   };
   const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
-    ...(trainMode === undefined ? {} : { trainMode }),
+    ...(trainMode === undefined ? {} : { trainMode }), ...(trainLanding === undefined ? {} : { trainLanding }),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   return { root, engine, runs, sent };
@@ -88,6 +88,75 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   // the descriptor's S is the derivation's; a derivation that names another S than the subject's is refused
   const other = await engineFixture(t, { testSha: '4'.repeat(40) });
   await assert.rejects(other.engine.derive(subject, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
+});
+
+test('derive (ADR 0019): a front batch of several PRs writes descriptor /4 (members, S\'s tree, /3 job ids); a chain that does not fit is refused', async t => {
+  const S = '4'.repeat(40), front = { ...subject, testSha: S };
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '5'.repeat(40) }, { pr: 886, headSha: '6'.repeat(40) }];
+  const f = await engineFixture(t);
+  const batch = await f.engine.derive(front, KEY, { members, testTree: '7'.repeat(40) });
+  const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
+  assert.equal(DESCRIPTOR_CHAIN_CONTRACT, 'clued.independent-ci.resident-batch-descriptor/4');
+  assert.equal(d.contract, DESCRIPTOR_CHAIN_CONTRACT);
+  assert.deepEqual([d.pr, d.headSha, d.testSha, d.testTree, d.members], [884, HEAD, S, '7'.repeat(40), members]);
+  // the derivation is the same as /3's (the members never reach derive-batch.mjs: S names the chain, the job ids are /3's)
+  const sent = JSON.parse(f.runs[0][f.runs[0].indexOf('--subject-json') + 1]);
+  assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256', 'testSha']);
+  const plain = await engineFixture(t);
+  const p = await plain.engine.derive(front, KEY);
+  const pd = JSON.parse(await fs.readFile(path.join(plain.root, 'outbox', p.batchId, 'descriptor.json'), 'utf8'));
+  assert.equal(pd.contract, DESCRIPTOR_CONTRACT);
+  assert.deepEqual(pd.linuxJobIds, d.linuxJobIds);
+  assert.equal(Object.hasOwn(pd, 'members') || Object.hasOwn(pd, 'testTree'), false, '/3 never names a chain');
+  for (const bad of [{ members: [members[1], members[0]], testTree: '7'.repeat(40) }, { members: members.slice(0, 1), testTree: '7'.repeat(40) },
+    { members: [members[0], { pr: 885, headSha: S }], testTree: '7'.repeat(40) }, { members, testTree: 'x' }, { members: [...members, ...members.slice(1)], testTree: '7'.repeat(40) }]) {
+    const g = await engineFixture(t);
+    await assert.rejects(g.engine.derive(front, KEY, bad), e => e.code === 'RESIDENT_DERIVATION_REFUSED', JSON.stringify(bad));
+  }
+  // a chain for a subject without S is refused too
+  const g = await engineFixture(t);
+  await assert.rejects(g.engine.derive(subject, KEY, { members, testTree: '7'.repeat(40) }), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
+});
+
+test('stage args (ADR 0019): stage 10 gets push:<n>:chain only while the installed Source carries every /4 marker and both sides run this generation', async t => {
+  const SRC = 'e'.repeat(64);
+  const view = (o = {}) => ({ consistent: true, windows: { ciSourceManifestSha256: SRC }, linux: { ciSourceManifestSha256: SRC }, ...o });
+  const mk = async ({ markers = BATCH_CHAIN_SOURCE_MARKERS.map(m => m[0]), versions = async () => view(), trainLanding = { landing: 'push', batchMax: 3 } } = {}) => {
+    const f = await engineFixture(t, { trainLanding });
+    for (const [name, marker] of BATCH_CHAIN_SOURCE_MARKERS) if (markers.includes(name)) await fs.writeFile(f.engine.v2(name), `// fixture\n${marker}\n`);
+    if (versions !== null) f.engine.versions = versions;
+    return f.engine;
+  };
+  const arg = async (e, n = 10) => (await e.stageArgs(n)).join(' ');
+  assert.equal(await arg(await mk()), '--train-landing push:3:chain');
+  // the real Source files carry every marker (a test of the Source pins the same literals)
+  for (const [name, marker] of BATCH_CHAIN_SOURCE_MARKERS) {
+    const real = await fs.readFile(new URL(`../../actions-hosted-migration/independent-ci-v1/src/resident-v2/${name}`, import.meta.url), 'utf8');
+    assert.ok(real.includes(marker), name);
+  }
+  assert.equal(await arg(await mk(), 8), '--train-landing push:3', 'stage 8 never gets the chain');
+  for (const [name] of BATCH_CHAIN_SOURCE_MARKERS) assert.equal(await arg(await mk({ markers: BATCH_CHAIN_SOURCE_MARKERS.map(m => m[0]).filter(n => n !== name) })), '--train-landing push:3', `no ${name} marker`);
+  for (const v of [view({ consistent: null }), view({ consistent: false }), view({ linux: null }), view({ linux: { ciSourceManifestSha256: 'f'.repeat(64) } }), view({ windows: {} }), null])
+    assert.equal(await arg(await mk({ versions: async () => v })), '--train-landing push:3', JSON.stringify(v));
+  assert.equal(await arg(await mk({ versions: async () => { throw new Error('unreadable'); } })), '--train-landing push:3', 'a versions read that fails');
+  assert.equal(await arg(await mk({ versions: null })), '--train-landing push:3', 'no versions port');
+  assert.equal(await arg(await mk({ trainLanding: { landing: 'push', batchMax: 1 } })), '--train-landing push:1', 'batchMax 1: nothing to chain');
+  assert.equal(await arg(await mk({ trainLanding: { landing: 'github-merge', batchMax: 1 } })), '', 'github-merge: no file');
+  // the Source half is kept once known; the versions half is read every time
+  let consistent = true;
+  const e = await mk({ versions: async () => view({ consistent }) });
+  assert.equal(await arg(e), '--train-landing push:3:chain');
+  consistent = null;
+  assert.equal(await arg(e), '--train-landing push:3', 'the Linux side unknown again: no chain from the next stage 10 on');
+  // a Source file that cannot be read for another reason than its absence: no for now, read again later
+  const held = await mk();
+  const v2 = held.v2.bind(held), t0 = held.clock();
+  let once = true;
+  held.v2 = name => { if (once) { once = false; throw Object.assign(new Error('busy'), { code: 'EBUSY' }); } return v2(name); };
+  assert.equal(await arg(held), '--train-landing push:3', 'a held file: no for now');
+  assert.equal(await arg(held), '--train-landing push:3', 'not read again before the wait');
+  held.clock = () => t0 + 5 * 60_000 + 1;
+  assert.equal(await arg(held), '--train-landing push:3:chain', 'read again after the wait, and kept');
 });
 
 test('derive (step 3c-2a): a train front batch sends its S with the subject and its descriptor names that S', async t => {
@@ -144,6 +213,25 @@ test('the train mode channel (DESIGN §41.2): the installed policy reaches stage
     }
   }
   assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainMode: 'ON' }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
+});
+
+test('the train landing channel (ADR 0018): push (or a batch) reaches stages 8 and 10 as train-landing.json; the default writes nothing', async t => {
+  const { prepareStageDirectory } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
+  const { readStageTrainLandingFact } = await import('../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs');
+  const { parseLandingArg } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
+  for (const [landing, expected] of [[{ landing: 'push', batchMax: 3 }, 'push:3'], [{ landing: 'github-merge', batchMax: 1 }, null], [undefined, null]]) {
+    const f = await engineFixture(t, { trainMode: 'on', ...(landing ? { trainLanding: landing } : {}) });
+    const batch = await f.engine.derive(subject, KEY);
+    for (const stage of [stages[0], stages[1], stages[7]]) await f.engine.runStage(batch, stage);
+    const invoked = f.runs.filter(a => a[1]?.endsWith('invoke-stage.mjs'));
+    const landingOf = a => (a.includes('--train-landing') ? a[a.indexOf('--train-landing') + 1] : null);
+    assert.deepEqual(invoked.map(landingOf), [null, null, expected], JSON.stringify(landing));
+    const dir = await prepareStageDirectory({ stageRoot: f.root, nonce: `${expected ?? 'none'}${landing ? 'x' : 'y'}`.replace(/[^0-9a-f]/g, 'a').padEnd(32, '0').slice(0, 32),
+      sealed: { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } }, trainLanding: parseLandingArg(landingOf(invoked[2]) ?? undefined) });
+    assert.deepEqual(await readStageTrainLandingFact(dir), expected ? { landing: 'push', batchMax: 3, batchChain: false, unreadable: false } : { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: false });
+  }
+  assert.equal(new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainLanding: { landing: 'push', batchMax: 2 } }).trainModeArgs(10).join(' '), '--train-landing push:2');
+  assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainLanding: { landing: 'push', batchMax: 9 } }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
 });
 
 test('stage 2 first proves no push since the bundle; a moved ref ends the stage cleanly before anything runs', async t => {

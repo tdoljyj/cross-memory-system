@@ -18,6 +18,8 @@ import { batchJobsV2, claimGeneration } from '../../actions-hosted-migration/ind
 import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+// A namespace import: the field defect 1b31b06b test runs against an older Source too (no stage1FrontRequeue: the result as it was).
+import * as claimAssistModule from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/claim-assist-native.mjs';
 
 const MIN = 60_000;
 const SCOPE = 'project:00000000-0000-4000-8000-000000000000';
@@ -859,4 +861,124 @@ test('field #1035: during the take-over a superseded parked batch ends at its sa
   const ended = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'SUPERSEDED_AT_SAFE_POINT');
   assert.deepEqual(ended.map(b => b.safePoint), ['parked']);
   assert.equal(f.queue.row(910).running, null, 'the row is free for the new head');
+});
+
+// Field defect 1b31b06b (PR #1037, 2026-11-07, resident receipts 3768-3812): the train front's batch for the old head 118f90a1 rested at B,
+// its stage 8 said REQUIRED_CHECK_FAILED and returned the merge slot (the claim's merge ref removed: the claim left the queue). A new head
+// 26ac75e4 was pushed; the old batch ended SUPERSEDED_AT_SAFE_POINT. The new head's ordinary batch then found the claim outside the queue at
+// its stage 1 (mergeQueue entered false, rightly), did not give way (§62.6), ran stages 1-7 (13 minutes), and only its stage 8 joined the
+// queue again; stage 10 opened the front 36 minutes after the push. Now the new head's stage 1 joins the queue again (Source
+// claim-assist-native.mjs#stage1FrontRequeue: this node's newest front batch is this PR's, at another head, under this claim), Native's
+// answer says it is the head of the empty queue, the ordinary batch gives way after stage 1 and the front batch (H2, S2) opens at once.
+// End to end over the real executor, the real Source v2 stage 10 / sweep store / stage-8 publisher and the real stage1FrontRequeue (its
+// claim-assist port answers from the offline Native: a join puts the claim back at the head of an empty queue).
+test('field #1037 (1b31b06b): the front PR\'s old head rests at B after a failed check (slot returned), a new head is pushed: its ordinary batch gives way after stage 1, the front opens at once', async t => {
+  const e = await world(t, { quick: true });
+  const at = { t };
+  const engine = engineFor(e, at);
+  const H2 = sha(0x7a7a), S2 = sha(0x7b7b), TREE2 = sha(0x7c7c);
+  e.gh.world.commits.set(S2, { sha: S2, tree: TREE2, parents: [T, H2] });
+  let liveHead = H;
+  const companion = fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: liveHead }) });
+  const f = await executorFixture(t, { policy: policy(), engine, companion, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  // An older Source has no stage1FrontRequeue: the stage-1 result is reported as it is (what ran in the field).
+  const requeue = claimAssistModule.stage1FrontRequeue ?? (async ({ result }) => result);
+  const joins = [];
+  const claimAssist = { async joinQueue({ pr, headSha }) {
+    joins.push([pr, headSha]);
+    if (e.native.holder) return { ok: true, joined: false, reason: 'already_queued', mergeQueue: { entered: true, state: e.native.holder.claimId === CLAIM ? 'head' : 'waiting', position: e.native.holder.claimId === CLAIM ? 1 : 2 } };
+    e.native.holder = holderOf({ takenAt: iso(f.clock()), mergeSlotUntil: iso(f.clock() + 45 * MIN) });
+    return { ok: true, joined: true, reason: null, mergeQueue: { entered: true, state: 'head', position: 1 } };
+  } };
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => {
+    const subject = engine.subjects.get(batch.key);
+    // The old head's front batch: a required check failed; stage 8 returns the slot (the claim leaves the queue) and rests at B.
+    if (stage.number === 8 && subject.testSha === S) {
+      engine.stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, stage: 8, at: at.clock() });
+      e.native.holder = null;
+      return { ok: false, code: 'REQUIRED_CHECK_FAILED', proof: PROOF, outcome: { status: 'BLOCKED', reason: 'REQUIRED_CHECK_FAILED', sideEffects: 0, mayHavePublished: false,
+        scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: { entered: false, state: null, position: null } } } };
+    }
+    // An ordinary batch's stage 1 while the claim is outside the queue: Native says so; the Source's stage 1 may then join again.
+    if (stage.number === 1 && !subject.testSha && e.native.holder === null) {
+      engine.stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: null, stage: 1, at: at.clock() });
+      e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
+      const job = batchJobsV2({ repo: REPO, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: CI_SOURCE,
+        createdAt: iso(at.clock()), attempt: 1 })['work-admission'];
+      const settled = { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
+        scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: { entered: false, state: null, position: null } } };
+      const outcome = await requeue({ result: settled, job, trainMode: 'on', claimAssist, sweepStore: e.store, batchClaim: { claimId: CLAIM, fence: 3, epoch: 1 }, record() {} });
+      return { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF, outcome };
+    }
+    return run(batch, stage);
+  };
+  await f.exec.trainRecover();
+  for (let i = 0; i < 12 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.equal(f.exec.trainTakeoverDone, true);
+  // The PR arrives; its claim is the queue head (not yet bound): the ordinary batch gives way, the front batch (H, S) runs and rests at B.
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
+  for (let i = 0; i < 40 && !(await parked()); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(await parked(), `the old head's front batch is not parked at B: ${JSON.stringify(engine.stages)}`);
+  assert.equal(e.native.holder, null, 'its stage 8 returned the slot');
+  // The new head is pushed.
+  const pushed = f.clock();
+  liveHead = H2;
+  e.gh.pull(910, { head: H2, mergeCommitSha: S2, updated: iso(pushed), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H2, baseSha: T }));
+  let green = null;
+  for (let i = 0; i <= 40 && !green; i++) { await f.exec.tick(); green = slotGreen(e, H2) ?? null; if (!green) f.advance(MIN); }
+  const after = engine.stages.filter(s => s.at >= pushed);
+  // The new head's ordinary batch ran stage 1 only, then gave way; the front batch (H2, S2) ran stages 1-8.
+  assert.deepEqual(after.filter(s => s.headSha === H2 && s.testSha === null).map(s => s.stage), [1], `the new head's ordinary batch ran past stage 1: ${JSON.stringify(after)}`);
+  assert.deepEqual(joins, [[910, H2]], 'stage 1 joined the queue again, once');
+  const yields = (await f.receipts.latest(['train-front-yield'], 10)).map(r => r.value.body).filter(y => y.headSha === H2);
+  assert.deepEqual(yields.map(y => [y.pr, y.mergeQueue?.state, y.mergeQueue?.position]), [[910, 'head', 1]]);
+  assert.deepEqual(after.filter(s => s.headSha === H2 && s.testSha === S2).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(green, `no merge-slot green for the new head; stage 10 said ${engine.lastFacts?.decision}; stages ${JSON.stringify(after)}`);
+  t.diagnostic(`#1037: the new head's merge-slot green ${Math.round((f.clock() - pushed) / 1000)} s (simulated) after the push`);
+  const ended = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'SUPERSEDED_AT_SAFE_POINT');
+  assert.deepEqual(ended.map(b => b.safePoint), ['parked'], 'the old head\'s parked batch ended as superseded at its safe point');
+});
+
+// Guard (1b31b06b): a PR this node never opened a front batch for, whose claim is outside the queue, never joins at stage 1 and runs its
+// ordinary batch through stages 1-7 as before (it joins at stage 8).
+test('field #1037 (1b31b06b): a PR that was never the train front does not join at stage 1 and runs on past stage 1', async t => {
+  const e = await world(t, { quick: true });
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  const joins = [];
+  const claimAssist = { async joinQueue(i) { joins.push(i); return { ok: true, joined: true, reason: null, mergeQueue: { entered: true, state: 'head', position: 1 } }; } };
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => {
+    const subject = engine.subjects.get(batch.key);
+    if (stage.number === 1 && !subject.testSha) {
+      engine.stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: null, stage: 1, at: at.clock() });
+      const job = batchJobsV2({ repo: REPO, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: CI_SOURCE,
+        createdAt: iso(at.clock()), attempt: 1 })['work-admission'];
+      const settled = { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
+        scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: { entered: false, state: null, position: null } } };
+      return { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF,
+        outcome: await (claimAssistModule.stage1FrontRequeue ?? (async ({ result }) => result))({ result: settled, job, trainMode: 'on', claimAssist, sweepStore: e.store, batchClaim: { claimId: CLAIM, fence: 3, epoch: 1 }, record() {} }) };
+    }
+    return run(batch, stage);
+  };
+  await f.exec.trainRecover();
+  for (let i = 0; i < 12 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  e.native.holders = undefined;
+  e.native.holder = null;
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(f.clock()), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  for (let i = 0; i < 10 && !engine.stages.some(s => s.stage === 7); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.deepEqual(joins, [], 'no join: this node never opened a front batch for the PR');
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage).slice(0, 7), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal((await f.receipts.latest(['train-front-yield'], 5)).length, 0);
 });

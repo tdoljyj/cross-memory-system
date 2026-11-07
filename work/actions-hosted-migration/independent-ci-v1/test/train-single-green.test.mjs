@@ -380,9 +380,11 @@ test('merge-slot port: holders and the role probe ignore anything optional (revi
 
 test('codes (§41.2–41.4): every train code is a clean final code of the stage-fact table', () => {
   assert.deepEqual([...TRAIN_CODES].sort(), ['RELAY_TRAIN_FRONT_LOCAL', 'TRAIN_FRONT_ATTEMPTS_USED', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_LANDED_TREE_MISMATCH',
-    'TRAIN_MODE_UNREADABLE', 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_TEST_COMMIT_GONE']);
+    'TRAIN_MODE_UNREADABLE', 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_TEST_COMMIT_GONE',
+    // ADR 0018 (push)
+    'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH', 'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_RULES_MISSING'].sort());
   assert.ok(TRAIN_CODES.every(c => CLEAN_FINAL_CODES.includes(c) && ALL_STAGE_CODES.includes(c)));
-  for (const reason of ['TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_FRONT_JOB_WITHOUT_TRAIN'])
+  for (const reason of ['TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED'])
     assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason, sideEffects: 0, mayHavePublished: false }, 8), reason);
   // stage 3's publisher is not the train's: there the code is an ordinary refusal
   assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: 'TRAIN_FRONT_JOB_WITHOUT_TRAIN', sideEffects: 0, mayHavePublished: false }, 3), 'PUBLICATION_BLOCKED');

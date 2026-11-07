@@ -4,13 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, validatePolicy } from '../src/policy.mjs';
-import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, trainLandingMode, trainBatchMax, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
+import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, chainOfFront, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { executorFixture, fakeEngine, rawPolicy, triggerBytes, HEAD, BASE } from './helpers.mjs';
+import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes, HEAD, BASE } from './helpers.mjs';
+import { breakerOf } from '../src/breaker.mjs';
 import { makeTrainRun, TRAIN_RUN_PARAMS } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
 import { DECISIONS as SOURCE_DECISIONS, NO_ACTIONS, NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 import { TRAIN_CODES as SOURCE_TRAIN_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
@@ -269,6 +270,38 @@ test('executor, on: OPEN_FRONT_BATCH queues the front with S first; the batch ke
   f.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1 }, { testSha: '8'.repeat(40), attempt: 2 }]);
   assert.equal(await f.exec.enqueueFront({ ...front(2), testSha: '9'.repeat(40) }), null);
   assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'TRAIN_FRONT_ATTEMPTS_USED');
+});
+
+test('executor, on (ADR 0019): a front batch of several PRs keeps its members (receipt, restart) and hands them to derive; one PR hands none', async t => {
+  const H2 = '3'.repeat(40), H3 = '4'.repeat(40);
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: H2 }, { pr: 886, headSha: H3 }];
+  const front = { pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: TREE, claimId: CLAIM, since: new Date(T0 - MIN).toISOString(), attempt: 1, members };
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: mode => answer(mode, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: front }, 1) }) });
+  await f.exec.tick(); // the take-over run opens the batch
+  const [enq] = await ofType(f.receipts, 'train-front-enqueued');
+  assert.deepEqual(enq.members, members, 'the receipt carries the members (a restart reads them back)');
+  // a restart before the batch runs: the binding, members included, comes back from the receipts
+  const g = await executorFixture(t, { root: f.root, policy: policyV8(), engine: fakeEngine({ train: mode => answer(mode, { ...DONE }, 0) }) });
+  await g.exec.trainFrontRecover([]);
+  assert.deepEqual(g.exec.frontBindings.get(`884:${S}`)?.members, members);
+  f.advance(MIN);
+  await f.exec.tick();
+  const derive = f.engine.calls.find(c => c[0] === 'derive');
+  assert.ok(derive, JSON.stringify(f.engine.calls));
+  assert.deepEqual(JSON.parse(JSON.stringify(derive[2])), { members, testTree: TREE }, 'descriptor /4: the members and S\'s tree');
+  // one PR (no members): derive gets no chain, exactly as before
+  const one = { ...front, members: undefined };
+  delete one.members;
+  const h = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: mode => answer(mode, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: one }, 1) }) });
+  await h.exec.tick();
+  h.advance(MIN);
+  await h.exec.tick();
+  assert.deepEqual(h.engine.calls.find(c => c[0] === 'derive').length, 2);
+  // members that do not describe the front make the whole batch unusable (never a /3 descriptor for a chain S by mistake)
+  assert.equal(openFrontBatchOf({ ...front, members: [members[1], members[0]] }), null);
+  assert.equal(openFrontBatchOf({ ...front, members: [members[0]] }), null);
+  assert.equal(openFrontBatchOf({ ...front, members: [members[0], { ...members[1], headSha: S }] }), null);
+  assert.equal(chainOfFront({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, testSha: '9'.repeat(40) }, openFrontBatchOf(front)), null, 'another S');
 });
 
 test('executor, on: the front batch (H, S) runs after the non-front run of H published; the head stays burned for every other run', async t => {
@@ -555,6 +588,78 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), subject, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
 });
 
+test('ADR 0019 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }, { pr: 886, headSha: '4'.repeat(40) }];
+  const FRONTM = { ...FRONT1, members };
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONTM }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  await f.exec.tick(); // opens the batch of three
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient failure of the batch of three: attempt 2');
+  assert.deepEqual(f.exec.frontBatches.get(`884:${HEAD}`).map(x => [x.attempt, x.solo]), [[1, false], [2, false]], 'neither is one of the front\'s own attempts');
+  const auto = (await ofType(f.receipts, 'train-front-enqueued')).at(-1);
+  assert.deepEqual([auto.auto, auto.members], [true, members], 'the attempt-2 receipt names the members (a restart counts it as a batch of several)');
+  stages[2] = { ok: true, factsSha256: 'd'.repeat(64) };
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const derives = f.engine.calls.filter(c => c[0] === 'derive');
+  assert.equal(derives.length, 2, JSON.stringify(f.engine.calls));
+  assert.ok(derives.every(c => JSON.stringify(c[2]?.members) === JSON.stringify(members)), 'attempt 1 and attempt 2 are both descriptor /4');
+  // bisection: the first half, then the front alone twice: every one of them reaches the run queue; only a third front-alone is refused
+  const refusedCodes = async () => (await ofType(f.receipts, 'train-front-refused')).map(b => b.failureCode);
+  const before = (await refusedCodes()).length;
+  f.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1, solo: false }, { testSha: '8'.repeat(40), attempt: 1, solo: false }, { testSha: '9'.repeat(40), attempt: 1, solo: false }]);
+  await f.exec.enqueueFront({ ...FRONT1, testSha: 'a'.repeat(40), attempt: 1 });
+  assert.ok(!(await refusedCodes()).slice(before).includes('TRAIN_FRONT_ATTEMPTS_USED'), 'the front alone after three batches of several');
+  f.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1, solo: true }, { testSha: '8'.repeat(40), attempt: 2, solo: true }]);
+  await f.exec.enqueueFront({ ...FRONTM, testSha: 'b'.repeat(40), attempt: 2, members: [members[0], members[1]] });
+  assert.ok(!(await refusedCodes()).slice(before).includes('TRAIN_FRONT_ATTEMPTS_USED'), 'a batch of several after the front\'s two attempts');
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, testSha: 'c'.repeat(40), attempt: 2 }), null);
+  assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'TRAIN_FRONT_ATTEMPTS_USED', 'a third front alone is refused, as before');
+  // a restart: the batches of several come back as such (members in their receipts)
+  const g = await executorFixture(t, { root: f.root, policy: policyV8() });
+  await g.exec.trainRecover();
+  assert.deepEqual(g.exec.frontBatches.get(`884:${HEAD}`).map(x => x.solo), [false, false, true, false], JSON.stringify(g.exec.frontBatches.get(`884:${HEAD}`)));
+  // the front alone whose two attempts are used up gets no attempt 2, as before
+  const h = await executorFixture(t, { policy: policyV8() });
+  h.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: '6'.repeat(40), attempt: 1, solo: true }, { testSha: '7'.repeat(40), attempt: 2, solo: true }, { testSha: '8'.repeat(40), attempt: 1, solo: false }]);
+  const solo = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: h.ports.policy.sourceManifestSha256, attempt: 1, testSha: '9'.repeat(40) };
+  assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), solo, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
+});
+
+test('ADR 0019 review 2: a batch whose member moved on (the bundle says so) is released like a supersession: no release cap, no breaker, its S dropped', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const FRONTM = { ...FRONT1, members };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONTM }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: m => list[Math.min(i++, list.length - 1)](m) }),
+    companion: fakeCompanion({ bundle: { ok: false, code: 'TRAIN_BATCH_MEMBER_MOVED' } }) });
+  await f.exec.tick(); // opens the batch of two
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode, r.release], ['NOT_EXECUTED', 'TRAIN_BATCH_MEMBER_MOVED', 'SUPERSEDED'], JSON.stringify(r));
+  const row = f.queue.row(884);
+  assert.deepEqual([row.state, row.reason, row.current], ['DONE', 'TRAIN_BATCH_MEMBER_MOVED', null], 'the S is dropped: it can never pass again');
+  assert.equal((await f.ledger.usage(f.clock() - 24 * 60 * MIN)).releasesByHead.get(HEAD) ?? 0, 0, 'not counted towards the front head\'s release cap');
+  assert.equal(breakerOf(f.queue.breaker).state, 'closed');
+  const un = (await ofType(f.receipts, 'batch-unexecuted')).at(-1);
+  assert.deepEqual([un.failureCode, un.release], ['TRAIN_BATCH_MEMBER_MOVED', 'SUPERSEDED']);
+  // a plain bundle refusal of the same batch is the counted environment release, as before
+  let j = 0;
+  const list2 = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONTM }, 1), m => answer(m, DONE, 0)];
+  const g = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ train: m => list2[Math.min(j++, list2.length - 1)](m) }),
+    companion: fakeCompanion({ bundle: { ok: false, code: 'BUNDLE_UNAVAILABLE' } }) });
+  await g.exec.tick();
+  g.advance(MIN);
+  const r2 = await g.exec.tick();
+  assert.deepEqual([r2.state, r2.failureCode], ['NOT_EXECUTED', 'BUNDLE_UNAVAILABLE']);
+  assert.equal(r2.settle.reason, 'BUNDLE_UNAVAILABLE');
+  assert.notEqual(g.queue.row(884).current, null, 'kept for a later try, as before');
+});
+
 test('review R3 M6: nonFrontRuns false schedules only the front subject; true runs every row as today', async t => {
   const f = await executorFixture(t, { policy: policyV8({ nonFrontRuns: false }), engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
   await f.exec.tick(); // the take-over
@@ -702,7 +807,7 @@ test('review R3 MINOR 6: parked batches wait for the take-over sweep; MINOR 11: 
   await f.receipts.append('train-front-enqueued', { key: 'a'.repeat(64), pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: TREE, attempt: 1, claimId: CLAIM, since: FRONT1.since });
   const g = await executorFixture(t, { root: f.root, policy: policyV8(), now: T0 + 3 * 24 * 60 * MIN });
   await g.exec.trainRecover();
-  assert.deepEqual(g.exec.frontBatches.get(`884:${HEAD}`), [{ testSha: S, attempt: 1 }]);
+  assert.deepEqual(g.exec.frontBatches.get(`884:${HEAD}`), [{ testSha: S, attempt: 1, solo: true }]);
 });
 
 test('round-2 review MINOR 1: a node that ran no stage 10 for longer than fullSweepMaxMs restores no duty (a new take-over sweep)', async t => {
@@ -869,4 +974,29 @@ test('defect: a TRAIN_SOURCE_MISMATCH or TRAIN_SOURCE_UNREADABLE run is re-check
   await h.exec.tick();
   assert.equal(g.inputs.length, 2, 'cap of 2 per day holds');
   assert.equal(trainDue({ train: onTrain({ maintenanceMaxPerDay: 2 }), now: T0 + 5 * MIN, runs: [T0, T0 + 2 * MIN], busy: false, recheck: true }), false);
+});
+
+// ADR 0018 (bors-style landing): train.landing and train.batchMax are optional in /8 and later; neither written changes nothing.
+test('policy train.landing / train.batchMax: optional, defaults github-merge and 1; push only in strict-permanent mode; a batch only with push', () => {
+  const p = validatePolicy(policyV8({ sweep: 'audit' }));
+  assert.equal(Object.hasOwn(p.train, 'landing'), false, 'nothing is added to the installed policy');
+  assert.deepEqual([trainLandingMode(p.train), trainBatchMax(p.train)], ['github-merge', 1]);
+  assert.deepEqual(installedTrainLanding(p), { landing: 'github-merge', batchMax: 1 });
+  assert.deepEqual(installedTrainLanding(validatePolicy(policyV8({ sweep: 'off', landing: 'push', batchMax: 4 }))), { landing: 'push', batchMax: 4 });
+  assert.deepEqual(installedTrainLanding(validatePolicy(policyV8({ sweep: 'audit', landing: 'push' }))), { landing: 'push', batchMax: 1 });
+  for (const train of [{ sweep: 'gate', landing: 'push' }, { landing: 'push' } /* sweep gate in this fixture */, { sweep: 'audit', batchMax: 2 }, { sweep: 'audit', landing: 'github-merge', batchMax: 2 },
+    { sweep: 'audit', landing: 'push', batchMax: 5 }, { sweep: 'audit', landing: 'push', batchMax: 0 }, { sweep: 'audit', landing: 'merge' }, { sweep: 'audit', landing: null }])
+    assert.throws(() => validatePolicy(policyV8(train)), { code: 'POLICY_TRAIN_INVALID' }, JSON.stringify(train));
+  assert.throws(() => validatePolicy(rawPolicy({ train: { ...rawPolicy().train, landing: 'push' } })), { code: 'POLICY_TRAIN_KEYS_INVALID' }, '/7 never takes it');
+  assert.equal(Object.hasOwn(trainSettings(policyV8({ sweep: 'audit', landing: 'push' }).train), 'landing'), false, 'the clocks stay the four of /8');
+});
+
+test('push codes (ADR 0018): every stage-8 landing code is in the resident tables and the Source table; the PR-attributable one feeds frontOutcome', () => {
+  const codes = ['TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH'];
+  for (const c of codes) {
+    assert.ok(TRAIN_CLEAN_CODES.includes(c) && SOURCE_TRAIN_CODES.includes(c), c);
+    assert.ok(failureRow({ code: c, stage: 8 }), c);
+  }
+  assert.equal(failureRow({ code: 'TRAIN_LANDING_CHECK_FAILED', stage: 8 }).class, 'deterministic-pr', 'bisection or touch failed follows');
+  for (const c of ['TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']) assert.equal(failureRow({ code: c, stage: 8 }).class, 'clean-final');
 });

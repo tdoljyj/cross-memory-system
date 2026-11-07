@@ -25,6 +25,12 @@ and the base; the trivy and placement candidates are checked out at S. Step 3c-2
 front batch, where S is GitHub's test merge of [T, H] read live by stage 10. The bundle then carries S under
 refs/clued-test/<S> (the receipt counts it), the candidates fetch that ref, and the mirror store checks that S's
 parents are exactly [T, H]. Everywhere else S = H and every workspace is exactly what it was under /2.
+Resident ADR 0019: a batch of several PRs comes with descriptor /4, which adds the members (the front first, in merge order) and
+S's tree. S is then the cumulative merge T -> S1 = merge(T, H1) -> ... -> S = merge(S(N-1), HN): walking back from S along first
+parents takes exactly N steps to T, each step is a commit with exactly two parents, and the k-th step's second parent is member k's
+head (chain_ok). S's tree must be the descriptor's, every member head must be the tip of a branch in the sealed refs (the exact
+ls-remote list), and the receipt must say that build-bundle.ps1 checked the same members and tree (it also read every member's
+refs/pull/<n>/head). Descriptor /3 (one PR) is checked exactly as before.
 """
 import hashlib
 import json
@@ -50,6 +56,9 @@ GIT = '/usr/bin/git'
 REPO = 'tdoljyj/cross-memory-system'
 JOB_CONTRACT = 'clued.independent-ci.job/3'
 DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3'
+# Resident ADR 0019: the cumulative merge of 2..4 PRs (the resident engine-windows.mjs#batchChainSupported looks for this line).
+DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'
+CHAIN_MEMBERS_MAX = 4
 LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
 BATCH_ID = re.compile(r'^[0-9a-f]{16}-[0-9a-f]{12}$')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
@@ -87,14 +96,51 @@ def job_id_v2(d, role):
     return hashlib.sha256(json.dumps(ident, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
 
 
+def chain_members_ok(d):
+    """Descriptor /4's own shape (pure): 2..4 members {pr, headSha}, the front (the descriptor's pr and head) first, distinct PRs and
+    heads, none of them T or S, S != T, and S's tree. Nothing about the objects yet: chain_ok and check_chain check those."""
+    m = d.get('members')
+    if not (isinstance(m, list) and 2 <= len(m) <= CHAIN_MEMBERS_MAX and isinstance(d.get('testTree'), str) and HEX40.fullmatch(d['testTree'])):
+        return False
+    for x in m:
+        if not (isinstance(x, dict) and sorted(x) == ['headSha', 'pr'] and isinstance(x['pr'], int) and not isinstance(x['pr'], bool) and x['pr'] > 0
+                and isinstance(x['headSha'], str) and HEX40.fullmatch(x['headSha'])):
+            return False
+    heads = [x['headSha'] for x in m]
+    return (m[0]['pr'] == d['pr'] and m[0]['headSha'] == d['headSha'] and len({x['pr'] for x in m}) == len(m) and len(set(heads)) == len(m)
+            and d['testSha'] not in heads and d['baseSha'] not in heads and d['testSha'] != d['baseSha'])
+
+
+def is_chain(d):
+    return d.get('contract') == DESCRIPTOR_CHAIN_CONTRACT
+
+
+def chain_ok(parents_line, d):
+    """Descriptor /4 (pure over a reader): parents_line(sha) is `git rev-list --parents -n 1 <sha>`. From S back along first parents,
+    step k (N..1) must be exactly '<S_k> <S_(k-1)> <H_k>', and S_0 must be T. Any other shape (a parent missing, a third parent, another
+    second parent, the members in another order, more or fewer steps) is False."""
+    at = d['testSha']
+    for member in reversed(d['members']):
+        parts = parents_line(at).split()
+        if len(parts) != 3 or parts[0] != at or parts[2] != member['headSha'] or not HEX40.fullmatch(parts[1]):
+            return False
+        at = parts[1]
+    return at == d['baseSha']
+
+
 def validate_descriptor(d, batch_id):
-    need(isinstance(d, dict) and d.get('contract') == DESCRIPTOR_CONTRACT and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
+    need(isinstance(d, dict) and d.get('contract') in (DESCRIPTOR_CONTRACT, DESCRIPTOR_CHAIN_CONTRACT) and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
     need(d.get('repo') == REPO and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
     need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha', 'testSha', 'sourceCommit')), 'DESCRIPTOR_REFUSED')
     # Step 3c-2: S != H only for a train front batch (GitHub's test merge of [T, H]); the bundle then carries S under
     # refs/clued-test/<S> and prepare() checks its parents. S = H everywhere else, exactly as before.
     need(all(isinstance(d.get(k), str) and HEX64.fullmatch(d[k]) for k in ('batchKey', 'ciSourceManifestSha256', 'gitleaksTomlSha256')), 'DESCRIPTOR_REFUSED')
     need(d.get('attempt') in (1, 2) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
+    # ADR 0019: /4 only with its members and S's tree; /3 never names them (a /3 that carries them is not a /3 the resident writes).
+    if is_chain(d):
+        need(chain_members_ok(d), 'BATCH_CHAIN_DESCRIPTOR_REFUSED')
+    else:
+        need('members' not in d and 'testTree' not in d, 'DESCRIPTOR_REFUSED')
     ids = d.get('linuxJobIds')
     need(isinstance(ids, list) and len(ids) == 3 and all(isinstance(j, str) and HEX64.fullmatch(j) for j in ids), 'DESCRIPTOR_REFUSED')
     for role, jid in zip(LINUX_ROLES, ids):
@@ -142,6 +188,12 @@ def expected_test_refs(d):
     return {} if d['testSha'] == d['headSha'] else {TEST_REF_PREFIX + d['testSha']: d['testSha']}
 
 
+def member_tips_ok(formal, d):
+    """ADR 0019 (pure): every member head is the tip of at least one branch of the sealed refs (the exact ls-remote list)."""
+    tips = {sha for name, sha in formal.items() if name.startswith('refs/heads/')}
+    return all(m['headSha'] in tips for m in d['members'])
+
+
 def test_parents_ok(rev_list_parents_line, d):
     """`git rev-list --parents -n 1 S` must be exactly 'S T H': GitHub's test merge of the batch base and the head."""
     return rev_list_parents_line.split() == [d['testSha'], d['baseSha'], d['headSha']]
@@ -164,6 +216,9 @@ def validate_receipt(r, d, descriptor_sha, now):
          and r.get('bundleVersion') == 2 and r.get('headPresent') is True and r.get('basePresent') is True, 'BUNDLE_RECEIPT_REFUSED')
     need(all(isinstance(r.get(k), str) and HEX64.fullmatch(r[k]) for k in ('bundleSha256', 'refListSha256', 'reviewedRefListSha256', 'testRefListSha256')), 'BUNDLE_RECEIPT_REFUSED')
     need(r.get('testSha') == d['testSha'] and r.get('testRefCount') == len(expected_test_refs(d)), 'BUNDLE_RECEIPT_REFUSED')
+    # ADR 0019: the bundle of a /4 batch was built by a build-bundle.ps1 that checked the same chain (members, their PR heads, S's tree).
+    if is_chain(d):
+        need(r.get('chainMembers') == d['members'] and r.get('testTree') == d['testTree'], 'BUNDLE_RECEIPT_REFUSED')
     age = now - iso_seconds(r.get('lsRemoteCompletedAt'))
     need(-CLOCK_SKEW_S <= age <= BUNDLE_MAX_AGE_S, 'FRESH_BUNDLE_REQUIRED')
     return r
@@ -295,6 +350,15 @@ def write_new(path, value):
         os.fsync(f.fileno())
 
 
+def check_chain(where, d, formal):
+    """ADR 0019 on one repository (where: git's --git-dir or -C arguments): the chain's parents, S's tree, the member heads."""
+    need(chain_ok(lambda sha: git([*where, 'rev-list', '--parents', '-n', '1', sha]).strip(), d), 'BATCH_CHAIN_REQUIRED')
+    need(git([*where, 'rev-parse', '--verify', d['testSha'] + '^{tree}']).strip() == d['testTree'], 'BATCH_TEST_TREE_CHANGED')
+    for m in d['members']:
+        need(git([*where, 'cat-file', '-t', m['headSha']]).strip() == 'commit', 'BATCH_MEMBER_COMMIT_MISSING')
+    need(member_tips_ok(formal, d), 'BATCH_MEMBER_NOT_BRANCH_TIP')
+
+
 def prepare(batch_id):
     need(sys.platform.startswith('linux') and os.geteuid() == 0 and os.getuid() == 0, 'LINUX_ROOT_REQUIRED')
     need(sys.version_info[:2] == (3, 12) and sys.executable == '/usr/bin/python3.12' and sys.flags.isolated == 1, 'FIXED_ISOLATED_PYTHON_REQUIRED')
@@ -395,16 +459,23 @@ def prepare(batch_id):
             for c in (d['headSha'], d['baseSha']):
                 need(git(['--git-dir', gd, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
             if test:
-                # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2): checked on the object itself.
+                # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2), or for /4 the members' cumulative merge on T (ADR 0019):
+                # checked on the objects themselves.
                 need(git(['--git-dir', gd, 'cat-file', '-t', d['testSha']]).strip() == 'commit', 'TEST_COMMIT_MISSING')
-                need(test_parents_ok(git(['--git-dir', gd, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
+                if is_chain(d):
+                    check_chain(['--git-dir', gd], d, formal)
+                else:
+                    need(test_parents_ok(git(['--git-dir', gd, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
             git(['--git-dir', gd, 'rev-list', '--objects', '--quiet', '--all'], timeout=600)  # full closure of every sealed tip
         else:
             cand = f'{target}/candidate'
             need(git(['-C', cand, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED')
             if test:
                 # The same parents check as the mirror store's, on this candidate's own copy of S (review n1).
-                need(test_parents_ok(git(['-C', cand, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
+                if is_chain(d):
+                    check_chain(['-C', cand], d, formal)
+                else:
+                    need(test_parents_ok(git(['-C', cand, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
             need(git(['-C', cand, 'status', '--porcelain=v1', '--untracked-files=all']).strip() == '', 'CANDIDATE_NOT_CLEAN')
             for c in (d['headSha'], d['baseSha']):
                 need(git(['-C', cand, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')

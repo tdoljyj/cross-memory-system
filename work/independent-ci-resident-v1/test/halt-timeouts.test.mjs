@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { COMPANION_CONFIG_CONTRACT, CHECK_REFS_SECOND_TRY_MAX_MS, Companion, READ_RETRIES, TERMINAL_NOANSWER_CAP_MS, WSPREP_QUIET_WAIT_MS,
-  BUNDLE_BRANCH_ONLY_HINTS, BUNDLE_NETWORK_STEPS, BUNDLE_NETWORK_UNAVAILABLE, bundleNetworkRefusal, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
+  BUNDLE_BRANCH_ONLY_HINTS, BUNDLE_MEMBER_MOVED_REASONS, BUNDLE_NETWORK_STEPS, BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED, bundleNetworkRefusal, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox } from '../src/mailbox.mjs';
 import { events, haltHint } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
@@ -319,7 +319,7 @@ test('generation 10: only a GitHub step that failed in git is BUNDLE_NETWORK_UNA
   const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
   const m = /\$NetworkSteps=@\(([^)]*)\)/.exec(ps);
   const steps = m[1].split(',').map(x => x.trim().replace(/^'|'$/g, ''));
-  assert.deepEqual(steps, ['fetch', 'ls-remote', 'fetch-reviewed', 'fetch-test']);
+  assert.deepEqual(steps, ['fetch', 'ls-remote', 'fetch-reviewed', 'fetch-test', 'ls-remote-members']);
   assert.deepEqual([...BUNDLE_NETWORK_STEPS], ['fetch', 'ls-remote'], 'the steps before any by-SHA fetch; all of them are steps the script retries');
   assert.ok(BUNDLE_NETWORK_STEPS.every(s => steps.includes(s)));
   // Build-Store runs the whole fetch and the ls-remote before the by-SHA fetches of the same attempt
@@ -336,6 +336,21 @@ test('generation 10: only a GitHub step that failed in git is BUNDLE_NETWORK_UNA
     const rg = rig({ script });
     assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code });
     assert.equal(rg.logs.length, 1, 'logged either way');
+  }
+});
+
+test('ADR 0019 review 2: a batch member that moved on (its branch or its PR head) is TRAIN_BATCH_MEMBER_MOVED; every other chain refusal stays BUNDLE_UNAVAILABLE', async () => {
+  const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
+  for (const reason of BUNDLE_MEMBER_MOVED_REASONS) assert.ok(ps.includes(`throw '${reason}'`), reason);
+  for (const [script, code] of [[() => refusal({ reason: 'BATCH_MEMBER_NOT_BRANCH_TIP', git: null }), TRAIN_BATCH_MEMBER_MOVED],
+    [() => refusal({ reason: 'BATCH_MEMBER_NOT_PR_HEAD', git: { label: 'ls-remote-members', exitCode: 0 } }), TRAIN_BATCH_MEMBER_MOVED],
+    [() => refusal({ reason: 'BATCH_CHAIN_REQUIRED', git: null }), 'BUNDLE_UNAVAILABLE'], [() => refusal({ reason: 'BATCH_TEST_TREE_CHANGED', git: null }), 'BUNDLE_UNAVAILABLE'],
+    [() => refusal({ reason: 'BATCH_MEMBER_COMMIT_MISSING', git: null }), 'BUNDLE_UNAVAILABLE'], [() => refusal({ reason: 'GIT_STEP_FAILED', git: { label: 'ls-remote-members', exitCode: 128 } }), 'BUNDLE_UNAVAILABLE'],
+    [() => ({ code: 1, stdout: refusal({ reason: 'BATCH_MEMBER_NOT_PR_HEAD' }).stdout }), 'BUNDLE_UNAVAILABLE'],
+    [() => ({ code: 0, stdout: JSON.stringify({ status: 'REFUSED_BEFORE_WRITE', reason: 'BATCH_MEMBER_NOT_PR_HEAD' }) }), 'BUNDLE_UNAVAILABLE'],
+    [() => ({ code: 2, stdout: JSON.stringify({ status: 'BUNDLE_WRITTEN' }) }), 'BUNDLE_UNAVAILABLE']]) {
+    const rg = rig({ script });
+    assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code }, String(script));
   }
 });
 

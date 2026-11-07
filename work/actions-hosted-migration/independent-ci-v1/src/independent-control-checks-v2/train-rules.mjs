@@ -15,6 +15,8 @@ import { isTrainFrontJobV2, sameClaimGeneration, validateClaimGeneration } from 
 import { validateStrictProof, validateStrictFrontProof, recordFollows } from './train-strict.mjs';
 
 export const TRAIN_MODES = Object.freeze(['off', 'shadow', 'on']);
+// resident ADR 0018 §8 item 3 (train-landing.mjs#TRAIN_ONLY_CHECK, inlined: this module stays free of the landing module).
+export const TRAIN_ONLY_CHECK = 'kooyumi-train-landed';
 export const TRAIN_MODE_DEFAULT = 'off';
 export const REQUIRED_CHECK_NAMES = Object.freeze(['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot']);
 // Not ready, with zero side effects and before any journal write: the resident parks the batch and tries again.
@@ -63,6 +65,8 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
     // This repository's supported producers are the resident's six Native
     // check-runs and GitHub Actions. Legacy/unpinned/unknown providers cannot
     // be qualified from a check-run inventory; park instead of assuming green.
+    // resident ADR 0018 §8 item 3: kooyumi-train-landed (pinned to this App) is known and never published: absent is not a failure.
+    if (required.integration_id === appId && required.context === TRAIN_ONLY_CHECK) continue;
     if (!(required.integration_id === 15368 || (required.integration_id === appId && REQUIRED_CHECK_NAMES.includes(required.context)))) uncertain = true;
     const matches = inventory.checks.filter(c => c.name === required.context
       && (!(required.integration_id > 0) || c.app.id === required.integration_id));

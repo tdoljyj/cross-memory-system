@@ -58,6 +58,19 @@ class ArchiveDescriptor(unittest.TestCase):
             with self.assertRaises(tool.Refused):
                 tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
 
+    def test_chain_descriptor_4_is_archived_like_3(self):
+        # ADR 0019: a batch of several PRs comes with descriptor /4; its job ids are /3's formula (S names the chain), and the archive
+        # re-derives them from content exactly as for /3; the workspace preparation of the same Source takes it too.
+        members = [{'pr': 884, 'headSha': '1' * 40}, {'pr': 885, 'headSha': '3' * 40}]
+        d = descriptor(contract='clued.independent-ci.resident-batch-descriptor/4', testSha='4' * 40, testTree='5' * 40, members=members)
+        d['linuxJobIds'] = [tool.job_id_v2(d, r) for r in tool.LINUX_ROLES]
+        self.assertEqual(tool.DESCRIPTOR_CHAIN_CONTRACT, wsprep.DESCRIPTOR_CHAIN_CONTRACT)
+        self.assertEqual(tool.descriptor_job_ids(json.dumps(d).encode(), BATCH), d['linuxJobIds'])
+        self.assertEqual(list(wsprep.validate_descriptor(d, BATCH).values()), d['linuxJobIds'])
+        for bad in ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/5'}, {**d, 'linuxJobIds': d['linuxJobIds'][::-1]}):
+            with self.assertRaises(tool.Refused):
+                tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
+
     def test_the_archive_reads_the_descriptor_from_the_outbox(self):
         # 3b review B1: the outbox path and the descriptor contract must never share a name; read through the real path.
         # The path is the one the Windows side writes (layout.mjs LINUX_DESCRIPTORS, review r2 n1).

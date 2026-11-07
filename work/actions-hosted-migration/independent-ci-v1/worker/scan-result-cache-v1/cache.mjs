@@ -20,7 +20,9 @@
 //     stored and a self-digest; it is good for CACHE_TTL_MS. Anything else (read wrongly, damaged, unsigned, from another
 //     key, Source or contract, stored in the future or too long ago, stored by a cache hit) is a miss. Failures and
 //     uncertain runs are never stored, so a new commit is still the remedy for a flaky failure.
-//   - The role policy switches it (scanResultCache: { enabled, root }); absent, disabled or invalid means off.
+//   - The role policy switches it (scanResultCache: { enabled, root }). Generation 28 (resident ADR 0021, Owner approval): absent means
+//     on at DEFAULT_CACHE_ROOT (the in-place channel derives role policies with their exact key set, so no generation could add the
+//     field); { enabled: false, root } turns it off; anything invalid means off.
 //   - A hit is evidence too: the adapter still takes both admissions and the scan-start grant, produces a new observation
 //     for this job whose own fields describe only this run, with the original observation and its signed envelope under
 //     cacheHit; the signer signs it as usual and marks the hit in the signed payload.
@@ -32,6 +34,9 @@ import { RESULT_CONTRACT_V2, ENVELOPE_CONTRACT_V2 } from '../../src/proof-v2.mjs
 import { protectedPath } from '../qualification-v2.mjs';
 
 export const CACHE_POLICY_FIELD = 'scanResultCache';
+// Generation 28 (resident ADR 0021): the root a trivy role policy without the field uses, DESIGN 68.4's suggested place. Its parent is the
+// state root (root-owned, protected: every role's workspaceRoot lies below it); the root and trivy/ are created 0700 on the first store.
+export const DEFAULT_CACHE_ROOT = '/var/lib/clued-independent-ci/scan-result-cache';
 export const CACHE_KEY_CONTRACT = 'clued.independent-ci.scan-result-cache-key/1';
 export const CACHE_RECORD_CONTRACT = 'clued.independent-ci.scan-result-cache-record/2';
 export const CACHE_HIT_CONTRACT = 'clued.independent-ci.scan-result-cache-hit/2';
@@ -64,14 +69,13 @@ const overlaps = (a, b) => a === b || a.startsWith(b + '/') || b.startsWith(a + 
 const reasonOf = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'SCAN_RESULT_CACHE_UNREADABLE';
 const time = value => typeof value === 'string' ? Date.parse(value) : NaN;
 
-// The policy switch. Off unless the role may be served from the cache and its policy names exactly { enabled: true, root }
-// with a root (trailing slashes removed) that overlaps nothing the job, Docker or the control plane uses (extraRoots:
-// role-specific directories such as trivy's database cache).
+// The policy switch. Off unless the role may be served from the cache and its policy either has no such field (generation 28: on at
+// DEFAULT_CACHE_ROOT) or names exactly { enabled: true, root }, with a root (trailing slashes removed) that overlaps nothing the job,
+// Docker or the control plane uses (extraRoots: role-specific directories such as trivy's database cache). { enabled: false, root }: off.
 export function cacheSettings(config, role, { extraRoots = [] } = {}) {
   if (!CACHE_ROLES.includes(role)) return Object.freeze({ enabled: false, reason: 'SCAN_RESULT_CACHE_ROLE_NOT_CACHED' });
   if (!CACHE_HIT_ROLES.includes(role)) return Object.freeze({ enabled: false, reason: 'SCAN_RESULT_CACHE_KEY_NOT_CLOSED_FOR_ROLE' });
-  const value = config?.[CACHE_POLICY_FIELD];
-  if (value === undefined) return Object.freeze({ enabled: false, reason: 'SCAN_RESULT_CACHE_NOT_CONFIGURED' });
+  const value = config?.[CACHE_POLICY_FIELD] === undefined ? { enabled: true, root: DEFAULT_CACHE_ROOT } : config[CACHE_POLICY_FIELD];
   if (!exactKeys(value, ['enabled', 'root']) || typeof value.enabled !== 'boolean') return Object.freeze({ enabled: false, reason: 'SCAN_RESULT_CACHE_POLICY_INVALID' });
   if (value.enabled !== true) return Object.freeze({ enabled: false, reason: 'SCAN_RESULT_CACHE_DISABLED' });
   const root = stripSlash(value.root);
