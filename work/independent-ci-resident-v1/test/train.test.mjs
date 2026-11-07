@@ -300,6 +300,19 @@ test('executor (review of 3c-1, round 2): an interruption found while halted is 
   assert.equal(await third.exec.trainRecover(), null, 'nothing left for the next start after the re-arm');
 });
 
+test('SwapBroker poll constants (M2a): intake 100 ms, stop watch 200 ms, SCM restore pass still 500 ms, stop-retry window still 10 s', async () => {
+  const fs = (await import('node:fs')).default;
+  const src = fs.readFileSync(new URL('../windows/SwapBroker.cs', import.meta.url), 'utf8');
+  const n = re => Number(re.exec(src)?.[1]);
+  assert.equal(n(/RequestPollMs\s*=\s*(\d+)/), 100);
+  assert.equal(n(/StopPollMs\s*=\s*(\d+)/), 200);
+  assert.equal(n(/RestoreIntervalMs\s*=\s*(\d+)/), 500, 'RestoreStoppedHelper opens an SCM session per pass; its rate is unchanged');
+  assert.equal(n(/const int StopAttempts\s*=\s*(\d+)/) * 200, 10_000, 'StopAttempts counts polls: the stop-retry window stays 10 s');
+  assert.match(src, /Thread\.Sleep\(RequestPollMs\)/);
+  assert.match(src, /Thread\.Sleep\(StopPollMs\)/);
+  assert.doesNotMatch(src, /Thread\.Sleep\((500|1000)\)/, 'no literal 500/1000 ms poll is left');
+});
+
 test('the install authority keeps at least the helper\'s fixed margin; stage 10\'s cap is pinned in the policy and the two C# tables', async t => {
   const at = Date.parse('2026-10-20T12:00:00Z');
   const lowMargin = { ...rawPolicy().limits, stageMarginMs: 60_000 };

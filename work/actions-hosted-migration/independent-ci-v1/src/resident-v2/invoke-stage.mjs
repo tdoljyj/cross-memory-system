@@ -85,6 +85,9 @@ export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBy
   return dir;
 }
 
+// M2a (DESIGN 65.3.6): the resident looks for the broker's answer every 200 ms (was 1000 ms). One 8 KiB local file read per poll.
+export const BROKER_ANSWER_POLL_MS = 200;
+
 export async function askBroker({ brokerRoot, request, clock, sleep, waitUntil }) {
   const requestId = randomUUID();
   await writeNew(path.join(brokerRoot, 'requests', `${requestId}.json`), Buffer.from(canonical(request)));
@@ -93,7 +96,7 @@ export async function askBroker({ brokerRoot, request, clock, sleep, waitUntil }
     const raw = await readBounded(answer, 8192).catch(() => null);
     if (raw) return { requestId, response: validateBrokerResponse(parse(raw), requestId) };
     if (clock() >= waitUntil) return { requestId, response: null };
-    await sleep(1000);
+    await sleep(BROKER_ANSWER_POLL_MS);
   }
 }
 
