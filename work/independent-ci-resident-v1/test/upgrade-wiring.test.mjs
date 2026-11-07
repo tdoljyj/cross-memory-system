@@ -75,7 +75,7 @@ test('status /7: versions from the three files; consistent true, false (generati
   assert.deepEqual([torn.view.generation, torn.view.linux, torn.view.consistent, torn.view.upgrade, torn.notices], [null, null, null, null, []]);
 });
 
-test('status /7 is written and read back with versions; /6 and /5 files still read (versions null); the shape is re-checked', async t => {
+test('status /8 is written and read back with versions; /6 and /5 files still read (versions null); the shape is re-checked', async t => {
   const root = await tempRoot(t);
   await fs.mkdir(path.join(root, 'state'));
   const b = new StatusBoard({ clock: () => T0 });
@@ -87,9 +87,13 @@ test('status /7 is written and read back with versions; /6 and /5 files still re
   assert.equal(JSON.parse(await fs.readFile(path.join(root, 'state', 'status.json'), 'utf8')).contract, STATUS_CONTRACT);
   assert.deepEqual(s.versions, view);
   assert.deepEqual([s.versions.consistent, s.versions.upgrade.state, s.versions.upgrade.code], [false, 'DEFERRED', 'UPGRADE_DRAIN_TIMEOUT']);
-  const { versions, ...v6 } = b.snapshot();
+  const { versions, timing, ...v6 } = b.snapshot();
   for (const contract of ['clued.independent-ci.resident-status/6', 'clued.independent-ci.resident-status/5']) assert.equal(parseStatus(Buffer.from(JSON.stringify({ ...v6, contract }))).versions, null, contract);
-  assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...v6, contract: STATUS_CONTRACT }))), { code: 'STATUS_REFUSED' }, '/7 without versions');
+  assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...v6, contract: STATUS_CONTRACT }))), { code: 'STATUS_REFUSED' }, '/8 without versions');
+  const v7 = { ...v6, versions, contract: 'clued.independent-ci.resident-status/7' };
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(v7))).versions, view, '/7 still reads with versions');
+  assert.equal(parseStatus(Buffer.from(JSON.stringify(v7))).timing, null, '/7 has no timing');
+  assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...v7, timing }))), { code: 'STATUS_REFUSED' }, '/7 with timing');
   assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), contract: 'clued.independent-ci.resident-status/6' }))), { code: 'STATUS_REFUSED' }, '/6 with versions');
   // what does not fit is shown as nothing, never trusted
   assert.equal(parseVersions({ windows: { residentManifestSha256: 'x' } }), null);

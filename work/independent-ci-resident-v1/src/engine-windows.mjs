@@ -825,7 +825,7 @@ export class WindowsEngine {
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();
       const proof = { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk };
-      let bridge = null;
+      let bridge = null, relayTiming = null;
       if (relay) {
         const request = await relay;
         const seen = observer.state;
@@ -852,6 +852,8 @@ export class WindowsEngine {
         const stopRequestId = seen.stop?.requestId ?? null;
         let stopCode = seen.stop?.stopCode ?? null;
         if (stopRequestId) stopCode = (await this.stopOutcome(stopRequestId)) ?? stopCode;
+        // The companion's relay times of this pump (status /8, a view): read once the pump has answered; absent or unreadable is null.
+        if (answer && typeof this.companionMailbox.timing === 'function') { try { relayTiming = (await this.companionMailbox.timing(request)) ?? null; } catch { relayTiming = null; } }
         const answerCode = answer && answer.ok !== true ? (PUMP_CODES.includes(answer.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED') : null;
         // The bridge facts the executor records with the stage (stage-terminal) and decides an abandonment on (DESIGN §27).
         bridge = { pumpCode: seen.pumpCode ?? answerCode, stopRequestId, stopCode, stageCode: fact.ok ? null : (fact.code ?? 'STAGE_TERMINAL_UNCONFIRMED'), pumpQuiet: !!answer };
@@ -874,7 +876,7 @@ export class WindowsEngine {
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof, factsSha256: fact.nativeReceiptSha256,
         relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
         ...(ok && stage.number === 1 && fact.stage1Locator ? { stage1Locator: fact.stage1Locator } : {}),
-        ...(bridge ? { bridge } : {}) };
+        ...(bridge ? { bridge } : {}), ...(relayTiming ? { relayTiming } : {}) };
     } finally {
       this.inflight = null;
       this.bridge = null;
