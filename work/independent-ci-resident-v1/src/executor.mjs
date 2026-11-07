@@ -2689,8 +2689,10 @@ export class ResidentExecutor {
     // The train on with nonFrontRuns false (policy /8; review R3 M6): only the front subject (S, from on-mode stage 10) is
     // scheduled; every other row waits, shown with TRAIN_NON_FRONT_RUNS_OFF, and so does an attempt 2 of a subject without S.
     // nonFrontRuns true (and off, shadow): every row, as today.
+    // Task 7100ff62 (DESIGN §62.4): the take-over binding run (the queue head's PR, attempt 1, no S) is the front's own prelude, not a
+    // non-front run: it runs here too, or the claim is never bound and the front waits for the full sweep again. No other row does.
     if (this.policy.train.enabled === 'on' && this.policy.train.nonFrontRuns === false) {
-      const front = c => Object.hasOwn(c, 'testSha');
+      const front = c => Object.hasOwn(c, 'testSha') || this.trainFrontBind(c);
       for (const c of rows.filter(c => !front(c))) this.queue.defer(c.pr, TRAIN_NON_FRONT_DEFERRED, now);
       rows = rows.filter(front);
       attempts = attempts.filter(a => front(a.subject));

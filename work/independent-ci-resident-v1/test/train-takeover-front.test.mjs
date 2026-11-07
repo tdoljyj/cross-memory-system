@@ -23,8 +23,8 @@ const MIN = 60_000;
 const SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const OTHER_CLAIM = '99999999-8888-4777-8666-555555555555';
 const PROOF = { windowsTreeZero: true, serviceOriginalStopped: true };
-const policy = () => rawPolicy({ contract: POLICY_CONTRACT_V8,
-  train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } });
+const policy = (nonFrontRuns = true) => rawPolicy({ contract: POLICY_CONTRACT_V8,
+  train: { enabled: 'on', nonFrontRuns, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } });
 const body = claim => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${SCOPE}\n`;
 const slotGreen = (e, head) => [...e.gh.world.checks.values()].find(c => c.app.id === 5368905 && c.name === 'kooyumi-merge-slot' && c.head_sha === head
   && c.status === 'completed' && c.conclusion === 'success');
@@ -104,11 +104,13 @@ function engineFor(e, at) {
   return engine;
 }
 
-test('take-over front (gen 19 PR #1027): a queue-head PR pushed after train=on gets the merge-slot green within 30 minutes while the full sweep still runs', async t => {
+// Task 7100ff62: with nonFrontRuns false the schedule kept only the front rows (S), so the binding run (no S) was deferred as
+// TRAIN_NON_FRONT_RUNS_OFF and the claim was never bound. The binding run is the front's own prelude: it runs under both settings.
+for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027): a queue-head PR pushed after train=on gets the merge-slot green within 30 minutes while the full sweep still runs (nonFrontRuns ${nonFrontRuns})`, async t => {
   const e = await world(t);
   const at = { t };
   const engine = engineFor(e, at);
-  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  const f = await executorFixture(t, { policy: policy(nonFrontRuns), engine, now: NOW });
   Object.assign(at, { clock: f.clock, advance: f.advance });
   await f.exec.trainRecover();
 
