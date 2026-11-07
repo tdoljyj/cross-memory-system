@@ -837,6 +837,28 @@
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
       "content_sha256": "e7a46659462d78677e24fb28fb075d304e840ba8fefb6611d38468fc9ce6064c"
+    },
+    {
+      "id": "script.merge-reconciliation",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
+      "root": ".",
+      "files": [
+        ".github/workflows/clued-merge-reconcile.yml",
+        "docs/maintenance/clued-merge-executor.md",
+        "scripts/ci/clued-merge-executor.mjs",
+        "scripts/ci/clued-merge-reconcile*",
+        "work/independent-ci-resident-v1/src/companion-main.mjs",
+        "work/independent-ci-resident-v1/src/merge-reconcile*.mjs",
+        "work/independent-ci-resident-v1/test/merge-reconcile.test.mjs",
+        "work/independent-ci-resident-v1/tools/build-package.mjs"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-merge-reconcile.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "1525c0b04ab6febb560123aa63ab3444b2e9dff035eaea576f69903643c84fb9"
     }
   ]
 }

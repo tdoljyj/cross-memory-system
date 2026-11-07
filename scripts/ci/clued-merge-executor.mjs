@@ -14,6 +14,7 @@
 // Pure proof tests and consumer tests run offline; main never injects a bypass.
 
 import fs from "node:fs";
+import { automaticExecutorGate } from './clued-merge-reconcile-gate.mjs';
 import {createNaturalRecorder,observeMutation,naturalRoundId} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -408,6 +409,11 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
 }
 
 export async function runExecutor(args) {
+  // The accepted activation controls every automatic caller, including old
+  // push/workflow_run entry points. Delegate before cleanup, qualification,
+  // recording or any GitHub/Native read; only the durable route may mutate.
+  const delegated = automaticExecutorGate(args.fetchImpl);
+  if (delegated) return delegated;
   const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-merge-executor.mjs"});
   let completion="exception";
   try {const result=await runExecutorCore({...args,observation_recorder:recorder});completion="returned";return result;}
