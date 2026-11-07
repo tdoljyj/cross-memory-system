@@ -184,14 +184,11 @@ test('every generated file is listed with a --check command, a fix and an id --o
 test('a changed agent contract makes the generated worker modules stale; the printed command fixes it', () => {
   const dir = registeredCopy();
   try {
-    fs.appendFileSync(path.join(dir, 'protocol/agent/agent-contract.md'), '
-A sentence added after generation.
-');
+    fs.appendFileSync(path.join(dir, 'protocol/agent/agent-contract.md'), '\nA sentence added after generation.\n');
     let r = cli(dir, '--base', 'HEAD', '--only', 'agent-contract');
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+agent-contract/); assert.match(r.stdout, /agent-contract\.ts is out of date/);
-    assert.match(r.stdout, /regenerate: node apps\/clued-cloud\/scripts\/generate-agent-contract\.mjs
-/);
+    assert.match(r.stdout, /regenerate: node apps\/clued-cloud\/scripts\/generate-agent-contract\.mjs\n/);
     const fix = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(fix.status, 0, fix.stdout + fix.stderr);
     r = cli(dir, '--base', 'HEAD', '--only', 'agent-contract'); assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -201,16 +198,11 @@ A sentence added after generation.
 test('a changed skill makes the plugin copies stale; the printed command fixes it', () => {
   const dir = registeredCopy();
   try {
-    const skill = git(dir, 'ls-files', 'skills/clued').split('
-').find((f) => f.endsWith('.md'));
-    fs.appendFileSync(path.join(dir, skill), '
-Changed after the plugin was built.
-');
-    git(dir, 'add', '-A');
+    const skill = git(dir, 'ls-files', 'skills/clued').split('\n').find((f) => f.endsWith('.md'));
+    fs.appendFileSync(path.join(dir, skill), '\nChanged after the plugin was built.\n');
     let r = cli(dir, '--base', 'HEAD', '--only', 'plugin');
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /STALE\s+plugin\s+\(integrations\/claude-code\/clued\/\)/); assert.match(r.stdout, /regenerate: python3? scripts\/build_claude_code_plugin\.py
-/);
+    assert.match(r.stdout, /STALE\s+plugin\s+\(integrations\/claude-code\/clued\/\)/); assert.match(r.stdout, /regenerate: python3? scripts\/build_claude_code_plugin\.py\n/);
     const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/build_claude_code_plugin.py'], { cwd: dir, encoding: 'utf8' });
     assert.equal(x.status, 0, x.stdout + x.stderr);
     r = cli(dir, '--base', 'HEAD', '--only', 'plugin'); assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -228,13 +220,11 @@ test('generators that need npm ci are "could not check" without it, and stale wh
     for (const [pkg, script, status] of [['pdfjs-dist', 'generate-pdf-cmaps', 1], ['typescript', 'generate-imprint-domain-rules', 0]]) {
       fs.mkdirSync(path.join(dir, 'apps/clued-cloud/node_modules', pkg), { recursive: true });
       fs.writeFileSync(path.join(dir, 'apps/clued-cloud/node_modules', pkg, 'package.json'), '{}');
-      fs.writeFileSync(path.join(dir, `apps/clued-cloud/scripts/${script}.mjs`), `console.error('stub says out of date'); process.exit(process.argv.includes('--check') ? ${status} : 0);
-`);
+      fs.writeFileSync(path.join(dir, `apps/clued-cloud/scripts/${script}.mjs`), `console.error('stub says out of date'); process.exit(process.argv.includes('--check') ? ${status} : 0);\n`);
     }
     r = cli(dir, '--base', 'HEAD', '--only', 'pdf-cmaps', '--only', 'imprint-rules');
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+pdf-cmaps/); assert.match(r.stdout, /stub says out of date/); assert.match(r.stdout, /ok\s+imprint-rules/);
-    assert.match(r.stdout, /fix sequence[\s\S]*generate-pdf-cmaps\.mjs
-/);
-  } finally { /* the shared copy is reset by the next test */ }
+    assert.match(r.stdout, /fix sequence[\s\S]*generate-pdf-cmaps\.mjs\n/);
+  } finally { fs.rmSync(path.join(dir, 'apps/clued-cloud/node_modules'), { recursive: true, force: true }); }
 });
