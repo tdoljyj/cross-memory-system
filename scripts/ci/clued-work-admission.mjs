@@ -76,7 +76,7 @@ import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import {isDeepStrictEqual} from "node:util";
-import {CONTROL_WORKFLOW_FILES,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
+import {CONTROL_WORKFLOW_FILES,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
@@ -1329,13 +1329,21 @@ function strategyShrinks(job, old) {
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
-export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false, registeredActorTransition = false } = {}) {
+export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredControlAddition = false, registeredBootstrapOrdinaryTransition = false, registeredActorTransition = false } = {}) {
   const form = workflowFormFindings(headText);
   if (form.length) return form;
   // Only the trusted-main exact-pair caller may set this Source classification.
   // A controller remains ungated to avoid waiting on its own admission result.
   if(registeredControlTransition===true){
-    if(baseText===null||workflowIsGated(baseText)||workflowIsGated(headText))return ['controller_Source_expected_ungated'];
+    if(baseText===null){
+      // Only this exact initial Source can lack a predecessor. The boolean is
+      // derived below from the trusted-main catalogue, never PR input; fixed
+      // Git bytes are checked here again rather than excusing any new job.
+      if(registeredControlAddition===true&&workflowBlob(headText)===MERGE_RECONCILE_CONTROL_SOURCE.workflow_blob&&
+        sha256Hex(headText)===MERGE_RECONCILE_CONTROL_SOURCE.source_sha256&&!workflowIsGated(headText))return [];
+      return ['controller_Source_expected_ungated'];
+    }
+    if(workflowIsGated(baseText)||workflowIsGated(headText))return ['controller_Source_expected_ungated'];
     return [];
   }
   if(registeredActorTransition===true&&actorSourceTransition(ACTOR_WORKFLOW,headText).passed)return [];
@@ -1449,7 +1457,11 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     const ordinaryRequired=ordinaryKnown&&(workflowIsGated(head)||base!==null&&workflowIsGated(base));
     const ordinarySource=ordinaryRequired?registeredBootstrapOrdinarySuccessor({file,headText:head,baseText:base,...trustedPlacementCatalogues()}):null;
     if(ordinaryRequired&&!ordinarySource.passed)gate.push(`workflow_gate:${file.filename}:bootstrap_ordinary_Source_not_registered`);
-    for (const finding of gateFindings(head, base, { registeredActorTransition:actorSource?.passed===true, registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
+    const registeredControlAddition=controlSource?.passed===true&&file.filename===MERGE_RECONCILE_CONTROL_SOURCE.file&&
+      file.status==='added'&&file.previous_filename===undefined&&base===null&&controlSource.profile.source_kind==='merge_reconcile_initial'&&
+      controlSource.profile.workflow_blob===MERGE_RECONCILE_CONTROL_SOURCE.workflow_blob&&
+      controlSource.profile.source_sha256===MERGE_RECONCILE_CONTROL_SOURCE.source_sha256;
+    for (const finding of gateFindings(head, base, { registeredActorTransition:actorSource?.passed===true, registeredControlTransition:controlSource?.passed===true, registeredControlAddition, registeredPublisherTransition,
       registeredPlacementTransition:placementSource?.registeredPlacementTransition===true,
       registeredBootstrapOrdinaryTransition:ordinarySource?.registeredBootstrapOrdinaryTransition===true })) {
       gate.push(`workflow_gate:${file.filename}:${finding}`);

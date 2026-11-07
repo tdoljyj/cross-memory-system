@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.15",
+      "version": "1.1.16",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -576,7 +576,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "33c0338544fa519e50b00188fbfb914a260cb1444a9d0ef438152dc4d73fa426"
+      "content_sha256": "c7ea04d81fbe1d2e7cddaab0efba45e8c31d4ac4a8e97186aea5557dddcd1e78"
     },
     {
       "id": "script.resource-maintenance",
@@ -631,7 +631,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -641,13 +641,14 @@
         "scripts/ci/clued-merge-slot-ci.test.mjs",
         ".github/workflows/clued-merge-slot-ci.yml",
         "scripts/ci/clued-control-workflow-source.test.mjs",
-        ".github/workflows/clued-work-admission-dispatch.yml"
+        ".github/workflows/clued-work-admission-dispatch.yml",
+        "scripts/ci/clued-control-workflow-reconcile-source.test.mjs"
       ],
       "version_marker": {
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "3a1ba372775682788caa54d5edafb698278e6492af152fe8ef5b64f2b818a380"
+      "content_sha256": "730eafacdcfaa77704d9179783e8c641abc3c74ac30d713bd1d2138257816153"
     },
     {
       "id": "script.required-applicability",
