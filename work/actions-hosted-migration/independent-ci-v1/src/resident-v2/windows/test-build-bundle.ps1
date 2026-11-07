@@ -8,7 +8,7 @@ function Refused-With([scriptblock]$f,[string]$code,[string]$what){$got=$null;tr
 $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$t,[ref]$e);if($e.Count){throw 'BUILD_BUNDLE_PARSE_FAILED'}
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
-  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint','Move-FailedGen2',
+  'Ref-Diff','Ref-Target-Types','Ref-Type-Allowed','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint','Move-FailedGen2',
   'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update',
   'Seed-Meta-Object','Seed-Meta-Failure-At','Seed-Note-Network-Failure','Seed-After-Network-Failure','Network-Step-Failed')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
@@ -128,7 +128,7 @@ if($git){
   $realGit=${function:Invoke-Git}
   # Sends the next $stalls[label] calls of that step to the silent listener; before a stalled fetch it leaves what a
   # broken transfer could: a partial pack and a stray ref in that attempt's repository.
-  function Invoke-Git([string]$Label,[string[]]$GitArgs){
+  function Invoke-Git([string]$Label,[string[]]$GitArgs,[string]$InputText=''){
    $script:calls+=$Label
    if($script:stalls.ContainsKey($Label) -and $script:stalls[$Label] -gt 0){
     $script:stalls[$Label]--
@@ -145,7 +145,7 @@ if($git){
     $script:lateRaces--;$dir=@($GitArgs|Where-Object{$_.StartsWith('--git-dir=')})[0].Substring(10)
     [IO.File]::WriteAllText((Join-Path $dir 'refs\heads\zz-late'),$c0+"`n")
    }
-   return (& $realGit $Label $GitArgs)
+   return (& $realGit $Label $GitArgs $InputText)
   }
   function New-Case([hashtable]$Stalls,$Elapsed){
    $script:races=0;$script:lateRaces=0;$script:refsDiffer=$null;$script:FetchDir3=$null
@@ -176,6 +176,29 @@ if($git){
   # 3. no stall: one attempt, nothing else created
   New-Case @{} $null;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir -and $attempts -eq 1 -and $null -eq $firstAttempt -and @($failedAttempts).Count -eq 0 -and -not (Test-Path -LiteralPath $FetchDir2) -and (Same-Map $s.remote $expected)) 'no-stall-one-attempt'
+  # 3b. CI Source round-trip trim (PR #1029 batches: 405 refs, one cat-file -t process each, 12-17 s): the ref target types come
+  # from one cat-file --batch-check; head and base keep their own two checks. Same store, same verdicts.
+  function Cat-Files{return @($script:calls|Where-Object{$_ -ceq 'cat-file'}).Count}
+  function Ref-Types{return @($script:calls|Where-Object{$_ -ceq 'ref-types'}).Count}
+  Yes ((Ref-Types) -eq 1 -and (Cat-Files) -eq 2) ('ref-types-one-process:'+(Ref-Types)+'/'+(Cat-Files))
+  $extra=@();foreach($n in 1..40){$extra+="refs/heads/many-$n"};foreach($n in 1..20){$extra+="refs/tags/many-$n"}
+  try{
+   foreach($r in $extra){& $g update-ref $r $c0}
+   $many=Ref-Map ((& git ls-remote --branches --tags $src)-join "`n") "`t" $true;Yes ($many.Count -eq 63) 'many-refs-fixture'
+   New-Case @{} $null;$s=Fetch-Store
+   Yes ((Same-Map $s.remote $many) -and $attempts -eq 1 -and (Ref-Types) -eq 1 -and (Cat-Files) -eq 2) ('many-refs-one-process:'+(Ref-Types)+'/'+(Cat-Files))
+   # the batch answer itself: one type per distinct target; a missing object (or an empty map) gives no answer at all
+   $tm=Ref-Target-Types $s.gd $s.remote;Yes ($null -ne $tm -and $tm.Count -eq 4 -and $tm[$c0] -ceq 'commit' -and $tm[$c1] -ceq 'commit' -and $tm[$c2] -ceq 'commit') 'ref-types-answer'
+   $miss=New-RefMap;$miss['refs/heads/main']=$c1;$miss['refs/heads/gone']='f'*40;Yes ($null -eq (Ref-Target-Types $s.gd $miss)) 'ref-types-missing-no-answer'
+   Yes ($null -eq (Ref-Target-Types $s.gd (New-RefMap))) 'ref-types-empty-no-answer'
+   Yes ((Ref-Type-Allowed 'refs/heads/x' 'commit') -and -not (Ref-Type-Allowed 'refs/heads/x' 'tag') -and (Ref-Type-Allowed 'refs/tags/x' 'tag') -and -not (Ref-Type-Allowed 'refs/tags/x' 'blob')) 'ref-type-allowed'
+   # a ref the store must refuse: the per-ref loop decides, so the code and the failed step are exactly the old ones
+   $blob=(& $g rev-parse "$($c0):a.txt").Trim();& $g update-ref refs/tags/many-blob $blob
+   New-Case @{} $null
+   Refused-With {Fetch-Store} 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED' 'blob-tag-refused'
+   Yes ($attempts -eq 1 -and (Ref-Types) -eq 1 -and (Cat-Files) -gt 2 -and $lastGit.label -ceq 'cat-file' -and $stage -ceq 'fetched-store-readback') ('blob-tag-old-loop-decides:'+(Cat-Files))
+  }finally{foreach($r in $extra+@('refs/tags/many-blob')){& $g show-ref --verify --quiet $r;if($LASTEXITCODE -eq 0){& $g update-ref -d $r}}}
+  Yes ((Ref-Map ((& git ls-remote --branches --tags $src)-join "`n") "`t" $true).Count -eq 3) 'many-refs-removed'
   # 4. both attempts stall: the second failure is the answer, never a third attempt
   New-Case @{fetch=2} $null
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'second-failure-final'
