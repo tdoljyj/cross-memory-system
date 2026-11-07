@@ -452,3 +452,58 @@ test('take-over front (task 60f83aa3): a PR arriving after a NO_FRONT run gets i
   f.exec.trainAskFrontBind([{ pr: 911, headSha: sha(0x7777), baseSha: T }]);
   assert.equal(f.exec.trainUrgent, false);
 });
+
+// Task 60f83aa3, steady state: the take-over is done, the queue is empty, the last stage 10 said NO_FRONT. A new PR's ordinary batch binds
+// the claim in its stage 1; stage 10 must then open the front batch within a minute, not at the next 10-minute cadence. (An urgent
+// request on arrival would be spent by a stage 10 that still sees the head unbound.)
+test('steady state (task 60f83aa3): after the ordinary batch\'s stage 1 bound the claim, stage 10 opens the front within a minute', async t => {
+  const e = await world(t, { quick: true });
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.equal(f.exec.trainTakeoverDone, true);
+  await f.exec.tick(); // a stage 10 on an empty queue: NO_FRONT, cadence restarts here
+  assert.equal(f.exec.trainLast.wouldDo, 'NO_FRONT');
+  f.advance(3 * MIN);
+  const arrival = f.clock();
+  const before = engine.trainRuns.length;
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let stage1At = null, open = null;
+  for (let i = 0; i < 12 && !open; i++) {
+    await f.exec.tick();
+    if (stage1At === null && engine.stages.some(s => s.pr === 910 && s.testSha === null && s.stage === 1)) stage1At = f.clock();
+    open = engine.trainRuns.slice(before).find(r => r.decision === 'OPEN_FRONT_BATCH') ?? null;
+    if (!open) f.advance(20_000);
+  }
+  assert.ok(stage1At !== null, 'the ordinary batch ran stage 1');
+  assert.ok(open, `no OPEN_FRONT_BATCH run: ${JSON.stringify(engine.trainRuns.slice(before))}`);
+  assert.ok(f.clock() - stage1At <= MIN, `stage 10 opened the front ${Math.round((f.clock() - stage1At) / 1000)} s after stage 1`);
+  assert.ok(f.clock() - arrival < 7 * MIN, 'well inside the cadence');
+});
+
+test('steady state (task 60f83aa3): a head makes stage 10 urgent at most twice, and never on arrival once the take-over is done', async t => {
+  const f = await executorFixture(t, { policy: policy(), now: NOW });
+  await f.exec.trainRecover();
+  f.exec.trainTakeoverDone = true;
+  f.exec.trainLast = Object.freeze({ ...(f.exec.trainLast ?? {}), mode: 'on', wouldDo: 'NO_FRONT', strict: true });
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 910, headSha: H, baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false, 'no ask on arrival after the take-over');
+  const subject = { pr: 910, headSha: H, baseSha: T };
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, true, 'asked once stage 1 bound');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, true, 'a second ask is allowed');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, false, 'never a third');
+  f.exec.trainAskAfterBind({ ...subject, testSha: S });
+  assert.equal(f.exec.trainUrgent, false, 'a front row (S) is not asked');
+});

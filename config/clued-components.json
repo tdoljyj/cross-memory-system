@@ -577,7 +577,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "0d9cb3dc53029f192f2d8dc1b036d8d36831c6c1855a1a10c77bf4fc6f24d174"
+      "content_sha256": "180ca193ba7827bd0fbd9c5563a701b54c257c2ce01d964fedcaa3845c2393bc"
     },
     {
       "id": "script.resource-maintenance",

@@ -214,6 +214,7 @@ export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
 // kept the PR busy, so the front batch was refused (TRAIN_FRONT_PR_BUSY) while stage 10 had already counted it and touched running.
 export const TRAIN_FRONT_TAKES_OVER = 'TRAIN_FRONT_TAKES_OVER';
 const FRONT_BIND_ASKED_MAX = 512;
+const FRONT_BIND_ASKED_PER_HEAD = 2;
 // Generation 22 field defect (PR #1029): a front batch's stage 8 needs the strict proof stage 10 wrote (sweepFreshMs); one with less than
 // this left right before stage 8 (or none any more) is refreshed by a stage-10 run first (stage8Try).
 export const FRONT_PROOF_MARGIN_MS = 3 * 60_000;
@@ -446,7 +447,7 @@ export class ResidentExecutor {
     // DESIGN §62.4: the take-over binding runs (batch key -> { pr, headSha }; kept across a restart by receipt 'train-front-bind') and
     // the held heads stage 10 was already asked about once.
     this.frontBindKeys = new Map();
-    this.frontBindAsked = new Set();
+    this.frontBindAsked = new Map(); // `${pr}:${headSha}` -> times stage 10 was made urgent for this head (at most FRONT_BIND_ASKED_PER_HEAD)
     // Defect a8910e41: the heads ('pr:headSha' -> when, ms) whose binding run ended TRAIN_FRONT_CLAIM_BOUND (receipt 'train-front-bound').
     // The binding run is released, not burned; this marker only holds within the duty it was set in (trainFrontBound).
     this.frontBound = new Map();
@@ -549,17 +550,31 @@ export class ResidentExecutor {
   // (bounded by the daily cap like every urgent run), so the binding run need not wait for the next routine run.
   trainAskFrontBind(rows) {
     const l = this.trainLast;
-    // NO_FRONT (empty queue at the last run) counts like FRONT_NOT_BOUND: a new head must not wait out the cadence (task 60f83aa3). The
-    // same rule holds after the take-over: the head's ordinary batch binds the claim, and the next quiet tick runs stage 10 at once.
-    if (!this.trainEligible() || l?.mode !== 'on' || !['FRONT_NOT_BOUND', 'NO_FRONT'].includes(l.wouldDo) || l.strict !== true) return;
+    // NO_FRONT (empty queue at the last run) counts like FRONT_NOT_BOUND: a new head must not wait out the cadence (task 60f83aa3).
+    // During the take-over the head is asked on arrival (the binding run is stage 10's to name). After it, the arrival is too early (the
+    // head's ordinary batch has not bound the claim yet): trainAskAfterBind asks once stage 1 has.
+    if (!this.trainEligible() || this.trainTakeoverDone || l?.mode !== 'on' || !['FRONT_NOT_BOUND', 'NO_FRONT'].includes(l.wouldDo) || l.strict !== true) return;
     for (const r of rows) {
       if (Object.hasOwn(r, 'testSha') || this.trainFrontBind(r)) continue;
-      const k = `${r.pr}:${r.headSha}`;
-      if (this.frontBindAsked.has(k)) continue;
-      if (this.frontBindAsked.size >= FRONT_BIND_ASKED_MAX) this.frontBindAsked.clear();
-      this.frontBindAsked.add(k);
-      this.trainUrgent = true;
+      if (!this.frontBindAsked.has(`${r.pr}:${r.headSha}`)) this.frontBindAskedNote(`${r.pr}:${r.headSha}`);
     }
+  }
+
+  // Counts one urgent stage-10 request for a head; false (and no urgency) once the head used FRONT_BIND_ASKED_PER_HEAD of them.
+  frontBindAskedNote(k) {
+    const n = this.frontBindAsked.get(k) ?? 0;
+    if (n >= FRONT_BIND_ASKED_PER_HEAD) return false;
+    if (n === 0 && this.frontBindAsked.size >= FRONT_BIND_ASKED_MAX) this.frontBindAsked.clear();
+    this.frontBindAsked.set(k, n + 1);
+    this.trainUrgent = true;
+    return true;
+  }
+
+  // After the take-over: the ordinary batch of a head without S passed its stage 1 (the admission binds the claim), so stage 10 can now
+  // name the front: due at once, once per head here (two per head with the arrival ask), under the daily cap like every urgent run.
+  trainAskAfterBind(subject) {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone || !subject || Object.hasOwn(subject, 'testSha')) return;
+    this.frontBindAskedNote(`${subject.pr}:${subject.headSha}`);
   }
 
   // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran. Defect a8910e41: the
@@ -2774,8 +2789,8 @@ export class ResidentExecutor {
     // The train on (DESIGN §41.6): no new batch before the take-over sweep, nor while stage 10 says another node runs another
     // Source. A quiet result: stage 10 runs in this very tick.
     const trainHeld = this.trainGate();
-    this.trainAskFrontBind(rows);
     if (trainHeld) {
+      this.trainAskFrontBind(rows);
       rows = rows.filter(row => !this.trainGate(row));
       attempts = attempts.filter(a => !this.trainGate(a.subject));
       if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return trainHeld; }
@@ -3307,6 +3322,7 @@ export class ResidentExecutor {
     // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
     // run that an older version left STARTED still ends in continueBatch, burned as before.
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
+    this.trainAskAfterBind(subject);
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
