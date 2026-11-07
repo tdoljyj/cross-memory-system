@@ -23,6 +23,7 @@ import { KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, r
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
+import { CompanionPresence, PRESENCE_EVERY_MS } from './companion-presence.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -100,8 +101,14 @@ export async function main(argv = process.argv.slice(2)) {
   await statusTimer.flush();
   // The executor's own run queue (phase 2, step 1; DESIGN §17): state\queue\queue.json, a view the ledger overrules.
   const queue = await RunQueue.open(path.join(state, 'queue'), clock);
+  // M5 (DESIGN §65.4.5): when the companion first beat after this start, and a companion-absent notice after 10 minutes without one.
+  const companionPresence = new CompanionPresence({ startedAt: clock() });
+  const presenceTimer = setInterval(async () => {
+    try { companionPresence.observe(await companion.heartbeat()); status.setCompanion(companionPresence.view()); } catch { /* a view only */ }
+  }, PRESENCE_EVERY_MS);
+  presenceTimer.unref?.();
   const exec = new ResidentExecutor({
-    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue, versions,
+    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue, versions, companionPresence,
     // Generation 10 (DESIGN 53.5): the executor writes status.json at once when a batch is claimed and when a breaker trial starts.
     statusFlush: () => statusTimer.flush(),
     sourceIntegrity: installedIntegrity({

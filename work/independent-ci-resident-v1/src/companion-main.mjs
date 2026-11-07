@@ -1,6 +1,7 @@
-// Entry point of the companion (scheduled task "\Clued\CluedCIResidentCompanion", principal = the
-// Owner, RunLevel LeastPrivilege, trigger AtLogOn). Code and config live in the admin-only resident
-// directory: the Owner can read and run them but not change them.
+// Entry point of the companion. M5 (DESIGN §65): the scheduled task "\Clued\CluedCIResidentCompanion" (principal = the Owner,
+// RunLevel LeastPrivilege; a password logon at boot and every 15 minutes, or, before the switch and after a fall-back, the Owner's
+// interactive token at log-on) runs bin\CluedCompanionSupervisor.exe, which starts this entry with a whitelisted environment and
+// restarts it. Code and config live in the admin-only resident directory: the Owner can read and run them but not change them.
 //
 //   node companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 <sha>
 import fs from 'node:fs/promises';
@@ -19,7 +20,7 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
-import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs';
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
@@ -27,6 +28,8 @@ import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
+import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads once a minute too (Decision 1b99e7e4; it was five minutes): its two
@@ -49,7 +52,8 @@ const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
 // address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
-export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, store, clock = Date.now, readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')) }) {
+// notify(key, title, body): the notification queue (M5, DESIGN §65.4.3); without it (tests) a toast through powershellExe as before.
+export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, store, clock = Date.now, readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null }) {
   if (!(await readHeartbeatToken(root))) return null;
   let transport, scope = null;
   try {
@@ -59,7 +63,7 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
   } catch { transport = async () => ({ ok: false, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }); }
   return new CompanionHeartbeat({ nodeName, scope, transport, clock, readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
     serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
-    notify: async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); },
+    notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
     memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: async (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; await store.save(); } },
     handover: ghHandoverPort({ ghExe, repo, run }) });
 }
@@ -232,6 +236,13 @@ export async function main(args = process.argv.slice(2)) {
   // DESIGN §34: the upgrade mailbox lane's own (a 20-minute Linux stage never holds up the resident's mailbox or the advisory work).
   const upgradeRunner = new Runner({ env: { ...process.env }, jobHost });
   await probeJobHost(runner);
+  // M5 (DESIGN §65.4.2): never with an elevated token (a task set to "highest privileges" refuses here as in the supervisor), and only
+  // with the companion's own gh login (Owner decision: a fine-grained token in a gh configuration of its own). Either refusal ends the
+  // companion before its first heartbeat, so the service only defers.
+  await assertNotElevated((a, o) => runner.run(a, o));
+  await assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe });
+  // The six notification sites write into the Owner's notification queue; the notifier task shows it at log-on (DESIGN §65.4.3).
+  const notify = queueNotify(new NotifyQueue({ dir: notifyQueueDir(cfg.node.ownerProfileDirectory) }));
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
   const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
@@ -266,7 +277,7 @@ export async function main(args = process.argv.slice(2)) {
   const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
     prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName,
-    writeRequest: v => Inbox.drop(requestsDir, v) });
+    writeRequest: v => Inbox.drop(requestsDir, v), notify });
   // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
   // lane then tries again each pass and the companion runs as before). The companion never creates it.
   const upgradeLane = new UpgradeLane({ cfg, run: (a, o) => upgradeRunner.run(a, o), clock: Date.now,
@@ -280,7 +291,7 @@ export async function main(args = process.argv.slice(2)) {
   const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
-    run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore });
+    run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
@@ -289,7 +300,7 @@ export async function main(args = process.argv.slice(2)) {
   // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
   const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
     ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
-      notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
+      notify,
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
   // Off in existing packages. Enabling belongs to a separately accepted
@@ -300,7 +311,7 @@ export async function main(args = process.argv.slice(2)) {
   const mergeIdentity={nodeName:cfg.node.nodeName,repo:raw.repo,pinnedSource:MERGE_RECONCILE_WORKFLOW_SHA256};
   const mergeReconcile=mergeConfig.enabled?new MergeReconciler({...mergeIdentity,ghExe:raw.ghExe,clock:Date.now,
     run:(a,o)=>mergeRunner.run(a,o),readStatus:()=>readStatus(values.root),
-    notify:async(key,title,body)=>{await mergeRunner.run(toastArgv(cfg.powershellExe,title,body),{timeoutMs:15_000});},
+    notify,
     state:await MergeReconcileState.open(path.join(cfg.node.ownerProfileDirectory,'AppData','Local','CluedIndependentCI','companion-merge-reconcile.json'),mergeIdentity)}):null;
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
@@ -308,10 +319,14 @@ export async function main(args = process.argv.slice(2)) {
   const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => rerunRunner.run(a, o) }),
     state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
     clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
-    notify: async (key, title, body) => { await rerunRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); } });
+    notify });
   // The PR page says when this lane re-ran a head's required tests (pr-status.mjs#PrStatusReporter, rerunDone).
   reporter.rerunDone = headSha => rerunner.done(headSha);
   keepalive(companionArgv(cfg).keepalive());
+  // M5 (DESIGN §65.6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
+  sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
+    run: (a, o) => upgradeRunner.run(a, o) })
+    .then(f => writeSessionFacts(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI'), f)).catch(() => {});
   let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
@@ -339,7 +354,7 @@ export async function main(args = process.argv.slice(2)) {
         // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
         if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
           lastBackstop = Date.now();
-          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next time */ }
+          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store, notify }); } catch { /* next time */ }
         }
         // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
         // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started

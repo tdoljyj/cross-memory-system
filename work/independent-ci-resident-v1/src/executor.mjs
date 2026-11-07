@@ -408,6 +408,8 @@ export class ResidentExecutor {
   //   statusFlush (optional): async () -> writes status.json now (service-main.mjs: the status timer's flush). Generation 10 (DESIGN
   //     53.5): called when a batch is claimed and when a breaker trial starts, so the board never shows the breaker open after its
   //     trial began. Without it the status timer writes within its 15 seconds as before.
+  //   companionPresence (optional): companion-presence.mjs#CompanionPresence (M5, DESIGN §65.4.5): its companion-absent notice joins the
+  //     status notices. A view only.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
@@ -2696,7 +2698,7 @@ export class ResidentExecutor {
       // The notices after leaseNotices, so a new lease-short notice is in this report (review round 2, NIT 12).
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true,
         hold: this.scheduleHold ?? null }, breaker: breakerView(b),
-        notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
+        notices: [...(this.versionState?.notices ?? []), ...(this.companionPresence?.notices(now) ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
       const watchedNow = Number.isFinite(this.queueWatchViewAt) && now >= this.queueWatchViewAt && now - this.queueWatchViewAt <= QUEUE_WATCH_VIEW_MS;
       s.setPending(view.map(r => ({ ...(atA(r) ? { ...r, reason: PARKED_A_REASON } : r), claimExpiresAt: this.leaseOf(r),
         watched: watchedNow && r.state === 'PARKED' && this.queueWatchView?.has(`${r.pr}:${r.headSha}`) === true })));

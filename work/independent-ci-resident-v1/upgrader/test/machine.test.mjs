@@ -438,6 +438,21 @@ test('verify fails: rolled back to generation 1 byte for byte, kept paused; the 
   assert.ok(env2.resident.paused);
 });
 
+// M5 (DESIGN §65.4.0, §65.4.4; T5): the channel never registers the companion task (it may hold the Owner's password): the switch, the
+// rollback and their Windows calls only write the launch file (WriteCompanionLaunch) and restart the companion's child.
+for (const rollback of [false, true]) test(`M5: ${rollback ? 'a rollback' : 'an upgrade'} writes the companion launch file and never registers the companion task`, async t => {
+  const env = await makeEnv(t, { windowsOptions: { failVerify: g => rollback && g === 2 } });
+  const op = await openOp(env, 'n2');
+  const r = await runOp(env, op);
+  assert.equal(r.terminal.outcome, rollback ? 'ROLLED_BACK_PAUSED' : 'SUCCEEDED');
+  const calls = env.windows.calls;
+  assert.ok(!calls.some(c => /RegisterCompanionTask/.test(c)), calls.join(' '));
+  assert.ok(calls.includes('WriteCompanionLaunch:2'), calls.join(' '));
+  if (rollback) assert.ok(calls.includes('WriteCompanionLaunch:1'), 'the rollback writes generation 1 back');
+  assert.ok(calls.lastIndexOf('RestartCompanion') > calls.indexOf('WriteCompanionLaunch:2'));
+  assert.equal(env.windows.companionTaskRegistrations ?? 0, 0);
+});
+
 test('a Linux switch refused for quiescence is aborted: services back on N, the node resumed, outcome REFUSED', async t => {
   const env = await makeEnv(t, { linuxOptions: { failSwitch: U.LINUX_QUIESCENCE_UNCONFIRMED } });
   const before = await managed(env);

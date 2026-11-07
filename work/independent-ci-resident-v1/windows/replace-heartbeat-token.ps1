@@ -49,7 +49,9 @@
   The companion (src/companion-heartbeat.mjs readHeartbeatToken, called by CompanionHeartbeat.step on EVERY beat) reads the file fresh
   each time, so a RENEWED token is used by the next beat with no restart. A FIRST token is different: src/companion-main.mjs builds
   the heartbeat lane only if a token can be read when the companion starts, so after adding the first token the companion must be
-  restarted (Owner: end and start the CluedCIResidentCompanion task, or log off and on). The result says so (companionRestartNeeded).
+  restarted. The result says so (companionRestartNeeded). M5 (DESIGN.md section 65.4.1): the Owner has read only on the task, so the
+  restart is done from an elevated window: Stop-ScheduledTask then Start-ScheduledTask -TaskPath '\Clued\' -TaskName
+  'CluedCIResidentCompanion' (logging off and on no longer restarts a password-logon companion).
   The Owner still links the connection on /bindings/failover (two-step confirmation); this tool makes no network call.
 
   The functions are dot-sourceable for the offline tests (test\test_replace_heartbeat_token.py): their path, owner and descriptor
@@ -318,7 +320,8 @@ function Invoke-HeartbeatTokenReplace {
       fileSddl = $FileSddl; directoryCreated = [bool]$plan.createsDirectory; connectionId = $plan.connectionId; installReceiptUpdated = $false }
     Write-NewFile $receiptPath ((New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 5 -Compress)))
     return [ordered]@{ status = 'HEARTBEAT_TOKEN_PLACED'; opId = $opId; planSha256 = $planSha; replaced = [bool]$plan.targetExists; keptOldCopyAs = $kept
-      receipt = $receiptPath; connectionId = $plan.connectionId; companionRestartNeeded = [bool]$plan.companionRestartNeeded; installReceiptUpdated = $false }
+      receipt = $receiptPath; connectionId = $plan.connectionId; companionRestartNeeded = [bool]$plan.companionRestartNeeded; installReceiptUpdated = $false
+      companionRestartHow = $(if ($plan.companionRestartNeeded) { 'elevated window: Stop-ScheduledTask, then Start-ScheduledTask, -TaskPath \Clued\ -TaskName CluedCIResidentCompanion' } else { $null }) }
   } finally {
     if ($tmp -and (Test-Path -LiteralPath $tmp)) {
       # Our own half-made copy of the NEW token (never an installed file): zero it, then remove it.

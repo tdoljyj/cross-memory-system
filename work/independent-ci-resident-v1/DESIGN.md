@@ -5441,3 +5441,28 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 | MINOR | docker 是哪一个 | Q1 写明是发行版里的 `docker.service`，不是 Docker Desktop |
 | MINOR | launch 文件要原子替换，junction 要逐级查 | 已写进 65.4.2 |
 | 建议 | 补安全验收 | 新增 T6、T8 |
+
+### 65.11 实施记录（分支 `claude/companion-headless-impl`；只在本地提交，未安装、未切换）
+
+按 65.4 和 65.10 实施，另加 Owner 的追加决定：companion 改用只限本仓库的细粒度令牌，放在它自己的 gh 配置里。
+
+**实现了什么**
+
+- `windows/CompanionSupervisor.cs`（监督进程）、`windows/CompanionTaskRegistrar.cs`（安全桌面凭据框 + 经 vtable 调 `RegisterTaskDefinition`，另有只读的 `token-facts`、`vtable-selftest`）。两者只由安装编译进 `bin\`（`install-resident.ps1#Invoke-CompanionSupervisorCompile`），升级通道不重编、不替换。
+- `windows/companion-headless.ps1`：共用函数（launch 文件、两个任务、锁定余量、待验收标记、提权一侧验收、切换流程）。`rearm-resident.ps1` 的 `-CompanionHeadless`、`-CompanionCredential`、`-CompanionInteractive` 和 `verify-resident.ps1` 从安装副本点载它；`install-resident.ps1`、`upgrade-apply.ps1` 各带一份同文副本，由 `test-companion-headless.ps1` 钉住。
+- 安装新步骤：`companion-supervisor`、`companion-launch`、`notifier-task`、`companion-task`（InteractiveToken + 监督进程）。重装启动器最后一步 `Step-CompanionHeadless` 调已安装的 `rearm-resident.ps1 -CompanionHeadless`。
+- 新升级通道：`RegisterCompanionTask` 换成 `WriteCompanionLaunch`（只写 launch 文件、重注册通知任务；任务定义不对只记 `COMPANION_TASK_NEEDS_OWNER`）；`RestartCompanion` 只结束 node 子进程和作业宿主，监督进程不在时由 SYSTEM `Run`，等 90 秒；Recover 同样只写 launch 文件。`upgrader/src/machine.mjs`、`windows-port.mjs` 相应改名。
+- companion：`notify-queue.mjs`（6 处通知改为入队）、`notifier-main.mjs`（通知任务）、`companion-session.mjs`（拒绝提权令牌、专用 gh 登录失败关闭、给探针的会话事实）、`companion-presence.mjs`（首次心跳与 `companion-absent`）。
+- `windows/companion-gh-login.ps1`（Owner 本人存入令牌、只读核对）、`windows/probe-companion-headless.ps1`（只读探针）、运维手册 `rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`。
+
+**与设计稿不同或补充的地方**
+
+1. status 字段放在 `executor.companion.firstBeatAfterServiceStartMs`，不是顶层 `companion`：顶层多一个键会让旧代际的读者（回滚后的 companion）整份拒收。
+2. verify 把 InteractiveToken 加监督进程的定义也算合格（安装后、退回后都是它），锁定余量只在密码模式下判不通过。否则一次退回之后，每次升级的 Verify 都会失败并回滚。
+3. launch 文件比 65.4.2 多三个固定键：`ghConfigDir`、`homeDir`、`pathDirs`，供监督进程设置 companion 专用的 `GH_CONFIG_DIR`、`HOME` 和 `PATH`。`HOME` 是因为 `build-bundle.ps1` 会删掉 git 的全部 `GIT_*` 变量，`home\.gitconfig` 只能经 `HOME` 生效。
+4. launch 文件和目标文件的所有者接受 Administrators 或 SYSTEM：升级通道以 SYSTEM 写它。写权限只许 SYSTEM、Administrators、TrustedInstaller。
+5. 原子替换用 `ReplaceFile`（`[IO.File]::Replace`），它保留被替换文件的 ACL；第一次创建用 `MoveFile`。
+6. 代际记录的 `companionTaskArguments` 现在存的是 node.exe 之后的 companion 参数（由 launch 文件推出），回执的 `companionTaskAction` 是 `{ node.exe, 这串参数 }`。
+7. 提权一侧验收里的“Linux 侧事实”取 `upgrade\mailbox\responses\version-facts.json` 在切换开始后被重写过（companion 启动即以 root 跑一次只读工具）。
+8. 令牌直接写进专用目录的 `hosts.yml`，不用 `gh auth login`：gh 的凭据管理器条目按“主机 + 账号”区分，与 `GH_CONFIG_DIR` 无关，同一账号再登录会动到 Owner 和 Agent 共用的那一条。companion 只认 `github_pat_` 开头的令牌，读不到专用配置就不启动。
+9. 只读探针不能自己开一个密码登录的会话（那要密码），所以后台那一半读 companion 在会话 0 里记下的 `companion-session.json`（boot_id、docker）和 `supervisor.json`（会话号）；切换前显示 `not-yet`。真正的现场核对是切换本身：8 分钟内不通过就自动退回。

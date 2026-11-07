@@ -122,30 +122,32 @@ Yes ((Get-DaclPart 'O:DAG:DAD:(A;;FA;;;SY)S:(AU;FA;FA;;;WD)') -ceq 'D:(A;;FA;;;S
 Yes (-not (Test-ScSddl ($dacl.Replace(';;;SU)', ';;;WD)') + 'S:(AU;FA;FA;;;WD)') $dacl)) 'sddl-dacl-change-still-refused'
 foreach ($s in @('install-resident.ps1', 'uninstall-resident.ps1')) { Yes ($functions.ContainsKey($s + ':Get-DaclPart') -and $functions[$s + ':Get-DaclPart'] -ceq $functions['verify-resident.ps1:Get-DaclPart']) ('dacl-part-identical:' + $s) }
 
-# 4b. Companion task action: windowless (conhost --headless) with one shape in install and verify; the uninstall
-#     stops the node child before the rename; the real in-box conhost hands node exactly these arguments.
-foreach ($name in @('install-resident.ps1:Get-CompanionAction', 'verify-resident.ps1:Test-CompanionAction')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+# 4b. M5 (DESIGN.md section 65.4): the companion task's action is the fixed supervisor (no generation, no console); the notifier still
+#     runs under the in-box conhost --headless (the real conhost hands node exactly these arguments); the uninstall stops the
+#     supervisor's instance, deletes both tasks and stops every process of the installed copy before the rename.
+foreach ($name in @('install-resident.ps1:Get-SupervisorAction', 'install-resident.ps1:Get-NotifierAction', 'install-resident.ps1:Get-CompanionLaunchArguments')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 $croot = 'C:\ProgramData\CluedIndependentCI\resident'; $rsha = 'a' * 64; $csha = 'b' * 64
-$ca = Get-CompanionAction $croot $rsha $csha
-Yes ($ca.path -ceq 'C:\Windows\System32\conhost.exe' -and $ca.arguments -ceq ('--headless "' + $croot + '\runtime\node.exe" "' + $croot + '\resident\' + $rsha + '\src\companion-main.mjs" --root "' + $croot + '" --config-sha256 ' + $csha)) 'companion-action-shape'
-Yes (Test-CompanionAction $ca.path $ca.arguments $croot $rsha) 'companion-action-verified'
-Yes (-not (Test-CompanionAction ($croot + '\runtime\node.exe') ('"' + $croot + '\resident\' + $rsha + '\src\companion-main.mjs" --root "' + $croot + '" --config-sha256 ' + $csha) $croot $rsha)) 'companion-action-console-node-refused'
-Yes (-not (Test-CompanionAction $ca.path $ca.arguments $croot ('c' * 64))) 'companion-action-other-resident-refused'
-Yes (-not (Test-CompanionAction $ca.path ($ca.arguments + ' --extra') $croot $rsha)) 'companion-action-extra-argument-refused'
+$ca = Get-SupervisorAction $croot
+Yes ($ca.path -ceq ($croot + '\bin\CluedCompanionSupervisor.exe') -and $ca.arguments -ceq ('"' + $croot + '"')) 'companion-action-is-the-supervisor'
+Yes ((Get-CompanionLaunchArguments $croot $rsha $csha) -ceq ('"' + $croot + '\resident\' + $rsha + '\src\companion-main.mjs" --root "' + $croot + '" --config-sha256 ' + $csha)) 'companion-launch-arguments-shape'
 Yes ($installText.Contains('$a.Path = $ca.path; $a.Arguments = $ca.arguments') -and $installText.Contains('$act.Arguments -cne $ca.arguments')) 'install-registers-and-reads-back-companion-action'
+$na = Get-NotifierAction $croot $rsha
+Yes ($na.path -ceq 'C:\Windows\System32\conhost.exe' -and $na.arguments -ceq ('--headless "' + $croot + '\runtime\node.exe" "' + $croot + '\resident\' + $rsha + '\src\notifier-main.mjs" --root "' + $croot + '"')) 'notifier-action-shape'
 $uninstallText = Get-Content -LiteralPath (Join-Path $here 'uninstall-resident.ps1') -Raw
 $killAt = $uninstallText.IndexOf("'COMPANION_STILL_RUNNING_RESIDENT_NOT_RENAMED'")
 Yes ($killAt -gt $uninstallText.IndexOf('Unregister-ScheduledTask') -and $killAt -lt $uninstallText.IndexOf('[IO.Directory]::Move($Root')) 'uninstall-stops-companion-before-rename'
+Yes ($uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -gt 0 -and $uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -lt $uninstallText.IndexOf("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -and
+  $uninstallText.Contains("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier'") -and $uninstallText.Contains("Name='CluedCompanionSupervisor.exe'")) 'uninstall-stops-the-supervisor-and-deletes-both-tasks'
 $probeNode = 'C:\Program Files\nodejs\node.exe'
-if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $ca.path)) {
+if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $na.path)) {
   $probeDir = Join-Path $Scratch 'conhost probe'; [void][IO.Directory]::CreateDirectory($probeDir)   # a space, quoted like the real paths
-  $probeJs = Join-Path $probeDir 'companion-main.mjs'
+  $probeJs = Join-Path $probeDir 'notifier-main.mjs'
   [IO.File]::WriteAllText($probeJs, "import fs from 'node:fs'; fs.writeFileSync(process.argv[1] + '.argv.json', JSON.stringify({ pid: process.pid, argv: process.argv.slice(2) })); setTimeout(() => {}, 60000);")
-  $probeArgs = '--headless "' + $probeNode + '" "' + $probeJs + '" --root "' + $probeDir + '" --config-sha256 ' + $csha
-  $host1 = Start-Process -FilePath $ca.path -ArgumentList $probeArgs -WindowStyle Hidden -PassThru
+  $probeArgs = '--headless "' + $probeNode + '" "' + $probeJs + '" --root "' + $probeDir + '"'
+  $host1 = Start-Process -FilePath $na.path -ArgumentList $probeArgs -WindowStyle Hidden -PassThru
   $until = (Get-Date).AddSeconds(20); while (-not (Test-Path -LiteralPath ($probeJs + '.argv.json')) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 200 }
   $host1.Refresh(); $seen = Get-Content -LiteralPath ($probeJs + '.argv.json') -Raw | ConvertFrom-Json
-  Yes (((@($seen.argv) -join '|') -ceq ('--root|' + $probeDir + '|--config-sha256|' + $csha)) -and $host1.MainWindowHandle -eq [IntPtr]::Zero) 'conhost-headless-argv-and-no-window'
+  Yes (((@($seen.argv) -join '|') -ceq ('--root|' + $probeDir)) -and $host1.MainWindowHandle -eq [IntPtr]::Zero) 'conhost-headless-argv-and-no-window'
   Stop-Process -Id $seen.pid -Force -ErrorAction SilentlyContinue; Stop-Process -Id $host1.Id -Force -ErrorAction SilentlyContinue
 }
 

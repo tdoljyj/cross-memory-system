@@ -18,7 +18,9 @@
 //   door.consume({ opId, resource, note })
 //   resident.{ hold, liftHold, requestPause, pauseRequestPending, withdrawPause, pauseState, halted, openBatches, status,
 //              receiptHead, receiptsSince, trainOpen, brokerPending, companionHeartbeat, requestUpgradeResume }
-//   windows.{ readScm, compile, stopServices, switchScm, registerCompanionTask, restartCompanion, startServices, verify }
+//   windows.{ readScm, compile, stopServices, switchScm, writeCompanionLaunch, restartCompanion, startServices, verify }
+//   (M5, DESIGN §65.4.4: the channel writes the companion's launch file; it never registers the companion task, which may hold the
+//   Owner's password)
 //   linux.{ stage, switch, rollback, verify, readFacts }
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -649,8 +651,8 @@ const STEPS = {
       const a = m.applyArgs(j, { generation: n1 });
       const sw = await m.windows.switchScm(a);
       if (!sw.ok) return failed(U.SWITCH_FAILED, applyFailure('switch-scm', sw));
-      const task = await m.windows.registerCompanionTask(a);
-      if (!task.ok) return failed(U.SWITCH_FAILED, applyFailure('register-companion-task', task));
+      const task = await m.windows.writeCompanionLaunch(a);
+      if (!task.ok) return failed(U.SWITCH_FAILED, applyFailure('write-companion-launch', task));
       const scm = await m.windows.readScm(m.applyArgs(j));
       if (!scm.ok || typeof scm.resident?.binPath !== 'string' || typeof scm.broker?.binPath !== 'string' || typeof scm.companionTask?.arguments !== 'string') return failed(U.SWITCH_FAILED, applyFailure('read-scm', scm));
       await m.gens.writeOnce(m.gens.recordFile(n1), jsonBytes({ generation: n1, packageManifestSha256: plan.packageManifestSha256, residentBinPath: scm.resident.binPath,
@@ -741,10 +743,10 @@ const STEPS = {
       const a = m.applyArgs(j, { generation: plan.fromGeneration });
       const sw = await m.windows.switchScm(a);
       if (!sw.ok) return failed(U.ROLLBACK_FAILED, applyFailure('switch-scm', sw));
-      const task = await m.windows.registerCompanionTask(a);
-      if (!task.ok) return failed(U.ROLLBACK_FAILED, applyFailure('register-companion-task', task));
-      // The companion of N comes back before the Linux half is switched back (it carries that request). Not there (the Owner
-      // is not logged on): a bounded wait, the node stopped. The wait shows why (status.json op.lastFailure).
+      const task = await m.windows.writeCompanionLaunch(a);
+      if (!task.ok) return failed(U.ROLLBACK_FAILED, applyFailure('write-companion-launch', task));
+      // The companion of N comes back before the Linux half is switched back (it carries that request). Not there (M5: the task
+      // could not run, for example a refused password logon): a bounded wait, the node stopped. The wait shows why (status.json op.lastFailure).
       const c = await m.windows.restartCompanion(m.applyArgs(j));
       if (!c.ok) return m.rollbackWait(intent, applyFailure('restart-companion', c));
       // The rolled-back generation's number is free again; its files stay in archive\.
