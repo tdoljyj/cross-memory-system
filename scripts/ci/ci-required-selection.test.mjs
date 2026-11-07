@@ -121,8 +121,18 @@ test('every Node suite runs when any file its tests reach through imports change
   assert.ok(selectSuites('ci-suites', ['work/actions-hosted-migration/independent-ci-v1/src/proof.mjs']).suites.includes('admission-self-tests'));
 });
 
-test('any workflow change runs the runner budget policy and the admission self-tests', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests']);
+test('any workflow change runs the runner budget policy, the admission self-tests and the pinned-registry check', () => {
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries']);
+});
+
+test('a change to a file a pinned registry holds runs the pinned-registry check', () => {
+  for (const file of ['config/merge-admission-policy.json', 'scripts/ci/merge-admission-source-producer.mjs', 'scripts/runner/clued-runner-job-started.mjs',
+    '.github/workflows/clued-merge-executor.yml', '.github/actions/ci-temporary-storage/setup.mjs', 'apps/clued-cloud/package-lock.json',
+    'apps/clued-cloud/app/supabase-public-config.ts', 'config/clued-components.json', 'scripts/clued_components.py']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('pinned-registries'), file);
+  }
+  assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('pinned-registries'), false);
+  assert.deepEqual(SUITE_COMMANDS['pinned-registries'][0].argv, ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}']);
 });
 
 test('maintenance source, policy and panel changes select filesystem tests without weakening other suites', () => {

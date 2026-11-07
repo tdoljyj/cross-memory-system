@@ -841,7 +841,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -858,7 +858,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "76d7d45dea2047c07061650f1d19ab2db625ff4866ae5343a9a9a6e40fcb5e03"
+      "content_sha256": "818a4619a22e41055d8b458a2adf71cc8c78552aee740bf0fd72e0e74f4079a2"
     }
   ]
 }
