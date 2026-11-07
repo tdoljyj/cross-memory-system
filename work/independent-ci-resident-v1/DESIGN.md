@@ -5162,3 +5162,13 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 - 旧 head 车头批次第 8 段 `REQUIRED_CHECK_FAILED` 停在 B → 推新 head，第 10 段先于触发看到新 head 并给出 `OPEN_FRONT_BATCH` → 旧批次 `SUPERSEDED_AT_SAFE_POINT`（safePoint `parked`）→ 新 head 的车头批次第 1–8 段 → merge-slot 绿。`gate` 与 `audit` 各一例，约 60 s（模拟）。修复前两例 40 分钟内都没有绿，第 10 段一直 `TRAIN_FRONT_BATCH_RUNNING`。
 - 同一场景，开车头批次时 companion 读不到 PR（不能只凭队列结束任何东西）：先被拒为 busy，5 分钟后实时读恢复 → 再提交 → 约 820 s 出绿。修复前没有绿。
 - 接管期间列车门挡着旧车头批次时，推新 head 后它仍在安全点结束、行被释放。修复前一直停着。
+
+## 66. 状态里的分段耗时（优化方案 P1，Clued bf57ff10；状态合同 `/8`）
+
+- `status.json` 新增顶层键 `timing`（合同升到 `clued.independent-ci.resident-status/8`；读端接受 `/5`~`/8`，`/7` 及更早的文件没有 `timing`，读作 null；现有字段语义不变）。仍是视图，不是证据：没有任何决定读它。
+- 记录器是 `src/stage-timing.mjs`，由状态板（`status.mjs`）喂数据，执行器只加了四处打点：`receipt('stage-terminal')` 结束该段的计时、`runStageWatched` 把扫描段的 relay 记录交给状态板、`reportOutcome` 带上队列首次看到该提交的时间、第 10 段运行前后各记一次时间。每个阶段/相位的起止来自已有的 `setCurrent`（`atStage`），所以重试、第 8 段多次尝试、停靠 A/B 后再恢复都落在同一条批次记录里；停靠休息的时间不计入 `activeMs`，计入 `spanMs`。
+- 每个批次一条记录：`prepMs`（预约到打包完成）与 `prep`（derive / bundle / workspace / rebundle），`stages[n]`（`ms` 为各次运行之和、`runs`、重试等待 `waitMs`、有 Linux 角色的段另有 `relay`：`handoffs { n, ms, maxMs }`（companion 的 relay 调用：发 issue、收 challenge、发 response、收 result）与 `rounds`（每轮准入挑战从取到 challenge 到发出 response 的毫秒数，最多 16 轮），`activeMs`、`spanMs`、`pushToGreenMs`。
+- relay 记录由 companion 的 pump 在结束前写入 `responses\<requestId>.timing.json`（create-only、尽力而为、不改任何已冻结的应答合同），服务在读到应答后宽松读取（`mailbox.mjs#timing`）；写不出或读不出就是没有，不影响阶段结果。
+- `timing` 的内容：`last`（最近完成批次）、`current`（在跑批次已累计各段，`openedAt` 为当前段起点，读端用 `activeMs + (now - openedAt)` 算已用时间）、`stats`（最近 20 个已结束批次每段的 n / 中位数 / P90；中位数取中间值，偶数个取中间两个的均值四舍五入；P90 取最近秩，即第 ceil(0.9n) 小；只统计测到该段的批次，`active` 只统计 COMPLETED 批次）、`pushToGreen`（当天 UTC 日、COMPLETED 批次从队列首次看到该提交到第 8 段结束的 n / 中位数 / P90 / 最大）、`train`（第 10 段各轮的 `ms` 与扫描段占用 `scanMs`，后者取该轮的清扫起止与本轮时间窗的重叠，没有清扫事实时为 null）、以及 `done` / `open`（恢复用，见下）。
+- 重启：`done`（最近 40 个已结束批次）、`open`（停靠中未结束的批次）和第 10 段各轮随快照整体写入 `status.json`；服务启动时读回上一份快照并逐项重新校验（`service-main.mjs`），读不出就空着开始。`done` 在序列化超过 80 KB 时从最旧的一端截掉，快照因此始终远小于 `STATUS_MAX_BYTES`。
+- PR 页的运行中一行在阶段文字与租约提醒之间插入“已跑 N分；备 … 1:… 2:…”，只用租约提醒之外剩下的字数再减 30 字的余量（给补跑、当班词、看门狗行留位置），所以 140 字上限与租约提醒都不会因它被截掉；按整分钟显示，所以这一行最多每分钟变一次。停靠在 A（没有段）的批次和别的批次的计时不显示。

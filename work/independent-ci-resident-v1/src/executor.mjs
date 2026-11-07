@@ -724,7 +724,11 @@ export class ResidentExecutor {
     return mode === 'ACTIVE' ? null : { state: 'DEFERRED', reason: mode === 'STANDBY' ? NODE_DEFERRALS.STANDBY : NODE_DEFERRALS.UNCERTAIN };
   }
 
-  receipt(type, body) { return this.receipts.append(type, body); }
+  // Stage timings (stage-timing.mjs): a stage-terminal receipt ends that stage's interval on the status board (the work between stages is not the stage's).
+  receipt(type, body) {
+    if (type === 'stage-terminal') this.report(s => s.stageDone?.(body?.stage));
+    return this.receipts.append(type, body);
+  }
 
   // Generation 11 (DESIGN 54): before an execution stage runs again in the same batch. No HALT and no drift; the installed authority
   // covers the wait, this stage again and every stage after it; quiescence on both hosts (the abort's bounded proof: the failed run's
@@ -860,7 +864,12 @@ export class ResidentExecutor {
   // The status board is a view: a failure to update it never changes what the executor does.
   report(fn) { try { fn(this.status); } catch { /* advisory */ } }
   reportOutcome(subject, outcome, { code = null, row = null, key = null } = {}) {
-    this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry: row?.retry ?? null, key }));
+    this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry: row?.retry ?? null, key,
+      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null }));
+  }
+  // The head's first sighting by the queue (ms), the push as far as the resident sees it (status timing: push to first green).
+  firstSeenAt(subject) {
+    try { const c = this.queue.row(subject.pr)?.current; return c?.headSha === subject.headSha && Number.isSafeInteger(c.firstAt) ? c.firstAt : null; } catch { return null; }
   }
 
   async haltWith(code, facts) {
@@ -1202,6 +1211,11 @@ export class ResidentExecutor {
   // to stop the stage (again on every poll until the broker stop is written); the stage then ends through its own
   // stop path and the caller concludes the abort. Every other stage runs as before, to its own end.
   async runStageWatched(key, batch, number, opts) {
+    const run = await this.runStageWatchedInner(key, batch, number, opts);
+    if (run?.result?.relayTiming) this.report(s => s.stageRelay?.(number, run.result.relayTiming)); // the companion's relay times of this run, for the status
+    return run;
+  }
+  async runStageWatchedInner(key, batch, number, opts) {
     const stage = this.stage(number);
     if (!ABORTABLE_IN_FLIGHT.includes(number) || typeof this.engine.requestStop !== 'function') return { result: await this.engine.runStage(batch, stage, opts), abort: null };
     const watch = this.watchAbort(key, batch, number);
@@ -2247,6 +2261,7 @@ export class ResidentExecutor {
     this.trainLastMode = mode;
     this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
     let r;
+    const trainFrom = this.clock();
     try { r = await this.engine.runTrainStage(mode, input); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
     const proven = r?.proof?.windowsTreeZero === true && r?.proof?.serviceOriginalStopped === true;
     const o = r?.outcome ?? null;
@@ -2255,6 +2270,7 @@ export class ResidentExecutor {
     const effects = acting && r?.ok === true && o?.status === 'TRAIN_FACTS' && Number.isSafeInteger(o.sideEffects) && o.sideEffects >= 0;
     const facts = r?.ok === true && (quiet || effects) ? trainSummary(r.train) : null;
     const summary = facts && facts.mode === mode ? facts : null;
+    this.report(s => s.noteTrain?.({ startedAt: trainFrom, endedAt: this.clock(), mode, sweep: summary?.sweep ?? null }));
     const failureCode = summary ? null : (r?.ok === true ? 'TRAIN_FACTS_UNCONFIRMED' : validCode(r?.code));
     const clean = proven && ((quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
       || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN')) || (effects && summary !== null));

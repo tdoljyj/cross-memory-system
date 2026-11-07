@@ -21,7 +21,7 @@ import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
 import { KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
-import { STATUS_FILE, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
+import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -96,6 +96,8 @@ export async function main(argv = process.argv.slice(2)) {
   // The status snapshot (state\status.json, read by the companion): rewritten whole on a timer, so writtenAt moves
   // even while one stage runs for 45 minutes.
   const status = new StatusBoard({ clock });
+  // Stage timings survive a restart (status /8): the previous snapshot's finished and resting batches and stage-10 rounds are read back, each re-checked.
+  try { status.restoreTiming(JSON.parse((await readBounded(path.join(state, STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED')).toString('utf8')).timing); } catch { /* none, or unreadable: start empty */ }
   const statusTimer = startStatusTimer({ board: status, file: new StatusFile(path.join(state, STATUS_FILE)) });
   await statusTimer.flush();
   // The executor's own run queue (phase 2, step 1; DESIGN §17): state\queue\queue.json, a view the ledger overrules.

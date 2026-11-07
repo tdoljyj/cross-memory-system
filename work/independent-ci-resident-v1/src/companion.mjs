@@ -710,7 +710,14 @@ export class Companion {
     const cancelled = async () => { try { return await this.mailbox.cancelled(request); } catch { return false; } };
     const live = async () => { check(!(await cancelled()), 'COMPANION_PUMP_CANCELLED'); };
     // Every relay call checks the cancel before each of its attempts and retries only within its budget (DESIGN §25.4).
-    const relay = (mode, seq, budget = {}) => this.relay(mode, seq, { live, ...budget });
+    // Stage timings (status /8): each relay call that carried a record, and each admission challenge round (challenge taken -> response sent).
+    const timing = { handoffs: [], rounds: [] };
+    const relay = async (mode, seq, budget = {}) => {
+      const from = this.clock();
+      const done = await this.relay(mode, seq, { live, ...budget });
+      if (done && timing.handoffs.length < 400) timing.handoffs.push({ mode, seq, ms: Math.max(0, this.clock() - from) });
+      return done;
+    };
     try {
       // A request cancelled before its pump began (a companion restarted after the service gave its heartbeat up, DESIGN §26)
       // never starts one: it answers COMPANION_PUMP_CANCELLED.
@@ -788,6 +795,7 @@ export class Companion {
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
           const challenge = relayRecordName('ReceiveChallenge', sequence);
           if (sequence <= 32 && listed(names, challenge)) {
+            const roundFrom = this.clock();
             if (await relay('ReceiveChallenge', sequence, { deadline, firstSeen: seenAt(names, sequence, anchor) })) {
               eventAt = this.clock();
               const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
@@ -795,6 +803,7 @@ export class Companion {
               while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
               const sendingAt = this.clock();
               check(await relay('SendResponse', seq, { deadline, challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+              timing.rounds.push({ seq, ms: Math.max(0, this.clock() - roundFrom) });
               // The worker makes challenge k+1 only after it has response k, which cannot be before this transfer began; the
               // listing taken before the round (even one that already ran long) says nothing about the next challenge (MAJOR-1).
               lowerBound = Math.max(lowerBound, sendingAt);
@@ -837,6 +846,9 @@ export class Companion {
       // COMPANION_PUMP_CANCELLED whatever step it ended in, also a relay call that failed as the cancel came.
       const code = (await cancelled()) ? 'COMPANION_PUMP_CANCELLED' : /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code ?? '') ? error.code : 'COMPANION_PUMP_UNCONFIRMED';
       return { ok: false, code, proof: await this.quiescence(request.batchId) };
+    } finally {
+      // Before the answer is written, so the service finds the record when it reads the answer. A view: never an error out of the pump.
+      if (timing.handoffs.length > 0 && typeof this.mailbox.writeTiming === 'function') { try { await this.mailbox.writeTiming(request, timing); } catch { /* the stage's time is still measured by the service */ } }
     }
   }
 

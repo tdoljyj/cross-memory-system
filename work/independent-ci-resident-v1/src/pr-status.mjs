@@ -187,6 +187,31 @@ export function leaseText(row, now, { running, since = null }) {
   return '';
 }
 
+// Stage timings on the running line (status /8, stage-timing.mjs): the time the batch has run so far and the finished segments, e.g.
+// "；已跑 12分；备 2分 1:40秒 2:5分". Whole minutes (or seconds below one), so the text changes at most once a minute. It fills only the room
+// that is left after the stage text and the lease reminder, minus TIMING_HEADROOM for the words other lines put in front or behind
+// (rerun line, duty word, watchdog): the lease reminder is never cut for it. No room, no timing, or a timing that is not this batch's: ''.
+export const TIMING_HEADROOM = 30;
+export const fmtDuration = ms => (ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}秒` : ms < 3_600_000 ? `${Math.round(ms / 60_000)}分` : `${Math.floor(ms / 3_600_000)}时${String(Math.round((ms % 3_600_000) / 60_000)).padStart(2, '0')}分`);
+export function timingText(status, now, room) {
+  const t = status?.timing?.current, c = status?.current;
+  // A batch resting at A (no stage) runs nothing; one with nothing measured yet has nothing to say.
+  if (!t || !c || c.stage === null || t.pr !== c.pr || t.headSha !== c.headSha || room < 8) return '';
+  const elapsed = t.activeMs + (Number.isSafeInteger(t.openedAt) && now >= t.openedAt ? now - t.openedAt : 0);
+  const out = `；已跑 ${fmtDuration(elapsed)}`;
+  const parts = [];
+  if (Number.isSafeInteger(t.prepMs)) parts.push(`备 ${fmtDuration(t.prepMs)}`);
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) if (t.stages?.[k]?.runs > 0) parts.push(`${k}:${fmtDuration(t.stages[k].ms)}`);
+  if (out.length > room || (elapsed < 1000 && parts.length === 0)) return '';
+  let table = '';
+  for (const p of parts) {
+    const next = table ? `${table} ${p}` : p;
+    if (out.length + 1 + next.length + 1 > room) { table += table ? ' …' : ''; break; }
+    table = next;
+  }
+  return table ? `${out}；${table}`.slice(0, room) : out;
+}
+
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
@@ -205,7 +230,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // A batch resting at A (stage null, atStage 'relay-wait') still has its whole run ahead: counted from now, like a row at A that is
     // not the current one and like the executor's notice (review round 16, MINOR 1); since is its reservation time there. A batch that
     // went on from A is counted from then (leaseFrom), as the executor's notice does (review round 17, MINOR 3).
-    return { state: 'pending', description: clip(text + leaseText(status.current, now, { running: true, since: stage === null ? now : (status.current.leaseFrom ?? status.current.since) })) };
+    const lease = leaseText(status.current, now, { running: true, since: stage === null ? now : (status.current.leaseFrom ?? status.current.since) });
+    return { state: 'pending', description: clip(text + timingText(status, now, DESCRIPTION_MAX - text.length - lease.length - TIMING_HEADROOM) + lease) };
   }
   // The run queue (phase 2): a row that waits for its turn or its next try says so; nothing runs while HALTed or paused.
   const row = status.pending.find(mine);
