@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.25",
+      "version": "1.1.26",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -469,6 +469,10 @@
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-strict.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-sweep-store.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-sweep.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/dsse.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/statement.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/store.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/verify.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/read-retry.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/acl-model.json",
         "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs",
@@ -505,6 +509,7 @@
         "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-record.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-stage.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/provenance-v1.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/qualification-observer.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/relay-roundtrip-opt.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-admission.test.mjs",
@@ -533,6 +538,7 @@
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/linux-worker.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/mailbox.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/protocol.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/provenance-emit.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/relay-public.ps1",
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/relay-record.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/signed-result.mjs",
@@ -580,7 +586,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "1463ab19b1812a5c335ed4ff22f36c37341f2dcde005f2a051e9e9cda0ac5369"
+      "content_sha256": "31b68fe509b2fa8f5cdf596f18d8622c730db7bb2625147c9465412638e50952"
     },
     {
       "id": "script.resource-maintenance",
@@ -845,7 +851,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.8",
+      "version": "1.0.9",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -862,7 +868,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b7b0167c3ef1a0d13b1b676cce6fd650db04ccf26423965e89716115ad3c4dc2"
+      "content_sha256": "451a160ec7f4450ccf0f899383046fc96ca475c1fde201cba1012181f4071524"
     }
   ]
 }
