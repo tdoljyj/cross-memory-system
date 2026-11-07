@@ -12,6 +12,16 @@
 //   r9         scripts/ci/merge-admission-r9-source.json      merge-admission-r9-reregister.mjs --write
 //   reconcile  scripts/ci/clued-merge-reconcile-source.json   clued-merge-reconcile-source-build.mjs (needs yaml)
 //   components config/clued-components.json                   scripts/clued_components.py (bump, update)
+//   agent-contract worker/generated/{agent-contract,components}.ts  generate-agent-contract.mjs
+//   plugin     integrations/claude-code/clued/ (copies of skills/hooks)  build_claude_code_plugin.py
+//   pdf-cmaps  worker/generated/pdf-cmaps.ts                    generate-pdf-cmaps.mjs (needs npm ci in apps/clued-cloud)
+//   imprint-rules the imprint-rules block of a supabase migration   generate-imprint-domain-rules.mjs (needs npm ci)
+// The last four are generated files, not pinned hashes: each generator has a --check mode and a test in CI that fails
+// when the committed output is out of date, so they fail the same way and are listed here for the same reason.
+// Looked at and deliberately not covered (no regeneration command, or not changed by editing a file): the
+// clued-*-sources.json / source-pins / gated-proof registries (hand-reviewed pins of historical blobs), the
+// handover-external acceptance (Owner-signed), existing-release-v3-host/source-freeze.json (a frozen, versioned package),
+// .github/actions/ci-temporary-storage/check-workflows.mjs (hashes written by hand after review).
 // Nothing here needs the yaml package; only the reconcile regeneration does. The registries pin each other:
 // a component bump edits a scripts/ci file (reconcile) and the reconcile registry is itself a component file, so after
 // regenerating one, run this again until it prints no stale registry.
@@ -100,7 +110,31 @@ function checkComponents(root, base) {
   return { id: 'components', status: 'stale', registry: 'config/clued-components.json', details: lines, fix: COMPONENTS_FIX };
 }
 
-export const CHECK_IDS = ['r9', 'reconcile', 'components'];
+const CLOUD_DEPS_HINT = '   (needs the dependencies: first run  cd apps/clued-cloud && npm ci)';
+// Generated files: the generator's own --check says whether the committed output is current.
+export const GENERATED = [
+  { id: 'agent-contract', registry: 'apps/clued-cloud/worker/generated/agent-contract.ts, components.ts', needs: [],
+    cmd: ['node', 'apps/clued-cloud/scripts/generate-agent-contract.mjs', '--check'], fix: 'node apps/clued-cloud/scripts/generate-agent-contract.mjs' },
+  { id: 'plugin', registry: 'integrations/claude-code/clued/', needs: [],
+    cmd: [PYTHON, 'scripts/build_claude_code_plugin.py', '--check'], fix: `${PYTHON} scripts/build_claude_code_plugin.py` },
+  { id: 'pdf-cmaps', registry: 'apps/clued-cloud/worker/generated/pdf-cmaps.ts', needs: ['apps/clued-cloud/node_modules/pdfjs-dist/package.json'],
+    cmd: ['node', 'apps/clued-cloud/scripts/generate-pdf-cmaps.mjs', '--check'], fix: 'node apps/clued-cloud/scripts/generate-pdf-cmaps.mjs' + CLOUD_DEPS_HINT },
+  { id: 'imprint-rules', registry: 'apps/clued-cloud/supabase/migrations/*_imprint_auto_domains_v1.sql', needs: ['apps/clued-cloud/node_modules/typescript/package.json'],
+    cmd: ['node', 'apps/clued-cloud/scripts/generate-imprint-domain-rules.mjs', '--check'], fix: 'node apps/clued-cloud/scripts/generate-imprint-domain-rules.mjs' + CLOUD_DEPS_HINT },
+];
+
+function checkGenerated(root, g) {
+  const missing = g.needs.find((file) => !fs.existsSync(path.join(root, file)));
+  if (missing) return { id: g.id, status: 'unchecked', reason: `${missing} is missing; run npm ci in apps/clued-cloud`, fix: g.fix };
+  const result = spawnSync(g.cmd[0], g.cmd.slice(1), { cwd: root, encoding: 'utf8' });
+  if (result.error) return { id: g.id, status: 'unchecked', reason: `${g.cmd[0]} did not run: ${result.error.message}`, fix: g.fix };
+  if (result.status === 0) return { id: g.id, status: 'ok' };
+  const lines = (result.stderr + result.stdout).split('
+').map((l) => l.trim()).filter(Boolean).slice(0, 8);
+  return { id: g.id, status: 'stale', registry: g.registry, details: lines, fix: g.fix };
+}
+
+export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id)];
 
 export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], env = process.env, knownMainRefs } = {}) {
   let refs = knownMainRefs;
@@ -111,6 +145,7 @@ export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], en
   if (want('r9')) results.push(await checkR9(root, resolved));
   if (want('reconcile')) results.push(await checkReconcile(root));
   if (want('components')) results.push(checkComponents(root, resolved));
+  for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g));
   return { base: resolved, results };
 }
 
@@ -130,6 +165,7 @@ export function render({ base, results }) {
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
     if (stale.some((r) => r.id === 'components' && r.details?.some((d) => /\bbump\b/.test(d)))) out.push(`  ${n++}. ${PYTHON} scripts/clued_components.py bump <component id> <new version>   (the id and a higher version are in the message above)`);
+    for (const g of GENERATED) if (g.id !== 'agent-contract' && stale.some((r) => r.id === g.id)) out.push(`  ${n++}. ${g.fix.replace(CLOUD_DEPS_HINT, '')}`);
     out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,
       `  ${n++}. node apps/clued-cloud/scripts/generate-agent-contract.mjs`,
       `  ${n++}. node scripts/ci/check-pinned-registries.mjs --base ${base ?? '<main commit>'}   (a component bump edits a locked file, so steps 2-3 may need a second pass)`);

@@ -39,10 +39,14 @@ const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions
 // Files whose bytes a pinned registry holds (check-pinned-registries.mjs): the R9 registry pins files under
 // scripts/ci, .github/workflows and the admission policy; the reconcile registry pins all of scripts/ci,
 // scripts/runner, .github/workflows, the temporary-storage action and four more files; the component
-// manifest pins its own files. check-pinned-registries.test.mjs checks that every pinned file matches.
+// manifest pins its own files. The generated files the same script checks add their generators and inputs: the agent
+// contract, the generated worker modules, the imprint rule source and its migration, and the plugin build script.
+// check-pinned-registries.test.mjs checks that every pinned file matches.
 export const PINNED_REGISTRY_PATHS = ['scripts/ci/**', 'scripts/runner/**', '.github/workflows/**', '.github/actions/ci-temporary-storage/**',
   'config/merge-admission-policy.json', 'apps/clued-cloud/app/supabase-public-config.ts', 'apps/clued-cloud/package.json',
-  'apps/clued-cloud/package-lock.json', 'config/clued-components.json', 'scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**'];
+  'apps/clued-cloud/package-lock.json', 'config/clued-components.json', 'scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
+  'protocol/agent/agent-contract.md', 'apps/clued-cloud/worker/generated/**', 'apps/clued-cloud/scripts/generate-*.mjs',
+  'apps/clued-cloud/app/imprints/imprint-suggestions.ts', 'apps/clued-cloud/supabase/migrations/*_imprint_auto_domains_v1.sql', 'scripts/build_claude_code_plugin.py'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {

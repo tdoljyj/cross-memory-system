@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
+import { CHECK_IDS, GENERATED, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
 import { PINNED_REGISTRY_PATHS, globToRegExp } from './ci-required-selection.mjs';
 import { SOURCE_FILE, hash, sourceClosure } from './clued-merge-reconcile-source.mjs';
 
@@ -65,6 +65,7 @@ test('an up to date tree passes', () => {
     const r = cli(dir, '--base', 'HEAD');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /ok\s+components/);
+    assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/);
     assert.match(r.stdout, /all pinned registries are up to date/);
   } finally { /* the shared copy is reset by the next test */ }
 });
@@ -168,5 +169,72 @@ test('this checkout has no stale pinned registry (needs full history and a resol
   const full = await checkAll({ root: repo });
   const unchecked = full.results.filter((r) => r.status === 'unchecked');
   if (unchecked.length) return t.skip(unchecked.map((r) => `${r.id}: ${r.reason}`).join('; '));
-  assert.deepEqual(full.results.map((r) => r.status), ['ok', 'ok', 'ok'], render(full));
+  assert.deepEqual(full.results.map((r) => r.status), CHECK_IDS.map(() => 'ok'), render(full));
+});
+
+// Generated files. Each has a generator with --check and a CI test that fails when the committed output is old.
+test('every generated file is listed with a --check command, a fix and an id --only accepts', () => {
+  assert.deepEqual(GENERATED.map((g) => g.id), ['agent-contract', 'plugin', 'pdf-cmaps', 'imprint-rules']);
+  for (const g of GENERATED) {
+    assert.ok(CHECK_IDS.includes(g.id)); assert.ok(g.cmd.includes('--check')); assert.ok(g.fix && g.registry);
+    const script = g.cmd.find((a) => /\.(mjs|py)$/.test(a)); assert.ok(fs.existsSync(path.join(repo, script)), script);
+  }
+});
+
+test('a changed agent contract makes the generated worker modules stale; the printed command fixes it', () => {
+  const dir = registeredCopy();
+  try {
+    fs.appendFileSync(path.join(dir, 'protocol/agent/agent-contract.md'), '
+A sentence added after generation.
+');
+    let r = cli(dir, '--base', 'HEAD', '--only', 'agent-contract');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /STALE\s+agent-contract/); assert.match(r.stdout, /agent-contract\.ts is out of date/);
+    assert.match(r.stdout, /regenerate: node apps\/clued-cloud\/scripts\/generate-agent-contract\.mjs
+/);
+    const fix = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(fix.status, 0, fix.stdout + fix.stderr);
+    r = cli(dir, '--base', 'HEAD', '--only', 'agent-contract'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally { /* the shared copy is reset by the next test */ }
+});
+
+test('a changed skill makes the plugin copies stale; the printed command fixes it', () => {
+  const dir = registeredCopy();
+  try {
+    const skill = git(dir, 'ls-files', 'skills/clued').split('
+').find((f) => f.endsWith('.md'));
+    fs.appendFileSync(path.join(dir, skill), '
+Changed after the plugin was built.
+');
+    git(dir, 'add', '-A');
+    let r = cli(dir, '--base', 'HEAD', '--only', 'plugin');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /STALE\s+plugin\s+\(integrations\/claude-code\/clued\/\)/); assert.match(r.stdout, /regenerate: python3? scripts\/build_claude_code_plugin\.py
+/);
+    const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/build_claude_code_plugin.py'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(x.status, 0, x.stdout + x.stderr);
+    r = cli(dir, '--base', 'HEAD', '--only', 'plugin'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally { /* the shared copy is reset by the next test */ }
+});
+
+test('generators that need npm ci are "could not check" without it, and stale when their --check fails', () => {
+  const dir = registeredCopy();
+  try {
+    let r = cli(dir, '--base', 'HEAD', '--only', 'pdf-cmaps', '--only', 'imprint-rules');
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stdout, /UNCHECKED\s+pdf-cmaps/); assert.match(r.stdout, /UNCHECKED\s+imprint-rules/); assert.match(r.stdout, /npm ci/);
+    // With the dependency present, the generator's own verdict counts. The generators are replaced by stubs
+    // here (the real ones need the whole dependency tree); the exit status is what the check reads.
+    for (const [pkg, script, status] of [['pdfjs-dist', 'generate-pdf-cmaps', 1], ['typescript', 'generate-imprint-domain-rules', 0]]) {
+      fs.mkdirSync(path.join(dir, 'apps/clued-cloud/node_modules', pkg), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'apps/clued-cloud/node_modules', pkg, 'package.json'), '{}');
+      fs.writeFileSync(path.join(dir, `apps/clued-cloud/scripts/${script}.mjs`), `console.error('stub says out of date'); process.exit(process.argv.includes('--check') ? ${status} : 0);
+`);
+    }
+    r = cli(dir, '--base', 'HEAD', '--only', 'pdf-cmaps', '--only', 'imprint-rules');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /STALE\s+pdf-cmaps/); assert.match(r.stdout, /stub says out of date/); assert.match(r.stdout, /ok\s+imprint-rules/);
+    assert.match(r.stdout, /fix sequence[\s\S]*generate-pdf-cmaps\.mjs
+/);
+  } finally { /* the shared copy is reset by the next test */ }
 });

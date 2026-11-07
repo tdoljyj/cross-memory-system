@@ -128,7 +128,10 @@ test('any workflow change runs the runner budget policy, the admission self-test
 test('a change to a file a pinned registry holds runs the pinned-registry check', () => {
   for (const file of ['config/merge-admission-policy.json', 'scripts/ci/merge-admission-source-producer.mjs', 'scripts/runner/clued-runner-job-started.mjs',
     '.github/workflows/clued-merge-executor.yml', '.github/actions/ci-temporary-storage/setup.mjs', 'apps/clued-cloud/package-lock.json',
-    'apps/clued-cloud/app/supabase-public-config.ts', 'config/clued-components.json', 'scripts/clued_components.py']) {
+    'apps/clued-cloud/app/supabase-public-config.ts', 'config/clued-components.json', 'scripts/clued_components.py',
+    'protocol/agent/agent-contract.md', 'apps/clued-cloud/worker/generated/pdf-cmaps.ts', 'apps/clued-cloud/scripts/generate-pdf-cmaps.mjs',
+    'apps/clued-cloud/app/imprints/imprint-suggestions.ts', 'apps/clued-cloud/supabase/migrations/20261016124233_imprint_auto_domains_v1.sql',
+    'scripts/build_claude_code_plugin.py', 'skills/clued/SKILL.md', 'integrations/claude-code/clued/skills/clued/SKILL.md']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('pinned-registries'), file);
   }
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('pinned-registries'), false);
