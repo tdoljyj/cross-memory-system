@@ -211,6 +211,10 @@ test('the PR page text per head: running stage, queue position, outcome, HALT, s
   assert.equal(gone.state, 'pending');
   assert.match(gone.description, /不用推新提交/);
   assert.match(describe({ pull: pull(), status: s(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'TRAIN_NON_FRONT_RUNS_OFF' }])), now }).description, /只跑车头批次/);
+  // defect a8910e41: the binding run is released (NOT_EXECUTED) and its head waits within the duty: the same words, no new commit asked for
+  const boundRun = describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_EXECUTED', code: 'TRAIN_FRONT_CLAIM_BOUND', klass: 'queue', retry: 'new-trigger' })), now });
+  assert.deepEqual([boundRun.state, /已为队首认领绑定此 PR.*不用推新提交/.test(boundRun.description)], ['pending', true]);
+  assert.match(describe({ pull: pull(), status: s(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'TRAIN_FRONT_BOUND_HEAD' }])), now }).description, /已为队首认领绑定/);
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_ADMITTED', code: 'OWNER_REVIEW_REQUIRED', klass: 'waiting' })), now }).state, 'pending');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'IGNORED', code: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' })), now }), null, 'what was written stays');
   assert.equal(describe({ pull: pull(), status: s(b => b.update({ halt: { code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', at: '2026-10-22T08:00:00Z' } })), now }).state, 'error');

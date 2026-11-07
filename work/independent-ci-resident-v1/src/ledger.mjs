@@ -61,9 +61,14 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 // Why a reservation was closed before 10-started (classify.mjs#UNEXECUTED_REASON_RULES says, per reason, that the
 // cool-down and the daily cap of a later trigger apply): Native refused on a safe-to-re-run stage 1 outcome, the bundle
 // failed, or the broker refused stage 1 before any launch with the original restored (resident quota redesign phase 1).
-export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
+// TRAIN_FRONT_BOUND (defect a8910e41, DESIGN §62.4): the train's take-over binding run ended on purpose right after its stage 1 bound
+// the merge queue head's claim to the PR; the head stays unburned (its front batch (H, S) has its own key).
+export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED', 'TRAIN_FRONT_BOUND']);
 // Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
+// Releases that count as an evaluation (a binding run did run stage 1) but never towards a head's release cap: they say nothing
+// against the PR (a supersession, a take-over binding run).
+export const UNCAPPED_RELEASES = Object.freeze(['SUPERSEDED', 'TRAIN_FRONT_BOUND']);
 // Risk tiers of the daily budgets (Task 12ada80e, DESIGN §36): a head burned by a stage-1 ending that proved it published
 // nothing (clean on both hosts, zero side effects, mayHavePublished false) carries quotaTier 'evaluation' in its burn
 // facts. usage() counts it once, as the evaluation its batch entry already is, not as an execution. Every other head
@@ -544,7 +549,7 @@ export class Ledger {
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
       if (separateNetwork && facts?.network === true) { if (reason && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
-      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      if (reason && !UNCAPPED_RELEASES.includes(reason) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     for (const key of await this.keys()) {
