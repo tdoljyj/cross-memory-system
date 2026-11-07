@@ -45,6 +45,9 @@ export const TRAIN_FACTS_STATUS = 'TRAIN_FACTS';
 export const RUNNING_CLOCK_MS = 90 * 60_000;
 export const STAGE8_ATTEMPT_MS = 90_000;
 export const MAX_FRONT_BATCHES_PER_HEAD = 2;
+// Generation 23 (DESIGN §62.8): an open or a batch's first refresh skips the take-over full-sweep segment only when at most this many
+// rounds came after the newest round that counted one, so at most MAX_SKIPS_BEFORE_SKIP + 1 rounds in a row skip it.
+export const MAX_SKIPS_BEFORE_SKIP = 2;
 // Nodes whose heartbeat is older than this are not compared (§41.6).
 export const SOURCE_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
 export const KEEPALIVE_MAX_PRS = 50;
@@ -284,9 +287,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   //     bound: not when the last round already judged this very front (claim, head, main) and no batch of it was counted since; a
   //     running batch's rounds never skip, and a head gets at most MAX_FRONT_BATCHES_PER_HEAD batches.
   //   refresh: the same, but this head's front batch is counted and still running (TRAIN_FRONT_BATCH_RUNNING: the round only renews the
-  //     strict-front observation, e.g. the resident's refresh before stage 8). Starvation bound: only when the last round counted a
-  //     full-sweep segment (below) and this round's full-sweep state stays as recorded (same main, same round), so it writes none and
-  //     the next round sweeps (at most every other refresh round skips).
+  //     strict-front observation, e.g. the resident's refresh before stage 8). Starvation bound: only when this round's full-sweep state
+  //     stays as recorded (same main, same round), so it writes none, and either the last round counted a full-sweep segment (below) or
+  //     (generation 23, PR #1032, DESIGN §62.8) the last round is the one that opened this very batch and at most two rounds came after
+  //     the newest round that counted a segment (the binding and the open of this front). So only a batch's first refresh may follow
+  //     skipped rounds; later refresh rounds skip at most every other round as before.
+  //   Since generation 23 an open skips too only when at most two rounds came after the newest round that counted a segment: no more
+  //     than three rounds in a row skip the segment (bind, open, first refresh), and the round after them counts one.
   //   binding: frontBindEligible's conditions known before the sweeps, and the one PR naming the claim found now. The incremental sweep
   //     still runs (the binding needs a complete, confirmed one: TRAIN_SWEEP_INCOMPLETE otherwise), with the share it has beside a
   //     segment. Starvation bound: only when the last round counted a full-sweep segment (or no round wrote a proof yet); such a round
@@ -303,9 +310,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const frontPlan = Array.isArray(previousBatches) && !(job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
     && decideShadow({ onDuty: true, holders: duty.holders, holder, front, rules, mainSha }) === 'OPEN_FRONT_BATCH'
     ? frontBatchPlan({ job, holder, front, mainSha, previous: previousBatches, keptAlive: [], clock }).refusal : 'NONE';
-  const frontOpenSkip = frontPlan === null && !judgedBefore;
+  const skippedSince = async () => roundsSinceSegment({ sweepStore, mode, lastFull });
+  const frontOpenSkip = frontPlan === null && !judgedBefore && await skippedSince() <= MAX_SKIPS_BEFORE_SKIP;
+  const firstRefresh = previousBatches?.[0]?.runId === lastProof?.runId && lastProof?.mode === 'on';
   const frontRefreshSkip = frontPlan === 'TRAIN_FRONT_BATCH_RUNNING' && history === 'same' && allPending === before.allPending
-    && JSON.stringify(full) === JSON.stringify(before.full) && await lastRoundSwept({ sweepStore, mode, lastProof, lastFull });
+    && JSON.stringify(full) === JSON.stringify(before.full)
+    && (await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }) || (firstRefresh && await skippedSince() <= MAX_SKIPS_BEFORE_SKIP));
   const bindCandidate = job.mode === 'on' && !sinceOn(full) && full.state === 'running' && holder !== null && holder.boundPr === null && !!holder.takenAt
     && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0
@@ -616,6 +626,22 @@ async function lastRoundSwept({ sweepStore, mode, lastProof, lastFull }) {
     if (newest?.runId !== lastFull.runId || newest.writtenAt !== lastFull.writtenAt) return false;
     return newest.full.calls > (older && older.full.startedAt === newest.full.startedAt ? older.full.calls : 0);
   } catch { return false; }
+}
+
+// Generation 23 (PR #1032, DESIGN §62.8): how many stage-10 rounds (their proofs, newest first) came after the newest round that counted a
+// full-sweep segment: 0 when the last round counted one. That round is the newest full-sweep record's run (this run's starting record),
+// when its calls grew over the record before it in the same round. Not found among the newest proofs, nothing counted, a torn record or
+// anything unreadable: Infinity (no skip).
+async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
+  if (!lastFull || typeof sweepStore?.read !== 'function') return Infinity;
+  try {
+    const [newest, older = null] = await sweepStore.read(`full-${mode}`, 2);
+    if (newest?.runId !== lastFull.runId || newest.writtenAt !== lastFull.writtenAt
+      || !(newest.full.calls > (older && older.full.startedAt === newest.full.startedAt ? older.full.calls : 0))) return Infinity;
+    const proofs = await sweepStore.read('proof', MAX_SKIPS_BEFORE_SKIP + 1);
+    const i = proofs.findIndex(p => p.runId === newest.runId);
+    return i < 0 || sweepStore.refused !== 0 ? Infinity : i;
+  } catch { return Infinity; }
 }
 
 // openFront's checks before any write (pure; also stage 10's forecast before the sweeps, task e30b5a36): the refusal, or null.
