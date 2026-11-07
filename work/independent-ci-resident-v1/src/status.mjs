@@ -71,7 +71,9 @@ export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-bu
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
   'train-owner',
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
-  'lease-short']);
+  'lease-short',
+  // M5 (ADR 0022 §4.5): no companion heartbeat 10 minutes after the service started (the notifier shows it at log-on).
+  'companion-absent']);
 // Generation 12 (DESIGN §56.3): how long the claim's lease must still run. A running batch needs what an average batch has left
 // (LEASE_BATCH_ESTIMATE_MS from its start, an estimate only) and LEASE_MARGIN_MS for stage 8 and the merge; a batch parked at B
 // needs LEASE_MARGIN_MS. Only a reminder: the admission of every stage checks the lease itself, and a renewal never voids a batch
@@ -151,7 +153,16 @@ export class StatusBoard {
     const r = typeof reason === 'string' && CODE.test(reason) ? reason : null;
     const e = this.content.executor;
     if (e.state === state && e.reason === r) return false;
-    return this.update({ executor: { state, since: iso(this.clock()), reason: r } });
+    return this.update({ executor: { state, since: iso(this.clock()), reason: r, ...(e.companion ? { companion: e.companion } : {}) } });
+  }
+
+  // M5 (ADR 0022 §4.5): executor.companion.firstBeatAfterServiceStartMs (companion-presence.mjs). Inside `executor`, whose reader
+  // takes only the keys it knows, so a reader of an earlier generation still accepts the file (a new top-level key would refuse it).
+  setCompanion(view) {
+    const ms = Number.isSafeInteger(view?.firstBeatAfterServiceStartMs) && view.firstBeatAfterServiceStartMs >= 0 ? view.firstBeatAfterServiceStartMs : null;
+    const e = this.content.executor;
+    if (e.companion && e.companion.firstBeatAfterServiceStartMs === ms) return false;
+    return this.update({ executor: { ...e, companion: { firstBeatAfterServiceStartMs: ms } } });
   }
 
   // The batch in flight (null when none). stage: the stage number running now (0 = bundle/workspace, 9 = stage R).
@@ -241,7 +252,8 @@ export function parseStatus(bytes) {
   const head = h => typeof h === 'string' && HEX40.test(h);
   return {
     writtenAt: Date.parse(v.writtenAt), changedAt: Date.parse(v.changedAt), pid: Number.isSafeInteger(v.pid) && v.pid > 0 ? v.pid : null,
-    executor: { state: v.executor.state, since: Date.parse(v.executor.since) || null, reason: typeof v.executor.reason === 'string' && CODE.test(v.executor.reason) ? v.executor.reason : null },
+    executor: { state: v.executor.state, since: Date.parse(v.executor.since) || null, reason: typeof v.executor.reason === 'string' && CODE.test(v.executor.reason) ? v.executor.reason : null,
+      companion: { firstBeatAfterServiceStartMs: Number.isSafeInteger(v.executor.companion?.firstBeatAfterServiceStartMs) && v.executor.companion.firstBeatAfterServiceStartMs >= 0 ? v.executor.companion.firstBeatAfterServiceStartMs : null } },
     halt: v.halt && typeof v.halt.code === 'string' && CODE.test(v.halt.code) ? { code: v.halt.code, at: Date.parse(v.halt.at) || null } : null,
     paused: v.paused === true,
     // A hold whose end the reader cannot read is still a hold (the companion then shows it without an end).

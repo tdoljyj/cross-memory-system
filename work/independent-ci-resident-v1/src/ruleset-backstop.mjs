@@ -110,7 +110,8 @@ export async function writePauseRequest(requestsDir, reason, clock = Date.now) {
 // The companion's ports for one pass (companion-main.mjs calls it on every poll): main's rules with the Owner's read-only
 // gh login, the train mode from the executor's status snapshot, the pause request into the user-writable requests\, a
 // Windows notification, and the once-a-day memory in the companion's own store (pr-status.mjs#LocalStore, `backstop:` keys).
-export function companionBackstop({ root, ghExe, repo, powershellExe, run, store, clock = Date.now, timeoutMs = 60_000 }) {
+// notify(key, title, body): the companion's notification queue (ADR 0022 §4.3, M5); without it (tests, older wiring) a toast as before.
+export function companionBackstop({ root, ghExe, repo, powershellExe, run, store, clock = Date.now, timeoutMs = 60_000, notify = null }) {
   return backstopPass({
     readRules: async () => {
       const r = await run([ghExe, 'api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/rules/branches/main?per_page=100`], { timeoutMs });
@@ -122,7 +123,10 @@ export function companionBackstop({ root, ghExe, repo, powershellExe, run, store
     trainDuty: async () => dutyOf(await readStatus(root)),
     trainSweepMode: async () => (await readStatus(root)).train?.sweepMode ?? null,
     writePause: reason => writePauseRequest(path.join(root, 'requests'), reason, clock),
-    notify: async (kind, text) => { await run(toastArgv(powershellExe, kind.startsWith('STRICT_OFF') ? '紧急：main 的 strict 已关' : 'main 的必需检查有变', text), { timeoutMs }); },
+    notify: async (kind, text) => {
+      const title = kind.startsWith('STRICT_OFF') ? '紧急：main 的 strict 已关' : 'main 的必需检查有变';
+      if (notify) await notify(`backstop:${kind}`, title, text); else await run(toastArgv(powershellExe, title, text), { timeoutMs });
+    },
     memory: {
       get: key => Date.parse(store.data.notified[key]?.at) || 0,
       set: async (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; await store.save(); },

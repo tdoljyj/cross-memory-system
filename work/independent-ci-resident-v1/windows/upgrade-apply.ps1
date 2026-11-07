@@ -32,8 +32,14 @@
                                   generation record. The files the command lines pin must already be in place. First, generation N's
                                   resident\<sha> and source\<sha> get their live parent's inheritance back (Repair-GenerationContentAcl: a
                                   rename out of upgrade\staged keeps the staged ACEs); the result carries contentAcl { repaired, resident, source }.
-    -Action RegisterCompanionTask -Generation N   the companion task with the install's configuration and N's arguments.
-    -Action RestartCompanion      ends the companion (task, node and job hosts of the installed copy) and runs the task again.
+    -Action WriteCompanionLaunch -Generation N   M5 (ADR 0022 §4.4): generation N's config\companion-launch.json, replaced
+                                  atomically, and the notifier task registered again for N. The companion task itself is NEVER
+                                  registered here (it may hold the Owner's password, which this channel does not have): a task whose
+                                  definition is neither the password one nor the interactive one is reported (companionTask.needsOwner,
+                                  COMPANION_TASK_NEEDS_OWNER) and the upgrade goes on.
+    -Action RestartCompanion      ends the companion's node and job hosts of the installed copy (not the task: the supervisor starts the
+                                  generation the launch file names at once), runs the task only when no supervisor runs, and waits up to
+                                  90 s for the new companion.
     -Action StartServices         starts the broker, then the resident.
     -Action Verify -Generation N [-ExpectPausedSha256 <sha>]   runs generation N's installed verify-resident.ps1 against the receipt
                                   upgrade\current.json names (N must be current), once its hash is the one generation N's
@@ -41,12 +47,12 @@
 
     -Recover -OpId <id> [-Apply]  the Owner's emergency entry (scheme C), elevated: dry run by default. -Apply stops the upgrader, the
                                   resident (waiting for its executor) and the broker, then points both binary paths and the companion
-                                  task at the generation upgrade\current.json names, if its files are in place, and starts nothing.
+                                  launch file at the generation upgrade\current.json names, if its files are in place, and starts nothing.
                                   The resident stays paused; what was done is written to upgrade\ops\<OpId>\recover-<UTC>.json.
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('ReadScm', 'Compile', 'StopServices', 'SwitchScm', 'RegisterCompanionTask', 'RestartCompanion', 'StartServices', 'Verify')][string]$Action,
+  [ValidateSet('ReadScm', 'Compile', 'StopServices', 'SwitchScm', 'WriteCompanionLaunch', 'RestartCompanion', 'StartServices', 'Verify')][string]$Action,
   [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')][string]$OpId,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$PlanSha256,
   [ValidateRange(1, 999999)][int]$Generation,
@@ -122,10 +128,6 @@ function ConvertTo-NodeProfileCanonical($n) {
   $rows=@(foreach($key in $keys) { ($key | ConvertTo-Json -Compress)+':'+($n.$key | ConvertTo-Json -Compress) })
   return '{'+($rows -join ',')+'}'
 }
-function Get-CompanionAction([string]$root, [string]$residentSha, [string]$configSha) {
-  [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
-    arguments = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 ' + $configSha }
-}
 # The two service command lines (install-resident.ps1 step 'services'; the generation records hold exactly these strings).
 function Get-ResidentBinPath([string]$root, [string]$policySha, [string]$nodeSha, [string]$residentSha, [string]$entrySha) {
   '"' + (Join-Path $root 'bin\ResidentServiceHost.exe') + '" "' + $root + '" ' + $policySha + ' "' + (Join-Path $root 'runtime\node.exe') + '" ' + $nodeSha + ' "' + (Join-Path $root ('resident\' + $residentSha + '\src\service-main.mjs')) + '" ' + $entrySha
@@ -163,9 +165,52 @@ function Invoke-CompileRecipe([string]$compiler, [string]$fw, [string]$binOut, [
   } finally { Pop-Location }
   $hashes
 }
-# The companion task (install-resident.ps1 step 'companion-task'): the Owner's interactive token, not elevated, at log-on, one instance,
-# no time limit, three restarts a minute apart, protected by $sddl; registered (6 = TASK_CREATE_OR_UPDATE) and read back. Returns the XML hash.
-function Register-CompanionTask([string]$ownerSid, $ca, [string]$sddl) {
+# ---- Shared with install-resident.ps1 and upgrade-apply.ps1 (test-companion-headless.ps1 holds the copies identical) ----
+# The companion task's fixed action (ADR 0022 §4.2): the supervisor, with the root and nothing else.
+function Get-SupervisorAction([string]$root) { [ordered]@{ path = (Join-Path $root 'bin\CluedCompanionSupervisor.exe'); arguments = ('"' + $root + '"') } }
+# The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 §4.1).
+function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerSid)" }
+# The companion child's arguments after node.exe, as the supervisor builds them (CompanionSupervisor.cs CommandLine); the generation
+# records keep this string as companionTaskArguments.
+function Get-CompanionLaunchArguments([string]$root, [string]$residentSha, [string]$configSha) {
+  '"' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 ' + $configSha
+}
+# The companion's own gh login (Owner decision): <profile>\AppData\Local\CluedIndependentCI\companion-gh\{gh,home}.
+function Get-CompanionGhDirs([string]$profileDir) {
+  $base = Join-Path $profileDir 'AppData\Local\CluedIndependentCI\companion-gh'
+  [ordered]@{ base = $base; gh = (Join-Path $base 'gh'); home = (Join-Path $base 'home') }
+}
+# The directories the child's PATH adds to the system ones: gh's (companion.json ghExe) and Git for Windows' cmd (build-bundle.ps1 $Git).
+function Get-CompanionPathDirs([string]$ghExe) { @((Split-Path -Parent $ghExe), 'C:\Program Files\Git\cmd') }
+# config\companion-launch.json, the one input of the supervisor (contract clued.independent-ci.companion-launch/1), keys in this order.
+function Get-CompanionLaunchJson([string]$root, [int]$generation, [string]$nodeSha, [string]$residentSha, [string]$entrySha, [string]$configSha, [string]$profileDir, [string[]]$pathDirs) {
+  foreach ($h in @($nodeSha, $residentSha, $entrySha, $configSha)) { if ($h -cnotmatch '^[0-9a-f]{64}\z') { throw 'COMPANION_LAUNCH_HASH_REFUSED' } }
+  if ($generation -lt 1) { throw 'COMPANION_LAUNCH_GENERATION_REFUSED' }
+  $gh = Get-CompanionGhDirs $profileDir
+  $q = { param([string]$s) ConvertTo-Json -InputObject $s -Compress }
+  '{"contract":' + (& $q 'clued.independent-ci.companion-launch/1') + ',"generation":' + $generation + ',"nodeExe":' + (& $q (Join-Path $root 'runtime\node.exe')) +
+  ',"nodeExeSha256":"' + $nodeSha + '","entry":' + (& $q (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs'))) + ',"entrySha256":"' + $entrySha +
+  '","configSha256":"' + $configSha + '","ghConfigDir":' + (& $q $gh.gh) + ',"homeDir":' + (& $q $gh.home) + ',"pathDirs":[' + ((@($pathDirs) | ForEach-Object { & $q $_ }) -join ',') + ']}'
+}
+# Atomic replace in config\ (the temporary file inherits config\'s DACL; ReplaceFile keeps the replaced file's): a reader sees the old
+# file or the new one, never a part. Returns the SHA-256 of the bytes written.
+function Write-CompanionLaunch([string]$root, [string]$json) {
+  $dest = Join-Path $root 'config\companion-launch.json'
+  $tmp = $dest + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
+  $f = New-Object IO.FileStream($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+  try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+  if (Test-Path -LiteralPath $dest) { [IO.File]::Replace($tmp, $dest, [NullString]::Value) } else { [IO.File]::Move($tmp, $dest) }
+  $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
+}
+# The notifier task (ADR 0022 §4.3): the Owner's interactive token, not elevated, at log-on, one instance; no password, so the upgrade
+# channel registers it again for every generation.
+function Get-NotifierAction([string]$root, [string]$residentSha) {
+  [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
+    arguments = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\notifier-main.mjs')) + '" --root "' + $root + '"' }
+}
+function Register-NotifierTask([string]$root, [string]$ownerSid, [string]$residentSha) {
+  $ca = Get-NotifierAction $root $residentSha
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $folder = try { $svc.GetFolder('\Clued') } catch { $svc.GetFolder('\').CreateFolder('Clued') }
   $def = $svc.NewTask(0)
@@ -174,15 +219,50 @@ function Register-CompanionTask([string]$ownerSid, $ca, [string]$sddl) {
   $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT0S'; $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
   $def.Settings.RestartCount = 3; $def.Settings.RestartInterval = 'PT1M'
   $a = $def.Actions.Create(0); $a.Path = $ca.path; $a.Arguments = $ca.arguments
-  $null = $folder.RegisterTaskDefinition('CluedCIResidentCompanion', $def, 6, $null, $null, 3, $sddl)
-  $t = $folder.GetTask('CluedCIResidentCompanion')
-  $uid = $t.Definition.Principal.UserId
-  $uidSid = if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value }
+  $null = $folder.RegisterTaskDefinition('CluedCIResidentNotifier', $def, 6, $null, $null, 3, "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$ownerSid)")
+  $t = $folder.GetTask('CluedCIResidentNotifier')
   $act = if ($t.Definition.Actions.Count -eq 1) { $t.Definition.Actions.Item(1) } else { $null }
-  if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $ownerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
-  Sha256Text $t.Xml
+  if (($t.Definition.Principal.RunLevel -ne 0) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'NOTIFIER_TASK_READBACK_MISMATCH' }
+  $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
 }
-function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$ownerSid)" }
+# What the companion task is now: mode 'password' (ADR 0022 §4.1, exactly), 'interactive' (the install's first registration or the
+# fall-back, exactly), 'other' (anything else: problems names what differs), or absent. Read-only; the Owner can read it (FR).
+function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $task = try { $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion') } catch { $null }
+  if ($null -eq $task) { return [ordered]@{ exists = $false; mode = 'absent'; problems = @('absent'); state = $null; lastTaskResult = $null; logonType = $null; xmlSha256 = $null } }
+  $d = $task.Definition; $p = @()
+  $uid = [string]$d.Principal.UserId
+  $uidSid = try { if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value } } catch { $null }
+  if ($uidSid -cne $ownerSid) { $p += 'principal' }
+  if ($d.Principal.RunLevel -ne 0) { $p += 'run-level' }
+  $ca = Get-SupervisorAction $root
+  $act = if ($d.Actions.Count -eq 1) { $d.Actions.Item(1) } else { $null }
+  if ($null -eq $act -or [string]$act.Path -cne $ca.path -or [string]$act.Arguments -cne $ca.arguments) { $p += 'action' }
+  $sd = try { [string]$task.GetSecurityDescriptor(4) } catch { $null }   # DACL_SECURITY_INFORMATION
+  $dacl = if ($sd) { $i = $sd.IndexOf('D:'); if ($i -ge 0) { $sd.Substring($i) } else { $sd } } else { $null }
+  if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) { $p += 'sddl' }
+  $sdOwner = try { $o = [string]$task.GetSecurityDescriptor(1); if ($o -match '^O:([A-Z]{2}|S-1-[0-9-]+)') { $Matches[1] } else { $null } } catch { $null }   # OWNER_SECURITY_INFORMATION: a fact
+  if ($d.Settings.MultipleInstances -ne 2) { $p += 'multiple-instances' }
+  if ([string]$d.Settings.ExecutionTimeLimit -cne 'PT0S') { $p += 'time-limit' }
+  if ($d.Settings.DisallowStartIfOnBatteries -or $d.Settings.StopIfGoingOnBatteries) { $p += 'batteries' }
+  if ($d.Settings.RestartCount -ne 0) { $p += 'restart-on-failure' }
+  $triggers = @(foreach ($t in $d.Triggers) { $t })
+  $types = @($triggers | ForEach-Object { [int]$_.Type }) | Sort-Object
+  $mode = 'other'
+  if ($d.Principal.LogonType -eq 1) {
+    $boot = @($triggers | Where-Object { $_.Type -eq 8 }); $time = @($triggers | Where-Object { $_.Type -eq 1 })
+    $ok = ($types -join ',') -ceq '1,8' -and [string]$boot[0].Delay -ceq 'PT30S' -and [string]$time[0].Repetition.Interval -ceq 'PT15M' -and [string]$time[0].Repetition.Duration -ceq '' -and $d.Settings.StartWhenAvailable
+    if (-not $ok) { $p += 'triggers' }
+    if ($p.Count -eq 0) { $mode = 'password' }
+  } elseif ($d.Principal.LogonType -eq 3) {
+    if (($types -join ',') -cne '9') { $p += 'triggers' }
+    if ($p.Count -eq 0) { $mode = 'interactive' }
+  } else { $p += 'logon-type' }
+  $s = [Security.Cryptography.SHA256]::Create()
+  $xmlSha = try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$task.Xml)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() }
+  [ordered]@{ exists = $true; mode = $mode; problems = $p; state = [int]$task.State; lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); logonType = [int]$d.Principal.LogonType; xmlSha256 = $xmlSha; sdOwner = $sdOwner }
+}
 
 # ---- Own helpers ----
 function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
@@ -203,11 +283,12 @@ function ConvertFrom-BrokerBinPath([string]$root, [string]$binPath) {
   if ((Get-BrokerBinPath $root $p.brokerConfigSha256 $p.nodeProfileSha256) -cne $binPath) { return $null }
   $p
 }
+# M5: the companion's arguments after node.exe (Get-CompanionLaunchArguments), as the generation records keep them.
 function ConvertFrom-CompanionArguments([string]$root, [string]$arguments) {
   $e = [regex]::Escape($root)
-  if ($arguments -cnotmatch ('^--headless "' + $e + '\\runtime\\node\.exe" "' + $e + '\\resident\\([0-9a-f]{64})\\src\\companion-main\.mjs" --root "' + $e + '" --config-sha256 ([0-9a-f]{64})\z')) { return $null }
+  if ($arguments -cnotmatch ('^"' + $e + '\\resident\\([0-9a-f]{64})\\src\\companion-main\.mjs" --root "' + $e + '" --config-sha256 ([0-9a-f]{64})\z')) { return $null }
   $p = [ordered]@{ residentManifestSha256 = $Matches[1]; companionConfigSha256 = $Matches[2] }
-  if ((Get-CompanionAction $root $p.residentManifestSha256 $p.companionConfigSha256).arguments -cne $arguments) { return $null }
+  if ((Get-CompanionLaunchArguments $root $p.residentManifestSha256 $p.companionConfigSha256) -cne $arguments) { return $null }
   $p
 }
 # sc queryex: the state in lower case (running, stopped, start_pending, ...), as the upgrader reads it.
@@ -368,7 +449,7 @@ function Get-PlanGeneration($plan, [int]$g) {
     $r = [pscustomobject][ordered]@{ generation = $g; packageManifestSha256 = $plan.packageManifestSha256
       residentBinPath = (Get-ResidentBinPath $Root $t.policySha256 $t.nodeSha256 $t.residentManifestSha256 $t.residentEntrySha256)
       brokerBinPath = (Get-BrokerBinPath $Root $done.brokerConfigSha256 $t.nodeProfileSha256)
-      companionTaskArguments = (Get-CompanionAction $Root $t.residentManifestSha256 $t.companionConfigSha256).arguments }
+      companionTaskArguments = (Get-CompanionLaunchArguments $Root $t.residentManifestSha256 $t.companionConfigSha256) }
     $gen = ConvertTo-GenerationView $Root $g $r $t.nodeProfileSha256
     if (Test-Path -LiteralPath (Join-Path $Root ('generations\g' + $g + '\generation.json'))) {
       $kept = Read-GenerationRecord $Root $g $t.nodeProfileSha256
@@ -498,12 +579,19 @@ function Test-ExecutorAlive([string]$root) {
   if (-not (Test-Int $holderPid)) { return $true }
   return [bool](Get-Process -Id $holderPid -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'node' })
 }
-function Get-CompanionTaskFacts {
+# M5: what the companion runs is named by the launch file (the supervisor reads it): path is its node.exe, arguments the companion's
+# arguments derived from it (Get-CompanionLaunchArguments: the form the generation records keep), state the task's state. A launch
+# file that does not parse or does not fit the formula reads as arguments $null (matches neither generation).
+function Get-CompanionLaunchFacts([string]$root) {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $task = try { $svc.GetFolder('\Clued').GetTask($TaskName) } catch { $null }
-  if ($null -eq $task) { return [ordered]@{ exists = $false; path = $null; arguments = $null; state = $null } }
-  $act = if ($task.Definition.Actions.Count -eq 1) { $task.Definition.Actions.Item(1) } else { $null }
-  [ordered]@{ exists = $true; path = $(if ($act) { [string]$act.Path } else { $null }); arguments = $(if ($act) { [string]$act.Arguments } else { $null }); state = [int]$task.State }
+  $file = Join-Path $root 'config\companion-launch.json'
+  $l = if (Test-Path -LiteralPath $file -PathType Leaf) { try { ConvertFrom-StrictJson (Read-SmallFile $file 8192 'COMPANION_LAUNCH') 'COMPANION_LAUNCH' } catch { $null } } else { $null }
+  $launchArgs = $null; $gen = $null
+  if ($null -ne $l -and (Get-Field $l 'contract') -ceq 'clued.independent-ci.companion-launch/1' -and ([string](Get-Field $l 'entry')) -cmatch ('^' + [regex]::Escape($root) + '\\resident\\([0-9a-f]{64})\\src\\companion-main\.mjs\z') -and (Test-Hex (Get-Field $l 'configSha256'))) {
+    $launchArgs = Get-CompanionLaunchArguments $root $Matches[1] (Get-Field $l 'configSha256'); $gen = Get-Field $l 'generation'
+  }
+  [ordered]@{ exists = ($null -ne $task -and $null -ne $launchArgs); path = $(if ($null -ne $launchArgs) { Join-Path $root 'runtime\node.exe' } else { $null }); arguments = $launchArgs; state = $(if ($task) { [int]$task.State } else { $null }); launchGeneration = $gen }
 }
 function Get-CompanionProcesses([string]$root) {
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
@@ -520,11 +608,11 @@ function Invoke-ReadScm($plan) {
   $to = try { (Get-PlanGeneration $plan $plan.toGeneration).record } catch { $null }
   $pick = { param($rec, [string]$k) if ($null -ne $rec) { $rec.$k } else { $null } }
   $live = Get-LiveNode $Root $plan.target.nodeProfileSha256
-  $r = Get-ServiceFacts $ServiceName; $b = Get-ServiceFacts $BrokerName; $u = Get-ServiceFacts $UpgraderName; $c = Get-CompanionTaskFacts
+  $r = Get-ServiceFacts $ServiceName; $b = Get-ServiceFacts $BrokerName; $u = Get-ServiceFacts $UpgraderName; $c = Get-CompanionLaunchFacts $Root
   $runner = Get-ServiceFacts ([string]$live.node.runnerService)
   $r.matches = Get-Match $r.binPath (& $pick $from 'residentBinPath') (& $pick $to 'residentBinPath')
   $b.matches = Get-Match $b.binPath (& $pick $from 'brokerBinPath') (& $pick $to 'brokerBinPath')
-  $c.matches = if ($c.path -cne 'C:\Windows\System32\conhost.exe') { 'neither' } else { Get-Match $c.arguments (& $pick $from 'companionTaskArguments') (& $pick $to 'companionTaskArguments') }
+  $c.matches = if ($null -eq $c.arguments) { 'neither' } else { Get-Match $c.arguments (& $pick $from 'companionTaskArguments') (& $pick $to 'companionTaskArguments') }
   [ordered]@{ resident = $r; broker = $b; upgrader = [ordered]@{ exists = $u.exists; state = $u.state }
     runner = [ordered]@{ exists = $runner.exists; state = $runner.state; originalBinary = ($runner.binPath -ceq $OriginalBinary) }
     companionTask = $c; executorAlive = (Test-ExecutorAlive $Root); fromRecord = ($null -ne $from); toRecord = ($null -ne $to) }
@@ -618,45 +706,61 @@ function Invoke-SwitchScm($plan, [int]$g) {
   }
   [ordered]@{ replayed = (-not $did.resident.changed -and -not $did.broker.changed -and $acl.repaired -eq 0); generation = $g; resident = $did.resident; broker = $did.broker; contentAcl = $acl }
 }
-function Invoke-RegisterCompanionTask($plan, [int]$g) {
+# M5 (ADR 0022 §4.4): generation N's launch file, replaced atomically; the notifier task for N. Never the companion task.
+function Invoke-WriteCompanionLaunch($plan, [int]$g) {
   $gen = Get-PlanGeneration $plan $g
   Assert-GenerationInPlace $Root $gen -Companion
   $live = Get-LiveNode $Root $plan.target.nodeProfileSha256
-  $ca = Get-CompanionAction $Root $gen.companion.residentManifestSha256 $gen.companion.companionConfigSha256
-  if ($ca.arguments -cne $gen.record.companionTaskArguments) { throw 'GENERATION_RECORD_REFUSED:companionTaskArguments' }
-  $before = Get-CompanionTaskFacts
+  $entry = Join-Path $Root ('resident\' + $gen.companion.residentManifestSha256 + '\src\companion-main.mjs')
+  $entrySha = Sha256File $entry
+  if ($g -eq $plan.toGeneration -and $entrySha -cne $plan.target.companionEntrySha256) { throw 'GENERATION_FILES_NOT_IN_PLACE:companion-main.mjs' }
+  $companionConfig = ConvertFrom-StrictJson (Read-SmallFile (Join-Path $Root 'config\companion.json') 65536 'COMPANION_CONFIG') 'COMPANION_CONFIG'
+  $ghExe = [string](Get-Field $companionConfig 'ghExe')
+  if ($ghExe -cnotmatch '^[A-Z]:\\[^"''\r\n;]+\\gh\.exe\z') { throw 'COMPANION_CONFIG_GH_EXE_REFUSED' }
+  $json = Get-CompanionLaunchJson $Root $g $gen.resident.nodeSha256 $gen.companion.residentManifestSha256 $entrySha $gen.companion.companionConfigSha256 ([string]$live.node.ownerProfileDirectory) (Get-CompanionPathDirs $ghExe)
+  $file = Join-Path $Root 'config\companion-launch.json'
+  $same = (Test-Path -LiteralPath $file -PathType Leaf) -and ([IO.File]::ReadAllText($file) -ceq $json)
   $script:Touched = $true
-  $xml = Register-CompanionTask $live.node.ownerSid $ca (Get-CompanionTaskSddl $live.node.ownerSid)
-  [ordered]@{ replayed = ($before.exists -and $before.path -ceq $ca.path -and $before.arguments -ceq $ca.arguments); generation = $g
-    companionTask = [ordered]@{ path = $ca.path; arguments = $ca.arguments }; taskXmlSha256 = $xml }
+  $launchSha = if ($same) { Sha256File $file } else { Write-CompanionLaunch $Root $json }
+  $notifier = Register-NotifierTask $Root ([string]$live.node.ownerSid) $gen.companion.residentManifestSha256
+  $task = Get-CompanionTaskFacts $Root ([string]$live.node.ownerSid)
+  $needsOwner = @('password', 'interactive') -cnotcontains $task.mode
+  [ordered]@{ replayed = $same; generation = $g; launchSha256 = $launchSha; companionTaskArguments = (Get-CompanionLaunchArguments $Root $gen.companion.residentManifestSha256 $gen.companion.companionConfigSha256)
+    notifierTaskXmlSha256 = $notifier; companionTask = [ordered]@{ mode = $task.mode; needsOwner = $needsOwner; note = $(if ($needsOwner) { 'COMPANION_TASK_NEEDS_OWNER' } else { $null }) } }
 }
+# Ends the companion's node and job hosts of the installed copy, never the supervisor or the task: the supervisor starts the generation
+# the launch file names at once. No supervisor running (the task is not running): SYSTEM runs the task (a password task runs without
+# the password; an interactive one only while the Owner is logged on). Then up to 90 s for the new companion.
 function Invoke-RestartCompanion {
+  $c = Get-CompanionLaunchFacts $Root
+  $parts = if ($null -ne $c.arguments) { ConvertFrom-CompanionArguments $Root $c.arguments } else { $null }
+  if ($null -eq $parts) { throw 'COMPANION_LAUNCH_REFUSED' }
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $task = try { $svc.GetFolder('\Clued').GetTask($TaskName) } catch { $null }
   if ($null -eq $task) { throw 'COMPANION_TASK_MISSING' }
-  $act = if ($task.Definition.Actions.Count -eq 1) { $task.Definition.Actions.Item(1) } else { $null }
-  $parts = if ($act) { ConvertFrom-CompanionArguments $Root ([string]$act.Arguments) } else { $null }
-  if ($null -eq $parts) { throw 'COMPANION_TASK_ARGUMENTS_REFUSED' }
   $script:Touched = $true
-  try { $task.Stop(0) } catch { }
-  # Ending the task ends conhost, not its node child (install-resident.ps1 Get-CompanionAction): those are stopped here, and the job hosts.
+  # Every companion process there is now (the generation being replaced, and one of the new generation the supervisor may already
+  # have started): ended once; then only new processes count.
   $stopped = New-Object System.Collections.ArrayList
+  foreach ($p in @(Get-CompanionProcesses $Root)) { [void]$stopped.Add([int]$p.ProcessId); Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   $until = [DateTime]::UtcNow.AddSeconds(30)
   do {
-    $left = @(Get-CompanionProcesses $Root)
-    foreach ($p in $left) { [void]$stopped.Add([int]$p.ProcessId); Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    $left = @(Get-CompanionProcesses $Root | Where-Object { $stopped -contains [int]$_.ProcessId })
     if ($left.Count) { Start-Sleep -Milliseconds 500 }
   } while ($left.Count -and [DateTime]::UtcNow -lt $until)
   if ($left.Count) { throw 'COMPANION_STILL_RUNNING' }
-  $null = $task.Run($null)
+  $supervisor = Join-Path $Root 'bin\CluedCompanionSupervisor.exe'
+  $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='CluedCompanionSupervisor.exe'" | Where-Object { [string]::Equals([string]$_.ExecutablePath, $supervisor, [StringComparison]::OrdinalIgnoreCase) })
+  $ranTask = $false
+  if ($running.Count -eq 0) { try { $null = $task.Run($null); $ranTask = $true } catch { throw 'COMPANION_TASK_RUN_FAILED' } }
   $marker = '--config-sha256 ' + $parts.companionConfigSha256
-  $until = [DateTime]::UtcNow.AddSeconds(30); $new = $null
+  $until = [DateTime]::UtcNow.AddSeconds(90); $new = $null
   while ($null -eq $new -and [DateTime]::UtcNow -lt $until) {
-    $new = @(Get-CompanionProcesses $Root | Where-Object { ([string]$_.CommandLine).Contains($marker) -and ([string]$_.CommandLine).Contains('\resident\' + $parts.residentManifestSha256 + '\') }) | Select-Object -First 1
+    $new = @(Get-CompanionProcesses $Root | Where-Object { ([string]$_.CommandLine).Contains($marker) -and ([string]$_.CommandLine).Contains('\resident\' + $parts.residentManifestSha256 + '\') -and $stopped -notcontains [int]$_.ProcessId }) | Select-Object -First 1
     if ($null -eq $new) { Start-Sleep -Milliseconds 500 }
   }
   if ($null -eq $new) { throw 'COMPANION_NOT_STARTED' }
-  [ordered]@{ replayed = $false; stoppedProcessIds = @($stopped | Sort-Object -Unique); processId = [int]$new.ProcessId; residentManifestSha256 = $parts.residentManifestSha256 }
+  [ordered]@{ replayed = $false; stoppedProcessIds = @($stopped | Sort-Object -Unique); processId = [int]$new.ProcessId; residentManifestSha256 = $parts.residentManifestSha256; ranTask = $ranTask }
 }
 function Invoke-StartServices {
   $before = [ordered]@{ broker = (Get-ServiceFacts $BrokerName).state; resident = (Get-ServiceFacts $ServiceName).state }
@@ -712,13 +816,13 @@ function Invoke-Recover([string]$opId, [bool]$apply) {
   Assert-GenerationInPlace $Root $gen
   Assert-GenerationInPlace $Root $gen -Companion
   $journal = @(Get-ChildItem -LiteralPath $dir -File -Force | Where-Object { $_.Name -cmatch '^[0-9]{3}-[a-z0-9-]+(?:\.(?:intent|result|plan))?\.json\z' } | Sort-Object Name | ForEach-Object { $_.Name })
-  $r = Get-ServiceFacts $ServiceName; $b = Get-ServiceFacts $BrokerName; $u = Get-ServiceFacts $UpgraderName; $c = Get-CompanionTaskFacts
+  $r = Get-ServiceFacts $ServiceName; $b = Get-ServiceFacts $BrokerName; $u = Get-ServiceFacts $UpgraderName; $c = Get-CompanionLaunchFacts $Root
   $todo = @()
   if ($u.exists -and $u.state -cne 'stopped') { $todo += 'stop-upgrader' }
   if ($r.state -cne 'stopped' -or (Test-ExecutorAlive $Root)) { $todo += 'stop-resident' }
   if ($b.state -cne 'stopped') { $todo += 'stop-broker' }
   if ($r.binPath -cne $gen.record.residentBinPath -or $b.binPath -cne $gen.record.brokerBinPath) { $todo += 'switch-scm' }
-  if (-not $c.exists -or $c.arguments -cne $gen.record.companionTaskArguments) { $todo += 'register-companion-task' }
+  if ($c.arguments -cne $gen.record.companionTaskArguments) { $todo += 'write-companion-launch' }
   $srcSha = if ($g -eq $plan.toGeneration) { $plan.target.ciSourceManifestSha256 } else { $plan.current.ciSourceManifestSha256 }
   if ((Test-ContentAcl (Join-Path $Root ('resident\' + $gen.resident.residentManifestSha256))) -cne 'ok' -or (Test-ContentAcl (Join-Path $Root ('source\' + $srcSha))) -cne 'ok') { $todo += 'repair-content-acl' }
   $view = [ordered]@{ mode = $(if ($apply) { 'apply' } else { 'dry-run' }); planSha256 = (Sha256Bytes $planBytes); currentGeneration = $g; lastJournalEntry = $(if ($journal.Count) { $journal[-1] } else { $null })
@@ -729,7 +833,7 @@ function Invoke-Recover([string]$opId, [bool]$apply) {
   $null = Invoke-StopServices
   if ($todo -ccontains 'repair-content-acl') { $null = Repair-GenerationContentAcl $Root $plan $gen }
   if ($todo -ccontains 'switch-scm') { $null = Invoke-SwitchScm $plan $g }
-  if ($todo -ccontains 'register-companion-task') { $null = Invoke-RegisterCompanionTask $plan $g }
+  if ($todo -ccontains 'write-companion-launch') { $null = Invoke-WriteCompanionLaunch $plan $g }
   $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
   $note = [ordered]@{ contract = 'clued.independent-ci.upgrade-owner-recover/1'; opId = $opId; planSha256 = $view.planSha256; generation = $g; did = $todo; by = $me.User.Value; at = [DateTimeOffset]::UtcNow.ToString('o') }
   Write-New (Join-Path $dir ('recover-' + $stamp + '.json')) ((New-Object Text.UTF8Encoding($false)).GetBytes(($note | ConvertTo-Json -Compress)))
@@ -761,14 +865,14 @@ try {
     if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-18') { throw 'UPGRADE_APPLY_SYSTEM_REQUIRED' }
     if (-not $Action -or -not $OpId -or -not $PlanSha256) { throw 'UPGRADE_APPLY_ARGUMENTS_REQUIRED' }
     if ($Apply -or ($ExpectPausedSha256 -and $Action -cne 'Verify')) { throw 'UPGRADE_APPLY_ARGUMENTS_REFUSED' }
-    $needsGeneration = @('SwitchScm', 'RegisterCompanionTask', 'Verify') -ccontains $Action
+    $needsGeneration = @('SwitchScm', 'WriteCompanionLaunch', 'Verify') -ccontains $Action
     if ($needsGeneration -ne [bool]$Generation) { throw 'UPGRADE_APPLY_GENERATION_REFUSED' }
     $plan = Read-UpgradePlan $Root $OpId $PlanSha256
     $detail = if ($Action -ceq 'ReadScm') { Invoke-ReadScm $plan }
       elseif ($Action -ceq 'Compile') { Invoke-Compile $plan }
       elseif ($Action -ceq 'StopServices') { Invoke-StopServices }
       elseif ($Action -ceq 'SwitchScm') { Invoke-SwitchScm $plan $Generation }
-      elseif ($Action -ceq 'RegisterCompanionTask') { Invoke-RegisterCompanionTask $plan $Generation }
+      elseif ($Action -ceq 'WriteCompanionLaunch') { Invoke-WriteCompanionLaunch $plan $Generation }
       elseif ($Action -ceq 'RestartCompanion') { Invoke-RestartCompanion }
       elseif ($Action -ceq 'StartServices') { Invoke-StartServices }
       else { Invoke-Verify $plan $Generation $ExpectPausedSha256 }

@@ -31,13 +31,28 @@
   batch must still get past the place that failed. A breaker that is not open refuses the request (BREAKER_NOT_OPEN), so a late or
   repeated request changes nothing.
 
+  M5 (ADR 0022 §4.4), the companion's log-on; elevated, the Owner's own account only, one at a time:
+    -CompanionHeadless     switch the companion task to the password logon (the reinstall's last step, or to do it again). A read-only
+                           preflight first; then an admin-only pending marker (install\companion-headless-pending.json); then
+                           bin\CluedCompanionTaskRegistrar.exe shows the Windows credential box on the SECURE desktop (the password goes
+                           from there to the Task Scheduler and nowhere else: never into this script); then the task is run and the
+                           elevated side checks for up to 8 minutes the real tokens of the supervisor and the companion (not elevated,
+                           Administrators deny-only, session 0, the launch file's images), a heartbeat and a Linux fact written since.
+                           Passed: the marker goes. Not passed (or cut off: a marker older than 15 minutes is rolled back by the next
+                           run of this script or of verify-resident.ps1): back to the interactive token, no password needed,
+                           COMPANION_HEADLESS_QUALIFICATION_FAILED with the check that failed.
+    -CompanionCredential   the same, after the Owner changed the Windows password (only the stored password changes).
+    -CompanionInteractive  back to the interactive token by hand (the stored password is deleted with the old definition).
+  A notification never asks for the password: type it only into the box on the secure desktop, after you started this yourself.
+
   Residual, unchanged from today: any elevated .NET process of the Owner (including this one and the
   per-batch UAC launch it replaces) inherits the Owner's environment, e.g. COR_ENABLE_PROFILING;
   DESIGN.md §14 R10.
 #>
 [CmdletBinding()]
 param([ValidateSet('Rearm', 'Resume', 'Abort', 'ReleaseBreaker')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
-  [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256)
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256,
+  [switch]$CompanionHeadless, [switch]$CompanionCredential, [switch]$CompanionInteractive)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory
@@ -47,6 +62,27 @@ $installed = Get-Content -LiteralPath (Join-Path $Root 'install\install-receipt.
 if ($installed.residentManifestSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevated = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# M5: the companion's log-on (ADR 0022 §4.4). The functions are the installed copy's companion-headless.ps1, next to this one.
+$companionModes = @(@($CompanionHeadless, 'headless'), @($CompanionCredential, 'credential'), @($CompanionInteractive, 'interactive') | Where-Object { $_[0] })
+if ($companionModes.Count -gt 0) {
+  if ($companionModes.Count -ne 1 -or $Request) { throw 'ONE_COMPANION_MODE_ONLY' }
+  if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
+  . (Join-Path $PSScriptRoot 'companion-headless.ps1')
+  $node = (Get-Content -LiteralPath (Join-Path $Root 'record\acceptance.json') -Raw | ConvertFrom-Json).node
+  if ([string]$node.ownerSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\z' -or $me.User.Value -cne [string]$node.ownerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  $mode = $companionModes[0][1]
+  $out = if ($mode -ceq 'interactive') {
+    $r = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)
+    try { Start-CompanionTask } catch { }
+    [ordered]@{ status = 'COMPANION_INTERACTIVE'; task = (Get-CompanionTaskFacts $Root ([string]$node.ownerSid)) }
+  } else {
+    $r = Invoke-CompanionHeadless $Root $node $mode
+    [ordered]@{ status = $(if ($r.qualified) { 'COMPANION_HEADLESS_QUALIFIED' } elseif ($r.failed -ceq 'PREFLIGHT') { 'COMPANION_HEADLESS_PREFLIGHT_REFUSED' } elseif ($r.fellBack) { 'COMPANION_HEADLESS_FELL_BACK' } else { 'COMPANION_HEADLESS_FAILED' }); result = $r }
+  }
+  $out | ConvertTo-Json -Depth 6
+  exit $(if (@('COMPANION_HEADLESS_QUALIFIED', 'COMPANION_INTERACTIVE') -ccontains $out.status) { 0 } else { 1 })
+}
 
 if (-not $Request) {
   if ($elevated) { throw 'INSPECT_RUNS_NOT_ELEVATED' }

@@ -43,7 +43,10 @@ $codeOf = { param([string]$t) (@($t -split "`r?`n" | Where-Object { $_ -notmatch
 
 # 2. One text for what install and the upgrader share (a rollback is executed by the frozen copy, so both must build the same thing).
 foreach ($name in @('Sha256Bytes', 'Sha256Text', 'Sha256File', 'Invoke-Sc', 'Get-DaclPart', 'Assert-ServiceBinary', 'Write-New', 'Assert-NodeProfile', 'ConvertTo-NodeProfileCanonical',
-    'Get-CompanionAction', 'Get-ResidentBinPath', 'Get-BrokerBinPath', 'Get-BrokerConfigJson', 'Invoke-CompileRecipe', 'Register-CompanionTask', 'Get-CompanionTaskSddl')) {
+    'Get-ResidentBinPath', 'Get-BrokerBinPath', 'Get-BrokerConfigJson', 'Invoke-CompileRecipe',
+    # M5 (ADR 0022 §4.4): the companion's launch file, task protection and notifier task, one text in both.
+    'Get-SupervisorAction', 'Get-CompanionTaskSddl', 'Get-CompanionLaunchArguments', 'Get-CompanionGhDirs', 'Get-CompanionPathDirs', 'Get-CompanionLaunchJson',
+    'Write-CompanionLaunch', 'Get-NotifierAction', 'Register-NotifierTask', 'Get-CompanionTaskFacts')) {
   Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['upgrade-apply.ps1:' + $name]) ('shared-with-install:' + $name)
 }
 foreach ($name in @('Root', 'OriginalBinary', 'Sc', 'Csc', 'GenericHelper', 'CompanionJobHost', 'SourceV2Windows', 'NodeProfileKeys')) {
@@ -68,6 +71,18 @@ $raw = @([regex]::Matches($apply, '& \$Sc (?!@scArgs)([a-z]+)') | ForEach-Object
 Yes ((@($raw | Where-Object { @('qc', 'queryex') -cnotcontains $_ }).Count) -eq 0) 'apply-every-mutating-sc-call-is-exit-checked'
 Yes ($apply.Contains("@('config', `$pair[0], 'binPath=', `$pair[1].Replace('`"', '\`"'))") -and $apply.Contains('Assert-ServiceBinary $pair[0] $pair[1]')) 'apply-switch-writes-then-reads-back'
 Yes ($apply.Contains("[IO.Path]::GetFullPath(`$PSCommandPath) -match `$InstalledCopy") -and $apply.Contains("'S-1-5-18'")) 'apply-installed-copy-and-system-only'
+# M5 (ADR 0022 §4.0, §4.4; T5): the frozen channel never registers the companion task (it may hold the Owner's password):
+# no Register-Companion* function, no RegisterTaskDefinition naming it, no -Action that does; it writes the launch file, and only the
+# notifier task (no password) is registered again. Upgrade, rollback and Recover go through Invoke-WriteCompanionLaunch.
+Yes (-not $applyCode.Contains("RegisterTaskDefinition('CluedCIResidentCompanion'") -and -not $applyCode.Contains('Register-CompanionTask') -and -not $applyCode.Contains('RegisterCompanionTask')) 'apply-never-registers-the-companion-task'
+Yes (@([regex]::Matches($applyCode, 'RegisterTaskDefinition\(')).Count -eq 1 -and $applyCode.Contains("RegisterTaskDefinition('CluedCIResidentNotifier'")) 'apply-registers-only-the-notifier-task'
+Yes ($apply.Contains("[ValidateSet('ReadScm', 'Compile', 'StopServices', 'SwitchScm', 'WriteCompanionLaunch', 'RestartCompanion', 'StartServices', 'Verify')]")) 'apply-action-write-companion-launch'
+$recoverText = $functions['upgrade-apply.ps1:Invoke-Recover']
+Yes ($recoverText.Contains("'write-companion-launch'") -and $recoverText.Contains('Invoke-WriteCompanionLaunch $plan $g') -and -not $recoverText.Contains('register-companion-task')) 'recover-writes-the-launch-file-only'
+$restartText = $functions['upgrade-apply.ps1:Invoke-RestartCompanion']
+Yes ($restartText.Contains('AddSeconds(90)') -and -not $restartText.Contains('$task.Stop(') -and $restartText.Contains("if (`$running.Count -eq 0) { try { `$null = `$task.Run(`$null)")) 'restart-ends-the-child-not-the-task-waits-90-s'
+$writeText = $functions['upgrade-apply.ps1:Invoke-WriteCompanionLaunch']
+Yes ($writeText.Contains("'COMPANION_TASK_NEEDS_OWNER'") -and $writeText.Contains('Write-CompanionLaunch $Root $json') -and $writeText.Contains('Register-NotifierTask')) 'write-launch-reports-a-foreign-task-never-fixes-it'
 $recover = $functions['upgrade-apply.ps1:Invoke-Recover']
 Yes ($recover.IndexOf('if (-not $apply) { return $view }') -gt 0 -and $recover.IndexOf('if (-not $apply) { return $view }') -lt $recover.IndexOf('$script:Touched = $true') -and $recover.Contains('ELEVATED_OWNER_TOKEN_REQUIRED')) 'recover-is-a-dry-run-unless-apply'
 Yes ($recover.Contains('startsAnything = $false') -and -not $recover.Contains('Invoke-StartServices') -and -not $recover.Contains("'start'")) 'recover-starts-nothing'
@@ -80,8 +95,8 @@ Yes ($startFn.IndexOf("@('start', `$BrokerName)") -lt $startFn.IndexOf("@('start
 # 4. Pure: the command lines, the plan, the generation records (functions of upgrade-apply.ps1).
 . (UseVar 'upgrade-apply.ps1' @('Root', 'OriginalBinary', 'Sc', 'GenericHelper', 'CompanionJobHost', 'SourceV2Windows', 'SourceV2Files', 'PlanContract', 'CompileContract', 'PackageSlots', 'GeneratedSlots', 'ReceiptSlot', 'NodeProfileKeys'))
 $ProdRoot = $Root
-. (Use 'upgrade-apply.ps1' @('Sha256Bytes', 'Sha256Text', 'Sha256File', 'Get-DaclPart', 'Write-New', 'Assert-NodeProfile', 'ConvertTo-NodeProfileCanonical', 'Get-CompanionAction', 'Get-ResidentBinPath', 'Get-BrokerBinPath',
-  'Get-BrokerConfigJson', 'Invoke-CompileRecipe', 'Get-Field', 'Test-Int', 'Test-Hex', 'Test-PackagePath', 'ConvertFrom-ResidentBinPath', 'ConvertFrom-BrokerBinPath', 'ConvertFrom-CompanionArguments', 'ConvertFrom-ScState', 'ConvertFrom-ScBinPath',
+. (Use 'upgrade-apply.ps1' @('Sha256Bytes', 'Sha256Text', 'Sha256File', 'Get-DaclPart', 'Write-New', 'Assert-NodeProfile', 'ConvertTo-NodeProfileCanonical', 'Get-ResidentBinPath', 'Get-BrokerBinPath',
+  'Get-BrokerConfigJson', 'Invoke-CompileRecipe', 'Get-CompanionLaunchArguments', 'Get-Field', 'Test-Int', 'Test-Hex', 'Test-PackagePath', 'ConvertFrom-ResidentBinPath', 'ConvertFrom-BrokerBinPath', 'ConvertFrom-CompanionArguments', 'ConvertFrom-ScState', 'ConvertFrom-ScBinPath',
   'Test-CompanionCommandLine', 'Read-SmallFile', 'ConvertFrom-StrictJson', 'Assert-NoLinkChain', 'Assert-UpgradePlan', 'Read-UpgradePlan', 'Find-PlanSlot', 'Read-StagedManifest', 'Find-CompileInput', 'Read-CompileRecord', 'ConvertTo-GenerationView', 'Read-GenerationRecord', 'Get-PlanGeneration', 'Read-CurrentRecord',
   'Assert-GenerationInPlace', 'Get-Match', 'Get-FailureCode'))
 $h = { param([string]$c) $c * 64 }
@@ -97,13 +112,15 @@ Yes ($bb -ceq ('"C:\ProgramData\CluedIndependentCI\resident\bin\SwapBroker.exe" 
 $pb = ConvertFrom-BrokerBinPath $ProdRoot $bb
 Yes ($null -ne $pb -and $pb.brokerConfigSha256 -ceq (& $h 'e') -and $pb.nodeProfileSha256 -ceq (& $h 'f')) 'broker-binpath-round-trip'
 foreach ($bad in @(($bb + ' x'), $bb.Replace((& $h 'f'), ''), $bb.Replace('SwapBroker', 'Swap'), ($bb -replace ' [0-9a-f]{64} ', ' '))) { Yes ($null -eq (ConvertFrom-BrokerBinPath $ProdRoot $bad)) 'broker-binpath-refused' }
-$ca = Get-CompanionAction $ProdRoot (& $h 'c') (& $h '9')
+$ca = [ordered]@{ path = (Join-Path $ProdRoot 'runtime\node.exe'); arguments = (Get-CompanionLaunchArguments $ProdRoot (& $h 'c') (& $h '9')) }
+Yes ($ca.arguments -ceq ('"C:\ProgramData\CluedIndependentCI\resident\resident\' + (& $h 'c') + '\src\companion-main.mjs" --root "C:\ProgramData\CluedIndependentCI\resident" --config-sha256 ' + (& $h '9'))) 'companion-launch-arguments-formula'
 $pc = ConvertFrom-CompanionArguments $ProdRoot $ca.arguments
 Yes ($null -ne $pc -and $pc.residentManifestSha256 -ceq (& $h 'c') -and $pc.companionConfigSha256 -ceq (& $h '9')) 'companion-arguments-round-trip'
-foreach ($bad in @(($ca.arguments + ' --extra'), $ca.arguments.Replace('--headless ', ''), $ca.arguments.Replace('companion-main', 'service-main'), $ca.arguments.Replace('--root "C:\ProgramData\CluedIndependentCI\resident"', '--root "C:\x"'))) {
+foreach ($bad in @(($ca.arguments + ' --extra'), ('--headless ' + $ca.arguments), $ca.arguments.Replace('companion-main', 'service-main'), $ca.arguments.Replace('--root "C:\ProgramData\CluedIndependentCI\resident"', '--root "C:\x"'))) {
   Yes ($null -eq (ConvertFrom-CompanionArguments $ProdRoot $bad)) 'companion-arguments-refused'
 }
-Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments.Substring($ca.arguments.IndexOf('" "') + 2)) $ProdRoot) 'companion-process-command-line'
+# The supervisor's command line (CompanionSupervisor.cs CommandLine): "<node>" + the launch arguments.
+Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments) $ProdRoot) 'companion-process-command-line'
 Yes (-not (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" "' + $ProdRoot + '\resident\' + (& $h 'c') + '\src\service-main.mjs" --root "' + $ProdRoot + '" --policy-sha256 ' + (& $h 'a')) $ProdRoot)) 'resident-process-is-not-the-companion'
 # Task 42fe5ae4 (op 8e3b3e1b): the node child conhost --headless really starts has no quotes. This is TURING's companion as
 # Win32_Process.CommandLine showed it on 2026-11-01 (PID 29028, parent conhost 44520 running the task's quoted arguments).
@@ -115,7 +132,7 @@ foreach ($desk in @('C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe
     'C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe C:\ProgramData\CluedIndependentCI\resident\resident\716587c3dfd689e6a6d517b2bbddef1c4033ec2d79f1689b7c5de96f8fdd1142\src\companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 b14a0fbe58bd503008a5de08c17a24a31dd899c5fc8fd3ca9f570a44efb69ba2')) {
   Yes (Test-CompanionCommandLine $desk $ProdRoot) 'companion-real-desk-command-line'
 }
-Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments.Substring($ca.arguments.IndexOf('" "') + 2).Replace('"', '')) $ProdRoot) 'companion-mixed-quoting'
+Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments.Replace('"', '')) $ProdRoot) 'companion-mixed-quoting'
 foreach ($bad in @($real.Replace('companion-main', 'service-main'), $real.Replace('--root C:\ProgramData\CluedIndependentCI\resident', '--root C:\ProgramData\CluedIndependentCI'),
     ($real + ' --extra'), ('x ' + $real), $real.Replace('runtime\node.exe', 'runtime\other.exe'), $real.Replace(' --config-sha256 ', ' --config-sha256 0'),
     $real.Replace('C:\ProgramData\CluedIndependentCI\resident\resident\', 'C:\ProgramData\CluedIndependentCI\residentX\resident\'),
@@ -153,7 +170,7 @@ $null = Put ('upgrade\staged\' + $pkg + '\package-manifest.json') $stagedManifes
 $null = Put ('upgrade\staged\' + $pkg + '\resident\windows\CompanionJobHost.cs') $jobCs
 function Write-GenRecord([int]$g, [string]$pk, [string]$policy, [string]$nodeSha, [string]$res, [string]$entry, [string]$brokerCfg, [string]$compCfg, [hashtable]$override = @{}) {
   $rec = [ordered]@{ generation = $g; packageManifestSha256 = $pk; residentBinPath = (Get-ResidentBinPath $Root $policy $nodeSha $res $entry); brokerBinPath = (Get-BrokerBinPath $Root $brokerCfg $profileSha)
-    companionTaskArguments = (Get-CompanionAction $Root $res $compCfg).arguments; filesSha256 = (& $h '7') }
+    companionTaskArguments = (Get-CompanionLaunchArguments $Root $res $compCfg); filesSha256 = (& $h '7') }
   foreach ($k in $override.Keys) { $rec[$k] = $override[$k] }
   $null = Put ('generations\g' + $g + '\generation.json') ($rec | ConvertTo-Json -Compress)
 }
@@ -272,7 +289,7 @@ Write-GenRecord 2 $pkg (& $h '5') (& $h '6') $r2 (& $h '8') (& $h 'b') (& $h 'a'
 Yes (Test-Refused { Get-PlanGeneration $plan 2 } 'GENERATION_RECORD_NOT_THE_PLAN') 'generation-to-record-disagrees-refused'
 Write-GenRecord 2 (& $h 'f') (& $h '5') (& $h '6') $r2 (& $h '8') (& $h '9') (& $h 'a')
 Yes (Test-Refused { Get-PlanGeneration $plan 2 } 'GENERATION_RECORD_NOT_THE_PLAN') 'generation-to-record-other-package-refused'
-foreach ($o in @(@{ generation = 7 }, @{ residentBinPath = ($rb) }, @{ brokerBinPath = (Get-BrokerBinPath $Root (& $h '9') (& $h '0')) }, @{ companionTaskArguments = (Get-CompanionAction $Root $r1 (& $h 'a')).arguments }, @{ filesSha256 = 'x' })) {
+foreach ($o in @(@{ generation = 7 }, @{ residentBinPath = ($rb) }, @{ brokerBinPath = (Get-BrokerBinPath $Root (& $h '9') (& $h '0')) }, @{ companionTaskArguments = (Get-CompanionLaunchArguments $Root $r1 (& $h 'a')) }, @{ filesSha256 = 'x' })) {
   Write-GenRecord 2 $pkg (& $h '5') (& $h '6') $r2 (& $h '8') (& $h '9') (& $h 'a') $o
   Yes (Test-Refused { Get-PlanGeneration $plan 2 } ('GENERATION_RECORD_REFUSED:' + @($o.Keys)[0])) ('generation-record-refused:' + @($o.Keys)[0])
 }
