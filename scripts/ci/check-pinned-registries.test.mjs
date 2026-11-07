@@ -109,6 +109,8 @@ test('changing a pinned file names the stale registries and the commands that fi
     assert.equal(r.status, 1); assert.match(r.stdout, /STALE\s+reconcile/);
     refreshReconcile(dir);
     py('update');
+    const gen = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stdout + gen.stderr);
     r = cli(dir, '--base', 'HEAD');
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
