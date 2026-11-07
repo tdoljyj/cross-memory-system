@@ -49,7 +49,7 @@ async function world(t, { quick = false } = {}) {
 
 // The engine: stage 10 is the real Source v2 runTrain; stage 1 of a batch binds the PR's claim on Native (verify with pr_ref, as the
 // admission stage does) and publishes kooyumi-work-admission; stage 8 of a front batch is the real control publisher.
-function engineFor(e, at, script = {}) {
+function engineFor(e, at, script = {}, { frontStageMs = 0 } = {}) {
   const subjects = new Map(), stages = [];
   let run = 0;
   const engine = fakeEngine(script);
@@ -74,8 +74,10 @@ function engineFor(e, at, script = {}) {
   };
   engine.runStage = async (batch, stage) => {
     const subject = subjects.get(batch.key);
-    stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha ?? null, stage: stage.number });
+    stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha ?? null, stage: stage.number, at: at.clock() });
     engine.calls.push(['stage', stage.number]);
+    // A slow front batch (generation 22, PR #1029): its stages 2-7 take frontStageMs each on the simulated clock.
+    if (subject.testSha && stage.number >= 2 && stage.number <= 7) at.advance(frontStageMs);
     const ok = { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF };
     if (stage.number === 1) {
       const pr = e.gh.world.pulls.get(subject.pr);
@@ -157,9 +159,13 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
   // The PR's own run went only as far as binding the claim (stage 1), then the front batch (S) ran in full.
   const own = engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage);
   assert.deepEqual(own, [1], 'the binding run publishes stage 1 only');
-  const [bound] = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
-  assert.ok(bound, 'the binding run ends cleanly after stage 1');
+  // Defect a8910e41: it ends released after stage 1 (TRAIN_FRONT_BOUND), the head is not burned.
+  const [bound] = (await f.receipts.latest(['batch-unexecuted'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
+  assert.deepEqual([bound?.release, bound?.class], ['TRAIN_FRONT_BOUND', 'queue'], 'the binding run ends cleanly after stage 1');
+  assert.equal((await f.receipts.latest(['batch-terminal'], 50)).filter(r => r.value.body.failureCode === 'TRAIN_FRONT_CLAIM_BOUND').length, 0);
   assert.ok(engine.stages.some(s => s.pr === 910 && s.testSha === S && s.stage === 8));
+  // Generation 22: a proof with time to spare is not refreshed before stage 8 (no extra stage-10 run).
+  assert.equal((await f.receipts.latest(['train-front-proof-refresh'], 5)).length, 0);
   // The PR whose claim is not the queue head runs nothing before the take-over sweep.
   assert.deepEqual(engine.stages.filter(s => s.pr === 911), []);
   assert.equal(f.queue.row(911).state, 'QUEUED');
@@ -295,4 +301,86 @@ test('take-over front: a binding run restarted between its stage 1 and its end s
   assert.deepEqual([ended.code, ended.stageNumber, ended.windowsOnly], ['TRAIN_FRONT_CLAIM_BOUND', 1, true]);
   assert.equal(next.exec.trainUrgent, true, 'stage 10 is due at once to open the front');
   assert.equal(next.exec.frontBindKeys.has(key), false);
+});
+
+// Defect a8910e41 (#1028 / #1029): the binding run ended after its stage 1 as TRAIN_FRONT_CLAIM_BOUND, which the failure table burned
+// (clean-final, new-commit). When the front batch then did not get its merge slot, or the node went back to shadow, the PR's head never
+// ran again: a new commit was needed. The binding run is now released (NOT_EXECUTED, the head stays unburned) with a marker that holds
+// only for this duty: the same head is neither bound again nor run as an ordinary batch while the duty lasts.
+async function bound(t) {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(true), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const ended = async () => (await f.receipts.latest(['batch-terminal', 'batch-unexecuted'], 50)).map(r => r.value.body).find(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
+  for (let i = 0; i < 20 && !(await ended()); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(await ended(), `no binding run: stages ${JSON.stringify(engine.stages)}`);
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1]);
+  return { e, f, engine, ended };
+}
+
+test('defect a8910e41: after the binding run the node goes back to shadow: the same head runs all eight stages, no new commit', async t => {
+  const { f, ended } = await bound(t);
+  const { outcome } = await ended() ?? {};
+  assert.notEqual(outcome, 'FAILED_CLEAN', 'the binding run does not burn the head');
+  // train=shadow (a reinstall restarts the service on the same state); the PR is triggered again (the poller, or the Owner's probe)
+  const shadow = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } });
+  const engine = fakeEngine();
+  const g = await executorFixture(t, { policy: shadow, engine, root: f.root, now: f.clock() + 11 * MIN });
+  await g.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let r = null;
+  for (let i = 0; i < 5 && r?.state !== 'COMPLETED'; i++) { r = await g.exec.tick(); if (r.state !== 'COMPLETED') g.advance(MIN); }
+  assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
+  assert.deepEqual(engine.calls.filter(c => c[0] === 'stage' && c[1] !== 10).map(c => c[1]), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test('defect a8910e41: in the same duty the released head is never bound a second time nor run as an ordinary batch', async t => {
+  const { e, f, engine } = await bound(t);
+  // the claim comes unbound again (the front was not opened): stage 10 names the same PR and head as the binding run's subject again
+  e.native.holder = { ...e.native.holder, boundPr: null, pr: null };
+  for (let i = 0; i < 40; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1], 'one binding run of this head in this duty, no ordinary batch');
+  assert.equal((await f.receipts.latest(['train-front-bind'], 50)).length, 1);
+});
+
+// Generation 22 field defect (PR #1029): the strict front proof was written 08:19:59 (sweepFreshMs 15 minutes), the front batch started
+// 08:20:24 and its stage 7 ended 08:35:09; stage 8 then said TRAIN_SINGLE_GREEN_NOT_PROVEN (the proof had run out), the batch rested at
+// B, stage 10 refreshed the proof 08:35:40-08:38:17 and the stage-8 retry succeeded 08:39:37. Now, right before stage 8 of a front batch
+// whose proof has less than three minutes left (or none), stage 10 refreshes it first: the first stage-8 try gets the merge slot.
+test('gen 22 (PR #1029): a front batch whose stages 1-7 outlast the strict proof gets the merge-slot green at its first stage-8 try', async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at, {}, { frontStageMs: 3 * MIN });
+  const f = await executorFixture(t, { policy: policy(true), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 90 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let green = null;
+  for (let i = 0; i < 60 && !green; i++) {
+    await f.exec.tick();
+    green = slotGreen(e, H);
+    if (!green) f.advance(MIN);
+  }
+  const front = engine.stages.filter(s => s.pr === 910 && s.testSha === S);
+  assert.ok(front.length > 0, `no front batch: ${JSON.stringify(engine.stages)}`);
+  const s1 = front.find(s => s.stage === 1).at, s8 = front.filter(s => s.stage === 8);
+  assert.ok(s8.length > 0 && s8[0].at - s1 > 15 * MIN, `stages 1-7 took ${Math.round(((s8[0]?.at ?? f.clock()) - s1) / MIN)} minutes`);
+  assert.deepEqual((await f.receipts.latest(['stage8-not-ready'], 20)).map(r => r.value.body.failureCode), [], 'no stage-8 try ran into an expired proof');
+  assert.equal(s8.length, 1, 'the first stage-8 try is the one');
+  assert.equal((await f.receipts.latest(['train-front-proof-refresh'], 5)).length, 1, 'one stage-10 refresh right before it');
+  assert.ok(green, `no kooyumi-merge-slot success; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}`);
+  t.diagnostic(`front batch: stage 1 to stage 8 ${Math.round((s8[0].at - s1) / 1000)} s (simulated); merge-slot green ${Math.round((f.clock() - arrival) / 1000)} s after the PR arrived`);
 });
