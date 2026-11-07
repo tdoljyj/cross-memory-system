@@ -49,7 +49,9 @@ async function world(t, { quick = false } = {}) {
 
 // The engine: stage 10 is the real Source v2 runTrain; stage 1 of a batch binds the PR's claim on Native (verify with pr_ref, as the
 // admission stage does) and publishes kooyumi-work-admission; stage 8 of a front batch is the real control publisher.
-function engineFor(e, at, script = {}, { frontStageMs = 0 } = {}) {
+// queueFacts (DESIGN §62.6): stage 1's outcome carries Native's merge-queue entry of the PR's claim (head when it is Native's holder), as
+// the Source's admission publisher reports it; false: no outcome (Native not reached, an older Source).
+function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true } = {}) {
   const subjects = new Map(), stages = [];
   let run = 0;
   const engine = fakeEngine(script);
@@ -89,7 +91,10 @@ function engineFor(e, at, script = {}, { frontStageMs = 0 } = {}) {
       // Native binds the claim the PR names to the PR (migration 20261003200000: only the ci-admission verify with pr_ref does).
       if (pr.claim && e.native.holder?.claimId === pr.claim) e.native.holder = { ...e.native.holder, boundPr: `${REPO}#${subject.pr}`, pr: subject.pr };
       e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
-      return ok;
+      if (!queueFacts) return ok;
+      const head = Boolean(pr.claim) && e.native.holder?.claimId === pr.claim;
+      return { ...ok, outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
+        scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: head ? { entered: true, state: 'head', position: 1 } : { entered: true, state: 'waiting', position: 2 } } } };
     }
     if (stage.number !== 8) return ok;
     if (!subject.testSha) return { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
@@ -202,10 +207,12 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
 // batch (no S): its stage 1 binds the claim, stages 1-7 pass and its stage 8 rests at B (TRAIN_SINGLE_GREEN_NOT_PROVEN: in train on only a
 // front job can get the merge slot). Before the fix that row kept the PR busy: stage 10 counted and touched the front batch, the executor
 // refused it (TRAIN_FRONT_PR_BUSY), stage 10 then said TRAIN_FRONT_BATCH_RUNNING, and no merge-slot green came within the hour.
-async function steadyState(t, { relay = false } = {}) {
+// queueFacts false: stage 1 reports no merge-queue entry, so the ordinary batch does not give way after stage 1 (DESIGN §62.6) and the
+// take-over at a parking point is what lets the front batch start.
+async function steadyState(t, { relay = false, queueFacts = true, pr = 910, claim = CLAIM, head = H } = {}) {
   const e = await world(t, { quick: true });
   const at = { t };
-  const engine = engineFor(e, at, relay ? { relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role, H)) }) } : {});
+  const engine = engineFor(e, at, relay ? { relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role, H)) }) } : {}, { queueFacts });
   const f = await executorFixture(t, { policy: policy(true, relay ? { relay: RELAY_ON } : {}), engine, now: NOW,
     ...(relay ? { companion: fakeCompanion({ hint: () => null }) } : {}) });
   Object.assign(at, { clock: f.clock, advance: f.advance });
@@ -216,15 +223,15 @@ async function steadyState(t, { relay = false } = {}) {
   const arrival = f.clock();
   e.native.holders = undefined;
   e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
-  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
-  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  e.gh.pull(pr, { head, mergeCommitSha: S, updated: iso(arrival), body: body(claim), claim });
+  await f.drop(triggerBytes({ pr, headSha: head, baseSha: T }));
   const refused = async () => (await f.receipts.latest(['train-front-refused'], 50)).map(r => r.value.body.failureCode);
   const terminals = async () => (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body.failureCode);
   return { e, f, engine, arrival, refused, terminals };
 }
 
-test('steady state (task ad19ef19): a queue-head PR pushed after the take-over gets the merge-slot green within 30 minutes', async t => {
-  const { e, f, engine, arrival, refused, terminals } = await steadyState(t);
+test('steady state (task ad19ef19): a queue-head PR pushed after the take-over gets the merge-slot green within 30 minutes (no queue fact)', async t => {
+  const { e, f, engine, arrival, refused, terminals } = await steadyState(t, { queueFacts: false });
   let green = null;
   for (let i = 0; i < 60 && !green; i++) {
     await f.exec.tick();
@@ -248,13 +255,86 @@ test('steady state (task ad19ef19): a queue-head PR pushed after the take-over g
 // The same at parking point A: Stage R on and no hosted signal, so the ordinary batch rests at A right after its stage 1 bound the claim.
 // It gives way the same way and the front batch starts. (With relay on, a front batch then waits for RELAY_PROVIDER_TRANSFER_REQUIRED by
 // the Owner's once-per-head rule 41ab823a, unrelated to this fix; the shipped policies keep relay off, where A never happens.)
-test('steady state (task ad19ef19): an ordinary batch resting at parking point A gives way to the front batch of its head', async t => {
-  const { f, engine, refused, terminals } = await steadyState(t, { relay: true });
+test('steady state (task ad19ef19): an ordinary batch resting at parking point A gives way to the front batch of its head (no queue fact)', async t => {
+  const { f, engine, refused, terminals } = await steadyState(t, { relay: true, queueFacts: false });
   for (let i = 0; i < 30 && !engine.stages.some(s => s.testSha === S); i++) { await f.exec.tick(); f.advance(MIN); }
   assert.deepEqual(await refused(), [], 'the front batch is never refused as busy');
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1], 'the ordinary batch ran stage 1 only');
   assert.ok(engine.stages.some(s => s.pr === 910 && s.testSha === S && s.stage === 1), `front batch not started: ${JSON.stringify(engine.stages)}`);
   assert.ok((await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), JSON.stringify(await terminals()));
+});
+
+// DESIGN §62.6 (the residue of §62.5): in steady state the queue head's ordinary batch ran stages 1-7 (13-15 minutes in the field), then
+// stage 10 opened the front batch (H, S) and the ordinary batch's work was thrown away. Now it gives way right after its stage 1 bound the
+// claim: released (TRAIN_FRONT_BOUND), stage 10 at once (OPEN_FRONT_BATCH), the front batch runs stages 1-8 and gets the merge slot.
+test('steady state (DESIGN §62.6): the queue head\'s ordinary batch gives way after stage 1, the front batch gets the merge-slot green', async t => {
+  const { e, f, engine, arrival, refused, terminals } = await steadyState(t);
+  const before = engine.trainRuns.length;
+  let green = null;
+  for (let i = 0; i < 60 && !green; i++) {
+    await f.exec.tick();
+    green = slotGreen(e, H);
+    if (!green) f.advance(MIN);
+  }
+  const own = engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage);
+  assert.deepEqual(own, [1], `the ordinary batch runs stage 1 only, never stage 2: ${JSON.stringify(engine.stages)}`);
+  assert.ok(engine.trainRuns.slice(before).some(r => r.decision === 'OPEN_FRONT_BATCH'), JSON.stringify(engine.trainRuns.slice(before)));
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(green, `no kooyumi-merge-slot success; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}`);
+  assert.equal(engine.published.status, 'SETTLED');
+  t.diagnostic(`steady state with the yield: merge-slot green ${Math.round((f.clock() - arrival) / 1000)} s (simulated) after the PR arrived`);
+  // A clean, explicit end: released after stage 1 (not burned), recorded; no busy refusal, no take-over at a parking point.
+  const [bound] = (await f.receipts.latest(['batch-unexecuted'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
+  assert.deepEqual([bound?.release, bound?.class], ['TRAIN_FRONT_BOUND', 'queue']);
+  const yields = (await f.receipts.latest(['train-front-yield'], 5)).map(r => r.value.body);
+  assert.deepEqual(yields.map(y => [y.pr, y.headSha, y.mergeQueue?.state]), [[910, H, 'head']]);
+  assert.deepEqual(await refused(), []);
+  assert.ok(!(await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), JSON.stringify(await terminals()));
+});
+
+// Guard: a PR whose claim is not first in the merge queue runs its ordinary batch through stages 1-7 (and stage 8) as before.
+test('steady state (DESIGN §62.6): an ordinary batch whose claim is not the queue head runs on past stage 1', async t => {
+  const { f, engine } = await steadyState(t, { pr: 911, claim: OTHER_CLAIM, head: sha(0x7777) });
+  for (let i = 0; i < 20 && !engine.stages.some(s => s.pr === 911 && s.stage === 8); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.deepEqual(engine.stages.filter(s => s.pr === 911 && s.testSha === null).map(s => s.stage).slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal((await f.receipts.latest(['train-front-yield'], 5)).length, 0);
+  assert.equal((await f.receipts.latest(['batch-unexecuted'], 50)).filter(r => r.value.body.failureCode === 'TRAIN_FRONT_CLAIM_BOUND').length, 0);
+});
+
+// Guard: train shadow and off never give way, even when stage 1 says the claim is the queue head; nor does train on without strict, before
+// the take-over is done (the binding run's business), for attempt 2 or a front row (S), or on a queue fact that is not head.
+test('DESIGN §62.6: no yield in shadow or off, nor in on without strict, before the take-over, for attempt 2, S, or no head fact', async t => {
+  const headOutcome = { ok: true, factsSha256: 'd'.repeat(64), outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
+    scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: { entered: true, state: 'head', position: 1 } } } };
+  for (const enabled of ['shadow', 'off']) {
+    const engine = fakeEngine({ stages: { 1: headOutcome } });
+    const g = await executorFixture(t, { policy: rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled, nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } }),
+      engine, now: NOW });
+    await g.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+    let r = null;
+    for (let i = 0; i < 5 && r?.state !== 'COMPLETED'; i++) { r = await g.exec.tick(); if (r.state !== 'COMPLETED') g.advance(MIN); }
+    assert.equal(r.state, 'COMPLETED', `${enabled}: ${JSON.stringify(r)}`);
+    assert.deepEqual(engine.calls.filter(c => c[0] === 'stage' && c[1] !== 10).map(c => c[1]), [1, 2, 3, 4, 5, 6, 7, 8], enabled);
+    assert.equal(g.exec.trainFrontYield({ pr: 910, headSha: H, baseSha: T, attempt: 1 }, headOutcome), false, enabled);
+  }
+  const f = await executorFixture(t, { policy: policy(), now: NOW });
+  await f.exec.trainRecover();
+  const subject = { pr: 910, headSha: H, baseSha: T, attempt: 1 };
+  f.exec.trainTakeoverDone = false;
+  f.exec.trainLast = Object.freeze({ ...(f.exec.trainLast ?? {}), mode: 'on', onDuty: true, strict: true, wouldDo: 'NO_FRONT' });
+  assert.equal(f.exec.trainFrontYield(subject, headOutcome), false, 'take-over not done');
+  f.exec.trainTakeoverDone = true;
+  assert.equal(f.exec.trainFrontYield(subject, headOutcome), true, 'steady state, strict, head');
+  assert.equal(f.exec.trainFrontYield({ ...subject, attempt: 2 }, headOutcome), false, 'attempt 2');
+  assert.equal(f.exec.trainFrontYield({ ...subject, testSha: S }, headOutcome), false, 'a front row');
+  const fact = mergeQueue => ({ ...headOutcome, outcome: { ...headOutcome.outcome, scheduling: { ...headOutcome.outcome.scheduling, mergeQueue } } });
+  for (const q of [{ entered: true, state: 'waiting', position: 2 }, { entered: true, state: 'head', position: 2 }, { entered: false, state: null, position: null }, null])
+    assert.equal(f.exec.trainFrontYield(subject, fact(q)), false, JSON.stringify(q));
+  assert.equal(f.exec.trainFrontYield(subject, { ok: true, factsSha256: 'd'.repeat(64) }), false, 'no outcome');
+  f.exec.trainLast = Object.freeze({ ...f.exec.trainLast, strict: false });
+  assert.equal(f.exec.trainFrontYield(subject, headOutcome), false, 'strict not true');
+  f.exec.trainLast = Object.freeze({ ...f.exec.trainLast, strict: true, mode: 'shadow' });
+  assert.equal(f.exec.trainFrontYield(subject, headOutcome), false, 'the newest run not on');
 });
 
 test('take-over front: no binding run without strict, for a PR that names another claim, or for two PRs naming the head claim', async t => {
@@ -410,4 +490,100 @@ test('gen 22 (PR #1029): a front batch whose stages 1-7 outlast the strict proof
   assert.equal((await f.receipts.latest(['train-front-proof-refresh'], 5)).length, 1, 'one stage-10 refresh right before it');
   assert.ok(green, `no kooyumi-merge-slot success; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}`);
   t.diagnostic(`front batch: stage 1 to stage 8 ${Math.round((s8[0].at - s1) / 1000)} s (simulated); merge-slot green ${Math.round((f.clock() - arrival) / 1000)} s after the PR arrived`);
+});
+
+// Task 60f83aa3 (#1031): the last stage 10 ran at 09:07 and said NO_FRONT (empty queue); the PR arrived at 09:14 and waited for the
+// 10-minute cadence. A new unbound head after NO_FRONT is asked about at once (once per head), the same as after FRONT_NOT_BOUND.
+test('take-over front (task 60f83aa3): a PR arriving after a NO_FRONT run gets its binding stage 10 within a minute, once per head', async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  await f.exec.tick(); // the run that says NO_FRONT (empty queue)
+  assert.equal(f.exec.trainLast.wouldDo, 'NO_FRONT');
+  f.advance(7 * MIN); // well inside the 10-minute cadence
+  const arrival = f.clock();
+  const before = engine.trainRuns.length;
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let bound = null;
+  for (let i = 0; i < 3 && !bound; i++) {
+    await f.exec.tick();
+    bound = engine.trainRuns.slice(before).find(r => r.frontBind) ?? null;
+    if (!bound) f.advance(20_000);
+  }
+  assert.ok(bound, `no frontBind run after the arrival: ${JSON.stringify(engine.trainRuns.slice(before))}`);
+  assert.ok(f.clock() - arrival <= MIN, `stage 10 ran ${Math.round((f.clock() - arrival) / 1000)} s after the arrival`);
+  for (let i = 0; i < 3; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(engine.stages.some(s => s.pr === 910 && s.testSha === null && s.stage === 1), 'the binding run ran stage 1');
+
+  // Guard: the same head never makes stage 10 urgent a second time.
+  f.exec.trainLast = Object.freeze({ ...f.exec.trainLast, wouldDo: 'NO_FRONT', mode: 'on', strict: true });
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 910, headSha: H, baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false, 'an asked head is not asked again');
+  f.exec.trainAskFrontBind([{ pr: 911, headSha: sha(0x7777), baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, true, 'a new head is asked once');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 911, headSha: sha(0x7777), baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false);
+});
+
+// Task 60f83aa3, steady state: the take-over is done, the queue is empty, the last stage 10 said NO_FRONT. A new PR's ordinary batch binds
+// the claim in its stage 1; stage 10 must then open the front batch within a minute, not at the next 10-minute cadence. (An urgent
+// request on arrival would be spent by a stage 10 that still sees the head unbound.)
+test('steady state (task 60f83aa3): after the ordinary batch\'s stage 1 bound the claim, stage 10 opens the front within a minute', async t => {
+  const e = await world(t, { quick: true });
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.equal(f.exec.trainTakeoverDone, true);
+  await f.exec.tick(); // a stage 10 on an empty queue: NO_FRONT, cadence restarts here
+  assert.equal(f.exec.trainLast.wouldDo, 'NO_FRONT');
+  f.advance(3 * MIN);
+  const arrival = f.clock();
+  const before = engine.trainRuns.length;
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let stage1At = null, open = null;
+  for (let i = 0; i < 12 && !open; i++) {
+    await f.exec.tick();
+    if (stage1At === null && engine.stages.some(s => s.pr === 910 && s.testSha === null && s.stage === 1)) stage1At = f.clock();
+    open = engine.trainRuns.slice(before).find(r => r.decision === 'OPEN_FRONT_BATCH') ?? null;
+    if (!open) f.advance(20_000);
+  }
+  assert.ok(stage1At !== null, 'the ordinary batch ran stage 1');
+  assert.ok(open, `no OPEN_FRONT_BATCH run: ${JSON.stringify(engine.trainRuns.slice(before))}`);
+  assert.ok(f.clock() - stage1At <= MIN, `stage 10 opened the front ${Math.round((f.clock() - stage1At) / 1000)} s after stage 1`);
+  assert.ok(f.clock() - arrival < 7 * MIN, 'well inside the cadence');
+});
+
+test('steady state (task 60f83aa3): a head makes stage 10 urgent at most twice, and never on arrival once the take-over is done', async t => {
+  const f = await executorFixture(t, { policy: policy(), now: NOW });
+  await f.exec.trainRecover();
+  f.exec.trainTakeoverDone = true;
+  f.exec.trainLast = Object.freeze({ ...(f.exec.trainLast ?? {}), mode: 'on', wouldDo: 'NO_FRONT', strict: true });
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 910, headSha: H, baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false, 'no ask on arrival after the take-over');
+  const subject = { pr: 910, headSha: H, baseSha: T };
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, true, 'asked once stage 1 bound');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, true, 'a second ask is allowed');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskAfterBind(subject);
+  assert.equal(f.exec.trainUrgent, false, 'never a third');
+  f.exec.trainAskAfterBind({ ...subject, testSha: S });
+  assert.equal(f.exec.trainUrgent, false, 'a front row (S) is not asked');
 });

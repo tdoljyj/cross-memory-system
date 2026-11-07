@@ -214,6 +214,7 @@ export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
 // kept the PR busy, so the front batch was refused (TRAIN_FRONT_PR_BUSY) while stage 10 had already counted it and touched running.
 export const TRAIN_FRONT_TAKES_OVER = 'TRAIN_FRONT_TAKES_OVER';
 const FRONT_BIND_ASKED_MAX = 512;
+const FRONT_BIND_ASKED_PER_HEAD = 2;
 // Generation 22 field defect (PR #1029): a front batch's stage 8 needs the strict proof stage 10 wrote (sweepFreshMs); one with less than
 // this left right before stage 8 (or none any more) is refreshed by a stage-10 run first (stage8Try).
 export const FRONT_PROOF_MARGIN_MS = 3 * 60_000;
@@ -446,7 +447,7 @@ export class ResidentExecutor {
     // DESIGN §62.4: the take-over binding runs (batch key -> { pr, headSha }; kept across a restart by receipt 'train-front-bind') and
     // the held heads stage 10 was already asked about once.
     this.frontBindKeys = new Map();
-    this.frontBindAsked = new Set();
+    this.frontBindAsked = new Map(); // `${pr}:${headSha}` -> times stage 10 was made urgent for this head (at most FRONT_BIND_ASKED_PER_HEAD)
     // Defect a8910e41: the heads ('pr:headSha' -> when, ms) whose binding run ended TRAIN_FRONT_CLAIM_BOUND (receipt 'train-front-bound').
     // The binding run is released, not burned; this marker only holds within the duty it was set in (trainFrontBound).
     this.frontBound = new Map();
@@ -549,15 +550,46 @@ export class ResidentExecutor {
   // (bounded by the daily cap like every urgent run), so the binding run need not wait for the next routine run.
   trainAskFrontBind(rows) {
     const l = this.trainLast;
-    if (!this.trainEligible() || this.trainTakeoverDone || l?.mode !== 'on' || l.wouldDo !== 'FRONT_NOT_BOUND' || l.strict !== true) return;
+    // NO_FRONT (empty queue at the last run) counts like FRONT_NOT_BOUND: a new head must not wait out the cadence (task 60f83aa3).
+    // During the take-over the head is asked on arrival (the binding run is stage 10's to name). After it, the arrival is too early (the
+    // head's ordinary batch has not bound the claim yet): trainAskAfterBind asks once stage 1 has.
+    if (!this.trainEligible() || this.trainTakeoverDone || l?.mode !== 'on' || !['FRONT_NOT_BOUND', 'NO_FRONT'].includes(l.wouldDo) || l.strict !== true) return;
     for (const r of rows) {
       if (Object.hasOwn(r, 'testSha') || this.trainFrontBind(r)) continue;
-      const k = `${r.pr}:${r.headSha}`;
-      if (this.frontBindAsked.has(k)) continue;
-      if (this.frontBindAsked.size >= FRONT_BIND_ASKED_MAX) this.frontBindAsked.clear();
-      this.frontBindAsked.add(k);
-      this.trainUrgent = true;
+      if (!this.frontBindAsked.has(`${r.pr}:${r.headSha}`)) this.frontBindAskedNote(`${r.pr}:${r.headSha}`);
     }
+  }
+
+  // Counts one urgent stage-10 request for a head; false (and no urgency) once the head used FRONT_BIND_ASKED_PER_HEAD of them.
+  frontBindAskedNote(k) {
+    const n = this.frontBindAsked.get(k) ?? 0;
+    if (n >= FRONT_BIND_ASKED_PER_HEAD) return false;
+    if (n === 0 && this.frontBindAsked.size >= FRONT_BIND_ASKED_MAX) this.frontBindAsked.clear();
+    this.frontBindAsked.set(k, n + 1);
+    this.trainUrgent = true;
+    return true;
+  }
+
+  // After the take-over: the ordinary batch of a head without S passed its stage 1 (the admission binds the claim), so stage 10 can now
+  // name the front: due at once, once per head here (two per head with the arrival ask), under the daily cap like every urgent run.
+  trainAskAfterBind(subject) {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone || !subject || Object.hasOwn(subject, 'testSha')) return;
+    this.frontBindAskedNote(`${subject.pr}:${subject.headSha}`);
+  }
+
+  // DESIGN §62.6 (the residue of §62.5): after the take-over, train on, a head's ordinary batch (no S, attempt 1) whose stage 1 Native
+  // answered with the claim first in the merge queue gives way right after that stage 1: in train on only the front batch (H, S) can get
+  // the merge slot, and stage 10 opens it once the claim is bound (stage 1 just bound it), so stages 2-7 of the ordinary batch (13-15
+  // minutes in the field) would be thrown away. Only with the newest on-mode stage-10 run on duty and reading strict true, and main not
+  // rewritten. A head not first in the queue (or with no queue fact: Native not reached, an older Source) runs on as before; shadow and
+  // off never get here. The queue fact only schedules: stage 8's live strict/holder/claim checks of the front batch are unchanged.
+  trainFrontYield(subject, first) {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone || this.trainOnSince === null) return false;
+    if (!subject || Object.hasOwn(subject, 'testSha') || (subject.attempt ?? 1) !== 1 || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN') return false;
+    const l = this.trainLast;
+    if (l?.mode !== 'on' || l.onDuty !== true || l.strict !== true) return false;
+    const q = first?.outcome?.status === 'SETTLED' ? first.outcome.scheduling?.mergeQueue : null;
+    return q?.entered === true && q.state === 'head' && (q.position === 1 || q.position === null);
   }
 
   // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran. Defect a8910e41: the
@@ -1492,7 +1524,15 @@ export class ResidentExecutor {
     if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
     this.tickBusy = true;
     this.tickSeq = (this.tickSeq ?? 0) + 1;
-    try { const result = await this.tickInner(); await this.reportTick(result); return result; }
+    this.tickBatchDue = false;
+    try {
+      let result = await this.tickInner();
+      // Stage 10 just named a batch to open now (OPEN_FRONT_BATCH queued, or a front-bind pending): the loop must not rest 15 s first.
+      // The state stays the resting one for the status board; `immediate` only tells the service loop to sleep the short interval.
+      if (this.tickBatchDue === true && result && typeof result === 'object') result = { ...result, immediate: true };
+      await this.reportTick(result);
+      return result;
+    }
     finally { this.tickBusy = false; }
   }
 
@@ -2241,7 +2281,9 @@ export class ResidentExecutor {
         await this.receipt('paused', source);
       }
     }
-    if (mode === 'on' && summary.openFrontBatch) await this.enqueueFront(summary.openFrontBatch);
+    if (mode === 'on' && summary.openFrontBatch && await this.enqueueFront(summary.openFrontBatch) !== null) this.tickBatchDue = true;
+    // A front-bind to run (frontBind on the summary): the binding run is due in the next tick, not after a resting sleep.
+    if (mode === 'on' && summary.frontBind) this.tickBatchDue = true;
     // TRAIN_FRONT_BATCH_RUNNING: this node's front batch still runs and stage 10 refreshed its sweep proof; nothing to enqueue,
     // but a front batch of that head parked at B gets its next stage-8 try now (parkedDueAt), within the usual try budgets.
     if (mode === 'on' && summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && summary.front?.pr) await this.nudgeFrontParked(summary.front);
@@ -3305,6 +3347,13 @@ export class ResidentExecutor {
     // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
     // run that an older version left STARTED still ends in continueBatch, burned as before.
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
+    this.trainAskAfterBind(subject);
+    // DESIGN §62.6: in steady state the queue head's ordinary batch gives way right here (its stages 2-7 would only be thrown away when
+    // stage 10 opens the front batch (H, S)); it ends the binding run's way: released, not burned, frontBound holds the head.
+    if (this.trainFrontYield(subject, first)) {
+      try { await this.receipt('train-front-yield', { key, pr: subject.pr, headSha: subject.headSha, mergeQueue: first.outcome.scheduling.mergeQueue }); } catch { /* a view */ }
+      return this.frontBindEnd(key);
+    }
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
