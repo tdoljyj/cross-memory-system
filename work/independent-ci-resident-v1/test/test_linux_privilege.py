@@ -148,12 +148,12 @@ class WsPrepCheckout(unittest.TestCase):
 
 
 def find_bash():
-    """A bash these tests can run scripts with. On Windows the first `bash` on PATH can be C:\Windows\System32\bash.exe,
+    r"""A bash these tests can run scripts with. On Windows the first `bash` on PATH can be C:\Windows\System32\bash.exe,
     the WSL launcher: it runs /bin/bash of the default WSL distribution, which may have none (docker-desktop), so it is
     skipped; Git for Windows' bash is used instead, or none (the tests are then skipped, with the reason shown)."""
     if os.name != 'nt':
         return shutil.which('bash')
-    system = os.path.normcase(os.path.join(os.environ.get('SystemRoot', r'C:\Windows')))
+    system = os.path.normcase(os.path.normpath(os.environ.get('SystemRoot', r'C:\Windows')))
     for folder in os.environ.get('PATH', '').split(os.pathsep):
         norm = os.path.normcase(os.path.normpath(folder)) if folder else ''
         if not norm or norm.startswith(system + os.sep) or 'windowsapps' in norm:
