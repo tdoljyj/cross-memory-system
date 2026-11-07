@@ -34,7 +34,13 @@ export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUO
 // H); the proof was refreshed for its stage 8, no new batch and no attempt counted (review R2 M1).
 export const DECISIONS_V2 = Object.freeze(['TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN']);
+// Strict-permanent mode (train-run /3 sweep audit|off; resident DESIGN §65): TRAIN_STRICT_OFF, strict read off in an on-mode run
+// (no front batch; requestPause TRAIN_STRICT_OFF: the resident latches PAUSE and tells the Owner); TRAIN_FRONT_NOT_PROVEN, the front
+// would be opened but this run could not write its strict current-front observation (stage 8 could not green it), so it opens none.
+export const STRICT_PERMANENT_SWEEPS = Object.freeze(['audit', 'off']);
+// The requestPause codes, each only with the decision of the same name, in mode on.
+export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_STRICT_OFF']);
 export const DECISIONS = Object.freeze([...WOULD_DO, ...DECISIONS_V2]);
 export const TRAIN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const SWEEP_KINDS = Object.freeze(['none', 'incremental', 'full-segment']);
@@ -149,7 +155,7 @@ export function validateTrainFacts(f) {
     || !f.wouldRevoke.every(r => plain(r) && SHA.test(r.headSha ?? '') && Number.isSafeInteger(r.checkRunId) && r.checkRunId > 0)
     || !Number.isSafeInteger(f.wouldRevokeCount) || !plain(f.ledger)
     || !DECISIONS.includes(f.decision) || !validSweep(f.sweep, Date.parse(f.at)) || !validActions(f.actions) || !validNodes(f.nodes) || !count(f.nodesDropped)
-    || !(f.requestPause === null || (f.requestPause === 'TRAIN_LANDED_TREE_MISMATCH' && f.decision === 'TRAIN_LANDED_TREE_MISMATCH' && f.mode === 'on'))
+    || !(f.requestPause === null || (REQUEST_PAUSE_CODES.includes(f.requestPause) && f.decision === f.requestPause && f.mode === 'on'))
     || !(f.openFrontBatch === null || (f.mode === 'on' && validBatch(f.openFrontBatch)))
     || (f.mode === 'on' && (f.decision === 'OPEN_FRONT_BATCH') !== (f.openFrontBatch !== null))
     || !(f.frontBind === undefined || (f.mode === 'on' && f.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' && validFrontBind(f.frontBind)

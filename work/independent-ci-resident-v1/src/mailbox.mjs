@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
+import { RELAY_TIMING_CONTRACT, parseRelayTiming } from './stage-timing.mjs';
 import { TEMP_PREFIX, ensureDir, exists, nonce, readBounded, sweepTemp, writeNew, writeNewAtomic } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
@@ -169,6 +170,7 @@ async function readFinishedBoth(file, maximum, code) {
 async function readFinished(file, maximum, code) {
   return (await readFinishedBoth(file, maximum, code))?.value ?? null;
 }
+const TIMING_FILE_MAX_BYTES = 32 * 1024;
 // How many of the newest hint files latestHint looks at when the newest is unfinished.
 export const HINT_LOOKBACK = 3;
 
@@ -257,6 +259,25 @@ export class Mailbox {
       if (error.code === 'CREATE_ONLY_TARGET_EXISTS') return false;
       throw error;
     }
+  }
+
+  // Companion side (stage timings, status /8): the relay times of one pump, written once when the pump ends, create-only and best effort
+  // (a view: nothing reads it for a decision, and a pump whose record cannot be written still answers as before).
+  async writeTiming(request, timing) {
+    const value = { contract: RELAY_TIMING_CONTRACT, requestId: request.requestId, handoffs: timing.handoffs.slice(0, 400), rounds: timing.rounds.slice(0, 32) };
+    const bytes = Buffer.byteLength(canonicalJson(value));
+    check(bytes <= TIMING_FILE_MAX_BYTES, 'RELAY_TIMING_TOO_LARGE');
+    await writeNewAtomic(path.join(this.responses, `${request.requestId}.timing.json`), value);
+  }
+
+  // Service side: the pump's relay times as parseRelayTiming returns them, or null (no file, torn, oversize, another request: never an error).
+  async timing(request) {
+    try {
+      const file = path.join(this.responses, `${request.requestId}.timing.json`);
+      if (!(await exists(file))) return null;
+      const v = await readFinished(file, TIMING_FILE_MAX_BYTES, 'RELAY_TIMING_REFUSED');
+      return v && v.requestId === request.requestId ? parseRelayTiming(v) : null;
+    } catch { return null; }
   }
 
   // Companion side. A request the service is still writing is left out (the next pass reads it again), never refused.

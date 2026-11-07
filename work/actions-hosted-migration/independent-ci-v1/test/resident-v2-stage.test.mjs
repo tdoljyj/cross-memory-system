@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical } from '../src/proof.mjs';
 import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { deriveBatch, residentBatchKey, writeBatch } from '../src/resident-v2/derive-batch.mjs';
-import { invokeStage, invokeRoleProbe, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
+import { invokeStage, invokeRoleProbe, BROKER_ANSWER_POLL_MS, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, NOT_ADMITTED_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
 import { BROKER_RESPONSE_CONTRACT, validateBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
@@ -116,6 +116,15 @@ test('invoke-stage: sealed package -> fresh stage dir -> broker -> receipt + bou
   assert.deepEqual((await fs.readdir(path.join(f.roots.stageRoot, dirs[0]))).sort(), ['formal-service-entry.json', 'jobs.json']);
 });
 
+test('invoke-stage (M2a): the resident polls the broker answer every 200 ms, so a handoff answered after 600 ms waits at most 600 ms', async t => {
+  const f = await fixture(t);
+  const broker = fakeBroker(f), sleeps = []; let time = NOW;
+  const fact = await invokeStage({ batchDir: f.batchDir, stage: 1, workManifestSha256: f.d.result.stages[0].workManifestSha256, batchKey: f.key, ...f.roots, recordDocs: f.rec.docs,
+    clock: () => time, sleep: async ms => { sleeps.push(ms); time += ms; if (sleeps.length === 3) await broker(); } });
+  assert.equal(BROKER_ANSWER_POLL_MS, 200);
+  assert.deepEqual(sleeps, [200, 200, 200], 'three polls of 200 ms; the former 1000 ms poll would have waited a full second');
+  assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
+});
 test('invoke-stage (DESIGN §41.2): stages 1 and 8 get the installed train mode as train-mode.json, create-only; no other stage, no mode: no file', async t => {
   const { readStageTrainMode, stageTrainModeText, STAGE_TRAIN_MODE_FILE } = await import('../src/independent-control-checks-v2/train-mode.mjs');
   const { main } = await import('../src/resident-v2/invoke-stage.mjs');

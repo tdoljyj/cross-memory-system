@@ -22,6 +22,11 @@ test('generation16 status distinguishes limited readiness, pending full and cont
     backgroundAllPending: 1, maintenanceExtraUsed: -1, maintenanceExtraLimit: 201 }), { enabled: 'on', last: null });
   assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'full-sweep', fullPending: false }).fullPending, false);
   assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'strict-current-front', fullPending: true }).frontReadyMode, 'strict-current-front');
+  // DESIGN §65: the policy's sweep mode (the companion's backstop reads it) and the strict-permanent ready mode; anything else is dropped.
+  assert.deepEqual(read({ enabled: 'on', last: null, frontReadyMode: 'strict-permanent', fullPending: false, sweepMode: 'audit' }),
+    { enabled: 'on', last: null, frontReadyMode: 'strict-permanent', fullPending: false, sweepMode: 'audit' });
+  for (const v of ['gate', 'off']) assert.equal(read({ enabled: 'on', last: null, sweepMode: v }).sweepMode, v);
+  for (const v of ['full', 1, null]) assert.equal(Object.hasOwn(read({ enabled: 'on', last: null, sweepMode: v }), 'sweepMode'), false, String(v));
 });
 
 test('C2 status carries observations without promoting held to ACTIVE or altering existing mode', () => {
@@ -34,7 +39,7 @@ test('C2 status carries observations without promoting held to ACTIVE or alterin
 });
 
 test('C3 status /6: node carries name, source, mode and probe; setNode keeps the probe; /5 is read, others are refused', () => {
-  assert.equal(STATUS_CONTRACT, 'clued.independent-ci.resident-status/7');
+  assert.equal(STATUS_CONTRACT, 'clued.independent-ci.resident-status/8');
   const b = new StatusBoard({ clock: () => Date.parse('2026-10-29T00:00:00Z') });
   const probe = { at: '2026-10-29T00:00:00.000Z', result: 'not-held', failures: 0, failingSince: null };
   assert.equal(b.setNode('fixture-node', 'ab'.repeat(32), 'UNCERTAIN'), true);
@@ -50,10 +55,10 @@ test('C3 status /6: node carries name, source, mode and probe; setNode keeps the
   b.setNode('fixture-node', 'ab'.repeat(32), 'STANDBY');
   const parsed = parseStatus(Buffer.from(JSON.stringify(b.snapshot())));
   assert.deepEqual([parsed.node.name, parsed.node.source, parsed.node.mode, parsed.node.probe.result], ['fixture-node', 'abababababab', 'STANDBY', 'not-held']);
-  const { versions, ...v6 } = b.snapshot();
+  const { versions, timing, ...v6 } = b.snapshot();
   const old = { ...v6, contract: 'clued.independent-ci.resident-status/5' };
   assert.equal(parseStatus(Buffer.from(JSON.stringify(old))).node.mode, 'STANDBY', 'the file of the executor that ran before the install');
-  for (const contract of ['clued.independent-ci.resident-status/4', 'clued.independent-ci.resident-status/8', 'x']) {
+  for (const contract of ['clued.independent-ci.resident-status/4', 'clued.independent-ci.resident-status/9', 'x']) {
     assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), contract }))), { code: 'STATUS_REFUSED' }, contract);
   }
 });
@@ -62,7 +67,7 @@ test('status board: fixed shape, state since only moves on a change, outcomes ne
   let now = Date.parse('2026-10-22T08:00:00Z');
   const b = new StatusBoard({ clock: () => now, pid: 7 });
   const s0 = b.snapshot();
-  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'node', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'train', 'versions', 'writtenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'node', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'timing', 'train', 'versions', 'writtenAt']);
   assert.equal(s0.contract, STATUS_CONTRACT);
   now += 1000;
   assert.equal(b.setState('IDLE'), true);

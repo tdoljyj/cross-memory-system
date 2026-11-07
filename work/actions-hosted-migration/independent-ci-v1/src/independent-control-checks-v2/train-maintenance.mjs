@@ -15,6 +15,16 @@
 //                batch of the same S is still running. The watermark (informational) after a confirmed full sweep.
 //   revoke-only  (under PAUSE; §41.3) the three kinds of revocation, the incremental sweep and the proof; no batch, no
 //                touch, adopt, return or keepalive.
+// The job's sweep (train-run /3; Owner decision 9e2511fe; resident DESIGN §65) says what the full sweep is for in mode on:
+//   gate         as before: the take-over full sweep gates every batch (TRAIN_TAKEOVER_SWEEP_PENDING until it completes since
+//                onSince), and a completed one lets a proof cover a green whatever strict says (fullSweepSinceOn).
+//   audit, off   strict-permanent mode: strict is on for good, so GitHub merges a head H only when it contains main's tip T and
+//                merge(T, H) has H's tree: what was tested is what lands. No full sweep gates anything and no proof ever says
+//                fullSweepSinceOn (stage 8 can then only green through the live-strict current-front route); the front batch opens
+//                on the strict current-front observation alone; strict read off is TRAIN_STRICT_OFF with a PAUSE request. audit runs
+//                one full round as a background audit at most once AUDIT_EVERY_MS (no expiry, segments only where §62.8 lets a round
+//                count one); off starts none of its own. A rewritten main still holds new batches until a round of scope all
+//                completes (§60.2): both start that round at once.
 // A read that fails before anything was written ends the run BLOCKED with zero side effects; after the first write every
 // failure becomes a decision (TRAIN_REVOKE_UNCONFIRMED, TRAIN_SWEEP_INCOMPLETE, ...) or, if it still throws, UNCERTAIN with
 // the true count (settleTrain).
@@ -62,6 +72,11 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const isoOf = ms => new Date(ms).toISOString();
 const normal = v => (Number.isFinite(Date.parse(v ?? '')) ? isoOf(Date.parse(v)) : null);
 const TESTED = /\bmain@([0-9a-f]{40}), tested ([0-9a-f]{40}) \(tree ([0-9a-f]{40})\)/;
+// Strict-permanent audit: a new full round at most this long after the last one completed (or the abandoned one started).
+export const AUDIT_EVERY_MS = 24 * 3_600_000;
+// Abandoned rounds that restart at once in audit and off mode (and the scope reasons whose rounds count segments in off): until a round of scope all completes they hold new batches (§60.2) or keep a
+// legacy unconfirmed count.
+const AUDIT_RESTART_NOW = Object.freeze(['TRAIN_MAIN_REWRITTEN', 'TRAIN_LEGACY_REVOKE_PENDING']);
 const freshFull = () => ({ state: 'none', via: null, startedAt: null, completedAt: null, onSince: null, mainSha: null, nextPage: 1, nextIndex: 0, prs: 0, commits: 0,
   heads: 0, revoked: 0, unconfirmed: 0, wouldRevoke: 0, calls: 0, ms: 0, reason: null, scope: 'all', scopeReason: null });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -99,6 +114,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   layerOfPaths = () => 'protected', claimScope = null }, fx) {
   validateTrainRun(job);
   const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
+  // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
+  const gating = job.sweep === 'gate', permanent = !gating;
   const { github, counter } = countedGithub(plainGithub);
   const actions = { ...NO_ACTIONS, revokeHead: job.revokeHeadRequestId ? { requestId: job.revokeHeadRequestId, done: false } : null };
   const until = { write: started + REVOKE_WRITE_BEFORE_MS, read: started + STAGE_WORK_BEFORE_MS };
@@ -244,7 +261,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // (revocations_list) lists open publications only, so another node's published greens are invisible to an incremental
   // sweep from a watermark. Until a read-only channel lists them, every take-over is a full on-mode sweep; the watermark
   // is still reported (harmless) and the stream stays an extra source.
-  const sinceOn = f => f.state === 'complete' && f.via === 'sweep' && onSinceMs !== null && Date.parse(f.startedAt) >= onSinceMs;
+  const sinceOn = f => gating && f.state === 'complete' && f.via === 'sweep' && onSinceMs !== null && Date.parse(f.startedAt) >= onSinceMs;
   const start = () => ({ ...freshFull(), state: 'running', via: 'sweep', startedAt: at, onSince: job.onSince, mainSha,
     ...(allPending ? { scope: 'all', scopeReason: allPending } : { scope: 'current' }) });
   const abandon = reason => ({ ...full, state: 'abandoned', reason, completedAt: null });
@@ -253,7 +270,16 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // A rewrite voids the round in progress and the one completed (DESIGN 60.2): on mode then starts a round of scope 'all' at once and
   // is TRAIN_TAKEOVER_SWEEP_PENDING (no green) until it completes; revoke-only leaves that to the next on run; shadow restarts too.
   if (history === 'rewritten' && ['running', 'complete'].includes(full.state)) full = abandon('TRAIN_MAIN_REWRITTEN');
-  if (history === 'unknown') { /* no round starts or ends on a history that could not be read */ } else if (job.mode === 'on' && !sinceOn(full)) {
+  if (history === 'unknown') { /* no round starts or ends on a history that could not be read */ } else if (job.mode === 'on' && permanent) {
+    // §65: a running round goes on however long it takes (it gates nothing); audit starts the next one per AUDIT_EVERY_MS. Both audit and
+    // off start one at once when it is what holds the train: main rewritten (§60.2) or a legacy unconfirmed count (§62.2).
+    const since = Date.parse((full.state === 'complete' ? full.completedAt : full.startedAt) ?? '');
+    const needed = allPending === 'TRAIN_MAIN_REWRITTEN' || (full.state === 'abandoned' && AUDIT_RESTART_NOW.includes(full.reason));
+    if (full.state !== 'running' && (needed || (job.sweep === 'audit' && (full.state === 'none' || !(started - since < AUDIT_EVERY_MS))))) full = start();
+    // Stage 8's current-front route reads the full-sweep record of this duty (strictFrontHeadDecision: full.onSince); a round that
+    // gates nothing is re-anchored to the duty it is read in.
+    if (full.onSince !== job.onSince) full = { ...full, onSince: job.onSince };
+  } else if (job.mode === 'on' && !sinceOn(full)) {
     if (full.state === 'running' && (Date.parse(full.startedAt) < onSinceMs || started - Date.parse(full.startedAt) > job.fullSweepMaxMs))
       full = abandon(Date.parse(full.startedAt) < onSinceMs ? 'TRAIN_FULL_SWEEP_BEFORE_ON' : 'TRAIN_FULL_SWEEP_EXPIRED');
     if (full.state !== 'running' && !(full.state === 'abandoned' && full.reason === 'TRAIN_PULL_OVER_250_COMMITS' && full.onSince === job.onSince)) full = start();
@@ -316,7 +342,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const frontRefreshSkip = frontPlan === 'TRAIN_FRONT_BATCH_RUNNING' && history === 'same' && allPending === before.allPending
     && JSON.stringify(full) === JSON.stringify(before.full)
     && (await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }) || (firstRefresh && await skippedSince() <= MAX_SKIPS_BEFORE_SKIP));
-  const bindCandidate = job.mode === 'on' && !sinceOn(full) && full.state === 'running' && holder !== null && holder.boundPr === null && !!holder.takenAt
+  const bindCandidate = gating && job.mode === 'on' && !sinceOn(full) && full.state === 'running' && holder !== null && holder.boundPr === null && !!holder.takenAt
     && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0
     && (lastProof === null || await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }));
@@ -329,7 +355,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   let stream = null;
   if (!historyDeferred) try { stream = publications ? await publications.heads() : null; } catch { stream = null; }
   const strictOwnsPending = pendingRevocations.every(t => legacyStrictPending.some(p => p.checkRunId === t.checkRunId && p.headSha === t.headSha));
-  const strictEnabled = legacyUnconfirmed === 0 && strictOwnsPending && !frontFastEligible && job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
+  const strictEnabled = gating && legacyUnconfirmed === 0 && strictOwnsPending && !frontFastEligible && job.mode === 'on' && rules?.strict === true && frontHead && holder?.takenAt && !sinceOn(full)
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN' && !stateReason && !ledgerReason
     && typeof sweepStore?.readStrictRound === 'function' && typeof sweepStore?.writeStrictRound === 'function' && typeof sweepStore?.appendStrictProof === 'function';
   const strict = strictEnabled ? await runStrictLane({ identity: strictIdentity({ job, holder, headSha: frontHead.headSha, mainSha,
@@ -338,7 +364,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   if (strict) try { pendingRevocations = (await sweepStore.readPendingRevocations())?.targets ?? []; }
   catch { stateReason ??= 'TRAIN_PENDING_REVOCATIONS_UNREADABLE'; }
   // A running full sweep gets its own share of the time: the incremental part never starves it (review R2 M2).
-  const wantSegment = !historyDeferred && !frontBindSkip && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason;
+  // §65: in mode on with sweep off only a round that holds the train (main rewritten, a legacy count) counts segments.
+  const wantSegment = !historyDeferred && !frontBindSkip && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason
+    && !(job.mode === 'on' && job.sweep === 'off' && !AUDIT_RESTART_NOW.includes(full.scopeReason));
   let incremental = historyDeferred ? { complete: false, reason: 'TRAIN_HISTORY_DEFERRED', targets: [], progress: null, newest: null }
     : await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
       until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2
@@ -455,7 +483,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       strictFrontReady = true;
     } catch { /* The independently durable front proof is mandatory. */ }
   }
-  const takeoverPending = job.mode === 'on' && !fullSweepSinceOn && !strictReady && !strictFrontReady;
+  // §65: in strict-permanent mode only a rewritten main (until a round of scope all completes) is still a take-over that holds the train.
+  const takeoverPending = job.mode === 'on' && !strictReady && !strictFrontReady && (gating ? !fullSweepSinceOn : after.allPending === 'TRAIN_MAIN_REWRITTEN');
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null;
@@ -511,6 +540,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0 && unconfirmed.length === 0 && leftover === 0 && !othersRefused && proofWritten;
     if (frontBindEligible && Array.isArray(openRows)) frontBind = Array.isArray(bindRows) ? bindFound
       : await findFrontBind({ github, job, holder, rows: openRows, claimScope, until: until.read, clock });
+    // §65 (the guard of strict-permanent mode): strict read off is never a state to work in. No front batch opens, and the resident
+    // latches PAUSE and tells the Owner; stage 8 writes no green either (no proof says fullSweepSinceOn, its strict route needs strict).
+    if (permanent && rules !== null && rules.strict !== true && !requestPause) requestPause = 'TRAIN_STRICT_OFF';
   }
   const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules, mainSha });
   if (!acting) decision = wouldDo;
@@ -524,6 +556,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.adopted) decision = 'FRONT_ADOPTED';
   else if (actions.returned) decision = 'FRONT_RETURNED';
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
+  else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx });
     decision = o.decision; openFrontBatch = o.openFrontBatch;

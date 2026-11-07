@@ -508,8 +508,8 @@ export class WindowsEngine {
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
   // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
   // fresh random values (the derivation checks their shape); the fact carries the train facts.
-  // Step 3c-2b (train-run job /2, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
-  // installed train settings, onSince, frontOutcome, revokeHeadRequestId); everything but the mode goes as one JSON object in
+  // Step 3c-2b (train-run job /2, /3 since DESIGN §65, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
+  // installed train settings, onSince, frontOutcome, revokeHeadRequestId, sweep); everything but the mode goes as one JSON object in
   // --train-params (Source v2 train-run.mjs#TRAIN_RUN_PARAMS, in that order); the derivation adds the record's repo and Source,
   // the run id and createdAt (makeTrainRun). Modes on and revoke-only need it; a call without it is a shadow run of step
   // 3c-1's argv (which a /2 derivation refuses: the executor always passes it).
@@ -825,7 +825,7 @@ export class WindowsEngine {
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();
       const proof = { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk };
-      let bridge = null;
+      let bridge = null, relayTiming = null;
       if (relay) {
         const request = await relay;
         const seen = observer.state;
@@ -852,6 +852,8 @@ export class WindowsEngine {
         const stopRequestId = seen.stop?.requestId ?? null;
         let stopCode = seen.stop?.stopCode ?? null;
         if (stopRequestId) stopCode = (await this.stopOutcome(stopRequestId)) ?? stopCode;
+        // The companion's relay times of this pump (status /8, a view): read once the pump has answered; absent or unreadable is null.
+        if (answer && typeof this.companionMailbox.timing === 'function') { try { relayTiming = (await this.companionMailbox.timing(request)) ?? null; } catch { relayTiming = null; } }
         const answerCode = answer && answer.ok !== true ? (PUMP_CODES.includes(answer.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED') : null;
         // The bridge facts the executor records with the stage (stage-terminal) and decides an abandonment on (DESIGN §27).
         bridge = { pumpCode: seen.pumpCode ?? answerCode, stopRequestId, stopCode, stageCode: fact.ok ? null : (fact.code ?? 'STAGE_TERMINAL_UNCONFIRMED'), pumpQuiet: !!answer };
@@ -874,7 +876,7 @@ export class WindowsEngine {
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof, factsSha256: fact.nativeReceiptSha256,
         relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
         ...(ok && stage.number === 1 && fact.stage1Locator ? { stage1Locator: fact.stage1Locator } : {}),
-        ...(bridge ? { bridge } : {}) };
+        ...(bridge ? { bridge } : {}), ...(relayTiming ? { relayTiming } : {}) };
     } finally {
       this.inflight = null;
       this.bridge = null;

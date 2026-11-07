@@ -384,7 +384,7 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   // mailbox.mjs: one writeNew (the pump mark), every other mailbox file through writeNewAtomic
   assert.equal([...mailbox.matchAll(/\bwriteNew\(/g)].length, 1);
   assert.match(mailbox, /async claimPump[\s\S]{0,900}await writeNew\(/);
-  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 4); // send, cancel, respond, writeHint
+  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 5); // send, cancel, respond, writeHint, writeTiming
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
   assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);

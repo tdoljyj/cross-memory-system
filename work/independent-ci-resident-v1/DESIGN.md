@@ -3277,7 +3277,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 Owner 2026-10-31 的决定：`263f9701` 现在做 3c-2b，批量测试与二分（Task `7f205c71`）排在它之后；`3dcb583b`（取代 `a5ea4be3`）定了排位用 Task 优先级；`86008583` 的守队程序和 `b30b1b79` 第 3 项的常驻层改动随同一轮安装（全部常驻节点）上线。本节只是设计。下文的“现状”都对照 main `35c41fd6`。本节的 Source B 指 `work/actions-hosted-migration/independent-ci-v1/src/`（Source v2），Source A 指 `scripts/ci/` 里的 Native 端口、撤销控制器和 `clued-work-admission.test.mjs`。
 
-Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把要参与自动接班的常驻节点（今天是 TURING 与 DESK-W-591）的连接标为“可自动接班的常驻节点”并排好次序，并为每个节点建一个只能发心跳的连接，下载令牌，随该节点的 UAC 安装用 `-HeartbeatTokenFile` 装上（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 每个常驻节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
+Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把要参与自动接班的常驻节点（今天是 TURING 与 DESK-W-591）的连接标为“可自动接班的常驻节点”并排好次序，并为每个节点建一个只能发心跳的连接，下载令牌，随该节点的 UAC 安装用 `-HeartbeatTokenFile` 装上（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 每个常驻节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ ~~在规则集里关 `strict`、合并方式只留 merge~~（**不再执行**：Owner 决定 `9e2511fe` 改为 strict 永久开、只留 merge，见 §65）；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
 
 ### 41.1 范围与顺序
 
@@ -3295,7 +3295,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 | 8 安装 | 一轮安装覆盖全部常驻节点（今天是 TURING 与 desk-w-591；同一个包，§40 工具链，含 #949），策略 `/8` 但 `train.enabled=shadow`；这一轮里还没装上的节点保持 STANDBY，不标自动接班资格 | 是：每个节点各 UAC 加 Linux root | 否 | UAC |
 | 9 影子与改 on | 影子清扫演练、Owner 复核，然后改策略为 on | 只改策略（UAC） | 否 | 复核；UAC |
 | 10 清扫 | 41.9 第 5 条 | 否 | 否 | 无 |
-| 11 关 strict | 关 `strict`、只留 merge，打开排位开关，定 `nonFrontRuns` | 否 | 否 | Owner |
+| 11 ~~关 strict~~（**不再执行**，§65） | strict 永久开、只留 merge；打开排位开关，定 `nonFrontRuns` | 否 | 否 | Owner |
 
 - 第 2–6 步合入后今天的行为不变：`/7` 策略照旧拒 `on`（`policy.mjs:131`），新代码只在 `train.enabled=on` 时走；保活只由 on 模式的第 10 段调用；迁移记下的车头就是今天算出的车头，排位开关默认 `fifo`（41.5）。
 - 第 7 步不同：守队程序一合入就在非列车模式下开始合并、更新队首的分支，这是 `86008583` 要的新行为（41.8）。
@@ -3455,7 +3455,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 3. **影子复核**：从 `train-run` 回执和 `train-shadow` 记录离线算出会撤几个、车头首次运行失败率、全量清扫时长，以及 §22.2 第 5 条的其余各项，交 Owner 复核一次；`nonFrontRuns` 的选择也用这份数据（v0.2 §2.2）。同时核对每个常驻节点的心跳在 holders 回答的 `nodes` 里正常、看门狗在走；Owner 这时才打开自动接班总开关（41.6a）。
 4. **改 on**：Owner 一次 UAC 把策略改成 `train.enabled=on`、`nonFrontRuns=true`。选在没有 PR 等合并的时候：之后的清扫会撤掉说明里没有 main@T 的旧绿。
 5. **清扫**：ACTIVE 节点以 on 模式做一次全量清扫（设计第 5 步），撤销全部两次读回确认，完成时写服务端水位（41.6）；再在列车模式下做一次，确认除车头外没有绿（第 6 步）。影子模式的清扫不算。STANDBY 不清扫，接班时按水位做增量（41.6）。清扫失败就停在这一步。
-6. **Owner**：在规则集里同一次保存关 `strict`、合并方式只留 merge；打开排位开关；`nonFrontRuns` 改成自己选的值（UAC）。
+6. **Owner**：~~在规则集里同一次保存关 `strict`~~（**不再执行**：Owner 决定 `9e2511fe`，strict 永久开，见 §65）；合并方式只留 merge；打开排位开关；`nonFrontRuns` 改成自己选的值（UAC）。
 7. **头 10 次合入**：第 10 段每次核对落地的树等于 S 的树并写回执，汇总报给 Owner；不符就 `TRAIN_LANDED_TREE_MISMATCH` 停车。
 
 **回退**（v0.2 §4.2）：Owner 写暂停请求 → 只撤模式的第 10 段确认没有别的绿（需要时加撤车头请求）→ `strict` 开回 → `train.enabled=off`（UAC），排位开关回 `fifo`（当前车头不变）。守队程序读到 `strict` 开就回到非列车模式，不用另改。任何一步失败就停在原地，不关 `strict`。
@@ -4668,16 +4668,19 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **现在**（迁移 `20261106100000_resident_upgrade_auto_approve_v1.sql`）：`ci.resident_upgrade` 接入现有的 Owner 自动审批开关，和 `release.production`、`migration.production` 一样按高风险规则处理：
   - 开关开着时，门（`owner_grant_resident_upgrade_door_v1`）为它打开或找到的请求调用 `owner_auto_approve_request_v1`。批准范围：一次、一次使用、24 小时，只给发起请求的连接，只限精确的节点与包。批准后在同一次调用里直接消费。
   - 回执用现成的：`OWNER_GRANT_GIVEN`，principal `owner_auto_approve`；门照常写 `OWNER_GRANT_USED`，内容不变（这次 Grant 从哪来，看它的 `auto_approve_id`）。门的答复和发布门一样带 `auto_approved: true`。/grants 页照常显示"来源 自动审批"，撤销也照旧。
-  - 本动作自己的一条规则：**同一节点 24 小时内最多自动批准一次**。
-    - 按 Grant 资源里的节点名算，不按连接算：同一节点重新标记的新连接也共用这 24 小时。
-    - 从请求打开的时刻算：在某次自动批准之后、或它之前 24 小时内打开的请求，直到被决定或过期，都只能由 Owner 批准，升级代理再怎么反复询问也不会变成自动。这样反复重试的失败升级或打错的包会交到 Owner 手里。
+  - 本动作自己的规则（最初是"同一节点 24 小时内最多自动批准一次"；迁移 `20261107090000_resident_upgrade_auto_approve_v2.sql` 按 Owner Decision `56371a46` 放宽为下面三条）。三条都按 Grant 或请求资源里的节点名算，不按连接算：同一节点重新标记的新连接也共用。三条都满足才自动，否则请求交 Owner：
+    1. **同一节点 24 小时内最多自动批准 6 次**。从请求打开的时刻算：在第 6 次自动批准之后、或它之前 24 小时内打开的请求，直到被决定或过期，都只能由 Owner 批准，升级代理再怎么反复询问也不会变成自动。
+    2. **上一次自动批准的升级没有成功，交 Owner**。数据库里没有升级成败的事实：门写完 `OWNER_GRANT_USED` 之后，升级代理不再向数据库回报任何东西（结果只在节点本地的 journal 里），也没有别的表或回执记升级 outcome。所以按 Decision 的退路判定：本请求打开之前该节点最近的一张本动作 Grant 如果是自动批的，且还没用掉（`uses < max_uses`），或者已用掉但和本请求是同一个包（同一节点又对同一个包发请求），就当作上次升级没有成功。最近一张是 Owner 在确认页批的，不拦：那是 Owner 自己看过之后的决定。门在批准的同一次调用里就消费自动 Grant，所以"自动批了却没用掉"本身就是异常。
+    3. **连续对同一个包重复请求，交 Owner**：该节点上一个本动作请求（任何状态）和本请求是同一个包。
+    - 第 1、3 条的事实在请求打开时就定了或只增不减，被它们拦下的请求一直归 Owner；被第 2 条"没用掉"拦下的请求，等那张 Grant 被用于另一个包之后可以通过。
   - 开关关着时全部走人工。
 - **不变的部分**：
   - `3ce5200c` 的第 1、3、4、5 项不变：每节点独立升级连接、HALT 时延后、stateCompat 不能回读就在 ACCEPT 拒、时间参数 24h/120/60。
   - `connection.permission`（会自我提权）和 DatasetSplit 的 4 项（会伪造 Owner 认定）仍然只能人工批准。
 - **升级代理不改**：`upgrader/src/grant-client.mjs` 里"永不自动批准"那段注释没动。`upgrader/src/*` 是冻结通道（§34.8、§42.1 c），改任何一个字节都会让之后的包变成 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`。客户端本来就只是轮询门：门返回已消费就继续，它不区分这次 Grant 是 Owner 点的还是开关给的。所以注释的语义以本节为准，等轨 2 的代理自更新（§42.5.3）时再改。
 - **测试**：
-  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同节点 24 小时内第二次走人工；窗口内打开的请求在窗口过后再问仍走人工；同一节点的新连接共用窗口；另一节点、过了 24 小时都会再自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs`：开关开着时自动通过并当场消费；同一 op 重放；同一个包换 op 再请求走人工，Owner 批准后消费；同一节点的新连接也按节点算；另一节点单独算；Owner 批过之后下一个包又自动，24 小时内可以多次自动；开关关着走人工，重新打开后同一 op 能通过；撤销；被拒或过期的请求不会自动批；回执内容；connection.permission 与 DatasetSplit 仍是人工。
+  - `apps/clued-cloud/tests/resident-upgrade-auto-approve-v2-db.test.mjs`（`20261107090000`）：第 1 到 6 次自动、第 7 次走人工且再问仍是人工、另一节点不受影响、窗口内打开的请求窗口过后再问仍走人工、窗口外的新请求又自动；上一张自动 Grant 没用掉走人工，Owner 批准并用掉后下一个包又自动；上一张自动 Grant 的包再请求走人工（中间隔着一个被拒的别的包）；上一个请求同包走人工（之前没有任何 Grant）；自动 Grant 仍守高风险规则；connection.permission 与 DatasetSplit 仍是人工。四个判定（6 次、自动 Grant 没用掉、上张自动 Grant 同包、上个请求同包）各自被测试钉住：逐个去掉，只有对应的子测试失败。
   - `owner-grants-resident-upgrade-door-db`：把开关关掉后，验证人工路径。
   - `owner-auto-approve-db`：covers 和 excluded 两个列表。
 
@@ -5067,3 +5070,108 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
 - 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
 - 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。
+
+## 65. strict 永久开模式（Owner 决定 `9e2511fe`，Task `40f0dfb7`）
+
+**决定（不偏离）。** 规则集的 `strict` 永远开着，合并方式只留 merge。全量扫描不再是任何前提，降为可选的低频后台审计。不做“检查名换代”；“升级沿用扫描进度”作废。
+
+### 65.1 安全论证
+
+- strict 开着时，GitHub 只合入**包含 main 尖端 T 的 H**（必需检查要求“分支是最新的”）。H 包含 T 时 merge(T, H) 是快进式的三方合并：没有 H 以外的改动，树就等于 H 的树。所以合入的树就是 H 的树：**测什么就落什么**。
+- 旧绿合不进不该进的树：一条旧绿挂在某个 H 上，是在当时的 T′ 上测的（S = H，或 S = merge(T′, H)）。H 不可变；它如果今天包含 T，那么当时也包含 T′（T′ 是 T 的祖先），当时 S 的树就等于 H 的树。合进来的正是测过的那棵树。所以 strict 开着时，“除车头外不能有别的绿”（§41.2 单绿）不再是“落地的树等于测过的树”的前提，全量扫描也就不再挡发绿。
+- 第 8 段发绿仍要过 §62 的实时检查：strict 实时为真、六项钉在 App 5368905、holder/claim generation、Source、Native 非 frozen、ticket/current/settlement、试合并 [T, H] 的树等于 S 的树。§65 只去掉“全量扫描完成”这一个前提，没有放宽其它任何一条。
+- 一旦 strict 被关，上面的论证就不成立，所以“strict 被关”在本模式里不是可以工作的状态（65.3）。
+
+### 65.2 改了什么：策略开关 `train.sweep`
+
+- **常驻层策略**（`policy.mjs`）：`train.sweep` 是 /8 及以后的可选键，取值 `gate | audit | off`；没写时取 `TRAIN_SWEEP_DEFAULT = 'audit'`（Owner 决定）。已装策略没写这个键，所以策略字节和摘要都不变；旧常驻层遇到写了这个键的策略会以 `POLICY_TRAIN_KEYS_INVALID` 拒绝，不会把它误跑成 gate 之外的东西。
+  - `gate`：§41、§60–§62 原样：接管全量扫描挡住一切普通批次（只有 §62.4 绑定批次和 §62.1 车头 S 行例外），完成后的全量证明可以在 strict 关时覆盖发绿。**保留它就是回退方式。**
+  - `audit`：strict 永久开。接管不再等扫描；全量扫描每天最多一轮，作后台审计。
+  - `off`：同 `audit`，但不跑任何全量轮。
+- **train-run 合同升 `/3`**（Source v2 `resident-v2/train-run.mjs` 与 C# `FormalPublicBoundaryV2.cs#ValidateTrainRun` 同表，`test/fixtures/train-run-cases.json` 两侧共用）：/2 加 `sweep`；/2 不再产出也不再接受（常驻层与 Source 同代安装）。常驻层 `train.mjs#trainRunInput` 带上 `policy.mjs#trainSweepMode`。`trainSettings`（Source `strictSettingsDigest` 摘要的四个时钟）不变，所以 strict 观察的 `settingsDigest` 不变。
+- **Source v2 第 10 段**（`train-maintenance.mjs`，只在 mode on 生效，shadow 与 revoke-only 照旧）在 `audit`/`off` 下：
+  - `sinceOn` 恒为假：全量轮完成也不写 `fullSweepSinceOn=true`，所以第 8 段的 `trainHeadDecision` 全量路径永远关着，只剩要求实时 strict 的当前车头路径（`strictFrontHeadDecision`）。
+  - 接管不挡：`takeoverPending` 只在 main 被改写、scope all 轮还没完成时为真（65.4）。车头直接按 §62.1 的 strict 当前车头观察开车头批次；这一轮写不出该观察时（Source 不一致、受保护记录不健康、有待撤销、试合并不对、撤车头请求……）不开批次，决定 `TRAIN_FRONT_NOT_PROVEN`，下一轮再看。
+  - 全量轮的节奏：`audit` 下，没有记录、main 被改写、或上一轮因 `TRAIN_MAIN_REWRITTEN`/`TRAIN_LEGACY_REVOKE_PENDING` 作废时立即开一轮；否则距上一轮完成（作废的从开始算）满 `AUDIT_EVERY_MS`（24 小时）才开下一轮。进行中的一轮不设 `fullSweepMaxMs` 过期（它不挡任何东西）。扫描段仍按 §62.8 的跳过规则只落在不在关键路径上的轮次（绑定、开车、第一次刷新可跳）。`off` 下从不开新轮，也不数扫描段。
+  - 全量记录重新锚定到当前职责（`full.onSince := job.onSince`）：第 8 段的当前车头路径要求全量记录属于这个职责（`fullState.full.onSince === frontProof.onSince`），不重开扫描也要满足它。
+  - `gate` 专属的 §62.4 绑定观察（`bindCandidate`）和第 16 代 strict coverage 轨道（`runStrictLane`）都不再跑：绑定由普通批次的第 1 段完成（§62.6 让位），历史覆盖不再需要。
+- **常驻层执行器**（`executor.mjs`）：
+  - `trainTakeoverDone` 在 `audit`/`off` 下从职责开始就为真（意义变为“接管门已开”，不再是“全量扫描已完成”），只在 main 被改写、scope all 轮未完成时为假，完成后由下一次第 10 段的事实重新置真。于是走 §62.5/§62.6 的稳态流程：队首 PR 的普通批次第 1 段绑定认领后让位 → 第 10 段开车头批次 → 第 8 段按 strict 规则发绿；非队首 PR 的普通批次照跑，停在 B（只有车头批次能拿合并位）。
+  - 车头批次第 8 段前的证明刷新（第 22 代 `frontProofShort`）在本模式下始终生效（只有 `gate` 下的真实全量完成才不需要它）。
+  - 空闲加速续扫（§61.4）在本模式下只在 main 被改写、等 scope all 轮时才用；审计轮不加速。
+  - 状态快照 `train.sweepMode`（companion 兜底读它）、`frontReadyMode` 新值 `strict-permanent`。
+- **重启与装包**：策略不变时职责照 §41 恢复；装包换策略（摘要变）时开新职责、新 onSince，但接管门同样立即打开，全量轮也不随装包清零重新阻塞（它不再阻塞任何东西）。
+
+### 65.3 strict 被关时的保护
+
+- **第 8 段**：没有任何证明会写 `fullSweepSinceOn=true`，当前车头路径要求实时 `strict === true`，所以读到 strict 为假就不发绿，以 `TRAIN_SINGLE_GREEN_NOT_PROVEN`（BLOCKED、零副作用）停在 B。第 8 段的代码没有改。
+- **第 10 段**：on 模式读到 strict 为假，决定 `TRAIN_STRICT_OFF`（train facts /2 的新决定），不开车头批次，`requestPause: TRAIN_STRICT_OFF`；常驻层与 `TRAIN_LANDED_TREE_MISMATCH` 同一路径锁 PAUSE（回执 `paused`，原因 `train-maintenance: TRAIN_STRICT_OFF`），并发 Owner 通知（`TRAIN_OWNER_NOTICE_DECISIONS`）。PR 页面写“main 的 strict 被关了……已停车，等 Owner 把 strict 开回”。
+- **companion 兜底**（`ruleset-backstop.mjs`）：状态快照 `train.sweepMode` 是 `audit`/`off`、`train.enabled` 是 on 时，strict 为假就**立即**写暂停请求并发紧急通知（`STRICT_OFF_STRICT_PERMANENT`），不看清扫、不看当班、没有 `SWEEP_GRACE_MS` 的 24 小时宽限；STANDBY 节点同样暂停（strict 被关时整个系统都应停下）。这与 `STRICT_OFF_WITHOUT_TRAIN` 的做法一致。读不到 `sweepMode`（旧常驻层的快照）按 `gate` 的旧规则。
+- **恢复**：Owner 把 strict 开回，然后照常恢复执行器（撤 PAUSE）。
+
+### 65.4 仍保留的：main 被改写
+
+§60.2 的“main 被改写就冻结到 scope all 轮完成”在本模式下保留：改写时第 10 段写不出当前车头观察，执行器的接管门关上，`audit`/`off` 都会立即开一轮 scope all（`off` 也开：这一轮是解冻条件），扫完再放行。从 65.1 的论证看，strict 开着时改写后的合入也是“测什么落什么”；保留冻结只是因为改写本身是事故，要人看。**这是一个 Owner 决定点**：若 Owner 认为改写也不该依赖全量扫描，可以改为“改写只告警、不冻结”。
+
+### 65.5 与旧 §41 步 11 的关系，以及回退
+
+- §41.1 的第 11 步、§41.9 的第 6 步、§41 开头 Owner 事项 ⑦ 的“关 strict”**不再执行**。合并方式只留 merge、排位开关、`nonFrontRuns` 照旧由 Owner 决定。
+- §41.7 兜底里“strict=false 而全量清扫没完成”那一档只在 `gate` 下还有意义。
+- **回退**：一次 UAC 把策略写成 `train.sweep: "gate"`（新策略、新摘要、新职责），即回到 §41/§60–§62 的接管门；Source 不用换代。再往回（关 strict 的列车）仍按 §41.9 的流程，且必须先在 `gate` 下完成一轮真实全量扫描。
+
+### 65.6 车头落后自动更新分支：方案（未实现，需要 Owner 决定）
+
+GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需要有人把 main 合进 PR 分支（update-branch，merge 方式），然后对新 head 走正常流程（第 1 段重新准入、第 10 段重开车头批次）。只读核对（2026-11-07）：
+
+1. **身份**：App 5368905（`clued-ci-checks-turing-20261018`）的权限是 `checks: write`、`contents: read`、`pull_requests: read`，**调不了** `PUT /pulls/{n}/update-branch`（要 contents 写）。不给它扩权。仓库里已有的合并执行器 `scripts/ci/clued-merge-executor.mjs`（工作流 `.github/workflows/clued-merge-executor.yml`）用 clued-admission App 5164952 调 update-branch（带 `expected_head_sha`），这个 App 有 `contents: write`、`pull_requests: write`；但该工作流现在是 `disabled_manually`（最后一次运行 2026-10-17）。
+2. **规则集** `24182890`：`require_extra_approval_for_unattributed_changes: true`，GitHub REST 文档的说明是只针对 Copilot 在没有人类协作者时开的 PR，且只在必需审批数不为 0 时多要一个审批；本仓库 `required_approving_review_count: 0`，所以它**不会拦** update-branch。规则集当前 `strict_required_status_checks_policy: true`、`allowed_merge_methods: ["merge"]`，与本模式一致。
+3. **受保护路径的 Owner Grant**：Grant 绑在精确 head 上。update-branch 生成的新 head 由 `clued-work-admission.mjs#carriedApprovalSource`（Owner 决定 `a0d93cd0`）兜底：新 head 是 [旧 head, main] 的合并、main 带来的改动不碰本 PR 改过的受保护路径时，旧 head 的批准延续。frozen 下不延续（每个 head 要自己的 Grant）。`optInCovers` 管的是 `Clued-Auto-Merge:` 自动合并选择，与 Grant 无关，但同样认“只来自 main 的变更”。另：合并执行器对受保护层的 PR 不做 update-branch（“由持有者自己更新”），要放开需要改 `scripts/ci/**`（受保护路径）。
+
+**建议方案**：重新启用 `clued-merge-executor`（clued-admission App，已有权限，不扩权），列车开着时只做“队首=车头、BEHIND 时 update-branch”这一个动作；受保护层是否也自动更新（依赖 `carriedApprovalSource` 兜底）由 Owner 定。**需要 Owner 决定**：① 是否重新启用该工作流；② 受保护层 PR 是否也由它自动更新（要一个 protected-change Grant 改 `scripts/ci/clued-merge-executor.mjs`）。在此之前，BEHIND 的车头仍由持有者自己合 main（PR 页面现有提示 `FRONT_NEEDS_MAIN_MERGE`）。
+
+### 65.7 测试
+
+- **端到端**（`test/train-takeover-front.test.mjs`，真实执行器 + 真实 Source v2 第 10 段/清扫存储/第 8 段发布者，模拟时间）：
+  - strict 开、train on 刚生效、全量扫描（这里要几小时）刚开始、PR 的认领只写在提交里（PR 正文没有 trailer，§62.4 的绑定例外帮不上）→ 普通批次第 1 段绑定、让位 → 车头批次 → 约 180 s（模拟）拿到 merge-slot 绿；全量轮仍是 running，证明里 `fullSweepSinceOn=false`。装包重启（换策略、新职责）后同样约 180 s。修复前（同一测试跑在 main `1be5f136` 上）30 分钟内没有绿：第 10 段一直 `TRAIN_TAKEOVER_SWEEP_PENDING/FRONT_NOT_BOUND`，什么批次都不跑。
+  - 同一场景 `train.sweep: gate` 仍等全量扫描（回退路径）。
+  - strict 关：没有绿、`TRAIN_STRICT_OFF`、PAUSE 锁上、Owner 通知、没有车头批次。
+  - 车头批次第 8 段之前 strict 被关：第 8 段不发绿、停在 B。
+  - `audit`：第一轮完成后 22 小时内不再读全量页，24 小时后开下一轮，期间新 PR 照样拿到绿；`off`：一页都不读。
+- **单元**：`test/ruleset-backstop.test.mjs`（本模式 strict 关立即暂停、无宽限、STANDBY 也暂停；`gate` 与旧快照照旧规则）；`test/train-on.test.mjs`（`train.sweep` 的取值、默认、/7 拒收、带进 train-run /3）；`test/status.test.mjs`（`sweepMode`、`strict-permanent`）；Source `test/train-run.test.mjs` 与两侧共用的 `train-run-cases.json`（/3、`sweep` 的接受与拒收）。
+- 旧的 gate 用例（`train-on`、`train-strict-readiness`、`train-takeover-front` 前半、Source `train-gen16-offline`）显式写 `sweep: 'gate'`，行为不变。
+
+### 65.8 送审与安装
+
+- **Source v2**（`work/actions-hosted-migration/independent-ci-v1/src/`）：`resident-v2/train-run.mjs`、`resident-v2/windows/FormalPublicBoundaryV2.cs`、`independent-control-checks-v2/train-maintenance.mjs`、`independent-control-checks-v2/train-facts.mjs`。要新的 Source 清单（`ciSourceManifestSha256`）；C# 边界随之重编。
+- **常驻层**：`policy.mjs`、`train.mjs`、`executor.mjs`、`status.mjs`、`ruleset-backstop.mjs`、`engine-windows.mjs`（只改注释）。
+- `upgrader/src/` 一个字节未动；`scripts/ci/` 只有注册表重新生成的部分。
+- 送审：本节与上述改动走独立审核（规则 01d4ba7d）；65.4 与 65.6 是 Owner 决定点。
+
+### 65.9 现场缺陷 #1035：旧 head 的停车批次占住行，新 head 的车头批次开不出来（2026-11-07）
+
+**现象。** #1035 旧 head `5797132c` 的车头批次（带 S）第 8 段 `REQUIRED_CHECK_FAILED`，停在 B。之后推了新 head `787ea0c5`。第 10 段给出 `OPEN_FRONT_BATCH(1035, 787ea0c5)`，之后一直 `TRAIN_FRONT_BATCH_RUNNING`，执行器 IDLE，40 分钟没开任何批次；queue.json 该行 `running` 是旧 head 的停车批次，`current` 是新 head。
+
+**根因（核实过，与最初推断部分不同）。** 有两处，第二处是卡死的直接原因：
+1. 接管期间（`trainTakeoverPending`）`resumeParked({ hold })` 先按列车门过滤停车批次，再做“被新提交取代就在安全点结束”（`supersededParked`）。旧 head 的车头批次已不是当前车头（strict 观察改指新 head 后 `trainStrictFront` 为假），被过滤掉，永远不会被判 superseded，一直占着这一行。最初推断说的 `executor.mjs:2162` 是空闲加速续扫的 `frontWork` 判断，不是这里；真正的过滤在 `resumeParked` 的 `hold` 一行。
+2. 第 10 段直接从 GitHub 读 PR，先于轮询的触发进队看到新 head：它为新 head 记下车头批次（计一次尝试）并 touch running，然后 `enqueueFront` 的 `offerFront` 因该行还在跑旧批次而拒绝（`TRAIN_FRONT_PR_BUSY`）。这一批从没跑，但第 10 段此后按记录和 holder 的 running 时钟一直说 `TRAIN_FRONT_BATCH_RUNNING`、不再开，直到 running 时钟或位子到期（最长 90 分钟）。这一处与模式无关：strict 永久开（`audit`）下同样卡住（离线复现：旧批次已被取代结束，但新车头批次仍不跑）。
+
+**修法（只改常驻层 `executor.mjs`）。**
+- `resumeParked`：被新提交取代的 B 点停车批次，先于接管门的过滤就判（`supersededParked`：队列有更新的提交 + 一次实时读确认，`SUPERSEDED_AT_SAFE_POINT`，旧 head 烧掉、rename-only 归档）。结束一个被取代的批次不发布任何东西，所以不受列车门约束。
+- `enqueueFront` → `endSupersededForFront`：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
+- `frontRetry`：`offerFront` 只因行忙被拒的车头批次记下来；之后某次第 10 段对同一 PR、同一 head、同一 main 仍说 `TRAIN_FRONT_BATCH_RUNNING` 时（它刚刷新了这个 head 的 strict 观察），再提交一次（回执 `train-front-reoffered`）。成功入队、职责结束时清掉。
+- 第 8 段的实时检查一条没变；停在 A 的旧批次（只在 relay 开时出现）不在本修法内，仍由原路径处理。
+
+**测试**（`test/train-takeover-front.test.mjs`，真实执行器 + Source v2 第 10 段/第 8 段，模拟时间）：
+- 旧 head 车头批次第 8 段 `REQUIRED_CHECK_FAILED` 停在 B → 推新 head，第 10 段先于触发看到新 head 并给出 `OPEN_FRONT_BATCH` → 旧批次 `SUPERSEDED_AT_SAFE_POINT`（safePoint `parked`）→ 新 head 的车头批次第 1–8 段 → merge-slot 绿。`gate` 与 `audit` 各一例，约 60 s（模拟）。修复前两例 40 分钟内都没有绿，第 10 段一直 `TRAIN_FRONT_BATCH_RUNNING`。
+- 同一场景，开车头批次时 companion 读不到 PR（不能只凭队列结束任何东西）：先被拒为 busy，5 分钟后实时读恢复 → 再提交 → 约 820 s 出绿。修复前没有绿。
+- 接管期间列车门挡着旧车头批次时，推新 head 后它仍在安全点结束、行被释放。修复前一直停着。
+
+## 66. 状态里的分段耗时（优化方案 P1，Clued bf57ff10；状态合同 `/8`）
+
+- `status.json` 新增顶层键 `timing`（合同升到 `clued.independent-ci.resident-status/8`；读端接受 `/5`~`/8`，`/7` 及更早的文件没有 `timing`，读作 null；现有字段语义不变）。仍是视图，不是证据：没有任何决定读它。
+- 记录器是 `src/stage-timing.mjs`，由状态板（`status.mjs`）喂数据，执行器只加了四处打点：`receipt('stage-terminal')` 结束该段的计时、`runStageWatched` 把扫描段的 relay 记录交给状态板、`reportOutcome` 带上队列首次看到该提交的时间、第 10 段运行前后各记一次时间。每个阶段/相位的起止来自已有的 `setCurrent`（`atStage`），所以重试、第 8 段多次尝试、停靠 A/B 后再恢复都落在同一条批次记录里；停靠休息的时间不计入 `activeMs`，计入 `spanMs`。
+- 每个批次一条记录：`prepMs`（预约到打包完成）与 `prep`（derive / bundle / workspace / rebundle），`stages[n]`（`ms` 为各次运行之和、`runs`、重试等待 `waitMs`、有 Linux 角色的段另有 `relay`：`handoffs { n, ms, maxMs }`（companion 的 relay 调用：发 issue、收 challenge、发 response、收 result）与 `rounds`（每轮准入挑战从取到 challenge 到发出 response 的毫秒数，最多 16 轮），`activeMs`、`spanMs`、`pushToGreenMs`。
+- relay 记录由 companion 的 pump 在结束前写入 `responses\<requestId>.timing.json`（create-only、尽力而为、不改任何已冻结的应答合同），服务在读到应答后宽松读取（`mailbox.mjs#timing`）；写不出或读不出就是没有，不影响阶段结果。
+- `timing` 的内容：`last`（最近完成批次）、`current`（在跑批次已累计各段，`openedAt` 为当前段起点，读端用 `activeMs + (now - openedAt)` 算已用时间）、`stats`（最近 20 个已结束批次每段的 n / 中位数 / P90；中位数取中间值，偶数个取中间两个的均值四舍五入；P90 取最近秩，即第 ceil(0.9n) 小；只统计测到该段的批次，`active` 只统计 COMPLETED 批次）、`pushToGreen`（当天 UTC 日、COMPLETED 批次从队列首次看到该提交到第 8 段结束的 n / 中位数 / P90 / 最大）、`train`（第 10 段各轮的 `ms` 与扫描段占用 `scanMs`，后者取该轮的清扫起止与本轮时间窗的重叠，没有清扫事实时为 null）、以及 `done` / `open`（恢复用，见下）。
+- 重启：`done`（最近 40 个已结束批次）、`open`（停靠中未结束的批次）和第 10 段各轮随快照整体写入 `status.json`；服务启动时读回上一份快照并逐项重新校验（`service-main.mjs`），读不出就空着开始。`done` 在序列化超过 80 KB 时从最旧的一端截掉，快照因此始终远小于 `STATUS_MAX_BYTES`。
+- PR 页的运行中一行在阶段文字与租约提醒之间插入“已跑 N分；备 … 1:… 2:…”，只用租约提醒之外剩下的字数再减 30 字的余量（给补跑、当班词、看门狗行留位置），所以 140 字上限与租约提醒都不会因它被截掉；按整分钟显示，所以这一行最多每分钟变一次。停靠在 A（没有段）的批次和别的批次的计时不显示。

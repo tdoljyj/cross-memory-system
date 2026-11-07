@@ -37,10 +37,13 @@ function harness({role='trivy',observationNames='last'}={}){
   const claim={claimId:randomUUID(),fence:3,epoch:1,expiresAt:iso(Date.now()+3600_000)};
   const context={role,config:{sourceManifestSha256:job.sourceManifestSha256},sourceAcceptanceRef:randomUUID(),hostQualificationRef:randomUUID()};
   const issue=makeIssue(job,admittedFacts(job,claim,PACKET,{batchClaim:claim}),role==='gitleaks'?{contract:'clued.independent-ci.remote-heads-tags/1',repository:REPO,complete:true,observedAt:iso(Date.now()),refs:[{name:'refs/heads/main',objectSha:BASE}]}:null,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:iso(Date.now()+600_000)});
+  // Each answer gets its own strictly increasing observedAt (in the past, never after the challenge): the facts digest includes it, so two answers made in the same
+  // millisecond (real clock) would be byte-identical and the 'first'-vs-'last' naming below could not tell them apart.
+  const answerBase=Date.now()-5000;let answers=0;
   const files=new Map([['issue',Buffer.from(encode(issue))]]),challenges=[];
   const box={async lock(){},async read(name){return files.get(name);},async write(name,bytes){files.set(name,Buffer.from(bytes));if(name.startsWith('challenge-'))challenges.push(decode(files.get(name)));},
     async wait(name){const challenge=decode(files.get('challenge-'+name.slice('response-'.length)));
-      return Buffer.from(encode(makeResponse(issue,challenge,admittedFacts(job,claim,PACKET,{batchClaim:claim}),null)));}};
+      return Buffer.from(encode(makeResponse(issue,challenge,admittedFacts(job,claim,PACKET,{batchClaim:claim,observedAt:answerBase+(++answers)}),null)));}};
   const h={context,box,job,signed:[],finished:[],challenges,files,
     // The adapter's shape: a pre admission, its work, a post admission, then the observation naming the post admission.
     adapter:ports=>({async execute(subject){const before=await ports.admissionPort(subject),after=await ports.admissionPort(subject);

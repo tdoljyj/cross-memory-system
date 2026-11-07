@@ -38,13 +38,20 @@ import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
+import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/7';
+// Contract /8 (optimisation plan P1, Clued bf57ff10): a new top-level key `timing` (stage-timing.mjs): the newest finished batch's segment
+// times (`last`), the batch in flight so far (`current`), the median and P90 of each segment over the newest 20 finished batches
+// (`stats`), the day's push-to-first-green figures (`pushToGreen`), stage 10's rounds (`train`), and `done` / `open`, the records the
+// service reads back on start (restore) so a restart keeps them. Every existing field keeps its meaning. The reader accepts /5 to /8;
+// a /8 file read by a companion of before /8 is refused as any unknown contract is (the same order as /6 -> /7: companion first).
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/8';
+export const STATUS_CONTRACT_V7 = 'clued.independent-ci.resident-status/7';
 export const STATUS_CONTRACT_V6 = 'clued.independent-ci.resident-status/6';
-// What the reader accepts: /5 and /6 (the same top-level keys; the executor before the upgrade channel) and /7.
-export const STATUS_CONTRACTS_READABLE = Object.freeze(['clued.independent-ci.resident-status/5', STATUS_CONTRACT_V6, STATUS_CONTRACT]);
+// What the reader accepts: /5 and /6 (the same top-level keys; the executor before the upgrade channel), /7 and /8.
+export const STATUS_CONTRACTS_READABLE = Object.freeze(['clued.independent-ci.resident-status/5', STATUS_CONTRACT_V6, STATUS_CONTRACT_V7, STATUS_CONTRACT]);
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -91,6 +98,8 @@ export class StatusBoard {
   constructor({ clock = Date.now, pid = process.pid } = {}) {
     this.clock = clock;
     this.pid = pid;
+    this.timing = new StageTimings({ clock });
+    this.timingJson = null;
     this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, node: null, backfill: { complete: false, published: null, unreadable: null },
       current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null }, versions: null };
     this.changedAt = iso(clock());
@@ -99,6 +108,19 @@ export class StatusBoard {
   // Status /7: the versions view (readVersions); anything that does not fit is shown as nothing (null).
   setVersions(v) {
     return this.update({ versions: parseVersions(v) });
+  }
+
+  // Stage timings (stage-timing.mjs): the recorder is fed by the calls the executor already makes; changedAt moves when the written view does.
+  restoreTiming(v) { return this.timing.restore(v); }
+  stageDone(stage) { this.timing.stageDone(stage); this.touchTiming(); }
+  stageRelay(stage, relayTiming) { this.timing.stageRelay(stage, relayTiming); this.touchTiming(); }
+  noteTrain(facts) { if (this.timing.noteTrain(facts)) this.touchTiming(); }
+  touchTiming() {
+    const json = canonicalJson(this.timing.view());
+    if (json === this.timingJson) return false;
+    this.timingJson = json;
+    this.changedAt = iso(this.clock());
+    return true;
   }
 
   update(patch) {
@@ -134,17 +156,20 @@ export class StatusBoard {
 
   // The batch in flight (null when none). stage: the stage number running now (0 = bundle/workspace, 9 = stage R).
   setCurrent(current) {
-    if (!current) return this.update({ current: null });
+    if (!current) { this.timing.setCurrent(null); this.touchTiming(); return this.update({ current: null }); }
     const c = { key: key12(current.key), pr: current.pr, headSha: current.headSha, baseSha: current.baseSha, attempt: current.attempt,
       stage: Number.isSafeInteger(current.stage) ? current.stage : null, phase: typeof current.phase === 'string' ? current.phase.slice(0, 40) : null,
       since: current.since ?? iso(this.clock()), stageSince: iso(this.clock()), claimExpiresAt: isoOrNull(current.claimExpiresAt ?? null),
       leaseFrom: isoOrNull(current.leaseFrom ?? null) };
+    this.timing.setCurrent({ pr: c.pr, headSha: c.headSha, attempt: c.attempt, stage: c.stage, phase: c.phase, since: c.since });
+    this.touchTiming();
     return this.update({ current: c });
   }
 
   // The newest outcome per (PR, head, attempt), newest first, bounded.
-  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null }) {
+  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null, pushedAt = null }) {
     if (!Number.isSafeInteger(pr) || !HEX40.test(headSha ?? '') || !RECENT_OUTCOMES.includes(outcome)) return false;
+    if (this.timing.finish({ pr, headSha, attempt, outcome, code, pushedAt })) this.touchTiming();
     const entry = { pr, headSha, attempt, outcome, code: typeof code === 'string' && CODE.test(code) ? code : null,
       class: typeof klass === 'string' && /^[a-z0-9-]{1,40}$/.test(klass) ? klass : null, retry: typeof retry === 'string' && /^[a-z0-9-]{1,40}$/.test(retry) ? retry : null,
       key: key12(key), at: iso(this.clock()) };
@@ -165,7 +190,7 @@ export class StatusBoard {
   }
 
   snapshot() {
-    return { contract: STATUS_CONTRACT, writtenAt: iso(this.clock()), changedAt: this.changedAt, pid: this.pid, ...this.content };
+    return { contract: STATUS_CONTRACT, writtenAt: iso(this.clock()), changedAt: this.changedAt, pid: this.pid, ...this.content, timing: this.timing.view() };
   }
 }
 
@@ -204,12 +229,13 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
 const TOP_V6 = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices', 'train'];
-const TOP = [...TOP_V6, 'versions'];
+const TOP_V7 = [...TOP_V6, 'versions'];
+const TOP = [...TOP_V7, 'timing'];
 const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
   check(v && typeof v === 'object' && STATUS_CONTRACTS_READABLE.includes(v.contract), 'STATUS_REFUSED');
-  exactKeys(v, v.contract === STATUS_CONTRACT ? TOP : TOP_V6, 'STATUS_REFUSED');
+  exactKeys(v, v.contract === STATUS_CONTRACT ? TOP : v.contract === STATUS_CONTRACT_V7 ? TOP_V7 : TOP_V6, 'STATUS_REFUSED');
   check(Number.isFinite(Date.parse(v.writtenAt)) && Number.isFinite(Date.parse(v.changedAt)), 'STATUS_REFUSED');
   check(v.executor && EXECUTOR_STATES.includes(v.executor.state), 'STATUS_REFUSED');
   const head = h => typeof h === 'string' && HEX40.test(h);
@@ -249,7 +275,9 @@ export function parseStatus(bytes) {
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
     train: trainOf(v.train),
     // /7 only; /6 has none. Read with the same rules as written (parseVersions), so what does not fit is null, never a refusal.
-    versions: v.contract === STATUS_CONTRACT ? parseVersions(v.versions) : null,
+    versions: v.contract === STATUS_CONTRACT || v.contract === STATUS_CONTRACT_V7 ? parseVersions(v.versions) : null,
+    // /8 only; older files have none. What does not fit is null, never a refusal (a view of times, nothing decides on it).
+    timing: v.contract === STATUS_CONTRACT ? parseTiming(v.timing) : null,
   };
 }
 
@@ -264,7 +292,9 @@ function trainOf(t) {
   if (t?.notOnDuty === true) out.notOnDuty = true;
   // Generation 16: readiness is narrower than a completed full sweep. These are
   // display facts only; the executor and Source independently check authority.
-  if (['blocked', 'strict-coverage', 'strict-current-front', 'full-sweep'].includes(t?.frontReadyMode)) out.frontReadyMode = t.frontReadyMode;
+  if (['blocked', 'strict-coverage', 'strict-current-front', 'full-sweep', 'strict-permanent'].includes(t?.frontReadyMode)) out.frontReadyMode = t.frontReadyMode;
+  // DESIGN §65: the policy's train.sweep (strict-permanent mode is 'audit' or 'off'); the companion's ruleset backstop reads it.
+  if (['gate', 'audit', 'off'].includes(t?.sweepMode)) out.sweepMode = t.sweepMode;
   for (const k of ['fullPending', 'backgroundAllPending']) if (typeof t?.[k] === 'boolean') out[k] = t[k];
   for (const k of ['maintenanceExtraUsed', 'maintenanceExtraLimit'])
     if (Number.isSafeInteger(t?.[k]) && t[k] >= 0 && t[k] <= 200) out[k] = t[k];

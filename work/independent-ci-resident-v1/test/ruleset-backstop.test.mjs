@@ -43,6 +43,28 @@ test('strict off without the train pauses and notifies; an unpinned or disabled 
   for (const bad of [null, {}, 'x', [1]]) assert.deepEqual(backstopDecision({ facts: rulesFacts(bad), trainMode: 'off' }), { pause: false, notify: null });
 });
 
+// DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): strict off is never a state to work in. With the policy's train.sweep 'audit'
+// or 'off' (status train.sweepMode) the pause and the urgent notice come at once, whatever the sweep, the duty or how new the eligibility.
+test('strict-permanent mode: strict off pauses and notifies at once, no grace, on every node; gate and an older status keep the old rules', async () => {
+  const off = rulesFacts(rules({ strict: false }));
+  const now = Date.parse('2026-11-07T00:00:00Z');
+  for (const sweepMode of ['audit', 'off'])
+    for (const [sweep, duty] of [[null, { onDuty: true, onSince: now - 60_000 }], [{ fullSinceOn: true }, { onDuty: true, onSince: now - 2 * SWEEP_GRACE_MS }],
+      [null, dutyOf({ node: { mode: 'STANDBY' }, train: {} })], [null, { onDuty: true, onSince: null }]])
+      assert.deepEqual(backstopDecision({ facts: off, trainMode: 'on', sweep, duty, now, sweepMode }), { pause: true, notify: 'STRICT_OFF_STRICT_PERMANENT' }, `${sweepMode} ${JSON.stringify([sweep, duty])}`);
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(rules()), trainMode: 'on', sweepMode: 'audit', now }), { pause: false, notify: null }, 'strict on: nothing');
+  assert.deepEqual(backstopDecision({ facts: off, trainMode: 'shadow', sweepMode: 'audit', now }), { pause: true, notify: 'STRICT_OFF_WITHOUT_TRAIN' });
+  for (const sweepMode of ['gate', null, undefined, 'bogus'])
+    assert.deepEqual(backstopDecision({ facts: off, trainMode: 'on', sweep: null, duty: { onDuty: true, onSince: now - 60_000 }, now, sweepMode }), { pause: false, notify: 'STRICT_OFF_SWEEP_PENDING' }, String(sweepMode));
+  assert.match(backstopText('STRICT_OFF_STRICT_PERMANENT'), /strict 永久开/);
+  // One pass: the status's sweepMode reaches the decision; the pause request is written on the first pass.
+  const paused = [], notes = [], mem = new Map();
+  const r = await backstopPass({ readRules: async () => rules({ strict: false }), trainMode: async () => 'on', trainSweep: async () => ({ fullSinceOn: true }),
+    trainDuty: async () => ({ onDuty: true, onSince: now - 60_000 }), trainSweepMode: async () => 'audit', writePause: async x => paused.push(x), notify: async k => notes.push(k),
+    memory: { get: async k => mem.get(k), set: async (k, v) => mem.set(k, v) }, clock: () => now });
+  assert.deepEqual([r.acted, paused, notes], [true, ['ruleset-backstop: STRICT_OFF_STRICT_PERMANENT'], ['STRICT_OFF_STRICT_PERMANENT']]);
+});
+
 test('one pass acts once a day per kind; a failing read never acts', async () => {
   const mem = new Map(), paused = [], notes = [];
   const ports = (reply, clock) => ({ readRules: async () => reply, trainMode: async () => 'shadow', writePause: async r => paused.push(r), notify: async k => notes.push(k),

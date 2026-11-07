@@ -1,6 +1,6 @@
 {
   "contract": "clued.independent-ci.train-run-cases/1",
-  "note": "Shared cases for the two train-run /2 validators: resident-v2/train-run.mjs#validateTrainRun (test/train-run.test.mjs) and FormalPublicBoundaryV2.cs#ValidateTrainRun (windows/PureTestsV2.cs via test-pure-v2.ps1). Each case applies `set` to `base` (then `remove` / `add`); the id is recomputed with trainRunJobId unless `keepId` is true. Accepted cases must validate on both sides with the same id; refused cases must be refused on both.",
+  "note": "Shared cases for the two train-run /3 validators: resident-v2/train-run.mjs#validateTrainRun (test/train-run.test.mjs) and FormalPublicBoundaryV2.cs#ValidateTrainRun (windows/PureTestsV2.cs via test-pure-v2.ps1). Each case applies `set` to `base` (then `remove` / `add`); the id is recomputed with trainRunJobId unless `keepId` is true. Accepted cases must validate on both sides with the same id; refused cases must be refused on both.",
   "base": {
     "repo": "tdoljyj/cross-memory-system",
     "runId": "0123456789abcdef-0123456789ab",
@@ -17,7 +17,8 @@
     "frontTestSha": null,
     "frontAttempt": null,
     "frontCode": null,
-    "revokeHeadRequestId": null
+    "revokeHeadRequestId": null,
+    "sweep": "gate"
   },
   "accepted": [
     { "name": "shadow" },
@@ -28,12 +29,18 @@
     { "name": "revoke-only-since-request", "set": { "mode": "revoke-only", "onSince": "2026-10-31T04:00:00.000Z", "revokeHeadRequestId": "11111111-2222-4333-8444-555555555555" } },
     { "name": "bounds-low", "set": { "slotHardCapMinutes": 60, "frontBatchBudgetMs": 60000, "sweepFreshMs": 60000, "fullSweepMaxMs": 600000 } },
     { "name": "bounds-high", "set": { "slotHardCapMinutes": 180, "frontBatchBudgetMs": 10800000, "sweepFreshMs": 3600000, "fullSweepMaxMs": 86400000 } },
-    { "name": "front-attempt-1", "set": { "mode": "on", "onSince": "2026-10-31T04:00:00.000Z", "frontPr": 1, "frontHeadSha": "2222222222222222222222222222222222222222", "frontTestSha": "2222222222222222222222222222222222222222", "frontAttempt": 1, "frontCode": "AB" } }
+    { "name": "front-attempt-1", "set": { "mode": "on", "onSince": "2026-10-31T04:00:00.000Z", "frontPr": 1, "frontHeadSha": "2222222222222222222222222222222222222222", "frontTestSha": "2222222222222222222222222222222222222222", "frontAttempt": 1, "frontCode": "AB" } },
+    { "name": "sweep-audit", "set": { "mode": "on", "onSince": "2026-10-31T04:00:00.000Z", "sweep": "audit" } },
+    { "name": "sweep-off", "set": { "mode": "on", "onSince": "2026-10-31T04:00:00.000Z", "sweep": "off" } }
   ],
   "refused": [
     { "name": "mode-off", "set": { "mode": "off" } },
     { "name": "on-since-year-0000", "set": { "mode": "on", "onSince": "0000-01-01T00:00:00.000Z" } },
     { "name": "contract-1", "set": { "contract": "clued.independent-ci.train-run/1" } },
+    { "name": "contract-2", "set": { "contract": "clued.independent-ci.train-run/2" } },
+    { "name": "sweep-unknown", "set": { "sweep": "full" } },
+    { "name": "sweep-null", "set": { "sweep": null } },
+    { "name": "sweep-missing", "remove": "sweep" },
     { "name": "id-mismatch", "set": { "id": "0000000000000000000000000000000000000000000000000000000000000000" }, "keepId": true },
     { "name": "slot-cap-low", "set": { "slotHardCapMinutes": 59 } },
     { "name": "slot-cap-high", "set": { "slotHardCapMinutes": 181 } },
