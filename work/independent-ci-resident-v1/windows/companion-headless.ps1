@@ -173,8 +173,21 @@ function Test-CompanionPendingStale($pending, [DateTimeOffset]$now) {
   if (-not [DateTimeOffset]::TryParse([string]$pending.startedAt, [ref]$at)) { return $true }
   ($now - $at).TotalMinutes -gt $CompanionPendingStaleMinutes
 }
+# The switch that wrote the marker is still running: its process (pid and start time from the marker) is still there. Review round 2:
+# the credential box may stay open for any time, so age alone never rolls back a switch that is still in progress.
+function Test-CompanionPendingOwnerAlive($pending) {
+  if ($null -eq $pending -or -not (@($pending.PSObject.Properties.Name) -ccontains 'pid') -or -not (@($pending.PSObject.Properties.Name) -ccontains 'processStart')) { return $false }
+  $p = Get-Process -Id ([int]$pending.pid) -ErrorAction SilentlyContinue
+  if ($null -eq $p) { return $false }
+  $start = try { $p.StartTime.ToUniversalTime().ToString('o') } catch { $null }
+  $start -ceq [string]$pending.processStart
+}
+# Abandoned: older than 15 minutes AND the switch that wrote it has ended (window closed, restart, error). Only then is it rolled back.
+function Test-CompanionPendingAbandoned($pending, [DateTimeOffset]$now) { (Test-CompanionPendingStale $pending $now) -and -not (Test-CompanionPendingOwnerAlive $pending) }
 function Write-CompanionPending([string]$root, [string]$mode, [string]$ownerSid) {
+  $me = Get-Process -Id $PID
   $body = [ordered]@{ contract = $CompanionPendingContract; mode = $mode; startedAt = [DateTimeOffset]::UtcNow.ToString('o'); by = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    pid = $PID; processStart = $me.StartTime.ToUniversalTime().ToString('o')
     fallback = [ordered]@{ logonType = 'InteractiveToken'; trigger = 'AtLogOn'; principal = $ownerSid; action = (Get-SupervisorAction $root); sddl = (Get-CompanionTaskSddl $ownerSid) } }
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(($body | ConvertTo-Json -Depth 5 -Compress))
   $f = [IO.File]::Open((Join-Path $root $CompanionPendingFile), 'CreateNew', 'Write', 'None'); try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
@@ -186,10 +199,18 @@ function Invoke-CompanionFallback([string]$root, [string]$ownerSid) {
   Remove-CompanionFallbackTask
   [ordered]@{ fellBack = $true; taskXmlSha256 = $xml }
 }
+# Review round 2 MINOR 5: every roll-back first ends the running instance and waits until it no longer counts as running.
+function Invoke-CompanionStopAndFallback([string]$root, [string]$ownerSid) {
+  Stop-CompanionTask
+  $tree = Get-CompanionProcessTree $root
+  foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+  Wait-CompanionTaskNotRunning
+  Invoke-CompanionFallback $root $ownerSid
+}
 # Review M1: a cut-off switch (a restart, a closed window, an error after the password was registered) is rolled back without anyone:
-# together with the marker, a one-shot SYSTEM task runs the installed companion-headless-fallback.ps1 at boot and 16 minutes after the
-# start. That script rolls back only a marker older than 15 minutes, then deletes this task; a qualified switch deletes it at once.
-# No password: SYSTEM and the interactive definition need none.
+# before the marker, a SYSTEM task is registered that runs the installed companion-headless-fallback.ps1 at boot and from 16 minutes
+# after the start every 15 minutes. That script rolls back only an abandoned marker (older than 15 minutes and its switch no longer
+# running), then deletes this task; a qualified switch deletes it at once. No password: SYSTEM and the interactive definition need none.
 function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
   $script = Join-Path $root ('resident\' + $residentSha + '\windows\companion-headless-fallback.ps1')
   if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'COMPANION_FALLBACK_SCRIPT_MISSING' }
@@ -197,7 +218,8 @@ function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
   $folder = $svc.GetFolder('\Clued')
   $def = $svc.NewTask(0)
   $def.Principal.UserId = 'S-1-5-18'; $def.Principal.LogonType = 5; $def.Principal.RunLevel = 1
-  $t = $def.Triggers.Create(1); $t.StartBoundary = [DateTime]::Now.AddMinutes($CompanionPendingStaleMinutes + 1).ToString('yyyy-MM-ddTHH:mm:ss')
+  $t = $def.Triggers.Create(1); $t.StartBoundary = [DateTime]::Now.AddMinutes($CompanionPendingStaleMinutes + 1).ToString('yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+  $t.Repetition.Interval = 'PT15M'
   $b = $def.Triggers.Create(8); $b.Delay = 'PT2M'
   $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT10M'; $def.Settings.StartWhenAvailable = $true
   $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
@@ -209,9 +231,10 @@ function Remove-CompanionFallbackTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   try { $svc.GetFolder('\Clued').DeleteTask($CompanionFallbackTaskName, 0) } catch { }
 }
+# The fall-back task is there and has not failed: never run (0x41303), running (0x41301) or its last run succeeded (0).
 function Test-CompanionFallbackTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
-  try { $null = $svc.GetFolder('\Clued').GetTask($CompanionFallbackTaskName); $true } catch { $false }
+  try { $t = $svc.GetFolder('\Clued').GetTask($CompanionFallbackTaskName); @(0L, 0x41301L, 0x41303L) -contains ([int64]$t.LastTaskResult -band 0xFFFFFFFFL) } catch { $false }
 }
 # Review M2: names of variables that would load foreign code into the registrar (a .NET program), in this process or in the Owner's
 # HKCU\Environment. The registrar is started with a cleared environment anyway (Invoke-CompanionRegistrar).
@@ -339,14 +362,17 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   $result = [ordered]@{ mode = $mode; preflight = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
   $pending = Read-CompanionPending $root
   if ($null -ne $pending) {
+    # Another switch is still running (its window is open): never two at once.
+    if (Test-CompanionPendingOwnerAlive $pending) { $result.failed = 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'; return $result }
     # An earlier switch was cut off (window closed, restart): back to the interactive token first, never left unqualified.
-    $null = Invoke-CompanionFallback $root $ownerSid
+    $null = Invoke-CompanionStopAndFallback $root $ownerSid
     $result.earlierPendingFellBack = $true
   }
   $result.preflight = Get-CompanionHeadlessPreflight $root $node
   if (@($result.preflight.refusals).Count) { $result.failed = 'PREFLIGHT'; return $result }
-  Write-CompanionPending $root $mode $ownerSid
+  # Review round 2 MINOR 1: the fall-back task first (a marker never exists without it), then the marker.
   Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
+  Write-CompanionPending $root $mode $ownerSid
   $reg = Invoke-CompanionRegistrar $root @('register-password', $root)
   $result.registrar = try { ($reg | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
   if ($result.registrar -cne 'REGISTERED') {
@@ -367,17 +393,13 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   $why = Wait-CompanionQualified $root $ownerSid $since
   $result.task = Get-CompanionTaskFacts $root $ownerSid
   if ($null -eq $why -and $result.task.mode -ceq 'password') {
-    Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force
+    Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
     Remove-CompanionFallbackTask
     $result.qualified = $true
     return $result
   }
   $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
-  Stop-CompanionTask
-  $tree = Get-CompanionProcessTree $root
-  foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
-  Wait-CompanionTaskNotRunning
-  $null = Invoke-CompanionFallback $root $ownerSid
+  $null = Invoke-CompanionStopAndFallback $root $ownerSid
   # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
   try { Start-CompanionTask } catch { }
   $result.fellBack = $true

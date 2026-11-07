@@ -88,12 +88,24 @@ $iPre = $sw.IndexOf('Get-CompanionHeadlessPreflight'); $iMark = $sw.IndexOf('Wri
 Yes ($iPre -gt 0 -and $iPre -lt $iMark -and $iMark -lt $iReg -and $iReg -lt $iRun -and $iRun -lt $iQual) 'switch-order-preflight-marker-password-run-qualify'
 # review M1: the SYSTEM fall-back task is registered with the marker, before the password; removed only when qualified (or by a fall-back)
 $iFb = $sw.IndexOf('Register-CompanionFallbackTask')
-Yes ($iFb -gt $iMark -and $iFb -lt $iReg) 'switch-registers-the-fallback-task-before-the-password'
+Yes ($iFb -gt $iPre -and $iFb -lt $iReg) 'switch-registers-the-fallback-task-before-the-password'
 Yes ($functions['companion-headless.ps1:Invoke-CompanionFallback'].Contains('Remove-CompanionFallbackTask')) 'fallback-removes-the-fallback-task'
 $fbReg = $functions['companion-headless.ps1:Register-CompanionFallbackTask']
 Yes ($fbReg.Contains("UserId = 'S-1-5-18'") -and $fbReg.Contains('Triggers.Create(8)') -and $fbReg.Contains('Triggers.Create(1)') -and $fbReg.Contains("'D:P(A;;FA;;;SY)(A;;FA;;;BA)'") -and $fbReg.Contains('companion-headless-fallback.ps1')) 'fallback-task-system-boot-and-16-minutes-admin-only'
 $fb = $texts['companion-headless-fallback.ps1']
-Yes ($fb.Contains("throw 'SYSTEM_REQUIRED'") -and $fb.Contains("throw 'RUN_THE_INSTALLED_COPY'") -and $fb.IndexOf('Test-CompanionPendingStale') -lt $fb.IndexOf('Invoke-CompanionFallback') -and -not ($fb -match 'param\s*\(')) 'fallback-script-system-installed-stale-only-no-arguments'
+Yes ($fb.Contains("throw 'SYSTEM_REQUIRED'") -and $fb.Contains("throw 'RUN_THE_INSTALLED_COPY'") -and $fb.IndexOf('Test-CompanionPendingAbandoned') -lt $fb.IndexOf('Invoke-CompanionStopAndFallback') -and -not ($fb -match 'param\s*\(')) 'fallback-script-system-installed-abandoned-only-no-arguments'
+# review round 2: the fall-back task before the marker; a repeated time trigger; culture-invariant time; never rolls back a running switch
+Yes ($iFb -lt $iMark) 'switch-fallback-task-before-the-marker'
+Yes ($fbReg.Contains("`$t.Repetition.Interval = 'PT15M'") -and $fbReg.Contains('InvariantCulture')) 'fallback-task-repeats-invariant-time'
+$alive = [pscustomobject]@{ startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-60).ToString('o'); pid = $PID; processStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o') }
+Yes ((Test-CompanionPendingOwnerAlive $alive) -and -not (Test-CompanionPendingAbandoned $alive ([DateTimeOffset]::UtcNow))) 'pending-of-a-running-switch-is-never-abandoned'
+$gone = [pscustomobject]@{ startedAt = $alive.startedAt; pid = $PID; processStart = '2000-01-01T00:00:00.0000000Z' }
+Yes (-not (Test-CompanionPendingOwnerAlive $gone) -and (Test-CompanionPendingAbandoned $gone ([DateTimeOffset]::UtcNow))) 'pending-of-an-ended-switch-is-abandoned-when-stale'
+$young = [pscustomobject]@{ startedAt = [DateTimeOffset]::UtcNow.ToString('o'); pid = 1; processStart = 'x' }
+Yes (-not (Test-CompanionPendingAbandoned $young ([DateTimeOffset]::UtcNow))) 'pending-young-is-not-abandoned'
+Yes ($pm.pid -eq $PID -and $pm.processStart) 'pending-records-the-switch-process'
+Yes ($sw.Contains("'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'") -and $sw.Contains('Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue')) 'switch-never-two-at-once-marker-removal-tolerant'
+foreach ($f in @('rearm-resident.ps1', 'verify-resident.ps1', 'companion-headless-fallback.ps1')) { Yes ($texts[$f].Contains('Invoke-CompanionStopAndFallback')) ('stop-before-fallback:' + $f) }
 # review B1: the time the qualification counts from is taken after the old instance ended, and the child's own start bounds the signals
 $iSince = $sw.IndexOf('$since = [DateTimeOffset]::UtcNow')
 Yes ($iSince -gt $sw.IndexOf('Wait-CompanionTaskNotRunning') -and $iSince -lt $iRun) 'switch-counts-from-after-the-old-instance'
@@ -106,13 +118,13 @@ foreach ($v in @('COR_ENABLE_PROFILING', 'COR_PROFILER_PATH_64', 'COMPlus_ReadyT
 Yes (-not ('PATH' -match $CompanionInjectVariables)) 'inject-variable-not-path'
 $vt = $texts['verify-resident.ps1']
 Yes ($vt.Contains("'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'") -and $vt.IndexOf("-ceq 'S-1-5-18') {") -lt $vt.IndexOf('elseif ($verifyCanFix) {')) 'verify-as-system-never-touches-the-task'
-Yes ($sw.IndexOf('Read-CompanionPending') -lt $iPre -and $sw.Substring(0, $iPre).Contains('Invoke-CompanionFallback')) 'switch-first-rolls-back-an-earlier-marker'
-Yes (([regex]::Matches($sw, 'Invoke-CompanionFallback')).Count -ge 3 -and ([regex]::Matches($sw, "Remove-Item -LiteralPath \(Join-Path \`$root \`$CompanionPendingFile\)")).Count -eq 1) 'switch-removes-the-marker-only-when-qualified'
+Yes ($sw.IndexOf('Read-CompanionPending') -lt $iPre -and $sw.Substring(0, $iPre).Contains('Invoke-CompanionStopAndFallback')) 'switch-first-rolls-back-an-earlier-marker'
+Yes (([regex]::Matches($sw, 'Invoke-Companion(StopAnd)?Fallback')).Count -ge 3 -and ([regex]::Matches($sw, "Remove-Item -LiteralPath \(Join-Path \`$root \`$CompanionPendingFile\)")).Count -eq 1) 'switch-removes-the-marker-only-when-qualified'
 $q = $functions['companion-headless.ps1:Test-CompanionQualifiedOnce']
 foreach ($k in @("'session-not-0'", "'token-elevated'", "'token-user'", "'image-path'", "'heartbeat'", "'linux-facts'", 'token-facts', 'adminsDenyOnly')) { Yes ($q.Contains($k) -or $functions['companion-headless.ps1:Get-ProcessTokenFacts'].Contains($k)) ('qualification-checks:' + $k) }
 Yes ((Get-Variable CompanionQualifySeconds).Value -eq 480) 'qualification-8-minutes'
 $verify = $texts['verify-resident.ps1']
-Yes ($verify.IndexOf('Test-CompanionPendingStale') -gt 0 -and $verify.IndexOf('Test-CompanionPendingStale') -lt $verify.IndexOf("Record 'companion-task'") -and $verify.Contains('STALE_MARKER_FELL_BACK')) 'verify-rolls-back-a-stale-marker-first'
+Yes ($verify.IndexOf('Test-CompanionPendingAbandoned') -gt 0 -and $verify.IndexOf('Test-CompanionPendingAbandoned') -lt $verify.IndexOf("Record 'companion-task'") -and $verify.Contains('STALE_MARKER_FELL_BACK')) 'verify-rolls-back-a-stale-marker-first'
 $rearm = $texts['rearm-resident.ps1']
 Yes ($rearm.Contains("throw 'OWNER_ACCOUNT_REQUIRED'") -and $rearm.Contains("[switch]`$CompanionHeadless, [switch]`$CompanionCredential, [switch]`$CompanionInteractive") -and $rearm.Contains("if (-not `$elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }")) 'rearm-owner-elevated-only'
 

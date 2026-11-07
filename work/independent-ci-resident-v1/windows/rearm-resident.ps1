@@ -73,8 +73,7 @@ if ($companionModes.Count -gt 0) {
   if ([string]$node.ownerSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\z' -or $me.User.Value -cne [string]$node.ownerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
   $mode = $companionModes[0][1]
   $out = if ($mode -ceq 'interactive') {
-    Stop-CompanionTask
-    $r = Invoke-CompanionFallback $Root ([string]$node.ownerSid)
+    $r = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)
     try { Start-CompanionTask } catch { }
     [ordered]@{ status = 'COMPANION_INTERACTIVE'; task = (Get-CompanionTaskFacts $Root ([string]$node.ownerSid)) }
   } else {

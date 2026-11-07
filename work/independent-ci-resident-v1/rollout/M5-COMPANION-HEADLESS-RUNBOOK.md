@@ -74,7 +74,7 @@ powershell.exe -NoProfile -File <仓库或安装包>\work\independent-ci-residen
 
 为什么不用 `gh auth login --with-token`：gh 在 Windows 凭据管理器里的条目按“主机 + GitHub 账号”区分，和 `GH_CONFIG_DIR` 无关。companion 的令牌和你的令牌属于同一个 GitHub 账号，再登录一次会动到你（和 Agent）正在用的那条凭据。即使加 `--insecure-storage`，gh 登录时也会先清掉“当前账号”那一条。直接写 `hosts.yml` 才能保证你和 Agent 的 gh 登录完全不变。
 
-脚本还会尽量清掉剪贴板历史（Win+V）。如果你开了“跨设备同步剪贴板”，请到“设置 → 系统 → 剪贴板”里点一次“清除”。
+脚本还会尽量清掉剪贴板历史（Win+V）。注意：这会清空你**全部**的剪贴板历史，不只是令牌那一条；有要留的内容请先另存。如果你开了“跨设备同步剪贴板”，请到“设置 → 系统 → 剪贴板”里点一次“清除”。
 
 这时可以关掉 GitHub 页面了。
 
@@ -109,7 +109,7 @@ powershell.exe -NoProfile -File <同上路径>\companion-gh-login.ps1 -Check
      - `COMPANION_HEADLESS_QUALIFIED`：完成。
      - `COMPANION_HEADLESS_FELL_BACK`：没通过，已自动退回原来的登录方式。节点照常工作（和今天一样依赖登录）。原因在 `stdout` 里的 `result.failed`。处理后按第 3 节重做。
      - `COMPANION_HEADLESS_PREFLIGHT_REFUSED`：前提不满足，什么都没改。原因在 `result.preflight.refusals`。
-5. 中途窗口被关、机器重启、脚本出错：不用管。切换一开始就登记了一个只做回退的 SYSTEM 任务（`\Clued\CluedCIResidentCompanionFallback`），它在开机时和开始后第 16 分钟运行：发现没验收完的切换超过 15 分钟，就退回原来的登录方式，然后删掉自己。提权运行 verify、或再运行一次切换，也会先做同样的退回。
+5. 中途窗口被关、机器重启、脚本出错：不用管。切换一开始就登记了一个只做回退的 SYSTEM 任务（`\Clued\CluedCIResidentCompanionFallback`），它在开机时运行，并从开始后第 16 分钟起每 15 分钟运行一次：只有当没验收完的切换已超过 15 分钟、**而且**那个切换窗口已经不在了（关掉、重启、出错），才退回原来的登录方式，然后删掉自己。所以凭据框开着多久都没关系。它做了什么写在 `C:\ProgramData\CluedIndependentCI\resident\install\companion-headless-fallback.json`。提权运行 verify、或再运行一次切换，也会先做同样的退回。
 
 ---
 
@@ -212,9 +212,9 @@ powershell.exe -NoProfile -File C:\ProgramData\CluedIndependentCI\resident\resid
 | T4b 反复运行 | **普通窗口**连续执行 10 次 `schtasks /run /tn \Clued\CluedCIResidentCompanion` | 每次都“拒绝访问”，这个任务不会因此产生失败登录 |
 | T4c 令牌撤销 | 在 GitHub 上撤销 companion 的令牌 | companion 照常运行，打包按现有分类报 `BUNDLE_UNAVAILABLE`；换令牌按第 4.2 节 |
 | T5 升级之后 | 下一次原地升级、回滚、Recover 之后 | 任务的 XML 哈希不变（verify 的 `companion-task` 仍为 `password`）；新代际 90 秒内运行 |
-| T6 中途打断 | 第 3 节运行到“验收中”时关掉窗口（另做一次：验收中重启） | 第 16 分钟（或开机后 2 分钟、标记已超过 15 分钟时）回退任务把任务改回 InteractiveToken，标记和回退任务都消失；或者 15 分钟后**提权**运行 verify，记 `STALE_MARKER_FELL_BACK` |
+| T6 中途打断 | 第 3 节运行到“验收中”时关掉窗口（另做一次：验收中重启；再做一次：在凭据框停留 20 分钟再输入） | 前两种：标记超过 15 分钟后的下一次回退任务运行（每 15 分钟，或开机后 2 分钟）把任务改回 InteractiveToken，标记和回退任务都消失；或者 15 分钟后**提权**运行 verify，记 `STALE_MARKER_FELL_BACK`。第三种：窗口一直开着，回退任务不动它，切换正常完成 |
 | T7 快速启动 | 关机（不是重启）再开机，不登录 | ≤ 20 分钟能执行 |
-| T8 安全 | 普通窗口试改 launch 文件、`bin\`、任务；开着 PowerShell Transcription 和 ScriptBlock 日志跑一遍第 3 节；在通知队列里放一条要密码的文字 | 改不了；转录和事件日志里搜不到密码；那条通知被拦下；普通桌面上从不出现凭据框 |
+| T8 安全 | 普通窗口试改 launch 文件、`bin\`、任务；开着 PowerShell Transcription 和 ScriptBlock 日志跑一遍第 3 节；在通知队列里放一条要密码的文字；看任务安全描述符的所有者（verify 的事实 `sdOwner`，或提权 `(New-Object -ComObject Schedule.Service)` 读 `GetSecurityDescriptor(1)`） | 改不了；转录和事件日志里搜不到密码；那条通知被拦下；普通桌面上从不出现凭据框；所有者是 Administrators 或 SYSTEM（是你本人的 SID 就报告，需要改注册方式） |
 
 T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 

@@ -1,10 +1,12 @@
 <#
 .SYNOPSIS
   M5 (DESIGN.md section 65.4.4; review M1): the one-shot SYSTEM task \Clued\CluedCIResidentCompanionFallback runs this INSTALLED copy at
-  boot and 16 minutes after a switch began. A pending marker (install\companion-headless-pending.json) older than 15 minutes means the
-  switch was cut off (a restart, a closed window, an error after the password was registered): the companion task goes back to the
-  interactive token (no password needed) and the marker goes. A younger marker is left alone (the 16-minute trigger comes later).
-  Without a marker, or after the roll-back, this task deletes itself. It takes no argument and never sees a password.
+  boot and from 16 minutes after a switch began every 15 minutes. A pending marker (install\companion-headless-pending.json) that is
+  abandoned (older than 15 minutes AND the switch that wrote it no longer runs: a restart, a closed window, an error after the password
+  was registered) is rolled back: the companion task goes back to the interactive token (no password needed) and the marker goes. A
+  younger marker, or one whose switch still runs (the credential box may stay open any time), is left for the next run. Without a
+  marker, or after the roll-back, this task deletes itself. It takes no argument and never sees a password. What it did is written to
+  install\companion-headless-fallback.json (admin-only).
 #>
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -17,13 +19,11 @@ $node = (Get-Content -LiteralPath (Join-Path $Root 'record\acceptance.json') -Ra
 $pending = Read-CompanionPending $Root
 $did = 'nothing'
 if ($null -eq $pending) { Remove-CompanionFallbackTask; $did = 'no-marker' }
-elseif (Test-CompanionPendingStale $pending ([DateTimeOffset]::UtcNow)) {
-  Stop-CompanionTask
-  $tree = Get-CompanionProcessTree $Root
-  foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
-  Wait-CompanionTaskNotRunning
-  $null = Invoke-CompanionFallback $Root ([string]$node.ownerSid)   # also deletes this task
+elseif (Test-CompanionPendingAbandoned $pending ([DateTimeOffset]::UtcNow)) {
+  $null = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)   # also deletes this task
   try { Start-CompanionTask } catch { }   # the interactive task starts only while the Owner is logged on; else at the next log-on
   $did = 'fell-back'
 }
-[ordered]@{ contract = 'clued.independent-ci.companion-headless-fallback/1'; did = $did; at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Compress
+$line = [ordered]@{ contract = 'clued.independent-ci.companion-headless-fallback/1'; did = $did; at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Compress
+try { [IO.File]::WriteAllText((Join-Path $Root 'install\companion-headless-fallback.json'), $line, (New-Object Text.UTF8Encoding($false))) } catch { }
+$line

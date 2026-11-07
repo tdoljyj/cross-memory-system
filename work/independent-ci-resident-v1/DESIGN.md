@@ -5487,5 +5487,19 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 | MINOR | 令牌作为参数传给 PowerShell 函数，模块日志可能记下 | 改正。令牌只交给 .NET 方法 |
 | MINOR | 不提权 verify 遇到过期标记记为失败 | 保留（需要提权才能退回）；手册 T6 写明提权，或等回退任务 |
 | 建议 | `BY_HANDLE_FILE_INFORMATION` 结构偏移、探针的 `writesAnything`、文件头注释 | 已改 |
+| MINOR | 用户档案目录的正则不接受空格等字符 | 保留：与节点档案自己的校验（`Assert-NodeProfile` / `validateNodeProfile`）是同一条规则，两台节点（`C:\Users\Windows`、`C:\Users\17531`）都符合 |
+| MINOR | `standby-install.test.mjs` 放宽了原来的 `\bgh\b` 禁止规则 | 理由：安装和 verify 现在要写出 gh 的安装目录和 companion 专用 gh 目录（launch 文件的 PATH、GH_CONFIG_DIR、HOME），这条测试原本防的是“安装时联网”，所以改为禁止运行 gh（gh 子命令、调用 gh 可执行文件），联网类调用的禁止规则不变 |
 | 建议 | 密码在 RPC 缓冲区和任务计划程序服务一侧的副本无法清零 | 接受，属于固有残留 |
 | 建议 | `suspiciousText` 容易绕过 | 接受：它只是减少误导，真正的规则是“只在安全桌面输入” |
+
+**复核（同一审核员，第二轮，只读）**
+
+| 级别 | 意见 | 处理 |
+|---|---|---|
+| MAJOR | 回退任务按“开始后第 16 分钟”触发，凭据框停留时间却没有上限：可能在切换进行中回退，之后留下没有标记也没有回退任务的未验收密码模式 | 改正。标记记下切换进程的 PID 和启动时刻；只有标记超过 15 分钟**而且**该进程已不在，才算“被放弃”并回退（回退任务、提权 verify、下一次切换都用同一规则）；另一个切换仍在进行时，新的切换拒绝（`COMPANION_HEADLESS_SWITCH_IN_PROGRESS`）；验收通过时删除标记不再因文件已不存在而报错 |
+| MINOR | 先写标记后登记回退任务 | 改正：先登记回退任务，再写标记 |
+| MINOR | 回退任务的时间触发器不重复，结果无处可查 | 改正：每 15 分钟重复；结果写入 `install\companion-headless-fallback.json` |
+| MINOR | SYSTEM verify 只看回退任务是否存在 | 改正：还要求它的 LastTaskResult 为 0、运行中或从未运行 |
+| MINOR | StartBoundary 依赖区域设置 | 改正：用 InvariantCulture |
+| MINOR | `-CompanionInteractive` 和提权 verify 的回退路径没有先等任务停止 | 改正：统一用 `Invoke-CompanionStopAndFallback` |
+| MINOR | 手册 T8 没写所有者检查；ClearHistory 会清空全部剪贴板历史 | 改正手册 |
