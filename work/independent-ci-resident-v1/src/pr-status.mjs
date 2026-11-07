@@ -294,6 +294,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
         // DESIGN §62.4: the take-over binding run ended after stage 1 on purpose; the front batch follows on the test merge commit.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
+        // DESIGN §62.5: the ordinary batch gave way to the front batch of the same head, which runs on the test merge commit.
+        if (recent.code === 'TRAIN_FRONT_TAKES_OVER') return { state: 'pending', description: '合并列车：车头批次接替此提交的普通批次，在试合并提交上跑，不用推新提交' };
         if (recent.code === 'TRAIN_TEST_COMMIT_GONE') return { state: 'pending', description: 'GitHub 已重算试合并：下一次第 10 段重读后开第二次车头批次，不用推新提交' };
         // Primary/standby C4: App 5368905 had already published on this head (another node or install).
         if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };

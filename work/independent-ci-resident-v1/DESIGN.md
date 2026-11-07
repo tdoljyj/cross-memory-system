@@ -4923,4 +4923,14 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 
 时间：从 PR 被第10段看到起，绑定批次（bundle + 第1段）约数分钟，随后一次第10段（urgent）开车头批次，车头批次仍完整跑一遍（约20分钟，§41.4）。离线端到端测试 `test/train-takeover-front.test.mjs` 用真实 executor + 真实 Source v2 第10段/清扫存储/第8段发布者，在 full sweep 仍 running 时拿到 merge-slot success；现场是否 ≤30 分钟仍需实测（§62 开头）。
 
-残余：认领 trailer 只写在 head 提交信息里（本修法与合并执行器一样只读 PR 正文）、或该 PR 不在最近更新的10个开着的 PR 里时，不产生 `frontBind`，仍等 full sweep。`nonFrontRuns=false` 时调度只放 S 行，绑定批次同样不会跑；接管完成后、`nonFrontRuns=true` 时普通批次跑完第1–7段停在 B（`TRAIN_SINGLE_GREEN_NOT_PROVEN`），其 row 占位使 `offerFront` 返回 busy，车头批次要等它结束（按代码推断，未实测）：这两点不在本次修复范围，另行立项。
+残余：认领 trailer 只写在 head 提交信息里（本修法与合并执行器一样只读 PR 正文）、或该 PR 不在最近更新的10个开着的 PR 里时，不产生 `frontBind`，仍等 full sweep。`nonFrontRuns=false` 时调度只放 S 行、绑定批次同样不会跑（Task `7100ff62`），以及接管完成后普通批次停在 B 占住 row（Task `ad19ef19`）：两点均已在 §62.5 修复。
+
+### 62.5 列车车头的两处后续缺陷（Task `7100ff62`、`ad19ef19`，2026-11-07）
+
+`nonFrontRuns=false`（Task `7100ff62`）：调度在 `nonFrontRuns=false` 时只放带 S 的行，§62.4 的绑定批次（队首 PR、attempt 1、不带 S）被 `TRAIN_NON_FRONT_RUNS_OFF` 挡住，认领绑不上，冷启动又回到等 full sweep。绑定批次本质是车头的前置，不是“非车头批次”：现在该过滤也放行 `trainFrontBind` 认可的那一行（同样只到第1段），其它不带 S 的行和 attempt 2 照旧推迟。端到端测试 `test/train-takeover-front.test.mjs` 增加 `nonFrontRuns false` 变体：修复前没有任何阶段运行、拿不到 merge-slot；修复后与 `true` 相同。
+
+稳态车头被同 PR 普通批次阻塞（Task `ad19ef19`，已证实）：接管完成后、`nonFrontRuns=true`，认领为队首的新 PR 先跑普通批次（不带 S）：第1段绑定认领，第1–7段通过，第8段 `TRAIN_SINGLE_GREEN_NOT_PROVEN` 停在 B。train on 下这一结果永远不会变：`trainHeadDecision`/`strictFrontHeadDecision` 只接受车头作业（带 S）。第10段随后读到已绑定的 holder，计入车头尝试并 touch running 后给出 `OPEN_FRONT_BATCH`；`offerFront` 因该 PR 的 row 正在 running 返回 busy（`TRAIN_FRONT_PR_BUSY`），而第10段此后一直说 `TRAIN_FRONT_BATCH_RUNNING`、不再开车头，直到 running 时钟或 slot 到期。离线端到端测试（稳态 + 队首新 PR 推入，真实 executor + Source v2 第10段 + 第8段发布者）修复前 60 分钟内没有 merge-slot success。
+
+修法：`enqueueFront` 在 `offerFront` 之前，若该 PR 正在 running 的是同一 head、不带 S 的普通批次，且它停在停车点 A（第1段之后的 hosted wait）或 B（第1–7段之后），就在该停车点以 `TRAIN_FRONT_TAKES_OVER`（clean-final、burn、new-commit、不计熔断；A 处为第1段结束，B 处为只动 Windows 的第8段结束，与 `PARKED_AUTHORITY_EXPIRING`/停车到期同一路径）干净结束它，并写 `train-front-takes-over` 回执，然后照常 `offerFront`。车头批次 (H, S) 有自己的 head key，不受普通 head 已烧影响；第8段的实时检查全部不变。不在停车点的批次（第10段运行时不会有）或其它 head 的批次不动，`offerFront` 照旧决定。修复后同一测试约 2 分钟（模拟时间）拿到 merge-slot success，并且没有 busy 拒绝。
+
+残余：停车点 A 只在 relay 开启时出现；relay 开启时车头批次本身会因 Owner 规则 41ab823a 停在 `RELAY_PROVIDER_TRANSFER_REQUIRED`（与本修法无关，出货策略 relay 关闭）。离线测试的阶段不耗时，现场“普通批次第1–7段约20分钟 + 车头批次约20分钟”仍可能超过30分钟目标：普通批次在第1–7段期间（无安全点）不会被打断，这一段需要现场实测后再决定是否让队首 PR 的普通批次在第1段后就让位。

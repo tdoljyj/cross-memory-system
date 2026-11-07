@@ -207,6 +207,10 @@ export const TRAIN_NON_FRONT_DEFERRED = 'TRAIN_NON_FRONT_RUNS_OFF';
 // Generation 19 field defect (DESIGN §62.4): the clean end of a take-over binding run right after its stage 1 (the queue head's claim is
 // bound to its PR now; the front batch is stage 10's to open). Resident-side, never Source-mirrored.
 export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
+// Task ad19ef19 (DESIGN §62.5): the clean end of an ordinary batch (no S) resting at a parking point when stage 10 opens the front batch
+// of the same PR and head. In train on its stage 8 can never publish the merge slot (trainHeadDecision wants a front job), yet its row
+// kept the PR busy, so the front batch was refused (TRAIN_FRONT_PR_BUSY) while stage 10 had already counted it and touched running.
+export const TRAIN_FRONT_TAKES_OVER = 'TRAIN_FRONT_TAKES_OVER';
 const FRONT_BIND_ASKED_MAX = 512;
 // Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
 // role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
@@ -1994,6 +1998,7 @@ export class ResidentExecutor {
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: 'TRAIN_FRONT_ATTEMPTS_USED' }); } catch { /* refused anyway */ }
       return null;
     }
+    await this.endOrdinaryForFront(front);
     const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
       { depth: this.policy.limits.queueDepth });
     if (offered.action !== 'front') {
@@ -2010,6 +2015,23 @@ export class ResidentExecutor {
       attempt: front.attempt, claimId: front.claimId, since: front.since });
     this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
+  }
+
+  // Task ad19ef19 (DESIGN §62.5): the PR's ordinary batch (attempt 1 or 2, no S) of the front's head that rests at parking point A (after
+  // stage 1) or B (after stage 7) ends cleanly now, as TRAIN_FRONT_TAKES_OVER, so the front batch is not refused as busy. Its stage 8 could
+  // never publish the merge slot in train on (only a front job can); the front batch (H, S) has its own head key. A batch that is not
+  // resting at a parking point (none is while stage 10 runs) or of another head is left alone: offerFront decides as before.
+  async endOrdinaryForFront(front) {
+    const run = this.queue.row(front.pr)?.running;
+    if (!run || Object.hasOwn(run, 'testSha') || run.headSha !== front.headSha) return;
+    let entry;
+    try { entry = (await this.ledger.parkedEntries()).find(e => e.key === run.key); } catch { return; }
+    const s = entry?.reserved?.subject;
+    if (!s || Object.hasOwn(s, 'testSha') || s.pr !== front.pr || s.headSha !== front.headSha) return;
+    let ended = null;
+    if (Ledger.parkedAt(entry)) ended = await this.endParkedB(entry, TRAIN_FRONT_TAKES_OVER);
+    else if (Ledger.waitingAt(entry)) ended = await this.endWaitingA(entry, TRAIN_FRONT_TAKES_OVER);
+    if (ended) { try { await this.receipt('train-front-takes-over', { key: entry.key, pr: s.pr, headSha: s.headSha, testSha: front.testSha, outcome: ended.state ?? null }); } catch { /* a view */ } }
   }
 
   // One train run when it is due (train.mjs#trainDue): not under an intake pause (also with an empty queue, which ends
@@ -2391,6 +2413,22 @@ export class ResidentExecutor {
       const drift = await this.driftCode();
       outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
         : await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
+    }
+    return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
+  }
+
+  // A batch resting at parking point A ends without going on (only stage 1 ran: nothing else was published), as the install authority's
+  // end closes it there (resumeWaiting).
+  async endWaitingA(entry, code) {
+    const { key } = entry, { batch } = entry.wait, subject = entry.reserved.subject;
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      const drift = await this.driftCode();
+      outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
+        : await this.fail(key, batch, Object.assign(new StepFailure(1, code, { windowsTreeZero: true }, 'stage', 0), { windowsOnly: true }));
     } catch (error) {
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
