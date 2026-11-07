@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-31T18:11:47.221Z",
-  "history_through": "20261031164748",
-  "row_count": 297,
+  "exported_at": "2026-11-07T15:30:18.516Z",
+  "history_through": "20261107152831",
+  "row_count": 306,
   "rows": [
     {
       "version": "20260823154017",
@@ -2380,6 +2380,78 @@
       "statements_length": 4107,
       "source": "migrations/20261031170000_ci_node_registration_binding_expiry_v1.sql",
       "transform": "strip_final_newline"
+    },
+    {
+      "version": "20261105153759",
+      "name": "ci_scan_start_keys_v1",
+      "statements_md5": "4fbc9a3cf1ce500e2ee14dfabe665770",
+      "statements_length": 32198,
+      "source": "migrations/20261102151506_ci_scan_start_keys_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261105153805",
+      "name": "work_claim_ci_queue_assist_v1",
+      "statements_md5": "d2fbdf1b4891cf567059445c115bd9c9",
+      "statements_length": 26917,
+      "source": "migrations/20261105120000_work_claim_ci_queue_assist_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261105191205",
+      "name": "ci_duty_holder_v1",
+      "statements_md5": "1bc8c2086df5387ec1f58539ab5b70b8",
+      "statements_length": 45997,
+      "source": "migrations/20261105160000_ci_duty_holder_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261105191213",
+      "name": "storage_route_destination_verifier_v1",
+      "statements_md5": "574969d6ac08e536c00b47b718a87277",
+      "statements_length": 2861,
+      "source": "migrations/20261106010000_storage_route_destination_verifier_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261106054531",
+      "name": "ci_node_gateway_v1",
+      "statements_md5": "91ea4a4844016b40b93282b5df10886a",
+      "statements_length": 59620,
+      "source": "migrations/20261106090000_ci_node_gateway_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261106054544",
+      "name": "resident_upgrade_auto_approve_v1",
+      "statements_md5": "31b1e233ef959df058613fcf33c61dc5",
+      "statements_length": 5917,
+      "source": "migrations/20261106100000_resident_upgrade_auto_approve_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261106062751",
+      "name": "ci_scheduling_t2a2_v1",
+      "statements_md5": "6f13b4525d52c13b6bbb0f07929abee3",
+      "statements_length": 54671,
+      "source": "migrations/20261106150000_ci_scheduling_t2a2_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261106132247",
+      "name": "ci_queue_holder_trigger_refs",
+      "statements_md5": "066ef9ea27355c36fdeaa16631da690f",
+      "statements_length": 1593,
+      "source": "migrations/20261106093215_ci_queue_holder_trigger_refs.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261107152831",
+      "name": "resident_upgrade_auto_approve_v2",
+      "statements_md5": "6c55be8fdfdc6ed80fb2d4c519ad5863",
+      "statements_length": 6451,
+      "source": "migrations/20261107090000_resident_upgrade_auto_approve_v2.sql",
+      "transform": "identical"
     }
   ],
   "repository_only": [

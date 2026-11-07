@@ -9,9 +9,9 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {validateJobV2,SCANNER_ROLES_V2} from '../../src/job-v2.mjs';
-import {protectedPath} from '../qualification-v2.mjs';
+import {protectedPath,loadQualifiedPolicyV2} from '../qualification-v2.mjs';
 import {validateRelayDescriptor} from './mailbox.mjs';
-import {loadFixedRolePolicy,takeActualRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
+import {loadFixedRolePolicy,takeActualRolePolicy,validateSelectedFacts,fixedPolicyPath} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 const P='work/actions-hosted-migration/independent-ci-v1/';
 const HASH=/^[a-f0-9]{64}$/,REPO='tdoljyj/cross-memory-system';
@@ -31,7 +31,8 @@ export const REQUIRED_SOURCE_PATHS=Object.freeze([...LOCAL_FILES.map(n=>P+'worke
     'worker/formal-gitleaks-v4/adapter.mjs','worker/formal-gitleaks-v4/required-history/prepare.mjs','worker/formal-gitleaks-v4/required-history/selftest-shim.mjs','worker/formal-gitleaks-v3/docker-transport.mjs',
     'worker/formal-trivy-v4/adapter.mjs','worker/formal-trivy-v3/cache.mjs','worker/formal-trivy-v3/docker.mjs','worker/required-trivy-v3/plans.mjs','worker/required-trivy-v2/plans.mjs',
     'worker/formal-contract-placement-v2/adapter.mjs','worker/formal-contract-placement-v2/container-entry.mjs','worker/formal-gitleaks-v2/docker-transport.mjs',
-    'worker/required-gitleaks/prepare.mjs','worker/trusted-workflows.mjs','worker/verify-once/verify-worker.mjs','worker/protected-controller-ports-v2/refs.mjs'].map(p=>P+p)].sort());
+    'worker/required-gitleaks/prepare.mjs','worker/trusted-workflows.mjs','worker/verify-once/verify-worker.mjs','worker/protected-controller-ports-v2/refs.mjs',
+    'worker/scan-result-cache-v1/cache.mjs'].map(p=>P+p)].sort());
 export function validateSourcePins(files,required=REQUIRED_SOURCE_PATHS){
   check(Array.isArray(files)&&files.length<=10000,'BRIDGE_ACCEPTED_SOURCE_MISSING');const pins=new Map();
   for(const p of files){check(p&&Object.keys(p).sort().join('|')==='path|sha256'&&typeof p.path==='string'&&!p.path.startsWith('/')&&!/[\\:\x00-\x1f]/.test(p.path)&&!p.path.split('/').some(v=>!v||v==='.'||v==='..')&&HASH.test(p.sha256??'')&&!pins.has(p.path),'BRIDGE_SOURCE_PIN_INVALID');pins.set(p.path,p.sha256);}
@@ -66,6 +67,36 @@ export async function loadLinuxContext(job=null){
   check(config.entryFile===fileURLToPath(new URL('./linux-worker.mjs',import.meta.url)),'FORMAL_LINUX_ENTRY_NOT_ACCEPTED');
   const descriptor=validateRelayDescriptor(manifest.roles[role].controllerRelay,{sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
   await checkLinuxSource(manifest.roles[role].sourceFiles,config.trustedSourceDirectory);
-  const context=freeze({side:'linux',role,...loaded,manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});contexts.add(context);return context;
+  // policy: the actual role policy this context was built from (openFixedRoleSession may reuse it; bf57ff10 P2 D).
+  const context=freeze({side:'linux',role,...loaded,policy:loaded,manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});contexts.add(context);return context;
+}
+// bf57ff10 P2 C (2026-11-07): the context of the public relay (relay-record.mjs), which only moves public bytes between
+// the fixed spools (no job, key, API or authority of its own); the Linux worker also uses it as the part of each
+// callback's reload that must pass before a challenge is written (linux-worker.mjs, review MAJOR-1).
+// What it checks, as loadLinuxContext does: the root principal; loadQualifiedPolicyV2 (the protected private policy file
+// and its shape, the Docker socket, every runtime path, the pinned entry/docker/node/git/qualification/worker/proof/job
+// bytes, the running node, the manifest hash, the qualification signature and payload); validateSelectedFacts at the
+// current clock (Source context, qualification window, role pins and their required paths, role configuration); the
+// accepted relay descriptor; the entry file; the shape and completeness of the bridge's Source pins (validateSourcePins).
+// What it does NOT check, unlike loadLinuxContext / loadFixedRolePolicy (about 1 s together): the Git checkout
+// (trackedSource: no shared/shallow repository, HEAD = the manifest's sourceSha, the tree, `git hash-object` of every role
+// pin, a clean status), the bytes of the pinned Source files on disk (checkLinuxSource and trackedSource), trivy's cache
+// root (protectedPath of formalTrivy.cacheRoot) and gitleaks' host python pin. The Linux worker still makes all of these
+// in loadLinuxContext when it starts and in every callback before it adopts a response or signs. It is not an accepted
+// bridge context (never in `contexts`): it cannot open the accepted mailbox or reach the signer.
+export function relayContextOf(job,loaded,now=Date.now()){
+  const facts=validateSelectedFacts(job,loaded,now),{config}=loaded,role=job.role;
+  check(SCANNER_ROLES_V2.includes(role)&&facts.manifest.roles?.[role],'FORMAL_SCANNER_PROFILE_REQUIRED');
+  check(config.entryFile===fileURLToPath(new URL('./linux-worker.mjs',import.meta.url)),'FORMAL_LINUX_ENTRY_NOT_ACCEPTED');
+  const descriptor=validateRelayDescriptor(facts.manifest.roles[role].controllerRelay,{sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
+  validateSourcePins(facts.manifest.roles[role].sourceFiles);
+  return freeze({side:'linux-relay',role,config:structuredClone(config),manifest:facts.manifest,descriptor,sourceAcceptanceRef:config.sourceAcceptanceRef,hostQualificationRef:config.hostAcceptanceRef});
+}
+export async function loadLinuxRelayContext(job=null){
+  check(process.platform==='linux'&&process.getuid?.()===0,'FORMAL_LINUX_CONTROLLER_REQUIRED');
+  job??=await readFixedIssueJob();validateJobV2(job);
+  const loaded=await loadQualifiedPolicyV2(fixedPolicyPath(job.role));
+  // As loadFixedRolePolicy: the clock is read again after every asynchronous read above.
+  return relayContextOf(job,loaded,Date.now());
 }
 export function takeAcceptedBridgeContext(context){check(contexts.has(context),'ACTUAL_ACCEPTED_BRIDGE_CONTEXT_REQUIRED');if(context.side==='windows')assertWindowsContextLive(context);return context;}

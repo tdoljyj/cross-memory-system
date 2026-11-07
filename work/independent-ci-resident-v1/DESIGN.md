@@ -1,3 +1,12 @@
+> **已冻结的历史档案（2026-11-07）。** 本文件到第 70 节为止，正文不再修改，只供按节号回查历史理由、复审记录和事故经过。
+> 现在实际生效的设计、决定和操作方法见 [`docs/`](docs/)：
+> - [docs/architecture.md](docs/architecture.md)：当前架构，按组件和数据流组织，每节标出代码文件；
+> - [docs/adr/](docs/adr/)：重要决定（背景、决定、理由、后果、Owner Decision 编号）；
+> - [docs/runbook.md](docs/runbook.md)：运维手册（装包、批准、Owner 请求、常见卡住情形、实测方法）；
+> - [docs/glossary.md](docs/glossary.md)：术语表。
+>
+> 两边说法不一致时，以代码为准，其次以 `docs/` 为准。新的设计变更写进 `docs/`（架构改动更新 architecture.md，新决定加一篇 ADR），不再追加到本文件。
+
 # TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.7（Source v2 与托管转发已离线实现，未安装）
 
 - 日期：2026-10-21（UTC）
@@ -344,6 +353,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   - 要移哪些工作区，由描述符的**内容**重算作业 id（与 `prepare-workspaces.py` 同一公式），描述符自带的 `linuxJobIds` 只用来比对，不一致就拒绝；描述符用一个 `O_NOFOLLOW` 句柄读，长度取自这个句柄（MINOR-8）；
   - Source v2（S14，教训 b22/b28）：目标是归档目录里的**扁平名字**（`incoming-<叶子>`、`outgoing-<叶子>`、`run-<名字>`、`workspace-<作业 id>`、`ws-prep-<批次>`、`formal-role.lock`），不再建 `runs/`、`workspaces/` 子目录（`runs/` 前缀把 b28 弄坏过）；“完成型”范围（`between-roles-N`、`success-close`）遇到未知叶子、半对记录或还被持有的 `formal-role.lock` 时一个都不移，原样留给失败路径；失败范围照原样归档并报告留在原处的东西；目录树移动前清点、移动后核对；中途失败写持久的 partial 状态（`verified: false`），不会是“没有状态”。
 - **目录名**：失败用 `failed-<key12>-<reason>-<12hex>`，收尾和角色间用 `archive-…`，都必须是新目录。
+- **L2（§70.5）**：失败型归档在改名之前，先给遗留的带标签容器取证（inspect + diff），再删除；完成型范围遇到这种容器就拒绝。文件仍然只改名。
 
 ### 6.5 HALT 与复位
 
@@ -1034,7 +1044,7 @@ v0.5 时的记录：
 
 ## 14. 风险与残余问题
 
-- **R1 contract-placement 会在容器里运行 PR 的测试和构建**（`container-entry.mjs:33-70`）。这是现状，隔离只有容器：uid 65532、无网络、只读、cap-drop ALL、不挂密钥。本设计不扩大它，但对这个角色，“PR 代码只当数据”并不成立。
+- **R1 contract-placement 会在容器里运行 PR 的测试和构建**（`container-entry.mjs:33-70`）。这是现状，隔离只有容器：uid 65532、无网络、只读、cap-drop ALL、不挂密钥。本设计不扩大它，但对这个角色，“PR 代码只当数据”并不成立。容器每个作业新建、跑完即删；L2（§65）补上主机侧的起点干净和最小可见，真正加强这一项的是 §65.2 的 C1（gVisor，Source 改动，交 Owner）。
 - **R2 Linux 用同一把 Ed25519 密钥签 qualification 和结果**，任何 root 进程都能读到。常驻前后一样。可以后续拆成两把。
 - **R3 磁盘增长**：只改名、不删除，工作区副本会一直累积。需要 Owner 定保留规则（§15 D5）。
 - **R4 companion 依赖 Owner 登录。** 没有登录时只推迟，不会出错。
@@ -5175,3 +5185,350 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 - `timing` 的内容：`last`（最近完成批次）、`current`（在跑批次已累计各段，`openedAt` 为当前段起点，读端用 `activeMs + (now - openedAt)` 算已用时间）、`stats`（最近 20 个已结束批次每段的 n / 中位数 / P90；中位数取中间值，偶数个取中间两个的均值四舍五入；P90 取最近秩，即第 ceil(0.9n) 小；只统计测到该段的批次，`active` 只统计 COMPLETED 批次）、`pushToGreen`（当天 UTC 日、COMPLETED 批次从队列首次看到该提交到第 8 段结束的 n / 中位数 / P90 / 最大）、`train`（第 10 段各轮的 `ms` 与扫描段占用 `scanMs`，后者取该轮的清扫起止与本轮时间窗的重叠，没有清扫事实时为 null）、以及 `done` / `open`（恢复用，见下）。
 - 重启：`done`（最近 40 个已结束批次）、`open`（停靠中未结束的批次）和第 10 段各轮随快照整体写入 `status.json`；服务启动时读回上一份快照并逐项重新校验（`service-main.mjs`），读不出就空着开始。`done` 在序列化超过 80 KB 时从最旧的一端截掉，快照因此始终远小于 `STATUS_MAX_BYTES`。
 - PR 页的运行中一行在阶段文字与租约提醒之间插入“已跑 N分；备 … 1:… 2:…”，只用租约提醒之外剩下的字数再减 30 字的余量（给补跑、当班词、看门狗行留位置），所以 140 字上限与租约提醒都不会因它被截掉；按整分钟显示，所以这一行最多每分钟变一次。停靠在 A（没有段）的批次和别的批次的计时不显示。
+
+## 67. 准入往返去掉重复开销（优化方案 bf57ff10 P2，分支 `claude/relay-roundtrip-opt`）
+
+**实测**（#1034、#1035 车头批次）：每轮约 16–17 秒＝拾取 1–1.5 + ReceiveChallenge 3.1 + Windows 准入 8.7 + SendResponse 3.9；一个批次 relay 层约 282 秒。原则：**不少任何一项校验**，只去掉重复的子进程、重复的重载和串行的读。
+
+### 67.1 ACL 子进程合并（`CI/worker/protected-job-bridge-v4/relay-public.ps1`、`formal-spool-acl.ps1`、`mailbox.mjs`）
+
+- `formal-spool-acl.ps1` 的 `-LiteralTarget` 可带最多 8 条路径，用 `|` 连接（Windows 路径不可能含 `|`）；每条路径都由原来那段逐路径判定代码检查，任何一条被拒整次退出码 2，全过才 0。旧版与新版对 42 个单路径用例（两种模式、叶子名、junction、可写 ACE、缺失、越界）退出码完全一致。
+- relay：三把 Hold-Parents 之后、读第一个字节之前，一次 Check-Spool 覆盖 spool、outgoing、incoming（Send 再加记录与 ready 标记）：Receive 3→1 个进程，Send 5→1 个进程，失败码仍是 `FORMAL_SPOOL_ACL_REFUSED`。
+- 签发方读记录：ready 与数据文件都在时一次调用；任一缺失或联合调用被拒，走原来的逐文件顺序，只用来决定报哪个拒绝码；**联合调用被拒而逐文件都通过时，仍以 `FORMAL_MAILBOX_ACL_JOINT_REFUSED` 失败**。
+
+### 67.2 relay 上下文与 Linux worker 的拆分重载（`boundary.mjs#loadLinuxRelayContext`、`relay-record.mjs`、`linux-worker.mjs`）
+
+- relay 上下文保留：root、`loadQualifiedPolicyV2` 全部（策略文件、Docker socket、运行时路径与各钉值、清单哈希、资格签名与载荷）、当前时钟的 `validateSelectedFacts`、relay 描述符、入口文件、Source 钉值集合的形状与完整性。**不做**：git 检查（`trackedSource`）、钉住文件的重新哈希（`checkLinuxSource`）、trivy `cacheRoot`、gitleaks python 钉值。它不是 accepted context，开不了受信邮箱、碰不到签名器。
+- **Linux worker 每个回调（复审 MAJOR-1）**：Windows 收到任何挑战都会做完整准入，其中 Native verify 带 pr_ref，是一次**写**。所以重载拆成两段：
+  1. **写挑战之前完整做完**：relay 上下文（策略、清单、资格，当前时钟）＋本 job 的接受 ref 与清单比较。被拒就**不写挑战**，与以前一样。
+  2. 其余（git 与全部 Source 重新哈希，约 1 秒）与等待 Windows 并行；它通过之前不验证响应、不交给适配器、不签名；它的拒绝优先于写挑战失败和等待失败，并立即中止等待。
+  - 剩余风险（如实记录）：Source checkout 在两次回调之间漂移时，第 2 段才发现，这时挑战已写出，Windows 可能多做一次准入（含一次 Native verify 写），其答复永不被采用。
+  - scan-start（请求 Native 效果）仍先做完整重载、后写挑战。
+- 启动：session 复用 context 里带 actual 品牌的角色策略（同一 job、当前时钟重新 `validateSelectedFacts`，否则重新加载）；收尾：签名器复用 `session.finish` 在**执行之后**加载的那份（一次性），签名前的时钟检查不变。
+
+### 67.3 Windows 准入并发（`windows-issuer.mjs`、`full-admission-v2.mjs`、`github.mjs`）
+
+- changed-paths 与准入并发：准入拿“延迟包”。**保证是：包完整有效之前不碰 Native**（任何 `/rest/v1/rpc/` 请求都等包）；事实只在包到齐后组装；包失败或无效时答复换成 `full_admission_subject_invalid`，签发方仍按读路径自己的失败原因答复。包一旦失败，评估里此后的每个 GitHub 读立即抛错、不再发出（复审 MINOR 2：限流时不放大额度消耗）；在此之前已在途的读（最多几次）照常完成。
+- 两个 mode scope 并发；mode 读与（取 token→读 PR）并发；全部完成后按原顺序、原 phase 判定；凭据不过 principal 检查就不读 PR。并发的首次读共用一次 token 交换。
+- remote-refs 那一轮：准入与 refs 收集并发，先判准入。**新鲜度（复审 MINOR 6，运维风险）**：并发时 refs 在准入进行中取得，而不是准入之后；准入慢或重试时，refs 到答复时会更旧。缓解：准入完成时 refs 已超过 `ISSUE_FRESH_MARGIN_MS`（10 秒）就在准入之后再收集一次（与改动前相同的顺序），所以答复不会比串行版更旧；代价是这种慢路径回到串行耗时。运维上若见 `REMOTE_REFS_*` 或 refs 过期类 blocked 增多，先看准入耗时。
+
+### 67.4 不可变读缓存与耗时日志（`resident-v2/entry-runtime.mjs`）
+
+- 每个入口进程一份缓存，**只**缓存按 SHA 固定的读：`compare/<sha>...<sha>`、`commits/<sha>`、`contents/...?ref=<sha>`；URL 必须是规范形式（`new URL(u).href===u`），不得有空段、`.`、`..` 或 `%2e`；只在 Accept 恰为 `application/vnd.github+json` 时缓存（Headers 实例与任意大小写的 Accept 都识别）；只存完整的 200；命中仍调用 `live()`，返回同样字节，只保留 content-type、etag、last-modified 三个响应头。
+- 每次网络请求和每次命中写一行 `fetch-timings.jsonl`（与 observations.jsonl 同目录）：固定词表的 URL 模式（词表外一律占位）、方法、状态、毫秒、是否命中；不记值、不记令牌；至多 16 MiB，尽力而为。
+
+### 67.5 安装与测试
+
+- 全是 CI Source：新的 Source 清单；Linux 三个角色（gitleaks、trivy、contract-placement）重签（`entrySha256` 随 `linux-worker.mjs` 变，清单哈希变）；companion 的 `bridgeManifestSha256` 安装时重算。
+- 测试：`CI/test/relay-roundtrip-opt.test.mjs`（A′ 真跑 ACL 助手副本、relay 一次启动、邮箱读顺序与联合拒绝、relay 上下文拒绝面、D 的拆分与优先级与 scan-start、复用条件、E1 延迟包与提前中止、E3 缓存范围与 Accept/路径规范、日志词表），`issuer-refs-transient.test.mjs` 的 E2 并发与重新收集。
+## 68. 按代码树缓存扫描结果（M4，第 21 代候选，分支 `claude/scan-result-cache`；Task `bf57ff10` 第二阶段 M4；Owner Decision `9e2511fe` 第 5 项；独立审查 PASS-WITH-FIXES 后修订）
+
+**为什么**：trivy 的判定只取决于三个扫描器能读到的内容和扫的方式，与哪个提交指向这份内容无关。下面三种情况都会产生一个“新提交、旧代码树”，以前每次都真跑一遍：GitHub 重算试合并提交 S 但树没变；同一个 PR 的普通批次与车头批次（strict 开着时车头已跟上 main，`merge(T,H)` 的树就是 H 的树）；只改提交信息的 force-push。现在第二次起变成一次查表。**contract-placement 不缓存**（§68.1 第二部分），gitleaks 也不缓存（§68.7）。
+
+新文件 `CI/worker/scan-result-cache-v1/cache.mjs`（键、记录、签名核对、策略开关、读写端口）；接线在 `CI/worker/formal-trivy-v4/adapter.mjs`（`trivyResultKey`、`executeScanners`、`finishObservation`）、`CI/worker/protected-job-bridge-v4/linux-worker.mjs`（签名之后才写缓存）、`CI/worker/protected-job-bridge-v4/signed-result.mjs`（签名器与 Windows 签发方共用的观察校验、签名载荷里的命中标记、签发方对原始签名的核对）、`CI/worker/formal-fixed-role-policy-v3/policy.mjs`（命中观察的清理核对）。`CI/worker/formal-contract-placement-v2/adapter.mjs` 只把执行步拆成 `executePlacement`（行为不变），并保留键的布局，供以后封闭输入的设计使用。
+
+### 68.1 键：逐项论证
+
+键是 `cacheKey(role, 成分)` 对规范 JSON 的 SHA-256。**每个成分都必填、都按类型校验**；缺一个、格式不对或多出未知字段，键就是 `null`：不查、不写，照旧真跑。构造键时出任何异常也返回 `null`（`trivyResultKey` 整体包在 try 里）。
+
+**trivy**（`trivyResultKey`）。三个扫描器能读到的只有：`/repo`（`snapshotTree` 复制的候选工作树，**跳过 `.git`**，所以看不到任何提交号、提交信息或历史）、`/scratch/db`（离线漏洞库）、`/scratch/policy`（checks bundle）、固定 argv 和容器参数。扫描器是受信的 trivy 二进制，不执行候选代码。
+
+| 成分 | 覆盖的输入 | 为什么够 |
+|---|---|---|
+| `candidateTreeSha` | 被测提交的树 | 候选目录由 `validateCheckout(complete)` 逐字节核对过树，不允许多余文件、链接或非常规文件 |
+| `inputInventorySha256` | 快照里每个文件的路径和 SHA-256 | 这是扫描器实际看到的字节本身；文件权限被快照统一成 0444/0555，扫描器看不出可执行位 |
+| `database` = `plan.cache` | 漏洞库 `trivy.db` 与 `metadata.json` 的 SHA-256、是否走 72 小时兜底、checks bundle 的 OCI digest、主版本、内容哈希 | 库一换，键就换。库是否仍可用每次都由 `cache.prepare` 与 `requiredTrivyPlans` 现场重判，缓存不绕过它 |
+| `image`、`nativeImageDigest`、`policyImage` | 扫描器镜像（tag+digest、原生 digest、角色策略钉的镜像） | 扫描器版本 |
+| `scannersSha256` | 三个扫描器的 argv、cwd、挂载（只取容器内目标路径）、网络、只读根、用户、能力、限额、scratch | 每次运行不同的宿主路径换成容器内路径；库的字节已由 `database` 覆盖 |
+| `dockerExecutableSha256` | Docker 客户端 | 保守项 |
+| `workflowSha256` | 受信 `.github/workflows/trivy.yml` | 规则来源 |
+| `sourceManifestSha256`、`sourceSha` | 整个 Source 清单：适配器、`plans.mjs`、`docker.mjs`、库缓存模块、本缓存模块 | 任何一个 Source 字节变化都换键，旧记录自然失效 |
+| `runtimeIdentity`、`hostAcceptanceRef`、`sourceAcceptanceRef` | 已签资格的运行环境与 Owner 接受引用 | 重装或重签资格后不复用旧结果 |
+
+墙钟：trivy 用 `--skip-db-update`，库的“是否过期”由上面的现场重判决定；扫描结论不读当前时间。
+
+**contract-placement：不缓存（开关在代码里关死）。** 初稿第 4 条说“候选代码就是被测树本身，提交号不影响结论”，这个论证**是错的**，改正如下。placement 容器里运行的是候选自己的代码（`python -m unittest`、`node --test`、候选的 esbuild 构建和渲染器、候选的 `check_contract_placement.py`），这些代码能读到的远不止两棵树：
+
+1. **完整提交历史**：`sealedCandidate` 用 `pack-objects --revs` 打包 S、H、T 三个提交**可达的全部对象**，放进容器内的 `.git`；
+2. **`/request/job.json`**：含 `pr`、`headSha`、`baseSha`、`testSha`、`createdAt`、`attempt`；
+3. **构建常量的内容**：`__CLUED_BUILD_SHA__=<testSha>` 被打进 bootstrap 渲染结果，候选代码能读到它的值，不只是长度；
+4. **墙钟**。
+
+而且现行测试**确实依赖历史**：`scripts/ci/test_check_contract_placement.py:60`（`test_real_pre_split_layout_passes`）读历史提交 `7888979c7e6a7e467aaa062aa84934918a024722` 的树。所以“两棵树 + 工具”构成的键不完整，按构造证明不了。
+
+**评估过的封闭方案（审查意见 M2(c)）**：容器里只放两个合成提交（固定元数据、没有父提交，树分别是被测树和 base 树），构建常量用固定占位符，`/request` 去掉提交号。结论：**这一项不在本次实现**，理由是：
+
+- 它会让上面那条现行测试直接失败（容器里没有 `7888979c`）。要保住它，只能再把一份固定的历史提交塞进容器；以后任何测试再引用别的历史提交都会重现这个问题。这等于给候选测试加了一条新的隐含约束，判定会与 GitHub 上原 workflow（跑真实提交）分叉；
+- 墙钟去不掉，所以即便封闭了提交元数据，也仍然不是“按构造完整”；
+- 改动面大：容器入口 `container-entry.mjs` 的作业校验与命令、`sealedCandidate` 的合成提交构造、`fixedCommands` 的参数，以及与原 workflow 的等价性论证，都要重写并重签资格，超出本项的中等规模。
+
+因此 **placement 开关在封闭输入的设计落地前保持关闭**，而且是在代码里关：`cacheSettings` 对 placement 总返回关（`SCAN_RESULT_CACHE_KEY_NOT_CLOSED_FOR_ROLE`），`createResultCache` 拒绝为 placement 打开端口，签名器和 Windows 签发方对带 `cacheHit` 的 placement 观察一律拒绝（§68.5）。策略示例只开 trivy。`placementResultKey`（已加 `dockerExecutableSha256`）与 `executePlacement` 的命中分支保留，只是生产上走不到。
+
+**只缓存成功**：失败与不确定结果从不写入。缓存失败不会放过任何东西，但会让“推一个新提交再跑”这个处理偶发失败的办法失效，所以不写。
+
+### 68.2 存放、签名与写入：只有 CI 能写
+
+- 位置由角色策略给出（§68.4），建议 `/var/lib/clued-independent-ci/scan-result-cache`，下分 `trivy/`，每条记录一个文件 `<keySha256>.json`。
+- **只有 root 写**：根目录、角色子目录、记录文件逐级过 `protectedPath`（无符号链接、uid 0、组和其他人不可写、记录 0600、单硬链接、`realpath` 等于自身）。根目录先去掉尾斜杠，不得与 `workspaceRoot`、`runsRoot`、`trustedSourceDirectory`、`dockerRootDirectory`（trivy 另加库缓存根）重叠，也不得包含签名钥、资格、公钥、Source 清单或入口文件；任何一条不满足，开关当作关（`SCAN_RESULT_CACHE_ROOT_OVERLAP`）。
+- **记录必须带原始签名（审查意见 MINOR 3：二选一，选“核对原始结果确实被签过”，不新增 HMAC 密钥）**。缓存只在原始结果**签名之后**写入：适配器把观察 durable 写进运行目录后，只给“真跑、完整、成功、有键”的结果返回一个 `storeSignedResult`；桥 `linux-worker` 写完签名结果之后才调用它，把刚签好的信封一起写进记录。读记录时，Linux 用角色策略里现有的结果公钥核对这个信封确实签了这份观察（`verifyOriginalEnvelope`：信封合同、keyId、运行身份、`executionObservationSha256` 等于观察摘要、主体、profile、成功、非命中、Ed25519 签名）；命中观察把原始观察和信封一起带给签名器与 Windows 签发方，签发方再用它**自己的签名者表**核一遍（§68.5）。理由：伪造一条能命中的记录需要现有结果私钥，这把钥匙本来就只在 root 保护区、本来就是 Windows 信任的锚；新增一个 HMAC 密钥要多一次安装时生成、一套 ACL、一份轮换与备份规程，还只能在 Linux 本机核对，Windows 无法独立验证。
+- 写入：先写临时文件（`wx`、0600、fsync），再 `link` 成正式名，再 fsync 目录。写失败不影响已经写出的签名结果，原因写进运行目录的 `result-cache-store.json`。
+- **崩溃窗口与坏记录（审查意见 MINOR 6）**：create、link、unlink 之间崩溃会留下孤儿临时文件，`link` 成功而 `unlink` 前崩溃还会让正式记录有两个硬链接，读时被 `protectedPath` 拒绝（单链接），于是这个键永远未命中。处理：每次写入先清扫角色目录里超过 10 分钟的孤儿临时文件（角色串行锁保证没有别的写入在进行），这同时把两链接记录恢复成一个链接；正式名已存在时，先按读取规则核对旧记录，仍能命中就保留（`RECORD_EXISTS`），坏的、过期的、未签名的、两链接的就删掉，用这次新的真实结果替换（`RECORD_REPLACED`）。坏记录只会让查表未命中、照旧真跑，下一次真跑就把它换掉。
+- 记录 = `{contract: …/2, role, keySha256, key（全部成分）, observation（原始真实观察）, originalObservationSha256, envelope（原始签名信封）, storedAt, recordSha256}`，`recordSha256` 是除它以外全部内容的摘要。
+
+### 68.3 读：任何异常一律未命中
+
+`lookup` 从不抛错，失败就返回 `{record: null, reason}`，原因写进 `result-cache.json`。命中要同时满足：开关开且有结果公钥；键完整；三级路径过 `protectedPath`；文件不超过 4 MiB、能解析、字段集合精确；合同号与角色对；`recordSha256` 对得上；键逐字节相同；**`storedAt` 不晚于现在且不早于现在减 TTL**（`CACHE_TTL_MS`，trivy 与 placement 都是 24 小时；`storedAt` 是将来值或超龄都算未命中）；`originalObservationSha256` 等于观察摘要；观察是该角色现行观察合同、`production-observation`、成功、退出码全 0、扫描器都完整清理、记录的每个时刻都不晚于 `storedAt`、**不带 `cacheHit`**（命中产生的观察绝不再被存成记录）；观察里的 Source、运行身份、接受引用、树、镜像、库与键一致；信封签名核对通过。
+
+### 68.4 策略开关
+
+角色策略 `/etc/clued-independent-ci/roles-v3/trivy.json`（root 私有文件，现有加载与“执行后策略未变”核对不变）新增可选字段：
+
+```json
+"scanResultCache": { "enabled": true, "root": "/var/lib/clued-independent-ci/scan-result-cache" }
+```
+
+字段缺失、`enabled` 不是 `true`、多出字段、根目录不合格，都等于关：不读也不写。只给 trivy 加；placement 的策略里即使写了也不生效。gitleaks 永远不缓存。**新 Source 装上而策略不加这个字段时，行为与今天完全相同。**
+
+**开关的约束放在 Windows 一侧（审查意见 MINOR 4：二选一，选“按角色白名单拒收 `cacheHit`”）**：`CACHE_HIT_ROLES = ['trivy']` 是 Source 常量，签名器与 Windows 签发方共用的 `observationFacts` 对其他角色的 `cacheHit` 一律拒绝（`SCAN_RESULT_CACHE_HIT_ROLE_REFUSED`）。不选“开关进资格载荷”，因为那要改资格签发工具和资格合同号并重签全部角色，而白名单随 Source 清单整体换代，审查面更小。
+
+### 68.5 命中时照样留证据、照样签名
+
+命中发生在“第一个扫描器本该启动”的位置，前面的步骤一步不省：角色开头的完整准入、扫描许可的取得与落盘、启动前的燃烧许可复核都照做，所以 **head 照样被记为已执行**，executed-heads 台账、“失败的 head 永远烧掉”、“同一提交的同一检查只真跑一次”都不变。之后不启动容器，做一次新的“后”准入，生成一份**本次 job 的新观察**：
+
+- 观察自己的字段只描述本次：主体、nonce、请求摘要、本次的前后准入、快照与清理；**没有 `scans`**。原来的三个扫描器记录及其逐扫描器准入哈希不再冒充本次的准入（审查意见 MINOR 2），只在 `cacheHit.originalObservation` 里；
+- `cacheHit = {contract: clued.independent-ci.scan-result-cache-hit/2, keySha256, recordSha256, originalObservationSha256, originalObservation, originalEnvelope, storedAt, servedAt}`；
+- 签名窗口是本次的：起点 `cacheHit.servedAt`，终点本次清理时刻；退出码与日志摘要取自原始扫描器。
+
+校验：
+
+- `observationFacts`（签名器与 Windows 签发方共用）：角色必须在白名单；`cacheHit` 字段集合精确；三个哈希格式；`storedAt ≤ servedAt`；`originalObservationSha256` 等于原始观察摘要，信封载荷指向同一摘要；原始观察是同角色、同 Source、同运行身份、同镜像的真实成功观察；**原始扫描器的开始、结束、清理时刻以及原始清理时刻都不晚于 `storedAt`**；命中观察不得另带 `scans`，结论等于原始结论。gitleaks、placement 带 `cacheHit` 一律拒绝；不带 `cacheHit` 的观察与以前逐字节同样校验。
+- 签名器（`signActualBridgeResult`）签名前用本机结果公钥核对原始信封。
+- Windows 签发方（`verifySignedBridgeResult`）用自己的签名者表找到原始信封的 keyId，要求它是同一 Source、同一资格的生产签名者，再核对签名和内容。
+- **签名载荷带命中标记（审查意见 MINOR 5）**：`resultPayload` 新增 `cacheHit`，真跑为 `null`，命中为 `{keySha256, recordSha256, originalObservationSha256}`；签发方要求它与观察一致，把命中签成真跑会被拒（`SIGNED_FORMAL_OBSERVATION_CHANGED`）。`verifyResultV2` 与 Native 发布侧不按字段集合核对载荷，所以多一个字段不影响它们；Checks 摘要不改。
+- 角色串行槽（`policy.mjs#validateCleanupObservation`）对命中观察取 `cacheHit.originalObservation.scans` 核对完整清理，并要求命中观察没有自己的 `scans`。
+
+观察合同号不变（trivy `/3`），信封与结果合同不变。运行目录写 `result-cache.json`（开关、键、查表结果、命中标记、观察摘要；命中和未命中都有），真跑成功且写入时另写 `result-cache-store.json`（写入结果与原因）。
+
+### 68.6 命中路径上的拒绝
+
+命中路径上任何一项授权失效，都和真跑一样直接失败、不产生观察：燃烧许可在查表期间过了传输窗口（`SCAN_START_GRANT_REFUSED`）、“后”准入被拒（批次认领代次变化等）、deadline 已过（`AUTHORITY_EXPIRED_BEFORE_SCAN`）。
+
+### 68.7 gitleaks 为什么不缓存
+
+gitleaks 扫的是提交历史（`gitleaks git /repo`：仓库里可达的每个提交的补丁，加审核过的历史例外证明），输入是提交图而不是一棵树：同一棵树可以由完全不同的历史得到，历史里可能带着后来删掉的秘密。完整的键至少要包含被扫范围内每个提交的身份，那样只改提交信息的 force-push 也会换键，正是本项要省的场景省不下来；键不完整又会放过历史里的秘密。所以不在本项内。
+
+### 68.8 能省多少、安装、测试
+
+- 按 §45.4 的实测，trivy 约 4.6–5.3 分钟；命中时只剩快照、库准备、两轮准入和签名，少 3 个扫描器容器与 3 轮准入。placement 不省。
+- 这是 CI Source 变更：新 Source 清单，trivy 与 contract-placement 两个角色随新清单重签资格；新文件已进 `source-closure.json`、桥 `boundary.mjs` 的必需清单、角色策略 `ROLE_SOURCE` 与两个适配器的 `CLOSURE`，组件 `script.independent-native-publication` 已 bump 并列入新文件。打开缓存只需在 trivy 角色策略里加 §68.4 的字段（不加则关闭）；根目录与角色子目录不存在时由第一次写入以 root 0700 创建，其父目录必须已是受保护目录。没有新增秘密。记录每条几十 KB（带原始观察与信封），超龄后不再命中，下次真跑时被替换；整目录删掉是安全的（之后只是未命中、照旧真跑），归档与 §35 的回收脚本不碰它。
+- 测试 `CI/test/scan-result-cache.test.mjs`（18 例，在修复前的代码上因缓存模块与接线不存在而失败）：真实 trivy 扫描循环、真实持久化步骤、真实 placement 执行步与真实桥 `executeProtectedIssuedJob`，只替换物理 Docker 传输与主机绑定的协作者；签名结果用测试 Ed25519 钥经真实 `resultPayload` 产生，经真实 `observationFacts` 与 `verifySignedBridgeResult`（真实 bridge v4 issue、签名者表）核对。覆盖：
+  1. 同树二次扫描命中、不启动扫描器（扫描许可仍取 1 次、准入 2 轮），命中观察没有自己的 `scans`，`cacheHit` 带原始观察与信封，签名载荷带命中标记，签发方全链核对通过；把命中签成真跑、或原始信封换成别的钥匙签的，都被拒；force-push 只改信息与重算 S 两种形状都命中；
+  2. 任何一个键成分变化都不命中（文件字节、文件集合、树、漏洞库、Source 清单、运行身份、两种接受引用、Docker 客户端）；纯函数层逐个成分去掉或改动都换键或变 `null`；键构造异常返回 `null`；
+  3. 缓存文件被篡改（12 种：改一个字节、截断、空、非 JSON、摘要过期、失败结果重算摘要、命中观察冒充记录、别的键重算摘要、观察摘要不符、别的钥匙签名、签名乱码、信封指向别的观察）都不命中；恢复原文件后再次命中；
+  4. `storedAt` 为将来值、超过 TTL 都不命中，TTL 内命中；
+  5. 开关关闭（缺字段、`enabled:false`、非布尔、缺 root、与运行目录、密钥目录、Docker 根目录重叠或包含它、多余字段）不读不写；尾斜杠被规范化；gitleaks、placement 永远关；没有结果公钥时端口不开；
+  6. guard 三级都检查（根目录、角色目录按目录，记录按私有文件），任何一级拒绝（非 root、组可写、符号链接、两个硬链接、权限不是 0600）都未命中；真实 `protectedPath` 在非 root 下也是未命中；
+  7. 持久化接线：先写 `observation.json`，再写 `result-cache.json`，签名之后才写记录与 `result-cache-store.json`；命中不写记录；失败不写记录；签名结果与观察不符时不写；未签名的信封被端口拒绝；
+  8. 孤儿临时文件被清扫、两链接记录恢复可读并被保留、坏记录被替换，且不留临时文件；
+  9. 命中路径上燃烧许可过期、“后”准入被拒、deadline 已过都不产生观察；
+  10. 签名器与签发方校验：格式不对、多字段、摘要不符、`storedAt` 晚于 `servedAt`、原始扫描器时刻晚于 `storedAt`、原始非成功、命中又带 `scans` 都被拒；gitleaks 与 placement 的 `cacheHit` 被拒；
+  11. 桥：`storeSignedResult` 在签名结果写出之后调用一次、参数就是那份签名结果，写入失败不改变结果。
+## 69. 来源证明标准化：in-toto Statement + SLSA provenance v1（优化方案 bf57ff10 的 L4；分支 `claude/slsa-provenance`）
+
+**问题。** 常驻 CI 的签名结果（Linux 用 Ed25519 签 `independent-ci.signed-result.v2`，Windows 签发方复核，发布段记 `evidenceSha256`）是自定义格式，外部工具无法验证。目标：对每个检查结果**额外**产出标准格式的来源证明；**现有格式、现有校验、现有测试一律不动**，流水线里没有任何判断读这份新文件。
+
+### 69.1 格式
+- **in-toto Statement v1**（`_type = https://in-toto.io/Statement/v1`），**predicateType = `https://slsa.dev/provenance/v1`**，放进 **DSSE 信封**（`payloadType = application/vnd.in-toto+json`，签名对象是 DSSE 的 PAE，Ed25519，`keyid` = 结果签名钥的 keyId）。
+- **subject**：被测提交 S（`job.testSha`，非车头批次时等于头提交）`{name: git+https://github.com/<repo>, digest: {gitCommit}}`；观察里带 `candidateTreeSha`（trivy、contract-placement）时再加一项树 `{name: ...#tree, digest: {gitTree}}`。gitleaks 的观察不含树，只有提交。
+- **predicate.buildDefinition**：`buildType`（本仓库 scanner-check/v1 的 URI）；`externalParameters` = 作业身份（jobId、合同号、repo、pr、role、attempt、headSha、baseSha、testSha、createdAt）；`internalParameters` = 结果合同、签名 keyId、profile、日志摘要模式；`resolvedDependencies` = 基线提交、**Source 清单哈希**、扫描镜像摘要、workflow 与工具钉的哈希（有则写）。
+- **predicate.runDetails**：`builder.id = urn:clued:independent-ci:node:<运行时身份>:source:<Source 清单哈希>`（节点身份取签名结果的 `runtimeId`，对 URN 做百分号转义）；`metadata`（invocationId = 作业 id，startedOn、finishedOn）；`byproducts` 全部按哈希绑定：`signed-result`（= 信封的 `digest()`，即 `verifyResultV2` 返回、发布段写进日志的 `evidenceSha256`，这就是回执哈希链接到证明的那一环）、`check-result`（结论与退出码，内联）、stdout、stderr、artifacts、request、execution-observation、cleanup。
+- 文本用现有 `canonical()`（键排序）序列化，同一输入字节一致。
+
+### 69.2 生成点、签钥、存放
+- **生成点**：Linux 桥 `worker/protected-job-bridge-v4/linux-worker.mjs`，在 `box.write('result', …)` 写出签名结果**之后**调用 `emitProvenanceBestEffort`（懒加载 `provenance-emit.mjs`，预算 10 秒，任何错误、超时都吞掉返回 null，**不改变返回值、结果记录和任何状态**）。`provenance-emit.mjs` 用与 `signActualBridgeResult` 同一份固定角色策略、同一把 `signingKeyFile`（读取前同样做 protectedPath 与“公钥一致”核对，不一致 `EXISTING_RESULT_KEY_CHANGED`），**不新增、不导出任何密钥**。
+- **存放**：Linux 本地回执目录 `/var/lib/clued-independent-ci/provenance/<testSha>-<role>-<jobId 前16位>.dsse.json`，create-only、fsync、0600，同一作业重复生成字节相同则视为已有，不同则拒绝。**故意不进 formal-spool**：spool 的记录名白名单（`mailbox.mjs`、`formal-spool-acl.ps1`、`archive-windows-spool.ps1`、Linux 归档）与 relay/companion 的传输集合都不动，避免新文件名触发归档拒绝。Windows 侧的回执目录约定为 `state\v2\receipts\provenance\`（同一文件名，`state-retention` 只认自己的名字，不会清理它）；把文件从 Linux 目录拷进来是 Owner 或后续传输步骤的事（见 69.5）。
+- **不写 Rekor 或任何透明日志**（私有仓库）；不接 GitHub 检查运行附件（可选项未做，见 69.5）。
+
+### 69.3 只读校验脚本
+`node work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/verify.mjs --sha <提交> --pubkey <结果签名公钥 PEM> [--keyid <id>] [--dir <目录>] [--role <角色>] [--repo <git 检出>] [--json]`
+对该提交的每个 `<sha>-*.dsse.json`：用公钥验 DSSE 签名；按 in-toto Statement v1 与 SLSA provenance v1 的字段规则校验（`validateStatementV1`）；subject 中必须有等于 `<sha>` 的 gitCommit；给了 `--repo` 时，若带树 subject，则与 `git rev-parse <sha>^{tree}` 比对。退出码：全部通过且至少一份为 0，有失败或没有证明为 1，用法错误为 2。**只读**：不写、不签、不联网（测试里逐字节比对目录）。公钥来源：结果签名钥的公钥（已装的签名者登记表里那一把）。
+
+### 69.4 测试（`test/provenance-v1.test.mjs`，13 例）
+DSSE PAE 与规范向量一致；Statement 的 in-toto/SLSA 必填字段（测试里按规范独立写出，不借用校验函数）；11 种违规 Statement 被拒；与作业、与签名结果的绑定检查；DSSE 签名通过、改 payload/签名/类型/换钥/换 keyid/非 base64/非 Ed25519 钥各自失败；生成证明后原 `signed-result` 字节不变、`verifyResultV2` 照常通过、`evidenceSha256` 就是 Statement 里的 `signed-result` 哈希；落盘 create-only 与幂等；按提交校验（错提交、错钥、错树、错角色、改一个字节均失败）；校验只读；命令行 0/1/2；尽力而为路径（加载失败、抛错、超时都返回 null）。
+
+### 69.5 没做的与已知边界
+- **传输**：Linux 目录到 Windows `receipts\provenance\` 没有自动搬运。自动化要新增 relay 记录名（`relay-record.mjs`、`relay-public.ps1`、`mailbox.mjs` 白名单）并改 companion 与 Windows 归档白名单，都是已装、受 Source 清单钉住的受保护组件，应单独出方案由 Owner 批准，这里不碰。
+- **gitleaks 无树 subject**（观察不含树）；需要时由 `--repo` 之外的方式另行求树。
+- **检查运行附件/链接**（要求里的可选项）未做：GitHub 检查输出由发布段严格比对（`output.title/summary`），加附件会动现有发布格式。
+- **生产钥路径未在本机实跑**：`emitProvenance` 的 Linux 生产分支需要 root 与固定角色策略，测试用同形态的注入端口与夹具钥覆盖；上线前要在 CluedDev-Linux 上随新 Source 清单实跑一次。
+- 本节新增的 `src/provenance-v1/{dsse,statement,store}.mjs` 与 `provenance-emit.mjs` 进入 Source 闭包（`source-closure.json` 已重算 166 个文件），改动 `linux-worker.mjs`，属于 CI Source：随下一代 Source 清单换代，Linux 三个角色随新清单重签资格（同 §42、§64.4）。
+## 70. L2：Linux 执行机用完即弃（优化方案 `bf57ff10` L2，分支 `claude/linux-ephemeral-workers`）
+
+范围：只改常驻层 Linux 侧：`linux/bin/clued-ci-resident-linux`、`linux/systemd/clued-ci-worker@.service`、`clued-ci-archive@.service` 的说明文字，以及新测试 `test/test_ephemeral_view.py`。不改 Source v2，不改 upgrader，不加新 unit 名。
+
+### 70.1 结论先说
+
+- PR 代码本来就只在“每个作业新建、跑完即删”的容器里执行。`verify-worker.mjs#createArguments` 给出的条件是：`--pull=never`、按 digest 钉住的镜像、`--read-only`、`/scratch` tmpfs、`--network=none`（trivy 缓存容器除外：它联网，只写自己新建的 staging）、`--cap-drop=ALL`、`no-new-privileges`、2 GiB、2 CPU、128 pids、`--log-driver=none`；跑完 `rm --force`，再按 nonce 标签和名字各列一次确认为空。所以方案里“每批新建容器 + 只读根 + tmpfs + 固定 digest”这一项，粒度比“每批”还细，早已做到。
+- 缺的是主机侧，有三处：
+  1. 受信 worker（root）能看到所有历史批次留在磁盘上的东西；
+  2. worker 能写工具链和常驻工具的状态；
+  3. 复位之后，下一批可以在上一批的遗留容器还在时开始。
+- L2 补这三处：每次 unit 启动时新建一个只含本作业所需内容的视图（70.3）；角色开始前必须一个带标签的容器都没有（70.4）；失败型归档先取证、再删遗留容器（70.5）。每批开销小于 1.5 秒，走原地升级通道，不重签角色。
+- 每批克隆一个 WSL 快照：不推荐（70.2）。
+
+### 70.2 跨批次残留逐项，以及方案比较
+
+| 状态 | 今天 | L2 之后 |
+|---|---|---|
+| 镜像层（`/var/lib/docker`） | 长期保留，按 digest 使用，层内容不逐批复核 | **保留**（缓存）；不复核层内容是残余（70.9） |
+| 容器 | 每个作业删除并确认；quiescence 接受 exited/dead，复位后的下一批可以在它们还在时开始 | **清掉**：worker 开始前要求一个都没有；失败型归档取证后删除 |
+| 卷 | 没有（拒绝带 Volumes 的镜像，inspect 核对只有 bind 和 tmpfs） | 不变 |
+| 容器内 /tmp、/scratch | 根文件系统只读；/scratch 是每个容器自己的 tmpfs | 不变（已是用完即弃） |
+| 主机 /tmp、SysV IPC | `PrivateTmp=yes`；IPC 与主机共享 | `PrivateTmp`、`PrivateIPC` 每次新建 |
+| 工作区 | 每批归档时改名移走；rearm 时如果没有描述符，就留在原处；worker 看得到全部 | 保留在归档里；**worker 只看得到本作业自己的一个** |
+| runs/、spool 记录、`formal-role.lock`、`ws-prep-<批次>` | 每批归档移走；ws-prep 预检要求它们为空 | 不变 |
+| 历史归档 `archive-*`、`failed-*`（含 PR 字节） | 保留，按 §35 修剪；worker 看得到 | 保留（审计用）；**worker 看不到** |
+| git 缓存 | Linux 侧没有长期缓存（ws-prep 的镜像库随批次归档）；Windows 侧有 seed.git（§10.1） | 不变 |
+| trivy DB 与检查包 | 长期保留 | **保留**（缓存），worker 视图里仍可写 |
+| 工具链 node | worker 可写 | **只读** |
+| `resident/`（归档状态、保留回执、`upgrade/current.json`）、旧流程留下的 `verify-spool`、`verify-once-state`、`trusted-source` | worker 可写 | **worker 看不到** |
+| `/mnt`（drvfs，即 C 盘）、`/run/WSL`（interop） | worker 能读整个 C 盘，也能经 interop 以 Owner 身份启动 Windows 程序 | **worker 看不到** |
+| 日志与回执（journald、archive-status） | 保留 | 不变（审计用） |
+| 密钥、qualification、角色策略（`/etc`） | 只读 | 不变 |
+| 内核、dockerd、WSL 工具 VM | 长期运行 | 残余（70.9） |
+
+依据与数据来源：
+- 只读读取本机注册表得到 VHDX 大小：CluedResident-Linux 50.24 GiB，CluedCI-Linux 71.80 GiB。
+- 本机顺序复制 2 GiB 实测 3.18 GiB/s。这个数含缓存，偏乐观。
+- 视图建立的耗时，来自一次 `unshare -m` 演练（70.6）。
+
+| | A. 每个作业新容器 + 每次 unit 新视图（**推荐**） | B. 每批克隆 WSL 发行版 | C1. placement 改用 gVisor |
+|---|---|---|---|
+| 对 PR 代码的隔离 | 与今天相同 | **不比 A 强**。理由：<br>• 所有发行版共用一个工具 VM 和内核，发行版运行在初始用户命名空间里，root 有 `CAP_SYS_ADMIN`，所有发行版的 VHD 都以块设备挂在同一个 VM 里；<br>• WSL 不是安全边界；<br>• 逃逸后的 root 还能经 interop 和 `/mnt/c` 以 Owner 身份落到 Windows 上（§3.3 已接受这条边界）。 | 明显更强 |
+| 跨批次残留 | 主机侧逐项清掉或藏起；内核和 VM 残余 | 发行版文件系统每批全新（镜像层、`/etc`、`/opt`、`daemon.json` 都是新的）；内核和 VM 残余与 A 相同 | 同 A |
+| 每批开销 | 每个 Exec 建一次视图，实测 17 ms（含 unshare 进程本身），3 个 worker × 2 个 Exec 共 6 次；worker 守卫每次多一次 `docker ps`，估 0.1–0.3 s，共 3 次。合计 < 1.5 s，不到 17–25 分钟批次的 0.15% | 复制：<br>• 原样复制 50 GiB，按实测速度至少 16 s，冷数据约 34 s；<br>• 精简模板（镜像约 1–2 GiB 加系统）估计可降到 5–10 GiB，几秒钟。<br>另加：注册、冷启动 systemd 和 dockerd 估 5–15 s，页缓存回填；trivy DB 不共享就每批重下（网络会抖）。<br>合计约 0.5–4 分钟。原样复制时每批写盘 50 GiB。差分 VHDX 在 WSL 上能否用未验证，需要 Hyper-V 模块和管理员 | 容器启动多 0.1–0.3 s；placement 估慢 10–50%（第 6 段多 0.3–1.5 分钟） |
+| §31.5（wsl.exe 次数） | 不增加 | 每批至少多 4 次（import、start、terminate、unregister），每个新发行版还有自己的 init 和 9p/hv_sock 通道 | 不变 |
+| §32（内存闸） | 不变 | 变差：冷启动正落在已知会因 order-5/7 连续块不足而失败的共享 VM 上；内存闸要挪到启动之后，并重定阈值 | 每个容器的 sentry 多约 50–100 MB |
+| 改动与上线 | 2 个文件加测试；原地升级；不重签 | 改 companion 固定 argv、node profile（发行版名进 `nodeProfileSha256` 和中继描述符）、安装与卸载、维护模板；Source 重签；整套重装；Owner UAC | Source 改动（钉 Runtime）、装 runsc、改 daemon.json；重签；需要 Owner Decision |
+
+其他几个选项：
+
+- **userns-remap**：DockerRootDir 会变成 `/var/lib/docker/<uid>.<gid>`，被 Source 的 `info.DockerRootDir` 核对拒绝。
+- **rootless docker**：套接字不再是 `/run/docker.sock`，qualification 会拒绝。两者都是 Source 改动。
+- **C1 只靠 `daemon.json` 的 `default-runtime=runsc`**：`inspectContainer` 不核对 Runtime，所以可以不改 Source；但运行时既没被钉住，也没被核对，换了也看不出来。要做必须由 Owner 明确决定，不能悄悄做。
+- **逐批复核镜像层**：`docker save` 后核对 `rootfs.diff_ids`。能发现磁盘上被篡改的层，但做核对的 dockerd 本身也在可能被攻破的主机上，只是辅助手段（70.9）。
+
+GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner 主机上执行。这里 PR 代码从不在主机上执行，所以“用完即弃”的单位本来就是容器。L2 补的是主机侧的起点干净和最小可见。
+
+**推荐 A**：开销最小；对 PR 代码的隔离与 B 相同，B 并不加强逃逸防护；B 的实际收益中，除“每批全新的镜像层和系统文件”外，A 都覆盖了。
+**C1** 是唯一真正加强 §14 R1 的选项，单列为后续提议，交 Owner 决定。
+
+### 70.3 worker 的视图（`clued-ci-worker@.service`）
+
+- 用的 systemd 设置：
+  - `TemporaryFileSystem=…/formal-spool:ro`，再用 `BindPaths=-…/incoming -…/outgoing` 绑回来；
+  - `TemporaryFileSystem=…/workspaces:ro`，再用 `BindPaths=-…/workspaces/%i` 绑回本作业的一个；
+  - `TemporaryFileSystem=/mnt:ro`；
+  - `ReadOnlyPaths=-…/toolchain-build-legacy-v1`；
+  - `InaccessiblePaths=-…/resident -…/verify-spool -…/verify-once-state -…/trusted-source -/run/WSL`；
+  - `PrivateIPC=yes`。
+  需要 systemd ≥ 248；节点是 255。
+- **何时建、何时销毁**：每条 Exec（守卫和 worker）各自按这份配置新建一个挂载命名空间；进程退出，命名空间就跟着消失，成功和失败都一样。bind 的源按主机原路径解析。tmpfs 的只读是第二遍才设，而且不递归，所以绑回来的目录保持可写。
+- **有意不变的**：
+  - state 根可写：Source 的 `SERIAL_LOCK` 固定在 `/var/lib/clued-independent-ci/formal-role.lock`，必须建在真实目录里；
+  - runs/ 和 trivy 缓存根仍是真实路径：dockerd 在主机命名空间里解析所有 bind 源（gitleaks、trivy、placement、自检、缓存容器的挂载源都在 runs/、缓存根或 `/opt` 下，没有一个落在被遮住的路径里）；
+  - 本作业的工作区仍可写：Source 里没有证明它只读。
+- **为什么失败路径不变**：每条路径都带 `-`，路径不存在时不会在命名空间建立阶段失败（226/NAMESPACE），而是像今天一样由 worker 自己的检查拒绝。
+- **工具链挪不走**：它是挂载点，可写的 state 根也不能把它改名或删除（EBUSY）。
+
+### 70.4 角色开始前一个遗留容器都没有
+
+- 只在 worker 的守卫里做：任何状态的带标签容器（含 trivy 缓存容器，同一个标签）都拒绝，码是 `EARLIER_CONTAINER_PRESENT`，输出里列出容器 id。docker 读不到时隔 2 s 再读，共 3 次，仍读不到就拒绝 `DOCKER_READ_UNCONFIRMED`。
+- 拒绝之后的走向：今天的守卫失败路径，即 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。第 2、4、6 段可以按放弃处理（`classify.mjs`），进入同批重跑；重跑前的 `retry-stage-N-K` 归档是失败型，会清扫，重跑就能通过，所以能自愈。
+- ws-prep 不查（复审 M1）：它的拒绝是 `WORKSPACE_PREPARATION_REFUSED`，会烧 head、要求推新提交，不该为与 PR 无关的残留付这个代价。
+- 连带好处：trivy `prepare.lock` 的回收条件之一是“一个带标签的容器都没有”（`cache.mjs` 的 `cacheContainersNone`），清扫之后不会再被旧容器挡住（R6）。
+
+### 70.5 归档取证后清掉遗留容器（改变了 §6.4 的“只改名、不删除”）
+
+- **顺序**：quiescence 之后、计划和改名之前，也在写任何状态文件之前。所以清扫失败时这个实例可以原样再跑（复审 B1）；复位用的固定实例名 `<batch>_rearm-*` 不会被一次 docker 抖动永久卡死。
+- **完成型范围**（`between-roles-4/6`、`success-close`）：遇到容器就拒绝 `CONTAINER_PRESENT_PRESERVED`，什么都不删、不移，现场留给失败路径（b22/b28 的规则，复审 m2）。
+- **失败型范围**：
+  - 所有容器必须是 exited 或 dead，否则拒绝 `CONTAINER_NOT_QUIET`，一个都不删；
+  - 每个容器用完整 id 执行 `docker inspect`，核对 Id 和 `clued.verify.nonce` 标签（`CONTAINER_IDENTITY_UNCONFIRMED`），再执行 `docker diff`（读不到就记 null），连同状态一起写成 create-only 的证据文件 `resident/container-sweep/<实例>/container-<id>-<随机>.json`；
+  - 然后 `docker rm --volumes <id>`，不加 `--force`；
+  - 最后再列一次，必须为空，否则拒绝 `CONTAINER_SWEEP_UNCONFIRMED`；
+  - 每次尝试的证据都保留。
+- **结果字段**：`containersSwept: [{id, state, evidence, evidenceSha256, diffEntries}]`；`deleted` 算上清扫掉的容器；`deletesAnything` 如实填写。companion 只读 `verified` 和 `directory`，Windows 侧不受影响。
+- **docker 只用四个子命令**：ps、inspect、diff、rm（`DOCKER_VERBS`，其他的直接拒绝 `DOCKER_VERB_REFUSED`；输出上限 1 MiB）。从不碰镜像、具名卷和网络，镜像缓存不受影响。
+- **与 §6.4 的关系**：
+  - 文件仍然只改名；
+  - 被删的是运行时对象，删之前它的全部元数据先进了证据目录；
+  - 容器根文件系统只读，`/scratch` 是 tmpfs，`docker diff` 的实测结果也写进证据；
+  - 先例是 §35.5 的瘦身。
+  §6.4 来自复审 X1，这一改变要由 Owner 确认（70.8）。
+
+**删不掉的容器**（复审 M3）：容器卡在 dead 状态、rm 返回失败时，归档和守卫的拒绝输出里有容器 id（journald）。Owner 的处置：
+1. 在节点上以 root 执行 `docker inspect <id>`，确认它带 `clued.verify.nonce` 标签；
+2. 执行 `docker rm -f <id>`，必要时先重启 docker.service；
+3. 按 §6.5 复位。复位时的归档会再清扫一次并留下证据。
+
+### 70.6 测试与演练
+
+- `test/test_ephemeral_view.py`，20 个测试：
+  - unit 文件逐条断言；
+  - 视图模型：把 unit 的设置按“越具体越优先”作用到一棵假的主机目录树上；
+  - **两批场景**：第 1 批失败，留下锁、工作区、runs、spool 记录和一个遗留容器。真实的 `main(['archive', …])` 第一次因为 `rm` 失败被拒，此时没有状态文件、什么都没移、证据已写下；同一实例第二次清扫成功并归档整批。第 2 批 trivy worker 的视图里，第 1 批写下的文件一个都看不到（历史归档、别的工作区、resident、`/mnt`、`/run/WSL` 都看不到），trivy DB 可见且可写（缓存命中仍有效），工具链只读；视图内检查 `view_facts` 判 ok，`view-check` 命令只在视图完全符合时退出 0；
+  - 去掉视图设置时，检查能逐项报错；
+  - 完成型范围遇到容器时拒绝且什么都不改；
+  - 清扫：顺序、证据哈希、running/created 拒绝、身份不符拒绝、rm 失败带 id 拒绝且第二次能完成、diff 读不到时照常删除、删除后又冒出来的容器拒绝、docker 子命令白名单、畸形列表；
+  - 守卫：任何状态都拒绝、读两次失败后第三次成功、三次都失败就拒绝、只有 worker 守卫读 docker、归档里各步的先后顺序。
+- **内核演练**：一次，在 CluedDev-Linux 里以 root 跑 `unshare -m`，只用新建的 /tmp 目录。这次是在协调会话禁止 WSL 实验之前做的，之后没有再跑。按 70.3 的设置建 tmpfs 加 bind，结果：
+  - 建立耗时 17 ms；
+  - 历史归档和别的工作区看不到；本作业工作区可读写；resident 看不到；工具链可读，但不可写、不可改名；spool 里不能新建名字；
+  - outgoing 可写并落到主机；锁文件落在主机 state 根；缓存和 runs 可写；
+  - 作业期间主机写进 incoming 的新文件经 bind 可见；
+  - 命名空间结束后挂载残留 0，在 tmpfs 里写下的东西消失。
+- **没有在真机 systemd 上验证**：本机不安装、不改系统；协调会话也禁止在 WSL 里实验。上线演练时用 70.7 的探针补上。
+
+### 70.7 上线
+
+- **通道**：resident-v1（工具与 manifest）和三个 unit 文件都是 `clued-ci-upgrade-linux` 的 ITEMS，原地升级就能换，切换后会 `daemon-reload`。包不带 `sourceV2`，Source 清单哈希不变，角色 qualification 不绑定 unit 文件。所以**不重签 Linux 角色，不整套重装**。
+- **切换前的探针**，在一台节点上以 root 跑，与新 unit 完全相同的视图设置（复审 M2）：
+
+  ```bash
+  T=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux; J=<64 位十六进制，最好是某个现存工作区的作业 id>
+  mapfile -t P < <($T view-properties --instance $J | python3.12 -I -c 'import json,sys;print("\n".join(json.load(sys.stdin)["properties"]))')
+  systemd-run --wait --pipe --collect "${P[@]}" $T view-check --instance $J
+  ```
+
+  `view-check` 逐条核对 70.3 说的“看不到”和“可写”，退出码 0 才算通过。之后再跑一次真实批次，作为端到端确认。
+- **Owner 要做的**：
+  1. 确认 70.5 对 §6.4 的改变；
+  2. 按常规批准一次原地升级；
+  3. 决定是否把 C1 立项。
+
+### 70.8 独立审核
+
+审核结论 PASS-WITH-FIXES，全部修掉：
+
+| 复审项 | 修法 |
+|---|---|
+| B1：清扫放在改名之后，一次 docker 失败会永久卡死固定的复位实例 | 挪到计划之前，并且不写状态 |
+| M1：ws-prep 前查容器会烧 head | 只在 worker 守卫查，docker 读不到时重读 |
+| M2：测试测不到 systemd 本身 | 加 `view-properties` 和 `view-check` 探针，写进上线步骤 |
+| M3：删不掉的容器卡死整个系统 | 拒绝输出带容器 id；写 Owner 处置流程（70.5） |
+| m1：视图漏了几处 | 加 `/mnt`、`/run/WSL`、旧流程目录、`PrivateIPC` |
+| m2：完成型归档不该清扫 | 完成型范围拒绝 |
+| m3：用短 ID 删容器 | 用完整 id，删前核对 Id 和标签，输出有上限 |
+| m4：“可写层里没有 PR 内容”没有实测 | 加 `docker diff` |
+| m5：“只改名”的承诺变了 | 改了说明和字段，交 Owner 确认 |
+| m6、m7：B 的估算和漏掉的选项 | 修正比较表 |
+| m8：prepare.lock 回收的连带效果 | 写入 70.4 |
+| NIT | 改了措辞 |
+
+### 70.9 残余
+
+- **内核、VM、dockerd 长期运行**：容器逃逸后的 root 可以持久化，包括篡改镜像层，而 dockerd 不逐批复核层内容。B 也挡不住，这一项要靠 C1。
+- **worker 持有 docker socket**：代码执行级的漏洞可以绕过视图（例如起一个特权容器）。视图挡的是“写到不该写的路径”这一类原语，以及受信代码自己误读误写。
+- **state 根仍可写**：worker 能在 state 根新建条目；`ws-prep-<批次>` 和 `resident-uninstalled-*` 这类动态名字没有藏起来。rearm 且没有描述符时留下的工作区不在保留规则里，磁盘会一直涨。
+- **不带标签的容器**不在“起点干净”的检查范围内。

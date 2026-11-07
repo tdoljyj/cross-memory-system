@@ -1,5 +1,9 @@
 // Source v2 port of protected-job-bridge-v3/relay-record.mjs: protocol v4 (no currentClaim binding: the claim
 // generation is inside the issue's admission facts), one more export (--export-blocked), qualification v2.
+// bf57ff10 P2 C (2026-11-07): the CONTEXT stage loads the relay context (boundary.mjs#loadLinuxRelayContext: every role
+// policy, Source manifest and qualification check of loadLinuxContext, without re-hashing the pinned Source files or
+// asking Git, about 1 s per call). This relay only moves public bytes; the Linux worker re-verifies the Source in full
+// when it starts and in every callback before it adopts a response or signs.
 // Fixed Linux half of the accepted Owner-operated public relay. Does not run a
 // job, read a private key, contact an API or treat a packet digest as authority.
 import fs from 'node:fs';
@@ -9,7 +13,7 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {canonical} from '../../src/proof.mjs';
 import {protectedPath} from '../qualification-v2.mjs';
-import {loadLinuxContext} from './boundary.mjs';
+import {loadLinuxRelayContext} from './boundary.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 import {LINUX_ROOT} from './mailbox.mjs';
 import {MAX_BYTES,validateIssue,validateResponse,decode,digest} from './protocol.mjs';
@@ -25,13 +29,15 @@ async function readRecord(folder,name){const file=path.join(LINUX_ROOT,folder,na
   const marker=await read(ready),r=JSON.parse(marker.toString('utf8')),bytes=await read(file);check(canonical(r)===marker.toString('utf8')&&Object.keys(r).sort().join('|')==='bytes|contract|sha256'&&r.contract==='clued.independent-ci.complete-public-file/1'&&r.bytes===bytes.length&&r.sha256===hash(bytes),'FORMAL_RELAY_READY_CHANGED');return bytes;}
 async function writeRecord(name,raw){const dir=path.join(LINUX_ROOT,'incoming');await protectedPath(dir,{directory:true});for(const[file,b]of [[name+'.json',raw],[name+'.ready.json',Buffer.from(canonical({contract:'clued.independent-ci.complete-public-file/1',bytes:raw.length,sha256:hash(raw)}))]]){const h=await fsp.open(path.join(dir,file),'wx',0o600);try{await h.writeFile(b);await h.sync();}finally{await h.close();}}const h=await fsp.open(dir,'r');try{await h.sync();}finally{await h.close();}}
 async function stdin(){const parts=[];let size=0;const timer=setTimeout(()=>process.stdin.destroy(Object.assign(new Error('FORMAL_RELAY_STDIN_TIMEOUT'),{code:'FORMAL_RELAY_STDIN_TIMEOUT'})),5000);try{for await(const b of process.stdin){size+=b.length;check(size<=1399000,'FORMAL_RELAY_TRANSPORT_BOUND');parts.push(b);}return Buffer.concat(parts);}finally{clearTimeout(timer);}}
+// The issue a relay imports must name the role, Source manifest and acceptance refs of the relay context. Pure.
+export function issueBinding(packet,context){validateIssue(packet);check(packet.job.role===context.role&&packet.job.sourceManifestSha256===context.config.sourceManifestSha256&&packet.sourceAcceptanceRef===context.sourceAcceptanceRef&&packet.hostQualificationRef===context.hostQualificationRef,'FORMAL_RELAY_ISSUER_CONTEXT_CHANGED');return packet;}
 let stage='OPERATION';
 export async function relayRecord(argv){stage='OPERATION';const op=operation(argv);
-  if(op.importing){stage='STDIN';const input=await stdin();stage='TRANSPORT';const raw=decodeTransport(input);stage='PACKET';const packet=decode(raw);stage='CONTEXT';const context=await loadLinuxContext(op.kind==='--import-issue'?validateIssue(packet).job:await readFixedIssueJob());stage='BINDING';
-    if(op.kind==='--import-issue'){validateIssue(packet);check(packet.job.role===context.role&&packet.job.sourceManifestSha256===context.config.sourceManifestSha256&&packet.sourceAcceptanceRef===context.sourceAcceptanceRef&&packet.hostQualificationRef===context.hostQualificationRef,'FORMAL_RELAY_ISSUER_CONTEXT_CHANGED');await writeRecord('issue',raw);}
+  if(op.importing){stage='STDIN';const input=await stdin();stage='TRANSPORT';const raw=decodeTransport(input);stage='PACKET';const packet=decode(raw);stage='CONTEXT';const context=await loadLinuxRelayContext(op.kind==='--import-issue'?validateIssue(packet).job:await readFixedIssueJob());stage='BINDING';
+    if(op.kind==='--import-issue'){issueBinding(packet,context);await writeRecord('issue',raw);}
     else{const issue=validateIssue(decode(await readRecord('incoming','issue'))),challenge=decode(await readRecord('outgoing','challenge-'+String(op.sequence).padStart(2,'0')));validateResponse(issue,challenge,packet);check(packet.sequence===op.sequence,'FORMAL_RELAY_SEQUENCE_CHANGED');await writeRecord('response-'+String(op.sequence).padStart(2,'0'),raw);}
     stage='COMPLETE';return{status:'FORMAL_PUBLIC_RECORD_IMPORTED',bytes:raw.length,sha256:hash(raw),taskStarted:false,qualificationIssued:false};}
-  stage='CONTEXT';await loadLinuxContext(await readFixedIssueJob());stage='RECORD';const name=op.kind==='--export-result'?'result':op.kind==='--export-blocked'?'blocked':'challenge-'+String(op.sequence).padStart(2,'0');const result=encodeTransport(await readRecord('outgoing',name));stage='COMPLETE';return result;
+  stage='CONTEXT';await loadLinuxRelayContext(await readFixedIssueJob());stage='RECORD';const name=op.kind==='--export-result'?'result':op.kind==='--export-blocked'?'blocked':'challenge-'+String(op.sequence).padStart(2,'0');const result=encodeTransport(await readRecord('outgoing',name));stage='COMPLETE';return result;
 }
 export async function main(argv=process.argv.slice(2)){
   try{console.log(JSON.stringify(await relayRecord(argv)));return 0;}catch(e){console.error(JSON.stringify({status:'BLOCKED',reason:/^[A-Z_]+$/.test(e.code??'')?e.code:'FORMAL_RELAY_UNCONFIRMED',stage,taskStarted:false,qualificationIssued:false}));return 2;}}

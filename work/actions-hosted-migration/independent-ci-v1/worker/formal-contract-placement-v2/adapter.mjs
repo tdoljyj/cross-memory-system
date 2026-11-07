@@ -18,6 +18,7 @@ import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
 import {dockerInvoke} from '../formal-gitleaks-v2/docker-transport.mjs';
 import {PROFILE,LIMITS,validateTools,fixedCommands} from './container-entry.mjs';
 import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../trusted-workflows.mjs';
+import {cacheKey,cacheSettings,createResultCache,cacheHitEvidence,placementCommandTemplateSha256} from '../scan-result-cache-v1/cache.mjs';
 
 export const POLICY_FILE='/etc/clued-independent-ci/roles-v3/contract-placement.json';
 // .github/workflows/contract-placement.yml is pinned as an exact accepted set, never a pattern, taken from the one
@@ -26,7 +27,7 @@ export const POLICY_FILE='/etc/clued-independent-ci/roles-v3/contract-placement.
 export const WORKFLOW_SHA256S=trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS['contract-placement']);
 const P='work/actions-hosted-migration/independent-ci-v1/';
 const DIR=P+'worker/formal-contract-placement-v2/';
-const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/scan-start-v1/grant.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/trusted-workflows.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs'];
+const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/scan-start-v1/grant.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/trusted-workflows.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs',P+'worker/scan-result-cache-v1/cache.mjs'];
 const HASH=/^[a-f0-9]{64}$/;const actual=new WeakSet();
 const check=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
@@ -79,6 +80,48 @@ async function readableSeal(dir){for(const item of await fs.readdir(dir,{withFil
 export function placementPlan(config,accepted,snapshot,requestFile,entryFile){
   validateTools(accepted.tools);return freeze({profile:PROFILE,image:config.image,executable:config.containerNodeExecutable,cwd:'/scratch',args:['/control/contract-placement-entry.mjs'],mounts:[[snapshot,'/input'],[requestFile,'/request/job.json'],[entryFile,'/control/contract-placement-entry.mjs']],limits:LIMITS,network:'none',user:'65532:65532',rootfsReadOnly:true,credentialsMounted:false});
 }
+// M4 scan result cache (DESIGN 68): the inputs the fixed placement check itself reads (the tested and base trees, image,
+// in-image node, tool pins, esbuild version, Host node, git and Docker, command template, limits, workflow, Source and
+// the qualified runtime and acceptance references). This key is NOT complete by construction: the container runs the
+// candidate's own code, which can also read the packed commit history, /request/job.json and the wall clock (DESIGN
+// 65.1). So placement is never served from the cache: cacheSettings keeps its switch off and the signer and the Windows
+// issuer refuse a placement cacheHit; the key and the hit path stay for a later closed-input design.
+export function placementResultKey({job,config,accepted,prepared,baseTreeSha}){
+  let commandTemplateSha256=null;try{commandTemplateSha256=placementCommandTemplateSha256(fixedCommands(job,accepted.tools),job);}catch{}
+  return cacheKey('contract-placement',{repo:job?.repo,profile:PROFILE,sourceManifestSha256:job?.sourceManifestSha256,sourceSha:prepared?.sourceSha,
+    workflowSha256:accepted?.workflowSha256,runtimeIdentity:config?.runtimeIdentity,hostAcceptanceRef:config?.hostAcceptanceRef,sourceAcceptanceRef:config?.sourceAcceptanceRef,
+    testTreeSha:prepared?.candidateTreeSha,baseTreeSha,image:config?.image,containerNodeSha256:config?.containerNodeSha256,nodeExecutableSha256:config?.nodeExecutableSha256,
+    gitExecutableSha256:config?.gitExecutableSha256,dockerExecutableSha256:config?.dockerExecutableSha256,toolPinsSha256:accepted?.tools?digest(accepted.tools):null,esbuildVersion:accepted?.esbuildVersion,
+    commandTemplateSha256,limitsSha256:digest(LIMITS)});
+}
+// From the plan to the unsigned observation. A hit (DESIGN 68) takes the same admission before the grant, the same grant,
+// grant record and burn-permission check, and a new post admission; it starts no container and serves the original real
+// run's image id, exit code, conclusion and log digests under this job's subject, with this run's window and cacheHit.
+async function executePlacement({job,config,accepted,prepared,sealed,plan,before,again,expires,signal,scanStartPort,scanStartRecord,nativeScanStartRequired,
+  resultCache=null,baseTreeSha=null,observe=observeUnsignedContainer,onTouched=()=>{}}){
+  await again();check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');
+  const grantValue=await scanStartPort(job),grant=scanStartPermission(job,grantValue,nativeScanStartRequired);await scanStartRecord(grant);
+  const request={nonce:randomBytes(32).toString('hex'),executionId:grant.execution_id,deadline:new Date(expires).toISOString()};
+  scanStartPermission(job,grantValue,nativeScanStartRequired);check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');
+  const resultKey=resultCache?.enabled?placementResultKey({job,config,accepted,prepared,baseTreeSha}):null;
+  const lookup=resultKey?await resultCache.lookup(resultKey):{record:null,reason:resultCache?.enabled?'SCAN_RESULT_CACHE_KEY_INCOMPLETE':'SCAN_RESULT_CACHE_DISABLED'};
+  const facts={keySha256:resultKey?.keySha256??null,lookup:lookup.reason};
+  const common=after=>({contract:'clued.independent-ci.formal-check-observation/2',domain:'production-observation',fixture:false,profile:PROFILE,subject:subjectOf(job),sourceSha:prepared.sourceSha,sourceTreeSha:prepared.sourceTreeSha,candidateTreeSha:prepared.candidateTreeSha,sourceManifestSha256:job.sourceManifestSha256,workflowSha256:accepted.workflowSha256,image:config.image,runtimeIdentity:config.runtimeIdentity,hostAcceptanceRef:config.hostAcceptanceRef,sourceAcceptanceRef:config.sourceAcceptanceRef,nonce:request.nonce,requestSha256:digest(request),headBasePackSha256:sealed.packSha256,commandSequenceSha256:digest(fixedCommands(job,accepted.tools)),toolPinsSha256:digest(accepted.tools),preAdmissionSha256:before.observationSha256,postAdmissionSha256:after.observationSha256});
+  if(lookup.record){
+    const servedAt=new Date().toISOString(),after=await again();check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_AFTER_PLACEMENT');
+    const r=lookup.record.observation,finishedAt=new Date().toISOString();
+    const observation=freeze({...common(after),imageId:r.imageId,conclusion:r.conclusion,exitCode:r.exitCode,startedAt:servedAt,finishedAt,logs:structuredClone(r.logs),cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:finishedAt},evidenceClass:'unsigned-observation-requires-protected-result-issuer',formalEligible:false,checksWritten:false,qualificationIssued:false,cacheHit:cacheHitEvidence(lookup.record,servedAt)});
+    return{observation,resultCache:facts,resultKey:null};
+  }
+  onTouched();
+  const o=await observe({imageDigest:config.image,dockerRootDirectory:config.dockerRootDirectory,limits:LIMITS},request,plan,dockerInvoke,{signal});const after=await again();
+  check(o.complete===true&&o.cleanupConfirmed===true&&o.reason===null&&o.state?.Running===false&&o.state.Status==='exited'&&Number.isInteger(o.state.ExitCode)&&o.attached?.code===o.state.ExitCode&&!o.attached.timedOut&&!o.attached.overflow&&!o.attached.error&&expires>Date.now(),'ACTUAL_PLACEMENT_EXIT_AND_CLEANUP_REQUIRED');
+  check(o.isolation?.nonRoot===true&&o.isolation.network==='none'&&o.isolation.credentialsMounted===false&&o.isolation.controlPathsMounted===false,'ACTUAL_PLACEMENT_ISOLATION_REQUIRED');
+  const observation=freeze({...common(after),imageId:o.imageId,conclusion:o.state.ExitCode===0?'success':'failure',exitCode:o.state.ExitCode,startedAt:o.startedAt,finishedAt:o.finishedAt,logs:o.attached.logs,cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:o.cleanupObservedAt},evidenceClass:'unsigned-observation-requires-protected-result-issuer',formalEligible:false,checksWritten:false,qualificationIssued:false});
+  return{observation,resultCache:facts,resultKey};
+}
+// The base tree the check reads (git_tree(--base)), for the cache key only; unknown keeps the cache out of this run.
+async function baseTree(config,candidate,job){try{const v=(await git(config,candidate,['rev-parse','--verify',job.baseSha+'^{tree}'])).toString().trim();return/^[a-f0-9]{40}$/.test(v)?v:null;}catch{return null;}}
 export function takeActualObservation(observation,job){validateRequiredJob(job);check(actual.has(observation)&&canonical(observation.subject)===canonical(subjectOf(job)),'ACTUAL_PROTECTED_PLACEMENT_OBSERVATION_REQUIRED');return observation;}
 export function createFormalContractPlacementAdapter({admissionPort,scanStartPort,nativeScanStartRequired=NATIVE_SCAN_START_REQUIRED}={}){
   return Object.freeze({async execute(job,{signal}={}){let run=null,created=false,touched=false;
@@ -92,15 +135,14 @@ export function createFormalContractPlacementAdapter({admissionPort,scanStartPor
       const snapshot=path.join(run,'candidate'),sealed=await sealedCandidate(config,job,candidate,snapshot);
       const sealedPrepared=await prepareWorkerJob({job,workspace:snapshot,trustedSourceDirectory:config.trustedSourceDirectory,sourceManifestBytes,expectedSourceManifestSha256:job.sourceManifestSha256,gitExecutable:config.gitExecutable});check(sealedPrepared.candidateTreeSha===prepared.candidateTreeSha,'SEALED_HEAD_TREE_CHANGED');
       const requestFile=path.join(run,'job.json'),entryFile=path.join(config.trustedSourceDirectory,DIR+'container-entry.mjs');await durableNew(requestFile,{contract:'clued.independent-ci.contract-placement-container/2',job,tools:accepted.tools});await fs.chmod(requestFile,0o444);
-      const plan=placementPlan(config,accepted,snapshot,requestFile,entryFile);await again();check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');
-      const grantValue=await scanStartPort(job),grant=scanStartPermission(job,grantValue,nativeScanStartRequired);await durableNew(path.join(run,'scan-start.json'),grant);
-      const request={nonce:randomBytes(32).toString('hex'),executionId:grant.execution_id,deadline:new Date(expires).toISOString()};
-      scanStartPermission(job,grantValue,nativeScanStartRequired);check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');touched=true;
-      const o=await observeUnsignedContainer({imageDigest:config.image,dockerRootDirectory:config.dockerRootDirectory,limits:LIMITS},request,plan,dockerInvoke,{signal});const after=await again();
-      check(o.complete===true&&o.cleanupConfirmed===true&&o.reason===null&&o.state?.Running===false&&o.state.Status==='exited'&&Number.isInteger(o.state.ExitCode)&&o.attached?.code===o.state.ExitCode&&!o.attached.timedOut&&!o.attached.overflow&&!o.attached.error&&expires>Date.now(),'ACTUAL_PLACEMENT_EXIT_AND_CLEANUP_REQUIRED');
-      check(o.isolation?.nonRoot===true&&o.isolation.network==='none'&&o.isolation.credentialsMounted===false&&o.isolation.controlPathsMounted===false,'ACTUAL_PLACEMENT_ISOLATION_REQUIRED');
-      const observation=freeze({contract:'clued.independent-ci.formal-check-observation/2',domain:'production-observation',fixture:false,profile:PROFILE,subject:subjectOf(job),sourceSha:prepared.sourceSha,sourceTreeSha:prepared.sourceTreeSha,candidateTreeSha:prepared.candidateTreeSha,sourceManifestSha256:job.sourceManifestSha256,workflowSha256:accepted.workflowSha256,image:config.image,imageId:o.imageId,runtimeIdentity:config.runtimeIdentity,hostAcceptanceRef:config.hostAcceptanceRef,sourceAcceptanceRef:config.sourceAcceptanceRef,nonce:request.nonce,requestSha256:digest(request),headBasePackSha256:sealed.packSha256,commandSequenceSha256:digest(fixedCommands(job,accepted.tools)),toolPinsSha256:digest(accepted.tools),preAdmissionSha256:before.observationSha256,postAdmissionSha256:after.observationSha256,conclusion:o.state.ExitCode===0?'success':'failure',exitCode:o.state.ExitCode,startedAt:o.startedAt,finishedAt:o.finishedAt,logs:o.attached.logs,cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:o.cleanupObservedAt},evidenceClass:'unsigned-observation-requires-protected-result-issuer',formalEligible:false,checksWritten:false,qualificationIssued:false});
-      await durableNew(path.join(run,'observation.json'),observation);actual.add(observation);return{status:'ACTUAL_PLACEMENT_OBSERVED_UNSIGNED',observation,formalEligible:false,checksWritten:false,qualificationIssued:false};
+      const plan=placementPlan(config,accepted,snapshot,requestFile,entryFile);
+      const resultCache=createResultCache(cacheSettings(config,'contract-placement')),baseTreeSha=resultCache.enabled?await baseTree(config,candidate,job):null;
+      const {observation,resultCache:cacheFacts,resultKey}=await executePlacement({job,config,accepted,prepared,sealed,plan,before,again,expires,signal,scanStartPort,
+        scanStartRecord:grant=>durableNew(path.join(run,'scan-start.json'),grant),nativeScanStartRequired,resultCache,baseTreeSha,onTouched:()=>{touched=true;}});
+      await durableNew(path.join(run,'observation.json'),observation);
+      // Placement is never stored (CACHE_HIT_ROLES); the run still records why the cache was not used.
+      try{await durableNew(path.join(run,'result-cache.json'),{contract:'clued.independent-ci.scan-result-cache-run/1',subject:subjectOf(job),enabled:resultCache.enabled,...cacheFacts,cacheHit:null,keyUsable:resultKey!==null,observationSha256:digest(observation)});}catch{}
+      actual.add(observation);return{status:'ACTUAL_PLACEMENT_OBSERVED_UNSIGNED',observation,formalEligible:false,checksWritten:false,qualificationIssued:false,resultCache:cacheFacts};
     }catch(e){const outcome={status:created?'UNCERTAIN':'BLOCKED',reason:safe(e),sideEffectsMayHaveStarted:created||touched,automaticRetryAllowed:false,formalEligible:false,checksWritten:false,qualificationIssued:false};if(created)try{await durableNew(path.join(run,'uncertain.json'),outcome);}catch{outcome.receiptPersistenceConfirmed=false;}return outcome;}
   }});
 }

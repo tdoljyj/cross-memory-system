@@ -17,7 +17,7 @@ const workerUrl=new URL('../worker/protected-job-bridge-v4/linux-worker.mjs',imp
 const stub=lines=>'data:text/javascript;base64,'+Buffer.from(lines.join('\n')).toString('base64');
 const H='globalThis.__finalAdmissionHarness';
 const stubs={
-  './boundary.mjs':stub([`export async function loadLinuxContext(){return ${H}.context;}`,`export function takeAcceptedBridgeContext(c){return c;}`]),
+  './boundary.mjs':stub([`export async function loadLinuxContext(){return ${H}.context;}`,`export async function loadLinuxRelayContext(){return ${H}.context;}`,`export function takeAcceptedBridgeContext(c){return c;}`]),
   './mailbox.mjs':stub([`export async function openAcceptedMailbox(){return ${H}.box;}`,`export function takeActualMailbox(b){return b;}`]),
   './signed-result.mjs':stub([`export async function signActualBridgeResult(context,issue,observation){${H}.signed.push(observation);return {signed:true};}`]),
   '../formal-gitleaks-v4/adapter.mjs':stub([`export function createFormalGitleaksAdapter(ports){return ${H}.adapter(ports);}`]),

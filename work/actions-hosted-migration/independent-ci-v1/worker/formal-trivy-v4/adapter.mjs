@@ -24,6 +24,7 @@ import { loadQualifiedPolicyV2 as loadQualifiedPolicy, protectedPath, qualificat
 import { IMAGE, LIMITS, WORKFLOW_SHA256S, requiredTrivyPlans } from '../required-trivy-v3/plans.mjs';
 import { actualDockerClient, NATIVE_IMAGE, runFixedScanner } from '../formal-trivy-v3/docker.mjs';
 import { createActualStorage, actualCachePort } from '../formal-trivy-v3/cache.mjs';
+import { cacheKey, cacheSettings, createResultCache, cacheHitEvidence, trivyScannersSha256 } from '../scan-result-cache-v1/cache.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
 export const TRIVY_OBSERVATION_CONTRACT = 'clued.independent-ci.formal-scanner-observation/3';
@@ -31,7 +32,7 @@ const JOB_TIMEOUT_MS = 25 * 60000; // Existing trusted trivy job ceiling.
 const PREFIX = 'work/actions-hosted-migration/independent-ci-v1/';
 const CLOSURE = ['worker/formal-trivy-v4/adapter.mjs', 'worker/formal-trivy-v3/docker.mjs', 'worker/formal-trivy-v3/cache.mjs',
   'worker/required-trivy-v3/plans.mjs', 'worker/required-trivy-v2/plans.mjs', 'worker/required-gitleaks/prepare.mjs', 'worker/verify-once/verify-worker.mjs',
-  'worker/trusted-workflows.mjs', 'worker/qualification-v2.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs', 'src/scan-start-v1/grant.mjs'];
+  'worker/trusted-workflows.mjs', 'worker/qualification-v2.mjs', 'worker/scan-result-cache-v1/cache.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs', 'src/scan-start-v1/grant.mjs'];
 const actualObservations = new WeakSet();
 const check = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }); };
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
@@ -104,11 +105,27 @@ export function carriedAdmission(job, held, { now = Date.now(), nowMono, batchCl
   try { validateAdmission(job, held.facts, now, { batchClaim }); return held; } catch { return null; }
 }
 
+// M4 scan result cache (DESIGN 68): every input that can change the three scanners' verdict. The scanners read the
+// snapshot only (snapshotTree skips .git, so no commit id, message or history), keyed by the candidate tree and the
+// digest of every copied file's path and bytes; the offline database and checks bundle by their content digests; the
+// image by tag digest, native digest and the role policy's pin; argv, mounts as the container sees them, limits and
+// isolation by scannersSha256; the Docker client by its pinned hash; the trusted workflow, the whole Source manifest
+// (adapter, plans, docker and cache modules) and the qualified runtime and acceptance references. null when any is
+// missing: then nothing is looked up or stored.
+export function trivyResultKey(input) {
+  try { const { job, preparedRequest, inputInventory, plan, workflowSha256, context, keyContext } = input ?? {}; return cacheKey('trivy', { repo: job?.repo, profile: 'required-trivy-three-scanners/1', sourceManifestSha256: job?.sourceManifestSha256,
+    sourceSha: preparedRequest?.sourceSha, workflowSha256, runtimeIdentity: context?.runtimeIdentity, hostAcceptanceRef: context?.hostAcceptanceRef,
+    sourceAcceptanceRef: context?.sourceAcceptanceRef, candidateTreeSha: preparedRequest?.candidateTreeSha,
+    inputInventorySha256: inputInventory?.complete === true && inputInventory.candidateTreeSha === preparedRequest?.candidateTreeSha ? digest(inputInventory) : null,
+    image: IMAGE, nativeImageDigest: NATIVE_IMAGE, policyImage: keyContext?.policyImage, dockerExecutableSha256: keyContext?.dockerExecutableSha256,
+    scannersSha256: trivyScannersSha256(plan?.scanners), database: plan?.cache }); } catch { return null; }
+}
+
 // The shared fixture path exercises real argv/readback algorithms with mocked
 // Docker. It is deliberately not the installed qualification or signing path.
 async function executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, workflowSha256, docker,
   dockerRootDirectory, deadline, signal, admissionPort, scanStartPort, scanStartRecord, fixture, context, generation = null,
-  nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED, monotonic = () => performance.now() }) {
+  nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED, monotonic = () => performance.now(), resultCache = null, keyContext = null }) {
   const scans = [], pre = validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation });
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED');
   const plan = requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, inputInventory, database: cache.database,
@@ -121,6 +138,34 @@ async function executeScanners({ job, preparedRequest, snapshotDirectory, inputI
   // A new admission, with the monotonic moment it was asked for; or the one carried from the step just before.
   const admit = async () => { const sentMono = monotonic(); return { facts: validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }), sentMono }; };
   const freshAdmission = async held => carriedAdmission(job, held, { now: Date.now(), nowMono: monotonic(), batchClaim: generation }) ?? await admit();
+  // A hit observation describes this run only: its own admissions, snapshot and cleanup; the original three scanner
+  // records and their admissions are not repeated here as if they were this run's, they stay inside
+  // cacheHit.originalObservation with the original signed envelope (DESIGN 68.5).
+  const observationOf = (scans, post, cacheHit = null) => freeze({ contract: TRIVY_OBSERVATION_CONTRACT,
+    domain: fixture ? 'fixture' : 'production-observation', fixture, profile: 'required-trivy-three-scanners/1', subject: subjectOf(job),
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: preparedRequest.sourceSha, sourceTreeSha: preparedRequest.sourceTreeSha,
+    candidateTreeSha: preparedRequest.candidateTreeSha, nonce: preparedRequest.nonce, requestSha256: digest(preparedRequest), inputInventorySha256: digest(inputInventory),
+    image: IMAGE, nativeImageDigest: NATIVE_IMAGE, cache: plan.cache, cacheProvenanceSha256: cache.provenanceSha256,
+    ...(cacheHit ? { conclusion: cacheHit.originalObservation.conclusion } : { scans, conclusion: scans.every(scan => scan.exitCode === 0) ? 'success' : 'failure' }),
+    preAdmissionSha256: pre.observationSha256, postAdmissionSha256: post.observationSha256, runtimeIdentity: context.runtimeIdentity, hostAcceptanceRef: context.hostAcceptanceRef, sourceAcceptanceRef: context.sourceAcceptanceRef,
+    cleanup: { containersRemoved: true, wholeContainerTreesStopped: true }, evidenceClass: 'unsigned-observation-requires-protected-result-issuer',
+    formalEligible: false, checksWritten: false, qualificationIssued: false, publicationAuthorized: false, ...(cacheHit ? { cacheHit } : {}) });
+  // M4 (DESIGN 68): after the grant is held and recorded, exactly where the first scanner would start. A hit starts no
+  // scanner: it takes the burn-permission check a first scanner takes and a new post admission, and serves the original
+  // signed result's verdict under this job's subject with cacheHit carrying it. Any lookup failure is a miss.
+  const resultKey = resultCache?.enabled ? trivyResultKey({ job, preparedRequest, inputInventory, plan, workflowSha256, context, keyContext }) : null;
+  const lookup = resultKey ? await resultCache.lookup(resultKey)
+    : { record: null, reason: resultCache?.enabled ? 'SCAN_RESULT_CACHE_KEY_INCOMPLETE' : 'SCAN_RESULT_CACHE_DISABLED' };
+  const resultCacheFacts = { keySha256: resultKey?.keySha256 ?? null, lookup: lookup.reason };
+  if (lookup.record) {
+    check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
+    if (!fixture) scanStartPermission(job, grantValue, nativeScanStartRequired);
+    const servedAt = new Date().toISOString(), post = (await admit()).facts;
+    check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_AFTER_SCAN');
+    return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED',
+      observation: observationOf(null, post, cacheHitEvidence(lookup.record, servedAt)),
+      resultCache: resultCacheFacts, formalEligible: false, checksWritten: false };
+  }
   let carried = null;
   for (const scan of plan.scanners) {
     // The previous scanner's post admission, with no work since, unless it left the freshness window.
@@ -136,15 +181,8 @@ async function executeScanners({ job, preparedRequest, snapshotDirectory, inputI
     scans[scans.length - 1] = { ...entry, postAdmissionSha256: after.facts.observationSha256 }; carried = after;
   }
   const post = (await freshAdmission(carried)).facts;
-  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: freeze({ contract: TRIVY_OBSERVATION_CONTRACT,
-    domain: fixture ? 'fixture' : 'production-observation', fixture, profile: 'required-trivy-three-scanners/1', subject: subjectOf(job),
-    sourceManifestSha256: job.sourceManifestSha256, sourceSha: preparedRequest.sourceSha, sourceTreeSha: preparedRequest.sourceTreeSha,
-    candidateTreeSha: preparedRequest.candidateTreeSha, nonce: preparedRequest.nonce, requestSha256: digest(preparedRequest), inputInventorySha256: digest(inputInventory),
-    image: IMAGE, nativeImageDigest: NATIVE_IMAGE, cache: plan.cache, cacheProvenanceSha256: cache.provenanceSha256,
-    scans, conclusion: scans.every(scan => scan.exitCode === 0) ? 'success' : 'failure', preAdmissionSha256: pre.observationSha256, postAdmissionSha256: post.observationSha256,
-    runtimeIdentity: context.runtimeIdentity, hostAcceptanceRef: context.hostAcceptanceRef, sourceAcceptanceRef: context.sourceAcceptanceRef,
-    cleanup: { containersRemoved: true, wholeContainerTreesStopped: true }, evidenceClass: 'unsigned-observation-requires-protected-result-issuer',
-    formalEligible: false, checksWritten: false, qualificationIssued: false, publicationAuthorized: false }), formalEligible: false, checksWritten: false };
+  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: observationOf(scans, post), resultCache: resultCacheFacts, resultKey,
+    formalEligible: false, checksWritten: false };
 }
 export function createFixtureTrivyAdapter({ docker, cache, checksPin, admissionPort, scanStartPort, preparedRequest, snapshotDirectory, inputInventory, workflowSha256 = WORKFLOW_SHA256S[0] }) {
   return Object.freeze({ fixture: true, async execute(job, { signal } = {}) {
@@ -170,6 +208,27 @@ export function cacheRefusal(cache, subject, observedAt) {
     result: { status: clean ? 'BLOCKED' : 'UNCERTAIN', reason, sideEffectsMayHaveStarted: !clean, snapshotRetained: !clean,
       automaticRetryAllowed: false, checksWritten: false, formalEligible: false } });
 }
+// After the final observation exists: it is made durable first, then the run's cache facts (result-cache.json, for a hit
+// and a miss alike). A real complete successful run with a key gets back the one way to store it, which the bridge calls
+// only after the result is signed (protected-job-bridge-v4 linux-worker): the record carries that signed envelope. A hit
+// is never stored. A failed store writes its reason (result-cache-store.json) and never changes the signed result.
+async function finishObservation({ run, job, observation, result, resultCache, write }) {
+  await write(path.join(run, 'observation.json'), observation);
+  const facts = { contract: 'clued.independent-ci.scan-result-cache-run/1', subject: subjectOf(job), enabled: resultCache.enabled,
+    keySha256: result.resultCache?.keySha256 ?? null, lookup: result.resultCache?.lookup ?? 'SCAN_RESULT_CACHE_DISABLED',
+    cacheHit: observation.cacheHit ? { keySha256: observation.cacheHit.keySha256, recordSha256: observation.cacheHit.recordSha256,
+      originalObservationSha256: observation.cacheHit.originalObservationSha256 } : null, observationSha256: digest(observation) };
+  try { await write(path.join(run, 'result-cache.json'), facts); } catch {}
+  if (!result.resultKey || observation.cacheHit || observation.conclusion !== 'success') return null;
+  const key = result.resultKey, observationSha256 = digest(observation);
+  return async signed => {
+    const stored = signed?.observation && digest(signed.observation) === observationSha256 && signed.envelope?.payload?.executionObservationSha256 === observationSha256
+      ? await resultCache.store(key, observation, signed.envelope) : { stored: false, reason: 'SCAN_RESULT_CACHE_SIGNED_RESULT_MISMATCH' };
+    try { await write(path.join(run, 'result-cache-store.json'), { contract: 'clued.independent-ci.scan-result-cache-store/1', subject: subjectOf(job),
+      keySha256: key.keySha256, observationSha256, ...stored }); } catch {}
+    return stored;
+  };
+}
 export function takeActualObservation(observation, job) {
   validateRequiredJob(job); check(actualObservations.has(observation) && canonical(observation.subject) === canonical(subjectOf(job)), 'ACTUAL_PROTECTED_TRIVY_OBSERVATION_REQUIRED'); return observation;
 }
@@ -180,7 +239,7 @@ export function createFormalTrivyAdapter({ admissionPort, scanStartPort, nativeS
       const job = freeze(structuredClone(validateRequiredJob(input)));
       check(typeof admissionPort === 'function' && typeof scanStartPort === 'function', 'PROTECTED_COMPLETE_ADMISSION_PORT_MISSING');
       check(process.platform === 'linux' && process.getuid?.() === 0, 'FIXED_PROTECTED_LINUX_ROOT_REQUIRED');
-      const { config, sourceManifestBytes, qualification } = await loadQualifiedPolicy('/etc/clued-independent-ci/roles-v3/trivy.json');
+      const { config, sourceManifestBytes, qualification, publicKey } = await loadQualifiedPolicy('/etc/clued-independent-ci/roles-v3/trivy.json');
       check(config.executionMode === 'scanner' && config.image === IMAGE && config.sourceManifestSha256 === job.sourceManifestSha256
         && config.dockerRootDirectory === '/var/lib/docker'
         && config.memoryBytes === LIMITS.memoryBytes && config.cpus === LIMITS.cpus && config.pids === LIMITS.pids, 'QUALIFIED_JOB_CONTEXT_MISMATCH');
@@ -197,6 +256,8 @@ export function createFormalTrivyAdapter({ admissionPort, scanStartPort, nativeS
       snapshot = path.join(run, 'repo'); snapshotReady = true; const files = await snapshotTree(candidate, snapshot);
       const inputInventory = { complete: true, candidateTreeSha: prepared.candidateTreeSha, paths: files.map(file => file.path), files };
       const storage = await createActualStorage(accepted.cacheRoot), docker = actualDockerClient();
+      const resultCache = createResultCache(cacheSettings(config, 'trivy', { extraRoots: [accepted.cacheRoot] }),
+        { signer: { publicKeyPem: publicKey, keyId: config.keyId, runtimeId: config.runtimeIdentity } });
       validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }); mayHaveStarted = true;
       const cache = await actualCachePort({ storage, docker, dockerRootDirectory: config.dockerRootDirectory, checksPin: accepted.checksPin }).prepare({ deadline, signal });
       if (cache.status !== 'READY') {
@@ -206,12 +267,15 @@ export function createFormalTrivyAdapter({ admissionPort, scanStartPort, nativeS
       }
       const result = await executeScanners({ job, preparedRequest: prepared, snapshotDirectory: snapshot, inputInventory, cache, checksPin: accepted.checksPin, workflowSha256,
         docker, dockerRootDirectory: config.dockerRootDirectory, deadline, signal, admissionPort, scanStartPort,
-        scanStartRecord: grant => durableNew(path.join(run, 'scan-start.json'), grant), fixture: false, context: config, generation, nativeScanStartRequired });
+        scanStartRecord: grant => durableNew(path.join(run, 'scan-start.json'), grant), fixture: false, context: config, generation, nativeScanStartRequired,
+        resultCache, keyContext: { policyImage: config.image, dockerExecutableSha256: config.dockerExecutableSha256 } });
       if (result.status !== 'UNCERTAIN') { await removeSnapshot(run, snapshot); snapshotReady = false; }
       if (result.observation) {
         const observation = freeze({ ...result.observation, cleanup: { ...result.observation.cleanup, snapshotRemoved: true, observedAt: new Date().toISOString() } });
-        check(Date.now() <= deadline, 'AUTHORITY_EXPIRED_AFTER_CLEANUP'); await durableNew(path.join(run, 'observation.json'), observation);
-        actualObservations.add(observation); return { ...result, observation };
+        check(Date.now() <= deadline, 'AUTHORITY_EXPIRED_AFTER_CLEANUP');
+        const { resultKey: _key, ...rest } = result;
+        const storeSignedResult = await finishObservation({ run, job, observation, result, resultCache, write: durableNew });
+        actualObservations.add(observation); return { ...rest, observation, ...(storeSignedResult ? { storeSignedResult } : {}) };
       }
       await durableNew(path.join(run, 'uncertain.json'), result); return result;
     } catch (error) {
