@@ -1,6 +1,6 @@
 # ADR 0010：长远走 bors 式列车（已预授权）
 
-- 状态：Owner 已预授权，未实施。触发条件满足时直接做，先做设计与独立审查。
+- 状态：Owner 已预授权。第 28 代已实现代码（[ADR 0018](0018-bors-landing.md) 落地与二分，[ADR 0019](0019-train-batch-member-chain.md) 批量成员链），开关默认 `github-merge`。按 Owner 决定，满足下面的触发条件、做完 ADR 0018 第 8 节的上线前提之后再改成 `push`。
 - 日期：2026-11-07
 - Owner Decision：`9e2511fe` 第 6 项；预授权记录在 Task `7d86cf41`
 - 档案：没有，这是新设计。仓库里相关的方案比较见 `development/contracts/execution-admission/ADR-EA-001-MergeAdmissionPolicy.md`。

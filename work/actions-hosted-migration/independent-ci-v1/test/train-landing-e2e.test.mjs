@@ -1,4 +1,4 @@
-// bors-style landing, end to end (resident DESIGN §66): the real Source v2 stage 10 (runTrain), sweep store and green ledger and the
+// bors-style landing, end to end (resident ADR 0018): the real Source v2 stage 10 (runTrain), sweep store and green ledger and the
 // real stage-8 control publisher, over an offline GitHub that models commits, refs, GitHub's test merges, the cumulative merges of
 // POST /merges, fast-forward-only PATCH of main, PRs marked merged once main contains their head, and the GitHub Actions required
 // check ci-suites on clued-train/staging; and an offline Native merge queue (one slot holder, the queue behind it, adopt and touch
@@ -6,11 +6,11 @@
 //   1. three PRs queued -> one batch -> main fast-forwarded to S -> all three marked merged and adopted;
 //   2. the middle PR breaks the combination -> bisection -> the other two land, the middle one is reported failed;
 //   3. someone else moves main between the check and the write -> the fast-forward is refused -> retested on the new main -> lands.
-//   4. (§67) batchMax 3 as production gets it: the resident engine's stage-10 argument (push:3:chain only while its installed Source
+//   4. (ADR 0019) batchMax 3 as production gets it: the resident engine's stage-10 argument (push:3:chain only while its installed Source
 //      and the Linux side take descriptor /4) -> the invoker's stage file -> stage 10 composes one batch of three -> the resident writes
 //      descriptor /4 whose members and tree are that S's chain -> all three land in one push; without the chain fact: one PR per batch.
 // Every stage 10 here reads its batch size from a stage file (trainLanding), as production does; nothing injects a batch size.
-// This file imports only modules that exist without the landing (the landing port is the offline one below): before §66 nothing
+// This file imports only modules that exist without the landing (the landing port is the offline one below): before ADR 0018 nothing
 // lands and every scenario fails on its first assertion.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -239,7 +239,7 @@ test('push: main moved by someone else between the check and the write -> the fa
   assert.deepEqual(e.adopted, [[910, e.W.pushes[1]]]);
 });
 
-// ---- §67: batch size as production sets it (resident engine -> invoker -> stage file), descriptor /4 as the resident writes it ----
+// ---- ADR 0019: batch size as production sets it (resident engine -> invoker -> stage file), descriptor /4 as the resident writes it ----
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 const CI_SOURCE = 'e'.repeat(64);
 // The resident's WindowsEngine over a fixture Source directory holding the real build-bundle.ps1, prepare-workspaces.py and invoke-stage.mjs
@@ -279,7 +279,7 @@ async function residentDescriptor(r, b, engine, root) {
   return JSON.parse(await fs.readFile(path.join(root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
 }
 
-test('push §67: batchMax 3 as production sets it -> push:3:chain -> one batch of three -> descriptor /4 names exactly S\'s chain -> all three land in one push', async t => {
+test('push ADR 0019: batchMax 3 as production sets it -> push:3:chain -> one batch of three -> descriptor /4 names exactly S\'s chain -> all three land in one push', async t => {
   const e = await world(t, { prs: [920, 921, 922, 923] });
   const { engine, root } = await residentEngine(t);
   const file = await stageFileOf(engine);
@@ -310,7 +310,7 @@ test('push §67: batchMax 3 as production sets it -> push:3:chain -> one batch o
   assert.equal(Object.hasOwn(descriptors[1], 'members') || Object.hasOwn(descriptors[1], 'testTree'), false);
 });
 
-test('push §67, fail closed: without the chain fact (the Linux side not known to be this generation, or another Source) batchMax 3 still lands one PR per batch', async t => {
+test('push ADR 0019, fail closed: without the chain fact (the Linux side not known to be this generation, or another Source) batchMax 3 still lands one PR per batch', async t => {
   for (const o of [{ consistent: null }, { consistent: false }, { linuxSource: 'f'.repeat(64) }]) {
     const e = await world(t, { prs: [930, 931, 932] });
     const { engine, root } = await residentEngine(t, o);
@@ -327,7 +327,7 @@ test('push §67, fail closed: without the chain fact (the Linux side not known t
   assert.equal(broken.batchChain, false);
 });
 
-test('§67 train facts: openFrontBatch members must describe the batch (front first, distinct, 2..4); the resident refuses any other shape', async t => {
+test('ADR 0019 train facts: openFrontBatch members must describe the batch (front first, distinct, 2..4); the resident refuses any other shape', async t => {
   const e = await world(t, { prs: [940, 941] });
   const r = await stage10(e);
   const f = r.facts, b = f.openFrontBatch;
@@ -347,7 +347,7 @@ test('§67 train facts: openFrontBatch members must describe the batch (front fi
   assert.equal(Object.hasOwn(r1.facts.openFrontBatch, 'members'), false);
 });
 
-test('§67 review 3, fail closed: staging.tmp moved by someone else between two of the train\'s merges -> no batch (never a step the train did not merge)', async t => {
+test('ADR 0019 review 3, fail closed: staging.tmp moved by someone else between two of the train\'s merges -> no batch (never a step the train did not merge)', async t => {
   const e = await world(t, { prs: [970, 971, 972] });
   let merges = 0;
   e.W.beforeMerge = () => {

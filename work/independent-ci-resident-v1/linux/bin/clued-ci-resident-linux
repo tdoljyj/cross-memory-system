@@ -848,7 +848,7 @@ def quiescence(self_unit=None):
 # reinstall: the uninstall renames the whole resident directory, outbox included, so no /2 descriptor is left to archive.
 JOB_CONTRACT = 'clued.independent-ci.job/3'
 DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3'
-# DESIGN §67: a batch of several PRs (the cumulative merge S of its members) comes with descriptor /4. Its job ids are the same formula
+# ADR 0019: a batch of several PRs (the cumulative merge S of its members) comes with descriptor /4. Its job ids are the same formula
 # (S names the whole chain), so an archive moves its workspaces exactly as a /3 batch's; prepare-workspaces.py checks the chain itself.
 DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'
 LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')

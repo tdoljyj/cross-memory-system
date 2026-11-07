@@ -272,7 +272,7 @@ test('executor, on: OPEN_FRONT_BATCH queues the front with S first; the batch ke
   assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'TRAIN_FRONT_ATTEMPTS_USED');
 });
 
-test('executor, on (§67): a front batch of several PRs keeps its members (receipt, restart) and hands them to derive; one PR hands none', async t => {
+test('executor, on (ADR 0019): a front batch of several PRs keeps its members (receipt, restart) and hands them to derive; one PR hands none', async t => {
   const H2 = '3'.repeat(40), H3 = '4'.repeat(40);
   const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: H2 }, { pr: 886, headSha: H3 }];
   const front = { pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: TREE, claimId: CLAIM, since: new Date(T0 - MIN).toISOString(), attempt: 1, members };
@@ -588,7 +588,7 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), subject, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
 });
 
-test('§67 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
+test('ADR 0019 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
   const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }, { pr: 886, headSha: '4'.repeat(40) }];
   const FRONTM = { ...FRONT1, members };
   const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
@@ -630,7 +630,7 @@ test('§67 review blocker 1: batches of several PRs never use up the front\'s tw
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), solo, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
 });
 
-test('§67 review 2: a batch whose member moved on (the bundle says so) is released like a supersession: no release cap, no breaker, its S dropped', async t => {
+test('ADR 0019 review 2: a batch whose member moved on (the bundle says so) is released like a supersession: no release cap, no breaker, its S dropped', async t => {
   const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
   const FRONTM = { ...FRONT1, members };
   let i = 0;
@@ -976,7 +976,7 @@ test('defect: a TRAIN_SOURCE_MISMATCH or TRAIN_SOURCE_UNREADABLE run is re-check
   assert.equal(trainDue({ train: onTrain({ maintenanceMaxPerDay: 2 }), now: T0 + 5 * MIN, runs: [T0, T0 + 2 * MIN], busy: false, recheck: true }), false);
 });
 
-// DESIGN §66 (bors-style landing): train.landing and train.batchMax are optional in /8 and later; neither written changes nothing.
+// ADR 0018 (bors-style landing): train.landing and train.batchMax are optional in /8 and later; neither written changes nothing.
 test('policy train.landing / train.batchMax: optional, defaults github-merge and 1; push only in strict-permanent mode; a batch only with push', () => {
   const p = validatePolicy(policyV8({ sweep: 'audit' }));
   assert.equal(Object.hasOwn(p.train, 'landing'), false, 'nothing is added to the installed policy');
@@ -991,7 +991,7 @@ test('policy train.landing / train.batchMax: optional, defaults github-merge and
   assert.equal(Object.hasOwn(trainSettings(policyV8({ sweep: 'audit', landing: 'push' }).train), 'landing'), false, 'the clocks stay the four of /8');
 });
 
-test('push codes (DESIGN §66): every stage-8 landing code is in the resident tables and the Source table; the PR-attributable one feeds frontOutcome', () => {
+test('push codes (ADR 0018): every stage-8 landing code is in the resident tables and the Source table; the PR-attributable one feeds frontOutcome', () => {
   const codes = ['TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH'];
   for (const c of codes) {
     assert.ok(TRAIN_CLEAN_CODES.includes(c) && SOURCE_TRAIN_CODES.includes(c), c);

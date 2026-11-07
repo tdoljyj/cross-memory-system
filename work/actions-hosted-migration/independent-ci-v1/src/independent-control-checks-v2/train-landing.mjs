@@ -1,4 +1,4 @@
-// bors-style landing of the merge train (resident DESIGN §66; Owner pre-authorization, Task 7d86cf41). With the installed policy's
+// bors-style landing of the merge train (resident ADR 0018; Owner pre-authorization, Task 7d86cf41). With the installed policy's
 // train.landing 'push' the train itself fast-forwards main to the commit S its front batch tested (PATCH refs/heads/main
 // {sha: S, force: false}) after every live admission passed in the same stage-8 run, instead of writing kooyumi-merge-slot and
 // waiting for someone to merge on the PR page. 'github-merge' (the default, also with no file at all) is resident DESIGN §65
@@ -10,7 +10,7 @@
 //     stages 8 and 10 only, next to train-mode.json (the C# boundary reads only the files it names, never lists the directory);
 //   - batchChainOk: S is the cumulative merge of the batch members on T (one member: exactly [T, H]);
 //   - externalChecksDecision: the required checks App 5368905 does not produce (GitHub Actions) on S itself;
-//   - landingRulesDecision: main's live rules carry what push mode relies on (§66.8);
+//   - landingRulesDecision: main's live rules carry what push mode relies on (ADR 0018 §8);
 //   - pickMembers and the bisection state (a Mergify-style search for the first failing prefix);
 //   - landMain: the one write to main, with its read-backs.
 import fs from 'node:fs/promises';
@@ -19,7 +19,7 @@ import path from 'node:path';
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
 export const BATCH_MAX_LIMIT = 4;
-// §66.3 / §67: a batch of several PRs is tested as the cumulative merge T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> ... -> S. The
+// ADR 0018 §3 / ADR 0019: a batch of several PRs is tested as the cumulative merge T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> ... -> S. The
 // bundle (build-bundle.ps1) and the workspace preparation (prepare-workspaces.py) take such an S only from a descriptor /4 that names
 // the members, and the resident writes /4 only with an installed Source and a Linux side that take it. Whether they do is not known
 // here: the resident says so in the stage file (batchChain, resident engine-windows.mjs#batchChainSupported: the installed Source's
@@ -28,12 +28,12 @@ export const BATCH_MAX_LIMIT = 4;
 export const STAGE_TRAIN_LANDING_CONTRACT = 'clued.independent-ci.stage-train-landing/1';
 export const STAGE_TRAIN_LANDING_FILE = 'train-landing.json';
 export const TRAIN_LANDING_STAGES = Object.freeze([8, 10]);
-// The train's own refs (§66.2 L1): main only ever fast-forward; these two may be moved by force (CI trigger, cumulative merge).
+// The train's own refs (ADR 0018 §2 L1): main only ever fast-forward; these two may be moved by force (CI trigger, cumulative merge).
 export const MAIN_REF = 'heads/main';
 export const STAGING_REF = 'heads/clued-train/staging';
 export const STAGING_TMP_REF = 'heads/clued-train/staging.tmp';
 export const STAGING_TMP_BRANCH = 'clued-train/staging.tmp';
-// §66.8 item 3: a required check pinned to App 5368905 that no code ever publishes, so nobody without the ruleset bypass can merge
+// ADR 0018 §8 item 3: a required check pinned to App 5368905 that no code ever publishes, so nobody without the ruleset bypass can merge
 // on the PR page. requiredCheckFailure knows it (absent is neither a failure nor an unknown provider).
 export const TRAIN_ONLY_CHECK = 'kooyumi-train-landed';
 export const ACTIONS_APP_ID = 15368;
@@ -61,8 +61,8 @@ const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 // ---- the stage file ----
-// batchChain (§67): true only in push mode, and only when the resident found that the installed components take a member chain. It is
-// written only when true, so every stage file of before §67 keeps its exact bytes.
+// batchChain (ADR 0019): true only in push mode, and only when the resident found that the installed components take a member chain. It is
+// written only when true, so every stage file of before ADR 0019 keeps its exact bytes.
 export const landingSettings = ({ landing = LANDING_DEFAULT, batchMax = 1, batchChain = false } = {}) => {
   if (!LANDING_MODES.includes(landing) || !Number.isSafeInteger(batchMax) || batchMax < 1 || batchMax > BATCH_MAX_LIMIT || (batchMax > 1 && landing !== 'push')
     || typeof batchChain !== 'boolean' || (batchChain && landing !== 'push')) fail('TRAIN_LANDING_REFUSED');
@@ -98,7 +98,7 @@ export async function readStageTrainLandingFact(stageDir) {
     } finally { await h.close(); }
   } catch { return parseStageTrainLanding(Buffer.alloc(300)); }
 }
-// The batch size stage 10 may compose: 1 unless the stage file says the installed components take a member chain (§67).
+// The batch size stage 10 may compose: 1 unless the stage file says the installed components take a member chain (ADR 0019).
 export const effectiveBatchMax = settings => (settings?.landing === 'push' && settings.batchChain === true && settings.unreadable !== true ? settings.batchMax : 1);
 
 // ---- the shape of S ----
@@ -116,7 +116,7 @@ export function batchChainOk({ commits, baseSha, heads, testSha }) {
   return at === baseSha;
 }
 // Reads the chain's commits through readGitCommit (any port) and checks it; a read that fails proves nothing (false).
-// steps (§67, review 3; optional): the commits the train's own merges returned, in merge order (S1..SN). With it, step k of the chain
+// steps (ADR 0019, review 3; optional): the commits the train's own merges returned, in merge order (S1..SN). With it, step k of the chain
 // must be exactly that commit, so a staging.tmp moved by anyone else between two merges (a step with the right parents shape but
 // other content) never becomes part of S.
 export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, steps = null }) {
@@ -136,7 +136,7 @@ export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, s
   return { ok, tree: ok ? commits.get(testSha).tree : null };
 }
 
-// ---- main's live rules (§66.8) ----
+// ---- main's live rules (ADR 0018 §8) ----
 // push lands only while main's rules hold what it relies on: a non_fast_forward and a deletion rule (the ruleset with an empty
 // bypass list makes the bypass App unable to rewrite or delete main) and the never-published required check TRAIN_ONLY_CHECK
 // pinned to App 5368905 (no PR-page merge). The endpoint lists the rules that apply, not who may bypass them; the bypass lists
@@ -149,7 +149,7 @@ export function landingRulesDecision(rules, appId) {
   return has('non_fast_forward') && has('deletion') && trainOnly ? null : TRAIN_LANDING_RULES_MISSING;
 }
 
-// ---- required checks App 5368905 does not produce, on S (§66.2 L2 item 5) ----
+// ---- required checks App 5368905 does not produce, on S (ADR 0018 §2 L2 item 5) ----
 // rules: main's live rules; inventory: { complete, checks } of the commit the checks are read on (S, or H when one member's S has H's
 // tree: the same tree, the same result). Every required context pinned to another App (or to none) must have, as its newest check
 // run by id of the pinned App, a completed success. Newest failed: FAILED. Missing or still running: PENDING. Contexts pinned to
@@ -170,7 +170,7 @@ export function externalChecksDecision({ rules, inventory, commitSha, appId }) {
   return pending ? TRAIN_LANDING_CHECKS_PENDING : null;
 }
 
-// ---- composing a batch (§66.3) ----
+// ---- composing a batch (ADR 0018 §3) ----
 // front: {pr, headSha, claimId}; candidates: the riders stage 10 found eligible, each {pr, headSha, claimId}, in PR-number order;
 // bad: [{pr, headSha}] kept out of riding; suspect: the bisection state (members of the last failed batch not yet cleared) or null;
 // max: the effective batch size. -> { members, suspect } (the suspect is null again when its prefix no longer matches).
@@ -202,7 +202,7 @@ export function bisectAfter({ suspect = null, members, landed }) {
   return { suspect: null, bad: [] };
 }
 
-// ---- the one write to main (§66.5) ----
+// ---- the one write to main (ADR 0018 §5) ----
 // port: train-landing-port.mjs (fastForwardMain) and readMain(): the current tip of main (any port's branch read). -> one of
 //   { state: 'landed', mainSha }           main is S (written now, or already S)
 //   { state: 'moved', mainSha }            not a fast-forward and main is neither T nor S: someone moved main (RESIDENT_BASE_MOVED)

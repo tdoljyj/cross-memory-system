@@ -41,7 +41,7 @@ export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAI
   'RELAY_TRAIN_FRONT_LOCAL',
   // Stages 1 and 8: a train front job whose stage directory's train-mode.json exists but is unusable (review R1 m4).
   'TRAIN_MODE_UNREADABLE',
-  // Stage 8 in push mode (resident DESIGN §66; train-landing.mjs): not ready (S's other-App checks, main's rules, a refused write)
+  // Stage 8 in push mode (resident ADR 0018; train-landing.mjs): not ready (S's other-App checks, main's rules, a refused write)
   // and final for the batch (a required check failed on S, a member changed, a batch without push). All zero side effects.
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt (never retried automatically).

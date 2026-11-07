@@ -499,7 +499,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       if (!body || !sha.test(body.head_sha) || body.status !== 'completed'
         || !['success', 'failure'].includes(body.conclusion) || typeof body.name !== 'string'
         || !body.external_id?.startsWith('independent-ci:')
-        // resident DESIGN §66.8 item 3: the never-published required check that keeps PR-page merges out in push mode
+        // resident ADR 0018 §8 item 3: the never-published required check that keeps PR-page merges out in push mode
         || body.name === 'kooyumi-train-landed') fail('invalid_check_publication');
       // Dedupe by external_id: one complete inventory of the head decides whether
       // this App already holds the run. Two copies, or a copy with a different

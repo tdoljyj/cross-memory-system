@@ -27,7 +27,7 @@
 //                one full round as a background audit at most once AUDIT_EVERY_MS (no expiry, segments only where §62.8 lets a round
 //                count one); off starts none of its own. A rewritten main still holds new batches until a round of scope all
 //                completes (§60.2): both start that round at once.
-// Push mode (resident DESIGN §66; the stage file train-landing.json, train-landing.mjs): with train.landing 'push' and the landing
+// Push mode (resident ADR 0018; the stage file train-landing.json, train-landing.mjs): with train.landing 'push' and the landing
 // port, mode on also (a) adopts every member of each batch of this node whose S main now contains (riders first, the front last;
 // a member whose PR moved to another head is not adopted), (b) turns the executor's frontOutcome of a batch of several members into
 // bisection instead of touch failed, and (c) opens the front batch on the batch it composes: the front, then riders (open PRs into
@@ -131,7 +131,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
   // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
   const gating = job.sweep === 'gate', permanent = !gating;
-  // §66: push lands main itself (strict-permanent mode only; the landing port present; a stage file that could not be read is no push).
+  // ADR 0018: push lands main itself (strict-permanent mode only; the landing port present; a stage file that could not be read is no push).
   const push = job.mode === 'on' && permanent && trainLanding?.landing === 'push' && trainLanding.unreadable !== true && typeof landing?.fastForwardMain === 'function';
   const { github, counter } = countedGithub(plainGithub);
   const actions = { ...NO_ACTIONS, revokeHead: job.revokeHeadRequestId ? { requestId: job.revokeHeadRequestId, done: false } : null };
@@ -308,7 +308,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
   const frontFastEligible = job.mode === 'on' && !sinceOn(full) && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy
-    // §66: push lands the tested merge(T, H) itself, so a head behind main is no reason against the observation there (strict merges
+    // ADR 0018: push lands the tested merge(T, H) itself, so a head behind main is no reason against the observation there (strict merges
     // only a head that contains T: that is github-merge's reason). A protected-layer head behind main is still FRONT_NEEDS_MAIN_MERGE.
     && (push || front?.headContainsMain === true) && front?.state === 'open' && front.draft === false && front.mergeable === true
     && front.testMerge?.parentsOk === true && holder?.takenAt && !stateReason && !ledgerReason
@@ -508,7 +508,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
   if (job.mode === 'on') {
-    // §66.9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
+    // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
     // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
     try {
       openRows = bindRows ?? (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls;
@@ -536,7 +536,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
         if (batchOfOutcome && batchOfOutcome.members.length > 1 && !landingState) {
           // the landing state could not be read: neither bisect nor touch failed (the front is not alone to blame); the next run tries again
         } else if (batchOfOutcome && batchOfOutcome.members.length > 1) {
-          // §66.3: a batch of several members failed for a PR's own reason: bisect (the next batch takes the first half), no touch failed.
+          // ADR 0018 §3: a batch of several members failed for a PR's own reason: bisect (the next batch takes the first half), no touch failed.
           if (!landingState.handled.includes(job.frontTestSha)) {
             const next = bisectAfter({ suspect: landingState.suspect, members: batchOfOutcome.members, landed: false });
             landingState = { ...landingState, suspect: next.suspect, bad: [...landingState.bad, ...next.bad], handled: [...landingState.handled, job.frontTestSha] };
@@ -749,7 +749,7 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   let previous, used;
   try {
     previous = await sweepStore.frontBatches({ pr: holder.pr, headSha: front.headSha });
-    // §66.3: in push mode a batch of several members that failed does not use up one of the front's own attempts (bisection would
+    // ADR 0018 §3: in push mode a batch of several members that failed does not use up one of the front's own attempts (bisection would
     // otherwise end the front before its own test alone).
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
@@ -783,13 +783,13 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   }
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
   try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
-  // §67: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
+  // ADR 0019: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
   // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
   const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
   return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: members ? { ...batch, members } : batch };
 }
 
-// §66.3 riders: open PRs into main (not the front), not drafts, from this repository, whose body names a claim of this install and
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose body names a claim of this install and
 // whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
 // PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
 export const RIDER_MAX_READS = 10;
@@ -812,7 +812,7 @@ async function findRiders({ github, job, rows, claimScope, holder, want }) {
   return out;
 }
 
-// §66.3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
+// ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
 async function composeBatch({ github, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
@@ -833,7 +833,7 @@ async function composeBatch({ github, landing, max, rows, claimScope, state, job
       members = kept;
       if (members.length === 1) { testSha = front.testMerge?.sha ?? null; testTree = front.testMerge?.tree ?? null; }
       else {
-        // §67 (review 3): every step of the chain must be the commit this run's own merge returned (S1 on T, S2 on S1, ...).
+        // ADR 0019 (review 3): every step of the chain must be the commit this run's own merge returned (S1 on T, S2 on S1, ...).
         const chain = await readBatchChain({ readGitCommit: s => github.readGitCommit(s), baseSha: mainSha, heads: members.map(m => m.headSha), testSha, steps });
         if (!chain.ok) return { refusal: 'FRONT_TEST_MERGE_NOT_READY' };
         testTree = chain.tree;
@@ -845,7 +845,7 @@ async function composeBatch({ github, landing, max, rows, claimScope, state, job
   return { members, testSha, testTree, suspect: picked.suspect, stateSuspect: state.suspect, state };
 }
 
-// §66.6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
+// ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
 // the batch's head (merged, or open while GitHub has not marked it yet) is adopted with S, riders first and the front last. A batch is
 // recorded as adopted once each member was answered (adopted, or moved on to another head); the bisection learns from it once.
 async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx }) {
@@ -967,7 +967,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     // §41.4: the front's layer by the held merge-admission policy; a policy that does not load judges every path protected.
     const loaded = loadPolicy(held.policyText);
     const layerOfPaths = loaded.policy ? paths => layerOf(paths, loaded.policy) : () => 'protected';
-    // §66: the stage file (stages 8 and 10) and, in push mode only, the landing port (the same App key, a contents-write token).
+    // ADR 0018: the stage file (stages 8 and 10) and, in push mode only, the landing port (the same App key, a contents-write token).
     const trainLanding = await readStageTrainLandingFact(inputs.dir);
     const landing = trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;

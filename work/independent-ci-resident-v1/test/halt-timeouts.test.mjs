@@ -339,7 +339,7 @@ test('generation 10: only a GitHub step that failed in git is BUNDLE_NETWORK_UNA
   }
 });
 
-test('§67 review 2: a batch member that moved on (its branch or its PR head) is TRAIN_BATCH_MEMBER_MOVED; every other chain refusal stays BUNDLE_UNAVAILABLE', async () => {
+test('ADR 0019 review 2: a batch member that moved on (its branch or its PR head) is TRAIN_BATCH_MEMBER_MOVED; every other chain refusal stays BUNDLE_UNAVAILABLE', async () => {
   const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
   for (const reason of BUNDLE_MEMBER_MOVED_REASONS) assert.ok(ps.includes(`throw '${reason}'`), reason);
   for (const [script, code] of [[() => refusal({ reason: 'BATCH_MEMBER_NOT_BRANCH_TIP', git: null }), TRAIN_BATCH_MEMBER_MOVED],

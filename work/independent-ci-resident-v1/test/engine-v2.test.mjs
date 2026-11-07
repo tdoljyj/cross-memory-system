@@ -90,7 +90,7 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   await assert.rejects(other.engine.derive(subject, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
 });
 
-test('derive (§67): a front batch of several PRs writes descriptor /4 (members, S\'s tree, /3 job ids); a chain that does not fit is refused', async t => {
+test('derive (ADR 0019): a front batch of several PRs writes descriptor /4 (members, S\'s tree, /3 job ids); a chain that does not fit is refused', async t => {
   const S = '4'.repeat(40), front = { ...subject, testSha: S };
   const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '5'.repeat(40) }, { pr: 886, headSha: '6'.repeat(40) }];
   const f = await engineFixture(t);
@@ -118,7 +118,7 @@ test('derive (§67): a front batch of several PRs writes descriptor /4 (members,
   await assert.rejects(g.engine.derive(subject, KEY, { members, testTree: '7'.repeat(40) }), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
 });
 
-test('stage args (§67): stage 10 gets push:<n>:chain only while the installed Source carries every /4 marker and both sides run this generation', async t => {
+test('stage args (ADR 0019): stage 10 gets push:<n>:chain only while the installed Source carries every /4 marker and both sides run this generation', async t => {
   const SRC = 'e'.repeat(64);
   const view = (o = {}) => ({ consistent: true, windows: { ciSourceManifestSha256: SRC }, linux: { ciSourceManifestSha256: SRC }, ...o });
   const mk = async ({ markers = BATCH_CHAIN_SOURCE_MARKERS.map(m => m[0]), versions = async () => view(), trainLanding = { landing: 'push', batchMax: 3 } } = {}) => {
@@ -215,7 +215,7 @@ test('the train mode channel (DESIGN §41.2): the installed policy reaches stage
   assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainMode: 'ON' }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
 });
 
-test('the train landing channel (DESIGN §66): push (or a batch) reaches stages 8 and 10 as train-landing.json; the default writes nothing', async t => {
+test('the train landing channel (ADR 0018): push (or a batch) reaches stages 8 and 10 as train-landing.json; the default writes nothing', async t => {
   const { prepareStageDirectory } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
   const { readStageTrainLandingFact } = await import('../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs');
   const { parseLandingArg } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');

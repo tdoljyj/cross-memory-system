@@ -49,7 +49,7 @@
 //   - Every publication's binding (Decision b30b1b79 item 3, §41.8): the merge slot is bound by state, ref, tip and queue
 //     head only, like sourceBinding; neither its `until` nor the claim lease is, so a renewal, keepalive or touch in the
 //     middle of a batch no longer voids it. Freshness still needs the lease unexpired (fresh()).
-//   - bors-style landing (resident DESIGN §66; train-landing.mjs): with the installed train.landing 'push' (stage file
+//   - bors-style landing (resident ADR 0018; train-landing.mjs): with the installed train.landing 'push' (stage file
 //     train-landing.json), a front job's stage 8 writes nothing to GitHub's checks. After the queue head, the rules, the test
 //     merge (one member) or the batch chain (several), the single-green/strict-front route, every member's live admission
 //     and the required checks other Apps produce on S itself have passed, it fast-forwards main to S (landing port,
@@ -90,7 +90,7 @@ export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'R
   // Merge train (§41.2): the batch waits for the next stage 10; a front job whose stage directory's train mode could not be
   // read parks (review R1 m4).
   TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_MODE_UNREADABLE,
-  // bors-style landing (§66): S's other-App checks still running, main's rules not yet what push relies on, the write refused.
+  // bors-style landing (ADR 0018): S's other-App checks still running, main's rules not yet what push relies on, the write refused.
   ...LANDING_NOT_READY_REASONS]);
 // Final for this head (step 3a): GitHub's merge of exactly [T, H] is not the tree that was tested. Zero side effects.
 // Merge train: a front job without the train; a front S GitHub dropped (§41.4: stage 10 reads S again for a new batch).
@@ -166,7 +166,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
   const trainOn = trainMode === 'on';
-  // §66: push lands main itself; the stage file read is trainLanding ({landing, batchMax, unreadable}); push needs the landing port.
+  // ADR 0018: push lands main itself; the stage file read is trainLanding ({landing, batchMax, unreadable}); push needs the landing port.
   const push = trainOn && trainLanding?.landing === 'push' && trainLanding.unreadable !== true && typeof landing?.fastForwardMain === 'function';
   const landingUnreadable = trainOn && trainLanding?.unreadable === true;
   const frontRefused = () => ({ status: 'BLOCKED', reason: trainFrontRefusal(trainModeUnreadable), sideEffects: 0, productionAuthorized: false });
@@ -191,7 +191,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (SHA.test(pull?.merge_commit_sha ?? '')) mergeCommit = await github.readGitCommit(pull.merge_commit_sha);
     } catch { return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules }; }
     if (!SHA.test(tested?.tree ?? '') || tested.sha !== job.testSha) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
-    // §66.3: this node's batch record of S. Several members: only push lands it, and S must be their chain on T (no GitHub test
+    // ADR 0018 §3: this node's batch record of S. Several members: only push lands it, and S must be their chain on T (no GitHub test
     // merge is involved). A record that cannot be read is not ready.
     let batch = null;
     if (front && typeof sweepStore?.landingBatchByTest === 'function') {
@@ -540,7 +540,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await sleep(QUEUE_POLL_MS);
     }
   }
-  // §66.5: the one write to main. The effect key names the subject, the batch claim generation and the members; an earlier key of
+  // ADR 0018 §5: the one write to main. The effect key names the subject, the batch claim generation and the members; an earlier key of
   // the same landing that ended without effect (not_sent, revoked: refused or main moved) is followed by the next one, any other
   // unfinished one needs reconciliation. Every check below runs live in this run; any that fails writes nothing.
   async function landingKey(job, members) {
@@ -575,7 +575,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(liveTrain.testTree === headTrain.testTree && (liveTrain.batch?.testSha ?? null) === (headTrain.batch?.testSha ?? null), TRAIN_BATCH_CHANGED);
       const current = await trainHead(job, liveTrain, before.facts.observedClaim, before.facts.mode?.state);
       if (current.reason) return blocked(current.reason);
-      // main's rules hold what push relies on (§66.8)
+      // main's rules hold what push relies on (ADR 0018 §8)
       const reply = await github.readBranchRules('main');
       check(reply?.complete === true, RULESET_UNREADABLE);
       const rulesMissing = landingRulesDecision(reply.rules, APP_ID);
@@ -672,7 +672,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
     // §41.2 (§38.8 m3): S != H only with the train on; nothing read, nothing written.
     if (trainFrontRefused(jobs[1], trainMode)) return frontRefused();
-    // §66: a front job whose stage file train-landing.json exists but cannot be used parks (the landing mode is unknown, not github-merge).
+    // ADR 0018: a front job whose stage file train-landing.json exists but cannot be used parks (the landing mode is unknown, not github-merge).
     if (landingUnreadable && isTrainFrontJobV2(jobs[1])) return { status: 'BLOCKED', reason: TRAIN_MODE_UNREADABLE, sideEffects: 0, productionAuthorized: false };
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
@@ -681,7 +681,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     // does not keep the end from before the extension; not the queue place: a transient park after it is counted as before (DESIGN §28).
     // The green ledger's answer below is the exception: not a §28 code, it keeps the whole facts.
     const lease = head.scheduling ? { scheduling: { ciRetryAfter: null, mergeQueue: null, claimExpiresAt: head.scheduling.claimExpiresAt ?? null } } : {};
-    // §66.2 item 6: push writes no check at all (no merge-slot green, no admission-verified): the landing is the one effect.
+    // ADR 0018 §2 item 6: push writes no check at all (no merge-slot green, no admission-verified): the landing is the one effect.
     if (push && isTrainFrontJobV2(jobs[1])) return landOne(jobs[1], head.train, lease);
     // C4: both halves are read back before either is published (nothing written yet: a refusal is a clean BLOCKED). A half
     // with an unsettled journal entry (a write that may have happened) skips this and keeps its path (reconciliation).

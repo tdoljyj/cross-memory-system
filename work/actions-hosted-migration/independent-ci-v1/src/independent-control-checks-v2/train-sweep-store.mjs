@@ -12,7 +12,7 @@
 //   strict-front-proof-<ms>-<runId>-<nonce>.json current subject only; explicitly no historical coverage
 //   pending-revocations-<ms>-<runId>-<nonce>.json bounded exact-ID negative intents, preserved across duty/Source changes;
 //                                         an old count without IDs stays latched until a real complete all round
-//   landing-batch-<ms>-<runId>-<nonce>.json clued.independent-ci.train-landing-batch/1 (push mode, resident DESIGN §66.3): one batch
+//   landing-batch-<ms>-<runId>-<nonce>.json clued.independent-ci.train-landing-batch/1 (push mode, resident ADR 0018 §3): one batch
 //                                         this node opened: T, S, S's tree and the members in batch order (the front first)
 //   landing-state-<ms>-<runId>-<nonce>.json clued.independent-ci.train-landing-state/1: the riders kept out (bad heads), the bisection
 //                                         suspect, the batches whose members were all adopted and the failures already handled
@@ -256,7 +256,7 @@ export class TrainSweepStore {
     return p;
   }
   async writeFullSweep(s) { return this.write(`full-${s?.mode}`, { contract: FULL_SWEEP_CONTRACT, ...s, inMain: (s?.inMain ?? []).slice(-MAX_IN_MAIN) }); }
-  // Push mode (§66.3): batch records, newest first (at most `limit`), and the landing state (newest valid; none: empty).
+  // Push mode (ADR 0018 §3): batch records, newest first (at most `limit`), and the landing state (newest valid; none: empty).
   async appendLandingBatch(r) { return this.write('landing-batch', { contract: LANDING_BATCH_CONTRACT, ...r }); }
   async landingBatches(limit = 20) { return this.read('landing-batch', limit); }
   async landingBatchByTest(testSha) { return (await this.read('landing-batch', 1, r => r.testSha === testSha))[0] ?? null; }

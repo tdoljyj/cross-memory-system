@@ -59,7 +59,7 @@ class ArchiveDescriptor(unittest.TestCase):
                 tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
 
     def test_chain_descriptor_4_is_archived_like_3(self):
-        # DESIGN §67: a batch of several PRs comes with descriptor /4; its job ids are /3's formula (S names the chain), and the archive
+        # ADR 0019: a batch of several PRs comes with descriptor /4; its job ids are /3's formula (S names the chain), and the archive
         # re-derives them from content exactly as for /3; the workspace preparation of the same Source takes it too.
         members = [{'pr': 884, 'headSha': '1' * 40}, {'pr': 885, 'headSha': '3' * 40}]
         d = descriptor(contract='clued.independent-ci.resident-batch-descriptor/4', testSha='4' * 40, testTree='5' * 40, members=members)

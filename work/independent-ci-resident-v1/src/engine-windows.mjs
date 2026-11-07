@@ -36,7 +36,7 @@ export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
 // (Source v2 invoke-stage.mjs#prepareStageDirectory, train-mode.mjs#stageTrainModeText). No file is 'off'.
 export function installedTrainMode(policy) { return ['off', 'shadow', 'on'].includes(policy?.train?.enabled) ? policy.train.enabled : 'off'; }
 export const TRAIN_MODE_STAGES = Object.freeze([1, 8]);
-// DESIGN §66: stages 8 and 10 learn the installed train.landing and train.batchMax through train-landing.json (Source v2 train-landing.mjs).
+// ADR 0018: stages 8 and 10 learn the installed train.landing and train.batchMax through train-landing.json (Source v2 train-landing.mjs).
 // The invoker gets --train-landing only when it is not the default (github-merge, 1): no file is github-merge.
 export const TRAIN_LANDING_STAGES = Object.freeze([8, 10]);
 
@@ -44,7 +44,7 @@ export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\Run
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
 // subject names its own S (step 3c-2).
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
-// DESIGN §67: a train front batch of several PRs (S is their cumulative merge on T) is described as /4: /3's fields plus S's tree
+// ADR 0019: a train front batch of several PRs (S is their cumulative merge on T) is described as /4: /3's fields plus S's tree
 // (testTree) and the members [{pr, headSha}] in merge order, the front first. Its job ids are /3's (S names the whole chain).
 // Written only for a batch whose stage 10 named members, and stage 10 names members only when this engine told it the installed
 // components take /4 (batchChainSupported).
@@ -446,7 +446,7 @@ export class WindowsEngine {
   // executor watches only when both say yes. A definite answer (both read, or a file missing) is kept for the engine's life (the
   // installed Source does not change under a running service); a read that failed otherwise (a file held by an antivirus or a backup)
   // is no for now and read again after QUEUE_WATCH_SUPPORT_RETRY_MS (review round 33, MINOR 1).
-  // DESIGN §67: whether a batch of several PRs can run on this node, i.e. whether every installed component that reads a descriptor
+  // ADR 0019: whether a batch of several PRs can run on this node, i.e. whether every installed component that reads a descriptor
   // takes /4: (1) the installed Source v2 (its build-bundle.ps1, which the companion runs, prepare-workspaces.py, which Linux root runs
   // from the same Source commit, and invoke-stage.mjs, which must take ':chain') carries BATCH_CHAIN_SOURCE_MARKERS; (2) the Linux side
   // runs this very generation: the versions view (status.mjs#versionsView, upgrade-mailbox.mjs#consistent) says the two sides are
@@ -478,7 +478,7 @@ export class WindowsEngine {
   }
 
   // The invoker's arguments for a stage: trainModeArgs, and for stage 10 in push mode with batchMax > 1 the ':chain' suffix when
-  // batchChainSupported says yes (DESIGN §67; without it stage 10 composes one PR per batch, as before).
+  // batchChainSupported says yes (ADR 0019; without it stage 10 composes one PR per batch, as before).
   async stageArgs(number) {
     const args = this.trainModeArgs(number);
     if (number !== 10 || this.trainLanding?.landing !== 'push' || !(this.trainLanding.batchMax > 1)) return args;
@@ -508,7 +508,7 @@ export class WindowsEngine {
     return originalStopped(qc, q, this.node);
   }
 
-  // chain (DESIGN §67, optional): chainOfFront's {members, testTree} of a front batch of several PRs; the descriptor is then /4.
+  // chain (ADR 0019, optional): chainOfFront's {members, testTree} of a front batch of several PRs; the descriptor is then /4.
   async derive(subject, key, chain = null) {
     const entry = await this.requireV2('derive-batch.mjs');
     const batchId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;

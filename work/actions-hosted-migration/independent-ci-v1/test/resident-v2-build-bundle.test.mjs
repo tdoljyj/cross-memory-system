@@ -33,7 +33,7 @@ test('build-bundle: the low-speed window leaves room for the retry inside the co
 });
 
 test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 15 minutes', () => {
-  // DESIGN §67: the read of the batch members' refs/pull/<n>/head is a GitHub step like the others (retried in a new store)
+  // ADR 0019: the read of the batch members' refs/pull/<n>/head is a GitHub step like the others (retried in a new store)
   assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test','ls-remote-members');$RetryWithinSeconds=900;$MaxStoreAttempts=3"));
   assert.ok(text.includes("$FetchDir2=Join-Path $Root 'fetch-2.git'"));
   assert.ok(text.includes('try{return Build-Store $dirs[$n]}'));

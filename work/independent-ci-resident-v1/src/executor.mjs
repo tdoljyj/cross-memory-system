@@ -340,7 +340,7 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
   // Step 3c-2b (DESIGN §41.2): the single green is not proven; the batch rests at B until the next stage 10. The stage
   // directory's train mode could not be read for a front job: it rests at B too.
   'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE',
-  // DESIGN §66 (push): S's other-App checks still running, main's rules not yet set, the fast-forward refused while main is still T.
+  // ADR 0018 (push): S's other-App checks still running, main's rules not yet set, the fast-forward refused while main is still T.
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED']);
 // Stage-8 answers the Owner must hear about (step 3a): main's rules do not hold it for a green, or GitHub's merge of exactly
 // [T, H] is not what was tested.
@@ -1623,7 +1623,7 @@ export class ResidentExecutor {
       t.fullPending = !this.trainTakeoverDone;
       // DESIGN §65: the companion's backstop reads it (strict off in strict-permanent mode: PAUSE at once, no grace).
       t.sweepMode = trainSweepMode(this.policy.train);
-      t.landing = trainLandingMode(this.policy.train); // DESIGN §66
+      t.landing = trainLandingMode(this.policy.train); // ADR 0018
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
@@ -2085,7 +2085,7 @@ export class ResidentExecutor {
         const b = e.value.body;
         if (!Number.isSafeInteger(b?.pr) || typeof b.headSha !== 'string') continue;
         const list = this.frontBatches.get(`${b.pr}:${b.headSha}`) ?? [];
-        // DESIGN §67: a batch of several PRs (its receipt names members) is not one of the front's own attempts.
+        // ADR 0019: a batch of several PRs (its receipt names members) is not one of the front's own attempts.
         if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt, solo: !Array.isArray(b.members) });
         this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
         if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
@@ -2120,8 +2120,8 @@ export class ResidentExecutor {
   }
 
   // A confirmed OPEN_FRONT_BATCH (mode on): the front subject with S into the run queue, the one producer of S. At most
-  // FRONT_BATCHES_PER_HEAD per head, never the same (S, attempt) twice. DESIGN §67 (review blocker 1): only the front's batches ALONE
-  // count, as stage 10 counts them (train-maintenance.mjs#openFront, §66.3): a batch of several PRs that failed is bisected, and its
+  // FRONT_BATCHES_PER_HEAD per head, never the same (S, attempt) twice. ADR 0019 (review blocker 1): only the front's batches ALONE
+  // count, as stage 10 counts them (train-maintenance.mjs#openFront, ADR 0018 §3): a batch of several PRs that failed is bisected, and its
   // smaller batches, down to the front alone, must still reach the run queue. Each of those is its own S (never the same S twice).
   async enqueueFront(front) {
     const headKey = `${front.pr}:${front.headSha}`;
@@ -2700,7 +2700,7 @@ export class ResidentExecutor {
       await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: s.parked.closed ?? null, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n });
       await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
       this.reportOutcome(subject, 'COMPLETED', { key });
-      // DESIGN §66.6: in push mode a front batch that completed stage 8 has landed main; stage 10 adopts its members right away
+      // ADR 0018 §6: in push mode a front batch that completed stage 8 has landed main; stage 10 adopts its members right away
       // (urgent, under the daily cap like every urgent run) instead of at the next routine run.
       if (subject?.testSha && subject.testSha !== subject.headSha && trainLandingMode(this.policy.train) === 'push' && this.policy.train.enabled === 'on') this.trainUrgent = true;
       // Only stage 8 ran in this step: a Windows-only ending for the breaker (the parking itself told it about the rest).
@@ -3281,7 +3281,7 @@ export class ResidentExecutor {
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
         releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
-      // DESIGN §67 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
+      // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
       if (settled === 'stopped') {
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
@@ -3394,7 +3394,7 @@ export class ResidentExecutor {
   }
 
   async drive(key, subject, t0, keepBatch) {
-    // DESIGN §67: a front batch of several PRs (its binding from stage 10 names the members) is described as /4; every other batch as /3.
+    // ADR 0019: a front batch of several PRs (its binding from stage 10 names the members) is described as /4; every other batch as /3.
     const front = Object.hasOwn(subject, 'testSha') ? this.frontBindings.get(`${subject.pr}:${subject.testSha}`) : null;
     const chain = front?.members ? chainOfFront(subject, front) : null;
     // Members that do not fit this subject (never expected: the binding is keyed by PR and S): said so, and the batch goes on as /3,
@@ -3408,7 +3408,7 @@ export class ResidentExecutor {
     // effect and publishes nothing, so its failure can release the reservation.
     this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
-    // DESIGN §67 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
     const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED : 'BUNDLE_UNAVAILABLE';
     if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
       // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
@@ -3815,7 +3815,7 @@ export class ResidentExecutor {
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
       if (!started && failure.phase === 'bundle' && failure.code === TRAIN_BATCH_MEMBER_MOVED) {
-        // DESIGN §67 (review 2): a member of the batch moved on after stage 10 composed it. Nothing about the front, the line or this
+        // ADR 0019 (review 2): a member of the batch moved on after stage 10 composed it. Nothing about the front, the line or this
         // node was decided: released like a supersession (no release cap, no breaker), and this S is dropped from the run queue
         // (settle dropFront: it can never pass again); stage 10 composes the next batch from the members' current heads.
         await this.closeOrThrow(batch, { linux: false });
@@ -3927,7 +3927,7 @@ export class ResidentExecutor {
     const front = Object.hasOwn(subject ?? {}, 'testSha');
     const headKey = front ? `${subject.pr}:${subject.headSha}` : null;
     const list = front ? (this.frontBatches.get(headKey) ?? []) : null;
-    // DESIGN §67: a batch of several PRs (its binding names members) is not one of the front's own attempts; its attempt 2 is the same
+    // ADR 0019: a batch of several PRs (its binding names members) is not one of the front's own attempts; its attempt 2 is the same
     // members and S again (descriptor /4 from the same binding) and does not use one up either.
     const members = front ? this.frontBindings.get(`${subject.pr}:${subject.testSha}`)?.members ?? null : null;
     const solo = !members;

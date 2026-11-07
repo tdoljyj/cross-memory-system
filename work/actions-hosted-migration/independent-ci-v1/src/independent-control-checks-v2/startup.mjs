@@ -33,7 +33,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     // §41.2: the installed train.enabled, written by the resident into this stage directory (train-mode.mjs; default off).
     const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
     const train = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github, queueReturn: true });
-    // resident DESIGN §66: the installed train.landing (stage file train-landing.json; none: github-merge). Only push with the train on
+    // resident ADR 0018: the installed train.landing (stage file train-landing.json; none: github-merge). Only push with the train on
     // builds the landing port: the same App key as the checks port, a contents-write token, refs only.
     const trainLanding = await readStageTrainLandingFact(inputs.dir);
     const landing = trainMode === 'on' && trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,

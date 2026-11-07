@@ -1,4 +1,4 @@
-// Units of push mode (resident DESIGN §66): the stage file, the shape of S, the other-App checks on S, main's rules, composing and
+// Units of push mode (resident ADR 0018): the stage file, the shape of S, the other-App checks on S, main's rules, composing and
 // bisecting, the one write to main, the landing port's token and refs, the landing records, and the never-published check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,10 +43,10 @@ test('stage file: exact bytes, defaults, refusals; only push may carry a batch; 
   assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 2, batchChain: false, unreadable: false });
 });
 
-test('§67 stage file: batchChain (the resident found /4 installed) is written only when true, only in push mode, and is what lets stage 10 batch', async t => {
+test('ADR 0019 stage file: batchChain (the resident found /4 installed) is written only when true, only in push mode, and is what lets stage 10 batch', async t => {
   const chain = L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: true });
   assert.equal(chain, '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":true}');
-  assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: false }), L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), 'no chain: the bytes of before §67');
+  assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: false }), L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), 'no chain: the bytes of before ADR 0019');
   assert.deepEqual(L.parseStageTrainLanding(Buffer.from(chain)), { landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
   assert.equal(L.effectiveBatchMax(L.parseStageTrainLanding(Buffer.from(chain))), 3);
   for (const bad of [{ landing: 'github-merge', batchMax: 1, batchChain: true }, { landing: 'push', batchMax: 3, batchChain: 'yes' }, { landing: 'push', batchMax: 3, batchChain: 1 }])
@@ -85,7 +85,7 @@ test('batchChainOk: one member is exactly [T, H]; several walk first parents bac
   assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H1, H2, H3], testSha: S3 }), false, 'an octopus is not a chain step');
 });
 
-test('§67 review 3: readBatchChain with the train\'s own merge results: each step must be exactly the commit that merge returned', async () => {
+test('ADR 0019 review 3: readBatchChain with the train\'s own merge results: each step must be exactly the commit that merge returned', async () => {
   const commits = new Map([[S1, { sha: S1, tree: sha(11), parents: [T, H1] }], [S2, { sha: S2, tree: sha(12), parents: [S1, H2] }], [S3, { sha: S3, tree: sha(13), parents: [S2, H3] }]]);
   const read = async s => { const c = commits.get(s); if (!c) throw new Error('404'); return structuredClone(c); };
   const heads = [H1, H2, H3];

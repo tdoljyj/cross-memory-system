@@ -25,7 +25,7 @@ and the base; the trivy and placement candidates are checked out at S. Step 3c-2
 front batch, where S is GitHub's test merge of [T, H] read live by stage 10. The bundle then carries S under
 refs/clued-test/<S> (the receipt counts it), the candidates fetch that ref, and the mirror store checks that S's
 parents are exactly [T, H]. Everywhere else S = H and every workspace is exactly what it was under /2.
-Resident DESIGN §67: a batch of several PRs comes with descriptor /4, which adds the members (the front first, in merge order) and
+Resident ADR 0019: a batch of several PRs comes with descriptor /4, which adds the members (the front first, in merge order) and
 S's tree. S is then the cumulative merge T -> S1 = merge(T, H1) -> ... -> S = merge(S(N-1), HN): walking back from S along first
 parents takes exactly N steps to T, each step is a commit with exactly two parents, and the k-th step's second parent is member k's
 head (chain_ok). S's tree must be the descriptor's, every member head must be the tip of a branch in the sealed refs (the exact
@@ -56,7 +56,7 @@ GIT = '/usr/bin/git'
 REPO = 'tdoljyj/cross-memory-system'
 JOB_CONTRACT = 'clued.independent-ci.job/3'
 DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3'
-# Resident DESIGN §67: the cumulative merge of 2..4 PRs (the resident engine-windows.mjs#batchChainSupported looks for this line).
+# Resident ADR 0019: the cumulative merge of 2..4 PRs (the resident engine-windows.mjs#batchChainSupported looks for this line).
 DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'
 CHAIN_MEMBERS_MAX = 4
 LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
@@ -136,7 +136,7 @@ def validate_descriptor(d, batch_id):
     # refs/clued-test/<S> and prepare() checks its parents. S = H everywhere else, exactly as before.
     need(all(isinstance(d.get(k), str) and HEX64.fullmatch(d[k]) for k in ('batchKey', 'ciSourceManifestSha256', 'gitleaksTomlSha256')), 'DESCRIPTOR_REFUSED')
     need(d.get('attempt') in (1, 2) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
-    # §67: /4 only with its members and S's tree; /3 never names them (a /3 that carries them is not a /3 the resident writes).
+    # ADR 0019: /4 only with its members and S's tree; /3 never names them (a /3 that carries them is not a /3 the resident writes).
     if is_chain(d):
         need(chain_members_ok(d), 'BATCH_CHAIN_DESCRIPTOR_REFUSED')
     else:
@@ -189,7 +189,7 @@ def expected_test_refs(d):
 
 
 def member_tips_ok(formal, d):
-    """§67 (pure): every member head is the tip of at least one branch of the sealed refs (the exact ls-remote list)."""
+    """ADR 0019 (pure): every member head is the tip of at least one branch of the sealed refs (the exact ls-remote list)."""
     tips = {sha for name, sha in formal.items() if name.startswith('refs/heads/')}
     return all(m['headSha'] in tips for m in d['members'])
 
@@ -216,7 +216,7 @@ def validate_receipt(r, d, descriptor_sha, now):
          and r.get('bundleVersion') == 2 and r.get('headPresent') is True and r.get('basePresent') is True, 'BUNDLE_RECEIPT_REFUSED')
     need(all(isinstance(r.get(k), str) and HEX64.fullmatch(r[k]) for k in ('bundleSha256', 'refListSha256', 'reviewedRefListSha256', 'testRefListSha256')), 'BUNDLE_RECEIPT_REFUSED')
     need(r.get('testSha') == d['testSha'] and r.get('testRefCount') == len(expected_test_refs(d)), 'BUNDLE_RECEIPT_REFUSED')
-    # §67: the bundle of a /4 batch was built by a build-bundle.ps1 that checked the same chain (members, their PR heads, S's tree).
+    # ADR 0019: the bundle of a /4 batch was built by a build-bundle.ps1 that checked the same chain (members, their PR heads, S's tree).
     if is_chain(d):
         need(r.get('chainMembers') == d['members'] and r.get('testTree') == d['testTree'], 'BUNDLE_RECEIPT_REFUSED')
     age = now - iso_seconds(r.get('lsRemoteCompletedAt'))
@@ -351,7 +351,7 @@ def write_new(path, value):
 
 
 def check_chain(where, d, formal):
-    """§67 on one repository (where: git's --git-dir or -C arguments): the chain's parents, S's tree, the member heads."""
+    """ADR 0019 on one repository (where: git's --git-dir or -C arguments): the chain's parents, S's tree, the member heads."""
     need(chain_ok(lambda sha: git([*where, 'rev-list', '--parents', '-n', '1', sha]).strip(), d), 'BATCH_CHAIN_REQUIRED')
     need(git([*where, 'rev-parse', '--verify', d['testSha'] + '^{tree}']).strip() == d['testTree'], 'BATCH_TEST_TREE_CHANGED')
     for m in d['members']:
@@ -459,7 +459,7 @@ def prepare(batch_id):
             for c in (d['headSha'], d['baseSha']):
                 need(git(['--git-dir', gd, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
             if test:
-                # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2), or for /4 the members' cumulative merge on T (§67):
+                # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2), or for /4 the members' cumulative merge on T (ADR 0019):
                 # checked on the objects themselves.
                 need(git(['--git-dir', gd, 'cat-file', '-t', d['testSha']]).strip() == 'commit', 'TEST_COMMIT_MISSING')
                 if is_chain(d):

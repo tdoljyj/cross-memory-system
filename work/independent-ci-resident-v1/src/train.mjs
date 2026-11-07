@@ -189,7 +189,7 @@ export function validateTrainRunInput(v) {
 }
 
 // facts /2 openFrontBatch -> the frozen front of a batch with S, or null when it does not fit (never a guess).
-// DESIGN §67: a batch of several PRs also names its members [{pr, headSha}] in merge order, the front first (2..4, distinct PRs and heads,
+// ADR 0019: a batch of several PRs also names its members [{pr, headSha}] in merge order, the front first (2..4, distinct PRs and heads,
 // none of them S or T); they go into the descriptor /4. A members value that does not fit makes the whole batch not fit.
 const membersOf = o => {
   if (o.members === undefined) return undefined;
@@ -208,7 +208,7 @@ export function openFrontBatchOf(o) {
     ...(members ? { members } : {}) }) : null;
 }
 
-// DESIGN §67 (engine-windows.mjs#derive, executor.mjs#drive): the front batch's members and S's tree as the descriptor /4 names them,
+// ADR 0019 (engine-windows.mjs#derive, executor.mjs#drive): the front batch's members and S's tree as the descriptor /4 names them,
 // or null when they do not fit the subject (never a guess).
 export function chainOfFront(subject, front) {
   const m = front?.members;

@@ -18,7 +18,7 @@
 | [0007](0007-strict-permanent.md) | 合入闸门：strict 永久开，合并方式只留 merge | 生效 | 2026-11-07 | `9e2511fe`、`78a3052f` |
 | [0008](0008-full-sweep-audit.md) | 全量扫描降为可选后台审计，不再是任何前提 | 生效，取代 `fb39ec73` 的前提作用 | 2026-11-07 | `9e2511fe` 第 2、4 项；`78a3052f` |
 | [0009](0009-no-admission-ticket.md) | 准入票据（M1）不做，设计存档 | 生效 | 2026-11-07 | `9dc130c7` 第 1 项 |
-| [0010](0010-bors-preauthorized.md) | 长远走 bors 式列车；Owner 已预授权，条件满足就做 | 已预授权，未实施 | 2026-11-07 | `9e2511fe` 第 6 项；Task `7d86cf41` |
+| [0010](0010-bors-preauthorized.md) | 长远走 bors 式列车；Owner 已预授权，条件满足就做 | 已预授权；第 28 代已实现（0018、0019），默认 `github-merge` | 2026-11-07 | `9e2511fe` 第 6 项；Task `7d86cf41` |
 | [0011](0011-companion-without-logon.md) | companion 不靠交互登录：采用 B2（保存 Owner 密码，无登录运行）；改用细粒度令牌 | 已决定，未实施 | 2026-11-07 | `9dc130c7` 第 3、4 项 |
 | [0012](0012-upgrade-auto-approval.md) | 常驻升级纳入自动审批，放宽到每节点每天 6 次 | 1 次/天已上线；6 次/天待发布 | 2026-11-06 / 2026-11-07 | `f8aff2f9` → `d90f1037` → `56371a46` |
 | [0013](0013-multi-node-failover.md) | 任意多个节点；只在失联时自动接班 | 生效 | 2026-10-31 | `d6eef30e`、`199cf3de` |
@@ -26,3 +26,6 @@
 | [0015](0015-republish-after-unavailable-withdrawal.md) | 写后核对读不到而撤回的扫描检查，可在同一 head 上重新发布（最多 3 次，先撤回后重发） | 生效（第 28 代，未安装） | 2026-11-08 | 缺陷 `664cc8eb` |
 | [0016](0016-front-requeue-on-new-head.md) | 车头 PR 换新 head：新 head 第 1 段重新入队并让位；合并位到期的根因与残余 | 生效（第 28 代，未安装） | 2026-11-08 | 缺陷 `1b31b06b` |
 | [0017](0017-stage10-front-slot-renewal.md) | 第 10 段为等车头或车头批次在跑/停靠的已绑定队首续期合并位（剩余 < 20 分钟时 touch running 一次） | 生效（第 28 代，未安装） | 2026-11-08 | 补 ADR 0016 的残余窗口 |
+| [0018](0018-bors-landing.md) | bors 式落地：`train.landing=push` 时列车把测过的 S 快进推上 main；组批、二分（原分支草稿 DESIGN §66） | 已实施（第 28 代，未安装），默认 `github-merge` | 2026-11-07 | `9e2511fe` 第 6 项；Task `7d86cf41` |
+| [0019](0019-train-batch-member-chain.md) | 批量上生产：描述符 /4 与两侧成员链核对（原分支草稿 DESIGN §67） | 已实施（第 28 代，未安装），`batchMax` 默认 1 | 2026-11-08 | 同 0018 |
+| [0020](0020-standby-prechecks-not-implemented.md) | 备用节点跑非车头 PR 的预检：评估后不实现（原分支草稿 DESIGN §67） | 不实现 | 2026-11-07 | Task `bf57ff10` L3 |

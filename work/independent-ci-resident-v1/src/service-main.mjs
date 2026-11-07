@@ -78,7 +78,7 @@ export async function main(argv = process.argv.slice(2)) {
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
     // DESIGN §41.2: stages 1 and 8 learn the installed train.enabled through the stage directory (train-mode.json).
     trainMode: installedTrainMode(policy),
-    // DESIGN §66: stages 8 and 10 learn train.landing and train.batchMax through the stage directory (train-landing.json).
+    // ADR 0018: stages 8 and 10 learn train.landing and train.batchMax through the stage directory (train-landing.json).
     trainLanding: installedTrainLanding(policy),
     paths: {
       sourceRoot,

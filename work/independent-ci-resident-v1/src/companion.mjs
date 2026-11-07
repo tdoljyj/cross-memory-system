@@ -237,7 +237,7 @@ export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
 // succeeded in the same attempt, so a failure there is much more likely a commit GitHub no longer serves (a deleted branch, a test merge
 // GitHub dropped) than the line: it stays BUNDLE_UNAVAILABLE.
 export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote']);
-// DESIGN §67 (review 2): build-bundle.ps1's refusals of a batch of several PRs that say a member moved on after stage 10 composed the
+// ADR 0019 (review 2): build-bundle.ps1's refusals of a batch of several PRs that say a member moved on after stage 10 composed the
 // batch (its branch no longer at the member's head, or GitHub's PR head another commit). Nothing about the front or the node was
 // decided: the executor releases the batch like a supersession (TRAIN_BATCH_MEMBER_MOVED: no release cap, no breaker) and drops
 // that S; stage 10 composes again. Every other refusal stays BUNDLE_UNAVAILABLE.

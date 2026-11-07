@@ -357,6 +357,7 @@ B 上的第 8 段尝试：
 - **strict 永久开，合并方式只有 merge**（[ADR 0007](adr/0007-strict-permanent.md)）。GitHub 只合入包含 main 尖端 T 的 H，此时 merge(T, H) 的树就是 H 的树，测什么落什么。
 - **全量清扫不挡任何事**（[ADR 0008](adr/0008-full-sweep-audit.md)），每天最多一轮后台审计（`AUDIT_EVERY_MS` 24 小时）。
 - `gate` 模式保留为回退路径：一次 UAC 把策略写成 `train.sweep: "gate"`，回到旧的接管门（DESIGN §65.5）。
+- **落地方式 `train.landing`**（第 28 代，[ADR 0018](adr/0018-bors-landing.md)、[ADR 0019](adr/0019-train-batch-member-chain.md)）：默认 `github-merge`，第 8 段写 `kooyumi-merge-slot` 绿，由 GitHub 合并，和上面说的完全一样。`push` 是 bors 式落地：第 8 段在全部实时准入通过后，把测过的 S 快进推上 main；第 10 段组批（`train.batchMax`，默认 1）、生成累积合并、二分，并 adopt 每个成员。`push` 要求 `sweep` 是 `audit` 或 `off`，并且要先完成 ADR 0018 第 8 节的 App 权限、规则集和工作流前提；Owner 决定按 ADR 0010 的触发条件再打开。代码在 `CI/independent-control-checks-v2/train-landing.mjs`、`train-landing-port.mjs`。
 
 ### 7.2 车头与 S
 
@@ -748,7 +749,8 @@ companion 由 Owner 登录时启动，单实例锁。每个通道有自己的 Ru
 | companion 无登录运行（B2） | 已决定，未实施 | Decision `9dc130c7` 第 3 项，Task `59f8ef81` |
 | companion 换细粒度 GitHub 令牌 | 已决定，未实施 | Decision `9dc130c7` 第 4 项 |
 | 准入票据（M1） | 不做，设计存档 | Decision `9dc130c7` 第 1 项，[ADR 0009](adr/0009-no-admission-ticket.md) |
-| bors 式列车 | Owner 已预授权，等触发条件满足 | Task `7d86cf41`，[ADR 0010](adr/0010-bors-preauthorized.md) |
+| bors 式列车（`train.landing = push`、`batchMax > 1`） | 第 28 代已实现，默认 `github-merge`、1；等 ADR 0010 的触发条件满足、上线前提做完再开 | Task `7d86cf41`，[ADR 0010](adr/0010-bors-preauthorized.md)、[0018](adr/0018-bors-landing.md)、[0019](adr/0019-train-batch-member-chain.md) |
+| 备用节点预检（L3） | 评估后不做 | [ADR 0020](adr/0020-standby-prechecks-not-implemented.md) |
 | 三个扫描并行 | 分析结论：常驻层做不到，需要 Source 级多角色扫描段 | DESIGN §45 |
 | 写后失败撤回后重发（方案 A） | 不建议做 | DESIGN §50 |
 

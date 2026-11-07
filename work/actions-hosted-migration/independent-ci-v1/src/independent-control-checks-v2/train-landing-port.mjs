@@ -1,10 +1,10 @@
-// The landing port of push mode (resident DESIGN §66.2 L1, §66.4). It writes refs, nothing else:
+// The landing port of push mode (resident ADR 0018 §2 L1, ADR 0018 §4). It writes refs, nothing else:
 //   fastForwardMain(S)        PATCH /git/refs/heads/main {sha: S, force: false}    (GitHub only fast-forwards; 422 otherwise)
 //   pointRef(ref, sha)        PATCH (or POST when missing) one of the train's own refs heads/clued-train/staging[.tmp], force true
 //   mergeIntoTmp(head, msg)   POST /merges {base: clued-train/staging.tmp, head}   (the cumulative merge of a batch)
 // Every other ref, a deletion, a force on main, a PR merge: refused before anything is sent (LANDING_REF_REFUSED). Its token is
 // minted from the same private-key provider as the checks port (github.mjs: the protected control-service principal's App key;
-// no new secret) but asks only for contents write (plus workflows write, so a tested change of .github/workflows can land: §66.8
+// no new secret) but asks only for contents write (plus workflows write, so a tested change of .github/workflows can land: ADR 0018 §8
 // item 1). The reply's permission set and repository must be exactly that, or no token is used. Reads go through the checks
 // port (its contents read), never through this token.
 import { createSign } from 'node:crypto';

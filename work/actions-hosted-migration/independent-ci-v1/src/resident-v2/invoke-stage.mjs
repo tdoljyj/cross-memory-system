@@ -75,7 +75,7 @@ export async function readSpoolResult(spoolRoot, job) {
 
 // trainMode (stages 1 and 8 only, DESIGN §41.2): the installed train.enabled, written create-only as train-mode.json, exactly
 // train-mode.mjs#stageTrainModeText; none is written otherwise (the stage then reads 'off').
-// trainLanding (stages 8 and 10 only, resident DESIGN §66): {landing, batchMax, batchChain}, written create-only as train-landing.json, exactly
+// trainLanding (stages 8 and 10 only, resident ADR 0018): {landing, batchMax, batchChain}, written create-only as train-landing.json, exactly
 // train-landing.mjs#stageTrainLandingText; none is written otherwise (the stage then reads github-merge).
 export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes = null, trainMode = null, trainLanding = null }) {
   check(NONCE32.test(nonce), 'STAGE_NONCE_INVALID');
@@ -322,7 +322,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
   }
   // --train-mode (optional; the resident passes it for stages 1 and 8, engine-windows.mjs#installedTrainMode): off|shadow|on.
-  // --train-landing (optional; stages 8 and 10, resident DESIGN §66): <github-merge|push>:<batchMax>[:chain] (§67).
+  // --train-landing (optional; stages 8 and 10, resident ADR 0018): <github-merge|push>:<batchMax>[:chain] (ADR 0019).
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key', '--train-mode', '--train-landing'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {
@@ -336,7 +336,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
   return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
 }
 // '<landing>:<batchMax>[:chain]' -> {landing, batchMax, batchChain}; absent: null; malformed: an object invokeStage refuses
-// (STAGE_PACKAGE_REFUSED). ':chain' (resident DESIGN §67): the resident found that the installed components take a descriptor /4 (a
+// (STAGE_PACKAGE_REFUSED). ':chain' (resident ADR 0019): the resident found that the installed components take a descriptor /4 (a
 // member chain); the resident looks for this literal before it ever sends it, so an older invoker never sees it.
 export const TRAIN_LANDING_CHAIN_ARG = 'chain';
 export function parseLandingArg(v) {

@@ -31,7 +31,7 @@ export const TRAIN_CLEAN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN',
   // Stages 1 and 8: a train front job whose stage directory's train-mode.json exists but is unusable: never burned (stage 1
   // releases the head, stage 8 parks it).
   'TRAIN_MODE_UNREADABLE',
-  // Stage 8 in push mode (DESIGN §66; Source v2 train-landing.mjs).
+  // Stage 8 in push mode (ADR 0018; Source v2 train-landing.mjs).
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt.
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',

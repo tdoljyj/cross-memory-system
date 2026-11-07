@@ -242,7 +242,7 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_chain_descriptor_shape(self):
-        """Resident DESIGN §67: descriptor /4 names 2..4 members (the front first) and S's tree; anything else is refused. Its job ids are /3's."""
+        """Resident ADR 0019: descriptor /4 names 2..4 members (the front first) and S's tree; anything else is refused. Its job ids are /3's."""
         heads = ['5' * 40, '6' * 40, '7' * 40]
         members = [{'pr': 888, 'headSha': heads[0]}, {'pr': 901, 'headSha': heads[1]}, {'pr': 902, 'headSha': heads[2]}]
         d = descriptor(contract=pw.DESCRIPTOR_CHAIN_CONTRACT, headSha=heads[0], testSha='4' * 40, testTree='8' * 40, members=members)
@@ -273,7 +273,7 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
             self.assertEqual(e.exception.code, 'DESCRIPTOR_REFUSED')
 
     def test_chain_receipt_binding(self):
-        """§67: a /4 bundle's receipt names the same members and tree (build-bundle.ps1 checked that chain); /3 receipts are unchanged."""
+        """ADR 0019: a /4 bundle's receipt names the same members and tree (build-bundle.ps1 checked that chain); /3 receipts are unchanged."""
         heads = ['5' * 40, '6' * 40]
         members = [{'pr': 888, 'headSha': heads[0]}, {'pr': 901, 'headSha': heads[1]}]
         d = descriptor(contract=pw.DESCRIPTOR_CHAIN_CONTRACT, headSha=heads[0], testSha='4' * 40, testTree='8' * 40, members=members)
@@ -292,7 +292,7 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('git'), 'git required')
     def test_real_three_pr_chain(self):
-        """§67 on real objects: T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> S3 = merge(S2, H3) passes check_chain on a store and on a
+        """ADR 0019 on real objects: T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> S3 = merge(S2, H3) passes check_chain on a store and on a
         candidate cloned from the bundle; a wrong parent, a third parent, a head that is not a member, members in another order or a
         different count, another base, S's tree, a member head that is no branch tip are each refused."""
         tmp = tempfile.mkdtemp(prefix='clued-wsprep-chain-')

@@ -40,7 +40,7 @@ $toml="# clued-reviewed-count: 2`n# clued-reviewed-finding: {`"fingerprint`":`"$
 $r=Reviewed-Commits $toml;Yes ($r.findings -eq 2 -and @($r.commits).Count -eq 2 -and $r.commits[0] -ceq $a -and $r.sha256 -ceq (Hash-Text "$a`n$b`n")) 'reviewed-commits'
 Refuse {Reviewed-Commits ($toml.Replace('count: 2','count: 3'))} 'reviewed-count-mismatch'
 Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$($b):x:rule:1`",`"kinds`":[`"K`"]}`n")} 'reviewed-duplicate'
-# DESIGN §67: descriptor /4's own shape (the twin of prepare-workspaces.py#chain_members_ok) and the chain walk over a reader
+# ADR 0019: descriptor /4's own shape (the twin of prepare-workspaces.py#chain_members_ok) and the chain walk over a reader
 $h1='1'*40;$h2='2'*40;$h3='3'*40;$tS='4'*40;$tT='5'*40;$tTree='6'*40
 function Desc4($o){$d=[ordered]@{contract=$ChainContract;pr=901;headSha=$h1;baseSha=$tT;testSha=$tS;testTree=$tTree;members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h2},[ordered]@{pr=903;headSha=$h3})};foreach($k in $o.Keys){$d[$k]=$o[$k]};return (($d|ConvertTo-Json -Depth 5 -Compress)|ConvertFrom-Json)}
 $ch=Chain-Of (Desc4 @{});Yes ($ch.members.Count -eq 3 -and $ch.members[2].pr -eq 903 -and $ch.members[0].headSha -ceq $h1 -and $ch.testTree -ceq $tTree) 'chain-of'
@@ -265,7 +265,7 @@ if($git){
   # the S fetch stalls: the whole store is built again
   New-Case @{'fetch-test'=1} $null;$Test=$cS;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $firstAttempt.stage -ceq 'fetch-test-commit-by-sha' -and $s.expectedTest.Count -eq 1) 'front-retry'
-  # 6b2. DESIGN §67, a batch of three PRs (descriptor /4): S = merge(merge(merge(T, H1), H2), H3) on T = main c1; H1 = c2 (feature),
+  # 6b2. ADR 0019, a batch of three PRs (descriptor /4): S = merge(merge(merge(T, H1), H2), H3) on T = main c1; H1 = c2 (feature),
   # H2 and H3 on their own branches; GitHub's refs/pull/<n>/head name each member's head. The chain is checked on the store's objects.
   function Make-Chain{
    & $g checkout -q -b topic-2 $c1;[IO.File]::WriteAllText((Join-Path $src 'm2.txt'),"m2`n");& $g add m2.txt;& $g commit -q -m H2;$x2=(& $g rev-parse HEAD).Trim()
@@ -663,7 +663,7 @@ if($git){
    Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.git.label -ceq 'fetch' -and $v.automaticRetryAllowed -eq $true -and $null -eq $v.setAside) ('rebundle-line-down:'+$out)
    $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $rbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.setAside -ceq 'gen-2-failed-1' -and $v.automaticRetryAllowed -eq $true) ('rebundle-line-down-again-sets-aside:'+$out)
-   # DESIGN §67: a batch of three PRs (descriptor /4), the whole script: the bundle carries S, the receipt names the members and S's tree
+   # ADR 0019: a batch of three PRs (descriptor /4), the whole script: the bundle carries S, the receipt names the members and S's tree
    $k=Make-Chain
    try{
     $cbatch='0123456789abcdef-c4a1c4a1c4a1';$cob=Join-Path $res ('outbox\'+$cbatch);[void][IO.Directory]::CreateDirectory($cob)

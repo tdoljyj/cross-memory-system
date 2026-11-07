@@ -116,7 +116,7 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
       lastHeartbeatAt: n.lastHeartbeatAt ?? null })) : null,
     nodesDropped: Number.isSafeInteger(nodesDropped) && nodesDropped >= 0 ? nodesDropped : 0,
     ...(frontBind ? { frontBind: { pr: frontBind.pr, headSha: frontBind.headSha, claimId: frontBind.claimId } } : {}),
-    // resident DESIGN §66 (push mode, on only): what was adopted from landed batches, the members GitHub has not marked merged yet, the
+    // resident ADR 0018 (push mode, on only): what was adopted from landed batches, the members GitHub has not marked merged yet, the
     // bisection, or why the landing state could not be read. Informational for the status and the PR page; never authority.
     ...(landing && mode === 'on' ? { landing: structuredClone(landing) } : {}),
   };
@@ -137,7 +137,7 @@ const validSweep = (s, now) => plain(s) && SWEEP_KINDS.includes(s.kind) && typeo
   && (s.progress === undefined || validSweepProgress(s.progress));
 const validActions = a => plain(a) && ['touchedRunning', 'adopted', 'returned', 'failedReported', 'watermarkReported'].every(k => typeof a[k] === 'boolean') && count(a.keptAlive)
   && (a.revokeHead === null || (plain(a.revokeHead) && UUID.test(a.revokeHead.requestId ?? '') && typeof a.revokeHead.done === 'boolean'));
-// §67: a batch of several PRs names its members in merge order, the front first (2..4, distinct PRs and heads, none of them S or T).
+// ADR 0019: a batch of several PRs names its members in merge order, the front first (2..4, distinct PRs and heads, none of them S or T).
 const validMembers = (b, m) => m === undefined || (Array.isArray(m) && m.length >= 2 && m.length <= 4
   && m.every(x => plain(x) && Object.keys(x).length === 2 && Number.isSafeInteger(x.pr) && x.pr > 0 && SHA.test(x.headSha ?? '') && x.headSha !== b.testSha && x.headSha !== b.baseSha)
   && m[0].pr === b.pr && m[0].headSha === b.headSha && new Set(m.map(x => x.pr)).size === m.length && new Set(m.map(x => x.headSha)).size === m.length);
