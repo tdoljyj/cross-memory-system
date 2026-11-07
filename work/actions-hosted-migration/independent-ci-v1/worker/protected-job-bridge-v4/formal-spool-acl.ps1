@@ -1,5 +1,10 @@
 # Source v2 copy of protected-job-bridge-v3/formal-spool-acl.ps1 (DESIGN S3): the resident service SID's exact
 # migrated grants are allowed and the 'blocked' record names are fixed spool leaves. Metadata only.
+# bf57ff10 P2 A' (2026-11-07): -LiteralTarget may name up to 8 fixed spool paths joined by '|', a character no Windows
+# path can contain, so one helper process serves a whole relay transfer or mailbox read (it was one process per path:
+# 0.43 s each). Every path is checked in the given order by the unchanged per-path code below, exactly as a lone target
+# was; the first refusal of any path refuses the call (exit 2), and exit 0 means every path passed. The handles of every
+# checked chain stay held until this process ends, as one target's did. A single path behaves as before.
 param([Parameter(Mandatory=$true)][string]$LiteralTarget, [Parameter(Mandatory=$true)][string]$ProtectedRoot, [switch]$AllowControllerWrite,
   [switch]$RelayReadOutgoing, [switch]$ReadFile, [string]$SecretRoot,
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256)
@@ -66,7 +71,11 @@ try {
   $NodeLease=[NodeProfileV2]::LoadProtectedProfile('C:\ProgramData\CluedIndependentCI\resident',$ExpectedNodeProfileSha256)
   $ControllerSid=$NodeLease.Profile.ControllerSid;$OwnerSid=$NodeLease.Profile.OwnerSid
   $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-  $target = [IO.Path]::GetFullPath($LiteralTarget)
+  $targets = $LiteralTarget.Split([char]'|')
+  if ($targets.Count -lt 1 -or $targets.Count -gt 8) { throw 'FIXED_SPOOL_TARGET_COUNT_REQUIRED' }
+  foreach ($oneTarget in $targets) {
+  if ([string]::IsNullOrEmpty($oneTarget)) { throw 'FIXED_SPOOL_TARGET_REQUIRED' }
+  $target = [IO.Path]::GetFullPath($oneTarget)
   if ($target -cnotmatch '^[A-Za-z]:\\' -or $target.Substring(2).Contains(':')) { throw 'LOCAL_FIXED_PATH_REQUIRED' }
   $protected = [IO.Path]::GetFullPath($ProtectedRoot).TrimEnd('\')
   if ($target -ine $protected -and -not $target.StartsWith($protected+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'PROTECTED_ROOT_REQUIRED' }
@@ -130,6 +139,7 @@ try {
       if (($granted -band [int]$rights) -ne 0 -and $allowedWrite -notcontains $sid) { throw 'WRITABLE_ANCESTOR_REFUSED' }
       if ($private -and ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ReadData) -ne 0 -and $admins -notcontains $sid -and $sid -cne $ControllerSid) { throw 'SECRET_READER_REFUSED' }
     }
+  }
   }
   if ($ReadFile) { [Console]::Out.Write([Convert]::ToBase64String([CluedRuntimeRead]::Read($held[$held.Count-1]))) }
   exit 0

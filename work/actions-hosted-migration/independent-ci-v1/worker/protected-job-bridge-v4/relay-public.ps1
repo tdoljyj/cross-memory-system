@@ -50,9 +50,13 @@ function Read-Public([string]$Path,[int]$Limit){
 }
 function Json-Public([byte[]]$b){return (New-Object Text.UTF8Encoding($false,$true)).GetString($b)|ConvertFrom-Json}
 function New-Public([string]$Path,[byte[]]$Bytes){$h=New-Object IO.FileStream($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$h.Write($Bytes,0,$Bytes.Length);$h.Flush($true)}finally{$h.Dispose()}}
-function Check-Spool([string]$Target){
+function Check-Spool([string[]]$Targets){
   # Separate metadata-only helper, pinned and locked above. Never reads bytes.
-  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File (Join-Path $FixedSource 'formal-spool-acl.ps1') -LiteralTarget $Target -ProtectedRoot $Spool -RelayReadOutgoing -ExpectedNodeProfileSha256 $ExpectedNodeProfileSha256
+  # bf57ff10 P2 A' (2026-11-07): one helper process for every path of this transfer (it was one per path: 3 for a
+  # Receive, 5 for a Send, 0.43 s each). The helper checks each path exactly as a lone target and refuses the call when
+  # any one is refused; '|' joins them because no Windows path contains it, and a path that did is refused here.
+  if($Targets.Count -lt 1 -or $Targets.Count -gt 8 -or @($Targets|Where-Object{$_ -isnot [string] -or $_.Length -lt 1 -or $_.Contains('|')}).Count -ne 0){throw 'FORMAL_SPOOL_ACL_REFUSED'}
+  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File (Join-Path $FixedSource 'formal-spool-acl.ps1') -LiteralTarget ($Targets -join '|') -ProtectedRoot $Spool -RelayReadOutgoing -ExpectedNodeProfileSha256 $ExpectedNodeProfileSha256
   if($LASTEXITCODE -ne 0){throw 'FORMAL_SPOOL_ACL_REFUSED'}
 }
 function Safe-ChildError([string]$Text){
@@ -83,14 +87,17 @@ try{
   $names=@('boundary.mjs','protocol.mjs','mailbox.mjs','windows-issuer.mjs','linux-worker.mjs','signed-result.mjs','relay-record.mjs','relay-public.ps1','formal-spool-acl.ps1','issue-job.mjs')
   if($m.contract -cne 'clued.independent-ci.protected-job-bridge-source/4' -or (@($m.runtimeFiles.PSObject.Properties.Name|Sort-Object)-join '|') -cne (($names|Sort-Object)-join '|')){throw 'EXACT_BRIDGE_SOURCE_REQUIRED'}
   foreach($name in $names){$b=Read-Public (Join-Path $FixedSource $name) $Max;if($b.Length -ne $m.runtimeFiles.$name.bytes -or (Hash-Bytes $b) -cne $m.runtimeFiles.$name.sha256){throw 'ACCEPTED_SOURCE_CHANGED'}}
-  Hold-Parents $Spool;Hold-Parents (Join-Path $Spool 'outgoing');Hold-Parents (Join-Path $Spool 'incoming');Check-Spool $Spool;Check-Spool (Join-Path $Spool 'outgoing');Check-Spool (Join-Path $Spool 'incoming')
   $send=$Mode.StartsWith('Send');$suffix=$Sequence.ToString('00')
   $name=switch($Mode){'SendIssue'{'issue'}'SendResponse'{'response-'+$suffix}'ReceiveChallenge'{'challenge-'+$suffix}'ReceiveResult'{'result'}'ReceiveBlocked'{'blocked'}}
   $operation=switch($Mode){'SendIssue'{'--import-issue'}'SendResponse'{'--import-response '+$Sequence}'ReceiveChallenge'{'--export-challenge '+$Sequence}'ReceiveResult'{'--export-result'}'ReceiveBlocked'{'--export-blocked'}}
+  # The same paths as before, in the same order (spool, outgoing, incoming, then a Send's record and its ready marker),
+  # checked by one helper call after the three parent locks and before any record byte is read.
+  $aclTargets=@($Spool,(Join-Path $Spool 'outgoing'),(Join-Path $Spool 'incoming'))
+  if($send){$file=Join-Path (Join-Path $Spool 'outgoing') ($name+'.json');$ready=Join-Path (Join-Path $Spool 'outgoing') ($name+'.ready.json');$aclTargets+=@($file,$ready)}
+  Hold-Parents $Spool;Hold-Parents (Join-Path $Spool 'outgoing');Hold-Parents (Join-Path $Spool 'incoming');Check-Spool $aclTargets
   $inputText='';$raw=$null
   if($send){
-    $file=Join-Path (Join-Path $Spool 'outgoing') ($name+'.json');$ready=Join-Path (Join-Path $Spool 'outgoing') ($name+'.ready.json')
-    Check-Spool $file;Check-Spool $ready;$raw=Read-Public $file $Max;$r=Json-Public (Read-Public $ready 4096)
+    $raw=Read-Public $file $Max;$r=Json-Public (Read-Public $ready 4096)
     if((@($r.PSObject.Properties.Name|Sort-Object)-join '|') -cne 'bytes|contract|sha256' -or $r.contract -cne 'clued.independent-ci.complete-public-file/1' -or $r.bytes -ne $raw.Length -or $r.sha256 -cne (Hash-Bytes $raw)){throw 'PUBLIC_READY_CHANGED'}
     $inputText=@{bytes=$raw.Length;sha256=(Hash-Bytes $raw);base64=[Convert]::ToBase64String($raw)}|ConvertTo-Json -Compress
   }else{foreach($leaf in @($name+'.json',$name+'.ready.json')){if(Test-Path -LiteralPath (Join-Path (Join-Path $Spool 'incoming') $leaf)){throw 'EXISTING_RECORD_PRESERVED_NO_RETRY'}}}

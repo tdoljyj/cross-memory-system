@@ -160,8 +160,16 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     } finally { reservation.ms = Math.max(0, clock() - opened); }
   }
   // `until` (a write read-back) also bounds a token refresh it needs.
+  // bf57ff10 P2 E1 (2026-11-07): reads now run side by side, so callers without `until` that need a new token share the
+  // one exchange in flight instead of each minting their own; its checks and failure are the same for all of them.
+  let minting = null;
   async function credential(until = null) {
     if (token && Date.parse(token.expires_at) > clock() + 60_000) return token.token;
+    if (until !== null) return mint(until);
+    if (!minting) minting = mint(null).finally(() => { minting = null; });
+    return minting;
+  }
+  async function mint(until) {
     let appJwt;
     try { appJwt = jwt(appId, await privateKeyProvider(), clock()); }
     catch { fail('github_credential_unavailable'); }
@@ -273,8 +281,12 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     async getInstallationToken() { return credential(); },
     async readAdmissionMode() {
       if (!includeModeRead) fail('mode_read_not_configured');
-      const repoMode = await modeScope('/actions/variables');
-      const environmentMode = await modeScope('/environments/clued-admission/variables');
+      // bf57ff10 P2 E1 (2026-11-07): the two scopes are read side by side (they were one after the other); the result is
+      // built only after both are complete, and a failure is reported in the old order (the repository scope's first).
+      const [repoRead, environmentRead] = await Promise.allSettled([modeScope('/actions/variables'), modeScope('/environments/clued-admission/variables')]);
+      if (repoRead.status === 'rejected') throw repoRead.reason;
+      if (environmentRead.status === 'rejected') throw environmentRead.reason;
+      const repoMode = repoRead.value, environmentMode = environmentRead.value;
       const effective = environmentMode.exists ? environmentMode : repoMode;
       const observations = { repository: repoMode, environment: environmentMode };
       const observedAt = new Date(clock()).toISOString();

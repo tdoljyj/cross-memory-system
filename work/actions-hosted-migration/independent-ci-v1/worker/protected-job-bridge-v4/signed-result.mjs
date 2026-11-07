@@ -14,7 +14,7 @@ import {takeActualObservation as takeGitleaks} from '../formal-gitleaks-v4/adapt
 import {REVIEWED_COMMITS,matchesReviewedHistoryProof} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 import {takeActualObservation as takeTrivy,TRIVY_OBSERVATION_CONTRACT} from '../formal-trivy-v4/adapter.mjs';
 import {takeActualObservation as takePlacement,WORKFLOW_SHA256S as PLACEMENT_WORKFLOW_SHA256S} from '../formal-contract-placement-v2/adapter.mjs';
-import {loadFixedRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
+import {loadFixedRolePolicy,takeFinishedRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {takeAcceptedBridgeContext} from './boundary.mjs';
 import {validateIssue,digest} from './protocol.mjs';
 export const RESULT_WRAPPER_CONTRACT_V2='clued.independent-ci.protected-job-result/2';
@@ -50,10 +50,12 @@ export function resultPayload(issue,observation,facts,runtimeIdentity){
     conclusion:observation.conclusion,artifactsSha256:digest([]),requestDigest:digest(issue),sourceSha:observation.sourceSha,
     executionObservationSha256:digest(observation),profile:observation.profile,cleanupSha256:digest(observation.cleanup),logDigestMode:issue.job.role==='trivy'?'canonical-scan-log-digests':'actual-stream-sha256'};
 }
-export async function signActualBridgeResult(context,issue,observation){
+// session (optional): the role session whose finish() has just loaded the role policy after the execution; that load is
+// used once instead of a second identical one (bf57ff10 P2 D). Without it, or for another job, the policy is loaded here.
+export async function signActualBridgeResult(context,issue,observation,{session=null}={}){
   takeAcceptedBridgeContext(context);check(context.side==='linux','ACTUAL_LINUX_SIGNER_CONTEXT_REQUIRED');validateIssue(issue);
   (issue.job.role==='gitleaks'?takeGitleaks:issue.job.role==='trivy'?takeTrivy:takePlacement)(observation,issue.job);
-  const facts=observationFacts(issue,observation),{config,publicKey,qualification}=await loadFixedRolePolicy(issue.job);
+  const facts=observationFacts(issue,observation),{config,publicKey,qualification}=(session&&takeFinishedRolePolicy(session,issue.job))??await loadFixedRolePolicy(issue.job);
   check(config.sourceManifestSha256===issue.job.sourceManifestSha256&&config.sourceAcceptanceRef===issue.sourceAcceptanceRef&&config.hostAcceptanceRef===issue.hostQualificationRef&&observation.image===config.image&&observation.runtimeIdentity===config.runtimeIdentity&&observation.hostAcceptanceRef===config.hostAcceptanceRef&&observation.sourceAcceptanceRef===config.sourceAcceptanceRef,'ACTUAL_RESULT_AUTHORITY_CHANGED');
   await protectedPath(config.signingKeyFile,{privateFile:true});const key=await fs.readFile(config.signingKeyFile),pub=createPublicKey(key);
   check(pub.asymmetricKeyType==='ed25519'&&pub.export({type:'spki',format:'der'}).equals(createPublicKey(publicKey).export({type:'spki',format:'der'})),'EXISTING_RESULT_KEY_CHANGED');

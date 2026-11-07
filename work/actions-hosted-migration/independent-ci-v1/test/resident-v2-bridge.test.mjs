@@ -556,7 +556,9 @@ test('issuer: the first admission retries an unavailable evaluation while a call
 
 test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change, a refusal is its own reason; otherwise the complete admission runs', async () => {
   const job = { id: 'job' }, batchClaim = { claimId: 'c' }, packet = { complete: true, paths: ['a.txt'] }, calls = [];
-  const admission = { evaluatePr: async (...args) => { calls.push(args); return { status: 'ADMITTED', marker: 1 }; } };
+  // bf57ff10 P2 E1: the admission runs side by side with the read and gets it as a deferred packet; its answer counts only
+  // when the read succeeded (the stand-in records what its packet turned out to be)
+  const admission = { evaluatePr: async (j, packet, options) => { calls.push([j, await packet().then(p => p, e => ({ failed: e?.code })), options]); return { status: 'ADMITTED', marker: 1 }; } };
   const throwing = code => ({ readChangedPaths: async () => { throw code === undefined ? undefined : Object.assign(new Error(code), { code }); } });
   for (const code of ['github_transport_unconfirmed', 'github_http_502', 'github_http_429', undefined]) {
     assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
@@ -569,7 +571,10 @@ test('issuer evaluate: a failed changed-paths read is unavailable (retried), a P
   }
   assert.deepEqual(await issuerEvaluate({ github: throwing('pr_subject_changed'), admission, job, batchClaim })(),
     { status: 'BLOCKED', reason: 'full_admission_subject_changed', diagnostic: { phase: 'changed_paths' } });
-  assert.equal(calls.length, 0, 'no admission without the changed paths');
+  // every admission run beside a failed read saw its packet fail, and none of their answers was used
+  assert.deepEqual(calls.map(c => c[1]), [{ failed: 'github_transport_unconfirmed' }, { failed: 'github_http_502' }, { failed: 'github_http_429' }, { failed: undefined },
+    { failed: 'pr_files_changed' }, { failed: 'invalid_pr_files' }, { failed: 'github_http_403' }, { failed: 'pr_subject_changed' }]);
+  calls.length = 0;
   const read = [];
   const ok = await issuerEvaluate({ github: { readChangedPaths: async j => { read.push(j); return packet; } }, admission, job, batchClaim })();
   assert.deepEqual([ok, read, calls], [{ status: 'ADMITTED', marker: 1 }, [job], [[job, packet, { batchClaim }]]]);

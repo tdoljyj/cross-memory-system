@@ -101,32 +101,71 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   const evaluateImpl = typeof hooks.evaluateImpl === 'function' ? hooks.evaluateImpl : evaluate;
   return Object.freeze({
     fixture: config?.domain === 'fixture',
+    // packet: the changed-paths packet, or (bf57ff10 P2 E1, 2026-11-07) a function returning a promise of it, so the
+    // issuer can read it side by side with this evaluation (windows-issuer.mjs#issuerEvaluate). A deferred packet is
+    // checked exactly as a given one, only later: no Native RPC is sent before it has arrived complete and valid
+    // (timedFetch below), and every answer given after the subject check waits for it and is replaced by
+    // full_admission_subject_invalid when it failed or is invalid, which is what a given invalid packet returned before
+    // anything else. The facts are assembled only after every read (mode, PR, packet, evaluation) is complete.
+    // The guarantee is "no Native contact without a valid packet" (Native verify carries pr_ref: a write); GitHub reads
+    // may run meanwhile, but once the packet has failed or is invalid every further read of this evaluation throws at
+    // once instead of being sent (review MINOR 2: no read budget spent on an answer that can no longer count).
     async evaluatePr(job, packet, options = {}) {
       if (!configured || typeof tokenProvider !== 'function' || typeof recorderProvider !== 'function'
         || typeof fetchImpl !== 'function' || typeof clock !== 'function') return blocked('full_admission_not_configured');
+      const deferred = typeof packet === 'function';
+      let packetRefused = false;
+      const packetRead = deferred ? Promise.resolve().then(packet).then(value => ({ ok: true, value }), () => ({ ok: false }))
+        .then(p => { if (!p.ok || !packetValid(job, p.value)) packetRefused = true; return p; }) : null;
+      const refusedNow = () => { if (packetRefused) throw Object.assign(new Error('full_admission_packet_refused'), { code: 'full_admission_packet_refused' }); };
+      const packetGate = async () => {
+        const p = await packetRead;
+        if (!p.ok || !packetValid(job, p.value)) throw Object.assign(new Error('full_admission_packet_refused'), { code: 'full_admission_packet_refused' });
+        return p.value;
+      };
+      let pastSubject = false;
+      const answer = await evaluateWith(job, deferred ? null : packet, options, { deferred, packetGate, refusedNow, past: () => { pastSubject = true; } });
+      if (!deferred || !pastSubject) return answer;
+      const p = await packetRead;
+      return p.ok && packetValid(job, p.value) ? answer : blocked('full_admission_subject_invalid');
+    },
+  });
+  async function evaluateWith(job, packet, options, { deferred, packetGate, refusedNow, past }) {
       let phase = 'mode';
+      // Every GitHub read of a deferred-packet evaluation stops at once when the packet has already failed.
+      const readFetch = deferred ? (url, opts) => { refusedNow(); return fetchImpl(url, opts); } : fetchImpl;
       try {
         validateJobV2(job);
         const batchClaim = options?.batchClaim ?? null;
         if (!plain(options) || Object.keys(options).some(k => !['batchClaim', 'scheduling'].includes(k)) || !batchClaimValid(batchClaim)
           || !(options.scheduling === undefined || typeof options.scheduling === 'function')) return blocked('full_admission_subject_invalid');
         const tell = (outcome, native) => { try { options.scheduling?.(Object.freeze(sanitizeSchedulingV2(schedulingFactsV2(outcome, native, REPO)))); } catch { /* told, never asked */ } };
-        if (job.repo !== config.repository || job.sourceManifestSha256 !== config.sourceManifestSha256 || !packetValid(job, packet)) return blocked('full_admission_subject_invalid');
+        if (job.repo !== config.repository || job.sourceManifestSha256 !== config.sourceManifestSha256 || (!deferred && !packetValid(job, packet))) return blocked('full_admission_subject_invalid');
+        past();
         if (digest(evaluatorBytes()) !== config.evaluatorSha256) return blocked('full_admission_source_changed');
         const started = clock();
         if (!Number.isSafeInteger(started)) return blocked('full_admission_clock_invalid');
-        const mode = typeof modeProvider === 'function' ? await modeProvider() : config.modeObservation;
-        const modeReturnedAt = clock();
+        // bf57ff10 P2 E1: the mode read and (installation token, then the PR read) run side by side; they were one after the
+        // other. Their results are judged only when all are complete, in the old order and with the old phases, so each
+        // refusal and failure is the old one; the PR is read only with credentials that pass the principal check.
+        const credentialsValid = credentials => plain(credentials) && typeof credentials.githubToken === 'string' && !!credentials.githubToken
+          && /^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(credentials.ciAdmissionToken ?? '')
+          && credentials.ciPrincipalBindingId === config.ciPrincipalBindingId
+          && credentials.ciPrincipalQualificationRef === config.ciPrincipalQualificationRef;
+        const modeRead = (async () => { const value = typeof modeProvider === 'function' ? await modeProvider() : config.modeObservation; return { value, at: clock() }; })();
+        const principalRead = Promise.resolve().then(() => tokenProvider());
+        const prRead = principalRead.then(c => credentialsValid(c) ? githubJson(readFetch, { GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: c.githubToken }, `/repos/${REPO}/pulls/${job.pr}`) : null);
+        const [modeResult, principalResult, prResult] = await Promise.allSettled([modeRead, principalRead, prRead]);
+        if (modeResult.status === 'rejected') throw modeResult.reason;
+        const mode = modeResult.value.value, modeReturnedAt = modeResult.value.at;
         if (!plain(mode) || mode.complete !== true || mode.repository !== REPO || mode.variable !== VARIABLE
           || mode.source !== 'github-repository-variables' || typeof mode.exists !== 'boolean'
           || !Number.isSafeInteger(modeReturnedAt) || modeReturnedAt < started
           || !fresh(mode.observedAt, modeReturnedAt) || typeof mode.proofRef !== 'string' || !mode.proofRef
           || (mode.exists && typeof mode.value !== 'string')) return blocked('full_admission_mode_unknown');
-        phase = 'principal'; const credentials = await tokenProvider();
-        if (!plain(credentials) || typeof credentials.githubToken !== 'string' || !credentials.githubToken
-          || !/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(credentials.ciAdmissionToken ?? '')
-          || credentials.ciPrincipalBindingId !== config.ciPrincipalBindingId
-          || credentials.ciPrincipalQualificationRef !== config.ciPrincipalQualificationRef) return blocked('full_admission_principal_unknown');
+        phase = 'principal'; if (principalResult.status === 'rejected') throw principalResult.reason;
+        const credentials = principalResult.value;
+        if (!credentialsValid(credentials)) return blocked('full_admission_principal_unknown');
         phase = 'observer'; const observation = await recorderProvider({ repository: REPO, jobId: job.id, domain: config.domain });
         const recorderReturnedAt = clock();
         const baseRecorder = observation?.recorder;
@@ -137,19 +176,26 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         const env = { GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: credentials.githubToken,
           CLUED_CONTEXT_READ_TOKEN: credentials.ciAdmissionToken, CLUED_SUPABASE_URL: config.supabaseUrl,
           CLUED_SUPABASE_PUBLISHABLE_KEY: config.publishableKey, [VARIABLE]: mode.exists ? mode.value : '' };
-        phase = 'pull_request'; const pr = await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`);
+        phase = 'pull_request'; if (prResult.status === 'rejected') throw prResult.reason;
+        const pr = prResult.value;
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
         const prBase = pr.base.sha;
         // A-strict: the claim is whatever the PR names NOW (body trailer, else head commit trailer).
         phase = 'claim_reference'; let reference = parseClaimReference(pr.body);
-        if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
+        if (!reference) reference = parseClaimReference((await githubJson(readFetch, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
         if (!reference || !uuid.test(reference.claim_id ?? '')) return blocked('full_admission_claim_missing');
         if (reference.scope !== config.scope || (batchClaim && reference.claim_id !== batchClaim.claimId)) return blocked('full_admission_claim_changed');
         // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
         // (Decision 1100a0ed); without a seen send, from the start of the evaluation, which is earlier.
         let native = null, nativeSentMono = null, verifySentMono = null;
         const evaluateStartMono = monotonic();
-        const timedFetch = (url, opts) => { if (String(url).endsWith(`/rest/v1/rpc/${VERIFY_RPC}`)) verifySentMono = monotonic(); return fetchImpl(url, opts); };
+        // A deferred packet gates every Native RPC of the evaluation: none is sent before the packet is complete and valid.
+        const timedFetch = async (url, opts) => {
+          if (deferred && String(url).includes('/rest/v1/rpc/')) await packetGate();
+          else if (deferred) refusedNow();
+          if (String(url).endsWith(`/rest/v1/rpc/${VERIFY_RPC}`)) verifySentMono = monotonic();
+          return fetchImpl(url, opts);
+        };
         const recorder = { newId: () => baseRecorder.newId(), record(kind, data) {
           baseRecorder.record(kind, data);
           if (kind === 'claim_verification') { native = structuredClone(data.result?.payload); nativeSentMono = verifySentMono ?? evaluateStartMono; }
@@ -162,10 +208,11 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired', rejectionDiagnostic(outcome, native, { modeFresh: fresh(mode.observedAt, finished), recorderFresh: fresh(observation.observedAt, finished) }));
         if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected', rejectionDiagnostic(outcome, native));
         phase = 'post_pull_request';
+        if (deferred) packet = await packetGate();
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== prBase || outcome.pr_ref !== prRef
           || outcome.claim_id !== reference.claim_id || outcome.scope !== config.scope
           || digest([...outcome.changed_paths].sort()) !== digest([...packet.paths].sort())
-          || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
+          || !samePr(await githubJson(readFetch, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
         phase = 'native'; const claim = native?.claim;
         if (native?.status !== 'ok' || native.verdict !== 'ADMITTED' || native.execution_authorized !== true
           || !supportedNativeExecution(native.execution_policy, claim?.lease_key_required)
@@ -202,8 +249,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
           { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
       } catch (error) { return blocked('full_admission_unavailable', { phase, transport: transportFault(error) }); }
-    },
-  });
+  }
 }
 
 export { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, ADMISSION_FIELDS_V2, ADMISSION_FIELDS_V3, supportedNativeExecution, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';

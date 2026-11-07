@@ -506,6 +506,7 @@
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-record.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-stage.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/qualification-observer.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/relay-roundtrip-opt.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-admission.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-entry-runtime-reasons.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-publishers.test.mjs",

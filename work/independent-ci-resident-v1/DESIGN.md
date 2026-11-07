@@ -5175,3 +5175,39 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 - `timing` 的内容：`last`（最近完成批次）、`current`（在跑批次已累计各段，`openedAt` 为当前段起点，读端用 `activeMs + (now - openedAt)` 算已用时间）、`stats`（最近 20 个已结束批次每段的 n / 中位数 / P90；中位数取中间值，偶数个取中间两个的均值四舍五入；P90 取最近秩，即第 ceil(0.9n) 小；只统计测到该段的批次，`active` 只统计 COMPLETED 批次）、`pushToGreen`（当天 UTC 日、COMPLETED 批次从队列首次看到该提交到第 8 段结束的 n / 中位数 / P90 / 最大）、`train`（第 10 段各轮的 `ms` 与扫描段占用 `scanMs`，后者取该轮的清扫起止与本轮时间窗的重叠，没有清扫事实时为 null）、以及 `done` / `open`（恢复用，见下）。
 - 重启：`done`（最近 40 个已结束批次）、`open`（停靠中未结束的批次）和第 10 段各轮随快照整体写入 `status.json`；服务启动时读回上一份快照并逐项重新校验（`service-main.mjs`），读不出就空着开始。`done` 在序列化超过 80 KB 时从最旧的一端截掉，快照因此始终远小于 `STATUS_MAX_BYTES`。
 - PR 页的运行中一行在阶段文字与租约提醒之间插入“已跑 N分；备 … 1:… 2:…”，只用租约提醒之外剩下的字数再减 30 字的余量（给补跑、当班词、看门狗行留位置），所以 140 字上限与租约提醒都不会因它被截掉；按整分钟显示，所以这一行最多每分钟变一次。停靠在 A（没有段）的批次和别的批次的计时不显示。
+
+## 67. 准入往返去掉重复开销（优化方案 bf57ff10 P2，分支 `claude/relay-roundtrip-opt`）
+
+**实测**（#1034、#1035 车头批次）：每轮约 16–17 秒＝拾取 1–1.5 + ReceiveChallenge 3.1 + Windows 准入 8.7 + SendResponse 3.9；一个批次 relay 层约 282 秒。原则：**不少任何一项校验**，只去掉重复的子进程、重复的重载和串行的读。
+
+### 67.1 ACL 子进程合并（`CI/worker/protected-job-bridge-v4/relay-public.ps1`、`formal-spool-acl.ps1`、`mailbox.mjs`）
+
+- `formal-spool-acl.ps1` 的 `-LiteralTarget` 可带最多 8 条路径，用 `|` 连接（Windows 路径不可能含 `|`）；每条路径都由原来那段逐路径判定代码检查，任何一条被拒整次退出码 2，全过才 0。旧版与新版对 42 个单路径用例（两种模式、叶子名、junction、可写 ACE、缺失、越界）退出码完全一致。
+- relay：三把 Hold-Parents 之后、读第一个字节之前，一次 Check-Spool 覆盖 spool、outgoing、incoming（Send 再加记录与 ready 标记）：Receive 3→1 个进程，Send 5→1 个进程，失败码仍是 `FORMAL_SPOOL_ACL_REFUSED`。
+- 签发方读记录：ready 与数据文件都在时一次调用；任一缺失或联合调用被拒，走原来的逐文件顺序，只用来决定报哪个拒绝码；**联合调用被拒而逐文件都通过时，仍以 `FORMAL_MAILBOX_ACL_JOINT_REFUSED` 失败**。
+
+### 67.2 relay 上下文与 Linux worker 的拆分重载（`boundary.mjs#loadLinuxRelayContext`、`relay-record.mjs`、`linux-worker.mjs`）
+
+- relay 上下文保留：root、`loadQualifiedPolicyV2` 全部（策略文件、Docker socket、运行时路径与各钉值、清单哈希、资格签名与载荷）、当前时钟的 `validateSelectedFacts`、relay 描述符、入口文件、Source 钉值集合的形状与完整性。**不做**：git 检查（`trackedSource`）、钉住文件的重新哈希（`checkLinuxSource`）、trivy `cacheRoot`、gitleaks python 钉值。它不是 accepted context，开不了受信邮箱、碰不到签名器。
+- **Linux worker 每个回调（复审 MAJOR-1）**：Windows 收到任何挑战都会做完整准入，其中 Native verify 带 pr_ref，是一次**写**。所以重载拆成两段：
+  1. **写挑战之前完整做完**：relay 上下文（策略、清单、资格，当前时钟）＋本 job 的接受 ref 与清单比较。被拒就**不写挑战**，与以前一样。
+  2. 其余（git 与全部 Source 重新哈希，约 1 秒）与等待 Windows 并行；它通过之前不验证响应、不交给适配器、不签名；它的拒绝优先于写挑战失败和等待失败，并立即中止等待。
+  - 剩余风险（如实记录）：Source checkout 在两次回调之间漂移时，第 2 段才发现，这时挑战已写出，Windows 可能多做一次准入（含一次 Native verify 写），其答复永不被采用。
+  - scan-start（请求 Native 效果）仍先做完整重载、后写挑战。
+- 启动：session 复用 context 里带 actual 品牌的角色策略（同一 job、当前时钟重新 `validateSelectedFacts`，否则重新加载）；收尾：签名器复用 `session.finish` 在**执行之后**加载的那份（一次性），签名前的时钟检查不变。
+
+### 67.3 Windows 准入并发（`windows-issuer.mjs`、`full-admission-v2.mjs`、`github.mjs`）
+
+- changed-paths 与准入并发：准入拿“延迟包”。**保证是：包完整有效之前不碰 Native**（任何 `/rest/v1/rpc/` 请求都等包）；事实只在包到齐后组装；包失败或无效时答复换成 `full_admission_subject_invalid`，签发方仍按读路径自己的失败原因答复。包一旦失败，评估里此后的每个 GitHub 读立即抛错、不再发出（复审 MINOR 2：限流时不放大额度消耗）；在此之前已在途的读（最多几次）照常完成。
+- 两个 mode scope 并发；mode 读与（取 token→读 PR）并发；全部完成后按原顺序、原 phase 判定；凭据不过 principal 检查就不读 PR。并发的首次读共用一次 token 交换。
+- remote-refs 那一轮：准入与 refs 收集并发，先判准入。**新鲜度（复审 MINOR 6，运维风险）**：并发时 refs 在准入进行中取得，而不是准入之后；准入慢或重试时，refs 到答复时会更旧。缓解：准入完成时 refs 已超过 `ISSUE_FRESH_MARGIN_MS`（10 秒）就在准入之后再收集一次（与改动前相同的顺序），所以答复不会比串行版更旧；代价是这种慢路径回到串行耗时。运维上若见 `REMOTE_REFS_*` 或 refs 过期类 blocked 增多，先看准入耗时。
+
+### 67.4 不可变读缓存与耗时日志（`resident-v2/entry-runtime.mjs`）
+
+- 每个入口进程一份缓存，**只**缓存按 SHA 固定的读：`compare/<sha>...<sha>`、`commits/<sha>`、`contents/...?ref=<sha>`；URL 必须是规范形式（`new URL(u).href===u`），不得有空段、`.`、`..` 或 `%2e`；只在 Accept 恰为 `application/vnd.github+json` 时缓存（Headers 实例与任意大小写的 Accept 都识别）；只存完整的 200；命中仍调用 `live()`，返回同样字节，只保留 content-type、etag、last-modified 三个响应头。
+- 每次网络请求和每次命中写一行 `fetch-timings.jsonl`（与 observations.jsonl 同目录）：固定词表的 URL 模式（词表外一律占位）、方法、状态、毫秒、是否命中；不记值、不记令牌；至多 16 MiB，尽力而为。
+
+### 67.5 安装与测试
+
+- 全是 CI Source：新的 Source 清单；Linux 三个角色（gitleaks、trivy、contract-placement）重签（`entrySha256` 随 `linux-worker.mjs` 变，清单哈希变）；companion 的 `bridgeManifestSha256` 安装时重算。
+- 测试：`CI/test/relay-roundtrip-opt.test.mjs`（A′ 真跑 ACL 助手副本、relay 一次启动、邮箱读顺序与联合拒绝、relay 上下文拒绝面、D 的拆分与优先级与 scan-start、复用条件、E1 延迟包与提前中止、E3 缓存范围与 Accept/路径规范、日志词表），`issuer-refs-transient.test.mjs` 的 E2 并发与重新收集。
