@@ -463,12 +463,13 @@ B 上的第 8 段尝试：
 | 第 8 段 CI 自动入队 | 不在队列时 `merge_queue_join` | `claim-assist-native.mjs` |
 | 第 1 段 CI 重新入队 | 车头 PR 的新 head：最新车头批次是本 PR 另一个 head、同一认领，且不在队列时（ADR 0016） | `claim-assist-native.mjs#stage1FrontRequeue` |
 | running 时钟 | `touch running` 后最长 90 分钟，受 `slotHardCapMinutes`（默认 120）约束 | 第 10 段 |
+| 第 10 段队位续期 | 已绑定的队首在等车头、或它的车头批次在跑/停靠，队位剩余 < 20 分钟时 `touch running` 一次；每轮最多一次合并位写入（ADR 0017） | `train-maintenance.mjs#renewFrontSlot` |
 | 绿之后的合并时间 | 30 分钟 | 服务端 |
 | 服务端保活 | 延长排队认领，不越过硬截止 | `clued_private.work_claim_merge_queue_keepalive_v1`（CI 命令门操作 `merge_queue_keepalive`） |
 
 开车头批次前，如果剩余时间小于 `frontBatchBudgetMs` 加一次第 8 段尝试，就不开（`TRAIN_FRONT_BUDGET_SHORT`）。
 
-合并位只由持有者续期和 `touch`（上表的 running/green）推后；`lease_extend` 和 keepalive 只延长租约。认领成为队首到第 10 段开车头之间没有延长，残余与建议见 ADR 0016。
+合并位只由持有者续期和 `touch`（上表的 running/green）推后；`lease_extend` 和 keepalive 只延长租约。认领成为队首到第 10 段开车头之间原先没有延长（ADR 0016 的残余），第 28 代由第 10 段的队位续期补上（[ADR 0017](adr/0017-stage10-front-slot-renewal.md)）。
 
 ---
 

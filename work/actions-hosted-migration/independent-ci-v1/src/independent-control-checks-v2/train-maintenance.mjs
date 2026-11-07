@@ -12,7 +12,9 @@
 //                segment, with revocations confirmed twice; the sweep proof; keepalive once; adopt, return or touch
 //                failed; the protected-layer check (H contains T); and for OPEN_FRONT_BATCH the hard-cap budget, touch
 //                running and its read-back, then the front batch (the executor's one source of S), unless this node's
-//                batch of the same S is still running. The watermark (informational) after a confirmed full sweep.
+//                batch of the same S is still running. The watermark (informational) after a confirmed full sweep. Generation 28
+//                (resident ADR 0017): a bound front that waits for its front batch, or whose front batch runs or is parked, gets
+//                one touch running when its merge slot has less than 20 minutes left (renewFrontSlot; one slot write a round).
 //   revoke-only  (under PAUSE; §41.3) the three kinds of revocation, the incremental sweep and the proof; no batch, no
 //                touch, adopt, return or keepalive.
 // The job's sweep (train-run /3; Owner decision 9e2511fe; resident DESIGN §65) says what the full sweep is for in mode on:
@@ -55,6 +57,8 @@ export const TRAIN_FACTS_STATUS = 'TRAIN_FACTS';
 export const RUNNING_CLOCK_MS = 90 * 60_000;
 export const STAGE8_ATTEMPT_MS = 90_000;
 export const MAX_FRONT_BATCHES_PER_HEAD = 2;
+// Generation 28 (resident ADR 0017): a bound front's merge slot with less than this left is renewed (renewFrontSlot).
+export const SLOT_RENEW_BELOW_MS = 20 * 60_000;
 // Generation 23 (DESIGN §62.8): an open or a batch's first refresh skips the take-over full-sweep segment only when at most this many
 // rounds came after the newest round that counted one, so at most MAX_SKIPS_BEFORE_SKIP + 1 rounds in a row skip it.
 export const MAX_SKIPS_BEFORE_SKIP = 2;
@@ -525,7 +529,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           if (!r.onDuty) { lostDuty = true; fx.n--; } else actions.returned = r.returned === true;
         } else if (job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha) {
           // §41.4 touch failed: only from the executor's frontOutcome, while this claim is the front and the head is still H
-          fx.n++;
+          fx.n++; fx.slotTouched = true;
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         }
@@ -561,6 +565,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
   } else decision = wouldDo;
+  // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
+  // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
+  if (job.mode === 'on' && !lostDuty && !requestPause && !fx.slotTouched) {
+    const r = await renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx });
+    if (r === 'NOT_ON_DUTY') { lostDuty = true; decision = 'NOT_ON_DUTY'; } else if (r === 'TOUCHED') actions.touchedRunning = true;
+  }
 
   if (job.mode === 'on' && ledger && !lostDuty && clock() - started < CLEANUP_BEFORE_MS) {
     try { summary = { ...(summary ?? { records: 0, refused: 0 }), closed: (await closeGreenLedgerGroups({ ledger, inMain: sweeper.inMainOf, now: clock(), deadline: until.read, clock })).closed }; }
@@ -706,7 +716,7 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   const { refusal, since, need } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock });
   if (refusal) return no(refusal);
   let touched;
-  try { fx.n++; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
+  try { fx.n++; fx.slotTouched = true; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
   catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   if (!touched.onDuty) { fx.n--; return no('NOT_ON_DUTY'); }
   if (touched.touched !== true) return no('TRAIN_FRONT_BUDGET_SHORT');
@@ -721,6 +731,50 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
   try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: batch };
+}
+
+// Generation 28 (resident ADR 0017, the 45-minute gap of ADR 0016): from the moment a claim becomes the queue head until stage 10's
+// OPEN_FRONT_BATCH touch, nothing moved the merge slot, so a front that stage 10 could not open for a while (other batches held the
+// executor, or rounds ended TRAIN_TAKEOVER_SWEEP_PENDING, TRAIN_FRONT_NOT_PROVEN, TRAIN_SWEEP_INCOMPLETE, ...) lost its slot when the
+// 45 minutes ran out. One touch running ("CI is reporting on its PR", Native's 90-minute clock, still bounded by the hard cap counted
+// from the slot's taking and by the claim lease) when all of these hold:
+//   - exactly one holder, bound to a PR of this repository (Native's touch matches bound_pr; an unbound head is §62.4's binding);
+//   - the PR is open and not merged, its head known, and no green on it (stage 8's 30-minute green clock is for the merge and a touch
+//     running would replace it): front.green false, and Native's CI state is not green on this head;
+//   - this node's newest front batch of this head and claim is not reported finished while Native's CI clock runs on this head (a
+//     front batch running or parked at stage 8), or the front waits for its front batch (wouldDo OPEN_FRONT_BATCH) and the hard cap
+//     still leaves that batch its budget (frontBatchPlan's need);
+//   - less than SLOT_RENEW_BELOW_MS of the slot is left (and it is still live: a report never revives a lapsed slot), and the hard
+//     cap leaves room past the current end (otherwise the touch could not move it);
+//   - no other merge-slot write this round (openFront's touch running, touch failed): at most one touch a round.
+// A front that is idle (draft, closed, conflicting, not containing main, green) is never renewed: it gives way when its time is up.
+// -> 'TOUCHED', 'NOT_TOUCHED', 'NOT_ON_DUTY' or null (not applicable). A reply that cannot be read counts as a write (the next
+// round reads the outcome).
+async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx }) {
+  if (!holder?.pr || !front || front.state !== 'open' || front.merged || !front.headSha || front.green) return null;
+  if (holder.ciState === 'green' && holder.ciHeadSha === front.headSha) return null;
+  const now = clock(), until = Date.parse(holder.mergeSlotUntil ?? '');
+  if (!(until > now) || !(until - now < SLOT_RENEW_BELOW_MS)) return null;
+  const since = Date.parse(normal(holder.since ?? holder.takenAt) ?? '');
+  const capUntil = Number.isFinite(since) ? since + job.slotHardCapMinutes * 60_000 : Infinity;
+  if (!(capUntil > until)) return null;
+  // A front batch of this head and claim that is not reported finished while Native's CI clock runs on this head: running or parked.
+  let batchLive = false;
+  if (holder.ciState === 'running' && holder.ciHeadSha === front.headSha) {
+    let last = null;
+    try { last = (await sweepStore?.frontBatches({ pr: holder.pr, headSha: front.headSha }))?.[0] ?? null; } catch { last = null; }
+    const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+    batchLive = !!last && !finished && last.claimId === holder.claimId;
+  }
+  // Waiting for the front batch counts only while the hard cap still leaves the batch its budget (frontBatchPlan's need): a front that
+  // can no longer be opened under the cap (TRAIN_FRONT_BUDGET_SHORT for good) gives way instead of holding the slot to the cap.
+  const waiting = wouldDo === 'OPEN_FRONT_BATCH' && capUntil - now >= job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
+  if (!batchLive && !waiting) return null;
+  let t;
+  try { fx.n++; fx.slotTouched = true; t = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
+  catch { return 'NOT_TOUCHED'; }
+  if (!t.onDuty) { fx.n--; return 'NOT_ON_DUTY'; }
+  return t.touched === true ? 'TOUCHED' : 'NOT_TOUCHED';
 }
 
 // After runTrain (review R2 M5): once a write happened, a later failure (the held record's lease, the shadow-store write) ends

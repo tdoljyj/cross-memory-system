@@ -75,7 +75,7 @@
 
 **今晚两次的真实原因不是 45 分钟计时。** 是第 8 段在 `REQUIRED_CHECK_FAILED` 时还了位。证据是回执 3606/3608 和 3768/3770：还位后 `mergeQueue` 立刻变成 `entered:false`。认领不在队里，`merge_slot_ci`（`work_claim_merge_slot_ci_view_v1`）对它自然是空的，因为这个视图只对活着的队首返回对象。#1035 的 `merge_slot_ci` 一直为空，原因就在这里。人手续期带着 merge ref，认领重新入队，所以续期“修好了”。本 ADR 的第 1 段重新入队覆盖了这两次：新 head 一到，第 1 段就重新入队。
 
-**仍然存在的真正 45 分钟窗口（未改，建议另立任务）。** 认领成为队首（`merge_slot_at`）之后，到第 10 段 `OPEN_FRONT_BATCH` 的 touch 之前，没有任何调用延长合并位。这种情况发生在第 10 段长时间轮不到（别的 PR 的批次占着执行器），或者第 10 段一直给出不 touch 的结论（`FRONT_NOT_BOUND`、`TRAIN_FRONT_BUDGET_SHORT` 等）时。§62.4/§62.6 让第 10 段在绑定后立即到期，这个窗口通常只有几分钟。
+**仍然存在的真正 45 分钟窗口（本 ADR 未改；第 28 代已由 [ADR 0017](0017-stage10-front-slot-renewal.md) 修复）。** 认领成为队首（`merge_slot_at`）之后，到第 10 段 `OPEN_FRONT_BATCH` 的 touch 之前，没有任何调用延长合并位。这种情况发生在第 10 段长时间轮不到（别的 PR 的批次占着执行器），或者第 10 段一直给出不 touch 的结论（`FRONT_NOT_BOUND`、`TRAIN_FRONT_BUDGET_SHORT` 等）时。§62.4/§62.6 让第 10 段在绑定后立即到期，这个窗口通常只有几分钟。
 
 建议的最小修法（只改 Source v2 `train-maintenance.mjs`）：on、当班、恰好一个已绑定的 holder、它的 PR 开着、且本节点有它在跑或停靠的批次时，如果 `mergeSlotUntil` 剩余不足约 20 分钟，就 touch running 一次。这正是 “CI 正在它的 PR 上报告”，仍受硬上限和租约约束。没有在跑批次时不延长，空闲 PR 照旧到时让位。
 
