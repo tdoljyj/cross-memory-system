@@ -10,11 +10,11 @@ $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
   'Ref-Diff','Ref-Target-Types','Ref-Type-Allowed','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint','Move-FailedGen2',
   'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update',
-  'Seed-Meta-Object','Seed-Meta-Failure-At','Seed-Note-Network-Failure','Seed-After-Network-Failure','Network-Step-Failed')){
+  'Seed-Meta-Object','Seed-Meta-Failure-At','Seed-Note-Network-Failure','Seed-After-Network-Failure','Network-Step-Failed','Chain-Of','Chain-Ok','Split-Pull-Heads','Read-Descriptor')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedAvailable','seedReport','SeedAfterNetworkFailureSeconds')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','ChainContract','ChainMembersMax','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedAvailable','seedReport','SeedAfterNetworkFailureSeconds')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common
@@ -40,6 +40,43 @@ $toml="# clued-reviewed-count: 2`n# clued-reviewed-finding: {`"fingerprint`":`"$
 $r=Reviewed-Commits $toml;Yes ($r.findings -eq 2 -and @($r.commits).Count -eq 2 -and $r.commits[0] -ceq $a -and $r.sha256 -ceq (Hash-Text "$a`n$b`n")) 'reviewed-commits'
 Refuse {Reviewed-Commits ($toml.Replace('count: 2','count: 3'))} 'reviewed-count-mismatch'
 Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$($b):x:rule:1`",`"kinds`":[`"K`"]}`n")} 'reviewed-duplicate'
+# DESIGN §67: descriptor /4's own shape (the twin of prepare-workspaces.py#chain_members_ok) and the chain walk over a reader
+$h1='1'*40;$h2='2'*40;$h3='3'*40;$tS='4'*40;$tT='5'*40;$tTree='6'*40
+function Desc4($o){$d=[ordered]@{contract=$ChainContract;pr=901;headSha=$h1;baseSha=$tT;testSha=$tS;testTree=$tTree;members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h2},[ordered]@{pr=903;headSha=$h3})};foreach($k in $o.Keys){$d[$k]=$o[$k]};return (($d|ConvertTo-Json -Depth 5 -Compress)|ConvertFrom-Json)}
+$ch=Chain-Of (Desc4 @{});Yes ($ch.members.Count -eq 3 -and $ch.members[2].pr -eq 903 -and $ch.members[0].headSha -ceq $h1 -and $ch.testTree -ceq $tTree) 'chain-of'
+Yes ($ChainContract -ceq 'clued.independent-ci.resident-batch-descriptor/4' -and $ChainMembersMax -eq 4) 'chain-contract'
+foreach($bad in @(@{members=@([ordered]@{pr=901;headSha=$h1})},@{members=@([ordered]@{pr=902;headSha=$h2},[ordered]@{pr=901;headSha=$h1})},@{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=901;headSha=$h2})},
+  @{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h1})},@{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$tS})},@{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$tT})},
+  @{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h2;claimId='x'})},@{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=$true;headSha=$h2})},@{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr='902';headSha=$h2})},
+  @{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h2},[ordered]@{pr=903;headSha=$h3},[ordered]@{pr=904;headSha=('7'*40)},[ordered]@{pr=905;headSha=('8'*40)})},
+  @{testTree='z'*40},@{testTree=$null},@{members=$null},@{testSha=$tT})){Refused-With {Chain-Of (Desc4 $bad)} 'BATCH_CHAIN_DESCRIPTOR_REFUSED' ('chain-of-refused:'+(($bad|ConvertTo-Json -Compress -Depth 4)))}
+$lines=@{};$lines[$tS]="$tS $('9'*40) $h3";$lines['9'*40]="$('9'*40) $('a'*40) $h2";$lines['a'*40]="$('a'*40) $tT $h1"
+$reader={param($c) $lines[$c]}
+Yes (Chain-Ok $reader $ch $tS $tT) 'chain-ok'
+Yes (-not (Chain-Ok $reader $ch $tS ('b'*40))) 'chain-other-base'
+$sw=@{};foreach($k in $lines.Keys){$sw[$k]=$lines[$k]};$sw['9'*40]="$('9'*40) $h2 $('a'*40)";Yes (-not (Chain-Ok {param($c) $sw[$c]} $ch $tS $tT)) 'chain-swapped-parents'
+$oc=@{};foreach($k in $lines.Keys){$oc[$k]=$lines[$k]};$oc[$tS]="$tS $('9'*40) $h3 $('c'*40)";Yes (-not (Chain-Ok {param($c) $oc[$c]} $ch $tS $tT)) 'chain-octopus'
+$two=Chain-Of (Desc4 @{members=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=903;headSha=$h3})});Yes (-not (Chain-Ok $reader $two $tS $tT)) 'chain-fewer-members'
+$want=[string[]]@('refs/pull/901/head','refs/pull/902/head')
+$pl=Split-Pull-Heads "$h1`trefs/pull/901/head`n$h2`trefs/pull/902/head`n" $want;Yes ($pl.Count -eq 2 -and $pl['refs/pull/902/head'] -ceq $h2) 'pull-heads'
+# a branch whose name ends like a pull ref (ls-remote matches from the tail) and refs not asked for are skipped, never taken
+$pl=Split-Pull-Heads "$h3`trefs/heads/refs/pull/901/head`n$h1`trefs/pull/901/head`n$h3`trefs/pull/901/merge`n$h3`trefs/pull/903/head`n" $want
+Yes ($pl.Count -eq 1 -and $pl['refs/pull/901/head'] -ceq $h1) 'pull-heads-only-the-names-asked-for'
+foreach($bad in @("$h1`trefs/pull/901/head`n$h2`trefs/pull/901/head`n","x`trefs/pull/901/head`n","$h1 refs/pull/901/head`n")){Refused-With {Split-Pull-Heads $bad $want} 'EXACT_REF_LINE_REQUIRED' ('pull-heads-refused:'+$bad)}
+# Read-Descriptor: /3 unchanged (and never with members or a tree), /4 only with its shape
+$rdDir=Join-Path ([IO.Path]::GetTempPath()) ('rd4-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($rdDir)
+try{
+ $BatchId='0123456789abcdef-0123456789ab';$Descriptor=Join-Path $rdDir 'descriptor.json'
+ $base3=[ordered]@{contract='clued.independent-ci.resident-batch-descriptor/3';batchId=$BatchId;repo='tdoljyj/cross-memory-system';pr=901;headSha=$h1;testSha=$tS;baseSha=$tT;sourceCommit=$tT;gitleaksTomlSha256=('e'*64)}
+ function Put-Desc($o){$d=[ordered]@{};foreach($k in $base3.Keys){$d[$k]=$base3[$k]};foreach($k in $o.Keys){$d[$k]=$o[$k]};[IO.File]::WriteAllText($Descriptor,($d|ConvertTo-Json -Depth 5 -Compress))}
+ Put-Desc @{};$rd=Read-Descriptor;Yes ($null -eq $rd.chain -and $rd.value.testSha -ceq $tS) 'read-descriptor-3'
+ $m4=@([ordered]@{pr=901;headSha=$h1},[ordered]@{pr=902;headSha=$h2})
+ Put-Desc @{contract=$ChainContract;testTree=$tTree;members=$m4};$rd=Read-Descriptor;Yes ($rd.chain.members.Count -eq 2 -and $rd.chain.testTree -ceq $tTree) 'read-descriptor-4'
+ Put-Desc @{members=$m4};Refused-With {Read-Descriptor} 'DESCRIPTOR_REFUSED' 'descriptor-3-never-with-members'
+ Put-Desc @{testTree=$tTree};Refused-With {Read-Descriptor} 'DESCRIPTOR_REFUSED' 'descriptor-3-never-with-tree'
+ Put-Desc @{contract=$ChainContract;members=$m4};Refused-With {Read-Descriptor} 'BATCH_CHAIN_DESCRIPTOR_REFUSED' 'descriptor-4-needs-tree'
+ Put-Desc @{contract='clued.independent-ci.resident-batch-descriptor/5';testTree=$tTree;members=$m4};Refused-With {Read-Descriptor} 'DESCRIPTOR_REFUSED' 'descriptor-5-refused'
+}finally{[IO.Directory]::Delete($rdDir,$true)}
 # The branch-only hint (Decision 98fec682): its table is empty since PR #991 brought d94cd486 into main, so no step gives one.
 $d94='d94cd486e29a7362888fc32cd807ceb38890acb6'
 Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$d94,$b))) 'no-hint-after-991-fetch'
@@ -68,12 +105,12 @@ try{
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=300');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
-Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 900 -and $MaxStoreAttempts -eq 3) 'retry-constants'
+Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test|ls-remote-members' -and $RetryWithinSeconds -eq 900 -and $MaxStoreAttempts -eq 3) 'retry-constants'
 function Step([string]$l,[int]$x){return [ordered]@{label=$l;exitCode=$x;stderrChars=1}}
-foreach($l in @('fetch','ls-remote','fetch-reviewed','fetch-test')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
+foreach($l in @('fetch','ls-remote','fetch-reviewed','fetch-test','ls-remote-members')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
 Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 899.9) 'retry-just-in-time'
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 900)) 'no-retry-too-late'
-foreach($l in @('init-bare','cat-file','source-gitleaks-toml','reviewed-closure','for-each-ref','test-cat-file','test-parents','for-each-ref-3')){Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61)) ('no-retry-'+$l)}
+foreach($l in @('init-bare','cat-file','source-gitleaks-toml','reviewed-closure','for-each-ref','test-cat-file','test-parents','test-tree','member-cat-file','for-each-ref-3')){Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61)) ('no-retry-'+$l)}
 foreach($r in @('REMOTE_MAIN_BASE_CHANGED','FETCHED_REFS_DIFFER_FROM_LS_REMOTE','GIT_START_UNCONFIRMED','FIXED_BUNDLE_BUILD_UNCONFIRMED')){Yes (-not (Retry-Allowed $r (Step 'fetch' 128) 61)) ('no-retry-'+$r)}
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' $null 61)) 'no-retry-without-step'
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 0) 61)) 'no-retry-exit-0'
@@ -152,7 +189,7 @@ if($git){
    $script:Root=Join-Path $tmp ('bundles\'+[Guid]::NewGuid().ToString('N').Substring(0,8));[void][IO.Directory]::CreateDirectory($script:Root)
    $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
    $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null;$script:failedAttempts=@()
-   $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
+   $script:Head=$c2;$script:Base=$c1;$script:Test=$c2;$script:Chain=$null
    $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false;$script:seedAvailable=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null;networkFailureNoted=$false}
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
   }
@@ -228,6 +265,58 @@ if($git){
   # the S fetch stalls: the whole store is built again
   New-Case @{'fetch-test'=1} $null;$Test=$cS;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $firstAttempt.stage -ceq 'fetch-test-commit-by-sha' -and $s.expectedTest.Count -eq 1) 'front-retry'
+  # 6b2. DESIGN §67, a batch of three PRs (descriptor /4): S = merge(merge(merge(T, H1), H2), H3) on T = main c1; H1 = c2 (feature),
+  # H2 and H3 on their own branches; GitHub's refs/pull/<n>/head name each member's head. The chain is checked on the store's objects.
+  function Make-Chain{
+   & $g checkout -q -b topic-2 $c1;[IO.File]::WriteAllText((Join-Path $src 'm2.txt'),"m2`n");& $g add m2.txt;& $g commit -q -m H2;$x2=(& $g rev-parse HEAD).Trim()
+   & $g checkout -q -b topic-3 $c1;[IO.File]::WriteAllText((Join-Path $src 'm3.txt'),"m3`n");& $g add m3.txt;& $g commit -q -m H3;$x3=(& $g rev-parse HEAD).Trim()
+   & $g checkout -q -b topic-o $c1;[IO.File]::WriteAllText((Join-Path $src 'mo.txt'),"mo`n");& $g add mo.txt;& $g commit -q -m O;$xo=(& $g rev-parse HEAD).Trim()
+   & $g checkout -q --detach $c1;& $g merge -q --no-ff -m S1 $c2;$s1=(& $g rev-parse HEAD).Trim();& $g merge -q --no-ff -m S2 $x2;$s2=(& $g rev-parse HEAD).Trim();& $g merge -q --no-ff -m S3 $x3;$s3=(& $g rev-parse HEAD).Trim()
+   $tree3=(& $g rev-parse "$s3^{tree}").Trim()
+   $sw2=(& $g commit-tree -p $x2 -p $s1 -m sw2 ((& $g rev-parse "$s2^{tree}").Trim())).Trim();$sw3=(& $g commit-tree -p $sw2 -p $x3 -m sw3 $tree3).Trim()
+   & $g checkout -q main
+   foreach($pair in @(@('refs/pull/101/head',$c2),@('refs/pull/102/head',$x2),@('refs/pull/103/head',$x3),@('refs/pull/109/merge',$s3),@('refs/pull/110/merge',$sw3))){& $g update-ref $pair[0] $pair[1]}
+   return @{s1=$s1;s2=$s2;s3=$s3;x2=$x2;x3=$x3;xo=$xo;tree=$tree3;sw3=$sw3}
+  }
+  function Drop-Chain{foreach($r in @('refs/heads/topic-2','refs/heads/topic-3','refs/heads/topic-o','refs/pull/101/head','refs/pull/102/head','refs/pull/103/head','refs/pull/109/merge','refs/pull/110/merge')){& $g show-ref --verify --quiet $r;if($LASTEXITCODE -eq 0){& $g update-ref -d $r}}}
+  function Chain-Case($k,$o){
+   New-Case @{} $null;$script:Test=$k.s3
+   $d=[ordered]@{contract=$ChainContract;pr=101;headSha=$c2;baseSha=$c1;testSha=$k.s3;testTree=$k.tree;members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=102;headSha=$k.x2},[ordered]@{pr=103;headSha=$k.x3})}
+   foreach($n in $o.Keys){$d[$n]=$o[$n]};if($o.ContainsKey('testSha')){$script:Test=$o['testSha']}
+   $script:Chain=Chain-Of (($d|ConvertTo-Json -Depth 5 -Compress)|ConvertFrom-Json)
+  }
+  $k=Make-Chain
+  try{
+   $chainRefs=Ref-Map ((& git ls-remote --branches --tags $src)-join "`n") "`t" $true;Yes ($chainRefs.Count -eq 6) 'chain-fixture'
+   Chain-Case $k @{};$s=Fetch-Store
+   Yes ($attempts -eq 1 -and $s.expectedTest.Count -eq 1 -and $s.expectedTest[$TestPrefix+$k.s3] -ceq $k.s3 -and (Same-Map $s.remote $chainRefs)) 'chain-store'
+   Yes (@($calls|Where-Object{$_ -ceq 'test-parents'}).Count -eq 3 -and @($calls|Where-Object{$_ -ceq 'ls-remote-members'}).Count -eq 1 -and @($calls|Where-Object{$_ -ceq 'test-tree'}).Count -eq 1 -and @($calls|Where-Object{$_ -ceq 'member-cat-file'}).Count -eq 3) 'chain-store-steps'
+   $cb=Join-Path $Root 'all-refs.bundle';$null=Invoke-Git 'bundle-create' ($Common+@($s.gd,'bundle','create','--quiet','--version=2',$cb,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'))
+   $hdr=Bundle-Header $cb;Yes ((Same-Map $hdr.formal $chainRefs) -and (Same-Map $hdr.test $s.expectedTest)) 'chain-bundle'
+   # a wrong parent (S2's parents swapped), a head that is not a member's, members in another order, one member fewer: refused, never retried
+   Chain-Case $k @{testSha=$k.sw3};Refused-With {Fetch-Store} 'BATCH_CHAIN_REQUIRED' 'chain-swapped';Yes ($attempts -eq 1 -and $stage -ceq 'test-chain-readback') 'chain-swapped-not-retried'
+   Chain-Case $k @{members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=102;headSha=$k.xo},[ordered]@{pr=103;headSha=$k.x3})};Refused-With {Fetch-Store} 'BATCH_CHAIN_REQUIRED' 'chain-head-not-member'
+   Chain-Case $k @{members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=103;headSha=$k.x3},[ordered]@{pr=102;headSha=$k.x2})};Refused-With {Fetch-Store} 'BATCH_CHAIN_REQUIRED' 'chain-members-order'
+   Chain-Case $k @{members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=103;headSha=$k.x3})};Refused-With {Fetch-Store} 'BATCH_CHAIN_REQUIRED' 'chain-member-missing'
+   # S's tree is not the descriptor's
+   Chain-Case $k @{testTree=(& $g rev-parse "$c1^{tree}").Trim()};Refused-With {Fetch-Store} 'BATCH_TEST_TREE_CHANGED' 'chain-tree'
+   # GitHub's PR head of a member is another commit (the PR moved on, or the member names another PR)
+   & $g update-ref refs/pull/103/head $c0
+   try{Chain-Case $k @{};Refused-With {Fetch-Store} 'BATCH_MEMBER_NOT_PR_HEAD' 'chain-pull-head-moved';Yes ($attempts -eq 1 -and $lastGit.label -ceq 'ls-remote-members') 'chain-pull-head-not-retried'}finally{& $g update-ref refs/pull/103/head $k.x3}
+   Chain-Case $k @{members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=102;headSha=$k.x2},[ordered]@{pr=104;headSha=$k.x3})};Refused-With {Fetch-Store} 'BATCH_MEMBER_NOT_PR_HEAD' 'chain-pull-head-missing'
+   # a branch named like a member's pull ref (ls-remote lists it for that pattern) changes nothing: the pull head itself decides
+   & $g update-ref refs/heads/refs/pull/103/head $c0
+   try{Chain-Case $k @{};$s=Fetch-Store;Yes ($attempts -eq 1 -and $s.expectedTest.Count -eq 1) 'chain-tail-named-branch-skipped'}finally{& $g update-ref -d refs/heads/refs/pull/103/head}
+   # a member head no branch carries any more (its branch deleted): not a live tip of the ls-remote list
+   & $g update-ref -d refs/heads/topic-3
+   try{Chain-Case $k @{};Refused-With {Fetch-Store} 'BATCH_MEMBER_NOT_BRANCH_TIP' 'chain-member-not-tip'}finally{& $g update-ref refs/heads/topic-3 $k.x3}
+   # the pull-head read is a network step: a stall there builds the whole store again
+   Chain-Case $k @{};$script:stalls=@{'ls-remote-members'=1};$s=Fetch-Store
+   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $firstAttempt.stage -ceq 'ls-remote-member-pull-heads') 'chain-pull-heads-retry'
+   # /3 on the same S: the one-PR parents check refuses it, as before
+   New-Case @{} $null;$Test=$k.s3;Refused-With {Fetch-Store} 'TEST_COMMIT_PARENTS_REQUIRED' 'chain-s-is-not-a-front-merge'
+  }finally{Drop-Chain}
+  Yes ((Ref-Map ((& git ls-remote --branches --tags $src)-join "`n") "`t" $true).Count -eq 3) 'chain-fixture-removed'
   # 6c. refs pushed between the fetch and the ls-remote: the first inconsistency gets a complete new attempt in a new store
   New-Case @{} $null;$races=1;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and (Fetches) -eq 2 -and (@($calls|Where-Object{$_ -ceq 'ls-remote'}).Count) -eq 2 -and -not (Test-Path -LiteralPath $FetchDir3)) 'race-retry-fresh-store'
@@ -574,6 +663,28 @@ if($git){
    Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.git.label -ceq 'fetch' -and $v.automaticRetryAllowed -eq $true -and $null -eq $v.setAside) ('rebundle-line-down:'+$out)
    $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $rbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE' -and $v.setAside -ceq 'gen-2-failed-1' -and $v.automaticRetryAllowed -eq $true) ('rebundle-line-down-again-sets-aside:'+$out)
+   # DESIGN §67: a batch of three PRs (descriptor /4), the whole script: the bundle carries S, the receipt names the members and S's tree
+   $k=Make-Chain
+   try{
+    $cbatch='0123456789abcdef-c4a1c4a1c4a1';$cob=Join-Path $res ('outbox\'+$cbatch);[void][IO.Directory]::CreateDirectory($cob)
+    $members=@([ordered]@{pr=101;headSha=$c2},[ordered]@{pr=102;headSha=$k.x2},[ordered]@{pr=103;headSha=$k.x3})
+    $cd=[ordered]@{contract=$ChainContract;batchId=$cbatch;repo='tdoljyj/cross-memory-system';pr=101;headSha=$c2;testSha=$k.s3;baseSha=$c1;testTree=$k.tree;members=$members;sourceCommit=$c1;gitleaksTomlSha256=(Hash-Text $toml)}
+    [IO.File]::WriteAllText((Join-Path $cob 'descriptor.json'),($cd|ConvertTo-Json -Depth 5 -Compress))
+    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $cbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+    Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN') ('chain-main-block-answer:'+$out)
+    $rc=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$cbatch+'\all-refs.receipt.json')))|ConvertFrom-Json
+    $tm=New-RefMap;$tm[$TestPrefix+$k.s3]=$k.s3
+    Yes ($rc.testSha -ceq $k.s3 -and $rc.testRefCount -eq 1 -and $rc.testRefListSha256 -ceq (Ref-List-Sha $tm) -and $rc.testTree -ceq $k.tree -and @($rc.chainMembers).Count -eq 3 -and
+      $rc.chainMembers[0].pr -eq 101 -and $rc.chainMembers[1].headSha -ceq $k.x2 -and $rc.chainMembers[2].pr -eq 103 -and (@($rc.chainMembers[0].PSObject.Properties.Name)-join '|') -ceq 'pr|headSha') 'chain-main-block-receipt'
+    $chh=Bundle-Header (Join-Path $res ('bundles\'+$cbatch+'\all-refs.bundle'));Yes (Same-Map $chh.test $tm) 'chain-main-block-bundle'
+    # a /3 receipt never names a chain
+    Yes ($null -eq $rf.PSObject.Properties['chainMembers'] -and $null -eq $rf.PSObject.Properties['testTree']) 'front-receipt-no-chain'
+    # a /4 descriptor whose S is not that chain (its tree differs): refused by the script, nothing kept as a bundle
+    $xbatch='0123456789abcdef-c4a1c4a1c4a2';$xob=Join-Path $res ('outbox\'+$xbatch);[void][IO.Directory]::CreateDirectory($xob)
+    $xd=[ordered]@{};foreach($n in $cd.Keys){$xd[$n]=$cd[$n]};$xd['batchId']=$xbatch;$xd['testTree']=(& $g rev-parse "$c1^{tree}").Trim();[IO.File]::WriteAllText((Join-Path $xob 'descriptor.json'),($xd|ConvertTo-Json -Depth 5 -Compress))
+    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $xbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+    Yes ($code -eq 2 -and $v.reason -ceq 'BATCH_TEST_TREE_CHANGED' -and -not (Test-Path -LiteralPath (Join-Path $res ('bundles\'+$xbatch+'\all-refs.receipt.json')))) ('chain-main-block-tree-refused:'+$out)
+   }finally{Drop-Chain}
   }
  }finally{if($listener){$listener.Stop()};Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue;Remove-Item Env:\GIT_CONFIG_GLOBAL,Env:\GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue}
 }

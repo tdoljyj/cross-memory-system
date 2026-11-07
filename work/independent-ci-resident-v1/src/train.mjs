@@ -189,11 +189,37 @@ export function validateTrainRunInput(v) {
 }
 
 // facts /2 openFrontBatch -> the frozen front of a batch with S, or null when it does not fit (never a guess).
+// DESIGN §67: a batch of several PRs also names its members [{pr, headSha}] in merge order, the front first (2..4, distinct PRs and heads,
+// none of them S or T); they go into the descriptor /4. A members value that does not fit makes the whole batch not fit.
+const membersOf = o => {
+  if (o.members === undefined) return undefined;
+  const m = o.members;
+  const ok = Array.isArray(m) && m.length >= 2 && m.length <= 4 && m.every(x => plain(x) && Object.keys(x).length === 2 && Number.isSafeInteger(x.pr) && x.pr > 0 && SHA.test(x.headSha ?? '')
+    && x.headSha !== o.testSha && x.headSha !== o.baseSha) && m[0].pr === o.pr && m[0].headSha === o.headSha
+    && new Set(m.map(x => x.pr)).size === m.length && new Set(m.map(x => x.headSha)).size === m.length;
+  return ok ? Object.freeze(m.map(x => Object.freeze({ pr: x.pr, headSha: x.headSha }))) : null;
+};
 export function openFrontBatchOf(o) {
   if (!plain(o)) return null;
+  const members = membersOf(o);
   const ok = Number.isSafeInteger(o.pr) && o.pr > 0 && SHA.test(o.headSha ?? '') && SHA.test(o.baseSha ?? '') && SHA.test(o.testSha ?? '') && SHA.test(o.testTree ?? '')
-    && o.testSha !== o.headSha && typeof o.claimId === 'string' && CLAIM.test(o.claimId) && isoOrNull(o.since) !== null && [1, 2].includes(o.attempt);
-  return ok ? Object.freeze({ pr: o.pr, headSha: o.headSha, baseSha: o.baseSha, testSha: o.testSha, testTree: o.testTree, claimId: o.claimId, since: o.since, attempt: o.attempt }) : null;
+    && o.testSha !== o.headSha && typeof o.claimId === 'string' && CLAIM.test(o.claimId) && isoOrNull(o.since) !== null && [1, 2].includes(o.attempt) && members !== null;
+  return ok ? Object.freeze({ pr: o.pr, headSha: o.headSha, baseSha: o.baseSha, testSha: o.testSha, testTree: o.testTree, claimId: o.claimId, since: o.since, attempt: o.attempt,
+    ...(members ? { members } : {}) }) : null;
+}
+
+// DESIGN §67 (engine-windows.mjs#derive, executor.mjs#drive): the front batch's members and S's tree as the descriptor /4 names them,
+// or null when they do not fit the subject (never a guess).
+export function chainOfFront(subject, front) {
+  const m = front?.members;
+  if (!Array.isArray(m) || m.length < 2 || m.length > 4 || !SHA.test(front.testTree ?? '')) return null;
+  if (!subject || !Object.hasOwn(subject, 'testSha') || front.pr !== subject.pr || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha
+    || front.testSha !== subject.testSha) return null;
+  const heads = m.map(x => x?.headSha);
+  const ok = m.every(x => x && Object.keys(x).length === 2 && Number.isSafeInteger(x.pr) && x.pr > 0 && SHA.test(x.headSha ?? ''))
+    && m[0].pr === subject.pr && m[0].headSha === subject.headSha && new Set(m.map(x => x.pr)).size === m.length && new Set(heads).size === m.length
+    && !heads.includes(subject.testSha) && !heads.includes(subject.baseSha);
+  return ok ? Object.freeze({ members: Object.freeze(m.map(x => Object.freeze({ pr: x.pr, headSha: x.headSha }))), testTree: front.testTree }) : null;
 }
 
 // facts /2 sweep -> the summary's copy, or null.

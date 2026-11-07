@@ -17,29 +17,60 @@ const sha = n => n.toString(16).padStart(40, '0');
 const T = sha(1), H1 = sha(2), H2 = sha(3), H3 = sha(4), S1 = sha(5), S2 = sha(6), S3 = sha(7);
 const APP = 5368905, REPO = 'tdoljyj/cross-memory-system';
 
-test('stage file: exact bytes, defaults, refusals; only push may carry a batch; production batches hold one PR until the bundle takes a chain', async t => {
+test('stage file: exact bytes, defaults, refusals; only push may carry a batch; one PR per batch unless the stage file says the chain is installed', async t => {
   assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3}');
   assert.throws(() => L.stageTrainLandingText({ landing: 'github-merge', batchMax: 2 }), /TRAIN_LANDING_REFUSED/);
   assert.throws(() => L.stageTrainLandingText({ landing: 'push', batchMax: 5 }), /TRAIN_LANDING_REFUSED/);
-  assert.deepEqual(L.parseStageTrainLanding(null), { landing: 'github-merge', batchMax: 1, unreadable: false });
-  assert.deepEqual(L.parseStageTrainLanding(Buffer.from(L.stageTrainLandingText({ landing: 'push', batchMax: 4 }))), { landing: 'push', batchMax: 4, unreadable: false });
+  assert.deepEqual(L.parseStageTrainLanding(null), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: false });
+  assert.deepEqual(L.parseStageTrainLanding(Buffer.from(L.stageTrainLandingText({ landing: 'push', batchMax: 4 }))), { landing: 'push', batchMax: 4, batchChain: false, unreadable: false });
   for (const bad of ['{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":4}\n', '{"landing":"push"}', 'x', '{"contract":"clued.independent-ci.stage-train-landing/1","batchMax":4,"landing":"push"}'])
-    assert.deepEqual(L.parseStageTrainLanding(Buffer.from(bad)), { landing: 'github-merge', batchMax: 1, unreadable: true }, bad);
+    assert.deepEqual(L.parseStageTrainLanding(Buffer.from(bad)), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: true }, bad);
   const dir = await tempDir(t);
-  assert.deepEqual(await L.readStageTrainLandingFact(dir), { landing: 'github-merge', batchMax: 1, unreadable: false });
+  assert.deepEqual(await L.readStageTrainLandingFact(dir), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: false });
   await fs.writeFile(path.join(dir, L.STAGE_TRAIN_LANDING_FILE), 'broken');
   assert.equal((await L.readStageTrainLandingFact(dir)).unreadable, true);
-  assert.equal(L.BATCH_CHAIN_INSTALLED, false);
-  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4 }), 1, 'production: one PR per batch until the bundle takes a member chain');
-  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4 }, true), 4);
-  assert.equal(L.effectiveBatchMax({ landing: 'github-merge', batchMax: 1 }, true), 1);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4 }), 1, 'one PR per batch unless the stage file says the chain is installed');
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: false }), 1);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: true }), 4);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: true, unreadable: true }), 1);
+  assert.equal(L.effectiveBatchMax({ landing: 'github-merge', batchMax: 1, batchChain: true }), 1);
   // the invoker: --train-landing <landing>:<n>, written for stages 8 and 10 only
-  assert.deepEqual(parseLandingArg('push:4'), { landing: 'push', batchMax: 4 });
+  assert.deepEqual(parseLandingArg('push:4'), { landing: 'push', batchMax: 4, batchChain: false });
   assert.equal(parseLandingArg(undefined), null);
   assert.throws(() => L.landingSettings(parseLandingArg('push:0')), /TRAIN_LANDING_REFUSED/);
   const root = await tempDir(t), sealed = { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } };
   const stageDir = await prepareStageDirectory({ stageRoot: root, nonce: 'a'.repeat(32), sealed, trainLanding: { landing: 'push', batchMax: 2 } });
-  assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 2, unreadable: false });
+  assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 2, batchChain: false, unreadable: false });
+});
+
+test('§67 stage file: batchChain (the resident found /4 installed) is written only when true, only in push mode, and is what lets stage 10 batch', async t => {
+  const chain = L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: true });
+  assert.equal(chain, '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":true}');
+  assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: false }), L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), 'no chain: the bytes of before §67');
+  assert.deepEqual(L.parseStageTrainLanding(Buffer.from(chain)), { landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
+  assert.equal(L.effectiveBatchMax(L.parseStageTrainLanding(Buffer.from(chain))), 3);
+  for (const bad of [{ landing: 'github-merge', batchMax: 1, batchChain: true }, { landing: 'push', batchMax: 3, batchChain: 'yes' }, { landing: 'push', batchMax: 3, batchChain: 1 }])
+    assert.throws(() => L.stageTrainLandingText(bad), /TRAIN_LANDING_REFUSED/, JSON.stringify(bad));
+  for (const bad of ['{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":false}',
+    '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"github-merge","batchMax":1,"batchChain":true}',
+    '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchChain":true,"batchMax":3}']) {
+    const r = L.parseStageTrainLanding(Buffer.from(bad));
+    assert.deepEqual(r, { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: true }, bad);
+    assert.equal(L.effectiveBatchMax(r), 1, 'a file that cannot be read: one PR per batch');
+  }
+  // the invoker's argument: ':chain' only after push:<n>; github-merge with it is refused before anything is written
+  assert.deepEqual(parseLandingArg('push:3:chain'), { landing: 'push', batchMax: 3, batchChain: true });
+  for (const bad of ['push:3:chain:chain', 'push:3:Chain', 'push:3chain', 'push::chain']) assert.throws(() => L.landingSettings(parseLandingArg(bad)), /TRAIN_LANDING_REFUSED/, bad);
+  assert.throws(() => L.landingSettings(parseLandingArg('github-merge:1:chain')), /TRAIN_LANDING_REFUSED/);
+  const root = await tempDir(t), sealed = { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } };
+  const stageDir = await prepareStageDirectory({ stageRoot: root, nonce: 'b'.repeat(32), sealed, trainLanding: parseLandingArg('push:3:chain') });
+  assert.equal(await fs.readFile(path.join(stageDir, L.STAGE_TRAIN_LANDING_FILE), 'utf8'), chain);
+  assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
+  // the literals the resident looks for before it ever sends ':chain' (engine-windows.mjs BATCH_CHAIN_SOURCE_MARKERS)
+  const v2 = name => new URL(`../src/resident-v2/${name}`, import.meta.url);
+  assert.ok((await fs.readFile(v2('build-bundle.ps1'), 'utf8')).includes("$ChainContract='clued.independent-ci.resident-batch-descriptor/4'"));
+  assert.ok((await fs.readFile(v2('prepare-workspaces.py'), 'utf8')).includes("DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'"));
+  assert.ok((await fs.readFile(v2('invoke-stage.mjs'), 'utf8')).includes("export const TRAIN_LANDING_CHAIN_ARG = 'chain';"));
 });
 
 test('batchChainOk: one member is exactly [T, H]; several walk first parents back to T with each head as a second parent, in order', () => {
@@ -52,6 +83,21 @@ test('batchChainOk: one member is exactly [T, H]; several walk first parents bac
   assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H2, H3], testSha: S3 }), false, 'a member left out');
   chain.set(S2, { sha: S2, parents: [S1, H2, sha(10)] });
   assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H1, H2, H3], testSha: S3 }), false, 'an octopus is not a chain step');
+});
+
+test('§67 review 3: readBatchChain with the train\'s own merge results: each step must be exactly the commit that merge returned', async () => {
+  const commits = new Map([[S1, { sha: S1, tree: sha(11), parents: [T, H1] }], [S2, { sha: S2, tree: sha(12), parents: [S1, H2] }], [S3, { sha: S3, tree: sha(13), parents: [S2, H3] }]]);
+  const read = async s => { const c = commits.get(s); if (!c) throw new Error('404'); return structuredClone(c); };
+  const heads = [H1, H2, H3];
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3 }), { ok: true, tree: sha(13) });
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [S1, S2, S3] }), { ok: true, tree: sha(13) });
+  // someone moved staging.tmp between two merges: step 1 is another commit of the same shape ([T, H1]) than the one the merge returned
+  const E = sha(20);
+  commits.set(E, { sha: E, tree: sha(21), parents: [T, H1] });
+  commits.set(S2, { sha: S2, tree: sha(12), parents: [E, H2] });
+  assert.equal((await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3 })).ok, true, 'the shape alone cannot tell');
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [S1, S2, S3] }), { ok: false, tree: null });
+  assert.equal((await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [E, S2] })).ok, false, 'one step per member');
 });
 
 test('externalChecksDecision: the newest run by id of each other-App required check on the commit decides; the train-own checks are not looked at', () => {

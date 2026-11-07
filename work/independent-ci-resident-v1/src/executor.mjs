@@ -123,7 +123,7 @@ import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
-import { BUNDLE_NETWORK_UNAVAILABLE } from './companion.mjs';
+import { BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breakerRelease, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -139,7 +139,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -2066,7 +2066,8 @@ export class ResidentExecutor {
         const b = e.value.body;
         if (!Number.isSafeInteger(b?.pr) || typeof b.headSha !== 'string') continue;
         const list = this.frontBatches.get(`${b.pr}:${b.headSha}`) ?? [];
-        if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt });
+        // DESIGN §67: a batch of several PRs (its receipt names members) is not one of the front's own attempts.
+        if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt, solo: !Array.isArray(b.members) });
         this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
         if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
         const front = openFrontBatchOf(b);
@@ -2100,12 +2101,15 @@ export class ResidentExecutor {
   }
 
   // A confirmed OPEN_FRONT_BATCH (mode on): the front subject with S into the run queue, the one producer of S. At most
-  // FRONT_BATCHES_PER_HEAD per head, never the same (S, attempt) twice.
+  // FRONT_BATCHES_PER_HEAD per head, never the same (S, attempt) twice. DESIGN §67 (review blocker 1): only the front's batches ALONE
+  // count, as stage 10 counts them (train-maintenance.mjs#openFront, §66.3): a batch of several PRs that failed is bisected, and its
+  // smaller batches, down to the front alone, must still reach the run queue. Each of those is its own S (never the same S twice).
   async enqueueFront(front) {
     const headKey = `${front.pr}:${front.headSha}`;
     const list = this.frontBatches.get(headKey) ?? [];
+    const solo = !front.members;
     if (list.some(x => x.testSha === front.testSha && x.attempt === front.attempt)) return null;
-    if (list.length >= FRONT_BATCHES_PER_HEAD) {
+    if (solo && list.filter(x => x.solo !== false).length >= FRONT_BATCHES_PER_HEAD) {
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: 'TRAIN_FRONT_ATTEMPTS_USED' }); } catch { /* refused anyway */ }
       return null;
     }
@@ -2121,7 +2125,7 @@ export class ResidentExecutor {
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: offered.code ?? 'TRAIN_FRONT_PR_BUSY' }); } catch { /* see above */ }
       return null;
     }
-    list.push({ testSha: front.testSha, attempt: front.attempt });
+    list.push({ testSha: front.testSha, attempt: front.attempt, solo });
     this.frontBatches.set(headKey, list);
     if (this.frontRetry?.pr === front.pr) this.frontRetry = null;
     const subject = { repo: this.policy.repo, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1, testSha: front.testSha };
@@ -2129,7 +2133,7 @@ export class ResidentExecutor {
     this.frontKeys.set(key, front.attempt);
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
-      attempt: front.attempt, claimId: front.claimId, since: front.since });
+      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}) });
     this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
   }
@@ -3256,6 +3260,8 @@ export class ResidentExecutor {
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
         releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
+      // DESIGN §67 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
+      if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
       if (settled === 'stopped') {
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h, ...(network ? { networkReleases24h } : {}) });
@@ -3367,7 +3373,13 @@ export class ResidentExecutor {
   }
 
   async drive(key, subject, t0, keepBatch) {
-    const batch = await this.engine.derive(subject, key);
+    // DESIGN §67: a front batch of several PRs (its binding from stage 10 names the members) is described as /4; every other batch as /3.
+    const front = Object.hasOwn(subject, 'testSha') ? this.frontBindings.get(`${subject.pr}:${subject.testSha}`) : null;
+    const chain = front?.members ? chainOfFront(subject, front) : null;
+    // Members that do not fit this subject (never expected: the binding is keyed by PR and S): said so, and the batch goes on as /3,
+    // which both tools refuse for a chain S (fail closed, review suggestion 5), so the reason is on record before the bundle fails.
+    if (front?.members && !chain) { try { await this.receipt('train-front-chain-unbound', { key, pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha }); } catch { /* a view */ } }
+    const batch = chain ? await this.engine.derive(subject, key, chain) : await this.engine.derive(subject, key);
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
 
@@ -3375,7 +3387,9 @@ export class ResidentExecutor {
     // effect and publishes nothing, so its failure can release the reservation.
     this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
-    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+    // DESIGN §67 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED : 'BUNDLE_UNAVAILABLE';
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
       // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
       bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
@@ -3777,6 +3791,17 @@ export class ResidentExecutor {
     const breakerState = breakerOf(this.queue.breaker).state;
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
+      if (!started && failure.phase === 'bundle' && failure.code === TRAIN_BATCH_MEMBER_MOVED) {
+        // DESIGN §67 (review 2): a member of the batch moved on after stage 10 composed it. Nothing about the front, the line or this
+        // node was decided: released like a supersession (no release cap, no breaker), and this S is dropped from the run queue
+        // (settle dropFront: it can never pass again); stage 10 composes the next batch from the members' current heads.
+        await this.closeOrThrow(batch, { linux: false });
+        await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: failure.code, basis: 'train-batch-member-moved-before-stage-1', class: 'superseded', breaker: 'neutral' });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release: 'SUPERSEDED', companionJobTree: failure.companionJobTree ?? null, network: false });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'SUPERSEDED',
+          settle: { kind: 'released', reason: 'SUPERSEDED', code: failure.code, klass: 'superseded', breaker: 'neutral', breakerState, pos, dropFront: true } };
+      }
       if (!started && failure.phase === 'bundle') {
         // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for
         // nothing, so a companion still busy with, or done with, the failed bundle cannot turn this release into a HALT.
@@ -3879,9 +3904,13 @@ export class ResidentExecutor {
     const front = Object.hasOwn(subject ?? {}, 'testSha');
     const headKey = front ? `${subject.pr}:${subject.headSha}` : null;
     const list = front ? (this.frontBatches.get(headKey) ?? []) : null;
+    // DESIGN §67: a batch of several PRs (its binding names members) is not one of the front's own attempts; its attempt 2 is the same
+    // members and S again (descriptor /4 from the same binding) and does not use one up either.
+    const members = front ? this.frontBindings.get(`${subject.pr}:${subject.testSha}`)?.members ?? null : null;
+    const solo = !members;
     // This very batch counts even when its own record was lost (its front attempt, at least 1).
-    const used = front ? Math.max(list.length, this.frontKeys.get(key) ?? 1) : 0;
-    if (front && used >= FRONT_BATCHES_PER_HEAD) return null;
+    const used = front ? Math.max(list.filter(x => x.solo !== false).length, this.frontKeys.get(key) ?? 1) : 0;
+    if (front && solo && used >= FRONT_BATCHES_PER_HEAD) return null;
     const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
       this.clock() + this.policy.automaticAttempt2.delayMs);
     try {
@@ -3892,13 +3921,13 @@ export class ResidentExecutor {
       throw error;
     }
     if (front) {
-      const attempt = used + 1;
-      list.push({ testSha: subject.testSha, attempt, auto: true });
+      const attempt = solo ? used + 1 : Math.min((this.frontKeys.get(key) ?? 1) + 1, FRONT_BATCHES_PER_HEAD);
+      list.push({ testSha: subject.testSha, attempt, auto: true, solo });
       this.frontBatches.set(headKey, list);
       this.frontKeys.set(key2, attempt);
       try {
         await this.receipt('train-front-enqueued', { key: key2, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha, testTree: null,
-          attempt, claimId: null, since: null, auto: true });
+          attempt, claimId: null, since: null, auto: true, ...(members ? { members } : {}) });
       } catch { /* counted in memory; stage 10 counts the head's front batches itself */ }
     }
     return key2;

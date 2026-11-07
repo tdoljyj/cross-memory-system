@@ -52,7 +52,7 @@ import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
-import { BATCH_CHAIN_INSTALLED, STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
@@ -122,7 +122,7 @@ export async function runTrain(ports) {
 }
 
 async function runTrainCounted({ job, github: plainGithub, native, ledger, sweepStore = null, publications = null, appId = APP_ID, clock = Date.now, sleep = wait,
-  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null, batchChain = BATCH_CHAIN_INSTALLED }, fx) {
+  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null }, fx) {
   validateTrainRun(job);
   const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
   // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
@@ -592,7 +592,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
-      pushing: push ? { github, landing, max: effectiveBatchMax(trainLanding, batchChain), rows: openRows ?? [], claimScope, state: landingState } : null });
+      pushing: push ? { github, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
   } else decision = wouldDo;
 
@@ -772,7 +772,10 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   }
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
   try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
-  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: batch };
+  // §67: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
+  // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
+  const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
+  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: members ? { ...batch, members } : batch };
 }
 
 // §66.3 riders: open PRs into main (not the front), not drafts, from this repository, whose body names a claim of this install and
@@ -810,16 +813,17 @@ async function composeBatch({ github, landing, max, rows, claimScope, state, job
   try {
     if (members.length > 1) {
       fx.n++; await landing.pointRef(STAGING_TMP_REF, mainSha);
-      const kept = [];
+      const kept = [], steps = [];
       for (const m of members) {
         fx.n++;
         const r = await landing.mergeIntoTmp(m.headSha, `Merge train batch: #${m.pr} (${m.headSha.slice(0, 12)})`);
-        if (r.status === 201) { kept.push(m); testSha = r.sha; } else if (m === members[0]) return { refusal: 'FRONT_NEEDS_MAIN_MERGE' };
+        if (r.status === 201) { kept.push(m); steps.push(r.sha); testSha = r.sha; } else if (m === members[0]) return { refusal: 'FRONT_NEEDS_MAIN_MERGE' };
       }
       members = kept;
       if (members.length === 1) { testSha = front.testMerge?.sha ?? null; testTree = front.testMerge?.tree ?? null; }
       else {
-        const chain = await readBatchChain({ readGitCommit: s => github.readGitCommit(s), baseSha: mainSha, heads: members.map(m => m.headSha), testSha });
+        // §67 (review 3): every step of the chain must be the commit this run's own merge returned (S1 on T, S2 on S1, ...).
+        const chain = await readBatchChain({ readGitCommit: s => github.readGitCommit(s), baseSha: mainSha, heads: members.map(m => m.headSha), testSha, steps });
         if (!chain.ok) return { refusal: 'FRONT_TEST_MERGE_NOT_READY' };
         testTree = chain.tree;
       }

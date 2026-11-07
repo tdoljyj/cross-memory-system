@@ -6,6 +6,10 @@
 //   1. three PRs queued -> one batch -> main fast-forwarded to S -> all three marked merged and adopted;
 //   2. the middle PR breaks the combination -> bisection -> the other two land, the middle one is reported failed;
 //   3. someone else moves main between the check and the write -> the fast-forward is refused -> retested on the new main -> lands.
+//   4. (§67) batchMax 3 as production gets it: the resident engine's stage-10 argument (push:3:chain only while its installed Source
+//      and the Linux side take descriptor /4) -> the invoker's stage file -> stage 10 composes one batch of three -> the resident writes
+//      descriptor /4 whose members and tree are that S's chain -> all three land in one push; without the chain fact: one PR per batch.
+// Every stage 10 here reads its batch size from a stage file (trainLanding), as production does; nothing injects a batch size.
 // This file imports only modules that exist without the landing (the landing port is the offline one below): before §66 nothing
 // lands and every scenario fails on its first assertion.
 import test from 'node:test';
@@ -19,6 +23,13 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { runTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
+import { batchChainOk, parseStageTrainLanding, stageTrainLandingText } from '../src/independent-control-checks-v2/train-landing.mjs';
+import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
+import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
+import fs from 'node:fs/promises';
+import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
+import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
+import { TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -98,6 +109,7 @@ async function world(t, { prs, bad = () => false }) {
       return { sha: s };
     },
     async mergeIntoTmp(head) {
+      W.beforeMerge?.();
       const base = W.refs.get('heads/clued-train/staging.tmp');
       if (ancestor(head, base)) return { status: 204, sha: null };
       const m = merge(base, head, `:post${++mergesMade}`); W.refs.set('heads/clued-train/staging.tmp', m); return { status: 201, sha: m };
@@ -127,13 +139,15 @@ async function world(t, { prs, bad = () => false }) {
 
 // ---- stage 10, stage 8 and the loop between them ----
 let runN = 0;
+// The stage file stage 10 reads (invoke-stage.mjs writes it from the resident's --train-landing): push, batchMax 4, the chain installed.
+const CHAIN4 = Object.freeze({ landing: 'push', batchMax: 4, batchChain: true, unreadable: false });
 async function stage10(e, outcome = null) {
   e.now += 60_000;
   const runId = `${(++runN).toString(16).padStart(16, '0')}-0123456789ab`;
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: { landing: 'push', batchMax: 4, unreadable: false }, batchChain: true });
+    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal' } = {}) {
   e.now += 60_000;
@@ -153,7 +167,7 @@ async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, 
   return publisher.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: e.now + 90_000 });
 }
 // The executor's part: a front batch runs (stages 1-7 pass), stage 8 answers; a final PR failure is stage 10's next frontOutcome.
-async function drive(t, e, { until, steps = 40 }) {
+async function drive(t, e, { until, steps = 40, opened = null }) {
   const log = [];
   let outcome = null;
   for (let i = 0; i < steps && !until(); i++) {
@@ -161,6 +175,7 @@ async function drive(t, e, { until, steps = 40 }) {
     log.push(['10', r.facts.decision, r.facts.openFrontBatch?.pr ?? null, r.facts.landing?.adopted ?? null]);
     const b = r.facts.openFrontBatch;
     if (!b) continue;
+    if (opened) await opened(r, b);
     const members = typeof e.store.landingBatchByTest === 'function' ? (await e.store.landingBatchByTest(b.testSha))?.members.map(m => m.pr) ?? null : null;
     const p = await stage8(t, e, b);
     log.push(['8', p.status, p.reason ?? null, members]);
@@ -222,6 +237,132 @@ test('push: main moved by someone else between the check and the write -> the fa
   assert.equal(e.main(), e.W.pushes[1]);
   assert.equal(e.W.pulls.get(910).merged, true);
   assert.deepEqual(e.adopted, [[910, e.W.pushes[1]]]);
+});
+
+// ---- §67: batch size as production sets it (resident engine -> invoker -> stage file), descriptor /4 as the resident writes it ----
+const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
+const CI_SOURCE = 'e'.repeat(64);
+// The resident's WindowsEngine over a fixture Source directory holding the real build-bundle.ps1, prepare-workspaces.py and invoke-stage.mjs
+// (what batchChainSupported reads) and a versions port (both sides of this generation, or not). Its derive runs a stub of derive-batch.mjs.
+async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE } = {}) {
+  const root = await tempDir(t), sourceRoot = path.join(root, 'source', CI_SOURCE);
+  await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
+  for (const n of ['build-bundle.ps1', 'prepare-workspaces.py', 'invoke-stage.mjs'])
+    await fs.copyFile(new URL(`../src/resident-v2/${n}`, import.meta.url), path.join(sourceRoot, ...V2, n));
+  await fs.writeFile(path.join(sourceRoot, ...V2, 'derive-batch.mjs'), '// fixture');
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: String(n).repeat(64).slice(0, 64), workManifestSha256: 'f'.repeat(64), directory: `stage-0${n}`, linuxWorker: [2, 4, 6].includes(n) }));
+  const run = async argv => {
+    const at = k => argv[argv.indexOf(k) + 1], subject = JSON.parse(at('--subject-json'));
+    return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: at('--batch-key'), batchId: at('--batch-id'), packageSha256: 'c'.repeat(64),
+      ciSourceManifestSha256: CI_SOURCE, sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: subject.testSha ?? subject.headSha, stages: rows }) };
+  };
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, sleep: async () => {}, clock: () => NOW,
+    trainLanding: { landing: 'push', batchMax: 3 },
+    versions: async () => ({ consistent, windows: { ciSourceManifestSha256: CI_SOURCE }, linux: { ciSourceManifestSha256: linuxSource } }),
+    paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'node.exe', powershellExe: 'powershell.exe', scExe: 'sc.exe' } });
+  return { engine, root };
+}
+// The stage file stage 10 reads, from the engine's own argument through the invoker's parse and write.
+async function stageFileOf(engine) {
+  const args = await engine.stageArgs(10);
+  const arg = args[args.indexOf('--train-landing') + 1];
+  return { arg, trainLanding: parseStageTrainLanding(Buffer.from(stageTrainLandingText(parseLandingArg(arg)))) };
+}
+// What the resident does with a confirmed OPEN_FRONT_BATCH: its front binding (train.mjs) and the descriptor its derive writes.
+async function residentDescriptor(r, b, engine, root) {
+  const front = openFrontBatchOf(b);
+  assert.ok(front, 'the resident takes the batch');
+  const subject = { repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, sourceManifestSha256: CI_SOURCE, attempt: 1, testSha: b.testSha };
+  const chain = chainOfFront(subject, front);
+  const key = createHash('sha256').update(b.testSha).digest('hex');
+  const batch = chain ? await engine.derive(subject, key, chain) : await engine.derive(subject, key);
+  return JSON.parse(await fs.readFile(path.join(root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
+}
+
+test('push §67: batchMax 3 as production sets it -> push:3:chain -> one batch of three -> descriptor /4 names exactly S\'s chain -> all three land in one push', async t => {
+  const e = await world(t, { prs: [920, 921, 922, 923] });
+  const { engine, root } = await residentEngine(t);
+  const file = await stageFileOf(engine);
+  assert.equal(file.arg, 'push:3:chain', 'the installed Source and the Linux side take /4: the resident says so');
+  e.trainLanding = file.trainLanding;
+  const descriptors = [];
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 10, opened: async (r, b) => {
+    validateTrainFacts(r.facts);
+    descriptors.push(await residentDescriptor(r, b, engine, root));
+  } });
+  const landings = log.filter(l => l[0] === '8');
+  assert.deepEqual(landings.map(l => [l[1], l[3]]), [['SETTLED', [920, 921, 922]], ['SETTLED', [923]]], JSON.stringify(log));
+  // the first push landed all three: main went from T straight to the tested S of the three-member batch
+  const S = e.W.pushes[0];
+  assert.ok([920, 921, 922].every(pr => e.W.ancestor(e.head(pr), S)) && !e.W.ancestor(e.head(923), S), 'batchMax 3: exactly three in the first batch');
+  assert.deepEqual([920, 921, 922].map(pr => e.W.pulls.get(pr).merged), [true, true, true]);
+  assert.ok(e.adopted.filter(a => a[1] === S).map(a => a[0]).sort().join() === '920,921,922', JSON.stringify(e.adopted));
+  // the descriptor the resident wrote for it: /4, the members in merge order, S's own tree; S really is their chain on T
+  const d = descriptors[0];
+  assert.equal(d.contract, DESCRIPTOR_CHAIN_CONTRACT);
+  assert.equal(d.testSha, S);
+  assert.deepEqual(d.members, [920, 921, 922].map(pr => ({ pr, headSha: e.head(pr) })));
+  assert.equal(d.testTree, e.W.commits.get(S).tree);
+  assert.deepEqual([d.pr, d.headSha], [920, e.head(920)]);
+  assert.equal(batchChainOk({ commits: e.W.commits, baseSha: d.baseSha, heads: d.members.map(m => m.headSha), testSha: d.testSha }), true);
+  // the one-PR batch after it is a /3 descriptor, exactly as before
+  assert.equal(descriptors[1].contract, DESCRIPTOR_CONTRACT);
+  assert.equal(Object.hasOwn(descriptors[1], 'members') || Object.hasOwn(descriptors[1], 'testTree'), false);
+});
+
+test('push §67, fail closed: without the chain fact (the Linux side not known to be this generation, or another Source) batchMax 3 still lands one PR per batch', async t => {
+  for (const o of [{ consistent: null }, { consistent: false }, { linuxSource: 'f'.repeat(64) }]) {
+    const e = await world(t, { prs: [930, 931, 932] });
+    const { engine, root } = await residentEngine(t, o);
+    const file = await stageFileOf(engine);
+    assert.equal(file.arg, 'push:3', JSON.stringify(o));
+    e.trainLanding = file.trainLanding;
+    const descriptors = [];
+    const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 12, opened: async (r, b) => { descriptors.push(await residentDescriptor(r, b, engine, root)); } });
+    assert.deepEqual(log.filter(l => l[0] === '8').map(l => [l[1], l[3]]), [['SETTLED', [930]], ['SETTLED', [931]], ['SETTLED', [932]]], JSON.stringify(log));
+    assert.ok(descriptors.every(d => d.contract === DESCRIPTOR_CONTRACT && !Object.hasOwn(d, 'members')), 'only /3 descriptors');
+  }
+  // a stage file that cannot be read is no chain either
+  const broken = parseStageTrainLanding(Buffer.from('{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":false}'));
+  assert.equal(broken.batchChain, false);
+});
+
+test('§67 train facts: openFrontBatch members must describe the batch (front first, distinct, 2..4); the resident refuses any other shape', async t => {
+  const e = await world(t, { prs: [940, 941] });
+  const r = await stage10(e);
+  const f = r.facts, b = f.openFrontBatch;
+  assert.deepEqual(b.members, [940, 941].map(pr => ({ pr, headSha: e.head(pr) })));
+  validateTrainFacts(f);
+  assert.ok(openFrontBatchOf(b)?.members?.length === 2);
+  const bads = [b.members.slice(0, 1), [...b.members].reverse(), [b.members[0], b.members[0]], [b.members[0], { ...b.members[1], pr: b.members[0].pr }],
+    [b.members[0], { ...b.members[1], headSha: b.testSha }], [b.members[0], { ...b.members[1], claimId: 'x' }], [b.members[0], { pr: 941, headSha: 'z'.repeat(40) }],
+    [...b.members, ...[1, 2, 3].map(n => ({ pr: 950 + n, headSha: h(`x${n}`) }))], 'members'];
+  for (const members of bads) {
+    assert.throws(() => validateTrainFacts({ ...f, openFrontBatch: { ...b, members } }), /invalid_train_facts/, JSON.stringify(members));
+    assert.equal(openFrontBatchOf({ ...b, members }), null, JSON.stringify(members));
+  }
+  // one member: no members key at all (descriptor /3)
+  const one = await world(t, { prs: [960] });
+  const r1 = await stage10(one);
+  assert.equal(Object.hasOwn(r1.facts.openFrontBatch, 'members'), false);
+});
+
+test('§67 review 3, fail closed: staging.tmp moved by someone else between two of the train\'s merges -> no batch (never a step the train did not merge)', async t => {
+  const e = await world(t, { prs: [970, 971, 972] });
+  let merges = 0;
+  e.W.beforeMerge = () => {
+    if (++merges !== 2) return;
+    // after the front's merge, another writer forces staging.tmp to E: the right shape ([T, H970]) with content nobody admitted
+    const T = e.main(), E = h('evil-step');
+    e.W.commits.set(E, { sha: E, tree: h('tree:evil'), parents: [T, e.head(970)] });
+    e.W.content.set(E, new Set(['970', 'evil']));
+    e.W.refs.set('heads/clued-train/staging.tmp', E);
+  };
+  const r = await stage10(e);
+  assert.notEqual(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+  assert.equal(r.facts.decision, 'FRONT_TEST_MERGE_NOT_READY');
+  assert.equal(r.facts.openFrontBatch, null);
+  assert.equal(e.W.pushes.length, 0, 'main never moves');
 });
 
 // ---- fail closed: every refusal below writes nothing to main and nothing to GitHub's checks ----

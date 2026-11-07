@@ -19,10 +19,12 @@ import path from 'node:path';
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
 export const BATCH_MAX_LIMIT = 4;
-// §66.3: the installed bundle (build-bundle.ps1 TEST_COMMIT_PARENTS_REQUIRED) and workspace preparation
-// (prepare-workspaces.py#test_parents_ok) accept only an S whose parents are exactly [T, H]. Until both learn the member chain,
-// production batches hold one PR whatever batchMax says. Tests inject batchChain: true (fixture only).
-export const BATCH_CHAIN_INSTALLED = false;
+// §66.3 / §67: a batch of several PRs is tested as the cumulative merge T -> S1 = merge(T, H1) -> S2 = merge(S1, H2) -> ... -> S. The
+// bundle (build-bundle.ps1) and the workspace preparation (prepare-workspaces.py) take such an S only from a descriptor /4 that names
+// the members, and the resident writes /4 only with an installed Source and a Linux side that take it. Whether they do is not known
+// here: the resident says so in the stage file (batchChain, resident engine-windows.mjs#batchChainSupported: the installed Source's
+// build-bundle.ps1, prepare-workspaces.py and invoke-stage.mjs carry /4, and both sides run the same generation). No batchChain, or a
+// stage file that cannot be read: one PR per batch whatever batchMax says (fail closed).
 export const STAGE_TRAIN_LANDING_CONTRACT = 'clued.independent-ci.stage-train-landing/1';
 export const STAGE_TRAIN_LANDING_FILE = 'train-landing.json';
 export const TRAIN_LANDING_STAGES = Object.freeze([8, 10]);
@@ -59,24 +61,27 @@ const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 // ---- the stage file ----
-export const landingSettings = ({ landing = LANDING_DEFAULT, batchMax = 1 } = {}) => {
-  if (!LANDING_MODES.includes(landing) || !Number.isSafeInteger(batchMax) || batchMax < 1 || batchMax > BATCH_MAX_LIMIT || (batchMax > 1 && landing !== 'push')) fail('TRAIN_LANDING_REFUSED');
-  return Object.freeze({ landing, batchMax });
+// batchChain (§67): true only in push mode, and only when the resident found that the installed components take a member chain. It is
+// written only when true, so every stage file of before §67 keeps its exact bytes.
+export const landingSettings = ({ landing = LANDING_DEFAULT, batchMax = 1, batchChain = false } = {}) => {
+  if (!LANDING_MODES.includes(landing) || !Number.isSafeInteger(batchMax) || batchMax < 1 || batchMax > BATCH_MAX_LIMIT || (batchMax > 1 && landing !== 'push')
+    || typeof batchChain !== 'boolean' || (batchChain && landing !== 'push')) fail('TRAIN_LANDING_REFUSED');
+  return Object.freeze({ landing, batchMax, batchChain });
 };
 export function stageTrainLandingText(settings) {
   const s = landingSettings(settings);
-  return JSON.stringify({ contract: STAGE_TRAIN_LANDING_CONTRACT, landing: s.landing, batchMax: s.batchMax });
+  return JSON.stringify({ contract: STAGE_TRAIN_LANDING_CONTRACT, landing: s.landing, batchMax: s.batchMax, ...(s.batchChain ? { batchChain: true } : {}) });
 }
-// Pure: the bytes (or null) -> { landing, batchMax, unreadable }. No file is the default (github-merge, 1); anything that is not
-// exactly the record is the default with unreadable true: stage 8 parks a front job, stage 10 does not push.
+// Pure: the bytes (or null) -> { landing, batchMax, batchChain, unreadable }. No file is the default (github-merge, 1, no chain); anything
+// that is not exactly the record is the default with unreadable true: stage 8 parks a front job, stage 10 does not push.
 export function parseStageTrainLanding(bytes) {
-  const none = { landing: LANDING_DEFAULT, batchMax: 1, unreadable: false }, broken = { ...none, unreadable: true };
+  const none = { landing: LANDING_DEFAULT, batchMax: 1, batchChain: false, unreadable: false }, broken = { ...none, unreadable: true };
   if (bytes === null) return none;
   if (!Buffer.isBuffer(bytes) || bytes.length > 256) return broken;
   try {
     const v = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     if (!plain(v) || bytes.toString('utf8') !== stageTrainLandingText(v)) return broken;
-    return { landing: v.landing, batchMax: v.batchMax, unreadable: false };
+    return { landing: v.landing, batchMax: v.batchMax, batchChain: v.batchChain === true, unreadable: false };
   } catch { return broken; }
 }
 export async function readStageTrainLandingFact(stageDir) {
@@ -93,8 +98,8 @@ export async function readStageTrainLandingFact(stageDir) {
     } finally { await h.close(); }
   } catch { return parseStageTrainLanding(Buffer.alloc(300)); }
 }
-// The batch size stage 10 may compose: 1 unless the installed bundle takes a member chain (or a fixture says so).
-export const effectiveBatchMax = (settings, batchChain = BATCH_CHAIN_INSTALLED) => (settings?.landing === 'push' && batchChain === true ? settings.batchMax : 1);
+// The batch size stage 10 may compose: 1 unless the stage file says the installed components take a member chain (§67).
+export const effectiveBatchMax = settings => (settings?.landing === 'push' && settings.batchChain === true && settings.unreadable !== true ? settings.batchMax : 1);
 
 // ---- the shape of S ----
 // commits: sha -> {sha, tree, parents}. One member: S's parents are exactly [T, H]. N members: S walks back along first parents
@@ -111,18 +116,23 @@ export function batchChainOk({ commits, baseSha, heads, testSha }) {
   return at === baseSha;
 }
 // Reads the chain's commits through readGitCommit (any port) and checks it; a read that fails proves nothing (false).
-export async function readBatchChain({ readGitCommit, baseSha, heads, testSha }) {
-  const commits = new Map();
+// steps (§67, review 3; optional): the commits the train's own merges returned, in merge order (S1..SN). With it, step k of the chain
+// must be exactly that commit, so a staging.tmp moved by anyone else between two merges (a step with the right parents shape but
+// other content) never becomes part of S.
+export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, steps = null }) {
+  const commits = new Map(), walked = [];
   let at = testSha;
   try {
     for (let k = 0; k < heads.length && SHA.test(at ?? ''); k++) {
       const c = await readGitCommit(at);
       if (!plain(c) || c.sha !== at) return { ok: false, tree: null };
       commits.set(at, c);
+      walked.unshift(at);
       at = Array.isArray(c.parents) ? c.parents[0] : null;
     }
   } catch { return { ok: false, tree: null }; }
-  const ok = batchChainOk({ commits, baseSha, heads, testSha });
+  const stepsOk = steps === null || (Array.isArray(steps) && steps.length === heads.length && steps.every((s, i) => s === walked[i]));
+  const ok = stepsOk && batchChainOk({ commits, baseSha, heads, testSha });
   return { ok, tree: ok ? commits.get(testSha).tree : null };
 }
 
