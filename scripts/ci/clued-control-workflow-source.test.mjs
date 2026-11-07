@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,RETIRED_CONSUMER_OBSERVER_SOURCE,MERGE_RECONCILE_CONTROL_SOURCE,
   compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
@@ -132,6 +134,15 @@ test('fixed retirement snapshot keeps old consumer metadata while the explicit s
       assert.equal(blob,'b6d65b5987aed5442ddb89087950c2c4369644f2');
       assert.equal(workflowBlob(current),MERGE_RECONCILE_CONTROL_SOURCE.implementation_blobs[name],name);
       assert.notEqual(workflowBlob(current),blob,name);
+    }else if(name==='.github/actions/ci-temporary-storage/coverage.json'){
+      // New workflow lifecycle rows do not rewrite this retired snapshot.
+      // Read and authenticate its exact old object, while the lifecycle suite
+      // independently checks today's complete inventory against actual YAML.
+      assert.equal(blob,'12f0ff5aca09df465aa0461d493485c3ed2c65b1');
+      const historical=execFileSync('git',['cat-file','blob',blob],{cwd:fileURLToPath(root)});
+      assert.equal(workflowBlob(historical),blob,name);
+      assert.equal(createHash('sha256').update(historical).digest('hex'),
+        '55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be');
     }else assert.equal(workflowBlob(current),blob,name);
   }
 });
