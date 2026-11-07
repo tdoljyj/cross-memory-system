@@ -448,6 +448,46 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   assert.throws(() => validateStatusConfig({ node: 'Company 01' }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
 });
 
+// Task 63c3c879 (PR #1027): end to end over the reporter: the STANDBY's resident-standby/<node> reminder (pending) is followed by a success
+// on the same context once the node on duty picked the head up, so GitHub no longer counts a pending status on the PR.
+test('Task 63c3c879: the STANDBY reminder under resident-standby/<node> does not stay pending', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-23T06:00:00Z');
+  const calls = [];
+  let other = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    if (argv[4]?.includes('/check-runs?')) return { code: 0, stdout: '0\n' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const store = await LocalStore.open(path.join(root, 's.json'), () => now);
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, notifications: false });
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+  const node = () => ({ name: 'turing', mode: 'STANDBY', probe: { at: new Date(now - 30_000).toISOString(), result: 'not-held', failures: 0, failingSince: null } });
+  const status = () => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: node() }); }, now);
+  const standbyPosts = () => calls.filter(a => a.includes('POST') && a.some(x => x.includes(`repos/${REPO}/statuses/${H(7)}`)) && a.includes(`context=${standbyContext('turing')}`))
+    .map(a => [a.find(x => x.startsWith('state=')), a.find(x => x.startsWith('description='))]);
+  await reporter.pass({ pulls, status: status() });
+  now += 31 * 60_000;
+  await reporter.pass({ pulls, status: status() });
+  assert.deepEqual(standbyPosts().map(p => p[0]), ['state=pending'], 'the reminder');
+  assert.ok(reporter.store.data.node.standby[H(7)], 'owed an end');
+  // the node on duty takes the head up
+  now += 6 * 60_000;
+  other = [{ context: 'resident-queue/company-01 (info only)', state: 'pending', description: '当班：运行中：第 3 段（gitleaks 发布）', created_at: new Date(now - 60_000).toISOString(), login: 'tdoljyj' }];
+  await reporter.pass({ pulls, status: status() });
+  assert.deepEqual(standbyPosts().at(-1), ['state=success', 'description=备用节点 turing，不参与本 PR：当班节点已接手']);
+  assert.deepEqual(reporter.store.data.node.standby, {});
+  now += 6 * 60_000;
+  await reporter.pass({ pulls, status: status() });
+  assert.equal(standbyPosts().length, 2, 'ended once');
+});
+
 test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; a reminder toast owed is shown later; refreshes stop at 900', async t => {
   const root = await tempRoot(t);
   let now = Date.parse('2026-10-23T06:00:00Z');

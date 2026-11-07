@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DUTY_WINDOW_MS, HOLDER_DUAL, LEGACY_CONTEXT, LEGACY_STANDBY_CONTEXT, NodeDuty, validMemory, RELEASE_READ_MS, STALL_NOTICE_MS, UNCLAIMED_MS, WORD, dualText, freshMemory, handedText,
-  nodeContext, nodeOf, onDutyElsewhere, othersOnHead, ownAny, ownLive, parseDutyStatus, stallCode, stalledText, standbyContext, standbyText, statusesArgv, unclaimedReason } from '../src/node-duty.mjs';
+  nodeContext, nodeOf, onDutyElsewhere, othersOnHead, ownAny, ownLive, parseDutyStatus, pruneMemory, stallCode, stalledText, standbyContext, standbyDoneText, standbyText, statusesArgv, unclaimedReason } from '../src/node-duty.mjs';
 // Task 9cac75be A2: each standby writes its own reminder context.
 const STANDBY_CONTEXT = standbyContext('turing');
 import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT } from '../src/intake-pause.mjs';
@@ -429,6 +429,58 @@ test('§5.3: a STANDBY reminds once per (PR, commit, reason) under resident-stan
   const calls = t.calls.length;
   await t.d.extra({ posted: {}, described: new Set(), pulls: [pull(1), pull(2)], now: t.now() + 1 });
   assert.equal(t.calls.length, calls, 'a head is read at most every 5 minutes');
+});
+
+// Task 63c3c879 (PR #1027): the STANDBY's reminder stayed pending for good, and GitHub showed the PR as UNSTABLE. It now ends as success once
+// moot: the node on duty took the head up (its duty word or the admission check), this node became ACTIVE, or the PR is not eligible.
+test('Task 63c3c879: a STANDBY reminder ends as success once the node on duty has the head, never on an unknown read', async () => {
+  const statuses = { [H(1)]: [], [H(2)]: [], [H(3)]: [] };
+  const checks = { [H(1)]: 0, [H(2)]: 0, [H(3)]: 0 };
+  const t = duty({ statuses, checks });
+  const s = () => fresh({ node: known('STANDBY'), writtenAt: t.now() });
+  const pulls = [pull(1), pull(2), pull(3)];
+  await t.d.prepare({ status: s(), pulls, now: NOW });
+  await t.d.extra({ posted: {}, described: new Set(), pulls, now: NOW });
+  t.advance(UNCLAIMED_MS);
+  await t.d.prepare({ status: s(), pulls, now: t.now() });
+  const out = await t.d.extra({ posted: {}, described: new Set(), pulls, now: t.now() });
+  assert.deepEqual(out.map(o => [o.headSha, o.want.state]), [[H(1), 'pending'], [H(2), 'pending'], [H(3), 'pending']]);
+  // what the reporter keeps once each reminder is written (pr-status.mjs#pass)
+  for (const o of out) { t.memory.reminded[o.remind.key] = iso(t.now()); t.memory.standby[o.headSha] = { pr: o.remind.pr, at: iso(t.now()) }; }
+  // H(1): the node on duty writes 当班; H(2): App 5368905 published the admission check; H(3): the admission read fails, nobody on duty
+  t.advance(RELEASE_READ_MS);
+  statuses[H(1)] = [gh('company-01', '当班：运行中：第 2 段', t.now() - MIN)];
+  checks[H(2)] = 1;
+  t.d.run = (orig => async argv => (argv[4]?.includes(`commits/${H(3)}/check-runs`) ? { code: 1, stdout: '' } : orig(argv)))(t.d.run);
+  await t.d.prepare({ status: s(), pulls, now: t.now() });
+  const ended = await t.d.extra({ posted: {}, described: new Set(), pulls, now: t.now() });
+  assert.deepEqual(ended.map(o => [o.headSha, o.context, o.want.state, o.want.description, o.standbyDone]), [
+    [H(1), STANDBY_CONTEXT, 'success', '备用节点 turing，不参与本 PR：当班节点已接手', H(1)],
+    [H(2), STANDBY_CONTEXT, 'success', '备用节点 turing，不参与本 PR：当班节点已接手', H(2)]], 'an unknown read ends nothing');
+  assert.ok(ended.every(o => !o.remind), 'no new reminder, no toast');
+  delete t.memory.standby[H(1)]; delete t.memory.standby[H(2)];
+  // H(3) not eligible any more: ended; a head no longer open is forgotten without a write
+  t.advance(RELEASE_READ_MS);
+  const next = await t.d.extra({ posted: {}, described: new Set(), pulls: [pull(3, { eligible: false })], now: t.now() });
+  assert.deepEqual(next.map(o => [o.headSha, o.want.description]), [[H(3), '备用节点 turing，不参与本 PR']]);
+  t.memory.standby[H(4)] = { pr: 4, at: iso(t.now()) };
+  assert.deepEqual(await t.d.extra({ posted: {}, described: new Set(), pulls: [], now: t.now() }), []);
+  assert.deepEqual(t.memory.standby, {});
+});
+
+test('Task 63c3c879: a node that became ACTIVE ends its own pending reminders; an older memory takes its remembered reminders as pending', async () => {
+  const t = duty();
+  t.memory.standby[H(1)] = { pr: 1, at: iso(NOW - MIN) };
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW });
+  const out = await t.d.extra({ posted: {}, described: new Set([H(1)]), pulls: [pull(1)], now: NOW });
+  assert.deepEqual(out.map(o => [o.headSha, o.context, o.want.state, o.want.description, o.standbyDone]), [[H(1), STANDBY_CONTEXT, 'success', 'turing 已接班，备用提醒结束', H(1)]]);
+  assert.deepEqual(standbyDoneText('handled', 'turing'), { state: 'success', description: '备用节点 turing，不参与本 PR：当班节点已接手' });
+  // memory of before the fix: no standby bag, the reminders come from reminded (kept a day)
+  const old = validMemory({ reminded: { [`standby:1027:${H(5)}:unclaimed`]: iso(NOW - MIN), 'other:key': iso(NOW) } }, NOW);
+  assert.deepEqual(old.standby, { [H(5)]: { pr: 1027, at: iso(NOW - MIN) } });
+  assert.deepEqual(validMemory({ reminded: { [`standby:1027:${H(5)}:unclaimed`]: iso(NOW) }, standby: {} }, NOW).standby, {}, 'an ended one stays ended');
+  pruneMemory(old, NOW + 86_400_000);
+  assert.deepEqual(old.standby, {});
 });
 
 // ---- independent review of C5: the fixes ----
