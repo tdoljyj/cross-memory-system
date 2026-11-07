@@ -111,6 +111,9 @@ export async function executeProtectedIssuedJob(options={}){
     // more itself); every signing check, and the clock check right before signing, are unchanged.
     await session.finish(result.observation);const signed=await signActualBridgeResult(context,issue,result.observation,{session});
     const bytes=Buffer.from(canonical(signed));await box.write('result',bytes);
+    // M4 (DESIGN 68.2): a real successful trivy run is stored only now, with the envelope just signed; best effort, the
+    // result already written is final whatever the store does.
+    if(typeof result.storeSignedResult==='function')try{await result.storeSignedResult(signed);}catch{}
     return{status:'ACTUAL_SIGNED_ROLE_RESULT_EMITTED',issueSha256:digest(issue),resultSha256:digest(signed),cleanupConfirmed:true,checksWritten:false,qualificationIssued:false,automaticRetryAllowed:false};
   }catch(e){return{status:locked?'UNCERTAIN':'BLOCKED',reason:safe(e),executionMayHaveStarted,automaticRetryAllowed:false,checksWritten:false,qualificationIssued:false};}
 }

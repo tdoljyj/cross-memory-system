@@ -5211,3 +5211,115 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 
 - 全是 CI Source：新的 Source 清单；Linux 三个角色（gitleaks、trivy、contract-placement）重签（`entrySha256` 随 `linux-worker.mjs` 变，清单哈希变）；companion 的 `bridgeManifestSha256` 安装时重算。
 - 测试：`CI/test/relay-roundtrip-opt.test.mjs`（A′ 真跑 ACL 助手副本、relay 一次启动、邮箱读顺序与联合拒绝、relay 上下文拒绝面、D 的拆分与优先级与 scan-start、复用条件、E1 延迟包与提前中止、E3 缓存范围与 Accept/路径规范、日志词表），`issuer-refs-transient.test.mjs` 的 E2 并发与重新收集。
+## 68. 按代码树缓存扫描结果（M4，第 21 代候选，分支 `claude/scan-result-cache`；Task `bf57ff10` 第二阶段 M4；Owner Decision `9e2511fe` 第 5 项；独立审查 PASS-WITH-FIXES 后修订）
+
+**为什么**：trivy 的判定只取决于三个扫描器能读到的内容和扫的方式，与哪个提交指向这份内容无关。下面三种情况都会产生一个“新提交、旧代码树”，以前每次都真跑一遍：GitHub 重算试合并提交 S 但树没变；同一个 PR 的普通批次与车头批次（strict 开着时车头已跟上 main，`merge(T,H)` 的树就是 H 的树）；只改提交信息的 force-push。现在第二次起变成一次查表。**contract-placement 不缓存**（§68.1 第二部分），gitleaks 也不缓存（§68.7）。
+
+新文件 `CI/worker/scan-result-cache-v1/cache.mjs`（键、记录、签名核对、策略开关、读写端口）；接线在 `CI/worker/formal-trivy-v4/adapter.mjs`（`trivyResultKey`、`executeScanners`、`finishObservation`）、`CI/worker/protected-job-bridge-v4/linux-worker.mjs`（签名之后才写缓存）、`CI/worker/protected-job-bridge-v4/signed-result.mjs`（签名器与 Windows 签发方共用的观察校验、签名载荷里的命中标记、签发方对原始签名的核对）、`CI/worker/formal-fixed-role-policy-v3/policy.mjs`（命中观察的清理核对）。`CI/worker/formal-contract-placement-v2/adapter.mjs` 只把执行步拆成 `executePlacement`（行为不变），并保留键的布局，供以后封闭输入的设计使用。
+
+### 68.1 键：逐项论证
+
+键是 `cacheKey(role, 成分)` 对规范 JSON 的 SHA-256。**每个成分都必填、都按类型校验**；缺一个、格式不对或多出未知字段，键就是 `null`：不查、不写，照旧真跑。构造键时出任何异常也返回 `null`（`trivyResultKey` 整体包在 try 里）。
+
+**trivy**（`trivyResultKey`）。三个扫描器能读到的只有：`/repo`（`snapshotTree` 复制的候选工作树，**跳过 `.git`**，所以看不到任何提交号、提交信息或历史）、`/scratch/db`（离线漏洞库）、`/scratch/policy`（checks bundle）、固定 argv 和容器参数。扫描器是受信的 trivy 二进制，不执行候选代码。
+
+| 成分 | 覆盖的输入 | 为什么够 |
+|---|---|---|
+| `candidateTreeSha` | 被测提交的树 | 候选目录由 `validateCheckout(complete)` 逐字节核对过树，不允许多余文件、链接或非常规文件 |
+| `inputInventorySha256` | 快照里每个文件的路径和 SHA-256 | 这是扫描器实际看到的字节本身；文件权限被快照统一成 0444/0555，扫描器看不出可执行位 |
+| `database` = `plan.cache` | 漏洞库 `trivy.db` 与 `metadata.json` 的 SHA-256、是否走 72 小时兜底、checks bundle 的 OCI digest、主版本、内容哈希 | 库一换，键就换。库是否仍可用每次都由 `cache.prepare` 与 `requiredTrivyPlans` 现场重判，缓存不绕过它 |
+| `image`、`nativeImageDigest`、`policyImage` | 扫描器镜像（tag+digest、原生 digest、角色策略钉的镜像） | 扫描器版本 |
+| `scannersSha256` | 三个扫描器的 argv、cwd、挂载（只取容器内目标路径）、网络、只读根、用户、能力、限额、scratch | 每次运行不同的宿主路径换成容器内路径；库的字节已由 `database` 覆盖 |
+| `dockerExecutableSha256` | Docker 客户端 | 保守项 |
+| `workflowSha256` | 受信 `.github/workflows/trivy.yml` | 规则来源 |
+| `sourceManifestSha256`、`sourceSha` | 整个 Source 清单：适配器、`plans.mjs`、`docker.mjs`、库缓存模块、本缓存模块 | 任何一个 Source 字节变化都换键，旧记录自然失效 |
+| `runtimeIdentity`、`hostAcceptanceRef`、`sourceAcceptanceRef` | 已签资格的运行环境与 Owner 接受引用 | 重装或重签资格后不复用旧结果 |
+
+墙钟：trivy 用 `--skip-db-update`，库的“是否过期”由上面的现场重判决定；扫描结论不读当前时间。
+
+**contract-placement：不缓存（开关在代码里关死）。** 初稿第 4 条说“候选代码就是被测树本身，提交号不影响结论”，这个论证**是错的**，改正如下。placement 容器里运行的是候选自己的代码（`python -m unittest`、`node --test`、候选的 esbuild 构建和渲染器、候选的 `check_contract_placement.py`），这些代码能读到的远不止两棵树：
+
+1. **完整提交历史**：`sealedCandidate` 用 `pack-objects --revs` 打包 S、H、T 三个提交**可达的全部对象**，放进容器内的 `.git`；
+2. **`/request/job.json`**：含 `pr`、`headSha`、`baseSha`、`testSha`、`createdAt`、`attempt`；
+3. **构建常量的内容**：`__CLUED_BUILD_SHA__=<testSha>` 被打进 bootstrap 渲染结果，候选代码能读到它的值，不只是长度；
+4. **墙钟**。
+
+而且现行测试**确实依赖历史**：`scripts/ci/test_check_contract_placement.py:60`（`test_real_pre_split_layout_passes`）读历史提交 `7888979c7e6a7e467aaa062aa84934918a024722` 的树。所以“两棵树 + 工具”构成的键不完整，按构造证明不了。
+
+**评估过的封闭方案（审查意见 M2(c)）**：容器里只放两个合成提交（固定元数据、没有父提交，树分别是被测树和 base 树），构建常量用固定占位符，`/request` 去掉提交号。结论：**这一项不在本次实现**，理由是：
+
+- 它会让上面那条现行测试直接失败（容器里没有 `7888979c`）。要保住它，只能再把一份固定的历史提交塞进容器；以后任何测试再引用别的历史提交都会重现这个问题。这等于给候选测试加了一条新的隐含约束，判定会与 GitHub 上原 workflow（跑真实提交）分叉；
+- 墙钟去不掉，所以即便封闭了提交元数据，也仍然不是“按构造完整”；
+- 改动面大：容器入口 `container-entry.mjs` 的作业校验与命令、`sealedCandidate` 的合成提交构造、`fixedCommands` 的参数，以及与原 workflow 的等价性论证，都要重写并重签资格，超出本项的中等规模。
+
+因此 **placement 开关在封闭输入的设计落地前保持关闭**，而且是在代码里关：`cacheSettings` 对 placement 总返回关（`SCAN_RESULT_CACHE_KEY_NOT_CLOSED_FOR_ROLE`），`createResultCache` 拒绝为 placement 打开端口，签名器和 Windows 签发方对带 `cacheHit` 的 placement 观察一律拒绝（§68.5）。策略示例只开 trivy。`placementResultKey`（已加 `dockerExecutableSha256`）与 `executePlacement` 的命中分支保留，只是生产上走不到。
+
+**只缓存成功**：失败与不确定结果从不写入。缓存失败不会放过任何东西，但会让“推一个新提交再跑”这个处理偶发失败的办法失效，所以不写。
+
+### 68.2 存放、签名与写入：只有 CI 能写
+
+- 位置由角色策略给出（§68.4），建议 `/var/lib/clued-independent-ci/scan-result-cache`，下分 `trivy/`，每条记录一个文件 `<keySha256>.json`。
+- **只有 root 写**：根目录、角色子目录、记录文件逐级过 `protectedPath`（无符号链接、uid 0、组和其他人不可写、记录 0600、单硬链接、`realpath` 等于自身）。根目录先去掉尾斜杠，不得与 `workspaceRoot`、`runsRoot`、`trustedSourceDirectory`、`dockerRootDirectory`（trivy 另加库缓存根）重叠，也不得包含签名钥、资格、公钥、Source 清单或入口文件；任何一条不满足，开关当作关（`SCAN_RESULT_CACHE_ROOT_OVERLAP`）。
+- **记录必须带原始签名（审查意见 MINOR 3：二选一，选“核对原始结果确实被签过”，不新增 HMAC 密钥）**。缓存只在原始结果**签名之后**写入：适配器把观察 durable 写进运行目录后，只给“真跑、完整、成功、有键”的结果返回一个 `storeSignedResult`；桥 `linux-worker` 写完签名结果之后才调用它，把刚签好的信封一起写进记录。读记录时，Linux 用角色策略里现有的结果公钥核对这个信封确实签了这份观察（`verifyOriginalEnvelope`：信封合同、keyId、运行身份、`executionObservationSha256` 等于观察摘要、主体、profile、成功、非命中、Ed25519 签名）；命中观察把原始观察和信封一起带给签名器与 Windows 签发方，签发方再用它**自己的签名者表**核一遍（§68.5）。理由：伪造一条能命中的记录需要现有结果私钥，这把钥匙本来就只在 root 保护区、本来就是 Windows 信任的锚；新增一个 HMAC 密钥要多一次安装时生成、一套 ACL、一份轮换与备份规程，还只能在 Linux 本机核对，Windows 无法独立验证。
+- 写入：先写临时文件（`wx`、0600、fsync），再 `link` 成正式名，再 fsync 目录。写失败不影响已经写出的签名结果，原因写进运行目录的 `result-cache-store.json`。
+- **崩溃窗口与坏记录（审查意见 MINOR 6）**：create、link、unlink 之间崩溃会留下孤儿临时文件，`link` 成功而 `unlink` 前崩溃还会让正式记录有两个硬链接，读时被 `protectedPath` 拒绝（单链接），于是这个键永远未命中。处理：每次写入先清扫角色目录里超过 10 分钟的孤儿临时文件（角色串行锁保证没有别的写入在进行），这同时把两链接记录恢复成一个链接；正式名已存在时，先按读取规则核对旧记录，仍能命中就保留（`RECORD_EXISTS`），坏的、过期的、未签名的、两链接的就删掉，用这次新的真实结果替换（`RECORD_REPLACED`）。坏记录只会让查表未命中、照旧真跑，下一次真跑就把它换掉。
+- 记录 = `{contract: …/2, role, keySha256, key（全部成分）, observation（原始真实观察）, originalObservationSha256, envelope（原始签名信封）, storedAt, recordSha256}`，`recordSha256` 是除它以外全部内容的摘要。
+
+### 68.3 读：任何异常一律未命中
+
+`lookup` 从不抛错，失败就返回 `{record: null, reason}`，原因写进 `result-cache.json`。命中要同时满足：开关开且有结果公钥；键完整；三级路径过 `protectedPath`；文件不超过 4 MiB、能解析、字段集合精确；合同号与角色对；`recordSha256` 对得上；键逐字节相同；**`storedAt` 不晚于现在且不早于现在减 TTL**（`CACHE_TTL_MS`，trivy 与 placement 都是 24 小时；`storedAt` 是将来值或超龄都算未命中）；`originalObservationSha256` 等于观察摘要；观察是该角色现行观察合同、`production-observation`、成功、退出码全 0、扫描器都完整清理、记录的每个时刻都不晚于 `storedAt`、**不带 `cacheHit`**（命中产生的观察绝不再被存成记录）；观察里的 Source、运行身份、接受引用、树、镜像、库与键一致；信封签名核对通过。
+
+### 68.4 策略开关
+
+角色策略 `/etc/clued-independent-ci/roles-v3/trivy.json`（root 私有文件，现有加载与“执行后策略未变”核对不变）新增可选字段：
+
+```json
+"scanResultCache": { "enabled": true, "root": "/var/lib/clued-independent-ci/scan-result-cache" }
+```
+
+字段缺失、`enabled` 不是 `true`、多出字段、根目录不合格，都等于关：不读也不写。只给 trivy 加；placement 的策略里即使写了也不生效。gitleaks 永远不缓存。**新 Source 装上而策略不加这个字段时，行为与今天完全相同。**
+
+**开关的约束放在 Windows 一侧（审查意见 MINOR 4：二选一，选“按角色白名单拒收 `cacheHit`”）**：`CACHE_HIT_ROLES = ['trivy']` 是 Source 常量，签名器与 Windows 签发方共用的 `observationFacts` 对其他角色的 `cacheHit` 一律拒绝（`SCAN_RESULT_CACHE_HIT_ROLE_REFUSED`）。不选“开关进资格载荷”，因为那要改资格签发工具和资格合同号并重签全部角色，而白名单随 Source 清单整体换代，审查面更小。
+
+### 68.5 命中时照样留证据、照样签名
+
+命中发生在“第一个扫描器本该启动”的位置，前面的步骤一步不省：角色开头的完整准入、扫描许可的取得与落盘、启动前的燃烧许可复核都照做，所以 **head 照样被记为已执行**，executed-heads 台账、“失败的 head 永远烧掉”、“同一提交的同一检查只真跑一次”都不变。之后不启动容器，做一次新的“后”准入，生成一份**本次 job 的新观察**：
+
+- 观察自己的字段只描述本次：主体、nonce、请求摘要、本次的前后准入、快照与清理；**没有 `scans`**。原来的三个扫描器记录及其逐扫描器准入哈希不再冒充本次的准入（审查意见 MINOR 2），只在 `cacheHit.originalObservation` 里；
+- `cacheHit = {contract: clued.independent-ci.scan-result-cache-hit/2, keySha256, recordSha256, originalObservationSha256, originalObservation, originalEnvelope, storedAt, servedAt}`；
+- 签名窗口是本次的：起点 `cacheHit.servedAt`，终点本次清理时刻；退出码与日志摘要取自原始扫描器。
+
+校验：
+
+- `observationFacts`（签名器与 Windows 签发方共用）：角色必须在白名单；`cacheHit` 字段集合精确；三个哈希格式；`storedAt ≤ servedAt`；`originalObservationSha256` 等于原始观察摘要，信封载荷指向同一摘要；原始观察是同角色、同 Source、同运行身份、同镜像的真实成功观察；**原始扫描器的开始、结束、清理时刻以及原始清理时刻都不晚于 `storedAt`**；命中观察不得另带 `scans`，结论等于原始结论。gitleaks、placement 带 `cacheHit` 一律拒绝；不带 `cacheHit` 的观察与以前逐字节同样校验。
+- 签名器（`signActualBridgeResult`）签名前用本机结果公钥核对原始信封。
+- Windows 签发方（`verifySignedBridgeResult`）用自己的签名者表找到原始信封的 keyId，要求它是同一 Source、同一资格的生产签名者，再核对签名和内容。
+- **签名载荷带命中标记（审查意见 MINOR 5）**：`resultPayload` 新增 `cacheHit`，真跑为 `null`，命中为 `{keySha256, recordSha256, originalObservationSha256}`；签发方要求它与观察一致，把命中签成真跑会被拒（`SIGNED_FORMAL_OBSERVATION_CHANGED`）。`verifyResultV2` 与 Native 发布侧不按字段集合核对载荷，所以多一个字段不影响它们；Checks 摘要不改。
+- 角色串行槽（`policy.mjs#validateCleanupObservation`）对命中观察取 `cacheHit.originalObservation.scans` 核对完整清理，并要求命中观察没有自己的 `scans`。
+
+观察合同号不变（trivy `/3`），信封与结果合同不变。运行目录写 `result-cache.json`（开关、键、查表结果、命中标记、观察摘要；命中和未命中都有），真跑成功且写入时另写 `result-cache-store.json`（写入结果与原因）。
+
+### 68.6 命中路径上的拒绝
+
+命中路径上任何一项授权失效，都和真跑一样直接失败、不产生观察：燃烧许可在查表期间过了传输窗口（`SCAN_START_GRANT_REFUSED`）、“后”准入被拒（批次认领代次变化等）、deadline 已过（`AUTHORITY_EXPIRED_BEFORE_SCAN`）。
+
+### 68.7 gitleaks 为什么不缓存
+
+gitleaks 扫的是提交历史（`gitleaks git /repo`：仓库里可达的每个提交的补丁，加审核过的历史例外证明），输入是提交图而不是一棵树：同一棵树可以由完全不同的历史得到，历史里可能带着后来删掉的秘密。完整的键至少要包含被扫范围内每个提交的身份，那样只改提交信息的 force-push 也会换键，正是本项要省的场景省不下来；键不完整又会放过历史里的秘密。所以不在本项内。
+
+### 68.8 能省多少、安装、测试
+
+- 按 §45.4 的实测，trivy 约 4.6–5.3 分钟；命中时只剩快照、库准备、两轮准入和签名，少 3 个扫描器容器与 3 轮准入。placement 不省。
+- 这是 CI Source 变更：新 Source 清单，trivy 与 contract-placement 两个角色随新清单重签资格；新文件已进 `source-closure.json`、桥 `boundary.mjs` 的必需清单、角色策略 `ROLE_SOURCE` 与两个适配器的 `CLOSURE`，组件 `script.independent-native-publication` 已 bump 并列入新文件。打开缓存只需在 trivy 角色策略里加 §68.4 的字段（不加则关闭）；根目录与角色子目录不存在时由第一次写入以 root 0700 创建，其父目录必须已是受保护目录。没有新增秘密。记录每条几十 KB（带原始观察与信封），超龄后不再命中，下次真跑时被替换；整目录删掉是安全的（之后只是未命中、照旧真跑），归档与 §35 的回收脚本不碰它。
+- 测试 `CI/test/scan-result-cache.test.mjs`（18 例，在修复前的代码上因缓存模块与接线不存在而失败）：真实 trivy 扫描循环、真实持久化步骤、真实 placement 执行步与真实桥 `executeProtectedIssuedJob`，只替换物理 Docker 传输与主机绑定的协作者；签名结果用测试 Ed25519 钥经真实 `resultPayload` 产生，经真实 `observationFacts` 与 `verifySignedBridgeResult`（真实 bridge v4 issue、签名者表）核对。覆盖：
+  1. 同树二次扫描命中、不启动扫描器（扫描许可仍取 1 次、准入 2 轮），命中观察没有自己的 `scans`，`cacheHit` 带原始观察与信封，签名载荷带命中标记，签发方全链核对通过；把命中签成真跑、或原始信封换成别的钥匙签的，都被拒；force-push 只改信息与重算 S 两种形状都命中；
+  2. 任何一个键成分变化都不命中（文件字节、文件集合、树、漏洞库、Source 清单、运行身份、两种接受引用、Docker 客户端）；纯函数层逐个成分去掉或改动都换键或变 `null`；键构造异常返回 `null`；
+  3. 缓存文件被篡改（12 种：改一个字节、截断、空、非 JSON、摘要过期、失败结果重算摘要、命中观察冒充记录、别的键重算摘要、观察摘要不符、别的钥匙签名、签名乱码、信封指向别的观察）都不命中；恢复原文件后再次命中；
+  4. `storedAt` 为将来值、超过 TTL 都不命中，TTL 内命中；
+  5. 开关关闭（缺字段、`enabled:false`、非布尔、缺 root、与运行目录、密钥目录、Docker 根目录重叠或包含它、多余字段）不读不写；尾斜杠被规范化；gitleaks、placement 永远关；没有结果公钥时端口不开；
+  6. guard 三级都检查（根目录、角色目录按目录，记录按私有文件），任何一级拒绝（非 root、组可写、符号链接、两个硬链接、权限不是 0600）都未命中；真实 `protectedPath` 在非 root 下也是未命中；
+  7. 持久化接线：先写 `observation.json`，再写 `result-cache.json`，签名之后才写记录与 `result-cache-store.json`；命中不写记录；失败不写记录；签名结果与观察不符时不写；未签名的信封被端口拒绝；
+  8. 孤儿临时文件被清扫、两链接记录恢复可读并被保留、坏记录被替换，且不留临时文件；
+  9. 命中路径上燃烧许可过期、“后”准入被拒、deadline 已过都不产生观察；
+  10. 签名器与签发方校验：格式不对、多字段、摘要不符、`storedAt` 晚于 `servedAt`、原始扫描器时刻晚于 `storedAt`、原始非成功、命中又带 `scans` 都被拒；gitleaks 与 placement 的 `cacheHit` 被拒；
+  11. 桥：`storeSignedResult` 在签名结果写出之后调用一次、参数就是那份签名结果，写入失败不改变结果。

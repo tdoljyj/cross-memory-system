@@ -31,7 +31,8 @@ export const REQUIRED_SOURCE_PATHS=Object.freeze([...LOCAL_FILES.map(n=>P+'worke
     'worker/formal-gitleaks-v4/adapter.mjs','worker/formal-gitleaks-v4/required-history/prepare.mjs','worker/formal-gitleaks-v4/required-history/selftest-shim.mjs','worker/formal-gitleaks-v3/docker-transport.mjs',
     'worker/formal-trivy-v4/adapter.mjs','worker/formal-trivy-v3/cache.mjs','worker/formal-trivy-v3/docker.mjs','worker/required-trivy-v3/plans.mjs','worker/required-trivy-v2/plans.mjs',
     'worker/formal-contract-placement-v2/adapter.mjs','worker/formal-contract-placement-v2/container-entry.mjs','worker/formal-gitleaks-v2/docker-transport.mjs',
-    'worker/required-gitleaks/prepare.mjs','worker/trusted-workflows.mjs','worker/verify-once/verify-worker.mjs','worker/protected-controller-ports-v2/refs.mjs'].map(p=>P+p)].sort());
+    'worker/required-gitleaks/prepare.mjs','worker/trusted-workflows.mjs','worker/verify-once/verify-worker.mjs','worker/protected-controller-ports-v2/refs.mjs',
+    'worker/scan-result-cache-v1/cache.mjs'].map(p=>P+p)].sort());
 export function validateSourcePins(files,required=REQUIRED_SOURCE_PATHS){
   check(Array.isArray(files)&&files.length<=10000,'BRIDGE_ACCEPTED_SOURCE_MISSING');const pins=new Map();
   for(const p of files){check(p&&Object.keys(p).sort().join('|')==='path|sha256'&&typeof p.path==='string'&&!p.path.startsWith('/')&&!/[\\:\x00-\x1f]/.test(p.path)&&!p.path.split('/').some(v=>!v||v==='.'||v==='..')&&HASH.test(p.sha256??'')&&!pins.has(p.path),'BRIDGE_SOURCE_PIN_INVALID');pins.set(p.path,p.sha256);}
