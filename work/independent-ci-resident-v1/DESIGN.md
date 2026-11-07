@@ -5068,280 +5068,376 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
 - 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。
 
-## 65. companion 不再依赖 Owner 登录：设计（优化方案 bf57ff10 M5；Task `59f8ef81`；只设计，未改任何运行代码，需独立审核和 Owner 批准）
+## 65. companion 不再依赖 Owner 登录：设计（优化方案 bf57ff10 M5；Task `59f8ef81`；只设计，未改任何运行代码，需 Owner 批准；r2 已按独立安全审核修订，见 65.10）
 
 ### 65.1 现状与问题
 
-- 现在的任务（§8.4，`install-resident.ps1#Register-CompanionTask`、`upgrade-apply.ps1` 同一配方；2026-11-07 在 DESK-W-591 只读回读）：`\Clued\CluedCIResidentCompanion`，主体 Owner SID，`LogonType=InteractiveToken`，RunLevel LUA，触发器只有 `LogonTrigger`，`RestartOnFailure` 3 次、间隔 1 分钟，`IgnoreNew`。
+- 现在的任务（§8.4）：`\Clued\CluedCIResidentCompanion`。
+  - 配方：`install-resident.ps1#Register-CompanionTask`，冻结升级通道 `upgrade-apply.ps1` 用的是同一配方。
+  - 2026-11-07 在 DESK-W-591 只读回读：主体 Owner SID，`LogonType=InteractiveToken`，RunLevel LUA，只有一个 `LogonTrigger`，`RestartOnFailure` 3 次、间隔 1 分钟，`IgnoreNew`。
+  - 动作：`conhost --headless node resident\<sha>\src\companion-main.mjs …`。
 - 后果：
-  1. 开机后没人登录：三个 SCM 服务（`CluedCIResident`、`CluedCISwapBroker`、`CluedCIUpgrader`）在跑，companion 不在。执行器只推迟（`companionReady` 要新鲜心跳），不出错，但也不干活。
-  2. Owner 注销：companion 随交互会话结束；节点心跳 30 分钟后算失联，触发接班（§41.6a）。
+  1. 开机后没人登录：三个 SCM 服务（`CluedCIResident`、`CluedCISwapBroker`、`CluedCIUpgrader`）在跑，companion 不在。执行器只推迟（`companionReady` 要新鲜心跳），不出错，也不干活。
+  2. Owner 注销：companion 随交互会话结束。节点心跳 30 分钟后算失联，触发接班（§41.6a）。
   3. 崩溃：任务计划程序最多补 3 次，之后要等下一次登录。
-  4. 原地升级在 Owner 没登录时：`upgrade-apply.ps1#Invoke-RegisterCompanionTask` 最后的 `$task.Run()` 对 InteractiveToken 任务不会启动，升级以 `COMPANION_NOT_STARTED` 结束。
+  4. Owner 没登录时的原地升级：`upgrade-apply.ps1#Invoke-RestartCompanion` 的 `$task.Run()` 拉不起 InteractiveToken 任务，结果是 `COMPANION_NOT_STARTED`。回滚时 `machine.mjs` 进入有界等待，节点停着（`restart-companion`）。
   5. 冷启动到能执行没有时间上界：取决于 Owner 什么时候登录。
 
 ### 65.2 companion 到底用了 Owner 会话的什么
 
-逐项核对源码。“需要什么”一栏区分两件不同的事：**Owner 的身份**（SID、已加载的用户配置文件和 HKCU、能解密 DPAPI 的登录）和**交互桌面**（能显示窗口和通知的会话）。
+逐项核对源码。“需要什么”一栏区分两件事：
+
+- **身份**：Owner 的 SID、已加载的用户档案和 HKCU、能解开 DPAPI 的登录；
+- **交互桌面**：能显示窗口和通知的会话。
 
 | # | 用到的东西 | 在哪里 | 需要什么 |
 |---|---|---|---|
-| 1 | **WSL 发行版归属**。发行版按 Windows 用户注册（HKCU `Lxss`），vhdx 在 Owner 档案里：DESK 是 `CluedResident-Linux`，位置在 `C:\Users\Windows\WSL\CluedResident-Linux`；TURING 是 `Ubuntu-24.04`。companion 以 `wsl --distribution <D> --user root --exec …` 运行全部 root 工具，另外有一个保活进程 `wsl --exec /bin/sleep infinity` | `companion.mjs#argv`（`wsl(...)`、`keepalive`），`companion-main.mjs#keepalive` | 身份和已加载的 HKCU，不需要桌面 |
-| 2 | **DrvFs**：Linux 一侧经 `/mnt/c` 读写 Windows 目录（bundles、formal-spool、upgrade 的 staged），用的是发行版所属 Windows 用户的令牌。所以 ACL 里给的是 Owner SID | §8.3，`install-resident.ps1#Get-AclPlan`（`bundles`、`upgrade`） | 身份 |
-| 3 | **git 凭据**：`credential.helper = !gh auth git-credential`，令牌在 gh 的 keyring 里（Windows 凭据管理器，按用户 DPAPI 加密）。`build-bundle.ps1` 在不提权时用它 fetch 私有仓库，提权就拒绝（`NON_ELEVATED_RUN_REQUIRED`） | Source `resident-v2/build-bundle.ps1` | 能解密 DPAPI 的登录（要有密码凭据的登录），不需要桌面 |
-| 4 | **gh 登录**。**不是只读**：与第 3 项是同一个令牌，scope 为 `repo`、`workflow`、`gist`、`read:org`（`gh auth status`，只看 scope，没看令牌）。读：poller、`pr-head`、main 的分支规则、提示模式的 check-runs。写：提交状态 `POST statuses`（`pr-status.mjs`）、`POST actions/runs/<id>/rerun`（`admission-rerun.mjs`）、`POST …/dispatches`（`panel-dispatch.mjs`）、接班评论 `POST issues/<n>/comments`（`companion-heartbeat.mjs#ghHandoverPort`） | 见左 | 同第 3 项 |
-| 5 | **Windows 通知**：`toastArgv` 起 PowerShell 调 WinRT toast，用在 6 处：PR 状态、节点心跳、算力面板、合并核对、补跑、规则兜底 | `pr-status.mjs#toastArgv` 及调用方 | **交互桌面**。这是唯一必须有登录会话的一项 |
-| 6 | **用户可写目录**。Owner 档案里的 `%LOCALAPPDATA%\CluedIndependentCI\`：`companion-lock`、`companion-log`，以及 5 个记忆文件（pr-status、heartbeat、panel-dispatch、merge-reconcile、admission-rerun）。常驻目录里给 Owner SID 的条目：`bundles`（含 `_seed`）修改；`mailbox\responses` 修改（答复和 companion 心跳都在这里）；`upgrade\mailbox\responses` 修改；`inbox`、`requests`、`upgrade\inbox` 只能新建。Owner 能读的秘密：`secrets\heartbeat` 里的节点心跳令牌 | `companion-main.mjs`，`install-resident.ps1#Get-AclPlan` | 身份和已加载的档案 |
-| 7 | **身份自检**：`USERPROFILE == node.ownerProfileDirectory`（`COMPANION_NODE_IDENTITY_CHANGED`）；`companionProcessAlive` 假定 companion 用 Owner 不提权的令牌；`build-bundle.ps1` 拒绝提权 | `companion-main.mjs` | 身份和档案 |
-| 8 | **出网**：服务按服务 SID 封了出站（§7），节点上只有 companion 出网（GitHub、Supabase 心跳）。代理设置是用户级的（HKCU 和用户环境变量） | §7 | 身份和档案 |
+| 1 | **WSL 发行版归属**。发行版按 Windows 用户注册在 HKCU `Lxss` 下，vhdx 在 Owner 档案里：DESK 是 `CluedResident-Linux`，位于 `C:\Users\Windows\WSL\CluedResident-Linux`；TURING 是 `Ubuntu-24.04`。所有 root 工具都经 `wsl --distribution <D> --user root --exec …` 运行，另有保活进程 `wsl --exec /bin/sleep infinity` | `companion.mjs#argv`（`wsl(...)`、`keepalive`）、`companion-main.mjs#keepalive` | 身份、HKCU |
+| 2 | **DrvFs**：Linux 经 `/mnt/c` 读写 bundles、formal-spool、upgrade 的 staged，用的是发行版所属用户的 Windows 令牌，所以 ACL 里写的是 Owner SID | §8.3，`install-resident.ps1#Get-AclPlan` | 身份 |
+| 3 | **git 凭据**：`credential.helper = !gh auth git-credential`，令牌在 gh 的 keyring 里（凭据管理器，用户 DPAPI）。`build-bundle.ps1` 在不提权时用它 fetch 私有仓库，提权就拒绝（`NON_ELEVATED_RUN_REQUIRED`） | Source `resident-v2/build-bundle.ps1` | DPAPI 能用的登录（带密码凭据）；不需要桌面 |
+| 4 | **gh 登录**。**不是只读**，和第 3 项是同一个令牌，scope 为 `repo`、`workflow`、`gist`、`read:org`（`gh auth status` 只看 scope，没看令牌）。<br>读：poller、`pr-head`、main 的分支规则、提示模式的 check-runs。<br>写：`POST statuses`（`pr-status.mjs`）、`POST actions/runs/<id>/rerun`（`admission-rerun.mjs`）、`POST …/dispatches`（`panel-dispatch.mjs`）、`POST issues/<n>/comments`（`companion-heartbeat.mjs#ghHandoverPort`） | 见左 | 同第 3 项 |
+| 5 | **Windows 通知**：`toastArgv` 起 PowerShell 调 WinRT toast，共 6 处：PR 状态、节点心跳、算力面板、合并核对、补跑、规则兜底 | `pr-status.mjs#toastArgv` 和它的调用方 | **交互桌面**。唯一一项必须有登录会话的 |
+| 6 | **用户可写目录**。<br>Owner 档案 `%LOCALAPPDATA%\CluedIndependentCI\`：`companion-lock`、`companion-log`，以及 5 个记忆文件。<br>常驻目录里 Owner SID 可修改的：`bundles`（含 `_seed`）、`mailbox\responses`（答复和心跳）、`upgrade\mailbox\responses`、`owner\train-review`（不是 companion 用的）。<br>Owner 只能新建的：`inbox`、`requests`、`upgrade\inbox`。<br>Owner 能读的秘密：`secrets\heartbeat`（节点心跳令牌） | `companion-main.mjs`、`Get-AclPlan` | 身份、档案 |
+| 7 | **身份自检**：`USERPROFILE == node.ownerProfileDirectory`（`COMPANION_NODE_IDENTITY_CHANGED`）；`companionProcessAlive` 假定进程用的是 Owner 不提权的令牌；`build-bundle.ps1` 拒绝提权 | `companion-main.mjs` | 身份、档案 |
+| 8 | **出网**：服务按服务 SID 封了出站（§7），所以节点上只有 companion 出网（GitHub、Supabase 心跳）。代理设置是用户级的 | §7 | 身份、档案 |
 
 结论：
-- 只有第 5 项要交互桌面。
-- 第 1–4 项和第 6–8 项要的是“Owner 本人的身份 + 已加载的档案 + 能解密 DPAPI 的登录”，不要求有人坐在桌面前。
-- 另外，Agent 在 Owner 账户下运行，所以第 1、3、4、6 项今天就是 Agent 够得着的（§3.3 已接受的边界，resident constraint `4fedfc84`：`wsl -u root` 能从 Owner 会话直接拿到）。M5 的任何方案都不能放宽这一点；收紧这一点是另一件事（见 65.3 方案 A）。
+
+- 只有第 5 项要交互桌面。第 1–4 项和第 6–8 项要的是“Owner 本人的身份、已加载的档案、DPAPI 能用的登录”，不要求有人坐在桌面前。
+- Agent 以 Owner 账户运行，所以第 1、3、4、6 项今天 Agent 就够得着，这在 §3.3 和 resident constraint `4fedfc84` 里是已接受的边界。
+- 同一用户的进程还能经环境变量（HKCU 里的 `NODE_OPTIONS`）、`~/.gitconfig`、调试或注入影响 companion，这也在已接受的边界之内。companion 只是搬运，不是权威（§3.3）。
+- M5 的任何方案都不能放宽这些边界；收紧它们是另一件事（65.3 的方案 A）。
 
 ### 65.3 方案比较
 
-**A. 专用低权限本地账户（例如 `.\clued-companion`），用计划任务或服务运行**
+**A. 专用低权限本地账户（例如 `.\clued-companion`），以计划任务或服务运行**
 
 - 不可行的子方案：
-  - gMSA：要求 AD 域，两台节点都是工作组（`net accounts`：`Computer role: WORKSTATION`），不能用；
-  - 虚拟账户 `NT SERVICE\…` 或 LocalSystem：WSL 不支持 LocalSystem；虚拟账户既不能拥有按用户注册的发行版，也没有验证过；而且 DrvFs 的身份会变成服务 SID。
+  - gMSA：要求 AD 域，两台节点都是工作组（`net accounts`：`WORKSTATION`）。
+  - 虚拟账户或 LocalSystem：WSL 不支持 LocalSystem；虚拟账户拥有不了按用户注册的发行版，也没验证过；DrvFs 的身份会变成服务 SID。
   - 所以 A 只能是一个普通本地账户。
-- 安全性：四个方案里最好。Owner 会话（含 Agent）不再是常驻发行版的 root，拿不到 companion 的 GitHub 凭据。如果相关 ACL 一起迁走，也写不了 `mailbox\responses`。这是把已接受的边界 `4fedfc84` 收紧。
-- 对现有边界和代码的影响：
-  - 节点档案合同要加 `companionSid` 和 `companionProfileDirectory`；
-  - §8.3 里所有给 Owner SID 的 companion 条目改成新 SID；
-  - 发行版要迁到新账户名下，用 `wsl --import-in-place` 或导出再导入，docker 镜像、systemd 单元和 `/var/lib/clued-independent-ci` 都跟着走；
-  - 新账户要有自己的 GitHub 凭据。这是一个新秘密，Agent 看不到，但多了一个要管的秘密；
-  - 所有从 Owner 会话 `wsl -d <D> -u root` 的运维手册都要改成以新账户身份运行，要 `runas` 加密码：reinstall A/B、`linux/host-tuning`、`install/verify-resident-linux.sh`、`make-result-key.sh`。Owner 也失去直接进 root 诊断的路。
-- Owner 一次性操作：至少 6 步，其中好几次要输密码：
+- 安全：最好。
+  - Owner 会话（含 Agent）不再是常驻发行版的 root，也拿不到 companion 的 GitHub 凭据。
+  - 如果 ACL 一并迁移，Owner 会话也写不了 `mailbox\responses`。
+  - 要存的密码是一个**非管理员**账户的密码。
+  - 整体上是把 `4fedfc84` 收紧。
+- 影响：
+  - 节点档案加 `companionSid`、`companionProfileDirectory`。
+  - §8.3 里 companion 用的 Owner SID 条目全部换成新 SID。
+  - 发行版迁到新账户，用 `wsl --import-in-place` 或导出再导入，docker 镜像、systemd 单元、`/var/lib/clued-independent-ci` 都跟着走。
+  - 新账户要有自己的 GitHub 凭据，这是一个新秘密，Agent 看不到。
+  - 所有在 Owner 会话里执行 `wsl -d <D> -u root` 的手册都要改为用 `runas` 加密码：reinstall A/B、`linux/host-tuning`、`install/verify-resident-linux.sh`、`make-result-key.sh`。Owner 也就没有了直接进 root 诊断的路。
+- Owner 一次性操作：至少 6 步，好几次要输密码。
   1. 建账户、设密码；
-  2. 授予“作为批处理作业登录”或“作为服务登录”；
-  3. 以新账户身份迁移发行版；
-  4. 以新账户身份 `gh auth login`；
+  2. 授予批处理登录或服务登录权限；
+  3. 迁移发行版；
+  4. 在新账户下 `gh auth login`；
   5. 带新档案重装；
-  6. 改 Linux 运维习惯。
-- 失败与恢复：如果用密码登录，有和方案 B2 一样的密码变更和锁定问题，只是账户价值低一些。如果用 S4U，就没有 DPAPI，GitHub 凭据只能放进有 ACL 的明文文件。
-- 结论：作为以后的加固候选（M5-b，见 65.9），不作为 M5。
+  6. 改掉 Linux 运维习惯。
+- 失败与恢复：用密码登录时，问题和 B2 一样，只是账户价值低；用 S4U 时没有 DPAPI，GitHub 凭据只能放进加了 ACL 的明文文件。
+- 结论：作为加固候选，记为 M5-b（65.9）。如果 Owner 不接受 B2 的代价 3（存管理员密码），就应改走 A。
 
-**B. 不换账户：同一个 Owner 账户，改成非交互登录（“不管用户是否登录都要运行”）**
+**B. 不换账户：同一个 Owner 账户，改为非交互登录（“不管用户是否登录都要运行”）**
 
 - **B1 S4U（不存密码）**：不推荐。
-  - S4U 登录没有密码凭据，DPAPI 用户密钥解不开，任务计划程序界面自己也注明“只能访问本地资源”。第 3、4 项（gh keyring 和 git 凭据）都会失败。
-  - 要让它工作，得把 gh 令牌改成明文文件（`--insecure-storage`）。存储方式更差，等于把同一个秘密搬到更容易泄露的地方。
-  - WSL 在 S4U 会话里能不能用没有验证过。
-  - 好处是不存密码，也不会触发账户锁定。
-- **B2 密码登录（`TASK_LOGON_PASSWORD`，任务计划程序把密码存为 LSA 秘密）**：推荐的底座。
-  - 和今天相比，身份、档案、DPAPI、令牌、ACL、发行版、出网都一样，只是没有桌面，所以通知要拆出去（方案 C）。
-  - Owner 在 Windows 原生凭据框里输一次自己的密码，Agent 看不到，也不经手。
+  - S4U 登录没有密码凭据，用户 DPAPI 解不开；任务计划程序界面自己也注明“只能访问本地资源”。第 3、4 项会失败。
+  - 绕过它就得把 gh 令牌改成明文文件存储，等于把同一个秘密放到更差的地方。
+  - WSL 在 S4U 下能不能用没有验证。
+  - 优点：不存密码，不会触发账户锁定。
+- **B2 密码登录（`TASK_LOGON_PASSWORD`）**：推荐的底座。
+  - 和今天相比，身份、档案、DPAPI、令牌、ACL、发行版、出网都不变，只是没有桌面，所以通知要拆出去（方案 C）。
   - 代价有四个：
-    1. Owner（管理员账户）的密码存成 LSA 秘密，只有 SYSTEM 或管理员能取出；
-    2. 改密码后任务无法登录；
-    3. 存的密码错了时，每次触发都是一次失败登录，可能锁住 Owner 账户（DESK：阈值 10 次，观察窗口 10 分钟，锁定 10 分钟）；
-    4. 带密码的任务定义，自动化路径（SYSTEM 升级器）没有密码就改不了，所以任务的动作必须与代际无关。
-  - 65.4 逐项处理这些代价。
+    1. Owner（管理员账户）的密码要交给任务计划程序保存。它存在 SYSTEM 的凭据库里，受机器 DPAPI 保护，**SYSTEM 和任何管理员都能还原出明文**。今天任何地方都没有存这个密码。
+    2. Owner 一改密码，任务就登录不上。
+    3. 存的密码失效时，每次触发都是一次失败登录，可能把 Owner 自己的账户锁住。DESK 的策略是阈值 10、观察窗口 10 分钟、锁定 10 分钟。
+    4. 没有密码就无法改写这个任务的定义，所以自动路径（SYSTEM 升级器）一律不能再注册它。
+  - 65.4 逐项处理这些代价，代价 1 需要 Owner 明确决定（65.5）。
 
 **C. 拆成“要会话的部分”和“不要会话的部分”**
 
-- 65.2 的结论是：只有通知要会话。WSL、git、gh 要的是 Owner 的身份，不是会话。
-- 所以只拆分本身去不掉对登录的依赖。把 WSL 操作挪进服务也不行：服务账户够不到 Owner 的发行版，而且服务被封了出站。
-- C 是 B2 的组成部分：companion 不再直接弹通知，只写通知队列；另起一个只在登录时运行的通知小任务。
+- 65.2 已经说明，只有通知要会话，所以只拆分去不掉对登录的依赖。
+- 把 WSL 操作挪进服务也不行：服务账户够不到 Owner 的发行版，而且封了出站。
+- 所以 C 只作为 B2 的组成部分：companion 只写通知队列，另起一个只在登录时运行的通知任务。
 
 **D. 其他**
 
-- D1 自动登录（AutoAdminLogon / Autologon）后锁屏：不推荐。注销问题照旧，密码同样存在 LSA，开机到锁屏之间控制台是解锁的，而且影响整个桌面。
-- D2 Linux 一侧不用 WSL，改用 Hyper-V 常驻虚拟机（hvsocket/SSH）：能彻底去掉按用户注册的问题，但 bridge、资格和运维要整套重做，不在 M5 的范围。
-- D3 让常驻服务去拉起交互任务：没人登录时没有会话可拉，不解决问题。
+- D1 自动登录后锁屏：不推荐。注销问题照旧，密码同样要存，开机到锁屏之间控制台是解锁的。
+- D2 Linux 一侧改用 Hyper-V 常驻虚拟机：bridge、资格、运维要整套重做，超出 M5 范围。
+- D3 由常驻服务拉起交互任务：没人登录时根本没有会话。
 
-**推荐：B2 + C，再加一个稳定的监督进程和不会锁账户的触发器（65.4）。**
+**推荐：B2 + C，加上一个稳定的监督进程、不会锁账户的触发器，以及在安全桌面上输入的凭据（65.4）。B2 的代价 1 不被接受时，改走 A（M5-b）。**
 
 ### 65.4 推荐方案
 
-#### 65.4.1 companion 计划任务：定义只写一次，此后不再改
+#### 65.4.0 先决条件：M5 必须整套重装
+
+- 冻结的升级通道每次升级、回滚、Recover 都会按 InteractiveToken 加 conhost 的配方重注册 companion 任务：`upgrade-apply.ps1:125-126`、`:172-177`，`machine.mjs` 第 652、744 行，`upgrade-apply.ps1:732`。
+- `upgrade-apply.ps1` 属于冻结范围（§34.8、§42.1 c、`rollout/INSTALL-BATCHES.md` 的 R 类），改一个字节就会被拒：`UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`。
+- 所以：
+  - M5 不能走原地升级。只能随一次整套重装（R 类：Decision + UAC + Grant）装上，同时换掉 `upgrade-apply.ps1` 和 `upgrader/src/machine.mjs` 里 companion 的那一步。
+  - 新通道里不再有 `registerCompanionTask`。升级、回滚、Recover 只改 launch 文件、重启 companion 子进程（65.4.4）。
+  - 在 M5 装好之前，**不能**单独把任务切成密码登录。否则下一次升级、回滚或 Recover 会把它悄悄改回 InteractiveToken，存的凭据也跟着丢失。
+
+#### 65.4.1 companion 计划任务：只在提权路径里写，自动路径永不改写
 
 - 名称不变：`\Clued\CluedCIResidentCompanion`。
-- 主体与登录：主体 Owner SID，`LogonType=Password`（1），`RunLevel=LUA`（0）。
+- 主体：Owner SID，`LogonType=Password`（1），`RunLevel=LUA`（0）。
 - 触发器：
   - `BootTrigger`，Delay `PT30S`；
-  - `LogonTrigger`（Owner）作后备。密码登录的任务即使由登录触发，也运行在自己的批处理会话里；
   - `TimeTrigger`，`Repetition.Interval=PT15M`，无限期。
+  - **不要 `LogonTrigger`**：密码失效时，Owner 的每次登录都会多一次失败尝试。
 - 设置：
-  - `MultipleInstancesPolicy=IgnoreNew`；
-  - **不要 `RestartOnFailure`**（Count 0），重启交给监督进程；
-  - `StartWhenAvailable=true`、`ExecutionTimeLimit=PT0S`；
-  - 电池相关两项为 false，不用空闲设置。
-- SDDL 不变：`D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;<Owner>)`。
-- **动作固定**：`<root>\bin\CluedCompanionSupervisor.exe "<root>"`。参数里不含任何代际哈希，所以升级不用改任务定义，也就不需要密码（见 65.4.4）。
-- **为什么是 15 分钟、为什么去掉 RestartOnFailure**：
-  - 存的密码失效时，每次触发是一次失败登录（事件 4625）。
-  - DESK 的锁定策略是阈值 10 次、观察窗口 10 分钟，计数在最后一次失败后 10 分钟清零。
-  - 触发间隔大于观察窗口，计数就不会累积：开机、登录、重复三个触发器碰巧落在同一窗口，最多也只有 3 次。
-  - 反过来，1 分钟一次的 `RestartOnFailure`，或者短于 10 分钟的重复触发，会在一小时内锁住 Owner 自己的账户。
-  - `verify-resident.ps1` 不提权读 `net accounts`。观察窗口 ≥ 15 分钟而阈值 > 0 时，记 `COMPANION_TRIGGER_WITHIN_LOCKOUT_WINDOW` 为不通过。
+  - `IgnoreNew`；
+  - **不要 `RestartOnFailure`**，重启交给监督进程；
+  - `StartWhenAvailable=true`，`ExecutionTimeLimit=PT0S`，两项电池设置为 false。
+- **SDDL：`D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;<Owner>)`**：
+  - Owner 只给读，**不给执行**（今天是 FRFX）。这样 Owner 会话（含 Agent）不能反复 `Run` 去刷失败登录，以此锁住账户；
+  - 通知任务能读 `State` 和 `LastTaskResult`；
+  - 需要手动拉起时，从提权窗口操作。
+  - 相应地，`replace-heartbeat-token.ps1` 的提示要改成“在提权窗口里重启任务”。
+- **动作固定**：`<root>\bin\CluedCompanionSupervisor.exe "<root>"`，不含代际哈希。
+- **锁定的账**：
+  - 计数在最后一次失败后经过一个观察窗口（10 分钟）清零。
+  - 自动触发里只有开机和每 15 分钟一次两类，间隔都大于观察窗口。同一窗口里最多有：开机 1 次、重复 1 次、SYSTEM 升级器重启 1 次、Owner 提权手动运行若干次。
+  - 规则：`verify-resident.ps1` 不提权读 `net accounts`。必须满足下面两条之一，否则记 `COMPANION_LOCKOUT_MARGIN_INSUFFICIENT` 为不通过：
+    - 阈值 = 0（不锁定）；
+    - 阈值 ≥ 6，且观察窗口 < 15 分钟。
 
 #### 65.4.2 监督进程 `CluedCompanionSupervisor.exe`（新，C#）
 
-- 编译：在安装时编译进管理员专用的 `bin\`，做法同作业宿主（§24）：`/noconfig`、引用写全路径、`winexe`。
-- 启动参数来源：只读管理员专用的 `config\companion-launch.json`，合同 `clued.independent-ci.companion-launch/1`，有界 JSON，键固定：
-  - `generation`；
-  - `nodeExe` 及其 sha256；
-  - `entry`（`resident\<sha>\src\companion-main.mjs`）及其 sha256；
-  - `configSha256`。
-- 启动前核对：
-  - 路径必须在 root 之下，不能是 junction；
-  - 两个哈希必须相符，做法同 `ResidentServiceHost.cs`；
-  - 任何一项不对都不启动，退避后重读文件。
-- 子进程：
-  - 以 `node.exe <entry> --root <root> --config-sha256 <sha>` 启动 companion，`CREATE_NO_WINDOW`，环境就是任务给的 Owner 环境，和今天一样；
-  - 子进程放进监督进程自己的作业对象，`KILL_ON_JOB_CLOSE`：监督进程被结束时 companion 一并结束，不会留下没人管的 companion。作业宿主的嵌套作业不受影响。WSL 里已经启动的 systemd 单元也不受影响，和今天“结束任务”一样。
-- **重启策略**：子进程退出就等 5、10、20、40 秒，之后每次 60 秒，永不放弃。连续运行满 10 分钟后退避清零。退出码与时间写进 `%LOCALAPPDATA%\CluedIndependentCI\supervisor.json`，只记码、时刻和次数，至多 50 条。每次重启前都重读 launch 文件，升级就靠这一点生效。
-- **令牌自检**：启动时读自己的令牌。`TokenElevationType` 为 Full，或者 Administrators 组是启用状态（不是 deny-only），就拒绝：记 `SUPERVISOR_ELEVATED_TOKEN_REFUSED` 后退出。这样任务被误设成“最高权限”时不会带着管理员令牌跑 companion。companion 本身加同样的检查（`COMPANION_ELEVATED_TOKEN_REFUSED`）。
-- 单实例：沿用现有的 companion 实例锁（档案里的文件锁，`acquireCompanionLock`），再加任务的 `IgnoreNew`。LUA 令牌没有 `SeCreateGlobalPrivilege`，不另建 Global 互斥量。
+- 编译：随安装编译进管理员专用的 `bin\`，做法与作业宿主（§24）相同：`/noconfig`、引用写全路径、`winexe`。
+- **launch 文件**：只读管理员专用的 `config\companion-launch.json`。
+  - 合同 `clued.independent-ci.companion-launch/1`，有界，键固定：`generation`、`nodeExe` 及其 sha256、`entry` 及其 sha256、`configSha256`。
+  - 写入方（安装器、新的升级通道）用“临时文件 + `MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH)`”原子替换。
+  - 监督进程读取时：
+    - 用 `FILE_FLAG_OPEN_REPARSE_POINT` 打开，拒绝重解析点；
+    - 从 root 到文件逐级核对，任何一级是 junction 或符号链接都拒绝；
+    - 核对所有者是 Administrators，DACL 里 Owner 只有读执行。
+  - 两个目标文件以 `FILE_SHARE_READ`（不含写和删）打开，持有句柄核对哈希，**持有到子进程启动之后**，避免核对和使用之间被换掉。
+  - 任何一项不对都不启动，退避后重读。
+- **子进程**：
+  - 启动方式：`node.exe <entry> --root <root> --config-sha256 <sha>`，加 `CREATE_NO_WINDOW`。
+  - **环境用白名单**，从任务给的环境里只保留：`SystemRoot`、`windir`、`ComSpec`、`PATHEXT`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`HOMEDRIVE`、`HOMEPATH`、`USERNAME`、`USERDOMAIN`、`COMPUTERNAME`、`TEMP`、`TMP`、`ProgramData`、`ProgramFiles*`、`NUMBER_OF_PROCESSORS`、`PROCESSOR_*`，以及代理变量 `HTTP(S)_PROXY`、`NO_PROXY`。
+    - `PATH` 重设为系统目录加 gh 和 git 的安装目录（取自 companion 配置）；
+    - `NODE_*`、`GIT_*`、`GH_*`、`PSModulePath` 等一律不传。
+  - 局限：同一用户还能改 `~/.gitconfig`，或者调试、注入这个进程，这仍在 65.2 所说的已接受边界之内。白名单只关掉最省事的那条路，不是新的权威。
+  - 作业对象：子进程放进监督进程自己的作业对象，`KILL_ON_JOB_CLOSE`。监督进程结束时 companion 一起结束。作业宿主的嵌套作业不受影响，WSL 里已启动的 systemd 单元也不受影响。
+  - 监督进程用 `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)`，只引用系统 DLL。
+- **重启**：
+  - 子进程退出后依次等 5、10、20、40 秒，之后每次 60 秒，永不放弃；连续运行满 10 分钟后退避清零。
+  - **launch 文件的 `generation` 变了就立即启动**，不退避，这样升级时等新进程的时限够用。新通道的等待时限也从 30 秒放宽到 90 秒。
+  - 退出码和时刻记进 `%LOCALAPPDATA%\CluedIndependentCI\supervisor.json`，至多 50 条。这个文件只是给人看的，没有任何判断依赖它。
+- **令牌自检**：
+  - 监督进程启动时读自己的令牌。`TokenElevationType` 为 Full，或 Administrators 处于启用状态（不是 deny-only），就以 `SUPERVISOR_ELEVATED_TOKEN_REFUSED` 退出。
+  - companion 加同样的检查：`COMPANION_ELEVATED_TOKEN_REFUSED`。
+  - 这样任务被设成“最高权限”时，不会带着管理员令牌运行。
+- 单实例：沿用 companion 的实例锁，加上任务的 `IgnoreNew`。
 
 #### 65.4.3 通知拆分（方案 C）
 
-- **companion 一侧**：6 处 `toastArgv` 改成同一个 `notify(key, title, body)`，写入 `%LOCALAPPDATA%\CluedIndependentCI\notify-queue\`。
-  - 每条一个文件，只新建；文本按 `toastArgv` 的规则截到 400 字。
-  - 上限 500 个文件、2 MB，超出就丢掉最旧的，并写一条“通知已丢弃 N 条”。
-  - 各处的“已通知”记忆语义不变，只是现在指“已入队”。
-- **通知任务** `\Clued\CluedCIResidentNotifier`（新）：
-  - 主体和今天的 companion 任务一模一样：InteractiveToken、LUA、AtLogOn。
-  - 动作：`conhost --headless node resident\<sha>\src\notifier-main.mjs --root <root>`，与代际绑定。因为不存密码，安装和升级器可以照今天的配方注册和改写。
-  - 每 5 秒把队列里的通知显示出来并删掉。
-  - 登录时和之后每 5 分钟读一次：
-    - companion 任务的 `State` 和 `LastTaskResult`（Owner 对任务有 FRFX）；
-    - `mailbox\responses` 里的心跳时间；
-    - `supervisor.json`。
-  - 遇到下列情况自己出通知：
-    - 登录失败类结果：`0x8007052E` 用户名或密码错，`0x80070569` 未授予该登录类型，`0x80070532` 密码过期，`0x80070533` 账户停用，`0x80070775` 账户锁定。通知写“companion 的登录凭据失效，请以管理员运行 `rearm-resident.ps1 -CompanionCredential`”；
-    - 任务在运行但心跳超过 5 分钟没更新：“companion 无心跳”；
-    - 30 分钟内重启 5 次以上：“companion 反复崩溃”。
-- **没人登录时**：队列有界累积，下次登录时显示。远端信号本来就不依赖会话：PR 页的提交状态，以及 KooYomi 节点心跳，都是 companion 自己发的。
+- **companion 一侧**：6 处 `toastArgv` 改为同一个 `notify(key, title, body)`，写进 `%LOCALAPPDATA%\CluedIndependentCI\notify-queue\`。
+  - 一条一个文件，只新建；文本按 `toastArgv` 截断到 400 字；
+  - 上限 500 个文件、2 MB，超出就丢掉最旧的，并记一条“已丢弃 N 条”；
+  - “已通知”的记忆改为“已入队”。
+- **通知任务 `\Clued\CluedCIResidentNotifier`（新）**：
+  - 配置：InteractiveToken、LUA、AtLogOn。动作是 `conhost --headless node resident\<sha>\src\notifier-main.mjs`。它不存密码，新通道可以照常改写。
+  - 每 5 秒显示一次队列里的通知，显示完删除。
+  - 登录时和之后每 5 分钟检查一次，各情况的提示：
+    - companion 任务的 `LastTaskResult` 落在登录失败的码里（`0x8007052E`、`0x8007052F`、`0x80070530`、`0x80070532`、`0x80070533`、`0x80070569`、`0x80070775`）：出“companion 无法登录（码 X）”；
+    - 心跳超过 5 分钟没更新：出“companion 无心跳”；
+    - 反复重启：出“companion 反复重启”。
+- **通知队列可以被伪造**：Owner 会话可写这个目录，今天它们本来也能直接弹通知。所以：
+  - 任何通知文本**都不叫人输入密码或凭据**，只给出码和手册里的章节号。
+  - 运行手册明文规定：只在自己亲手启动提权命令、点过 UAC 之后，**而且只在安全桌面上**的凭据框里输入密码（65.4.4）。在普通桌面上弹出的“凭据框”一律当作伪造。
+- 没人登录时，队列有界累积，下次登录时显示。远端信号不依赖会话：PR 页的提交状态和 KooYomi 节点心跳。
 
-#### 65.4.4 安装、升级通道、复位、校验、卸载
+#### 65.4.4 凭据输入、安装、复位、升级通道、校验、卸载
 
-- **install-resident.ps1**：
-  - 步骤 `companion-task` 改为注册 65.4.1 的定义。
-  - 密码用 `Get-Credential` 取。Windows PowerShell 5.1 弹出的是系统 CredUI 原生凭据框，用户名预填 Owner 账户，SID 对不上就拒绝。
-  - 取到的密码直接传给 `RegisterTaskDefinition(…, user, password, 1, sddl)`，不写文件、不进计划、不进回执、不进日志、不进环境变量和命令行，用完立即清空变量。
-  - Owner 取消就以 `COMPANION_CREDENTIAL_NOT_GIVEN` 停在这一步，前面各步照 §6 的规则可以重放。
-  - 新增步骤 `companion-launch`：写 `config\companion-launch.json`，计划、回执和 verify 都钉它的哈希。
-  - 新增步骤 `notifier-task`。
-- **upgrade-apply.ps1（SYSTEM 升级器，按 Owner Decision `f8aff2f9` 自动审批）**：
-  - `register-companion-task` 改成 `write-companion-launch`，顺序是：写新代际的 launch 文件 → 结束 companion 的 node 子进程和作业宿主（今天已有的 `Get-CompanionProcesses` 循环）→ 由监督进程拉起新代际，**不碰任务本身**。
-  - 等新进程命令行带上新的 `--config-sha256` 和 `resident\<sha>`，与今天的核对相同。
-  - 回滚是把上一代的 launch 文件写回去，同样处理。
-  - 发现任务定义不是 65.4.1 的固定定义时，升级器**不重注册**（没有密码也注册不了）。它只在状态里记 `COMPANION_TASK_NEEDS_OWNER`，服务一侧照常升级完成。
-  - 通知任务照今天的方式重注册。
-- **过渡包（M5 第一个包，仍走自动升级）**：
-  - 放入监督进程、通知任务和 launch 文件；
-  - 把旧任务重注册为“InteractiveToken + AtLogOn + 动作指向监督进程”。这一步不要密码，SYSTEM 可以做，而且从此以后动作是固定的；
-  - Owner 后续只需做一次提权步骤，把登录方式切成密码。
-- **rearm-resident.ps1**：
-  - 新模式 `-CompanionHeadless`：
-    1. 弹凭据框，按 65.4.1 重注册任务；
-    2. `Run` 任务；
-    3. 在 8 分钟内等到三件事：companion 新心跳、一次 Linux 侧实测（`version-facts.json` 刷新，或一个只读的 root 工具应答）、自检报告的令牌不是提权令牌；
-    4. 等不到就自动把任务退回过渡包的 InteractiveToken 定义（不要密码），报告 `COMPANION_HEADLESS_QUALIFICATION_FAILED`，并写明是哪一项没通过。
-  - 这就是 65.6 里 P0 前提验证的现场版，不另建试验任务，也不另输一次密码。
-  - `-CompanionCredential`：改密码后用，只换密码，定义不变。
+- **凭据输入：一个专用的 C# 小程序 `CluedCompanionTaskRegistrar.exe`**
+  - 随安装编译进管理员专用的 `bin\`，只在提权时运行；不提权就拒绝。
+  - 用 `CredUIPromptForWindowsCredentials` 加 `CREDUIWIN_SECURE_PROMPT`，在**安全桌面**上弹凭据框（和 UAC 同一个桌面，中等完整性的进程既画不上去，也读不到）。
+  - 用户名预填为 Owner；`LookupAccountName` 解析出的 SID 必须等于节点档案里的 `ownerSid`，否则拒绝。
+  - `CredUnpackAuthenticationBuffer` 把密码解到固定的非托管缓冲区，直接作为 `VARIANT(BSTR)` 交给 `ITaskFolder::RegisterTaskDefinition(…, TASK_LOGON_PASSWORD, sddl)`，随即用 `SecureZeroMemory` 清零缓冲区和 BSTR。
+  - 密码从不进入 PowerShell，所以不受 Transcription、ScriptBlock 日志或命令历史影响；也不进文件、计划、回执、日志、环境变量或命令行。
+  - 程序只输出码：`REGISTERED`、`CREDENTIAL_NOT_GIVEN`、`ACCOUNT_MISMATCH`、`LOGON_REJECTED`（注册时任务计划程序会核对密码）等。
+  - 调用它的 PowerShell 脚本保持 §8.5 的 `-NoProfile -NonInteractive`。
+- **安装（整套重装）**：
+  - 步骤 `companion-launch`：写 launch 文件。计划、回执和 verify 都钉它的哈希。
+  - 步骤 `notifier-task`：注册通知任务。
+  - 步骤 `companion-task`：先按“InteractiveToken + 固定的监督进程动作”注册，不要密码。这一步保证即使后面中止，也和今天一样能用。
+  - 步骤 `companion-headless`（重装启动器的最后一步）：与下面的复位模式是同一段代码。
+- **复位**：`rearm-resident.ps1 -CompanionHeadless`，用于重装的最后一步或以后重做。
+  1. 只读预检：
+     - `Lsa\DisableDomainCreds` 必须为 0；
+     - 锁定余量符合 65.4.1；
+     - Owner 账户 `PasswordRequired`/`PasswordExpires` 记为事实；
+     - Microsoft 账户节点拒绝：`COMPANION_HEADLESS_MSA_UNSUPPORTED`。
+  2. **先写管理员专用的待验收标记** `install\companion-headless-pending.json`，记录开始时间和退回所用的定义。
+  3. 运行注册小程序，在安全桌面上输一次密码。
+  4. 在提权一侧 `Run` 任务。
+  5. 8 分钟内**由提权一侧直接核对**，不采信 Owner 可写目录里的自报：
+     - 用任务实例找到监督进程和 node 子进程的 PID，`OpenProcessToken` 读它们的真实令牌：不是提权令牌，Administrators 为 deny-only，会话号 = 0，镜像路径等于 launch 文件里的路径；
+     - companion 的心跳在这段时间里更新过；
+     - 常驻服务读到的 Linux 侧事实刷新过，即服务邮箱里一条只读的 root 工具应答。
+  6. 通过就删除标记。不通过就按标记里的定义退回 InteractiveToken（不需要密码），删除标记，报告 `COMPANION_HEADLESS_QUALIFICATION_FAILED` 以及没通过的项。
+  - 中途被打断（窗口被关、机器重启）时，标记还在。`verify-resident.ps1` 和下一次 `rearm` 一看到超过 15 分钟的标记，就先执行退回，不会停在没验收过的密码模式。
+  - 心跳和 Linux 事实这两个信号仍然可以被 Owner 会话伪造（在已接受的边界之内）。伪造的后果只是“没验收也当成通过”，之后 companion 实际没在干活，服务只会推迟，不会因此获得任何权限。Agent 也能故意结束进程，逼它退回，这只影响可用性，和今天结束 companion 一样。
+  - `-CompanionCredential`：改密码后用，只换密码，同样有标记和核对。
   - `-CompanionInteractive`：手动退回。
-- **verify-resident.ps1** 核对：
-  - 任务定义：LogonType=1、RunLevel=0、主体 SID、固定动作、三个触发器、没有 RestartOnFailure、SDDL；
-  - launch 文件哈希与两个目标文件的哈希；
-  - 通知任务；
-  - 锁定间隔（65.4.1）；
-  - `LastTaskResult` 不在登录失败那几个码里。
-- **uninstall-resident.ps1**：删两个任务，存的凭据随任务一起删除。删任务之前先结束监督进程。
+- **新的升级通道**（随 M5 重装进入冻结范围）：
+  - 升级、回滚、Recover 都把 `register-companion-task` 换成 `write-companion-launch`：
+    1. 原子替换 launch 文件；
+    2. 结束 companion 的 node 子进程和作业宿主（沿用 `Get-CompanionProcesses` 的循环），**不碰任务本身**；
+    3. 监督进程看到新的 `generation` 后立即拉起；
+    4. 在 90 秒内核对新进程的命令行（`--config-sha256`、`resident\<sha>`）。
+  - 如果监督进程本身不在（任务没运行），由 SYSTEM `Run` 任务。密码任务可以这样运行，不需要密码。
+  - 发现任务定义不是 65.4.1 的定义时，**不重注册**，只记 `COMPANION_TASK_NEEDS_OWNER`，服务一侧照常完成升级。
+  - 回滚也一样，只写回上一代的 launch 文件。
+  - 通知任务照常重注册。
+- **verify-resident.ps1**：
+  - 核对：任务定义（LogonType=1、RunLevel=0、主体、固定动作、两个触发器、没有 RestartOnFailure、SDDL 中 Owner 为 FR）、launch 文件和两个目标文件的哈希、通知任务、锁定余量。
+  - `LastTaskResult` 不在登录失败的码里。
+  - 待验收标记不存在，或者已按上面的规则退回。
+  - 记录 Owner 账户的密码有效期（`PasswordExpires`）和 C: 的 BitLocker 状态，作为事实（提权时）。
+- **uninstall-resident.ps1**：先结束监督进程，再删两个任务。存的凭据随任务一起删除。
 
 #### 65.4.5 冷启动的时间上界
 
-- 启动链：开机 → 任务计划程序启动 → `BootTrigger` 加 30 秒延迟 → LSA 批处理登录并加载档案 → 监督进程核对 → companion 做配置和哈希核对、作业宿主探测（≤ 30 秒）→ 第一次心跳 → 保活进程冷启动 WSL 虚拟机，要 WSL 的 lane 等它就绪。
+- 启动链：开机 → 任务计划程序 → `BootTrigger` 加 30 秒 → 批处理登录并加载档案 → 监督进程核对 → companion 核对配置并探测作业宿主（≤ 30 秒）→ 第一次心跳 → 保活进程冷启动 WSL 虚拟机。
 - 上界：
-  - 正常冷启动：第一次心跳 ≤ 5 分钟，WSL 就绪 ≤ 8 分钟，**能执行 ≤ 10 分钟**。这是验收门槛。
-  - 任务没有被开机触发的情形，比如快速启动（Hiberboot，DESK 已开）恢复时 `BootTrigger` 不触发：由 15 分钟的重复触发器兜底，**≤ 20 分钟**。
-  - 以上都不需要任何人登录。
-- 可观测：status.json 增加 `companion.firstBeatAfterServiceStartMs`。服务启动 10 分钟后还没有心跳，就出通知 `companion-absent`，经队列在下次登录时显示；远端则由节点心跳过期体现（§41.6a）。
+  - 正常冷启动：第一次心跳 ≤ 5 分钟，WSL 就绪 ≤ 8 分钟，**能执行 ≤ 10 分钟**（验收门槛）。
+  - 任务没被开机触发的情形，比如快速启动（DESK 已开 Hiberboot）恢复时 `BootTrigger` 不触发，由 15 分钟的重复触发兜底：**≤ 20 分钟**。
+  - 都不需要任何人登录。
+- 可观测：status.json 增加 `companion.firstBeatAfterServiceStartMs`。服务启动 10 分钟后还没有心跳时出 `companion-absent`，在下次登录时显示；远端由节点心跳过期反映（§41.6a）。
 
-#### 65.4.6 安全论证
+#### 65.4.6 安全论证（如实列出得失）
 
-- **不新增 Agent 可见的秘密**：
-  - Owner 的 Windows 密码只在 Owner 自己的提权窗口里、在系统凭据框中输入，由任务计划程序存为 LSA 秘密，只有 SYSTEM 能读。不出现在任何文件、计划、回执、日志、环境变量或命令行里。
-  - gh/git 令牌不动，仍在 keyring；不新增任何令牌。
-- **权限不变**：
-  - 同一个账户，同一个 LUA 令牌，监督进程和 companion 都自检；
-  - ACL、发行版、出网都不变；
-  - 会话 0 的批处理登录没有桌面，也就没有能被关掉的窗口（2026-10-21 关窗口结束 companion 那一类问题不会再出现）。
-- **边界不放宽**：
-  - Owner 会话里的进程（含 Agent）能做的事和今天一样（`4fedfc84`）：改不了任务（SDDL），读不到存的密码，能运行或结束任务（FRFX），今天也能。
-  - 通知队列能被 Owner 会话伪造，但今天它们本来就能直接弹通知。
-  - 监督进程只读管理员专用的 launch 文件并核对哈希，Owner 会话无法让它运行别的东西，与今天任务动作受保护的程度相同。
-- **新增风险与对策**：
-  1. 管理员密码存为 LSA 秘密：能取出它的人（SYSTEM/管理员）本来就控制整台机器。离线窃取靠磁盘加密防：verify 记录 C: 的 BitLocker 状态作为事实，建议 Owner 开启，不强制。
-  2. 锁定账户这类拒绝服务：用 65.4.1 的触发间隔防。
-  3. 改密码：有明确的检测（通知任务、verify），恢复只需一次复位。
-  4. companion 现在在 Owner 不在时也运行：做的事和今天“Owner 已登录但锁屏、人不在”完全一样（§8.4：锁屏也算登录），不是新行为。
-  5. 如果节点策略开了“不允许存储网络身份验证的密码和凭据”（`Lsa\DisableDomainCreds=1`），任务注册会失败。`-CompanionHeadless` 先只读核对它，DESK 现为 0。
-  6. Owner 用 Microsoft 账户并开启“仅 Windows Hello 登录”时，密码登录可能失败。会被 `-CompanionHeadless` 的现场核对发现并自动退回。
+- **没变的**：
+  - 同一个账户、同一个 LUA 令牌，并且由提权一侧实测；
+  - ACL、发行版、gh/git 令牌（仍在 keyring）、出网都不变；
+  - 不新增 GitHub 或 Supabase 令牌；
+  - Owner 会话能做的事不增加。
+- **变好的**：
+  - Owner 会话不能再运行或结束 companion 任务（SDDL 从 FRFX 改成 FR）；
+  - companion 的环境改成白名单；
+  - 会话 0 没有能被关掉的窗口，不会再出现 2026-10-21 那样关窗口结束 companion 的事；
+  - Owner 注销、重启都不再让节点停摆。
+- **新增的秘密（需要 Owner 明确接受）**：
+  - Owner 的 Windows 密码保存在任务计划程序的凭据库里（SYSTEM 的 DPAPI），**SYSTEM 和管理员能还原出明文**。
+  - Agent 看不到它：不在任何 Owner 可读的地方，输入时在安全桌面上。
+  - 但它可以被间接够到，路径有两条：
+    1. 一个按 `f8aff2f9` 自动审批、以 SYSTEM 执行的升级包；
+    2. 一次 UAC 绕过（本机 `ConsentPromptBehaviorAdmin=5` 是默认值，Owner 是管理员）。
+  - 这两条路径今天就能拿到 App 私钥、ci-admission 令牌和整台机器，所以爆炸半径没有扩大。真正多出来的是：这个密码一旦泄露，能在别处登录 Owner 的账户。
+  - 对策：
+    - 这个密码必须是本机专用、不在别处复用的密码；
+    - Microsoft 账户节点不适用（会拒绝，见复位的预检）；
+    - 建议开 BitLocker，防离线窃取；
+    - Owner 不接受这项代价就改走 M5-b（存的是一个非管理员账户的密码）。
+- **其他风险与对策**：
+  1. 锁住账户：靠触发器间隔、SDDL 不给 Owner 执行权、verify 核对余量。
+  2. 改密码：通知任务和 verify 能检测；恢复只需一次复位。
+  3. companion 在 Owner 不在时运行：和今天“已登录、锁屏、人不在”完全一样（§8.4 锁屏也算登录）。
+  4. 伪造凭据框或通知钓鱼：用安全桌面加运行手册规则（65.4.3）。Owner 可以自行开启“凭据输入需要可信路径”（`EnableSecureCredentialPrompting`），这是 Owner 做的系统设置，不强制。
 
 ### 65.5 Owner 一次性要做的事
 
-0. （前提，只读，Agent 可以核对）Owner 账户必须有非空密码。DESK 的 `PasswordRequired` 为 False，看不出是不是空密码。如果是空密码，Owner 在系统设置里设一个（系统设置由 Owner 自己做）。建议 C: 开 BitLocker。
-1. 照常放行 M5 过渡包的原地升级：自动审批，不弹 UAC。
-2. 在自己的提权 PowerShell 里运行一条命令（UAC 点一次）：`powershell -NoProfile -File <已装副本>\windows\rearm-resident.ps1 -CompanionHeadless`。弹出 Windows 凭据框时输入自己的 Windows 密码（一次）。脚本自己验收；8 分钟内不通过就自动退回原样，并说明原因。
-3. （验收）方便时重启一次，不登录，等 10 分钟后再登录，或者让 Agent 读 status.json。
+1. **决定**：是否接受 65.4.6 的“新增的秘密”。接受就继续；不接受就改走 M5-b。决定写成一条 Decision。
+2. **前提**（Agent 只读核对后告诉 Owner）：
+   - Owner 账户要有非空、本机专用的密码。DESK 的 `PasswordRequired` 为 False，看不出是不是空密码；如果是空的，由 Owner 在系统设置里设一个。
+   - Microsoft 账户节点不适用。
+   - 建议开 BitLocker。
+3. **批准 M5 的整套重装**：照 R 类流程，Decision + Grant。
+4. **运行重装启动器**：在自己的提权窗口里运行（点一次 UAC）。最后一步会在**安全桌面**上弹出 Windows 凭据框，输一次自己的 Windows 密码。之后脚本自己验收；8 分钟内不通过就自动退回原来的登录方式，并说明原因。
+5. **验收**：方便时重启一次，不登录，10 分钟后再登录（或让 Agent 读 status.json）。
 
-以后只有改了 Windows 密码才需要再做一次：运行 `rearm-resident.ps1 -CompanionCredential`（UAC 加凭据框）。
+以后只有改了 Windows 密码才要再操作一次：在提权窗口运行 `rearm-resident.ps1 -CompanionCredential`，点 UAC，在安全桌面上输入密码。
 
-### 65.6 实施前要核实的前提（P0，在 `-CompanionHeadless` 里现场核对）
+### 65.6 实施前要核实的前提（P0，`-CompanionHeadless` 在现场核对）
 
-- Q1 会话 0 的密码批处理登录里，WSL 能用：`wsl --distribution <D> --user root --exec /bin/true`，`/mnt/c` 能读 bundles，docker 能连上。
-- Q2 同一用户在批处理会话和交互会话里启动发行版，是同一个实例：两边的 `/proc/sys/kernel/random/boot_id` 相同；Owner 在控制台 `wsl -d <D> -u root` 不会因为 vhdx 被占用而失败。
-- Q3 DPAPI 可用：`gh auth status` 和经 gh 凭据助手的 `git ls-remote` 成功。
-- Q4 令牌是 LUA：Administrators 为 deny-only，`build-bundle.ps1` 的 `IsInRole` 为假。
-- Q5 交互会话注销不影响批处理会话里的进程和 WSL（验收 T2）。
-- Q6 快速启动关机与重启的行为（验收 T7）。
+- Q1 会话 0 的密码批处理登录里 WSL 能用：
+  - `wsl --distribution <D> --user root --exec /bin/true`；
+  - `/mnt/c` 能读 bundles；
+  - 发行版里的 `docker.service`（§9，不是 Docker Desktop）可达。
+- Q2 同一用户在批处理会话和交互会话里启动的是同一个发行版实例：`boot_id` 相同；Owner 在控制台 `wsl -d <D> -u root` 不会因为 vhdx 被占用而失败。
+- Q3 DPAPI 能用：`gh auth status` 能通过；经 gh 凭据助手的 `git ls-remote` 能成功。
+- Q4 令牌是 LUA：提权一侧用 `OpenProcessToken` 实测，`build-bundle.ps1` 里的 `IsInRole` 为假。
+- Q5 注销交互会话不影响批处理会话（T2）。
+- Q6 快速启动的行为（T7）。
 
-Q1 或 Q2 不成立，就不发布 B2，改走 65.9 的 M5-b 或 D2，并重新设计。
+Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 
 ### 65.7 验收测试
 
-- **T1 无人登录冷启动**：重启（不是关机），不登录。
-  - 期望：status.json 记录的第一次心跳在服务启动后 ≤ 10 分钟；KooYomi 节点心跳连续。
-  - 端到端：在此期间由别的节点推一个小 PR，本节点在无人登录时**完整跑完一个批次**。只看心跳不够。
-- **T2 注销**：Owner 登录、companion 在批处理会话里运行时注销。
-  - 期望：companion 的 PID 不变，心跳没有超过 30 秒的空档，正在跑的批次不受影响。
-  - 再登录：没有第二个 companion（实例锁），通知任务启动并清空队列。
+- **T1 无人登录冷启动**：重启，不登录。
+  - 第一次心跳在服务启动后 ≤ 10 分钟，节点心跳连续。
+  - 端到端：期间由别的节点推一个小 PR，本节点在无人登录时**完整跑完一个批次**。
+- **T2 注销**：companion 运行时注销。
+  - companion PID 不变，心跳空档 < 30 秒，正在跑的批次不受影响。
+  - 再登录时不出现第二个 companion，通知任务清空队列。
 - **T3 崩溃**：
-  - 结束 node companion：≤ 10 秒内被拉起，心跳空档 < 60 秒。
-  - 连杀 6 次：退避封顶 60 秒，不放弃。
-  - 结束监督进程：companion 随作业结束；≤ 15 分钟由重复触发器拉起（Owner 也可以手动运行任务）。期间服务只推迟，不烧任何 head（`companionReady`）。
+  - 结束 node：10 秒内拉起；连续结束 6 次，退避封顶 60 秒，不放弃。
+  - 结束监督进程：companion 随之结束，15 分钟内由重复触发拉起。
+  - 期间服务只推迟，不烧任何 head。
 - **T4 凭据失效**：
-  - 改 Owner 密码但不复位，然后重启。期望：`LastTaskResult=0x8007052E`；2 小时内账户**没有被锁**（事件 4740 为 0，4625 每 15 分钟至多 1 次）；登录后出“凭据失效”通知；`-CompanionCredential` 后 5 分钟内有心跳。
-  - GitHub 令牌被撤销：companion 照常运行，打包按现有分类报 `BUNDLE_UNAVAILABLE`，PR 状态写入失败，现有行为不变。
-- **T5 无人登录时原地升级**：升级器写 launch 文件、拉起新代际，任务 XML 的哈希不变，不需要密码。
-- **T6 回退**：`-CompanionInteractive` 恢复成 AtLogOn 加 InteractiveToken。
-- **T7 快速启动**：关机（Hiberboot）再开机，不登录，≤ 20 分钟能执行。
+  - 改密码但不复位，然后重启：`LastTaskResult=0x8007052E`；两小时内事件 4740 为 0，4625 至多每 15 分钟 1 次；登录后看到通知；`-CompanionCredential` 之后 5 分钟内有心跳。
+  - **在 Owner 会话里连续 `schtasks /run` 10 次**：被拒绝（没有执行权），账户不会被锁。
+  - GitHub 令牌被撤销：companion 照常运行，按现有分类报 `BUNDLE_UNAVAILABLE`。
+- **T5 升级、回滚、Recover 之后**：任务的 XML 哈希不变，仍是密码模式；新代际在 90 秒内运行。
+- **T6 复位中途被打断**：在第 5 步关掉窗口，然后运行 verify：先按标记退回，任务回到 InteractiveToken。
+- **T7 快速启动**：关机再开机，不登录，≤ 20 分钟能执行。
+- **T8 安全**：
+  - Owner 会话改不了 launch 文件、`bin\`、任务；
+  - 把 launch 文件路径上的某一级换成 junction（提权测试机）会被拒绝；
+  - 真实任务被设成“最高权限”时，监督进程拒绝启动；
+  - 开着 PowerShell Transcription 和 ScriptBlock 日志跑一遍复位，转录和事件日志里没有密码；
+  - 伪造通知队列，不会引出任何“请输入凭据”的文字；
+  - 在普通桌面上不会出现凭据框。
 - **离线测试**：
-  - `SupervisorPureTests.cs`：退避、launch 文件校验、拒绝提权令牌、哈希不符时不启动；
-  - node 测试：通知队列的上限与去重，通知任务对结果码的映射；
-  - `test-resident-windows.ps1`：任务 XML 回读；
-  - `test-upgrade-windows.ps1`：钉住升级器对 companion 任务从不调用 `RegisterTaskDefinition`。
+  - `SupervisorPureTests.cs`：退避、launch 文件校验、重解析点、哈希不符、拒绝提权令牌、环境白名单；
+  - `RegistrarPureTests.cs`：SID 不符时拒绝，输出只有码；
+  - node 测试：通知队列的上限，结果码的映射；
+  - `test-resident-windows.ps1`：任务 XML 回读和 SDDL；
+  - `test-upgrade-windows.ps1`：钉住新通道对 companion 任务从不调用 `RegisterTaskDefinition`，回滚和 Recover 只写 launch 文件。
 
 ### 65.8 实施估时
 
 | 项 | 人日 |
 |---|---|
-| 监督进程（C#）与纯测试 | 1 |
+| 监督进程（C#）与纯测试 | 1–1.5 |
+| 注册小程序（CredUI 安全桌面、COM 注册）与测试 | 1 |
 | 通知队列、`notifier-main.mjs` 与测试 | 1 |
-| install、upgrade-apply、rearm、verify、uninstall 的改动与 PS 5.1 测试 | 1.5–2 |
-| 令牌自检，status 字段 | 0.5 |
+| install、rearm（标记与提权核对）、verify、uninstall | 1.5 |
+| 新升级通道（`upgrade-apply.ps1`、`machine.mjs` 的 companion 步骤）与测试 | 1 |
+| 令牌自检、status 字段 | 0.5 |
 | 独立审核与修复 | 1 |
-| 合计开发 | 5–5.5 |
-| 现场：DESK 上 Owner 一步加 T1–T7（含重启），然后 TURING | 每台约 0.5 天日历时间 |
+| 合计开发 | 7–7.5 |
+| 现场（整套重装 + T1–T8，含多次重启） | 每台约 1 天日历时间，DESK 先，TURING 后 |
 
 ### 65.9 不在 M5 里做的
 
-- **M5-b 专用账户**（方案 A）：把 Agent 从常驻发行版的 root、companion 的 GitHub 凭据和 `mailbox\responses` 写权限中隔开。另立设计，需要 Owner 决定是否收紧 `4fedfc84`，以及 Linux 运维改用 `runas` 的代价。
-- **gh 令牌范围**：companion 用的令牌是 Owner 的全范围令牌（`repo`、`workflow`）。建议另立任务，改用只限本仓库的细粒度令牌，只给 contents 读、statuses 写、actions 写、issues 写。这要 Owner 决定，不属于 M5。
+- **M5-b 专用账户**（方案 A）：
+  - 收益：把 Agent 从常驻发行版的 root、companion 的 GitHub 凭据和 `mailbox\responses` 写权限中隔开；需要存的只是一个非管理员账户的密码。
+  - 前提：Owner 决定收紧 `4fedfc84`，并接受 Linux 运维改用 `runas`。
+- **gh 令牌范围**：现在用的是 Owner 的全范围令牌（`repo`、`workflow`）。建议另立任务，改为只限本仓库的细粒度令牌，只给 contents 读、statuses 写、actions 写、issues 写，由 Owner 决定。
+
+### 65.10 独立安全审核（r1 → r2）
+
+审核员是 general-purpose 子代理，只拿到设计稿和代码路径，全程只读。下表是它的意见和这一版的处理。
+
+| 级别 | 意见 | 处理 |
+|---|---|---|
+| BLOCKER | 升级器属于冻结通道。每次升级、回滚、Recover 都会按 InteractiveToken 重注册 companion 任务。r1 的“过渡包走自动升级”和“升级器不改任务”都做不到 | 接受。新增 65.4.0：M5 改为整套重装，一并替换冻结通道里 companion 的步骤；装好之前禁止单独切换；删掉过渡包；65.5 改为 R 类流程 |
+| MAJOR | 密码在普通桌面上输入，通知可伪造，构成钓鱼入口 | 接受。改用注册小程序 + `CREDUIWIN_SECURE_PROMPT` 安全桌面；通知文本不叫人输凭据；运行手册加规则；可选的可信路径策略由 Owner 决定 |
+| MAJOR | `Get-Credential` 与 §8.5 的 `-NonInteractive` 冲突，PowerShell 字符串清不掉 | 接受。密码不再进 PowerShell，由 C# 小程序在非托管缓冲区里处理后清零；脚本保留 `-NonInteractive`；T8 检查转录 |
+| MAJOR | 存下的是一个能还原的新秘密，“只有 SYSTEM 能读”不准确，经 SYSTEM 升级包或 UAC 绕过可以间接拿到 | 接受，如实改写 65.3 和 65.4.6，列为 Owner 决定项（65.5 第 1 步）；要求本机专用密码；Microsoft 账户节点拒绝；不接受就走 M5-b |
+| MAJOR | 继承 Owner 的环境（`NODE_OPTIONS`）可以注入代码，“无法让它运行别的东西”不成立；验收信号是自报的 | 接受。环境改成白名单；改正措辞，并写明同用户注入在已接受边界之内；复位改由提权一侧 `OpenProcessToken` 实测 |
+| MAJOR | Owner 有 FRFX，能反复 Run 来锁住账户；锁定的账没有和阈值比较 | 接受。SDDL 中 Owner 改为 FR；去掉 LogonTrigger；verify 同时比较阈值和窗口；T4 加连续 Run 的用例 |
+| MAJOR | 复位中断会停在没验收过的状态，验收信号可伪造 | 接受。加管理员专用的待验收标记，verify 和下一次复位先退回；改由提权一侧核对；写明伪造的后果只影响可用性 |
+| MINOR | 事实错误：`Run()` 在 `Invoke-RestartCompanion`；密码存在任务计划程序凭据库而不是 LSA 秘密；漏了 `owner\train-review` | 已改正（65.1、65.3、65.2） |
+| MINOR | 升级器只等 30 秒，退避最长 60 秒 | 换代时立即启动；新通道等 90 秒 |
+| MINOR | 缺 `0x8007052F`、`0x80070530` | 已补上 |
+| MINOR | 密码过期，以及 TURING 账户 | verify 记 `PasswordExpires`；预检拒绝 Microsoft 账户 |
+| MINOR | docker 是哪一个 | Q1 写明是发行版里的 `docker.service`，不是 Docker Desktop |
+| MINOR | launch 文件要原子替换，junction 要逐级查 | 已写进 65.4.2 |
+| 建议 | 补安全验收 | 新增 T6、T8 |
