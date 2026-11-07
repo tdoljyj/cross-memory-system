@@ -15,9 +15,21 @@
 合入、迁移、发布及验收结果由持有会话当场记录到 KooYomi；CI 绿色、队首或本地测试本身不能代替实际合入和生产发布的证据。
 # 完成事件丢失的持久恢复候选（Task `3a0e4219`）
 
-先交SourceA精确登记前置（本地提交`b16643d8`），其中没有实际工作流或运行lane。
-A真实合入且可信evaluator/Source按正常资格刷新后，才提交后继B工作流与运行代码。
+SourceA精确登记前置已在PR #1025合入，main提交为
+`2eb6ad77af4214643fd7c852fade1fbbbed6385f`；A没有实际工作流或运行lane。
+后继B可以先正常推送和建PR。执行B正式八阶段CI的节点须先通过正常升级入口，
+接受并安装包含A的Source；main合入不会热更新已安装的evaluator。
 自有完整性清单不能代替可信准入登记；本地测试中的`gate=[]`也不是线上资格（Task `3a0e4219`）。
+
+正式reader沿`service-main.mjs`的policy Source目录加载，`full-admission-v2.mjs`
+相对导入其中的`clued-work-admission.mjs`，后者只读自身相邻可信registry。
+仍运行旧Source的执行节点会拒绝新增工作流；standby节点不因B建PR而必须重复安装。
+正常中间构包使用`work/independent-ci-resident-v1/rollout/build-upgrade.ps1`，
+输入是执行节点既有公开Config、上面的A-only提交和当前InstalledPackage目录。
+`-Final -DecisionRef -ReceiptRef`须对应覆盖实际新主体的决定/Receipt；字段有值不等于授权。
+入口生成新Source/evaluator pins、accepted bundle、Linux角色及两次确定性构包，
+再走节点本机precheck、精确包Grant与正常升级，不手改已安装代码或pins。
+这项CI前置与B合入后的专用控制器资格、旧在途对账、账本预置及B运行包启用分别验收。
 
 `companion.mergeReconcile` 与源码 activation 均缺省关闭。本候选以独立伴随 lane 每5分钟唤醒固定
 `clued-merge-reconcile.yml`，不依赖 completion、后续 push 或 GitHub cron。
