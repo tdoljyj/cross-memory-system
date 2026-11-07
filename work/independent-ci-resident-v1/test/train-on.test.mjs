@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, trainSettings, validatePolicy } from '../src/policy.mjs';
-import { DECISIONS, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
+import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
@@ -812,4 +812,37 @@ test('service loop: after stage 10 gives OPEN_FRONT_BATCH the next sleep is the 
     acknowledgeStop: async () => {}, onLoopException: async () => {}, betweenBatches: async () => {} });
   assert.equal(f.queue.row(884).current.testSha, S, 'the front batch was queued');
   assert.deepEqual(slept, [2_000], 'a batch is to open: the short sleep');
+});
+
+test('defect: a TRAIN_SOURCE_MISMATCH or TRAIN_SOURCE_UNREADABLE run is re-checked after 2 minutes, not 10; the daily cap still holds', async t => {
+  for (const decision of ['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']) {
+    const e = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, e.inputs.length === 2 ? { ...DONE, decision } : DONE, 0) }) });
+    const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+    await f.exec.tick();
+    f.advance(10 * MIN);
+    await f.exec.tick();
+    assert.equal(f.exec.trainLast.decision, decision);
+    assert.equal(e.inputs.length, 2);
+    f.advance(MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 2, 'not yet: 1 minute');
+    f.advance(MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 3, `${decision}: due 2 minutes after`);
+    assert.equal(f.exec.trainLast.decision, 'NO_FRONT', 'the peer is ready now; back to the normal cadence');
+    f.advance(2 * MIN);
+    await f.exec.tick();
+    assert.equal(e.inputs.length, 3, 'a normal run keeps the 10 minute cadence');
+  }
+  // the daily cap is not bypassed
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, { ...DONE, decision: 'TRAIN_SOURCE_MISMATCH' }, 0) }) });
+  const h = await executorFixture(t, { policy: policyV8({ maintenanceMaxPerDay: 2 }), engine: g.engine });
+  await h.exec.tick();
+  h.advance(2 * MIN);
+  await h.exec.tick();
+  assert.equal(g.inputs.length, 2);
+  h.advance(2 * MIN);
+  await h.exec.tick();
+  assert.equal(g.inputs.length, 2, 'cap of 2 per day holds');
+  assert.equal(trainDue({ train: onTrain({ maintenanceMaxPerDay: 2 }), now: T0 + 5 * MIN, runs: [T0, T0 + 2 * MIN], busy: false, recheck: true }), false);
 });

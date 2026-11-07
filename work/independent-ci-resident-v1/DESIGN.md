@@ -732,6 +732,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
   - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
   - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
+- 后续（§64.2）：签名前 bridge 不再固定多发一轮准入挑战，适配器自己的“后”准入在 30 秒单调时钟内、完整 v2 检查通过时直接复用，否则照旧重发。
 
 ---
 
@@ -877,6 +878,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
    - `-CheckRefs` 的 ls-remote 也带低速限制，但不重来：它失败就是 `REMOTE_REFS_UNAVAILABLE`，由常驻侧照旧分类。
    - 慢但不停（一直略高于 1000 字节/秒）的传输：脚本本身没有总时限，到 companion 的时限由作业宿主连同进程树一起结束；邮箱通道不再停摆，第 0 段失败只关 Windows、不 HALT（§24，Task `8e1f07d3`）。
    - 测试：`windows/test-build-bundle.ps1` 从脚本的语法树取出 `Invoke-Git`、`Build-Store`、`Fetch-Store`，对一个本地 file:// 远端和一个只接受连接、从不回应的回环端口跑真实 git（低速窗口在测试里改成 2 秒）：卡住后在新库里成功、已审查提交那一步卡住、不卡、两次都卡（没有第 3 次）、过了 10 分钟才卡（不重来）、脚本自己的拒绝（不重来）；另把脚本复制一份、只换常驻目录、远端和 git 路径，跑完整主块、`-CheckRefs` 和同一批次的第二次运行（只新建），共 50 例。`CI/test/resident-v2-build-bundle.test.mjs` 在任何主机上钉住这些固定值。
+   - **ref 目标类型一次查完**（§64.1）：`Build-Store` 用一次 `cat-file --batch-check` 查全部 ref 的目标类型，不再每个 ref 起一个 `cat-file -t`；批量答复有任何异常就退回原来的逐个查，判定与诊断不变。
    - 生效要重装（Source v2 文件）。
 3. 第 1 段准入之后写 `10-started`。
 4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。MINOR-7：候选的 head 树先在对象库里核对模式（只许 100644、100755），**然后**才检出，检出带 `core.symlinks=false`、`core.protectNTFS`、`core.protectHFS`，所以 root 从不写出符号链接或子模块。（以非 root 身份检出没有采用：工作区必须是 root:root，换身份要加 chown 步骤，留作 P2 评估。）
@@ -3740,6 +3742,8 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 
 范围：基于第 7 代 `b88ee755`。任务要求在常驻节点内让 gitleaks、trivy、contract-placement 的执行段（第 2、4、6 段）并行，再按现有顺序发布。本节逐项核对共享资源，结论是：**只改常驻层，任何并行都会被下面五处单例挡住；没有任何一处能靠“只把发布串行”绕开**，因为发布段（第 3、5、7 段）本身也要占同一个交换槽。没有写并行的代码：并行逻辑放在常驻层就是死代码，放进 Source 就是一次 Source 变更（新 Source 清单、Owner Decision、UAC、Grant），要先由 Owner 选。
 
+> 后续（§64.3）：trivy 三个扫描器之间紧挨着的“后/前”准入已合并为一次（上一个的“后”就是下一个的“前”），每个扫描器的 pre/post 准入哈希记在观察里，观察合同因此升到 `/3`。
+
 ### 45.1 五处单例（读代码得到的事实）
 
 | # | 资源 | 证据 | 为什么挡并行 |
@@ -5008,3 +5012,41 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 ### 63.5 测试
 
 `test/roles-public.test.mjs`（固定 argv、装后首份 facts 即写副本、平时零读取、切代重写、字节不符或读超时不写且保留旧副本、缺字段不读、文档篡改拒绝）；`rollout/test/test_upgrade_tools.py` 的 `test_companion_copy_is_used_without_any_export`、`test_companion_copy_changed_or_stale_is_refused_never_passed_over`、`test_companion_copy_missing_or_of_another_generation_falls_back_with_a_notice`、`test_install_then_build_next_package_needs_no_uac`（真实 `UpgradeLane` 写副本 → `roles-derived.py` 在配置目录为空时成功；修复前同一情形是 `INSTALLED_ROLES_COPY_MISSING`）。
+
+## 64. CI Source 去掉三处纯重复的往返（第 20 代候选，分支 `claude/source-roundtrip-trim`）
+
+**实测**（PR #1029 车头批次）：耗时大头不是扫描本身，而是 20 轮“Linux 发挑战、Windows 做完整准入”的往返，每轮约 15–17 秒，其中至少 6 轮紧挨着重复；另外 build-bundle 对 405 个 ref 逐个起 git 进程，车头批次空耗 16.6 秒、绑定批次 12.2 秒。三处都只删重复，不放宽任何核对。
+
+### 64.1 build-bundle：ref 目标类型批量查（`CI/src/resident-v2/build-bundle.ps1`）
+
+- `Build-Store` 在“fetch 后读回”这一段要核对每个 ref 的目标类型（heads 必须是 commit，tags 是 commit 或 annotated tag，否则 `REMOTE_REF_TARGET_TYPE_UNSUPPORTED`）。以前每个 ref 一次 `cat-file -t`，现在先由 `Ref-Target-Types` 一次 `cat-file --batch-check`（去重后的目标 SHA 从标准输入写入；`Invoke-Git` 新增可选的 `$InputText`，在两个输出读取都开始之后再写入并关闭输入，不会管道互锁）。
+- **批量答复只在完整、一致时采用**：每个不同目标恰好一行 `<sha> <type> <size>`、顺序一致、类型是已知对象类型，且按 `Ref-Type-Allowed` 每个 ref 都通过。**任何异常都退回逐个查**：缺对象（`missing`）、行数或格式不对、git 失败或没能启动、或者有任何一个 ref 会被拒，`Build-Store` 都原样运行原来的逐个 `cat-file -t` 循环，于是每一种拒绝的错误码、失败步骤（`lastGit.label = 'cat-file'`）和阶段都与以前完全相同。head/base 原有的两次 `cat-file -t` 不变。`ref-types` 不连远端，不是网络步骤，不重试。
+- 结果：405 个 ref 从 407 个 git 进程变成 3 个（批量 1 + head/base 2）。
+
+### 64.2 bridge：签名前复用适配器的“后”准入（`CI/worker/protected-job-bridge-v4/linux-worker.mjs`）
+
+- 以前适配器的“扫描后”准入做完、返回观察后，worker 在 `session.finish` 和签名之前又单独发一轮准入挑战，答复也不用（3 个角色各 1 轮，约 47 秒）。观察里的 `postAdmissionSha256` 本来就是适配器那一次。
+- 现在 worker 记下最后一次准入回调的答复对象和发挑战时刻（本机单调时钟 `performance.now()`）。签名前由 `adapterFinalAdmission` 判断能否复用，**三条全满足才复用**：
+  1. 它正是观察的 `postAdmissionSha256` 指的那一次（同一个 `observationSha256`）；
+  2. 从发出那轮挑战算起不超过 **30 秒单调时钟**（`FINAL_ADMISSION_REUSE_MAX_MS` = `clock-skew.mjs` 的 `FRESH_MS`；时钟倒退也算不满足）；发挑战早于 Windows 签出，所以这个年龄只会高估；
+  3. 在 issue 的批次 claim 代次下仍通过**完整的 v2 检查**（`validateFormalAdmissionV2`，含 §7.9 的签出时刻新鲜度与 claim 未过期）。
+- 任何一条不满足就**照旧再发一轮挑战**（超时重发）。Linux 上下文与角色授权在 `session.finish`（重读角色策略）和签名器（核对接受 ref 与资格 ref）里照旧再核一次；Windows 签发方收到签名结果后的完整准入不变。
+
+### 64.3 trivy：相邻扫描器的准入串接（`CI/worker/formal-trivy-v4/adapter.mjs`）
+
+- 以前每个扫描器前后各一次准入，再加最终一次：1 + 3×2 + 1 = 8 轮。上一个扫描器的“后”准入和下一个扫描器的“前”准入之间、最后一个的“后”准入和最终准入之间没有任何工作（实测 3 轮约 49 秒）。
+- 现在上一个扫描器的“后”准入直接当下一个扫描器的“前”准入，最后一个的“后”准入当最终准入（`carriedAdmission`）：5 轮。角色开头的那次准入仍单独一轮（它和第一个扫描器之间有扫描许可的取得与记录）。
+- **复用规则与 §64.2 相同**：从请求那次准入起不超过 30 秒单调时钟（`CARRIED_ADMISSION_MAX_AGE_MS` = `FRESH_MS`），并且此刻仍通过完整的 v2 检查（同一批次 claim 代次）；否则重新发挑战。“每个扫描器前后都有新鲜准入”这一性质不变。
+- **观察里每个扫描器记录两项**：`scans[i].preAdmissionSha256`、`scans[i].postAdmissionSha256`；复用时 `scans[i+1].preAdmissionSha256 = scans[i].postAdmissionSha256`，观察的 `postAdmissionSha256` 等于 `scans[2].postAdmissionSha256`。超出窗口重发时两者不同。扫描未完整提前结束时，该项只有 `preAdmissionSha256`（那是 uncertain 记录，不是观察）。
+- **trivy 观察合同升到 `/3`**（Owner 决定，Clued decision 已记）：生产方 `formal-trivy-v4/adapter.mjs` 写 `clued.independent-ci.formal-scanner-observation/3`（`TRIVY_OBSERVATION_CONTRACT`）。校验方一起改，trivy **只接受 `/3`**：
+  1. Linux 签名器与 Windows 签发方收结果的校验共用 `protected-job-bridge-v4/signed-result.mjs#observationFacts`（签名前由 `signActualBridgeResult` 调用；Windows 侧 `windows-issuer.mjs` 经 `verifySignedBridgeResult` 调用）：trivy 要求 `/3`，并要求观察的 `preAdmissionSha256`、`postAdmissionSha256` 和每个扫描器的 `preAdmissionSha256`、`postAdmissionSha256` 都是 64 位小写十六进制（否则 `ACTUAL_TRIVY_SCAN_ADMISSIONS_REQUIRED`）；不要求 `scans[i+1].pre = scans[i].post`，因为超出窗口重发时两者本来就不同。gitleaks 仍是 scanner-observation `/2`，contract-placement 仍是 check-observation `/2`，trivy 的 `/2` 和 gitleaks 的 `/3` 都以 `ACTUAL_FORMAL_PROFILE_REQUIRED` 拒绝。
+  2. 角色串行槽 `formal-fixed-role-policy-v3/policy.mjs#validateCleanupObservation`（`session.finish`）：trivy 观察必须是 `/3`，否则 `ACTUAL_ROLE_CLEANUP_UNCONFIRMED`。
+  3. 再往后没有按观察合同号分派的地方：发布段（`resident-v2/invoke-stage.mjs#readSpoolResult`）只取签名信封，`proof-v2.mjs` 核对的是载荷（`profile`、`executionObservationSha256` 等），载荷里没有观察合同号；merge-admission、Native 侧（`scripts/ci`）不读观察。所以信封与结果合同（`protected-job-result/2`、信封 `/2`）不变。
+  - **不保留 `/2` 过渡**：观察只在同一个批次的同一个阶段里生产和校验（Linux 生产、签名，Windows 签发方在同一阶段内校验），签名器、签发方和角色策略都属于同一个 CI Source 清单，按 §42 在批次之间整体换代，两侧桥文件按字节受理；新 Source 装好后不会再产生 `/2`，旧批次已发布的结果在重新发布时也只读信封、不再校验观察。所以只接受 `/3`。
+  - 测试：`test/resident-v2-bridge.test.mjs` 的 trivy 夹具改为 `/3` 并带每个扫描器的哈希；新增签名器、签发方校验、角色槽三处都拒绝 trivy `/2`、缺失或格式不对的每扫描器哈希被拒、串接与重发两种形状都接受；gitleaks 用例确认 `/3` 被拒；`test/formal-trivy-scan-start-window.test.mjs` 断言生产方写 `/3`。
+
+### 64.4 省多少、安装、测试
+
+- 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
+- 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
+- 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。

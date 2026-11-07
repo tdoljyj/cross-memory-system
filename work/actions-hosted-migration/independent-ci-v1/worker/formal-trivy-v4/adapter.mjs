@@ -4,6 +4,12 @@
 // module is shared (its prepare.lock is removed again when the lock write fails), and a BLOCKED cache is a clean
 // refusal here (cacheRefusal).
 // Fixed three-scanner execution Source. No signer, credentials or Checks writer.
+// Back-to-back admissions (CI Source round-trip trim): nothing runs between one scanner's post admission and the next
+// scanner's pre admission, or the final one, so that admission is carried over instead of asking the bridge again
+// (carriedAdmission). Every scanner still has a fresh admission right before and right after it, and the observation
+// records both per scanner (scans[i].preAdmissionSha256 / postAdmissionSha256; scans[i+1].pre is scans[i].post when carried).
+// That shape is observation contract /3 (Owner decision, DESIGN 64.3; TRIVY_OBSERVATION_CONTRACT): the signer, the Windows
+// issuer's verification and the role session accept only /3 for trivy. gitleaks keeps its /2.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -20,6 +26,7 @@ import { actualDockerClient, NATIVE_IMAGE, runFixedScanner } from '../formal-tri
 import { createActualStorage, actualCachePort } from '../formal-trivy-v3/cache.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
+export const TRIVY_OBSERVATION_CONTRACT = 'clued.independent-ci.formal-scanner-observation/3';
 const JOB_TIMEOUT_MS = 25 * 60000; // Existing trusted trivy job ceiling.
 const PREFIX = 'work/actions-hosted-migration/independent-ci-v1/';
 const CLOSURE = ['worker/formal-trivy-v4/adapter.mjs', 'worker/formal-trivy-v3/docker.mjs', 'worker/formal-trivy-v3/cache.mjs',
@@ -85,11 +92,23 @@ async function removeSnapshot(run, snapshot) {
   try { await fsp.lstat(snapshot); check(false, 'SNAPSHOT_CLEANUP_UNCONFIRMED'); } catch (error) { check(error.code === 'ENOENT', 'SNAPSHOT_CLEANUP_UNCONFIRMED'); }
 }
 
+// The freshness window of a carried admission: clock-skew.mjs FRESH_MS, measured on this host's monotonic clock from the
+// moment the admission was asked for (no later than its issuance), so it never outlasts what a new answer would get.
+export const CARRIED_ADMISSION_MAX_AGE_MS = 30_000;
+// Pure: the admission held from the step just before, when it may stand in for a new one. null means ask again: nothing
+// held, older than the window (or a clock that went backwards), or facts the full v2 check no longer accepts now.
+export function carriedAdmission(job, held, { now = Date.now(), nowMono, batchClaim = null } = {}) {
+  if (!held || !Number.isFinite(held.sentMono) || !Number.isFinite(nowMono)) return null;
+  const age = nowMono - held.sentMono;
+  if (!(age >= 0 && age <= CARRIED_ADMISSION_MAX_AGE_MS)) return null;
+  try { validateAdmission(job, held.facts, now, { batchClaim }); return held; } catch { return null; }
+}
+
 // The shared fixture path exercises real argv/readback algorithms with mocked
 // Docker. It is deliberately not the installed qualification or signing path.
 async function executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, workflowSha256, docker,
   dockerRootDirectory, deadline, signal, admissionPort, scanStartPort, scanStartRecord, fixture, context, generation = null,
-  nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED }) {
+  nativeScanStartRequired = NATIVE_SCAN_START_REQUIRED, monotonic = () => performance.now() }) {
   const scans = [], pre = validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation });
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED');
   const plan = requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, inputInventory, database: cache.database,
@@ -99,18 +118,25 @@ async function executeScanners({ job, preparedRequest, snapshotDirectory, inputI
   const grant = fixture ? validateScanStartGrant(grantValue, { job, executionId: grantValue?.execution_id }) : scanStartPermission(job, grantValue, nativeScanStartRequired);
   if (!fixture) { check(typeof scanStartRecord === 'function', 'PROTECTED_SCAN_START_RECORD_MISSING'); await scanStartRecord(grant); scanStartPermission(job, grantValue, nativeScanStartRequired); }
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
+  // A new admission, with the monotonic moment it was asked for; or the one carried from the step just before.
+  const admit = async () => { const sentMono = monotonic(); return { facts: validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }), sentMono }; };
+  const freshAdmission = async held => carriedAdmission(job, held, { now: Date.now(), nowMono: monotonic(), batchClaim: generation }) ?? await admit();
+  let carried = null;
   for (const scan of plan.scanners) {
-    validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }); check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
+    // The previous scanner's post admission, with no work since, unless it left the freshness window.
+    const before = await freshAdmission(carried); carried = null; check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
     // The last admission await can outlive the grant's transport window. Burn
     // permission is checked again only before this role unit's first scanner.
     if (!fixture && scans.length === 0) scanStartPermission(job, grantValue, nativeScanStartRequired);
-    const result = await runFixedScanner({ scan, docker, dockerRootDirectory, deadline: Math.min(deadline, Date.now() + LIMITS.timeoutMs), signal }); scans.push(result);
+    const result = await runFixedScanner({ scan, docker, dockerRootDirectory, deadline: Math.min(deadline, Date.now() + LIMITS.timeoutMs), signal });
+    const entry = { ...result, preAdmissionSha256: before.facts.observationSha256 }; scans.push(entry);
     if (!result.complete || !result.cleanupConfirmed || Date.parse(result.cleanupObservedAt) > deadline) return { status: result.touched ? 'UNCERTAIN' : 'BLOCKED',
       reason: result.reason ?? 'SCAN_CLEANUP_UNCONFIRMED', scans, fixture, automaticRetryAllowed: false, checksWritten: false, formalEligible: false };
-    validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }); check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_AFTER_SCAN');
+    const after = await admit(); check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_AFTER_SCAN');
+    scans[scans.length - 1] = { ...entry, postAdmissionSha256: after.facts.observationSha256 }; carried = after;
   }
-  const post = validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation });
-  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: freeze({ contract: 'clued.independent-ci.formal-scanner-observation/2',
+  const post = (await freshAdmission(carried)).facts;
+  return { status: 'THREE_SCANNERS_OBSERVED_UNSIGNED', observation: freeze({ contract: TRIVY_OBSERVATION_CONTRACT,
     domain: fixture ? 'fixture' : 'production-observation', fixture, profile: 'required-trivy-three-scanners/1', subject: subjectOf(job),
     sourceManifestSha256: job.sourceManifestSha256, sourceSha: preparedRequest.sourceSha, sourceTreeSha: preparedRequest.sourceTreeSha,
     candidateTreeSha: preparedRequest.candidateTreeSha, nonce: preparedRequest.nonce, requestSha256: digest(preparedRequest), inputInventorySha256: digest(inputInventory),

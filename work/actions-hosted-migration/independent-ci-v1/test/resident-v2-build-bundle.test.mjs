@@ -160,3 +160,23 @@ test('build-bundle: removals of seed trees never follow a link and clear read-on
   assert.ok(!/Remove-Item[^\n]*-Recurse/.test(text.slice(text.indexOf('# ---- The persistent seed'), text.indexOf('function Build-Store'))), 'no Remove-Item -Recurse on a seed tree');
   assert.ok(!text.includes('[IO.Directory]::Delete($SeedDir,$true)'));
 });
+
+// CI Source round-trip trim (PR #1029 batches: 405 refs, one git process each, 12-17 s per bundle). Behaviour:
+// test-build-bundle.ps1 (63 refs: 1 batch process + head/base; a refused blob tag is decided by the old loop). This pins the
+// shape on any host: one cat-file --batch-check for the ref targets, its answer used only when complete, and the per-ref
+// cat-file -t loop, unchanged, whenever there is no usable answer or any ref would be refused.
+test('build-bundle: ref target types from one cat-file --batch-check; the per-ref loop decides every refusal', () => {
+  const store = text.slice(text.indexOf('function Build-Store'), text.indexOf('function Retry-Allowed'));
+  const types = text.slice(text.indexOf('function Ref-Target-Types'), text.indexOf('function Build-Store'));
+  assert.equal(types.match(/Invoke-Git /g).length, 1);
+  assert.ok(types.includes("Invoke-Git 'ref-types' ($Common+@($Gd,'cat-file','--batch-check'))"));
+  assert.ok(types.includes('catch{return $null}') && types.includes('if($lines.Count -ne $shas.Count){return $null}'));
+  assert.ok(store.includes('$types=Ref-Target-Types $gd $local'));
+  assert.ok(store.includes("if($null -eq $types){foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()"));
+  assert.ok(store.includes("throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'"));
+  // ref-types talks to no remote: never a network step, so never retried
+  assert.ok(!/\$NetworkSteps=@\([^)]*ref-types/.test(text));
+  // the input is written only after both output readers started (no pipe deadlock), then closed
+  const invoke = text.slice(text.indexOf('function Invoke-Git'), text.indexOf('function Assert-FormalRefName'));
+  assert.ok(invoke.indexOf('ReadToEndAsync') < invoke.indexOf('StandardInput.Write') && invoke.indexOf('StandardInput.Write') < invoke.indexOf('StandardInput.Close()'));
+});
