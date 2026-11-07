@@ -5067,3 +5067,33 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
 - 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
 - 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。
+
+## 65. 来源证明标准化：in-toto Statement + SLSA provenance v1（优化方案 bf57ff10 的 L4；分支 `claude/slsa-provenance`）
+
+**问题。** 常驻 CI 的签名结果（Linux 用 Ed25519 签 `independent-ci.signed-result.v2`，Windows 签发方复核，发布段记 `evidenceSha256`）是自定义格式，外部工具无法验证。目标：对每个检查结果**额外**产出标准格式的来源证明；**现有格式、现有校验、现有测试一律不动**，流水线里没有任何判断读这份新文件。
+
+### 65.1 格式
+- **in-toto Statement v1**（`_type = https://in-toto.io/Statement/v1`），**predicateType = `https://slsa.dev/provenance/v1`**，放进 **DSSE 信封**（`payloadType = application/vnd.in-toto+json`，签名对象是 DSSE 的 PAE，Ed25519，`keyid` = 结果签名钥的 keyId）。
+- **subject**：被测提交 S（`job.testSha`，非车头批次时等于头提交）`{name: git+https://github.com/<repo>, digest: {gitCommit}}`；观察里带 `candidateTreeSha`（trivy、contract-placement）时再加一项树 `{name: ...#tree, digest: {gitTree}}`。gitleaks 的观察不含树，只有提交。
+- **predicate.buildDefinition**：`buildType`（本仓库 scanner-check/v1 的 URI）；`externalParameters` = 作业身份（jobId、合同号、repo、pr、role、attempt、headSha、baseSha、testSha、createdAt）；`internalParameters` = 结果合同、签名 keyId、profile、日志摘要模式；`resolvedDependencies` = 基线提交、**Source 清单哈希**、扫描镜像摘要、workflow 与工具钉的哈希（有则写）。
+- **predicate.runDetails**：`builder.id = urn:clued:independent-ci:node:<运行时身份>:source:<Source 清单哈希>`（节点身份取签名结果的 `runtimeId`，对 URN 做百分号转义）；`metadata`（invocationId = 作业 id，startedOn、finishedOn）；`byproducts` 全部按哈希绑定：`signed-result`（= 信封的 `digest()`，即 `verifyResultV2` 返回、发布段写进日志的 `evidenceSha256`，这就是回执哈希链接到证明的那一环）、`check-result`（结论与退出码，内联）、stdout、stderr、artifacts、request、execution-observation、cleanup。
+- 文本用现有 `canonical()`（键排序）序列化，同一输入字节一致。
+
+### 65.2 生成点、签钥、存放
+- **生成点**：Linux 桥 `worker/protected-job-bridge-v4/linux-worker.mjs`，在 `box.write('result', …)` 写出签名结果**之后**调用 `emitProvenanceBestEffort`（懒加载 `provenance-emit.mjs`，预算 10 秒，任何错误、超时都吞掉返回 null，**不改变返回值、结果记录和任何状态**）。`provenance-emit.mjs` 用与 `signActualBridgeResult` 同一份固定角色策略、同一把 `signingKeyFile`（读取前同样做 protectedPath 与“公钥一致”核对，不一致 `EXISTING_RESULT_KEY_CHANGED`），**不新增、不导出任何密钥**。
+- **存放**：Linux 本地回执目录 `/var/lib/clued-independent-ci/provenance/<testSha>-<role>-<jobId 前16位>.dsse.json`，create-only、fsync、0600，同一作业重复生成字节相同则视为已有，不同则拒绝。**故意不进 formal-spool**：spool 的记录名白名单（`mailbox.mjs`、`formal-spool-acl.ps1`、`archive-windows-spool.ps1`、Linux 归档）与 relay/companion 的传输集合都不动，避免新文件名触发归档拒绝。Windows 侧的回执目录约定为 `state\v2\receipts\provenance\`（同一文件名，`state-retention` 只认自己的名字，不会清理它）；把文件从 Linux 目录拷进来是 Owner 或后续传输步骤的事（见 65.5）。
+- **不写 Rekor 或任何透明日志**（私有仓库）；不接 GitHub 检查运行附件（可选项未做，见 65.5）。
+
+### 65.3 只读校验脚本
+`node work/actions-hosted-migration/independent-ci-v1/src/provenance-v1/verify.mjs --sha <提交> --pubkey <结果签名公钥 PEM> [--keyid <id>] [--dir <目录>] [--role <角色>] [--repo <git 检出>] [--json]`
+对该提交的每个 `<sha>-*.dsse.json`：用公钥验 DSSE 签名；按 in-toto Statement v1 与 SLSA provenance v1 的字段规则校验（`validateStatementV1`）；subject 中必须有等于 `<sha>` 的 gitCommit；给了 `--repo` 时，若带树 subject，则与 `git rev-parse <sha>^{tree}` 比对。退出码：全部通过且至少一份为 0，有失败或没有证明为 1，用法错误为 2。**只读**：不写、不签、不联网（测试里逐字节比对目录）。公钥来源：结果签名钥的公钥（已装的签名者登记表里那一把）。
+
+### 65.4 测试（`test/provenance-v1.test.mjs`，13 例）
+DSSE PAE 与规范向量一致；Statement 的 in-toto/SLSA 必填字段（测试里按规范独立写出，不借用校验函数）；11 种违规 Statement 被拒；与作业、与签名结果的绑定检查；DSSE 签名通过、改 payload/签名/类型/换钥/换 keyid/非 base64/非 Ed25519 钥各自失败；生成证明后原 `signed-result` 字节不变、`verifyResultV2` 照常通过、`evidenceSha256` 就是 Statement 里的 `signed-result` 哈希；落盘 create-only 与幂等；按提交校验（错提交、错钥、错树、错角色、改一个字节均失败）；校验只读；命令行 0/1/2；尽力而为路径（加载失败、抛错、超时都返回 null）。
+
+### 65.5 没做的与已知边界
+- **传输**：Linux 目录到 Windows `receipts\provenance\` 没有自动搬运。自动化要新增 relay 记录名（`relay-record.mjs`、`relay-public.ps1`、`mailbox.mjs` 白名单）并改 companion 与 Windows 归档白名单，都是已装、受 Source 清单钉住的受保护组件，应单独出方案由 Owner 批准，这里不碰。
+- **gitleaks 无树 subject**（观察不含树）；需要时由 `--repo` 之外的方式另行求树。
+- **检查运行附件/链接**（要求里的可选项）未做：GitHub 检查输出由发布段严格比对（`output.title/summary`），加附件会动现有发布格式。
+- **生产钥路径未在本机实跑**：`emitProvenance` 的 Linux 生产分支需要 root 与固定角色策略，测试用同形态的注入端口与夹具钥覆盖；上线前要在 CluedDev-Linux 上随新 Source 清单实跑一次。
+- 本节新增的 `src/provenance-v1/{dsse,statement,store}.mjs` 与 `provenance-emit.mjs` 进入 Source 闭包（`source-closure.json` 已重算 166 个文件），改动 `linux-worker.mjs`，属于 CI Source：随下一代 Source 清单换代，Linux 三个角色随新清单重签资格（同 §42、§64.4）。
