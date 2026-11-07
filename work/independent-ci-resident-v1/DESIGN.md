@@ -5153,7 +5153,7 @@ gitleaks 扫的是提交历史（`gitleaks git /repo`：仓库里可达的每个
 ### 65.7 能省多少、安装、测试
 
 - 按 §45.4 的实测，trivy 约 4.6–5.3 分钟、placement 约 2.4–3.1 分钟；命中时只剩快照、库准备、两轮准入和签名，trivy 少 3 个扫描器容器与 3 轮准入，placement 少一个容器。
-- 这是 CI Source 变更：新 Source 清单，trivy 与 contract-placement 两个角色随新清单重签资格；新文件已进 `source-closure.json`、桥 `boundary.mjs` 的必需清单、角色策略 `ROLE_SOURCE` 与两个适配器的 `CLOSURE`。打开缓存还要在两份角色策略里加 §65.4 的字段并建好 root 0700 的目录（不加则关闭）。
+- 这是 CI Source 变更：新 Source 清单，trivy 与 contract-placement 两个角色随新清单重签资格；新文件已进 `source-closure.json`、桥 `boundary.mjs` 的必需清单、角色策略 `ROLE_SOURCE` 与两个适配器的 `CLOSURE`。打开缓存只需在两份角色策略里加 §65.4 的字段（不加则关闭）；根目录与角色子目录不存在时由适配器第一次写入时以 root 0700 创建，其父目录必须已是受保护目录。记录每条几 KB，不做自动回收；整目录删掉是安全的（之后只是未命中、照旧真跑），归档与 §35 的回收脚本不碰它。
 - 测试 `CI/test/scan-result-cache.test.mjs`（13 例，在修复前的代码上因缓存模块与接线不存在而失败）：真实 trivy 扫描循环与真实 placement 执行步，只替换物理 Docker 传输：
   1. 同树二次扫描命中、不启动扫描器（trivy 三个扫描器、placement 容器都是 0 次），扫描许可仍取 1 次、准入 2 轮，`cacheHit` 指向原始观察与记录，签名校验通过且时间窗是本次的；force-push 只改信息（新 head）与重算 S（新 testSha）两种形状都命中；
   2. 任何一个键成分变化都不命中、照旧真跑（trivy：文件字节、文件集合、树、漏洞库、Source 清单、运行身份、两种接受引用、Docker 客户端；placement：base 树、被测树、工具钉、镜像、镜像内 node、宿主 git、运行身份、接受引用）；纯函数层逐个成分去掉或改动都换键或变 `null`；
