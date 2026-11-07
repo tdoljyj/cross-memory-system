@@ -713,18 +713,18 @@ const PR_1015_FILES = [
 const forCheck = (picked, check) => picked.selections.find((entry) => entry.check === check);
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
-  // The literal list of seven below is the regression lock: it is what the real run
+  // The literal list of eight below is the regression lock: it is what the real run
   // selected for #1015, so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests']);
+    ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));
@@ -740,8 +740,8 @@ test('--affected: a change only to the application selects no ci-suites suite, a
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, []);
   assert.deepEqual(picked.suites, ['clued-cloud']);
   assert.equal(picked.lines[0], 'ci-suites: no file this check covers changed; suites: none');
-  // the schema files add the schema check
-  assert.deepEqual(selectAffected(selection, ['apps/clued-cloud/package.json']).suites, ['clued-cloud', 'production-schema']);
+  // the schema files add the schema check (package.json is also locked by the reconcile registry)
+  assert.deepEqual(selectAffected(selection, ['apps/clued-cloud/package.json']).suites, ['pinned-registries', 'clued-cloud', 'production-schema']);
   // a change to the selection itself selects every suite of every check, files unknown too, with no per-file reasons for the unknown
   assert.equal(selectAffected(selection, ['scripts/ci/ci-required-selection.mjs']).selections[0].suites.length, Object.keys(selection.SUITES['ci-suites']).length);
   const unknown = selectAffected(selection, null);
