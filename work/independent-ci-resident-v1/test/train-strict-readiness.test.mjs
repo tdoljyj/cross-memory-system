@@ -4,7 +4,7 @@ import { digest } from '../src/canonical.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, trainSettings } from '../src/policy.mjs';
 import { TRAIN_STRICT_READINESS_CONTRACT, TRAIN_STRICT_FRONT_READINESS_CONTRACT, strictCoverageOf, strictCoverageMatches, strictFrontReadinessOf,
   strictFrontReadinessMatches, sweepOf, trainIdleExtraDue } from '../src/train.mjs';
-import { executorFixture, fakeEngine, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+import { executorFixture, fakeEngine, rawPolicy, HEAD, BASE, SOURCE, CI_SOURCE } from './helpers.mjs';
 
 const MIN = 60_000, DAY = 24 * 60 * MIN, NOW = Date.parse('2026-10-20T12:00:00Z');
 const iso = n => new Date(n).toISOString();
@@ -13,10 +13,10 @@ const policy = () => rawPolicy({ contract: POLICY_CONTRACT_V8, train });
 const front = { pr: 910, headSha: HEAD, baseSha: BASE, testSha: '5'.repeat(40), testTree: '6'.repeat(40),
   claimId: '0a1b2c3d-0000-4000-8000-0000000000aa', since: iso(NOW), attempt: 1 };
 const coverage = () => ({ contract: TRAIN_STRICT_READINESS_CONTRACT, state: 'ready', repo: policy().repo, mainSha: BASE,
-  sourceManifestSha256: SOURCE, settingsDigest: digest(trainSettings(train)), onSince: iso(NOW), front: { pr: front.pr, headSha: HEAD, claimId: front.claimId, since: front.since },
+  sourceManifestSha256: CI_SOURCE, settingsDigest: digest(trainSettings(train)), onSince: iso(NOW), front: { pr: front.pr, headSha: HEAD, claimId: front.claimId, since: front.since },
   proofRef: `strict-proof-${NOW}-0123456789abcdef-0123456789ab-01234567.json`, writtenAt: iso(NOW), expiresAt: iso(NOW + 15 * MIN),
   backgroundAllPending: 'TRAIN_ALL_REQUIRED', reason: null });
-const context = () => ({ now: NOW, repo: policy().repo, sourceManifestSha256: SOURCE, settingsDigest: digest(trainSettings(train)), onSince: iso(NOW), front, sweepFreshMs: 15 * MIN });
+const context = () => ({ now: NOW, repo: policy().repo, sourceManifestSha256: CI_SOURCE, settingsDigest: digest(trainSettings(train)), onSince: iso(NOW), front, sweepFreshMs: 15 * MIN });
 const frontReadiness = () => ({ ...coverage(), contract: TRAIN_STRICT_FRONT_READINESS_CONTRACT, historyCoverage: false,
   proofRef: `strict-front-proof-${NOW}-0123456789abcdef-0123456789ab-01234567.json` });
 const progress = () => ({ contract: 'clued.independent-ci.train-sweep-progress/1', roundId: 'a'.repeat(64), token: 'b'.repeat(64), scope: 'all', required: true, advanced: true, at: iso(NOW) });
@@ -26,7 +26,7 @@ const budget = () => ({ contract: 'clued.independent-ci.train-provider-budget/1'
 
 test('strict readiness checks its exact front tenure, Source, settings and bounded fresh clock window', () => {
   assert.ok(strictCoverageMatches(coverage(), context()));
-  for (const patch of [{ now: NOW - 1 }, { now: NOW + 15 * MIN }, { repo: 'other/repo' }, { sourceManifestSha256: 'e'.repeat(64) },
+  for (const patch of [{ now: NOW - 1 }, { now: NOW + 15 * MIN }, { repo: 'other/repo' }, { sourceManifestSha256: SOURCE }, { sourceManifestSha256: 'f'.repeat(64) },
     { settingsDigest: 'e'.repeat(64) }, { onSince: iso(NOW - 1) }, { front: { ...front, baseSha: HEAD } }, { front: { ...front, claimId: 'new-claim' } },
     { front: { ...front, since: iso(NOW + 1) } }, { front: { ...front, headSha: BASE } }]) assert.equal(strictCoverageMatches(coverage(), { ...context(), ...patch }), false, JSON.stringify(patch));
   assert.equal(strictCoverageMatches({ ...coverage(), expiresAt: iso(NOW + 16 * MIN) }, context()), false);
@@ -45,7 +45,7 @@ test('front-only readiness cannot claim coverage and still binds the exact Sourc
   assert.equal(strictFrontReadinessOf(coverage()), null);
   for (const patch of [{ historyCoverage: true }, { proofRef: coverage().proofRef }, { unknown: true }])
     assert.equal(strictFrontReadinessOf({ ...frontReadiness(), ...patch }), null);
-  for (const patch of [{ now: NOW - 1 }, { now: NOW + 15 * MIN }, { sourceManifestSha256: 'e'.repeat(64) },
+  for (const patch of [{ now: NOW - 1 }, { now: NOW + 15 * MIN }, { sourceManifestSha256: SOURCE }, { sourceManifestSha256: 'f'.repeat(64) },
     { settingsDigest: 'e'.repeat(64) }, { onSince: iso(NOW - 1) }, { front: { ...front, claimId: 'new-claim' } },
     { front: { ...front, since: iso(NOW - 1) } }, { front: { ...front, baseSha: HEAD } }])
     assert.equal(strictFrontReadinessMatches(frontReadiness(), { ...context(), ...patch }), false);
@@ -66,6 +66,12 @@ test('resident admits only an enqueued S with the same claim; full takeover and 
   await f.exec.enqueueFront(front);
   assert.equal(f.exec.trainGate(front), null);
   assert.equal(f.exec.trainTakeoverDone, false);
+  // Stage 10 binds its observation to the CI Source (policy ciSourceManifestSha256); the resident's own installed-files manifest
+  // (policy sourceManifestSha256) is another Source and admits nothing (generation 21: the executor compared against it).
+  f.exec.trainStrictReadiness = { ...coverage(), sourceManifestSha256: SOURCE };
+  assert.equal(f.exec.trainGate(front).reason, 'TRAIN_TAKEOVER_SWEEP_PENDING');
+  f.exec.trainStrictReadiness = coverage();
+  assert.equal(f.exec.trainGate(front), null);
   assert.equal(f.exec.trainGate({ ...front, testSha: '7'.repeat(40) }).reason, 'TRAIN_TAKEOVER_SWEEP_PENDING');
   assert.equal(f.exec.trainGate({ pr: front.pr, headSha: HEAD, baseSha: BASE }).reason, 'TRAIN_TAKEOVER_SWEEP_PENDING');
   f.exec.trainLast.decision = 'TRAIN_SOURCE_UNREADABLE';
