@@ -129,7 +129,7 @@ export function render({ base, results }) {
     out.push('fix sequence (repeat the check until nothing changes):');
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
-    if (stale.some((r) => r.id === 'components' && r.details?.some((d) => /bbumpb/.test(d)))) out.push(`  ${n++}. ${PYTHON} scripts/clued_components.py bump <component id> <new version>   (the id and a higher version are in the message above)`);
+    if (stale.some((r) => r.id === 'components' && r.details?.some((d) => /\bbump\b/.test(d)))) out.push(`  ${n++}. ${PYTHON} scripts/clued_components.py bump <component id> <new version>   (the id and a higher version are in the message above)`);
     out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,
       `  ${n++}. node apps/clued-cloud/scripts/generate-agent-contract.mjs`,
       `  ${n++}. node scripts/ci/check-pinned-registries.mjs --base ${base ?? '<main commit>'}   (a component bump edits a locked file, so steps 2-3 may need a second pass)`);

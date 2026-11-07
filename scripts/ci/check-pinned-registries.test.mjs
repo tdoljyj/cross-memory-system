@@ -85,7 +85,7 @@ test('changing a pinned file names the stale registries and the commands that fi
     assert.match(r.stdout, /ok\s+components/);
     assert.match(r.stdout, /2 registries are stale/);
     assert.match(r.stdout, /fix sequence/);
-    assert.match(r.stdout, /clued-merge-reconcile-source-build.mjs[sS]*clued_components.py update[sS]*generate-agent-contract.mjs[sS]*check-pinned-registries.mjs/);
+    assert.match(r.stdout, /clued-merge-reconcile-source-build\.mjs[\s\S]*clued_components\.py update[\s\S]*generate-agent-contract\.mjs[\s\S]*check-pinned-registries\.mjs/);
 
     r = cli(dir, '--base', 'HEAD', '--only', 'components'); assert.equal(r.status, 0, r.stdout);
     assert.doesNotMatch(r.stdout, /r9|reconcile/);
@@ -100,7 +100,7 @@ test('changing a pinned file names the stale registries and the commands that fi
     // The reconcile registry is itself a file of the script.merge-reconciliation component, so the registries
     // chase each other: regenerating it makes the component digest stale, and the check says so.
     r = cli(dir, '--base', 'HEAD');
-    assert.equal(r.status, 1, r.stdout); assert.match(r.stdout, /oks+reconcile/); assert.match(r.stdout, /STALEs+components/);
+    assert.equal(r.status, 1, r.stdout); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /STALE\s+components/);
     const update = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', 'update'], { cwd: dir, encoding: 'utf8' });
     assert.equal(update.status, 0, update.stdout + update.stderr);
     r = cli(dir, '--base', 'HEAD');
