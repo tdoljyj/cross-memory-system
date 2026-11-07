@@ -191,14 +191,17 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
   const after = engine.trainRuns.length;
   for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
   assert.ok(engine.trainRuns.slice(after).some(r => r.created > 0), JSON.stringify(engine.trainRuns.slice(after)));
-  // A run that only refreshed the running front batch's observation (TRAIN_FRONT_BATCH_RUNNING) may skip the pages too, but only right
-  // after a run that read them: from the open run on, no two runs in a row skip.
+  // A run that only refreshed the running front batch's observation (TRAIN_FRONT_BATCH_RUNNING) may skip the pages too, right after a run
+  // that read them or (generation 23, DESIGN §62.8) as the batch's first refresh right after its open run: from the open run on, a skipping
+  // run is a refresh, and no more than three runs in a row skip.
   const fromOpen = engine.trainRuns.slice(engine.trainRuns.indexOf(openRuns[0]));
   t.diagnostic(`runs from the open: ${fromOpen.map(r => `${r.decision}:${r.created}`).join(' ')}`);
   for (let i = 1; i < fromOpen.length; i++) if (fromOpen[i].created === 0 && fromOpen[i].full === 'running') {
     assert.equal(fromOpen[i].decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(fromOpen));
-    assert.ok(fromOpen[i - 1].created > 0, JSON.stringify(fromOpen));
+    assert.ok(fromOpen[i - 1].created > 0 || (i === 1 && fromOpen[0].decision === 'OPEN_FRONT_BATCH'), JSON.stringify(fromOpen));
   }
+  const all = engine.trainRuns.map(r => r.created === 0 && r.full === 'running');
+  assert.ok(!all.some((s, i) => s && all[i + 1] && all[i + 2] && all[i + 3]), `four runs in a row skipped: ${JSON.stringify(engine.trainRuns)}`);
   assert.equal(f.exec.trainTakeoverDone, true, `take-over not done: ${JSON.stringify(engine.lastFacts?.sweep)}`);
   assert.equal((await e.store.readFullSweepStrict('on')).full.state, 'complete');
 });
@@ -490,6 +493,23 @@ test('gen 22 (PR #1029): a front batch whose stages 1-7 outlast the strict proof
   assert.equal((await f.receipts.latest(['train-front-proof-refresh'], 5)).length, 1, 'one stage-10 refresh right before it');
   assert.ok(green, `no kooyumi-merge-slot success; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}`);
   t.diagnostic(`front batch: stage 1 to stage 8 ${Math.round((s8[0].at - s1) / 1000)} s (simulated); merge-slot green ${Math.round((f.clock() - arrival) / 1000)} s after the PR arrived`);
+  // Generation 23 field defect (PR #1032, DESIGN §62.8): the open run skipped the full-sweep segment (10:04:31), the front batch ran
+  // 10:05:04-10:19:22 and the refresh before stage 8 then had to read it (10:19:22-10:21:59, 2 min 37 s) only because the open run had
+  // skipped it. The strict front proof needs no history: the first refresh run after this batch's open run reads no full-sweep page.
+  const openIdx = engine.trainRuns.findIndex(r => r.decision === 'OPEN_FRONT_BATCH');
+  const refreshIdx = engine.trainRuns.findIndex((r, i) => i > openIdx && r.decision === 'TRAIN_FRONT_BATCH_RUNNING');
+  assert.ok(openIdx >= 0 && refreshIdx === openIdx + 1, JSON.stringify(engine.trainRuns));
+  const [open, refresh] = [engine.trainRuns[openIdx], engine.trainRuns[refreshIdx]];
+  t.diagnostic(`runs: ${engine.trainRuns.map(r => `${r.decision}:${r.created}:${r.ms / 1000}s`).join(' ')}`);
+  assert.equal(open.created, 0, 'the open run reads no full-sweep page');
+  assert.equal(refresh.created, 0, 'the refresh run right after the open run reads no full-sweep page either');
+  assert.ok(refresh.ms < 60_000, `the refresh run took ${refresh.ms / 1000} s (simulated)`);
+  // Starvation bound: the run after them reads the full-sweep pages again, and the take-over full sweep still completes.
+  e.gh.world.hooks.pullsPage = null;
+  const after = engine.trainRuns.length;
+  for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.ok(engine.trainRuns[after]?.created > 0 && engine.trainRuns[after].full !== null, `the next run reads pages: ${JSON.stringify(engine.trainRuns.slice(after))}`);
+  assert.equal(f.exec.trainTakeoverDone, true, `take-over not done: ${JSON.stringify(engine.lastFacts?.sweep)}`);
 });
 
 // Task 60f83aa3 (#1031): the last stage 10 ran at 09:07 and said NO_FRONT (empty queue); the PR arrived at 09:14 and waited for the
