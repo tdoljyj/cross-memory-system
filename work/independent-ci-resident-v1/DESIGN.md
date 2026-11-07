@@ -5067,3 +5067,96 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - 车头批次省 6 轮挑战（trivy 3 轮约 49 秒、bridge 3 轮约 47 秒）加约 16 秒打包，约 110 秒；绑定批次打包省约 12 秒，挑战轮数视其所含角色而定。
 - 三个文件都是 CI Source：要新的 Source 清单（`ciSourceManifestSha256`，打包时由 `rollout/build-upgrade.ps1` 生成），Linux 三个角色（gitleaks、trivy、contract-placement）随新清单重签资格；`build-bundle.ps1` 是 companion 的 Source v2 脚本，随同一个 Source 装，不涉及 Linux 资格。
 - 测试：`windows/test-build-bundle.ps1`（+10 例：一次批量加 head/base 两次；63 个 ref 同样；缺对象与空表无答复；blob 标签被拒且由旧循环判定）；`test/resident-v2-build-bundle.test.mjs`（钉住形状与“任何异常退回逐个查”）；`test/linux-worker-final-admission.test.mjs`（真实 `executeProtectedIssuedJob` 与真实协议：3 个角色各 3 轮变 2 轮；观察指的不是最后一次答复、或超过 30 秒时仍是 3 轮；纯函数各分支）；`test/formal-trivy-scan-start-window.test.mjs`（8 轮变 5 轮，判定不变；每个扫描器 pre/post 与串接关系；单调时钟拨过 30 秒回到 8 轮；`carriedAdmission` 各分支）。
+
+## 65. 按代码树缓存扫描结果（M4，第 21 代候选，分支 `claude/scan-result-cache`；Task `bf57ff10` 第二阶段 M4；Owner Decision `9e2511fe` 第 5 项）
+
+**为什么**：trivy 与 contract-placement 的判定只取决于被扫的内容和扫的方式，与哪个提交指向这份内容无关。下面三种情况都会产生一个“新提交、旧代码树”，以前每次都真跑一遍：GitHub 重算试合并提交 S 但树没变；同一个 PR 的普通批次与车头批次（strict 开着时车头已跟上 main，`merge(T,H)` 的树就是 H 的树）；只改提交信息的 force-push。现在第二次起变成一次查表。gitleaks 不在本项内（§65.6）。
+
+新文件 `CI/worker/scan-result-cache-v1/cache.mjs`（键、记录、策略开关、读写端口，纯函数为主）；接线在 `CI/worker/formal-trivy-v4/adapter.mjs`（`trivyResultKey`、`executeScanners`）与 `CI/worker/formal-contract-placement-v2/adapter.mjs`（`placementResultKey`、`executePlacement`，从 `execute` 里拆出来的执行步，行为不变）；签名器与 Windows 签发方共用的观察校验 `CI/worker/protected-job-bridge-v4/signed-result.mjs#observationFacts` 认 `cacheHit`。
+
+### 65.1 键：逐项论证
+
+键是 `cacheKey(role, 成分)` 对规范 JSON 的 SHA-256。**每个成分都必填、都按类型校验**；缺一个或格式不对，键就是 `null`：不查、不写，照旧真跑（“键不全一律当未命中”）。成分里多出一个未知字段也是 `null`。`repo` 和 `profile` 是固定值，也校验。
+
+**trivy**（`trivyResultKey`）。三个扫描器能读到的只有：`/repo`（`snapshotTree` 复制的候选工作树，**跳过 `.git`**，所以看不到任何提交号、提交信息或历史）、`/scratch/db`（离线漏洞库）、`/scratch/policy`（checks bundle）、固定 argv 和容器参数。
+
+| 成分 | 覆盖的输入 | 为什么够 |
+|---|---|---|
+| `candidateTreeSha` | 被测提交的树 | 候选目录由 `validateCheckout(complete)` 逐字节核对过树，不允许多余文件、链接或非常规文件 |
+| `inputInventorySha256` | 快照里每个文件的路径和 SHA-256（`inputInventory` 的摘要） | 这是扫描器实际看到的字节本身，比树号更直接；文件权限被快照统一成 0444/0555，扫描器看不出可执行位 |
+| `database` = `plan.cache` | 漏洞库 `trivy.db` 与 `metadata.json` 的 SHA-256、是否走 72 小时兜底、checks bundle 的 OCI digest、主版本、内容哈希 | 漏洞库每天更新：库一换，键就换。库是否仍可用（`NextUpdate`、72 小时）每次都由 `cache.prepare` 与 `requiredTrivyPlans` 现场重判，缓存不绕过它 |
+| `image`、`nativeImageDigest`、`policyImage` | 扫描器镜像（tag+digest、原生 digest、角色策略钉的镜像） | 扫描器版本 |
+| `scannersSha256` | 三个扫描器的 argv、cwd、挂载（只取容器内目标路径）、网络、只读根、用户、能力、限额、scratch | 每次运行不同的宿主路径（快照目录、库的代目录）被换成容器内路径；库的字节已由 `database` 覆盖 |
+| `dockerExecutableSha256` | Docker 客户端 | 保守项 |
+| `workflowSha256` | 受信 `.github/workflows/trivy.yml` | 规则来源 |
+| `sourceManifestSha256`、`sourceSha` | 整个 Source 清单：适配器、`plans.mjs`、`docker.mjs`、库缓存模块、本缓存模块 | 任何一个 Source 字节变化都换键，旧记录自然失效（“版本不匹配当未命中”） |
+| `runtimeIdentity`、`hostAcceptanceRef`、`sourceAcceptanceRef` | 已签资格的运行环境与 Owner 接受引用 | 重装或重签资格后不复用旧结果（保守项） |
+
+**contract-placement**（`placementResultKey`）。这一项**不只取决于被测树**：`check_contract_placement.py --base <base> --head <test>` 读两棵树（`git_tree`：先 rev-parse 到提交，再 `ls-tree`，只用树内容），所以 base 树也是输入。
+
+| 成分 | 覆盖的输入 |
+|---|---|
+| `testTreeSha` | 被测树（工作区就是它的检出，逐字节核对过） |
+| `baseTreeSha` | base 提交的树，`git rev-parse <base>^{tree}`；读不到就是 `null`，本次不用缓存 |
+| `image`、`containerNodeSha256` | 工具镜像与镜像内的 node |
+| `toolPinsSha256`、`esbuildVersion` | 五个工具（node、python、git、esbuild js、esbuild 二进制）的路径与哈希，esbuild 版本 |
+| `nodeExecutableSha256`、`gitExecutableSha256` | 宿主侧 node 与 git（封装候选、打包对象用） |
+| `commandTemplateSha256` | 五条固定命令的每一个字节，只把两个提交号换成占位符 |
+| `limitsSha256` | 内存、CPU、pids、超时、输出上限 |
+| `workflowSha256`、`sourceManifestSha256`、`sourceSha`、`runtimeIdentity`、`hostAcceptanceRef`、`sourceAcceptanceRef` | 同 trivy |
+
+**提交号为什么可以不进 placement 的键**（逐条）：
+
+1. `--base`、`--head` 两个参数：检查脚本只用它们取树，两棵树都在键里。
+2. 构建常量 `__CLUED_BUILD_SHA__=<testSha>`：打进 bootstrap 渲染结果，是**定长 40 位十六进制**；检查对渲染结果只量字节数（`check_response_budget`），不同提交号字节数相同。
+3. 生产 bootstrap 读数（rollout 规则）：容器 `network: none`，这条路径对同一对树总是同样地“读不到”，结果确定；网络设置在 Source 里，已由 `sourceManifestSha256` 覆盖。
+4. 容器里确实有 `.git`（被测、head、base 三个提交及其历史），候选代码理论上能读提交信息或时间。但这些代码就是被测树本身：两次运行树相同、代码相同；一个会按提交信息或时间改变结论的检查，作者同样可以直接写成恒过，缓存没有给出新的能力。现行固定命令（`test_check_contract_placement.py` 只在临时仓库里建自己的夹具，bootstrap 测试不调 git）都只读树。**这一条是本设计的残余判断，送审时请审核者专门看**；如果不接受，可以只开 trivy 的开关（§65.4，开关按角色分开）。
+
+**结论只缓存成功**：失败与不确定结果从不写入。缓存失败不会放过任何东西，但会让“推一个新提交再跑”这个处理偶发失败的办法失效，所以不写。
+
+### 65.2 存放与写入：只有 CI 能写
+
+- 位置由角色策略给出（§65.4），建议 `/var/lib/clued-independent-ci/scan-result-cache`，下分 `trivy/`、`contract-placement/`，每条记录一个文件 `<keySha256>.json`。
+- 只有 root 写：适配器以 root 运行；根目录、角色子目录、记录文件逐级过 `protectedPath`（无符号链接、uid 0、组和其他人不可写、记录 0600、单硬链接、`realpath` 等于自身）。根目录不得与 `workspaceRoot`、`runsRoot`、`trustedSourceDirectory`（trivy 另加库缓存根）重叠，也不得包含签名钥、资格、公钥、Source 清单或入口文件；任何一条不满足，开关当作关（`SCAN_RESULT_CACHE_ROOT_OVERLAP`）。这些目录之外的东西不会挂进任何扫描容器，PR 代码看不到也写不到。
+- 写入只在**真跑成功**、观察已经 durable 写进运行目录之后：先写临时文件（`wx`、0600、fsync），再 `link` 成正式名（已存在就保留旧的，先写者胜，不覆盖），再 fsync 目录。写失败不影响本次结果，下一次同树照旧真跑。
+- 记录 = `{contract, role, keySha256, key（全部成分）, observation（原始真实观察，即签名结果里 executionObservationSha256 指向的那一份）, originalObservationSha256, storedAt, recordSha256}`，`recordSha256` 是除它以外全部内容的摘要。
+
+### 65.3 读：任何异常一律未命中
+
+`lookup` 从不抛错，失败就返回 `{record: null, reason}`。命中要同时满足：开关开；键完整；各级路径过 `protectedPath`；文件不超过 4 MiB、能解析、字段集合精确；记录合同号与角色对；`recordSha256` 对得上；`keySha256` 等于本次键、记录里的键成分逐字节等于本次成分；`originalObservationSha256` 等于观察的摘要；观察是该角色**现行**观察合同（trivy `/3`、placement check-observation `/2`）、`production-observation`、`conclusion = success`、退出码全为 0、扫描器都完整清理、**不带 `cacheHit`**（命中产生的观察绝不再被存成记录，不会“缓存套缓存”），且观察里的 Source、运行身份、接受引用、树、镜像、库与键一致。被改一个字节、截断、空文件、换成别的键的记录（哪怕重新算过摘要）、失败结果、过期合同，全部是未命中，照旧真跑。
+
+### 65.4 策略开关
+
+角色策略（`/etc/clued-independent-ci/roles-v3/trivy.json`、`contract-placement.json`，root 私有文件，现有加载与“执行后策略未变”核对不变）新增可选字段：
+
+```json
+"scanResultCache": { "enabled": true, "root": "/var/lib/clued-independent-ci/scan-result-cache" }
+```
+
+字段缺失、`enabled` 不是 `true`、多出字段、根目录不合格，都等于关：不读也不写。两个角色各自一个开关；gitleaks 没有开关，永远不缓存。**新 Source 装上而策略不加这个字段时，行为与今天完全相同。**
+
+### 65.5 命中时照样留证据、照样签名
+
+命中发生在“第一个扫描器（或 placement 容器）本该启动”的位置，前面的步骤一步不省：角色开头的完整准入、扫描许可（scan-start grant）的取得与落盘、启动前的燃烧许可复核都照做，所以 **head 照样被记为已执行**，executed-heads 台账、“失败的 head 永远烧掉”、“同一提交的同一检查只真跑一次”都不变（一个提交命中一次就算这个检查跑过了，不会再真跑）。之后不启动容器，做一次新的“后”准入，生成一份**本次 job 的新观察**：
+
+- 主体、nonce、请求摘要、前后准入、placement 的 head/base 打包摘要与本 job 的命令序列摘要都是本次的；
+- 判定数据来自原始真实运行：trivy 是原样的三个扫描器记录（含它们当时的时间与逐扫描器准入哈希）；placement 是镜像 id、退出码、结论、日志摘要；
+- `cacheHit = {contract: clued.independent-ci.scan-result-cache-hit/1, keySha256, recordSha256, originalObservationSha256, originalSubject, storedAt, servedAt}`；
+- 执行时间窗是本次的：placement 的 `startedAt` 是 `servedAt`；trivy 的签名窗口起点取 `cacheHit.servedAt`（扫描器记录保留原始时间）。
+
+签名器照常签（`executionObservationSha256` 指向这份带 `cacheHit` 的观察），Windows 签发方用同一个 `observationFacts` 校验：`cacheHit` 字段集合精确、三个哈希是 64 位十六进制、`storedAt ≤ servedAt`；gitleaks 观察带 `cacheHit` 一律拒绝；placement 仍是精确字段集合，只是多认一个可选的 `cacheHit`。不带 `cacheHit` 的观察与以前逐字节同样校验。观察合同号不变（trivy `/3`、placement `/2`），信封与结果合同不变。运行目录另写一份 `result-cache.json`（是否开、键、查表结果、是否写入及原因、观察摘要），命中和未命中都有。
+
+### 65.6 gitleaks 为什么不缓存
+
+gitleaks 扫的是提交历史（`gitleaks git /repo`：仓库里可达的每个提交的补丁，加审核过的历史例外证明），输入是提交图而不是一棵树：同一棵树可以由完全不同的历史得到，历史里可能带着后来删掉的秘密。完整的键至少要包含被扫范围内每个提交的身份，那样只改提交信息的 force-push 也会换键，正是本项要省的场景省不下来；键不完整又会放过历史里的秘密。所以不在本项内。
+
+### 65.7 能省多少、安装、测试
+
+- 按 §45.4 的实测，trivy 约 4.6–5.3 分钟、placement 约 2.4–3.1 分钟；命中时只剩快照、库准备、两轮准入和签名，trivy 少 3 个扫描器容器与 3 轮准入，placement 少一个容器。
+- 这是 CI Source 变更：新 Source 清单，trivy 与 contract-placement 两个角色随新清单重签资格；新文件已进 `source-closure.json`、桥 `boundary.mjs` 的必需清单、角色策略 `ROLE_SOURCE` 与两个适配器的 `CLOSURE`。打开缓存还要在两份角色策略里加 §65.4 的字段并建好 root 0700 的目录（不加则关闭）。
+- 测试 `CI/test/scan-result-cache.test.mjs`（13 例，在修复前的代码上因缓存模块与接线不存在而失败）：真实 trivy 扫描循环与真实 placement 执行步，只替换物理 Docker 传输：
+  1. 同树二次扫描命中、不启动扫描器（trivy 三个扫描器、placement 容器都是 0 次），扫描许可仍取 1 次、准入 2 轮，`cacheHit` 指向原始观察与记录，签名校验通过且时间窗是本次的；force-push 只改信息（新 head）与重算 S（新 testSha）两种形状都命中；
+  2. 任何一个键成分变化都不命中、照旧真跑（trivy：文件字节、文件集合、树、漏洞库、Source 清单、运行身份、两种接受引用、Docker 客户端；placement：base 树、被测树、工具钉、镜像、镜像内 node、宿主 git、运行身份、接受引用）；纯函数层逐个成分去掉或改动都换键或变 `null`；
+  3. 缓存文件被篡改（改一个字节、截断、空、非 JSON、摘要过期、失败结果重算摘要、命中观察冒充记录、别的键重算摘要、观察摘要不符）都不命中、照旧真跑；恢复原文件后再次命中；
+  4. 开关关闭（缺字段、`enabled:false`、非布尔、缺 root、与运行目录或密钥目录重叠、多余字段）不读不写；gitleaks 永远关；
+  5. 失败结果不写入，下一个提交照旧真跑；签名校验拒绝格式不对或多字段的 `cacheHit`，placement 仍拒绝未知字段，不带 `cacheHit` 的观察照旧通过。
