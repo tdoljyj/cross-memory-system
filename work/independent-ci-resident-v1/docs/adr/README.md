@@ -29,3 +29,4 @@
 | [0018](0018-bors-landing.md) | bors 式落地：`train.landing=push` 时列车把测过的 S 快进推上 main；组批、二分（原分支草稿 DESIGN §66） | 已实施（第 28 代，未安装），默认 `github-merge` | 2026-11-07 | `9e2511fe` 第 6 项；Task `7d86cf41` |
 | [0019](0019-train-batch-member-chain.md) | 批量上生产：描述符 /4 与两侧成员链核对（原分支草稿 DESIGN §67） | 已实施（第 28 代，未安装），`batchMax` 默认 1 | 2026-11-08 | 同 0018 |
 | [0020](0020-standby-prechecks-not-implemented.md) | 备用节点跑非车头 PR 的预检：评估后不实现（原分支草稿 DESIGN §67） | 不实现 | 2026-11-07 | Task `bf57ff10` L3 |
+| [0021](0021-trivy-scan-result-cache-default-on.md) | trivy 扫描结果缓存默认打开：角色策略没有 `scanResultCache` 字段时按默认根目录开启；placement、gitleaks 仍关 | 生效（第 28 代，未安装） | 2026-11-08 | Owner 已批准打开（M4，`9e2511fe` 第 5 项） |

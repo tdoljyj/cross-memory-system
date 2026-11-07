@@ -192,6 +192,8 @@ Linux 段（2/4/6）额外经过：
 3. 版本兜底：两侧不一致时报 `UPGRADE_VERSION_SKEW`；
 4. companion 的泵：在两端 formal-spool 之间搬运 issue → challenge → response → result，并启动 worker unit。
 
+trivy 的扫描结果缓存（M4，DESIGN §68）：同一棵树、同样的工具与数据已经真跑并签过名的成功结论，在 24 小时内直接复用，不再启动三个扫描器容器；准入、扫描许可与签名照做。第 28 代起默认打开，根目录 `/var/lib/clued-independent-ci/scan-result-cache`，placement 与 gitleaks 不缓存（[ADR 0021](adr/0021-trivy-scan-result-cache-default-on.md)）。
+
 ### 4.4 第 1 段：准入
 
 代码：`CI/formal-work-admission-check-v2/`、`CI/full-admission-v2.mjs`、`scripts/ci/clued-work-admission.mjs`

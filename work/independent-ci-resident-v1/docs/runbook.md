@@ -358,6 +358,7 @@ $tool = "<res>\tools\rearm-tool.mjs"
   - 租约不足 180 分钟时 CI 自动延长；
   - 第 1 段之后租约不足 90 分钟时也延长；
   - 排队观察在队首变化后约 30 秒内提前尝试第 8 段。
+  - 第 28 代起：已绑定的队首在等车头、或它的车头批次在跑/停靠时，合并位剩余不足 20 分钟，第 10 段就 `touch running` 一次（[ADR 0017](adr/0017-stage10-front-slot-renewal.md)），不必再人手续期。
 - **手工处理**：
   1. 回执或日志里出现 `CLAIM_ASSIST_NOT_DEPLOYED`（服务端没有入队、延租动作）时，由认领持有者用 `clued_work_renew` 续租，并带上 merge ref 重新入队。
   2. 车头批次因为合并位剩余时间不够没开（`TRAIN_FRONT_BUDGET_SHORT`）时，PR 页面会请持有者让位子过期后重新入队。每个 head 最多两次车头批次，用完（`TRAIN_FRONT_ATTEMPTS_USED`）就要推新提交。

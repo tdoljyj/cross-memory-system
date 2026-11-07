@@ -17,7 +17,7 @@ import {noteScanStartResponseWindow} from '../src/scan-start-v1/grant.mjs';
 import {admittedFacts,BASE} from './resident-v2-fixtures.mjs';
 import {IMAGE,WORKFLOW_SHA256S,CHECKS_REPOSITORY} from '../worker/required-trivy-v3/plans.mjs';
 import {cacheKey,cacheSettings,createResultCache,parseCacheRecord,cacheRecord,validateCacheHitEvidence,verifyOriginalEnvelope,CACHE_HIT_CONTRACT,
-  CACHE_TTL_MS,ORPHAN_TEMPORARY_AGE_MS,trivyScannersSha256,placementCommandTemplateSha256} from '../worker/scan-result-cache-v1/cache.mjs';
+  CACHE_TTL_MS,ORPHAN_TEMPORARY_AGE_MS,trivyScannersSha256,placementCommandTemplateSha256,DEFAULT_CACHE_ROOT} from '../worker/scan-result-cache-v1/cache.mjs';
 import {trivyResultKey} from '../worker/formal-trivy-v4/adapter.mjs';
 import {placementResultKey,validateAdmission as placementAdmission,WORKFLOW_SHA256S as PLACEMENT_WORKFLOWS} from '../worker/formal-contract-placement-v2/adapter.mjs';
 import {fixedCommands,LIMITS as PLACEMENT_LIMITS} from '../worker/formal-contract-placement-v2/container-entry.mjs';
@@ -196,15 +196,26 @@ test('trivy: a record stored in the future or older than its TTL is a miss',asyn
   t.mock.timers.tick(CACHE_TTL_MS.trivy-60_000);run=trivyRun(t,{headSha:H2,resultCache});assert.equal((await run.run()).resultCache.lookup,'SCAN_RESULT_CACHE_HIT','inside the TTL');
   t.mock.timers.tick(120_000);run=trivyRun(t,{headSha:H2,resultCache});assert.equal((await run.run()).resultCache.lookup,'SCAN_RESULT_CACHE_RECORD_EXPIRED');assert.equal(run.starts.length,3);
 });
-test('trivy: with the policy switch off nothing is read or written, even with a valid record present',async t=>{
+test('trivy: with the policy switch off nothing is read or written, even with a valid record present; no field at all is on (gen 28)',async t=>{
   t.mock.timers.enable({apis:['Date'],now:START});const root=await tempDir(t);await storeTrivy(t,port(root));
   const config={workspaceRoot:'/w',runsRoot:'/r',trustedSourceDirectory:'/s',dockerRootDirectory:'/var/lib/docker',signingKeyFile:'/k/key',qualificationFile:'/k/q',publicKeyFile:'/k/pub',sourceManifestFile:'/s/m',entryFile:'/s/e'};
-  for(const value of [undefined,{enabled:false,root},{enabled:'true',root},{enabled:true},{enabled:true,root:'/r/cache'},{enabled:true,root:'/k'},{enabled:true,root,extra:1},
+  for(const value of [{enabled:false,root},{enabled:'true',root},{enabled:true},{enabled:true,root:'/r/cache'},{enabled:true,root:'/k'},{enabled:true,root,extra:1},
     {enabled:true,root:'/var/lib/docker/cache'},{enabled:true,root:'/var/lib'}]){
     const settings=cacheSettings({...config,scanResultCache:value},'trivy');assert.equal(settings.enabled,false,JSON.stringify(value));
     const resultCache=createResultCache(settings,{guard:noGuard,signer:SIGNER}),run=trivyRun(t,{headSha:H2,resultCache}),r=await run.run();
     assert.deepEqual(run.starts,['vuln','secret','misconfig']);assert.equal(r.resultKey,null);
     assert.equal((await persist(t,run,r,resultCache)).store,null,'nothing to store with the switch off');}
+  // Generation 28 (resident ADR 0021, Owner approval): a trivy role policy without the field (every installed one: the in-place
+  // channel keeps a policy's exact key set) has the cache on at DEFAULT_CACHE_ROOT; { enabled: false } is the way to turn it off.
+  const absent=cacheSettings(config,'trivy',{extraRoots:['/var/lib/clued-independent-ci-trivy-cache']});
+  assert.deepEqual([absent.enabled,absent.root,absent.role],[true,'/var/lib/clued-independent-ci/scan-result-cache','trivy'],'absent field: on at the default root');
+  assert.equal(DEFAULT_CACHE_ROOT,'/var/lib/clued-independent-ci/scan-result-cache');
+  const live={...config,workspaceRoot:'/var/lib/clued-independent-ci/workspaces',runsRoot:'/var/lib/clued-independent-ci/runs',trustedSourceDirectory:'/opt/clued-independent-ci/source-v2'};
+  assert.equal(cacheSettings(live,'trivy',{extraRoots:['/var/lib/clued-independent-ci-trivy-cache']}).enabled,true,'the installed layout: no overlap with the default root');
+  assert.equal(cacheSettings({...live,runsRoot:'/var/lib/clued-independent-ci'},'trivy').reason,'SCAN_RESULT_CACHE_ROOT_OVERLAP','the default root is still checked for overlap');
+  assert.equal(cacheSettings({...config,scanResultCache:{enabled:false,root:DEFAULT_CACHE_ROOT}},'trivy').reason,'SCAN_RESULT_CACHE_DISABLED','explicit off');
+  assert.equal(cacheSettings(config,'contract-placement').reason,'SCAN_RESULT_CACHE_KEY_NOT_CLOSED_FOR_ROLE','placement stays off without the field too');
+  assert.equal(cacheSettings(config,'gitleaks').enabled,false,'gitleaks stays off without the field too');
   const on=cacheSettings({...config,scanResultCache:{enabled:true,root:'/var/lib/clued-independent-ci/scan-result-cache//'}},'trivy');
   assert.deepEqual([on.enabled,on.root],[true,'/var/lib/clued-independent-ci/scan-result-cache'],'trailing slashes are removed');
   assert.equal(cacheSettings({...config,scanResultCache:{enabled:true,root:'/var/lib/c'}},'gitleaks').enabled,false,'gitleaks is never cached');
