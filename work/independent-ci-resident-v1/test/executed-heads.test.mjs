@@ -233,3 +233,34 @@ test('backfill counts and skips a carried record that does not parse; the store 
   assert.equal(new ExecutedHeads(f.root, () => 0).manifestFile, null);
   assert.equal(headKey(subject()) !== executedHeadKey(subject()), true);
 });
+
+// Defect 39e8ba4f: a start whose backfill was already done (every restart after the install's first) left status.backfill at
+// complete:false, so every PR page said "执行器启动中：回填已执行记录" for good. It reports complete:true with the marker's counts, or
+// null for a count the marker does not give.
+test('defect 39e8ba4f: a start after the backfill reports it complete, with the counts from BACKFILL-COMPLETE.json or null', async t => {
+  const { StatusBoard } = await import('../src/status.mjs');
+  const { BACKFILL_MARKER } = await import('../src/executed-heads.mjs');
+  const first = await executorFixture(t);
+  await first.exec.tick();
+  assert.equal(await first.executedHeads.backfilled(), true);
+  const markerFile = path.join(first.root, 'state', 'executed-heads', BACKFILL_MARKER);
+  const marker = JSON.parse(await fs.readFile(markerFile, 'utf8'));
+  await fs.writeFile(markerFile, JSON.stringify({ ...marker, published: 7, unreadable: 2 }));
+  const status = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') });
+  const again = await executorFixture(t, { root: first.root, status });
+  assert.deepEqual(status.content.backfill, { complete: false, published: null, unreadable: null }, 'a fresh board starts at false');
+  await again.exec.tick();
+  assert.deepEqual(status.content.backfill, { complete: true, published: 7, unreadable: 2 });
+  assert.equal((await again.receipts.latest(['executed-heads-backfilled'], 5)).length, 1, 'no second backfill and no second receipt');
+  // a marker whose counts cannot be read: complete, the counts null
+  await fs.writeFile(markerFile, '{"torn":');
+  const torn = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') });
+  const third = await executorFixture(t, { root: first.root, status: torn });
+  await third.exec.tick();
+  assert.deepEqual(torn.content.backfill, { complete: true, published: null, unreadable: null });
+  await fs.writeFile(markerFile, JSON.stringify({ ...marker, published: -1, unreadable: 'x' }));
+  const odd = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') });
+  const fourth = await executorFixture(t, { root: first.root, status: odd });
+  await fourth.exec.tick();
+  assert.deepEqual(odd.content.backfill, { complete: true, published: null, unreadable: null });
+});

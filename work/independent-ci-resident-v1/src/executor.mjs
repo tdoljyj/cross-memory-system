@@ -120,7 +120,7 @@
 // requests\ also carries the "立即探测" and "撤车头" requests (resident-requests.mjs).
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
+import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE } from './companion.mjs';
@@ -204,6 +204,8 @@ const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFI
 const FRONT_RECOVER_RECEIPTS = 512;
 // The train on with nonFrontRuns false (policy /8, DESIGN §41.9 item 6): every row but the front's waits, shown with this reason.
 export const TRAIN_NON_FRONT_DEFERRED = 'TRAIN_NON_FRONT_RUNS_OFF';
+// Defect a8910e41: the head this duty's take-over binding run bound runs no ordinary batch while the duty lasts, shown with this reason.
+export const TRAIN_FRONT_BOUND_DEFERRED = 'TRAIN_FRONT_BOUND_HEAD';
 // Generation 19 field defect (DESIGN §62.4): the clean end of a take-over binding run right after its stage 1 (the queue head's claim is
 // bound to its PR now; the front batch is stage 10's to open). Resident-side, never Source-mirrored.
 export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
@@ -212,6 +214,9 @@ export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
 // kept the PR busy, so the front batch was refused (TRAIN_FRONT_PR_BUSY) while stage 10 had already counted it and touched running.
 export const TRAIN_FRONT_TAKES_OVER = 'TRAIN_FRONT_TAKES_OVER';
 const FRONT_BIND_ASKED_MAX = 512;
+// Generation 22 field defect (PR #1029): a front batch's stage 8 needs the strict proof stage 10 wrote (sweepFreshMs); one with less than
+// this left right before stage 8 (or none any more) is refreshed by a stage-10 run first (stage8Try).
+export const FRONT_PROOF_MARGIN_MS = 3 * 60_000;
 // Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
 // role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
 export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
@@ -428,6 +433,8 @@ export class ResidentExecutor {
     this.trainOnSince = null;
     this.trainTakeoverDone = false;
     this.trainUrgent = false;
+    // Defect b0426896: the mode of this duty's newest stage-10 run (trainResumeOwed).
+    this.trainLastMode = null;
     this.trainSweep = null;
     this.revokeHead = null;
     this.trainFrontOutcome = null;
@@ -440,6 +447,9 @@ export class ResidentExecutor {
     // the held heads stage 10 was already asked about once.
     this.frontBindKeys = new Map();
     this.frontBindAsked = new Set();
+    // Defect a8910e41: the heads ('pr:headSha' -> when, ms) whose binding run ended TRAIN_FRONT_CLAIM_BOUND (receipt 'train-front-bound').
+    // The binding run is released, not burned; this marker only holds within the duty it was set in (trainFrontBound).
+    this.frontBound = new Map();
     this.trainExtraRuns = [];
     this.trainProgressConsumed = null;
     // The duty kept across restarts (receipt 'train-duty', review R3 M2): the restored one until this node is eligible again, and
@@ -473,6 +483,7 @@ export class ResidentExecutor {
     }
     if (this.trainOnSince !== null) return;
     this.trainUrgent = true;
+    this.trainLastMode = null;
     const c = this.trainDutyCandidate;
     this.trainDutyCandidate = null;
     if (c) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (c.sweep) this.trainSweep = c.sweep; return; }
@@ -481,16 +492,26 @@ export class ResidentExecutor {
     this.trainProgressReady = false;
   }
 
+  // Defect b0426896 (field: after an upgrade's restart the first on run came a full maintenanceEveryMs after the resume): stage 10 is
+  // owed an on-mode run at once once no pause holds any more, while this node is eligible and the newest stage-10 run of this duty was
+  // revoke-only (the run under PAUSE or an intake pause spent the urgency the new eligibility had set). That is also "no on-mode run
+  // yet in this duty": the urgency is only ever spent by a run, and in train on every run is on or revoke-only; a new duty (or a new
+  // process) starts urgent anyway. Only the cadence is waived (trainDue's urgent): the daily cap, the intake gate, the run mode and
+  // every batch gate stay as they are.
+  trainResumeOwed() {
+    return this.policy.train.enabled === 'on' && this.trainEligible() && this.trainOnSince !== null && this.trainLastMode === 'revoke-only';
+  }
+
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
   trainTakeoverPending() { return this.trainEligible() && !this.trainTakeoverDone; }
 
   // Only an S already bound by this node's enqueue receipt can use the limited scheduling exception. A PR/H match alone
   // would accidentally revive an old claim or tenure. Restart restores those bindings, but always refreshes readiness first.
-  trainStrictFront(subject) {
+  trainStrictFront(subject, { at = this.clock() } = {}) {
     if (!subject || !HEX40.test(subject.testSha ?? '') || !this.trainEligible()) return false;
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
     if (!front || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha) return false;
-    const context = { now: this.clock(), repo: this.policy.repo,
+    const context = { now: at, repo: this.policy.repo,
       // Stage 10 binds its observations to the CI Source it runs (the install record's source-manifest.json), never to the
       // resident's own Windows Source manifest (generation 21 field defect: the two always differ, so no front was ever admitted).
       sourceManifestSha256: this.policy.ciSourceManifestSha256, settingsDigest: digest(trainSettings(this.policy.train)),
@@ -507,10 +528,21 @@ export class ResidentExecutor {
   trainFrontBind(subject) {
     if (!subject || Object.hasOwn(subject, 'testSha') || !HEX40.test(subject.headSha ?? '') || (subject.attempt !== undefined && subject.attempt !== 1)) return false;
     if (!this.trainEligible() || this.trainTakeoverDone || this.trainOnSince === null || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN') return false;
+    // Defect a8910e41: a head bound once in this duty is never bound again in it.
+    if (this.trainFrontBound(subject)) return false;
     const l = this.trainLast, b = l?.frontBind, at = Date.parse(l?.at ?? ''), now = this.clock();
     if (!b || l.mode !== 'on' || l.onDuty !== true || l.strict !== true || l.decision !== 'TRAIN_TAKEOVER_SWEEP_PENDING') return false;
     if (!(at >= this.trainOnSince) || !(now >= at) || now - at >= trainSettings(this.policy.train).sweepFreshMs) return false;
     return b.pr === subject.pr && b.headSha === subject.headSha;
+  }
+
+  // Defect a8910e41: whether this subject without S is a head this duty's binding run bound already (the marker is set when that run
+  // ended TRAIN_FRONT_CLAIM_BOUND, at or after this duty's onSince). It then runs no ordinary batch and no second binding run while the
+  // duty lasts; a new duty (STANDBY and back, a restart that starts a new take-over), shadow or off: the head is like any other.
+  trainFrontBound(subject) {
+    if (!subject || Object.hasOwn(subject, 'testSha') || !this.trainEligible() || this.trainOnSince === null) return false;
+    const at = this.frontBound.get(`${subject.pr}:${subject.headSha}`);
+    return Number.isFinite(at) && at >= this.trainOnSince;
   }
 
   // A held head stage 10 has not been asked about while it says the queue head is unbound: stage 10 is due at once, once per head
@@ -528,8 +560,10 @@ export class ResidentExecutor {
     }
   }
 
-  // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran, the head is burned for
-  // runs without S (failure table: clean-final, new-commit); the front batch (H, S) has its own head key. Stage 10 is due at once.
+  // The binding run's clean end right after its stage 1 (also when resumed after a restart): Windows only ran. Defect a8910e41: the
+  // reservation is released (fail: TRAIN_FRONT_BOUND), the head is not burned, so it runs again once this duty is over (shadow, off,
+  // another duty); within the duty the marker frontBound holds it (no second binding run, no ordinary batch). The front batch (H, S)
+  // has its own head key. Stage 10 is due at once.
   frontBindEnd(key) {
     this.frontBindKeys.delete(key);
     this.trainUrgent = true;
@@ -1579,7 +1613,18 @@ export class ResidentExecutor {
   async ensureBackfill() {
     let marker;
     try {
-      if (await this.executedHeads.backfilled()) return null;
+      if (await this.executedHeads.backfilled()) {
+        // Defect 39e8ba4f: a backfill done by an earlier start is complete for the status board too (once per process), with the
+        // marker's counts when it gives them (anything else is null: a count is never guessed).
+        if (!this.backfillReported) {
+          let m = null;
+          try { m = await this.executedHeads.readMarker?.(); } catch { m = null; }
+          const count = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
+          this.report(s => s.update({ backfill: { complete: true, published: count(m?.published), unreadable: count(m?.unreadable) } }));
+          this.backfillReported = true;
+        }
+        return null;
+      }
       this.report(s => s.update({ backfill: { complete: false, published: null, unreadable: null } }));
       marker = await this.executedHeads.backfill();
     } catch (error) {
@@ -1594,6 +1639,7 @@ export class ResidentExecutor {
     await this.receipt('executed-heads-backfilled', { published: marker.published, unreadable: marker.unreadable,
       sources: marker.sources.map(s => ({ name: s.name, heads: s.heads, published: s.published, unreadable: s.unreadable })) });
     this.report(s => s.update({ backfill: { complete: true, published: marker.published, unreadable: marker.unreadable } }));
+    this.backfillReported = true;
     return null;
   }
 
@@ -1971,6 +2017,10 @@ export class ResidentExecutor {
         const b = e.value.body;
         if (HEX64.test(b?.key ?? '') && Number.isSafeInteger(b.pr) && HEX40.test(b.headSha ?? '')) this.frontBindKeys.set(b.key, { pr: b.pr, headSha: b.headSha });
       }
+      for (const e of await this.receipts.latest(['train-front-bound'], FRONT_RECOVER_RECEIPTS)) {
+        const b = e.value.body, at = Date.parse(e.value.at);
+        if (Number.isSafeInteger(b?.pr) && HEX40.test(b.headSha ?? '') && Number.isFinite(at)) this.frontBound.set(`${b.pr}:${b.headSha}`, at);
+      }
       const [fo] = await this.receipts.latest(['train-front-outcome'], 1);
       const cleared = runs.some(e => e.type === 'train-run' && e.value.body?.frontOutcomeSeq === fo?.seq && e.value.body?.ok === true && e.value.body?.frontOutcomeCleared !== false);
       if (fo && !cleared && Date.parse(fo.value.at) > this.clock() - DAY) this.trainFrontOutcome = { ...fo.value.body.frontOutcome, seq: fo.seq, at: Date.parse(fo.value.at) };
@@ -2054,6 +2104,14 @@ export class ResidentExecutor {
     this.trainRuns = this.trainRuns.filter(at => at > now - DAY);
     const active = !this.probing() || this.nodeMode() === 'ACTIVE';
     if (train.enabled === 'on' && !active) return null; // NOT_ON_DUTY (trainStatus)
+    // Defect b0426896: the first tick that reaches stage 10 with no pause in force after a revoke-only run (the PAUSE was lifted by
+    // upgrade-resumed or the Owner, the last intake hold by intake-resumed or its clock) makes the on-mode run due at once. Under an
+    // intake hold nothing changes (revoke-only keeps its cadence); the read is the same intake gate the run itself reads below.
+    if (!paused && this.trainUrgent !== true && this.trainResumeOwed()) {
+      const held = await this.intakeGate();
+      if (held?.state === 'HALTED') return held;
+      if (held === null) this.trainUrgent = true;
+    }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
     const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent });
     let idleProgressExtra = false;
@@ -2093,6 +2151,7 @@ export class ResidentExecutor {
     this.trainRuns.push(now);
     if (idleProgressExtra) { this.trainExtraRuns.push(now); this.trainProgressConsumed = progressKey; }
     this.trainUrgent = false;
+    this.trainLastMode = mode;
     this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
     let r;
     try { r = await this.engine.runTrainStage(mode, input); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
@@ -2463,7 +2522,29 @@ export class ResidentExecutor {
 
   // Stage 8 as one try. Settled: COMPLETED. Not ready with zero side effects, and neither main moved nor the tries or the
   // time ran out: the try is recorded and the batch rests at B again (PARKED). Anything else: a stage failure as before.
+  // Generation 22 field defect (PR #1029: proof written 08:19:59, front batch 08:20:24, stage 7 ended 08:35:09, stage 8 refused with
+  // TRAIN_SINGLE_GREEN_NOT_PROVEN, the retry after stage 10's refresh succeeded 08:39:37): whether this front batch (S) rests on a strict
+  // proof (the take-over fast track: its scheduling went through trainStrictFront) that will not last through its stage 8: less than
+  // FRONT_PROOF_MARGIN_MS left, or none. Never widens the proof: it only asks stage 10 for a fresh one before the try.
+  frontProofShort(subject) {
+    if (!subject || !Object.hasOwn(subject, 'testSha') || !this.trainEligible() || this.trainTakeoverDone) return false;
+    const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
+    if (!front || front.headSha !== subject.headSha) return false;
+    const named = [this.trainStrictReadiness, this.trainStrictFrontReadiness].some(r => r?.front?.pr === subject.pr && r.front.headSha === subject.headSha);
+    return named && !this.trainStrictFront(subject, { at: this.clock() + FRONT_PROOF_MARGIN_MS });
+  }
+
   async stage8Try(key, subject, batch) {
+    // Generation 22: the batch rests at parking point B (the Linux zone is closed, nothing of it runs), where stage 10 may run as it does
+    // after a schedule that ran nothing: a front batch whose strict proof would run out first gets it refreshed now (urgent: only the
+    // cadence is waived; the daily cap, one run per tick and every gate of trainMaintenance hold), so its first try is not refused.
+    // A HALT that run latched leaves the batch at B (due at once after the re-arm), with no try.
+    if (this.policy.train.enabled === 'on' && this.frontProofShort(subject)) {
+      this.trainUrgent = true;
+      try { await this.receipt('train-front-proof-refresh', { key, pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha }); } catch { /* a view */ }
+      const refreshed = await this.trainMaintenance();
+      if (refreshed?.state === 'HALTED') return { state: 'PARKED', key, reason: refreshed.failureCode ?? 'TRAIN_STAGE_HALTED', until: this.clock(), position: null, tries: 0, settle: null };
+    }
     const s = await this.ledger.state(key);
     const windowsOnly = f => Object.assign(f, { windowsOnly: true }); // only stage 8 ran here (breaker, review m2)
     const unrecorded = await this.beforePublication(key, subject, 8);
@@ -2696,6 +2777,14 @@ export class ResidentExecutor {
       rows = rows.filter(row => !this.trainGate(row));
       attempts = attempts.filter(a => !this.trainGate(a.subject));
       if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return trainHeld; }
+    }
+    // Defect a8910e41: the head this duty's binding run bound waits while the duty lasts (its front batch (H, S) is stage 10's to open;
+    // in train on its ordinary stage 8 could never get the merge slot anyway). Its row stays, so it runs again once the duty is over.
+    if (this.frontBound.size > 0 && this.trainEligible()) {
+      for (const c of rows.filter(c => this.trainFrontBound(c))) this.queue.defer(c.pr, TRAIN_FRONT_BOUND_DEFERRED, now);
+      rows = rows.filter(c => !this.trainFrontBound(c));
+      attempts = attempts.filter(a => !this.trainFrontBound(a.subject));
+      if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); this.reportQueue(); return { state: 'DEFERRED', reason: TRAIN_FRONT_BOUND_DEFERRED }; }
     }
     // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
@@ -3041,7 +3130,7 @@ export class ResidentExecutor {
       const network = s?.kind === 'released' && s.klass !== 'waiting' && s.network === true && this.networkPolicy() !== null;
       // This release counts towards the head's cap unless it is a wait, a supersession, a network release (above), or an environment
       // fault while the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !network && !(environment && s.breakerState !== 'closed');
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && !UNCAPPED_RELEASES.includes(s.reason) && !network && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const networkReleases24h = (this.tickUsage?.networkReleasesByHead?.get(subject.headSha) ?? 0) + (network ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
@@ -3212,6 +3301,10 @@ export class ResidentExecutor {
       return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
     }
     if (guarded) await this.qualificationHolds.recordStage1(subject, { key, batchId: batch.batchId, result: first });
+    // Defect a8910e41 (DESIGN §62.4): the take-over binding run ends right here, before markStarted would burn the head: only stage 1
+    // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
+    // run that an older version left STARTED still ends in continueBatch, burned as before.
+    if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -3570,6 +3663,26 @@ export class ResidentExecutor {
           settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos, network } };
       }
       const proof = await this.proofFor(batch, failure.proof);
+      // Defect a8910e41 (DESIGN §62.4): the take-over binding run's own end after stage 1 is released, never burned, once the Windows
+      // side is proven quiet (as every stage-1 release): its head may run again when this duty is over (frontBound holds it within the
+      // duty). Without that proof it goes the table's way below (burned when clean, else UNKNOWN), as before.
+      if (!started && failure.code === TRAIN_FRONT_CLAIM_BOUND && failure.stageNumber === 1 && proof.windowsTreeZero === true && proof.serviceOriginalStopped === true) {
+        const row = failureRow({ code: failure.code, stage: 1 });
+        const facts = ResidentExecutor.failureFacts(failure, row);
+        const subject = await subjectOf() ?? this.current;
+        await this.closeOrThrow(batch);
+        await this.ledger.releaseUnexecuted(key, 'TRAIN_FRONT_BOUND', { failureCode: failure.code, basis: 'train-front-bind-stage-1', ...facts, breakerState });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release: 'TRAIN_FRONT_BOUND', class: facts.class });
+        if (Number.isSafeInteger(subject?.pr) && HEX40.test(subject?.headSha ?? '')) {
+          this.frontBound.set(`${subject.pr}:${subject.headSha}`, this.clock());
+          // Best effort: a marker that was not written is lost at a restart, and the head is then like any other head of the duty.
+          try { await this.receipt('train-front-bound', { key, pr: subject.pr, headSha: subject.headSha }); } catch { /* see above */ }
+        }
+        this.reportOutcome(subject, 'NOT_EXECUTED', { code: failure.code, row, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'TRAIN_FRONT_BOUND',
+          settle: { kind: 'released', reason: 'TRAIN_FRONT_BOUND', code: failure.code, klass: row?.class ?? 'queue', breaker: row?.breaker ?? 'neutral', breakerState, pos,
+            outcomeReason: null, network: false, windowsOnly: true } };
+      }
       // The failure table (classify.mjs#decideFailure): a stage-1 failure is released only on the outcome's own
       // safeToRerun flag or the broker's "no launch, original restored" answer; every other failure burns the head.
       const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
