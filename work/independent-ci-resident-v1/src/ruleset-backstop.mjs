@@ -9,6 +9,10 @@
 //     and a paused STANDBY could never be a take-over target, §41.6a), and only once its eligibility (train.onSince) is older than
 //     SWEEP_GRACE_MS: before that (a take-over, a start whose state is not read back yet) stage 8 writes no green without the
 //     proof anyway and the executor defers every batch, so it only notifies (STRICT_OFF_SWEEP_PENDING, review R3 M1);
+//   - strict off in train mode 'on' while the policy runs strict-permanent mode (status train.sweepMode 'audit' or 'off', DESIGN §65,
+//     Owner decision 9e2511fe): strict must never be off there, so the pause request and the urgent notice come at once, on every
+//     node, whatever the sweep or the duty says (STRICT_OFF_STRICT_PERMANENT; no SWEEP_GRACE_MS). Stage 8 writes no green then and
+//     stage 10 asks for PAUSE too (TRAIN_STRICT_OFF); this is the backstop for a node whose stage 10 does not run;
 //   - a required check no longer pinned to App 5368905, or no required_status_checks at all (the ruleset disabled):
 //     raise an Owner notification (no pause: stage 8 already writes no green then);
 //   - the rules cannot be read: nothing (stage 8 parks on RULESET_UNREADABLE by itself).
@@ -23,7 +27,10 @@ export const APP_ID = 5368905;
 // Must equal Source v2 train-rules.mjs REQUIRED_CHECK_NAMES and executor.mjs PAUSE_CONTRACT (a test keeps them equal).
 export const REQUIRED_CHECK_NAMES = Object.freeze(['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot']);
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
-export const BACKSTOP_KINDS = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'RULESET_NOT_PINNED', 'STRICT_OFF_SWEEP_INCOMPLETE', 'STRICT_OFF_SWEEP_PENDING']);
+export const BACKSTOP_KINDS = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'RULESET_NOT_PINNED', 'STRICT_OFF_SWEEP_INCOMPLETE', 'STRICT_OFF_SWEEP_PENDING',
+  'STRICT_OFF_STRICT_PERMANENT']);
+// The policy sweep modes of strict-permanent mode (policy.mjs TRAIN_SWEEPS without 'gate').
+export const STRICT_PERMANENT_MODES = Object.freeze(['audit', 'off']);
 const DAY = 24 * 3600_000;
 // The longest a full sweep may take (policy train.fullSweepMaxMs is at most 24 hours): a newer eligibility only notifies.
 export const SWEEP_GRACE_MS = DAY;
@@ -39,11 +46,13 @@ export function rulesFacts(reply) {
 
 // facts: rulesFacts(...) or null; trainMode: the executor's train.enabled from its status snapshot (null: unknown); sweep: its
 // train.sweep (status.mjs; null or absent: no full sweep known, which in mode 'on' is "not complete"); duty: { onDuty (false: the
-// status says STANDBY or UNCERTAIN, or train.notOnDuty), onSince (ms or null) } from the same snapshot; now: the clock.
-export function backstopDecision({ facts, trainMode, sweep = null, duty = { onDuty: true, onSince: null }, now = Date.now() }) {
+// status says STANDBY or UNCERTAIN, or train.notOnDuty), onSince (ms or null) } from the same snapshot; now: the clock; sweepMode: the
+// snapshot's train.sweepMode (null or absent: a resident before DESIGN §65, i.e. 'gate').
+export function backstopDecision({ facts, trainMode, sweep = null, duty = { onDuty: true, onSince: null }, now = Date.now(), sweepMode = null }) {
   if (!facts) return { pause: false, notify: null };
   if (!facts.pinned) return { pause: false, notify: 'RULESET_NOT_PINNED' };
   if (!facts.strict && trainMode !== 'on') return { pause: true, notify: 'STRICT_OFF_WITHOUT_TRAIN' };
+  if (!facts.strict && STRICT_PERMANENT_MODES.includes(sweepMode)) return { pause: true, notify: 'STRICT_OFF_STRICT_PERMANENT' };
   if (facts.strict || sweep?.fullSinceOn === true || duty?.onDuty === false) return { pause: false, notify: null };
   const settled = Number.isFinite(duty?.onSince) && now - duty.onSince >= SWEEP_GRACE_MS;
   return settled ? { pause: true, notify: 'STRICT_OFF_SWEEP_INCOMPLETE' } : { pause: false, notify: 'STRICT_OFF_SWEEP_PENDING' };
@@ -60,6 +69,7 @@ const TEXT = {
   STRICT_OFF_WITHOUT_TRAIN: 'main 的规则集已关掉 strict，而合并列车没有开：已暂停常驻执行器（不再发新绿）。请把 strict 改回开，或按上线流程先完成清扫。',
   STRICT_OFF_SWEEP_INCOMPLETE: 'main 的规则集已关掉 strict，合并列车开着但清扫没完成（本节点开车或接班后还没完成全量清扫）：已暂停常驻执行器（不再发新绿）。请把 strict 改回开，等清扫完成后再关。',
   STRICT_OFF_SWEEP_PENDING: 'main 的规则集已关掉 strict，本节点刚开车、接班或重启，清扫还在进行：清扫完成前不发新绿（未暂停）。若这不是计划内的操作，请把 strict 改回开。',
+  STRICT_OFF_STRICT_PERMANENT: 'main 的规则集已关掉 strict，而合并列车运行在 strict 永久开模式：已暂停常驻执行器（不再发新绿）。请立即把 strict 改回开，然后恢复执行器。',
   RULESET_NOT_PINNED: 'main 的必需检查不再全部钉在 App 5368905（或规则集被停用）：常驻执行器不会再发合并位。若是灾备切换，请按运维手册的流程走。',
 };
 export const backstopText = kind => TEXT[kind] ?? null;
@@ -67,7 +77,9 @@ export const backstopText = kind => TEXT[kind] ?? null;
 // One pass. ports: readRules() -> raw reply (throws when unreadable), trainMode() -> 'off'|'shadow'|'on'|null,
 // writePause(reason), notify(kind, text), memory: { get(key), set(key, value) } (the companion's own store), trainSweep()
 // (optional) -> status train.sweep or null, trainDuty() (optional) -> dutyOf(status) (absent: on duty, eligibility unknown).
-export async function backstopPass({ readRules, trainMode, trainSweep = async () => null, trainDuty = async () => ({ onDuty: true, onSince: null }), writePause, notify, memory, clock = Date.now }) {
+// trainSweepMode() (optional, DESIGN §65) -> status train.sweepMode or null.
+export async function backstopPass({ readRules, trainMode, trainSweep = async () => null, trainDuty = async () => ({ onDuty: true, onSince: null }), trainSweepMode = async () => null,
+  writePause, notify, memory, clock = Date.now }) {
   let facts = null;
   try { facts = rulesFacts(await readRules()); } catch { facts = null; }
   let mode = null;
@@ -76,8 +88,10 @@ export async function backstopPass({ readRules, trainMode, trainSweep = async ()
   try { sweep = await trainSweep(); } catch { sweep = null; }
   let duty = { onDuty: true, onSince: null };
   try { duty = await trainDuty(); } catch { duty = { onDuty: true, onSince: null }; }
+  let sweepMode = null;
+  try { sweepMode = await trainSweepMode(); } catch { sweepMode = null; }
   const now = clock();
-  const d = backstopDecision({ facts, trainMode: mode, sweep, duty, now });
+  const d = backstopDecision({ facts, trainMode: mode, sweep, duty, now, sweepMode });
   if (!d.notify) return { ...d, acted: false };
   const key = `backstop:${d.notify}`, last = Number(await memory.get(key)) || 0;
   if (now - last < DAY) return { ...d, acted: false };
@@ -106,6 +120,7 @@ export function companionBackstop({ root, ghExe, repo, powershellExe, run, store
     trainMode: async () => (await readStatus(root)).train?.enabled ?? null,
     trainSweep: async () => (await readStatus(root)).train?.sweep ?? null,
     trainDuty: async () => dutyOf(await readStatus(root)),
+    trainSweepMode: async () => (await readStatus(root)).train?.sweepMode ?? null,
     writePause: reason => writePauseRequest(path.join(root, 'requests'), reason, clock),
     notify: async (kind, text) => { await run(toastArgv(powershellExe, kind.startsWith('STRICT_OFF') ? '紧急：main 的 strict 已关' : 'main 的必需检查有变', text), { timeoutMs }); },
     memory: {

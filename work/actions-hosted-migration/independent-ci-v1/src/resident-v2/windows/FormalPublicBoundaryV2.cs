@@ -39,7 +39,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
  public const int RelayStage=9;
  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
- // (train-run.mjs: contract clued.independent-ci.train-run/2, mode shadow, on or revoke-only), never a job of contract /3.
+ // (train-run.mjs: contract clued.independent-ci.train-run/3, mode shadow, on or revoke-only), never a formal job (of contract /3).
  public const int TrainStage=10;
  public const int RoleProbeStage=11;
  public const int RevocationStage=12;
@@ -157,12 +157,13 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  // Train run /2 (step 3c-2b, DESIGN §41.7; train-run.mjs is the same table, test/fixtures/train-run-cases.json runs on both):
- // id = sha256(JSON(["clued.independent-ci.train-run/2",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
- // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,revokeHeadRequestId])).
- static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","revokeHeadRequestId"};
+ // id = sha256(JSON(["clued.independent-ci.train-run/3",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
+ // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,revokeHeadRequestId,sweep])).
+ // /3 (strict-permanent mode, resident DESIGN §65): /2 plus sweep (gate|audit|off, the policy's train.sweep); /2 is refused.
+ static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","revokeHeadRequestId","sweep"};
  static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode"};
  public static string TrainRunId(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.train-run/2"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
+  var identity=new List<object>{"clued.independent-ci.train-run/3"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  static void Within(Dictionary<string,object> m,string k,long lo,long hi){long v=Int(m,k);if(v<lo||v>hi)Deny("TRAIN_RUN_PARAMS_REQUIRED");}
@@ -171,7 +172,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public static bool LowerUuid(object v){var s=v as string;if(s==null||s.Length!=36)return false;for(int i=0;i<36;i++){char c=s[i];if(i==8||i==13||i==18||i==23){if(c!='-')return false;}else if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return false;}return true;}
  public static bool UpperCode(object v){var s=v as string;if(s==null||s.Length<2||s.Length>80||s[0]<'A'||s[0]>'Z')return false;foreach(char c in s)if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))return false;return true;}
  public static Dictionary<string,object> ValidateTrainRun(Dictionary<string,object> job,string sourceManifest,string batchId){
-  Fields(job,TrainRunFields);Exact(job,"contract","clued.independent-ci.train-run/2");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Fields(job,TrainRunFields);Exact(job,"contract","clued.independent-ci.train-run/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   string mode=Text(job,"mode");if(mode!="shadow"&&mode!="on"&&mode!="revoke-only")Deny("FIXED_PUBLIC_IDENTITY_REFUSED");Sha(job,"id");string run=Text(job,"runId");
   if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest)Deny("FIXED_TRAIN_RUN_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
@@ -181,6 +182,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   bool none=true;foreach(string f in TrainRunFront)if(At(job,f)!=null)none=false;
   if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode")))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
   object request=At(job,"revokeHeadRequestId");if(!(request==null||(mode!="shadow"&&LowerUuid(request))))Deny("TRAIN_RUN_PARAMS_REQUIRED");
+  string sweep=At(job,"sweep") as string;if(sweep!="gate"&&sweep!="audit"&&sweep!="off")Deny("TRAIN_RUN_PARAMS_REQUIRED");
   if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
  // C2 probe /1: no PR/head/claim/attempt fields. The complete current node profile is independently pinned by plan /3.

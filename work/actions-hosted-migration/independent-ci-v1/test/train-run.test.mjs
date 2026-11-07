@@ -14,21 +14,22 @@ const run = (o = {}) => makeTrainRun({ repo: REPO, runId: `${key.slice(0, 16)}-0
   ...TRAIN_RUN_SHADOW_DEFAULTS, ...o });
 const ON = { mode: 'on', onSince: '2026-10-23T04:00:00.000Z' };
 
-test('train run /2: contract, fields in order, id over every field but contract, id and createdAt', () => {
+test('train run /3: contract, fields in order, id over every field but contract, id and createdAt', () => {
   const job = run();
-  assert.equal(job.contract, 'clued.independent-ci.train-run/2');
+  assert.equal(job.contract, 'clued.independent-ci.train-run/3');
   assert.deepEqual(Object.keys(job), [...TRAIN_RUN_FIELDS]);
   assert.deepEqual(TRAIN_RUN_FIELDS, ['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs',
-    'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId']);
+    'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
   assert.equal(job.id, createHash('sha256').update(JSON.stringify([TRAIN_RUN_CONTRACT, REPO, job.runId, 'shadow', 'e'.repeat(64), 120, 3600000, 900000, 21600000,
-    null, null, null, null, null, null, null])).digest('hex'));
+    null, null, null, null, null, null, null, 'gate'])).digest('hex'));
   assert.equal(trainRunJobId(job), job.id);
   assert.deepEqual(TRAIN_RUN_MODES, ['shadow', 'on', 'revoke-only']);
   // createdAt is not part of the id; every identity field is
   assert.equal(run({ createdAt: '2026-10-23T06:00:00.000Z' }).id, job.id);
-  for (const o of [{ runId: `${key.slice(0, 16)}-ffffffffffff` }, { slotHardCapMinutes: 121 }, { sweepFreshMs: 900001 }, { ...ON }, { mode: 'revoke-only' }])
+  for (const o of [{ runId: `${key.slice(0, 16)}-ffffffffffff` }, { slotHardCapMinutes: 121 }, { sweepFreshMs: 900001 }, { ...ON }, { mode: 'revoke-only' }, { sweep: 'audit' }, { sweep: 'off' }])
     assert.notEqual(run(o).id, job.id, JSON.stringify(o));
-  for (const bad of [{ ...job, mode: 'off' }, { ...job, id: '0'.repeat(64) }, { ...job, runId: 'x' }, { ...job, extra: 1 }, { ...job, repo: 'a' }, { ...job, contract: 'clued.independent-ci.train-run/1' }])
+  for (const bad of [{ ...job, mode: 'off' }, { ...job, id: '0'.repeat(64) }, { ...job, runId: 'x' }, { ...job, extra: 1 }, { ...job, repo: 'a' }, { ...job, contract: 'clued.independent-ci.train-run/1' },
+    { ...job, contract: 'clued.independent-ci.train-run/2' }, { ...job, sweep: 'full' }])
     assert.throws(() => validateTrainRun(bad), e => e.code === 'invalid_train_run');
   assert.throws(() => run({ mode: 'on' }), e => e.code === 'invalid_train_run', 'on names onSince');
   // makeTrainRun takes every param and nothing else
@@ -37,7 +38,7 @@ test('train run /2: contract, fields in order, id over every field but contract,
   assert.throws(() => run({ extra: 1 }), e => e.code === 'invalid_train_run');
 });
 
-test('train run /2: the shared table (test/fixtures/train-run-cases.json) as the C# boundary runs it', () => {
+test('train run /3: the shared table (test/fixtures/train-run-cases.json) as the C# boundary runs it', () => {
   const rows = trainRunCases();
   assert.ok(rows.filter(r => r.accepted).length >= 9 && rows.filter(r => !r.accepted).length >= 25);
   for (const r of rows) {
@@ -50,7 +51,7 @@ test('train run /2: the shared table (test/fixtures/train-run-cases.json) as the
     assert.match(fs.readFileSync(ps('test-pure-v2.ps1'), 'utf8'), /trainRunCases:trainRunCases\(\)/);
     const cs = fs.readFileSync(ps('PureTestsV2.cs'), 'utf8');
     assert.match(cs, /fixture\["trainRunCases"\]/);
-    assert.match(fs.readFileSync(ps('FormalPublicBoundaryV2.cs'), 'utf8'), /"clued\.independent-ci\.train-run\/2"/);
+    assert.match(fs.readFileSync(ps('FormalPublicBoundaryV2.cs'), 'utf8'), /"clued\.independent-ci\.train-run\/3"/);
   });
 });
 

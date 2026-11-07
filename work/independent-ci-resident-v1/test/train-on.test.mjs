@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, trainSettings, validatePolicy } from '../src/policy.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, validatePolicy } from '../src/policy.mjs';
 import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
@@ -18,7 +18,8 @@ import { TRAIN_CODES as SOURCE_TRAIN_CODES } from '../../actions-hosted-migratio
 const MIN = 60_000;
 const T0 = Date.parse('2026-10-20T12:00:00Z');
 const S = '5'.repeat(40), TREE = '6'.repeat(40), CLAIM = '0a1b2c3d-0000-4000-8000-0000000000aa';
-const onTrain = (o = {}) => ({ enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, ...o });
+// Gate mode (DESIGN §41, §60-§62): the take-over full sweep these tests exercise; strict-permanent mode (§65) has its own tests.
+const onTrain = (o = {}) => ({ enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, sweep: 'gate', ...o });
 const policyV8 = (train = {}, top = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, train: onTrain(train), ...top });
 const ofType = async (receipts, type) => (await receipts.latest([type], 1000)).map(e => e.value.body);
 const trainCalls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 10);
@@ -47,6 +48,29 @@ test('policy /8: on, the four train settings and their bounds; /7 refuses on exa
   assert.equal(trainSettings(onTrain({ sweepFreshMs: 600_000 })).sweepFreshMs, 600_000);
   for (const [train, mode] of [[rawPolicy().train, 'off'], [onTrain({ enabled: 'shadow' }), 'shadow'], [onTrain(), 'on']]) assert.equal(installedTrainMode({ train }), mode);
   assert.equal(installedTrainMode(null), 'off');
+});
+
+// DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): train.sweep is optional in /8 and later; without it the Owner's default
+// 'audit'; the policy digest of an installed policy without it is unchanged; the train-run input carries it next to the clocks.
+test('policy train.sweep: optional gate | audit | off, default audit; carried by the train-run input and the job /3', () => {
+  assert.equal(TRAIN_SWEEP_DEFAULT, 'audit');
+  const { sweep, ...without } = onTrain(); void sweep;
+  const p = validatePolicy(rawPolicy({ contract: POLICY_CONTRACT_V8, train: without }));
+  assert.equal(Object.hasOwn(p.train, 'sweep'), false, 'nothing is added to the installed policy');
+  assert.equal(trainSweepMode(p.train), 'audit');
+  assert.equal(trainSweepMode(rawPolicy().train), 'audit', '/7 carries the default');
+  for (const v of ['gate', 'audit', 'off']) assert.equal(trainSweepMode(validatePolicy(policyV8({ sweep: v })).train), v);
+  for (const v of ['full', null, true, 'GATE']) assert.throws(() => validatePolicy(policyV8({ sweep: v })), { code: 'POLICY_TRAIN_INVALID' }, String(v));
+  assert.throws(() => validatePolicy(rawPolicy({ train: { ...rawPolicy().train, sweep: 'audit' } })), { code: 'POLICY_TRAIN_KEYS_INVALID' }, '/7 never takes it');
+  assert.equal(Object.hasOwn(trainSettings(onTrain()), 'sweep'), false, 'the clocks (strictSettingsDigest) stay the four of /8');
+  for (const v of ['gate', 'audit', 'off']) {
+    const input = trainRunInput({ mode: 'on', settings: trainSettings(onTrain()), sweep: v, onSince: T0 });
+    assert.equal(input.sweep, v);
+    const job = makeTrainRun({ repo: 'tdoljyj/cross-memory-system', runId: `${'1'.repeat(16)}-${'2'.repeat(12)}`, sourceManifestSha256: 'e'.repeat(64), createdAt: new Date(T0).toISOString(), ...input });
+    assert.equal(job.sweep, v);
+  }
+  assert.throws(() => trainRunInput({ mode: 'on', settings: trainSettings(onTrain()), sweep: 'full', onSince: T0 }), { code: 'TRAIN_RUN_INPUT_INVALID' });
+  assert.deepEqual(TRAIN_RUN_INPUT_FIELDS, ['mode', ...TRAIN_RUN_PARAMS]);
 });
 
 test('config: the /8 shadow example is the /7 example with the /8 contract and train settings; the installed /7 example is unchanged', async () => {

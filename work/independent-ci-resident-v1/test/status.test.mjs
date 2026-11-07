@@ -22,6 +22,11 @@ test('generation16 status distinguishes limited readiness, pending full and cont
     backgroundAllPending: 1, maintenanceExtraUsed: -1, maintenanceExtraLimit: 201 }), { enabled: 'on', last: null });
   assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'full-sweep', fullPending: false }).fullPending, false);
   assert.equal(read({ enabled: 'on', last: null, frontReadyMode: 'strict-current-front', fullPending: true }).frontReadyMode, 'strict-current-front');
+  // DESIGN §65: the policy's sweep mode (the companion's backstop reads it) and the strict-permanent ready mode; anything else is dropped.
+  assert.deepEqual(read({ enabled: 'on', last: null, frontReadyMode: 'strict-permanent', fullPending: false, sweepMode: 'audit' }),
+    { enabled: 'on', last: null, frontReadyMode: 'strict-permanent', fullPending: false, sweepMode: 'audit' });
+  for (const v of ['gate', 'off']) assert.equal(read({ enabled: 'on', last: null, sweepMode: v }).sweepMode, v);
+  for (const v of ['full', 1, null]) assert.equal(Object.hasOwn(read({ enabled: 'on', last: null, sweepMode: v }), 'sweepMode'), false, String(v));
 });
 
 test('C2 status carries observations without promoting held to ACTIVE or altering existing mode', () => {

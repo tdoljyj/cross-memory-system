@@ -23,8 +23,9 @@ const MIN = 60_000;
 const SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const OTHER_CLAIM = '99999999-8888-4777-8666-555555555555';
 const PROOF = { windowsTreeZero: true, serviceOriginalStopped: true };
-const policy = (nonFrontRuns = true, extra = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
-  train: { enabled: 'on', nonFrontRuns, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } });
+// Gate mode (DESIGN §62: the take-over full sweep gates the train); strict-permanent mode (§65) is train-strict-permanent.test.mjs.
+const policy = (nonFrontRuns = true, extra = {}, sweep = 'gate') => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
+  train: { enabled: 'on', nonFrontRuns, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, sweep } });
 const body = claim => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${SCOPE}\n`;
 const slotGreen = (e, head) => [...e.gh.world.checks.values()].find(c => c.app.id === 5368905 && c.name === 'kooyumi-merge-slot' && c.head_sha === head
   && c.status === 'completed' && c.conclusion === 'success');
@@ -606,4 +607,256 @@ test('steady state (task 60f83aa3): a head makes stage 10 urgent at most twice, 
   assert.equal(f.exec.trainUrgent, false, 'never a third');
   f.exec.trainAskAfterBind({ ...subject, testSha: S });
   assert.equal(f.exec.trainUrgent, false, 'a front row (S) is not asked');
+});
+
+// ---- Strict-permanent mode (Owner decision 9e2511fe, Task 40f0dfb7, DESIGN §65) ----
+// The policy names no train.sweep: the default is the Owner's decision ('audit'). Strict stays on for good, so no full sweep gates
+// anything: the queue head's ordinary batch binds its claim at stage 1 (no take-over binding exception needed), gives way, and the front
+// batch gets the merge-slot green on the strict current-front proof while the full sweep (here: hours) still runs.
+// The PR names its claim only in the head commit (not in its body), so the take-over binding exception (§62.4, body trailer only) cannot
+// help: before this change (gate mode) the PR waited for the whole full sweep.
+const permanentPolicy = (extra = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
+  train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, ...(extra.train ?? {}) } });
+
+async function permanentArrival(t, { strict = true, restart = false, sweep } = {}) {
+  const e = await world(t);
+  e.gh.world.strict = strict;
+  const at = { t };
+  const engine = engineFor(e, at);
+  const pol = permanentPolicy(sweep ? { train: { sweep } } : {});
+  let f = await executorFixture(t, { policy: pol, engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  // train=on has just taken effect: the full sweep starts and runs (hours here); the queue is empty.
+  for (let i = 0; i < 3; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  if (restart) {
+    // An install (a new package, so a new policy: another digest) restarts the service on the same state: a new duty, a new onSince.
+    const installed = permanentPolicy({ train: { maintenanceMaxPerDay: 199, ...(sweep ? { sweep } : {}) } });
+    f = await executorFixture(t, { policy: installed, engine, root: f.root, now: f.clock() });
+    Object.assign(at, { clock: f.clock, advance: f.advance });
+    await f.exec.trainRecover();
+    await f.exec.tick(); f.advance(MIN);
+  }
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: 'Change.\n', claim: CLAIM });
+  e.gh.pull(911, { head: sha(0x7777), updated: iso(arrival), body: 'Other change.\n', claim: OTHER_CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  await f.drop(triggerBytes({ pr: 911, headSha: sha(0x7777), baseSha: T }));
+  return { e, f, engine, arrival };
+}
+
+async function untilGreen(f, e, minutes = 30) {
+  let green = null;
+  for (let i = 0; i <= minutes && !green; i++) { await f.exec.tick(); green = slotGreen(e, H) ?? null; if (!green) f.advance(MIN); }
+  return green;
+}
+
+for (const restart of [false, true]) test(`strict-permanent (DESIGN §65): train on, the full sweep just started${restart ? ', then an install restart' : ''}: a new queue-head PR gets the merge-slot green within 30 minutes without the sweep`, async t => {
+  const { e, f, engine, arrival } = await permanentArrival(t, { restart });
+  const green = await untilGreen(f, e);
+  const elapsed = f.clock() - arrival;
+  assert.ok(green, `no kooyumi-merge-slot success within 30 minutes; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}; stages ${JSON.stringify(engine.stages)}`);
+  t.diagnostic(`strict-permanent${restart ? ' after restart' : ''}: first kooyumi-merge-slot success ${Math.round(elapsed / 1000)} s (simulated) after the PR arrived`);
+  // Not the full sweep: it is still running, no proof says fullSweepSinceOn, the take-over gate was open from the start of the duty.
+  const full = await e.store.readFullSweepStrict('on');
+  assert.equal(full.full.state, 'running');
+  assert.equal(full.full.onSince, new Date(f.exec.trainOnSince).toISOString(), 'the round is anchored to this duty');
+  assert.equal((await e.store.latestProof()).fullSweepSinceOn, false);
+  assert.equal(f.exec.trainSweep.fullSinceOn, false);
+  assert.equal(f.exec.trainTakeoverDone, true);
+  assert.equal(f.exec.trainStatus().sweepMode, 'audit');
+  assert.equal(engine.published.status, 'SETTLED');
+  // The ordinary batch bound the claim at stage 1 and gave way (DESIGN §62.6); the front batch (S) ran stages 1-8.
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1]);
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal((await f.receipts.latest(['train-front-bind'], 5)).length, 0, 'no take-over binding exception was needed');
+  // The PR that is not the queue head is no longer held for the sweep: it runs, and its stage 8 rests at B (only a front batch greens).
+  assert.ok(engine.stages.some(s => s.pr === 911 && s.stage === 8), JSON.stringify(engine.stages));
+  assert.equal(slotGreen(e, sha(0x7777)), undefined);
+});
+
+// The way back: the same arrival with train.sweep 'gate' (the take-over gate of §62) waits for the full sweep: no green in 30 minutes.
+test('strict-permanent (DESIGN §65): with train.sweep gate the same PR still waits for the take-over full sweep', async t => {
+  const { e, f, engine } = await permanentArrival(t, { sweep: 'gate' });
+  assert.equal(await untilGreen(f, e), null);
+  assert.equal(f.exec.trainTakeoverDone, false);
+  assert.deepEqual(engine.stages, [], 'gate mode holds every batch before the take-over sweep');
+  assert.equal(f.exec.trainStatus().sweepMode, 'gate');
+});
+
+// Strict read off in strict-permanent mode: stage 10 decides TRAIN_STRICT_OFF, opens no front batch and asks for PAUSE; the executor
+// latches PAUSE (receipt 'paused') and tells the Owner; no merge-slot green.
+test('strict-permanent (DESIGN §65): strict off -> no green, TRAIN_STRICT_OFF, PAUSE latched and an Owner notice', async t => {
+  const { e, f, engine } = await permanentArrival(t, { strict: false });
+  assert.equal(await untilGreen(f, e), null);
+  const paused = (await f.receipts.latest(['paused'], 10)).map(r => r.value.body.reason);
+  assert.ok(paused.includes('train-maintenance: TRAIN_STRICT_OFF'), JSON.stringify(paused));
+  assert.ok(engine.trainRuns.some(r => r.decision === 'TRAIN_STRICT_OFF'), JSON.stringify(engine.trainRuns));
+  assert.ok(!engine.trainRuns.some(r => r.open), 'no front batch opens with strict off');
+  assert.ok(!engine.stages.some(s => s.testSha === S), 'no front batch runs');
+  assert.equal(slotGreen(e, H), undefined);
+  assert.ok(f.queue.notices.some(n => n.kind === 'train-owner' && n.code === 'TRAIN_STRICT_OFF'), JSON.stringify(f.queue.notices));
+});
+
+// Strict turned off between the front batch's open and its stage 8: stage 8 writes no green (the live-strict current-front route is the
+// only one; no proof says fullSweepSinceOn) and the batch rests at B.
+test('strict-permanent (DESIGN §65): strict switched off before the front batch\'s stage 8 -> stage 8 writes no green and rests at B', async t => {
+  const { e, f, engine } = await permanentArrival(t);
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => { if (stage.number === 8 && engine.subjects.get(batch.key)?.testSha) e.gh.world.strict = false; return run(batch, stage); };
+  assert.equal(await untilGreen(f, e), null);
+  assert.ok(engine.stages.some(s => s.testSha === S && s.stage === 8), JSON.stringify(engine.stages));
+  assert.notEqual(engine.published?.status, 'SETTLED');
+  assert.equal(slotGreen(e, H), undefined);
+});
+
+// Audit mode: one full round as a background audit, at most once a day; it never holds a green. Off: none at all.
+test('strict-permanent (DESIGN §65): the audit round runs at its daily cadence and never holds the green; sweep off runs none', async t => {
+  for (const sweep of ['audit', 'off']) await t.test(sweep, async t => {
+    const e = await world(t, { quick: true });
+    const at = { t };
+    const engine = engineFor(e, at);
+    const f = await executorFixture(t, { policy: permanentPolicy({ train: { sweep } }), engine, now: NOW });
+    Object.assign(at, { clock: f.clock, advance: f.advance });
+    await f.exec.trainRecover();
+    assert.equal(f.exec.trainTakeoverDone, true, 'the gate is open from the start of the duty');
+    const pages = () => engine.trainRuns.reduce((n, r) => n + r.created, 0);
+    for (let i = 0; i < 12; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+    const full = await e.store.readFullSweepStrict('on');
+    if (sweep === 'off') {
+      assert.equal(pages(), 0, 'sweep off reads no full-sweep page');
+      assert.notEqual(full?.full?.state, 'running');
+    } else {
+      assert.equal(full.full.state, 'complete', JSON.stringify(full.full));
+      // Within a day of its completion no new round starts; after a day one does.
+      const done = pages();
+      for (let i = 0; i < 6 * 22; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+      assert.equal(pages(), done, 'no audit round within a day of the last one');
+      for (let i = 0; i < 6 * 3; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+      assert.ok(pages() > done, 'the next audit round a day later');
+    }
+    assert.equal((await e.store.latestProof()).fullSweepSinceOn, false, 'a full round never covers a green in strict-permanent mode');
+    // And the green does not wait for it.
+    const arrival = f.clock();
+    e.native.holders = undefined;
+    e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+    e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: 'Change.\n', claim: CLAIM });
+    await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+    assert.ok(await untilGreen(f, e), `${sweep}: no green; stage 10 said ${engine.lastFacts?.decision}`);
+  });
+});
+
+// Field defect PR #1035 (2026-11-07): the front batch (with S) of the old head 5797132c rested at B after its stage 8 said
+// REQUIRED_CHECK_FAILED. A new head 787ea0c5 was pushed; stage 10 said OPEN_FRONT_BATCH(1035, 787ea0c5) and then only
+// TRAIN_FRONT_BATCH_RUNNING, while the executor stayed IDLE for 40 minutes: queue.json's row still ran the old head's parked batch,
+// its current was the new head. During the take-over sweep resumeParked filtered every parked batch through the train gate before the
+// supersede check (hold), and the old front batch is no longer the current front, so it was never ended as superseded and kept the row.
+// Now a parked batch superseded by a newer commit ends at its safe point whatever the gate says, and the new head's front batch runs.
+for (const [sweep, liveLate] of [['gate', false], ['audit', false], ['gate', true]]) test(`field #1035 (${sweep}${liveLate ? ', no live answer at first' : ''}): a front batch parked at B after a failed check, then a new head: the new head's front batch runs and gets the merge-slot green`, async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const H2 = sha(0x7a7a), S2 = sha(0x7b7b), TREE2 = sha(0x7c7c);
+  e.gh.world.commits.set(S2, { sha: S2, tree: TREE2, parents: [T, H2] });
+  // The companion's live read of the PR: its current head.
+  let liveHead = H, live = true;
+  const companion = fakeCompanion({ pull: pr => (live ? { number: pr, state: 'open', headSha: liveHead } : null) });
+  const f = await executorFixture(t, { policy: sweep === 'gate' ? policy() : permanentPolicy({ train: { sweep } }), engine, companion, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  // The old head's front batch: its stage 8 finds a required check failed and rests at B.
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => {
+    const subject = engine.subjects.get(batch.key);
+    if (stage.number === 8 && subject.testSha === S) {
+      engine.stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, stage: 8, at: at.clock() });
+      return { ok: false, code: 'REQUIRED_CHECK_FAILED', proof: PROOF, outcome: { status: 'BLOCKED', reason: 'REQUIRED_CHECK_FAILED', sideEffects: 0, mayHavePublished: false } };
+    }
+    return run(batch, stage);
+  };
+  await f.exec.trainRecover();
+  for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
+  for (let i = 0; i < 30 && !(await parked()); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(await parked(), `the old head's front batch is not parked at B: ${JSON.stringify(engine.stages)}`);
+  // A new head is pushed to the same PR (the claim stays the queue head, bound to the PR). As in the field, stage 10 reads the PR on
+  // GitHub before the poller's trigger reaches the queue: it names the new head and opens its front batch first.
+  const pushed = f.clock();
+  liveHead = H2;
+  e.gh.pull(910, { head: H2, mergeCommitSha: S2, updated: iso(pushed), body: body(CLAIM), claim: CLAIM });
+  f.exec.trainUrgent = true;
+  // liveLate: the companion has no answer while stage 10 opens the new head's front batch and the trigger arrives (nothing may end on the
+  // queue's order alone), so the front is refused as busy; the live answer comes back five minutes later.
+  if (liveLate) live = false;
+  for (let i = 0; i < 10 && engine.lastFacts?.front?.headSha !== H2; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.equal(engine.lastFacts?.front?.headSha, H2, 'stage 10 saw the new head');
+  t.diagnostic(`stage 10 on the new head: ${engine.lastFacts.decision}`);
+  await f.drop(triggerBytes({ pr: 910, headSha: H2, baseSha: T }));
+  if (liveLate) {
+    for (let i = 0; i < 5; i++) { await f.exec.tick(); f.advance(MIN); }
+    assert.ok(await parked(), 'without a live answer the parked batch stays');
+    assert.ok((await f.receipts.latest(['train-front-refused'], 10)).some(r => r.value.body.headSha === H2 && r.value.body.failureCode === 'TRAIN_FRONT_PR_BUSY'));
+    live = true;
+  }
+  let green = null;
+  for (let i = 0; i <= 40 && !green; i++) { await f.exec.tick(); green = slotGreen(e, H2) ?? null; if (!green) f.advance(MIN); }
+  const elapsed = f.clock() - pushed;
+  assert.ok(green, `no merge-slot green for the new head within 40 minutes; stage 10 said ${engine.lastFacts?.decision}; parked ${JSON.stringify((await parked())?.key ?? null)}; `
+    + `stages ${JSON.stringify(engine.stages.filter(s => s.at >= pushed))}`);
+  t.diagnostic(`#1035 (${sweep}): new head's merge-slot green ${Math.round(elapsed / 1000)} s (simulated) after the push`);
+  assert.equal(await parked(), undefined, 'the old head\'s parked batch ended');
+  const ended = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'SUPERSEDED_AT_SAFE_POINT');
+  assert.deepEqual(ended.map(b => b.safePoint), ['parked'], 'ended as superseded at its safe point');
+  assert.deepEqual(engine.stages.filter(s => s.headSha === H2 && s.testSha === S2).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(slotGreen(e, H), undefined);
+  if (liveLate) assert.equal((await f.receipts.latest(['train-front-reoffered'], 5)).length, 1, 'the refused front was offered again');
+});
+
+// Field defect PR #1035, the gate's side: during the take-over sweep a parked batch the train gate holds (here: the old head's front batch
+// once no fresh strict observation names it) is still ended as superseded when its PR got a newer commit: ending publishes nothing.
+test('field #1035: during the take-over a superseded parked batch ends at its safe point although the train gate holds it', async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const H2 = sha(0x7a7a);
+  let liveHead = H;
+  const companion = fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: liveHead }) });
+  const f = await executorFixture(t, { policy: policy(), engine, companion, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => {
+    const subject = engine.subjects.get(batch.key);
+    if (stage.number === 8 && subject.testSha === S) return { ok: false, code: 'REQUIRED_CHECK_FAILED', proof: PROOF, outcome: { status: 'BLOCKED', reason: 'REQUIRED_CHECK_FAILED', sideEffects: 0, mayHavePublished: false } };
+    return run(batch, stage);
+  };
+  await f.exec.trainRecover();
+  await f.exec.tick(); f.advance(10 * MIN);
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
+  for (let i = 0; i < 30 && !(await parked()); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(await parked());
+  // stage 10 stops answering (a clean refusal): the strict observation is dropped, the gate holds the parked front batch.
+  engine.runTrainStage = async () => ({ ok: false, code: 'TRAIN_STAGE_REFUSED', proof: PROOF });
+  f.exec.trainUrgent = true;
+  await f.exec.tick(); f.advance(MIN);
+  assert.equal(f.exec.trainTakeoverDone, false);
+  assert.ok(f.exec.trainGate((await parked()).reserved.subject), 'the gate holds the old front batch');
+  liveHead = H2;
+  e.gh.pull(910, { head: H2, updated: iso(f.clock()), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H2, baseSha: T }));
+  for (let i = 0; i < 5 && (await parked()); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.equal(await parked(), undefined, 'the superseded parked batch ended');
+  const ended = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body).filter(b => b.failureCode === 'SUPERSEDED_AT_SAFE_POINT');
+  assert.deepEqual(ended.map(b => b.safePoint), ['parked']);
+  assert.equal(f.queue.row(910).running, null, 'the row is free for the new head');
 });

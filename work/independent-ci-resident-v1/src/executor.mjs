@@ -130,7 +130,7 @@ import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
 import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
-import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
+import { RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
@@ -442,6 +442,8 @@ export class ResidentExecutor {
     this.frontBatches = new Map();
     this.frontKeys = new Map();
     this.frontBindings = new Map();
+    // Field defect PR #1035: the newest front batch offerFront refused only because the PR's row was busy (enqueueFront, trainActed).
+    this.frontRetry = null;
     this.trainStrictReadiness = null;
     this.trainStrictFrontReadiness = null;
     // DESIGN §62.4: the take-over binding runs (batch key -> { pr, headSha }; kept across a restart by receipt 'train-front-bind') and
@@ -479,6 +481,7 @@ export class ResidentExecutor {
         // A front row (S) belongs to the duty that ended (or to an install whose train is not on any more): it never runs
         // (review R3 MINOR 5).
         this.dropFrontRows(on ? 'TRAIN_NOT_ON_DUTY' : 'TRAIN_NOT_ON');
+        this.frontRetry = null;
       }
       return;
     }
@@ -487,11 +490,22 @@ export class ResidentExecutor {
     this.trainLastMode = null;
     const c = this.trainDutyCandidate;
     this.trainDutyCandidate = null;
-    if (c) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (c.sweep) this.trainSweep = c.sweep; return; }
+    if (c) { this.trainOnSince = c.onSince; if (c.sweep) this.trainSweep = c.sweep; this.trainTakeoverDone = c.takeoverDone || this.trainOpenWithoutSweep(); return; }
     this.trainOnSince = this.clock();
-    this.trainTakeoverDone = false;
+    this.trainTakeoverDone = this.trainOpenWithoutSweep();
     this.trainProgressReady = false;
   }
+
+  // DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): the policy's train.sweep. Only 'gate' makes the take-over full sweep a
+  // condition of new batches; with 'audit' or 'off' strict stays on for good (GitHub merges H only when it contains main's tip T, and
+  // merge(T, H) then has H's tree: what was tested is what lands), so the take-over is "done" from the start of the duty
+  // (trainTakeoverDone then means "the take-over gate is open", not "a full sweep completed"; stage 10 never reports fullSweepSinceOn in
+  // that mode, so stage 8 still greens only on the live-strict current-front proof). A rewritten main still holds new batches until a
+  // round of scope all completes (§60.2). A policy change is a reinstall: a new policy digest never restores this duty (trainDutyRecover).
+  trainSweepGates() { return trainSweepMode(this.policy.train) === 'gate'; }
+  trainOpenWithoutSweep() { return !this.trainSweepGates() && this.trainSweep?.fullAllPending !== 'TRAIN_MAIN_REWRITTEN'; }
+  // Whether a completed take-over full sweep (gate mode) covers this node's greens; the strict current-front proof then is not needed.
+  trainFullCovers() { return this.trainTakeoverDone && this.trainSweepGates(); }
 
   // Defect b0426896 (field: after an upgrade's restart the first on run came a full maintenanceEveryMs after the resume): stage 10 is
   // owed an on-mode run at once once no pause holds any more, while this node is eligible and the newest stage-10 run of this duty was
@@ -640,7 +654,7 @@ export class ResidentExecutor {
       const s = b.sweep;
       const sweep = s && typeof s === 'object' && !Array.isArray(s) && s.onSince === b.onSince && typeof s.fullSinceOn === 'boolean' ? Object.freeze({ ...s }) : null;
       const c = { onSince, takeoverDone: b.takeoverDone === true, sweep };
-      if (this.trainEligible() && this.trainOnSince !== null) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (sweep) this.trainSweep = sweep; }
+      if (this.trainEligible() && this.trainOnSince !== null) { this.trainOnSince = c.onSince; if (sweep) this.trainSweep = sweep; this.trainTakeoverDone = c.takeoverDone || this.trainOpenWithoutSweep(); }
       else this.trainDutyCandidate = c;
       this.trainDutyKey = JSON.stringify([b.onSince, c.takeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true]);
     } catch { /* see above */ }
@@ -1584,8 +1598,10 @@ export class ResidentExecutor {
       const r = this.trainStrictFrontReadiness ?? this.trainStrictReadiness;
       const front = r?.front ? [...this.frontBindings.values()].find(f => this.trainStrictFront(f) && !this.trainGate(f)) : null;
       t.frontReadyMode = front ? this.trainStrictFrontReadiness ? 'strict-current-front' : 'strict-coverage'
-        : this.trainEligible() && this.trainTakeoverDone && !this.trainGate() ? 'full-sweep' : 'blocked';
+        : this.trainEligible() && this.trainTakeoverDone && !this.trainGate() ? this.trainSweepGates() ? 'full-sweep' : 'strict-permanent' : 'blocked';
       t.fullPending = !this.trainTakeoverDone;
+      // DESIGN §65: the companion's backstop reads it (strict off in strict-permanent mode: PAUSE at once, no grace).
+      t.sweepMode = trainSweepMode(this.policy.train);
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
@@ -2091,14 +2107,20 @@ export class ResidentExecutor {
       return null;
     }
     await this.endOrdinaryForFront(front);
+    await this.endSupersededForFront(front);
     const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
       { depth: this.policy.limits.queueDepth });
     if (offered.action !== 'front') {
+      // Field defect PR #1035: stage 10 counted this front batch and touched running, so it says TRAIN_FRONT_BATCH_RUNNING from now on and
+      // never offers it again. A front refused only because the row was busy is kept and offered again (trainActed) once a later stage-10
+      // run, still naming this head on this main, finds the row free.
+      this.frontRetry = offered.action === 'busy' ? front : null;
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: offered.code ?? 'TRAIN_FRONT_PR_BUSY' }); } catch { /* see above */ }
       return null;
     }
     list.push({ testSha: front.testSha, attempt: front.attempt });
     this.frontBatches.set(headKey, list);
+    if (this.frontRetry?.pr === front.pr) this.frontRetry = null;
     const subject = { repo: this.policy.repo, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1, testSha: front.testSha };
     const key = batchKey(subject);
     this.frontKeys.set(key, front.attempt);
@@ -2124,6 +2146,35 @@ export class ResidentExecutor {
     if (Ledger.parkedAt(entry)) ended = await this.endParkedB(entry, TRAIN_FRONT_TAKES_OVER);
     else if (Ledger.waitingAt(entry)) ended = await this.endWaitingA(entry, TRAIN_FRONT_TAKES_OVER);
     if (ended) { try { await this.receipt('train-front-takes-over', { key: entry.key, pr: s.pr, headSha: s.headSha, testSha: front.testSha, outcome: ended.state ?? null }); } catch { /* a view */ } }
+  }
+
+  // Field defect PR #1035 (2026-11-07): the PR's row still ran an older head's batch parked at B (there: the old head's front batch, its
+  // stage 8 REQUIRED_CHECK_FAILED) when stage 10, having read the new head on GitHub before the poller's trigger reached the queue, opened
+  // the new head's front batch. offerFront refused it as busy; stage 10 had counted it and touched running, so every later run said
+  // TRAIN_FRONT_BATCH_RUNNING and nothing ran until the running clock lapsed (40 minutes and more in the field). Now that parked batch ends
+  // here at its safe point as SUPERSEDED_AT_SAFE_POINT (the same ending as supersededParked: quiescence, the old head burned, a rename-only
+  // archive) once one live read of the PR confirms its head is the front's; the front batch is then offered as usual. No live answer, or
+  // the PR still at the parked head: nothing ends, offerFront decides as before.
+  async endSupersededForFront(front) {
+    const run = this.queue.row(front.pr)?.running;
+    if (!run || run.headSha === front.headSha) return;
+    let entry;
+    try { entry = (await this.ledger.parkedEntries()).find(e => e.key === run.key && Ledger.parkedAt(e)); } catch { return; }
+    const s = entry?.reserved?.subject, batch = entry?.parked?.batch;
+    if (!s || s.pr !== front.pr || s.headSha === front.headSha) return;
+    const live = await this.livePull(s.pr, batch);
+    if (!live || live.state !== 'open' || live.headSha !== front.headSha) {
+      try { await this.receipt('supersede-unconfirmed', { key: entry.key, pr: s.pr, safePoint: 'parked-for-front' }); } catch { /* a view */ }
+      return;
+    }
+    this.parkNudges?.delete(entry.key);
+    this.current = { key: entry.key, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, attempt: s.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try { outcome = await this.supersededEnd(entry.key, s, batch, { safePoint: 'parked', pos: POSITIONS[8], live, stage: 8 }); }
+    catch (error) { outcome = await this.unknown(entry.key, codeOf(error), 'executor-exception', batch, archiveFacts(error)); }
+    await this.afterBatch(s, entry.reserved.origin ?? 'queued', outcome);
+    try { await this.receipt('train-front-supersedes', { key: entry.key, pr: s.pr, headSha: s.headSha, frontHeadSha: front.headSha, testSha: front.testSha, outcome: outcome?.state ?? null }); }
+    catch { /* a view */ }
   }
 
   // One train run when it is due (train.mjs#trainDue): not under an intake pause (also with an empty queue, which ends
@@ -2156,7 +2207,8 @@ export class ResidentExecutor {
     const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
     const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
-    if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true) {
+    // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
+    if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
       const frontWork = this.queue.candidates(now).some(row => Object.hasOwn(row, 'testSha') && !this.trainGate(row))
         || (await this.ledger.parkedEntries()).some(e => Object.hasOwn(e.reserved?.subject ?? {}, 'testSha')
           && Ledger.parkedAt(e) && this.parkedDueAt(e) <= now && !this.trainGate(e.reserved?.subject));
@@ -2182,7 +2234,7 @@ export class ResidentExecutor {
     const acting = mode !== 'shadow';
     const revokeHead = acting ? this.revokeHeadInForce() : null;
     const frontOutcome = mode === 'on' ? this.trainFrontOutcome : null;
-    const input = trainRunInput({ mode, settings: trainSettings(train), onSince: this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
+    const input = trainRunInput({ mode, settings: trainSettings(train), sweep: trainSweepMode(train), onSince: this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
       frontOutcome: frontOutcome ? { pr: frontOutcome.pr, headSha: frontOutcome.headSha, testSha: frontOutcome.testSha, attempt: frontOutcome.attempt, code: frontOutcome.code } : null });
     const progress = this.trainLast?.sweep?.progress;
     const progressKey = idleProgressExtra ? `${progress.roundId}:${progress.token}` : null;
@@ -2249,6 +2301,8 @@ export class ResidentExecutor {
     // sets it again then), so no batch starts meanwhile whatever else a run decides (an incomplete sweep, an unconfirmed revocation).
     if (full?.allPending === 'TRAIN_MAIN_REWRITTEN') this.trainTakeoverDone = false;
     if (!this.trainTakeoverDone && onSince !== null && input.onSince === onSince && full?.state === 'complete' && full.sinceOn === true) this.trainTakeoverDone = true;
+    // DESIGN §65: in strict-permanent mode only the rewritten main holds the gate; it opens again once the round of scope all completed.
+    if (!this.trainTakeoverDone && !this.trainSweepGates() && full?.allPending !== 'TRAIN_MAIN_REWRITTEN') this.trainTakeoverDone = true;
     const coverage = summary.sweep?.strictCoverage;
     this.trainStrictReadiness = mode === 'on' && input.onSince === onSince && summary.onDuty && summary.strict === true && summary.sweep?.complete === true
       && summary.sweep.proofWritten === true && summary.sweep.unconfirmed === 0 && full?.allPending !== 'TRAIN_MAIN_REWRITTEN'
@@ -2288,6 +2342,14 @@ export class ResidentExecutor {
     // TRAIN_FRONT_BATCH_RUNNING: this node's front batch still runs and stage 10 refreshed its sweep proof; nothing to enqueue,
     // but a front batch of that head parked at B gets its next stage-8 try now (parkedDueAt), within the usual try budgets.
     if (mode === 'on' && summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && summary.front?.pr) await this.nudgeFrontParked(summary.front);
+    // Field defect PR #1035: the front batch stage 10 still counts as running was refused as busy and never ran: offer it again (the run that
+    // just refreshed its strict observation names the same head on the same main).
+    const retry = this.frontRetry;
+    if (mode === 'on' && retry && summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && summary.front?.pr === retry.pr && summary.front.headSha === retry.headSha
+      && summary.mainSha === retry.baseSha) {
+      this.frontRetry = null;
+      if (await this.enqueueFront(retry) !== null) { this.tickBatchDue = true; try { await this.receipt('train-front-reoffered', { pr: retry.pr, headSha: retry.headSha, testSha: retry.testSha, attempt: retry.attempt }); } catch { /* a view */ } }
+    }
   }
 
   async nudgeFrontParked(front) {
@@ -2462,6 +2524,13 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
+    // Field defect PR #1035: a batch parked at B whose PR got a newer commit ends at its safe point whatever the train gate says (ending a
+    // superseded batch publishes nothing). Before, the take-over hold below filtered it out first: an old head's front batch is no longer
+    // the current front, so it was never ended, kept the PR's row and the new head's front batch could not run.
+    for (const e of entries.filter(x => Ledger.parkedAt(x))) {
+      const r = await this.supersededParked(e);
+      if (r) return { acted: r, waiting: null };
+    }
     if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
     if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
@@ -2570,7 +2639,8 @@ export class ResidentExecutor {
   // proof (the take-over fast track: its scheduling went through trainStrictFront) that will not last through its stage 8: less than
   // FRONT_PROOF_MARGIN_MS left, or none. Never widens the proof: it only asks stage 10 for a fresh one before the try.
   frontProofShort(subject) {
-    if (!subject || !Object.hasOwn(subject, 'testSha') || !this.trainEligible() || this.trainTakeoverDone) return false;
+    // DESIGN §65: in strict-permanent mode every front batch rests on the strict current-front proof, before and after the take-over.
+    if (!subject || !Object.hasOwn(subject, 'testSha') || !this.trainEligible() || this.trainFullCovers()) return false;
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
     if (!front || front.headSha !== subject.headSha) return false;
     const named = [this.trainStrictReadiness, this.trainStrictFrontReadiness].some(r => r?.front?.pr === subject.pr && r.front.headSha === subject.headSha);

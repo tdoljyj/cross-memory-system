@@ -517,6 +517,39 @@ test('main rewritten since last seen: the in-main cache is dropped, the round in
   assert.deepEqual([on.facts.sweep.fullSweep.scope, on.facts.sweep.fullSweep.scopeReason, on.facts.sweep.fullSweep.state], ['all', 'TRAIN_MAIN_REWRITTEN', 'complete']);
 });
 
+// Resident DESIGN §65 (strict-permanent mode, train-run /3 sweep audit | off): no full sweep gates the train, except that a rewritten main
+// still holds it until a round of scope all completes (§60.2; also with sweep off, where it is the only round that runs). No round ever
+// says sinceOn (stage 8's full-sweep route stays closed). Strict read off is TRAIN_STRICT_OFF with a PAUSE request and no front batch.
+test('strict-permanent (sweep audit, off): a rewritten main holds the train until a round of scope all completes; strict off asks for PAUSE', async t => {
+  const strictRules = e => { const read = e.gh.readBranchRules.bind(e.gh); e.gh.readBranchRules = async b => {
+    const r = await read(b); return { ...r, rules: r.rules.map(x => x.type === 'required_status_checks' ? { ...x, parameters: { ...x.parameters, strict_required_status_checks_policy: e.strict !== false } } : x) }; }; };
+  for (const sweep of ['audit', 'off']) {
+    const slow = await setup(t, { fullDone: false, tick: 4000 });
+    strictRules(slow);
+    for (let n = 10; n <= 60; n++) slow.gh.pull(n, { head: sha(0x41000 + n), updated: iso(NOW - 86_400_000) });
+    await recordMain(slow, OLD_T, { full: { ...FULL1, state: 'complete', via: 'sweep', startedAt: iso(NOW - 3_000_000), completedAt: iso(NOW - 2_000_000), onSince: ON_SINCE,
+      mainSha: OLD_T, scope: 'current' } });
+    slow.gh.world.hooks.compare = (base, head) => (base === OLD_T && head === T ? { status: 'diverged', aheadBy: 2, behindBy: 5 } : null);
+    const job = jobOf({ sweep });
+    const s1 = await slow.run(job);
+    assert.deepEqual([s1.facts.decision, s1.facts.openFrontBatch, s1.facts.sweep.fullSweep.state, s1.facts.sweep.fullSweep.scope, s1.facts.sweep.fullSweep.allPending],
+      ['TRAIN_TAKEOVER_SWEEP_PENDING', null, 'running', 'all', 'TRAIN_MAIN_REWRITTEN'], sweep);
+    let last = null, runs = 0;
+    for (; runs < 30 && last?.facts.sweep.fullSweep.state !== 'complete'; runs++) {
+      last = await slow.run(job);
+      if (last.facts.sweep.fullSweep.state !== 'complete') assert.equal(last.facts.decision, 'TRAIN_TAKEOVER_SWEEP_PENDING', sweep);
+    }
+    assert.deepEqual([last.facts.sweep.fullSweep.state, last.facts.sweep.fullSweep.scope, last.facts.sweep.fullSweep.sinceOn, last.facts.sweep.fullSweep.allPending],
+      ['complete', 'all', false, null], `${sweep}: the round completes, never as a take-over`);
+    assert.notEqual(last.facts.decision, 'TRAIN_TAKEOVER_SWEEP_PENDING', sweep);
+    assert.equal((await slow.store.latestProof()).fullSweepSinceOn, false, sweep);
+    // strict off now: TRAIN_STRICT_OFF, a PAUSE request, no front batch
+    slow.strict = false;
+    const off = await slow.run(job);
+    assert.deepEqual([off.facts.decision, off.facts.requestPause, off.facts.openFrontBatch], ['TRAIN_STRICT_OFF', 'TRAIN_STRICT_OFF', null], sweep);
+  }
+});
+
 test('main history unreadable: the run is incomplete, no round starts, nothing is recorded, the cache is not trusted; the next run asks again', async t => {
   const e = await setup(t, { fullDone: false, stream: [sha(0x40022)] });
   const { h } = pullsOfC(e);

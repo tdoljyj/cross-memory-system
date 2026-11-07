@@ -24,13 +24,15 @@ export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUO
 export const RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const DECISIONS = Object.freeze([...WOULD_DO, 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN']);
 // Stage 10's decisions after which the executor starts no new batch (DESIGN §41.6: no publication of any stage before the
 // take-over sweep; no on-mode duty while another node runs another Source, or while the nodes' Sources cannot be read).
 export const TRAIN_SCHEDULE_DEFERRALS = Object.freeze(['TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
 // The decisions the Owner hears of (a notice, one per key).
-export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH']);
-export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH']);
+// DESIGN §65: TRAIN_STRICT_OFF, strict read off in strict-permanent mode (sweep audit or off): PAUSE and an Owner notice.
+export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_STRICT_OFF']);
+export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_STRICT_OFF']);
+export const TRAIN_RUN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 // Front batches per head (DESIGN §41.4: attempt 2 and both kinds of re-open count).
 export const FRONT_BATCHES_PER_HEAD = 2;
 const SWEEP_KINDS = ['none', 'incremental', 'full-segment'];
@@ -156,23 +158,23 @@ export function providerBudgetOf(v, now = null) {
   return Object.freeze({ ...v, rest: v.rest ? Object.freeze({ ...v.rest }) : null, graphql: v.graphql ? Object.freeze({ ...v.graphql }) : null });
 }
 
-// The resident's part of the train-run job /2 (INTERFACES §2): every field the derivation does not take from the install
+// The resident's part of the train-run job /3 (INTERFACES §2; /2 plus sweep, DESIGN §65): every field the derivation does not take from the install
 // record (contract, id, repo, runId, sourceManifestSha256 and createdAt are the derivation's), in the job's order. settings:
 // policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code } or null
-// (mode on only); revokeHeadRequestId: uuid or null (on and revoke-only).
+// (mode on only); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
 export const TRAIN_RUN_INPUT_FIELDS = Object.freeze(['mode', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs', 'fullSweepMaxMs', 'onSince',
-  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId']);
+  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
 const FRONT_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
-export function trainRunInput({ mode, settings, onSince = null, frontOutcome = null, revokeHeadRequestId = null }) {
+export function trainRunInput({ mode, settings, onSince = null, frontOutcome = null, revokeHeadRequestId = null, sweep = 'gate' }) {
   const on = mode === 'on', acting = mode !== 'shadow';
   const f = on ? frontOutcome : null;
   const input = { mode, slotHardCapMinutes: settings.slotHardCapMinutes, frontBatchBudgetMs: settings.frontBatchBudgetMs, sweepFreshMs: settings.sweepFreshMs,
     fullSweepMaxMs: settings.fullSweepMaxMs, onSince: acting && Number.isSafeInteger(onSince) ? new Date(onSince).toISOString() : null,
     frontPr: f?.pr ?? null, frontHeadSha: f?.headSha ?? null, frontTestSha: f?.testSha ?? null, frontAttempt: f?.attempt ?? null, frontCode: f?.code ?? null,
-    revokeHeadRequestId: acting ? revokeHeadRequestId : null };
+    revokeHeadRequestId: acting ? revokeHeadRequestId : null, sweep };
   return validateTrainRunInput(input);
 }
-// The same rules as the job /2 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
+// The same rules as the job /3 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
 export function validateTrainRunInput(v) {
   const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode];
   const int = (x, lo, hi) => Number.isSafeInteger(x) && x >= lo && x <= hi;
@@ -181,7 +183,7 @@ export function validateTrainRunInput(v) {
     && (v.onSince === null ? v.mode === 'shadow' : isoOrNull(v.onSince) !== null && v.mode !== 'shadow')
     && (flat.every(x => x === null) || (v.mode === 'on' && Number.isSafeInteger(v.frontPr) && v.frontPr > 0 && SHA.test(v.frontHeadSha ?? '') && SHA.test(v.frontTestSha ?? '')
       && v.frontTestSha !== v.frontHeadSha && [1, 2].includes(v.frontAttempt) && FRONT_CODE.test(v.frontCode ?? '')))
-    && (v.revokeHeadRequestId === null || (v.mode !== 'shadow' && UUID.test(v.revokeHeadRequestId)));
+    && (v.revokeHeadRequestId === null || (v.mode !== 'shadow' && UUID.test(v.revokeHeadRequestId))) && TRAIN_RUN_SWEEPS.includes(v.sweep);
   if (!ok) fail('TRAIN_RUN_INPUT_INVALID');
   return Object.freeze({ ...v });
 }
@@ -273,6 +275,8 @@ const ON_TEXT = {
   TRAIN_LANDED_TREE_MISMATCH: '落地的树与测过的不同，已停车，等 Owner',
   TRAIN_FRONT_BATCH_RUNNING: '车头批次进行中',
   TRAIN_SOURCE_UNREADABLE: '读不到各常驻节点的 Source，暂不开车',
+  TRAIN_STRICT_OFF: 'main 的 strict 被关了：strict 永久开模式下不发绿，已停车，等 Owner 把 strict 开回',
+  TRAIN_FRONT_NOT_PROVEN: '这一轮没能确认车头的严格检查条件，暂不开车头批次，下一轮再看',
 };
 // Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
