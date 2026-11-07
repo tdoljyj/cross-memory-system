@@ -411,3 +411,44 @@ test('gen 22 (PR #1029): a front batch whose stages 1-7 outlast the strict proof
   assert.ok(green, `no kooyumi-merge-slot success; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}`);
   t.diagnostic(`front batch: stage 1 to stage 8 ${Math.round((s8[0].at - s1) / 1000)} s (simulated); merge-slot green ${Math.round((f.clock() - arrival) / 1000)} s after the PR arrived`);
 });
+
+// Task 60f83aa3 (#1031): the last stage 10 ran at 09:07 and said NO_FRONT (empty queue); the PR arrived at 09:14 and waited for the
+// 10-minute cadence. A new unbound head after NO_FRONT is asked about at once (once per head), the same as after FRONT_NOT_BOUND.
+test('take-over front (task 60f83aa3): a PR arriving after a NO_FRONT run gets its binding stage 10 within a minute, once per head', async t => {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  await f.exec.tick(); // the run that says NO_FRONT (empty queue)
+  assert.equal(f.exec.trainLast.wouldDo, 'NO_FRONT');
+  f.advance(7 * MIN); // well inside the 10-minute cadence
+  const arrival = f.clock();
+  const before = engine.trainRuns.length;
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  let bound = null;
+  for (let i = 0; i < 3 && !bound; i++) {
+    await f.exec.tick();
+    bound = engine.trainRuns.slice(before).find(r => r.frontBind) ?? null;
+    if (!bound) f.advance(20_000);
+  }
+  assert.ok(bound, `no frontBind run after the arrival: ${JSON.stringify(engine.trainRuns.slice(before))}`);
+  assert.ok(f.clock() - arrival <= MIN, `stage 10 ran ${Math.round((f.clock() - arrival) / 1000)} s after the arrival`);
+  for (let i = 0; i < 3; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(engine.stages.some(s => s.pr === 910 && s.testSha === null && s.stage === 1), 'the binding run ran stage 1');
+
+  // Guard: the same head never makes stage 10 urgent a second time.
+  f.exec.trainLast = Object.freeze({ ...f.exec.trainLast, wouldDo: 'NO_FRONT', mode: 'on', strict: true });
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 910, headSha: H, baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false, 'an asked head is not asked again');
+  f.exec.trainAskFrontBind([{ pr: 911, headSha: sha(0x7777), baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, true, 'a new head is asked once');
+  f.exec.trainUrgent = false;
+  f.exec.trainAskFrontBind([{ pr: 911, headSha: sha(0x7777), baseSha: T }]);
+  assert.equal(f.exec.trainUrgent, false);
+});

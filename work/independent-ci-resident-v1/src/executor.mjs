@@ -549,7 +549,9 @@ export class ResidentExecutor {
   // (bounded by the daily cap like every urgent run), so the binding run need not wait for the next routine run.
   trainAskFrontBind(rows) {
     const l = this.trainLast;
-    if (!this.trainEligible() || this.trainTakeoverDone || l?.mode !== 'on' || l.wouldDo !== 'FRONT_NOT_BOUND' || l.strict !== true) return;
+    // NO_FRONT (empty queue at the last run) counts like FRONT_NOT_BOUND: a new head must not wait out the cadence (task 60f83aa3). The
+    // same rule holds after the take-over: the head's ordinary batch binds the claim, and the next quiet tick runs stage 10 at once.
+    if (!this.trainEligible() || l?.mode !== 'on' || !['FRONT_NOT_BOUND', 'NO_FRONT'].includes(l.wouldDo) || l.strict !== true) return;
     for (const r of rows) {
       if (Object.hasOwn(r, 'testSha') || this.trainFrontBind(r)) continue;
       const k = `${r.pr}:${r.headSha}`;
@@ -2772,8 +2774,8 @@ export class ResidentExecutor {
     // The train on (DESIGN §41.6): no new batch before the take-over sweep, nor while stage 10 says another node runs another
     // Source. A quiet result: stage 10 runs in this very tick.
     const trainHeld = this.trainGate();
+    this.trainAskFrontBind(rows);
     if (trainHeld) {
-      this.trainAskFrontBind(rows);
       rows = rows.filter(row => !this.trainGate(row));
       attempts = attempts.filter(a => !this.trainGate(a.subject));
       if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return trainHeld; }
