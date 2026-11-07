@@ -129,8 +129,7 @@ function checkGenerated(root, g) {
   const result = spawnSync(g.cmd[0], g.cmd.slice(1), { cwd: root, encoding: 'utf8' });
   if (result.error) return { id: g.id, status: 'unchecked', reason: `${g.cmd[0]} did not run: ${result.error.message}`, fix: g.fix };
   if (result.status === 0) return { id: g.id, status: 'ok' };
-  const lines = (result.stderr + result.stdout).split('
-').map((l) => l.trim()).filter(Boolean).slice(0, 8);
+  const lines = (result.stderr + result.stdout).split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8);
   return { id: g.id, status: 'stale', registry: g.registry, details: lines, fix: g.fix };
 }
 
