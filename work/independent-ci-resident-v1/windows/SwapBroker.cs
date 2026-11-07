@@ -117,13 +117,19 @@ public sealed class SwapBroker : ServiceBase
 
     string HelperBinary(BrokerConfig c) { return "\"" + Path.Combine(root, "helpers", c.HelperName) + "\" --acceptance-sha256 "+c.AcceptanceSha256+" --node-profile-sha256 "+c.Node.Sha256; }
 
+    // M2a (DESIGN 65.3.6): poll constants. Request intake 500 -> 100 ms and stop watch 1000 -> 200 ms cut about 1.2 s from
+    // every swap. RestoreStoppedHelper (an SCM session per pass) keeps its old 500 ms cadence so the SCM query rate is unchanged;
+    // only the cheap directory listing runs faster. The loop stays one thread; requests are still handled one at a time.
+    public const int RequestPollMs = 100, StopPollMs = 200, RestoreIntervalMs = 500;
+
     void Loop()
     {
         var req = Path.Combine(root, "broker", "requests");
         var res = Path.Combine(root, "broker", "responses");
+        var sinceRestore = System.Diagnostics.Stopwatch.StartNew(); bool firstPass = true;
         while (!stopping)
         {
-            RestoreStoppedHelper();
+            if (firstPass || sinceRestore.ElapsedMilliseconds >= RestoreIntervalMs) { firstPass = false; RestoreStoppedHelper(); sinceRestore.Restart(); }
             // Review MINOR-2: a transient enumeration failure (sharing violation, a vanished directory) never
             // ends the worker thread; the next pass retries.
             string[] files;
@@ -152,7 +158,7 @@ public sealed class SwapBroker : ServiceBase
               }
               catch (Exception) { /* this request is answered on a later pass, or stays visible to the resident as unanswered */ }
             }
-            Thread.Sleep(500);
+            Thread.Sleep(RequestPollMs);
         }
     }
 
@@ -228,12 +234,12 @@ public sealed class SwapBroker : ServiceBase
         return Swap(id, c, stage, nonce, config, deadline);
     }
 
-    // Owner abort (DESIGN §6.5), checked once a second while the helper of this swap runs. Returns true once the
-    // stop request is settled (sent, refused or no longer needed), false to look again next second: the helper is still
+    // Owner abort (DESIGN §6.5), checked every StopPollMs (200 ms) while the helper of this swap runs. Returns true once the
+    // stop request is settled (sent, refused or no longer needed), false to look again on the next poll: the helper is still
     // starting or younger than StopRequest.GraceSeconds (StopRequest.Decide), or a read, a status query or the control
     // call failed in a way that may pass (the resident may still be writing the request; a sharing violation; a
-    // momentary SCM error). Those are tried for StopAttempts seconds, then settled with a refusal code.
-    const int StopAttempts = 10;
+    // momentary SCM error). Those are tried for StopAttempts polls (10 s), then settled with a refusal code.
+    const int StopAttempts = 50; // 50 x StopPollMs (200 ms) = the same 10 s window as the former 10 x 1 s
     bool TryOwnerStop(string id, int stage, string nonce, string configSha256, DateTime startedHelperAt, ref int attempts)
     {
         var file = Path.Combine(root, "broker", "requests", id + ".stop");
@@ -298,7 +304,7 @@ public sealed class SwapBroker : ServiceBase
             {
                 if (ResidentScmV2.ReadStatus().State == 1) { stopped = true; break; }
                 if (!stopSettled) stopSettled = TryOwnerStop(id, stage, nonce, configSha256, startedHelperAt, ref stopAttempts);
-                Thread.Sleep(1000);
+                Thread.Sleep(StopPollMs);
             }
             if (!stopped && ResidentScmV2.ReadStatus().State == 1) stopped = true;
             r["stoppedInTime"] = stopped;
