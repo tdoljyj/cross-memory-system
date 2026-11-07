@@ -5,6 +5,10 @@
 // shadow judgement in every mode) plus `decision` (what this run ended on: WOULD_DO or DECISIONS_V2), `openFrontBatch`
 // (on only, after a confirmed sweep and a confirmed touch running: the executor's one source of a test commit S),
 // `sweep`, `actions`, `requestPause` and the holders' `nodes`.
+// `frontBind` (on only, optional; DESIGN §62.4): during the take-over sweep, with strict confirmed in this run, the one open PR
+// {pr, headSha, claimId} whose body names the single queue head's claim that Native has bound to no PR yet (FRONT_NOT_BOUND).
+// It is a scheduling observation, never publication authority: the resident may run that PR's stage 1 only, which binds the claim
+// through Native's verify; the front, the proofs and stage 8 are then decided exactly as before.
 //
 // wouldDo is one of WOULD_DO:
 //   NOT_ON_DUTY              Native says this binding has no ci-admission role (the standby node)
@@ -87,7 +91,7 @@ export function wouldRevoke({ entries, inMain, frontHeadSha }) {
 
 // revoke: the would-revoke (shadow) or revocation targets (on, revoke-only) of this run; decision defaults to wouldDo.
 export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesReason = null, front, revoke, ledger, decision = null, openFrontBatch = null,
-  sweep = NO_SWEEP, actions = NO_ACTIONS, requestPause = null, nodes = null, nodesDropped = 0 }) {
+  sweep = NO_SWEEP, actions = NO_ACTIONS, requestPause = null, nodes = null, nodesDropped = 0, frontBind = null }) {
   const holder = holders?.[0] ?? null;
   const wouldDo = decideShadow({ onDuty, holders, holder, front, rules, mainSha });
   const facts = {
@@ -105,6 +109,7 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
     nodes: Array.isArray(nodes) ? nodes.slice(0, 64).map(n => ({ node: n.node ?? null, sourceManifestSha256: n.sourceManifestSha256 ?? null, state: n.state ?? null,
       lastHeartbeatAt: n.lastHeartbeatAt ?? null })) : null,
     nodesDropped: Number.isSafeInteger(nodesDropped) && nodesDropped >= 0 ? nodesDropped : 0,
+    ...(frontBind ? { frontBind: { pr: frontBind.pr, headSha: frontBind.headSha, claimId: frontBind.claimId } } : {}),
   };
   return validateTrainFacts(facts);
 }
@@ -128,6 +133,7 @@ const validBatch = b => plain(b) && Number.isSafeInteger(b.pr) && b.pr > 0 && ['
 const validNodes = n => n === null || (Array.isArray(n) && n.length <= 64 && n.every(x => plain(x) && (x.node === null || (typeof x.node === 'string' && x.node.length <= 200))
   && (x.sourceManifestSha256 === null || HEX64.test(x.sourceManifestSha256 ?? '')) && (x.state === null || (typeof x.state === 'string' && x.state.length <= 40))
   && (x.lastHeartbeatAt === null || iso(x.lastHeartbeatAt))));
+const validFrontBind = b => plain(b) && Object.keys(b).length === 3 && Number.isSafeInteger(b.pr) && b.pr > 0 && SHA.test(b.headSha ?? '') && UUID.test(b.claimId ?? '');
 const quiet = f => f.openFrontBatch === null && f.requestPause === null && f.sweep.revoked === 0 && f.sweep.unconfirmed === 0 && !f.sweep.proofWritten
   && Object.entries(NO_ACTIONS).every(([k, v]) => f.actions[k] === v);
 
@@ -146,6 +152,8 @@ export function validateTrainFacts(f) {
     || !(f.requestPause === null || (f.requestPause === 'TRAIN_LANDED_TREE_MISMATCH' && f.decision === 'TRAIN_LANDED_TREE_MISMATCH' && f.mode === 'on'))
     || !(f.openFrontBatch === null || (f.mode === 'on' && validBatch(f.openFrontBatch)))
     || (f.mode === 'on' && (f.decision === 'OPEN_FRONT_BATCH') !== (f.openFrontBatch !== null))
+    || !(f.frontBind === undefined || (f.mode === 'on' && f.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' && validFrontBind(f.frontBind)
+      && f.front?.pr === null && f.front.claimId === f.frontBind.claimId))
     || (f.mode === 'shadow' && (!quiet(f) || f.decision !== f.wouldDo))
     || (f.mode === 'revoke-only' && (f.openFrontBatch !== null || f.actions.touchedRunning || f.actions.adopted || f.actions.returned || f.actions.failedReported || f.actions.keptAlive > 0))
     || JSON.stringify(f).length > MAX_TRAIN_FACTS_BYTES) fail('invalid_train_facts');
