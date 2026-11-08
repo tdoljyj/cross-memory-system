@@ -19,6 +19,7 @@
 // /1 byte for byte, and a /1 record always means S = H.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { canonical, digest } from './proof.mjs';
 import { batchRefV2, claimGeneration, isTrainFrontJobV2, sameClaimGeneration, validateJobV2, validateObservedClaim } from './job-v2.mjs';
 
@@ -46,6 +47,20 @@ async function directoryOk(directory) {
   if (!st.isDirectory() || st.isSymbolicLink()) fail('BATCH_CLAIM_DIRECTORY_INVALID');
 }
 const fileFor = (directory, ref) => { if (!HASH.test(ref)) fail('BATCH_CLAIM_REF_INVALID'); return path.join(directory, `${ref}.json`); };
+// A head/attempt may be repaired once across base, train-test and Source variants too.
+const rewriteRef = job => digest({ repo: job.repo, headSha: job.headSha, attempt: job.attempt });
+const rewriteMarker = (directory, job) => path.join(directory, `${rewriteRef(job)}.rewrite-once`);
+const archiveFor = (directory, job) => path.join(directory, `${batchRefV2(job)}.superseded.json`);
+async function exists(file) { try { await fs.lstat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
+async function withClaimLock(directory, job, operation) {
+  await directoryOk(directory);
+  const lock = path.join(directory, `${rewriteRef(job)}.rewrite-lock`);
+  let handle;
+  try { handle = await fs.open(lock, 'wx', 0o600); }
+  catch (e) { if (e.code === 'EEXIST') fail('BATCH_CLAIM_BUSY'); throw e; }
+  try { return await operation(); }
+  finally { await handle.close(); await fs.unlink(lock); }
+}
 
 function body(job, claim, observedAt) {
   const shape = shapeFor(job);
@@ -83,19 +98,66 @@ async function readRecord(file, job) {
 export async function recordBatchClaim(directory, job, observedClaim, observedAt) {
   validateJobV2(job); validateObservedClaim(observedClaim);
   if (job.role !== 'work-admission') fail('BATCH_CLAIM_RECORD_STAGE_ONE_ONLY');
-  await directoryOk(directory);
-  const file = fileFor(directory, batchRefV2(job));
-  const record = body(job, observedClaim, observedAt);
-  let handle;
-  try { handle = await fs.open(file, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
+  return withClaimLock(directory, job, async () => {
+    const file = fileFor(directory, batchRefV2(job));
+    const record = body(job, observedClaim, observedAt);
+    // A crash after archiving the old record must never reopen create-only admission.
+    if (!(await exists(file)) && await exists(archiveFor(directory, job))) fail('BATCH_CLAIM_REWRITE_INCOMPLETE');
+    let handle;
+    try { handle = await fs.open(file, 'wx', 0o600); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const prior = await readRecord(file, job);
+      if (!prior || !sameClaimGeneration(prior.claim, observedClaim)) fail('BATCH_CLAIM_CHANGED');
+      return { record: prior, created: false };
+    }
+    try { await handle.writeFile(canonical(record)); await handle.sync(); } finally { await handle.close(); }
+    return { record, created: true };
+  });
+}
+
+// Stage one only. The installed publisher supplies the fresh no-publication proof under
+// the same lock used to begin an effect. All uncertainty fails closed; the one-time
+// reservation is intentionally retained after any crash or incomplete replacement.
+export async function rewriteUnpublishedBatchClaim(directory, job, expectedClaim, observedClaim, observedAt, verifyUnpublished) {
+  validateJobV2(job); validateObservedClaim(observedClaim);
+  if (job.role !== 'work-admission' || typeof verifyUnpublished !== 'function') fail('BATCH_CLAIM_RECORD_STAGE_ONE_ONLY');
+  const next = body(job, observedClaim, observedAt);
+  validateBatchClaimRecord(next, job);
+  return withClaimLock(directory, job, async () => {
+    const file = fileFor(directory, batchRefV2(job)), archive = archiveFor(directory, job), marker = rewriteMarker(directory, job);
     const prior = await readRecord(file, job);
-    if (!prior || !sameClaimGeneration(prior.claim, observedClaim)) fail('BATCH_CLAIM_CHANGED');
-    return { record: prior, created: false };
-  }
-  try { await handle.writeFile(canonical(record)); await handle.sync(); } finally { await handle.close(); }
-  return { record, created: true };
+    if (!prior || !sameClaimGeneration(prior.claim, expectedClaim) || sameClaimGeneration(prior.claim, observedClaim)) fail('BATCH_CLAIM_CHANGED');
+    if (await exists(marker) || await exists(archive)) fail('BATCH_CLAIM_CHANGED');
+    await verifyUnpublished();
+    // The callback may await I/O. Keep the generation CAS at the actual replacement boundary.
+    const current = await readRecord(file, job);
+    if (!current || current.integrity !== prior.integrity) fail('BATCH_CLAIM_CHANGED');
+    const reservation = await fs.open(marker, 'wx', 0o600);
+    try { await reservation.writeFile(canonical({ batchRef: batchRefV2(job), oldIntegrity: prior.integrity, newIntegrity: next.integrity })); await reservation.sync(); }
+    finally { await reservation.close(); }
+    const temporary = path.join(directory, `${batchRefV2(job)}.${randomUUID()}.rewrite-tmp`);
+    const staged = await fs.open(temporary, 'wx', 0o600);
+    try { await staged.writeFile(canonical(next)); await staged.sync(); }
+    finally { await staged.close(); }
+    // Both noncanonical names are excluded by the consumer's exact 64-hex.json scan.
+    // A crash in the gap leaves no active claim: every reader and writer fails closed.
+    await fs.rename(file, archive);
+    await fs.rename(temporary, file);
+    return { record: next, rewritten: true };
+  });
+}
+
+// An older in-flight stage-one publisher cannot begin its effect after a repair.
+// Existing effects retain their reconciliation path; this excludes only NEW intents.
+export async function withBatchClaimPublication(directory, job, expectedClaim, operation) {
+  validateJobV2(job);
+  if (job.role !== 'work-admission' || typeof operation !== 'function') fail('BATCH_CLAIM_RECORD_STAGE_ONE_ONLY');
+  return withClaimLock(directory, job, async () => {
+    const current = await readRecord(fileFor(directory, batchRefV2(job)), job);
+    if (!current || !sameClaimGeneration(current.claim, expectedClaim)) fail('BATCH_CLAIM_CHANGED');
+    return operation();
+  });
 }
 
 // Every later stage: the batch claim must exist (stage 1 admitted this batch) and is returned as

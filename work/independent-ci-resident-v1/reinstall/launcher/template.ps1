@@ -23,6 +23,8 @@ elevated Windows PowerShell 5.1 started with -NoProfile. Without -RunApprovedIns
     password once into the credential box on the SECURE desktop (the registrar hands it to the Task Scheduler; it never reaches this
     launcher), then the script qualifies the password-logon companion from the elevated side for up to 8 minutes and otherwise falls
     back to the interactive token by itself. Its result is recorded (companionHeadless); it never undoes the install.
+    M5-b (ADR 0023, $CompanionWslVhdxDirectory set): -CompanionAccount instead; the resident distribution moves to the companion's
+    own account and the registrar gives that account a random password nobody types or sees.
 Every stop writes the raw values to W\launch (terminal.json detail and the *-report.json files).
 #>
 [CmdletBinding()]
@@ -109,7 +111,7 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
 
 function Step-Identity {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-  if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  if ($id.User.Value -cne $OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }   # M5-b (ADR 0023): the Owner; ownerSid is then the companion's account
   if ($env:COMPUTERNAME -cne $NodeHostname) { throw 'NODE_HOST_REQUIRED' }   # the node profile's hostname (pinned by the generator)
   if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 }
@@ -229,7 +231,7 @@ function Test-LeftoversAsPinned($found) {
 # DESIGN section 41.6a: with a configured heartbeat token also -HeartbeatTokenFile (and -HeartbeatBindingId when configured), except
 # -NoHeartbeat: the carry-forward preview before the uninstall, while the old root (and any heartbeat token in it) is still there.
 function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat) {   # r5c: -UpgradeTokenFile unless -NoToken; -Apply with the with-token plan
-  $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid)
+  $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid, '-OperatorSid', $OperatorSid)
   if ($Apply) {
     if ([string]$R5c.applyPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { Stop-Launch 'APPLY_PLAN_NOT_CONFIRMED' $null }
     $a += @('-Apply', '-ExpectedPlanSha256', $R5c.applyPlanSha256)
@@ -272,7 +274,7 @@ function Step-Preflight {
     if (-not $asPinned) { $codes.Add('SPOOL_LEFTOVERS_NOT_AS_REVIEWED'); $report['spool']['recordHashes'] = $found }
     if ($rem.Count) { $codes.Add('SPOOL_REMAINDER_WOULD_BLOCK_V2_ARCHIVES') }
   } catch { $codes.Add('SPOOL_INVENTORY_FAILED'); $report['spool'] = [ordered]@{ error = $_.Exception.Message } }
-  $m = Invoke-Child 'migrate-acl.dry-run' (Join-Path $Stage 'migrate-acl.ps1') @('-ResidentSid', $ResidentSid, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid)
+  $m = Invoke-Child 'migrate-acl.dry-run' (Join-Path $Stage 'migrate-acl.ps1') @('-ResidentSid', $ResidentSid, '-OwnerSid', $OperatorSid, '-ControllerSid', $ControllerSid)
   $mv = Parse-LastLine $m.stdout
   $report['migrateAcl'] = [ordered]@{ exit = $m.exit; status = (Get-Key $mv 'status'); code = (Get-Key $mv 'code'); exceptionType = (Get-Key $mv 'exceptionType')
     planSha256 = (Get-Key $mv 'planSha256'); steps = @(Get-Key $mv 'steps'); stderr = (Tail $m.stderr) }
@@ -675,7 +677,7 @@ function Step-UninstallPreflight {
     if (-not $report['spool'].recordsAsPinned) { $codes.Add('SPOOL_LEFTOVERS_NOT_AS_REVIEWED'); $report['spool']['recordHashes'] = $found }
     if ($rem.Count) { $codes.Add('SPOOL_REMAINDER_WOULD_BLOCK_V2_ARCHIVES') }
   } catch { $codes.Add('SPOOL_INVENTORY_FAILED'); $report['spool'] = [ordered]@{ error = $_.Exception.Message } }
-  $m = Invoke-Child 'migrate-acl.dry-run.before-uninstall' (Join-Path $Stage 'migrate-acl.ps1') @('-ResidentSid', $ResidentSid, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid)
+  $m = Invoke-Child 'migrate-acl.dry-run.before-uninstall' (Join-Path $Stage 'migrate-acl.ps1') @('-ResidentSid', $ResidentSid, '-OwnerSid', $OperatorSid, '-ControllerSid', $ControllerSid)
   $mv = Parse-LastLine $m.stdout
   $report['migrateAcl'] = [ordered]@{ exit = $m.exit; status = (Get-Key $mv 'status'); code = (Get-Key $mv 'code'); exceptionType = (Get-Key $mv 'exceptionType'); planSha256 = (Get-Key $mv 'planSha256'); steps = @(Get-Key $mv 'steps'); stderr = (Tail $m.stderr) }
   if ($m.exit -ne 0 -or (Get-Key $mv 'status') -cne 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN') { $codes.Add('ACL_MIGRATION_PLAN_REFUSED') }
@@ -815,7 +817,8 @@ function Step-CompanionHeadless {
   try {
     $rearm = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\rearm-resident.ps1')
     if ((Get-FileSha $rearm) -cne $RearmSha256) { throw 'INSTALLED_REARM_SCRIPT_NOT_AS_PACKAGED' }
-    $c = Invoke-Child 'companion-headless' $rearm @('-CompanionHeadless')
+    # M5-b (ADR 0023): with a companion account, the account switch (the distribution moves to the account; no password is typed).
+    $c = Invoke-Child 'companion-headless' $rearm $(if ($CompanionWslVhdxDirectory) { @('-CompanionAccount', '-WslVhdxDirectory', $CompanionWslVhdxDirectory) } else { @('-CompanionHeadless') })
     $r.ran = $true; $r.exit = $c.exit; $r.stdout = (Tail $c.stdout)
     $r.status = if ([string]$c.stdout -match '"status":\s*"(COMPANION_HEADLESS_[A-Z_]+)"') { $Matches[1] } else { 'UNREADABLE' }
   } catch { $r.error = $_.Exception.Message }

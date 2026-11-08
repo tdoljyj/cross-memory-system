@@ -121,6 +121,7 @@
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
+import { CLAIM_REASONS } from './queue.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
@@ -3312,11 +3313,11 @@ export class ResidentExecutor {
       const network = s?.kind === 'released' && s.klass !== 'waiting' && s.network === true && this.networkPolicy() !== null;
       // This release counts towards the head's cap unless it is a wait, a supersession, a network release (above), or an environment
       // fault while the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && !UNCAPPED_RELEASES.includes(s.reason) && !network && !(environment && s.breakerState !== 'closed');
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && !UNCAPPED_RELEASES.includes(s.reason) && !CLAIM_REASONS.includes(s.code) && !network && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const networkReleases24h = (this.tickUsage?.networkReleasesByHead?.get(subject.headSha) ?? 0) + (network ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
-      const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
+      const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter, outcomeReason: s.outcomeReason ?? null,
         releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).

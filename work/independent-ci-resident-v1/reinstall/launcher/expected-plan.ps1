@@ -13,7 +13,9 @@ param([Parameter(Mandatory)][ValidateSet('current', 'post-uninstall')][string]$V
       [Parameter(Mandatory)][ValidateSet('true', 'false')][string]$AppKeyTargetExists,
       [Parameter(Mandatory)][ValidateSet('true', 'false')][string]$CiTokenTargetExists,
       [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OwnerSid,       # the node profile's
-      [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid)
+      [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid,
+      [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid)   # M5-b (ADR 0023): the Owner when ownerSid is the companion's account
+if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
 $ErrorActionPreference = 'Stop'
 $root = 'C:\ProgramData\CluedIndependentCI\resident'
 $global:R5Secret = @{
@@ -37,4 +39,4 @@ if ($View -ceq 'post-uninstall') {
     @($Name | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -notcontains $_ } | ForEach-Object { Microsoft.PowerShell.Management\Get-Service -Name $_ -ErrorAction SilentlyContinue })
   }
 }
-& (Join-Path $PackageRoot 'resident\windows\install-resident.ps1') -PackageRoot $PackageRoot -ExpectedPackageManifestSha256 $PackageManifestSha256 -OwnerSid $OwnerSid -ControllerSid $ControllerSid -StartAfterInstall
+& (Join-Path $PackageRoot 'resident\windows\install-resident.ps1') -PackageRoot $PackageRoot -ExpectedPackageManifestSha256 $PackageManifestSha256 -OwnerSid $OwnerSid -ControllerSid $ControllerSid -OperatorSid $OperatorSid -StartAfterInstall

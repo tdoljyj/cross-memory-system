@@ -34,7 +34,9 @@
 #>
 [CmdletBinding()]
 param([switch]$Login, [switch]$Check, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system',
-  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe = 'C:\Program Files\GitHub CLI\gh.exe')
+  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe = 'C:\Program Files\GitHub CLI\gh.exe',
+  # M5-b (ADR 0023): for the companion's own account, elevated (by the Owner): its profile directory and SID (prepare-account prints both).
+  [string]$ProfileDirectory, [string]$AccountSid)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
@@ -76,11 +78,24 @@ function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own
 
 if ($Login.IsPresent -eq $Check.IsPresent) { throw 'ONE_OF_LOGIN_OR_CHECK' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
-if ((New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW' }
-$profileDir = [string]$env:USERPROFILE
+$elevatedNow = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ([bool]$ProfileDirectory -ne [bool]$AccountSid) { throw 'PROFILE_DIRECTORY_AND_ACCOUNT_SID_TOGETHER' }
+if ($AccountSid) {
+  # M5-b: the folder of another account (the companion's), so elevated; never this account, and the profile directory must be the one
+  # Windows has for that SID. The folder's ACL then gives that account (not the Owner) full control.
+  if (-not $elevatedNow) { throw 'RUN_ELEVATED_FOR_THE_COMPANION_ACCOUNT' }
+  if ($AccountSid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z' -or $AccountSid -ceq $me.User.Value) { throw 'ACCOUNT_SID_REFUSED' }
+  $registered = try { [string](Get-ItemProperty -LiteralPath ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $AccountSid) -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath } catch { $null }
+  if (-not $registered -or -not [string]::Equals([Environment]::ExpandEnvironmentVariables($registered), $ProfileDirectory, [StringComparison]::OrdinalIgnoreCase)) { throw 'PROFILE_DIRECTORY_NOT_THE_ACCOUNTS' }
+  $profileDir = $ProfileDirectory
+  $ownerSid = $AccountSid
+} else {
+  if ($elevatedNow) { throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW' }
+  $profileDir = [string]$env:USERPROFILE
+  $ownerSid = $me.User.Value
+}
 if ($profileDir -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'PROFILE_DIRECTORY_REFUSED' }
 $dirs = Get-CompanionGhDirs $profileDir
-$ownerSid = $me.User.Value
 
 if ($Login) {
   if (-not (Test-Path -LiteralPath $GhExe -PathType Leaf)) { throw 'GH_EXE_MISSING' }
