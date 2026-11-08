@@ -145,6 +145,14 @@ class FakeHost:
             return 1, '', 'Test-Path : Access is denied (+ FullyQualifiedErrorId : ItemExistsUnauthorizedAccessError)'
         if script[-1] == 'verify-resident.ps1' and self.verify == 'failed':
             return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'a': {'ok': False}}}), ''
+        if script[-1] == 'verify-resident.ps1' and self.verify == 'input-unreadable':
+            return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'install-receipt': {'ok': True, 'detail': None},
+                                  'verify-inputs': {'ok': False, 'detail': 'VERIFY_INPUT_UNREADABLE'}}}), ''
+        if script[-1] == 'verify-resident.ps1' and self.verify == 'input-unreadable-and-failed':
+            return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'a': {'ok': False},
+                                  'verify-inputs': {'ok': False, 'detail': 'VERIFY_INPUT_UNREADABLE'}}}), ''
+        if script[-1] == 'verify-resident.ps1' and self.verify == 'receipt-changed':
+            return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'install-receipt': {'ok': False, 'detail': 'INSTALL_RECEIPT_CHANGED'}}}), ''
         if script[-1] == 'verify-resident.ps1':
             return 2, json.dumps({'status': 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED', 'checks': {'a': {'ok': True}, 'b': {'ok': 'unreadable'}}}), ''
         raise AssertionError(script)
@@ -289,6 +297,15 @@ class Rehearsal(unittest.TestCase):
         r = self.run_with(FakeHost(self.fx, verify='denied'))
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings']); self.assertTrue(r['checks']['verify']['notRunnableUnelevated'])
         self.assertIn('INSTALLED_VERIFY_NOT_PASSING', codes(self.run_with(FakeHost(self.fx, verify='failed'))))
+
+    def test_installed_verify_bounded_unreadable_input(self):
+        # DESK 2026-11-08: non-elevated, the installed verify cannot open broker\token.json and answers with its bounded JSON
+        # (verify-inputs = VERIFY_INPUT_UNREADABLE) instead of failing without JSON; that is "not runnable unelevated" too.
+        r = self.run_with(FakeHost(self.fx, verify='input-unreadable'))
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings']); self.assertTrue(r['checks']['verify']['notRunnableUnelevated'])
+        # another failed check beside it, or a fixed code other than the unreadable one, is still a finding
+        self.assertIn('INSTALLED_VERIFY_NOT_PASSING', codes(self.run_with(FakeHost(self.fx, verify='input-unreadable-and-failed'))))
+        self.assertIn('INSTALLED_VERIFY_NOT_PASSING', codes(self.run_with(FakeHost(self.fx, verify='receipt-changed'))))
 
     def test_package_verify_output_the_launcher_cannot_read(self):
         open(os.path.join(self.fx.pkg, 'resident', 'windows', 'verify-resident.ps1'), 'w').write(VERIFY_TAIL.replace('checks = $checks', 'results = $checks'))

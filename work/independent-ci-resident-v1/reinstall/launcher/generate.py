@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'fc11af99e6d6969ff913da273192878d515e95ffd1b63164ba67a29d25027ba1'   # f019 receipt-bound terminal evidence and native SC exit codes
+TEMPLATE_SHA = '86f047e52a7f9454a310c7f14bc6b84a951d484f145a17c0962d46b86514bc9c'   # M5 (#1039, ADR 0022): Step-CompanionHeadless; was fc11af99 (f019)
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
