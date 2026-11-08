@@ -73,7 +73,7 @@ function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own
   [ordered]@{ exit = $p.ExitCode; lines = $lines }
 }
 
-if ([int]$Login + [int]$Check -ne 1) { throw 'ONE_OF_LOGIN_OR_CHECK' }
+if ($Login.IsPresent -eq $Check.IsPresent) { throw 'ONE_OF_LOGIN_OR_CHECK' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if ((New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW' }
 $profileDir = [string]$env:USERPROFILE
