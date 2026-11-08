@@ -634,12 +634,13 @@ function Test-BytesEqualClear([byte[]]$copy, [byte[]]$expected) {
 
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-  if ($id.User.Value -cne $OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  $operator = if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }
+  if ($id.User.Value -cne $operator) { throw 'OWNER_ACCOUNT_REQUIRED' }
   if ([Environment]::MachineName -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
   # M5-b (ADR 0023): the companion's account is a local account of this host and not an administrator (the switch's registrar checks
   # groups too, indirect ones included); the operator is not the controller.
-  if ($AccountNode) {
-    if ($OperatorSid -ceq $ControllerSid) { throw 'OPERATOR_IS_THE_CONTROLLER' }
+  if ($operator -cne $OwnerSid) {
+    if ($operator -ceq $ControllerSid) { throw 'OPERATOR_IS_THE_CONTROLLER' }
     Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts'
     $acct = try { Get-LocalUser -SID $OwnerSid -ErrorAction Stop } catch { $null }
     if ($null -eq $acct) { throw 'COMPANION_ACCOUNT_NOT_LOCAL' }
@@ -723,8 +724,10 @@ function Get-AclPlan([string]$res) {
   $rx = '0x1200a9'; $mod = '0x1301bf'; $drop = '0x1000a2'
   # M5-b (ADR 0023): $op reads where the companion's account reads ($OwnerSid); the Owner's own requests ($drop, train-review) are his.
   # Without a companion account $op is empty and every rule is the one before M5-b.
-  $op = if ($AccountNode) { "(A;OICI;$rx;;;$OperatorSid)" } else { '' }
-  $opDrop = if ($AccountNode) { "(A;;$drop;;;$OperatorSid)(A;OIIO;0x120089;;;$OperatorSid)" } else { '' }
+  # (Read through Test-Path: the offline tests load this function alone, where -OperatorSid does not exist.)
+  $operator = if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }
+  $op = if ($operator -cne $OwnerSid) { "(A;OICI;$rx;;;$operator)" } else { '' }
+  $opDrop = if ($operator -cne $OwnerSid) { "(A;;$drop;;;$operator)(A;OIIO;0x120089;;;$operator)" } else { '' }
   [ordered]@{
     # The generic helper (as clued-control) opens every parent of its inputs with READ_CONTROL before it reads
     # them (FormalPublicBoundaryV2.Parents); this folder only, no inheritance, no access to any content.
@@ -738,7 +741,7 @@ function Get-AclPlan([string]$res) {
     # Accepted residual (review R3 MINOR 7): unlike owner\, the unelevated Owner may write here, so any process of the Owner's session
     # (an Agent too) could write the mark; the worst it does is start the 90-day pruning of train-shadow records early (none is older
     # than 90 days at step 9), never a green, a revocation or a batch.
-    'owner\train-review' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OperatorSid)(A;OICI;$rx;;;$ControllerSid)"   # M5-b: the Owner's mark, not the companion's
+    'owner\train-review' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$operator)(A;OICI;$rx;;;$ControllerSid)"   # M5-b: the Owner's mark, not the companion's
     'source'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)$op"
     'helpers'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # the installed generic helper (broker config pin)
     'record'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)$op"   # claim-free install record: only admins write
@@ -767,7 +770,7 @@ function Get-AclPlan([string]$res) {
     'upgrader'                  = "$base"                                                 # its code, node, host and config: SYSTEM and Administrators only
     'secrets'                   = "$base"                                                 # resident-upgrade.token: SYSTEM and Administrators only
     'upgrade'                   = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"      # current.json, status.json, ops, staged (the Owner's WSL reads staged)
-    'upgrade\inbox'             = "$base(A;;$drop;;;$OperatorSid)(A;OIIO;0x120089;;;$OperatorSid)(A;OIIO;0x120089;;;OW)"   # the 'inbox' rule: Owner create-only
+    'upgrade\inbox'             = "$base(A;;$drop;;;$operator)(A;OIIO;0x120089;;;$operator)(A;OIIO;0x120089;;;OW)"   # the 'inbox' rule: Owner create-only
     'upgrade\mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
     'upgrade\mailbox\requests'  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"      # the upgrader writes, the companion reads
     'upgrade\mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)$op"     # the companion answers (and version-facts.json)
@@ -1138,7 +1141,7 @@ function Build-Plan {
     deletesAnything = $false
   }
   # M5-b (ADR 0023): only on a node whose companion runs as its own account (so every other node's plan is the one it was).
-  if ($AccountNode) {
+  if ((Test-Path variable:AccountNode) -and $AccountNode) {
     $p.companionAccount = [ordered]@{ companionSid = $OwnerSid; operatorSid = $OperatorSid; record = $CompanionAccountFile
       spool = [ordered]@{ folders = $CompanionSpoolFolders; rule = 'the operator''s write entries move to the companion account; its read entries are kept and copied' }
       brokerStableDigest = 'read as LocalSystem (Source v2 admits LocalSystem or the elevated node-profile owner)'; passwordLogon = 'rearm-resident.ps1 -CompanionAccount (random password, never typed)' }

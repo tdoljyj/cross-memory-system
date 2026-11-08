@@ -451,6 +451,24 @@ class Config(unittest.TestCase):
             with self.assertRaises(rconfig.ConfigError, msg=bad):
                 self.load(dict(self.doc, signer=bad))
 
+    # M5-b (ADR 0023): the Owner who runs the launcher (operatorSid) and where the resident distribution moves; both or neither
+    def test_companion_account_operator_and_vhdx_directory(self):
+        op = 'S-1-5-21-858977881-4031698862-3006450925-1000'
+        ca = {'wslVhdxDirectory': 'D:\\clued-resident\\wsl\\CluedResident-Linux'}
+        got = self.load(dict(self.doc, operatorSid=op, companionAccount=ca))
+        self.assertEqual((got['operatorSid'], got['companionAccount']), (op, ca))
+        plain = self.load(self.doc)
+        self.assertEqual((plain['operatorSid'], plain['companionAccount']), (None, None))
+        for bad, code in ((dict(self.doc, operatorSid=op), 'CONFIG_COMPANION_ACCOUNT_NEEDS_BOTH'),
+                          (dict(self.doc, companionAccount=ca), 'CONFIG_COMPANION_ACCOUNT_NEEDS_BOTH'),
+                          (dict(self.doc, operatorSid='S-1-5-18', companionAccount=ca), 'CONFIG_OPERATOR_SID'),
+                          (dict(self.doc, operatorSid=op, companionAccount={'wslVhdxDirectory': 'D:\\a b'}), 'CONFIG_COMPANION_ACCOUNT'),
+                          (dict(self.doc, operatorSid=op, companionAccount={'wslVhdxDirectory': 'D:\\a\\..\\b'}), 'CONFIG_COMPANION_ACCOUNT'),
+                          (dict(self.doc, operatorSid=op, companionAccount=dict(ca, more=1)), 'CONFIG_COMPANION_ACCOUNT')):
+            with self.assertRaises(rconfig.ConfigError, msg=bad) as e:
+                self.load(bad)
+            self.assertEqual(e.exception.code, code)
+
     # DESIGN 41.6a: the optional heartbeat token file (path only) and, only with it, its binding id
     def test_heartbeat_token_file_and_binding_id(self):
         bid = '3b0c8a7e-1111-4222-8333-444455556666'
