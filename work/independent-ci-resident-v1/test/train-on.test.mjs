@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, trainLandingMode, trainBatchMax, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
-import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, chainOfFront, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput } from '../src/train.mjs';
+import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, chainOfFront, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput,
+  trainNodesView, parseTrainNodes } from '../src/train.mjs';
+import { fleetSourceCheck } from '../rollout/precheck.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
@@ -999,4 +1001,44 @@ test('push codes (ADR 0018): every stage-8 landing code is in the resident table
   }
   assert.equal(failureRow({ code: 'TRAIN_LANDING_CHECK_FAILED', stage: 8 }).class, 'deterministic-pr', 'bisection or touch failed follows');
   for (const c of ['TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']) assert.equal(failureRow({ code: c, stage: 8 }).class, 'clean-final');
+});
+
+// Defect 15894c2a (end to end, resident side): the nodes an on-mode stage 10 compared in its §41.6 Source check reach the status snapshot
+// (train.nodes) the NON-elevated upgrade precheck reads; there the precheck's comparison against a target refuses while another node heard
+// within 24 hours runs another Source, and passes once it runs the target. A run that read no nodes (shadow, not on duty) keeps the list.
+test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; the precheck compares the target against it', async t => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const target = 'd'.repeat(64), heard = new Date(T0 - 5 * MIN).toISOString();
+  let peerSource = null, mode = 'on';
+  const nodes = own => [{ node: 'desk', sourceManifestSha256: own, state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() },
+    { node: 'turing', sourceManifestSha256: peerSource, state: 'NORMAL', lastHeartbeatAt: heard }];
+  let own = null;
+  const f = await executorFixture(t, { policy: policyV8(), status, engine: fakeEngine({ train: m => answer(m, mode === 'on' ? { ...DONE, decision: 'NO_FRONT', nodes: nodes(own), nodesDropped: 0 } : DONE, 0) }) });
+  own = f.exec.policy.ciSourceManifestSha256;
+  peerSource = own;
+  await f.exec.tick();
+  const onDisk = () => JSON.parse(JSON.stringify(status.snapshot())).train.nodes; // what precheck.mjs reads from state\status.json
+  const read = parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.nodes;
+  assert.deepEqual([read.at, read.sourceManifestSha256, read.nodes.map(n => [n.node, n.sourceManifestSha256, n.lastHeartbeatAt])],
+    [new Date(T0).toISOString(), own, [['desk', own, new Date(T0).toISOString()], ['turing', own, heard]]]);
+  const check = () => fleetSourceCheck({ view: parseTrainNodes(onDisk()), target, selfNames: ['desk'], now: T0 + MIN });
+  assert.deepEqual([check().status, check().upgradeFirst], ['MISMATCH', ['turing']], 'turing still runs the current Source: it goes first');
+  // turing installs the target; the next on-mode run reads it
+  peerSource = target;
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  assert.equal(check().status, 'PASS');
+  assert.equal(parseTrainNodes(onDisk()).at, new Date(T0).toISOString(), 'facts carry the run time the fixture gave');
+});
+
+test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list only; a malformed list is none', () => {
+  const own = 'e'.repeat(64);
+  const facts = o => answer('on', { decision: 'NO_FRONT', nodes: [{ node: 'turing', sourceManifestSha256: 'c'.repeat(64), state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() }], nodesDropped: 2, ...o }, 0).train;
+  const v = trainNodesView(facts(), own);
+  assert.deepEqual([v.sourceManifestSha256, v.dropped, v.nodes.length], [own, 2, 1]);
+  assert.equal(trainNodesView(facts({ nodes: null }), own), null, 'a run that read no nodes');
+  assert.equal(trainNodesView(answer('shadow', {}, 0).train, own), null, 'shadow reads no nodes');
+  assert.equal(trainNodesView(facts(), 'not-a-hash'), null);
+  assert.equal(parseTrainNodes({ ...v, nodes: [{ node: 'x', sourceManifestSha256: 'zz', state: null, lastHeartbeatAt: null }] }), null);
+  assert.deepEqual(parseTrainNodes(JSON.parse(JSON.stringify(v))), v);
 });

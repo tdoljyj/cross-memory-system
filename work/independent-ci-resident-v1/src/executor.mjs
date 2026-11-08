@@ -139,7 +139,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -449,6 +449,8 @@ export class ResidentExecutor {
     // Defect b0426896: the mode of this duty's newest stage-10 run (trainResumeOwed).
     this.trainLastMode = null;
     this.trainSweep = null;
+    // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView), the status view's train.nodes.
+    this.trainNodes = null;
     this.revokeHead = null;
     this.trainFrontOutcome = null;
     this.frontBatches = new Map();
@@ -1634,6 +1636,7 @@ export class ResidentExecutor {
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
     }
     if (this.trainSweep) t.sweep = this.trainSweep;
+    if (this.trainNodes) t.nodes = this.trainNodes;
     if (this.revokeHeadView) t.revokeHead = this.revokeHeadView;
     if (this.trainOnSince !== null) t.onSince = new Date(this.trainOnSince).toISOString();
     if (this.policy.train.enabled === 'on' && !this.trainEligible()) t.notOnDuty = true;
@@ -2287,6 +2290,9 @@ export class ResidentExecutor {
     const effects = acting && r?.ok === true && o?.status === 'TRAIN_FACTS' && Number.isSafeInteger(o.sideEffects) && o.sideEffects >= 0;
     const facts = r?.ok === true && (quiet || effects) ? trainSummary(r.train) : null;
     const summary = facts && facts.mode === mode ? facts : null;
+    // A view for the upgrade precheck only (defect 15894c2a); a run that read no nodes keeps the older list, whose `at` ages.
+    const nodesView = summary ? trainNodesView(r.train, this.policy.ciSourceManifestSha256) : null;
+    if (nodesView) this.trainNodes = nodesView;
     this.report(s => s.noteTrain?.({ startedAt: trainFrom, endedAt: this.clock(), mode, sweep: summary?.sweep ?? null }));
     const failureCode = summary ? null : (r?.ok === true ? 'TRAIN_FACTS_UNCONFIRMED' : validCode(r?.code));
     const clean = proven && ((quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))

@@ -9,6 +9,8 @@ import { canonicalJson, sha256 } from '../../src/canonical.mjs';
 import { upgraderCopy } from '../../tools/build-package.mjs';
 import { DECISION, NODE, buildTestPackage, installGeneration1, tempDir } from '../../upgrader/test/fixtures.mjs';
 import { precheck } from '../precheck.mjs';
+import { trainNodesView } from '../../src/train.mjs';
+import { trainFacts } from '../../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const RESIDENT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const T = Date.parse('2026-11-01T08:00:00.000Z');
@@ -18,8 +20,9 @@ const TOOL_MANIFEST = 'linux/upgrade-v1/manifest.json';
 const FROZEN_LINUX = { [TOOL]: '#!/usr/bin/python3.12 -I\n# tool\n', [SIGNER]: '// signer\n', [TOOL_MANIFEST]: '{"files":[]}\n' };
 
 // A package whose `upgrader` is this tree's copy (one copy file changed with `change`, or every copy file AND the manifest list
-// rewritten with `forge`), carrying the three frozen Linux upgrade files (`linux` overrides some of them).
-async function pkgWithCopy(dir, tag, { change = null, forge = null, linux = {}, ...options } = {}) {
+// rewritten with `forge`), carrying the three frozen Linux upgrade files (`linux` overrides some of them). trainMode: the policy's
+// train.enabled (null: no train key at all).
+async function pkgWithCopy(dir, tag, { change = null, forge = null, linux = {}, trainMode = 'off', ...options } = {}) {
   const copy = await upgraderCopy(RESIDENT);
   let { manifest, manifestSha256 } = copy;
   const bytes = new Map();
@@ -33,6 +36,11 @@ async function pkgWithCopy(dir, tag, { change = null, forge = null, linux = {}, 
   }
   const frozen = { ...FROZEN_LINUX, ...linux };
   const pkg = await buildTestPackage(dir, { tag, upgrader: { manifestSha256, files: manifest.files }, ...options, mutate: (m, files, put) => {
+    const policyFile = m.files.find(f => f.target === 'config\\policy.json');
+    const policy = JSON.parse(files.get(policyFile.path).toString('utf8'));
+    if (trainMode !== null) policy.train = { enabled: trainMode };
+    put(policyFile.path, canonicalJson(policy) + '\n');
+    policyFile.sha256 = sha256(files.get(policyFile.path));
     for (const [p, text] of Object.entries(frozen)) {
       put(p, text);
       m.linux.files.push({ path: p, sha256: sha256(files.get(p)), bytes: files.get(p).length });
@@ -89,6 +97,90 @@ test('precheck: an admin-only slot is a stand-in, the rest is still decided', as
   const r = await run({ readSlot });
   assert.equal(r.status, 'PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS');
   assert.deepEqual(r.unreadableSlots, ['helpers\\controller-formal-generic-v2.exe']);
+});
+
+// Defect 15894c2a: the precheck before a train-on upgrade compares the OTHER nodes' Sources with the target, on the list stage 10 last
+// read from Native (ci_nodes_status). The status snapshot's train.nodes is written exactly as the executor writes it: stage 10's facts
+// (train-facts.mjs, as train-maintenance.mjs fills them) through train.mjs#trainNodesView.
+const MIN = 60_000, HOUR = 60 * MIN;
+const peer = (node, source, heardAgo) => ({ node, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: heardAgo === null ? null : new Date(T - heardAgo).toISOString() });
+async function writeNodes(root, { own, nodes, at = T }) {
+  const facts = trainFacts({ mode: 'on', at: new Date(at).toISOString(), onDuty: true, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null,
+    decision: 'NO_FRONT', nodes, nodesDropped: 0 });
+  const view = trainNodesView(facts, own);
+  assert.ok(view, 'stage 10 facts give a nodes view');
+  await fs.mkdir(path.join(root, 'state'), { recursive: true });
+  await fs.writeFile(path.join(root, 'state', 'status.json'), JSON.stringify({ node: { name: NODE, mode: 'ACTIVE' }, train: { enabled: 'on', last: null, nodes: view } }));
+}
+
+test('defect 15894c2a: target on, the other node heard within 24 hours already runs the target Source: PASS', async t => {
+  const { base, next, root, run } = await world(t, { trainMode: 'on' });
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('turing', next.ciSource, 5 * MIN)] });
+  const before = await listing(root);
+  const r = await run();
+  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
+  assert.deepEqual([r.fleetSourceReadiness.status, r.fleetSourceReadiness.targetMode, r.fleetSourceReadiness.targetCiSourceManifestSha256, r.fleetSourceReadiness.staleNodesIgnored],
+    ['PASS', 'on', next.ciSource, []]);
+  assert.ok(!r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
+  assert.deepEqual(await listing(root), before, 'nothing is written');
+});
+
+test('defect 15894c2a: target on, the other node heard within 24 hours runs another Source: refused, and it is named to go first', async t => {
+  const { base, next, root, run } = await world(t, { trainMode: 'on' });
+  // today's field case: this node goes to the next generation while the other one, heard 5 minutes ago, still runs the current Source
+  // (this node's own entry, under any letter case, is the one being upgraded and is never compared)
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE.toUpperCase(), base.ciSource, MIN), peer('turing', base.ciSource, 5 * MIN)] });
+  const r = await run();
+  assert.deepEqual([r.status, r.code, r.detail, r.localChecks], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH', { upgradeFirst: ['turing'] }, 'PRECHECK_PASS'], JSON.stringify(r));
+  assert.equal(r.fleetSourceReadiness.status, 'MISMATCH');
+  assert.deepEqual(r.fleetSourceReadiness.mismatchedNodes, [{ node: 'turing', sourceManifestSha256: base.ciSource, lastHeartbeatAt: new Date(T - 5 * MIN).toISOString() }]);
+  assert.match(r.advice, /先给 turing 装目标 Source/);
+  assert.match(r.advice, new RegExp(next.ciSource.slice(0, 12)));
+  assert.equal(r.fleetSourceReadiness.ownerStatusUrl, 'https://kooyumi.pixelgrav.com/bindings/failover');
+  // a node on a third Source is just as much a mismatch; one that reports no Source (§41.6 "no record") is not compared
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('turing', 'c'.repeat(64), 23 * HOUR), peer('fresh', null, MIN)] });
+  const s = await run();
+  assert.deepEqual([s.status, s.code, s.detail.upgradeFirst], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH', ['turing']]);
+});
+
+test('defect 15894c2a: target on, the other node on another Source was not heard for over 24 hours: not compared, PASS with a notice', async t => {
+  const { base, root, run } = await world(t, { trainMode: 'on' });
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('turing', base.ciSource, 25 * HOUR), peer('never', base.ciSource, null)] });
+  const r = await run();
+  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
+  assert.equal(r.fleetSourceReadiness.status, 'PASS');
+  assert.deepEqual(r.fleetSourceReadiness.staleNodesIgnored.map(n => n.node), ['turing', 'never']);
+  assert.ok(r.warnings.includes('FLEET_STALE_NODES_IGNORED'));
+});
+
+test('defect 15894c2a: no list the precheck can trust is never a fleet PASS (a standby has none); the target mode is the package\'s', async t => {
+  const { base, next, root, run } = await world(t, { trainMode: 'on' });
+  const unverified = async reason => {
+    const r = await run();
+    assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'PRECHECK_PASS', 'UNVERIFIED', reason], JSON.stringify(r));
+    assert.ok(r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
+    return r;
+  };
+  await unverified('NODES_VIEW_ABSENT'); // no status.json at all
+  await writeNodes(root, { own: base.ciSource, at: T - 2 * HOUR, nodes: [peer(NODE, base.ciSource, 2 * HOUR), peer('turing', base.ciSource, 2 * HOUR)] });
+  await unverified('NODES_VIEW_STALE');
+  await writeNodes(root, { own: base.ciSource, nodes: [peer('someone-else', base.ciSource, MIN), peer('turing', next.ciSource, MIN)] });
+  assert.deepEqual((await unverified('SELF_NOT_IN_NODES_VIEW')).fleetSourceReadiness.nodes.map(n => n.node), ['someone-else', 'turing']);
+  // the target's mode, absent or not one of off | shadow | on, is never "not required"
+  for (const trainMode of [null, 'ON']) {
+    const w = await world(t, { trainMode });
+    const r = await w.run();
+    assert.deepEqual([r.status, r.fleetSourceReadiness.reason, r.fleetSourceReadiness.targetMode], ['PRECHECK_PASS_LOCAL_ONLY', 'TARGET_TRAIN_MODE_UNREADABLE', null]);
+  }
+});
+
+test('defect 15894c2a: a target with the train shadow or off needs no fleet check, so a shadow rollback is never held by it', async t => {
+  for (const trainMode of ['shadow', 'off']) {
+    const { base, root, run } = await world(t, { trainMode });
+    await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('turing', base.ciSource, MIN)] });
+    const r = await run();
+    assert.deepEqual([r.status, r.fleetSourceReadiness.status, r.fleetSourceReadiness.targetMode], ['PRECHECK_PASS', 'NOT_REQUIRED', trainMode]);
+  }
 });
 
 test('precheck: a changed frozen module is a channel change, and the changed files are named', async t => {

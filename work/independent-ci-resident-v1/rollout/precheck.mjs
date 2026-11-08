@@ -26,8 +26,16 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonicalJson } from '../src/canonical.mjs';
+import { parseTrainNodes } from '../src/train.mjs';
 
 export const PRECHECK_CONTRACT = 'clued.independent-ci.upgrade-precheck/1';
+// Defect 15894c2a: stage 10's §41.6 Source check (train-maintenance.mjs SOURCE_HEARTBEAT_WINDOW_MS): every node heard within 24 hours
+// must run the Source the on-duty node runs, or the train stops (TRAIN_SOURCE_MISMATCH). The precheck runs the same comparison
+// against the TARGET Source, on the nodes list stage 10 last read from Native (status.json train.nodes; train.mjs#trainNodesView).
+export const FLEET_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
+// A list older than this says too little about now (stage 10 on duty reads it every maintenanceEveryMs, 10 minutes by default).
+export const FLEET_VIEW_FRESH_MS = 60 * 60_000;
+export const OWNER_NODES_URL = 'https://kooyumi.pixelgrav.com/bindings/failover';
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const STAND_IN = 'f'.repeat(64);
@@ -64,6 +72,30 @@ function diffFiles(a, b) {
   const n = new Map(b.map(f => [f.path, f.sha256]));
   return [...new Set([...m.keys(), ...n.keys()])].sort().filter(p => m.get(p) !== n.get(p))
     .map(p => ({ path: p, installed: m.get(p) ?? null, package: n.get(p) ?? null }));
+}
+
+// Defect 15894c2a, pure: would the fleet still pass stage 10's Source check once THIS node runs `target`? view: train.mjs#parseTrainNodes
+// of this node's status.json (null: none). selfNames: this node's names (its own entry is the one being upgraded, never compared).
+//   PASS        every other node heard within 24 hours already runs `target` (or reports no Source: §41.6 "no record");
+//   MISMATCH    some do not: after this upgrade the train stops with TRAIN_SOURCE_MISMATCH until they run `target` too, so they go first
+//               (upgradeFirst). Rolling order (§42): the standby nodes first, the ci-admission holder last; only the holder runs stage
+//               10 on duty, so only it has a fresh list and only it is refused here: the standby's precheck cannot deadlock it;
+//   UNVERIFIED  no usable list (none, older than FLEET_VIEW_FRESH_MS, or this node is not in it): the comparison was not made.
+// A node not heard within 24 hours is not compared (as stage 10) and is named in staleNodesIgnored.
+export function fleetSourceCheck({ view, target, selfNames = [], now }) {
+  const base = { targetCiSourceManifestSha256: target, viewAt: view?.at ?? null };
+  const row = n => ({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, lastHeartbeatAt: n.lastHeartbeatAt });
+  if (!view) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_ABSENT' };
+  if (!(Math.abs(now - Date.parse(view.at)) <= FLEET_VIEW_FRESH_MS)) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_STALE' };
+  const names = new Set(selfNames.filter(s => typeof s === 'string' && s.length > 0).map(s => s.toLowerCase()));
+  const isSelf = n => typeof n.node === 'string' && names.has(n.node.toLowerCase());
+  if (!view.nodes.some(isSelf)) return { ...base, status: 'UNVERIFIED', reason: 'SELF_NOT_IN_NODES_VIEW', nodes: view.nodes.map(row) };
+  const differ = view.nodes.filter(n => !isSelf(n) && n.sourceManifestSha256 !== null && n.sourceManifestSha256 !== target);
+  const heard = n => n.lastHeartbeatAt !== null && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS;
+  const blocking = differ.filter(heard), stale = differ.filter(n => !heard(n));
+  const extra = { staleNodesIgnored: stale.map(row), ...(view.dropped > 0 ? { droppedEntries: view.dropped } : {}) };
+  if (blocking.length) return { ...base, status: 'MISMATCH', upgradeFirst: blocking.map(n => n.node), mismatchedNodes: blocking.map(row), ...extra };
+  return { ...base, status: 'PASS', ...extra };
 }
 
 // readSlot: how one live slot is read (tests stand in an access-denied file; the Owner's session meets real ones).
@@ -127,10 +159,16 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
   const nodeName = policy?.node?.nodeName;
   const config = { node: nodeName, nodeProfileSha256: policy?.nodeProfileSha256, ownerSid: policy?.companion?.userSid, timeouts: { drainMaxMinutes: 120 } };
   const request = { node: nodeName, packageManifestSha256: pkgSha, packageDirectory: path.resolve(pkgDir), acceptanceDecisionRef: acceptance, drainMaxMinutes: 120 };
-  let plan;
+  let plan, targetPolicy = null;
   try {
     const pkg = await readPackageOnce(path.resolve(pkgDir), pkgSha);
     plan = buildPlan(node, pkg.manifest, { request, packageFiles: pkg.bytesByPath, opId: ZERO_UUID, config, requestSha256: '0'.repeat(64) }).plan;
+    // The target's train mode, from the same held, package-hash-verified bytes buildPlan read (the installed mode says nothing about
+    // what this upgrade turns on). Unreadable: null, which is never "fleet check not required".
+    try {
+      const policyFile = pkg.manifest.files.find(f => f.target === 'config\\policy.json');
+      targetPolicy = JSON.parse(pkg.bytesByPath.get(policyFile.path).toString('utf8'));
+    } catch { targetPolicy = null; }
   } catch (error) {
     if (typeof error?.code === 'string' && error.code.startsWith('UPGRADE_')) return done('PRECHECK_REFUSED', { code: error.code, detail: error.detail ?? null });
     throw error;
@@ -157,13 +195,41 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
     const up = JSON.parse((await fs.readFile(path.join(root, 'upgrade', 'status.json'))).toString('utf8'));
     if (up?.op && OP_MOVING.includes(up.op.state)) result.warnings.push('ANOTHER_UPGRADE_OP_ACTIVE');
   } catch { /* no status yet */ }
+  let st = null;
   try {
-    const st = JSON.parse((await fs.readFile(path.join(root, 'state', 'status.json'))).toString('utf8'));
+    st = JSON.parse((await fs.readFile(path.join(root, 'state', 'status.json'))).toString('utf8'));
     if (st?.halt) result.warnings.push('RESIDENT_HALTED');
     if (st?.versions && st.versions.consistent === false) result.warnings.push('VERSIONS_NOT_CONSISTENT');
     if (st?.node?.mode === 'ACTIVE') result.warnings.push('NODE_HOLDS_CI_ADMISSION_HAND_OVER_FIRST');
   } catch { result.warnings.push('RESIDENT_STATUS_UNREADABLE'); }
-  return done(result.unreadableSlots.length ? 'PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS' : 'PRECHECK_PASS');
+  const localChecks = result.unreadableSlots.length ? 'PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS' : 'PRECHECK_PASS';
+
+  // Defect 15894c2a: a target with the train on must leave every node heard within 24 hours on one Source (§41.6), or stage 10 stops.
+  const target = plan.target.ciSourceManifestSha256;
+  const targetMode = targetPolicy?.train?.enabled;
+  const knownMode = ['off', 'shadow', 'on'].includes(targetMode);
+  if (knownMode && targetMode !== 'on') {
+    result.fleetSourceReadiness = { status: 'NOT_REQUIRED', targetMode, targetCiSourceManifestSha256: target };
+    return done(localChecks);
+  }
+  const fleet = knownMode
+    ? fleetSourceCheck({ view: parseTrainNodes(st?.train?.nodes), target, now: clock(),
+      selfNames: [policy?.node?.nodeName, policy?.node?.hostname, st?.node?.name] })
+    : { targetCiSourceManifestSha256: target, viewAt: null, status: 'UNVERIFIED', reason: 'TARGET_TRAIN_MODE_UNREADABLE' };
+  result.fleetSourceReadiness = { ...fleet, targetMode: knownMode ? targetMode : null,
+    ...(fleet.status === 'PASS' ? {} : { ownerStatusUrl: OWNER_NODES_URL }) };
+  if (fleet.staleNodesIgnored?.length) result.warnings.push('FLEET_STALE_NODES_IGNORED');
+  if (fleet.status === 'MISMATCH') {
+    const names = fleet.upgradeFirst.map(n => n ?? '(unnamed)').join(', ');
+    return done('PRECHECK_REFUSED', { code: 'FLEET_SOURCE_MISMATCH', detail: { upgradeFirst: fleet.upgradeFirst }, localChecks,
+      advice: `先给 ${names} 装目标 Source ${target.slice(0, 12)} 的包（待命节点先升、当班节点最后升），再升本机；否则本机升级后合并列车以 TRAIN_SOURCE_MISMATCH 停车，直到它们也装上同一个 Source。` });
+  }
+  if (fleet.status === 'UNVERIFIED') {
+    // No list this precheck may trust (a standby has none: only the ci-admission holder's stage 10 reads Native). Never a PASS of the fleet.
+    result.warnings.push('FLEET_SOURCE_UNVERIFIED');
+    return done('PRECHECK_PASS_LOCAL_ONLY', { localChecks });
+  }
+  return done(localChecks);
 }
 
 export async function main(argv, { log = s => process.stdout.write(s + '\n') } = {}) {

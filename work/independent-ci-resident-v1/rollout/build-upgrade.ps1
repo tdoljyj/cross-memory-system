@@ -166,5 +166,10 @@ $request = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-P
 ([ordered]@{ status = $(if ($preExit -eq 0) { 'UPGRADE_PACKAGE_BUILT' } else { 'UPGRADE_PACKAGE_BUILT_PRECHECK_REFUSED' }); node = $cfg.node; final = [bool]$Final
   package = $pkg; packageManifestSha256 = $pkgSha; ciSourceManifestSha256 = $m.ciSourceManifestSha256; residentManifestSha256 = $m.residentManifestSha256
   grantResource = ('ci-resident:' + $cfg.node + '/' + $pkgSha); rolesCopySource = $rolesRes.copySource; precheck = $p.status; precheckCode = $(if ($p.PSObject.Properties.Name -contains 'code') { $p.code } else { $null })
-  requestCommand = $(if ($Final -and $preExit -eq 0) { $request } else { $null }) } | ConvertTo-Json -Depth 4)
+  # defect 15894c2a: the fleet Source comparison (and which node goes first) and the local result behind a LOCAL_ONLY pass or a fleet refusal
+  precheckWarnings = @(if ($p.PSObject.Properties.Name -contains 'warnings') { $p.warnings })
+  precheckLocalChecks = $(if ($p.PSObject.Properties.Name -contains 'localChecks') { $p.localChecks } else { $p.status })
+  fleetSourceReadiness = $(if ($p.PSObject.Properties.Name -contains 'fleetSourceReadiness') { $p.fleetSourceReadiness } else { $null })
+  precheckAdvice = $(if ($p.PSObject.Properties.Name -contains 'advice') { $p.advice } else { $null })
+  requestCommand = $(if ($Final -and $preExit -eq 0) { $request } else { $null }) } | ConvertTo-Json -Depth 6)
 if ($preExit -ne 0) { exit 1 }
