@@ -34,8 +34,15 @@ $codeOf = { param([string]$t) $i = $t.IndexOf("`n#>"); if ($t.StartsWith('<#') -
 
 # 2. One text.
 $sharedUpgrade = @('Get-SupervisorAction', 'Get-CompanionTaskSddl', 'Get-CompanionLaunchArguments', 'Get-CompanionGhDirs', 'Get-CompanionPathDirs', 'Get-CompanionLaunchJson', 'Write-CompanionLaunch', 'Get-NotifierAction', 'Register-NotifierTask', 'Get-CompanionTaskFacts')
-foreach ($name in $sharedUpgrade) { Yes ($functions.ContainsKey('upgrade-apply.ps1:' + $name) -and $functions['upgrade-apply.ps1:' + $name] -ceq $functions['companion-headless.ps1:' + $name]) ('shared-upgrade:' + $name) }
-foreach ($name in @($sharedUpgrade + 'Register-CompanionTaskInteractive')) { Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['companion-headless.ps1:' + $name]) ('shared-install:' + $name) }
+# The frozen upgrade channel's Get-CompanionTaskFacts keeps the text comparison of the DACL (2026-11-08, 29th DESK reinstall: the
+# non-frozen copies compare it as a security descriptor, Test-CompanionTaskDacl); apart from that one line it is the same text.
+$frozenDacl = @{ 'Get-CompanionTaskFacts' = @('if (-not (Test-CompanionTaskDacl $dacl $ownerSid)) {', 'if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) {') }
+foreach ($name in $sharedUpgrade) {
+  $mine = $functions['companion-headless.ps1:' + $name]
+  if ($frozenDacl.ContainsKey($name)) { Yes ($mine.Contains($frozenDacl[$name][0])) ('frozen-difference-present:' + $name); $mine = $mine.Replace($frozenDacl[$name][0], $frozenDacl[$name][1]) }
+  Yes ($functions.ContainsKey('upgrade-apply.ps1:' + $name) -and $functions['upgrade-apply.ps1:' + $name] -ceq $mine) ('shared-upgrade:' + $name)
+}
+foreach ($name in @($sharedUpgrade + 'Register-CompanionTaskInteractive' + 'Test-CompanionTaskDacl')) { Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['companion-headless.ps1:' + $name]) ('shared-install:' + $name) }
 Yes ($functions['companion-gh-login.ps1:Get-CompanionGhDirs'] -ceq $functions['companion-headless.ps1:Get-CompanionGhDirs']) 'shared-gh-login:Get-CompanionGhDirs'
 Yes (-not $functions.ContainsKey('upgrade-apply.ps1:Register-CompanionTaskInteractive')) 'upgrade-has-no-companion-task-registration'
 foreach ($file in @('install-resident.ps1', 'upgrade-apply.ps1')) {
@@ -50,6 +57,41 @@ foreach ($d in @('config', 'install', 'runtime', ('resident\' + ('b' * 64) + '\s
 $sa = Get-SupervisorAction 'C:\ProgramData\CluedIndependentCI\resident'
 Yes ($sa.path -ceq 'C:\ProgramData\CluedIndependentCI\resident\bin\CluedCompanionSupervisor.exe' -and $sa.arguments -ceq '"C:\ProgramData\CluedIndependentCI\resident"') 'supervisor-action'
 Yes ((Get-CompanionTaskSddl 'S-1-5-21-1-2-3-1001') -ceq 'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;S-1-5-21-1-2-3-1001)') 'task-sddl-owner-read-only'
+# 2026-11-08, the 29th DESK reinstall: the Task Scheduler reads the protected DACL back as D:PAI(...) (a D:P(...) cannot be stored), so
+# Get-CompanionTaskFacts compares the DACL as a security descriptor (protected, the same ACEs in order), not as a string. Run against a
+# fake Schedule.Service (no task is read): the interactive and the password definitions with the DACL the scheduler returns.
+$ownerT = 'S-1-5-21-858977881-4031698862-3006450925-1000'
+$fakeFacts = {
+  param([string]$dacl, [int]$logonType)
+  $sa2 = Get-SupervisorAction $root
+  $actions = [pscustomobject]@{ Count = 1; Only = [pscustomobject]@{ Path = $sa2.path; Arguments = $sa2.arguments } }
+  $actions | Add-Member -MemberType ScriptMethod -Name Item -Value { param($i) $this.Only }
+  $triggers = if ($logonType -eq 1) { @([pscustomobject]@{ Type = 1; Repetition = [pscustomobject]@{ Interval = 'PT15M'; Duration = '' } }, [pscustomobject]@{ Type = 8; Delay = 'PT30S' }) } else { @([pscustomobject]@{ Type = 9 }) }
+  $def = [pscustomobject]@{ Principal = [pscustomobject]@{ UserId = $ownerT; RunLevel = 0; LogonType = $logonType }; Actions = $actions; Triggers = $triggers
+    Settings = [pscustomobject]@{ MultipleInstances = 2; ExecutionTimeLimit = 'PT0S'; DisallowStartIfOnBatteries = $false; StopIfGoingOnBatteries = $false; RestartCount = 0; StartWhenAvailable = $true } }
+  $task = [pscustomobject]@{ Definition = $def; State = 3; LastTaskResult = 0; Xml = '<Task/>'; Dacl = $dacl }
+  $task | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value { param($f) if ($f -eq 4) { $this.Dacl } else { 'O:BA' } }
+  $folder = [pscustomobject]@{ Task = $task }; $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($name) if ($name -cne 'CluedCIResidentCompanion') { throw 'NO_TASK' }; $this.Task }
+  $svc = [pscustomobject]@{ Folder = $folder }; $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+  $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($path) if ($path -cne '\Clued') { throw 'NO_FOLDER' }; $this.Folder }
+  function New-Object { param([string]$ComObject) if ($ComObject -cne 'Schedule.Service') { throw 'UNEXPECTED_NEW_OBJECT' }; $svc }
+  Get-CompanionTaskFacts $root $ownerT
+}
+$aces = "(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerT)"
+foreach ($c in @(@('D:PAI', 3, 'interactive'), @('D:P', 3, 'interactive'), @('D:PAI', 1, 'password'), @('D:PARAI', 3, 'interactive'))) {
+  $f = & $fakeFacts ($c[0] + $aces) $c[1]
+  Yes ($f.mode -ceq $c[2] -and @($f.problems).Count -eq 0) ('task-dacl-semantic-ok:' + $c[0] + ':' + $c[2] + ':' + $f.mode + ':' + (@($f.problems) -join ','))
+}
+$f = & $fakeFacts "D:PAI(A;;0x1f01ff;;;SY)(A;;0x1f01ff;;;BA)(A;;0x120089;;;$ownerT)" 3
+Yes ($f.mode -ceq 'interactive' -and @($f.problems).Count -eq 0) 'task-dacl-semantic-ok:numeric-rights'
+foreach ($c in @(@('not-protected', ('D:AI' + $aces)), @('no-flags', ('D:' + $aces)), @('extra-ace', ('D:PAI' + $aces + '(A;;FR;;;AU)')), @('owner-full', "D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$ownerT)"),
+    @('order', "D:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;$ownerT)"), @('missing-ace', 'D:PAI(A;;FA;;;SY)(A;;FA;;;BA)'), @('other-owner', 'D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;S-1-5-21-1-2-3-1001)'),
+    @('inherited-ace', "D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;ID;FR;;;$ownerT)"), @('deny-ace', "D:PAI(D;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerT)"), @('null-dacl', 'D:NO_ACCESS_CONTROL'), @('empty', ''), @('garbage', 'D:PAI(x'))) {
+  foreach ($lt in @(3, 1)) {
+    $f = & $fakeFacts $c[1] $lt
+    Yes ($f.mode -ceq 'other' -and @($f.problems) -ccontains 'sddl') ('task-dacl-semantic-refused:' + $c[0] + ':' + $lt + ':' + $f.mode + ':' + (@($f.problems) -join ','))
+  }
+}
 $json = Get-CompanionLaunchJson 'C:\ProgramData\CluedIndependentCI\resident' 3 ('a' * 64) ('b' * 64) ('c' * 64) ('d' * 64) $profileDir (Get-CompanionPathDirs 'C:\Program Files\GitHub CLI\gh.exe')
 $parsed = $json | ConvertFrom-Json
 Yes ((@($parsed.PSObject.Properties.Name) -join ',') -ceq 'contract,generation,nodeExe,nodeExeSha256,entry,entrySha256,configSha256,ghConfigDir,homeDir,pathDirs') 'launch-keys-in-order'
