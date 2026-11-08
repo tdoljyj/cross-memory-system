@@ -17,6 +17,9 @@
   The upgrade channel (018da927): CluedCIUpgrader is stopped first (its host ends the upgrader at a step boundary, at most 60 s) and
   deleted with the other two; an upgrade that is RUNNING or ROLLING_BACK (upgrade\status.json) refuses the uninstall. Its journal,
   generations, archive and token stay inside the renamed directory.
+  M5 (ADR 0022 section 4.4): the companion task's running instance is stopped first (the supervisor, and with its job object the
+  companion), then both tasks are deleted (\Clued\CluedCIResidentCompanion and \Clued\CluedCIResidentNotifier); the password the Task
+  Scheduler stored for the companion task is deleted with it.
 #>
 [CmdletBinding()]
 param([switch]$Apply, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256)
@@ -93,16 +96,24 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
 if ($plan.upgraderService) { & $Sc delete CluedCIUpgrader | Out-Null }
+# M5: end the supervisor's instance first (its job object ends the companion), then delete both tasks; the companion task's stored
+# password goes with its definition.
+try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop } catch { }
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
+if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionFallback' -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionFallback' -Confirm:$false }
+if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction SilentlyContinue) {
+  try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction Stop } catch { }
+  Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -Confirm:$false
+}
 # The companion runs as conhost --headless -> node (install-resident.ps1 Get-CompanionAction); ending or
 # unregistering its task ends conhost, not node. With both services stopped only the companion can still run
 # the installed node copy, so every such process is stopped before the resident directory is renamed. The companion's
 # job hosts (bin\CluedCompanionJobHost.exe, DESIGN §24) end with node's job, but asynchronously: they are waited for too.
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
-$installed = @((Join-Path $Root 'runtime\node.exe'), (Join-Path $Root 'bin\CluedCompanionJobHost.exe'), (Join-Path $Root 'upgrader\runtime\node.exe'))
+$installed = @((Join-Path $Root 'bin\CluedCompanionSupervisor.exe'), (Join-Path $Root 'runtime\node.exe'), (Join-Path $Root 'bin\CluedCompanionJobHost.exe'), (Join-Path $Root 'upgrader\runtime\node.exe'))
 $until = (Get-Date).AddSeconds(30)
 do {
-  $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe' OR Name='CluedCompanionJobHost.exe'" | Where-Object { $p = [string]$_.ExecutablePath; @($installed | Where-Object { [string]::Equals($p, $_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 })
+  $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe' OR Name='CluedCompanionJobHost.exe' OR Name='CluedCompanionSupervisor.exe'" | Where-Object { $p = [string]$_.ExecutablePath; @($installed | Where-Object { [string]::Equals($p, $_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 })
   foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   if ($left.Count) { Start-Sleep -Milliseconds 500 }
 } while ($left.Count -and (Get-Date) -lt $until)

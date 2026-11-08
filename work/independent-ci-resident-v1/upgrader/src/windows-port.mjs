@@ -6,20 +6,22 @@
 // Actions and what the upgrader expects back (besides ok/code):
 //   ReadScm                  { resident: { state, binPath }, broker: { state, binPath }, runner: { state, originalBinary },
 //                              companionTask: { path, arguments } }     state: 'running' | 'stopped' | other text
+//                              (M5: path/arguments are what config\companion-launch.json makes the supervisor start)
 //   Compile                  writes upgrade\staged\<pkgSha>\compiled\{bin\*.exe, helpers\*.exe, config\broker.json} (idempotent)
 //   StopServices             resident first (it ends by itself), then the broker
 //   SwitchScm -Generation N  binPaths of generation N (N = toGeneration: from the plan; otherwise generations\gN\generation.json)
-//   RegisterCompanionTask -Generation N   only the task's Arguments
-//   RestartCompanion | StartServices
+//   WriteCompanionLaunch -Generation N   M5 (ADR 0022 §4.4): generation N's launch file and the notifier task; never the companion task
+//   RestartCompanion         ends the companion's node (not the task: the supervisor starts the new generation), waits up to 90 s
+//   StartServices
 //   Verify -Generation N [-ExpectPausedSha256 <sha>]   verify-resident.ps1's checks for generation N
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { CODE, HEX64, UUID, check } from '../../src/canonical.mjs';
 
 export const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-export const ACTIONS = Object.freeze(['ReadScm', 'Compile', 'StopServices', 'SwitchScm', 'RegisterCompanionTask', 'RestartCompanion', 'StartServices', 'Verify']);
-export const ACTION_TIMEOUT_MS = Object.freeze({ ReadScm: 60_000, Compile: 600_000, StopServices: 300_000, SwitchScm: 120_000, RegisterCompanionTask: 120_000,
-  RestartCompanion: 120_000, StartServices: 300_000, Verify: 600_000 });
+export const ACTIONS = Object.freeze(['ReadScm', 'Compile', 'StopServices', 'SwitchScm', 'WriteCompanionLaunch', 'RestartCompanion', 'StartServices', 'Verify']);
+export const ACTION_TIMEOUT_MS = Object.freeze({ ReadScm: 60_000, Compile: 600_000, StopServices: 300_000, SwitchScm: 120_000, WriteCompanionLaunch: 120_000,
+  RestartCompanion: 180_000, StartServices: 300_000, Verify: 600_000 });
 const OUTPUT_MAX = 64 * 1024;
 // The whole environment upgrade-apply.ps1 runs in; nothing else of the upgrader's own is inherited. PATHEXT is required: without
 // it Windows PowerShell 5.1 runs no native .exe at all (no error, no output, $LASTEXITCODE empty), so csc, sc.exe and the rest
@@ -73,7 +75,7 @@ export class WindowsPort {
   compile(a) { return this.apply('Compile', a); }
   stopServices(a) { return this.apply('StopServices', a); }
   switchScm(a) { return this.apply('SwitchScm', a); }
-  registerCompanionTask(a) { return this.apply('RegisterCompanionTask', a); }
+  writeCompanionLaunch(a) { return this.apply('WriteCompanionLaunch', a); }
   restartCompanion(a) { return this.apply('RestartCompanion', a); }
   startServices(a) { return this.apply('StartServices', a); }
   verify(a) { return this.apply('Verify', a); }

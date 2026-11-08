@@ -19,6 +19,10 @@ elevated Windows PowerShell 5.1 started with -NoProfile. Without -RunApprovedIns
     preflight requires that the preview lists the state the uninstall just kept;
   9 only when a HALT was pinned (b9bba67e): the newly installed rearm-resident.ps1 requests its re-arm and waits for it.
     The quota phase 1 reinstall pins none (the installed resident is PAUSED): the step reports notNeeded. terminal.json
+  10 M5 (ADR 0022 section 4.4): the newly installed rearm-resident.ps1 -CompanionHeadless, the last step: the Owner types his Windows
+    password once into the credential box on the SECURE desktop (the registrar hands it to the Task Scheduler; it never reaches this
+    launcher), then the script qualifies the password-logon companion from the elevated side for up to 8 minutes and otherwise falls
+    back to the interactive token by itself. Its result is recorded (companionHeadless); it never undoes the install.
 Every stop writes the raw values to W\launch (terminal.json detail and the *-report.json files).
 #>
 [CmdletBinding()]
@@ -802,6 +806,23 @@ function Step-Rearm {
   $Done.Add('rearm')
   $r
 }
+# M5 (ADR 0022 section 4.4): the last step. The installed, package-pinned rearm-resident.ps1 -CompanionHeadless: preflight, pending
+# marker, the credential box on the secure desktop (CluedCompanionTaskRegistrar.exe; the password goes from there to the Task Scheduler
+# and nowhere else), the elevated side's qualification for up to 8 minutes, and the fall-back to the interactive token when it does not
+# pass. A failure is recorded; the node then runs as before the switch (interactive token) and the Owner can run the step again.
+function Step-CompanionHeadless {
+  $r = [ordered]@{ ran = $false; exit = $null; status = $null; stdout = $null; error = $null }
+  try {
+    $rearm = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\rearm-resident.ps1')
+    if ((Get-FileSha $rearm) -cne $RearmSha256) { throw 'INSTALLED_REARM_SCRIPT_NOT_AS_PACKAGED' }
+    $c = Invoke-Child 'companion-headless' $rearm @('-CompanionHeadless')
+    $r.ran = $true; $r.exit = $c.exit; $r.stdout = (Tail $c.stdout)
+    $r.status = if ([string]$c.stdout -match '"status":\s*"(COMPANION_HEADLESS_[A-Z_]+)"') { $Matches[1] } else { 'UNREADABLE' }
+  } catch { $r.error = $_.Exception.Message }
+  Write-Json 'companion-headless-report.json' $r
+  $Done.Add('companion-headless')
+  $r
+}
 #endregion generic
 
 #region main
@@ -823,6 +844,7 @@ try {
   $pause = Step-PauseAfterInstall ($verify.status -ceq 'RESIDENT_VERIFIED')   # R5
   $companion = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   if (-not [IO.File]::Exists((Join-Path $Out 'terminal.json'))) { Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = 'LAUNCHER_EXCEPTION'; detail = $_.Exception.Message; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; at = [DateTimeOffset]::UtcNow.ToString('o') }) }
   Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw
@@ -830,7 +852,7 @@ try {
 }
 $terminal = [ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'
   status = $(if ($verify.status -cne 'RESIDENT_VERIFIED') { 'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED' } elseif (-not $pause.confirmed) { 'PAUSE_NOT_CONFIRMED' } else { 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })
-  sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm
+  sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm; companionHeadless = $companionHeadless
   completed = @($Done); at = [DateTimeOffset]::UtcNow.ToString('o') }
 Write-Json 'terminal.json' $terminal
 $terminal | ConvertTo-Json -Depth 6
