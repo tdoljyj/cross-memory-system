@@ -27,7 +27,7 @@ const trigger = updatedAt => Buffer.from(JSON.stringify({ contract: TRIGGER_CONT
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
 
 // Stage 1 refuses the claim until the PR names `good`; the claim the PR body names is `body.claim` (read live by the fake companion).
-async function field(t, { good }) {
+async function field(t, { good, refusal = CLAIM_REFUSAL }) {
   const body = { claim: OLD_CLAIM };
   const engine = fakeEngine();
   const run = engine.runStage;
@@ -35,7 +35,7 @@ async function field(t, { good }) {
   engine.runStage = async (batch, stage, o) => {
     if (stage.number === 1) {
       stage1.push(body.claim);
-      if (body.claim !== good) { engine.calls.push(['stage', 1]); return notAdmitted('CLAIM_NOT_CURRENT', CLAIM_REFUSAL); }
+      if (body.claim !== good) { engine.calls.push(['stage', 1]); return notAdmitted('CLAIM_NOT_CURRENT', refusal); }
     }
     return run(batch, stage, o);
   };
@@ -52,7 +52,7 @@ async function refused(f) {
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'CLAIM_NOT_CURRENT']);
   const row = f.queue.row(PR);
-  assert.deepEqual([row.state, row.reason, row.level, row.levelKind], ['BACKOFF', 'CLAIM_NOT_CURRENT', 1, 'release']);
+  assert.deepEqual([row.state, row.reason, row.level, row.levelKind], ['BACKOFF', 'CLAIM_NOT_CURRENT', 0, null]);
   assert.deepEqual(row.evalClaims, [OLD_CLAIM], 'the refused evaluation saw the old claim');
   return row.nextAt;
 }
@@ -147,4 +147,41 @@ test('the pr-head read carries the PR body claims from gh through the companion 
     assert.throws(() => validateResponse(response({ ...pull, claims }), request), { code: 'MAILBOX_RESPONSE_PULL_REFUSED' }, JSON.stringify(claims));
   }
   assert.equal(validateResponse(response({ number: PR, state: 'open', headSha: HEAD }), request).pull.claims, undefined, 'a legacy answer stays valid');
+});
+
+// Task 9aafd9ec (PR #1043): a claim refusal never counts towards the release cap and never stops the head; it is looked at again by itself.
+for (const [name, reasons] of [['no authorize_head yet', ['claim_not_found']], ['merge-queue place aged', ['work_claim_execution_epoch_stale']], ['renewed after the push', ['full_admission_claim_changed']]]) {
+  test(`claim refusal (${name}) waits on the same head, past the release cap, and is admitted once the claim is good`, async t => {
+    const refusal = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: reasons } };
+    const { f, body, stage1 } = await field(t, { good: NEW_CLAIM, refusal });
+    const cap = f.policy?.limits?.releasesPerHeadPer24h ?? 3;
+    await f.drop(trigger(f.clock() - MIN));
+    let r = await f.exec.tick();
+    assert.equal(r.failureCode, 'CLAIM_NOT_CURRENT');
+    for (let i = 0; i < cap + 2; i += 1) {
+      const row = f.queue.row(PR);
+      assert.deepEqual([row.state, row.reason], ['BACKOFF', 'CLAIM_NOT_CURRENT'], `round ${i}: still waiting, not stopped`);
+      if (i === 0) assert.match(row.deferred, /^CLAIM_NOT_CURRENT: /);
+      f.advance(row.nextAt - f.clock() + 1);
+      r = await f.exec.tick();
+    }
+    assert.ok(stage1.length > cap, 'evaluated more often than the release cap');
+    body.claim = NEW_CLAIM; // the claim is fixed; no new commit
+    const row = f.queue.row(PR);
+    f.advance(Math.max(row.nextAt - f.clock(), 0) + 1);
+    r = await f.exec.tick();
+    assert.equal(r.state, 'COMPLETED', 'the same head is admitted again');
+    assert.equal(f.queue.row(PR).current.headSha, HEAD);
+  });
+}
+
+test('claim refusal: the head stops only after 24 hours of waiting for its claim', async t => {
+  const { f } = await field(t, { good: NEW_CLAIM });
+  await f.drop(trigger(f.clock() - MIN));
+  await f.exec.tick();
+  f.advance(24 * 60 * MIN);
+  const row = f.queue.row(PR);
+  row.nextAt = f.clock();
+  await f.exec.tick();
+  assert.deepEqual([f.queue.row(PR).state, f.queue.row(PR).stopKind], ['STOPPED', 'release-cap']);
 });

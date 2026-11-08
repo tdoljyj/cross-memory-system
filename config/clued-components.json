@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.31",
+      "version": "1.1.32",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -447,6 +447,7 @@
         "scripts/ci/clued-work-admission.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/clock-skew.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/startup.mjs",
@@ -460,6 +461,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.scan-start.spec.json",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.spec.json",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-entry-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
@@ -499,6 +501,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/scan-start-v1/native-port.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/scan-start-v1/subject.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/batch-claim-rewrite.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/ci-scan-start-bridge.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/clock-skew.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/gitleaks.yml",
@@ -588,7 +591,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "3954e6dd0afd5e6cec5cf33996a5837784a6e67b892ec8c3a13d3c9fe69e6f04"
+      "content_sha256": "e88979752c9a1020615ccb2c2db83fc3702940c1b1d7066022e889486eb1a575"
     },
     {
       "id": "script.resource-maintenance",
@@ -853,7 +856,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -870,7 +873,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7de1be464067c60965187e02e378d02b5d8e84d9dddb253e5347ffe185297a9b"
+      "content_sha256": "6c77faf14fcf2975cec9182fe694996e64caf67dd66324faac216cceda2ed296"
     }
   ]
 }

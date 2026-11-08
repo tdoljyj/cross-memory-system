@@ -41,7 +41,7 @@ import { prepareNativePublication, nativePublicationNoPostProof } from '../../..
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
-import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
+import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
@@ -122,6 +122,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   clock = Date.now, sleep = wait, verifyRereadDelaysMs = VERIFY_REREAD_DELAYS_MS, deadlineAt = () => null }, production) {
   const domain = production ? 'production' : 'fixture';
   check(TRAIN_MODES.includes(trainMode), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
+  check(!production || (typeof batchClaims?.rewrite === 'function' && typeof batchClaims?.withPublication === 'function'), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
   check(typeof sleep === 'function' && typeof deadlineAt === 'function' && Array.isArray(verifyRereadDelaysMs) && verifyRereadDelaysMs.length <= 6
     && verifyRereadDelaysMs.every(ms => Number.isSafeInteger(ms) && ms > 0 && ms <= 120_000), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
   // Generation 10 (resident DESIGN 53.6, Task 125a5162 item 6): a verification of THIS batch's own check that could not be done
@@ -219,7 +220,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (claimed) {
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous && !['settled', 'not_sent'].includes(previous.state)) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       } else {
         // C4: GitHub is the shared record of what was published on this head, by any node or install.
         step = 'published-on-github';
@@ -234,7 +235,37 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
       }
       step = 'boundary';
-      const evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
+      let evaluated;
+      try { evaluated = await evaluate(job, claimed, facts => { scheduling = facts; }); }
+      catch (error) {
+        if (!claimed || safe(error) !== 'full_admission_claim_changed' || typeof batchClaims.rewrite !== 'function'
+          || (previous && previous.state !== 'not_sent')) throw error;
+        const oldClaim = claimed, oldKey = key;
+        // A stale sticky record is not evidence that the current trailer's claim is
+        // valid. Ask Native without that obsolete binding and validate every fact.
+        const current = await evaluate(job, null, facts => { scheduling = facts; });
+        check(!sameClaimGeneration(oldClaim, current.facts.observedClaim), 'BATCH_CLAIM_CHANGED');
+        const verifyUnpublished = async () => {
+          assertLive();
+          const oldEffect = await journal.read(oldKey);
+          check(oldEffect === null || oldEffect?.state === 'not_sent', 'BATCH_CLAIM_CHANGED');
+          const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`, front = frontJobIdsV2(job);
+          const published = await readPublishedChecks(github, job.headSha, APP_ID);
+          check(!published.some(c => (typeof c.external_id === 'string' && c.external_id.startsWith(sameJob))
+            || (PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)))), 'BATCH_CLAIM_CHANGED');
+          assertLive(); check(fresh(current.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
+        };
+        await batchClaims.rewrite(job, oldClaim, current.facts.observedClaim, current.facts.observedAt, verifyUnpublished);
+        claimed = await batchClaims.read(job);
+        check(claimed && sameClaimGeneration(claimed, current.facts.observedClaim), 'BATCH_CLAIM_CHANGED');
+        key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
+        previous = await journal.read(key);
+        if (previous) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        // Re-run the complete boundary against the replacement, never reuse the
+        // unbound observation as publication authority.
+        evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
+      }
+      if (previous?.state === 'not_sent') return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       // DESIGN 51 (B): GitHub must answer once more before the batch claim is recorded or anything is written; if it cannot (after the
       // bounded read retry) the refusal is clean and safe to re-run, with no claim and no journal record.
       step = 'probe';
@@ -270,8 +301,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
     let phase = 'intent', sent = false, known = null, sideEffects = 0;
     try {
-      const intent = await journal.begin(key, { subject: subjectOfV2(job), claim: claimed, definition: DEFINITION, externalId, observationKind: 'actual-native-admission-control',
+      const beginEffect = () => journal.begin(key, { subject: subjectOfV2(job), claim: claimed, definition: DEFINITION, externalId, observationKind: 'actual-native-admission-control',
         nativeObservationSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256, compensation: 'known-success-one-bounded-negative-patch' });
+      const intent = typeof batchClaims.withPublication === 'function' ? await batchClaims.withPublication(job, claimed, beginEffect) : await beginEffect();
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
