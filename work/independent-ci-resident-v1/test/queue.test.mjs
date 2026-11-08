@@ -85,7 +85,7 @@ test('waits back off 10, 20, 40, 80, 120, then every 120 minutes, or until ci_re
 
   // a not-admitted release: 10, 20, then the third release in 24 hours stops the row (cap 2)
   q.offer(trig(8, 2), now(), OPTS);
-  const release = n => { q.begin(8, H(2), KEY, q.candidates(Number.MAX_SAFE_INTEGER).find(c => c.pr === 8).origin, now()); return q.settle(8, H(2), { kind: 'released', klass: 'not-admitted', code: 'CLAIM_NOT_CURRENT', releases24h: n, releaseCap: 2 }, now()); };
+  const release = n => { q.begin(8, H(2), KEY, q.candidates(Number.MAX_SAFE_INTEGER).find(c => c.pr === 8).origin, now()); return q.settle(8, H(2), { kind: 'released', klass: 'not-admitted', code: 'PATHS_OUTSIDE_WRITE_SET', releases24h: n, releaseCap: 2 }, now()); };
   assert.equal(release(1), null);
   assert.deepEqual([q.row(8).state, (q.row(8).nextAt - now()) / MIN], ['BACKOFF', 10]);
   advance(10 * MIN);
