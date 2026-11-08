@@ -158,8 +158,8 @@ test('a companion restarted while its pump ran (no cancel yet) starts no second 
   assert.equal(runs2.filter(a => mode(a) || a.includes('start')).length, 0);
 });
 
-test('cancel reasons: owner-abort, stage-ended and heartbeat-lost on both sides; anything else is refused and no cancel', async t => {
-  assert.deepEqual([...CANCEL_REASONS], ['owner-abort', 'stage-ended', 'heartbeat-lost']);
+test('cancel reasons: owner-abort, stage-ended, heartbeat-lost and service-stopping on both sides; anything else is refused and no cancel', async t => {
+  assert.deepEqual([...CANCEL_REASONS], ['owner-abort', 'stage-ended', 'heartbeat-lost', 'service-stopping']);
   const root = await tempRoot(t);
   const box = await Mailbox.open(root, () => T0);
   for (const reason of CANCEL_REASONS) {
