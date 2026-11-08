@@ -211,6 +211,14 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
     denied = v is None and bool(re.search(r'Access is denied|UnauthorizedAccess', err))
     v = v if isinstance(v, dict) else {}
     failed = sorted(k for k, c in (v.get('checks') or {}).items() if isinstance(c, dict) and c.get('ok') is not True and c.get('ok') != 'unreadable')
+    # Since verify's bounded JSON verdict (Get-VerifyInputFailure), an admin-only input it cannot open non-elevated (DESK,
+    # 2026-11-08: broker\token.json) no longer ends without JSON: it ends as RESIDENT_VERIFICATION_FAILED with the one check
+    # verify-inputs = VERIFY_INPUT_UNREADABLE. That alone is the same "not runnable unelevated"; any other failed check, or
+    # another code (a changed receipt, profile or config), is still a finding. The launcher runs this verify elevated.
+    checks_v = v.get('checks') or {}
+    if (not denied and failed == ['verify-inputs'] and v.get('status') == 'RESIDENT_VERIFICATION_FAILED'
+            and isinstance(checks_v.get('verify-inputs'), dict) and checks_v['verify-inputs'].get('detail') == 'VERIFY_INPUT_UNREADABLE'):
+        denied = True
     checks['verify'] = {'script': vscript, 'exit': code, 'status': v.get('status'), 'failed': failed, 'notRunnableUnelevated': denied, 'stderr': err[-300:]}
     if not denied and (v.get('status') not in VERIFY_OK or failed):
         find('INSTALLED_VERIFY_NOT_PASSING', status=v.get('status'), failed=failed)
