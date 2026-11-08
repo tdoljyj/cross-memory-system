@@ -32,6 +32,7 @@ import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
+import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
 // Every node writes its own context (node-duty.mjs#nodeContext); there is no default node (Task 9cac75be A3).
@@ -161,11 +162,31 @@ export function withRerunLine(want, rerun) {
   if (!want || want.weak || rerun !== true) return want;
   return { ...want, description: clip(`已自动补跑一次必需测试；${want.description}`) };
 }
+// The lines kept at the end of a text, never clipped away: the host capacity line (host-capacity.mjs, Owner decision 241824b2), then
+// the watchdog warning. Each is added at most once; adding one keeps the other (the text before them is clipped instead).
+const CAPACITY_TAIL = new RegExp(`；${CAPACITY_ALERT_TEXT}(?:（[^；（）]*）)?$`, 'u');
+function splitTails(d) {
+  let base = d, capacity = null, watchdog = false;
+  if (base.endsWith(`；${WATCHDOG_STALE_TEXT}`)) { watchdog = true; base = base.slice(0, -(WATCHDOG_STALE_TEXT.length + 1)); }
+  const m = CAPACITY_TAIL.exec(base);
+  if (m) { capacity = m[0].slice(1); base = base.slice(0, m.index); }
+  return { base, capacity, watchdog };
+}
+function joinTails(want, { base, capacity, watchdog }, max) {
+  const tail = `${capacity ? `；${capacity}` : ''}${watchdog ? `；${WATCHDOG_STALE_TEXT}` : ''}`, room = max - tail.length;
+  const d = base.length <= room ? base : `${base.slice(0, room - 1)}…`;
+  return { ...want, description: `${d}${tail}` };
+}
 export function withWatchdogLine(want, stale, max = DESCRIPTION_MAX) {
   if (!want || stale !== true || want.description.endsWith(WATCHDOG_STALE_TEXT)) return want;
-  const tail = `；${WATCHDOG_STALE_TEXT}`, room = max - tail.length;
-  const d = want.description.length <= room ? want.description : `${want.description.slice(0, room - 1)}…`;
-  return { ...want, description: `${d}${tail}` };
+  return joinTails(want, { ...splitTails(want.description), watchdog: true }, max);
+}
+// line: host-capacity.mjs#readCapacityAlert's text while the host watchdog holds the Linux runners back, else null.
+export function withCapacityLine(want, line, max = DESCRIPTION_MAX) {
+  if (!want || typeof line !== 'string' || !line.startsWith(CAPACITY_ALERT_TEXT)) return want;
+  const parts = splitTails(want.description);
+  if (parts.capacity === line) return want;
+  return joinTails(want, { ...parts, capacity: line }, max);
 }
 
 // The fixed shape of the context (a " (info only)" suffix); whether it is free is decided by contextFree.
@@ -486,7 +507,8 @@ export class PrStatusReporter {
   // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool),
   //   node (this node's name, required: there is no default; status.json's own name wins when it names one), writeRequest(value)
   //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
-  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), notify(key, title, body)
+  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), hostCapacity() (optional:
+  //   host-capacity.mjs#readCapacityAlert, the host watchdog's capacity marker, Owner decision 241824b2), notify(key, title, body)
   //   (optional, M5: the notification queue instead of a toast) }
   constructor(ports) {
     Object.assign(this, ports);
@@ -588,13 +610,16 @@ export class PrStatusReporter {
           this.store.data.posted[headSha] = { state: want.state, description: clip(want.description), at: new Date(now).toISOString(), context, kind: want.kind ?? null,
             dutyAt: ['duty', 'dual'].includes(want.kind) ? new Date(now).toISOString() : (mine ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
         };
+        // Owner decision 241824b2: the host watchdog's capacity marker, read once per pass; any failure is no marker.
+        let capacity = null;
+        try { capacity = (await this.hostCapacity?.())?.text ?? null; } catch { capacity = null; }
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
-          // and the watchdog tail stays last (review round 3, BLOCKER 1).
+          // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunDone?.(pull.headSha) === true);
-          const want = withWatchdogLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
-            this.watchdogStale?.() === true);
+          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+            capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
           const last = this.store.data.posted[pull.headSha];

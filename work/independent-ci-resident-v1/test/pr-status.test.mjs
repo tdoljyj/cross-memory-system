@@ -533,3 +533,87 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   assert.deepEqual(store.data.node.toasts, {});
   assert.ok(store.data.notified['standby:7:x:unclaimed']);
 });
+
+// Owner decision 241824b2: the host watchdog's capacity marker (C:\clued-ci\state\capacity-alert.json, present exactly while it
+// holds the Linux runners back) shows on the PR page too; 2026-11-08 #1040 waited 13 minutes behind a desktop toast nobody saw.
+const MARKER_DETAIL = 'D: 12.3 GB free (stops below 20, resumes at 30), memory 9.87 GB free (stops below 2, resumes at 3); cleanup: 1.1 -> 12.3 GB';
+const markerJson = (o = {}) => JSON.stringify({ state: 'capacity-suspended', since: '2026-11-08T08:40:00.0000000+08:00', detail: MARKER_DETAIL, host: 'DESK-W-591', ...o }, null, 2);
+
+test('241824b2: the capacity marker becomes one line of the PR page text; gone, broken or unreadable: no line and no error', async t => {
+  const { CAPACITY_ALERT_FILE, readCapacityAlert } = await import('../src/host-capacity.mjs');
+  const { withCapacityLine, withWatchdogLine } = await import('../src/pr-status.mjs');
+  assert.equal(CAPACITY_ALERT_FILE, 'C:\\clued-ci\\state\\capacity-alert.json');
+  const root = await tempRoot(t);
+  const marker = path.join(root, 'capacity-alert.json');
+  let now = Date.parse('2026-11-08T09:00:00Z');
+  const calls = [];
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+    store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
+  reporter.hostCapacity = () => readCapacityAlert(marker); // as companion-main.mjs wires it (with CAPACITY_ALERT_FILE)
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+  const status = () => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' }); }, now);
+  const described = () => calls.filter(a => a.includes('POST')).map(a => a.find(x => x.startsWith('description=')).slice('description='.length));
+  const LINE = '主机容量不足，Linux runner 已停（D: 剩 12.3 GB）';
+  // no marker: the text as before
+  await reporter.pass({ pulls, status: status() });
+  assert.ok(!described()[0].includes('主机容量不足'), described()[0]);
+  // the watchdog holds the runners back: the line is on the page at the next pass
+  await fs.writeFile(marker, markerJson());
+  await reporter.pass({ pulls, status: status() });
+  assert.equal(described()[1], `${described()[0]}；${LINE}`);
+  // the runners resumed (the marker is gone): the line goes again
+  await fs.rm(marker);
+  now += 60_000;
+  await reporter.pass({ pulls, status: status() });
+  assert.equal(described()[2], described()[0]);
+  // a broken marker (torn, not JSON, another shape, too big, a directory) is no marker, and the pass does not fail
+  for (const bad of ['{"state":"capacity-susp', 'not json', markerJson({ state: 'other' }), '[1]', `${markerJson()}${' '.repeat(5000)}`]) {
+    await fs.writeFile(marker, bad);
+    assert.equal(await readCapacityAlert(marker), null, bad.slice(0, 30));
+    const r = await reporter.pass({ pulls, status: status() });
+    assert.equal(r.stalled, false);
+  }
+  await fs.rm(marker); await fs.mkdir(marker);
+  assert.equal(await readCapacityAlert(marker), null);
+  assert.equal(described().length, 3, 'no text with the line was ever written for a broken marker');
+  // a port that throws is no marker either
+  reporter.hostCapacity = () => { throw new Error('boom'); };
+  await reporter.pass({ pulls, status: status() });
+  reporter.hostCapacity = async () => { throw new Error('boom'); };
+  await reporter.pass({ pulls, status: status() });
+  assert.equal(described().length, 3);
+});
+
+test('241824b2: the marker read: only the watchdog\'s numbers are shown (disk and, when it is the low one, memory), never its free text', async t => {
+  const { readCapacityAlert, capacityText } = await import('../src/host-capacity.mjs');
+  const { withCapacityLine, withWatchdogLine } = await import('../src/pr-status.mjs');
+  const root = await tempRoot(t);
+  const marker = path.join(root, 'capacity-alert.json');
+  const read = async (o, bom = false) => { await fs.writeFile(marker, `${bom ? '\uFEFF' : ''}${markerJson(o)}`); return readCapacityAlert(marker); };
+  assert.equal(await readCapacityAlert(path.join(root, 'absent.json')), null);
+  assert.deepEqual(await read({}), { drive: 'D', freeGb: 12.3, memGb: 9.87, text: '主机容量不足，Linux runner 已停（D: 剩 12.3 GB）' });
+  assert.equal((await read({}, true)).drive, 'D', 'a byte order mark is accepted');
+  // memory is the low one: shown too; the disk back above its resume level is not
+  assert.equal((await read({ detail: 'D: 45 GB free (stops below 20, resumes at 30), memory 1.5 GB free (stops below 2, resumes at 3)' })).text, '主机容量不足，Linux runner 已停（内存剩 1.5 GB）');
+  assert.equal((await read({ detail: 'D: 12 GB free (stops below 20, resumes at 30), memory 1.5 GB free (stops below 2, resumes at 3)' })).text, '主机容量不足，Linux runner 已停（D: 剩 12 GB，内存剩 1.5 GB）');
+  // a disk the watchdog could not size, or a detail in another form: the line without numbers
+  assert.equal((await read({ detail: '?: unknown GB free (stops below 20, resumes at 30), memory 9 GB free (stops below 2, resumes at 3)' })).text, '主机容量不足，Linux runner 已停');
+  assert.equal((await read({ detail: 'force-resume: <script>alert(1)</script>' })).text, '主机容量不足，Linux runner 已停');
+  assert.equal((await read({ detail: 12 })).text, '主机容量不足，Linux runner 已停');
+  assert.equal(capacityText(null), null);
+  // the line and the watchdog warning both survive a long text, within 140 characters, with the duty word first
+  const want = { state: 'pending', description: `当班：${'x'.repeat(200)}` };
+  const both = withWatchdogLine(withCapacityLine(want, '主机容量不足，Linux runner 已停（D: 剩 12.3 GB）'), true);
+  assert.ok(both.description.length <= 140 && both.description.startsWith('当班：') && both.description.endsWith('；主机容量不足，Linux runner 已停（D: 剩 12.3 GB）；自动接班看门狗未运行'), both.description);
+  assert.equal(withCapacityLine(null, 'x'), null);
+  assert.deepEqual(withCapacityLine({ state: 'success', description: 'x' }, null), { state: 'success', description: 'x' });
+  const once = withCapacityLine({ state: 'success', description: 'x' }, 'y');
+  assert.deepEqual(withCapacityLine(once, 'y'), once, 'never twice');
+});
+
+test('241824b2: companion-main.mjs hands the reporter the watchdog marker', async () => {
+  const src = await fs.readFile(new URL('../src/companion-main.mjs', import.meta.url), 'utf8');
+  assert.ok(/reporter\.hostCapacity = \(\) => readCapacityAlert\(CAPACITY_ALERT_FILE\);/.test(src), 'companion-main.mjs sets reporter.hostCapacity');
+  assert.ok(/import \{ CAPACITY_ALERT_FILE, readCapacityAlert \} from '\.\/host-capacity\.mjs';/.test(src), 'companion-main.mjs imports the marker read');
+});
