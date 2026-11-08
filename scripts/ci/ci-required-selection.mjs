@@ -55,6 +55,9 @@ export const SUITES = {
       'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
     'resident-node': RESIDENT_AND_SOURCE,
     'resident-python': RESIDENT_AND_SOURCE,
+    // The reinstall tools' own tests (work/independent-ci-resident-v1/reinstall/test) pin the launcher template, read the resident's
+    // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
+    'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
     'source-v2-node': RESIDENT_AND_SOURCE,
     'source-v2-python': RESIDENT_AND_SOURCE,
@@ -107,6 +110,7 @@ export const SUITE_COMMANDS = {
   ],
   'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}'] }],
   'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
+  'reinstall-python': [{ cwd: `${RESIDENT}/reinstall`, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
   'offline-drill': [{ cwd: RESIDENT, argv: ['node', 'drill/offline-drill.mjs'] }],
   'source-v2-node': [{ cwd: '.', argv: ['node', '--test', `{tests:${SOURCE_V2}/test}`] }],
   'source-v2-python': [{ cwd: '.', argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', `${SOURCE_V2}/test`, '-p', 'test_*.py'] }],
