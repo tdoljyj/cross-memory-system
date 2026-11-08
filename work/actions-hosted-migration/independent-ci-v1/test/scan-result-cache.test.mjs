@@ -24,6 +24,9 @@ import {fixedCommands,LIMITS as PLACEMENT_LIMITS} from '../worker/formal-contrac
 import {observationFacts,resultPayload,verifySignedBridgeResult,RESULT_WRAPPER_CONTRACT_V2} from '../worker/protected-job-bridge-v4/signed-result.mjs';
 import {makeIssue,makeResponse,encode,decode} from '../worker/protected-job-bridge-v4/protocol.mjs';
 import {protectedPath} from '../worker/qualification-v2.mjs';
+import {provenanceEnvelope} from '../worker/protected-job-bridge-v4/provenance-emit.mjs';
+import {buildStatement,validateStatementV1,checkStatementBinding} from '../src/provenance-v1/statement.mjs';
+import {verifyDsse} from '../src/provenance-v1/dsse.mjs';
 
 const START=Date.parse('2026-11-07T00:00:00.000Z'),hex=c=>c.repeat(64),H1='a'.repeat(40),H2='d'.repeat(40),H3='e'.repeat(40);
 const noGuard=async()=>{};
@@ -144,6 +147,42 @@ test('trivy: the same tree scanned again under another commit is a hit; no scann
   assert.throws(()=>verifySignedBridgeResult({issue,wrapper:wrongMarker,signers:SIGNERS}),{code:'SIGNED_FORMAL_OBSERVATION_CHANGED'},'a hit signed as a real run is refused');
   const foreign=new Map([[SIGNER.keyId,{...SIGNERS.get(SIGNER.keyId),publicKeyPem:OTHER.publicKey.export({type:'spki',format:'pem'})}]]);
   assert.throws(()=>verifySignedBridgeResult({issue,wrapper:signed,signers:foreign}),{code:/RESULT_SIGNATURE_INVALID|result_signature_invalid|SCAN_RESULT_CACHE_SIGNATURE_INVALID/});
+});
+test('trivy: on a cache hit the L4 provenance is still published, with the same fields as a real run and bound to the hit result (DESIGN 68.5, 69)',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:START});const resultCache=port(await tempDir(t));
+  const {first,r:original,signed:originalSigned}=await storeTrivy(t,resultCache);
+  const again=trivyRun(t,{headSha:H2,resultCache}),r=await again.run(),o=r.observation;
+  assert.equal(r.resultCache.lookup,'SCAN_RESULT_CACHE_HIT');
+  const issue=issueFor(again.job,again.generation),signed=signedResult(issue,o);
+  const config={keyId:SIGNER.keyId,runtimeIdentity:CONTEXT.runtimeIdentity};
+  // The real Linux generation step (provenanceEnvelope) for the hit and for the original real run, same key.
+  const hitDsse=provenanceEnvelope({issue,signed,observation:o,config,key:KEYS.privateKey});
+  const origIssue=issueFor(first.job,first.generation);
+  const origDsse=provenanceEnvelope({issue:origIssue,signed:originalSigned,observation:original.observation,config,key:KEYS.privateKey});
+  const hit=JSON.parse(verifyDsse({envelope:hitDsse,publicKey:SIGNER.publicKeyPem,keyId:SIGNER.keyId}).toString());
+  const real=JSON.parse(verifyDsse({envelope:origDsse,publicKey:SIGNER.publicKeyPem,keyId:SIGNER.keyId}).toString());
+  validateStatementV1(hit);validateStatementV1(real);
+  assert.equal(checkStatementBinding(hit,{job:again.job,envelope:signed.envelope}),hit,'bound to this job and to the hit result');
+  // Same shape and same fields as a non-cached run (the values that must differ are the job/commit and the signed result).
+  const names=a=>a.map(x=>x.name).sort();
+  assert.deepEqual(Object.keys(hit),Object.keys(real));
+  assert.deepEqual(names(hit.predicate.runDetails.byproducts),names(real.predicate.runDetails.byproducts));
+  assert.deepEqual(names(hit.predicate.buildDefinition.resolvedDependencies),names(real.predicate.buildDefinition.resolvedDependencies));
+  assert.deepEqual(Object.keys(hit.predicate.buildDefinition.externalParameters),Object.keys(real.predicate.buildDefinition.externalParameters));
+  assert.deepEqual(Object.keys(hit.predicate.buildDefinition.internalParameters),Object.keys(real.predicate.buildDefinition.internalParameters));
+  assert.equal(hit.predicate.runDetails.builder.id,real.predicate.runDetails.builder.id,'same node and Source');
+  // The subject is the tested commit of THIS job and the cached tree (the key of the cache).
+  assert.deepEqual(hit.subject[0].digest,{gitCommit:again.job.testSha});assert.notEqual(again.job.testSha,first.job.testSha);
+  assert.deepEqual(hit.subject[1]?.digest,real.subject[1]?.digest,'same tree as the original');
+  assert.equal(hit.predicate.buildDefinition.externalParameters.jobId,again.job.id);
+  assert.equal(hit.predicate.runDetails.metadata.startedOn,o.cacheHit.servedAt,"this run's window, not the original's");
+  // Reference to the cached result: the signed-result byproduct is the hash of the hit envelope, whose signed payload names the cache record and the original observation.
+  const by=(st,n)=>st.predicate.runDetails.byproducts.find(b=>b.name===n);
+  assert.equal(by(hit,'signed-result').digest.sha256,digest(signed.envelope));
+  assert.notEqual(by(hit,'signed-result').digest.sha256,by(real,'signed-result').digest.sha256);
+  assert.equal(signed.envelope.payload.cacheHit.recordSha256,o.cacheHit.recordSha256);
+  assert.equal(signed.envelope.payload.cacheHit.originalObservationSha256,digest(original.observation));
+  assert.equal(by(hit,'check-result').content,by(real,'check-result').content,'same verdict as the cached original');
 });
 test('trivy: a message-only force-push (new head, same tree) and a recomputed S (new testSha, same tree) both hit',async t=>{
   t.mock.timers.enable({apis:['Date'],now:START});const resultCache=port(await tempDir(t));await storeTrivy(t,resultCache);
