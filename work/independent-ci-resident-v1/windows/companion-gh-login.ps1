@@ -86,7 +86,11 @@ if ($Login) {
   # The folder first, with its own protected ACL (an existing one must be a real folder; its ACL is set again).
   if (Test-Path -LiteralPath $dirs.base) {
     if (((Get-Item -LiteralPath $dirs.base -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'COMPANION_GH_FOLDER_IS_A_LINK' }
-    $acl = Get-Acl -LiteralPath $dirs.base; $acl.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid)); Set-Acl -LiteralPath $dirs.base -AclObject $acl
+    # Only the DACL section: Get-Acl/Set-Acl writes every section, and the audit (SACL) part needs SeSecurityPrivilege, which a
+    # non-elevated window does not hold (PrivilegeNotHeldException on the Owner's second run, 2026-11-08).
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid), [Security.AccessControl.AccessControlSections]::Access)
+    (Get-Item -LiteralPath $dirs.base -Force).SetAccessControl($sec)
   } else {
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dirs.base))
     $sec = New-Object Security.AccessControl.DirectorySecurity; $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid))
