@@ -106,6 +106,32 @@ public static class RegistrarCore {
     if (!d.TryGetValue("processStart", out start) || parentStartUtc == null || (start as string) != parentStartUtc) return "PENDING_MARKER_NOT_THIS_SWITCH";
     return null;
   }
+  // 2026-11-08 (30th DESK): the detail of REGISTRAR_UNEXPECTED, "step:ExceptionType:0xHRESULT": the step RegisterPassword was in
+  // ("main" outside it), the exception's short type name and HRESULT (an InvokeMember wrapper is unwrapped). Never the message, never an
+  // input. Steps register and readback are from the password's hand-over on; every earlier step is before it.
+  public static string UnexpectedDetail(Exception e) {
+    string step = "main";
+    RegistrarStepException se = e as RegistrarStepException;
+    if (se != null) { if (se.Step != null && Regex.IsMatch(se.Step, @"\A[a-z]{1,16}\z")) step = se.Step; e = se.Cause; }
+    while (e is System.Reflection.TargetInvocationException && e.InnerException != null) e = e.InnerException;
+    if (e == null) return step + ":none:0x00000000";
+    string type = Regex.Replace(e.GetType().Name, "[^A-Za-z0-9_]", "");
+    if (type.Length == 0) type = "unknown";
+    if (type.Length > 40) type = type.Substring(0, 40);
+    return step + ":" + type + ":0x" + e.HResult.ToString("X8");
+  }
+  // 2026-11-08 (30th DESK, live switch at 07:00Z): CredUnPackAuthenticationBufferW with CRED_PACK_PROTECTED_CREDENTIALS failed with
+  // GetLastError 775 for the buffer the secure-desktop box returned; with flags 0 the same buffer unpacked and the registration succeeded.
+  // So the protected unpack is tried first and, failing with 775 only, the plain one; any other error is final.
+  public static bool UnpackRetryPlain(int protectedError) { return protectedError == 775; }
+  // The detail of CREDENTIAL_UNPACK_FAILED: the error numbers of both tries, nothing else (review L1: not even the packed buffer's size,
+  // from which the password's length could be inferred). Never the user name, the domain or the password.
+  public static string UnpackDetail(int protectedError, bool retried, int plainError) {
+    return "protected:" + protectedError + ":plain:" + (retried ? plainError.ToString() : "skipped");
+  }
+  // CRED_PROTECTION_TYPE: CredUnprotected (0) is the only kind the plain unpack may hand over (review L2: anything else would be the
+  // protected form, never the password).
+  public static bool PlainUnpackUsable(bool checkedOk, int protectionType) { return checkedOk && protectionType == 0; }
   // The node profile's owner SID from record\acceptance.json (admin-only; the install wrote it).
   public static string OwnerSidFromAcceptance(string json) {
     Dictionary<string, object> d = new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string, object>;
@@ -113,6 +139,13 @@ public static class RegistrarCore {
     if (d == null || !d.TryGetValue("node", out node) || (n = node as Dictionary<string, object>) == null) return null;
     object sid; return n.TryGetValue("ownerSid", out sid) && ValidSid(sid as string) ? (string)sid : null;
   }
+}
+
+// An exception in RegisterPassword, with the step it was in (RegistrarCore.UnexpectedDetail prints the step, never the message).
+public sealed class RegistrarStepException : Exception {
+  public readonly string Step;
+  public readonly Exception Cause;
+  public RegistrarStepException(string step, Exception cause) : base("REGISTRAR_STEP") { Step = step; Cause = cause; }
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -128,7 +161,10 @@ public static class CluedCompanionTaskRegistrar {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct CREDUI_INFO { public int cbSize; public IntPtr hwndParent; public string pszMessageText, pszCaptionText; public IntPtr hbmBanner; }
   [DllImport("credui.dll", CharSet = CharSet.Unicode)] static extern int CredUIPromptForWindowsCredentialsW(ref CREDUI_INFO info, int authError, ref uint package, IntPtr inBuf, uint inSize, out IntPtr outBuf, out uint outSize, ref bool save, uint flags);
   [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredPackAuthenticationBufferW(uint flags, string user, string password, IntPtr packed, ref uint size);
-  [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredUnpackAuthenticationBufferW(uint flags, IntPtr buf, uint size, StringBuilder user, ref uint userLen, StringBuilder domain, ref uint domainLen, IntPtr password, ref uint passwordLen);
+  // 2026-11-08 (30th DESK): credui.dll exports CredUnPackAuthenticationBufferW (capital P); without the EntryPoint every password typed
+  // ended in EntryPointNotFoundException (REGISTRAR_UNEXPECTED). test-companion-headless.ps1 binds every import of every program.
+  [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CredUnPackAuthenticationBufferW")] static extern bool CredUnpackAuthenticationBufferW(uint flags, IntPtr buf, uint size, StringBuilder user, ref uint userLen, StringBuilder domain, ref uint domainLen, IntPtr password, ref uint passwordLen);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool CredIsProtectedW(IntPtr credentials, out int protectionType);
   [DllImport("ole32.dll")] static extern void CoTaskMemFree(IntPtr p);
   [DllImport("oleaut32.dll")] static extern IntPtr SysAllocStringLen(IntPtr s, uint len);
   [DllImport("oleaut32.dll")] static extern void SysFreeString(IntPtr b);
@@ -180,7 +216,7 @@ public static class CluedCompanionTaskRegistrar {
       int pid;
       if (args.Length == 2 && args[0] == "token-facts" && int.TryParse(args[1], out pid) && pid > 0) return TokenFacts(pid);
       Print("REGISTRAR_ARGS_REFUSED", null); return 2;
-    } catch (Exception) { Print("REGISTRAR_UNEXPECTED", null); return 1; }
+    } catch (Exception e) { Print("REGISTRAR_UNEXPECTED", RegistrarCore.UnexpectedDetail(e)); return 1; }
   }
 
   static bool Elevated() {
@@ -201,14 +237,26 @@ public static class CluedCompanionTaskRegistrar {
     return new SecurityIdentifier(sid, 0).Value;
   }
 
+  // 2026-11-08 (30th DESK): step names the part RegisterPasswordSteps is in, so an unexpected exception says where it happened
+  // (REGISTRAR_UNEXPECTED, detail step:ExceptionType:0xHRESULT) without saying what: acceptance, owner, service, folder, definition,
+  // prefill, prompt, unpack, account, pending (all before the hand-over), register, readback (from the hand-over on).
   static int RegisterPassword(string root) {
+    string step = "acceptance";
+    try { return RegisterPasswordSteps(root, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
+  }
+  static int RegisterPasswordSteps(string root, ref string step) {
+    step = "acceptance";
     string ownerSid = RegistrarCore.OwnerSidFromAcceptance(System.IO.File.ReadAllText(root + @"\record\acceptance.json", new UTF8Encoding(false, true)));
     if (ownerSid == null) { Print("NODE_PROFILE_UNREADABLE", null); return 2; }
+    step = "owner";
     string ownerAccount = new SecurityIdentifier(ownerSid).Translate(typeof(NTAccount)).Value;
     // The definition first (no secret in it), through the scripting interface; the folder's vtable only for the one call with the password.
+    step = "service";
     object svc = Service();
+    step = "folder";
     object folder;
     try { folder = Call(svc, "GetFolder", RegistrarCore.TaskFolder); } catch { Print("TASK_FOLDER_MISSING", null); return 2; }
+    step = "definition";
     object def = Call(svc, "NewTask", 0);
     Set(def, "XmlText", RegistrarCore.PasswordTaskXml(root, ownerSid));
 
@@ -217,6 +265,7 @@ public static class CluedCompanionTaskRegistrar {
     uint inSize = 0, outSize = 0;
     const int PwChars = 512;
     try {
+      step = "prefill";
       CredPackAuthenticationBufferW(0, ownerAccount, "", IntPtr.Zero, ref inSize);
       if (inSize == 0 || inSize > 65536) { Print("CREDENTIAL_PREFILL_FAILED", null); return 1; }
       inBuf = Marshal.AllocCoTaskMem((int)inSize);
@@ -225,23 +274,48 @@ public static class CluedCompanionTaskRegistrar {
       ui.cbSize = Marshal.SizeOf(typeof(CREDUI_INFO));
       ui.pszCaptionText = "Clued companion";
       ui.pszMessageText = "Enter your own Windows password for " + ownerAccount + ". The Task Scheduler keeps it for the companion task (ADR 0022). This box is on the secure desktop: you started this yourself and approved UAC.";
+      step = "prompt";
       uint package = 0; bool save = false;
       int rc = CredUIPromptForWindowsCredentialsW(ref ui, 0, ref package, inBuf, inSize, out outBuf, out outSize, ref save, CREDUIWIN_IN_CRED_ONLY | CREDUIWIN_SECURE_PROMPT);
       if (rc == 1223) { Print("CREDENTIAL_NOT_GIVEN", null); return 3; }
       if (rc != 0 || outBuf == IntPtr.Zero) { Print("CREDENTIAL_PROMPT_FAILED", "0x" + rc.ToString("X")); return 1; }
+      step = "unpack";
       StringBuilder user = new StringBuilder(514), domain = new StringBuilder(514);
       uint userLen = 513, domainLen = 513, pwLen = PwChars;
       pw = Marshal.AllocHGlobal(PwChars * 2);
       ZeroMemory(pw, new UIntPtr(PwChars * 2));
-      if (!CredUnpackAuthenticationBufferW(CRED_PACK_PROTECTED_CREDENTIALS, outBuf, outSize, user, ref userLen, domain, ref domainLen, pw, ref pwLen) || pwLen == 0 || pwLen > PwChars) {
-        Print("CREDENTIAL_UNPACK_FAILED", null); return 1;
+      // 2026-11-08 (30th DESK): the protected unpack (CRED_PACK_PROTECTED_CREDENTIALS) failed with GetLastError 775 for the buffer the
+      // secure-desktop box returned, and flags 0 unpacked it (RegistrarCore.UnpackRetryPlain). Only the error numbers are ever printed,
+      // never a length or a byte of the credential.
+      bool unpacked = CredUnpackAuthenticationBufferW(CRED_PACK_PROTECTED_CREDENTIALS, outBuf, outSize, user, ref userLen, domain, ref domainLen, pw, ref pwLen);
+      int protectedError = unpacked ? 0 : Marshal.GetLastWin32Error(), plainError = 0;
+      bool retried = false;
+      if (!unpacked && RegistrarCore.UnpackRetryPlain(protectedError)) {
+        retried = true;
+        user.Length = 0; domain.Length = 0; userLen = 513; domainLen = 513; pwLen = PwChars;
+        ZeroMemory(pw, new UIntPtr(PwChars * 2));
+        unpacked = CredUnpackAuthenticationBufferW(0, outBuf, outSize, user, ref userLen, domain, ref domainLen, pw, ref pwLen);
+        plainError = unpacked ? 0 : Marshal.GetLastWin32Error();
       }
+      if (!unpacked || pwLen == 0 || pwLen > PwChars) {
+        Print("CREDENTIAL_UNPACK_FAILED", RegistrarCore.UnpackDetail(protectedError, retried, plainError)); return 1;
+      }
+      if (retried) {
+        // Review L2: what the plain unpack returned must be the password itself, not its protected form. CredIsProtectedW reads up to
+        // the NUL: the buffer is zeroed and pwLen < PwChars leaves one at the end.
+        int protection = -1;
+        bool usable = pwLen < PwChars && RegistrarCore.PlainUnpackUsable(CredIsProtectedW(pw, out protection), protection);
+        if (!usable) { Print("CREDENTIAL_STILL_PROTECTED", null); return 1; }
+      }
+      step = "account";
       string account = RegistrarCore.QualifiedAccount(user.ToString(), domain.ToString(), Environment.MachineName);
       string sid = account == null ? null : SidOf(account);
       if (sid == null || sid != ownerSid) { Print("ACCOUNT_MISMATCH", null); return 2; }
       // Review round 3: only while the switch that started us still holds its marker (checked after the box, right before the hand-over).
+      step = "pending";
       string pendingWhy = CurrentPendingRefusal(root);
       if (pendingWhy != null) { Print(pendingWhy, null); return 2; }
+      step = "register";
       // pwLen counts the terminating NUL when there is one.
       uint chars = pwLen;
       if (chars > 0 && Marshal.ReadInt16(pw, (int)(chars - 1) * 2) == 0) chars -= 1;
@@ -260,6 +334,7 @@ public static class CluedCompanionTaskRegistrar {
       string code = RegistrarCore.RegisterCode(hr);
       if (hr != 0) { Print(code, "0x" + hr.ToString("X8")); return 1; }
       // Read back through the scripting interface: the password logon, the Owner, not elevated, the one fixed action.
+      step = "readback";
       object task = Call(folder, "GetTask", RegistrarCore.TaskName);
       object d2 = Get(task, "Definition"), pr = Get(d2, "Principal"), acts = Get(d2, "Actions");
       object a = (int)Get(acts, "Count") == 1 ? Get(acts, "Item", 1) : null;

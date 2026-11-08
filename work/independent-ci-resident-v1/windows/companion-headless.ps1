@@ -6,9 +6,9 @@
   install-resident.ps1 and upgrade-apply.ps1 carry the functions they need as their own text, held identical to these by
   test-companion-headless.ps1 (an elevated script never dot-sources a file from a user-writable package directory).
 
-  The password never passes through this file: it is typed only into the Windows credential box on the secure desktop that
-  bin\CluedCompanionTaskRegistrar.exe shows, and goes from there to the Task Scheduler (CompanionTaskRegistrar.cs). What comes back
-  here is a code.
+  The password never passes through this file: it is typed only into the Windows credential box on the secure desktop that the
+  registrar shows (built for each switch from this generation's CompanionTaskRegistrar.cs: New-CompanionBuild), and goes
+  from there to the Task Scheduler (CompanionTaskRegistrar.cs). What comes back here is a code.
 #>
 Set-StrictMode -Version 2.0
 
@@ -22,6 +22,12 @@ $CompanionQualifySeconds = 480
 # LastTaskResult values that mean the password logon was refused (ADR 0022 section 4.3), as unsigned 32-bit numbers.
 $CompanionLogonFailureCodes = @(0x8007052EL, 0x8007052FL, 0x80070530L, 0x80070531L, 0x80070532L, 0x80070533L, 0x80070569L, 0x80070701L, 0x80070773L, 0x80070775L)   # L: int64, positive (a bare 0x8... literal is a negative Int32)
 $CompanionFallbackTaskName = 'CluedCIResidentCompanionFallback'
+# The programs each switch builds for itself from this generation's pinned sources (New-CompanionBuild), with install's recipe:
+# name -> (source in the resident manifest, program). Only the registrar: the supervisor stays the install's (bin\).
+$CompanionBuildPrograms = [ordered]@{ registrar = @('windows/CompanionTaskRegistrar.cs', 'CluedCompanionTaskRegistrar.exe') }
+$CompanionBuildSddl = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+$CompanionFramework = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'
+$CompanionCsc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 # Variables that make a .NET or node process load foreign code (DESIGN.md section 14 R10; the reinstall launcher's Step-HostHygiene).
 $CompanionInjectVariables = '^(COR_ENABLE_PROFILING|COR_PROFILER|COR_PROFILER_PATH(_32|_64)?|CORECLR_.*|COMPlus_.*|DOTNET_.*|NODE_OPTIONS)$'
 
@@ -265,12 +271,74 @@ function Get-InjectVariables {
   $hkcu = try { @((Get-Item -LiteralPath 'HKCU:\Environment' -ErrorAction Stop).GetValueNames() | Where-Object { $_ -match $CompanionInjectVariables }) } catch { @() }
   @($names + $hkcu | Sort-Object -Unique)
 }
+# ---- The registrar of this generation (2026-11-08, 30th DESK) ----
+# bin\CluedCompanionTaskRegistrar.exe is compiled once by the install and the upgrade channel never replaces it, so a fix to
+# CompanionTaskRegistrar.cs never reached an installed node: the 30th DESK's registrar imported CredUnpackAuthenticationBufferW (credui.dll
+# exports CredUnPackAuthenticationBufferW), and every password typed ended in REGISTRAR_UNEXPECTED. A switch therefore builds the
+# registrar for itself from THIS generation's source: install\install-receipt.json names the generation; config\resident-installed-manifest.json
+# must hash to it (the generation's name is that manifest's SHA-256) and pin windows/CompanionTaskRegistrar.cs; the source is read once,
+# its bytes must have the pinned hash, and exactly those bytes are written into a new directory under the admin-only install\ (SYSTEM and
+# Administrators only, protected) and compiled there with install's recipe (Invoke-CompanionSupervisorCompile; test-companion-headless.ps1
+# holds the command line identical). The switch uses that program for register-password and token-facts and deletes the directory when
+# it ends; a directory left by a switch that was cut off is deleted by the next one. bin\'s registrar stays for the read-only probe; the
+# supervisor stays bin\'s.
+function Get-CompanionSha256([byte[]]$bytes) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
+function Invoke-CompanionBinaryCompile([string]$compiler, [string]$fw, [string]$exe, [string]$cs) {
+  & $compiler /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $exe) $cs | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'COMPANION_BUILD_COMPILE_FAILED' }
+}
+function Remove-CompanionBuild([string]$dir) {
+  $item = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+  if ($null -eq $item) { return }
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($dir, $false); return }   # the link only
+  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+}
+# Returns directory, generation, and per program (the registrar) its exe, source hash and program hash. Throws a COMPANION_BUILD_*
+# code; nothing is left behind then.
+function New-CompanionBuild([string]$root, [string]$dacl = $CompanionBuildSddl) {
+  $gen = [string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256
+  if ($gen -cnotmatch '^[0-9a-f]{64}\z') { throw 'COMPANION_BUILD_RECEIPT_REFUSED' }
+  $manifestBytes = [IO.File]::ReadAllBytes((Join-Path $root 'config\resident-installed-manifest.json'))
+  if ((Get-CompanionSha256 $manifestBytes) -cne $gen) { throw 'COMPANION_BUILD_MANIFEST_NOT_THE_GENERATION' }
+  $manifest = try { (New-Object Text.UTF8Encoding($false, $true)).GetString($manifestBytes) | ConvertFrom-Json } catch { throw 'COMPANION_BUILD_MANIFEST_UNREADABLE' }
+  $sources = [ordered]@{}
+  foreach ($name in @($CompanionBuildPrograms.Keys)) {
+    $rel = $CompanionBuildPrograms[$name][0]
+    $pin = @(@($manifest.files) | Where-Object { $null -ne $_ -and [string]$_.path -ceq $rel })
+    if ($pin.Count -ne 1 -or [string]$pin[0].sha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'COMPANION_BUILD_SOURCE_NOT_PINNED' }
+    $bytes = [IO.File]::ReadAllBytes((Join-Path $root ('resident\' + $gen + '\' + $rel.Replace('/', '\'))))
+    if ((Get-CompanionSha256 $bytes) -cne [string]$pin[0].sha256) { throw 'COMPANION_BUILD_SOURCE_NOT_THE_GENERATION' }
+    $sources[$name] = $bytes
+  }
+  # Never two switches at once (the marker), so any build directory still here is a cut-off switch's.
+  foreach ($d in @(Get-ChildItem -LiteralPath (Join-Path $root 'install') -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -and $_.Name -cmatch '^companion-build-[0-9a-f]{32}\z' })) { Remove-CompanionBuild $d.FullName }
+  $dir = Join-Path $root ('install\companion-build-' + [guid]::NewGuid().ToString('N'))
+  if (Test-Path -LiteralPath $dir) { throw 'COMPANION_BUILD_DIRECTORY_EXISTS' }
+  $ds = New-Object Security.AccessControl.DirectorySecurity
+  $ds.SetSecurityDescriptorSddlForm($dacl)
+  $null = [IO.Directory]::CreateDirectory($dir, $ds)
+  try {
+    $build = [ordered]@{ directory = $dir; generation = $gen }
+    foreach ($name in @($CompanionBuildPrograms.Keys)) {
+      $cs = Join-Path $dir (Split-Path -Leaf $CompanionBuildPrograms[$name][0])
+      $bytes = $sources[$name]
+      $f = [IO.File]::Open($cs, 'CreateNew', 'Write', 'None'); try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+      $exe = Join-Path $dir $CompanionBuildPrograms[$name][1]
+      Push-Location $dir
+      try { Invoke-CompanionBinaryCompile $CompanionCsc $CompanionFramework $exe $cs } finally { Pop-Location }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'COMPANION_BUILD_COMPILE_FAILED' }
+      $build[$name] = [ordered]@{ exe = $exe; sourceSha256 = (Get-CompanionSha256 $bytes); sha256 = (Get-CompanionSha256 ([IO.File]::ReadAllBytes($exe))) }
+    }
+    $build
+  } catch { Remove-CompanionBuild $dir; throw }
+}
 # The registrar with a cleared, fixed environment (no profiler, no COMPlus_ knob of the Owner's session reaches it). Returns its stdout.
 # The registrar's parent is this process: it checks that the pending marker names this process (pid and start time) right before it
 # hands the password over (review round 3), so the marker must be written by this same process (Write-CompanionPending uses $PID).
-function Invoke-CompanionRegistrar([string]$root, [string[]]$arguments) {
+# exe: the switch passes its own build (New-CompanionBuild); bin\'s copy otherwise.
+function Invoke-CompanionRegistrar([string]$root, [string[]]$arguments, [string]$exe = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
   $psi = New-Object Diagnostics.ProcessStartInfo
-  $psi.FileName = Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'
+  $psi.FileName = $exe
   $psi.Arguments = (($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = 'C:\Windows\System32'
   $psi.EnvironmentVariables.Clear()
@@ -297,6 +365,7 @@ function Get-CompanionHeadlessPreflight([string]$root, $node) {
   $ghReady = (Test-Path -LiteralPath $hosts -PathType Leaf) -and (Test-Path -LiteralPath $gitconfig -PathType Leaf)
   if (-not $ghReady) { $refusals += 'COMPANION_GH_CONFIG_MISSING' }
   foreach ($exe in @('bin\CluedCompanionSupervisor.exe', 'bin\CluedCompanionTaskRegistrar.exe', 'config\companion-launch.json')) { if (-not (Test-Path -LiteralPath (Join-Path $root $exe) -PathType Leaf)) { $refusals += ('COMPANION_HEADLESS_NOT_INSTALLED:' + $exe) } }
+  if (-not (Test-Path -LiteralPath $CompanionCsc -PathType Leaf)) { $refusals += 'COMPANION_HEADLESS_COMPILER_MISSING' }   # the switch builds its registrar
   $inject = @(Get-InjectVariables)
   if ($inject.Count) { $refusals += ('COMPANION_HEADLESS_INJECTION_VARIABLES:' + ($inject -join ',')) }
   [ordered]@{ refusals = $refusals; disableDomainCreds = [int]$lsa; lockout = $lock
@@ -313,12 +382,12 @@ function Get-CompanionProcessTree([string]$root) {
   $children = @($all | Where-Object { [string]::Equals([string]$_.ExecutablePath, $node, [StringComparison]::OrdinalIgnoreCase) -and (@($sups | ForEach-Object { [int]$_.ProcessId }) -contains [int]$_.ParentProcessId) })
   [ordered]@{ supervisors = $sups; children = $children }
 }
-function Get-ProcessTokenFacts([string]$root, [int]$processId) {
-  $out = Invoke-CompanionRegistrar $root @('token-facts', [string]$processId)
+function Get-ProcessTokenFacts([string]$root, [int]$processId, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
+  $out = Invoke-CompanionRegistrar $root @('token-facts', [string]$processId) $registrar
   try { $out | ConvertFrom-Json } catch { $null }
 }
 # One look: $null when everything holds, else the first check that does not. since: when the switch began (UTC).
-function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since) {
+function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
   $launch = try { Get-Content -LiteralPath (Join-Path $root 'config\companion-launch.json') -Raw | ConvertFrom-Json } catch { return 'launch-file' }
   $tree = Get-CompanionProcessTree $root
   if (@($tree.supervisors).Count -ne 1) { return 'supervisor-process' }
@@ -329,7 +398,7 @@ function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTime
   if ($childStart -lt $since) { return 'companion-process-older-than-the-switch' }
   $since = $childStart
   foreach ($p in @(@($tree.supervisors[0], (Join-Path $root 'bin\CluedCompanionSupervisor.exe')), @($child[0], [string]$launch.nodeExe))) {
-    $f = Get-ProcessTokenFacts $root ([int]$p[0].ProcessId)
+    $f = Get-ProcessTokenFacts $root ([int]$p[0].ProcessId) $registrar
     if ($null -eq $f -or $f.code -cne 'TOKEN_FACTS') { return 'token-unreadable' }
     if ($f.userSid -cne $ownerSid) { return 'token-user' }
     if ($f.elevationType -eq 2 -or ($f.adminsPresent -and -not $f.adminsDenyOnly)) { return 'token-elevated' }
@@ -343,10 +412,10 @@ function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTime
   if (-not (Test-Path -LiteralPath $facts -PathType Leaf) -or (Get-Item -LiteralPath $facts).LastWriteTimeUtc -lt $since.UtcDateTime) { return 'linux-facts' }
   $null
 }
-function Wait-CompanionQualified([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [int]$seconds = $CompanionQualifySeconds) {
+function Wait-CompanionQualified([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [int]$seconds = $CompanionQualifySeconds, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
   $until = [DateTime]::UtcNow.AddSeconds($seconds); $why = 'not-started'
   while ([DateTime]::UtcNow -lt $until) {
-    $why = Test-CompanionQualifiedOnce $root $ownerSid $since
+    $why = Test-CompanionQualifiedOnce $root $ownerSid $since $registrar
     if ($null -eq $why) { return $null }
     Start-Sleep -Seconds 10
   }
@@ -394,38 +463,54 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
   }
   $result.preflight = Get-CompanionHeadlessPreflight $root $node
   if (@($result.preflight.refusals).Count) { $result.failed = 'PREFLIGHT'; return $result }
-  # Review round 2 MINOR 1: the fall-back task first (a marker never exists without it), then the marker.
-  Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
-  Write-CompanionPending $root $mode $ownerSid
-  $reg = Invoke-CompanionRegistrar $root @('register-password', $root)
-  $result.registrar = try { ($reg | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
-  if ($result.registrar -cne 'REGISTERED') {
-    # Nothing was changed (or a refused registration left the old definition): back to the known interactive definition anyway.
-    $null = Invoke-CompanionFallback $root $ownerSid
-    $result.fellBack = $true; $result.failed = $result.registrar
-    return $result
-  }
-  # The old instance (the interactive session's supervisor, and with its job the companion) ends; the password task is then run from
-  # the elevated side (IgnoreNew would ignore a Run while an instance still counts as running).
-  Stop-CompanionTask
-  $tree = Get-CompanionProcessTree $root
-  foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
-  Wait-CompanionTaskNotRunning
-  # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
-  $since = [DateTimeOffset]::UtcNow
-  try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
-  $why = Wait-CompanionQualified $root $ownerSid $since
-  $result.task = Get-CompanionTaskFacts $root $ownerSid
-  if ($null -eq $why -and $result.task.mode -ceq 'password') {
-    Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
-    Remove-CompanionFallbackTask
-    $result.qualified = $true
-    return $result
-  }
-  $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
-  $null = Invoke-CompanionStopAndFallback $root $ownerSid
-  # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
-  try { Start-CompanionTask } catch { }
-  $result.fellBack = $true
-  $result
+  # 2026-11-08 (30th DESK): this generation's registrar, built for this switch (New-CompanionBuild), never bin\'s. Before the fall-back
+  # task and the marker: a build that fails changes nothing.
+  $build = $null
+  try { $build = New-CompanionBuild $root } catch { $why = [string]$_.Exception.Message; $result.failed = 'COMPANION_BUILD_FAILED:' + $(if ($why -cmatch '^COMPANION_BUILD_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' }) }
+  if ($null -eq $build) { return $result }
+  $result.build = [ordered]@{ generation = $build.generation; registrarSourceSha256 = $build.registrar.sourceSha256; registrarSha256 = $build.registrar.sha256 }
+  try {
+    # Review round 2 MINOR 1: the fall-back task first (a marker never exists without it), then the marker.
+    Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
+    Write-CompanionPending $root $mode $ownerSid
+    $reg = Invoke-CompanionRegistrar $root @('register-password', $root) $build.registrar.exe
+    # The registrar's code (a fixed code, never text); for REGISTRAR_UNEXPECTED also where it stopped (step:ExceptionType:0xHRESULT), for
+    # CREDENTIAL_UNPACK_FAILED the two unpack error numbers; each kept only in exactly that shape.
+    $code = try { [string]($reg | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
+    $result.registrar = if ($code -cmatch '^[A-Z][A-Z0-9_]{0,63}\z') { $code } else { 'REGISTRAR_OUTPUT_UNREADABLE' }
+    $detailShape = @{ REGISTRAR_UNEXPECTED = '^[a-z]{1,16}:[A-Za-z0-9_]{1,40}:0x[0-9A-F]{8}\z'; CREDENTIAL_UNPACK_FAILED = '^protected:-?[0-9]{1,10}:plain:(-?[0-9]{1,10}|skipped)\z' }
+    if ($detailShape.ContainsKey($result.registrar)) {
+      $detail = try { [string]($reg | ConvertFrom-Json).detail } catch { $null }
+      if ($detail -cmatch $detailShape[$result.registrar]) { $result.registrarDetail = $detail }
+    }
+    if ($result.registrar -cne 'REGISTERED') {
+      # Nothing was changed (or a refused registration left the old definition): back to the known interactive definition anyway.
+      $null = Invoke-CompanionFallback $root $ownerSid
+      $result.fellBack = $true; $result.failed = $result.registrar
+      return $result
+    }
+    # The old instance (the interactive session's supervisor, and with its job the companion) ends; the password task is then run from
+    # the elevated side (IgnoreNew would ignore a Run while an instance still counts as running).
+    Stop-CompanionTask
+    $tree = Get-CompanionProcessTree $root
+    foreach ($p in @($tree.supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+    Wait-CompanionTaskNotRunning
+    # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
+    $since = [DateTimeOffset]::UtcNow
+    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $why = Wait-CompanionQualified $root $ownerSid $since -registrar $build.registrar.exe
+    $result.task = Get-CompanionTaskFacts $root $ownerSid
+    if ($null -eq $why -and $result.task.mode -ceq 'password') {
+      Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
+      Remove-CompanionFallbackTask
+      $result.qualified = $true
+      return $result
+    }
+    $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
+    $null = Invoke-CompanionStopAndFallback $root $ownerSid
+    # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
+    try { Start-CompanionTask } catch { }
+    $result.fellBack = $true
+    $result
+  } finally { Remove-CompanionBuild $build.directory }
 }
