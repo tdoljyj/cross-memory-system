@@ -51,7 +51,12 @@
       "id": "mcp.server",
       "kind": "service",
       "version": "0.9.0",
-      "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+      "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
+      "root": "apps/clued-cloud",
+      "files": [
+        "worker/**/*",
+        "supabase/migrations/*.sql"
+      ]
     },
     {
       "id": "hook.runner-job-started",
@@ -161,7 +166,9 @@
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
-        "clued_components.py"
+        "clued_components.py",
+        "ci/component-version-integration.py",
+        "ci/component-version-integration.test.py"
       ],
       "content_sha256": "a9da33f8e3b450e03c7b5d279430b75ebd19c511185ffd123193c9aaaa6d2c7d",
       "version_marker": {
@@ -585,7 +592,13 @@
         "work/independent-ci-resident-v1/windows/BrokerPureTests.cs",
         "work/independent-ci-resident-v1/windows/SwapBroker.cs",
         "work/independent-ci-resident-v1/windows/test-upgrade-windows.ps1",
-        "work/independent-ci-resident-v1/windows/verify-resident.ps1"
+        "work/independent-ci-resident-v1/windows/verify-resident.ps1",
+        "config/clued-mechanical-files.json",
+        "scripts/ci/component-version-integration-policy.mjs",
+        "scripts/ci/component-version-integration-policy.test.mjs",
+        "apps/clued-cloud/supabase/migrations/20261108144312_work_claim_mechanical_files_v1.sql",
+        "apps/clued-cloud/tests/work-claims-generated-files-db.test.mjs",
+        "apps/clued-cloud/worker/work-claims.ts"
       ],
       "version_marker": {
         "file": "scripts/ci/clued-independent-publication-port.mjs",
