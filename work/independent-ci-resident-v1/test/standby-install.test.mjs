@@ -77,7 +77,10 @@ test('a STANDBY install carries no state, no role and no publishing path; the ro
   assert.match(verifyText, /\(Get-Field \$receipt 'roleAssumption'\) -cne 'NONE'/, 'verify refuses a receipt that assumed one');
   // 3. The install talks to no service: nothing in its code reaches GitHub, KooYomi or any network.
   for (const text of [installText, verifyText]) {
-    assert.doesNotMatch(codeOf(text), /Invoke-WebRequest|Invoke-RestMethod|Net\.WebClient|HttpClient|WebRequest|api\.github\.com|supabase|Test-NetConnection|\bcurl\b|\bwget\b|\bgh\b/i);
+    assert.doesNotMatch(codeOf(text), /Invoke-WebRequest|Invoke-RestMethod|Net\.WebClient|HttpClient|WebRequest|api\.github\.com|supabase|Test-NetConnection|\bcurl\b|\bwget\b/i);
+    // M5 (ADR 0022 §4.4): install and verify name gh's install directory and the companion's own gh folder (the launch file's PATH,
+    // GH_CONFIG_DIR and HOME), but never run gh: no gh command and no call of a gh executable.
+    assert.doesNotMatch(codeOf(text), /\bgh(?:\.exe)?['"]?\s+(?:api|auth|repo|pr|run|workflow|release|issue|secret|status)\b|&\s*\$ghExe\b|Start-Process[^\n]*\bgh\b/i);
   }
   // 4. After the install the role probe reads the token from the file the install placed and sends the one read RPC.
   const record = { accepted: JSON.parse(fx.files['acceptance.json']), config: JSON.parse(fx.files['installation.json']) };

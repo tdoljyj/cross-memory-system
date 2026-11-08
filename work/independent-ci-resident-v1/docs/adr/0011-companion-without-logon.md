@@ -1,6 +1,6 @@
 # ADR 0011：companion 不靠交互登录
 
-- 状态：已决定，未实施。当前 companion 仍然是 AtLogOn 触发、Interactive 令牌。
+- 状态：已决定；第 29 代已实施（[ADR 0022](0022-companion-headless-implementation.md)），未安装。装好之前 companion 仍然是 AtLogOn 触发、Interactive 令牌；上线须整套重装，步骤见 [`../../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)。
 - 日期：2026-11-07
 - Owner Decision：`9dc130c7` 第 3 项（M5 采用 B2）、第 4 项（companion 改用细粒度 GitHub 令牌）
 - 关联：
@@ -40,7 +40,7 @@ companion 必须以 Owner 身份运行，原因有两个：
 ## 后果
 
 - Windows 上会多存一份 Owner 密码，形式是 LSA 秘密，本机管理员可以取得。这与现有"Owner、root 是受信者"的边界一致。
-- 实施之前，节点重启后需要 Owner 登录一次（锁屏也算登录），见 runbook §5.9。
+- 装好之前，节点重启后需要 Owner 登录一次（锁屏也算登录），见 runbook §5.9。实施细节和与本文的差异（例如令牌放在 companion 自己的 gh 配置里）见 ADR 0022。
 - 验收要覆盖以下情形（Task `59f8ef81`）：
   - 无人登录时冷启动；
   - 注销；

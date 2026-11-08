@@ -352,8 +352,10 @@ function Test-GenerationCurrent([string]$root, $receipt, [string]$receiptSha) {
     $live = { param([string]$name) $t = & $Sc qc $name 8192 | Out-String; if ($t -match 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { $Matches[1] } else { $null } }
     if ((& $live 'CluedCIResident') -cne $gen.residentBinPath) { return & $no 'RESIDENT_BINARY_PATH' }
     if ((& $live 'CluedCISwapBroker') -cne $gen.brokerBinPath) { return & $no 'BROKER_BINARY_PATH' }
-    $task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue
-    if ($null -eq $task -or @($task.Actions).Count -ne 1 -or [string]@($task.Actions)[0].Arguments -cne $gen.companionTaskArguments) { return & $no 'COMPANION_TASK_ARGUMENTS' }
+    # M5: what the supervisor starts is the launch file's generation (its entry and configuration), not the task's action.
+    $launch = Get-Content -LiteralPath (Join-Path $root 'config\companion-launch.json') -Raw | ConvertFrom-Json
+    $want = if ([string]$launch.entry -cmatch ('^' + [regex]::Escape($root) + '\\resident\\([0-9a-f]{64})\\src\\companion-main\.mjs\z')) { Get-CompanionLaunchArguments $root $Matches[1] ([string]$launch.configSha256) } else { $null }
+    if ($launch.generation -ne $g -or $want -cne $gen.companionTaskArguments) { return & $no 'COMPANION_LAUNCH_NOT_THE_GENERATION' }
     if ((Get-GenerationFilesSha256 $root) -cne (Get-Field $gen 'filesSha256')) { return & $no 'GENERATION_FILES' }
     [pscustomobject]@{ ok = $true; detail = ('g' + $g) }
   } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
@@ -629,19 +631,78 @@ foreach ($m in @('config\source-installed-manifest.json', 'config\resident-insta
   Record ('package:' + $m) ($bad.Count -eq 0) $bad.Count
 }
 
-# The companion task runs the installed node copy under the in-box conhost.exe --headless, so it has no console
-# window the Owner could close (install-resident.ps1 Get-CompanionAction).
-function Test-CompanionAction([string]$execute, [string]$arguments, [string]$root, [string]$residentSha) {
-  $want = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 '
-  ($execute -ceq 'C:\Windows\System32\conhost.exe') -and $arguments.StartsWith($want, [StringComparison]::Ordinal) -and ($arguments.Substring($want.Length) -cmatch '^[0-9a-f]{64}$')
+# ---- M5: the companion without the Owner's log-on (ADR 0022 section 4.4) ----
+# The functions are the installed copy's companion-headless.ps1 next to this file (its bytes are among the package files checked above).
+. (Join-Path $PSScriptRoot 'companion-headless.ps1')
+$companionOwnerSid = [string]$Node.ownerSid
+$verifyIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$verifyCanFix = ($verifyIdentity.User.Value -ceq 'S-1-5-18') -or (New-Object Security.Principal.WindowsPrincipal($verifyIdentity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# A switch cut off (window closed, restart) leaves its marker: older than 15 minutes it is rolled back here, before anything else is read.
+$companionPending = Read-CompanionPending $Root
+if ($null -eq $companionPending) { Record 'companion-headless-pending' $true }
+elseif (Test-CompanionPendingAbandoned $companionPending ([DateTimeOffset]::UtcNow)) {
+  if ($verifyIdentity.User.Value -ceq 'S-1-5-18') {
+    # Run by the upgrade channel (SYSTEM): it never touches the companion task (ADR 0022 section 4.4); the SYSTEM fall-back task owns this.
+    Record 'companion-headless-pending' (Test-CompanionFallbackTask) 'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'
+  } elseif ($verifyCanFix) {
+    try { $null = Invoke-CompanionStopAndFallback $Root $companionOwnerSid; try { Start-CompanionTask } catch { }; Record 'companion-headless-pending' $true 'STALE_MARKER_FELL_BACK' }
+    catch { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_FALLBACK_FAILED' }
+  } else { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_PENDING_STALE_RUN_ELEVATED' }
+} else { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS' }
+# The task: exactly the password definition (ADR 0022 section 4.1) or exactly the interactive one (before the switch, after a fall-back).
+$companionTask = Get-CompanionTaskFacts $Root $companionOwnerSid
+Record 'companion-task-present' ($companionTask.exists)
+Record 'companion-task' (@('password', 'interactive') -ccontains $companionTask.mode) ([string]$companionTask.mode + $(if (@($companionTask.problems).Count) { ':' + (@($companionTask.problems) -join ',') } else { '' }))
+Record 'companion-task-logon' (-not (Test-CompanionLogonFailure $companionTask.lastTaskResult)) $(if ($null -ne $companionTask.lastTaskResult) { '0x' + ('{0:X8}' -f [int64]$companionTask.lastTaskResult) } else { $null })
+$lockout = Get-LockoutPolicy
+Record 'companion-lockout-margin' $(if ($companionTask.mode -ceq 'password') { Test-LockoutMargin $lockout } else { $true }) $(if ($null -eq $lockout) { 'unreadable' } else { 'threshold=' + $lockout.threshold + ';window=' + $lockout.windowMinutes + ';mode=' + $companionTask.mode })
+# The launch file: admin-only, no link, this generation's node, entry and configuration, the Owner's own gh login.
+$launchProblem = try {
+  $lf = Join-Path $Root 'config\companion-launch.json'
+  $item = Get-Item -LiteralPath $lf -Force
+  $acl = Get-Acl -LiteralPath $lf
+  $writers = @($acl.Access | Where-Object { $_.AccessControlType -eq 'Allow' -and -not (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) -and
+    @('S-1-5-18', 'S-1-5-32-544') -cnotcontains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -and ((([int]$_.FileSystemRights) -band 0x500D0156) -ne 0) })
+  $l = Get-Content -LiteralPath $lf -Raw | ConvertFrom-Json
+  $gh = Get-CompanionGhDirs ([string]$Node.ownerProfileDirectory)
+  $entry = Join-Path $Root ('resident\' + $receipt.residentManifestSha256 + '\src\companion-main.mjs')
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'LAUNCH_LINK' }
+  elseif (@('S-1-5-18', 'S-1-5-32-544') -cnotcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -or $writers.Count) { 'LAUNCH_ACL' }
+  elseif ((@($l.PSObject.Properties.Name) -join ',') -cne 'contract,generation,nodeExe,nodeExeSha256,entry,entrySha256,configSha256,ghConfigDir,homeDir,pathDirs' -or $l.contract -cne $CompanionLaunchContract) { 'LAUNCH_SHAPE' }
+  elseif ((Get-Field $receipt 'generation') -and $l.generation -ne $receipt.generation) { 'LAUNCH_GENERATION' }
+  elseif ([string]$l.nodeExe -cne (Join-Path $Root 'runtime\node.exe') -or [string]$l.nodeExeSha256 -cne (Sha256File (Join-Path $Root 'runtime\node.exe'))) { 'LAUNCH_NODE' }
+  elseif ([string]$l.entry -cne $entry -or [string]$l.entrySha256 -cne (Sha256File $entry)) { 'LAUNCH_ENTRY' }
+  elseif ([string]$l.configSha256 -cne [string]$receipt.companionConfigSha256) { 'LAUNCH_CONFIG' }
+  elseif ([string]$l.ghConfigDir -cne $gh.gh -or [string]$l.homeDir -cne $gh.home) { 'LAUNCH_GH_CONFIG' }
+  else { $null }
+} catch { 'LAUNCH_UNREADABLE' }
+Record 'companion-launch' ($null -eq $launchProblem) $launchProblem
+foreach ($pair in @(@('bin\CluedCompanionSupervisor.exe', 'companionSupervisorSha256', 'companion-supervisor-pin'), @('bin\CluedCompanionTaskRegistrar.exe', 'companionRegistrarSha256', 'companion-registrar-pin'))) {
+  $f = Join-Path $Root $pair[0]
+  Record $pair[2] (($receipt.PSObject.Properties.Name -ccontains $pair[1]) -and (Test-Path -LiteralPath $f -PathType Leaf) -and ((Sha256File $f) -ceq [string]$receipt.($pair[1])))
 }
-$task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue
-Record 'companion-task-present' ($null -ne $task)
-if ($task) {
-  Record 'companion-task-not-elevated' ($task.Principal.RunLevel -eq 'Limited')
-  $actions = @($task.Actions)
-  Record 'companion-task-windowless' (($actions.Count -eq 1) -and (Test-CompanionAction ([string]$actions[0].Execute) ([string]$actions[0].Arguments) $Root $receipt.residentManifestSha256))
-}
+$notifierTask = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction SilentlyContinue
+$notifierAction = Get-NotifierAction $Root $receipt.residentManifestSha256
+Record 'notifier-task' ($null -ne $notifierTask -and [string]$notifierTask.Principal.RunLevel -ceq 'Limited' -and [string]$notifierTask.Principal.LogonType -ceq 'Interactive' -and @($notifierTask.Actions).Count -eq 1 -and
+  [string]@($notifierTask.Actions)[0].Execute -ceq $notifierAction.path -and [string]@($notifierTask.Actions)[0].Arguments -ceq $notifierAction.arguments)
+# The companion's own gh login (Owner decision): present, and its folder protected (SYSTEM, Administrators, the Owner; nothing inherited).
+# Presence only: verify never reads the token. The companion checks the token's shape itself and does not start without it.
+$ghProblem = try {
+  $gh = Get-CompanionGhDirs ([string]$Node.ownerProfileDirectory)
+  $base = Get-Item -LiteralPath $gh.base -Force
+  $gacl = Get-Acl -LiteralPath $gh.base
+  $others = @($gacl.Access | Where-Object { @('S-1-5-18', 'S-1-5-32-544', $companionOwnerSid) -cnotcontains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })
+  if (($base.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'GH_CONFIG_LINK' }
+  elseif (-not $gacl.AreAccessRulesProtected -or $others.Count) { 'GH_CONFIG_ACL' }
+  elseif (-not (Test-Path -LiteralPath (Join-Path $gh.gh 'hosts.yml') -PathType Leaf)) { 'GH_CONFIG_NO_LOGIN' }
+  elseif (-not (Test-Path -LiteralPath (Join-Path $gh.home '.gitconfig') -PathType Leaf)) { 'GH_CONFIG_NO_GITCONFIG' }
+  else { $null }
+} catch { 'GH_CONFIG_MISSING' }
+Record 'companion-gh-config' ($null -eq $ghProblem) $ghProblem
+# Facts only (ADR 0022 section 4.4): the Owner's password expiry, and BitLocker on C: (elevated only).
+$ownerUser = try { Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts\Microsoft.PowerShell.LocalAccounts.psd1' -ErrorAction Stop; Get-LocalUser -SID $companionOwnerSid -ErrorAction Stop } catch { $null }
+$bitlocker = if ($verifyCanFix) { try { [string](Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop).ProtectionStatus } catch { 'unreadable' } } else { 'not-elevated' }
+Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $ownerUser.PasswordExpires) { ([DateTime]$ownerUser.PasswordExpires).ToString('yyyy-MM-dd') } elseif ($ownerUser) { 'never' } else { 'unreadable' }) + ';bitlocker=' + $bitlocker)
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }

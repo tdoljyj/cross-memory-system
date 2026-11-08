@@ -63,7 +63,7 @@
 | **常驻执行器** `CluedCIResident` | `NT SERVICE\CluedCIResident` 虚拟账户，Session 0，非管理员，只保留 `SeChangeNotifyPrivilege`，按服务 SID 封掉出站 | 全部调度决定：读触发、排队、预留、驱动各段、分类失败、归档、写账本和回执、写状态 | 联网、读秘密、加载用户目录里的代码、对 runner 服务有任何权限 | `src/service-main.mjs`、`src/executor.mjs`、`windows/ResidentServiceHost.cs` |
 | **交换代理** `CluedCISwapBroker` | LocalSystem | 把 runner 服务的二进制路径在"原始"和"已安装、哈希在白名单里的通用助手"之间切换，带 nonce 启动一次，等它停下再换回；Owner 中止时向这一次交换的助手发一次 SCM 停止 | 改账户、启动类型、依赖、DACL；运行白名单外的东西；杀进程 | `windows/SwapBroker.cs`、`CI/resident-v2/windows/ResidentScmV2.cs` |
 | **通用助手** | 以 runner 服务的账户 `.\clued-control` 运行 | 读 App 私钥和 ci-admission token；对 GitHub、KooYomi 做全部实时核验和发布 | 加载 `<root>\source\<ciSourceManifestSha256>\` 以外的代码 | `CI/resident-v2/`（`invoke-stage.mjs`、`FormalPublicBoundaryV2.cs`、`entry-runtime.mjs`） |
-| **companion** | Owner 本人的登录会话，计划任务 `\Clued\CluedCIResidentCompanion`，不提权，AtLogOn 触发 | WSL 保活；用 Owner 的 git 凭据打 bundle；在两端 spool 之间搬运 bridge 记录；启动固定的 Linux unit；轮询 PR；写 PR 页面状态和 Windows 通知；发节点心跳；搬运升级信箱 | 任何授权判断；任意命令（只有固定 argv）；写执行器的 `state\` 和 `owner\` | `src/companion-main.mjs`、`src/companion.mjs` 等，见 §9 |
+| **companion** | Owner 本人，计划任务 `\Clued\CluedCIResidentCompanion`，不提权。现装版本 AtLogOn 触发、Interactive 令牌；第 29 代（ADR 0022，未安装）改为密码登录、会话 0，由监督进程 `bin\CluedCompanionSupervisor.exe` 拉起 | WSL 保活；用 Owner 的 git 凭据打 bundle；在两端 spool 之间搬运 bridge 记录；启动固定的 Linux unit；轮询 PR；写 PR 页面状态和 Windows 通知；发节点心跳；搬运升级信箱 | 任何授权判断；任意命令（只有固定 argv）；写执行器的 `state\` 和 `owner\` | `src/companion-main.mjs`、`src/companion.mjs` 等，见 §9 |
 | **Linux unit** | WSL 内 root，systemd oneshot 模板，沙箱加固 | `clued-ci-worker@`（扫描 worker）、`clued-ci-wsprep@`（建工作区）、`clued-ci-archive@`（归档）；每个都由 root 自己实测前提 | 让 PR 内容驱动执行代码 | `linux/systemd/`、`linux/bin/clued-ci-resident-linux` |
 | **升级代理** `CluedCIUpgrader` | LocalSystem | 原地升级：暂存、停服、切换、启动、校验，失败自动回滚 | 在没有 Owner Grant 的情况下改任何东西 | `upgrader/src/`、`windows/UpgraderServiceHost.cs`、`windows/upgrade-apply.ps1` |
 | **服务端（KooYomi / Native）** | Supabase 上的 RPC，用每节点的 ci-admission Binding 调用 | 准入评估、合并队列（车头、touch、adopt、return、保活）、角色持有、心跳与自动接班看门狗、Grant | — | `apps/clued-cloud/supabase/migrations/`（不在本目录） |
@@ -559,7 +559,7 @@ P2 的停止路径：经代理写 `.stop`，助手走自己的停止路径（只
 代码：`R/src/companion-main.mjs`（各通道）、`companion.mjs`、`poller.mjs`、`pr-status.mjs`、`node-duty.mjs`、`ruleset-backstop.mjs`、`companion-heartbeat.mjs`、`panel-dispatch.mjs`、`admission-rerun.mjs`、`merge-reconcile.mjs`、`upgrade-mailbox.mjs`、`roles-public.mjs`、`runner.mjs`、`windows/CompanionJobHost.cs`
 档案：DESIGN §16.6、§24–§26、§39、§43、§56.5、§63
 
-companion 由 Owner 登录时启动，单实例锁。每个通道有自己的 Runner，一个通道卡住不影响别的通道。每个子进程都建在作业宿主（`bin\CluedCompanionJobHost.exe`）自己的作业对象里，超时后整棵树一起结束。
+companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起由计划任务的固定动作 `bin\CluedCompanionSupervisor.exe` 按管理员专用的 `config\companion-launch.json` 启动并退避重启（ADR 0022 §4.2）。每个通道有自己的 Runner，一个通道卡住不影响别的通道。每个子进程都建在作业宿主（`bin\CluedCompanionJobHost.exe`）自己的作业对象里，超时后整棵树一起结束。
 
 | 通道 | 周期 | 做什么 |
 |---|---|---|
@@ -579,7 +579,14 @@ companion 由 Owner 登录时启动，单实例锁。每个通道有自己的 Ru
 - 它对执行器只能"让批次停下或少做"，放行永远由第 1 段和第 8 段的实时核验决定；
 - 恶意的 Owner 会话最多能谎报 Linux 静止，下一批 ws-prep 的 root 预检会拒绝（DESIGN §3.3）。
 
-现在的限制：companion 要靠 Owner 登录才运行（AtLogOn，Interactive）。无人登录时冷启动链没有闭合。Owner 已决定改为 B2 方案（保存 Owner 密码，无登录运行），尚未实施，见 [ADR 0011](adr/0011-companion-without-logon.md)。
+现在的限制：现装版本的 companion 要靠 Owner 登录才运行（AtLogOn，Interactive），无人登录时冷启动链没有闭合。Owner 已决定改为 B2 方案（[ADR 0011](adr/0011-companion-without-logon.md)），第 29 代已实施，未安装（[ADR 0022](adr/0022-companion-headless-implementation.md)）：
+
+- companion 任务：Owner 本人、密码登录、LUA；触发器只有开机加 30 秒和每 15 分钟一次；SDDL 里 Owner 只有读。密码由 `CluedCompanionTaskRegistrar.exe` 在安全桌面上收取，切换后 8 分钟内由提权一侧实测，不通过就自动退回 InteractiveToken。
+- 通知：6 处 Windows 通知改为写 `%LOCALAPPDATA%\CluedIndependentCI\notify-queue\`，由登录时运行的 `\Clued\CluedCIResidentNotifier`（`src/notifier-main.mjs`）显示；它还提示登录失败码、无心跳、反复重启。
+- 升级通道：升级、回滚、Recover 不再注册 companion 任务，只写 launch 文件并重启子进程（`upgrader/src/machine.mjs` 的 `write-companion-launch`）。
+- GitHub：companion 用只限本仓库的细粒度令牌，放在 `%LOCALAPPDATA%\CluedIndependentCI\companion-gh\`，读不到就不启动。
+- 状态：`executor.companion.firstBeatAfterServiceStartMs`；服务启动 10 分钟仍无心跳时出 `companion-absent`。
+- 上线只能整套重装（R 类），步骤见 [`../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)。
 
 ---
 
@@ -748,8 +755,8 @@ companion 由 Owner 登录时启动，单实例锁。每个通道有自己的 Ru
 | `train.sweep = gate`（接管全量清扫挡住一切） | 回退路径，平时不用 | DESIGN §65.5 |
 | 车头落后时自动更新分支 | Owner 已决定重新启用合并执行器，只给 BEHIND 的车头做 update-branch，尚未实现 | Decision `78a3052f` 第 2 项 |
 | 升级自动审批每节点每天 6 次 | 已决定，迁移等发布 | Decision `56371a46`，Task `3b4f1f12` |
-| companion 无登录运行（B2） | 已决定，未实施 | Decision `9dc130c7` 第 3 项，Task `59f8ef81` |
-| companion 换细粒度 GitHub 令牌 | 已决定，未实施 | Decision `9dc130c7` 第 4 项 |
+| companion 无登录运行（B2） | 第 29 代已实施，未安装；须整套重装 | Decision `9dc130c7` 第 3 项，Task `59f8ef81`，[ADR 0022](adr/0022-companion-headless-implementation.md) |
+| companion 换细粒度 GitHub 令牌 | 第 29 代已实施，未安装；令牌由 Owner 生成并存入 | Decision `9dc130c7` 第 4 项，[ADR 0022](adr/0022-companion-headless-implementation.md) §11 |
 | 准入票据（M1） | 不做，设计存档 | Decision `9dc130c7` 第 1 项，[ADR 0009](adr/0009-no-admission-ticket.md) |
 | bors 式列车（`train.landing = push`、`batchMax > 1`） | 第 28 代已实现，默认 `github-merge`、1；等 ADR 0010 的触发条件满足、上线前提做完再开 | Task `7d86cf41`，[ADR 0010](adr/0010-bors-preauthorized.md)、[0018](adr/0018-bors-landing.md)、[0019](adr/0019-train-batch-member-chain.md) |
 | 备用节点预检（L3） | 评估后不做 | [ADR 0020](adr/0020-standby-prechecks-not-implemented.md) |

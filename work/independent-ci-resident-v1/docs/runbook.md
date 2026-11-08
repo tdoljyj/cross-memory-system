@@ -427,10 +427,14 @@ $tool = "<res>\tools\rearm-tool.mjs"
 | 现象 | 处理 |
 |---|---|
 | `writtenAt` 不动 | 服务没在跑。看服务状态和事件日志（服务失败后每天最多自动重启一次）；单实例锁拒绝启动时看 `state\locks\` |
-| 执行器 `DEFERRED COMPANION_NOT_READY` | companion 心跳过期。companion 只在 Owner 登录时运行（AtLogOn），先确认 Owner 已登录（锁屏也算），计划任务 `\Clued\CluedCIResidentCompanion` 在运行 |
+| 执行器 `DEFERRED COMPANION_NOT_READY` | companion 心跳过期。现装版本的 companion 只在 Owner 登录时运行（AtLogOn），先确认 Owner 已登录（锁屏也算），计划任务 `\Clued\CluedCIResidentCompanion` 在运行。装了 M5（第 29 代）并切到密码登录之后不需要登录：看通知或 M5 手册第 5 节的排查表 |
 | companion 起不来 | 看是否报 `COMPANION_JOB_HOST_UNAVAILABLE`、`COMPANION_SCRIPT_NOT_IN_SOURCE`。在 Owner 会话里跑一次已装的 `test-job-host.ps1 -Wsl` |
 
-无人登录时 companion 不可用，这是已知限制。Owner 已选定 B2 方案，尚未实施（[ADR 0011](adr/0011-companion-without-logon.md)）。
+无人登录时 companion 不可用，这是现装版本的已知限制。Owner 已选定 B2 方案（[ADR 0011](adr/0011-companion-without-logon.md)），第 29 代已实施、未安装（[ADR 0022](adr/0022-companion-headless-implementation.md)）。上线、改密码、换令牌、排查和真机验收都在运维手册 [`../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)：
+
+- 上线只能整套重装（R 类，§2.1）：M5 换了冻结的升级通道 `upgrade-apply.ps1` 和 `upgrader/src/machine.mjs`。重装之前先由 Owner 生成并存入 companion 专用的细粒度令牌（手册 §1.3–§1.5），没有它 companion 不启动。
+- Windows 密码只在安全桌面（屏幕变暗、和 UAC 同一画面）的凭据框里输入，而且只在自己刚启动提权命令、点过 UAC 之后。通知从不叫人输密码。
+- 改了 Windows 密码：提权运行 `rearm-resident.ps1 -CompanionCredential`（手册 §4.1）；手动退回登录方式：`-CompanionInteractive`（手册 §4.3）。
 
 ### 5.10 main 被改写，列车冻结
 

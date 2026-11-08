@@ -259,8 +259,10 @@ export class FakeWindows {
     await this.save(s);
     return { ok: true, code: null };
   }
-  async registerCompanionTask({ generation }) {
-    this.calls.push(`RegisterCompanionTask:${generation}`);
+  // M5: upgrade-apply.ps1 WriteCompanionLaunch (the launch file; the companion task itself is never registered by the channel).
+  async writeCompanionLaunch({ generation }) {
+    this.calls.push(`WriteCompanionLaunch:${generation}`);
+    this.companionTaskRegistrations = this.companionTaskRegistrations ?? 0;
     const s = await this.state();
     const rec = await this.record(generation);
     s.companionTask.arguments = rec?.companionTaskArguments ?? `gen ${generation} companion ${await shaOf(path.join(this.root, 'config', 'companion.json'))}`;

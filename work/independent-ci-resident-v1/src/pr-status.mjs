@@ -486,7 +486,8 @@ export class PrStatusReporter {
   // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool),
   //   node (this node's name, required: there is no default; status.json's own name wins when it names one), writeRequest(value)
   //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
-  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat) }
+  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), notify(key, title, body)
+  //   (optional, M5: the notification queue instead of a toast) }
   constructor(ports) {
     Object.assign(this, ports);
     check(NODE_NAME.test(this.node ?? ''), 'PR_STATUS_NODE_REQUIRED');
@@ -527,7 +528,9 @@ export class PrStatusReporter {
   // A toast that never started keeps its key for the next pass. Shown, refused or still running (timed out): the key is
   // used up, so a toast is never shown twice or retried every minute.
   async toast(e, now) {
-    const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
+    // M5 (ADR 0022 §4.3): the companion passes notify (its notification queue); "shown" then means queued. Without it, a toast.
+    const r = this.notify ? await this.notify(e.key, e.title, e.body).then(() => ({ code: 0 }), () => ({ code: 1 }))
+      : await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
     this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
     delete this.store.data.node.toasts[e.key];
