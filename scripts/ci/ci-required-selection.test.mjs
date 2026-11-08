@@ -216,6 +216,10 @@ test('expansions refuse empty test lists and a missing or all-zero base commit',
   assert.throws(() => expandArgv(['{base}'], { cwd: ROOT }), /CI_BASE_SHA is required/);
   assert.throws(() => expandArgv(['{base}'], { cwd: ROOT, base: '0'.repeat(40) }), /CI_BASE_SHA is required/);
   assert.deepEqual(expandArgv(['{base}', '{report}'], { cwd: ROOT, base: 'b', report: 'r' }), ['b', 'r']);
+  // defect 15894c2a review M1: the upgrade precheck and rollout tools' tests run in the resident suites
+  const resident = expandArgv(SUITE_COMMANDS['resident-node'][0].argv, { cwd: path.join(ROOT, 'work/independent-ci-resident-v1') });
+  assert.ok(resident.includes('rollout/test/precheck.test.mjs') && resident.includes('rollout/test/rollout.test.mjs') && resident.includes('test/train-on.test.mjs'));
+  assert.ok(SUITE_COMMANDS['resident-python'].some((c) => c.argv.join(' ').includes('-s rollout/test -p test_*.py')));
   const unit = expandArgv(['{unit-tests}'], { cwd: path.join(ROOT, 'apps/clued-cloud') });
   assert.ok(unit.includes('tests/production-schema-drift.test.mjs'));
 });

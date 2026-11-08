@@ -36,6 +36,15 @@ export const FLEET_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
 // A list older than this says too little about now (stage 10 on duty reads it every maintenanceEveryMs, 10 minutes by default).
 export const FLEET_VIEW_FRESH_MS = 60 * 60_000;
 export const OWNER_NODES_URL = 'https://kooyumi.pixelgrav.com/bindings/failover';
+// What a LOCAL_ONLY pass leaves to the Owner, by reason (review 15894c2a m4: the first generation's gap is said, not implied).
+const CHECK_BY_HAND = '在本机升级前，请到 /bindings/failover 只读核对：24 小时内有心跳的其他节点是否已是目标 Source；不是就先升它们。';
+export const UNVERIFIED_ADVICE = Object.freeze({
+  NODES_VIEW_ABSENT: `本机 status.json 还没有 train.nodes：要等装上含 15894c2a 修复的一代、且本机当班跑过一次 on 模式第 10 段之后才有（首代空窗，在那之前预检一律只核本机）。${CHECK_BY_HAND}`,
+  NODES_VIEW_STALE: `本机的节点表已超过 1 小时（本机多半不再当班）。${CHECK_BY_HAND}`,
+  SELF_NOT_IN_NODES_VIEW: `节点表里找不到本机（Native 登记的节点名与本机名不同）。${CHECK_BY_HAND}`,
+  NOT_ON_DUTY: `本机现在不当班，节点表不代表第 10 段此刻比对的内容；mismatchedNodes 只是它上次看到的。${CHECK_BY_HAND}`,
+  TARGET_TRAIN_MODE_UNREADABLE: `目标包的 train.enabled 读不出。${CHECK_BY_HAND}`,
+});
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const STAND_IN = 'f'.repeat(64);
@@ -81,8 +90,11 @@ function diffFiles(a, b) {
 //               (upgradeFirst). Rolling order (§42): the standby nodes first, the ci-admission holder last; only the holder runs stage
 //               10 on duty, so only it has a fresh list and only it is refused here: the standby's precheck cannot deadlock it;
 //   UNVERIFIED  no usable list (none, older than FLEET_VIEW_FRESH_MS, or this node is not in it): the comparison was not made.
+//               Also this node not on duty now (onDuty false: its status.json node.mode is not ACTIVE). Right after a hand-over both
+//               nodes hold a list younger than FLEET_VIEW_FRESH_MS; only the holder's says what stage 10 compares now, so the other
+//               one never refuses (review 15894c2a m2): it reports what its older list showed (mismatchedNodes) as a warning.
 // A node not heard within 24 hours is not compared (as stage 10) and is named in staleNodesIgnored.
-export function fleetSourceCheck({ view, target, selfNames = [], now }) {
+export function fleetSourceCheck({ view, target, selfNames = [], now, onDuty = false }) {
   const base = { targetCiSourceManifestSha256: target, viewAt: view?.at ?? null };
   const row = n => ({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, lastHeartbeatAt: n.lastHeartbeatAt });
   if (!view) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_ABSENT' };
@@ -94,12 +106,17 @@ export function fleetSourceCheck({ view, target, selfNames = [], now }) {
   const heard = n => n.lastHeartbeatAt !== null && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS;
   const blocking = differ.filter(heard), stale = differ.filter(n => !heard(n));
   const extra = { staleNodesIgnored: stale.map(row), ...(view.dropped > 0 ? { droppedEntries: view.dropped } : {}) };
+  if (onDuty !== true) return { ...base, status: 'UNVERIFIED', reason: 'NOT_ON_DUTY', mismatchedNodes: blocking.map(row), ...extra };
   if (blocking.length) return { ...base, status: 'MISMATCH', upgradeFirst: blocking.map(n => n.node), mismatchedNodes: blocking.map(row), ...extra };
   return { ...base, status: 'PASS', ...extra };
 }
 
 // readSlot: how one live slot is read (tests stand in an access-denied file; the Owner's session meets real ones).
-export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgDir, clock = Date.now, readSlot = file => fs.readFile(file) }) {
+// allowFleetSourceMismatch (--allow-fleet-source-mismatch, build-upgrade.ps1 -AllowFleetSourceMismatch): the Owner's explicit emergency
+// pass for a mismatch, e.g. the other node heard within 24 hours is gone for good. The train still stops with TRAIN_SOURCE_MISMATCH until
+// that node's heartbeat is 24 hours old or it runs the target Source; the result says so (FLEET_SOURCE_MISMATCH_ALLOWED).
+export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgDir, clock = Date.now, readSlot = file => fs.readFile(file),
+  allowFleetSourceMismatch = false }) {
   need(HEX64.test(pkgSha ?? '') && UUID.test(acceptance ?? '') && typeof installedPkgDir === 'string', 'USAGE');
   const result = { contract: PRECHECK_CONTRACT, packageManifestSha256: pkgSha, checkedAt: new Date(clock()).toISOString(), warnings: [], unreadableSlots: [] };
   const done = (status, extra = {}) => ({ ...result, status, ...extra });
@@ -213,7 +230,7 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
     return done(localChecks);
   }
   const fleet = knownMode
-    ? fleetSourceCheck({ view: parseTrainNodes(st?.train?.nodes), target, now: clock(),
+    ? fleetSourceCheck({ view: parseTrainNodes(st?.train?.nodes), target, now: clock(), onDuty: st?.node?.mode === 'ACTIVE',
       selfNames: [policy?.node?.nodeName, policy?.node?.hostname, st?.node?.name] })
     : { targetCiSourceManifestSha256: target, viewAt: null, status: 'UNVERIFIED', reason: 'TARGET_TRAIN_MODE_UNREADABLE' };
   result.fleetSourceReadiness = { ...fleet, targetMode: knownMode ? targetMode : null,
@@ -221,22 +238,30 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
   if (fleet.staleNodesIgnored?.length) result.warnings.push('FLEET_STALE_NODES_IGNORED');
   if (fleet.status === 'MISMATCH') {
     const names = fleet.upgradeFirst.map(n => n ?? '(unnamed)').join(', ');
+    const stops = `本机升级后合并列车以 TRAIN_SOURCE_MISMATCH 停车，直到 ${names} 也装上同一个 Source，或它的最后心跳超过 24 小时。`;
+    if (allowFleetSourceMismatch === true) {
+      result.warnings.push('FLEET_SOURCE_MISMATCH_ALLOWED');
+      result.fleetSourceReadiness.allowed = true;
+      return done('PRECHECK_PASS_FLEET_SOURCE_MISMATCH_ALLOWED', { localChecks, advice: `已按 -AllowFleetSourceMismatch 放行：${stops}` });
+    }
     return done('PRECHECK_REFUSED', { code: 'FLEET_SOURCE_MISMATCH', detail: { upgradeFirst: fleet.upgradeFirst }, localChecks,
-      advice: `先给 ${names} 装目标 Source ${target.slice(0, 12)} 的包（待命节点先升、当班节点最后升），再升本机；否则本机升级后合并列车以 TRAIN_SOURCE_MISMATCH 停车，直到它们也装上同一个 Source。` });
+      advice: `先给 ${names} 装目标 Source ${target.slice(0, 12)} 的包（待命节点先升、当班节点最后升），再升本机；否则${stops}`
+        + '那台已永久离线时，可用 -AllowFleetSourceMismatch 显式放行（列车照样停到它的心跳满 24 小时）。' });
   }
   if (fleet.status === 'UNVERIFIED') {
     // No list this precheck may trust (a standby has none: only the ci-admission holder's stage 10 reads Native). Never a PASS of the fleet.
     result.warnings.push('FLEET_SOURCE_UNVERIFIED');
-    return done('PRECHECK_PASS_LOCAL_ONLY', { localChecks });
+    return done('PRECHECK_PASS_LOCAL_ONLY', { localChecks, advice: UNVERIFIED_ADVICE[fleet.reason] ?? UNVERIFIED_ADVICE.NODES_VIEW_ABSENT });
   }
   return done(localChecks);
 }
 
 export async function main(argv, { log = s => process.stdout.write(s + '\n') } = {}) {
   const { values } = parseArgs({ args: argv, options: { root: { type: 'string' }, package: { type: 'string' }, 'package-sha': { type: 'string' }, acceptance: { type: 'string' },
-    'installed-package': { type: 'string' } } });
+    'installed-package': { type: 'string' }, 'allow-fleet-source-mismatch': { type: 'boolean' } } });
   need(values.root && values.package && values['installed-package'], 'USAGE');
-  const r = await precheck({ root: values.root, pkgDir: values.package, pkgSha: values['package-sha'], acceptance: values.acceptance, installedPkgDir: values['installed-package'] });
+  const r = await precheck({ root: values.root, pkgDir: values.package, pkgSha: values['package-sha'], acceptance: values.acceptance, installedPkgDir: values['installed-package'],
+    allowFleetSourceMismatch: values['allow-fleet-source-mismatch'] === true });
   log(JSON.stringify(r));
   return r.status.startsWith('PRECHECK_PASS') ? 0 : 1;
 }

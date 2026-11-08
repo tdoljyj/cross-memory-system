@@ -104,13 +104,13 @@ test('precheck: an admin-only slot is a stand-in, the rest is still decided', as
 // (train-facts.mjs, as train-maintenance.mjs fills them) through train.mjs#trainNodesView.
 const MIN = 60_000, HOUR = 60 * MIN;
 const peer = (node, source, heardAgo) => ({ node, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: heardAgo === null ? null : new Date(T - heardAgo).toISOString() });
-async function writeNodes(root, { own, nodes, at = T }) {
+async function writeNodes(root, { own, nodes, at = T, mode = 'ACTIVE' }) {
   const facts = trainFacts({ mode: 'on', at: new Date(at).toISOString(), onDuty: true, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null,
     decision: 'NO_FRONT', nodes, nodesDropped: 0 });
   const view = trainNodesView(facts, own);
   assert.ok(view, 'stage 10 facts give a nodes view');
   await fs.mkdir(path.join(root, 'state'), { recursive: true });
-  await fs.writeFile(path.join(root, 'state', 'status.json'), JSON.stringify({ node: { name: NODE, mode: 'ACTIVE' }, train: { enabled: 'on', last: null, nodes: view } }));
+  await fs.writeFile(path.join(root, 'state', 'status.json'), JSON.stringify({ node: { name: NODE, mode }, train: { enabled: 'on', last: null, nodes: view } }));
 }
 
 test('defect 15894c2a: target on, the other node heard within 24 hours already runs the target Source: PASS', async t => {
@@ -181,6 +181,46 @@ test('defect 15894c2a: a target with the train shadow or off needs no fleet chec
     const r = await run();
     assert.deepEqual([r.status, r.fleetSourceReadiness.status, r.fleetSourceReadiness.targetMode], ['PRECHECK_PASS', 'NOT_REQUIRED', trainMode]);
   }
+});
+
+test('defect 15894c2a (review m2): right after a hand-over both lists are fresh; only the node on duty now refuses, the other warns', async t => {
+  const { base, root, run } = await world(t, { trainMode: 'on' });
+  const nodes = [peer(NODE, base.ciSource, MIN), peer('turing', base.ciSource, 5 * MIN)];
+  for (const mode of ['STANDBY', 'UNCERTAIN']) {
+    // this node handed over 20 minutes ago: its list is younger than an hour and still shows turing on the current Source
+    await writeNodes(root, { own: base.ciSource, at: T - 20 * MIN, mode, nodes });
+    const r = await run();
+    assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'PRECHECK_PASS', 'UNVERIFIED', 'NOT_ON_DUTY'], mode);
+    assert.deepEqual(r.fleetSourceReadiness.mismatchedNodes.map(n => n.node), ['turing'], 'what the older list showed is still told');
+    assert.ok(r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
+    assert.match(r.advice, /不当班/);
+  }
+  await writeNodes(root, { own: base.ciSource, at: T - 20 * MIN, mode: 'ACTIVE', nodes });
+  assert.deepEqual([(await run()).status, (await run()).code], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH'], 'the holder refuses');
+});
+
+test('defect 15894c2a (review m3): the Owner\'s explicit pass for a node gone for good passes the precheck and says the train will stop', async t => {
+  const { base, root, run } = await world(t, { trainMode: 'on' });
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('turing', base.ciSource, 3 * HOUR)] });
+  const refused = await run();
+  assert.equal(refused.code, 'FLEET_SOURCE_MISMATCH');
+  assert.match(refused.advice, /-AllowFleetSourceMismatch/);
+  const r = await run({ allowFleetSourceMismatch: true });
+  assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.allowed], ['PRECHECK_PASS_FLEET_SOURCE_MISMATCH_ALLOWED', 'PRECHECK_PASS', 'MISMATCH', true]);
+  assert.ok(r.warnings.includes('FLEET_SOURCE_MISMATCH_ALLOWED'));
+  assert.match(r.advice, /TRAIN_SOURCE_MISMATCH 停车/);
+  assert.equal(r.code, undefined);
+  // the pass changes nothing when there is no mismatch
+  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN)] });
+  assert.equal((await run({ allowFleetSourceMismatch: true })).status, 'PRECHECK_PASS');
+});
+
+test('defect 15894c2a (review m4): before the first generation that writes train.nodes, the pass is local only and says so', async t => {
+  const { run } = await world(t, { trainMode: 'on' });
+  const r = await run();
+  assert.deepEqual([r.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'NODES_VIEW_ABSENT']);
+  assert.match(r.advice, /首代空窗/);
+  assert.match(r.advice, /bindings\/failover/);
 });
 
 test('precheck: a changed frozen module is a channel change, and the changed files are named', async t => {

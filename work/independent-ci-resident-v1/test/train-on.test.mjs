@@ -1021,8 +1021,9 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
   const read = parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.nodes;
   assert.deepEqual([read.at, read.sourceManifestSha256, read.nodes.map(n => [n.node, n.sourceManifestSha256, n.lastHeartbeatAt])],
     [new Date(T0).toISOString(), own, [['desk', own, new Date(T0).toISOString()], ['turing', own, heard]]]);
-  const check = () => fleetSourceCheck({ view: parseTrainNodes(onDisk()), target, selfNames: ['desk'], now: T0 + MIN });
+  const check = (onDuty = true) => fleetSourceCheck({ view: parseTrainNodes(onDisk()), target, selfNames: ['desk'], now: T0 + MIN, onDuty });
   assert.deepEqual([check().status, check().upgradeFirst], ['MISMATCH', ['turing']], 'turing still runs the current Source: it goes first');
+  assert.deepEqual([check(false).status, check(false).reason], ['UNVERIFIED', 'NOT_ON_DUTY'], 'review m2: only the node on duty refuses');
   // turing installs the target; the next on-mode run reads it
   peerSource = target;
   f.advance(10 * MIN);
