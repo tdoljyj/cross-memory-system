@@ -30,9 +30,15 @@ def need(value, reason):
         raise ValueError(reason)
 
 
-def read_json(path):
+# The snapshot of the kept history is the one large file: DESK (2026-11-08, 29 upgraded generations, g1-g26 archived) has about
+# 300 000 history entries, so the snapshot is tens of MB. Every other JSON read here stays bounded at 4 MB.
+MAX_ENTRIES = 1000000
+MAX_SNAPSHOT_BYTES = 256 << 20
+
+
+def read_json(path, limit=4 << 20):
     st = os.lstat(path)
-    need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and 0 < st.st_size <= 4 << 20, 'HISTORY_JSON_NOT_REGULAR')
+    need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and 0 < st.st_size <= limit, 'HISTORY_JSON_NOT_REGULAR')
     with open(path, encoding='utf-8-sig') as f:
         return json.load(f)
 
@@ -45,7 +51,7 @@ def tree(path):
     def visit(p, rel):
         s = os.lstat(p)
         need(stat.S_ISDIR(s.st_mode) or stat.S_ISREG(s.st_mode), 'HISTORY_LINK_OR_SPECIAL_FILE')
-        need(len(result) < 200000, 'HISTORY_TREE_TOO_LARGE')
+        need(len(result) < MAX_ENTRIES, 'HISTORY_TREE_TOO_LARGE')
         result[rel] = [s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns]
         if stat.S_ISDIR(s.st_mode):
             for n in sorted(os.listdir(p)):
@@ -174,14 +180,14 @@ def main(argv):
     if argv[0] == 'capture' and len(argv) == 4:
         result = capture(open(argv[1], encoding='utf-8').read(), read_json(argv[2]))
         data = json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n'
-        need(len(data.encode('utf-8')) <= 4 << 20, 'HISTORY_SNAPSHOT_TOO_LARGE')
+        need(len(data.encode('utf-8')) <= MAX_SNAPSHOT_BYTES, 'HISTORY_SNAPSHOT_TOO_LARGE')
         with open(argv[3], 'x', encoding='utf-8', newline='\n') as f:
             f.write(data)
     elif argv[0] in ('verify-live', 'verify-kept'):
         kept = argv[2] if len(argv) == 3 else None
         need((argv[0] == 'verify-live' and kept is None) or
              (argv[0] == 'verify-kept' and kept is not None and re.fullmatch(r'/var/lib/clued-independent-ci/resident-uninstalled-[0-9TZ]+', kept)), 'HISTORY_KEPT_PATH')
-        verify(read_json(argv[1]), kept)
+        verify(read_json(argv[1], MAX_SNAPSHOT_BYTES), kept)
     else:
         raise ValueError('HISTORY_USAGE')
     print(json.dumps({'status': 'REINSTALL_HISTORY_VERIFIED', 'mode': argv[0],
