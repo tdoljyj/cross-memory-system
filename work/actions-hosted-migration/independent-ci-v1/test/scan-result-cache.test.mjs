@@ -59,9 +59,9 @@ const SIGNERS=new Map([[SIGNER.keyId,{domain:'production',publicKeyPem:SIGNER.pu
 const port=(root,{guard=noGuard,signer=SIGNER,now}={})=>createResultCache({enabled:true,root,role:'trivy'},{guard,signer,...(now?{now}:{})});
 const logs={stdout:{bytes:10,sha256:hex('5'),truncated:false},stderr:{bytes:0,sha256:hex('6'),truncated:false}};
 const generationOf=()=>({claimId:randomUUID(),fence:3,epoch:1,expiresAt:new Date(Date.now()+3600000).toISOString()});
-function grantFor(job,role){const issued=Date.now();return noteScanStartResponseWindow({status:'committed',contract:'clued.ci-scan-start-grant/1',launch_allowed:true,
+function grantFor(job,role){const issued=Date.now();return noteScanStartResponseWindow({status:'committed',contract:'clued.ci-scan-start-grant/2',launch_allowed:true,
   execution_id:randomUUID(),receipt_id:randomUUID(),repository_id:1334673495,head_sha:job.headSha,role,provider:'independent-controller',
-  start_requested_at:new Date(issued).toISOString()},{issuedAt:new Date(issued).toISOString(),expiresAt:new Date(issued+120000).toISOString()});}
+  start_requested_at:new Date(issued).toISOString(),test_sha:job.testSha,attempt:job.attempt},{issuedAt:new Date(issued).toISOString(),expiresAt:new Date(issued+120000).toISOString()});}
 // The real bridge v4 issue for a job, and the result the Linux signer would emit for an observation (real resultPayload).
 function issueFor(job,generation){
   return makeIssue(job,admittedFacts(job,generation,{complete:true,paths:['README.md']},{batchClaim:generation}),null,

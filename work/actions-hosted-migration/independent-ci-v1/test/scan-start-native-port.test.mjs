@@ -13,9 +13,10 @@ function fixture(options = {}) {
   const claim = { claimId: randomUUID(), fence: 9, epoch: 2, expiresAt: new Date(now + 3600000).toISOString() };
   const packet = { complete: true, pr: job.pr, headSha: HEAD, baseSha: BASE, paths: ['src/b.mjs', 'src/a.mjs'] };
   const facts = admittedFacts(job, claim, packet, { batchClaim: claim, observedAt: now });
-  const answer = { status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true,
+  const answer = { status: 'committed', contract: 'clued.ci-scan-start-grant/2', launch_allowed: true,
     execution_id: executionId, receipt_id: randomUUID(), repository_id: 1334673495, head_sha: HEAD,
-    role: job.role, provider: 'independent-controller', start_requested_at: new Date(now).toISOString() };
+    role: job.role, provider: 'independent-controller', start_requested_at: new Date(now).toISOString(),
+    test_sha: job.testSha, attempt: job.attempt };
   const native = {
     async current(identity, mode) { calls.push(['current', identity, mode]); return options.current?.(calls) ?? true; },
     async command(input) { calls.push(['begin', input]); if (options.throwBegin) throw Error('fixture lost reply'); return options.answer ?? answer; },

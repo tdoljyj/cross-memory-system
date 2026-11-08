@@ -48,9 +48,9 @@ function context(t,{lastAdmissionDelay=0,firstScannerDelay=0,monotonic}={}){
     return admittedFacts(job,generation,{complete:true,paths:inputInventory.paths},{batchClaim:generation,observedAt:Date.now()});
   };
   const scanStartPort=async()=>{
-    grants++;const issued=Date.now();return noteScanStartResponseWindow({status:'committed',contract:'clued.ci-scan-start-grant/1',launch_allowed:true,
+    grants++;const issued=Date.now();return noteScanStartResponseWindow({status:'committed',contract:'clued.ci-scan-start-grant/2',launch_allowed:true,
       execution_id:randomUUID(),receipt_id:randomUUID(),repository_id:1334673495,head_sha:job.headSha,role:'trivy',provider:'independent-controller',
-      start_requested_at:new Date(issued).toISOString()},{issuedAt:new Date(issued).toISOString(),expiresAt:new Date(issued+120000).toISOString()});
+      start_requested_at:new Date(issued).toISOString(),test_sha:job.testSha,attempt:job.attempt},{issuedAt:new Date(issued).toISOString(),expiresAt:new Date(issued+120000).toISOString()});
   };
   const docker={async scanner({scan}){
     starts.push(scan.scanner);if(starts.length===1&&firstScannerDelay)t.mock.timers.tick(firstScannerDelay);
