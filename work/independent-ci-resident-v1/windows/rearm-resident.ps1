@@ -34,8 +34,10 @@
   M5 (ADR 0022 section 4.4), the companion's log-on; elevated, the Owner's own account only, one at a time:
     -CompanionHeadless     switch the companion task to the password logon (the reinstall's last step, or to do it again). A read-only
                            preflight first; then an admin-only pending marker (install\companion-headless-pending.json); then
-                           bin\CluedCompanionTaskRegistrar.exe shows the Windows credential box on the SECURE desktop (the password goes
-                           from there to the Task Scheduler and nowhere else: never into this script); then the task is run and the
+                           the registrar (built for this switch from this generation's pinned CompanionTaskRegistrar.cs with install's
+                           recipe, in a new admin-only directory deleted afterwards) shows the Windows credential box on the SECURE
+                           desktop (the password goes from there to the Task Scheduler and nowhere else: never into this script); then
+                           the task is run and the
                            elevated side checks for up to 8 minutes the real tokens of the supervisor and the companion (not elevated,
                            Administrators deny-only, session 0, the launch file's images), a heartbeat and a Linux fact written since.
                            Passed: the marker goes. Not passed (or cut off: a marker older than 15 minutes is rolled back by the next

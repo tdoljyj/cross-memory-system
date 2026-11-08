@@ -3,6 +3,9 @@
 // (/main:RegistrarPureTests); prints one JSON line.
 using System;
 using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Xml;
 
 public static class RegistrarPureTests {
@@ -53,6 +56,30 @@ public static class RegistrarPureTests {
     Ok(RegistrarCore.Output("ACCOUNT_MISMATCH", null) == "{\"contract\":\"clued.independent-ci.companion-registrar/1\",\"code\":\"ACCOUNT_MISMATCH\"}", "output-code-only");
     Ok(RegistrarCore.Output("REGISTER_FAILED", "my secret password!") .IndexOf("secret") < 0, "output-drops-free-text");
     Ok(RegistrarCore.Output("REGISTER_FAILED", "0x8007052E").IndexOf("0x8007052E") > 0, "output-keeps-hresult");
+
+    // 2026-11-08 (30th DESK): REGISTRAR_UNEXPECTED names the step and the exception's type and HRESULT, never its message or any input
+    string ud = RegistrarCore.UnexpectedDetail(new RegistrarStepException("service", new COMException("my secret password!", unchecked((int)0x80004005))));
+    Ok(ud == "service:COMException:0x80004005", "unexpected-step-type-hresult:" + ud);
+    Ok(RegistrarCore.Output("REGISTRAR_UNEXPECTED", ud).IndexOf("\"detail\":\"service:COMException:0x80004005\"") > 0, "unexpected-detail-kept-by-output");
+    ud = RegistrarCore.UnexpectedDetail(new RegistrarStepException("definition", new TargetInvocationException(new UnauthorizedAccessException("secret"))));
+    Ok(ud == "definition:UnauthorizedAccessException:0x80070005", "unexpected-unwraps-invoke-member:" + ud);
+    ud = RegistrarCore.UnexpectedDetail(new InvalidOperationException("secret"));
+    Ok(ud == "main:InvalidOperationException:0x80131509", "unexpected-outside-a-step:" + ud);
+    ud = RegistrarCore.UnexpectedDetail(new RegistrarStepException(null, new IdentityNotMappedException("secret")));
+    Ok(ud == "main:IdentityNotMappedException:0x80131501" && ud.IndexOf("secret") < 0, "unexpected-no-step-no-message:" + ud);
+    ud = RegistrarCore.UnexpectedDetail(new RegistrarStepException("prompt", null));
+    Ok(ud == "prompt:none:0x00000000", "unexpected-no-cause:" + ud);
+    Ok(RegistrarCore.Output("REGISTRAR_UNEXPECTED", RegistrarCore.UnexpectedDetail(new RegistrarStepException("readback", new ArgumentOutOfRangeException()))).IndexOf("readback:ArgumentOutOfRangeException:0x80131502") > 0, "unexpected-detail-fits-output");
+
+    // 2026-11-08 (30th DESK, live switch): the protected unpack failed with 775 and flags 0 worked; only 775 falls back to the plain unpack
+    Ok(RegistrarCore.UnpackRetryPlain(775), "unpack-775-retries-plain");
+    Ok(!RegistrarCore.UnpackRetryPlain(0) && !RegistrarCore.UnpackRetryPlain(122) && !RegistrarCore.UnpackRetryPlain(87) && !RegistrarCore.UnpackRetryPlain(1783), "unpack-other-errors-final");
+    Ok(RegistrarCore.UnpackDetail(775, true, 87) == "protected:775:plain:87", "unpack-detail-error-numbers-only");
+    Ok(RegistrarCore.UnpackDetail(122, false, 0) == "protected:122:plain:skipped", "unpack-detail-not-retried");
+    Ok(RegistrarCore.Output("CREDENTIAL_UNPACK_FAILED", RegistrarCore.UnpackDetail(-2147483647, true, 2147483647)).IndexOf("\"detail\":\"protected:-2147483647:plain:2147483647\"") > 0, "unpack-detail-fits-output");
+    // review L2: the plain unpack's result is used only when CredIsProtectedW says it is not protected
+    Ok(RegistrarCore.PlainUnpackUsable(true, 0), "plain-unpack-unprotected-usable");
+    Ok(!RegistrarCore.PlainUnpackUsable(true, 1) && !RegistrarCore.PlainUnpackUsable(true, 2) && !RegistrarCore.PlainUnpackUsable(true, 3) && !RegistrarCore.PlainUnpackUsable(false, 0), "plain-unpack-protected-or-unchecked-refused");
 
     // the account: DOMAIN\user, a bare user read as this computer's
     Ok(RegistrarCore.QualifiedAccount("Windows", "", "DESK-W-591") == @"DESK-W-591\Windows", "account-bare-user");

@@ -167,6 +167,136 @@ foreach ($k in @("'session-not-0'", "'token-elevated'", "'token-user'", "'image-
 Yes ((Get-Variable CompanionQualifySeconds).Value -eq 480) 'qualification-8-minutes'
 $verify = $texts['verify-resident.ps1']
 Yes ($verify.IndexOf('Test-CompanionPendingAbandoned') -gt 0 -and $verify.IndexOf('Test-CompanionPendingAbandoned') -lt $verify.IndexOf("Record 'companion-task'") -and $verify.Contains('STALE_MARKER_FELL_BACK')) 'verify-rolls-back-a-stale-marker-first'
+# 4b. 2026-11-08 (30th DESK): bin\'s registrar is install-only and imported CredUnpackAuthenticationBufferW (credui.dll exports
+# CredUnPackAuthenticationBufferW). The switch builds this generation's registrar for itself, from the pinned source, with install's
+# recipe, in a new admin-only directory it deletes at the end. The supervisor stays bin\'s.
+$iBuild = $sw.IndexOf('New-CompanionBuild $root')
+Yes ($iBuild -gt $iPre -and $iBuild -lt $iFb -and $iBuild -lt $iMark) 'switch-builds-before-the-fallback-task-and-the-marker'
+Yes ($sw.Contains("Invoke-CompanionRegistrar `$root @('register-password', `$root) `$build.registrar.exe") -and $sw.Contains('Wait-CompanionQualified $root $ownerSid $since -registrar $build.registrar.exe') -and [regex]::IsMatch($sw, '\} finally \{ Remove-CompanionBuild \$build\.directory \}\s*\}\s*\z')) 'switch-uses-its-build-and-always-deletes-it'
+Yes ($functions['companion-headless.ps1:Get-ProcessTokenFacts'].Contains("Invoke-CompanionRegistrar `$root @('token-facts', [string]`$processId) `$registrar") -and $functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains('Get-ProcessTokenFacts $root ([int]$p[0].ProcessId) $registrar') -and $functions['companion-headless.ps1:Wait-CompanionQualified'].Contains('Test-CompanionQualifiedOnce $root $ownerSid $since $registrar')) 'token-facts-through-the-build'
+# the recipe: the csc command line of install's Invoke-CompanionSupervisorCompile (which compiles exactly these two programs), the same text
+$cscLine = { param([string]$f) @($f -split "`r?`n" | Where-Object { $_ -match '^\s*& \$compiler ' } | ForEach-Object { $_.Trim() }) }
+$installCsc = @(& $cscLine $functions['install-resident.ps1:Invoke-CompanionSupervisorCompile']); $mineCsc = @(& $cscLine $functions['companion-headless.ps1:Invoke-CompanionBinaryCompile'])
+Yes ($installCsc.Count -eq 1 -and $mineCsc.Count -eq 1 -and $installCsc[0].Replace('$pair[1]', '$cs') -ceq $mineCsc[0] -and $mineCsc[0].Contains('/noconfig /target:winexe /platform:x64 /optimize+')) ('build-recipe-is-install:' + ($mineCsc -join '|'))
+Yes ((@($CompanionBuildPrograms.Keys) -join ',') -ceq 'registrar' -and $CompanionBuildPrograms.registrar[0] -ceq 'windows/CompanionTaskRegistrar.cs' -and $CompanionBuildPrograms.registrar[1] -ceq 'CluedCompanionTaskRegistrar.exe' -and
+  $functions['install-resident.ps1:Invoke-CompanionSupervisorCompile'].Contains("@('CluedCompanionTaskRegistrar.exe', `$registrarCs") -and -not $sw.Contains('CluedCompanionSupervisor.exe')) 'build-only-the-registrar'
+Yes ($CompanionCsc -ceq ($CompanionFramework + 'csc.exe') -and $CompanionFramework -ceq 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\' -and $texts['install-resident.ps1'].Contains("`$Csc = '$CompanionCsc'")) 'build-compiler-is-installs'
+Yes ($CompanionBuildSddl -ceq 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' -and $functions['companion-headless.ps1:New-CompanionBuild'].Contains('[string]$dacl = $CompanionBuildSddl')) 'build-directory-system-and-administrators-only'
+Yes ($functions['companion-headless.ps1:Get-CompanionHeadlessPreflight'].Contains("'COMPANION_HEADLESS_COMPILER_MISSING'")) 'preflight-needs-the-compiler'
+# A real build in the scratch directory (not elevated: the test adds its own account to the DACL; only the registrar's read-only self-test
+# and a refused root run, never register-password on the real root).
+$meSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$testDacl = $CompanionBuildSddl + "(A;OICI;FA;;;$meSid)"
+$regText = [IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs')); $supText = [IO.File]::ReadAllText((Join-Path $here 'CompanionSupervisor.cs'))
+$newGen = {
+  param([hashtable]$sourceTexts, [hashtable]$pinSha = @{}, [string[]]$unpinned = @(), [string]$receiptGen = $null)
+  $r = Join-Path $Scratch ('gen-' + [guid]::NewGuid().ToString('N'))
+  foreach ($d in @('install', 'config', 'bin')) { [void][IO.Directory]::CreateDirectory((Join-Path $r $d)) }
+  $rows = @('{"path":"windows/CompanionTool.cs","sha256":"' + ('0' * 64) + '"}')
+  $files = @{}
+  foreach ($rel in @('windows/CompanionTaskRegistrar.cs', 'windows/CompanionSupervisor.cs')) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$sourceTexts[$rel]); $files[$rel] = $bytes
+    if ($unpinned -notcontains $rel) { $rows += ('{"path":"' + $rel + '","sha256":"' + $(if ($pinSha.ContainsKey($rel)) { $pinSha[$rel] } else { Get-CompanionSha256 $bytes }) + '"}') }
+  }
+  $manBytes = [Text.Encoding]::UTF8.GetBytes('{"contract":"x","files":[' + ($rows -join ',') + '],"root":"resident"}' + "`n")
+  [IO.File]::WriteAllBytes((Join-Path $r 'config\resident-installed-manifest.json'), $manBytes)
+  $gen = Get-CompanionSha256 $manBytes
+  [void][IO.Directory]::CreateDirectory((Join-Path $r ('resident\' + $gen + '\windows')))
+  foreach ($rel in @($files.Keys)) { [IO.File]::WriteAllBytes((Join-Path $r ('resident\' + $gen + '\' + $rel.Replace('/', '\'))), $files[$rel]) }
+  [IO.File]::WriteAllText((Join-Path $r 'install\install-receipt.json'), '{"residentManifestSha256":"' + $(if ($receiptGen) { $receiptGen } else { $gen }) + '"}')
+  $r
+}
+$good = @{ 'windows/CompanionTaskRegistrar.cs' = $regText; 'windows/CompanionSupervisor.cs' = $supText }
+$gr = & $newGen $good
+$stale = Join-Path $gr ('install\companion-build-' + ('a' * 32)); [void][IO.Directory]::CreateDirectory($stale)
+$b = New-CompanionBuild $gr $testDacl
+Yes ((Split-Path -Leaf $b.directory) -cmatch '^companion-build-[0-9a-f]{32}$' -and (Split-Path -Parent $b.directory) -ceq (Join-Path $gr 'install') -and (Test-Path -LiteralPath $b.registrar.exe -PathType Leaf) -and (@($b.Keys) -join ',') -ceq 'directory,generation,registrar' -and @(Get-ChildItem -LiteralPath $b.directory -Filter '*.exe').Count -eq 1) 'build-in-a-new-directory-under-install'
+Yes ($b.registrar.sourceSha256 -ceq (Get-CompanionSha256 ([Text.Encoding]::UTF8.GetBytes($regText))) -and $b.registrar.sha256 -ceq (Get-CompanionSha256 ([IO.File]::ReadAllBytes($b.registrar.exe))) -and $b.generation -cmatch '^[0-9a-f]{64}$') 'build-hashes'
+Yes (-not (Test-Path -LiteralPath $stale)) 'build-deletes-a-cut-off-switch-build'
+$acl = (Get-Acl -LiteralPath $b.directory).Sddl
+Yes ($acl.Contains('D:P') -and -not $acl.Contains('ID;')) ('build-directory-protected:' + $acl)
+$v = (& $b.registrar.exe vtable-selftest | Out-String).Trim()
+Yes ($v.StartsWith('{"contract":"clued.independent-ci.companion-registrar/1","code":"VTABLE_OK"')) ('build-registrar-runs:' + $v)
+$v = (& $b.registrar.exe register-password 'C:\Temp' | Out-String).Trim()
+Yes ($v.Contains('REGISTRAR_ELEVATION_REQUIRED') -or $v.Contains('REGISTRAR_ARGS_REFUSED')) ('build-registrar-refuses-other-root:' + $v)
+Remove-CompanionBuild $b.directory
+Yes (-not (Test-Path -LiteralPath $b.directory)) 'build-deleted'
+# refused: a source not the pinned bytes, not pinned, the manifest not the receipt's generation, a source that does not compile; nothing left
+foreach ($c in @(
+    @('COMPANION_BUILD_SOURCE_NOT_THE_GENERATION', (& $newGen $good @{ 'windows/CompanionTaskRegistrar.cs' = ('f' * 64) })),
+    @('COMPANION_BUILD_SOURCE_NOT_PINNED', (& $newGen $good @{} @('windows/CompanionTaskRegistrar.cs'))),
+    @('COMPANION_BUILD_MANIFEST_NOT_THE_GENERATION', (& $newGen $good @{} @() ('e' * 64))),
+    @('COMPANION_BUILD_RECEIPT_REFUSED', (& $newGen $good @{} @() 'x')),
+    @('COMPANION_BUILD_COMPILE_FAILED', (& $newGen @{ 'windows/CompanionTaskRegistrar.cs' = 'class X { void Main( }'; 'windows/CompanionSupervisor.cs' = $supText })))) {
+  $why = try { $null = New-CompanionBuild $c[1] $testDacl; 'built' } catch { $_.Exception.Message }
+  Yes ($why -ceq $c[0]) ('build-refused:' + $c[0] + ':' + $why)
+  Yes (@(Get-ChildItem -LiteralPath (Join-Path $c[1] 'install') -Force | Where-Object { $_.Name -like 'companion-build-*' }).Count -eq 0) ('build-refused-leaves-nothing:' + $c[0])
+}
+# The switch with fakes (no task is read or registered, no registrar runs, no credential box): the build is used for register-password and
+# token-facts and deleted on every way out; a build that fails changes nothing.
+$runSwitch = {
+  param([string]$registrarOut, [string]$buildFails = $null, [object]$qualify = $null, [bool]$throwAtRun = $false)
+  $dir = Join-Path $Scratch ('switch-' + [guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory((Join-Path $dir 'install'))
+  [IO.File]::WriteAllText((Join-Path $dir 'install\install-receipt.json'), '{"residentManifestSha256":"' + ('b' * 64) + '"}')
+  $fakeCalls = [Collections.Generic.List[string]]::new()
+  $fakeBuild = Join-Path $dir ('install\companion-build-' + ('c' * 32))
+  $fakeRegistrar = Join-Path $fakeBuild 'CluedCompanionTaskRegistrar.exe'
+  # New-Object refuses a COM object, so a missing fake can never reach the Task Scheduler
+  function New-Object { param([string]$TypeName, [object[]]$ArgumentList, [string]$ComObject) if ($ComObject) { throw 'UNEXPECTED_COM_OBJECT' }; if ($null -eq $ArgumentList) { Microsoft.PowerShell.Utility\New-Object -TypeName $TypeName } else { Microsoft.PowerShell.Utility\New-Object -TypeName $TypeName -ArgumentList $ArgumentList } }
+  function Get-CompanionHeadlessPreflight { $fakeCalls.Add('preflight'); [ordered]@{ refusals = @() } }
+  function New-CompanionBuild([string]$r) {
+    $fakeCalls.Add('build'); if ($buildFails) { throw $buildFails }; [void][IO.Directory]::CreateDirectory($fakeBuild)
+    [ordered]@{ directory = $fakeBuild; generation = ('b' * 64); registrar = [ordered]@{ exe = $fakeRegistrar; sourceSha256 = ('1' * 64); sha256 = ('2' * 64) } }
+  }
+  function Register-CompanionFallbackTask { $fakeCalls.Add('fallback-task') }
+  function Invoke-CompanionRegistrar([string]$r, [string[]]$a, [string]$exe) { $fakeCalls.Add('registrar:' + $a[0] + ':' + $(if ($exe -ceq $fakeRegistrar) { 'build' } else { $exe })); $registrarOut }
+  function Invoke-CompanionFallback([string]$r, [string]$o) { $fakeCalls.Add('fallback'); Remove-Item -LiteralPath (Join-Path $r $CompanionPendingFile) -Force -ErrorAction SilentlyContinue; [ordered]@{ fellBack = $true } }
+  function Invoke-CompanionStopAndFallback([string]$r, [string]$o) { $fakeCalls.Add('stop-and-fallback'); Invoke-CompanionFallback $r $o }
+  function Stop-CompanionTask { $fakeCalls.Add('stop-task') }
+  function Get-CompanionProcessTree { [ordered]@{ supervisors = @(); children = @() } }
+  function Wait-CompanionTaskNotRunning { }
+  function Start-CompanionTask { $fakeCalls.Add('run-task'); if ($throwAtRun) { throw 'BOOM' } }
+  function Wait-CompanionQualified { param([string]$r, [string]$o, $s, [int]$seconds, [string]$registrar) $fakeCalls.Add('qualify:' + $(if ($registrar -ceq $fakeRegistrar) { 'build' } else { $registrar })); if ($qualify -ceq 'THROW') { throw 'QUALIFY_THREW' }; $qualify }
+  function Get-CompanionTaskFacts { [ordered]@{ mode = 'password' } }
+  function Remove-CompanionFallbackTask { $fakeCalls.Add('remove-fallback-task') }
+  $r = $null; $thrown = $null
+  try { $r = Invoke-CompanionHeadless $dir ([pscustomobject]@{ ownerSid = 'S-1-5-21-1-2-3-1001' }) 'headless' } catch { $thrown = $_.Exception.Message }
+  [ordered]@{ result = $r; thrown = $thrown; calls = (@($fakeCalls) -join ','); markerLeft = (Test-Path -LiteralPath (Join-Path $dir $CompanionPendingFile)); buildLeft = (Test-Path -LiteralPath $fakeBuild) }
+}
+$regOut = { param([string]$code, [string]$detail) $o = [ordered]@{ contract = 'clued.independent-ci.companion-registrar/1'; code = $code }; if ($detail) { $o.detail = $detail }; $o | ConvertTo-Json -Compress }
+$s = & $runSwitch (& $regOut 'REGISTERED' ('e' * 64))
+Yes ($s.result.qualified -and $s.result.registrar -ceq 'REGISTERED' -and $s.result.build.registrarSourceSha256 -ceq ('1' * 64) -and $s.result.build.registrarSha256 -ceq ('2' * 64) -and -not $s.buildLeft -and -not $s.markerLeft) ('switch-with-the-build-qualifies:' + $s.calls)
+Yes ($s.calls -ceq 'preflight,build,fallback-task,registrar:register-password:build,stop-task,run-task,qualify:build,remove-fallback-task') ('switch-with-the-build-order:' + $s.calls)
+foreach ($c in @('CREDENTIAL_NOT_GIVEN', 'ACCOUNT_MISMATCH', 'LOGON_REJECTED', 'PENDING_MARKER_NOT_THIS_SWITCH', 'CREDENTIAL_UNPACK_FAILED')) {
+  $s = & $runSwitch (& $regOut $c)
+  Yes ($s.result.failed -ceq $c -and $s.result.registrar -ceq $c -and $s.result.fellBack -and -not $s.buildLeft -and -not $s.markerLeft -and $s.calls -ceq 'preflight,build,fallback-task,registrar:register-password:build,fallback') ('switch-registrar-refused-build-deleted:' + $c + ':' + $s.calls)
+}
+$s = & $runSwitch (& $regOut 'REGISTRAR_UNEXPECTED' 'unpack:EntryPointNotFoundException:0x80131523')
+Yes ($s.result.failed -ceq 'REGISTRAR_UNEXPECTED' -and $s.result.registrarDetail -ceq 'unpack:EntryPointNotFoundException:0x80131523' -and -not $s.buildLeft) 'switch-records-where-the-registrar-stopped'
+# CREDENTIAL_UNPACK_FAILED: the two unpack error numbers only (review L1), in exactly that shape
+foreach ($c in @(@('protected:775:plain:87', 'protected:775:plain:87'), @('protected:122:plain:skipped', 'protected:122:plain:skipped'), @('protected:775:plain:87:size:212', $null), @('protected:775:plain:x', $null))) {
+  $s = & $runSwitch (& $regOut 'CREDENTIAL_UNPACK_FAILED' $c[0])
+  $kept = if (@($s.result.Keys) -ccontains 'registrarDetail') { $s.result.registrarDetail } else { $null }
+  Yes ($s.result.failed -ceq 'CREDENTIAL_UNPACK_FAILED' -and $kept -ceq $c[1] -and -not $s.buildLeft) ('switch-records-unpack-errors-only:' + $c[0] + ':' + $kept)
+}
+$s = & $runSwitch (& $regOut 'ACCOUNT_MISMATCH' 'protected:775:plain:87')
+Yes (-not (@($s.result.Keys) -ccontains 'registrarDetail')) 'switch-keeps-a-detail-only-for-its-code'
+foreach ($o in @('', 'not json', '{"code":"my secret text"}', (& $regOut 'REGISTRAR_UNEXPECTED' 'free text here'))) {
+  $s = & $runSwitch $o
+  Yes ($s.result.fellBack -and -not $s.buildLeft -and -not (($s.result | ConvertTo-Json -Depth 6 -Compress) -match 'secret|free text') -and ($s.result.registrar -ceq 'REGISTRAR_OUTPUT_UNREADABLE' -or ($s.result.registrar -ceq 'REGISTRAR_UNEXPECTED' -and -not (@($s.result.Keys) -ccontains 'registrarDetail')))) ('switch-records-codes-only:' + $s.result.registrar)
+}
+$s = & $runSwitch (& $regOut 'REGISTERED' ('e' * 64)) $null 'heartbeat'
+Yes ($s.result.failed -ceq 'COMPANION_HEADLESS_QUALIFICATION_FAILED:heartbeat' -and $s.result.fellBack -and -not $s.buildLeft -and -not $s.markerLeft) ('switch-not-qualified-build-deleted:' + $s.calls)
+$s = & $runSwitch (& $regOut 'REGISTERED' ('e' * 64)) $null $null $true
+Yes ($s.result.runError -ceq 'COMPANION_TASK_RUN_FAILED' -and -not $s.buildLeft) 'switch-run-error-build-deleted'
+$s = & $runSwitch (& $regOut 'REGISTERED' ('e' * 64)) $null 'THROW'
+Yes ($s.thrown -ceq 'QUALIFY_THREW' -and -not $s.buildLeft) ('switch-exception-build-deleted:' + $s.thrown)
+foreach ($c in @(@('COMPANION_BUILD_SOURCE_NOT_THE_GENERATION', 'COMPANION_BUILD_FAILED:COMPANION_BUILD_SOURCE_NOT_THE_GENERATION'), @('Access to the path C:\x is denied.', 'COMPANION_BUILD_FAILED:UNEXPECTED'))) {
+  $s = & $runSwitch (& $regOut 'REGISTERED' ('e' * 64)) $c[0]
+  Yes ($s.result.failed -ceq $c[1] -and -not $s.result.fellBack -and $s.calls -ceq 'preflight,build' -and -not $s.markerLeft -and -not $s.buildLeft) ('switch-build-failed-changes-nothing:' + $s.result.failed + ':' + $s.calls)
+}
+
 $rearm = $texts['rearm-resident.ps1']
 Yes ($rearm.Contains("throw 'OWNER_ACCOUNT_REQUIRED'") -and $rearm.Contains("[switch]`$CompanionHeadless, [switch]`$CompanionCredential, [switch]`$CompanionInteractive") -and $rearm.Contains("if (-not `$elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }")) 'rearm-owner-elevated-only'
 
@@ -199,6 +329,44 @@ Yes ($LASTEXITCODE -eq 0) 'compile-registrar-pure'
 $out = & (Join-Path $Scratch 'registrar-pure.exe') (Join-Path $bin 'CluedCompanionTaskRegistrar.exe') | Out-String
 Yes ($LASTEXITCODE -eq 0 -and $out -match 'REGISTRAR_PURE_PASS') ('registrar-pure:' + $out.Trim())
 $registrarCsharp = [int](($out | ConvertFrom-Json).assertions)
+# 2026-11-08 (30th DESK): every P/Invoke of every program install compiles binds on this machine. The registrar imported
+# CredUnpackAuthenticationBufferW, which credui.dll does not export (it is CredUnPackAuthenticationBufferW): every password typed ended in
+# REGISTRAR_UNEXPECTED. Each program is compiled with install's own recipe and each [DllImport] method is bound by the CLR itself
+# (Marshal.Prelink: the DLL is loaded and the entry point found, with the CLR's own W-suffix probing; nothing is called). The count of
+# bound methods must equal the count of [DllImport] attributes in the program's sources, so no import is skipped.
+foreach ($name in @('install-resident.ps1:Invoke-CompileRecipe', 'install-resident.ps1:Invoke-UpgraderHostCompile')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($v in @('GenericHelper', 'CompanionJobHost')) { Yes ($texts['install-resident.ps1'] -match ('(?m)^\$' + $v + " = '([A-Za-z0-9.-]+)'")) ('install-name:' + $v); Set-Variable -Name $v -Value $Matches[1] }
+$v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))
+$pbin = Join-Path $Scratch 'pinvoke-bin'; $phelpers = Join-Path $Scratch 'pinvoke-helpers'
+foreach ($d in @($pbin, $phelpers)) { [void][IO.Directory]::CreateDirectory($d) }
+$null = Invoke-CompileRecipe $csc $fw $pbin $phelpers (Join-Path $here 'ResidentServiceHost.cs') (Join-Path $here 'SwapBroker.cs') $v2 (Join-Path $here 'CompanionJobHost.cs')
+$null = Invoke-UpgraderHostCompile $csc $fw $pbin (Join-Path $here 'UpgraderServiceHost.cs')
+$programs = @(
+  @((Join-Path $bin 'CluedCompanionTaskRegistrar.exe'), @((Join-Path $here 'CompanionTaskRegistrar.cs'))),
+  @((Join-Path $bin 'CluedCompanionSupervisor.exe'), @((Join-Path $here 'CompanionSupervisor.cs'))),
+  @((Join-Path $pbin $CompanionJobHost), @((Join-Path $here 'CompanionJobHost.cs'))),
+  @((Join-Path $pbin 'ResidentServiceHost.exe'), @((Join-Path $here 'ResidentServiceHost.cs'))),
+  @((Join-Path $pbin 'SwapBroker.exe'), @((Join-Path $here 'SwapBroker.cs'), (Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'), (Join-Path $v2 'NodeProfileV2.cs'))),
+  @((Join-Path $phelpers $GenericHelper), @((Join-Path $v2 'FormalPublicBoundaryV2.cs'), (Join-Path $v2 'FormalSession0V2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'), (Join-Path $v2 'NodeProfileV2.cs'))),
+  @((Join-Path $pbin 'UpgraderServiceHost.exe'), @((Join-Path $here 'UpgraderServiceHost.cs'))))
+$pinvokeBound = 0
+foreach ($pr in $programs) {
+  $exeName = Split-Path -Leaf $pr[0]
+  Yes (Test-Path -LiteralPath $pr[0] -PathType Leaf) ('pinvoke-compiled:' + $exeName)
+  $declared = 0; foreach ($cs in $pr[1]) { $declared += ([regex]::Matches([IO.File]::ReadAllText($cs), '\[(System\.Runtime\.InteropServices\.)?DllImport\(')).Count }
+  $asm = [Reflection.Assembly]::LoadFile($pr[0])
+  $bound = 0; $unbound = @()
+  foreach ($t in $asm.GetTypes()) {
+    foreach ($m in $t.GetMethods([Reflection.BindingFlags]'Public,NonPublic,Static,Instance,DeclaredOnly')) {
+      if (($m.Attributes -band [Reflection.MethodAttributes]::PinvokeImpl) -eq 0) { continue }
+      $bound++
+      try { [Runtime.InteropServices.Marshal]::Prelink($m) } catch { $e = $_.Exception; while ($null -ne $e.InnerException) { $e = $e.InnerException }; $unbound += ($t.Name + '.' + $m.Name + ':' + $e.GetType().Name) }
+    }
+  }
+  Yes ($bound -gt 0 -and $bound -eq $declared) ('pinvoke-all-found:' + $exeName + ':' + $bound + '/' + $declared)
+  Yes ($unbound.Count -eq 0) ('pinvoke-entry-points-resolve:' + $exeName + ':' + ($unbound -join ','))
+  $pinvokeBound += $bound
+}
 # the launch file PowerShell writes is the one the supervisor accepts; one changed byte of shape is refused
 $lf = Join-Path $Scratch 'launch.json'
 [IO.File]::WriteAllText($lf, $json, (New-Object Text.UTF8Encoding($false)))
@@ -228,4 +396,4 @@ Yes (-not ([regex]::IsMatch($login, '(?m)^\s*[A-Z][A-Za-z]+-[A-Za-z]+\b[^\r\n]*\
 $probe = & $codeOf $texts['probe-companion-headless.ps1']
 foreach ($bad in @('Set-Content', 'Set-Acl', 'Set-Item', 'Set-Service', 'Set-ScheduledTask', 'Set-Clipboard', 'New-Item', 'Remove-', 'Register-', 'Unregister-', 'Stop-', 'Start-Process', 'Out-File', 'Add-Content', 'WriteAll', '::Move', '::Replace(', 'schtasks', 'Restart-', 'icacls', 'reg.exe', '.Run(')) { Yes (-not $probe.Contains($bad)) ('probe-read-only:' + $bad) }
 
-[ordered]@{ status = 'COMPANION_HEADLESS_WINDOWS_OFFLINE_PASS'; assertions = $n; supervisorCsharpAssertions = $supervisorCsharp; registrarCsharpAssertions = $registrarCsharp; gitconfigNode = $nodeText; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
+[ordered]@{ status = 'COMPANION_HEADLESS_WINDOWS_OFFLINE_PASS'; assertions = $n; supervisorCsharpAssertions = $supervisorCsharp; registrarCsharpAssertions = $registrarCsharp; pinvokeBound = $pinvokeBound; gitconfigNode = $nodeText; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
