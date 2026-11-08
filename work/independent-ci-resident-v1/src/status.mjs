@@ -31,12 +31,14 @@
 // Owner's revoke-head request and its result), `onSince` and `notOnDuty` (on, but this node is not ACTIVE). Each key is written
 // only when it has a value, so a reader before 3c-2b and the train shapes of today stay as they were. A notice kind `train-owner`
 // carries stage 10's decisions the Owner must hear of (a PAUSE for a landed tree that differs, another node's Source).
+// Defect 15894c2a (still /8: only `train` grows, written only when it has a value): `train.nodes`, the nodes the newest on-mode run
+// compared in its §41.6 Source check (train.mjs#trainNodesView), for the NON-elevated upgrade precheck (rollout/precheck.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
-import { parseRevokeHead, parseTrainLast, parseTrainSweep } from './train.mjs';
+import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
@@ -299,6 +301,9 @@ function trainOf(t) {
   const out = { enabled: ['off', 'shadow', 'on'].includes(t?.enabled) ? t.enabled : null, last: parseTrainLast(t?.last) };
   const sweep = parseTrainSweep(t?.sweep), revokeHead = parseRevokeHead(t?.revokeHead), onSince = ms(t?.onSince);
   if (sweep) out.sweep = sweep;
+  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the upgrade precheck.
+  const nodes = parseTrainNodes(t?.nodes);
+  if (nodes) out.nodes = nodes;
   if (revokeHead) out.revokeHead = revokeHead;
   if (onSince) out.onSince = onSince;
   if (t?.notOnDuty === true) out.notOnDuty = true;

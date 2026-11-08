@@ -361,6 +361,31 @@ export function parseRevokeHead(v) {
   return Object.freeze({ requestId: v.requestId, state: v.state, at: Date.parse(v.at), code: typeof v.code === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.code) ? v.code : null });
 }
 
+// Defect 15894c2a: the nodes stage 10 compared in its §41.6 Source check (ci_nodes_status, train-maintenance.mjs; facts /2 `nodes`),
+// kept as the status snapshot's `train.nodes` so that the upgrade precheck (rollout/precheck.mjs, NON-elevated: it cannot call Native
+// with this node's ci-admission token) reads the very list the runtime guard reads. A view only: nothing in the executor decides on it.
+// Only an on-mode run on duty reads the nodes (every other run says nothing: nodes null), so `at` tells the reader how old the list is.
+// { at, sourceManifestSha256 (this node's Source at that run), nodes: [{ node, sourceManifestSha256, state, lastHeartbeatAt }], dropped }
+export const TRAIN_NODES_MAX = 64;
+const nodeEntry = n => (plain(n) && (n.node === null || (typeof n.node === 'string' && n.node.length >= 1 && n.node.length <= 200))
+  && (n.sourceManifestSha256 === null || HEX64.test(n.sourceManifestSha256 ?? ''))
+  && (n.state === null || (typeof n.state === 'string' && n.state.length <= 40))
+  && (n.lastHeartbeatAt === null || (typeof n.lastHeartbeatAt === 'string' && n.lastHeartbeatAt.length <= 40 && Number.isFinite(Date.parse(n.lastHeartbeatAt))))
+  ? Object.freeze({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, state: n.state, lastHeartbeatAt: n.lastHeartbeatAt }) : null);
+function nodesOf(list, dropped, at, sourceManifestSha256) {
+  if (!Array.isArray(list) || !isoOrNull(at) || !HEX64.test(sourceManifestSha256 ?? '')) return null;
+  const nodes = list.slice(0, TRAIN_NODES_MAX).map(nodeEntry);
+  if (nodes.includes(null)) return null;
+  return Object.freeze({ at, sourceManifestSha256, nodes: Object.freeze(nodes), dropped: (count(dropped) ?? 0) + Math.max(0, list.length - TRAIN_NODES_MAX) });
+}
+// From stage 10's facts (any shape: null unless an on-mode facts /2 with a nodes list).
+export function trainNodesView(f, sourceManifestSha256) {
+  if (!plain(f) || f.contract !== TRAIN_FACTS_CONTRACT_V2 || f.mode !== 'on') return null;
+  return nodesOf(f.nodes, f.nodesDropped, f.at, sourceManifestSha256);
+}
+// The status reader's copy of train.nodes, or null.
+export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.dropped, v.at, v.sourceManifestSha256) : null; }
+
 // The PR page (pr-status.mjs): the front PR's own description, with the shadow line appended when the newest run (at most
 // TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the
 // executor's own words.
