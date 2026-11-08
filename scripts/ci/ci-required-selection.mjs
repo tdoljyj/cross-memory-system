@@ -68,6 +68,7 @@ export const SUITES = {
       'scripts/ci/test_validate_runner_budget_policy.py'],
     'admission-self-tests': [...RESIDENT_AND_SOURCE, '.github/workflows/**'],
     'pinned-registries': PINNED_REGISTRY_PATHS,
+    'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json'],
   },
@@ -130,6 +131,9 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
+  // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
+  'powershell-count': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-powershell-count.test.mjs'] },
+    { cwd: '.', argv: ['node', 'scripts/ci/check-powershell-count.mjs'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },

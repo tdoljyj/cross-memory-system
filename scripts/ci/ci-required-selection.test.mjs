@@ -407,3 +407,10 @@ test('regenerated entries keep the reason of the same failure only; --keep keeps
   const kept = knownEntriesFromReport(report, [{ file: 'x.test.mjs', path: ['future'], fingerprint: '4'.repeat(16), reason: 'coming change' }], { keep: true });
   assert.deepEqual(kept.map((entry) => entry.path[0]), ['future', 'new', 'old']);
 });
+
+test('a PowerShell script anywhere selects the bare-pipeline .Count scan, and other files do not', () => {
+  for (const file of ['a.ps1', 'work/x/windows/new-script.ps1', 'scripts/ci/check-powershell-count.mjs']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('powershell-count'), file);
+  }
+  assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('powershell-count'), false);
+});

@@ -229,18 +229,3 @@ test('registrar CreateProfile never passes a profile-path buffer larger than MAX
   for (const m of calls) assert.ok(Number(m[1]) <= 260, `cchProfilePath ${m[1]} exceeds MAX_PATH`);
   for (const m of cs.matchAll(/StringBuilder\s+path\s*=\s*new\s+StringBuilder\((\d+)\)/g)) assert.ok(Number(m[1]) <= 260, `buffer ${m[1]} exceeds MAX_PATH`);
 });
-
-test('Windows scripts never read .Count off a bare pipeline (StrictMode 2 throws on a scalar or empty result; DESK 2026-11-08 step P)', async () => {
-  const dir = path.join(HERE, '..', 'windows');
-  const bad = [];
-  for (const name of (await fs.readdir(dir)).filter((n) => n.endsWith('.ps1') && !n.startsWith('test-'))) {
-    const s = await fs.readFile(path.join(dir, name), 'utf8');
-    for (const m of s.matchAll(/\)\.Count\b/g)) {
-      let depth = 0, j = m.index;
-      for (; j >= 0; j--) { if (s[j] === ')') depth++; else if (s[j] === '(' && --depth === 0) break; }
-      const inner = s.slice(j, m.index + 1);
-      if (s[j - 1] !== '@' && inner.includes('|') && !/^\(\s*\[regex\]/.test(inner)) bad.push(`${name}:${s.slice(0, m.index).split('\n').length}`);
-    }
-  }
-  assert.deepEqual(bad, [], 'wrap pipelines in @(...) before .Count');
-});
