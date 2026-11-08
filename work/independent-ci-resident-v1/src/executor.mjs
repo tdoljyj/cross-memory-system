@@ -148,6 +148,10 @@ import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQua
   REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
+// Defect 8f8240ff: the service's between-batches step (archive retention, which may delete) runs beside the loop; while it runs the
+// loop says so in tick({ betweenBatchesRunning }) and no new batch opens (DEFERRED with this reason), as when the loop waited for it.
+// Pause, stop and the Owner's requests are served meanwhile.
+export const BETWEEN_BATCHES_RUNNING = 'BETWEEN_BATCHES_RUNNING';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
@@ -1560,9 +1564,10 @@ export class ResidentExecutor {
     return view ? { state: 'DEFERRED', reason: 'INTAKE_PAUSED', until: Date.parse(view.until) } : null;
   }
 
-  async tick() {
+  async tick({ betweenBatchesRunning = false } = {}) {
     if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
     this.tickBusy = true;
+    this.betweenBatchesRunning = betweenBatchesRunning === true;
     this.tickSeq = (this.tickSeq ?? 0) + 1;
     this.tickBatchDue = false;
     try {
@@ -2940,6 +2945,7 @@ export class ResidentExecutor {
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
     if (held) { await this.persistQueue(); return held; }
+    if (this.betweenBatchesRunning) { await this.persistQueue(); return { state: 'DEFERRED', reason: BETWEEN_BATCHES_RUNNING }; }
     // No new batch while park.maxParked batches rest at A or in the queue's first two places at B: a new one could not
     // park (design v0.5 §4.7). A due attempt 2 is a batch too.
     // Nor while the bound outside those places is full: a new batch would run its whole zone and end PARKED_OVER_CAPACITY

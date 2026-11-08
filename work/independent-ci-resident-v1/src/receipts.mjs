@@ -208,7 +208,15 @@ export class ReceiptChain {
     return { seq: last.seq, sha256: sha256(await fs.readFile(path.join(this.dir, last.name))) };
   }
 
-  async append(type, body) {
+  // One append at a time within this process (defect 8f8240ff): the service's between-batches step (archive retention) runs beside
+  // the loop and appends while a tick may; two appends that read the same head would take the same sequence number.
+  append(type, body) {
+    const turn = (this.appending ?? Promise.resolve()).then(() => this.appendOne(type, body));
+    this.appending = turn.catch(() => {});
+    return turn;
+  }
+
+  async appendOne(type, body) {
     check(/^[a-z0-9-]{1,48}$/.test(type), 'RECEIPT_TYPE_INVALID');
     if (body && body.failureCode !== undefined && body.failureCode !== null) check(CODE.test(body.failureCode), 'RECEIPT_FAILURE_CODE_INVALID');
     const head = await this.currentHead();
