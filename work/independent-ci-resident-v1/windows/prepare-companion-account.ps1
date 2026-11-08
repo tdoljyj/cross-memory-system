@@ -21,13 +21,17 @@
   Exit 0 and status COMPANION_ACCOUNT_PREPARED: send the log's nodeProfile lines (ownerSid, ownerProfileDirectory) to the Agent; they go
   into config\node-profile.<node>.json for the reinstall.
 
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File prepare-companion-account.ps1 -LogDirectory <folder> [-AccountName clued-companion]
-      [-WslMemory 16GB -WslProcessors 8 -WslSwap 4GB]
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File prepare-companion-account.ps1 -LogDirectory <folder> -RegistrarSha256 <sha>
+      [-AccountName clued-companion] [-WslMemory 16GB -WslProcessors 8 -WslSwap 4GB]
+  -RegistrarSha256: the SHA-256 the commit's resident manifest pins for windows/CompanionTaskRegistrar.cs (the Agent gives it with the
+  command); the source next to this script is compiled only when it has exactly that hash (review r1 m12).
   -Plan: not elevated, read-only: prints what a run would do (no registrar, no change).
+  The roll-back is remove-companion-account.ps1.
 #>
 [CmdletBinding()]
 param([ValidatePattern('^[a-z][a-z0-9-]{2,19}$')][string]$AccountName = 'clued-companion',
   [Parameter(Mandatory)][string]$LogDirectory,
+  [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$RegistrarSha256,
   [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslMemory = '16GB', [ValidateRange(1, 64)][int]$WslProcessors = 8, [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslSwap = '4GB',
   [switch]$Plan)
 Set-StrictMode -Version 2.0
@@ -117,13 +121,16 @@ $logFile = Join-Path $LogDirectory ('companion-account-prepare.' + [Environment]
 $build = $null
 try {
   # 1. The registrar, from the source next to this script, built in a protected folder.
-  $build = New-PrepDirectory
+  # Review r1 m12: read once; compiled only when the bytes have the hash the commit's manifest pins (and those very bytes are compiled).
   $src = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'CompanionTaskRegistrar.cs'))
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $srcSha = ([BitConverter]::ToString($sha.ComputeHash($src))).Replace('-', '').ToLowerInvariant()
+  $log.steps.registrar = [ordered]@{ sourceSha256 = $srcSha; pinned = $RegistrarSha256 }
+  if ($srcSha -cne $RegistrarSha256) { throw 'REGISTRAR_SOURCE_NOT_THE_PINNED_ONE' }
+  $build = New-PrepDirectory
   $cs = Join-Path $build 'CompanionTaskRegistrar.cs'; $exe = Join-Path $build 'CluedCompanionTaskRegistrar.exe'
   $f = [IO.File]::Open($cs, 'CreateNew', 'Write', 'None'); try { $f.Write($src, 0, $src.Length); $f.Flush($true) } finally { $f.Dispose() }
   Push-Location $build; try { Invoke-PrepCompile $Csc $Framework $exe $cs } finally { Pop-Location }
-  $sha = [Security.Cryptography.SHA256]::Create()
-  $log.steps.registrar = [ordered]@{ sourceSha256 = ([BitConverter]::ToString($sha.ComputeHash($src))).Replace('-', '').ToLowerInvariant() }
   # 2. The account, its rights and its profile.
   $prep = (Invoke-PrepRegistrar $exe @('prepare-account', $AccountName)) | ConvertFrom-Json
   $log.steps.account = $prep
@@ -147,6 +154,8 @@ try {
   $log.steps.tokenCheck = [ordered]@{ exit = $LASTEXITCODE; status = $(if ($check -match '"status":\s*"([A-Za-z_:,-]+)"') { $Matches[1] } else { 'UNREADABLE' }) }
   # 6. Facts for the Agent (read-only).
   $log.facts.account = (Invoke-PrepRegistrar $exe @('account-facts', $sid)) | ConvertFrom-Json
+  # Review r1 m5: the account as the switch will check it (hidden now included)
+  if (@($log.facts.account.hardening).Count) { throw ('ACCOUNT_NOT_HARDENED:' + (@($log.facts.account.hardening) -join ',')) }
   $sids = @($sid) + @($ServiceAccounts | ForEach-Object { try { (New-Object Security.Principal.NTAccount([Environment]::MachineName, $_)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null } } | Where-Object { $_ })
   $log.facts.tasks = Get-TasksOf $sids
   $log.facts.userRights = Get-RightsNaming $sids (@($AccountName) + $ServiceAccounts)
@@ -156,7 +165,7 @@ try {
 } catch {
   $log.status = 'COMPANION_ACCOUNT_NOT_PREPARED'
   $why = [string]$_.Exception.Message
-  $log.error = if ($why -cmatch '^[A-Z][A-Z0-9_:]{0,80}\z') { $why } else { $_.Exception.GetType().Name }
+  $log.error = if ($why -cmatch '^[A-Z][A-Z0-9_:,]{0,160}\z') { $why } else { $_.Exception.GetType().Name }
 } finally {
   if ($build) { Remove-Item -LiteralPath $build -Recurse -Force -ErrorAction SilentlyContinue }
   [IO.File]::WriteAllText($logFile, ($log | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))

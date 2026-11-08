@@ -632,6 +632,22 @@ function Test-BytesEqualClear([byte[]]$copy, [byte[]]$expected) {
   try { return ((Sha256Bytes $copy) -ceq (Sha256Bytes $expected)) } finally { [Array]::Clear($copy, 0, $copy.Length) }
 }
 
+# Review r1 m6: the members of a local group as SIDs, read through ADSI (WinNT provider) member by member; Get-LocalGroupMember throws on
+# an orphaned or Entra ID member. $null when the group or any member cannot be read (the callers refuse, never guess).
+# Shared with install-resident.ps1 and verify-resident.ps1 (test-companion-headless.ps1 holds the copies identical).
+function Get-GroupMemberSids([string]$groupSid) {
+  try {
+    $name = (New-Object Security.Principal.SecurityIdentifier($groupSid)).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $group = [ADSI]('WinNT://' + [Environment]::MachineName + '/' + $name + ',group')
+    $out = New-Object Collections.ArrayList
+    foreach ($m in @($group.psbase.Invoke('Members'))) {
+      $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+      [void]$out.Add((New-Object Security.Principal.SecurityIdentifier([byte[]]$bytes, 0)).Value)
+    }
+    ,([string[]]$out.ToArray())
+  } catch { $null }
+}
+function Get-AdministratorSids { Get-GroupMemberSids 'S-1-5-32-544' }
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   $operator = if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }
@@ -644,7 +660,9 @@ function Assert-Owner {
     Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts'
     $acct = try { Get-LocalUser -SID $OwnerSid -ErrorAction Stop } catch { $null }
     if ($null -eq $acct) { throw 'COMPANION_ACCOUNT_NOT_LOCAL' }
-    if (@(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object { $_.SID.Value }) -ccontains $OwnerSid) { throw 'COMPANION_ACCOUNT_IS_ADMINISTRATOR' }
+    $admins = Get-AdministratorSids
+    if ($null -eq $admins) { throw 'ADMINISTRATORS_UNREADABLE' }
+    if (@($admins) -ccontains $OwnerSid) { throw 'COMPANION_ACCOUNT_IS_ADMINISTRATOR' }
   }
   if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
   # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
@@ -709,7 +727,7 @@ function Read-ServiceLogonRight([string]$sid) {
           $names[$e]
         }
         if ($s -cmatch '^S-1-5-32-\d+$|^S-1-5-21-[\d-]+$' -and -not $groups.ContainsKey($s)) {
-          $groups[$s] = try { @(Get-LocalGroupMember -SID $s -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+          $members = Get-GroupMemberSids $s; $groups[$s] = $(if ($null -eq $members) { @() } else { @($members) })
         }
       }
     }
@@ -824,6 +842,7 @@ function Invoke-AsSystemOnce([string]$exe, [string[]]$arguments) {
   $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
   [void][IO.Directory]::CreateDirectory($dir, $ds)
   $name = 'CluedCIInstallSystemOnce-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
+  $t = $null
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $folder = $svc.GetFolder('\')
   try {
@@ -838,8 +857,13 @@ function Invoke-AsSystemOnce([string]$exe, [string[]]$arguments) {
     $null = $t.Run($null)
     $until = [DateTime]::UtcNow.AddMinutes(5)
     do { Start-Sleep -Milliseconds 500; $t = $folder.GetTask($name) } while ([DateTime]::UtcNow -lt $until -and ([int]$t.State -eq 4 -or $t.LastRunTime -eq $before))
+    # Review r1 m9: still running after 5 minutes: its instance is stopped before the task is deleted, and the install stops here.
+    if ([int]$t.State -eq 4 -or $t.LastRunTime -eq $before) { try { $t.Stop(0) } catch { }; throw 'INSTALL_SYSTEM_ONCE_TIMEOUT' }
     [ordered]@{ exit = ([int64]$t.LastTaskResult -band 0xFFFFFFFFL); stdout = $(if (Test-Path -LiteralPath $out -PathType Leaf) { [IO.File]::ReadAllText($out) } else { '' }) }
-  } finally { try { $folder.DeleteTask($name, 0) } catch { }; Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+  } finally {
+    if ($null -ne $t -and [int]$t.State -eq 4) { try { $t.Stop(0) } catch { } }
+    try { $folder.DeleteTask($name, 0) } catch { }; Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 # ---- The CI root's READ_CONTROL entry for the resident service (DESIGN.md section 33, first HALT of 2026-10-29) ----
@@ -1329,7 +1353,7 @@ Step 'resident-firewall' {
 Step 'source-v2-acl' {
   $tool = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2\migrate-acl.ps1')
   if (-not (Test-Path -LiteralPath $tool)) { throw 'SOURCE_V2_REQUIRED' }
-  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $OwnerSid -ControllerSid $ControllerSid | Out-String
+  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
   if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
 }

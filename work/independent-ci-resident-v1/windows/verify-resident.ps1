@@ -532,6 +532,22 @@ function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers, $name
 # Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
 # The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
 # processes could swap or rewrite).
+# Review r1 m6: the members of a local group as SIDs, read through ADSI (WinNT provider) member by member; Get-LocalGroupMember throws on
+# an orphaned or Entra ID member. $null when the group or any member cannot be read (the callers refuse, never guess).
+# Shared with install-resident.ps1 and verify-resident.ps1 (test-companion-headless.ps1 holds the copies identical).
+function Get-GroupMemberSids([string]$groupSid) {
+  try {
+    $name = (New-Object Security.Principal.SecurityIdentifier($groupSid)).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $group = [ADSI]('WinNT://' + [Environment]::MachineName + '/' + $name + ',group')
+    $out = New-Object Collections.ArrayList
+    foreach ($m in @($group.psbase.Invoke('Members'))) {
+      $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+      [void]$out.Add((New-Object Security.Principal.SecurityIdentifier([byte[]]$bytes, 0)).Value)
+    }
+    ,([string[]]$out.ToArray())
+  } catch { $null }
+}
+function Get-AdministratorSids { Get-GroupMemberSids 'S-1-5-32-544' }
 function Read-ServiceLogonRight([string]$sid) {
   $dir = Join-Path 'C:\Windows\Temp' ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
   try {
@@ -550,7 +566,7 @@ function Read-ServiceLogonRight([string]$sid) {
           $names[$e]
         }
         if ($s -cmatch '^S-1-5-32-\d+$|^S-1-5-21-[\d-]+$' -and -not $groups.ContainsKey($s)) {
-          $groups[$s] = try { @(Get-LocalGroupMember -SID $s -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+          $members = Get-GroupMemberSids $s; $groups[$s] = $(if ($null -eq $members) { @() } else { @($members) })
         }
       }
     }
@@ -706,7 +722,7 @@ Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $owne
 # M5-b (ADR 0023): on a node whose companion runs as its own account (install\companion-account.json; absent elsewhere).
 $companionAccountRecord = try { Read-CompanionAccountRecord $Root $Node } catch { 'COMPANION_ACCOUNT_RECORD_REFUSED' }
 if ($companionAccountRecord -is [string]) { Record 'companion-account' $false $companionAccountRecord }
-elseif ($null -ne $companionAccountRecord) { $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord; Record 'companion-account' ($null -eq $accountProblem) $accountProblem }
+elseif ($null -ne $companionAccountRecord) { $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord ([bool]$verifyCanFix); Record 'companion-account' ($null -eq $accountProblem) $accountProblem }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }

@@ -246,10 +246,10 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 2. 用“以管理员身份运行”打开 PowerShell（点 UAC），执行（路径用 Agent 给的包目录，Agent 同时给出这个脚本和 `CompanionTaskRegistrar.cs` 的 SHA-256，执行前可以 `Get-FileHash` 对一下）：
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File <包>\work\independent-ci-resident-v1\windows\prepare-companion-account.ps1 -LogDirectory C:\Users\<你>\clued-m5b-logs
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File <包>\work\independent-ci-resident-v1\windows\prepare-companion-account.ps1 -LogDirectory C:\Users\<你>\clued-m5b-logs -RegistrarSha256 <Agent 给的 64 位哈希>
    ```
 
-   TURING 加 `-WslMemory 6GB -WslProcessors 3 -WslSwap 2GB`。
+   TURING 加 `-WslMemory 6GB -WslProcessors 3 -WslSwap 2GB`。`-RegistrarSha256` 是提交的清单给 `CompanionTaskRegistrar.cs` 钉住的哈希，文件不一致脚本就拒绝（`REGISTRAR_SOURCE_NOT_THE_PINNED_ONE`），什么都不改。
 
 3. 看到 `"status": "COMPANION_ACCOUNT_PREPARED"` 就完成了，可以关掉窗口和 GitHub 页面。脚本已经清掉剪贴板（和它的历史）。
    - `COMPANION_ACCOUNT_PREPARED_TOKEN_PENDING`：账户建好了，但剪贴板里不是经典令牌。重新复制令牌，在提权窗口里只跑这一步：
@@ -267,16 +267,16 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 
 1. Linux A、B：和以往一样，你以 root 在**你名下的**发行版里运行（迁移在最后一步才发生）。
 2. 提权运行重装启动器（点一次 UAC）。最后一步自动执行 `rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <dir>`：
-   - 停掉发行版（只停这一个）；DESK 把 61 GB 的 `ext4.vhdx` 复制到 D: 并两边校验 SHA-256，一致后删 C: 上的旧文件（约 10–20 分钟，C: 回收在这里）；TURING 在 C: 内改名，瞬间完成；
-   - 删掉你名下这个发行版的注册项（不删文件）；
-   - 给账户设一个新的随机密码，注册 companion 任务和一次性导入任务（以账户身份 `wsl --import-in-place`），运行导入，删掉导入任务；
+   - 先把你名下这个发行版的注册项完整导出到 `install\companion-wsl-owner-<guid>.reg`（管理员专用），记录写进 `install\companion-wsl.json`；
+   - 停掉发行版（只停这一个）；途中每一级上级目录都要是管理员所有、普通用户删不掉改不了，否则拒绝；DESK 把 61 GB 的 `ext4.vhdx` 先复制成 `ext4.vhdx.partial`，两边校验 SHA-256（目标从磁盘无缓冲读），一致才改名并删 C: 上的旧文件（约 10–20 分钟，C: 回收在这里）；TURING 在 C: 内改名，瞬间完成；
+   - 给账户设一个新的随机密码，注册 companion 任务和一次性导入任务（以账户身份 `wsl --import-in-place`，并写回你原来的 DefaultUid），运行导入；导入返回 0 之后才删掉你名下的注册项（不删文件）；
    - 运行 companion，最多 8 分钟由提权一侧验收。
    - **不会弹出任何凭据框。**屏幕上出现要密码的框，一律当伪造关掉。
 3. 结果在 `W\launch\terminal.json` 的 `companionHeadless.status`：
    - `COMPANION_HEADLESS_QUALIFIED`：完成。
    - `COMPANION_HEADLESS_FELL_BACK` / `..._FAILED`：没通过，companion 停着（服务只推迟，另一台接班）。原因在 `stdout` 的 `result.failed`。处理后在提权窗口重跑：
      `powershell.exe -NoProfile -NonInteractive -File C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <dir>`。
-     发行版已移动的部分会按现状续做，不会重复复制。
+     不带 `-WslVhdxDirectory` 也行：按 `install\companion-wsl.json` 记下的阶段续做，不会重复复制。导入失败报 `WSL_IMPORT_FAILED:<码>`，你名下的注册项还在。
    - `COMPANION_HEADLESS_PREFLIGHT_REFUSED`：前提不满足，什么都没改，原因在 `result.preflight.refusals`。
 
 ### 9.5 以后
@@ -288,7 +288,8 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 | 换 GitHub 令牌 | 复制新令牌，`companion-gh-login.ps1 -Login -ProfileDirectory C:\Users\clued-companion -AccountSid <sid>`，再按第 4.2 节第 3 步重启任务 |
 | 停掉 companion | `rearm-resident.ps1 -CompanionInteractive`（任务改为账户的交互定义，账户从不登录，所以就停着） |
 | 看 companion 的日志、`supervisor.json` | 都在 `C:\Users\clued-companion\AppData\Local\CluedIndependentCI\`，要提权才能读；只读探针 `probe-companion-headless.ps1` 也要提权运行 |
-| 整体退回你自己的账户 | 先在 root shell 里 `shutdown`（或提权 `wsl --terminate <D>` 无效：发行版不在你名下）；提权窗口：`wsl --import-in-place <D> <dir>\ext4.vhdx` 把它注册回你名下；再用改动前的节点档案整套重装；最后删账户名下的注册（`reg delete "HKU\<账户 sid>\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}"`，账户的注册表加载时）和账户本身（`net user clued-companion /delete`） |
+| 发行版退回你名下 | `rearm-resident.ps1 -CompanionWslRestore`：先停 companion（任务改为账户的交互定义），vhdx 移回记录里的原位置（跨卷时同样经 `.partial` 两边校验），你名下的注册项不在就从导出的 `.reg` 导回。账户名下那条注册此后指向不存在的文件，无害 |
+| 整体退回你自己的账户 | 先 `-CompanionWslRestore`；再用改动前的节点档案整套重装；最后删账户：`remove-companion-account.ps1 -LogDirectory <目录> -RegistrarSha256 <哈希>`（提权；只删 prepare 建的账户，companion 任务还用它时拒绝；去掉三项权利、档案（含它的 WSL 注册和 `.wslconfig`）、账户和登录界面隐藏项） |
 
 ### 9.6 真机验收（M5-b 版，DESK 先）
 
@@ -303,6 +304,9 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 | T7 | 关机再开机，不登录 | ≤ 20 分钟能执行 |
 | T8 | 普通窗口里试：写 `mailbox\responses`、读 `secrets\heartbeat`、`wsl -d <D>`、`schtasks /run /tn \Clued\CluedCIResidentCompanion` | 全部拒绝（发行版不在你名下：“找不到分发”） |
 | T9 | `-CompanionRootShell` | 弹出的控制台里 `id` 为 root，`cat /proc/sys/kernel/random/boot_id` 与 companion 记下的 `companion-session.json` 相同（同一个 VM） |
+| T10 | 切换前先确认（review r1 m10）：你自己的普通窗口里 `wsl -d <D> --exec sleep 600` 跑着，另开提权窗口 `wsl --terminate <D>` | 普通窗口里那个进程随之结束，`wsl -l -v` 显示 Stopped（提权的 terminate 停得掉不提权的实例）。停不掉就先在普通窗口里自己 `wsl --terminate <D>` 再切换 |
+| T11 | 切换后（review r1 m11）：你自己的普通窗口里 `wsl -l -v`、`wsl -d <D> --exec true` | 列表里没有 `<D>`，第二条报“找不到分发”（WSL 服务没有缓存旧注册）。还能看到时 `wsl --shutdown` 只关你自己的 VM 后再查 |
+| T12 | 切换后 root shell 里 `id -u` 之外再看默认用户：账户名下普通 `wsl -d <D>`（经 root shell 无法直接看时读 `install\companion-wsl.json` 的 `ownerRegistration.values.DefaultUid`） | 与你名下原来的 DefaultUid 相同（TURING 原为 1000；DESK 原为 0） |
 
 ### 9.7 TURING 先确认
 

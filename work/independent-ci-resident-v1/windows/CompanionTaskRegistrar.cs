@@ -165,7 +165,7 @@ public static class RegistrarCore {
     return 0;
   }
   static readonly Regex Distro = new Regex(@"\A[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z");
-  static readonly Regex Vhdx = new Regex(@"\A[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){1,8}ext4\.vhdx\z");
+  static readonly Regex Vhdx = new Regex(@"\A[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){1,15}ext4\.vhdx\z");
   static readonly Regex AccountName = new Regex(@"\A[a-z][a-z0-9-]{2,19}\z");
   public static bool ValidDistro(string s) { return s != null && Distro.IsMatch(s); }
   public static bool ValidVhdx(string s) { return s != null && Vhdx.IsMatch(s) && s.IndexOf(@"\..\", StringComparison.Ordinal) < 0 && s.IndexOf(@"\.\", StringComparison.Ordinal) < 0; }
@@ -181,9 +181,27 @@ public static class RegistrarCore {
   }
   // The one-shot task that registers the moved distribution for the companion account (wsl --import-in-place, which only registers
   // the existing ext4.vhdx: nothing is copied or unpacked). On demand only: no trigger; the same random password as the companion task.
-  public static string ImportTaskXml(string accountSid, string distro, string vhdx) {
+  // Review r1 m1/m11: its action is ImportScript as -EncodedCommand (no quoting through cmd or the task XML): exit 0 only when the
+  // distribution is registered for the account and runs; an import that fails because a cut-off earlier run already registered it is
+  // accepted when the distribution then starts; the Owner's DefaultUid is written back (it was 1000 on TURING; import-in-place gives 0).
+  public static string ImportScript(string distro, string vhdx, long defaultUid) {
+    if (!ValidDistro(distro) || !ValidVhdx(vhdx) || defaultUid < 0 || defaultUid > 4294967295L) throw new ArgumentException("IMPORT_ARGUMENTS_INVALID");
+    return "$ErrorActionPreference = 'Stop'\n"
+      + "$wsl = '" + WslExe + "'\n"
+      + "& $wsl --import-in-place '" + distro + "' '" + vhdx + "' | Out-Null\n"
+      + "if ($LASTEXITCODE -ne 0) { & $wsl --distribution '" + distro + "' --exec /bin/true | Out-Null; if ($LASTEXITCODE -ne 0) { exit 3 } }\n"
+      + "$k = @(Get-ChildItem -LiteralPath 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss' | Where-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath).DistributionName -ceq '" + distro + "' })\n"
+      + "if ($k.Count -ne 1) { exit 4 }\n"
+      + "try { Set-ItemProperty -LiteralPath $k[0].PSPath -Name 'DefaultUid' -Value " + defaultUid + " -Type DWord } catch { exit 5 }\n"
+      + "exit 0\n";
+  }
+  public const string PowerShellExe = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+  public static string ImportArguments(string distro, string vhdx, long defaultUid) {
+    return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(ImportScript(distro, vhdx, defaultUid)));
+  }
+  public static string ImportTaskXml(string accountSid, string distro, string vhdx, long defaultUid) {
     if (!ValidSid(accountSid)) throw new ArgumentException("ACCOUNT_SID_INVALID");
-    if (!ValidDistro(distro) || !ValidVhdx(vhdx)) throw new ArgumentException("IMPORT_ARGUMENTS_INVALID");
+    string arguments = ImportArguments(distro, vhdx, defaultUid);
     return "<?xml version=\"1.0\" encoding=\"UTF-16\"?>"
       + "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
       + "<RegistrationInfo><Description>Clued CI: one-shot WSL registration of the resident distribution for the companion account. ADR 0023.</Description></RegistrationInfo>"
@@ -193,8 +211,41 @@ public static class RegistrarCore {
       + "<RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>"
       + "<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun>"
       + "<ExecutionTimeLimit>PT30M</ExecutionTimeLimit><Priority>7</Priority></Settings>"
-      + "<Actions Context=\"Author\"><Exec><Command>" + X(WslExe) + "</Command><Arguments>" + X("--import-in-place " + distro + " \"" + vhdx + "\"") + "</Arguments></Exec></Actions>"
+      + "<Actions Context=\"Author\"><Exec><Command>" + X(PowerShellExe) + "</Command><Arguments>" + X(arguments) + "</Arguments></Exec></Actions>"
       + "</Task>";
+  }
+  // Review r1 M2: the definition a failed password registration falls back to (no password needed): the companion account's
+  // interactive token at its log-on (it never logs on interactively, so the task never runs and never tries a stale password), the
+  // supervisor's fixed action; the same as Register-CompanionTaskInteractive (companion-headless.ps1).
+  public static string InteractiveTaskXml(string root, string accountSid) {
+    if (!ValidSid(accountSid)) throw new ArgumentException("ACCOUNT_SID_INVALID");
+    return "<?xml version=\"1.0\" encoding=\"UTF-16\"?>"
+      + "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
+      + "<RegistrationInfo><Description>Clued CI resident companion (supervisor), parked: interactive token. ADR 0023.</Description></RegistrationInfo>"
+      + "<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + X(accountSid) + "</UserId></LogonTrigger></Triggers>"
+      + "<Principals><Principal id=\"Author\"><UserId>" + X(accountSid) + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>"
+      + "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+      + "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable>"
+      + "<RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>"
+      + "<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun>"
+      + "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>"
+      + "<Actions Context=\"Author\"><Exec><Command>" + X(SupervisorPath(root)) + "</Command><Arguments>" + X(SupervisorArguments(root)) + "</Arguments></Exec></Actions>"
+      + "</Task>";
+  }
+  // Review r1 m5: what the companion account must look like besides local / enabled / not an administrator: a member of Users only,
+  // its password never expires and it cannot change it, network and remote-desktop logon denied, hidden from the sign-in screen.
+  public const int UfPasswdCantChange = 0x40, UfDontExpirePasswd = 0x10000;
+  public static List<string> HardeningProblems(IEnumerable<string> groups, string usersGroup, int flags, IEnumerable<string> rights, bool hidden) {
+    List<string> o = new List<string>();
+    List<string> g = new List<string>(groups ?? new string[0]);
+    if (g.Count != 1 || !string.Equals(g[0], usersGroup, StringComparison.OrdinalIgnoreCase)) o.Add("GROUPS_NOT_USERS_ONLY");
+    if ((flags & UfDontExpirePasswd) == 0) o.Add("PASSWORD_EXPIRES");
+    if ((flags & UfPasswdCantChange) == 0) o.Add("PASSWORD_CHANGEABLE");
+    List<string> r = new List<string>(rights ?? new string[0]);
+    if (!r.Contains("SeDenyNetworkLogonRight")) o.Add("NETWORK_LOGON_NOT_DENIED");
+    if (!r.Contains("SeDenyRemoteInteractiveLogonRight")) o.Add("RDP_LOGON_NOT_DENIED");
+    if (!hidden) o.Add("NOT_HIDDEN");
+    return o;
   }
   // The node profile's WSL distribution from record\acceptance.json.
   public static string DistroFromAcceptance(string json) {
@@ -209,6 +260,23 @@ public static class RegistrarCore {
     object node; Dictionary<string, object> n;
     if (d == null || !d.TryGetValue("node", out node) || (n = node as Dictionary<string, object>) == null) return null;
     object sid; return n.TryGetValue("ownerSid", out sid) && ValidSid(sid as string) ? (string)sid : null;
+  }
+}
+
+// Review r1 M2/M5: the order of the account modes once the random password exists, with the host's calls passed in (the pure tests pass
+// fakes). The password goes on the account first; from then on any failed registration parks the companion task on its interactive
+// definition at once, so no definition is left holding the old password (each trigger would be a failed logon and could lock the account).
+public static class RegistrarFlow {
+  public static string PasswordFlow(Func<int> setPassword, Func<int> registerTask, Func<int> registerImport, Func<bool> park, out string detail) {
+    int nrc = setPassword();
+    if (nrc != 0) { detail = nrc.ToString(); return "ACCOUNT_PASSWORD_NOT_SET"; }
+    int hr = registerTask();
+    if (hr != 0) { bool parked = park(); detail = "0x" + hr.ToString("X8") + (parked ? ":parked" : ":park-failed"); return RegistrarCore.RegisterCode(hr); }
+    if (registerImport != null) {
+      int hr2 = registerImport();
+      if (hr2 != 0) { bool parked = park(); detail = "0x" + hr2.ToString("X8") + (parked ? ":parked" : ":park-failed"); return "IMPORT_" + RegistrarCore.RegisterCode(hr2); }
+    }
+    detail = null; return "REGISTERED";
   }
 }
 
@@ -272,8 +340,15 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
   [DllImport("userenv.dll", CharSet = CharSet.Unicode)] static extern int CreateProfile(string sid, string user, StringBuilder path, uint chars);
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessWithLogonW(string user, string domain, IntPtr password, int logonFlags, string application, StringBuilder commandLine, int creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
-  [DllImport("ole32.dll")] static extern int CoInitializeEx(IntPtr reserved, int coinit);
-  [DllImport("ole32.dll")] static extern int CoInitializeSecurity(IntPtr sd, int auth, IntPtr svc, IntPtr reserved, int authnLevel, int impLevel, IntPtr authList, int caps, IntPtr reserved3);
+  // Review r1: m4 random bytes straight into unmanaged memory; m3 the unbuffered re-read; m5 the roll-back of prepare-account.
+  [DllImport("bcrypt.dll")] static extern int BCryptGenRandom(IntPtr algorithm, IntPtr buffer, int count, int flags);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadFile(IntPtr file, IntPtr buffer, int toRead, out int read, IntPtr overlapped);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint type, uint protect);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool VirtualFree(IntPtr address, UIntPtr size, uint type);
+  [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr policy, byte[] sid, bool all, LSA_UNICODE_STRING[] rights, int count);
+  [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetUserDel(string server, string user);
+  [DllImport("userenv.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool DeleteProfileW(string sid, string path, string machine);
 
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetPathFn(IntPtr self, out IntPtr bstr);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetTaskFn(IntPtr self, IntPtr bstrPath, out IntPtr task);
@@ -304,14 +379,17 @@ public static class CluedCompanionTaskRegistrar {
     try { SetDefaultDllDirectories(0x800); } catch { }
     try {
       if (args.Length == 1 && args[0] == "vtable-selftest") return VtableSelfTest();
+      if (args.Length == 2 && args[0] == "file-sha256" && Regex.IsMatch(args[1], @"\A[A-Za-z]:\\")) return FileSha256Unbuffered(args[1]);
       if (!Elevated()) { Print("REGISTRAR_ELEVATION_REQUIRED", null); return 2; }
       if (args.Length == 2 && args[0] == "register-password" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterPassword(RegistrarCore.FixedRoot);
       int pid;
       if (args.Length == 2 && args[0] == "token-facts" && int.TryParse(args[1], out pid) && pid > 0) return TokenFacts(pid);
       // M5-b (ADR 0023).
-      if ((args.Length == 2 || args.Length == 4) && args[0] == "register-account" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase))
-        return RegisterAccount(RegistrarCore.FixedRoot, args.Length == 4 ? args[2] : null, args.Length == 4 ? args[3] : null, false);
-      if (args.Length == 2 && args[0] == "root-shell" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterAccount(RegistrarCore.FixedRoot, null, null, true);
+      long uidArg = -1;
+      if ((args.Length == 2 || (args.Length == 5 && long.TryParse(args[4], out uidArg) && uidArg >= 0 && uidArg <= 4294967295L)) && args[0] == "register-account" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase))
+        return RegisterAccount(RegistrarCore.FixedRoot, args.Length == 5 ? args[2] : null, args.Length == 5 ? args[3] : null, uidArg, false);
+      if (args.Length == 2 && args[0] == "root-shell" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterAccount(RegistrarCore.FixedRoot, null, null, -1, true);
+      if (args.Length == 2 && args[0] == "remove-account" && RegistrarCore.ValidAccountName(args[1])) return RemoveAccount(args[1]);
       if (args.Length == 2 && args[0] == "prepare-account" && RegistrarCore.ValidAccountName(args[1])) return PrepareAccount(args[1]);
       if (args.Length == 2 && args[0] == "account-facts" && RegistrarCore.ValidSid(args[1])) return AccountFacts(args[1]);
       Print("REGISTRAR_ARGS_REFUSED", null); return 2;
@@ -519,33 +597,44 @@ public static class CluedCompanionTaskRegistrar {
   // zeroes and frees it.
   static IntPtr NewRandomPassword() {
     int n = RegistrarCore.RandomPasswordChars; string alphabet = RegistrarCore.PasswordAlphabet;
+    const int RandomBytes = 256;
     UIntPtr bytes = new UIntPtr((uint)((n + 1) * 2));
-    IntPtr pw = Marshal.AllocHGlobal((n + 1) * 2);
-    byte[] r = new byte[256];
+    IntPtr pw = Marshal.AllocHGlobal((n + 1) * 2), r = Marshal.AllocHGlobal(RandomBytes);
     try {
-      using (RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider()) {
-        for (int attempt = 0; attempt < 64; attempt++) {
-          ZeroMemory(pw, bytes);
-          int at = 0, classes = 0;
-          while (at < n) {
-            rng.GetBytes(r);
-            for (int i = 0; i < r.Length && at < n; i++) { int k = RegistrarCore.PasswordIndex(r[i]); if (k < 0) continue; classes |= RegistrarCore.PasswordClass(alphabet[k]); Marshal.WriteInt16(pw, at * 2, (short)alphabet[k]); at++; }
-          }
-          if (classes == 15) { IntPtr done = pw; pw = IntPtr.Zero; return done; }
+      for (int attempt = 0; attempt < 64; attempt++) {
+        ZeroMemory(pw, bytes);
+        int at = 0, classes = 0;
+        while (at < n) {
+          if (BCryptGenRandom(IntPtr.Zero, r, RandomBytes, 2) != 0) throw new InvalidOperationException("RANDOM_SOURCE");   // BCRYPT_USE_SYSTEM_PREFERRED_RNG
+          for (int i = 0; i < RandomBytes && at < n; i++) { int k = RegistrarCore.PasswordIndex(Marshal.ReadByte(r, i)); if (k < 0) continue; classes |= RegistrarCore.PasswordClass(alphabet[k]); Marshal.WriteInt16(pw, at * 2, (short)alphabet[k]); at++; }
         }
+        if (classes == 15) { IntPtr done = pw; pw = IntPtr.Zero; return done; }
       }
       throw new InvalidOperationException("RANDOM_PASSWORD");
     } finally {
-      Array.Clear(r, 0, r.Length);
+      ZeroMemory(r, new UIntPtr(RandomBytes)); Marshal.FreeHGlobal(r);
       if (pw != IntPtr.Zero) { ZeroMemory(pw, bytes); Marshal.FreeHGlobal(pw); }
     }
   }
   // RegisterTaskDefinition with a password, through the folder's own vtable (the password only as VARIANT(BSTR)).
   static int RegisterWithPassword(object folder, object def, string taskName, string account, IntPtr bstr, string sddl) {
-    IntPtr pFolder = Qi(folder, IidTaskFolder), pDef = Qi(def, IidTaskDefinition), pTask = IntPtr.Zero;
-    IntPtr name = Marshal.StringToBSTR(taskName), user = Marshal.StringToBSTR(account), sd = Marshal.StringToBSTR(sddl);
-    try { return Slot<RegisterTaskDefinitionFn>(pFolder, SlotRegisterTaskDefinition)(pFolder, name, pDef, 6, ComVariant.Bstr(user), ComVariant.Bstr(bstr), 1, ComVariant.Bstr(sd), out pTask); }
-    finally { Marshal.FreeBSTR(name); Marshal.FreeBSTR(user); Marshal.FreeBSTR(sd); if (pTask != IntPtr.Zero) Marshal.Release(pTask); Marshal.Release(pDef); Marshal.Release(pFolder); }
+    IntPtr pFolder = Qi(folder, IidTaskFolder);
+    try {
+      IntPtr pDef = Qi(def, IidTaskDefinition), pTask = IntPtr.Zero;
+      IntPtr name = Marshal.StringToBSTR(taskName), user = Marshal.StringToBSTR(account), sd = Marshal.StringToBSTR(sddl);
+      try { return Slot<RegisterTaskDefinitionFn>(pFolder, SlotRegisterTaskDefinition)(pFolder, name, pDef, 6, ComVariant.Bstr(user), ComVariant.Bstr(bstr), 1, ComVariant.Bstr(sd), out pTask); }
+      finally { Marshal.FreeBSTR(name); Marshal.FreeBSTR(user); Marshal.FreeBSTR(sd); if (pTask != IntPtr.Zero) Marshal.Release(pTask); Marshal.Release(pDef); }
+    } finally { Marshal.Release(pFolder); }
+  }
+  // Review r1 M2: the companion task back on the account's interactive definition (no password; RegistrarCore.InteractiveTaskXml),
+  // through the scripting interface. true when it is registered.
+  static bool ParkTask(object svc, object folder, string root, string sid, string account) {
+    try {
+      object def = Call(svc, "NewTask", 0);
+      Set(def, "XmlText", RegistrarCore.InteractiveTaskXml(root, sid));
+      Call(folder, "RegisterTaskDefinition", RegistrarCore.TaskName, def, 6, account, null, 3, RegistrarCore.TaskSddl(sid));
+      return true;
+    } catch { return false; }
   }
 
   // register-account <root> [<distro> <vhdx>]: the companion task for the node profile's ownerSid (the companion account), with a new
@@ -553,11 +642,11 @@ public static class CluedCompanionTaskRegistrar {
   // a new random password for the account and the existing password task, then wsl.exe --distribution <the profile's> --user root in a
   // new console as that account (the Owner's way into root after M5-b; nobody knows the password, so there is no runas).
   // Steps: acceptance, account, service, folder, definition, pending, random, setpassword, register, import, shell, readback.
-  static int RegisterAccount(string root, string distro, string vhdx, bool rootShell) {
+  static int RegisterAccount(string root, string distro, string vhdx, long defaultUid, bool rootShell) {
     string step = "acceptance";
-    try { return RegisterAccountSteps(root, distro, vhdx, rootShell, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
+    try { return RegisterAccountSteps(root, distro, vhdx, defaultUid, rootShell, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
   }
-  static int RegisterAccountSteps(string root, string distro, string vhdx, bool rootShell, ref string step) {
+  static int RegisterAccountSteps(string root, string distro, string vhdx, long defaultUid, bool rootShell, ref string step) {
     step = "acceptance";
     string acceptance = System.IO.File.ReadAllText(root + @"\record\acceptance.json", new UTF8Encoding(false, true));
     string sid = RegistrarCore.OwnerSidFromAcceptance(acceptance), nodeDistro = RegistrarCore.DistroFromAcceptance(acceptance);
@@ -586,7 +675,7 @@ public static class CluedCompanionTaskRegistrar {
     object def = Call(svc, "NewTask", 0);
     Set(def, "XmlText", RegistrarCore.PasswordTaskXml(root, sid));
     object importDef = null;
-    if (distro != null) { importDef = Call(svc, "NewTask", 0); Set(importDef, "XmlText", RegistrarCore.ImportTaskXml(sid, distro, vhdx)); }
+    if (distro != null) { importDef = Call(svc, "NewTask", 0); Set(importDef, "XmlText", RegistrarCore.ImportTaskXml(sid, distro, vhdx, defaultUid)); }
     if (!rootShell) {
       // As register-password: only while the switch that started this program still holds its marker.
       step = "pending";
@@ -598,22 +687,23 @@ public static class CluedCompanionTaskRegistrar {
     try {
       step = "random";
       pw = NewRandomPassword();
-      step = "setpassword";
-      IntPtr info = pw; int parmErr;
-      int nrc = NetUserSetInfo(null, acct[1], 1003, ref info, out parmErr);   // USER_INFO_1003: the one pointer to the new password
-      info = IntPtr.Zero;
-      if (nrc != 0) { Print("ACCOUNT_PASSWORD_NOT_SET", nrc.ToString()); return 1; }
-      step = "register";
       bstr = SysAllocStringLen(pw, (uint)chars);
       if (bstr == IntPtr.Zero) { Print("REGISTER_FAILED", "BSTR"); return 1; }
-      int hr = RegisterWithPassword(folder, def, RegistrarCore.TaskName, account, bstr, RegistrarCore.TaskSddl(sid));
-      if (hr != 0) { Print(RegistrarCore.RegisterCode(hr), "0x" + hr.ToString("X8")); return 1; }
-      if (importDef != null) {
-        step = "import";
-        int hr2 = RegisterWithPassword(folder, importDef, RegistrarCore.ImportTaskName, account, bstr, RegistrarCore.ImportTaskSddl);
-        if (hr2 != 0) { Print("IMPORT_" + RegistrarCore.RegisterCode(hr2), "0x" + hr2.ToString("X8")); return 1; }
-      }
+      step = "setpassword";
+      IntPtr password = pw, bpassword = bstr;
+      string detail;
+      // Review r1 M2: once the account has the new password, a registration that fails parks the task at once (RegistrarFlow).
+      string code = RegistrarFlow.PasswordFlow(
+        () => { IntPtr info = password; int parmErr; return NetUserSetInfo(null, acct[1], 1003, ref info, out parmErr); },   // USER_INFO_1003
+        () => RegisterWithPassword(folder, def, RegistrarCore.TaskName, account, bpassword, RegistrarCore.TaskSddl(sid)),
+        importDef == null ? (Func<int>)null : () => RegisterWithPassword(folder, importDef, RegistrarCore.ImportTaskName, account, bpassword, RegistrarCore.ImportTaskSddl),
+        () => ParkTask(svc, folder, root, sid, account), out detail);
       ZeroMemory(bstr, new UIntPtr((uint)(chars * 2))); SysFreeString(bstr); bstr = IntPtr.Zero;
+      if (code != "REGISTERED") {
+        // root-shell: the companion task is no longer on the stored password; say so plainly.
+        if (rootShell && code != "ACCOUNT_PASSWORD_NOT_SET") code = detail != null && detail.EndsWith(":parked") ? "ROOT_SHELL_TASK_NOT_UPDATED_PARKED" : "ROOT_SHELL_TASK_NOT_UPDATED_PARK_FAILED";
+        Print(code, detail); return 1;
+      }
       if (rootShell) {
         step = "shell";
         STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); si.lpTitle = "Clued resident root shell: " + nodeDistro;
@@ -689,11 +779,105 @@ public static class CluedCompanionTaskRegistrar {
     StringBuilder path = new StringBuilder(261);
     int hr = CreateProfile(sid, name, path, 261);
     if (hr != 0 && (uint)hr != 0x800700B7) { Print("PROFILE_NOT_CREATED", "0x" + hr.ToString("X8")); return 1; }   // ERROR_ALREADY_EXISTS
+    // Review r1 m5: an account that was already there must also be Users only, password never expiring and not changeable by it, with
+    // network and remote-desktop logon denied (the sign-in screen is the script's step, so it is not counted here).
+    step = "hardening";
+    List<string> problems = HardeningOf(sid, name, true);
+    problems.Remove("NOT_HIDDEN");
+    if (problems.Count > 0) { string pd = string.Join(".", problems.ToArray()).ToLowerInvariant().Replace('_', '-'); Print("ACCOUNT_NOT_HARDENED", pd.Length > 80 ? pd.Substring(0, 80) : pd); return 2; }
     Dictionary<string, object> v = new Dictionary<string, object>();
     v["contract"] = RegistrarCore.Contract; v["code"] = "ACCOUNT_PREPARED"; v["sid"] = sid; v["account"] = machine + "\\" + name; v["created"] = created;
     v["profileDirectory"] = ProfilePath(sid);
     Console.Out.WriteLine(new JavaScriptSerializer().Serialize(v));
     return 0;
+  }
+
+  // Review r1 m5: RegistrarCore.HardeningProblems over the live facts: the direct local groups, the account flags, the rights held directly
+  // and the sign-in screen's UserList value.
+  static List<string> HardeningOf(string sid, string name, bool withHidden) {
+    List<string> groups = new List<string>();
+    IntPtr buf; int read, total;
+    if (NetUserGetLocalGroups(null, name, 0, 0, out buf, -1, out read, out total) == 0) {
+      try { for (int i = 0; i < read; i++) groups.Add(Marshal.PtrToStringUni(Marshal.ReadIntPtr(buf, i * IntPtr.Size))); } finally { NetApiBufferFree(buf); }
+    } else groups.Add("?");
+    int flags = 0; IntPtr ub;
+    if (NetUserGetInfo(null, name, 1, out ub) == 0) { try { flags = ((USER_INFO_1_OUT)Marshal.PtrToStructure(ub, typeof(USER_INFO_1_OUT))).flags; } finally { NetApiBufferFree(ub); } }
+    bool hidden = false;
+    try {
+      using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList")) {
+        object v = k == null ? null : k.GetValue(name); hidden = v is int && (int)v == 0;
+      }
+    } catch { hidden = false; }
+    return RegistrarCore.HardeningProblems(groups, GroupName("S-1-5-32-545"), flags, RightsOf(sid), withHidden ? hidden : true);
+  }
+
+  // file-sha256 <path>: the SHA-256 of a file read with FILE_FLAG_NO_BUFFERING (review r1 m3: the copy's target is hashed from the disk,
+  // not from the cache that just wrote it). Read-only, with the caller's own token; no elevation needed.
+  static int FileSha256Unbuffered(string path) {
+    const uint GenericRead = 0x80000000, ShareRead = 0x1, OpenExisting = 3, NoBuffering = 0x20000000, SequentialScan = 0x08000000;
+    IntPtr h = CreateFileW(path, GenericRead, ShareRead, IntPtr.Zero, OpenExisting, NoBuffering | SequentialScan, IntPtr.Zero);
+    if (h == new IntPtr(-1)) { Print("FILE_UNREADABLE", Marshal.GetLastWin32Error().ToString()); return 1; }
+    const int Chunk = 4 << 20;   // a multiple of every sector size; VirtualAlloc gives page-aligned memory
+    IntPtr mem = VirtualAlloc(IntPtr.Zero, new UIntPtr(Chunk), 0x3000, 0x04);   // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    try {
+      if (mem == IntPtr.Zero) { Print("FILE_UNREADABLE", "alloc"); return 1; }
+      byte[] managed = new byte[Chunk]; long length = 0;
+      using (SHA256 sha = SHA256.Create()) {
+        while (true) {
+          int got;
+          if (!ReadFile(h, mem, Chunk, out got, IntPtr.Zero)) { Print("FILE_UNREADABLE", Marshal.GetLastWin32Error().ToString()); return 1; }
+          if (got == 0) break;
+          Marshal.Copy(mem, managed, 0, got); sha.TransformBlock(managed, 0, got, null, 0); length += got;
+        }
+        sha.TransformFinalBlock(managed, 0, 0);
+        Dictionary<string, object> v = new Dictionary<string, object>();
+        v["contract"] = RegistrarCore.Contract; v["code"] = "FILE_SHA256"; v["sha256"] = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant(); v["length"] = length;
+        Console.Out.WriteLine(new JavaScriptSerializer().Serialize(v));
+        return 0;
+      }
+    } finally { if (mem != IntPtr.Zero) VirtualFree(mem, UIntPtr.Zero, 0x8000); CloseHandle(h); }
+  }
+
+  // remove-account <name> (review r1 m5, the roll-back of prepare-account; remove-companion-account.ps1): only an account
+  // prepare-account made (its comment), never an administrator or the caller, never while the companion task names it. Its rights
+  // (SeBatchLogonRight and the two denials), its profile (with it its registry, so its WSL registrations and .wslconfig) and the account.
+  static int RemoveAccount(string name) {
+    string step = "lookup";
+    try { return RemoveAccountSteps(name, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
+  }
+  static int RemoveAccountSteps(string name, ref string step) {
+    string sid = SidOf(Environment.MachineName + "\\" + name);
+    if (sid == null) { Print("ACCOUNT_ABSENT", null); return 0; }
+    step = "check";
+    string why = AccountRefusalOf(sid);
+    if (why == "COMPANION_ACCOUNT_IS_ADMINISTRATOR" || why == "COMPANION_ACCOUNT_IS_THE_CALLER" || why == "COMPANION_ACCOUNT_NOT_LOCAL") { Print(why, null); return 2; }
+    IntPtr ub; string comment = null;
+    if (NetUserGetInfo(null, name, 1, out ub) == 0) { try { comment = Marshal.PtrToStringUni(((USER_INFO_1_OUT)Marshal.PtrToStructure(ub, typeof(USER_INFO_1_OUT))).comment); } finally { NetApiBufferFree(ub); } }
+    if (comment == null || !comment.StartsWith("Clued CI resident companion (ADR 0023)", StringComparison.Ordinal)) { Print("ACCOUNT_NOT_MADE_BY_PREPARE", null); return 2; }
+    step = "task";
+    try {
+      object t = Call(Call(Service(), "GetFolder", RegistrarCore.TaskFolder), "GetTask", RegistrarCore.TaskName);
+      string u = (string)Get(Get(Get(t, "Definition"), "Principal"), "UserId");
+      if ((u != null && u.StartsWith("S-1-") ? u : SidOf(u)) == sid) { Print("ACCOUNT_STILL_USED_BY_THE_COMPANION_TASK", null); return 2; }
+    } catch (System.Reflection.TargetInvocationException) { }   // no folder or no task: nothing uses it
+    step = "rights";
+    IntPtr h = OpenLsa(0x10 | 0x800);
+    string[] rights = { "SeBatchLogonRight", "SeDenyNetworkLogonRight", "SeDenyRemoteInteractiveLogonRight" };
+    LSA_UNICODE_STRING[] r = new LSA_UNICODE_STRING[rights.Length];
+    int lrc;
+    try {
+      for (int i = 0; i < rights.Length; i++) { r[i].Buffer = Marshal.StringToHGlobalUni(rights[i]); r[i].Length = (ushort)(rights[i].Length * 2); r[i].MaximumLength = (ushort)(rights[i].Length * 2 + 2); }
+      uint st = LsaRemoveAccountRights(h, SidBytes(sid), false, r, r.Length);
+      lrc = st == 0xC0000034 ? 0 : LsaNtStatusToWinError(st);   // STATUS_OBJECT_NAME_NOT_FOUND: none left
+    } finally { foreach (LSA_UNICODE_STRING x in r) if (x.Buffer != IntPtr.Zero) Marshal.FreeHGlobal(x.Buffer); LsaClose(h); }
+    if (lrc != 0) { Print("ACCOUNT_RIGHTS_NOT_REMOVED", lrc.ToString()); return 1; }
+    step = "profile";
+    string profile = ProfilePath(sid);
+    if (profile != null && !DeleteProfileW(sid, null, null)) { int e = Marshal.GetLastWin32Error(); if (e != 2) { Print("PROFILE_NOT_REMOVED", e.ToString()); return 1; } }
+    step = "delete";
+    int drc = NetUserDel(null, name);
+    if (drc != 0) { Print("ACCOUNT_NOT_REMOVED", drc.ToString()); return 1; }
+    Print("ACCOUNT_REMOVED", null); return 0;
   }
 
   // account-facts <sid>: read-only facts of the companion account for the switch's preflight and verify.
@@ -710,6 +894,7 @@ public static class CluedCompanionTaskRegistrar {
       v["rights"] = RightsOf(sid).ToArray();
       v["profileDirectory"] = ProfilePath(sid);
       v["refusal"] = AccountRefusalOf(sid);
+      v["hardening"] = HardeningOf(sid, a[1], true).ToArray();   // review r1 m5
     }
     Console.Out.WriteLine(new JavaScriptSerializer().Serialize(v));
     return 0;

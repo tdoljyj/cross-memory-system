@@ -109,14 +109,41 @@ public static class RegistrarPureTests {
     Ok(!RegistrarCore.ValidVhdx(@"D:\x\..\y\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\a b\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\x\other.vhdx") && !RegistrarCore.ValidVhdx("D:\\x\\\"ext4.vhdx") && !RegistrarCore.ValidVhdx(@"\\server\x\ext4.vhdx"), "vhdx-refused");
     Ok(RegistrarCore.DistroFromAcceptance("{\"node\":{\"wslDistribution\":\"CluedResident-Linux\"}}") == "CluedResident-Linux" && RegistrarCore.DistroFromAcceptance("{\"node\":{\"wslDistribution\":\"a b\"}}") == null, "distro-from-record");
     XmlDocument ix = new XmlDocument();
-    ix.LoadXml(RegistrarCore.ImportTaskXml(Owner, "CluedResident-Linux", @"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx"));
+    ix.LoadXml(RegistrarCore.ImportTaskXml(Owner, "CluedResident-Linux", @"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx", 1000));
     XmlNamespaceManager ins = new XmlNamespaceManager(ix.NameTable); ins.AddNamespace("t", "http://schemas.microsoft.com/windows/2004/02/mit/task");
     Ok(ix.SelectSingleNode("//t:Principal/t:LogonType", ins).InnerText == "Password" && ix.SelectSingleNode("//t:Principal/t:RunLevel", ins).InnerText == "LeastPrivilege" && ix.SelectSingleNode("//t:Principal/t:UserId", ins).InnerText == Owner, "import-task-password-lua-account");
     Ok(ix.SelectSingleNode("//t:Triggers", ins) == null, "import-task-on-demand-only");
-    Ok(ix.SelectSingleNode("//t:Exec/t:Command", ins).InnerText == @"C:\Windows\System32\wsl.exe" && ix.SelectSingleNode("//t:Exec/t:Arguments", ins).InnerText == "--import-in-place CluedResident-Linux \"D:\\clued-resident\\wsl\\CluedResident-Linux\\ext4.vhdx\"", "import-task-action");
+    string iargs = ix.SelectSingleNode("//t:Exec/t:Arguments", ins).InnerText;
+    Ok(ix.SelectSingleNode("//t:Exec/t:Command", ins).InnerText == @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" && iargs.StartsWith("-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "), "import-task-action-encoded");
+    string iscript = System.Text.Encoding.Unicode.GetString(Convert.FromBase64String(iargs.Substring(iargs.LastIndexOf(' ') + 1)));
+    Ok(iscript == RegistrarCore.ImportScript("CluedResident-Linux", @"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx", 1000), "import-task-script-decodes");
+    // review r1 m1: exit 0 only when registered and running; an import that fails is accepted when the distribution then starts (a re-run)
+    Ok(iscript.Contains("& $wsl --import-in-place 'CluedResident-Linux' 'D:\\clued-resident\\wsl\\CluedResident-Linux\\ext4.vhdx'") && iscript.Contains("if ($LASTEXITCODE -ne 0) { & $wsl --distribution 'CluedResident-Linux' --exec /bin/true | Out-Null; if ($LASTEXITCODE -ne 0) { exit 3 } }"), "import-script-allows-already-registered-only-if-it-runs");
+    // review r1 m11: the Owner's DefaultUid written back
+    Ok(iscript.Contains("-Name 'DefaultUid' -Value 1000 -Type DWord") && iscript.Contains("if ($k.Count -ne 1) { exit 4 }") && RegistrarCore.ImportScript("D", @"D:\a\ext4.vhdx", 0).Contains("-Value 0 "), "import-script-default-uid");
     Ok(ix.SelectSingleNode("//t:ExecutionTimeLimit", ins).InnerText == "PT30M" && RegistrarCore.ImportTaskSddl == "D:P(A;;FA;;;SY)(A;;FA;;;BA)", "import-task-limit-and-admin-only");
-    threw = false; try { RegistrarCore.ImportTaskXml(Owner, "x y", @"D:\a\ext4.vhdx"); } catch (ArgumentException) { threw = true; }
-    Ok(threw, "import-task-refuses-bad-distro");
+    threw = false; try { RegistrarCore.ImportTaskXml(Owner, "x y", @"D:\a\ext4.vhdx", 0); } catch (ArgumentException) { threw = true; }
+    bool threw2 = false; try { RegistrarCore.ImportScript("D", @"D:\a\ext4.vhdx", -1); } catch (ArgumentException) { threw2 = true; }
+    Ok(threw && threw2, "import-task-refuses-bad-distro-or-uid");
+    // review r1 M2: the parked definition (interactive token of the account at its log-on, the fixed action, no restart)
+    XmlDocument px = new XmlDocument(); px.LoadXml(RegistrarCore.InteractiveTaskXml(Root, Owner));
+    XmlNamespaceManager pns = new XmlNamespaceManager(px.NameTable); pns.AddNamespace("t", "http://schemas.microsoft.com/windows/2004/02/mit/task");
+    Ok(px.SelectSingleNode("//t:Principal/t:LogonType", pns).InnerText == "InteractiveToken" && px.SelectSingleNode("//t:LogonTrigger/t:UserId", pns).InnerText == Owner && px.SelectSingleNode("//t:BootTrigger", pns) == null && px.SelectSingleNode("//t:RestartOnFailure", pns) == null
+      && px.SelectSingleNode("//t:Exec/t:Command", pns).InnerText == Root + @"\bin\CluedCompanionSupervisor.exe" && px.SelectSingleNode("//t:MultipleInstancesPolicy", pns).InnerText == "IgnoreNew", "parked-definition-interactive-no-password");
+    // review r1 M2/M5: the order once the password exists, with fakes for every host call
+    System.Collections.Generic.List<string> calls = new System.Collections.Generic.List<string>(); string det;
+    string fc = RegistrarFlow.PasswordFlow(() => { calls.Add("set"); return 0; }, () => { calls.Add("task"); return unchecked((int)0x8007052E); }, () => { calls.Add("import"); return 0; }, () => { calls.Add("park"); return true; }, out det);
+    Ok(fc == "LOGON_REJECTED" && det == "0x8007052E:parked" && string.Join(",", calls.ToArray()) == "set,task,park", "password-flow-register-fails-parks");
+    calls.Clear(); fc = RegistrarFlow.PasswordFlow(() => { calls.Add("set"); return 0; }, () => { calls.Add("task"); return 0; }, () => { calls.Add("import"); return unchecked((int)0x80070005); }, () => { calls.Add("park"); return false; }, out det);
+    Ok(fc == "IMPORT_REGISTER_ACCESS_DENIED" && det == "0x80070005:park-failed" && string.Join(",", calls.ToArray()) == "set,task,import,park", "password-flow-import-fails-parks");
+    calls.Clear(); fc = RegistrarFlow.PasswordFlow(() => { calls.Add("set"); return 2245; }, () => { calls.Add("task"); return 0; }, null, () => { calls.Add("park"); return true; }, out det);
+    Ok(fc == "ACCOUNT_PASSWORD_NOT_SET" && det == "2245" && string.Join(",", calls.ToArray()) == "set", "password-flow-password-not-set-touches-nothing");
+    calls.Clear(); fc = RegistrarFlow.PasswordFlow(() => { calls.Add("set"); return 0; }, () => { calls.Add("task"); return 0; }, null, () => { calls.Add("park"); return true; }, out det);
+    Ok(fc == "REGISTERED" && det == null && string.Join(",", calls.ToArray()) == "set,task", "password-flow-registered-no-park");
+    // review r1 m5: the account's hardening
+    Ok(RegistrarCore.HardeningProblems(new[] { "Users" }, "Users", 0x10040 | 0x201, new[] { "SeBatchLogonRight", "SeDenyNetworkLogonRight", "SeDenyRemoteInteractiveLogonRight" }, true).Count == 0, "hardening-ok");
+    Ok(string.Join(",", RegistrarCore.HardeningProblems(new[] { "Users", "Remote Desktop Users" }, "Users", 0x201, new[] { "SeBatchLogonRight" }, false).ToArray()) == "GROUPS_NOT_USERS_ONLY,PASSWORD_EXPIRES,PASSWORD_CHANGEABLE,NETWORK_LOGON_NOT_DENIED,RDP_LOGON_NOT_DENIED,NOT_HIDDEN", "hardening-every-problem");
+    Ok(RegistrarCore.HardeningProblems(new string[0], "Users", 0x10040, new[] { "SeDenyNetworkLogonRight", "SeDenyRemoteInteractiveLogonRight" }, true)[0] == "GROUPS_NOT_USERS_ONLY", "hardening-no-group");
 
     // the compiled program: not elevated it refuses every mode but the read-only vtable self-test, which must pass
     if (args.Length == 1) {
@@ -128,10 +155,14 @@ public static class RegistrarPureTests {
       string bad = run("register-password C:\\Temp");
       Ok(bad.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || bad.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "register-refuses-other-root");
       // M5-b: the same for the account modes; never a real account name or the real root (elevated they would act)
-      foreach (string a in new[] { "register-account C:\\Temp", "root-shell C:\\Temp", "prepare-account X", "account-facts S-1-5-18" }) {
+      foreach (string a in new[] { "register-account C:\\Temp", "root-shell C:\\Temp", "prepare-account X", "account-facts S-1-5-18", "remove-account X", "register-account C:\\Temp a b c" }) {
         string r = run(a);
         Ok(r.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || r.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "account-mode-refuses-bad-arguments:" + a);
       }
+      // review r1 m3: file-sha256 reads unbuffered with the caller's token (no elevation) and gives the file's real hash
+      string fh = run("file-sha256 \"" + args[0] + "\"");
+      string want; using (System.Security.Cryptography.SHA256 h = System.Security.Cryptography.SHA256.Create()) want = BitConverter.ToString(h.ComputeHash(System.IO.File.ReadAllBytes(args[0]))).Replace("-", "").ToLowerInvariant();
+      Ok(fh.IndexOf("\"code\":\"FILE_SHA256\"") > 0 && fh.IndexOf("\"sha256\":\"" + want + "\"") > 0 && fh.EndsWith("|0"), "file-sha256-unbuffered:" + fh);
     }
 
     Console.Out.WriteLine("{\"status\":\"REGISTRAR_PURE_PASS\",\"assertions\":" + n + "}");

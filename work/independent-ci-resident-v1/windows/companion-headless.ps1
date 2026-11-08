@@ -526,8 +526,8 @@ $CompanionWslFile = 'install\companion-wsl.json'
 $CompanionWslContract = 'clued.independent-ci.companion-wsl/1'
 $CompanionImportTaskName = 'CluedCIResidentCompanionWslImport'
 $CompanionSidPattern = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z'
-# The registrar's ValidVhdx (CompanionTaskRegistrar.cs), here for the directory: a drive, 1 to 7 plain names.
-$CompanionVhdxDirPattern = '^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,6}[A-Za-z0-9._-]{1,64}\z'
+# The registrar's ValidVhdx (CompanionTaskRegistrar.cs), here for the directory: a drive, 1 to 15 plain names.
+$CompanionVhdxDirPattern = '^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,14}[A-Za-z0-9._-]{1,64}\z'
 
 # $null when this node's companion runs as the Owner (no record); else the record, checked against the node profile (throws if it
 # does not fit: never guess who the Owner is).
@@ -548,26 +548,89 @@ function Test-CompanionAccountRecord($a, $node) {
 function Get-CompanionOperatorSid([string]$root, $node) { $a = Read-CompanionAccountRecord $root $node; if ($null -eq $a) { [string]$node.ownerSid } else { [string]$a.operatorSid } }
 
 # The moved ext4.vhdx and its folder: SYSTEM and Administrators full, the companion account modify (WSL opens it as that user), nothing
-# inherited, nothing for the Owner's session.
+# inherited, nothing for the Owner's session. Missing parents of the folder are created SYSTEM / Administrators full, Users read.
 $CompanionVhdxParentSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
 function Get-CompanionVhdxSddl([string]$companionSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $companionSid + ')' }
-# The current user's WSL registrations (HKCU Lxss): guid, name, base path (the \\?\ prefix dropped), default uid, flags, version.
+# The current user's WSL registrations (Lxss): guid, name, base path (the \\?\ prefix dropped), default uid and every value of the key
+# (review r1 M4: VhdFileName, PackageFamilyName, KernelCommandLine, DefaultEnvironment, Flavor, OsVersion, ... all of them).
+$CompanionLxssKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
 function Get-WslRegistrations {
-  $base = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
-  if (-not (Test-Path -LiteralPath $base)) { return @() }
-  @(Get-ChildItem -LiteralPath $base | ForEach-Object {
-    $p = Get-ItemProperty -LiteralPath $_.PSPath
-    $names = @($p.PSObject.Properties.Name)
-    [ordered]@{ guid = $_.PSChildName; name = $(if ($names -contains 'DistributionName') { [string]$p.DistributionName } else { $null })
-      basePath = $(if ($names -contains 'BasePath') { ([string]$p.BasePath) -replace '^\\\\\?\\', '' } else { $null })
-      defaultUid = $(if ($names -contains 'DefaultUid') { [int64]$p.DefaultUid } else { $null }); flags = $(if ($names -contains 'Flags') { [int64]$p.Flags } else { $null })
-      version = $(if ($names -contains 'Version') { [int64]$p.Version } else { $null }) }
+  if (-not (Test-Path -LiteralPath $CompanionLxssKey)) { return @() }
+  @(Get-ChildItem -LiteralPath $CompanionLxssKey | ForEach-Object {
+    $key = $_
+    $values = [ordered]@{}
+    foreach ($n in @($key.GetValueNames())) { $v = $key.GetValue($n, $null, 'DoNotExpandEnvironmentNames'); $values[$(if ($n) { $n } else { '(default)' })] = $(if ($v -is [byte[]]) { [Convert]::ToBase64String($v) } else { $v }) }
+    [ordered]@{ guid = $key.PSChildName; name = $(if ($values.Contains('DistributionName')) { [string]$values['DistributionName'] } else { $null })
+      basePath = $(if ($values.Contains('BasePath')) { ([string]$values['BasePath']) -replace '^\\\\\?\\', '' } else { $null })
+      defaultUid = $(if ($values.Contains('DefaultUid')) { [int64]$values['DefaultUid'] } else { $null }); values = $values }
   })
 }
+# The registry steps of the move, each its own function (the offline tests replace them). The export is reg.exe's own full copy of the
+# key (every value with its type), written to the admin-only install\ before anything changes.
+function Export-CompanionLxssKey([string]$guid, [string]$file) {
+  $null = & 'C:\Windows\System32\reg.exe' export ('HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\' + $guid) $file /y 2>&1
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'WSL_OWNER_REGISTRATION_NOT_EXPORTED' }
+}
+function Import-CompanionLxssKey([string]$file) { $null = & 'C:\Windows\System32\reg.exe' import $file 2>&1; if ($LASTEXITCODE -ne 0) { throw 'WSL_OWNER_REGISTRATION_NOT_IMPORTED' } }
+function Remove-CompanionLxssKey([string]$guid) { Remove-Item -LiteralPath (Join-Path $CompanionLxssKey $guid) -Recurse -Force }
+function Get-CompanionLxssDefault { try { [string](Get-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null } }
+function Remove-CompanionLxssDefault { Remove-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -Force }
+function Invoke-CompanionWslTerminate([string]$distro) { $null = & 'C:\Windows\System32\wsl.exe' --terminate $distro 2>&1 }
+function Test-CompanionSameVolume([string]$a, [string]$b) { [string]::Equals([IO.Path]::GetPathRoot($a), [IO.Path]::GetPathRoot($b), [StringComparison]::OrdinalIgnoreCase) }
+function Get-CompanionDirSddl([string]$path) { (Get-Acl -LiteralPath $path).Sddl }
+function New-CompanionProtectedDirectory([string]$path, [string]$sddl) { $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl); [void][IO.Directory]::CreateDirectory($path, $ds) }
+function Set-CompanionVhdxAcl([string]$dir, [string]$file, [string]$companionSid) {
+  $sddl = Get-CompanionVhdxSddl $companionSid
+  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl, [Security.AccessControl.AccessControlSections]::Access)
+  (Get-Item -LiteralPath $dir -Force).SetAccessControl($ds)
+  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm($sddl.Replace('(A;OICI;', '(A;;'), [Security.AccessControl.AccessControlSections]::Access)
+  (Get-Item -LiteralPath $file -Force).SetAccessControl($fs)
+}
+# The file moved back on a roll-back gets its folder's inherited ACL again (only the DACL).
+function Set-CompanionOwnerFileAcl([string]$file) {
+  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm('D:', [Security.AccessControl.AccessControlSections]::Access)
+  (Get-Item -LiteralPath $file -Force).SetAccessControl($fs)
+}
+# Review r1 M1 (pure): a folder on the way to the vhdx is safe when its owner is SYSTEM, Administrators or TrustedInstaller and no entry
+# that applies to the folder itself (inherit-only ones do not) gives anyone else DELETE, DELETE_CHILD, WRITE_DAC, WRITE_OWNER or
+# GENERIC_ALL. A drive root cannot be deleted or renamed, so DELETE alone is not counted there (D:\ gives Authenticated Users modify
+# on itself). $null, 'unreadable', 'owner' or 'ace:<sid>'.
+$CompanionTrustedSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+function Get-CompanionDirAclProblem([string]$sddl, [bool]$isRoot) {
+  $raw = try { New-Object Security.AccessControl.RawSecurityDescriptor($sddl) } catch { return 'unreadable' }
+  if ($null -eq $raw.Owner -or $CompanionTrustedSids -cnotcontains $raw.Owner.Value) { return 'owner' }
+  if ($null -eq $raw.DiscretionaryAcl) { return 'unreadable' }
+  $danger = 0x40 -bor 0x40000 -bor 0x80000 -bor 0x10000000
+  if (-not $isRoot) { $danger = $danger -bor 0x10000 }
+  foreach ($a in $raw.DiscretionaryAcl) {
+    if (-not ($a -is [Security.AccessControl.CommonAce]) -or $a.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+    if (([int]$a.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { continue }
+    if ($CompanionTrustedSids -ccontains $a.SecurityIdentifier.Value) { continue }
+    if (($a.AccessMask -band $danger) -ne 0) { return ('ace:' + $a.SecurityIdentifier.Value) }
+  }
+  $null
+}
+# Every folder from the drive root down to the vhdx's folder: an existing one must be a real folder (no link) and safe; a missing one is
+# created protected and read back (CreateDirectory does not apply a DACL to a folder someone created meanwhile). Returns the created ones.
+function Assert-CompanionVhdxParents([string]$targetDir) {
+  $chain = @(); for ($d = $targetDir; $d; $d = Split-Path -Parent $d) { $chain = @($d) + $chain }
+  $created = @()
+  foreach ($d in $chain) {
+    $isRoot = ([IO.Path]::GetPathRoot($d).TrimEnd('\') -ieq $d.TrimEnd('\'))
+    if (Test-Path -LiteralPath $d) {
+      if (-not $isRoot -and ((Get-Item -LiteralPath $d -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_TARGET_PARENT_IS_A_LINK' }
+      if ($null -ne (Get-CompanionDirAclProblem (Get-CompanionDirSddl $d) $isRoot)) { throw 'WSL_TARGET_PARENT_UNSAFE' }
+    } else {
+      New-CompanionProtectedDirectory $d $CompanionVhdxParentSddl
+      if (((Get-Item -LiteralPath $d -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $null -ne (Get-CompanionDirAclProblem (Get-CompanionDirSddl $d) $false)) { throw 'WSL_TARGET_PARENT_READBACK_MISMATCH' }
+      $created += $d
+    }
+  }
+  ,$created
+}
 # What the move has to do (pure). registration: the Owner's registration of the distribution or $null; sourceExists: its ext4.vhdx is
-# there; targetDir: where it goes; targetExists: ext4.vhdx is already there. action: move (sameVolume: a rename, else a copy), forget
-# (the file is already in the target, only the Owner's registration goes: a move cut off after the file, or a distribution registered
-# there already), done (moved and forgotten earlier), or refuse with the code.
+# there; targetDir: where it goes; targetExists: ext4.vhdx is already there. action: move, forget (the file is already in the target),
+# done, or refuse with the code. sameVolume: Test-CompanionSameVolume.
 function Get-CompanionWslMovePlan($registration, [bool]$sourceExists, [string]$targetDir, [bool]$targetExists) {
   if ($targetDir -cnotmatch $CompanionVhdxDirPattern -or $targetDir.Contains('\..') -or $targetDir.Contains('\.\')) { return [ordered]@{ action = 'refuse'; code = 'WSL_TARGET_REFUSED' } }
   if ($null -eq $registration) {
@@ -583,24 +646,46 @@ function Get-CompanionWslMovePlan($registration, [bool]$sourceExists, [string]$t
   if ($sourceExists -and $targetExists) { return [ordered]@{ action = 'refuse'; code = 'WSL_TARGET_EXISTS' } }
   if (-not $sourceExists -and $targetExists) { return [ordered]@{ action = 'forget'; code = $null } }
   if (-not $sourceExists) { return [ordered]@{ action = 'refuse'; code = 'WSL_SOURCE_MISSING' } }
-  [ordered]@{ action = 'move'; code = $null; sameVolume = ($src.Substring(0, 2) -ieq $targetDir.Substring(0, 2)) }
+  [ordered]@{ action = 'move'; code = $null; sameVolume = (Test-CompanionSameVolume $src $targetDir) }
 }
 function Get-CompanionFileSha256([string]$path) { $s = [Security.Cryptography.SHA256]::Create(); $f = [IO.File]::OpenRead($path); try { ([BitConverter]::ToString($s.ComputeHash($f))).Replace('-', '').ToLowerInvariant() } finally { $f.Dispose(); $s.Dispose() } }
-# Copies source to target (CreateNew) hashing what it reads, then hashes the target as written; returns both hashes and the length.
-function Copy-CompanionFileVerified([string]$source, [string]$target) {
+# Review r1 m3: the copy's target hashed from the disk, not from the cache that just wrote it: the registrar of this switch reads it with
+# FILE_FLAG_NO_BUFFERING (file-sha256). $CompanionRegistrarExe is set by the switch.
+$CompanionRegistrarExe = $null
+function Get-CompanionFileSha256Unbuffered([string]$path) {
+  if (-not $script:CompanionRegistrarExe) { throw 'WSL_HASH_TOOL_MISSING' }
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $script:CompanionRegistrarExe; $psi.Arguments = 'file-sha256 "' + $path + '"'
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = 'C:\Windows\System32'
+  $p = [Diagnostics.Process]::Start($psi); $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
+  $v = try { $o | ConvertFrom-Json } catch { $null }
+  if ($null -eq $v -or [string]$v.code -cne 'FILE_SHA256' -or [string]$v.sha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'WSL_HASH_UNREADABLE' }
+  [string]$v.sha256
+}
+# Review r1 M3: copies source to partial (CreateNew, write-through) hashing what it reads, then hashes partial from the disk; any
+# exception deletes partial (never a half file under the final name). progress: called with the bytes copied so far after each chunk.
+function Copy-CompanionFileVerified([string]$source, [string]$partial, [scriptblock]$progress) {
   $sha = [Security.Cryptography.SHA256]::Create()
-  $in = New-Object IO.FileStream($source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None, 4194304)
   try {
-    $out = New-Object IO.FileStream($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 4194304, [IO.FileOptions]::WriteThrough)
+    $in = New-Object IO.FileStream($source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None, 4194304)
     try {
-      $buf = New-Object byte[] 4194304
-      while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) { [void]$sha.TransformBlock($buf, 0, $n, $null, 0); $out.Write($buf, 0, $n) }
-      [void]$sha.TransformFinalBlock($buf, 0, 0); $out.Flush($true)
-    } finally { $out.Dispose() }
-    $length = $in.Length
-  } finally { $in.Dispose() }
-  $read = ([BitConverter]::ToString($sha.Hash)).Replace('-', '').ToLowerInvariant(); $sha.Dispose()
-  [ordered]@{ sourceSha256 = $read; targetSha256 = (Get-CompanionFileSha256 $target); length = $length }
+      $out = New-Object IO.FileStream($partial, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 4194304, [IO.FileOptions]::WriteThrough)
+      try {
+        $buf = New-Object byte[] 4194304; $done = 0L
+        while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+          [void]$sha.TransformBlock($buf, 0, $n, $null, 0); $out.Write($buf, 0, $n); $done += $n
+          if ($progress) { & $progress $done }
+        }
+        [void]$sha.TransformFinalBlock($buf, 0, 0); $out.Flush($true)
+      } finally { $out.Dispose() }
+      $length = $in.Length
+    } finally { $in.Dispose() }
+    $read = ([BitConverter]::ToString($sha.Hash)).Replace('-', '').ToLowerInvariant()
+    [ordered]@{ sourceSha256 = $read; targetSha256 = (Get-CompanionFileSha256Unbuffered $partial); length = $length }
+  } catch {
+    Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+    throw
+  } finally { $sha.Dispose() }
 }
 # The vhdx is free: opened with no sharing (the distribution no longer runs). At most $seconds.
 function Wait-CompanionVhdxFree([string]$path, [int]$seconds = 120) {
@@ -610,59 +695,83 @@ function Wait-CompanionVhdxFree([string]$path, [int]$seconds = 120) {
   } while ([DateTime]::UtcNow -lt $until)
   $false
 }
-# Moves the Owner's registration of the distribution to the companion account's side (elevated, as the Owner): the distribution is
-# stopped (wsl --terminate, this one only), ext4.vhdx goes to targetDir (a rename on the same volume; otherwise a copy hashed on both
-# sides, then the source is deleted: that is where C: gets its space back), folder and file get Get-CompanionVhdxSddl, and the Owner's
-# registration key is removed (its values kept in the result) WITHOUT wsl --unregister, which would delete the file.
-# The registration for the companion account is the import task's (register-account). Returns the record; throws a WSL_* code.
-function Invoke-CompanionWslMove([string]$distro, [string]$targetDir, [string]$companionSid) {
+function Read-CompanionWslRecord([string]$root) {
+  $f = Join-Path $root $CompanionWslFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+  try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null }
+}
+function Write-CompanionWslRecord([string]$root, $record) {
+  $f = Join-Path $root $CompanionWslFile
+  $tmp = $f + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  [IO.File]::WriteAllText($tmp, ($record | ConvertTo-Json -Depth 8 -Compress), (New-Object Text.UTF8Encoding($false)))
+  if (Test-Path -LiteralPath $f) { [IO.File]::Replace($tmp, $f, [NullString]::Value) } else { [IO.File]::Move($tmp, $f) }
+}
+function Set-CompanionWslStage($record, [string]$stage) { if ($record -is [Collections.IDictionary]) { $record['stage'] = $stage } else { $record.stage = $stage } }
+# The move (review r1 M4), as stages kept in install\companion-wsl.json (admin-only) so a cut-off switch resumes and a roll-back finds
+# everything: exported (the Owner's full registration key, reg.exe's own copy, in install\ and its values in the record) -> moved
+# (ext4.vhdx in targetDir, protected) -> imported (the account's import task returned 0) -> forgotten (the Owner's key removed) ->
+# qualified. This function does exported and moved; nothing of the Owner's registration is removed here. Returns the record.
+function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid) {
+  $target = Join-Path $targetDir 'ext4.vhdx'; $partial = $target + '.partial'
+  $existing = Read-CompanionWslRecord $root
+  $record = if ($null -ne $existing) { $existing } else { [ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $target; companionSid = $companionSid; stage = 'new'; imported = $false } }
+  if ([string]$record.target -cne $target -or [string]$record.distro -cne $distro) { throw 'WSL_RECORD_IS_ANOTHER_MOVE' }
+  if (@('moved', 'imported', 'forgotten', 'qualified') -ccontains [string]$record.stage -and (Test-Path -LiteralPath $target -PathType Leaf)) { return $record }
   $reg = @(Get-WslRegistrations | Where-Object { $_.name -ceq $distro })
   if ($reg.Count -gt 1) { throw 'WSL_REGISTRATION_AMBIGUOUS' }
   $r = if ($reg.Count) { $reg[0] } else { $null }
-  $source = if ($r) { Join-Path ([string]$r.basePath) 'ext4.vhdx' } else { $null }
-  $target = Join-Path $targetDir 'ext4.vhdx'
+  $source = if ($r) { Join-Path ([string]$r.basePath) 'ext4.vhdx' } elseif ($existing) { [string]$existing.source } else { $null }
   $plan = Get-CompanionWslMovePlan $r ([bool]($source -and (Test-Path -LiteralPath $source -PathType Leaf))) $targetDir (Test-Path -LiteralPath $target -PathType Leaf)
-  $out = [ordered]@{ action = $plan.action; distro = $distro; source = $source; target = $target; registration = $r; copy = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
   if ($plan.action -ceq 'refuse') { throw $plan.code }
-  if ($plan.action -ceq 'done') { return $out }
-  $null = & 'C:\Windows\System32\wsl.exe' --terminate $distro 2>&1
-  if (Test-Path -LiteralPath $source -PathType Leaf) { if (-not (Wait-CompanionVhdxFree $source)) { throw 'WSL_VHDX_STILL_IN_USE' } }
-  $sddl = Get-CompanionVhdxSddl $companionSid
-  if (Test-Path -LiteralPath $targetDir) {
-    if (((Get-Item -LiteralPath $targetDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_TARGET_IS_A_LINK' }
-  } else {
-    # Missing parents (D:\clued-resident\wsl) are created protected: SYSTEM and Administrators full, Users read; nothing inherited from a
-    # drive root that may let every user write (an existing parent is left as it is and its DACL recorded).
-    $chain = @(); for ($d = Split-Path -Parent $targetDir; $d -and -not (Test-Path -LiteralPath $d); $d = Split-Path -Parent $d) { $chain = @($d) + $chain }
-    foreach ($d in $chain) { $pds = New-Object Security.AccessControl.DirectorySecurity; $pds.SetSecurityDescriptorSddlForm($CompanionVhdxParentSddl); [void][IO.Directory]::CreateDirectory($d, $pds) }
-    $out.parentsCreated = $chain
-    $out.parentSddl = (Get-Acl -LiteralPath (Split-Path -Parent $targetDir)).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
-    $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl)
-    [void][IO.Directory]::CreateDirectory($targetDir, $ds)
+  # 1. exported: before anything changes
+  if ($null -ne $r -and -not ($record.PSObject.Properties.Name -ccontains 'ownerExport' -or ($record -is [Collections.IDictionary] -and $record.Contains('ownerExport')))) {
+    $file = Join-Path $root ('install\companion-wsl-owner-' + ([string]$r.guid).Trim('{}') + '.reg')
+    Export-CompanionLxssKey ([string]$r.guid) $file
+    $record = [ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $target; companionSid = $companionSid; stage = 'exported'; imported = $false
+      source = $source; ownerRegistration = $r; ownerExport = $file; ownerDefaultDistribution = (Get-CompanionLxssDefault); at = [DateTimeOffset]::UtcNow.ToString('o') }
+    Write-CompanionWslRecord $root $record
   }
-  if ($plan.action -ceq 'move') {
-    if ($plan.sameVolume) { [IO.File]::Move($source, $target) }
-    else {
-      $out.copy = Copy-CompanionFileVerified $source $target
-      if ($out.copy.sourceSha256 -cne $out.copy.targetSha256) { Remove-Item -LiteralPath $target -Force; throw 'WSL_COPY_HASH_MISMATCH' }
-      Remove-Item -LiteralPath $source -Force
+  # 2. moved
+  if ($plan.action -ceq 'move' -or $plan.action -ceq 'forget') {
+    Invoke-CompanionWslTerminate $distro
+    if ($source -and (Test-Path -LiteralPath $source -PathType Leaf)) { if (-not (Wait-CompanionVhdxFree $source)) { throw 'WSL_VHDX_STILL_IN_USE' } }
+    $created = Assert-CompanionVhdxParents $targetDir
+    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }   # a cut-off copy of this move (its own name, in its own folder)
+    $copy = $null
+    if ($plan.action -ceq 'move') {
+      if ($plan.sameVolume) { [IO.File]::Move($source, $target) }
+      else {
+        $copy = Copy-CompanionFileVerified $source $partial
+        if ($copy.sourceSha256 -cne $copy.targetSha256) { Remove-Item -LiteralPath $partial -Force; throw 'WSL_COPY_HASH_MISMATCH' }
+        [IO.File]::Move($partial, $target)
+        Remove-Item -LiteralPath $source -Force
+      }
     }
+    Set-CompanionVhdxAcl $targetDir $target $companionSid
+    $record = ConvertTo-CompanionOrdered $record
+    $record.stage = 'moved'; $record.imported = $false; $record.copy = $copy; $record.parentsCreated = $created; $record.movedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    Write-CompanionWslRecord $root $record
   }
-  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl, [Security.AccessControl.AccessControlSections]::Access)
-  (Get-Item -LiteralPath $targetDir -Force).SetAccessControl($ds)
-  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm($sddl.Replace('(A;OICI;', '(A;;'), [Security.AccessControl.AccessControlSections]::Access)
-  (Get-Item -LiteralPath $target -Force).SetAccessControl($fs)
-  if ($null -ne $r) {
-    $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
-    $default = try { [string](Get-ItemProperty -LiteralPath $lxss -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null }
-    $out.ownerDefaultWas = $default
-    Remove-Item -LiteralPath (Join-Path $lxss ([string]$r.guid)) -Recurse -Force
-    if ($default -ceq [string]$r.guid) { Remove-ItemProperty -LiteralPath $lxss -Name 'DefaultDistribution' -Force }
-  }
-  $out
+  $record
 }
-# Runs the one-shot import task once and deletes it: its last result (wsl.exe's exit code), 'timeout' or 'not-registered'. At most
-# 10 minutes.
+function ConvertTo-CompanionOrdered($o) {
+  if ($o -is [Collections.IDictionary]) { $h = [ordered]@{}; foreach ($k in $o.Keys) { $h[$k] = $o[$k] }; return $h }
+  $h = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = $p.Value }; $h
+}
+# After the account's import returned 0 (review r1 M4): the Owner's registration key goes, and the default distribution when it named it.
+function Remove-CompanionOwnerRegistration([string]$root, $record) {
+  $record = ConvertTo-CompanionOrdered $record
+  $guid = if ($record.Contains('ownerRegistration') -and $null -ne $record.ownerRegistration) { [string]$record.ownerRegistration.guid } else { $null }
+  if ($guid) {
+    $still = @(Get-WslRegistrations | Where-Object { $_.guid -ceq $guid -and $_.name -ceq [string]$record.distro })
+    if ($still.Count) { Remove-CompanionLxssKey $guid }
+    if ((Get-CompanionLxssDefault) -ceq $guid) { Remove-CompanionLxssDefault }
+  }
+  $record.stage = 'forgotten'; $record.forgottenAt = [DateTimeOffset]::UtcNow.ToString('o')
+  Write-CompanionWslRecord $root $record
+  $record
+}
+# Runs the one-shot import task once and deletes it: its last result (the import script's exit code), 'timeout' or 'not-registered'.
 function Invoke-CompanionWslImportTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
   $folder = $svc.GetFolder('\Clued')
@@ -677,31 +786,26 @@ function Invoke-CompanionWslImportTask {
     ([int64]$t.LastTaskResult -band 0xFFFFFFFFL)
   } finally { try { $folder.DeleteTask($CompanionImportTaskName, 0) } catch { } }
 }
-function Read-CompanionWslRecord([string]$root) {
-  $f = Join-Path $root $CompanionWslFile
-  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
-  try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null }
-}
-function Write-CompanionWslRecord([string]$root, $record) {
-  $f = Join-Path $root $CompanionWslFile
-  $tmp = $f + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-  [IO.File]::WriteAllText($tmp, ($record | ConvertTo-Json -Depth 6 -Compress), (New-Object Text.UTF8Encoding($false)))
-  if (Test-Path -LiteralPath $f) { [IO.File]::Replace($tmp, $f, [NullString]::Value) } else { [IO.File]::Move($tmp, $f) }
-}
 # The registrar's account-facts for the companion account.
 function Get-CompanionAccountFacts([string]$root, [string]$sid, [string]$registrar) {
   try { (Invoke-CompanionRegistrar $root @('account-facts', $sid) $registrar) | ConvertFrom-Json } catch { $null }
 }
+function Get-CompanionDomainCredsDisabled { try { [int](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'DisableDomainCreds' -ErrorAction Stop).DisableDomainCreds } catch { 0 } }
 # Read-only preflight of the account switch (pure over the facts): the account (local, enabled, not an administrator, not the caller,
-# SeBatchLogonRight held directly and not denied, its profile is the node profile's), its own gh configuration in that profile, the
-# installed supervisor and launch file, no injection variable, the target's shape.
-function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vhdxDir) {
+# SeBatchLogonRight held directly and not denied, hardened (review r1 m5), its profile is the node profile's), its own gh configuration,
+# the installed supervisor and launch file, no injection variable, the target's shape, and (review r1 m2) stored domain credentials
+# allowed and the lockout margin: all before anything irreversible.
+function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vhdxDir, [int]$disableDomainCreds, $lockout) {
   $refusals = @()
+  if ($disableDomainCreds -ne 0) { $refusals += 'COMPANION_HEADLESS_DOMAIN_CREDS_DISABLED' }
+  if (-not (Test-LockoutMargin $lockout)) { $refusals += 'COMPANION_LOCKOUT_MARGIN_INSUFFICIENT' }
   if ($null -eq $facts -or [string]$facts.code -cne 'ACCOUNT_FACTS' -or -not $facts.exists) { $refusals += 'COMPANION_ACCOUNT_MISSING' }
   else {
     if ($null -ne $facts.refusal) { $refusals += [string]$facts.refusal }
     if (@($facts.rights) -cnotcontains 'SeBatchLogonRight') { $refusals += 'COMPANION_ACCOUNT_BATCH_LOGON_RIGHT_MISSING' }
     if (@($facts.rights) -ccontains 'SeDenyBatchLogonRight') { $refusals += 'COMPANION_ACCOUNT_BATCH_LOGON_DENIED' }
+    $hard = @($(if ($facts.PSObject.Properties.Name -ccontains 'hardening') { @($facts.hardening) } else { 'UNKNOWN' }) | Where-Object { $_ })
+    if ($hard.Count) { $refusals += ('COMPANION_ACCOUNT_NOT_HARDENED:' + ($hard -join ',')) }
     if (-not [string]::Equals([string]$facts.profileDirectory, [string]$node.ownerProfileDirectory, [StringComparison]::OrdinalIgnoreCase)) { $refusals += 'COMPANION_ACCOUNT_PROFILE_NOT_THE_NODE_PROFILE' }
   }
   $gh = Get-CompanionGhDirs ([string]$node.ownerProfileDirectory)
@@ -711,13 +815,13 @@ function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vh
   $inject = @(Get-InjectVariables)
   if ($inject.Count) { $refusals += ('COMPANION_HEADLESS_INJECTION_VARIABLES:' + ($inject -join ',')) }
   if ($vhdxDir -cnotmatch $CompanionVhdxDirPattern) { $refusals += 'WSL_TARGET_REFUSED' }
-  [ordered]@{ refusals = $refusals; account = $facts; companionGhConfig = $ghReady }
+  [ordered]@{ refusals = $refusals; account = $facts; companionGhConfig = $ghReady; disableDomainCreds = $disableDomainCreds; lockout = $lockout }
 }
 # The account switch (rearm-resident.ps1 -CompanionAccount, the reinstall's last step; again with -CompanionCredential): elevated, by
-# the operator. The same marker, fall-back task, registrar build and qualification as Invoke-CompanionHeadless; between the marker and
-# the registrar the distribution moves (first time only); the registrar sets a new random password and registers the task (and the
-# import task, which then runs once). No password is ever typed. Not qualified: the task goes back to the interactive definition of the
-# companion account (which never logs on interactively: the companion stays off, the services defer, nothing is burned).
+# the operator. The same marker, fall-back task, registrar build and qualification as Invoke-CompanionHeadless. In between, the stages of
+# Invoke-CompanionWslMove, then the registrar (a new random password, the task, the import task with the Owner's DefaultUid), the import
+# (exit 0 or WSL_IMPORT_FAILED:<code>), only then the Owner's registration key goes. A run that was cut off resumes from the record
+# (no -WslVhdxDirectory needed). Not qualified: the task goes back to the account's interactive definition (the companion stays off).
 function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode) {
   $sid = [string]$node.ownerSid; $distro = [string]$node.wslDistribution
   $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
@@ -728,14 +832,19 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $result.earlierPendingFellBack = $true
   }
   $wslRecord = Read-CompanionWslRecord $root
-  if (-not $vhdxDir -and $null -ne $wslRecord) { $vhdxDir = Split-Path -Parent ([string]$wslRecord.target) }
+  if ($null -ne $wslRecord) {
+    $recordDir = Split-Path -Parent ([string]$wslRecord.target)
+    if ($vhdxDir -and -not [string]::Equals($vhdxDir.TrimEnd('\'), $recordDir, [StringComparison]::OrdinalIgnoreCase)) { $result.failed = 'WSL_VHDX_DIRECTORY_NOT_THE_RECORDED_ONE'; return $result }
+    $vhdxDir = $recordDir
+  }
   if (-not $vhdxDir) { $result.failed = 'WSL_VHDX_DIRECTORY_REQUIRED'; return $result }
   $build = $null
   try { $build = New-CompanionBuild $root } catch { $why = [string]$_.Exception.Message; $result.failed = 'COMPANION_BUILD_FAILED:' + $(if ($why -cmatch '^COMPANION_BUILD_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' }) }
   if ($null -eq $build) { return $result }
   $result.build = [ordered]@{ generation = $build.generation; registrarSourceSha256 = $build.registrar.sourceSha256; registrarSha256 = $build.registrar.sha256 }
+  $script:CompanionRegistrarExe = $build.registrar.exe
   try {
-    $result.preflight = Get-CompanionAccountPreflight $root $node (Get-CompanionAccountFacts $root $sid $build.registrar.exe) $vhdxDir
+    $result.preflight = Get-CompanionAccountPreflight $root $node (Get-CompanionAccountFacts $root $sid $build.registrar.exe) $vhdxDir (Get-CompanionDomainCredsDisabled) (Get-LockoutPolicy)
     if (@($result.preflight.refusals).Count) { $result.failed = 'PREFLIGHT'; return $result }
     Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
     Write-CompanionPending $root $mode $sid
@@ -743,33 +852,52 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     Stop-CompanionTask
     foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
     Wait-CompanionTaskNotRunning
-    try { $result.wsl = Invoke-CompanionWslMove $distro $vhdxDir $sid } catch {
+    try { $record = Invoke-CompanionWslMove $root $distro $vhdxDir $sid; $result.wsl = $record } catch {
       $why = [string]$_.Exception.Message
       $result.failed = 'COMPANION_WSL_MOVE_FAILED:' + $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' })
       $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
       return $result
     }
     $vhdx = Join-Path $vhdxDir 'ext4.vhdx'
-    $imported = ($null -ne $wslRecord) -and [string]$wslRecord.target -ceq $vhdx -and [bool]$wslRecord.imported
-    $registrarArgs = if ($imported) { @('register-account', $root) } else { @('register-account', $root, $distro, $vhdx) }
+    $needImport = @('imported', 'forgotten', 'qualified') -cnotcontains [string]$record.stage
+    $uid = 0L
+    if ($null -ne $record.ownerRegistration -and $null -ne $record.ownerRegistration.values) { $v = $record.ownerRegistration.values; $u = if ($v -is [Collections.IDictionary]) { $v['DefaultUid'] } else { $v.DefaultUid }; if ($null -ne $u) { $uid = [int64]$u } }
+    $registrarArgs = if ($needImport) { @('register-account', $root, $distro, $vhdx, [string]$uid) } else { @('register-account', $root) }
     $reg = Invoke-CompanionRegistrar $root $registrarArgs $build.registrar.exe
     $code = try { [string]($reg | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
     $result.registrar = if ($code -cmatch '^[A-Z][A-Z0-9_]{0,63}\z') { $code } else { 'REGISTRAR_OUTPUT_UNREADABLE' }
-    if ($result.registrar -ceq 'REGISTRAR_UNEXPECTED') { $d = try { [string]($reg | ConvertFrom-Json).detail } catch { $null }; if ($d -cmatch '^[a-z]{1,16}:[A-Za-z0-9_]{1,40}:0x[0-9A-F]{8}\z') { $result.registrarDetail = $d } }
+    $d = try { [string]($reg | ConvertFrom-Json).detail } catch { $null }
+    if ($d -cmatch '^[a-z]{1,16}:[A-Za-z0-9_]{1,40}:0x[0-9A-F]{8}\z|^0x[0-9A-F]{8}:(parked|park-failed)\z') { $result.registrarDetail = $d }
     if ($result.registrar -cne 'REGISTERED') {
       $null = Invoke-CompanionFallback $root $sid
       $result.fellBack = $true; $result.failed = $result.registrar
       return $result
     }
-    # The distribution is registered for the account by the account. A re-run after an import that did happen fails here harmlessly
-    # (the name exists): the qualification below is what counts.
-    if (-not $imported) { $result.importResult = Invoke-CompanionWslImportTask }
+    if ($needImport) {
+      $result.importResult = Invoke-CompanionWslImportTask
+      if (-not (($result.importResult -is [long] -or $result.importResult -is [int]) -and [int64]$result.importResult -eq 0)) {
+        $result.failed = 'WSL_IMPORT_FAILED:' + [string]$result.importResult
+        $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
+        return $result
+      }
+      $record = ConvertTo-CompanionOrdered $record; $record.stage = 'imported'; $record.imported = $true; $record.importedAt = [DateTimeOffset]::UtcNow.ToString('o')
+      Write-CompanionWslRecord $root $record
+    }
+    if ([string]$record.stage -ceq 'imported') {
+      try { $record = Remove-CompanionOwnerRegistration $root $record } catch {
+        $result.failed = 'COMPANION_WSL_FORGET_FAILED'
+        $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
+        return $result
+      }
+    }
     $since = [DateTimeOffset]::UtcNow
     try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $sid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $sid
     if ($null -eq $why -and $result.task.mode -ceq 'password') {
-      Write-CompanionWslRecord $root ([ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $vhdx; imported = $true; companionSid = $sid; at = [DateTimeOffset]::UtcNow.ToString('o'); move = $result.wsl })
+      $record = ConvertTo-CompanionOrdered $record; $record.stage = 'qualified'; $record.qualifiedAt = [DateTimeOffset]::UtcNow.ToString('o')
+      Write-CompanionWslRecord $root $record
+      $result.wsl = $record
       Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
       Remove-CompanionFallbackTask
       $result.qualified = $true
@@ -779,7 +907,43 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $null = Invoke-CompanionStopAndFallback $root $sid
     $result.fellBack = $true
     $result
-  } finally { Remove-CompanionBuild $build.directory }
+  } finally { $script:CompanionRegistrarExe = $null; Remove-CompanionBuild $build.directory }
+}
+# rearm-resident.ps1 -CompanionWslRestore (review r1 M4): back to where the move started. The task is parked first (the account's
+# companion stops, so its WSL VM lets the file go); ext4.vhdx goes back to the recorded source (a rename on one volume, else the same
+# verified copy through a .partial); the Owner's registration key comes back from its export when it is gone. The account's own
+# registration then names a missing file and is harmless (remove-companion-account.ps1 deletes it with the account's profile).
+function Invoke-CompanionWslRestore([string]$root, $node) {
+  $result = [ordered]@{ restored = $false; failed = $null; record = $null }
+  $record = Read-CompanionWslRecord $root
+  if ($null -eq $record) { $result.failed = 'WSL_NOTHING_TO_RESTORE'; return $result }
+  $record = ConvertTo-CompanionOrdered $record; $result.record = $record
+  if (-not $record.Contains('source') -or -not $record.source -or -not $record.Contains('ownerExport')) { $result.failed = 'WSL_RECORD_INCOMPLETE'; return $result }
+  $null = Invoke-CompanionStopAndFallback $root ([string]$node.ownerSid)
+  $source = [string]$record.source; $target = [string]$record.target
+  try {
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+      if (-not (Wait-CompanionVhdxFree $target 300)) { throw 'WSL_VHDX_STILL_IN_USE' }
+      if (Test-Path -LiteralPath $source) { throw 'WSL_SOURCE_EXISTS' }
+      [void][IO.Directory]::CreateDirectory((Split-Path -Parent $source))
+      if (Test-CompanionSameVolume $source $target) { [IO.File]::Move($target, $source) }
+      else {
+        $partial = $source + '.partial'
+        if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+        $copy = Copy-CompanionFileVerified $target $partial
+        if ($copy.sourceSha256 -cne $copy.targetSha256) { Remove-Item -LiteralPath $partial -Force; throw 'WSL_COPY_HASH_MISMATCH' }
+        [IO.File]::Move($partial, $source)
+        Remove-Item -LiteralPath $target -Force
+      }
+      Set-CompanionOwnerFileAcl $source
+    } elseif (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'WSL_VHDX_MISSING' }
+    $guid = if ($null -ne $record.ownerRegistration) { [string]$record.ownerRegistration.guid } else { $null }
+    if ($guid -and @(Get-WslRegistrations | Where-Object { $_.guid -ceq $guid }).Count -eq 0) { Import-CompanionLxssKey ([string]$record.ownerExport) }
+    $record.stage = 'restored'; $record.restoredAt = [DateTimeOffset]::UtcNow.ToString('o')
+    Write-CompanionWslRecord $root $record
+    $result.restored = $true
+  } catch { $why = [string]$_.Exception.Message; $result.failed = $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'WSL_RESTORE_UNEXPECTED' }) }
+  $result
 }
 # rearm-resident.ps1 -CompanionRootShell: a root shell in the resident distribution as the companion account (the registrar sets a new
 # random password on the account and on its password task, then opens wsl.exe in a new console). Returns the registrar's code.
@@ -790,13 +954,32 @@ function Invoke-CompanionRootShell([string]$root) {
     try { [string]($out | ConvertFrom-Json).code } catch { 'REGISTRAR_OUTPUT_UNREADABLE' }
   } finally { Remove-CompanionBuild $build.directory }
 }
-# verify-resident.ps1 on an M5-b node (pure over the facts): the account exists, is enabled and is not a direct member of Administrators
-# (the switch's registrar also checks indirect membership), its profile is the node profile's, and the operator holds no explicit
-# entry that can write formal-spool\incoming (Source v2 accepts only the node profile's ownerSid there). $null when all hold.
-function Get-CompanionAccountProblem($node, $record, $user, [string[]]$administrators, [string]$profilePath, [string]$incomingSddl) {
+# Review r1 m6: the members of a local group as SIDs, read through ADSI (WinNT provider) member by member; Get-LocalGroupMember throws on
+# an orphaned or Entra ID member. $null when the group or any member cannot be read (the callers refuse, never guess).
+# Shared with install-resident.ps1 and verify-resident.ps1 (test-companion-headless.ps1 holds the copies identical).
+function Get-GroupMemberSids([string]$groupSid) {
+  try {
+    $name = (New-Object Security.Principal.SecurityIdentifier($groupSid)).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $group = [ADSI]('WinNT://' + [Environment]::MachineName + '/' + $name + ',group')
+    $out = New-Object Collections.ArrayList
+    foreach ($m in @($group.psbase.Invoke('Members'))) {
+      $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+      [void]$out.Add((New-Object Security.Principal.SecurityIdentifier([byte[]]$bytes, 0)).Value)
+    }
+    ,([string[]]$out.ToArray())
+  } catch { $null }
+}
+function Get-AdministratorSids { Get-GroupMemberSids 'S-1-5-32-544' }
+# verify-resident.ps1 on an M5-b node (pure over the facts): the account exists, is enabled, is not a member of Administrators (an
+# unreadable group is its own problem, never "administrator"), is hardened (review r1 m5), its profile is the node profile's, and the
+# operator holds no explicit entry that can write formal-spool\incoming. $null when all hold.
+function Get-CompanionAccountProblem($node, $record, $user, $administrators, [string]$profilePath, [string]$incomingSddl, $hardening) {
   if ($null -eq $user) { return 'ACCOUNT_MISSING' }
   if (-not [bool]$user.Enabled) { return 'ACCOUNT_DISABLED' }
+  if ($null -eq $administrators) { return 'ADMINISTRATORS_UNREADABLE' }
   if (@($administrators) -ccontains [string]$record.companionSid) { return 'ACCOUNT_IS_ADMINISTRATOR' }
+  $hard = @(@($hardening) | Where-Object { $_ })
+  if ($hard.Count) { return ('ACCOUNT_NOT_HARDENED:' + ($hard -join ',')) }
   if (-not [string]::Equals($profilePath, [string]$node.ownerProfileDirectory, [StringComparison]::OrdinalIgnoreCase)) { return 'ACCOUNT_PROFILE_NOT_THE_NODE_PROFILE' }
   if (-not $incomingSddl) { return 'SPOOL_ACL_UNREADABLE' }
   $raw = try { New-Object Security.AccessControl.RawSecurityDescriptor($incomingSddl) } catch { return 'SPOOL_ACL_UNREADABLE' }
@@ -806,12 +989,42 @@ function Get-CompanionAccountProblem($node, $record, $user, [string[]]$administr
   }
   $null
 }
-function Get-CompanionAccountVerify([string]$root, $node, $record) {
+# Review r1 m5 for verify (it may run as SYSTEM, which the registrar refuses): the account's direct groups and flags through ADSI, the
+# sign-in screen's UserList value; the rights only when secedit can be read (elevated), otherwise they are not counted.
+function Get-CompanionAccountHardening([string]$sid, [bool]$canReadRights) {
+  $o = @()
+  try {
+    $acc = (New-Object Security.Principal.SecurityIdentifier($sid)).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $u = [ADSI]('WinNT://' + [Environment]::MachineName + '/' + $acc + ',user')
+    $groups = @(@($u.psbase.Invoke('Groups')) | ForEach-Object { $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) })
+    $users = (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-545')).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    if ($groups.Count -ne 1 -or $groups[0] -ine $users) { $o += 'GROUPS_NOT_USERS_ONLY' }
+    $flags = [int]$u.UserFlags.Value
+    if (($flags -band 0x10000) -eq 0) { $o += 'PASSWORD_EXPIRES' }
+    if (($flags -band 0x40) -eq 0) { $o += 'PASSWORD_CHANGEABLE' }
+    $hidden = try { (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList' -Name $acc -ErrorAction Stop).$acc -eq 0 } catch { $false }
+    if (-not $hidden) { $o += 'NOT_HIDDEN' }
+    if ($canReadRights) {
+      $dir = Join-Path 'C:\Windows\Temp' ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
+      try {
+        $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'); [void][IO.Directory]::CreateDirectory($dir, $ds)
+        $cfg = Join-Path $dir 'rights.inf'
+        $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
+        $inf = [IO.File]::ReadAllText($cfg)
+        foreach ($pair in @(@('SeDenyNetworkLogonRight', 'NETWORK_LOGON_NOT_DENIED'), @('SeDenyRemoteInteractiveLogonRight', 'RDP_LOGON_NOT_DENIED'))) {
+          $line = @(($inf -split "`r?`n") | Where-Object { $_ -match ('^\s*' + $pair[0] + '\s*=') })
+          if ($line.Count -eq 0 -or -not ($line[0].Contains('*' + $sid) -or ($line[0] -split '[=,]' | ForEach-Object { $_.Trim() }) -icontains $acc)) { $o += $pair[1] }
+        }
+      } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+  } catch { $o += 'UNREADABLE' }
+  ,$o
+}
+function Get-CompanionAccountVerify([string]$root, $node, $record, [bool]$elevated) {
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts' -ErrorAction SilentlyContinue
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1' -ErrorAction SilentlyContinue
   $user = try { Get-LocalUser -SID ([string]$record.companionSid) -ErrorAction Stop } catch { $null }
-  $admins = try { @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @([string]$record.companionSid) }   # unreadable: refused
   $profilePath = try { [string](Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='" + [string]$record.companionSid + "'") -ErrorAction Stop).LocalPath } catch { $null }
   $incoming = try { (Get-Acl -LiteralPath 'C:\ProgramData\CluedIndependentCI\formal-spool\incoming').GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) } catch { $null }
-  Get-CompanionAccountProblem $node $record $user $admins $profilePath $incoming
+  Get-CompanionAccountProblem $node $record $user (Get-AdministratorSids) $profilePath $incoming (Get-CompanionAccountHardening ([string]$record.companionSid) $elevated)
 }

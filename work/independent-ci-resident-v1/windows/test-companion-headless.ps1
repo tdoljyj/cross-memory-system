@@ -22,7 +22,7 @@ function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $wha
 
 # 1. Parse; functions by file.
 $functions = @{}; $texts = @{}
-foreach ($file in @('companion-headless.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'rearm-resident.ps1', 'uninstall-resident.ps1', 'companion-gh-login.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1', 'prepare-companion-account.ps1', 'request-upgrade.ps1')) {
+foreach ($file in @('companion-headless.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'rearm-resident.ps1', 'uninstall-resident.ps1', 'companion-gh-login.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1', 'prepare-companion-account.ps1', 'request-upgrade.ps1', 'remove-companion-account.ps1')) {
   $tokens = $null; $errors = $null
   $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $here $file), [ref]$tokens, [ref]$errors)
   Yes ($errors.Count -eq 0) ('parse:' + $file)
@@ -301,7 +301,7 @@ $rearm = $texts['rearm-resident.ps1']
 Yes ($rearm.Contains("throw 'OWNER_ACCOUNT_REQUIRED'") -and $rearm.Contains("[switch]`$CompanionHeadless, [switch]`$CompanionCredential, [switch]`$CompanionInteractive") -and $rearm.Contains("if (-not `$elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }")) 'rearm-owner-elevated-only'
 
 # 5. The password never in PowerShell (ADR 0022 section 4.4, T8).
-foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1', 'prepare-companion-account.ps1', 'request-upgrade.ps1')) {
+foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'upgrade-apply.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1', 'probe-companion-headless.ps1', 'companion-headless-fallback.ps1', 'prepare-companion-account.ps1', 'request-upgrade.ps1', 'remove-companion-account.ps1')) {
   $code = & $codeOf $texts[$file]
   foreach ($bad in @('Get-Credential', 'Read-Host', 'SecureString', 'PSCredential', '-Password', 'NetworkCredential', 'Register-ScheduledTask')) { Yes (-not $code.Contains($bad)) ('no-password-in-powershell:' + $file + ':' + $bad) }
 }
@@ -433,15 +433,16 @@ Yes ((Get-CompanionWslMovePlan $regD $true 'D:\clued resident\x' $false).code -c
 $regAt = [ordered]@{ guid = '{z}'; name = 'CluedResident-Linux'; basePath = 'D:\clued-resident\wsl\CluedResident-Linux' }
 Yes ((Get-CompanionWslMovePlan $regAt $true 'D:\clued-resident\wsl\CluedResident-Linux' $true).action -ceq 'forget') 'wsl-plan-already-there-only-forget'
 Yes ((Get-CompanionVhdxSddl $acct) -ceq ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $acct + ')')) 'vhdx-sddl-admins-and-the-account-only'
-Yes ($CompanionVhdxParentSddl -ceq 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)' -and $functions['companion-headless.ps1:Invoke-CompanionWslMove'].Contains('SetSecurityDescriptorSddlForm($CompanionVhdxParentSddl)')) 'vhdx-missing-parents-created-protected'
+Yes ($CompanionVhdxParentSddl -ceq 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)' -and $functions['companion-headless.ps1:Assert-CompanionVhdxParents'].Contains('New-CompanionProtectedDirectory $d $CompanionVhdxParentSddl') -and $functions['companion-headless.ps1:Invoke-CompanionWslMove'].Contains('Assert-CompanionVhdxParents $targetDir')) 'vhdx-missing-parents-created-protected'
 # the verified copy (a real small file in the scratch directory): both hashes, then the move deletes the source only after they match
 $src = Join-Path $Scratch 'vhdx-src.bin'; $dst = Join-Path $Scratch 'vhdx-dst.bin'
 $bytes = New-Object byte[] 9437185; (New-Object Random 7).NextBytes($bytes); [IO.File]::WriteAllBytes($src, $bytes)
+$script:CompanionRegistrarExe = Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'
 $c = Copy-CompanionFileVerified $src $dst
 Yes ($c.sourceSha256 -ceq $c.targetSha256 -and $c.length -eq 9437185 -and $c.sourceSha256 -ceq (Get-CompanionFileSha256 $src)) 'wsl-copy-hashed-on-both-sides'
 $mv = $functions['companion-headless.ps1:Invoke-CompanionWslMove']
-Yes ($mv.IndexOf('WSL_COPY_HASH_MISMATCH') -lt $mv.IndexOf('Remove-Item -LiteralPath $source') -and $mv.IndexOf("--terminate") -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('Wait-CompanionVhdxFree') -lt $mv.IndexOf('Copy-CompanionFileVerified')) 'wsl-move-terminate-free-copy-verify-then-delete'
-Yes ($mv.Contains("Remove-Item -LiteralPath (Join-Path `$lxss ([string]`$r.guid))") -and $mv.IndexOf('ownerDefaultWas') -lt $mv.IndexOf('Remove-Item -LiteralPath (Join-Path $lxss')) 'wsl-move-forgets-the-owner-registration-after-recording-it'
+Yes ($mv.IndexOf('WSL_COPY_HASH_MISMATCH') -lt $mv.IndexOf('Remove-Item -LiteralPath $source') -and $mv.IndexOf('Invoke-CompanionWslTerminate') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('Wait-CompanionVhdxFree') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('[IO.File]::Move($partial, $target)') -gt $mv.IndexOf('WSL_COPY_HASH_MISMATCH')) 'wsl-move-terminate-free-copy-verify-then-delete'
+Yes (-not $mv.Contains('Remove-CompanionLxssKey') -and $mv.IndexOf('Export-CompanionLxssKey') -lt $mv.IndexOf('Invoke-CompanionWslTerminate') -and $functions['companion-headless.ps1:Remove-CompanionOwnerRegistration'].Contains('Remove-CompanionLxssKey $guid')) 'wsl-move-exports-first-and-never-forgets-the-owner-registration'
 foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'verify-resident.ps1', 'prepare-companion-account.ps1')) {
   Yes (-not ((& $codeOf $texts[$file]) -match '--unregister|--shutdown|wsl(\.exe)?''?\s+--export|--import(?!-in-place)')) ('never-unregister-shutdown-export-import:' + $file)
 }
@@ -450,24 +451,25 @@ foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-res
 $as = $functions['companion-headless.ps1:Invoke-CompanionAccountSwitch']
 $i = [ordered]@{ pre = $as.IndexOf('Get-CompanionAccountPreflight'); fb = $as.IndexOf('Register-CompanionFallbackTask'); mark = $as.IndexOf('Write-CompanionPending'); stop = $as.IndexOf('Stop-CompanionTask')
   move = $as.IndexOf('Invoke-CompanionWslMove'); reg = $as.IndexOf('Invoke-CompanionRegistrar'); imp = $as.IndexOf('Invoke-CompanionWslImportTask'); run = $as.IndexOf('Start-CompanionTask')
-  qual = $as.IndexOf('Wait-CompanionQualified'); rec = $as.IndexOf('Write-CompanionWslRecord'); done = $as.IndexOf('$result.qualified = $true') }
+  qual = $as.IndexOf('Wait-CompanionQualified'); rec = $as.LastIndexOf('Write-CompanionWslRecord'); done = $as.IndexOf('$result.qualified = $true') }
 Yes (@($i.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $i.pre -lt $i.fb -and $i.fb -lt $i.mark -and $i.mark -lt $i.stop -and $i.stop -lt $i.move -and $i.move -lt $i.reg -and $i.reg -lt $i.imp -and $i.imp -lt $i.run -and $i.run -lt $i.qual -and $i.qual -lt $i.rec -and $i.rec -lt $i.done) 'account-switch-order'
-Yes ($as.Contains("@('register-account', `$root, `$distro, `$vhdx)") -and $as.Contains("@('register-account', `$root)") -and $as.Contains('New-CompanionBuild $root') -and $as.Contains('Remove-CompanionBuild $build.directory')) 'account-switch-own-build-register-account-only'
+Yes ($as.Contains("@('register-account', `$root, `$distro, `$vhdx, [string]`$uid)") -and $as.Contains("@('register-account', `$root)") -and $as.Contains('New-CompanionBuild $root') -and $as.Contains('Remove-CompanionBuild $build.directory')) 'account-switch-own-build-register-account-only'
 Yes ($as.IndexOf('Invoke-CompanionFallback $root $sid', $i.move) -gt $i.move -and $as.Contains('COMPANION_HEADLESS_QUALIFICATION_FAILED') -and $as.Contains('Invoke-CompanionStopAndFallback $root $sid')) 'account-switch-falls-back'
 Yes ($functions['companion-headless.ps1:Invoke-CompanionRootShell'].Contains("@('root-shell', `$root)")) 'root-shell-through-the-registrar'
 # the preflight over fake facts (pure; the profile directory is a scratch folder)
-$okFacts = [pscustomobject]@{ code = 'ACCOUNT_FACTS'; exists = $true; refusal = $null; rights = @('SeBatchLogonRight', 'SeDenyNetworkLogonRight'); profileDirectory = $nodeB.ownerProfileDirectory }
+$okFacts = [pscustomobject]@{ code = 'ACCOUNT_FACTS'; exists = $true; refusal = $null; rights = @('SeBatchLogonRight', 'SeDenyNetworkLogonRight'); profileDirectory = $nodeB.ownerProfileDirectory; hardening = @() }
+$lockGood = [ordered]@{ threshold = 10; durationMinutes = 10; windowMinutes = 10 }
 $ghB = Get-CompanionGhDirs $nodeB.ownerProfileDirectory
-$pf = Get-CompanionAccountPreflight $rootB $nodeB $okFacts 'D:\clued-resident\wsl\CluedResident-Linux'
+$pf = Get-CompanionAccountPreflight $rootB $nodeB $okFacts 'D:\clued-resident\wsl\CluedResident-Linux' 0 $lockGood
 Yes (@($pf.refusals) -ccontains 'COMPANION_GH_CONFIG_MISSING' -and @($pf.refusals) -ccontains 'COMPANION_HEADLESS_NOT_INSTALLED:bin\CluedCompanionSupervisor.exe') 'account-preflight-needs-gh-config-and-install'
 foreach ($d in @($ghB.gh, $ghB.home, (Join-Path $rootB 'bin'), (Join-Path $rootB 'config'))) { [void][IO.Directory]::CreateDirectory($d) }
 foreach ($f in @((Join-Path $ghB.gh 'hosts.yml'), (Join-Path $ghB.home '.gitconfig'), (Join-Path $rootB 'bin\CluedCompanionSupervisor.exe'), (Join-Path $rootB 'config\companion-launch.json'))) { [IO.File]::WriteAllText($f, 'x') }
-$pf = Get-CompanionAccountPreflight $rootB $nodeB $okFacts 'D:\clued-resident\wsl\CluedResident-Linux'
+$pf = Get-CompanionAccountPreflight $rootB $nodeB $okFacts 'D:\clued-resident\wsl\CluedResident-Linux' 0 $lockGood
 Yes (@($pf.refusals | Where-Object { $_ -notlike 'COMPANION_HEADLESS_INJECTION_VARIABLES:*' }).Count -eq 0) ('account-preflight-passes:' + (@($pf.refusals) -join ','))
 $bad = [pscustomobject]@{ code = 'ACCOUNT_FACTS'; exists = $true; refusal = 'COMPANION_ACCOUNT_IS_ADMINISTRATOR'; rights = @('SeDenyBatchLogonRight'); profileDirectory = 'C:\Users\other' }
-$pf = Get-CompanionAccountPreflight $rootB $nodeB $bad 'D:\x y'
+$pf = Get-CompanionAccountPreflight $rootB $nodeB $bad 'D:\x y' 0 $lockGood
 foreach ($code in @('COMPANION_ACCOUNT_IS_ADMINISTRATOR', 'COMPANION_ACCOUNT_BATCH_LOGON_RIGHT_MISSING', 'COMPANION_ACCOUNT_BATCH_LOGON_DENIED', 'COMPANION_ACCOUNT_PROFILE_NOT_THE_NODE_PROFILE', 'WSL_TARGET_REFUSED')) { Yes (@($pf.refusals) -ccontains $code) ('account-preflight-refuses:' + $code) }
-Yes (@((Get-CompanionAccountPreflight $rootB $nodeB $null 'D:\a').refusals) -ccontains 'COMPANION_ACCOUNT_MISSING') 'account-preflight-no-facts-refused'
+Yes (@((Get-CompanionAccountPreflight $rootB $nodeB $null 'D:\a' 0 $lockGood).refusals) -ccontains 'COMPANION_ACCOUNT_MISSING') 'account-preflight-no-facts-refused'
 # verify's account check (pure)
 $recB = & $rec 'clued.independent-ci.companion-account/1' $acct $opr
 $user = [pscustomobject]@{ Enabled = $true }
@@ -518,14 +520,19 @@ $tpl = [IO.File]::ReadAllText((Join-Path $here '..\reinstall\launcher\template.p
 Yes ($tpl.Contains("if (`$id.User.Value -cne `$OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }") -and $tpl.Contains("@('-CompanionAccount', '-WslVhdxDirectory', `$CompanionWslVhdxDirectory)") -and $tpl.Contains("'-OperatorSid', `$OperatorSid)")) 'launcher-operator-and-account-step'
 # the prepare script: elevated runs only; -Plan is read-only and runs here (not elevated); it never handles a password or the token
 $pr = & $codeOf $texts['prepare-companion-account.ps1']
+$rmScript = & $codeOf $texts['remove-companion-account.ps1']
+Yes ($rmScript.Contains("@('remove-account', `$AccountName)") -and $rmScript.Contains("throw 'REGISTRAR_SOURCE_NOT_THE_PINNED_ONE'") -and $rmScript.Contains("throw 'RUN_ELEVATED_IN_YOUR_OWN_WINDOW'") -and $rmScript.Contains('Remove-ItemProperty -LiteralPath $UserList -Name $AccountName')) 'remove-account-script-shape'
 Yes ($pr.Contains("throw 'RUN_ELEVATED_IN_YOUR_OWN_WINDOW'") -and $pr.Contains("@('prepare-account', `$AccountName)") -and $pr.Contains('-Login -ProfileDirectory $profileDir -AccountSid $sid') -and -not $pr.Contains('Get-Clipboard') -and -not $pr.Contains('oauth_token')) 'prepare-script-shape'
 Yes (([regex]::Matches($pr, 'Invoke-PrepCompile \$Csc')).Count -eq 1 -and $functions['prepare-companion-account.ps1:Invoke-PrepCompile'].Contains('/target:winexe /platform:x64 /optimize+')) 'prepare-compiles-with-the-install-recipe'
 . ([scriptblock]::Create($functions['prepare-companion-account.ps1:Get-CompanionWslConfig']))
 Yes ((Get-CompanionWslConfig '16GB' 8 '4GB') -ceq "[wsl2]`r`nmemory=16GB`r`nprocessors=8`r`nswap=4GB`r`n") 'prepare-wslconfig'
 $isAdmin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-  $planOut = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'prepare-companion-account.ps1') -Plan -LogDirectory (Join-Path $Scratch 'prep-log') | Out-String
+  $planOut = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'prepare-companion-account.ps1') -Plan -LogDirectory (Join-Path $Scratch 'prep-log') -RegistrarSha256 ('0' * 64) | Out-String
   Yes ($LASTEXITCODE -eq 0 -and $planOut.Contains('PLAN_ONLY_NOTHING_CHANGED') -and -not (Test-Path -LiteralPath (Join-Path $Scratch 'prep-log'))) 'prepare-plan-read-only'
+  # review r1 m5: the roll-back script, read-only in -Plan
+  $rmOut = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'remove-companion-account.ps1') -Plan -LogDirectory (Join-Path $Scratch 'rm-log') -RegistrarSha256 ('0' * 64) | Out-String
+  Yes ($LASTEXITCODE -eq 0 -and $rmOut.Contains('PLAN_ONLY_NOTHING_CHANGED') -and -not (Test-Path -LiteralPath (Join-Path $Scratch 'rm-log'))) 'remove-account-plan-read-only'
 }
 
 # 10. M5-b independent review r1 (BLOCKER B1, MAJOR M1-M5, MINOR m1-m12): behaviour tests. Every scenario runs in the scratch directory
@@ -569,8 +576,9 @@ function Invoke-R1Switch($sc, $opt, [string]$vhdxDir) {
     function Stop-CompanionTask { [void]$script:sc.log.Add('stop') }
     function Get-CompanionProcessTree { [ordered]@{ supervisors = @(); children = @() } }
     function Wait-CompanionTaskNotRunning { }
-    function Invoke-CompanionFallback { [void]$script:sc.log.Add('fallback'); [ordered]@{ fellBack = $true } }
-    function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback'); [ordered]@{ fellBack = $true } }
+    # as the real ones: the interactive definition comes back and the pending marker goes
+    function Invoke-CompanionFallback { [void]$script:sc.log.Add('fallback'); Remove-Item -LiteralPath (Join-Path $rootR $CompanionPendingFile) -Force -ErrorAction SilentlyContinue; [ordered]@{ fellBack = $true } }
+    function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback'); Remove-Item -LiteralPath (Join-Path $rootR $CompanionPendingFile) -Force -ErrorAction SilentlyContinue; [ordered]@{ fellBack = $true } }
     function Get-WslRegistrations { if ($script:sc.keyPresent) { @([ordered]@{ guid = '{g1}'; name = 'CluedResident-Linux'; basePath = $script:sc.sourceDir; defaultUid = 1000; values = [ordered]@{ DistributionName = 'CluedResident-Linux'; BasePath = $script:sc.sourceDir; DefaultUid = 1000; VhdFileName = 'ext4.vhdx' } }) } else { @() } }
     function Export-CompanionLxssKey([string]$guid, [string]$file) { [void]$script:sc.log.Add('export:' + $guid); [IO.File]::WriteAllText($file, 'REGEDIT4') }
     function Remove-CompanionLxssKey([string]$guid) { [void]$script:sc.log.Add('remove-key:' + $guid); $script:sc.keyPresent = $false; if ($script:opt.ContainsKey('throwAfterKeyRemoved')) { throw 'BOOM_AFTER_KEY' } }
