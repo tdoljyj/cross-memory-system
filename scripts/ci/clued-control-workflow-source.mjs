@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.7';
+export const COMPONENT_VERSION='1.0.8';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -546,9 +546,9 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-merge-reconcile-gate.test.mjs": "e7c61128605334cc8bccd511832c63452c8e1f01",
     "scripts/ci/clued-merge-reconcile-host.mjs": "a54822ad781da3544bf4b31543698321231bb20a",
     "scripts/ci/clued-merge-reconcile-source-build.mjs": "860478495500a7f22e29b0ac6d31b6285352330e",
-    "scripts/ci/clued-merge-reconcile-source.mjs": "7f849c5b09242b467226fa29bd6cd3d9ab5d3c71",
-    "scripts/ci/clued-merge-reconcile-source.test.mjs": "4373b33fe1b32260e0ac340a307c46709d2720e4",
-    "scripts/ci/clued-merge-reconcile.mjs": "fc4546a8d697ccb9963180eec3f8b4e297e10c1f",
+    "scripts/ci/clued-merge-reconcile-source.mjs": "c3660096b818e8b432ac641f84526c7a4e0d0664",
+    "scripts/ci/clued-merge-reconcile-source.test.mjs": "68801654aa3adab6cb971a0f56c9fdc8b7159bc5",
+    "scripts/ci/clued-merge-reconcile.mjs": "6296ce6bef57a53085b112d6d1d185e369f6f2ac",
     "scripts/ci/clued-merge-reconcile.test.mjs": "4ba6676ccb86455b8a65a870830aed9189c266c9",
     "scripts/ci/clued-merge-slot-ci.mjs": "b26a73bc6e05c4917d236a15e62b5ff01955f7b0",
     "scripts/ci/clued-merge-slot-ci.test.mjs": "204c517784a71c0230c1c116a09fc938ea0f2361",
@@ -620,7 +620,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
     "scripts/ci/merge-admission-policy.test.mjs": "3fbce1e3245bc5cf1d931b8ccac782ff65229d79",
     "scripts/ci/merge-admission-r9-collector.mjs": "5e7938964e640b063718da885e2ca906351f8720",
-    "scripts/ci/merge-admission-r9-collector.test.mjs": "c8ddcac05097204fe9c12ff6ddcaa345ddf5fd0a",
+    "scripts/ci/merge-admission-r9-collector.test.mjs": "8b9d502437a870096b8f87a573dd9e6ffa39ecb2",
     "scripts/ci/merge-admission-r9-reregister.mjs": "bba4ae50c7103146cfdf3294d726d9fd67a18169",
     "scripts/ci/merge-admission-r9-reregister.test.mjs": "1349b5664206d391f8d55bb1773e8938d0b0eb50",
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "481127caabb425e854d24ba3d7919528ad604c8d",

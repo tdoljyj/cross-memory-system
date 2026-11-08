@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "3ddb177a5a2b00b9ca56562fcce1550adb46ca0bb172c479fbcb854a5dfacf2f"
+      "content_sha256": "4095ac1f3482fa485795b4d629167421b5f022511a83f8723582aacacb81cded"
     },
     {
       "id": "hook.runner-job-started",
@@ -605,7 +605,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "0338d0ae21072fe588b8509f76d9bfe8ccfd982c86016b1c89ea597561ff97c5"
+      "content_sha256": "447fa63bc7dd27c1fad6480977ce1e65ffb2c0e73d0245bc91df9d4461885ae3"
     },
     {
       "id": "script.resource-maintenance",
@@ -660,7 +660,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -677,7 +677,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "efbcea51a30c6798e2db2018769f0ebcfed2ceef8d7e80cbc3e0cfefde6091f5"
+      "content_sha256": "4df6dcf30361abd0f6f987e3ed9563e4759e978a9c5af541134f7b85fc890375"
     },
     {
       "id": "script.required-applicability",
@@ -870,7 +870,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.20",
+      "version": "1.0.21",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -887,7 +887,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "21a69409e403e8870b9bf763df4f8f54da1df9491e60ea64a33d9e2a5d2f87d3"
+      "content_sha256": "c249355ec0d15d62e67841fc15df8f06d0eab7294382c567c3b9da04ea94ec78"
     }
   ]
 }

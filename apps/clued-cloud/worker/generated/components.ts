@@ -32,10 +32,10 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.3",
   "script.source-only-workflow": "1.0.0",
-  "script.control-workflow-source": "1.0.7",
+  "script.control-workflow-source": "1.0.8",
   "script.required-applicability": "1.0.4",
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.3",
-  "script.merge-reconciliation": "1.0.20"
+  "script.merge-reconciliation": "1.0.21"
 };
 export const MCP_SERVER_VERSION = "0.9.1";
