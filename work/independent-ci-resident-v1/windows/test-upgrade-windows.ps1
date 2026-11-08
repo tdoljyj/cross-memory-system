@@ -47,7 +47,11 @@ foreach ($name in @('Sha256Bytes', 'Sha256Text', 'Sha256File', 'Invoke-Sc', 'Get
     # M5 (ADR 0022 section 4.4): the companion's launch file, task protection and notifier task, one text in both.
     'Get-SupervisorAction', 'Get-CompanionTaskSddl', 'Get-CompanionLaunchArguments', 'Get-CompanionGhDirs', 'Get-CompanionPathDirs', 'Get-CompanionLaunchJson',
     'Write-CompanionLaunch', 'Get-NotifierAction', 'Register-NotifierTask', 'Get-CompanionTaskFacts')) {
-  Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['upgrade-apply.ps1:' + $name]) ('shared-with-install:' + $name)
+  $mine = $functions['install-resident.ps1:' + $name]
+  # 2026-11-08, 29th DESK reinstall: install compares the companion task's DACL as a security descriptor (Test-CompanionTaskDacl); the
+  # frozen channel's copy keeps the text comparison (it only notes COMPANION_TASK_NEEDS_OWNER). Otherwise the same text.
+  if ($name -ceq 'Get-CompanionTaskFacts' -and $null -ne $mine) { $mine = $mine.Replace('if (-not (Test-CompanionTaskDacl $dacl $ownerSid)) {', 'if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) {') }
+  Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $mine -ceq $functions['upgrade-apply.ps1:' + $name]) ('shared-with-install:' + $name)
 }
 foreach ($name in @('Root', 'OriginalBinary', 'Sc', 'Csc', 'GenericHelper', 'CompanionJobHost', 'SourceV2Windows', 'NodeProfileKeys')) {
   Yes ($assignments.ContainsKey('upgrade-apply.ps1:' + $name) -and $assignments['upgrade-apply.ps1:' + $name] -ceq $assignments['install-resident.ps1:' + $name]) ('same-constant:' + $name)

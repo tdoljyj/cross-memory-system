@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.28",
+      "version": "1.1.29",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -588,7 +588,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "33cf8549ce8e28a7defe9d34fa5803fe819e7bdd646e5b9f6773fd0953cb904e"
+      "content_sha256": "ac54f185e24c500094774018a46a2727fdbdf443e0296c2248635f03d412039d"
     },
     {
       "id": "script.resource-maintenance",
@@ -870,7 +870,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "3703aa4e7c64bb896663962385c82003864dc0b9c43417bd4ec3975ed93fa460"
+      "content_sha256": "89796c861b50a7dc4c0966983d7c048baa67d790cbc75438cb47ce4fe5ef63ab"
     }
   ]
 }
