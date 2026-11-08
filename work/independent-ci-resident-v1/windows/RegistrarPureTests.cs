@@ -90,6 +90,34 @@ public static class RegistrarPureTests {
     Ok(RegistrarCore.OwnerSidFromAcceptance("{\"node\":{\"ownerSid\":\"S-1-5-18\"}}") == null, "owner-sid-shape");
     Ok(RegistrarCore.OwnerSidFromAcceptance("{}") == null, "owner-sid-missing");
 
+    // M5-b (ADR 0023): the companion account's random password, its checks and the one-shot import task
+    string alphabet = RegistrarCore.PasswordAlphabet;
+    Ok(alphabet.Length == 70 && RegistrarCore.RandomPasswordChars >= 24, "password-alphabet-and-length");
+    int[] seen = new int[alphabet.Length]; int dropped = 0;
+    for (int b = 0; b < 256; b++) { int k = RegistrarCore.PasswordIndex((byte)b); if (k < 0) dropped++; else seen[k]++; }
+    bool even = true; foreach (int c in seen) if (c != seen[0]) even = false;
+    Ok(even && seen[0] == 3 && dropped == 256 - 210, "password-bytes-map-evenly-by-rejection");
+    int classes = 0; foreach (char c in alphabet) { int k = RegistrarCore.PasswordClass(c); Ok(k == 1 || k == 2 || k == 4 || k == 8, "password-char-has-one-class:" + c); classes |= k; }
+    Ok(classes == 15 && RegistrarCore.PasswordClass('"') == 0 && RegistrarCore.PasswordClass(' ') == 0 && alphabet.IndexOf('"') < 0 && alphabet.IndexOf('\'') < 0 && alphabet.IndexOf('<') < 0 && alphabet.IndexOf('&') < 0, "password-four-classes-no-quote-or-markup");
+    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, false, false) == null, "account-local-user-usable");
+    Ok(RegistrarCore.AccountRefusal("OTHER", "DESK-W-591", true, false, false) == "COMPANION_ACCOUNT_NOT_LOCAL", "account-not-local");
+    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, true, false) == "COMPANION_ACCOUNT_IS_ADMINISTRATOR", "account-administrator-refused");
+    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, false, true) == "COMPANION_ACCOUNT_IS_THE_CALLER", "account-the-owner-refused");
+    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", false, false, false) == "COMPANION_ACCOUNT_DISABLED", "account-disabled-refused");
+    Ok(RegistrarCore.ValidAccountName("clued-companion") && !RegistrarCore.ValidAccountName("Administrator") && !RegistrarCore.ValidAccountName("a b") && !RegistrarCore.ValidAccountName("x"), "account-name-shape");
+    Ok(RegistrarCore.ValidVhdx(@"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx") && RegistrarCore.ValidVhdx(@"C:\clued-resident\wsl\Ubuntu-24.04\ext4.vhdx"), "vhdx-shape");
+    Ok(!RegistrarCore.ValidVhdx(@"D:\x\..\y\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\a b\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\x\other.vhdx") && !RegistrarCore.ValidVhdx("D:\\x\\\"ext4.vhdx") && !RegistrarCore.ValidVhdx(@"\\server\x\ext4.vhdx"), "vhdx-refused");
+    Ok(RegistrarCore.DistroFromAcceptance("{\"node\":{\"wslDistribution\":\"CluedResident-Linux\"}}") == "CluedResident-Linux" && RegistrarCore.DistroFromAcceptance("{\"node\":{\"wslDistribution\":\"a b\"}}") == null, "distro-from-record");
+    XmlDocument ix = new XmlDocument();
+    ix.LoadXml(RegistrarCore.ImportTaskXml(Owner, "CluedResident-Linux", @"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx"));
+    XmlNamespaceManager ins = new XmlNamespaceManager(ix.NameTable); ins.AddNamespace("t", "http://schemas.microsoft.com/windows/2004/02/mit/task");
+    Ok(ix.SelectSingleNode("//t:Principal/t:LogonType", ins).InnerText == "Password" && ix.SelectSingleNode("//t:Principal/t:RunLevel", ins).InnerText == "LeastPrivilege" && ix.SelectSingleNode("//t:Principal/t:UserId", ins).InnerText == Owner, "import-task-password-lua-account");
+    Ok(ix.SelectSingleNode("//t:Triggers", ins) == null, "import-task-on-demand-only");
+    Ok(ix.SelectSingleNode("//t:Exec/t:Command", ins).InnerText == @"C:\Windows\System32\wsl.exe" && ix.SelectSingleNode("//t:Exec/t:Arguments", ins).InnerText == "--import-in-place CluedResident-Linux \"D:\\clued-resident\\wsl\\CluedResident-Linux\\ext4.vhdx\"", "import-task-action");
+    Ok(ix.SelectSingleNode("//t:ExecutionTimeLimit", ins).InnerText == "PT30M" && RegistrarCore.ImportTaskSddl == "D:P(A;;FA;;;SY)(A;;FA;;;BA)", "import-task-limit-and-admin-only");
+    threw = false; try { RegistrarCore.ImportTaskXml(Owner, "x y", @"D:\a\ext4.vhdx"); } catch (ArgumentException) { threw = true; }
+    Ok(threw, "import-task-refuses-bad-distro");
+
     // the compiled program: not elevated it refuses every mode but the read-only vtable self-test, which must pass
     if (args.Length == 1) {
       Func<string, string> run = a => { Process p = Process.Start(new ProcessStartInfo(args[0], a) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true }); string o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Trim() + "|" + p.ExitCode; };
@@ -99,6 +127,11 @@ public static class RegistrarPureTests {
       // before any box, elevated (REGISTRAR_ARGS_REFUSED) or not (REGISTRAR_ELEVATION_REQUIRED).
       string bad = run("register-password C:\\Temp");
       Ok(bad.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || bad.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "register-refuses-other-root");
+      // M5-b: the same for the account modes; never a real account name or the real root (elevated they would act)
+      foreach (string a in new[] { "register-account C:\\Temp", "root-shell C:\\Temp", "prepare-account X", "account-facts S-1-5-18" }) {
+        string r = run(a);
+        Ok(r.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || r.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "account-mode-refuses-bad-arguments:" + a);
+      }
     }
 
     Console.Out.WriteLine("{\"status\":\"REGISTRAR_PURE_PASS\",\"assertions\":" + n + "}");

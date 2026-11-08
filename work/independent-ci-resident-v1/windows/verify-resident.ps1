@@ -700,9 +700,13 @@ $ghProblem = try {
 } catch { 'GH_CONFIG_MISSING' }
 Record 'companion-gh-config' ($null -eq $ghProblem) $ghProblem
 # Facts only (ADR 0022 section 4.4): the Owner's password expiry, and BitLocker on C: (elevated only).
-$ownerUser = try { Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts\Microsoft.PowerShell.LocalAccounts.psd1' -ErrorAction Stop; Get-LocalUser -SID $companionOwnerSid -ErrorAction Stop } catch { $null }
+$ownerUser = try { Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts' -ErrorAction Stop; Get-LocalUser -SID $companionOwnerSid -ErrorAction Stop } catch { $null }
 $bitlocker = if ($verifyCanFix) { try { [string](Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop).ProtectionStatus } catch { 'unreadable' } } else { 'not-elevated' }
 Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $ownerUser.PasswordExpires) { ([DateTime]$ownerUser.PasswordExpires).ToString('yyyy-MM-dd') } elseif ($ownerUser) { 'never' } else { 'unreadable' }) + ';bitlocker=' + $bitlocker)
+# M5-b (ADR 0023): on a node whose companion runs as its own account (install\companion-account.json; absent elsewhere).
+$companionAccountRecord = try { Read-CompanionAccountRecord $Root $Node } catch { 'COMPANION_ACCOUNT_RECORD_REFUSED' }
+if ($companionAccountRecord -is [string]) { Record 'companion-account' $false $companionAccountRecord }
+elseif ($null -ne $companionAccountRecord) { $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord; Record 'companion-account' ($null -eq $accountProblem) $accountProblem }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }

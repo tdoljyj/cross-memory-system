@@ -11,7 +11,12 @@ import hashlib, json, os, re
 
 CONTRACT = 'clued.independent-ci.reinstall-config/1'
 KEYS = {'contract', 'node', 'nodeProfile', 'workDir', 'repo', 'basePackage', 'nodeRecord', 'nodeExe', 'policyInput', 'companionInput',
-        'upgradeTokenFile', 'heartbeat', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer'}
+        'upgradeTokenFile', 'heartbeat', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer', 'operatorSid', 'companionAccount'}
+# M5-b (ADR 0023), optional and only together: operatorSid is the Owner who runs the launcher when the node profile's ownerSid is the
+# companion's own non-administrator account; companionAccount.wslVhdxDirectory is where the resident distribution's ext4.vhdx moves.
+COMPANION_ACCOUNT_KEYS = {'wslVhdxDirectory'}
+VHDX_DIR = re.compile(r'[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,6}[A-Za-z0-9._-]{1,64}')
+USER_SID = re.compile(r'S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}')
 # The node heartbeat (DESIGN section 41.6a), optional: the heartbeat-only connection's token file (path only, like upgradeTokenFile) and,
 # optionally and only with it, that connection's binding id (public, informational: the Owner links it on /bindings/failover). The
 # launcher passes -HeartbeatTokenFile, and -HeartbeatBindingId only when configured.
@@ -81,6 +86,12 @@ def load(path):
          and '..' not in hb['tokenFile'].split('\\') and hb['tokenFile'].lower() != cfg['upgradeTokenFile'].lower()
          and (hb.get('bindingId') is None or isinstance(hb['bindingId'], str) and re.fullmatch(_UUID, hb['bindingId'])), 'CONFIG_HEARTBEAT')
     cfg['heartbeat'] = None if hb is None else {'tokenFile': hb['tokenFile'], 'bindingId': hb.get('bindingId')}
+    op, ca = cfg.get('operatorSid'), cfg.get('companionAccount')
+    need((op is None) == (ca is None), 'CONFIG_COMPANION_ACCOUNT_NEEDS_BOTH')
+    need(op is None or isinstance(op, str) and USER_SID.fullmatch(op), 'CONFIG_OPERATOR_SID')
+    need(ca is None or isinstance(ca, dict) and set(ca) == COMPANION_ACCOUNT_KEYS and isinstance(ca['wslVhdxDirectory'], str)
+         and VHDX_DIR.fullmatch(ca['wslVhdxDirectory']) and '..' not in ca['wslVhdxDirectory'].split('\\'), 'CONFIG_COMPANION_ACCOUNT')
+    cfg['operatorSid'], cfg['companionAccount'] = op, ca
     nr = cfg.get('nodeRecord') or {}
     need(isinstance(nr, dict) and set(nr) <= NODE_RECORD_KEYS, 'CONFIG_NODE_RECORD', sorted(set(nr) - NODE_RECORD_KEYS) if isinstance(nr, dict) else None)
     for k, v in nr.items():   # the public fingerprints the node reports; an example's REPLACE_ placeholder never passes

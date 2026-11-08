@@ -77,6 +77,9 @@ param(
   [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPackageManifestSha256,
   [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OwnerSid,
   [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid, # .\clued-control
+  # M5-b (ADR 0023): the Owner who runs this install when the node profile's ownerSid is the companion's own non-administrator account;
+  # omitted, the Owner is ownerSid (the companion runs as the Owner).
+  [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid,
   [switch]$Apply,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
   [switch]$StartAfterInstall,
@@ -90,6 +93,10 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
 
+if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
+# M5-b (ADR 0023): the companion runs as its own account ($OwnerSid, the node profile's ownerSid); the Owner ($OperatorSid) keeps what he
+# reads and the requests he drops; what only the companion writes (bundles, responses) and reads (the heartbeat secret) is the account's.
+$AccountNode = $OperatorSid -cne $OwnerSid
 $CiRoot = 'C:\ProgramData\CluedIndependentCI'   # the parent of $Root; it exists before this install (the v1 one-shot install made it)
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 $ServiceName = 'CluedCIResident'
@@ -627,8 +634,17 @@ function Test-BytesEqualClear([byte[]]$copy, [byte[]]$expected) {
 
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-  if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  if ($id.User.Value -cne $OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
   if ([Environment]::MachineName -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
+  # M5-b (ADR 0023): the companion's account is a local account of this host and not an administrator (the switch's registrar checks
+  # groups too, indirect ones included); the operator is not the controller.
+  if ($AccountNode) {
+    if ($OperatorSid -ceq $ControllerSid) { throw 'OPERATOR_IS_THE_CONTROLLER' }
+    Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts'
+    $acct = try { Get-LocalUser -SID $OwnerSid -ErrorAction Stop } catch { $null }
+    if ($null -eq $acct) { throw 'COMPANION_ACCOUNT_NOT_LOCAL' }
+    if (@(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object { $_.SID.Value }) -ccontains $OwnerSid) { throw 'COMPANION_ACCOUNT_IS_ADMINISTRATOR' }
+  }
   if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
   # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
   # record's value, so it must be the real local .\clued-control of this host, not only the value the profile names.
@@ -705,30 +721,34 @@ function Read-ServiceLogonRight([string]$sid) {
 function Get-AclPlan([string]$res) {
   $base = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
   $rx = '0x1200a9'; $mod = '0x1301bf'; $drop = '0x1000a2'
+  # M5-b (ADR 0023): $op reads where the companion's account reads ($OwnerSid); the Owner's own requests ($drop, train-review) are his.
+  # Without a companion account $op is empty and every rule is the one before M5-b.
+  $op = if ($AccountNode) { "(A;OICI;$rx;;;$OperatorSid)" } else { '' }
+  $opDrop = if ($AccountNode) { "(A;;$drop;;;$OperatorSid)(A;OIIO;0x120089;;;$OperatorSid)" } else { '' }
   [ordered]@{
     # The generic helper (as clued-control) opens every parent of its inputs with READ_CONTROL before it reads
     # them (FormalPublicBoundaryV2.Parents); this folder only, no inheritance, no access to any content.
-    ''                  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;;0x120080;;;$ControllerSid)"
-    'bin'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'config'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'install'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # install records: only admins write
-    'owner'             = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # Owner requests: only the elevated Owner (BA) creates
+    ''                  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;;0x120080;;;$ControllerSid)$op"
+    'bin'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'config'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'install'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"                 # install records: only admins write
+    'owner'             = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"                 # Owner requests: only the elevated Owner (BA) creates
     # DESIGN.md section 41.7/41.9 step 3: the Owner's train-shadow review mark (rearm-tool mark-train-shadow-reviewed). Stage 10 prunes
     # train-shadow only after it (Source v2 state-retention.mjs, as clued-control), so clued-control reads this folder, and only this one.
     # Accepted residual (review R3 MINOR 7): unlike owner\, the unelevated Owner may write here, so any process of the Owner's session
     # (an Agent too) could write the mark; the worst it does is start the 90-day pruning of train-shadow records early (none is older
     # than 90 days at step 9), never a green, a revocation or a batch.
-    'owner\train-review' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"
-    'source'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"
+    'owner\train-review' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OperatorSid)(A;OICI;$rx;;;$ControllerSid)"   # M5-b: the Owner's mark, not the companion's
+    'source'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)$op"
     'helpers'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # the installed generic helper (broker config pin)
-    'record'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)"   # claim-free install record: only admins write
+    'record'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)$op"   # claim-free install record: only admins write
     'stage'             = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # sealed per-stage inputs (resident writes, helper reads)
-    'bundles'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"               # companion bundles (Owner's git credential), read by ws-prep
-    'resident'          = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'runtime'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"   # the generic helper (clued-control) runs this node (FormalPublicBoundaryV2.Node)
-    'state'             = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'work'              = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)"
-    'outbox'            = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
+    'bundles'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)$op"               # companion bundles (Owner's git credential), read by ws-prep
+    'resident'          = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'runtime'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)$op"   # the generic helper (clued-control) runs this node (FormalPublicBoundaryV2.Node)
+    'state'             = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'work'              = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)$op"
+    'outbox'            = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
     'broker'            = "$base(A;OICI;$rx;;;$res)"
     # Review MINOR-2: the resident may only add request files (list, add-file, traverse, read), never delete or
     # rename anything here; files are read-only for it, and OWNER RIGHTS (OW) removes the creator's implicit
@@ -738,22 +758,85 @@ function Get-AclPlan([string]$res) {
     # Review MINOR-9: create-only for the Owner. The folder ACE allows adding a file (the creating handle keeps
     # the access it asked for); existing files are read-only for the Owner, and OW removes the owner's implicit
     # WRITE_DAC, so a trigger or request cannot be rewritten after the resident read it.
-    'inbox'             = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"
-    'requests'          = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"
-    'mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'mailbox\requests'  = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"            # responses + companion heartbeat
+    'inbox'             = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)$opDrop"
+    'requests'          = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)$opDrop"
+    'mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'mailbox\requests'  = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)$op"            # responses + companion heartbeat
     # ---- The in-place upgrade channel (018da927, A6). CluedCIUpgrader runs as LocalSystem: SY full (base) is its only write. ----
     'upgrader'                  = "$base"                                                 # its code, node, host and config: SYSTEM and Administrators only
     'secrets'                   = "$base"                                                 # resident-upgrade.token: SYSTEM and Administrators only
-    'upgrade'                   = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # current.json, status.json, ops, staged (the Owner's WSL reads staged)
-    'upgrade\inbox'             = "$base(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"   # the 'inbox' rule: Owner create-only
-    'upgrade\mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
-    'upgrade\mailbox\requests'  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # the upgrader writes, the companion reads
-    'upgrade\mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"     # the companion answers (and version-facts.json)
-    'generations'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # as config
-    'archive'                   = "$base(A;OICI;$rx;;;$OwnerSid)"
+    'upgrade'                   = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"      # current.json, status.json, ops, staged (the Owner's WSL reads staged)
+    'upgrade\inbox'             = "$base(A;;$drop;;;$OperatorSid)(A;OIIO;0x120089;;;$OperatorSid)(A;OIIO;0x120089;;;OW)"   # the 'inbox' rule: Owner create-only
+    'upgrade\mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"
+    'upgrade\mailbox\requests'  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"      # the upgrader writes, the companion reads
+    'upgrade\mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)$op"     # the companion answers (and version-facts.json)
+    'generations'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)$op"      # as config
+    'archive'                   = "$base(A;OICI;$rx;;;$OwnerSid)$op"
   }
+}
+
+# ---- M5-b (ADR 0023): the companion's own account ----
+$CompanionAccountFile = 'install\companion-account.json'
+$CompanionAccountContract = 'clued.independent-ci.companion-account/1'
+# The formal spool's folders (under $CiRoot, made by the one-shot install, outside $Root) the companion relays through.
+$CompanionSpoolFolders = @('formal-spool\incoming', 'formal-spool\outgoing')
+# Pure: the DACL of one spool folder with the companion's account in the operator's place. Source v2 lets only the node profile's
+# ownerSid write formal-spool\incoming (FormalPublicBoundaryV2.WriterAllowed; any other writer is refused), and that is now the account:
+# so every explicit allow entry of the operator that can change something moves to the account; one that only reads stays and the account
+# gets the same. Inherited entries, other SIDs and the order of the rest are kept; an account entry already there is not added twice.
+function Get-CompanionSpoolSddl([string]$sddl, [string]$operator, [string]$account) {
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  $acl = $raw.DiscretionaryAcl
+  $have = @{}
+  foreach ($a in $acl) { if ($a -is [Security.AccessControl.CommonAce] -and $a.SecurityIdentifier.Value -ceq $account) { $have[[string]$a.AceFlags + '|' + $a.AccessMask] = $true } }
+  $add = @()
+  for ($i = $acl.Count - 1; $i -ge 0; $i--) {
+    $a = $acl[$i]
+    if (-not ($a -is [Security.AccessControl.CommonAce]) -or $a.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or $a.IsInherited -or $a.SecurityIdentifier.Value -cne $operator) { continue }
+    if (($a.AccessMask -band $write) -ne 0) { $acl.RemoveAce($i) }
+    if (-not $have.ContainsKey([string]$a.AceFlags + '|' + $a.AccessMask)) { $add += ,@($a.AceFlags, $a.AccessMask) }
+  }
+  $at = 0; while ($at -lt $acl.Count -and -not $acl[$at].IsInherited) { $at++ }   # after the explicit entries, before the inherited ones
+  foreach ($x in $add) { $acl.InsertAce($at, (New-Object Security.AccessControl.CommonAce($x[0], [Security.AccessControl.AceQualifier]::AccessAllowed, $x[1], (New-Object Security.Principal.SecurityIdentifier($account)), $false, $null))); $at++ }
+  $raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+}
+function Set-CompanionSpoolAcl([string]$path, [string]$operator, [string]$account) {
+  $item = Get-Item -LiteralPath $path -Force
+  if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('COMPANION_SPOOL_FOLDER_REFUSED:' + $path) }
+  $before = (Get-Acl -LiteralPath $path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+  $want = Get-CompanionSpoolSddl $before $operator $account
+  if ($want -ceq $before) { return }
+  $sec = New-Object Security.AccessControl.DirectorySecurity
+  $sec.SetSecurityDescriptorSddlForm($want, [Security.AccessControl.AccessControlSections]::Access)
+  $item.SetAccessControl($sec)
+  $back = (Get-Acl -LiteralPath $path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+  if ((Get-CompanionSpoolSddl $back $operator $account) -cne $back) { throw ('COMPANION_SPOOL_ACL_READBACK_MISMATCH:' + $path) }
+}
+# One program run as LocalSystem through a one-shot task (SYSTEM, highest; no password), its stdout into a new folder that only SYSTEM
+# and Administrators can touch; the task and the folder are removed. Returns exit (the task's last result) and stdout.
+function Invoke-AsSystemOnce([string]$exe, [string[]]$arguments) {
+  $dir = Join-Path 'C:\Windows\Temp' ('clued-system-' + [Guid]::NewGuid().ToString('N'))
+  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+  [void][IO.Directory]::CreateDirectory($dir, $ds)
+  $name = 'CluedCIInstallSystemOnce-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $folder = $svc.GetFolder('\')
+  try {
+    $out = Join-Path $dir 'stdout.txt'
+    $def = $svc.NewTask(0)
+    $def.Principal.UserId = 'S-1-5-18'; $def.Principal.LogonType = 5; $def.Principal.RunLevel = 1
+    $def.Settings.ExecutionTimeLimit = 'PT5M'; $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
+    $a = $def.Actions.Create(0); $a.Path = 'C:\Windows\System32\cmd.exe'
+    $a.Arguments = '/d /c ""' + $exe + '" ' + ((@($arguments) | ForEach-Object { '"' + $_ + '"' }) -join ' ') + ' > "' + $out + '""'
+    $t = $folder.RegisterTaskDefinition($name, $def, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+    $before = $t.LastRunTime
+    $null = $t.Run($null)
+    $until = [DateTime]::UtcNow.AddMinutes(5)
+    do { Start-Sleep -Milliseconds 500; $t = $folder.GetTask($name) } while ([DateTime]::UtcNow -lt $until -and ([int]$t.State -eq 4 -or $t.LastRunTime -eq $before))
+    [ordered]@{ exit = ([int64]$t.LastTaskResult -band 0xFFFFFFFFL); stdout = $(if (Test-Path -LiteralPath $out -PathType Leaf) { [IO.File]::ReadAllText($out) } else { '' }) }
+  } finally { try { $folder.DeleteTask($name, 0) } catch { }; Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # ---- The CI root's READ_CONTROL entry for the resident service (DESIGN.md section 33, first HALT of 2026-10-29) ----
@@ -998,7 +1081,7 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   Assert-Package4 $pkg
-  [ordered]@{
+  $p = [ordered]@{
     contract = 'clued.independent-ci.resident-install-plan/8'   # /7 (DESIGN.md section 33): parentAcl; /8 (018da927): package /4, upgrader, generation
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
@@ -1054,6 +1137,13 @@ function Build-Plan {
       linux = [ordered]@{ generation = 1; manifestSha256 = $pkg.linux.manifestSha256; ciSourceManifestSha256 = $pkg.ciSourceManifestSha256 } }
     deletesAnything = $false
   }
+  # M5-b (ADR 0023): only on a node whose companion runs as its own account (so every other node's plan is the one it was).
+  if ($AccountNode) {
+    $p.companionAccount = [ordered]@{ companionSid = $OwnerSid; operatorSid = $OperatorSid; record = $CompanionAccountFile
+      spool = [ordered]@{ folders = $CompanionSpoolFolders; rule = 'the operator''s write entries move to the companion account; its read entries are kept and copied' }
+      brokerStableDigest = 'read as LocalSystem (Source v2 admits LocalSystem or the elevated node-profile owner)'; passwordLogon = 'rearm-resident.ps1 -CompanionAccount (random password, never typed)' }
+  }
+  $p
 }
 
 # Each directory is CREATED with its final security descriptor (no window in which it carries the
@@ -1170,8 +1260,16 @@ Step 'companion-supervisor' {
 #     stable configuration digest (read-only, with the just-compiled broker) and the helper pin. Written
 #     once, CreateNew; its SHA-256 is the broker's second command-line argument.
 Step 'broker-config' {
-  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest $Root $plan.acceptanceSha256 $plan.nodeProfileSha256 | Out-String).Trim()
-  if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
+  # M5-b (ADR 0023): Source v2 (ResidentScmV2.InstallTimeIdentityAllowed) admits only LocalSystem or the elevated node-profile owner, and
+  # with a companion account the node-profile owner is that account: the read then runs as LocalSystem (Invoke-AsSystemOnce).
+  if ($AccountNode) {
+    $sys = Invoke-AsSystemOnce (Join-Path $Root 'bin\SwapBroker.exe') @('--stable-digest', $Root, $plan.acceptanceSha256, $plan.nodeProfileSha256)
+    $stable = ([string]$sys.stdout).Trim()
+    if ($sys.exit -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
+  } else {
+    $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest $Root $plan.acceptanceSha256 $plan.nodeProfileSha256 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
+  }
   if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' }
   # Config /2 (review MINOR-3): no Owner SID; mutex and runner-DACL managers are SYSTEM and Administrators only.
   $json = Get-BrokerConfigJson $script:receipt.genericHelperSha256 $stable $NodeCanonical $plan.nodeProfileSha256 $plan.acceptanceSha256
@@ -1231,6 +1329,15 @@ Step 'source-v2-acl' {
   $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $OwnerSid -ControllerSid $ControllerSid | Out-String
   if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
+}
+# 5a. M5-b (ADR 0023): the record of who is who (install\companion-account.json: rearm-resident.ps1, request-upgrade.ps1 and
+#     verify-resident.ps1 read the Owner from it), then the formal spool follows the companion's account (Set-CompanionSpoolAcl).
+if ($AccountNode) {
+  Step 'companion-account' {
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(([ordered]@{ contract = $CompanionAccountContract; companionSid = $OwnerSid; operatorSid = $OperatorSid } | ConvertTo-Json -Compress))
+    Write-New (Join-Path $Root $CompanionAccountFile) $bytes
+    foreach ($rel in $CompanionSpoolFolders) { Set-CompanionSpoolAcl (Join-Path $CiRoot $rel) $OperatorSid $OwnerSid }
+  }
 }
 # 6. M5: the launch file of generation 1 (the supervisor's one input), the notifier task, then the companion task with the interactive
 #    token and the supervisor's fixed action (ADR 0022 section 4.4). The receipt's companionTaskAction is what the supervisor starts:

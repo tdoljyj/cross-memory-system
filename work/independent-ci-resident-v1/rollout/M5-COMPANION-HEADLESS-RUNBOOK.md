@@ -2,6 +2,8 @@
 
 适用：DESK-W-591 先，TURING 后。每台各做一遍。
 
+> **2026-11-08 起改走 M5-b（ADR 0023）：companion 用专用的非管理员账户 `clued-companion`，Owner 不输任何密码。** 第 1–8 节是 B2（Owner 自己的密码）的做法，Owner 是管理员的节点上走不通（supervisor 拒绝完整令牌）；现在照**第 9 节**做。第 0 节的安全规则、第 5 节的排查表仍然适用。
+
 本轮代码只在分支上，**没有在任何机器上安装或切换**。下面的步骤都要等 Owner 批准整套重装（R 类）之后才做。
 
 ---
@@ -227,3 +229,81 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 - `test/companion-headless.test.mjs`：通知队列上限与丢弃、伪造通知被拦（T8）、通知程序的登录失败码映射和心跳/重启判断、companion 拒绝提权令牌、专用 gh 登录失败关闭、status 字段与 companion-absent。
 - `upgrader/test/machine.test.mjs`：升级和回滚只写 launch 文件、从不注册 companion 任务（T5）。
 - `windows/test-upgrade-windows.ps1`、`windows/test-resident-windows.ps1`：新通道和安装、卸载的文本与回读。
+
+---
+
+## 9. M5-b：companion 用专用的非管理员账户（ADR 0023）
+
+每台两次 UAC，**一次密码也不输**。DESK 先，TURING 后（TURING 先看 9.7）。
+
+### 9.1 一次性决定（Owner）
+
+写一条 Decision：接受 ADR 0023（新账户 `clued-companion`、节点档案的 `ownerSid` 改指它、随机密码无人知晓、常驻发行版移到它名下、§10 的已知缺口），批准两台的整套重装（R 类）。
+
+### 9.2 步骤 P：建账户、存令牌（第一次 UAC）
+
+1. 浏览器打开 https://github.com/settings/tokens/new （Tokens (classic)），Note 填 `clued-companion-desk`（TURING：`clued-companion-turing`），只勾 `repo`，生成，点复制按钮。页面先别关。
+2. 用“以管理员身份运行”打开 PowerShell（点 UAC），执行（路径用 Agent 给的包目录，Agent 同时给出这个脚本和 `CompanionTaskRegistrar.cs` 的 SHA-256，执行前可以 `Get-FileHash` 对一下）：
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File <包>\work\independent-ci-resident-v1\windows\prepare-companion-account.ps1 -LogDirectory C:\Users\<你>\clued-m5b-logs
+   ```
+
+   TURING 加 `-WslMemory 6GB -WslProcessors 3 -WslSwap 2GB`。
+
+3. 看到 `"status": "COMPANION_ACCOUNT_PREPARED"` 就完成了，可以关掉窗口和 GitHub 页面。脚本已经清掉剪贴板（和它的历史）。
+   - `COMPANION_ACCOUNT_PREPARED_TOKEN_PENDING`：账户建好了，但剪贴板里不是经典令牌。重新复制令牌，在提权窗口里只跑这一步：
+     `powershell.exe -NoProfile -File <包>\...\windows\companion-gh-login.ps1 -Login -ProfileDirectory C:\Users\clued-companion -AccountSid <日志里的 sid>`。
+   - 日志里没有令牌、没有密码，只有账户的 SID、档案目录，和只读导出的 clued-runner / clued-control / 新账户名下的计划任务、相关用户权利、你名下的 WSL 注册。把日志路径告诉 Agent。
+
+### 9.3 Agent 的部分（不需要你）
+
+- 把日志的 `nodeProfile.ownerSid`、`nodeProfile.ownerProfileDirectory` 写进 `config/node-profile.<node>.json`；重装配置（DESK：`D:\w\gen30-package\reinstall-config.desk-w-591.g30.json` 的副本）加：
+  - `"operatorSid": "<你的 SID>"`（DESK：`S-1-5-21-858977881-4031698862-3006450925-1000`；TURING：`S-1-5-21-1173730660-3877291096-655431861-1001`）；
+  - `"companionAccount": { "wslVhdxDirectory": "D:\\clued-resident\\wsl\\CluedResident-Linux" }`（TURING：`"C:\\clued-resident\\wsl\\Ubuntu-24.04"`）。
+- 提交、CI、合入；`build.ps1 -Final`、`rehearse.py`、W1 暂停旧常驻、生成 Linux 脚本——和第 29 代重装一样。
+
+### 9.4 重装（Linux A/B 照旧，然后第二次 UAC）
+
+1. Linux A、B：和以往一样，你以 root 在**你名下的**发行版里运行（迁移在最后一步才发生）。
+2. 提权运行重装启动器（点一次 UAC）。最后一步自动执行 `rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <dir>`：
+   - 停掉发行版（只停这一个）；DESK 把 61 GB 的 `ext4.vhdx` 复制到 D: 并两边校验 SHA-256，一致后删 C: 上的旧文件（约 10–20 分钟，C: 回收在这里）；TURING 在 C: 内改名，瞬间完成；
+   - 删掉你名下这个发行版的注册项（不删文件）；
+   - 给账户设一个新的随机密码，注册 companion 任务和一次性导入任务（以账户身份 `wsl --import-in-place`），运行导入，删掉导入任务；
+   - 运行 companion，最多 8 分钟由提权一侧验收。
+   - **不会弹出任何凭据框。**屏幕上出现要密码的框，一律当伪造关掉。
+3. 结果在 `W\launch\terminal.json` 的 `companionHeadless.status`：
+   - `COMPANION_HEADLESS_QUALIFIED`：完成。
+   - `COMPANION_HEADLESS_FELL_BACK` / `..._FAILED`：没通过，companion 停着（服务只推迟，另一台接班）。原因在 `stdout` 的 `result.failed`。处理后在提权窗口重跑：
+     `powershell.exe -NoProfile -NonInteractive -File C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <dir>`。
+     发行版已移动的部分会按现状续做，不会重复复制。
+   - `COMPANION_HEADLESS_PREFLIGHT_REFUSED`：前提不满足，什么都没改，原因在 `result.preflight.refusals`。
+
+### 9.5 以后
+
+| 要做的 | 命令（提权窗口，`<sha>` 见第 3 节） |
+|---|---|
+| 进常驻发行版的 root | `rearm-resident.ps1 -CompanionRootShell`：弹出一个以 `clued-companion` 身份运行的 `wsl --user root` 控制台。不要密码；它顺便换一个新随机密码（companion 不受影响） |
+| 任务结果是登录失败码（`0x8007052E` 等） | `rearm-resident.ps1 -CompanionCredential`：换一个新随机密码并验收 |
+| 换 GitHub 令牌 | 复制新令牌，`companion-gh-login.ps1 -Login -ProfileDirectory C:\Users\clued-companion -AccountSid <sid>`，再按第 4.2 节第 3 步重启任务 |
+| 停掉 companion | `rearm-resident.ps1 -CompanionInteractive`（任务改为账户的交互定义，账户从不登录，所以就停着） |
+| 看 companion 的日志、`supervisor.json` | 都在 `C:\Users\clued-companion\AppData\Local\CluedIndependentCI\`，要提权才能读；只读探针 `probe-companion-headless.ps1` 也要提权运行 |
+| 整体退回你自己的账户 | 先在 root shell 里 `shutdown`（或提权 `wsl --terminate <D>` 无效：发行版不在你名下）；提权窗口：`wsl --import-in-place <D> <dir>\ext4.vhdx` 把它注册回你名下；再用改动前的节点档案整套重装；最后删账户名下的注册（`reg delete "HKU\<账户 sid>\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}"`，账户的注册表加载时）和账户本身（`net user clued-companion /delete`） |
+
+### 9.6 真机验收（M5-b 版，DESK 先）
+
+| # | 怎么做 | 通过的样子 |
+|---|---|---|
+| T1 | 重启，不登录，10 分钟后从另一台看节点心跳 | 首次心跳 ≤ 10 分钟；期间推一个小 PR，本节点无人登录时跑完一个批次 |
+| T2 | companion 运行时注销你自己 | companion PID 不变（它不在你的会话里） |
+| T3 | 提权按 PID 结束 companion 的 node（不要按名字杀），连续 6 次；再结束 supervisor | 10 秒内拉起，退避封顶 60 秒；supervisor 结束后 15 分钟内由重复触发拉起 |
+| T4 | `-CompanionCredential` 两次 | 每次都 `QUALIFIED`；没有任何凭据框 |
+| T5 | 下一次原地升级之后 | verify 的 `companion-task` 仍为 `password`，`companion-account` 通过；新代际 90 秒内运行。升级回执里 `companionTask.needsOwner` 可能为 true：冻结通道按文本比较任务的 DACL，任务计划程序读回的是 `D:PAI(...)`（ADR 0022 的已知现象，只是备注，不阻止升级） |
+| T6 | 切换验收中关窗口 / 重启 | 15 分钟后回退任务把任务退回账户的交互定义；重跑 `-CompanionAccount` 续做 |
+| T7 | 关机再开机，不登录 | ≤ 20 分钟能执行 |
+| T8 | 普通窗口里试：写 `mailbox\responses`、读 `secrets\heartbeat`、`wsl -d <D>`、`schtasks /run /tn \Clued\CluedCIResidentCompanion` | 全部拒绝（发行版不在你名下：“找不到分发”） |
+| T9 | `-CompanionRootShell` | 弹出的控制台里 `id` 为 root，`cat /proc/sys/kernel/random/boot_id` 与 companion 记下的 `companion-session.json` 相同（同一个 VM） |
+
+### 9.7 TURING 先确认
+
+TURING 的常驻发行版是 `Ubuntu-24.04`，也是那台机器唯一的通用发行版。迁走以后，你和 TURING 的 Agent 都不能再直接 `wsl` 进去。做之前由 TURING 一侧只读确认那里没有别的用途（例如家里 Linux runner 的单元、日常开发）；有的话，先另建一个专用的常驻发行版（reinstall README 第 8c 节），再做 M5-b。TURING 的 D: 只剩 27 GB，vhdx 留在 C:，这次不回收 C:。

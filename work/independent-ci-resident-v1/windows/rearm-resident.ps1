@@ -45,6 +45,16 @@
                            COMPANION_HEADLESS_QUALIFICATION_FAILED with the check that failed.
     -CompanionCredential   the same, after the Owner changed the Windows password (only the stored password changes).
     -CompanionInteractive  back to the interactive token by hand (the stored password is deleted with the old definition).
+  M5-b (ADR 0023), the companion as its own non-administrator account (the node profile's ownerSid; the Owner is the install's operator,
+  install\companion-account.json); elevated, the operator only; NO password is typed anywhere:
+    -CompanionAccount -WslVhdxDirectory <dir>   the reinstall's last step: the same marker, fall-back task and qualification as
+                           -CompanionHeadless; in between the resident distribution moves from the Owner's WSL registration to the
+                           account's (ext4.vhdx into <dir>, the Owner's registration key removed without deleting the file) and the
+                           registrar sets a new random password on the account and registers the task with it (and the one-shot
+                           wsl --import-in-place task, run once as the account). Again later: without -WslVhdxDirectory.
+    -CompanionCredential   on such a node: only a new random password (the account's and the task's).
+    -CompanionRootShell    a root shell in the resident distribution, in a new console, as the account (a new random password first).
+    -CompanionInteractive  parks the task on the account's interactive definition (the companion stops: nobody logs on as it).
   A notification never asks for the password: type it only into the box on the secure desktop, after you started this yourself.
 
   Residual, unchanged from today: any elevated .NET process of the Owner (including this one and the
@@ -54,7 +64,8 @@
 [CmdletBinding()]
 param([ValidateSet('Rearm', 'Resume', 'Abort', 'ReleaseBreaker')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256,
-  [switch]$CompanionHeadless, [switch]$CompanionCredential, [switch]$CompanionInteractive)
+  [switch]$CompanionHeadless, [switch]$CompanionCredential, [switch]$CompanionInteractive, [switch]$CompanionAccount, [switch]$CompanionRootShell,
+  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$WslVhdxDirectory)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory
@@ -66,15 +77,29 @@ $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevated = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 # M5: the companion's log-on (ADR 0022 section 4.4). The functions are the installed copy's companion-headless.ps1, next to this one.
-$companionModes = @(@($CompanionHeadless, 'headless'), @($CompanionCredential, 'credential'), @($CompanionInteractive, 'interactive') | Where-Object { $_[0] })
+$companionModes = @(@($CompanionHeadless, 'headless'), @($CompanionCredential, 'credential'), @($CompanionInteractive, 'interactive'), @($CompanionAccount, 'account'), @($CompanionRootShell, 'root-shell') | Where-Object { $_[0] })
 if ($companionModes.Count -gt 0) {
   if ($companionModes.Count -ne 1 -or $Request) { throw 'ONE_COMPANION_MODE_ONLY' }
   if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
   . (Join-Path $PSScriptRoot 'companion-headless.ps1')
   $node = (Get-Content -LiteralPath (Join-Path $Root 'record\acceptance.json') -Raw | ConvertFrom-Json).node
-  if ([string]$node.ownerSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\z' -or $me.User.Value -cne [string]$node.ownerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  if ([string]$node.ownerSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\z') { throw 'OWNER_ACCOUNT_REQUIRED' }
+  # M5-b (ADR 0023): on a node whose companion runs as its own account the Owner is the install's operator (install\companion-account.json).
+  $accountNode = $null -ne (Read-CompanionAccountRecord $Root $node)
+  if ($me.User.Value -cne (Get-CompanionOperatorSid $Root $node)) { throw 'OWNER_ACCOUNT_REQUIRED' }
   $mode = $companionModes[0][1]
-  $out = if ($mode -ceq 'interactive') {
+  if ($WslVhdxDirectory -and $mode -cne 'account') { throw 'WSL_VHDX_DIRECTORY_ONLY_WITH_COMPANION_ACCOUNT' }
+  # The Owner's own password (ADR 0022) is not the way on an M5-b node, and the account modes need one.
+  if ($accountNode -and $mode -ceq 'headless') { throw 'COMPANION_ACCOUNT_NODE_USE_COMPANION_ACCOUNT' }
+  if (-not $accountNode -and @('account', 'root-shell') -ccontains $mode) { throw 'COMPANION_ACCOUNT_NOT_INSTALLED' }
+  if ($accountNode -and $mode -ceq 'credential') { $mode = 'account' }   # a new random password; the distribution stays where it is
+  $out = if ($mode -ceq 'root-shell') {
+    $code = Invoke-CompanionRootShell $Root
+    [ordered]@{ status = $code }
+  } elseif ($mode -ceq 'account') {
+    $r = Invoke-CompanionAccountSwitch $Root $node $WslVhdxDirectory $(if ($CompanionCredential) { 'credential' } else { 'account' })
+    [ordered]@{ status = $(if ($r.qualified) { 'COMPANION_HEADLESS_QUALIFIED' } elseif ($r.failed -ceq 'PREFLIGHT') { 'COMPANION_HEADLESS_PREFLIGHT_REFUSED' } elseif ($r.fellBack) { 'COMPANION_HEADLESS_FELL_BACK' } else { 'COMPANION_HEADLESS_FAILED' }); result = $r }
+  } elseif ($mode -ceq 'interactive') {
     $r = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)
     try { Start-CompanionTask } catch { }
     [ordered]@{ status = 'COMPANION_INTERACTIVE'; task = (Get-CompanionTaskFacts $Root ([string]$node.ownerSid)) }
@@ -83,7 +108,7 @@ if ($companionModes.Count -gt 0) {
     [ordered]@{ status = $(if ($r.qualified) { 'COMPANION_HEADLESS_QUALIFIED' } elseif ($r.failed -ceq 'PREFLIGHT') { 'COMPANION_HEADLESS_PREFLIGHT_REFUSED' } elseif ($r.fellBack) { 'COMPANION_HEADLESS_FELL_BACK' } else { 'COMPANION_HEADLESS_FAILED' }); result = $r }
   }
   $out | ConvertTo-Json -Depth 6
-  exit $(if (@('COMPANION_HEADLESS_QUALIFIED', 'COMPANION_INTERACTIVE') -ccontains $out.status) { 0 } else { 1 })
+  exit $(if (@('COMPANION_HEADLESS_QUALIFIED', 'COMPANION_INTERACTIVE', 'ROOT_SHELL_STARTED') -ccontains $out.status) { 0 } else { 1 })
 }
 
 if (-not $Request) {
