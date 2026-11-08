@@ -23,6 +23,16 @@
 #>
 [CmdletBinding()]
 param([switch]$Apply, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256)
+# M5-b (ADR 0023) review r2 n7: the stage of an unfinished move of the resident distribution, or $null (no move, qualified, restored);
+# 'unreadable' when the record cannot be read.
+function Get-CompanionWslUnfinished([string]$root) {
+  $f = Join-Path $root 'install\companion-wsl.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+  $r = try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null }
+  if ($null -eq $r -or -not ($r.PSObject.Properties.Name -ccontains 'stage')) { return 'unreadable' }
+  if (@('qualified', 'restored') -ccontains [string]$r.stage) { return $null }
+  [string]$r.stage
+}
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
@@ -80,6 +90,10 @@ if ($plan.openBatches -ne 0) { throw 'UNINSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIR
 if (-not $plan.runnerOriginalStopped) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED' }
 if (-not $plan.runnerSddlUnchanged) { throw 'RUNNER_SDDL_CHANGED_OWNER_LOOK' }
 if (@('RUNNING', 'ROLLING_BACK', 'unreadable') -ccontains $plan.upgradeOpState) { throw 'UNINSTALL_REQUIRES_NO_RUNNING_UPGRADE' }
+# M5-b review r2 n7: the move of the resident distribution keeps its stages in install\companion-wsl.json; the uninstall renames install\
+# away with the rest, so it never runs while a move is half done (qualified or restored only), before anything is changed.
+$wslUnfinished = Get-CompanionWslUnfinished $Root
+if ($null -ne $wslUnfinished) { throw ('COMPANION_WSL_MOVE_UNFINISHED:' + $wslUnfinished) }
 
 # The upgrader first, so nothing starts an upgrade step while the services go: its host asks it to stop at a step boundary and ends its
 # job after 60 s (UpgraderServiceHost.cs); every step is journaled and is never repeated blindly.

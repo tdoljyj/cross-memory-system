@@ -197,8 +197,10 @@ export class ReceiptChain {
     return out;
   }
 
-  // The head is re-derived from the last file on every append, so an append by another process
-  // (or a crash between write and cache update) can never make this one collide or fork the chain.
+  // The head is re-derived from the last file on every append, so an append by another process that came before this one, or a
+  // crash between write and cache update, is chained onto rather than overwritten. Appends that overlap are a different matter: two
+  // that read the same head take the same sequence number (the same type: the second create-only write fails; another type: the
+  // chain forks). Within this process append() queues them (below); the service is the chain's only writer (instance lock).
   async currentHead() {
     const base = ReceiptChain.base(await this.knownSeals());
     const entries = (await this.files()).filter(e => e.seq > base.seq);
@@ -208,7 +210,15 @@ export class ReceiptChain {
     return { seq: last.seq, sha256: sha256(await fs.readFile(path.join(this.dir, last.name))) };
   }
 
-  async append(type, body) {
+  // One append at a time within this process (defect 8f8240ff): the service's between-batches step (archive retention) runs beside
+  // the loop and appends while a tick may; two appends that read the same head would take the same sequence number.
+  append(type, body) {
+    const turn = (this.appending ?? Promise.resolve()).then(() => this.appendOne(type, body));
+    this.appending = turn.catch(() => {});
+    return turn;
+  }
+
+  async appendOne(type, body) {
     check(/^[a-z0-9-]{1,48}$/.test(type), 'RECEIPT_TYPE_INVALID');
     if (body && body.failureCode !== undefined && body.failureCode !== null) check(CODE.test(body.failureCode), 'RECEIPT_FAILURE_CODE_INVALID');
     const head = await this.currentHead();

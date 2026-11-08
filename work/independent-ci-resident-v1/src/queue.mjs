@@ -81,6 +81,14 @@ export const DEFER_RECHECK_MS = 5 * MIN;
 // (Source resident-v2/stage-fact.mjs#notAdmittedCode, #outcomeFailureCode); after stage 1 a moved claim is BATCH_CLAIM_CHANGED,
 // which burns the head and never backs off.
 export const CLAIM_REASONS = Object.freeze(['CLAIM_NOT_CURRENT']);
+// Field defect 2026-11-08 (PR #1043, task 9aafd9ec): three claim refusals in a row (no authorize_head yet, the merge-queue place aged,
+// a renew after the push) each counted towards the head's release cap and burned the head, though each is safeToRerun with no side effect
+// and the author or the system fixes it by itself. A claim refusal now never counts towards the cap and never stops the row: it is
+// looked at again every 10 minutes (the batch key's cool-down) on the same head, flat, and only a head that has waited
+// for its claim for CLAIM_WAIT_MAX_MS since it arrived stops (release-cap).
+export const CLAIM_WAIT_MAX_MS = 24 * 60 * MIN;
+const CLAIM_MISSING_REASONS = ['claim_trailer_missing', 'claim_not_found', 'full_admission_claim_missing'];
+export const claimWaitText = reason => (CLAIM_MISSING_REASONS.includes(reason) ? '等认领授权此提交' : '认领在推送后变动或队位过期，等下一次检查');
 const claimsOk = c => Array.isArray(c) && c.length <= SEEN_MAX && c.every(x => typeof x === 'string' && UUID.test(x));
 // The claims an evaluation saw (begin), or null: unknown (no live read answered, or a companion that does not read the body).
 const claimsOf = c => (claimsOk(c) ? [...new Set(c)].sort() : null);
@@ -386,6 +394,18 @@ export class RunQueue {
         return null;
       case 'released': {
         r.order = this.seq(); // to the tail
+        if (CLAIM_REASONS.includes(outcome.code)) {
+          const since = r.current.firstAt ?? r.lastEvalAt ?? now;
+          if (now - since >= CLAIM_WAIT_MAX_MS) {
+            Object.assign(r, { stopKind: 'release-cap', stopClass: outcome.klass ?? null, nextAt: null });
+            this.setState(r, 'STOPPED', outcome.code, now);
+            return 'stopped';
+          }
+          Object.assign(r, { nextAt: now + RELEASE_BACKOFF_MS[0], level: 0, levelKind: null, stopKind: null, stopClass: null });
+          this.setState(r, 'BACKOFF', outcome.code, now);
+          r.deferred = `${outcome.code}: ${claimWaitText(outcome.outcomeReason)}`;
+          return null;
+        }
         const waiting = outcome.klass === 'waiting';
         const network = !waiting && outcome.network === true;
         if (network && Number.isSafeInteger(outcome.networkReleases24h) && outcome.networkReleases24h >= outcome.networkCap) {

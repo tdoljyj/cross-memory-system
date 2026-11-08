@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EffectJournal } from '../effect-journal.mjs';
-import { recordBatchClaim, readBatchClaim } from '../batch-claim-v2.mjs';
+import { recordBatchClaim, readBatchClaim, rewriteUnpublishedBatchClaim, withBatchClaimPublication } from '../batch-claim-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
@@ -22,6 +22,8 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const batchClaims = {
       read: async j => { try { return await readBatchClaim(STATE_V2.batchClaims, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
       record: (j, claim, at) => recordBatchClaim(STATE_V2.batchClaims, j, claim, at),
+      rewrite: (...args) => rewriteUnpublishedBatchClaim(STATE_V2.batchClaims, ...args),
+      withPublication: (...args) => withBatchClaimPublication(STATE_V2.batchClaims, ...args),
     };
     // Merge train (§41.2, §41.4): the installed train.enabled from this stage directory (default off); with it on, the
     // holders, touch and sweep-proof ports for the front batch's second touch running.

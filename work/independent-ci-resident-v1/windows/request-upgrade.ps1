@@ -80,8 +80,19 @@ function Get-InstalledNode {
   $accepted = (New-Object Text.UTF8Encoding($false, $true)).GetString([IO.File]::ReadAllBytes((Join-Path $Root 'record\acceptance.json'))) | ConvertFrom-Json
   $node = Get-Field $accepted 'node'
   if ([string](Get-Field $node 'nodeName') -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z') { throw 'INSTALLED_NODE_UNREADABLE' }
-  if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne [string](Get-Field $node 'ownerSid')) { throw 'OWNER_ACCOUNT_REQUIRED' }
+  if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne (Get-OperatorSid $node)) { throw 'OWNER_ACCOUNT_REQUIRED' }
   $node
+}
+# M5-b (ADR 0023): on a node whose companion runs as its own account, the node profile's ownerSid is that account and the Owner is the
+# install's operator (install\companion-account.json, admin-only write, written by the install); otherwise the Owner is ownerSid.
+function Get-OperatorSid($node) {
+  $f = Join-Path $Root 'install\companion-account.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return [string](Get-Field $node 'ownerSid') }
+  $a = (New-Object Text.UTF8Encoding($false, $true)).GetString([IO.File]::ReadAllBytes($f)) | ConvertFrom-Json
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z'
+  if ([string](Get-Field $a 'contract') -cne 'clued.independent-ci.companion-account/1' -or [string](Get-Field $a 'companionSid') -cne [string](Get-Field $node 'ownerSid') -or
+    [string](Get-Field $a 'operatorSid') -cnotmatch $sid -or [string](Get-Field $a 'operatorSid') -ceq [string](Get-Field $a 'companionSid')) { throw 'COMPANION_ACCOUNT_RECORD_REFUSED' }
+  [string](Get-Field $a 'operatorSid')
 }
 
 $installedNode = Get-InstalledNode

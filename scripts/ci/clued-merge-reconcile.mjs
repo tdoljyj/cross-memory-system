@@ -8,7 +8,7 @@ import {verifyReconcileSource} from './clued-merge-reconcile-source.mjs';
 import {assertControllerIdentity} from './clued-merge-reconcile-host.mjs';
 import {markDurableFetch,readReconcileActivation} from './clued-merge-reconcile-gate.mjs';
 
-export const COMPONENT_VERSION='1.0.15';
+export const COMPONENT_VERSION='1.0.18';
 export const CONTRACT='clued.merge-reconciliation-budget/1';
 export const HOUR=3_600_000, MAX_API_PER_HOUR=1500, MAX_API_PER_CYCLE=250;
 export const MAX_OPERATIONS=2000, MIN_GITHUB_REMAINING=750;
