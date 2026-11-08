@@ -528,4 +528,227 @@ if (-not $isAdmin) {
   Yes ($LASTEXITCODE -eq 0 -and $planOut.Contains('PLAN_ONLY_NOTHING_CHANGED') -and -not (Test-Path -LiteralPath (Join-Path $Scratch 'prep-log'))) 'prepare-plan-read-only'
 }
 
+# 10. M5-b independent review r1 (BLOCKER B1, MAJOR M1-M5, MINOR m1-m12): behaviour tests. Every scenario runs in the scratch directory
+# with the host-facing steps (wsl.exe, the registry, ACLs, the Task Scheduler, the registrar) replaced by recording stubs in a child
+# scope (PowerShell resolves functions dynamically, so the real switch calls the stubs). Each check is reported on its own.
+$r1 = [ordered]@{}
+function R1([string]$id, [scriptblock]$body) { try { $null = & $body; $script:r1[$id] = 'pass' } catch { $script:r1[$id] = 'FAIL: ' + $_.Exception.Message } }
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$acctR = 'S-1-5-21-111-222-333-1010'; $oprR = $me
+$rootR = Join-Path $Scratch 'r1-root'; foreach ($d in @('install', 'bin', 'config')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootR $d)) }
+[IO.File]::WriteAllText((Join-Path $rootR 'install\install-receipt.json'), '{"residentManifestSha256":"' + ('a' * 64) + '"}')
+$profR = Join-Path $Scratch 'r1-profile'; $ghR = Get-CompanionGhDirs $profR
+foreach ($d in @($ghR.gh, $ghR.home)) { [void][IO.Directory]::CreateDirectory($d) }
+foreach ($f in @((Join-Path $ghR.gh 'hosts.yml'), (Join-Path $ghR.home '.gitconfig'), (Join-Path $rootR 'bin\CluedCompanionSupervisor.exe'), (Join-Path $rootR 'config\companion-launch.json'))) { [IO.File]::WriteAllText($f, 'x') }
+$nodeR = [pscustomobject]@{ ownerSid = $acctR; ownerProfileDirectory = $profR; wslDistribution = 'CluedResident-Linux' }
+$factsR = [pscustomobject]@{ code = 'ACCOUNT_FACTS'; exists = $true; refusal = $null; rights = @('SeBatchLogonRight', 'SeDenyNetworkLogonRight', 'SeDenyRemoteInteractiveLogonRight'); profileDirectory = $profR; hardening = @() }
+$lockOk = [ordered]@{ threshold = 10; durationMinutes = 10; windowMinutes = 10 }
+
+# A fresh scenario: a source vhdx in "the Owner's" folder, a target directory, a fake Lxss registration. Returns the paths and a log.
+function New-R1Scenario([string]$name, [int]$bytes = 3145730) {
+  $base = Join-Path $Scratch ('r1-' + $name)
+  $src = Join-Path $base 'owner\CluedResident-Linux'; [void][IO.Directory]::CreateDirectory($src)
+  $data = New-Object byte[] $bytes; (New-Object Random $bytes).NextBytes($data); [IO.File]::WriteAllBytes((Join-Path $src 'ext4.vhdx'), $data)
+  Remove-Item -LiteralPath (Join-Path $rootR 'install\companion-wsl.json') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $rootR $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath (Join-Path $rootR 'install') -Filter 'companion-wsl-owner-*' -ErrorAction SilentlyContinue | Remove-Item -Force
+  [ordered]@{ base = $base; source = (Join-Path $src 'ext4.vhdx'); sourceDir = $src; targetDir = (Join-Path $base 'd\clued-resident\wsl\CluedResident-Linux'); sha = (Get-CompanionFileSha256 (Join-Path $src 'ext4.vhdx'))
+    log = (New-Object Collections.ArrayList); keyPresent = $true; default = '{g1}' }
+}
+# The stubs every switch scenario uses; $sc is the scenario, $opt overrides (registrar code, import result, faults).
+function Invoke-R1Switch($sc, $opt, [string]$vhdxDir) {
+  $script:sc = $sc; $script:opt = $opt
+  & {
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-build-none'); generation = ('a' * 64); registrar = [ordered]@{ exe = 'registrar.exe'; sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
+    function Remove-CompanionBuild { }
+    function Get-CompanionAccountFacts { $factsR }
+    function Get-LockoutPolicy { $lockOk }
+    function Get-CompanionDomainCredsDisabled { if ($script:opt.ContainsKey('lsa')) { $script:opt.lsa } else { 0 } }
+    function Register-CompanionFallbackTask { [void]$script:sc.log.Add('fallback-task') }
+    function Remove-CompanionFallbackTask { [void]$script:sc.log.Add('fallback-task-removed') }
+    function Stop-CompanionTask { [void]$script:sc.log.Add('stop') }
+    function Get-CompanionProcessTree { [ordered]@{ supervisors = @(); children = @() } }
+    function Wait-CompanionTaskNotRunning { }
+    function Invoke-CompanionFallback { [void]$script:sc.log.Add('fallback'); [ordered]@{ fellBack = $true } }
+    function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback'); [ordered]@{ fellBack = $true } }
+    function Get-WslRegistrations { if ($script:sc.keyPresent) { @([ordered]@{ guid = '{g1}'; name = 'CluedResident-Linux'; basePath = $script:sc.sourceDir; defaultUid = 1000; values = [ordered]@{ DistributionName = 'CluedResident-Linux'; BasePath = $script:sc.sourceDir; DefaultUid = 1000; VhdFileName = 'ext4.vhdx' } }) } else { @() } }
+    function Export-CompanionLxssKey([string]$guid, [string]$file) { [void]$script:sc.log.Add('export:' + $guid); [IO.File]::WriteAllText($file, 'REGEDIT4') }
+    function Remove-CompanionLxssKey([string]$guid) { [void]$script:sc.log.Add('remove-key:' + $guid); $script:sc.keyPresent = $false; if ($script:opt.ContainsKey('throwAfterKeyRemoved')) { throw 'BOOM_AFTER_KEY' } }
+    function Get-CompanionLxssDefault { $script:sc.default }
+    function Remove-CompanionLxssDefault { [void]$script:sc.log.Add('remove-default'); $script:sc.default = $null }
+    function Import-CompanionLxssKey([string]$file) { [void]$script:sc.log.Add('import-key'); $script:sc.keyPresent = $true }
+    function Invoke-CompanionWslTerminate { [void]$script:sc.log.Add('terminate') }
+    function Test-CompanionSameVolume { if ($script:opt.ContainsKey('sameVolume')) { $script:opt.sameVolume } else { $false } }
+    function Get-CompanionDirSddl([string]$path) { if ($script:opt.ContainsKey('unsafeParent') -and $path -like ('*' + $script:opt.unsafeParent)) { 'O:S-1-5-21-9-9-9-1013G:SYD:(A;;FA;;;S-1-5-21-9-9-9-1013)' } else { 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)' } }
+    function New-CompanionProtectedDirectory([string]$path, [string]$sddl) { [void][IO.Directory]::CreateDirectory($path); [void]$script:sc.log.Add('mkdir:' + (Split-Path -Leaf $path)) }
+    function Set-CompanionVhdxAcl { [void]$script:sc.log.Add('vhdx-acl') }
+    function Get-CompanionFileSha256Unbuffered([string]$path) { if ($script:opt.ContainsKey('badHash')) { 'f' * 64 } else { Get-CompanionFileSha256 $path } }
+    function Invoke-CompanionRegistrar($root, [string[]]$arguments, $exe) { [void]$script:sc.log.Add('registrar:' + ($arguments -join ' ')); '{"code":"' + $(if ($script:opt.ContainsKey('registrar')) { $script:opt.registrar } else { 'REGISTERED' }) + '"}' }
+    function Invoke-CompanionWslImportTask { [void]$script:sc.log.Add('import-task'); if ($script:opt.ContainsKey('import')) { $script:opt.import } else { 0L } }
+    function Start-CompanionTask { [void]$script:sc.log.Add('run') }
+    function Wait-CompanionQualified { if ($script:opt.ContainsKey('qualify')) { $script:opt.qualify } else { $null } }
+    function Get-CompanionTaskFacts { [ordered]@{ mode = 'password'; problems = @() } }
+    Invoke-CompanionAccountSwitch $rootR $nodeR $vhdxDir 'account'
+  }
+}
+
+R1 'B1-source-v2-acl-runs-as-the-operator' {
+  # the install's own step body, run with a fake migrate-acl.ps1 that refuses (as Source v2 line 49 does) unless -OwnerSid is the caller
+  $tokens = $null; $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $here 'install-resident.ps1'), [ref]$tokens, [ref]$errors)
+  $step = $ast.FindAll({ param($a) $a -is [Management.Automation.Language.CommandAst] -and $a.CommandElements.Count -eq 3 -and [string]$a.CommandElements[0] -ceq 'Step' -and [string]$a.CommandElements[1] -ceq "'source-v2-acl'" }, $true) | Select-Object -First 1
+  if ($null -eq $step) { throw 'STEP_NOT_FOUND' }
+  $body = $step.CommandElements[2].ScriptBlock.GetScriptBlock()
+  $Root = Join-Path $Scratch 'b1-root'; $plan = [pscustomobject]@{ ciSourceManifestSha256 = ('d' * 64); residentSid = 'S-1-5-80-1-2-3-4-5' }
+  $toolDir = Join-Path $Root ('source\' + ('d' * 64) + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2'); [void][IO.Directory]::CreateDirectory($toolDir)
+  [IO.File]::WriteAllText((Join-Path $toolDir 'migrate-acl.ps1'), "param([switch]`$Apply, [string]`$ResidentSid, [string]`$OwnerSid, [string]`$ControllerSid)`nif (`$OwnerSid -cne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { 'ELEVATED_OWNER_REQUIRED'; exit 1 }`n'{`"code`":`"FAKE_MIGRATE_OK`"}'")
+  $OwnerSid = $acctR; $OperatorSid = $oprR; $ControllerSid = 'S-1-5-21-111-222-333-1007'; $AccountNode = $true
+  $script:receipt = [ordered]@{}
+  & $body
+  if ([string]$script:receipt.sourceV2Acl.code -cne 'FAKE_MIGRATE_OK') { throw 'NOT_RUN_AS_OPERATOR' }
+}
+R1 'M1-parent-acl-rules' {
+  if ($null -ne (Get-CompanionDirAclProblem 'O:SYG:SYD:(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1301bf;;;AU)(A;;FA;;;SY)(A;OICIIO;GA;;;SY)(A;OICIIO;GA;;;BA)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)' $true)) { throw 'D_ROOT_REFUSED' }
+  if ($null -ne (Get-CompanionDirAclProblem 'O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464G:SYD:PAI(A;;LC;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)' $true)) { throw 'C_ROOT_REFUSED' }
+  if ($null -ne (Get-CompanionDirAclProblem $CompanionVhdxParentSddl $false)) { throw 'OWN_PARENT_REFUSED' }
+  if ((Get-CompanionDirAclProblem 'O:S-1-5-21-9-9-9-1013G:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' $false) -cne 'owner') { throw 'USER_OWNER_ACCEPTED' }
+  foreach ($mask in @('0x10000', '0x40', '0x40000', '0x80000', 'GA')) {
+    if ((Get-CompanionDirAclProblem ('O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;' + $mask + ';;;AU)') $false) -notlike 'ace:*') { throw ('DANGEROUS_ACE_ACCEPTED:' + $mask) }
+  }
+  if ((Get-CompanionDirAclProblem 'O:SYG:SYD:(A;;0x40;;;AU)(A;;FA;;;SY)' $true) -notlike 'ace:*') { throw 'ROOT_DELETE_CHILD_ACCEPTED' }
+  if ($null -ne (Get-CompanionDirAclProblem 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;GA;;;CO)(A;OICI;0x1200a9;;;BU)' $false)) { throw 'INHERIT_ONLY_COUNTED' }
+}
+R1 'M1-existing-unsafe-parent-refused-before-anything' {
+  $sc = New-R1Scenario 'm1'; [void][IO.Directory]::CreateDirectory((Join-Path $sc.base 'd\clued-resident'))
+  $r = Invoke-R1Switch $sc @{ unsafeParent = 'd\clued-resident' } $sc.targetDir
+  if ($r.failed -cne 'COMPANION_WSL_MOVE_FAILED:WSL_TARGET_PARENT_UNSAFE') { throw ('got:' + $r.failed) }
+  if (-not (Test-Path -LiteralPath $sc.source) -or @($sc.log) -contains 'remove-key:{g1}') { throw 'SOURCE_OR_KEY_TOUCHED' }
+}
+R1 'M3-copy-fault-leaves-no-partial-and-rerun-copies' {
+  $sc = New-R1Scenario 'm3' 9437185
+  $partial = Join-Path $sc.base 'p\ext4.vhdx.partial'; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $partial))
+  $threw = try { $null = Copy-CompanionFileVerified $sc.source $partial { param($done) if ($done -gt 0) { throw 'DISK_GONE' } }; $false } catch { $_.Exception.Message -like '*DISK_GONE*' }
+  if (-not $threw -or (Test-Path -LiteralPath $partial) -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha) { throw 'PARTIAL_LEFT_OR_SOURCE_CHANGED' }
+  # a partial left by a cut-off earlier run does not block the move
+  [void][IO.Directory]::CreateDirectory($sc.targetDir); [IO.File]::WriteAllText((Join-Path $sc.targetDir 'ext4.vhdx.partial'), 'stale')
+  $rec = & { function Get-WslRegistrations { @([ordered]@{ guid = '{g1}'; name = 'CluedResident-Linux'; basePath = $sc.sourceDir; values = [ordered]@{ DefaultUid = 0 } }) }
+    function Export-CompanionLxssKey($g, $f) { [IO.File]::WriteAllText($f, 'x') }; function Invoke-CompanionWslTerminate { }; function Test-CompanionSameVolume { $false }
+    function Get-CompanionDirSddl { $CompanionVhdxParentSddl.Replace('O:BAG:BAD:', 'O:BAG:SYD:') }; function New-CompanionProtectedDirectory($p, $s) { [void][IO.Directory]::CreateDirectory($p) }
+    function Set-CompanionVhdxAcl { }; function Get-CompanionFileSha256Unbuffered($p) { Get-CompanionFileSha256 $p }
+    Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc.targetDir $acctR }
+  if ((Get-CompanionFileSha256 (Join-Path $sc.targetDir 'ext4.vhdx')) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx.partial')) -or (Test-Path -LiteralPath $sc.source) -or $rec.stage -cne 'moved') { throw 'RERUN_DID_NOT_MOVE' }
+}
+R1 'M3-hash-mismatch-deletes-the-partial-keeps-the-source' {
+  $sc = New-R1Scenario 'm3b'
+  $r = Invoke-R1Switch $sc @{ badHash = $true } $sc.targetDir
+  if ($r.failed -cne 'COMPANION_WSL_MOVE_FAILED:WSL_COPY_HASH_MISMATCH' -or -not (Test-Path -LiteralPath $sc.source) -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx.partial'))) { throw ('got:' + $r.failed) }
+  if (@($sc.log) -contains 'remove-key:{g1}') { throw 'KEY_REMOVED' }
+}
+R1 'M4-record-and-export-before-registrar-key-only-after-import' {
+  $sc = New-R1Scenario 'm4'
+  $r = Invoke-R1Switch $sc @{} $sc.targetDir
+  $log = @($sc.log)
+  $iExport = [array]::IndexOf($log, 'export:{g1}'); $iReg = [array]::IndexOf(@($log | ForEach-Object { $_ -replace '^registrar:.*$', 'registrar' }), 'registrar'); $iImp = [array]::IndexOf($log, 'import-task'); $iKey = [array]::IndexOf($log, 'remove-key:{g1}')
+  if (-not $r.qualified -or $iExport -lt 0 -or $iExport -gt $iReg -or $iImp -lt 0 -or $iKey -lt $iImp) { throw ('order:' + ($log -join ',')) }
+  $rec = Read-CompanionWslRecord $rootR
+  if ($rec.stage -cne 'qualified' -or -not (Test-Path -LiteralPath ([string]$rec.ownerExport)) -or [string]$rec.ownerRegistration.values.VhdFileName -cne 'ext4.vhdx' -or [int64]$rec.ownerRegistration.values.DefaultUid -ne 1000) { throw 'RECORD_INCOMPLETE' }
+  if (@($log | Where-Object { $_ -like 'registrar:register-account * CluedResident-Linux *ext4.vhdx 1000' }).Count -ne 1) { throw 'DEFAULT_UID_NOT_PASSED' }
+  if (-not ($log -contains 'remove-default')) { throw 'DEFAULT_NOT_CLEARED' }
+}
+R1 'M4-registrar-failure-after-move-keeps-the-owner-key-and-resumes' {
+  $sc = New-R1Scenario 'm4b'
+  $r = Invoke-R1Switch $sc @{ registrar = 'REGISTER_FAILED' } $sc.targetDir
+  if ($r.failed -cne 'REGISTER_FAILED' -or @($sc.log) -contains 'remove-key:{g1}' -or -not (@($sc.log) -contains 'fallback')) { throw ('got:' + $r.failed) }
+  $rec = Read-CompanionWslRecord $rootR
+  if ($rec.stage -cne 'moved' -or [bool]$rec.imported) { throw 'RECORD_NOT_MOVED' }
+  # resume from the record alone (no -WslVhdxDirectory): no second copy, import, then the key
+  $sc.log.Clear()
+  $r = Invoke-R1Switch $sc @{} ''
+  if (-not $r.qualified -or @($sc.log) -contains 'terminate' -or -not (@($sc.log) -contains 'import-task') -or -not (@($sc.log) -contains 'remove-key:{g1}')) { throw ('resume:' + $r.failed + ':' + (@($sc.log) -join ',')) }
+}
+R1 'M4-m1-import-failure-reported-key-kept' {
+  $sc = New-R1Scenario 'm4c'
+  $r = Invoke-R1Switch $sc @{ import = 3L } $sc.targetDir
+  if ($r.failed -cne 'WSL_IMPORT_FAILED:3' -or @($sc.log) -contains 'remove-key:{g1}' -or -not (@($sc.log) -contains 'fallback')) { throw ('got:' + $r.failed) }
+  if ((Read-CompanionWslRecord $rootR).stage -cne 'moved') { throw 'STAGE' }
+  $r = Invoke-R1Switch $sc @{ import = 'timeout' } ''
+  if ($r.failed -cne 'WSL_IMPORT_FAILED:timeout') { throw ('timeout:' + $r.failed) }
+}
+R1 'M4-exception-after-key-removed-resumes' {
+  $sc = New-R1Scenario 'm4d'
+  $r = Invoke-R1Switch $sc @{ throwAfterKeyRemoved = $true } $sc.targetDir
+  if (-not $r.failed -or $r.qualified) { throw 'NOT_FAILED' }
+  $rec = Read-CompanionWslRecord $rootR
+  if (-not (Test-Path -LiteralPath ([string]$rec.ownerExport)) -or $rec.stage -cne 'imported') { throw ('RECORD:' + $rec.stage) }
+  $sc.log.Clear()
+  $r = Invoke-R1Switch $sc @{} ''
+  if (-not $r.qualified -or @($sc.log) -contains 'import-task') { throw ('resume:' + $r.failed + ':' + (@($sc.log) -join ',')) }
+}
+R1 'M4-restore-moves-back-and-reimports-the-key' {
+  $sc = New-R1Scenario 'm4e'
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  $script:sc = $sc
+  $res = & {
+    function Get-WslRegistrations { @() }; function Import-CompanionLxssKey($f) { [void]$script:sc.log.Add('import-key') }; function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback') }
+    function Test-CompanionSameVolume { $false }; function Get-CompanionFileSha256Unbuffered($p) { Get-CompanionFileSha256 $p }; function Set-CompanionOwnerFileAcl { }
+    Invoke-CompanionWslRestore $rootR $nodeR }
+  if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or -not (@($sc.log) -contains 'import-key')) { throw ('restore:' + $res.failed) }
+}
+R1 'm2-preflight-domain-creds-and-lockout-before-the-move' {
+  $p = Get-CompanionAccountPreflight $rootR $nodeR $factsR 'D:\clued-resident\wsl\CluedResident-Linux' 1 ([ordered]@{ threshold = 3; durationMinutes = 10; windowMinutes = 30 })
+  if (-not (@($p.refusals) -ccontains 'COMPANION_HEADLESS_DOMAIN_CREDS_DISABLED') -or -not (@($p.refusals) -ccontains 'COMPANION_LOCKOUT_MARGIN_INSUFFICIENT')) { throw (@($p.refusals) -join ',') }
+  $sc = New-R1Scenario 'm2'
+  $r = Invoke-R1Switch $sc @{ lsa = 1 } $sc.targetDir
+  if ($r.failed -cne 'PREFLIGHT' -or @($sc.log) -contains 'terminate' -or @($sc.log) -contains 'export:{g1}') { throw 'MOVED_DESPITE_PREFLIGHT' }
+}
+R1 'm3-unbuffered-rehash-through-the-registrar' {
+  $f = Join-Path $Scratch 'r1-hash.bin'; $b = New-Object byte[] 5000001; (New-Object Random 3).NextBytes($b); [IO.File]::WriteAllBytes($f, $b)
+  $script:CompanionRegistrarExe = Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'
+  if ((Get-CompanionFileSha256Unbuffered $f) -cne (Get-CompanionFileSha256 $f)) { throw 'HASH_DIFFERS' }
+  if (-not ([IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))).Contains('0x20000000')) { throw 'NO_FILE_FLAG_NO_BUFFERING' }
+}
+R1 'm5-hardening-in-preflight-and-verify' {
+  $f2 = $factsR.PSObject.Copy(); $f2.hardening = @('PASSWORD_EXPIRES', 'NOT_HIDDEN')
+  $p = Get-CompanionAccountPreflight $rootR $nodeR $f2 'D:\clued-resident\wsl\CluedResident-Linux' 0 $lockOk
+  if (-not (@($p.refusals) -ccontains 'COMPANION_ACCOUNT_NOT_HARDENED:PASSWORD_EXPIRES,NOT_HIDDEN')) { throw (@($p.refusals) -join ',') }
+  $recH = [pscustomobject]@{ contract = 'clued.independent-ci.companion-account/1'; companionSid = $acctR; operatorSid = $oprR }
+  $inc = "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;$acctR)"
+  if ((Get-CompanionAccountProblem $nodeR $recH ([pscustomobject]@{ Enabled = $true }) @($oprR) $profR $inc @('GROUPS_NOT_USERS_ONLY')) -cne 'ACCOUNT_NOT_HARDENED:GROUPS_NOT_USERS_ONLY') { throw 'VERIFY_HARDENING' }
+  if (-not (Test-Path -LiteralPath (Join-Path $here 'remove-companion-account.ps1'))) { throw 'NO_ROLLBACK_SCRIPT' }
+}
+R1 'm6-administrators-read-without-throwing' {
+  $recH = [pscustomobject]@{ contract = 'clued.independent-ci.companion-account/1'; companionSid = $acctR; operatorSid = $oprR }
+  $inc = "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;$acctR)"
+  if ((Get-CompanionAccountProblem $nodeR $recH ([pscustomobject]@{ Enabled = $true }) $null $profR $inc @()) -cne 'ADMINISTRATORS_UNREADABLE') { throw 'UNREADABLE_SEEN_AS_ADMIN' }
+  foreach ($file in @('install-resident.ps1', 'verify-resident.ps1', 'companion-headless.ps1')) { if ((& $codeOf $texts[$file]).Contains('Get-LocalGroupMember')) { throw ('GET_LOCALGROUPMEMBER:' + $file) } }
+  if (-not $functions.ContainsKey('install-resident.ps1:Get-AdministratorSids') -or $functions['install-resident.ps1:Get-AdministratorSids'] -cne $functions['companion-headless.ps1:Get-AdministratorSids']) { throw 'NOT_SHARED' }
+}
+R1 'm7-m8-m4-registrar-source' {
+  $cs = [IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))
+  if ($cs.Contains('CoInitializeEx') -or $cs.Contains('CoInitializeSecurity')) { throw 'M7' }
+  if (-not ([regex]::IsMatch($cs, 'IntPtr pFolder = Qi\(folder, IidTaskFolder\);\s*try \{'))) { throw 'M8' }
+  $np = [regex]::Match($cs, '(?s)static IntPtr NewRandomPassword\(\).*?\n  \}').Value
+  if (-not $np.Contains('BCryptGenRandom') -or $np.Contains('new byte[')) { throw 'M4' }
+}
+R1 'm9-system-once-stops-a-running-instance' {
+  $f = $functions['install-resident.ps1:Invoke-AsSystemOnce']
+  if (-not $f.Contains('INSTALL_SYSTEM_ONCE_TIMEOUT') -or $f.IndexOf('.Stop(0)') -lt 0 -or $f.IndexOf('.Stop(0)') -gt $f.LastIndexOf('DeleteTask')) { throw 'M9' }
+}
+R1 'm10-m11-runbook-real-machine-steps' {
+  $rb = [IO.File]::ReadAllText((Join-Path $here '..\rollout\M5-COMPANION-HEADLESS-RUNBOOK.md'))
+  foreach ($k in @('T10', 'T11', 'DefaultUid')) { if (-not $rb.Contains($k)) { throw ('RUNBOOK:' + $k) } }
+}
+R1 'm12-prepare-checks-the-pinned-registrar-hash' {
+  $pr = $texts['prepare-companion-account.ps1']
+  if (-not $pr.Contains('[Parameter(Mandatory)][ValidatePattern(''^[0-9a-f]{64}$'')][string]$RegistrarSha256') -or -not $pr.Contains("throw 'REGISTRAR_SOURCE_NOT_THE_PINNED_ONE'")) { throw 'M12' }
+}
+R1 'M2-registrar-flow-behaviour' {
+  $out = & (Join-Path $Scratch 'registrar-pure.exe') | Out-String
+  if ($out -notmatch 'REGISTRAR_PURE_PASS' -or -not ([IO.File]::ReadAllText((Join-Path $here 'RegistrarPureTests.cs'))).Contains('password-flow-register-fails-parks')) { throw 'NO_FLOW_TESTS' }
+}
+$r1Failed = @($r1.Keys | Where-Object { $r1[$_] -ne 'pass' })
+if ($r1Failed.Count) { $r1 | ConvertTo-Json | Write-Host }
+Yes ($r1Failed.Count -eq 0) ('review-r1:' + ($r1Failed -join ','))
+$n += $r1.Count
+
 [ordered]@{ status = 'COMPANION_HEADLESS_WINDOWS_OFFLINE_PASS'; assertions = $n; supervisorCsharpAssertions = $supervisorCsharp; registrarCsharpAssertions = $registrarCsharp; pinvokeBound = $pinvokeBound; gitconfigNode = $nodeText; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
