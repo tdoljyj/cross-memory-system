@@ -147,8 +147,9 @@ For approximately 16 GB personal hosts:
 WSL memory      6 GB
 WSL processors  3
 WSL swap        2 GB
-capacity suspend: host free memory < 1.5 GB or C: free < 40 GB
-capacity resume:  host free memory >= 2.5 GB and C: free >= 55 GB
+capacity suspend: host free memory < 1.5 GB or runner disk free < 40 GB (after a cleanup first)
+capacity resume:  host free memory >= 2.5 GB and runner disk free >= 55 GB
+C: alert only:    C: free < 40 GB, cleared at >= 55 GB
 watchdog interval 30 s
 ```
 
@@ -160,10 +161,13 @@ For 64 GB-class workstations:
 WSL memory      28 GB
 WSL processors  16
 WSL swap        8 GB
-capacity suspend: host free memory < 6 GB or C: free < 50 GB
-capacity resume:  host free memory >= 10 GB and C: free >= 60 GB
+capacity suspend: host free memory < 6 GB or runner disk free < 15 GB (after a cleanup first)
+capacity resume:  host free memory >= 10 GB and runner disk free >= 20 GB
+C: alert only:    C: free < 15 GB, cleared at >= 20 GB
 watchdog interval 60 s
 ```
+
+The runner disk is the drive that holds the runner distribution's virtual disk (`suspend_runner_disk_free_gb`/`resume_runner_disk_free_gb`); the watchdog finds it at run time from the distribution's WSL registration (`HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, `BasePath`), D: for `CluedCI-Linux` on DESK-W-591. C: (`suspend_c_free_gb`/`resume_c_free_gb`) only raises an alert: what fills it there (the resident CI's distribution, Docker Desktop) is not the watchdog's to stop or clean, and stopping runners whose disk is elsewhere frees nothing on C:. Owner decision 241824b2 (2026-11-08).
 
 Capacity suspension attempts to detect idle Linux runners, but its sampling is not atomic with dispatch or service stop. A newly assigned job can be terminated by `KillMode=control-group`; unreadable listener logs do not prevent suspension. Follow the runbook's restrictions on new deployment and safe draining; do not treat this mechanism as a guarantee that active jobs survive.
 
@@ -308,9 +312,11 @@ The rendered watchdog has the following behavior and limitations:
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - logs when the Windows runner service is not running, but never starts the Windows runner: it runs as a Windows service under the dedicated standard account `clued-runner`, and starting it from the login session would run jobs as the login account;
-- attempts to suspend Linux CI when host memory/disk crosses the profile's danger threshold and idle sampling passes. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. Missing/unreadable listener logs and journal failure do not reliably block suspension; Worker-query failure defers it. Sampling and stopping have a dispatch race, so this is not a safe-draining guarantee. Shared Docker stop affects every container in that distro; see runbook sections 2.2 and 12;
+- attempts to suspend Linux CI when host memory or the runner disk crosses the profile's danger threshold and idle sampling passes. When the runner disk is the reason, it first cleans inside the runner distribution (Owner decision 241824b2): `docker image prune --all --force` and `docker builder prune --all --force` as the runner account (images no container uses, dangling layers, build cache; never containers or volumes), the `_work/_temp` of every active runner root (only while no `Runner.Worker` runs anywhere in the distribution, without following a linked `_work` or `_temp`), then `fstrim -v /` as root, so the freed blocks can go back to the drive when the virtual disk is sparse (on a non-sparse VHDX the drive's free space does not grow until it is compacted). It stops the runners only when that left the disk below the level; a cleanup in the last 15 minutes counts as tried. Low memory stops them without a cleanup;
+- persists its intent (`C:\clued-ci\state\watchdog-<host>.state.json`), so a restart while held back keeps the runners stopped, and stops runner units systemd started again while held back; creating `C:\clued-ci\state\force-resume` clears the intent. `-DryRun` (own log, state, marker and mutex; every stop, start and cleanup only logged as "would ...") and `-MaxIterations N` are for checking a rendered script before it replaces the installed one;
+- raises a C: alert (an `ALERT C:` line and a desktop notification, again every 30 minutes while it lasts, cleared once) when C: is below its level; it never stops or cleans anything for C:; A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. Missing/unreadable listener logs and journal failure do not reliably block suspension; Worker-query failure defers it. Sampling and stopping have a dispatch race, so this is not a safe-draining guarantee. Shared Docker stop affects every container in that distro; see runbook sections 2.2 and 12;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
-- alerts on every capacity suspend (defect 2102f7e1: the runners once stood still for 86 minutes with only the log to say why): an `ALERT` line in the watchdog log, the marker file `C:\clued-ci\state\capacity-alert.json` (`state`, `since`, `detail`; UTF-8 without a byte order mark; present exactly while the runners are held back, for panels and scripts; a watchdog that starts with the runners running removes a marker an earlier one left) and a desktop notification (registered as the application id "Clued CI watchdog"), repeated every 30 minutes while the hold lasts; the resume removes the marker and notifies once. Setting `CLUED_WATCHDOG_NO_TOAST` leaves out the notification only. A watchdog that is already installed keeps what it was rendered or written with: it has this alert only after it is rendered again and restarted, or the `# BEGIN capacity-alert` block and its three calls are ported into it (the one on DESK-W-591 is a hand-edited newer script, so it has to be ported, see the hand-over note of defect 2102f7e1);
+- alerts on every capacity suspend (defect 2102f7e1: the runners once stood still for 86 minutes with only the log to say why): an `ALERT` line in the watchdog log, the marker file `C:\clued-ci\state\capacity-alert.json` (`state`, `since`, `detail`; UTF-8 without a byte order mark; present exactly while the runners are held back, for panels and scripts; a watchdog that starts with the runners running removes a marker an earlier one left) and a desktop notification (registered as the application id "Clued CI watchdog"), repeated every 30 minutes while the hold lasts; the resume removes the marker and notifies once. Setting `CLUED_WATCHDOG_NO_TOAST` leaves out the notification only. A watchdog that is already installed keeps what it was rendered or written with: it has this behaviour only after it is rendered again and restarted. The renderer now carries what the hand-edited script on DESK-W-591 added (persisted intent, re-assert, force-resume, `-DryRun`, `-MaxIterations`), so that host is redeployed by rendering too; its hourly telemetry CSV is not carried over;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 
 ## Add a Linux slot on an existing host

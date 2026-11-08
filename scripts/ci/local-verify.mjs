@@ -239,7 +239,9 @@ export function freeGb(dir, statfs = fs.statfsSync) {
 }
 
 // The levels of free space on the system drive (GB) at which the CI host's
-// watchdog stops the self-hosted runners (suspend) and starts them again (resume).
+// watchdog raises its C: alert (suspend) and clears it (resume). Since Owner
+// decision 241824b2 the runners stop only for the drive of their own
+// distribution's virtual disk; C: holds the resident CI's, so it stays guarded.
 // Only a machine that is a CI host has any: its entry in
 // scripts/ci/self-hosted/node-profiles.json (by host name) gives the capacity
 // profile's levels, and the watchdog script installed there (its path is in the
@@ -281,7 +283,7 @@ export function systemDriveNotes(home, { env = process.env, platform = process.p
   try {
     const gb = free(drive);
     if (Number.isFinite(resume) && resume > 0 && gb < resume) {
-      notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog stops the self-hosted runners${levels.suspend ? ` below ${levels.suspend} GB` : ''} and starts them again at ${resume} GB; free space there first`);
+      notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog raises its low-space alert${levels.suspend ? ` below ${levels.suspend} GB` : ''} and clears it at ${resume} GB (the resident CI's disk is there); free space there first`);
     }
   } catch { /* the drive cannot be asked: nothing to say */ }
   if (path.win32.parse(home).root.toLowerCase() === drive.toLowerCase()) {
@@ -505,7 +507,7 @@ function processAlive(pid) {
 // removed when it ends; a file whose process is gone is dropped). A run starts
 // when it is first in the queue and the machine has room for one more: free
 // memory, idle CPU and free disk, the system drive counted against the level at
-// which the CI host's watchdog stops the runners. The first run always starts.
+// which the CI host's watchdog clears its C: alert. The first run always starts.
 // A run that has to wait says its position.
 export const RUN_NEEDS = { memGb: 6, cores: 4, dataGb: 3, systemGb: 3 }; // one more run: Windows and Linux side, embedded PostgreSQL, builds
 export const HOST_KEEPS = { memGb: 10, cores: 4, dataGb: 10 }; // what the CI runners and the user keep (the watchdog resumes at 10 GB of memory)
@@ -650,7 +652,7 @@ export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX
   short('cpu', 'CPU', sample.idleCores, needs.cores, keeps.cores, 'idle cores');
   if (sample.dataFreeGb !== null) short('disk', 'disk of the cache', sample.dataFreeGb, needs.dataGb, keeps.dataGb);
   if (sample.systemFreeGb !== null && resume > 0) {
-    short('system-disk', "the system drive (the CI watchdog resumes the runners at its level)", sample.systemFreeGb, needs.systemGb, resume);
+    short('system-disk', "the system drive (the CI watchdog clears its C: alert at its level)", sample.systemFreeGb, needs.systemGb, resume);
   }
   return { ok: lacks.length === 0, lacks };
 }

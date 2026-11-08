@@ -605,8 +605,8 @@ test('a run says when the system drive is below the CI watchdog resume level, or
   const win = { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 60 } };
   const data = 'D:\\clued-dev\\cache';
   const [low] = systemDriveNotes(data, { ...win, free: () => 49.8 });
-  assert.match(low, /^C:\\ has 49\.8 GB free, below 60 GB: .*below 50 GB .*starts them again at 60 GB/);
-  assert.equal(systemDriveNotes(data, { ...win, free: () => 59.9 }).length, 1, 'between the two levels the watchdog is still holding the runners');
+  assert.match(low, /^C:\\ has 49\.8 GB free, below 60 GB: .*alert below 50 GB and clears it at 60 GB/);
+  assert.equal(systemDriveNotes(data, { ...win, free: () => 59.9 }).length, 1, 'between the two levels the watchdog\'s alert still stands');
   assert.deepEqual(systemDriveNotes(data, { ...win, free: () => 60 }), []);
   assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 0 }, free: () => 1 }), [], 'switched off');
   assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: null, free: () => 1 }), [], 'not a CI host: nothing is guarded');
@@ -718,13 +718,13 @@ test('--affected selects exactly what the ci-suites job selects, from the select
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));
@@ -791,7 +791,7 @@ test('--affected: the branch against main, as the pull request lists it, picks t
   const chosen = (head) => chooseSuites(dir, head, main, selection);
   assert.deepEqual(chosen(application).suites, ['clued-cloud'], "main's own commits are not the branch's");
   assert.deepEqual(chosen(application).files, ['apps/clued-cloud/src/a.ts']);
-  assert.deepEqual(chosen(drill).suites, ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'admission-self-tests', 'clued-cloud']);
+  assert.deepEqual(chosen(drill).suites, ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'admission-self-tests', 'clued-cloud']);
   // a rename counts under both names, as the pull request lists it
   assert.deepEqual(chosen(moved).files.filter((file) => file.endsWith('moved.ts')),
     ['apps/clued-cloud/src/moved.ts', 'work/independent-ci-resident-v1/drill/moved.ts']);

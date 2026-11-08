@@ -146,3 +146,39 @@ class History(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HistoryLimitsTest(unittest.TestCase):
+    """DESK 2026-11-08: 29 upgraded generations kept about 300 000 history entries (archive g1-g26), over the old 200 000
+    bound, and the snapshot of them is tens of MB, over the old 4 MB JSON bound; phase A refused HISTORY_TREE_TOO_LARGE."""
+
+    def test_bounds_fit_a_long_upgrade_history(self):
+        self.assertGreaterEqual(h.MAX_ENTRIES, 1000000)
+        self.assertGreaterEqual(h.MAX_SNAPSHOT_BYTES, 128 << 20)
+
+    def test_entry_bound_still_refuses(self):
+        d = tempfile.mkdtemp()
+        try:
+            for i in range(3):
+                Path(d, 'f%d' % i).write_bytes(b'x')
+            old = h.MAX_ENTRIES
+            h.MAX_ENTRIES = 3
+            try:
+                with self.assertRaisesRegex(ValueError, 'HISTORY_TREE_TOO_LARGE'):
+                    h.tree(d)
+            finally:
+                h.MAX_ENTRIES = old
+            self.assertEqual(len(h.tree(d)), 4)
+        finally:
+            shutil.rmtree(d)
+
+    def test_large_snapshot_is_readable_small_json_still_bounded(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = Path(d, 'snap.json')
+            p.write_text(json.dumps({'pad': 'x' * (5 << 20)}), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'HISTORY_JSON_NOT_REGULAR'):
+                h.read_json(str(p))
+            self.assertEqual(len(h.read_json(str(p), h.MAX_SNAPSHOT_BYTES)['pad']), 5 << 20)
+        finally:
+            shutil.rmtree(d)

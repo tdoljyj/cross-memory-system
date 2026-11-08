@@ -66,6 +66,9 @@ export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay
 // Owner's own gh login, for the run queue's supersession and falsification checks. Its answer can only stop a batch or
 // re-queue a commit; it never admits anything (stage 1 does).
 export const PULL_STATES = Object.freeze(['open', 'closed', 'merged']);
+// A pr-head answer's claim trailers (companion.mjs#claimTrailers): data the run queue compares, never authority.
+export const PULL_CLAIMS_MAX = 8;
+export const pullClaimsOk = c => Array.isArray(c) && c.length <= PULL_CLAIMS_MAX && c.every((x, i) => typeof x === 'string' && UUID.test(x) && (i === 0 || c[i - 1] < x));
 // Hosted hints (free-minutes design S20, §7.1): the companion's read-only observation of the GitHub-hosted
 // runs of one PR head, as untrusted scheduling data (clued.independent-ci.hosted-hint/1, <= 2 KB). They are
 // not request kinds: the companion writes them on its own poll, create-only, next to its answers, and the
@@ -138,12 +141,14 @@ export function validateResponse(v, request) {
   check(v.verified === null || typeof v.verified === 'boolean', 'MAILBOX_RESPONSE_VERIFIED_REFUSED');
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
   // parsePull's merge-ref observation is advisory but must survive this boundary.
-  // Keep legacy three-field replies; the sole optional fourth field is a typed
-  // exact SHA, never an open-ended payload or authority to execute anything.
+  // Keep legacy three-field replies; the optional fields are a typed exact SHA and
+  // the body's claim trailers (sorted, unique UUIDs, at most PULL_CLAIMS_MAX: field
+  // defect 2026-11-08, PR #1039), never an open-ended payload or authority to execute anything.
   check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull,
-    ['number', 'state', 'headSha', ...(v.pull && Object.hasOwn(v.pull, 'mergeSha') ? ['mergeSha'] : [])], 'MAILBOX_RESPONSE_PULL_REFUSED'),
+    ['number', 'state', 'headSha', ...['mergeSha', 'claims'].filter(k => v.pull && Object.hasOwn(v.pull, k))], 'MAILBOX_RESPONSE_PULL_REFUSED'),
     v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? '') &&
-    (!Object.hasOwn(v.pull, 'mergeSha') || (typeof v.pull.mergeSha === 'string' && v.pull.mergeSha.length === 40 && HEX40.test(v.pull.mergeSha))))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+    (!Object.hasOwn(v.pull, 'mergeSha') || (typeof v.pull.mergeSha === 'string' && v.pull.mergeSha.length === 40 && HEX40.test(v.pull.mergeSha))) &&
+    (!Object.hasOwn(v.pull, 'claims') || pullClaimsOk(v.pull.claims)))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
     Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');

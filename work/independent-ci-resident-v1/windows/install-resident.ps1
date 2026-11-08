@@ -205,6 +205,28 @@ function Invoke-CompileRecipe([string]$compiler, [string]$fw, [string]$binOut, [
 function Get-SupervisorAction([string]$root) { [ordered]@{ path = (Join-Path $root 'bin\CluedCompanionSupervisor.exe'); arguments = ('"' + $root + '"') } }
 # The task's protection: SYSTEM and Administrators full, the Owner read only (ADR 0022 section 4.1).
 function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$ownerSid)" }
+# The task's DACL as read back is Get-CompanionTaskSddl's, compared as a security descriptor, not as text: protected (P), and the same
+# ACEs in the same order (type, flags, rights, SID; each ACE's binary form). Other control bits (AI, AR) are ignored: 2026-11-08, the
+# 29th DESK reinstall failed verify on companion-task because the Task Scheduler reads a protected DACL back as D:PAI(...) and a
+# D:P(...) cannot be stored at all (flag 0x10 keeps P and adds AI; flag 0 drops P and adds a principal ACE).
+# The frozen upgrade channel's copy of Get-CompanionTaskFacts (upgrade-apply.ps1) still compares the text; there it only notes
+# COMPANION_TASK_NEEDS_OWNER and never blocks an upgrade.
+function Test-CompanionTaskDacl([string]$dacl, [string]$ownerSid) {
+  if (-not $dacl) { return $false }
+  try {
+    $want = [Security.AccessControl.RawSecurityDescriptor]::new((Get-CompanionTaskSddl $ownerSid))
+    $have = [Security.AccessControl.RawSecurityDescriptor]::new($dacl)
+  } catch { return $false }
+  if (([int]$have.ControlFlags -band [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { return $false }
+  $a = $want.DiscretionaryAcl; $b = $have.DiscretionaryAcl
+  if ($null -eq $b -or $b.Count -ne $a.Count) { return $false }
+  for ($i = 0; $i -lt $a.Count; $i++) {
+    $x = [byte[]]::new($a[$i].BinaryLength); $a[$i].GetBinaryForm($x, 0)
+    $y = [byte[]]::new($b[$i].BinaryLength); $b[$i].GetBinaryForm($y, 0)
+    if ([Convert]::ToBase64String($x) -cne [Convert]::ToBase64String($y)) { return $false }
+  }
+  $true
+}
 # The companion child's arguments after node.exe, as the supervisor builds them (CompanionSupervisor.cs CommandLine); the generation
 # records keep this string as companionTaskArguments.
 function Get-CompanionLaunchArguments([string]$root, [string]$residentSha, [string]$configSha) {
@@ -295,7 +317,7 @@ function Get-CompanionTaskFacts([string]$root, [string]$ownerSid) {
   if ($null -eq $act -or [string]$act.Path -cne $ca.path -or [string]$act.Arguments -cne $ca.arguments) { $p += 'action' }
   $sd = try { [string]$task.GetSecurityDescriptor(4) } catch { $null }   # DACL_SECURITY_INFORMATION
   $dacl = if ($sd) { $i = $sd.IndexOf('D:'); if ($i -ge 0) { $sd.Substring($i) } else { $sd } } else { $null }
-  if ($dacl -cne (Get-CompanionTaskSddl $ownerSid)) { $p += 'sddl' }
+  if (-not (Test-CompanionTaskDacl $dacl $ownerSid)) { $p += 'sddl' }
   $sdOwner = try { $o = [string]$task.GetSecurityDescriptor(1); if ($o -match '^O:([A-Z]{2}|S-1-[0-9-]+)') { $Matches[1] } else { $null } } catch { $null }   # OWNER_SECURITY_INFORMATION: a fact
   if ($d.Settings.MultipleInstances -ne 2) { $p += 'multiple-instances' }
   if ([string]$d.Settings.ExecutionTimeLimit -cne 'PT0S') { $p += 'time-limit' }

@@ -41,6 +41,7 @@ def main() -> int:
             "minimum_host_memory_gb", "wsl_memory_gb", "wsl_processors", "wsl_swap_gb",
             "watchdog_interval_seconds", "suspend_free_memory_gb", "resume_free_memory_gb",
             "suspend_c_free_gb", "resume_c_free_gb",
+            "suspend_runner_disk_free_gb", "resume_runner_disk_free_gb",
         )
         missing = [key for key in required if key not in profile]
         if missing:
@@ -52,6 +53,10 @@ def main() -> int:
             fail(errors, f"{name} memory hysteresis is invalid")
         if profile["suspend_c_free_gb"] >= profile["resume_c_free_gb"]:
             fail(errors, f"{name} disk hysteresis is invalid")
+        # Owner decision 241824b2: the runner disk (the drive of the runner distribution's virtual disk)
+        # stops and resumes the runners; C: only alerts.
+        if profile["suspend_runner_disk_free_gb"] >= profile["resume_runner_disk_free_gb"]:
+            fail(errors, f"{name} runner disk hysteresis is invalid")
         if profile["wsl_processors"] <= 0 or profile["watchdog_interval_seconds"] < 15:
             fail(errors, f"{name} processor/watchdog values are invalid")
 
