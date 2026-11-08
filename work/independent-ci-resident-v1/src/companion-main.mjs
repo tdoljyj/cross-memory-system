@@ -30,6 +30,10 @@ import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconc
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
+import { ReceiptChain } from './receipts.mjs';
+import { RetentionNotifier } from './retention-notify.mjs';
+import { pruneArchivedGenerations } from './generation-retention.mjs';
+import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
 
@@ -281,6 +285,12 @@ export async function main(args = process.argv.slice(2)) {
   // The node's name is the pinned node profile's; a status.node that names another node refuses (never a default node).
   check(statusCfg.node === cfg.node.nodeName || statusCfg.node === null, 'COMPANION_NODE_IDENTITY_CHANGED');
   const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  // Read receipts only: never open/seal/append the service's chain from the companion.
+  const retentionNotifier = new RetentionNotifier({ receipts: new ReceiptChain(path.join(values.root, 'state', 'receipts'), Date.now), store, notify,
+    reviewGenerations: async () => {
+      const settings = await readRetentionSettings(path.join(values.root, 'owner', SETTINGS_FILE));
+      return settings.ok ? pruneArchivedGenerations({ root: values.root, settings: settings.settings }) : { code: settings.code };
+    } });
   // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
   // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
   const requestsDir = path.join(values.root, 'requests');
@@ -362,6 +372,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
+        try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
           // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.

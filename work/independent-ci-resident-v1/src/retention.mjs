@@ -16,7 +16,7 @@
 //    a keep list that cannot be read, a redirected spool, a permission error or a directory that changed after planning
 //    deletes nothing more and is written into the receipt.
 //
-// 3. The C: reminder (§35): below 30 GiB free on C: one disk-space-reminder receipt per day. It blocks nothing.
+// 3. Disk reminder: C: / 30 GiB by default; optional Owner settings choose drives/threshold. Receipts feed the companion's normal notification queue.
 //
 // No Linux measurement and no Linux prune without a fresh companion heartbeat (Task 018da927 c): the request would wait
 // for its whole timeout (archive-usage: 3 minutes) and the service loop with it.
@@ -32,11 +32,12 @@ import { CODE, check, fail } from './canonical.mjs';
 export const REMINDER_RECEIPT = 'archive-retention-reminder';
 export const PRUNE_RECEIPT = 'archive-retention-prune';
 export const DISK_RECEIPT = 'disk-space-reminder';
+export const ALERT_RECEIPT = 'archive-retention-alert';
 export const KEEP_CONTRACT = 'clued.independent-ci.archive-retention-keep/1';
 export const KEEP_FILE = 'retention-keep.json';
 const DAY = 86_400_000;
 const GIB = 1024 ** 3;
-// The Owner's numbers (Task 4aedda54). Constants, not policy: the installed policy contract stays as it is (DESIGN §35).
+// Legacy defaults (Task 4aedda54); optional Owner settings do not change the installed policy contract.
 export const RETENTION_RULE = Object.freeze({ classBudgetBytes: 20 * GIB, minKeepPerClass: 10, maxDeletesPerPass: 16 });
 export const DISK_REMINDER_BYTES = 30 * GIB;
 // The archive kinds the archive tools create (src/archive.mjs, resident-v2/archive-windows-spool.ps1, clued-ci-resident-linux);
@@ -144,7 +145,8 @@ export function planRetention({ entries, keep = new Set(), rule = RETENTION_RULE
     // Newest first (modification time, then name); delete from the oldest end while over budget and above the minimum.
     const sorted = [...list].sort((a, b) => (b.mtimeMs - a.mtimeMs) || byName(b, a));
     let total = bytes, remaining = sorted.length;
-    for (let i = sorted.length - 1; i >= 0 && total > rule.classBudgetBytes && remaining > rule.minKeepPerClass; i -= 1) {
+    const classRule = rule.classRules?.[cls] ?? rule;
+    for (let i = sorted.length - 1; i >= 0 && total > classRule.classBudgetBytes && remaining > classRule.minKeepPerClass; i -= 1) {
       deletes.push({ name: sorted[i].name, class: cls, bytes: sorted[i].bytes, mtimeMs: sorted[i].mtimeMs });
       total -= sorted[i].bytes; remaining -= 1; summary.deleteDirectories += 1; summary.deleteBytes += sorted[i].bytes;
     }
@@ -209,8 +211,9 @@ async function realSpool(spool) {
 const refusedPass = (base, code) => ({ ...base, refused: code, classes: null, protected: null, deferred: 0, deleted: [], deletedBytes: 0, stopped: null });
 
 // One pass over one spool: inventory, plan, apply. Returns the facts the receipt carries; deletes nothing when refused.
-export async function pruneSpool({ spool, keep, rule = RETENTION_RULE }) {
-  const base = { rule: { classBudgetBytes: rule.classBudgetBytes, minKeepPerClass: rule.minKeepPerClass, maxDeletesPerPass: rule.maxDeletesPerPass } };
+export async function pruneSpool({ spool, keep, rule = RETENTION_RULE, authorizeDelete = async () => true }) {
+  const base = { rule: { classBudgetBytes: rule.classBudgetBytes, minKeepPerClass: rule.minKeepPerClass, maxDeletesPerPass: rule.maxDeletesPerPass,
+    ...(rule.classRules ? { classRules: rule.classRules } : {}) } };
   if (!keep?.ok) return refusedPass(base, keep?.code ?? 'RETENTION_KEEP_LIST_UNREADABLE');
   const entries = [];
   try {
@@ -221,6 +224,7 @@ export async function pruneSpool({ spool, keep, rule = RETENTION_RULE }) {
   const deleted = [];
   let stopped = null;
   for (const d of plan.deletes) {
+    if (!await authorizeDelete().catch(() => false)) { stopped = { name: d.name, code: 'RETENTION_SETTINGS_CHANGED', partial: false }; break; }
     // Re-checked right before the deletion: still the planned directory, same size and entry count, no link.
     const before = entries.find(e => e.name === d.name);
     const now = await entryFacts(spool, d.name);
@@ -237,10 +241,18 @@ export class RetentionWatch {
   //   companionReady() -> bool (a fresh companion heartbeat; without it nothing is asked of the companion),
   //   idle() -> { ok, reason } (no open batch, no HALT; deletion runs only then),
   //   pruneWindows() -> pruneSpool facts, pruneLinux() -> { ok, prune, usage } | { ok: false, code },
-  //   diskFree() -> { ok, freeBytes } }. The last five are optional; without idle() nothing is deleted.
+  //   diskFree(driveRoot) -> { ok, freeBytes }, readSettings() -> {ok, settings|code} }. Without idle() nothing is deleted.
   constructor(ports) {
     Object.assign(this, ports);
-    this.lastCheck = -Infinity; this.lastReminder = -Infinity; this.lastDisk = -Infinity; this.lastRefusal = new Map();
+    this.lastCheck = -Infinity; this.lastReminder = -Infinity; this.lastDisk = -Infinity; this.lastRefusal = new Map(); this.lastAlert = new Map();
+  }
+
+  async alert(spool, code, now) {
+    const key = `${spool}:${code}`;
+    if (now - (this.lastAlert.get(key) ?? -Infinity) < DAY) return;
+    await this.receipts.append(ALERT_RECEIPT, { spool, code, action: 'owner-review-retention', deletesAnything: false });
+    if (typeof this.notify === 'function') await this.notify(`retention:${key}`, 'Clued：归档保留需要检查', `${spool}: ${code}。请检查归档保留配置；未自动放宽清理条件。`);
+    this.lastAlert.set(key, now);
   }
 
   async ready() {
@@ -251,13 +263,15 @@ export class RetentionWatch {
   // A pass with deletions writes its receipt every time; a pass that was refused or stopped writes one per day per reason.
   async recordPrune(spool, facts, now) {
     const problem = facts.refused ?? facts.stopped?.code ?? Object.values(facts.classes ?? {}).map(c => c.refused).find(Boolean) ?? null;
+    if (problem) await this.alert(spool, problem, now);
+    for (const warning of facts.warnings ?? []) await this.alert(spool, warning, now);
     if (facts.deleted.length === 0 && !problem) return false;
     if (facts.deleted.length === 0) {
       const key = `${spool}:${problem}`;
       if (now - (this.lastRefusal.get(key) ?? -Infinity) < DAY) return false;
-      this.lastRefusal.set(key, now);
     }
     await this.receipts.append(PRUNE_RECEIPT, { spool, ...facts, deletesAnything: facts.deleted.length > 0 });
+    if (problem) this.lastRefusal.set(`${spool}:${problem}`, now);
     return true;
   }
 
@@ -266,7 +280,7 @@ export class RetentionWatch {
     const idle = typeof this.idle === 'function' ? await this.idle().catch(() => ({ ok: false, reason: 'IDLE_UNCONFIRMED' })) : { ok: false, reason: 'NO_IDLE_PORT' };
     if (!idle?.ok) { out.skipped = idle?.reason ?? 'BATCH_OPEN'; return out; }
     if (typeof this.pruneWindows === 'function') {
-      try { out.windows = await this.pruneWindows(); } catch { out.windows = refusedPass({}, 'RETENTION_PASS_UNCONFIRMED'); }
+      try { out.windows = await this.pruneWindows(this.activeSettings ?? {}); } catch { out.windows = refusedPass({}, 'RETENTION_PASS_UNCONFIRMED'); }
       await this.recordPrune('windows', out.windows, now);
     }
     if (typeof this.pruneLinux === 'function' && companion) {
@@ -283,7 +297,10 @@ export class RetentionWatch {
     if (now - this.lastCheck < this.policy.retention.checkEveryMs) return null;
     this.lastCheck = now;
     const companion = await this.ready();
-    const prune = await this.prunePass(companion, now);
+    const settings = typeof this.readSettings === 'function' ? await this.readSettings().catch(() => ({ ok: false, code: 'RETENTION_SETTINGS_UNREADABLE' })) : { ok: true, settings: {} };
+    this.activeSettings = settings.ok ? settings.settings : {};
+    if (!settings.ok) await this.alert('settings', settings.code, now);
+    const prune = settings.ok ? await this.prunePass(companion, now) : { skipped: settings.code, windows: null, linux: null, linuxUsage: null };
     const w = await this.measureWindows();
     // Task 018da927 (c): no heartbeat, no request; the archive-usage request would hold this loop for its 3-minute timeout.
     const l = !companion ? { ok: false, skipped: 'COMPANION_HEARTBEAT_ABSENT' }
@@ -298,15 +315,26 @@ export class RetentionWatch {
     return { reminded: true, ...facts, ...extra };
   }
 
-  // C: below 30 GiB free: one reminder per day; an unreadable drive reminds nothing and blocks nothing.
+  // Defaults to C: below 30 GiB; optional Owner drive list, daily reminders, unreadable disks also alert. Never blocks a batch.
   async checkDisk(now) {
     if (typeof this.diskFree !== 'function') return null;
-    const d = await this.diskFree().catch(() => ({ ok: false }));
-    if (!d?.ok || !Number.isSafeInteger(d.freeBytes) || d.freeBytes < 0) return { ok: false, reminded: false };
-    if (d.freeBytes >= DISK_REMINDER_BYTES || now - this.lastDisk < DAY) return { ok: true, freeBytes: d.freeBytes, reminded: false };
-    this.lastDisk = now;
-    await this.receipts.append(DISK_RECEIPT, { drive: 'C:', freeBytes: d.freeBytes, thresholdBytes: DISK_REMINDER_BYTES, action: 'owner-free-disk-space', blocksAnything: false });
-    return { ok: true, freeBytes: d.freeBytes, reminded: true };
+    const config = this.activeSettings?.disk ?? { drives: ['C:'], thresholdBytes: DISK_REMINDER_BYTES };
+    const results = [];
+    this.lastDrives ??= new Map();
+    for (const drive of config.drives) {
+      const d = await this.diskFree(drive + '\\').catch(() => ({ ok: false }));
+      if (!d?.ok || !Number.isSafeInteger(d.freeBytes) || d.freeBytes < 0) {
+        await this.alert('disk', 'RETENTION_DISK_UNREADABLE', now);
+        results.push({ ok: false, reminded: false }); continue;
+      }
+      const reminded = d.freeBytes < config.thresholdBytes && now - (this.lastDrives.get(drive) ?? -Infinity) >= DAY;
+      if (reminded) {
+        await this.receipts.append(DISK_RECEIPT, { drive, freeBytes: d.freeBytes, thresholdBytes: config.thresholdBytes, action: 'owner-free-disk-space', blocksAnything: false });
+        this.lastDrives.set(drive, now);
+      }
+      results.push({ ok: true, freeBytes: d.freeBytes, reminded });
+    }
+    return results.length === 1 ? results[0] : { drives: results };
   }
 }
 

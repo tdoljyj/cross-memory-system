@@ -20,6 +20,7 @@ import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
 import { KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
+import { SETTINGS_FILE, readRetentionSettings, retentionRule, retentionKeep } from './retention-settings.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
@@ -124,6 +125,7 @@ export async function main(argv = process.argv.slice(2)) {
   });
   const spool = path.join(path.dirname(root), 'formal-spool');
   const retention = new RetentionWatch({ policy, receipts, clock,
+    readSettings: () => readRetentionSettings(path.join(root, 'owner', SETTINGS_FILE)),
     measureWindows: () => measureWindows({ spool, work: path.join(root, 'work'), bundles: path.join(root, 'bundles') }),
     measureLinux: () => companion.archiveUsage(),
     // Task 018da927 (c): nothing is asked of the companion without a fresh heartbeat (the same age the executor requires).
@@ -136,9 +138,20 @@ export async function main(argv = process.argv.slice(2)) {
       if ((await ledger.unarchivedScenes()) > 0) return { ok: false, reason: 'SCENE_UNARCHIVED' };
       return { ok: true };
     },
-    pruneWindows: async () => pruneSpool({ spool, keep: await readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows') }),
+    pruneWindows: async settings => {
+      const original = await readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows');
+      const result = await pruneSpool({ spool, keep: retentionKeep(original, settings), rule: retentionRule(settings, 'windows'),
+        authorizeDelete: async () => {
+          const current = await readRetentionSettings(path.join(root, 'owner', SETTINGS_FILE));
+          const keep = await readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows');
+          return current.ok && JSON.stringify(current.settings) === JSON.stringify(settings) && keep.ok
+            && keep.entries === original.entries && [...keep.names].sort().join('\n') === [...original.names].sort().join('\n');
+        } });
+      if (original.ok && original.entries === 0 && (settings.emptyKeep ?? 'legacy') === 'legacy') result.warnings = ['RETENTION_EMPTY_KEEP_UNCONFIRMED'];
+      return result;
+    },
     pruneLinux: () => companion.archivePrune(),
-    diskFree: () => diskFreeBytes('C:\\') });
+    diskFree: drive => diskFreeBytes(drive) });
   await recordServiceStart({ receipts, root, policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   return serviceLoop({ exec, lock, sleep, once: values.once === true,

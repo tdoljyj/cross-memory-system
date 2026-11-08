@@ -905,6 +905,27 @@
       "content_sha256": "c0ac939bbd508fd28b56ed3c16e08aa92ba9fc4d89fbde576cc200a2917ec6d0"
     },
     {
+      "id": "script.archive-retention",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
+      "root": ".",
+      "files": [
+        "work/independent-ci-resident-v1/src/retention*.mjs",
+        "work/independent-ci-resident-v1/src/generation-retention.mjs",
+        "work/independent-ci-resident-v1/src/service-main.mjs",
+        "work/independent-ci-resident-v1/src/mailbox.mjs",
+        "work/independent-ci-resident-v1/src/companion-main.mjs",
+        "work/independent-ci-resident-v1/linux/bin/clued-ci-resident-linux",
+        "work/independent-ci-resident-v1/tools/retention-generations.mjs",
+        "work/independent-ci-resident-v1/test/retention*.test.mjs",
+        "work/independent-ci-resident-v1/test/test_linux_tool.py",
+        "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
+        "work/independent-ci-resident-v1/docs/adr/0023-retention-settings-and-notifications.md"
+      ],
+      "content_sha256": "93b3f352a5ea30f2dae930d78993d9278bf3eea8ce9ad2c2057352b82f65d0c5"
+    },
+    {
       "id": "script.merge-reconciliation",
       "kind": "script",
       "version": "1.0.23",
