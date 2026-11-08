@@ -40,7 +40,9 @@ test('one initial Source and full concrete Role are registered without inventing
   assert.deepEqual(compile(source.source_yaml,source.workflow_definition,rolesOf(r)),source);
   assert.deepEqual(source.primary_ids,['reconcile']);assert.equal(rolesOf(r).length,1);
   assert.deepEqual(rolesOf(r)[0].definition,source.workflow_definition.jobs.reconcile);
-  assert.equal(Object.keys(pin.implementation_blobs).length,378);
+  assert.equal(Object.keys(pin.implementation_blobs).length,380);
+  for(const name of ['config/clued-mechanical-files.json','scripts/ci/component-version-integration-policy.mjs'])
+    assert.equal(pin.implementation_blobs[name],workflowBlob(fs.readFileSync(new URL('../../'+name,import.meta.url))),name);
   for(const excluded of ['scripts/ci/clued-control-workflow-source.mjs',CONTROL_WORKFLOW_SOURCE_PATH,
     'scripts/ci/clued-merge-reconcile-source.json'])assert.equal(pin.implementation_blobs[excluded],undefined);
   for(const name of ['scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-merge-reconcile-host.mjs',

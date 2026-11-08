@@ -22,7 +22,7 @@ export function sourceClosure(workspace){
     else if(/\.(?:mjs|json|py|ps1|yml|yaml|sh|cmd)$/.test(name)&&name!==SOURCE_FILE)files.push(name);
   }};
   for(const dir of ['scripts/ci','scripts/runner','.github/workflows','.github/actions/ci-temporary-storage'])walk(dir);
-  files.push('config/merge-admission-policy.json','apps/clued-cloud/app/supabase-public-config.ts',
+  files.push('config/merge-admission-policy.json','config/clued-mechanical-files.json','apps/clued-cloud/app/supabase-public-config.ts',
     'apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json');
   return files.sort();
 }

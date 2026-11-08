@@ -40,6 +40,15 @@ test('changed byte/Role, omitted dependency and claimed authority cannot become 
   assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,WORKFLOW_FILE)?raw()+'\n':fs.readFileSync(name,encoding)),/UNQUALIFIED/);
 });
 
+test('mechanical policy bytes are part of the complete reconcile Source and cannot be omitted or substituted',()=>{
+  const policy='config/clued-mechanical-files.json';
+  const manifest=JSON.parse(fs.readFileSync(path.join(root,SOURCE_FILE),'utf8'));
+  assert.equal(manifest.files[policy],hash(fs.readFileSync(path.join(root,policy))));
+  const missing=structuredClone(manifest);delete missing.files[policy];
+  assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,SOURCE_FILE)?JSON.stringify(missing):fs.readFileSync(name,encoding)),/UNQUALIFIED/);
+  assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,policy)?fs.readFileSync(name,'utf8')+'\n':fs.readFileSync(name,encoding)),/UNQUALIFIED/);
+});
+
 test('existing package config has no new dispatch lane; enablement cannot inject Source or routing',()=>{
   assert.deepEqual(validateMergeReconcileConfig(undefined),{enabled:false});
   assert.deepEqual(validateMergeReconcileConfig({enabled:false}),{enabled:false});

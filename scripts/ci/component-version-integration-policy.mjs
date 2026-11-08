@@ -3,7 +3,7 @@
 // literal to it. It never deploys SQL or turns a candidate policy into authority.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const POLICY = 'config/clued-mechanical-files.json';
@@ -118,7 +118,7 @@ export function writeMechanicalPolicy(root) {
   return { changed: p.changed, file: path.relative(root, p.file).split(path.sep).join('/') };
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (import.meta.main) {
   try {
     let root = ROOT, write = false;
     for (let i = 2; i < process.argv.length; i += 1) {
