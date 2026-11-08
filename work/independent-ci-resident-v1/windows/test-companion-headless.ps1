@@ -177,7 +177,7 @@ if (Get-Command $NodeExe -ErrorAction SilentlyContinue) {
   $nodeText = 'checked'
 }
 $login = & $codeOf $texts['companion-gh-login.ps1']
-Yes ($login.Contains("throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW'") -and $login.Contains("throw 'CLIPBOARD_IS_NOT_A_FINE_GRAINED_TOKEN'") -and -not $login.Contains('auth login') -and -not $login.Contains('auth token')) 'gh-login-owner-only-no-shared-keyring'
+Yes ($login.Contains("throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW'") -and $login.Contains("throw 'CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN'") -and -not $login.Contains('auth login') -and -not $login.Contains('auth token')) 'gh-login-owner-only-no-shared-keyring'
 Yes ($login.Contains('[Windows.Forms.Clipboard]::Clear()') -and $login.Contains('ClearHistory()') -and $login.Contains('$token = $null')) 'gh-login-clears-the-clipboard-and-its-history'
 # review MINOR 13: the token is never an argument of a PowerShell function or cmdlet (only of .NET methods)
 Yes (-not ([regex]::IsMatch($login, '(?m)^\s*[A-Z][A-Za-z]+-[A-Za-z]+\b[^\r\n]*\$token\b')) -and -not $login.Contains('Test-FineGrainedToken')) 'gh-login-token-only-in-dotnet-calls'

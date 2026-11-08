@@ -151,7 +151,7 @@ test('M5: the companion refuses an elevated token (high integrity), and an unrea
   await assert.rejects(assertNotElevated(async () => ({ code: 1, stdout: '' })), /COMPANION_TOKEN_UNREADABLE/);
 });
 
-async function ghProfile(t, { token = 'github_pat_' + 'A1'.repeat(20), gitconfig = null } = {}) {
+async function ghProfile(t, { token = 'ghp_' + 'A1'.repeat(18), gitconfig = null } = {}) {
   const profile = path.join(await tempRoot(t), 'Users', 'owner');
   const ghExe = 'C:\\Program Files\\GitHub CLI\\gh.exe';
   await fs.mkdir(companionGhConfigDir(profile), { recursive: true });
@@ -162,7 +162,7 @@ async function ghProfile(t, { token = 'github_pat_' + 'A1'.repeat(20), gitconfig
   return { profile, ghExe, env };
 }
 
-test('M5 (Owner decision): the companion starts only with its own gh login, a fine-grained token; anything else fails closed', async t => {
+test('M5 (Owner decision): the companion starts only with its own gh login, a classic token; anything else fails closed', async t => {
   const ok = await ghProfile(t);
   assert.deepEqual(await assertGhIsolation({ env: ok.env, profileDir: ok.profile, ghExe: ok.ghExe }), { ghConfigDir: ok.env.GH_CONFIG_DIR, homeDir: ok.env.HOME });
   const refused = async (env, code, p = ok) => assert.rejects(assertGhIsolation({ env, profileDir: p.profile, ghExe: p.ghExe }), new RegExp(code));
@@ -170,15 +170,19 @@ test('M5 (Owner decision): the companion starts only with its own gh login, a fi
   await refused({ ...ok.env, GH_CONFIG_DIR: 'C:\\Users\\owner\\AppData\\Roaming\\GitHub CLI' }, 'COMPANION_GH_CONFIG_DIR_REQUIRED');
   await refused({ GH_CONFIG_DIR: ok.env.GH_CONFIG_DIR }, 'COMPANION_GH_HOME_REQUIRED');
   await refused({ ...ok.env, GH_TOKEN: 'x' }, 'COMPANION_GH_ENV_REFUSED');
-  const classic = await ghProfile(t, { token: 'gho_' + 'a'.repeat(36) });
-  await refused(classic.env, 'COMPANION_GH_TOKEN_NOT_FINE_GRAINED', classic);
+  // a fine-grained token cannot read check runs (GitHub offers it no Checks permission); an OAuth token or a short one is not the
+  // Owner's classic token either
+  for (const token of ['github_pat_' + 'A1'.repeat(20), 'gho_' + 'a'.repeat(36), 'ghp_' + 'a'.repeat(35), 'ghp_' + 'a'.repeat(37)]) {
+    const p = await ghProfile(t, { token });
+    await refused(p.env, 'COMPANION_GH_TOKEN_NOT_CLASSIC', p);
+  }
   const other = await ghProfile(t, { gitconfig: '[credential]\n\thelper = manager\n' });
   await refused(other.env, 'COMPANION_GIT_CONFIG_MISMATCH', other);
   const missing = await ghProfile(t);
   await fs.rm(path.join(companionGhConfigDir(missing.profile), 'hosts.yml'));
   await refused(missing.env, 'COMPANION_GH_CONFIG_UNREADABLE', missing);
   assert.equal(hostsFileShape('github.com:\n    user: x\n'), 'COMPANION_GH_TOKEN_NOT_STORED_IN_CONFIG');
-  assert.equal(hostsFileShape('example.com:\n    oauth_token: github_pat_' + 'a'.repeat(30) + '\n'), 'COMPANION_GH_HOST_MISSING');
+  assert.equal(hostsFileShape('example.com:\n    oauth_token: ghp_' + 'a'.repeat(36) + '\n'), 'COMPANION_GH_HOST_MISSING');
   // the git configuration includes the Owner's own file, then resets every helper to gh with this configuration
   const text = companionGitConfig('C:\\Users\\owner', 'C:\\Program Files\\GitHub CLI\\gh.exe');
   assert.equal(text, "[include]\n\tpath = C:/Users/owner/.gitconfig\n[credential]\n\thelper =\n\thelper = !'C:/Program Files/GitHub CLI/gh.exe' auth git-credential\n[credential \"https://github.com\"]\n\thelper =\n\thelper = !'C:/Program Files/GitHub CLI/gh.exe' auth git-credential\n");

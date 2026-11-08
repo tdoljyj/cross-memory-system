@@ -1,12 +1,12 @@
 // The companion's own start-up checks for M5 (ADR 0022 §4.2, §6; Owner decision on the companion's GitHub token):
 //   1. it never runs with an elevated token (COMPANION_ELEVATED_TOKEN_REFUSED): the task might be set to "highest privileges";
 //   2. its gh login is its own (COMPANION_GH_CONFIG_*): GH_CONFIG_DIR and HOME are the dedicated directories the supervisor sets,
-//      the gh hosts file there holds a fine-grained token (insecure storage, so it never overwrites the Owner's keyring entry), and the
+//      the gh hosts file there holds a classic token (insecure storage, so it never overwrites the Owner's keyring entry), and the
 //      git configuration there points git's credential helper at that gh login. Anything else fails closed: the companion does not
 //      start, sends no heartbeat, and the service only defers;
 //   3. it records the facts of its own session for the Owner's read-only probe (windows/probe-companion-headless.ps1): the WSL
 //      instance it sees (boot_id) and whether the distribution's docker.service is active. Best effort, never blocks the start.
-// None of these reads or prints a secret: the hosts file is checked for its shape only (a fine-grained token's prefix), and the
+// None of these reads or prints a secret: the hosts file is checked for its shape only (a classic token's prefix and length), and the
 // value never leaves this function.
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -47,14 +47,16 @@ export function companionGitConfig(profileDir, ghExe) {
     '[credential "https://github.com"]', '\thelper =', `\thelper = ${helper}`, ''].join('\n');
 }
 const sameDir = (a, b) => typeof a === 'string' && typeof b === 'string' && path.normalize(a).replace(/\\+$/, '').toLowerCase() === path.normalize(b).replace(/\\+$/, '').toLowerCase();
-// gh's hosts.yml with insecure storage: a github.com entry with an oauth_token. A fine-grained personal access token starts with
-// github_pat_; the Owner decided the companion uses one, limited to this repository.
+// gh's hosts.yml with insecure storage: a github.com entry with an oauth_token. A classic personal access token starts with ghp_.
+// Owner decision (2026-11-08, superseding the fine-grained token): GitHub gives a fine-grained token no Checks permission, and the
+// companion reads check runs (gh-read-port, node-duty, admission-rerun); the token is a classic one with the repo scope. A
+// fine-grained token is refused here, so the companion fails closed at start rather than on its first check-run read.
 export function hostsFileShape(text) {
   const t = String(text ?? '');
   if (!/^github\.com:\s*$/m.test(t)) return 'COMPANION_GH_HOST_MISSING';
   const m = /^\s+oauth_token:\s*(\S+)\s*$/m.exec(t);
   if (!m) return 'COMPANION_GH_TOKEN_NOT_STORED_IN_CONFIG';
-  if (!/^github_pat_[A-Za-z0-9_]{20,255}$/.test(m[1])) return 'COMPANION_GH_TOKEN_NOT_FINE_GRAINED';
+  if (!/^ghp_[A-Za-z0-9]{36}$/.test(m[1])) return 'COMPANION_GH_TOKEN_NOT_CLASSIC';
   return null;
 }
 async function regularFile(p, max, fsImpl) {

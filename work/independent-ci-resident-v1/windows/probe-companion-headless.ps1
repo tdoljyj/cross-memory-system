@@ -9,7 +9,7 @@
         own docker.service (DESIGN section 9, not Docker Desktop) is active.
     Q2  the background session and the Owner's console reach the SAME instance of the distribution: the same boot_id, and the Owner's
         own `wsl -d <D> -u root` still works while the companion holds it (no "vhdx in use").
-    Q3  the companion's gh login works (since the Owner decision: its own fine-grained token, companion-gh-login.ps1), and git fetches
+    Q3  the companion's gh login works (since the Owner decision: its own classic token, companion-gh-login.ps1), and git fetches
         through it.
     Q4  the companion's token is not elevated.
 

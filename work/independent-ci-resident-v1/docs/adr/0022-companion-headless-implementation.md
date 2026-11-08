@@ -416,7 +416,7 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 5. 原子替换用 `ReplaceFile`（`[IO.File]::Replace`），它保留被替换文件的 ACL；第一次创建用 `MoveFile`。
 6. 代际记录的 `companionTaskArguments` 现在存的是 node.exe 之后的 companion 参数（由 launch 文件推出），回执的 `companionTaskAction` 是 `{ node.exe, 这串参数 }`。
 7. 提权一侧验收里的“Linux 侧事实”取 `upgrade\mailbox\responses\version-facts.json` 在切换开始后被重写过（companion 启动即以 root 跑一次只读工具）。
-8. 令牌直接写进专用目录的 `hosts.yml`，不用 `gh auth login`：gh 的凭据管理器条目按“主机 + 账号”区分，与 `GH_CONFIG_DIR` 无关，同一账号再登录会动到 Owner 和 Agent 共用的那一条。companion 只认 `github_pat_` 开头的令牌，读不到专用配置就不启动。
+8. 令牌直接写进专用目录的 `hosts.yml`，不用 `gh auth login`：gh 的凭据管理器条目按“主机 + 账号”区分，与 `GH_CONFIG_DIR` 无关，同一账号再登录会动到 Owner 和 Agent 共用的那一条。companion 只认 `ghp_` 开头的经典令牌，读不到专用配置就不启动。
 9. 只读探针不能自己开一个密码登录的会话（那要密码），所以后台那一半读 companion 在会话 0 里记下的 `companion-session.json`（boot_id、docker）和 `supervisor.json`（会话号）；切换前显示 `not-yet`。真正的现场核对是切换本身：8 分钟内不通过就自动退回。
 10. 监督进程放开 node.exe 句柄的时机是子进程恢复运行之后；entry 和它导入的模块由 node 之后再读，真正保证它们不被换掉的是逐级核对过的管理员专用目录 ACL。
 
@@ -460,3 +460,7 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 
 1. 切换进程在凭据框开着时被意外结束，回退之后 Owner 才输入密码，会留下没有标记的密码模式。已改：注册小程序在交出密码前核对标记仍在、标记里的 PID 就是它的父进程且启动时刻相同，否则拒绝（`PENDING_MARKER_*`）。
 2. 不提权的 verify 读不到切换进程的启动时刻，进行中的切换会显示成“需要提权运行”。只影响显示，保留。
+
+## 补记（2026-11-08）：令牌改为经典令牌
+
+上线时实测：GitHub 不给细粒度令牌开放 Checks 权限，读 `commits/{sha}/check-runs` 返回 403 “Resource not accessible by personal access token”（仓库里 `scripts/runner/README.md` 的 Task `b979d5a2` 早有记录，本 ADR 设计时漏核）。companion 必须读检查结果（`gh-read-port.mjs`、`node-duty.mjs`、`admission-rerun.mjs`），所以 Owner 决定改用只勾 `repo` 范围的经典令牌（`ghp_`）。范围与 companion 原先共用 Owner 的 gh 登录相同；隔离仍在于它有自己的 gh 配置，不碰 Owner 和 Agent 的凭据。`hostsFileShape` 只接受 `ghp_` 加 36 个字符，细粒度令牌在启动时就被拒绝（`COMPANION_GH_TOKEN_NOT_CLASSIC`），不会等到第一次读检查结果才失败。

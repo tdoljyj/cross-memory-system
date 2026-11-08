@@ -239,7 +239,7 @@ export async function main(args = process.argv.slice(2)) {
   const upgradeRunner = new Runner({ env: { ...process.env }, jobHost });
   await probeJobHost(runner);
   // M5 (ADR 0022 §4.2): never with an elevated token (a task set to "highest privileges" refuses here as in the supervisor), and only
-  // with the companion's own gh login (Owner decision: a fine-grained token in a gh configuration of its own). Either refusal ends the
+  // with the companion's own gh login (Owner decision: a classic token in a gh configuration of its own). Either refusal ends the
   // companion before its first heartbeat, so the service only defers.
   await assertNotElevated((a, o) => runner.run(a, o));
   await assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe });

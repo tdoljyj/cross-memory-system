@@ -35,27 +35,18 @@
 - 建议开启 C: 盘的 BitLocker（防止离线窃取）。不强制。
 - 锁定策略要有余量（verify 会查，DESK 现在是 阈值 10、观察窗口 10 分钟，符合）。
 
-### 1.3 生成 companion 专用的细粒度令牌（在 GitHub 网页上）
+### 1.3 生成 companion 专用的经典令牌（在 GitHub 网页上）
 
-1. 打开 GitHub → 右上角头像 → **Settings** → 左栏最下 **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**。
+> 2026-11-08 Owner 决定改用经典令牌：GitHub 不给细粒度令牌开放 Checks 权限（读检查结果返回 403 “Resource not accessible by personal access token”），而 companion 必须读检查结果（gh-read-port、node-duty、admission-rerun）。细粒度令牌会被 companion 拒绝启动。
+
+1. 打开 https://github.com/settings/tokens/new （Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate new token (classic)）。
 2. 填写：
-   - Token name：`clued-companion-desk`（TURING 用 `clued-companion-turing`）。
+   - Note：`clued-companion-desk`（TURING 用 `clued-companion-turing`）。
    - Expiration：由你决定。到期后 companion 会拒绝启动（失败关闭），照第 4.2 节换新令牌即可。
-   - Resource owner：`tdoljyj`。
-   - Repository access：**Only select repositories** → 只选 `cross-memory-system`。
-3. Repository permissions，**只给下面这些，其余一律保持 No access**：
+   - Select scopes：**只勾 `repo`**（它会自动带上下面几项子权限），其余一律不勾。
+3. 点 **Generate token**。看到以 `ghp_` 开头的令牌后，点复制按钮。**不要关这个页面**，等下一步存好再关。
 
-   | 权限 | 级别 |
-   |---|---|
-   | Metadata | Read-only（自动） |
-   | Contents | Read-only |
-   | Pull requests | Read-only |
-   | Checks | Read-only |
-   | Commit statuses | Read and write |
-   | Actions | Read and write |
-   | Issues | Read and write |
-
-4. 点 **Generate token**。看到以 `github_pat_` 开头的令牌后，点复制按钮。**不要关这个页面**，等下一步存好再关。
+经典令牌能访问你账号下所有仓库（含私有仓库）。这和 companion 现在共用你的 gh 登录时的范围相同；细粒度令牌那种只限一个仓库的隔离，在 GitHub 不支持 Checks 的前提下做不到。
 
 ### 1.4 存入令牌（你自己的 PowerShell 窗口，不提权）
 
@@ -65,7 +56,7 @@
 powershell.exe -NoProfile -File <仓库或安装包>\work\independent-ci-resident-v1\windows\companion-gh-login.ps1 -Login
 ```
 
-- 脚本从剪贴板读令牌，检查格式（必须是 `github_pat_` 开头），写入 companion 自己的配置目录，然后清空剪贴板。
+- 脚本从剪贴板读令牌，检查格式（必须是 `ghp_` 开头、共 40 个字符），写入 companion 自己的配置目录，然后清空剪贴板。
 - 看到的结果：`"status": "COMPANION_GH_LOGIN_STORED"`，以及令牌长度。屏幕上不会出现令牌本身。
 - 存放位置：`%LOCALAPPDATA%\CluedIndependentCI\companion-gh\`。
   - `gh\hosts.yml`：令牌。
@@ -89,11 +80,11 @@ powershell.exe -NoProfile -File <同上路径>\companion-gh-login.ps1 -Check
 应当看到：
 
 - `"status": "COMPANION_GH_LOGIN_READY"`；
-- `folder` 为 `ok`；`token` 为 `github_pat_ (length N)`；`gitconfig` 为 `ok`；
+- `folder` 为 `ok`；`token` 为 `ghp_ (classic, length 40)`；`gitconfig` 为 `ok`；
 - `reads` 下 metadata、pulls、statuses、checks、actions、issues、rules 全是 `0`；`gitLsRemote` 为 `0`；
 - `ownersOwnGhLogin.exit` 为 `0`，说明你自己的 gh 登录没有被动过。
 
-写权限（statuses、actions、issues）无法只读验证。请在 GitHub 令牌页面上再看一眼权限表，和 1.3 的表一致即可。
+写权限无法只读验证。请在 GitHub 令牌页面上再看一眼，scopes 只有 `repo`。
 
 ---
 
@@ -225,7 +216,7 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 1. Decision：接受 ADR 0022 §4.6“新增的秘密”（Windows 密码存进任务计划程序）。
 2. Decision + Grant：M5 整套重装（R 类，冻结的升级通道 `upgrade-apply.ps1` 和 `upgrader/src/machine.mjs` 一起换）。
 3. UAC：运行重装启动器一次；最后一步在安全桌面上输入一次 Windows 密码。
-4. 你本人生成并存入 companion 专用的细粒度令牌（第 1.3–1.5 节）。必须在重装之前做完：companion 没有它就不启动。
+4. 你本人生成并存入 companion 专用的经典令牌（第 1.3–1.5 节）。必须在重装之前做完：companion 没有它就不启动。
 5. 方便时重启一次做 T1。
 
 ## 8. 自动测试覆盖了什么

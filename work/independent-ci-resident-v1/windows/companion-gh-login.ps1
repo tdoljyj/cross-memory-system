@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  The companion's own GitHub login (Owner decision on M5: a fine-grained token limited to this repository). Run by the Owner himself,
+  The companion's own GitHub login (Owner decision on M5, 2026-11-08: a classic token with the repo scope; a fine-grained token
+  cannot read check runs, GitHub offers it no Checks permission). Run by the Owner himself,
   in his own PowerShell window, NOT elevated. The Agent never runs -Login and never sees the token.
 
 .DESCRIPTION
@@ -10,7 +11,7 @@
     %LOCALAPPDATA%\CluedIndependentCI\companion-gh\home   HOME of the companion: home\.gitconfig points git's credential helper at that
                                                           gh configuration (build-bundle.ps1 strips every GIT_* variable, not HOME)
   The supervisor (bin\CluedCompanionSupervisor.exe) sets exactly these two variables for the companion and drops GH_TOKEN and every
-  other GH_* variable; the companion refuses to start unless both are set, hosts.yml holds a fine-grained token (github_pat_...) and
+  other GH_* variable; the companion refuses to start unless both are set, hosts.yml holds a classic token (ghp_...) and
   .gitconfig is exactly the text below (src/companion-session.mjs assertGhIsolation: fail closed).
 
   Why the token is written into hosts.yml (gh's "insecure storage") and not with `gh auth login`: gh keys its credential-store entries by
@@ -22,7 +23,7 @@
   The Agent runs as the Owner and could read it, exactly as it can use the Owner's own gh login today (resident constraint 4fedfc84);
   what changes is that this token can only touch this repository, with the permissions the Owner chose.
 
-    -Login   reads the token from the clipboard (copy it from the GitHub page first), checks its shape (github_pat_...), writes
+    -Login   reads the token from the clipboard (copy it from the GitHub page first), checks its shape (ghp_ and 36 characters), writes
              hosts.yml and home\.gitconfig, and empties the clipboard. Prints no part of the token.
     -Check   read-only: the folder and its ACL, the token's shape (prefix and length only), the .gitconfig text, then with the companion's
              own configuration: gh auth status, the read-only GitHub reads the companion makes, and git ls-remote through the helper;
@@ -101,7 +102,7 @@ if ($Login) {
   # The token: from the clipboard straight into hosts.yml; never printed, never in a variable longer than these lines, and never passed
   # as an argument to a PowerShell function or cmdlet (review MINOR 13: module logging records those), only to .NET methods.
   $token = ([string](Get-Clipboard -Raw)).Trim()
-  if ($token -cnotmatch '^github_pat_[A-Za-z0-9_]{20,255}\z') { $token = $null; throw 'CLIPBOARD_IS_NOT_A_FINE_GRAINED_TOKEN' }
+  if ($token -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { $token = $null; throw 'CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN' }
   $hostsPath = Join-Path $dirs.gh 'hosts.yml'; $hostsTmp = $hostsPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
   [IO.File]::WriteAllText($hostsTmp, ("github.com:`n    oauth_token: " + $token + "`n    git_protocol: https`n"), (New-Object Text.UTF8Encoding($false)))
   if (Test-Path -LiteralPath $hostsPath) { [IO.File]::Replace($hostsTmp, $hostsPath, [NullString]::Value) } else { [IO.File]::Move($hostsTmp, $hostsPath) }
@@ -110,7 +111,7 @@ if ($Login) {
   try { Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Clipboard]::Clear() } catch { Set-Clipboard -Value ' ' }
   $historyCleared = try { [void][Windows.ApplicationModel.DataTransfer.Clipboard, Windows.ApplicationModel.DataTransfer, ContentType = WindowsRuntime]; [Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory() } catch { $false }
   [GC]::Collect()
-  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'fine-grained'; tokenLength = $length; clipboardCleared = $true; clipboardHistoryCleared = [bool]$historyCleared
+  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'classic'; tokenLength = $length; clipboardCleared = $true; clipboardHistoryCleared = [bool]$historyCleared
     next = 'powershell.exe -NoProfile -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
   exit 0
 }
@@ -129,9 +130,9 @@ else {
 $hosts = Join-Path $dirs.gh 'hosts.yml'
 if (Test-Path -LiteralPath $hosts -PathType Leaf) {
   $m = [regex]::Match([IO.File]::ReadAllText($hosts), '(?m)^\s+oauth_token:\s*(\S+)\s*$')
-  $r.token = if (-not $m.Success) { 'none' } elseif ($m.Groups[1].Value -cmatch '^github_pat_[A-Za-z0-9_]{20,255}\z') { 'github_pat_ (length ' + $m.Groups[1].Value.Length + ')' } else { 'not-fine-grained' }
+  $r.token = if (-not $m.Success) { 'none' } elseif ($m.Groups[1].Value -cmatch '^ghp_[A-Za-z0-9]{36}\z') { 'ghp_ (classic, length ' + $m.Groups[1].Value.Length + ')' } else { 'not-classic' }
   $m = $null
-  if ($r.token -notlike 'github_pat_*') { $bad += 'token' }
+  if ($r.token -notlike 'ghp_ *') { $bad += 'token' }
 } else { $r.token = 'missing'; $bad += 'token' }
 $gc = Join-Path $dirs.home '.gitconfig'
 $r.gitconfig = if (-not (Test-Path -LiteralPath $gc -PathType Leaf)) { 'missing' } elseif (([IO.File]::ReadAllText($gc)).Replace("`r`n", "`n") -ceq (Get-CompanionGitConfig $profileDir $GhExe)) { 'ok' } else { 'differs' }
