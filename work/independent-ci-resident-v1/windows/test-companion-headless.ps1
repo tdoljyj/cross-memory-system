@@ -759,4 +759,85 @@ if ($r1Failed.Count) { $r1 | ConvertTo-Json | Write-Host }
 Yes ($r1Failed.Count -eq 0) ('review-r1:' + ($r1Failed -join ','))
 $n += $r1.Count
 
+# 11. M5-b re-review r2 (N1, n2-n7): tests written before the fixes; each reported on its own.
+$r2 = [ordered]@{}
+function R2([string]$id, [scriptblock]$body) { try { $null = & $body; $script:r2[$id] = 'pass' } catch { $script:r2[$id] = 'FAIL: ' + $_.Exception.Message } }
+# A moved scenario: the record says qualified, the vhdx is in the target, the source folder empty.
+function New-R2Moved([string]$name, [string]$stage = 'qualified') {
+  $sc = New-R1Scenario $name
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  if ($stage -cne 'qualified') { $rec = ConvertTo-CompanionOrdered (Read-CompanionWslRecord $rootR); $rec.stage = $stage; Write-CompanionWslRecord $rootR $rec }
+  $sc
+}
+R2 'N1-restore-across-volumes-builds-its-own-hash-tool' {
+  $sc = New-R2Moved 'n1'; $script:sc = $sc; $script:built = 0; $script:removed = 0
+  $res = & {
+    function New-CompanionBuild { $script:built++; [ordered]@{ directory = (Join-Path $Scratch 'r2-build'); generation = ('a' * 64); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'); sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
+    function Remove-CompanionBuild { $script:removed++ }
+    function Get-WslRegistrations { @() }; function Import-CompanionLxssKey($f) { [void]$script:sc.log.Add('import-key') }; function Invoke-CompanionStopAndFallback { }
+    function Test-CompanionSameVolume { $false }; function Set-CompanionOwnerFileAcl { }
+    $script:CompanionRegistrarExe = $null
+    Invoke-CompanionWslRestore $rootR $nodeR }
+  if (-not $res.restored) { throw ('not-restored:' + $res.failed) }
+  if ((Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or $script:built -ne 1 -or $script:removed -ne 1 -or $null -ne $script:CompanionRegistrarExe) { throw 'BUILD_OR_HASH' }
+}
+R2 'n2-runbook-restart-when-the-account-vm-holds-the-vhdx' {
+  $rb = [IO.File]::ReadAllText((Join-Path $here '..\rollout\M5-COMPANION-HEADLESS-RUNBOOK.md'))
+  if (-not $rb.Contains('T13') -or -not $rb.Contains('WSL_VHDX_STILL_IN_USE')) { throw 'RUNBOOK' }
+}
+R2 'n3-restore-refuses-while-a-switch-runs' {
+  $sc = New-R2Moved 'n3'; $script:sc = $sc
+  Write-CompanionPending $rootR 'account' $acctR
+  try {
+    $res = & { function New-CompanionBuild { throw 'SHOULD_NOT_BUILD' }; function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stopped') }; Invoke-CompanionWslRestore $rootR $nodeR }
+    if ($res.restored -or $res.failed -cne 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS' -or @($sc.log) -contains 'stopped' -or -not (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx'))) { throw ('got:' + $res.failed) }
+  } finally { Remove-Item -LiteralPath (Join-Path $rootR $CompanionPendingFile) -Force -ErrorAction SilentlyContinue }
+}
+R2 'n4-copied-stage-resumes-a-cut-between-rename-and-delete' {
+  $sc = New-R1Scenario 'n4'
+  $script:sc = $sc
+  $stubs = { function Get-WslRegistrations { @([ordered]@{ guid = '{g1}'; name = 'CluedResident-Linux'; basePath = $script:sc.sourceDir; values = [ordered]@{ DefaultUid = 0 } }) }
+    function Export-CompanionLxssKey($g, $f) { [IO.File]::WriteAllText($f, 'x') }; function Invoke-CompanionWslTerminate { }; function Test-CompanionSameVolume { $false }
+    function Get-CompanionDirSddl { $CompanionVhdxParentSddl.Replace('O:BAG:BAD:', 'O:BAG:SYD:') }; function New-CompanionProtectedDirectory($p, $s) { [void][IO.Directory]::CreateDirectory($p) }
+    function Set-CompanionVhdxAcl { }; function Get-CompanionFileSha256Unbuffered($p) { Get-CompanionFileSha256 $p } }
+  # the state a cut leaves: both files there, the record at 'copied' with the hashes
+  [void][IO.Directory]::CreateDirectory($sc.targetDir); Copy-Item -LiteralPath $sc.source -Destination (Join-Path $sc.targetDir 'ext4.vhdx')
+  Write-CompanionWslRecord $rootR ([ordered]@{ contract = $CompanionWslContract; distro = 'CluedResident-Linux'; target = (Join-Path $sc.targetDir 'ext4.vhdx'); companionSid = $acctR; stage = 'copied'; imported = $false
+    source = $sc.source; ownerRegistration = [ordered]@{ guid = '{g1}'; values = [ordered]@{ DefaultUid = 0 } }; ownerExport = (Join-Path $rootR 'install\x.reg'); copy = [ordered]@{ sourceSha256 = $sc.sha; targetSha256 = $sc.sha; length = 3145730 } })
+  $rec = & { . $stubs; Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc.targetDir $acctR }
+  if ($rec.stage -cne 'moved' -or (Test-Path -LiteralPath $sc.source) -or (Get-CompanionFileSha256 (Join-Path $sc.targetDir 'ext4.vhdx')) -cne $sc.sha) { throw ('both-files:' + $rec.stage) }
+  # the other cut: the partial is complete, not renamed yet
+  $sc2 = New-R1Scenario 'n4b'; $script:sc = $sc2
+  [void][IO.Directory]::CreateDirectory($sc2.targetDir); Copy-Item -LiteralPath $sc2.source -Destination (Join-Path $sc2.targetDir 'ext4.vhdx.partial')
+  Write-CompanionWslRecord $rootR ([ordered]@{ contract = $CompanionWslContract; distro = 'CluedResident-Linux'; target = (Join-Path $sc2.targetDir 'ext4.vhdx'); companionSid = $acctR; stage = 'copied'; imported = $false
+    source = $sc2.source; ownerRegistration = [ordered]@{ guid = '{g1}'; values = [ordered]@{ DefaultUid = 0 } }; ownerExport = (Join-Path $rootR 'install\x.reg'); copy = [ordered]@{ sourceSha256 = $sc2.sha; targetSha256 = $sc2.sha; length = 3145730 } })
+  $rec = & { . $stubs; Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc2.targetDir $acctR }
+  if ($rec.stage -cne 'moved' -or (Test-Path -LiteralPath $sc2.source) -or (Test-Path -LiteralPath (Join-Path $sc2.targetDir 'ext4.vhdx.partial')) -or (Get-CompanionFileSha256 (Join-Path $sc2.targetDir 'ext4.vhdx')) -cne $sc2.sha) { throw ('partial:' + $rec.stage) }
+  $mv2 = $functions['companion-headless.ps1:Invoke-CompanionWslMove']
+  if ($mv2.IndexOf("'copied'") -lt 0 -or $mv2.IndexOf("'copied'") -gt $mv2.IndexOf('[IO.File]::Move($partial, $target)')) { throw 'COPIED_NOT_RECORDED_BEFORE_THE_RENAME' }
+}
+R2 'n5-hash-tool-gets-a-cleared-environment' {
+  $f = $functions['companion-headless.ps1:Get-CompanionFileSha256Unbuffered']
+  if (-not $f.Contains('$psi.EnvironmentVariables.Clear()')) { throw 'ENV_NOT_CLEARED' }
+}
+R2 'n6-lsa-remove-all-is-one-byte' {
+  if (-not ([IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))).Contains('[MarshalAs(UnmanagedType.U1)] bool all')) { throw 'NOT_U1' }
+}
+R2 'n7-uninstall-refuses-an-unfinished-move' {
+  $u = $texts['uninstall-resident.ps1']
+  if (-not $functions.ContainsKey('uninstall-resident.ps1:Get-CompanionWslUnfinished')) { throw 'NO_FUNCTION' }
+  . ([scriptblock]::Create($functions['uninstall-resident.ps1:Get-CompanionWslUnfinished']))
+  $ur = Join-Path $Scratch 'r2-uninstall'; [void][IO.Directory]::CreateDirectory((Join-Path $ur 'install'))
+  if ($null -ne (Get-CompanionWslUnfinished $ur)) { throw 'NO_RECORD_SEEN_AS_UNFINISHED' }
+  foreach ($st in @('exported', 'copied', 'moved', 'imported', 'forgotten')) { [IO.File]::WriteAllText((Join-Path $ur 'install\companion-wsl.json'), ('{"stage":"' + $st + '"}')); if ((Get-CompanionWslUnfinished $ur) -cne $st) { throw ('NOT_REFUSED:' + $st) } }
+  foreach ($st in @('qualified', 'restored')) { [IO.File]::WriteAllText((Join-Path $ur 'install\companion-wsl.json'), ('{"stage":"' + $st + '"}')); if ($null -ne (Get-CompanionWslUnfinished $ur)) { throw ('REFUSED:' + $st) } }
+  [IO.File]::WriteAllText((Join-Path $ur 'install\companion-wsl.json'), 'not json'); if ((Get-CompanionWslUnfinished $ur) -cne 'unreadable') { throw 'UNREADABLE_ACCEPTED' }
+  $i = $u.IndexOf("throw ('COMPANION_WSL_MOVE_UNFINISHED:'")
+  if ($i -lt 0 -or $i -gt $u.IndexOf('UPGRADER_STILL_RUNNING_NOTHING_REMOVED')) { throw 'NOT_BEFORE_ANY_CHANGE' }
+}
+$r2Failed = @($r2.Keys | Where-Object { $r2[$_] -ne 'pass' })
+if ($r2Failed.Count) { $r2 | ConvertTo-Json | Write-Host }
+Yes ($r2Failed.Count -eq 0) ('review-r2:' + ($r2Failed -join ','))
+$n += $r2.Count
+
 [ordered]@{ status = 'COMPANION_HEADLESS_WINDOWS_OFFLINE_PASS'; assertions = $n; supervisorCsharpAssertions = $supervisorCsharp; registrarCsharpAssertions = $registrarCsharp; pinvokeBound = $pinvokeBound; gitconfigNode = $nodeText; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
