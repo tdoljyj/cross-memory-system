@@ -57,7 +57,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.10"
+__version__ = "1.1.11"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -1532,8 +1532,47 @@ def fetch_live_claims(root: Path, token: str) -> list[dict] | str:
     return [c for c in claims if isinstance(c, dict)] if isinstance(claims, list) else "no claims list returned"
 
 
-def describe(claim: dict) -> str:
+def source_write_set(claim: dict, root: Path | None) -> list[str]:
+    """Display only exclusive source resources; Native remains the authority.
+
+    This never changes the stored claim or waives the live-claim requirement.
+    An unavailable policy is conservative: show every path as before.
+    """
     paths = [p for p in claim.get("write_set") or [] if isinstance(p, str)]
+    if root is None:
+        return paths
+    try:
+        policy = json.loads((root / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
+        if (set(policy) != {"schema", "repository", "context_keys", "mechanical_paths"}
+                or policy["schema"] != 1
+                or not isinstance(policy["repository"], str)
+                or not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", policy["repository"])
+                or not isinstance(policy["context_keys"], list) or not policy["context_keys"]
+                or any(not isinstance(c, str) or not re.fullmatch(r"project:[0-9a-f-]{36}", c)
+                       for c in policy["context_keys"])
+                or not isinstance(policy["mechanical_paths"], list) or not policy["mechanical_paths"]):
+            return paths
+        for item in policy["mechanical_paths"]:
+            if (not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*(?:/\*\*)?", item)
+                    or any(p in (".", "..") for p in item.split("/"))):
+                return paths
+        if claim.get("context_key") not in policy["context_keys"]:
+            return paths
+    except (OSError, ValueError, TypeError):
+        return paths
+
+    prefix = f"repo:{policy['repository']}/"
+    def mechanical(resource: str) -> bool:
+        name = resource[len(prefix):] if resource.startswith(prefix) else resource
+        if ":" in name:
+            return False
+        return any(name == item or (item.endswith("/**") and name.startswith(item[:-2]))
+                   for item in policy["mechanical_paths"])
+    return [p for p in paths if not mechanical(p)]
+
+
+def describe(claim: dict, root: Path | None = None) -> str:
+    paths = source_write_set(claim, root)
     shown = ", ".join(paths[:8]) + (f" (+{len(paths) - 8} more)" if len(paths) > 8 else "")
     holder = claim.get("holder_session_ref") or claim.get("session_id") or "unknown session"
     return (f"- claim {claim.get('claim_id')} on Task {claim.get('task_id')} by {holder}, "
@@ -1547,7 +1586,7 @@ def session_context(payload: dict) -> str:
     local = [c for c in load_claims(root / CLAIM_FILE).values() if is_live(c, now)]
     if local:
         lines.append("Live claims recorded in this checkout:")
-        lines += [describe(c) for c in local[:10]]
+        lines += [describe(c, root) for c in local[:10]]
     token = os.environ.get("CLUED_CONTEXT_READ_TOKEN", "").strip()
     if token:
         live = fetch_live_claims(root, token)
@@ -1555,7 +1594,7 @@ def session_context(payload: dict) -> str:
             lines.append(f"Live claims from BeamingFace are unavailable: {live}. clued_session_resume lists them.")
         elif live:
             lines.append("Live claims in BeamingFace (check these before you start; do not overlap them):")
-            lines += [describe(c) for c in live[:10]]
+            lines += [describe(c, root) for c in live[:10]]
         else:
             lines.append("BeamingFace reports no live claims.")
     else:

@@ -45,6 +45,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkMechanicalPolicy } from './component-version-integration-policy.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(HERE, '../..');
@@ -52,7 +53,7 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 
 export const R9_FIX = 'node scripts/ci/merge-admission-r9-reregister.mjs --write --base <main commit>';
 export const RECONCILE_FIX = 'node scripts/ci/clued-merge-reconcile-source-build.mjs';
-export const COMPONENTS_FIX = `${PYTHON} scripts/clued_components.py bump <component id> <new version>   (then: ${PYTHON} scripts/clued_components.py update; if it says components.ts is stale: node apps/clued-cloud/scripts/generate-agent-contract.mjs)`;
+export const COMPONENTS_FIX = `${PYTHON} scripts/ci/component-version-integration.py --root <clean-candidate> --base <main commit> --expect-head <candidate commit> --write`;
 
 const git = (root, args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 const gitOk = (root, args) => { try { execFileSync('git', args, { cwd: root, stdio: 'ignore' }); return true; } catch { return false; } };
@@ -139,7 +140,7 @@ function checkGenerated(root, g) {
 }
 
 export const SELECTOR_PIN_FIX = 'edit REQUIRED_SELECTOR_SOURCE in scripts/ci/clued-required-applicability.mjs to the blob and sha256 above, then: '
-  + `${PYTHON} scripts/clued_components.py bump script.required-applicability <next version>`;
+  + COMPONENTS_FIX;
 
 // The applicability module pins the exact bytes of the selector it trusts on the base. The module's own export is the
 // pin, the file in this checkout is what it pins.
@@ -158,7 +159,7 @@ async function checkSelectorPin(root) {
     details: [`${pin.path} changed: pinned blob ${pin.blob}, now blob: '${blob}'`, `pinned sha256 ${pin.sha256}, now sha256: '${sha256}'`], fix };
 }
 
-export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id), 'selector-pin'];
+export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id), 'selector-pin', 'mechanical-policy'];
 
 export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], env = process.env, knownMainRefs } = {}) {
   let refs = knownMainRefs;
@@ -171,6 +172,7 @@ export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], en
   if (want('components')) results.push(checkComponents(root, resolved));
   for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g));
   if (want('selector-pin')) results.push(await checkSelectorPin(root));
+  if (want('mechanical-policy')) results.push(checkMechanicalPolicy(root));
   return { base: resolved, results };
 }
 
@@ -190,7 +192,7 @@ export function render({ base, results }) {
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
     if (stale.some((r) => r.id === 'selector-pin')) out.push(`  ${n++}. ${SELECTOR_PIN_FIX}`);
-    if (stale.some((r) => r.id === 'components' && r.details?.some((d) => /\bbump\b/.test(d)))) out.push(`  ${n++}. ${PYTHON} scripts/clued_components.py bump <component id> <new version>   (the id and a higher version are in the message above)`);
+    if (stale.some((r) => r.id === 'components')) out.push(`  ${n++}. ${COMPONENTS_FIX.replace('<main commit>', base ?? '<main commit>')}   (commit generated outputs before testing the final candidate)`);
     for (const g of GENERATED) if (g.id !== 'agent-contract' && stale.some((r) => r.id === g.id)) out.push(`  ${n++}. ${g.fix.replace(CLOUD_DEPS_HINT, '')}`);
     out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,
       `  ${n++}. node apps/clued-cloud/scripts/generate-agent-contract.mjs`,

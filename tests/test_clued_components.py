@@ -31,6 +31,7 @@ class Fixture:
         write(self.dir / "pkg" / "SKILL.md", '---\nname: x\nmetadata:\n  version: "1.0.0"\n---\nbody\n')
         write(self.dir / "pkg" / "references" / "a.md", "a\n")
         write(self.dir / "tool.py", "print(1)\n")
+        write(self.dir / "service.js", "export const service = true;\n")
         manifest = {
             "schema": cc.SCHEMA,
             "components": [
@@ -39,7 +40,7 @@ class Fixture:
                  "version_marker": {"file": "SKILL.md", "pattern": '  version: "{version}"'}},
                 {"id": "tool", "kind": "script", "version": "2", "root": ".", "files": ["tool.py"],
                  "content_sha256": None},
-                {"id": "svc", "kind": "service", "version": "0.1.0"},
+                {"id": "svc", "kind": "service", "version": "0.1.0", "root": ".", "files": ["service.js"]},
             ],
         }
         write(self.dir / cc.MANIFEST, json.dumps(manifest))
@@ -328,6 +329,153 @@ class BaseRefTest(unittest.TestCase):
         write(self.repo.dir / cc.MANIFEST, good)
         problems = cc.check(self.repo.dir, base_ref=base)
         self.assertTrue(any("is not valid JSON" in p for p in problems), problems)
+
+
+class AutomaticIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = Fixture()
+        self.addCleanup(self.repo.close)
+        self.repo.git("init", "-q")
+        self.commit("base")
+        self.base = self.head()
+
+    def head(self):
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def commit(self, message):
+        self.repo.git("add", "-A")
+        self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
+
+    def test_unbumped_source_change_is_planned_and_applied_once(self):
+        write(self.repo.dir / "tool.py", "print(2)\n")
+        self.commit("source without metadata")
+        plan = cc.integration_plan(self.base, self.repo.dir)
+        self.assertEqual({x["id"]: x["target_version"] for x in plan["changes"]}, {"tool": "3"})
+        self.assertEqual(cc.by_id(cc.load_manifest(self.repo.dir))["tool"]["version"], "2")
+        cc.apply_integration(plan, self.repo.dir)
+        self.assertEqual(cc.check(self.repo.dir, self.base), [])
+        first = (self.repo.dir / cc.MANIFEST).read_bytes()
+        cc.apply_integration(cc.integration_plan(self.base, self.repo.dir), self.repo.dir)
+        self.assertEqual((self.repo.dir / cc.MANIFEST).read_bytes(), first)
+
+    def test_two_sources_auto_bump_only_their_own_components(self):
+        write(self.repo.dir / "tool.py", "print(2)\n")
+        write(self.repo.dir / "pkg/references/a.md", "changed\n")
+        self.commit("two independent changes")
+        cc.apply_integration(cc.integration_plan(self.base, self.repo.dir), self.repo.dir)
+        versions = {x["id"]: x["version"] for x in cc.load_manifest(self.repo.dir)["components"]}
+        self.assertEqual(versions, {"pkg": "1.0.1", "tool": "3", "svc": "0.1.0"})
+        self.assertEqual(cc.check(self.repo.dir, self.base), [])
+
+    def test_marker_only_change_does_not_bump_overlapping_component(self):
+        data = cc.load_manifest(self.repo.dir)
+        data["components"].append({"id": "outer", "kind": "script", "version": "4.0.0",
+                                   "root": ".", "files": ["pkg/**/*"]})
+        cc.save_manifest(data, self.repo.dir)
+        cc.update(self.repo.dir)
+        self.commit("outer baseline")
+        baseline = self.head()
+        cc.bump("pkg", "2.0.0", self.repo.dir)
+        self.commit("explicit semantic release")
+        plan = cc.integration_plan(baseline, self.repo.dir)
+        cc.apply_integration(plan, self.repo.dir)
+        current = cc.by_id(cc.load_manifest(self.repo.dir))
+        self.assertEqual(current["pkg"]["version"], "2.0.0")
+        self.assertEqual(current["outer"]["version"], "4.0.0")
+
+    def test_mechanical_only_change_does_not_raise_source_version(self):
+        policy = {"schema": 1, "repository": "tdoljyj/cross-memory-system",
+                  "context_keys": ["project:0597aa60-9b98-4da6-a4ab-63d7705b632f"],
+                  "mechanical_paths": ["config/clued-components.json",
+                  "apps/clued-cloud/worker/generated/**", "scripts/ci/clued-merge-reconcile.mjs",
+                  "scripts/ci/clued-merge-reconcile-source.json", "scripts/ci/clued-independent-publication-port.mjs"]}
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(policy))
+        write(self.repo.dir / "apps/clued-cloud/worker/generated/example.ts", "old\n")
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["tool"]["files"].append("apps/clued-cloud/worker/generated/**")
+        cc.save_manifest(data, self.repo.dir)
+        cc.update(self.repo.dir)
+        self.commit("mechanical baseline")
+        baseline = self.head()
+        write(self.repo.dir / "apps/clued-cloud/worker/generated/example.ts", "new\n")
+        self.commit("generated only")
+        self.assertEqual(cc.integration_plan(baseline, self.repo.dir)["changes"], [])
+        cc.apply_integration(cc.integration_plan(baseline, self.repo.dir), self.repo.dir)
+        self.assertEqual(cc.check(self.repo.dir, baseline), [])
+
+    def test_service_auto_bump_uses_explicit_coverage_not_a_name_heuristic(self):
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["svc"].update({"root": ".", "files": ["tool.py"]})
+        cc.save_manifest(data, self.repo.dir)
+        cc.update(self.repo.dir)
+        self.commit("explicit service coverage")
+        baseline = self.head()
+        write(self.repo.dir / "tool.py", "print(2)\n")
+        self.commit("backend change")
+        plan = cc.integration_plan(baseline, self.repo.dir)
+        self.assertEqual({row["id"]: row["target_version"] for row in plan["changes"]},
+                         {"tool": "3", "svc": "0.1.1"})
+
+    def test_service_without_explicit_source_coverage_is_not_silently_skipped(self):
+        data = cc.load_manifest(self.repo.dir)
+        service = cc.by_id(data)["svc"]
+        service.pop("root")
+        service.pop("files")
+        cc.save_manifest(data, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "svc: service has no explicit source coverage"):
+            cc.integration_plan(self.base, self.repo.dir)
+
+    def test_mechanical_version_marker_does_not_hide_executable_body_change(self):
+        policy = {"schema": 1, "repository": "tdoljyj/cross-memory-system",
+                  "context_keys": ["project:0597aa60-9b98-4da6-a4ab-63d7705b632f"],
+                  "mechanical_paths": ["scripts/ci/clued-merge-reconcile.mjs"]}
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(policy))
+        source = "scripts/ci/clued-merge-reconcile.mjs"
+        write(self.repo.dir / source, "export const COMPONENT_VERSION='2';\nexport const decision = false;\n")
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["tool"].update({"files": [source], "version_marker": {
+            "file": source, "pattern": "export const COMPONENT_VERSION='{version}';"}})
+        cc.save_manifest(data, self.repo.dir)
+        cc.update(self.repo.dir)
+        self.commit("mechanical marker baseline")
+        baseline = self.head()
+        write(self.repo.dir / source, "export const COMPONENT_VERSION='2';\nexport const decision = true;\n")
+        self.commit("executable body change")
+        self.assertEqual(cc.integration_plan(baseline, self.repo.dir)["changes"][0]["target_version"], "3")
+
+    def test_deleted_source_and_new_coverage_are_changes(self):
+        (self.repo.dir / "pkg/references/a.md").unlink()
+        self.commit("remove source")
+        self.assertEqual(cc.integration_plan(self.base, self.repo.dir)["changes"][0]["id"], "pkg")
+
+    def test_rename_out_of_component_keeps_the_deleted_source_change(self):
+        self.repo.git("mv", "pkg/references/a.md", "outside.md")
+        self.commit("move outside component")
+        self.assertEqual(cc.integration_plan(self.base, self.repo.dir)["changes"][0]["id"], "pkg")
+
+    def test_rejects_version_rollback_and_stale_expected_head(self):
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["tool"]["version"] = "1"
+        cc.save_manifest(data, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "version went down"):
+            cc.integration_plan(self.base, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "head changed"):
+            cc.integration_plan(self.base, self.repo.dir, expected_head="0" * 40)
+
+    def test_apply_refuses_source_changed_after_plan(self):
+        write(self.repo.dir / "tool.py", "print(2)\n")
+        plan = cc.integration_plan(self.base, self.repo.dir)
+        write(self.repo.dir / "tool.py", "print(3)\n")
+        with self.assertRaisesRegex(ValueError, "changed since integration plan"):
+            cc.apply_integration(plan, self.repo.dir)
+
+    def test_marker_path_cannot_escape_checkout(self):
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["pkg"]["root"] = ".."
+        cc.save_manifest(data, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "unsafe component path"):
+            cc.integration_plan(self.base, self.repo.dir)
 
 
 if __name__ == "__main__":

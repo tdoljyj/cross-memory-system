@@ -46,7 +46,7 @@ export const PINNED_REGISTRY_PATHS = ['scripts/ci/**', 'scripts/runner/**', '.gi
   'config/merge-admission-policy.json', 'apps/clued-cloud/app/supabase-public-config.ts', 'apps/clued-cloud/package.json',
   'apps/clued-cloud/package-lock.json', 'config/clued-components.json', 'scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
   'protocol/agent/agent-contract.md', 'apps/clued-cloud/worker/generated/**', 'apps/clued-cloud/scripts/generate-*.mjs',
-  'apps/clued-cloud/app/imprints/imprint-suggestions.ts', 'apps/clued-cloud/supabase/migrations/*_imprint_auto_domains_v1.sql', 'scripts/build_claude_code_plugin.py'];
+  'apps/clued-cloud/app/imprints/imprint-suggestions.ts', 'apps/clued-cloud/supabase/migrations/*_imprint_auto_domains_v1.sql', 'scripts/build_claude_code_plugin.py', 'config/clued-mechanical-files.json'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {

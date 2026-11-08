@@ -6,12 +6,44 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CHECK_IDS, GENERATED, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
+import { CHECK_IDS, GENERATED, COMPONENTS_FIX, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
 import { PINNED_REGISTRY_PATHS, globToRegExp } from './ci-required-selection.mjs';
 import { SOURCE_FILE, hash, sourceClosure } from './clued-merge-reconcile-source.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.resolve(here, '../..');
 const CLI = path.join(here, 'check-pinned-registries.mjs');
+
+test('component remediation uses the automatic clean-candidate integrator instead of manual version edits', () => {
+  assert.match(COMPONENTS_FIX, /component-version-integration\.py/);
+  assert.match(COMPONENTS_FIX, /--base.*--expect-head.*--write/);
+  assert.doesNotMatch(COMPONENTS_FIX, /clued_components\.py bump/);
+});
+
+test('a change to the mechanical policy always selects pinned registries', () => {
+  assert.ok(PINNED_REGISTRY_PATHS.some(pattern => globToRegExp(pattern).test('config/clued-mechanical-files.json')),
+    'the selector integration must register config/clued-mechanical-files.json');
+});
+
+test('mechanical exemption policy is verified by pinned registries and tampering fails', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-mechanical-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.copyFileSync(path.join(repo, 'config/clued-mechanical-files.json'), path.join(root, 'config/clued-mechanical-files.json'));
+  const sub = 'apps/clued-cloud/supabase/migrations';
+  fs.mkdirSync(path.join(root, sub), { recursive: true });
+  const name = fs.readdirSync(path.join(repo, sub)).filter(n => /_work_claim_mechanical_files_v\d+\.sql$/.test(n)).sort().at(-1);
+  const file = path.join(root, sub, name);
+  fs.copyFileSync(path.join(repo, sub, name), file);
+  const run = () => checkAll({ root, only: ['mechanical-policy'], knownMainRefs: () => [] });
+  let report = await run();
+  assert.equal(report.results.length, 1);
+  assert.equal(report.results[0].status, 'ok');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('config/clued-components.json', 'source/private.ts'));
+  report = await run();
+  assert.equal(report.results[0].status, 'stale');
+  assert.equal(exitCode(report.results, {}), 1);
+  assert.match(render(report), /Native policy literal differs/);
+});
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (dir, message) => { git(dir, 'add', '-A'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', message); };
 const cli = (root, ...args) => spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
@@ -115,6 +147,10 @@ test('changing a pinned file names the stale registries and the commands that fi
     py('update');
     const gen = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stdout + gen.stderr);
+    // A service with explicit Worker coverage also covers the generated version
+    // map. Refresh its raw digest after generation, just as the automatic
+    // integration builder's fixed-point pass does; no extra version is needed.
+    py('update');
     r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
@@ -143,7 +179,7 @@ test('a stale component manifest is reported with its bump and update commands',
     const r = cli(dir, '--base', 'HEAD', '--only', 'components');
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+components\s+\(config\/clued-components\.json\)/);
-    assert.match(r.stdout, /clued_components\.py bump/); assert.match(r.stdout, /clued_components\.py update/);
+    assert.match(r.stdout, /component-version-integration\.py/); assert.match(r.stdout, /clued_components\.py update/);
   } finally { /* the shared copy is reset by the next test */ }
 });
 
@@ -243,7 +279,7 @@ test('changing the selector without re-pinning it in the applicability module is
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+selector-pin\s+\(scripts\/ci\/clued-required-applicability\.mjs\)/);
     assert.match(r.stdout, /now blob: '[0-9a-f]{40}'/); assert.match(r.stdout, /now sha256: '[0-9a-f]{64}'/);
-    assert.match(r.stdout, /clued_components\.py bump script\.required-applicability/);
+    assert.match(r.stdout, /component-version-integration\.py/);
     // The pin the message asks for.
     const bytes = fs.readFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'));
     const blob = execFileSync('git', ['hash-object', '--stdin'], { input: bytes, encoding: 'utf8' }).trim();
