@@ -3118,6 +3118,22 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 需要常驻层 Windows 与 Linux 重装（companion 与服务一起，响应合同 `/4`），trivy 回收需要 Source 重装。删除只发生在上面的条件下；没有新的发布路径，不碰 GitHub、凭据或网络。
 
+### 35.11 保留步骤不挡主循环（缺陷 `8f8240ff`）
+
+2026-11-08 TURING：`archive-prune` 请求 08:19:21Z 发出，服务按 10 分钟期限等满（08:29:21Z 回执 `LINUX_ARCHIVE_PRUNE_UNCONFIRMED`）；companion 那边 wsl.exe 跑满自己的 9 分钟上限，进程树确认不了（`jobTree: unconfirmed`）。随后 `archive-usage` 又等满 3 分钟（08:30:18Z→08:33:18Z，同样 `unconfirmed`），中间 Windows 统计约 1 分钟。这期间 `serviceLoop` 一直在 `await betweenBatches()`，升级程序 08:22:09Z 放进 `requests\` 的暂停请求没人读，10 分钟后 `UPGRADE_PAUSE_UNCONFIRMED`。
+
+改法（只在常驻一侧；升级程序冻结）：
+
+- `serviceLoop` 不再等 `betweenBatches`：它在主循环旁边跑，同时只跑一份；tick、暂停、停止、Owner 请求照常处理。
+- 它在跑时，每个 tick 都带 `betweenBatchesRunning`，`schedule()` 一开头就返回 `DEFERRED / BETWEEN_BATCHES_RUNNING`，不开新批（保持 §35.3“只在批次之间删除”，与以前主循环等它时一样）。这道闸在 `recheckClaims` 之前（独立审核 MAJOR 1）：companion 的邮箱只有一条串行通道，正被 Linux prune 占着，`pr-head`（2 分钟期限）排在后面，几个退避中的认领就能让一个 tick 超过 10 分钟。已在途或停靠的批次本来就让 `idle` 拒绝删除。
+- 它在跑时也不做会起子进程的维护（审核 MAJOR 2）：revocation 维护、角色探测（含升级暂停下的探测）、队列观察、stage 10 都跳过，下一个 tick 再做；暂停、停止、Owner 请求照常。升级重启后的第一轮清理会把 VERIFY 要的角色观测推迟到它结束，最坏约 13 分钟（WSL 挂住），在 VERIFY 的 45 分钟之内。
+- 停止（含升级程序的 StopServices）先放弃它对 companion 的 `archive-prune`/`archive-usage` 等待（按“无应答”记，不发新请求），并给已发出的请求写取消（原因 `service-stopping`，邮箱取消原因新增这一项）；后面的 Windows 统计也不再做。然后最多等 2 分钟（`LEAVE_MAX_MS`）让它收尾再确认停止；已经在进行的 Windows 遍历或删除不会被打断，超过 2 分钟就先确认停止，进程等它做完才退出。批次自己的 companion 请求不受影响。
+- 取消只对还没开始的请求有效（审核 MINOR 3）：companion 在开始一个保留请求之前查取消，已取消的回 `COMPANION_REQUEST_CANCELLED`，不占通道。已经在跑的那一个不会被提前杀掉，wsl.exe 照旧跑到结束或 companion 的上限（prune 9 分钟、usage 2 分钟），这期间串行通道仍被占着。
+- 停服务后 WSL 里的 prune 可能还在跑，或者跑到上限被杀，留下删了一半的归档目录（审核 MINOR 4）。这不会变成错误状态：Linux 工具每轮重新清点、重新计划，半截的目录仍按名字归类、照常计量，迟早照规则删完。不过删除改了它的修改时间，它会先被当成较新的归档留着，等变旧了再删，不一定是下一轮。被杀时没写出的本地回执、没送回的应答，只是少一条记录。
+- 回执链 `append` 在进程内排队，一次一条：保留步骤与 tick 同时写回执不会抢同一个序号。跨进程的并发写本来就不安全（同一序号会冲突或分叉），服务是回执链唯一的写者。
+
+测试：`test/retention-nonblocking.test.mjs`（companion 不应答时暂停 5 秒内锁定，且满足升级程序认定暂停生效的条件：PAUSED 是它的请求、无未关闭批次、`status.current` 为 false、无未结束的 stage 10；停止 5 秒内返回；步骤在跑时不开新批、之后照常；认领复查的 `pr-head` 不会排到挂住的 prune 后面（真实 companion 串行通道）；步骤在跑时不做会起子进程的维护；放弃的请求被取消且 companion 不再开始；停止最多等 `leaveMaxMs`；并发回执链不断；放弃信号只作用于保留请求；service-main 接线）。`test/bridge-observer.test.mjs` 的取消原因清单加上 `service-stopping`。
+
 ## 36. 按风险分档计每日额度（Task `12ada80e`，来自 c0ff5167；Decision `ca70ea31`）
 
 ### 36.1 为什么

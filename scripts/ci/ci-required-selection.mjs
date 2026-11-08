@@ -108,8 +108,10 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'scripts/ci/self-hosted/resource-maintenance', '-p', 'test_*.py'] },
     { cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] },
   ],
-  'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}'] }],
-  'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
+  // The upgrade precheck and rollout tools' own tests (rollout/test) run with the resident's (defect 15894c2a review M1).
+  'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}', '{tests:rollout/test}'] }],
+  'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] },
+    { cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'rollout/test', '-p', 'test_*.py'] }],
   'reinstall-python': [{ cwd: `${RESIDENT}/reinstall`, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
   'offline-drill': [{ cwd: RESIDENT, argv: ['node', 'drill/offline-drill.mjs'] }],
   'source-v2-node': [{ cwd: '.', argv: ['node', '--test', `{tests:${SOURCE_V2}/test}`] }],

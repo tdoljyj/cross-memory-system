@@ -82,6 +82,10 @@
    > - M4 车头批次命中缓存时照样要取的许可（M4 §65.5）。
    >
    > DESIGN 里还没有记下这个冲突，§54 只写了“`NATIVE_SCAN_START_REQUIRED = false`，所以不需要许可”。切换之前要先改 K 的键（例如加上 `test_sha`），或者给重跑定义同一 `execution_id` 的续用规则。这也是本文第 4 节第 2 条的前提。
+   >
+   > **后续（Task dcc53013）：** 迁移 `20261108090000_ci_scan_start_batch_key_v1.sql` 把 K 改成 (repository, head, test_sha, attempt, role)，`native-port.mjs` 发送 `test_sha: job.testSha`、`attempt: job.attempt`；不带这两项的调用方（旧 Source、托管入口）仍得到 S = H、attempt 1，也就是原来的全局 K。上面第 1、2、4 种（普通批次之后的车头批次、attempt 2、车头批次命中缓存）因此各有自己的许可，端到端测试见 `apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs`。第 3 种 §54 同批次原地重跑是同一作业、同一 attempt，仍是同一个 K，还没有解决：切换前仍要给它定义续用规则。
+   >
+   > 独立审核后的补充：Native 核实不了 S（它读不到 Git，随请求来的 base 也只是回显），所以同一 (repository, head, role) 下 S≠H 的不同 S 最多 16 个，超过答 `ci_scan_start_front_batch_limit`。依据：按车头 head（front.headSha）计，main 前进两次 × 一批最多 4 种组成已是 8；接班会重跑车头批次的尝试，搭车 PR 中途变动会清空拆批状态、从全集重新组批，合法历史可以超过 8，所以取两倍 16，正常车头碰不到；一个已准入的 head 每个角色最多 2 + 16×2 = 34 次启动，仍有上限。点名了 S 和 attempt 的独立控制器拿到 `clued.ci-scan-start-grant/2`（带 test_sha 和 attempt，`grant.mjs` 逐项比对）；没点名的调用方（旧 Source、托管入口）仍拿原样 /1——旧 Source 的 `grant.mjs` 只认 /1，给它 /2 只会在 K 已烧之后拒绝启动。迁移前已有的 K 一律记为 S = H、attempt 1（当时也只有这种），继续只烧那个普通首跑批次。**部署说明：这个迁移只能前滚，不能回退到旧主键**——迁移后产生的车头批次和 attempt 2 的 K 在旧键 (repository, head, role) 下无法表示；要改只能再写前滚迁移。顺序：先应用迁移，再装发送 test_sha/attempt、要求 /2 许可的 Source（旧库会拒收新字段，新 Source 也拒收 /1 许可，都是拒绝而不是放行）。迁移必须单事务执行，第一句就拿表的 ACCESS EXCLUSIVE 锁。
 3. **争用与接班让出**：
    - TURING 上只有一套单例：交换槽、Linux 角色锁、单 unit 守卫、formal-spool、companion 邮箱 lane（§45.1），预检要占全部五个。接班可以是 §41.6a 的自动接班（DESK 失联时），也可以是 Owner 的一键移交。接班以后 TURING 最先要做的是接班清扫和第 1 段准入（§41.6），预检得“立即”让出。
    - 但正在跑的 Linux 扫描 unit 不能直接杀：要么等它跑完（典型约 5 分钟，段上限 gitleaks 45、trivy 30、placement 10 分钟，§45.4），要么走 §27 的 `provenCleanEnd` 证明没有发布再归档。后者在 companion 不在或忙的时候，正是 §24.4 拿掉的那类 HALT 来源。对预检来说，“接班时立即让出”不是免费的，每一条退出路径都要像正式批次一样逐条证明。

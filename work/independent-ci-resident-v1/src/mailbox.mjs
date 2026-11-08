@@ -32,7 +32,8 @@ export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heart
 // had not answered yet) and heartbeat-lost (the companion's heartbeat stopped while the stage ran). The companion treats
 // every reason the same way (COMPANION_PUMP_CANCELLED); only the ledger's 80-owner-abort makes an Owner abort.
 export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
-export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost']);
+// 'service-stopping' (defect 8f8240ff): the service stops and gives up a retention request (archive-usage, archive-prune) it still waits for.
+export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost', 'service-stopping']);
 // One pump per relay-stage request (DESIGN §26.5; r3 implementation review MINOR 1): the companion's first pump of a request
 // creates <requestId>.pump.json in responses/ (create-only). A companion restarted while that pump ran finds it and starts no
 // second one: no second issue transfer, no second worker start. pending() and the hint reads never list it.

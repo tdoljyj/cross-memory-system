@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.33",
+      "version": "1.1.36",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -591,7 +591,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "125213ce737d3747707d57da4c9ccb7c67912b80abbf345331218da2b8b9bce4"
+      "content_sha256": "11bba36e5753685e2d9cdac13e0631105ded1f6709072c61afd1ec531e8153aa"
     },
     {
       "id": "script.resource-maintenance",
@@ -668,7 +668,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -679,7 +679,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "087c49678633228011669e9b775c9da91b1941788901bd8d201ad665a043e5eb"
+      "content_sha256": "af1fefff8826b6293a416b17aec3e8c3feced6490f9b87926afff7216e876344"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -856,7 +856,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.17",
+      "version": "1.0.20",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -873,7 +873,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "e6f74fdf270ed3bee403b5f0f4e4a64b7da95060c09a5f1c13737927990a8342"
+      "content_sha256": "202ca0d3c85458d65bc9e64b8d07ab517fccb359538a63342e853d5876ccf3d3"
     }
   ]
 }

@@ -376,6 +376,8 @@ const json = text => { try { return JSON.parse(text); } catch { return null; } }
 
 // pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
 export const PR_HEAD_TIMEOUT_MS = 30_000;
+// The service's retention requests (DESIGN §35.11): the only ones a stopping service cancels ('service-stopping'), before they start.
+const RETENTION_KINDS = new Set(['archive-usage', 'archive-prune']);
 // DESIGN §44 (Tasks 576231fa, 4d3aaa64, 8e1f07d3, the remainder): a wsl.exe call that ran out of time (25-45 s on a loaded host,
 // DESIGN §25) says nothing about the thing it was asked, so a READ-ONLY probe, or an idempotent root-tool action, is asked again
 // a bounded number of times before "no answer" is turned into a failure that HALTs. Never for an action with an effect.
@@ -877,6 +879,12 @@ export class Companion {
     for (const request of await this.mailbox.pending()) {
       if (request.refused) continue; // unreadable requests are left for the service's own audit
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
+      // Defect 8f8240ff: a retention request the stopping service gave up (cancel 'service-stopping') is not started; one already running
+      // runs to its end or its limit (its wsl.exe is not killed early).
+      if (RETENTION_KINDS.has(request.kind) && (await this.mailbox.cancelled(request).catch(() => false))) {
+        await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_CANCELLED' });
+        continue;
+      }
       let answer;
       this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }

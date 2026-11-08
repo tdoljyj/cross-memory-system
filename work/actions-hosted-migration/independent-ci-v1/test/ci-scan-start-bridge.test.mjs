@@ -23,9 +23,9 @@ test('accepted bridge pins must include both the Native gate implementation and 
   }
 });
 const missing = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
-const grant = (job, executionId) => ({ status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true,
+const grant = (job, executionId) => ({ status: 'committed', contract: 'clued.ci-scan-start-grant/2', launch_allowed: true,
   execution_id: executionId, receipt_id: randomUUID(), repository_id: 1334673495, head_sha: job.headSha, role: job.role,
-  provider: 'independent-controller', start_requested_at: new Date().toISOString() });
+  provider: 'independent-controller', start_requested_at: new Date().toISOString(), test_sha: job.testSha, attempt: job.attempt });
 function setup(role = 'trivy') {
   const fx = fixtureRecord({}, { paths: REQUIRED_SOURCE_PATHS }), record = validateRecordV2(fx.docs, { now: Date.now() });
   const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD,
@@ -45,8 +45,13 @@ test('closed grant binds fixed repo/head/role/provider/execution and rejects rep
   for (const patch of [{ status: 'consumed', launch_allowed: false }, { status: 'rejected', launch_allowed: false },
     { execution_id: randomUUID() }, { head_sha: 'f'.repeat(40) }, { role: 'gitleaks' }, { provider: 'github-actions' },
     { repository_id: 1 }, { launch_allowed: 'true' }, { receipt_id: 'invalid' }, { token: 'SECRET' },
-    { start_requested_at: '2026-11-02T00:00:00.000123+00:00' }]) {
+    { start_requested_at: '2026-11-02T00:00:00.000123+00:00' }, { contract: 'clued.ci-scan-start-grant/1' },
+    { test_sha: 'c'.repeat(40) }, { test_sha: f.job.headSha.toUpperCase() }, { attempt: 2 }, { attempt: '1' }, { attempt: 0 }]) {
     assert.throws(() => validateScanStartGrant({ ...good, ...patch }, { job: f.job, executionId: id }), { code: 'SCAN_START_GRANT_REFUSED' });
+  }
+  for (const key of ['test_sha', 'attempt']) {
+    const short = { ...good }; delete short[key];
+    assert.throws(() => validateScanStartGrant(short, { job: f.job, executionId: id }), { code: 'SCAN_START_GRANT_REFUSED' }, `${key} is required`);
   }
   let reads = 0; const bad = { ...good }; Object.defineProperty(bad, 'execution_id', { enumerable: true, get() { reads++; return id; } });
   assert.throws(() => validateScanStartGrant(bad, { job: f.job, executionId: id })); assert.equal(reads, 0);
@@ -58,6 +63,9 @@ test('response successor /3 ordinary rounds cannot carry a grant, scan-start mus
   assert.equal(validateResponse(issue, ch, decode(encode(response))).scanStart.execution_id, issue.issueId);
   const value = callbackValue('scan-start', response);
   assert.equal(requireFreshScanStartGrant(f.job, value).receipt_id, g.receipt_id);
+  // Task dcc53013 review: the adapter's check names the batch, not only head and role.
+  for (const other of [{ ...f.job, attempt: 2 }, { ...f.job, testSha: 'c'.repeat(40) }])
+    assert.throws(() => requireFreshScanStartGrant(other, value), { code: 'SCAN_START_GRANT_REFUSED' });
   assert.throws(() => requireFreshScanStartGrant(f.job, value, Date.parse(response.expiresAt)), { code: 'SCAN_START_GRANT_REFUSED' });
   assert.throws(() => requireFreshScanStartGrant(f.job, clone(value)), { code: 'SCAN_START_GRANT_REFUSED' });
   const legacy = { ...clone(response), contract: 'clued.independent-ci.protected-job-response/2' };
