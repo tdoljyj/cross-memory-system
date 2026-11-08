@@ -55,13 +55,24 @@ test('a change to the selection, the known failures or the required-check workfl
 });
 
 test('resident, Source v2 and CI-script changes run the resident and Source v2 suites', () => {
-  const both = ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python'];
+  const both = ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python'];
   for (const file of ['work/independent-ci-resident-v1/src/executor.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
     'scripts/ci/clued-independent-publication-port.mjs', '.gitleaks.toml']) {
     const { suites } = selectSuites('ci-suites', [file]);
     for (const id of both) assert.ok(suites.includes(id), `${file}: ${id}`);
   }
   assert.ok(selectSuites('ci-suites', ['scripts/ci/clued-work-admission.mjs']).suites.includes('admission-self-tests'));
+});
+
+test('the reinstall Python tests run for reinstall, resident and Source v2 changes (task e0f07515)', () => {
+  for (const file of ['work/independent-ci-resident-v1/reinstall/launcher/template.ps1', 'work/independent-ci-resident-v1/reinstall/launcher/generate.py',
+    'work/independent-ci-resident-v1/windows/install-resident.ps1', 'work/independent-ci-resident-v1/linux/uninstall-resident-linux.sh',
+    'work/independent-ci-resident-v1/rollout/x.json', 'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/record.mjs']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('reinstall-python'), file);
+  }
+  assert.ok(!selectSuites('ci-suites', ['README.md']).suites.includes('reinstall-python'));
+  assert.deepEqual(SUITE_COMMANDS['reinstall-python'].map((c) => c.cwd), ['work/independent-ci-resident-v1/reinstall']);
+  assert.ok(SUITE_COMMANDS['reinstall-python'][0].argv.join(' ').endsWith('-m unittest discover -s test -p test_*.py'));
 });
 
 // Review M3 (rounds 1 and 2): a Node suite must run when any file its code
