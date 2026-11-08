@@ -147,6 +147,10 @@ test('changing a pinned file names the stale registries and the commands that fi
     py('update');
     const gen = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stdout + gen.stderr);
+    // A service with explicit Worker coverage also covers the generated version
+    // map. Refresh its raw digest after generation, just as the automatic
+    // integration builder's fixed-point pass does; no extra version is needed.
+    py('update');
     r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
