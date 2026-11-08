@@ -25,10 +25,10 @@
 
     -Login   reads the token from the clipboard (copy it from the GitHub page first), checks its shape (ghp_ and 36 characters), writes
              hosts.yml and home\.gitconfig, and empties the clipboard. Prints no part of the token.
-    -CopyFromOwner  (elevated, with -ProfileDirectory and -AccountSid) copies the Owner's existing companion hosts.yml, byte for byte, into the
-             account's profile at the same relative place, with the same folder ACL as -Login; only when it holds a classic token. The token
+    -CopyFromOwner  (elevated, with -ProfileDirectory and -AccountSid) takes the github.com classic token of the Owner's existing companion hosts.yml and writes a new
+             hosts.yml (-Login's format) into the account's profile at the same relative place, with the same folder ACL as -Login; only when it holds a classic token. The token
              is never printed and never in a variable here. Prints JSON with a status: COMPANION_GH_LOGIN_COPIED, or
-             COMPANION_GH_OWNER_TOKEN_MISSING / COMPANION_GH_OWNER_TOKEN_NOT_CLASSIC (exit 1, nothing written to hosts.yml).
+             COMPANION_GH_ plus OWNER_TOKEN_MISSING, OWNER_TOKEN_NOT_CLASSIC, OWNER_TOKEN_PATH_IS_A_LINK, OWNER_TOKEN_FILE_HARDLINKED, OWNER_SID_MISMATCH or OWNER_PROFILE_REFUSED (exit 1, nothing copied).
     -Check   read-only: the folder and its ACL, the token's shape (prefix and length only), the .gitconfig text, then with the companion's
              own configuration: gh auth status, the read-only GitHub reads the companion makes, and git ls-remote through the helper;
              finally that the Owner's own gh login still works. Prints exit codes and gh's own masked lines only.
@@ -64,18 +64,50 @@ function Write-Utf8([string]$path, [string]$text) {
   [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding($false)))
   if (Test-Path -LiteralPath $path) { [IO.File]::Replace($tmp, $path, [NullString]::Value) } else { [IO.File]::Move($tmp, $path) }
 }
-function Test-OwnerHostsShape([string]$hostsPath) {
-  if (-not (Test-Path -LiteralPath $hostsPath -PathType Leaf)) { return 'missing' }
-  $m = [regex]::Match([IO.File]::ReadAllText($hostsPath), '(?m)^\s+oauth_token:\s*(\S+)\s*$')
-  if (-not $m.Success) { return 'none' }
-  if ($m.Groups[1].Value -cmatch '^ghp_[A-Za-z0-9]{36}\z') { 'classic' } else { 'not-classic' }
+# The github.com block of a hosts.yml and its first oauth_token (indented lines belong to the block; another host starts at column 0).
+$GithubTokenRx = '(?ms)^github\.com:[ \t]*\r?\n(?:[ \t]+[^\r\n]*\r?\n)*?[ \t]+oauth_token:[ \t]*(\S+)[ \t]*\r?$'
+function Get-LinkCount([string]$path) {
+  if (-not ('CompanionLinkCount' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Runtime.InteropServices;
+public static class CompanionLinkCount {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] struct Info { public uint Attr; public long C, A, W; public uint Serial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr h, out Info i);
+  public static uint Of(string path) {
+    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+      Info i; if (!GetFileInformationByHandle(fs.SafeFileHandle.DangerousGetHandle(), out i)) throw new IOException("GetFileInformationByHandle");
+      return i.Links;
+    }
+  }
 }
-# Owner's hosts.yml -> the account's, byte for byte, only when classic. Takes paths only; the content stays inside this function.
-function Copy-OwnerHosts([string]$ownerHosts, [string]$targetHosts) {
-  $shape = Test-OwnerHostsShape $ownerHosts
-  if ($shape -cne 'classic') { return $shape }
+'@
+  }
+  [int][CompanionLinkCount]::Of($path)
+}
+# 'ok' or a code. The Owner's token store is trusted only when: the profile is C:\Users\<name> (profileRoot, for tests), the process
+# user is the Owner (SID), and neither the file nor any folder from it up to the profile is a link / reparse point, and the file has one link.
+function Get-OwnerTokenState([string]$ownerProfile, [string]$ownerSid, [string]$profileRoot = 'C:\Users') {
+  if ($ownerProfile -cnotmatch ('^' + [regex]::Escape($profileRoot) + '\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z')) { return 'OWNER_PROFILE_REFUSED' }
+  if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $ownerSid) { return 'OWNER_SID_MISMATCH' }
+  $file = Join-Path (Get-CompanionGhDirs $ownerProfile).gh 'hosts.yml'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return 'OWNER_TOKEN_MISSING' }
+  for ($p = $file; $p -and $p.Length -ge $ownerProfile.Length; $p = Split-Path -Parent $p) {
+    if (((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'OWNER_TOKEN_PATH_IS_A_LINK' }
+  }
+  if ((Get-LinkCount $file) -ne 1) { return 'OWNER_TOKEN_FILE_HARDLINKED' }
+  $m = [regex]::Match([IO.File]::ReadAllText($file), $GithubTokenRx)
+  if (-not $m.Success) { return 'OWNER_TOKEN_MISSING' }
+  if ($m.Groups[1].Value -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { return 'OWNER_TOKEN_NOT_CLASSIC' }
+  'ok'
+}
+# Owner's github.com classic token -> a NEW hosts.yml in -Login's format (no other host, nothing else). Paths only in, the token stays in here.
+function Copy-OwnerToken([string]$ownerProfile, [string]$ownerSid, [string]$targetHosts, [string]$profileRoot = 'C:\Users') {
+  $state = Get-OwnerTokenState $ownerProfile $ownerSid $profileRoot
+  if ($state -cne 'ok') { return $state }
+  $m = [regex]::Match([IO.File]::ReadAllText((Join-Path (Get-CompanionGhDirs $ownerProfile).gh 'hosts.yml')), $GithubTokenRx)
   $tmp = $targetHosts + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-  [IO.File]::Copy($ownerHosts, $tmp, $false)
+  [IO.File]::WriteAllText($tmp, ("github.com:`n    oauth_token: " + $m.Groups[1].Value + "`n    git_protocol: https`n"), (New-Object Text.UTF8Encoding($false)))
+  $m = $null
   if (Test-Path -LiteralPath $targetHosts) { [IO.File]::Replace($tmp, $targetHosts, [NullString]::Value) } else { [IO.File]::Move($tmp, $targetHosts) }
   'copied'
 }
@@ -137,19 +169,15 @@ $dirs = Get-CompanionGhDirs $profileDir
 
 if ($CopyFromOwner) {
   if (-not (Test-Path -LiteralPath $GhExe -PathType Leaf)) { throw 'GH_EXE_MISSING' }
-  $ownerProfile = [string]$env:USERPROFILE   # the elevated window is the Owner's own: the same profile
-  if ($ownerProfile -cnotmatch '^C:\Users\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'PROFILE_DIRECTORY_REFUSED' }
-  $ownerDirs = Get-CompanionGhDirs $ownerProfile
-  $shape = Test-OwnerHostsShape (Join-Path $ownerDirs.gh 'hosts.yml')
-  if ($shape -cne 'classic') {
-    [ordered]@{ status = $(if ($shape -ceq 'missing' -or $shape -ceq 'none') { 'COMPANION_GH_OWNER_TOKEN_MISSING' } else { 'COMPANION_GH_OWNER_TOKEN_NOT_CLASSIC' }) } | ConvertTo-Json
-    exit 1
+  # The Owner is this elevated window's user; the profile is the one Windows registers for that SID (not just $env:USERPROFILE).
+  $ownerProfile = try { [string][Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $me.User.Value) -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath) } catch { '' }
+  $state = Get-OwnerTokenState $ownerProfile $me.User.Value
+  if ($state -ceq 'ok') {
+    Initialize-CompanionGhFolder $dirs $ownerSid $profileDir $GhExe
+    $state = Copy-OwnerToken $ownerProfile $me.User.Value (Join-Path $dirs.gh 'hosts.yml')
   }
-  Initialize-CompanionGhFolder $dirs $ownerSid $profileDir $GhExe
-  $res = Copy-OwnerHosts (Join-Path $ownerDirs.gh 'hosts.yml') (Join-Path $dirs.gh 'hosts.yml')
-  [ordered]@{ status = $(if ($res -ceq 'copied') { 'COMPANION_GH_LOGIN_COPIED' } else { 'COMPANION_GH_OWNER_TOKEN_NOT_CLASSIC' }); ghConfigDir = $dirs.gh; tokenKind = 'classic'
-    next = 'powershell.exe -NoProfile -File companion-gh-login.ps1 -Check -ProfileDirectory <dir> -AccountSid <sid>' } | ConvertTo-Json
-  exit $(if ($res -ceq 'copied') { 0 } else { 1 })
+  [ordered]@{ status = $(if ($state -ceq 'copied') { 'COMPANION_GH_LOGIN_COPIED' } else { 'COMPANION_GH_' + $state }); ghConfigDir = $dirs.gh; tokenKind = 'classic' } | ConvertTo-Json
+  exit $(if ($state -ceq 'copied') { 0 } else { 1 })
 }
 
 if ($Login) {
