@@ -92,7 +92,9 @@ export async function main(argv = process.argv.slice(2)) {
       brokerRoot: path.join(root, 'broker'),
     },
   });
-  const companion = mailboxCompanion(mailbox, sleep);
+  // Defect 8f8240ff: a stop gives up the retention requests the between-batches step still waits for (serviceLoop).
+  const leaving = new AbortController();
+  const companion = mailboxCompanion(mailbox, sleep, { abandon: leaving.signal });
   // Executed heads independent of the Source (resident quota redesign phase 1): the install carries every earlier
   // install's ledger into state\backfill\ and lists it in the admin-only install\backfill-manifest.json.
   const executedHeads = await ExecutedHeads.open(state, clock, { manifestFile: path.join(root, 'install', 'backfill-manifest.json'), carriedRoot: path.join(state, 'backfill') });
@@ -150,33 +152,57 @@ export async function main(argv = process.argv.slice(2)) {
       await statusTimer.flush();
     },
     onLoopException: async error => { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); },
-    betweenBatches: () => retention.maybeCheck() });
+    betweenBatches: () => retention.maybeCheck(),
+    // A stop: the companion waits end (service-ports.mjs) and the rest of a running pass measures nothing more on Windows (review MINOR 5).
+    abandonBetweenBatches: () => { leaving.abort(); retention.measureWindows = async () => ({ bytes: 0, directories: 0, complete: false }); } });
 }
 
 // The service loop. Every iteration refreshes the instance-lock liveness and honours an SCM stop before it
 // runs one tick, and a tick never blocks on the hosted wait (it returns WAITING), so neither the liveness
 // record nor a stop, a pause or an Owner request ever waits for hosted signals.
+// Nor for the between-batches step (defect 8f8240ff, TURING 2026-11-08: archive-prune waited its whole 10 minutes for a wsl.exe that
+// never returned, then archive-usage 3 more, and the upgrader's pause went unanswered past its 10 minutes): the step runs beside the
+// loop, one at a time; while it runs every tick is told so and opens no new batch; a stop first gives up its companion waits
+// (abandonBetweenBatches) and lets it finish, at most leaveMaxMs (a Windows walk or deletion already under way is not cut; past that the
+// stop is acknowledged and the process ends when it does). `once` still waits for it.
 export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING', 'BACKFILL_PENDING']);
-export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches }) {
+export const LEAVE_MAX_MS = 120_000;
+export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches, abandonBetweenBatches = () => {},
+  leaveMaxMs = LEAVE_MAX_MS }) {
+  let between = null;
+  const leave = async () => {
+    if (!between) return;
+    try { abandonBetweenBatches(); } catch { /* it finishes at its own deadlines then */ }
+    let timer;
+    await Promise.race([between, new Promise(r => { timer = setTimeout(r, leaveMaxMs); })]);
+    clearTimeout(timer);
+  };
   for (;;) {
     await lock.touch();
     // SCM stop is honoured only here, before every tick, the first included (ResidentServiceHost never kills us).
     if (await stopRequested()) {
+      await leave();
       await acknowledgeStop();
       return 0;
     }
     let result;
     try {
-      result = await exec.tick();
+      result = await exec.tick({ betweenBatchesRunning: between !== null });
     } catch (error) {
       // The loop itself failed. Latch HALT if we still can and exit; the next start runs recovery
       // first, which terminalises any entry this tick left open, so re-arm is never wedged.
       try { await onLoopException(error); } catch { /* keep exiting */ }
+      await leave();
       return 3;
     }
     // Between batches only (a tick runs at most one batch step): archive retention, the 50 GB and the C: reminders, at most hourly
     // (DESIGN §7.3, §35). Without a companion heartbeat nothing is asked of the companion, so this never waits for its timeout.
-    if (['IDLE', 'DEFERRED', 'PAUSED', 'WAITING'].includes(result.state)) { try { await betweenBatches(); } catch { /* a reminder is advisory */ } }
+    if (between === null && ['IDLE', 'DEFERRED', 'PAUSED', 'WAITING'].includes(result.state)) {
+      const step = (async () => { try { await betweenBatches(); } catch { /* a reminder is advisory */ } })()
+        .finally(() => { if (between === step) between = null; });
+      between = step;
+      if (once) await step;
+    }
     if (once) return 0;
     // `immediate`: stage 10 just decided a batch is to open (executor.mjs tickBatchDue); the short sleep, not the resting one.
     await sleep(RESTING_STATES.includes(result.state) && result.immediate !== true ? 15_000 : 2_000);

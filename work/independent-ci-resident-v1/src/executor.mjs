@@ -121,6 +121,7 @@
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
+import { CLAIM_REASONS } from './queue.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
@@ -148,6 +149,10 @@ import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQua
   REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
+// Defect 8f8240ff: the service's between-batches step (archive retention, which may delete) runs beside the loop; while it runs the
+// loop says so in tick({ betweenBatchesRunning }) and no new batch opens (DEFERRED with this reason), as when the loop waited for it.
+// Pause, stop and the Owner's requests are served meanwhile.
+export const BETWEEN_BATCHES_RUNNING = 'BETWEEN_BATCHES_RUNNING';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
@@ -1560,9 +1565,10 @@ export class ResidentExecutor {
     return view ? { state: 'DEFERRED', reason: 'INTAKE_PAUSED', until: Date.parse(view.until) } : null;
   }
 
-  async tick() {
+  async tick({ betweenBatchesRunning = false } = {}) {
     if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
     this.tickBusy = true;
+    this.betweenBatchesRunning = betweenBatchesRunning === true;
     this.tickSeq = (this.tickSeq ?? 0) + 1;
     this.tickBatchDue = false;
     try {
@@ -1758,7 +1764,9 @@ export class ResidentExecutor {
     // Qualified safety maintenance may revoke old work while CI is halted or
     // paused. It neither clears that latch nor starts a PR/batch, and its
     // pre-broker engine guards still require the actual helper/SCM to be idle.
-    if (recovered) {
+    // Defect 8f8240ff (review MAJOR 2): none of the maintenance runs (revocation, role probe, queue watch, stage 10) while the
+    // between-batches step runs beside the loop: they start children, and archive retention deletes only with no child running (§35.3).
+    if (recovered && !this.betweenBatchesRunning) {
       const originalHalt=await this.ledger.halted();
       const maintenance=await this.revocationMaintenance({halted:!!originalHalt});
       if(maintenance)return originalHalt?{...maintenance,state:'HALTED',failureCode:originalHalt.value?.code??null}:maintenance;
@@ -1780,6 +1788,7 @@ export class ResidentExecutor {
     // DESIGN §41.3: under PAUSE while the train is on, stage 10 runs revoke-only (an ACTIVE node, its own cadence) before the tick
     // returns PAUSED; a HALT it latches is the tick's result. Off and shadow: nothing runs, as before.
     if (await this.ledger.paused()) {
+      if (this.betweenBatchesRunning) return { state: 'PAUSED' };
       // The upgrader keeps its pause until VERIFY has seen a post-start role observation. Run only that
       // read-only maintenance under its exact pause; never intake, schedule or lift the pause here.
       const probed = await this.roleProbeMaintenance({ upgradePaused: true });
@@ -1802,6 +1811,7 @@ export class ResidentExecutor {
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
     const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS), ...TRAIN_SCHEDULE_DEFERRALS].includes(r.reason)) ? waiting : r;
+    if (this.betweenBatchesRunning) return waiting ?? r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
     // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
     if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
@@ -2906,6 +2916,9 @@ export class ResidentExecutor {
   // poked rows, then first come, first served. A row that is only deferred for itself, or ignored, never blocks the
   // rows behind it; a global deferral (the daily limits, the companion, the breaker) ends the pass.
   async schedule() {
+    // Defect 8f8240ff (review MAJOR 1): held first, before anything here asks the companion (recheckClaims' pr-head): its one mailbox
+    // lane may be busy with the step's Linux prune, and each such request would wait for its own deadline.
+    if (this.betweenBatchesRunning) { await this.persistQueue(); return { state: 'DEFERRED', reason: BETWEEN_BATCHES_RUNNING }; }
     const now = this.clock();
     this.queue.compact(now);
     const b = breakerOf(this.queue.breaker);
@@ -3300,11 +3313,11 @@ export class ResidentExecutor {
       const network = s?.kind === 'released' && s.klass !== 'waiting' && s.network === true && this.networkPolicy() !== null;
       // This release counts towards the head's cap unless it is a wait, a supersession, a network release (above), or an environment
       // fault while the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && !UNCAPPED_RELEASES.includes(s.reason) && !network && !(environment && s.breakerState !== 'closed');
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && !UNCAPPED_RELEASES.includes(s.reason) && !CLAIM_REASONS.includes(s.code) && !network && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const networkReleases24h = (this.tickUsage?.networkReleasesByHead?.get(subject.headSha) ?? 0) + (network ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
-      const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
+      const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter, outcomeReason: s.outcomeReason ?? null,
         releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).

@@ -414,15 +414,13 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.31",
-      "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/tested-commit/attempt/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
+      "version": "1.1.34",
+      "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
         "apps/clued-cloud/supabase/migrations/20261029050000_work_claim_independent_publication_v1.sql",
         "apps/clued-cloud/supabase/migrations/20261102151506_ci_scan_start_keys_v1.sql",
-        "apps/clued-cloud/supabase/migrations/20261108090000_ci_scan_start_batch_key_v1.sql",
         "apps/clued-cloud/tests/bootstrap-ordinary-gitleaks-successor.test.mjs",
-        "apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-worker.test.mjs",
         "apps/clued-cloud/worker/ci-scan-start-v1.ts",
@@ -449,6 +447,7 @@
         "scripts/ci/clued-work-admission.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/clock-skew.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/startup.mjs",
@@ -462,6 +461,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.scan-start.spec.json",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.spec.json",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-entry-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
@@ -501,6 +501,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/scan-start-v1/native-port.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/scan-start-v1/subject.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/batch-claim-rewrite.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/ci-scan-start-bridge.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/clock-skew.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/gitleaks.yml",
@@ -590,7 +591,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "3c483fd10d4a9c218522923b4d81f60986cf0a0295c7e71cd22221998c9c2b52"
+      "content_sha256": "8ebc4c1727cda27c592d1c11f4ee81067f99e62e8331dfd56e8e235625037d18"
     },
     {
       "id": "script.resource-maintenance",
@@ -855,7 +856,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.15",
+      "version": "1.0.18",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -872,7 +873,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7de1be464067c60965187e02e378d02b5d8e84d9dddb253e5347ffe185297a9b"
+      "content_sha256": "9ef1f60f8b29e98757f6c4f65bc3f9b0e9a4d39ef3bc75b686461514291fd289"
     }
   ]
 }

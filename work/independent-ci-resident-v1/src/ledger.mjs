@@ -53,6 +53,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, exactKeys, fail, isoNow } from './canonical.mjs';
 import { ensureDir, exists, nonce, readJson, renameToNew, writeNew, writeNewAtomic } from './store.mjs';
+import { CLAIM_REASONS } from './queue.mjs';
 import { RelayQualificationHolds } from './relay-qualification-hold.mjs';
 
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
@@ -549,7 +550,7 @@ export class Ledger {
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
       if (separateNetwork && facts?.network === true) { if (reason && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
-      if (reason && !UNCAPPED_RELEASES.includes(reason) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     for (const key of await this.keys()) {

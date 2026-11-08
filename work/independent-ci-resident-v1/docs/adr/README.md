@@ -31,3 +31,4 @@
 | [0020](0020-standby-prechecks-not-implemented.md) | 备用节点跑非车头 PR 的预检：评估后不实现（原分支草稿 DESIGN §67） | 不实现 | 2026-11-07 | Task `bf57ff10` L3 |
 | [0021](0021-trivy-scan-result-cache-default-on.md) | trivy 扫描结果缓存默认打开：角色策略没有 `scanResultCache` 字段时按默认根目录开启；placement、gitleaks 仍关 | 生效（第 28 代，未安装） | 2026-11-08 | Owner 已批准打开（M4，`9e2511fe` 第 5 项） |
 | [0022](0022-companion-headless-implementation.md) | companion 不靠登录的实施：密码登录的计划任务 + 监督进程、通知拆到登录时的通知任务、安全桌面收密码并自动验收/退回、升级通道不再注册 companion 任务（原分支草稿 DESIGN §65） | 已实施（第 29 代，未安装），须整套重装 | 2026-11-08 | `9dc130c7` 第 3、4 项；`ad709155`（改升级器） |
+| [0023](0023-companion-own-account.md) | M5-b：companion 以专用非管理员本地账户 `clued-companion` 运行；节点档案 `ownerSid` 改指该账户、Owner 成为安装的 operator；随机密码无人知晓；常驻发行版移到该账户名下（DESK 移到 D:）；冻结通道不改 | 已实施（分支，未安装），须整套重装；待独立审核 | 2026-11-08 | `085e7f75` 之后 Owner 2026-11-08 决定“现在就做” |
