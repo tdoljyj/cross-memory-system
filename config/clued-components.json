@@ -50,13 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
-      ]
+      ],
+      "content_sha256": "3ddb177a5a2b00b9ca56562fcce1550adb46ca0bb172c479fbcb854a5dfacf2f"
     },
     {
       "id": "hook.runner-job-started",
@@ -91,13 +92,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.10",
+      "version": "1.1.11",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "055d69ec66bf698d676a07cb5ff114d793e1a81081685030fae64b7ff3a1e8ba",
+      "content_sha256": "8232f3535c25352e6cafedbc0778e02889f06273a73c0bbd37f3545badacea6f",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -162,7 +163,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -170,7 +171,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "a9da33f8e3b450e03c7b5d279430b75ebd19c511185ffd123193c9aaaa6d2c7d",
+      "content_sha256": "67802baf52e8915a798e5166a46c2b76222cd89149803845e223263bbc6f50f2",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -421,7 +422,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.36",
+      "version": "1.1.37",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -604,7 +605,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "11bba36e5753685e2d9cdac13e0631105ded1f6709072c61afd1ec531e8153aa"
+      "content_sha256": "39f96eb0a8e79a4df1ef25f686444c61183e501657c9dd6fbc4155f418226699"
     },
     {
       "id": "script.resource-maintenance",
@@ -681,7 +682,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -692,7 +693,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "af1fefff8826b6293a416b17aec3e8c3feced6490f9b87926afff7216e876344"
+      "content_sha256": "a5e001399e6e070ded87c9bf2e4ec402f57346f3ee4696440ab441172d684088"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -886,7 +887,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "202ca0d3c85458d65bc9e64b8d07ab517fccb359538a63342e853d5876ccf3d3"
+      "content_sha256": "30b0b7259ba2e3fa86854bd68aa2730c1a1647be821a6d55d05c7bb673ad0f4a"
     }
   ]
 }

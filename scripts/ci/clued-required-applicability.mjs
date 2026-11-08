@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.3';
+export const COMPONENT_VERSION='1.0.4';
 export const REQUIRED_SELECTOR_SOURCE=Object.freeze({
   path:'scripts/ci/ci-required-selection.mjs',
   blob:'9cce156a2b150b29767253f01c2c33c571230dd3',
