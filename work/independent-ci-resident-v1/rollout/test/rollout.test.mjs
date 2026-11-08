@@ -206,7 +206,7 @@ test('observe: reads the three files, read-only; missing and malformed files are
   await fs.mkdir(path.join(root, 'upgrade'), { recursive: true });
   const status = { contract: STATUS_CONTRACT, writtenAt: ago(1), changedAt: ago(5), pid: 1, executor: { state: 'IDLE', since: ago(5), reason: null }, halt: null, paused: false,
     intakePause: null, node: { name: 'turing', source: null, mode: 'ACTIVE', probe: null }, backfill: { complete: true, published: null, unreadable: null }, current: null, pending: [],
-    recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null }, versions: null };
+    recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null }, versions: null, timing: null };
   await fs.writeFile(path.join(root, 'state', 'status.json'), JSON.stringify(status));
   await fs.writeFile(path.join(root, 'upgrade', 'current.json'), JSON.stringify({ contract: GENERATION_CURRENT_CONTRACT, generation: 2, packageManifestSha256: hex('1'),
     residentManifestSha256: hex('2'), ciSourceManifestSha256: hex('3'), policySha256: hex('4'), installReceiptSha256: hex('5'), stateCompat: { schema: 1, readableBySchemas: [1] },

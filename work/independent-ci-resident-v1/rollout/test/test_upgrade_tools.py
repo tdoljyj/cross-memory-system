@@ -31,6 +31,9 @@ def run(script, *args):
     return p.returncode, (json.loads(lines[-1]) if lines else None), p.stderr
 
 
+# upgrade-config.py writes this host's absolute path as basePackage and rconfig requires Windows paths (CONFIG_PATH_SHAPE): the tool
+# runs on the Windows node only, so on a Linux CI runner these cases cannot be built (defect 15894c2a review M1, the 11-08 lesson).
+@unittest.skipUnless(os.name == 'nt', 'upgrade-config.py runs on the Windows node only (rconfig requires Windows paths)')
 class UpgradeConfig(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix='upgcfg-')
