@@ -269,6 +269,32 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     });
     return { complete: true, page, pulls, last: rows.length < perPage };
   }
+  async function pullHistorySnapshot(number) {
+    if (!positive(number)) fail('invalid_pr');
+    const p = await scoped(`/pulls/${number}`);
+    if (p?.number !== number || !Number.isSafeInteger(p.commits) || p.commits < 0 || !sha.test(p.head?.sha ?? '')
+      || typeof p.updated_at !== 'string' || !Number.isFinite(Date.parse(p.updated_at))) fail('pr_history_unconfirmed');
+    return { headSha: p.head.sha, count: p.commits, updatedAt: new Date(Date.parse(p.updated_at)).toISOString() };
+  }
+  async function pullHistoryPage(number, phase, after = null) {
+    if (!positive(number) || !['commits', 'pushes'].includes(phase) || !(after === null || typeof after === 'string' && after.length > 0 && after.length <= 1024)) fail('invalid_pr_history_page');
+    const [owner, name] = repository.split('/');
+    const field = phase === 'commits' ? 'commits(first:100,after:$after){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid}}}'
+      : 'timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$after){filteredCount pageInfo{hasNextPage endCursor} nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid}}}}';
+    const query = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid updatedAt ${field}}}}`;
+    const body = await request('https://api.github.com/graphql', 'POST', await credential(), { query, variables: { owner, name, number, after } }, { repeatable: true });
+    const p = body?.data?.repository?.pullRequest, items = phase === 'commits' ? p?.commits : p?.timelineItems;
+    const count = phase === 'commits' ? items?.totalCount : items?.filteredCount;
+    if (body?.errors !== undefined || !sha.test(p?.headRefOid ?? '') || typeof p?.updatedAt !== 'string' || !Number.isFinite(Date.parse(p.updatedAt))
+      || !Number.isSafeInteger(count) || count < 0 || !Array.isArray(items?.nodes) || items.nodes.length > 100
+      || typeof items.pageInfo?.hasNextPage !== 'boolean') fail('pr_history_unconfirmed');
+    const next = items.pageInfo.hasNextPage ? items.pageInfo.endCursor : null;
+    if (next !== null && (typeof next !== 'string' || !next || next.length > 1024 || next === after || items.nodes.length === 0)) fail('pr_history_unconfirmed');
+    const oid = c => c === null ? null : sha.test(c?.oid ?? '') ? c.oid : fail('pr_history_unconfirmed');
+    const rows = phase === 'commits' ? items.nodes.map(n => { const h = oid(n?.commit); if (!h) fail('pr_history_unconfirmed'); return h; })
+      : items.nodes.map(n => ({ before: oid(n?.beforeCommit), after: oid(n?.afterCommit) }));
+    return { headSha: p.headRefOid, updatedAt: new Date(Date.parse(p.updatedAt)).toISOString(), count, rows, next };
+  }
   return Object.freeze({
     rateBudget() { return budget.snapshot(); },
     async readRateBudget({ until = null } = {}) {
@@ -419,22 +445,27 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       }
       return done(false);
     },
-    // Every commit of a pull. GitHub's pulls/{n}/commits lists at most 250: a longer pull is reported incomplete
-    // (tooMany), never truncated; a listing that does not add up to the pull's count is incomplete too.
+    readPullHistorySnapshot: pullHistorySnapshot,
+    readPullHistoryPage: pullHistoryPage,
+    // GraphQL's connection covers long PRs beyond REST's 250-commit truncation. The snapshot is checked on both sides;
+    // changed counts, duplicate commits, broken cursors or the explicit page bound never produce a complete inventory.
     async readPullCommitsBounded(number) {
-      if (!positive(number)) fail('invalid_pr');
-      const pull = await scoped(`/pulls/${number}`);
-      if (pull?.number !== number || !Number.isSafeInteger(pull.commits) || pull.commits < 0 || !sha.test(pull.head?.sha ?? '')) fail('pr_history_unconfirmed');
-      const result = (complete, commits, tooMany = false) => ({ complete, tooMany, count: pull.commits, headSha: pull.head.sha, commits });
-      if (pull.commits > 250) return result(false, [], true);
-      const commits = [], seen = new Set();
-      for (let page = 1; page <= 3 && commits.length < pull.commits; page++) {
-        const rows = await scoped(`/pulls/${number}/commits?per_page=100&page=${page}`);
-        if (!Array.isArray(rows) || rows.length > 100) fail('pr_history_unconfirmed');
-        for (const row of rows) { if (!sha.test(row?.sha ?? '') || seen.has(row.sha)) fail('pr_history_unconfirmed'); seen.add(row.sha); commits.push(row.sha); }
-        if (rows.length < 100) break;
+      const snapshot = await pullHistorySnapshot(number), commits = [], seen = new Set(), cursors = new Set();
+      let after = null;
+      for (let page = 1; page <= maxPages; page++) {
+        const p = await pullHistoryPage(number, 'commits', after);
+        if (p.headSha !== snapshot.headSha || p.updatedAt !== snapshot.updatedAt || p.count !== snapshot.count) fail('pr_history_unconfirmed');
+        for (const h of p.rows) { if (seen.has(h)) fail('pr_history_unconfirmed'); seen.add(h); commits.push(h); }
+        if (commits.length > snapshot.count) fail('pr_history_unconfirmed');
+        if (p.next === null) {
+          const final = await pullHistorySnapshot(number);
+          if (JSON.stringify(final) !== JSON.stringify(snapshot)) fail('pr_history_unconfirmed');
+          return { complete: commits.length === snapshot.count && seen.has(snapshot.headSha), tooMany: false, ...snapshot, commits };
+        }
+        if (cursors.has(p.next)) fail('pr_history_unconfirmed');
+        cursors.add(p.next); after = p.next;
       }
-      return result(commits.length === pull.commits && seen.has(pull.head.sha), commits);
+      return { complete: false, tooMany: false, ...snapshot, commits: [] };
     },
     // The before/after commits of every force push of a pull's head (GraphQL HeadRefForcePushedEvent; REST has no
     // equivalent). A commit GitHub no longer resolves is null. Errors, a changed matching count or the page bound: refused.

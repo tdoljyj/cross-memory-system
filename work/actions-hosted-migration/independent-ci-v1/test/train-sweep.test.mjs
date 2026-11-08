@@ -1221,11 +1221,17 @@ test('github.mjs sweep reads: pulls updated since a cursor across pages, 250-com
   const pages = { 1: Array.from({ length: 100 }, (_, i) => pullRow(1000 - i, iso(NOW - i * 1000))), 2: [pullRow(800, iso(NOW - 200_000)), pullRow(799, iso(NOW - 900_000))] };
   const { port, seen } = await realPort(async (u, method, body) => {
     if (u.pathname === `${base}/pulls`) return pages[u.searchParams.get('page')] ?? [];
-    if (u.pathname === `${base}/pulls/5`) return { number: 5, commits: 251, head: { sha: sha(5) } };
-    if (u.pathname === `${base}/pulls/6`) return { number: 6, commits: 2, head: { sha: sha(6) } };
+    if (u.pathname === `${base}/pulls/5`) return { number: 5, commits: 251, updated_at: iso(NOW), head: { sha: sha(5) } };
+    if (u.pathname === `${base}/pulls/6`) return { number: 6, commits: 2, updated_at: iso(NOW), head: { sha: sha(6) } };
     if (u.pathname === `${base}/pulls/6/commits`) return [{ sha: sha(60) }, { sha: sha(6) }];
     if (method === 'POST' && u.pathname === '/graphql') {
       if (body.variables.number === 7) return { errors: [{ message: 'rate limited' }] };
+      if (body.query.includes('commits(')) {
+        const n = body.variables.number, all = n === 5 ? [...Array.from({ length: 250 }, (_, i) => sha(100 + i)), sha(5)] : [sha(60), sha(6)];
+        const from = body.variables.after === null ? 0 : Number(body.variables.after), end = Math.min(from + 100, all.length);
+        return { data: { repository: { pullRequest: { headRefOid: sha(n), updatedAt: iso(NOW), commits: { totalCount: all.length,
+          pageInfo: { hasNextPage: end < all.length, endCursor: String(end) }, nodes: all.slice(from, end).map(oid => ({ commit: { oid } })) } } } } };
+      }
       assert.match(body.query, /filteredCount/);
       return body.variables.after === null
         ? { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 2, pageInfo: { hasNextPage: true, endCursor: 'c1' }, nodes: [{ beforeCommit: { oid: sha(61) }, afterCommit: { oid: sha(62) } }] } } } } }
@@ -1237,7 +1243,8 @@ test('github.mjs sweep reads: pulls updated since a cursor across pages, 250-com
   const since = await port.readPullsUpdatedSince(iso(NOW - 300_000));
   assert.deepEqual([since.complete, since.pulls.length, since.newest], [true, 101, iso(NOW)], 'stops at the first pull older than the cursor');
   assert.ok(seen.some(s => s.includes('/pulls?state=all&sort=updated&direction=desc&per_page=100&page=2')));
-  assert.deepEqual(await port.readPullCommitsBounded(5), { complete: false, tooMany: true, count: 251, headSha: sha(5), commits: [] });
+  const longer = await port.readPullCommitsBounded(5);
+  assert.deepEqual([longer.complete, longer.tooMany, longer.count, longer.headSha, longer.commits.length], [true, false, 251, sha(5), 251]);
   assert.deepEqual((await port.readPullCommitsBounded(6)).commits, [sha(60), sha(6)]);
   assert.deepEqual(await port.readForcePushes(6), { complete: true, events: [{ before: sha(61), after: sha(62) }, { before: null, after: sha(6) }] });
   await assert.rejects(port.readForcePushes(7), e => e.code === 'force_push_events_unconfirmed', 'a GraphQL error is refused');
@@ -1278,17 +1285,20 @@ test('github.mjs force pushes: a changed remaining matching count across pages i
 test('shadow over the real GitHub and KooYomi ports: every GitHub call a read (GraphQL is a read), the one KooYomi call the holders read', async t => {
   const { createMergeSlotNative, HOLDERS_RPC } = await import('../src/independent-control-checks-v2/merge-slot-native.mjs');
   const base = `/repos/${REPO}`, OLDH = sha(0x50001);
-  const { port, seen, fetchImpl } = await realPort(async (u, method) => {
+  const { port, seen, fetchImpl } = await realPort(async (u, method, body) => {
     if (u.host === 'x.supabase.co') return { status: 200, json: async () => ({ status: 'ok', repository: REPO, holders: [{ claim_id: CLAIM, task_id: CLAIM, bound_pr: `${REPO}#910`, bound_prs: [`${REPO}#910`], merge_slot_until: iso(NOW + 600_000), merge_slot_ci: {} }] }) };
     if (method !== 'GET' && u.pathname !== '/graphql') return undefined;
     if (u.pathname === `${base}/branches/main`) return { name: 'main', commit: { sha: T } };
     if (u.pathname === `${base}/rules/branches/main`) return [];
-    if (u.pathname === `${base}/pulls/910`) return { number: 910, state: 'open', draft: false, merged: false, mergeable: true, merge_commit_sha: S, head: { sha: H }, base: { ref: 'main', sha: T }, commits: 1 };
-    if (u.pathname === `${base}/pulls/911`) return { number: 911, commits: 1, head: { sha: OLDH } };
+    if (u.pathname === `${base}/pulls/910`) return { number: 910, state: 'open', draft: false, merged: false, mergeable: true, merge_commit_sha: S, head: { sha: H }, base: { ref: 'main', sha: T }, commits: 1, updated_at: iso(NOW - 2000) };
+    if (u.pathname === `${base}/pulls/911`) return { number: 911, commits: 1, head: { sha: OLDH }, updated_at: iso(NOW - 1000) };
     if (u.pathname === `${base}/pulls/911/commits`) return [{ sha: OLDH }];
     if (u.pathname === `${base}/pulls/910/commits`) return [{ sha: H }];
     if (u.pathname === `${base}/pulls`) return u.searchParams.get('page') === '1' ? [pullRow(910, iso(NOW - 2000), H), pullRow(911, iso(NOW - 1000), OLDH)].slice(0, Number(u.searchParams.get('per_page'))) : [];
-    if (u.pathname === '/graphql') return { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } };
+    if (u.pathname === '/graphql') { const n = body.variables.number, oid = n === 910 ? H : OLDH;
+      return { data: { repository: { pullRequest: { headRefOid: oid, updatedAt: iso(NOW - (n === 910 ? 2000 : 1000)),
+        commits: { totalCount: 1, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ commit: { oid } }] },
+        timelineItems: { totalCount: 20, filteredCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } }; }
     if (u.pathname === `${base}/compare/${T}...${H}`) return { status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: T }, merge_base_commit: { sha: T } };
     if (u.pathname === `${base}/compare/${T}...${OLDH}`) return { status: 'diverged', ahead_by: 1, behind_by: 1, base_commit: { sha: T }, merge_base_commit: { sha: T } };
     if (u.pathname === `${base}/git/commits/${S}`) return { sha: S, tree: { sha: TREE }, parents: [{ sha: T }, { sha: H }] };
