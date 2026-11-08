@@ -396,7 +396,10 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
       case 'role-probe-interrupted': out.push({ key: `notice:${n.key}`, title: '节点角色探测被中断，已自动恢复', body: '上一次角色探测（或排队观察）进行到一半时执行器重启或断电。已结束那次探测，按上一次完整的结论立即重新探测；如果中断时的进程还占着探测通道，这次探测会停机等你处理。连续中断达到策略上限也会停机。' }); break;
       case 'role-probe-uncertain': out.push({ key: `notice:${n.key}`, title: '节点角色连续三次无法确认', body: '三次连续只读探测未确认角色。请检查网络、连接与 parking holder；不会据此切换节点模式或重跑已有提交。' }); break;
-      case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
+      // CLAIM_CHANGED (executor.mjs#recheckClaims; field defect 2026-11-08, PR #1039): the PR names another claim after a claim refusal.
+      case 'new-trigger': out.push(n.code === 'CLAIM_CHANGED'
+        ? { key: `notice:${n.key}`, title: `PR #${n.pr} 已换认领`, body: `提交 ${head} 上次因认领失效未准入；PR 正文已换成新认领，立即重新评估。` }
+        : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
       // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end.

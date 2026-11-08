@@ -29,11 +29,14 @@
 //     10 -> 20 -> 40 -> 80 -> 120 minutes, then every 120 (§4.4), or until Native's ci_retry_after. A commit released
 //     policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: only a new commit runs the
 //     PR again (§4.5); a new trigger pokes only a row that still waits for its next try.
+//   - A row backing off after a claim refusal (CLAIM_REASONS) whose new trigger comes with another claim in the PR body than the one its
+//     refused evaluation saw is due at once, without the cool-down (claimChanged; field defect 2026-11-08, PR #1039). The same claim
+//     backs off as before.
 //   - Depth: at most policy.limits.queueDepth live rows (QUEUED, RUNNING, WAITING, BACKOFF); rows DONE or STOPPED for
 //     24 hours are compacted away.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HEX40, ResidentError, canonicalJson, check, isoNow, parseBoundedJson } from './canonical.mjs';
+import { HEX40, ResidentError, UUID, canonicalJson, check, isoNow, parseBoundedJson } from './canonical.mjs';
 import { ensureDir, exists, nonce, readBounded } from './store.mjs';
 import { POSITIONS } from './breaker.mjs';
 
@@ -68,6 +71,20 @@ export const COMPACT_AFTER_MS = 24 * 60 * MIN;
 export const NOTICES_MAX = 50;
 // A row deferred for itself is looked at again after this long (the cool-down: when it ends).
 export const DEFER_RECHECK_MS = 5 * MIN;
+// Field defect 2026-11-08 (PR #1039): stage 1 refused head 2e95bda4 CLAIM_NOT_CURRENT (Native: claim_not_current, fence_superseded), the
+// row backed off 10 minutes; a minute later the author put a new, valid claim in the PR body (an edit, a new trigger), but the poke
+// was due only after the 10-minute cool-down from that evaluation, so the head waited until the back-off ended anyway. A claim refusal
+// is safeToRerun with no side effect, and the PR body naming another claim is exactly what the refusal asked for ("renew or claim,
+// then trigger again", failure-table.json). The release codes of a claim refusal: the Source maps every claim reason of stage 1
+// (claim_trailer_missing, claim_not_found, claim_not_current, fence_superseded, claim_bound_to_other_pr,
+// work_claim_execution_epoch_stale, and the full admission's claim missing / changed / native changed) to CLAIM_NOT_CURRENT
+// (Source resident-v2/stage-fact.mjs#notAdmittedCode, #outcomeFailureCode); after stage 1 a moved claim is BATCH_CLAIM_CHANGED,
+// which burns the head and never backs off.
+export const CLAIM_REASONS = Object.freeze(['CLAIM_NOT_CURRENT']);
+const claimsOk = c => Array.isArray(c) && c.length <= SEEN_MAX && c.every(x => typeof x === 'string' && UUID.test(x));
+// The claims an evaluation saw (begin), or null: unknown (no live read answered, or a companion that does not read the body).
+const claimsOf = c => (claimsOk(c) ? [...new Set(c)].sort() : null);
+const sameClaims = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 const delayAt = (table, level) => table[Math.min(Math.max(level, 0), table.length - 1)];
 // A queue file that could not be read took the breaker's state with it: half-open, failing "everywhere".
@@ -96,7 +113,7 @@ export function validateQueue(q) {
       && Array.isArray(r.superseded) && r.superseded.length <= SUPERSEDED_MAX && r.superseded.every(commitOk)
       && Array.isArray(r.seen) && r.seen.length <= SEEN_MAX && r.seen.every(h => HEX40.test(h))
       && Number.isSafeInteger(r.order) && Number.isSafeInteger(r.level) && r.level >= 0 && (r.stopKind === null || STOP_KINDS.includes(r.stopKind))
-      && (r.origin === null || ORIGINS.includes(r.origin)), 'QUEUE_FILE_INVALID', r?.pr);
+      && (r.origin === null || ORIGINS.includes(r.origin)) && (r.evalClaims === undefined || r.evalClaims === null || claimsOk(r.evalClaims)), 'QUEUE_FILE_INVALID', r?.pr);
     prs.add(r.pr);
   }
   return q;
@@ -192,6 +209,9 @@ export class RunQueue {
       const waits = ['WAITING', 'BACKOFF'].includes(row.state);
       if (!waits || !(updatedAt === null || newer)) return { action: 'seen' };
       row.poke = { at: now, dueAt: Math.max(now, (row.lastEvalAt ?? 0) + cooldownMs) };
+      // A row backing off after a claim refusal whose evaluation saw the PR's claims: the executor reads the PR once before its next
+      // scheduling pass and makes the poke due now when the PR names other claims (claimChanged; field defect 2026-11-08, PR #1039).
+      if (this.claimRefused(row) && row.evalClaims.length > 0) row.poke.claimCheck = true;
       row.deferUntil = null;
       row.updatedAt = now;
       return { action: 'new-trigger', dueAt: row.poke.dueAt };
@@ -213,6 +233,34 @@ export class RunQueue {
     // A running or parked batch keeps going (the row stays as it is and shows the newer commit as the next one).
     this.setState(row, row.running ? (row.state === 'PARKED' ? 'PARKED' : 'RUNNING') : 'QUEUED', row.running && row.state === 'PARKED' ? row.reason : null, now);
     return { action, seq: row.current.seq };
+  }
+
+  // A row that backs off after a claim refusal of its current commit, and knows the claims that evaluation saw.
+  claimRefused(row) {
+    return !!row && row.state === 'BACKOFF' && CLAIM_REASONS.includes(row.reason) && !row.running && !!row.current && claimsOk(row.evalClaims);
+  }
+
+  // The rows whose poke waits for the PR's claims to be read (offer set claimCheck).
+  claimChecks() {
+    return this.data.rows.filter(r => r.poke?.claimCheck === true && this.claimRefused(r)).map(r => ({ pr: r.pr, headSha: r.current.headSha }));
+  }
+
+  // Field defect 2026-11-08 (PR #1039): one live read of the PR (companion pr-head: { state, headSha, claims }) answers a poke's claim
+  // check. When the PR is still open at this commit and names claims, and they are not the ones the refused evaluation saw, the poke is
+  // due now and skips the cool-down (claimChanged: candidates, executor precheck). The back-off itself (nextAt, level) stays: when the
+  // re-evaluation cannot run (the re-evaluation cap, the PR's daily batches) the row retries at its own time, as before. The same
+  // claims, none, no answer or another head: the poke keeps its due time. Each poke is checked once. Returns true when it changed.
+  claimChanged(pr, live, now) {
+    const r = this.row(pr);
+    if (!r?.poke?.claimCheck) return false;
+    delete r.poke.claimCheck;
+    r.updatedAt = now;
+    if (!this.claimRefused(r) || !live || live.state !== 'open' || live.headSha !== r.current.headSha) return false;
+    const claims = claimsOf(live.claims);
+    if (!claims || claims.length === 0 || sameClaims(claims, r.evalClaims)) return false;
+    r.poke = { ...r.poke, dueAt: now, claimChanged: true };
+    r.deferUntil = null;
+    return true;
   }
 
   // A train front batch (step 3c-2b, DESIGN §41.4): the executor's only producer of a subject with S is on-mode stage 10's
@@ -271,7 +319,9 @@ export class RunQueue {
     }
     first.sort((a, b) => a.at - b.at || a.r.pr - b.r.pr);
     rest.sort((a, b) => a.r.order - b.r.order);
-    return [...first, ...rest].map(({ r, origin, poked }) => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, origin, poked: poked === true, ...frontOf(r.current) }));
+    // claimChanged: a poke whose PR names another claim than the refused evaluation saw (claimChanged): the precheck skips the cool-down.
+    return [...first, ...rest].map(({ r, origin, poked }) => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, origin, poked: poked === true,
+      ...(origin === 'new-trigger' && r.poke?.claimChanged === true ? { claimChanged: true } : {}), ...frontOf(r.current) }));
   }
 
   // A candidate the executor did not start (a per-row defer: the cool-down, the PR's daily batches, the waiting budget,
@@ -286,11 +336,13 @@ export class RunQueue {
     else { r.deferred = reason; r.updatedAt = now; }
   }
 
-  // The batch of this row's current commit was reserved.
-  begin(pr, headSha, key, origin, now) {
+  // The batch of this row's current commit was reserved. claims: the PR body's claims the live read before the reservation saw
+  // (companion.mjs#claimTrailers), kept as evalClaims for a claim refusal's next trigger (claimChanged); null when unknown.
+  begin(pr, headSha, key, origin, now, { claims = null } = {}) {
     const r = this.row(pr);
     check(r && r.current?.headSha === headSha && !r.running && ORIGINS.includes(origin), 'QUEUE_ROW_NOT_CURRENT', pr);
     r.running = { ...commitOf(r.current), key };
+    r.evalClaims = claimsOf(claims);
     r.lastEvalAt = now;
     r.poke = null;
     r.deferred = null;
