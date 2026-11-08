@@ -96,7 +96,7 @@ function Get-RightsNaming([string[]]$sids, [string[]]$names) {
     $cfg = Join-Path $dir 'rights.inf'
     $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
     if ($LASTEXITCODE -ne 0) { return 'unreadable' }
-    @(([IO.File]::ReadAllText($cfg) -split "`r?`n") | Where-Object { $line = $_; $_ -match '^\s*Se\w+\s*=' -and (@($sids + $names) | Where-Object { $line.Contains($_) }).Count })
+    @(([IO.File]::ReadAllText($cfg) -split "`r?`n") | Where-Object { $line = $_; $_ -match '^\s*Se\w+\s*=' -and @(@($sids + $names) | Where-Object { $line.Contains($_) }).Count })
   } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
