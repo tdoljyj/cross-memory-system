@@ -8,6 +8,62 @@ import { test } from "node:test";
 import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import * as admissionModule from './clued-work-admission.mjs';
+
+function mechanicalGitFixture(before, after, headMode = '100644') {
+  const repository = 'tdoljyj/cross-memory-system';
+  const file = 'scripts/ci/clued-independent-publication-port.mjs';
+  const url = `https://api.test/repos/${repository}`;
+  const ids = ['1', '2', '3', '4', '5', '6'].map(c => c.repeat(40));
+  const tree = entries => ({ body: { truncated: false, tree: entries } });
+  const dir = (name, sha) => ({ path: name, sha, mode: '040000', type: 'tree' });
+  const leaf = (sha, mode) => ({ path: path.basename(file), sha, mode, type: 'blob' });
+  const bytes = value => Buffer.isBuffer(value) ? value : Buffer.from(value);
+  const response = value => ({ body: { encoding: 'base64', content: bytes(value).toString('base64') } });
+  return fakeFetch({
+    [`GET ${url}/git/trees/${BASE}`]: tree([dir('scripts', ids[0])]),
+    [`GET ${url}/git/trees/${HEAD}`]: tree([dir('scripts', ids[1])]),
+    [`GET ${url}/git/trees/${ids[0]}`]: tree([dir('ci', ids[2])]),
+    [`GET ${url}/git/trees/${ids[1]}`]: tree([dir('ci', ids[3])]),
+    [`GET ${url}/git/trees/${ids[2]}`]: tree([leaf(ids[4], '100644')]),
+    [`GET ${url}/git/trees/${ids[3]}`]: tree([leaf(ids[5], headMode)]),
+    [`GET ${url}/git/blobs/${ids[4]}`]: () => response(before()),
+    [`GET ${url}/git/blobs/${ids[5]}`]: () => response(after()),
+    // Keep the old Contents response to reproduce why dereferencing a link is unsafe.
+    [`GET ${url}/contents/${file}?ref=${BASE}`]: () => response(before()),
+    [`GET ${url}/contents/${file}?ref=${HEAD}`]: () => response(after()),
+  });
+}
+
+test('trusted admission proves version-only changes but never waives an executable body edit', async () => {
+  const repository = 'tdoljyj/cross-memory-system', file = 'scripts/ci/clued-independent-publication-port.mjs';
+  const before = "export const COMPONENT_VERSION = '1.0.0';\nexport const bound = true;\n";
+  let after = before.replace('1.0.0', '1.0.1');
+  const f = mechanicalGitFixture(() => before, () => after);
+  const pr = { base: { sha: BASE }, head: { sha: HEAD } };
+  const call = () => admissionModule.mechanicalProofForPull(f.fetchImpl, env(), repository, pr, [file]);
+  assert.deepEqual(await call(), [file]);
+  after = after.replace('bound = true', 'bound = false');
+  assert.deepEqual(await call(), []);
+  assert.ok(f.calls.every(c => c.url.includes('/git/')));
+});
+
+test('mechanical proof never hides different invalid UTF-8 source bytes', async () => {
+  const repository = 'tdoljyj/cross-memory-system', file = 'scripts/ci/clued-independent-publication-port.mjs';
+  const bytes = (version, bad) => Buffer.concat([Buffer.from(`export const COMPONENT_VERSION='${version}';\n//`), Buffer.from([bad])]);
+  const f = mechanicalGitFixture(() => bytes('1.0.0', 255), () => bytes('1.0.1', 254));
+  assert.deepEqual(await admissionModule.mechanicalProofForPull(f.fetchImpl, env(), repository,
+    { base: { sha: BASE }, head: { sha: HEAD } }, [file]), []);
+});
+
+test('mechanical proof refuses a symlink or executable mode change even when Contents returns version-only bytes', async () => {
+  const before = "export const COMPONENT_VERSION='1.0.0';\nexport const bound = true;\n";
+  for (const mode of ['120000', '100755', '160000']) {
+    const f = mechanicalGitFixture(() => before, () => before.replace('1.0.0', '1.0.1'), mode);
+    assert.deepEqual(await admissionModule.mechanicalProofForPull(f.fetchImpl, env(), 'tdoljyj/cross-memory-system',
+      { base: { sha: BASE }, head: { sha: HEAD } }, ['scripts/ci/clued-independent-publication-port.mjs']), []);
+  }
+});
 
 test("admission CLI honors configured proxy routing and preserves child exit semantics before network work", () => {
   const script = fileURLToPath(new URL("./clued-work-admission.mjs", import.meta.url));

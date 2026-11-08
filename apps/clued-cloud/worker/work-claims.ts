@@ -147,6 +147,11 @@ export const workClaimTools = [
       properties: {
         scope, claim_id: uuid,
         changed_paths: { type: "array", maxItems: 2000, items: { type: "string", minLength: 1, maxLength: 400 } },
+        mechanical_paths_proven: {
+          type: "array", maxItems: 2000,
+          description: "CI-admission Binding only: declared mechanical literal paths independently verified against the exact PR base/head bytes; every entry must occur in changed_paths. Other callers cannot assert this proof. Without it full write-set coverage applies.",
+          items: { type: "string", minLength: 1, maxLength: 400 },
+        },
         head_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" },
         pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
       },

@@ -75,6 +75,8 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import mechanicalPolicy from '../../config/clued-mechanical-files.json' with { type: 'json' };
+import { computeMechanicalPathsProven, parseMechanicalPolicy } from './component-version-integration-policy.mjs';
 import {isDeepStrictEqual} from "node:util";
 import {CONTROL_WORKFLOW_FILES,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
@@ -1413,6 +1415,54 @@ async function fileAt(fetchImpl, env, repository, path, ref) {
   return Buffer.from(body.content, "base64").toString("utf8");
 }
 
+export async function mechanicalProofForPull(fetchImpl, env, repository, pr, paths) {
+  // This policy is part of the accepted gate's source closure, never PR input.
+  const policy = parseMechanicalPolicy(JSON.stringify(mechanicalPolicy));
+  if (repository.toLowerCase() !== policy.repository) return [];
+  const trees = new Map(), entries = new Map(), blobs = new Map();
+  const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+  const treeAt = ref => {
+    if (!sha(ref)) return Promise.resolve(null);
+    if (!trees.has(ref)) trees.set(ref, githubJson(fetchImpl, env, `/repos/${repository}/git/trees/${ref}`));
+    return trees.get(ref);
+  };
+  const readFileEntryAt = (file, ref) => {
+    const key = `${ref}:${file}`;
+    if (!entries.has(key)) entries.set(key, (async () => {
+      const parts = file.split('/');
+      if (!parts.length || parts.some(p => !p || p === '.' || p === '..')) return null;
+      let current = ref;
+      for (let i = 0; i < parts.length; i += 1) {
+        const tree = await treeAt(current);
+        if (!tree || tree.truncated !== false || !Array.isArray(tree.tree)) return null;
+        const matches = tree.tree.filter(entry => entry.path === parts[i]);
+        if (matches.length !== 1 || !sha(matches[0].sha)) return null;
+        const entry = matches[0];
+        if (i === parts.length - 1) return entry;
+        if (entry.type !== 'tree' || entry.mode !== '040000') return null;
+        current = entry.sha;
+      }
+      return null;
+    })());
+    return entries.get(key);
+  };
+  return computeMechanicalPathsProven({ policy, changedPaths: paths,
+    baseSha: pr.base.sha, headSha: pr.head.sha,
+    readFileEntryAt,
+    readFileAt: async (file, ref) => {
+      const entry = await readFileEntryAt(file, ref);
+      if (!entry || entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode)) return null;
+      if (!blobs.has(entry.sha)) blobs.set(entry.sha, githubJson(fetchImpl, env, `/repos/${repository}/git/blobs/${entry.sha}`));
+      const body = await blobs.get(entry.sha);
+      if (!body || body.encoding !== 'base64' || typeof body.content !== 'string' || body.content.length > 3 * 2 ** 20) return null;
+      const encoded = body.content.replace(/\s/g, '');
+      const bytes = Buffer.from(encoded, 'base64');
+      const text = bytes.toString('utf8');
+      if (bytes.length > 2 ** 21 || bytes.toString('base64') !== encoded || !Buffer.from(text, 'utf8').equals(bytes)) return null;
+      return text;
+    } });
+}
+
 // The base version a changed workflow is compared with. Re-review 7, MAJOR-2:
 // a file renamed into .github/workflows/ from anywhere else, or copied, is a
 // new workflow; only a rename between two workflow files keeps its base.
@@ -2052,6 +2102,8 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
     const reasonsBefore = outcome.reasons.length;
     let result;
     try {
+      const mechanicalProof = gateFindingsOfPr.length ? []
+        : await mechanicalProofForPull(fetchImpl, env, repository, pr, outcome.changed_paths);
       result = await verifyClaim(fetchImpl, env, gateFindingsOfPr.length ? {
         scope: reference.scope,
         claim_id: reference.claim_id,
@@ -2063,6 +2115,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
         head_sha: pr.head.sha,
         base_sha: pr.base.sha,
         pr_ref: outcome.pr_ref,
+        ...(mechanicalProof.length ? { mechanical_paths_proven: mechanicalProof } : {}),
         target_branch: pr.base.ref,
         // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
         // of a newly admitted head name the mode it was judged in. A service

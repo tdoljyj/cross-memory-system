@@ -1479,5 +1479,50 @@ class PublishTrailerTest(unittest.TestCase):
                 self.assertIsNone(GUARD.local_path(Path("w"), value))
 
 
+class MechanicalClaimDisplayTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.policy = json.loads((ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
+        (self.root / "config").mkdir()
+        self.file = self.root / "config/clued-mechanical-files.json"
+        self.file.write_text(json.dumps(self.policy), encoding="utf-8")
+
+    def test_generated_paths_do_not_appear_as_exclusive_source_occupancy(self):
+        current = {**claim(), "context_key": self.policy["context_keys"][0],
+                   "write_set": ["source/a.py", "config/clued-components.json",
+                                 "apps/clued-cloud/worker/generated/**"]}
+        rendered = GUARD.describe(current, root=self.root)
+        self.assertIn("source/a.py", rendered)
+        self.assertNotIn("clued-components.json", rendered)
+        self.assertNotIn("worker/generated", rendered)
+
+    def test_other_context_or_repository_keeps_same_named_source_exclusive(self):
+        current = {**claim(), "context_key": "global", "write_set": ["config/clued-components.json"]}
+        self.assertIn("clued-components.json", GUARD.describe(current, root=self.root))
+        current.update(context_key=self.policy["context_keys"][0],
+                       write_set=["repo:someone/else/config/clued-components.json"])
+        self.assertIn("someone/else/config/clued-components.json", GUARD.describe(current, root=self.root))
+
+    def test_exact_typed_repository_is_filtered_but_broad_source_glob_is_not(self):
+        current = {**claim(), "context_key": self.policy["context_keys"][0], "write_set": [
+            "repo:tdoljyj/cross-memory-system/config/clued-components.json", "apps/**",
+            "apps/clued-cloud/worker/generated-neighbour/source.ts"]}
+        rendered = GUARD.describe(current, root=self.root)
+        self.assertNotIn("clued-components.json", rendered)
+        self.assertIn("apps/**", rendered)
+        self.assertIn("generated-neighbour/source.ts", rendered)
+
+    def test_missing_or_malformed_policy_keeps_all_paths(self):
+        current = {**claim(), "context_key": self.policy["context_keys"][0],
+                   "write_set": ["config/clued-components.json"]}
+        for text in ("{bad", json.dumps({**self.policy, "mechanical_paths": ["../*"]})):
+            self.file.write_text(text, encoding="utf-8")
+            self.assertIn("clued-components.json", GUARD.describe(current, root=self.root))
+        self.file.unlink()
+        self.assertIn("clued-components.json", GUARD.describe(current, root=self.root))
+
+
 if __name__ == "__main__":
     unittest.main()

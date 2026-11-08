@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "repository": "tdoljyj/cross-memory-system",
+  "context_keys": ["project:0597aa60-9b98-4da6-a4ab-63d7705b632f"],
+  "mechanical_paths": [
+    "config/clued-components.json",
+    "apps/clued-cloud/worker/generated/**",
+    "scripts/ci/clued-merge-reconcile.mjs",
+    "scripts/ci/clued-merge-reconcile-source.json",
+    "scripts/ci/clued-independent-publication-port.mjs"
+  ]
+}
