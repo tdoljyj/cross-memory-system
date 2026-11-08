@@ -288,7 +288,7 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 | 换 GitHub 令牌 | 复制新令牌，`companion-gh-login.ps1 -Login -ProfileDirectory C:\Users\clued-companion -AccountSid <sid>`，再按第 4.2 节第 3 步重启任务 |
 | 停掉 companion | `rearm-resident.ps1 -CompanionInteractive`（任务改为账户的交互定义，账户从不登录，所以就停着） |
 | 看 companion 的日志、`supervisor.json` | 都在 `C:\Users\clued-companion\AppData\Local\CluedIndependentCI\`，要提权才能读；只读探针 `probe-companion-headless.ps1` 也要提权运行 |
-| 发行版退回你名下 | `rearm-resident.ps1 -CompanionWslRestore`：先停 companion（任务改为账户的交互定义），vhdx 移回记录里的原位置（跨卷时同样经 `.partial` 两边校验），你名下的注册项不在就从导出的 `.reg` 导回。账户名下那条注册此后指向不存在的文件，无害 |
+| 发行版退回你名下 | `rearm-resident.ps1 -CompanionWslRestore`（有切换正在进行时拒绝；报 `WSL_VHDX_STILL_IN_USE` 就重启后再跑，见 T13）：先停 companion（任务改为账户的交互定义），vhdx 移回记录里的原位置（跨卷时同样经 `.partial` 两边校验），你名下的注册项不在就从导出的 `.reg` 导回。账户名下那条注册此后指向不存在的文件，无害 |
 | 整体退回你自己的账户 | 先 `-CompanionWslRestore`；再用改动前的节点档案整套重装；最后删账户：`remove-companion-account.ps1 -LogDirectory <目录> -RegistrarSha256 <哈希>`（提权；只删 prepare 建的账户，companion 任务还用它时拒绝；去掉三项权利、档案（含它的 WSL 注册和 `.wslconfig`）、账户和登录界面隐藏项） |
 
 ### 9.6 真机验收（M5-b 版，DESK 先）
@@ -306,6 +306,7 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 | T9 | `-CompanionRootShell` | 弹出的控制台里 `id` 为 root，`cat /proc/sys/kernel/random/boot_id` 与 companion 记下的 `companion-session.json` 相同（同一个 VM） |
 | T10 | 切换前先确认（review r1 m10）：你自己的普通窗口里 `wsl -d <D> --exec sleep 600` 跑着，另开提权窗口 `wsl --terminate <D>` | 普通窗口里那个进程随之结束，`wsl -l -v` 显示 Stopped（提权的 terminate 停得掉不提权的实例）。停不掉就先在普通窗口里自己 `wsl --terminate <D>` 再切换 |
 | T11 | 切换后（review r1 m11）：你自己的普通窗口里 `wsl -l -v`、`wsl -d <D> --exec true` | 列表里没有 `<D>`，第二条报“找不到分发”（WSL 服务没有缓存旧注册）。还能看到时 `wsl --shutdown` 只关你自己的 VM 后再查 |
+| T13 | 回退演练（review r2 n2），先在测试时机做：`-CompanionWslRestore` | `COMPANION_WSL_RESTORED`；报 `WSL_VHDX_STILL_IN_USE`（账户自己的 WSL VM 还占着 vhdx，你停不掉它）时重启一次（任务已改为账户的交互定义，开机后没有东西会再启动那个 VM），再运行一次 `-CompanionWslRestore` |
 | T12 | 切换后 root shell 里 `id -u` 之外再看默认用户：账户名下普通 `wsl -d <D>`（经 root shell 无法直接看时读 `install\companion-wsl.json` 的 `ownerRegistration.values.DefaultUid`） | 与你名下原来的 DefaultUid 相同（TURING 原为 1000；DESK 原为 0） |
 
 ### 9.7 TURING 先确认

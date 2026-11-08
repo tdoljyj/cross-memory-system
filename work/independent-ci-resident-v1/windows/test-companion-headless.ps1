@@ -698,7 +698,10 @@ R1 'M4-restore-moves-back-and-reimports-the-key' {
   $script:sc = $sc
   $res = & {
     function Get-WslRegistrations { @() }; function Import-CompanionLxssKey($f) { [void]$script:sc.log.Add('import-key') }; function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback') }
-    function Test-CompanionSameVolume { $false }; function Get-CompanionFileSha256Unbuffered($p) { Get-CompanionFileSha256 $p }; function Set-CompanionOwnerFileAcl { }
+    function Test-CompanionSameVolume { $false }; function Set-CompanionOwnerFileAcl { }
+    # review r2 N1: the real unbuffered hash through a real registrar build (only the build's location is the scratch one)
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-build'); generation = ('a' * 64); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'); sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
+    function Remove-CompanionBuild { }
     Invoke-CompanionWslRestore $rootR $nodeR }
   if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or -not (@($sc.log) -contains 'import-key')) { throw ('restore:' + $res.failed) }
 }

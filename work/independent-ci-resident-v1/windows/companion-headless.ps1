@@ -657,6 +657,9 @@ function Get-CompanionFileSha256Unbuffered([string]$path) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $script:CompanionRegistrarExe; $psi.Arguments = 'file-sha256 "' + $path + '"'
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = 'C:\Windows\System32'
+  # Review r2 n5: the same cleared, fixed environment as Invoke-CompanionRegistrar (no profiler or COMPlus_ knob reaches it).
+  $psi.EnvironmentVariables.Clear()
+  foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('windir', 'C:\Windows'), @('SystemDrive', 'C:'), @('PATH', 'C:\Windows\System32;C:\Windows'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
   $p = [Diagnostics.Process]::Start($psi); $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
   $v = try { $o | ConvertFrom-Json } catch { $null }
   if ($null -eq $v -or [string]$v.code -cne 'FILE_SHA256' -or [string]$v.sha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'WSL_HASH_UNREADABLE' }
@@ -717,6 +720,22 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
   $record = if ($null -ne $existing) { $existing } else { [ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $target; companionSid = $companionSid; stage = 'new'; imported = $false } }
   if ([string]$record.target -cne $target -or [string]$record.distro -cne $distro) { throw 'WSL_RECORD_IS_ANOTHER_MOVE' }
   if (@('moved', 'imported', 'forgotten', 'qualified') -ccontains [string]$record.stage -and (Test-Path -LiteralPath $target -PathType Leaf)) { return $record }
+  # Review r2 n4: cut after the copy was verified (stage 'copied', with its hash): the copy is finished from the record, never copied again.
+  if ([string]$record.stage -ceq 'copied') {
+    $want = [string]$record.copy.targetSha256
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf) -and (Test-Path -LiteralPath $partial -PathType Leaf)) {
+      if ((Get-CompanionFileSha256Unbuffered $partial) -cne $want) { throw 'WSL_COPY_HASH_MISMATCH' }
+      [IO.File]::Move($partial, $target)
+    } elseif (Test-Path -LiteralPath $target -PathType Leaf) {
+      if ((Get-CompanionFileSha256Unbuffered $target) -cne $want) { throw 'WSL_TARGET_NOT_THE_COPY' }
+    } else { throw 'WSL_COPY_MISSING' }
+    if ($record.source -and (Test-Path -LiteralPath ([string]$record.source) -PathType Leaf)) { Remove-Item -LiteralPath ([string]$record.source) -Force }
+    Set-CompanionVhdxAcl $targetDir $target $companionSid
+    $record = ConvertTo-CompanionOrdered $record
+    $record.stage = 'moved'; $record.imported = $false; $record.movedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    Write-CompanionWslRecord $root $record
+    return $record
+  }
   $reg = @(Get-WslRegistrations | Where-Object { $_.name -ceq $distro })
   if ($reg.Count -gt 1) { throw 'WSL_REGISTRATION_AMBIGUOUS' }
   $r = if ($reg.Count) { $reg[0] } else { $null }
@@ -743,6 +762,10 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
       else {
         $copy = Copy-CompanionFileVerified $source $partial
         if ($copy.sourceSha256 -cne $copy.targetSha256) { Remove-Item -LiteralPath $partial -Force; throw 'WSL_COPY_HASH_MISMATCH' }
+        # Review r2 n4: 'copied' with the hash before the rename and the delete, so a cut between them resumes (above).
+        $record = ConvertTo-CompanionOrdered $record
+        $record.stage = 'copied'; $record.copy = $copy; $record.source = $source
+        Write-CompanionWslRecord $root $record
         [IO.File]::Move($partial, $target)
         Remove-Item -LiteralPath $source -Force
       }
@@ -915,14 +938,23 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
 # registration then names a missing file and is harmless (remove-companion-account.ps1 deletes it with the account's profile).
 function Invoke-CompanionWslRestore([string]$root, $node) {
   $result = [ordered]@{ restored = $false; failed = $null; record = $null }
+  # Review r2 n3: never while a switch is running (its window is open).
+  $pending = Read-CompanionPending $root
+  if ($null -ne $pending -and (Test-CompanionPendingOwnerAlive $pending)) { $result.failed = 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'; return $result }
   $record = Read-CompanionWslRecord $root
   if ($null -eq $record) { $result.failed = 'WSL_NOTHING_TO_RESTORE'; return $result }
   $record = ConvertTo-CompanionOrdered $record; $result.record = $record
   if (-not $record.Contains('source') -or -not $record.source -or -not $record.Contains('ownerExport')) { $result.failed = 'WSL_RECORD_INCOMPLETE'; return $result }
+  # Review r2 N1: the copy back is hashed from the disk by this generation's registrar (file-sha256), built here as the switch does.
+  $build = $null
+  try { $build = New-CompanionBuild $root } catch { $why = [string]$_.Exception.Message; $result.failed = 'COMPANION_BUILD_FAILED:' + $(if ($why -cmatch '^COMPANION_BUILD_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' }); return $result }
+  $script:CompanionRegistrarExe = $build.registrar.exe
   $null = Invoke-CompanionStopAndFallback $root ([string]$node.ownerSid)
   $source = [string]$record.source; $target = [string]$record.target
   try {
     if (Test-Path -LiteralPath $target -PathType Leaf) {
+      # Review r2 n2: the account's own WSL VM may still hold the file; the Owner cannot stop it. The task is parked (above), so after a
+      # restart nothing starts that VM: WSL_VHDX_STILL_IN_USE means restart, then run -CompanionWslRestore again (runbook 9.5, T13).
       if (-not (Wait-CompanionVhdxFree $target 300)) { throw 'WSL_VHDX_STILL_IN_USE' }
       if (Test-Path -LiteralPath $source) { throw 'WSL_SOURCE_EXISTS' }
       [void][IO.Directory]::CreateDirectory((Split-Path -Parent $source))
@@ -943,6 +975,7 @@ function Invoke-CompanionWslRestore([string]$root, $node) {
     Write-CompanionWslRecord $root $record
     $result.restored = $true
   } catch { $why = [string]$_.Exception.Message; $result.failed = $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'WSL_RESTORE_UNEXPECTED' }) }
+  finally { $script:CompanionRegistrarExe = $null; Remove-CompanionBuild $build.directory }
   $result
 }
 # rearm-resident.ps1 -CompanionRootShell: a root shell in the resident distribution as the companion account (the registrar sets a new

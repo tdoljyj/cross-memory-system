@@ -346,7 +346,7 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadFile(IntPtr file, IntPtr buffer, int toRead, out int read, IntPtr overlapped);
   [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint type, uint protect);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool VirtualFree(IntPtr address, UIntPtr size, uint type);
-  [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr policy, byte[] sid, bool all, LSA_UNICODE_STRING[] rights, int count);
+  [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr policy, byte[] sid, [MarshalAs(UnmanagedType.U1)] bool all, LSA_UNICODE_STRING[] rights, int count);   // BOOLEAN: one byte (review r2 n6)
   [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetUserDel(string server, string user);
   [DllImport("userenv.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool DeleteProfileW(string sid, string path, string machine);
 
