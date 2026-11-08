@@ -319,6 +319,9 @@ export const SUPERSEDED_AT_SAFE_POINT = 'SUPERSEDED_AT_SAFE_POINT';
 export const SUPERSEDED_ARCHIVE_REASON = 'superseded';
 // The status code of a reservation released for a newer commit before stage 1 (release reason SUPERSEDED).
 export const BATCH_SUPERSEDED = 'BATCH_SUPERSEDED';
+// The code of a new-trigger notice whose poke found another claim in the PR body after a claim refusal (recheckClaims; field defect
+// 2026-11-08, PR #1039): the PR page says the head is evaluated again now, not after the cool-down.
+export const CLAIM_CHANGED = 'CLAIM_CHANGED';
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
 export const ETA_BATCH_MS = 22 * 60_000;
 // Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
@@ -2908,6 +2911,7 @@ export class ResidentExecutor {
     const b = breakerOf(this.queue.breaker);
     this.queue.breaker = b;
     let attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now);
+    await this.recheckClaims(now);
     let rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
@@ -2999,10 +3003,26 @@ export class ResidentExecutor {
     return last ?? { state: 'IDLE' };
   }
 
+  // Field defect 2026-11-08 (PR #1039): a poke of a row backing off after a claim refusal (queue.mjs#claimChecks) is answered by one
+  // live read of the PR before the candidates are taken: when the PR body names other claims than the refused evaluation saw, the
+  // poke is due now and skips the cool-down (queue.mjs#claimChanged), so the same head is evaluated again (same batch key, attempt 1)
+  // right after its author fixed the claim, not when the back-off ends. Only scheduling: stage 1's Native admission decides again, the
+  // once-only ledger, burned heads, the breaker, the re-evaluation cap and the daily budgets apply as to any new trigger. No answer:
+  // the poke keeps its due time.
+  async recheckClaims(now) {
+    for (const { pr, headSha } of this.queue.claimChecks()) {
+      const live = await this.livePull(pr);
+      if (!this.queue.claimChanged(pr, live, now)) continue;
+      this.queue.notice({ key: `poke-claim:${pr}:${headSha}:${now}`, kind: 'new-trigger', pr, headSha, code: CLAIM_CHANGED });
+      try { await this.receipt('queue-claim-changed', { pr, headSha }); } catch { /* the queue row and the notice show it */ }
+    }
+  }
+
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.
   //   usage: ledger.mjs#usage for the last 24 hours; origin: how the queue picked the subject (queue.mjs#ORIGINS).
+  //   claimChanged: the queue's poke found another claim in the PR body after a claim refusal (recheckClaims): no cool-down.
   // A deferral with perRow waits for this row only; any other one ends the scheduling pass.
-  async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued' } = {}) {
+  async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued', claimChanged = false } = {}) {
     const now = this.clock();
     const l = this.policy.limits;
     if ((await this.qualificationHolds.inspect(subject)).held) return { defer: RELAY_QUALIFICATION_HELD, perRow: true };
@@ -3027,8 +3047,11 @@ export class ResidentExecutor {
     // DESIGN §34.5: while the two sides run different versions (consistent false, read now) nothing is reserved: a global
     // deferral, the PR pays nothing for the node's skew. Unknown (null) or no versions port: as before.
     if (await this.versionSkewNow()) return { defer: VERSION_SKEW };
-    // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES).
-    const recent = (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
+    // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES). Not for a new
+    // trigger whose PR now names another claim after a claim refusal (field defect 2026-11-08, PR #1039: the refusal was safeToRerun,
+    // nothing ran, and the fix it asked for is in; the re-evaluation cap below still bounds how often).
+    const recent = claimChanged && origin === 'new-trigger' ? []
+      : (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
     // The daily budgets (policy /4), all from the ledger: executions, evaluations (not for a wait: it has its own
     // budget), the waits' budget, the new-trigger re-evaluations of this PR commit, the PR's own executions.
@@ -3097,7 +3120,7 @@ export class ResidentExecutor {
     if (Object.hasOwn(c, 'testSha') && [1, 2].includes(c.frontAttempt)) this.frontKeys.set(batchKey(subject), c.frontAttempt);
     const key = batchKey(subject);
     const hk = headKey(subject);
-    const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin });
+    const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin, claimChanged: c.claimChanged === true });
     if (pre.ignore) {
       this.queue.settle(c.pr, c.headSha, { kind: 'ignored', code: pre.ignore, klass: null }, this.clock());
       await this.receipt('trigger-ignored', { key, failureCode: pre.ignore, origin: c.origin });
@@ -3127,7 +3150,8 @@ export class ResidentExecutor {
     } else this.frontBindKeys.delete(key); // an earlier binding run of this key that was released: this run is an ordinary one
     await this.ledger.reserve(key, subject, { origin: c.origin });
     await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
-    this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock());
+    // The claims the PR body names now (the live read above), for a claim refusal's next trigger (queue.mjs#claimChanged).
+    this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock(), { claims: live?.claims ?? null });
     await this.persistQueue();
     // t0 of the hosted wait: the row is reserved in this very tick.
     return this.driveReserved(key, subject, this.clock(), c.origin);
@@ -3203,7 +3227,7 @@ export class ResidentExecutor {
     await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1, origin: 'attempt2' });
     // The row of attempt 1's head shows attempt 2 running (when that head is still the PR's current one in the queue).
     const row = this.queue.row(subject.pr);
-    if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock()); await this.persistQueue(); }
+    if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock(), { claims: live?.claims ?? null }); await this.persistQueue(); }
     return this.driveReserved(key2, subject, this.clock(), 'attempt2');
   }
 
