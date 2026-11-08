@@ -183,6 +183,19 @@ function Get-InstalledNode([string]$root) {
   $node
 }
 
+# M5-b (ADR 0023): who runs -Apply. On a node whose companion runs as its own account (install\companion-account.json, admin-only write)
+# the node profile's ownerSid is that account and the Owner is the install's operator; otherwise the Owner is ownerSid. The heartbeat
+# secret's ACL stays the node profile's ownerSid's (the companion reads it).
+function Get-HeartbeatOperatorSid([string]$root, [string]$ownerSid) {
+  $f = Join-Path $root 'install\companion-account.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $ownerSid }
+  $a = try { (New-Object Text.UTF8Encoding($false, $true)).GetString([IO.File]::ReadAllBytes($f)) | ConvertFrom-Json } catch { throw 'COMPANION_ACCOUNT_RECORD_REFUSED' }
+  $names = @(if ($a -is [pscustomobject]) { $a.PSObject.Properties.Name })
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z'
+  if ($names.Count -ne 3 -or [string]$a.contract -cne 'clued.independent-ci.companion-account/1' -or [string]$a.companionSid -cne $ownerSid -or
+    [string]$a.operatorSid -cnotmatch $sid -or [string]$a.operatorSid -ceq $ownerSid) { throw 'COMPANION_ACCOUNT_RECORD_REFUSED' }
+  [string]$a.operatorSid
+}
 # The plan: read-only. Nothing in it is, or is derived from, the token except its (fixed) length and two booleans.
 # $tokenBytes: the new token (held); $existing: the installed token's bytes (held) or $null.
 function Get-HeartbeatReplacePlan([string]$root, [string]$tokenFile, [string]$connectionId, [bool]$allowSame, [bool]$tokenFileGiven,
@@ -289,7 +302,7 @@ function Invoke-HeartbeatTokenReplace {
 
     # ---- Apply ----
     if (-not $Elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
-    if ($CurrentSid -cne $plan.nodeOwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
+    if ($CurrentSid -cne (Get-HeartbeatOperatorSid $Root ([string]$plan.nodeOwnerSid))) { throw 'OWNER_ACCOUNT_REQUIRED' }
     if ($Machine -cne $plan.nodeHostname) { throw 'NODE_HOST_REQUIRED' }
     if ($ExpectedPlanSha256 -cne $planSha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
     $dir = $plan.directory; $target = $plan.target

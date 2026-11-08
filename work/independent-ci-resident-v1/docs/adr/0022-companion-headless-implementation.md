@@ -1,6 +1,7 @@
 # ADR 0022：companion 不靠登录的实施——密码登录的计划任务、监督进程、通知拆分与新升级通道
 
 - 状态：已实施（第 29 代，未安装）。只能随一次整套重装（R 类：Decision + UAC + Grant）装上，不能走原地升级（本文 §4.0）。装好后 companion 任务先是 InteractiveToken 加监督进程，Owner 在安全桌面输一次密码之后才切成密码登录。
+- 补记（2026-11-08）：DESK 现场 Owner 是管理员，密码登录拿到完整令牌，supervisor 拒绝运行；M5 按 Decision `085e7f75` 暂停，之后 Owner 决定改走 M5-b（本文 §3 方案 A、§9），实施见 [ADR 0023](0023-companion-own-account.md)。本文的监督进程、注册程序、待验收标记、回退任务和升级通道原样沿用。
 - 日期：2026-11-07（设计）；2026-11-08（实施与三轮独立审核）；第 29 代合入
 - Owner Decision：`9dc130c7` 第 3 项（M5 采用 B2）、第 4 项（companion 改用细粒度 GitHub 令牌）；`ad709155`（批准本次修改升级器 `upgrader/src/machine.mjs`、`windows-port.mjs`）
 - 关联：[ADR 0011](0011-companion-without-logon.md)（决定）；Task `59f8ef81`；优化方案 Task `bf57ff10` 的 M5
@@ -371,6 +372,7 @@ Q1 或 Q2 不成立，就不发 B2，改走 M5-b 或 D2，并重新设计。
 - **M5-b 专用账户**（方案 A）：
   - 收益：把 Agent 从常驻发行版的 root、companion 的 GitHub 凭据和 `mailbox\responses` 写权限中隔开；需要存的只是一个非管理员账户的密码。
   - 前提：Owner 决定收紧 `4fedfc84`，并接受 Linux 运维改用 `runas`。
+  - 2026-11-08 已实施，见 [ADR 0023](0023-companion-own-account.md)：密码改为随机、无人知晓，所以没有 `runas`，Linux 运维改用 `rearm-resident.ps1 -CompanionRootShell`。
 - **gh 令牌范围**：现在用的是 Owner 的全范围令牌（`repo`、`workflow`）。建议另立任务，改为只限本仓库的细粒度令牌，只给 contents 读、statuses 写、actions 写、issues 写，由 Owner 决定。
 
 ### 10. 独立安全审核（r1 → r2）
