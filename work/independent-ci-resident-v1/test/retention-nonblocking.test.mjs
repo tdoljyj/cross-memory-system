@@ -210,6 +210,9 @@ test('review MAJOR 1: a claim re-check is not asked while the step runs: its pr-
     f.advance(60_000);
     claims[0] = NEW;
     await f.drop(trigger(f.clock()));
+    // A tick already under way when the trigger landed may end without having read it (CI run 42488811412, Linux): wait for the
+    // trigger to be taken first, then for a tick that ended after that.
+    await waitFor(() => f.queue.row(PR).poke?.claimCheck === true, 'the trigger taken: its poke asks for a claim re-check', PROMPT_MS);
     const from = results.length;
     await waitFor(() => results.slice(from).some(r => r.state === 'DEFERRED' && r.reason === BETWEEN_BATCHES_RUNNING), 'a prompt tick held by the running step', PROMPT_MS);
     assert.deepEqual(await box.requests('pr-head'), [], 'no pr-head was queued behind the hung prune');
