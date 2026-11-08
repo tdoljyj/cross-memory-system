@@ -63,7 +63,7 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   assert.deepEqual(kinds(1, { ...plenty, freeMemGb: 16 }), []);
   assert.deepEqual(kinds(1, { ...plenty, idleCores: 7 }), ['cpu']);
   assert.deepEqual(kinds(1, { ...plenty, dataFreeGb: 12 }), ['disk']);
-  // the system drive: the watchdog resumes the runners at 60 GB, and stops them at 50
+  // the system drive: the watchdog clears its C: alert at 60 GB (the resume level of this fixture)
   assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 62.9 }), ['system-disk']);
   assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 63 }), []);
   assert.deepEqual(kinds(1, { ...plenty, systemFreeGb: 40 }), ['system-disk']);

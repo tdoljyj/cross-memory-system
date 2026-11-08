@@ -605,8 +605,8 @@ test('a run says when the system drive is below the CI watchdog resume level, or
   const win = { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 60 } };
   const data = 'D:\\clued-dev\\cache';
   const [low] = systemDriveNotes(data, { ...win, free: () => 49.8 });
-  assert.match(low, /^C:\\ has 49\.8 GB free, below 60 GB: .*below 50 GB .*starts them again at 60 GB/);
-  assert.equal(systemDriveNotes(data, { ...win, free: () => 59.9 }).length, 1, 'between the two levels the watchdog is still holding the runners');
+  assert.match(low, /^C:\\ has 49\.8 GB free, below 60 GB: .*alert below 50 GB and clears it at 60 GB/);
+  assert.equal(systemDriveNotes(data, { ...win, free: () => 59.9 }).length, 1, 'between the two levels the watchdog\'s alert still stands');
   assert.deepEqual(systemDriveNotes(data, { ...win, free: () => 60 }), []);
   assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: { suspend: 50, resume: 0 }, free: () => 1 }), [], 'switched off');
   assert.deepEqual(systemDriveNotes(data, { platform: 'win32', env: { SystemDrive: 'C:' }, levels: null, free: () => 1 }), [], 'not a CI host: nothing is guarded');
