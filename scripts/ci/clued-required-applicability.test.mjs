@@ -9,7 +9,7 @@ import {COMPONENT_VERSION,readRequiredApplicability,inspectRequiredApplicability
   REQUIRED_MIGRATION_PATHS,REQUIRED_SELECT_ALL_PATHS} from './clued-required-applicability.mjs';
 
 const H='a'.repeat(40),B='b'.repeat(40),M='c'.repeat(40),repository='o/r',prNumber=17,runId=777,runAttempt=2;
-assert.equal(COMPONENT_VERSION,'1.0.1');
+assert.equal(COMPONENT_VERSION,'1.0.2');
 const profile=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[REQUIRED_TESTS_SOURCE.file];
 const selector=fs.readFileSync(new URL('./ci-required-selection.mjs',import.meta.url));
 const gateScript=Buffer.from('public trusted gate fixture, not a credential');
