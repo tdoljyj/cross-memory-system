@@ -269,14 +269,15 @@ test('mailbox: an empty ready marker is pending, but empty data, links and malfo
 test('issuer (gitleaks): a ready marker that never commits stays uncertain at the existing deadline, never reissued', WINDOWS, async t => {
   const f = issuerFixture(t), root = await spool(t), s = scripted(['ok']), actual = await createFixtureMailbox(root, 'windows');
   await fs.writeFile(path.join(root, 'incoming', 'blocked.ready.json'), Buffer.alloc(0), { flag: 'wx' });
-  let now = Date.now(), expires = null;
+  let skew = 0, expires = null;
+  const clock = () => Date.now() + skew;
   const writes = [], waits = [];
   const box = { ...actual, async write(name, bytes) {
     writes.push(name); if (name === 'issue') expires = Date.parse(decode(bytes).expiresAt);
     return actual.write(name, bytes);
   } };
-  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box, clock: () => now,
-    sleep: async ms => { waits.push(ms); now = expires; }, stageDeadline: now + CALLBACK_WINDOW_MS + 60_000 });
+  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box, clock,
+    sleep: async ms => { waits.push(ms); skew = expires - Date.now(); }, stageDeadline: clock() + CALLBACK_WINDOW_MS + 60_000 });
   assert.deepEqual([r.status, r.reason, r.sideEffects], ['UNCERTAIN', 'BRIDGE_RESULT_DEADLINE', 1]);
   assert.deepEqual(writes, ['issue']);
   assert.deepEqual(waits, [100], 'pending bytes use the existing bounded wait, never the refs retry');
