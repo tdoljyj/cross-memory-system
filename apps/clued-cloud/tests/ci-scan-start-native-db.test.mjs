@@ -205,6 +205,8 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       const results=await Promise.all([local(d,c1),hosted(verified({...d,execution_id:uuid()}),c2)]);
       assert.equal(results.filter(r=>r.launch_allowed===true).length,1,JSON.stringify(results));assert.equal(results.filter(r=>r.launch_allowed===false).length,1);
       won=results.find(r=>r.launch_allowed);assert.equal(await count(),1);assert.ok(won.receipt_id);
+      // 20261108090000 (Task dcc53013): only a caller naming S and attempt gets the /2 grant; this one names neither
+      // (an old Source, or the hosted entry), so either winner keeps the exact /1 shape its consumer checks.
       assert.deepEqual(Object.keys(won).sort(),['status','contract','launch_allowed','execution_id','receipt_id','repository_id','head_sha','role','provider','start_requested_at'].sort());
       assert.equal(won.contract,'clued.ci-scan-start-grant/1');assert.match(won.start_requested_at,/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
     });
@@ -292,7 +294,9 @@ test('physical scan-start Native K: real transactions, exact existing authority 
     });
     await t.test('the K itself is immutable and globally unique; there is no finish/reset/transfer door',async()=>{
       const key=(await admin.query(`select pg_get_constraintdef(oid) d from pg_constraint where conrelid='clued_private.ci_scan_start_keys_v1'::regclass and contype='p'`)).rows[0].d;
-      assert.equal(key,'PRIMARY KEY (repository_id, head_sha, role)');
+      // 20261108090000 (Task dcc53013) names the batch: tested commit and attempt. Callers that name neither (this
+      // test, the hosted entry) still get S = H, attempt 1, so the global (head, role) burn above is unchanged.
+      assert.equal(key,'PRIMARY KEY (repository_id, head_sha, test_sha, attempt, role)');
       await assert.rejects(()=>admin.query("update clued_private.ci_scan_start_keys_v1 set state='start_requested'"),/CI_SCAN_START_IMMUTABLE/);
       await assert.rejects(()=>admin.query('delete from clued_private.ci_scan_start_keys_v1'),/CI_SCAN_START_IMMUTABLE/);
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
