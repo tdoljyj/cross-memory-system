@@ -19,6 +19,11 @@ test('component remediation uses the automatic clean-candidate integrator instea
   assert.doesNotMatch(COMPONENTS_FIX, /clued_components\.py bump/);
 });
 
+test('a change to the mechanical policy always selects pinned registries', () => {
+  assert.ok(PINNED_REGISTRY_PATHS.some(pattern => globToRegExp(pattern).test('config/clued-mechanical-files.json')),
+    'the selector integration must register config/clued-mechanical-files.json');
+});
+
 test('mechanical exemption policy is verified by pinned registries and tampering fails', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-mechanical-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
