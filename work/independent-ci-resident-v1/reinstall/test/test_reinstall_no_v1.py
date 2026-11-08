@@ -3,12 +3,15 @@
 fixture inputs, for a node with v1 (unchanged) and one without. Nothing runs as root, nothing touches WSL or the host.
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
-import datetime, hashlib, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
+import datetime, hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RE = os.path.dirname(HERE)
 SIGN = os.path.join(RE, 'linux', 'tools', 'sign-qualification-no-v1.mjs')
 PREP = os.path.join(RE, 'linux', 'prep.py')
+FIXTURE_PATHS = os.path.join(HERE, 'fixture_paths.py')   # the configuration names C:\fixture\... on every host
+_spec = importlib.util.spec_from_file_location('fixture_paths', FIXTURE_PATHS)
+fixture_paths = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fixture_paths)
 sha = lambda b: hashlib.sha256(b).hexdigest()
 
 
@@ -201,20 +204,22 @@ def build_prep(d, v1_head):
     for name, doc in (('facts.json', facts), ('gen.json', gen)):
         with open(os.path.join(d, name), 'w', encoding='utf-8') as f:
             json.dump(doc, f)
-    cfg = {'contract': 'clued.independent-ci.reinstall-config/1', 'node': 'node-a', 'nodeProfile': 'config/node-profile.node-a.json', 'workDir': w, 'repo': repo,
+    cp = os.path.join(d, 'config.json')
+    win = lambda p: fixture_paths.win(cp, p)
+    cfg = {'contract': 'clued.independent-ci.reinstall-config/1', 'node': 'node-a', 'nodeProfile': 'config/node-profile.node-a.json', 'workDir': win(w), 'repo': win(repo),
            'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
            'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
            'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
            'linux': {'distribution': 'D', 'installedManifest': 'C:\\m.json', 'installedRoles': 'C:\\roles-v3',
                      'host': {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64, 'v1SourceHead': v1_head}}}
-    cp = os.path.join(d, 'config.json')
     with open(cp, 'w', encoding='utf-8') as f:
         json.dump(cfg, f)
     return [cp, commit, new, 'dddddddd-1111-4111-8111-111111111111', pkg, 'draft-t', 'in-t', os.path.join(d, 'facts.json'), os.path.join(d, 'gen.json')], w
 
 
 def run_prep(argv, prep=PREP):
-    return subprocess.run([sys.executable, '-I', prep] + argv, capture_output=True, text=True)
+    # prep.py as on the node (python -I), its configuration's C:\fixture stand-ins read at the fixture's local paths (test/fixture_paths.py)
+    return subprocess.run([sys.executable, '-I', FIXTURE_PATHS, prep] + argv, capture_output=True, text=True)
 
 
 class PrepNoV1(unittest.TestCase):

@@ -20,6 +20,7 @@ def load(name, path):
 
 rehearse = load('rehearse', os.path.join(RE, 'rehearse.py'))
 rconfig = rehearse.rconfig
+fixture_paths = load('fixture_paths', os.path.join(HERE, 'fixture_paths.py'))
 sha = lambda b: hashlib.sha256(b).hexdigest()
 COMMIT = 'a' * 40
 SV2 = '/opt/clued-independent-ci/source-v2/'
@@ -82,15 +83,20 @@ class Fixture:
         open(os.path.join(pkg, 'package-manifest.json'), 'w').write('{"contract":"clued.independent-ci.resident-package/4"}')
         os.makedirs(os.path.join(pkg, 'resident', 'windows'))
         open(os.path.join(pkg, 'resident', 'windows', 'verify-resident.ps1'), 'w').write(VERIFY_TAIL)
-        cfg_doc = {'contract': rconfig.CONTRACT, 'node': 'turing', 'nodeProfile': 'config/node-profile.turing.json', 'workDir': w, 'repo': 'C:\\repo',
+        self.cfg_path = os.path.join(self.dir, 'config.json')
+        win = lambda p: fixture_paths.win(self.cfg_path, p)   # the configuration names Windows paths on every host
+        cfg_doc = {'contract': rconfig.CONTRACT, 'node': 'turing', 'nodeProfile': 'config/node-profile.turing.json', 'workDir': win(w), 'repo': 'C:\\repo',
                    'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
                    'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
                    'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
-                   'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': self.installed_manifest, 'installedRoles': os.path.join(inst_dir, 'roles-v3'),
+                   'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': win(self.installed_manifest), 'installedRoles': win(os.path.join(inst_dir, 'roles-v3')),
                              'host': HOST_FACTS}}
-        self.cfg_path = os.path.join(self.dir, 'config.json')
         json.dump(cfg_doc, open(self.cfg_path, 'w'))
-        self.cfg = rconfig.load(self.cfg_path)
+        self.cfg = self.load(self.cfg_path)
+
+    def load(self, path):
+        """rconfig.load (its Windows-path checks, as on the node), then this fixture's local paths for the C:\\fixture stand-ins."""
+        return fixture_paths.localize(rconfig.load(path), path)
 
     def close(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -330,7 +336,7 @@ class Rehearsal(unittest.TestCase):
         doc = json.load(open(self.fx.cfg_path))
         doc['linux']['host'] = dict(HOST_FACTS, v1SourceHead=None)
         p = os.path.join(self.fx.dir, 'no-v1.json'); json.dump(doc, open(p, 'w'))
-        cfg = rconfig.load(p)
+        cfg = self.fx.load(p)
         z1 = {'v1Head': None, 'v1Qualifications': {r: False for r in ('gitleaks', 'trivy', 'contract-placement')}, 'v1Present': [],
               'v2Qualifications': {r: True for r in ('gitleaks', 'trivy', 'contract-placement')}}
         run = lambda probe: rehearse.rehearse(cfg, COMMIT, self.fx.pkg, FakeHost(self.fx, probe=dict(z1, **probe)))
@@ -382,7 +388,16 @@ class Config(unittest.TestCase):
     def load(self, doc):
         p = os.path.join(self.fx.dir, 'c2.json')
         json.dump(doc, open(p, 'w'))
-        return rconfig.load(p)
+        return self.fx.load(p)
+
+    def test_paths_are_windows_paths_on_every_host(self):
+        # a regular expression, the same check on the Linux CI host as on the node: a POSIX or forward-slash path is refused
+        for bad in ('/tmp/rehearse-x/work', 'C:/Users/x/work', 'work', 'C:\\fixture\\..\\work'):
+            with self.subTest(bad=bad), self.assertRaises(rconfig.ConfigError) as e:
+                self.load(dict(self.doc, workDir=bad))
+            self.assertEqual(str(e.exception), 'CONFIG_PATH_SHAPE workDir')
+        self.assertTrue(self.doc['workDir'].startswith('C:\\fixture\\'), self.doc['workDir'])   # the fixture never names a host path
+        self.assertEqual(self.fx.cfg['workDir'], self.fx.w)
 
     def test_optional_rehearsal_user_is_a_normal_username_and_bound_by_config_hash(self):
         default = self.load(self.doc)
@@ -524,7 +539,7 @@ class FirstInstall(unittest.TestCase):
     def load(self, doc):
         p = os.path.join(self.fx.dir, 'c3.json')
         json.dump(doc, open(p, 'w'))
-        return rconfig.load(p)
+        return self.fx.load(p)
 
     def test_null_linux_facts_load_and_the_reinstall_tools_refuse_them(self):
         first = dict(self.doc, linux=dict(self.doc['linux'], installedRoles=None, host={k: None for k in HOST_FACTS}))

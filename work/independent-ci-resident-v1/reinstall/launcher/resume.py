@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import ntpath
 import os
 from pathlib import Path
 import re
@@ -60,8 +61,9 @@ def output_path(value, work_directory):
     path = Path(value).absolute()
     work = windows_path(str(Path(work_directory).absolute()))
     windows_path(str(path))
-    require(os.path.normcase(os.path.commonpath([work, str(path)])) == os.path.normcase(work)
-            and os.path.normcase(str(path)) != os.path.normcase(work), 'RESUME_OUTPUT_OUTSIDE_WORKDIR')
+    # both are C:\ paths (windows_path): compared as Windows paths (ntpath), whatever host os.path is
+    require(ntpath.normcase(ntpath.commonpath([work, str(path)])) == ntpath.normcase(work)
+            and ntpath.normcase(str(path)) != ntpath.normcase(work), 'RESUME_OUTPUT_OUTSIDE_WORKDIR')
     require(not os.path.lexists(path), 'RESUME_OUTPUT_MUST_BE_NEW')
     for parent in path.parents:
         info = parent.lstat()
