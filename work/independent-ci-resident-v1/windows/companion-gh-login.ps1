@@ -25,6 +25,10 @@
 
     -Login   reads the token from the clipboard (copy it from the GitHub page first), checks its shape (ghp_ and 36 characters), writes
              hosts.yml and home\.gitconfig, and empties the clipboard. Prints no part of the token.
+    -CopyFromOwner  (elevated, with -ProfileDirectory and -AccountSid) takes the github.com classic token of the Owner's existing companion hosts.yml and writes a new
+             hosts.yml (-Login's format) into the account's profile at the same relative place, with the same folder ACL as -Login; only when it holds a classic token. The token
+             is never printed and never in a variable here. Prints JSON with a status: COMPANION_GH_LOGIN_COPIED, or
+             COMPANION_GH_ plus OWNER_TOKEN_MISSING, OWNER_TOKEN_NOT_CLASSIC, OWNER_TOKEN_PATH_IS_A_LINK, OWNER_TOKEN_FILE_HARDLINKED, OWNER_SID_MISMATCH or OWNER_PROFILE_REFUSED (exit 1, nothing copied).
     -Check   read-only: the folder and its ACL, the token's shape (prefix and length only), the .gitconfig text, then with the companion's
              own configuration: gh auth status, the read-only GitHub reads the companion makes, and git ls-remote through the helper;
              finally that the Owner's own gh login still works. Prints exit codes and gh's own masked lines only.
@@ -33,7 +37,7 @@
   powershell.exe -NoProfile -File companion-gh-login.ps1 -Check
 #>
 [CmdletBinding()]
-param([switch]$Login, [switch]$Check, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system',
+param([switch]$Login, [switch]$Check, [switch]$CopyFromOwner, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system',
   [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe = 'C:\Program Files\GitHub CLI\gh.exe',
   # M5-b (ADR 0023): for the companion's own account, elevated (by the Owner): its profile directory and SID (prepare-account prints both).
   [string]$ProfileDirectory, [string]$AccountSid)
@@ -60,6 +64,71 @@ function Write-Utf8([string]$path, [string]$text) {
   [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding($false)))
   if (Test-Path -LiteralPath $path) { [IO.File]::Replace($tmp, $path, [NullString]::Value) } else { [IO.File]::Move($tmp, $path) }
 }
+# The github.com block of a hosts.yml and its first oauth_token (indented lines belong to the block; another host starts at column 0).
+$GithubTokenRx = '(?ms)^github\.com:[ \t]*\r?\n(?:[ \t]+[^\r\n]*\r?\n)*?[ \t]+oauth_token:[ \t]*(\S+)[ \t]*\r?$'
+function Get-LinkCount([string]$path) {
+  if (-not ('CompanionLinkCount' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Runtime.InteropServices;
+public static class CompanionLinkCount {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] struct Info { public uint Attr; public long C, A, W; public uint Serial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr h, out Info i);
+  public static uint Of(string path) {
+    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+      Info i; if (!GetFileInformationByHandle(fs.SafeFileHandle.DangerousGetHandle(), out i)) throw new IOException("GetFileInformationByHandle");
+      return i.Links;
+    }
+  }
+}
+'@
+  }
+  [int][CompanionLinkCount]::Of($path)
+}
+# 'ok' or a code. The Owner's token store is trusted only when: the profile is C:\Users\<name> (profileRoot, for tests), the process
+# user is the Owner (SID), and neither the file nor any folder from it up to the profile is a link / reparse point, and the file has one link.
+function Get-OwnerTokenState([string]$ownerProfile, [string]$ownerSid, [string]$profileRoot = 'C:\Users') {
+  if ($ownerProfile -cnotmatch ('^' + [regex]::Escape($profileRoot) + '\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z')) { return 'OWNER_PROFILE_REFUSED' }
+  if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $ownerSid) { return 'OWNER_SID_MISMATCH' }
+  $file = Join-Path (Get-CompanionGhDirs $ownerProfile).gh 'hosts.yml'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return 'OWNER_TOKEN_MISSING' }
+  for ($p = $file; $p -and $p.Length -ge $ownerProfile.Length; $p = Split-Path -Parent $p) {
+    if (((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'OWNER_TOKEN_PATH_IS_A_LINK' }
+  }
+  if ((Get-LinkCount $file) -ne 1) { return 'OWNER_TOKEN_FILE_HARDLINKED' }
+  $m = [regex]::Match([IO.File]::ReadAllText($file), $GithubTokenRx)
+  if (-not $m.Success) { return 'OWNER_TOKEN_MISSING' }
+  if ($m.Groups[1].Value -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { return 'OWNER_TOKEN_NOT_CLASSIC' }
+  'ok'
+}
+# Owner's github.com classic token -> a NEW hosts.yml in -Login's format (no other host, nothing else). Paths only in, the token stays in here.
+function Copy-OwnerToken([string]$ownerProfile, [string]$ownerSid, [string]$targetHosts, [string]$profileRoot = 'C:\Users') {
+  $state = Get-OwnerTokenState $ownerProfile $ownerSid $profileRoot
+  if ($state -cne 'ok') { return $state }
+  $m = [regex]::Match([IO.File]::ReadAllText((Join-Path (Get-CompanionGhDirs $ownerProfile).gh 'hosts.yml')), $GithubTokenRx)
+  $tmp = $targetHosts + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  [IO.File]::WriteAllText($tmp, ("github.com:`n    oauth_token: " + $m.Groups[1].Value + "`n    git_protocol: https`n"), (New-Object Text.UTF8Encoding($false)))
+  $m = $null
+  if (Test-Path -LiteralPath $targetHosts) { [IO.File]::Replace($tmp, $targetHosts, [NullString]::Value) } else { [IO.File]::Move($tmp, $targetHosts) }
+  'copied'
+}
+# The folder with its own protected ACL, then gh\, home\ and home\.gitconfig (shared by -Login and -CopyFromOwner).
+function Initialize-CompanionGhFolder($dirs, [string]$ownerSid, [string]$profileDir, [string]$ghExe) {
+  # The folder first, with its own protected ACL (an existing one must be a real folder; its ACL is set again).
+  if (Test-Path -LiteralPath $dirs.base) {
+    if (((Get-Item -LiteralPath $dirs.base -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'COMPANION_GH_FOLDER_IS_A_LINK' }
+    # Only the DACL section: Get-Acl/Set-Acl writes every section, and the audit (SACL) part needs SeSecurityPrivilege, which a
+    # non-elevated window does not hold (PrivilegeNotHeldException on the Owner's second run, 2026-11-08).
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid), [Security.AccessControl.AccessControlSections]::Access)
+    (Get-Item -LiteralPath $dirs.base -Force).SetAccessControl($sec)
+  } else {
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dirs.base))
+    $sec = New-Object Security.AccessControl.DirectorySecurity; $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid))
+    [void][IO.Directory]::CreateDirectory($dirs.base, $sec)
+  }
+  foreach ($d in @($dirs.gh, $dirs.home)) { [void][IO.Directory]::CreateDirectory($d) }
+  Write-Utf8 (Join-Path $dirs.home '.gitconfig') (Get-CompanionGitConfig $profileDir $ghExe)
+}
 # One child with the companion's own gh configuration (or the Owner's when $own): exit code and, for gh auth status, gh's own lines
 # without the token line (gh masks it anyway).
 function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own = $false) {
@@ -76,7 +145,8 @@ function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own
   [ordered]@{ exit = $p.ExitCode; lines = $lines }
 }
 
-if ($Login.IsPresent -eq $Check.IsPresent) { throw 'ONE_OF_LOGIN_OR_CHECK' }
+if (@($Login, $Check, $CopyFromOwner | Where-Object { $_.IsPresent }).Count -ne 1) { throw 'ONE_OF_LOGIN_OR_CHECK_OR_COPYFROMOWNER' }
+if ($CopyFromOwner -and -not $AccountSid) { throw 'COPYFROMOWNER_NEEDS_THE_ACCOUNT' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevatedNow = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ([bool]$ProfileDirectory -ne [bool]$AccountSid) { throw 'PROFILE_DIRECTORY_AND_ACCOUNT_SID_TOGETHER' }
@@ -97,23 +167,22 @@ if ($AccountSid) {
 if ($profileDir -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'PROFILE_DIRECTORY_REFUSED' }
 $dirs = Get-CompanionGhDirs $profileDir
 
+if ($CopyFromOwner) {
+  if (-not (Test-Path -LiteralPath $GhExe -PathType Leaf)) { throw 'GH_EXE_MISSING' }
+  # The Owner is this elevated window's user; the profile is the one Windows registers for that SID (not just $env:USERPROFILE).
+  $ownerProfile = try { [string][Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $me.User.Value) -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath) } catch { '' }
+  $state = Get-OwnerTokenState $ownerProfile $me.User.Value
+  if ($state -ceq 'ok') {
+    Initialize-CompanionGhFolder $dirs $ownerSid $profileDir $GhExe
+    $state = Copy-OwnerToken $ownerProfile $me.User.Value (Join-Path $dirs.gh 'hosts.yml')
+  }
+  [ordered]@{ status = $(if ($state -ceq 'copied') { 'COMPANION_GH_LOGIN_COPIED' } else { 'COMPANION_GH_' + $state }); ghConfigDir = $dirs.gh; tokenKind = 'classic' } | ConvertTo-Json
+  exit $(if ($state -ceq 'copied') { 0 } else { 1 })
+}
+
 if ($Login) {
   if (-not (Test-Path -LiteralPath $GhExe -PathType Leaf)) { throw 'GH_EXE_MISSING' }
-  # The folder first, with its own protected ACL (an existing one must be a real folder; its ACL is set again).
-  if (Test-Path -LiteralPath $dirs.base) {
-    if (((Get-Item -LiteralPath $dirs.base -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'COMPANION_GH_FOLDER_IS_A_LINK' }
-    # Only the DACL section: Get-Acl/Set-Acl writes every section, and the audit (SACL) part needs SeSecurityPrivilege, which a
-    # non-elevated window does not hold (PrivilegeNotHeldException on the Owner's second run, 2026-11-08).
-    $sec = New-Object Security.AccessControl.DirectorySecurity
-    $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid), [Security.AccessControl.AccessControlSections]::Access)
-    (Get-Item -LiteralPath $dirs.base -Force).SetAccessControl($sec)
-  } else {
-    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dirs.base))
-    $sec = New-Object Security.AccessControl.DirectorySecurity; $sec.SetSecurityDescriptorSddlForm((Get-CompanionGhSddl $ownerSid))
-    [void][IO.Directory]::CreateDirectory($dirs.base, $sec)
-  }
-  foreach ($d in @($dirs.gh, $dirs.home)) { [void][IO.Directory]::CreateDirectory($d) }
-  Write-Utf8 (Join-Path $dirs.home '.gitconfig') (Get-CompanionGitConfig $profileDir $GhExe)
+  Initialize-CompanionGhFolder $dirs $ownerSid $profileDir $GhExe
   # The token: from the clipboard straight into hosts.yml; never printed, never in a variable longer than these lines, and never passed
   # as an argument to a PowerShell function or cmdlet (review MINOR 13: module logging records those), only to .NET methods.
   $token = ([string](Get-Clipboard -Raw)).Trim()

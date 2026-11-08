@@ -516,6 +516,45 @@ Yes ($rm.Contains("if (`$me.User.Value -cne (Get-CompanionOperatorSid `$Root `$n
 Yes ($texts['request-upgrade.ps1'].Contains("-cne (Get-OperatorSid `$node)) { throw 'OWNER_ACCOUNT_REQUIRED' }") -and $texts['request-upgrade.ps1'].Contains("'clued.independent-ci.companion-account/1'")) 'request-upgrade-operator'
 $gl = & $codeOf $texts['companion-gh-login.ps1']
 Yes ($gl.Contains("throw 'RUN_ELEVATED_FOR_THE_COMPANION_ACCOUNT'") -and $gl.Contains("throw 'PROFILE_DIRECTORY_NOT_THE_ACCOUNTS'") -and $gl.Contains('$ownerSid = $AccountSid') -and $gl.Contains("throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW'")) 'gh-login-for-the-account-elevated-only'
+# M5-b: the account's token is the Owner's existing companion token when there is a classic one (fake tokens, scratch files only).
+foreach ($fn in @('Get-LinkCount', 'Get-OwnerTokenState', 'Copy-OwnerToken')) { . ([scriptblock]::Create($functions['companion-gh-login.ps1:' + $fn])) }
+$GithubTokenRx = [regex]::Match($texts['companion-gh-login.ps1'], '(?m)^\$GithubTokenRx = ''(.+)''\r?$').Groups[1].Value
+$meSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$cpRoot = Join-Path $Scratch 'copy-owner'; [void][IO.Directory]::CreateDirectory($cpRoot)
+$fakeClassic = 'ghp_' + ('A1b2' * 9)
+function New-OwnerProfile([string]$name, $hostsText) {
+  $pd = Join-Path $cpRoot $name; $g = (Get-CompanionGhDirs $pd).gh; [void][IO.Directory]::CreateDirectory($g)
+  if ($null -ne $hostsText) { [IO.File]::WriteAllText((Join-Path $g 'hosts.yml'), $hostsText) }
+  $pd
+}
+$tg = Join-Path $cpRoot 'target-hosts.yml'
+# the real full path: classic token, other host entries around it; the target is a NEW file with only github.com
+$op = New-OwnerProfile 'ok' ("other.example.com:`n    oauth_token: ghp_" + ('Z' * 36) + "`ngithub.com:`n    user: someone`n    oauth_token: $fakeClassic`n    git_protocol: ssh`nthird.example.com:`n    oauth_token: ghp_" + ('Y' * 36) + "`n")
+Yes ((Copy-OwnerToken $op $meSid $tg $cpRoot) -ceq 'copied' -and [IO.File]::ReadAllText($tg) -ceq "github.com:`n    oauth_token: $fakeClassic`n    git_protocol: https`n" -and @(Get-ChildItem -LiteralPath $cpRoot -Filter '*.tmp' -Recurse).Count -eq 0) 'copy-owner-token-classic-regenerated-github-only'
+# the real default profile root (C:\Users): the pattern that once threw on a single backslash accepts C:\Users\x and refuses elsewhere
+Yes ((Get-OwnerTokenState 'C:\Users\clued-test-no-such-profile' $meSid) -ceq 'OWNER_TOKEN_MISSING' -and (Get-OwnerTokenState 'C:\Windows\x' $meSid) -ceq 'OWNER_PROFILE_REFUSED') 'copy-owner-token-default-profile-pattern'
+Yes ((Get-OwnerTokenState $op 'S-1-5-21-1-2-3-4' $cpRoot) -ceq 'OWNER_SID_MISMATCH') 'copy-owner-token-wrong-sid-refused'
+Remove-Item -LiteralPath $tg -Force
+Yes ((Copy-OwnerToken (Join-Path $cpRoot 'absent') $meSid $tg $cpRoot) -ceq 'OWNER_TOKEN_MISSING' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-missing-nothing-written'
+$op2 = New-OwnerProfile 'fine' ("github.com:`n    oauth_token: github_pat_" + ('x' * 40) + "`n")
+Yes ((Copy-OwnerToken $op2 $meSid $tg $cpRoot) -ceq 'OWNER_TOKEN_NOT_CLASSIC' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-wrong-format-refused'
+$op3 = New-OwnerProfile 'other-host' ("other.example.com:`n    oauth_token: $fakeClassic`n")
+Yes ((Copy-OwnerToken $op3 $meSid $tg $cpRoot) -ceq 'OWNER_TOKEN_MISSING' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-only-from-github-com'
+# links: the file hard-linked, a folder on the way a junction
+$op4 = New-OwnerProfile 'hard' ("github.com:`n    oauth_token: $fakeClassic`n")
+$hl = Join-Path $cpRoot 'hardlink-peer'; $null = New-Item -ItemType HardLink -Path $hl -Target (Join-Path (Get-CompanionGhDirs $op4).gh 'hosts.yml')
+Yes ((Get-LinkCount $hl) -eq 2 -and (Copy-OwnerToken $op4 $meSid $tg $cpRoot) -ceq 'OWNER_TOKEN_FILE_HARDLINKED' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-hardlink-refused'
+$op5 = New-OwnerProfile 'junc' $null
+$realGh = Join-Path $cpRoot 'real-gh'; [void][IO.Directory]::CreateDirectory($realGh); [IO.File]::WriteAllText((Join-Path $realGh 'hosts.yml'), "github.com:`n    oauth_token: $fakeClassic`n")
+$ghp = (Get-CompanionGhDirs $op5).gh; Remove-Item -LiteralPath $ghp -Force
+$null = & cmd.exe /c mklink /J "$ghp" "$realGh"
+Yes ((Copy-OwnerToken $op5 $meSid $tg $cpRoot) -ceq 'OWNER_TOKEN_PATH_IS_A_LINK' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-junction-on-the-path-refused'
+[IO.Directory]::Delete($ghp)
+$glc = & $codeOf $texts['companion-gh-login.ps1']
+Yes ($glc.Contains("throw 'COPYFROMOWNER_NEEDS_THE_ACCOUNT'") -and $glc.Contains("'COMPANION_GH_' + `$state") -and ([regex]::Matches($glc, 'Initialize-CompanionGhFolder \$dirs')).Count -eq 2) 'copy-mode-needs-account-shares-the-acl-function'
+# prepare: the child copy first, the clipboard login as the fallback, the source recorded in the log
+$prc = & $codeOf $texts['prepare-companion-account.ps1']
+Yes ($prc.IndexOf('-CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid') -gt 0 -and $prc.IndexOf('-CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid') -lt $prc.IndexOf('-Login -ProfileDirectory $profileDir -AccountSid $sid') -and $prc.Contains("source = 'owner-existing-token'") -and $prc.Contains("source = 'clipboard'") -and $prc.Contains("'COMPANION_GH_LOGIN_COPIED'")) 'prepare-copies-owner-token-else-clipboard'
 $tpl = [IO.File]::ReadAllText((Join-Path $here '..\reinstall\launcher\template.ps1'))
 Yes ($tpl.Contains("if (`$id.User.Value -cne `$OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }") -and $tpl.Contains("@('-CompanionAccount', '-WslVhdxDirectory', `$CompanionWslVhdxDirectory)") -and $tpl.Contains("'-OperatorSid', `$OperatorSid)")) 'launcher-operator-and-account-step'
 # the prepare script: elevated runs only; -Plan is read-only and runs here (not elevated); it never handles a password or the token

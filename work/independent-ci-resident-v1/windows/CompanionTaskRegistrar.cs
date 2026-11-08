@@ -776,8 +776,8 @@ public static class CluedCompanionTaskRegistrar {
     int lrc = AddRights(sid, new[] { "SeBatchLogonRight", "SeDenyNetworkLogonRight", "SeDenyRemoteInteractiveLogonRight" });
     if (lrc != 0) { Print("ACCOUNT_RIGHTS_FAILED", lrc.ToString()); return 1; }
     step = "profile";
-    StringBuilder path = new StringBuilder(261);
-    int hr = CreateProfile(sid, name, path, 261);
+    StringBuilder path = new StringBuilder(260);   // CreateProfile: cchProfilePath must not exceed MAX_PATH (260); 261 fails with RPC_X_BAD_STUB_DATA 0x800706F7 (DESK 2026-11-08)
+    int hr = CreateProfile(sid, name, path, 260);
     if (hr != 0 && (uint)hr != 0x800700B7) { Print("PROFILE_NOT_CREATED", "0x" + hr.ToString("X8")); return 1; }   // ERROR_ALREADY_EXISTS
     // Review r1 m5: an account that was already there must also be Users only, password never expiring and not changeable by it, with
     // network and remote-desktop logon denied (the sign-in screen is the script's step, so it is not counted here).

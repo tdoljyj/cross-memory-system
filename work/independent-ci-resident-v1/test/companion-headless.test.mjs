@@ -221,3 +221,11 @@ test('M5 status: the first beat after the service start is recorded, and compani
 test('M5 notify queue path: the Owner\'s %LOCALAPPDATA%\\CluedIndependentCI\\notify-queue', () => {
   assert.equal(notifyQueueDir('C:\\Users\\owner'), path.join('C:\\Users\\owner', 'AppData', 'Local', 'CluedIndependentCI', 'notify-queue'));
 });
+
+test('registrar CreateProfile never passes a profile-path buffer larger than MAX_PATH (DESK 2026-11-08: 261 failed with 0x800706F7)', async () => {
+  const cs = await fs.readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'windows', 'CompanionTaskRegistrar.cs'), 'utf8');
+  const calls = [...cs.matchAll(/CreateProfile\(\s*sid\s*,\s*\w+\s*,\s*\w+\s*,\s*(\d+)\s*\)/g)];
+  assert.ok(calls.length > 0, 'the CreateProfile call is found');
+  for (const m of calls) assert.ok(Number(m[1]) <= 260, `cchProfilePath ${m[1]} exceeds MAX_PATH`);
+  for (const m of cs.matchAll(/StringBuilder\s+path\s*=\s*new\s+StringBuilder\((\d+)\)/g)) assert.ok(Number(m[1]) <= 260, `buffer ${m[1]} exceeds MAX_PATH`);
+});
