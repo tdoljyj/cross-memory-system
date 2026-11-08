@@ -152,7 +152,9 @@ export async function main(argv = process.argv.slice(2)) {
       await statusTimer.flush();
     },
     onLoopException: async error => { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); },
-    betweenBatches: () => retention.maybeCheck(), abandonBetweenBatches: () => leaving.abort() });
+    betweenBatches: () => retention.maybeCheck(),
+    // A stop: the companion waits end (service-ports.mjs) and the rest of a running pass measures nothing more on Windows (review MINOR 5).
+    abandonBetweenBatches: () => { leaving.abort(); retention.measureWindows = async () => ({ bytes: 0, directories: 0, complete: false }); } });
 }
 
 // The service loop. Every iteration refreshes the instance-lock liveness and honours an SCM stop before it
@@ -161,14 +163,19 @@ export async function main(argv = process.argv.slice(2)) {
 // Nor for the between-batches step (defect 8f8240ff, TURING 2026-11-08: archive-prune waited its whole 10 minutes for a wsl.exe that
 // never returned, then archive-usage 3 more, and the upgrader's pause went unanswered past its 10 minutes): the step runs beside the
 // loop, one at a time; while it runs every tick is told so and opens no new batch; a stop first gives up its companion waits
-// (abandonBetweenBatches) and lets it finish, so nothing of it outlives the service. `once` still waits for it.
+// (abandonBetweenBatches) and lets it finish, at most leaveMaxMs (a Windows walk or deletion already under way is not cut; past that the
+// stop is acknowledged and the process ends when it does). `once` still waits for it.
 export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING', 'BACKFILL_PENDING']);
-export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches, abandonBetweenBatches = () => {} }) {
+export const LEAVE_MAX_MS = 120_000;
+export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches, abandonBetweenBatches = () => {},
+  leaveMaxMs = LEAVE_MAX_MS }) {
   let between = null;
   const leave = async () => {
     if (!between) return;
     try { abandonBetweenBatches(); } catch { /* it finishes at its own deadlines then */ }
-    await between;
+    let timer;
+    await Promise.race([between, new Promise(r => { timer = setTimeout(r, leaveMaxMs); })]);
+    clearTimeout(timer);
   };
   for (;;) {
     await lock.touch();

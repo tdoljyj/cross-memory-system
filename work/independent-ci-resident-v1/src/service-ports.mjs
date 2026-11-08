@@ -11,8 +11,8 @@ const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'rebuild-bundle': REBUILD_BUNDLE
 const NO_BATCH = '0000000000000000-000000000000';
 
 // abandon (optional AbortSignal; defect 8f8240ff): the service is stopping. The retention requests (archive-usage, archive-prune), which
-// the between-batches step asks beside the loop, are then no longer waited for (nor sent): no answer, as at their deadline. A batch's
-// requests always wait for their own deadline.
+// the between-batches step asks beside the loop, are then no longer waited for (nor sent): no answer, as at their deadline, and one
+// already sent is cancelled ('service-stopping'). A batch's requests always wait for their own deadline.
 const ABANDONABLE = new Set(['archive-usage', 'archive-prune']);
 export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
   const ask = async (kind, fields) => {
@@ -24,6 +24,8 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
       if (r) return r;
       await sleep(500);
     }
+    // Given up: the companion does not start it if it has not yet (companion.mjs step); a cancel that cannot be written changes nothing.
+    if (abandon.aborted) { try { await mailbox.cancel(request, 'service-stopping'); } catch { /* it runs at its own deadline then */ } }
     return null;
   };
   return {
