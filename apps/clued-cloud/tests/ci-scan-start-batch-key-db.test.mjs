@@ -25,7 +25,7 @@ import {admittedFacts} from '../../../work/actions-hosted-migration/independent-
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const MIGRATION='20261108090000_ci_scan_start_batch_key_v1.sql';
-const FRONT_LIMIT=8; // distinct tested commits S != H per (repository, head, role), as in MIGRATION
+const FRONT_LIMIT=16; // distinct tested commits S != H per (repository, head, role), as in MIGRATION
 const uuid=()=>crypto.randomUUID();
 const digest=(s='fixture')=>crypto.createHash('sha256').update(s).digest('hex');
 const sha=(s='fixture')=>crypto.createHash('sha1').update(s).digest('hex');
@@ -215,11 +215,15 @@ test('Native scan-start K per batch: front batch and attempt 2 each get exactly 
       const before=await count(),H3=sha('head H3'),H4=sha('head H4');
       await authorize(H3);
       const legacy=await local(H3,T);assert.equal(legacy.launch_allowed,true,JSON.stringify(legacy));
-      assert.equal(legacy.test_sha,H3);assert.equal(legacy.attempt,1);
+      // A caller that names neither is an old Source: its grant.mjs knows only /1, so it still gets exactly /1
+      // (the K is burned either way; a /2 answer would only stop its launch after the burn).
+      assert.equal(legacy.contract,'clued.ci-scan-start-grant/1');
+      assert.deepEqual(Object.keys(legacy).sort(),['status','contract','launch_allowed','execution_id','receipt_id','repository_id','head_sha','role','provider','start_requested_at'].sort());
       assert.deepEqual(await keyOf(legacy.execution_id),{head_sha:H3,test_sha:H3,attempt:1,role:'gitleaks',provider:'independent-controller'});
       const explicit=await local(H3,T,{test_sha:H3,attempt:1});assert.equal(explicit.status,'consumed',JSON.stringify(explicit));assert.equal(explicit.execution_id,legacy.execution_id);
       await authorize(H4);
       const first=await local(H4,T,{test_sha:H4,attempt:1});assert.equal(first.launch_allowed,true,JSON.stringify(first));
+      assert.equal(first.contract,'clued.ci-scan-start-grant/2');assert.equal(first.test_sha,H4);assert.equal(first.attempt,1);
       const second=await local(H4,T);assert.equal(second.status,'consumed',JSON.stringify(second));assert.equal(second.execution_id,first.execution_id);
       assert.equal(await count(),before+2);
     });

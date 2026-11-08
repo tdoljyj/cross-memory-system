@@ -24,13 +24,21 @@
 --
 -- S is not a fact Native can verify: it cannot read Git, and the base sent with
 -- it is only echoed by the full verification. So the number of distinct tested
--- commits S != H per (repository, head, role) is capped at 8 (two moves of main
--- times the up to four compositions of a batch, train-landing.mjs
--- BATCH_MAX_LIMIT). One admitted head can therefore take at most 2 + 8 x 2 = 18
--- launches per role, never an unbounded number; past the cap the answer is
--- ci_scan_start_front_batch_limit (a new head starts afresh). The grant to the
--- independent controller is clued.ci-scan-start-grant/2 and names S and attempt;
--- the hosted grant keeps its /1 shape, which the serving Worker checks exactly.
+-- commits S != H per (repository, head, role) is capped at 16. The count runs
+-- per front head (front.headSha), across everything that can rebuild its batch:
+-- two moves of main times the up to four compositions of a batch
+-- (train-landing.mjs BATCH_MAX_LIMIT) is 8, and legitimate history can exceed
+-- that: a takeover re-runs the front batch's tries, and a rider PR changing
+-- mid-way clears the split state so the batch is composed again from the full
+-- set. 16 doubles that bound, so a normal front never meets it, while one
+-- admitted head still takes at most 2 + 16 x 2 = 34 launches per role, never an
+-- unbounded number. Past the cap the answer is ci_scan_start_front_batch_limit
+-- (a new head starts afresh).
+-- The grant names the batch (clued.ci-scan-start-grant/2 with S and attempt)
+-- only for a caller that named S and attempt, i.e. a Source whose grant.mjs
+-- checks /2. A caller naming neither (an older Source, the hosted entry) gets
+-- the exact /1 shape it checks; a /2 answer there would only stop its launch
+-- after the K is already burned.
 --
 -- Execution: one transaction. The first statement takes the table's ACCESS
 -- EXCLUSIVE lock, so it fails outside a transaction block and nothing can write
@@ -81,9 +89,16 @@ $r$    or p_input-array['action','scope','repository_id','repository','execution
 -- The common transaction resolves and checks the batch identity before any lock,
 -- Native verification or receipt. The hosted entry passes exact closed facts
 -- without S or attempt, so it always resolves to S = H, attempt 1.
+-- named_batch: whether the caller named S and attempt itself (it decides the
+-- grant's shape, see the header).
+select clued_private.ci_scan_batch_key_patch_v1('clued_private.ci_scan_start_begin_v1(public.clued_agent_bindings,clued_private.ci_scan_start_policies_v1,jsonb,text,text,text)',
+$a$  verification jsonb; r uuid; inserted uuid; authorized_at timestamptz; old clued_private.ci_scan_start_keys_v1; pr_ref text;$a$,
+$r$  verification jsonb; r uuid; inserted uuid; authorized_at timestamptz; old clued_private.ci_scan_start_keys_v1; pr_ref text;
+  named_batch boolean:=true;$r$);
 select clued_private.ci_scan_batch_key_patch_v1('clued_private.ci_scan_start_begin_v1(public.clued_agent_bindings,clued_private.ci_scan_start_policies_v1,jsonb,text,text,text)',
 $a$  perform clued_private.work_claim_lock(b.user_id);$a$,
 $r$  if not(data ? 'test_sha') and not(data ? 'attempt') then
+    named_batch:=false;
     data:=data||jsonb_build_object('test_sha',data->>'head_sha','attempt',1);
   end if;
   if jsonb_typeof(data->'test_sha') is distinct from 'string' or coalesce(data->>'test_sha','') !~ '^[0-9a-f]{40}$'
@@ -112,19 +127,20 @@ select clued_private.ci_scan_batch_key_patch_v1('clued_private.ci_scan_start_beg
 $a$  r:=clued_private.work_claim_ci_receipt_v1(b,p.scope,'ci_scan_start_requested',c.claim_id,c.execution_epoch,$a$,
 $r$  if data->>'test_sha'<>data->>'head_sha' and (select count(distinct k.test_sha) from clued_private.ci_scan_start_keys_v1 k
       where k.repository_id=p.repository_id and k.head_sha=data->>'head_sha' and k.role=scan_role
-        and k.test_sha<>k.head_sha and k.test_sha<>data->>'test_sha')>=8 then
+        and k.test_sha<>k.head_sha and k.test_sha<>data->>'test_sha')>=16 then
     return jsonb_build_object('status','rejected','error_code','ci_scan_start_front_batch_limit','launch_allowed',false); end if;
   r:=clued_private.work_claim_ci_receipt_v1(b,p.scope,'ci_scan_start_requested',c.claim_id,c.execution_epoch,$r$);
--- The independent controller's grant names the batch it burned (/2); the hosted
--- grant keeps the exact /1 shape the serving Worker checks.
+-- A controller that named the batch gets a grant naming it (/2). A caller that
+-- named neither (an older Source, the hosted entry) keeps the exact /1 shape its
+-- grant check (or the serving Worker) accepts.
 select clued_private.ci_scan_batch_key_patch_v1('clued_private.ci_scan_start_begin_v1(public.clued_agent_bindings,clued_private.ci_scan_start_policies_v1,jsonb,text,text,text)',
 $a$  return jsonb_build_object('status','committed','contract','clued.ci-scan-start-grant/1','launch_allowed',true,$a$,
-$r$  return jsonb_build_object('status','committed','contract',case when provider_name='independent-controller'
+$r$  return jsonb_build_object('status','committed','contract',case when provider_name='independent-controller' and named_batch
       then 'clued.ci-scan-start-grant/2' else 'clued.ci-scan-start-grant/1' end,'launch_allowed',true,$r$);
 select clued_private.ci_scan_batch_key_patch_v1('clued_private.ci_scan_start_begin_v1(public.clued_agent_bindings,clued_private.ci_scan_start_policies_v1,jsonb,text,text,text)',
 $a$    'provider',provider_name,'start_requested_at',to_char(authorized_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));$a$,
 $r$    'provider',provider_name,'start_requested_at',to_char(authorized_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-    ||case when provider_name='independent-controller'
+    ||case when provider_name='independent-controller' and named_batch
       then jsonb_build_object('test_sha',data->>'test_sha','attempt',(data->>'attempt')::int) else '{}'::jsonb end;$r$);
 
 drop function clued_private.ci_scan_batch_key_patch_v1(text,text,text);

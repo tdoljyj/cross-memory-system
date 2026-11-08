@@ -205,13 +205,10 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       const results=await Promise.all([local(d,c1),hosted(verified({...d,execution_id:uuid()}),c2)]);
       assert.equal(results.filter(r=>r.launch_allowed===true).length,1,JSON.stringify(results));assert.equal(results.filter(r=>r.launch_allowed===false).length,1);
       won=results.find(r=>r.launch_allowed);assert.equal(await count(),1);assert.ok(won.receipt_id);
-      // 20261108090000 (Task dcc53013): the independent controller's grant (/2) also names the burned batch (S = H, attempt 1
-      // for a caller naming neither); the hosted grant keeps the exact /1 shape the serving Worker checks.
-      const local2=won.provider==='independent-controller';
-      assert.deepEqual(Object.keys(won).sort(),['status','contract','launch_allowed','execution_id','receipt_id','repository_id','head_sha','role','provider','start_requested_at',
-        ...(local2?['test_sha','attempt']:[])].sort());
-      assert.equal(won.contract,local2?'clued.ci-scan-start-grant/2':'clued.ci-scan-start-grant/1');assert.match(won.start_requested_at,/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
-      if(local2){assert.equal(won.test_sha,d.head_sha);assert.equal(won.attempt,1);}
+      // 20261108090000 (Task dcc53013): only a caller naming S and attempt gets the /2 grant; this one names neither
+      // (an old Source, or the hosted entry), so either winner keeps the exact /1 shape its consumer checks.
+      assert.deepEqual(Object.keys(won).sort(),['status','contract','launch_allowed','execution_id','receipt_id','repository_id','head_sha','role','provider','start_requested_at'].sort());
+      assert.equal(won.contract,'clued.ci-scan-start-grant/1');assert.match(won.start_requested_at,/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
     });
     await t.test('same UUID, another provider/run/attempt or claim cannot regrant; lost response stays burned',async()=>{
       assert.equal((await local(first)).launch_allowed,false);
