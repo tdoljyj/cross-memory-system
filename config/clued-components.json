@@ -921,9 +921,9 @@
         "work/independent-ci-resident-v1/test/retention*.test.mjs",
         "work/independent-ci-resident-v1/test/test_linux_tool.py",
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
-        "work/independent-ci-resident-v1/docs/adr/0023-retention-settings-and-notifications.md"
+        "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "93b3f352a5ea30f2dae930d78993d9278bf3eea8ce9ad2c2057352b82f65d0c5"
+      "content_sha256": "e88b03bfb04a1b9c98d49074ea94c8e739a85fe80202da7667c16f5d296cbbd1"
     },
     {
       "id": "script.merge-reconciliation",
