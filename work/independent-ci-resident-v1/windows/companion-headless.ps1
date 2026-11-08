@@ -549,6 +549,7 @@ function Get-CompanionOperatorSid([string]$root, $node) { $a = Read-CompanionAcc
 
 # The moved ext4.vhdx and its folder: SYSTEM and Administrators full, the companion account modify (WSL opens it as that user), nothing
 # inherited, nothing for the Owner's session.
+$CompanionVhdxParentSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
 function Get-CompanionVhdxSddl([string]$companionSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $companionSid + ')' }
 # The current user's WSL registrations (HKCU Lxss): guid, name, base path (the \\?\ prefix dropped), default uid, flags, version.
 function Get-WslRegistrations {
@@ -630,7 +631,12 @@ function Invoke-CompanionWslMove([string]$distro, [string]$targetDir, [string]$c
   if (Test-Path -LiteralPath $targetDir) {
     if (((Get-Item -LiteralPath $targetDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_TARGET_IS_A_LINK' }
   } else {
-    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $targetDir))
+    # Missing parents (D:\clued-resident\wsl) are created protected: SYSTEM and Administrators full, Users read; nothing inherited from a
+    # drive root that may let every user write (an existing parent is left as it is and its DACL recorded).
+    $chain = @(); for ($d = Split-Path -Parent $targetDir; $d -and -not (Test-Path -LiteralPath $d); $d = Split-Path -Parent $d) { $chain = @($d) + $chain }
+    foreach ($d in $chain) { $pds = New-Object Security.AccessControl.DirectorySecurity; $pds.SetSecurityDescriptorSddlForm($CompanionVhdxParentSddl); [void][IO.Directory]::CreateDirectory($d, $pds) }
+    $out.parentsCreated = $chain
+    $out.parentSddl = (Get-Acl -LiteralPath (Split-Path -Parent $targetDir)).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
     $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl)
     [void][IO.Directory]::CreateDirectory($targetDir, $ds)
   }

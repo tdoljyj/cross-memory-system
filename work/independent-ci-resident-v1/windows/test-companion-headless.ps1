@@ -433,6 +433,7 @@ Yes ((Get-CompanionWslMovePlan $regD $true 'D:\clued resident\x' $false).code -c
 $regAt = [ordered]@{ guid = '{z}'; name = 'CluedResident-Linux'; basePath = 'D:\clued-resident\wsl\CluedResident-Linux' }
 Yes ((Get-CompanionWslMovePlan $regAt $true 'D:\clued-resident\wsl\CluedResident-Linux' $true).action -ceq 'forget') 'wsl-plan-already-there-only-forget'
 Yes ((Get-CompanionVhdxSddl $acct) -ceq ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $acct + ')')) 'vhdx-sddl-admins-and-the-account-only'
+Yes ($CompanionVhdxParentSddl -ceq 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)' -and $functions['companion-headless.ps1:Invoke-CompanionWslMove'].Contains('SetSecurityDescriptorSddlForm($CompanionVhdxParentSddl)')) 'vhdx-missing-parents-created-protected'
 # the verified copy (a real small file in the scratch directory): both hashes, then the move deletes the source only after they match
 $src = Join-Path $Scratch 'vhdx-src.bin'; $dst = Join-Path $Scratch 'vhdx-dst.bin'
 $bytes = New-Object byte[] 9437185; (New-Object Random 7).NextBytes($bytes); [IO.File]::WriteAllBytes($src, $bytes)
