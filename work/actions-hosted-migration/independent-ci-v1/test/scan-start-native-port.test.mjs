@@ -9,7 +9,7 @@ import { scanStartSubjectLine, SCAN_START_SUBJECT_MARKER } from '../src/scan-sta
 function fixture(options = {}) {
   const now = Date.now(), calls = [], executionId = randomUUID();
   const job = makeJobV2({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE,
-    sourceManifestSha256: 'e'.repeat(64), testSha: HEAD, role: 'gitleaks', attempt: 1, createdAt: new Date(now - 1000).toISOString() });
+    sourceManifestSha256: 'e'.repeat(64), testSha: options.testSha ?? HEAD, role: 'gitleaks', attempt: options.attempt ?? 1, createdAt: new Date(now - 1000).toISOString() });
   const claim = { claimId: randomUUID(), fence: 9, epoch: 2, expiresAt: new Date(now + 3600000).toISOString() };
   const packet = { complete: true, pr: job.pr, headSha: HEAD, baseSha: BASE, paths: ['src/b.mjs', 'src/a.mjs'] };
   const facts = admittedFacts(job, claim, packet, { batchClaim: claim, observedAt: now });
@@ -33,9 +33,22 @@ test('actual controller port rechecks complete facts and current claim around on
   assert.equal(request.action, 'scan_start_independent'); assert.equal(request.repository_id, 1334673495);
   assert.equal(request.execution_id, f.executionId); assert.equal(request.claim_id, f.facts.claimId);
   assert.deepEqual(request.changed_paths, ['src/a.mjs', 'src/b.mjs']);
+  assert.equal(request.head_sha, HEAD); assert.equal(request.test_sha, HEAD); assert.equal(request.attempt, 1);
   assert.ok(!JSON.stringify(request).includes('token'));
   await assert.rejects(f.port(f.input), { code: 'SCAN_START_ALREADY_ATTEMPTED' });
   assert.equal(f.calls.filter(c => c[0] === 'begin').length, 1);
+});
+
+// Task dcc53013: Native's K is the batch (H, S, attempt), so the request names all three. Naming only H made a
+// train front batch (S != H) and an attempt 2 find an earlier batch's burn once Native scan-start is required.
+test('a train front batch and an attempt 2 ask Native for their own batch identity, not only the head', async () => {
+  const S = 'c'.repeat(40);
+  for (const [testSha, attempt] of [[S, 1], [S, 2], [HEAD, 2]]) {
+    const f = fixture({ testSha, attempt }); assert.deepEqual(await f.port(f.input), f.answer);
+    const request = f.calls.find(c => c[0] === 'begin')[1];
+    assert.equal(request.head_sha, HEAD); assert.equal(request.base_sha, BASE);
+    assert.equal(request.test_sha, testSha); assert.equal(request.attempt, attempt);
+  }
 });
 
 test('lost Native reply, consumed permission and malformed success cannot mint another launch', async () => {

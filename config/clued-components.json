@@ -414,13 +414,15 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.30",
-      "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
+      "version": "1.1.31",
+      "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/tested-commit/attempt/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
         "apps/clued-cloud/supabase/migrations/20261029050000_work_claim_independent_publication_v1.sql",
         "apps/clued-cloud/supabase/migrations/20261102151506_ci_scan_start_keys_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261108090000_ci_scan_start_batch_key_v1.sql",
         "apps/clued-cloud/tests/bootstrap-ordinary-gitleaks-successor.test.mjs",
+        "apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-worker.test.mjs",
         "apps/clued-cloud/worker/ci-scan-start-v1.ts",
@@ -588,7 +590,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "eebbf112de6523a6a1b1834cd97b6308b14a28b741931075b8c3d682735124fa"
+      "content_sha256": "29ba346ad1888ac78844805f1f05b62f9fc92b8adbd7c912fb50fa07eddda8fd"
     },
     {
       "id": "script.resource-maintenance",
@@ -853,7 +855,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.14",
+      "version": "1.0.15",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -870,7 +872,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5e9e63f5b85c1e525f67cf0d9a77744b9ec4bb88a893596b2fccf19841763bc0"
+      "content_sha256": "7de1be464067c60965187e02e378d02b5d8e84d9dddb253e5347ffe185297a9b"
     }
   ]
 }

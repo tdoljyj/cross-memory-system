@@ -82,6 +82,8 @@
    > - M4 车头批次命中缓存时照样要取的许可（M4 §65.5）。
    >
    > DESIGN 里还没有记下这个冲突，§54 只写了“`NATIVE_SCAN_START_REQUIRED = false`，所以不需要许可”。切换之前要先改 K 的键（例如加上 `test_sha`），或者给重跑定义同一 `execution_id` 的续用规则。这也是本文第 4 节第 2 条的前提。
+   >
+   > **后续（Task dcc53013）：** 迁移 `20261108090000_ci_scan_start_batch_key_v1.sql` 把 K 改成 (repository, head, test_sha, attempt, role)，`native-port.mjs` 发送 `test_sha: job.testSha`、`attempt: job.attempt`；不带这两项的调用方（旧 Source、托管入口）仍得到 S = H、attempt 1，也就是原来的全局 K。上面第 1、2、4 种（普通批次之后的车头批次、attempt 2、车头批次命中缓存）因此各有自己的许可，端到端测试见 `apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs`。第 3 种 §54 同批次原地重跑是同一作业、同一 attempt，仍是同一个 K，还没有解决：切换前仍要给它定义续用规则。
 3. **争用与接班让出**：
    - TURING 上只有一套单例：交换槽、Linux 角色锁、单 unit 守卫、formal-spool、companion 邮箱 lane（§45.1），预检要占全部五个。接班可以是 §41.6a 的自动接班（DESK 失联时），也可以是 Owner 的一键移交。接班以后 TURING 最先要做的是接班清扫和第 1 段准入（§41.6），预检得“立即”让出。
    - 但正在跑的 Linux 扫描 unit 不能直接杀：要么等它跑完（典型约 5 分钟，段上限 gitleaks 45、trivy 30、placement 10 分钟，§45.4），要么走 §27 的 `provenCleanEnd` 证明没有发布再归档。后者在 companion 不在或忙的时候，正是 §24.4 拿掉的那类 HALT 来源。对预检来说，“接班时立即让出”不是免费的，每一条退出路径都要像正式批次一样逐条证明。

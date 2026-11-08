@@ -292,7 +292,9 @@ test('physical scan-start Native K: real transactions, exact existing authority 
     });
     await t.test('the K itself is immutable and globally unique; there is no finish/reset/transfer door',async()=>{
       const key=(await admin.query(`select pg_get_constraintdef(oid) d from pg_constraint where conrelid='clued_private.ci_scan_start_keys_v1'::regclass and contype='p'`)).rows[0].d;
-      assert.equal(key,'PRIMARY KEY (repository_id, head_sha, role)');
+      // 20261108090000 (Task dcc53013) names the batch: tested commit and attempt. Callers that name neither (this
+      // test, the hosted entry) still get S = H, attempt 1, so the global (head, role) burn above is unchanged.
+      assert.equal(key,'PRIMARY KEY (repository_id, head_sha, test_sha, attempt, role)');
       await assert.rejects(()=>admin.query("update clued_private.ci_scan_start_keys_v1 set state='start_requested'"),/CI_SCAN_START_IMMUTABLE/);
       await assert.rejects(()=>admin.query('delete from clued_private.ci_scan_start_keys_v1'),/CI_SCAN_START_IMMUTABLE/);
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){

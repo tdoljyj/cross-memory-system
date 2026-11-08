@@ -36,10 +36,14 @@ export function createIndependentScanStartPort({ native, github, registrySha256,
     const identity = { job, claim: { claim_id: facts.claimId, fence: facts.fence, execution_epoch: facts.epoch } };
     const mode = { scope, paths, executionPolicy: facts.executionPolicy, guarded: facts.guarded };
     check(await native.current(identity, mode)); live();
+    // Native's K is the batch this job belongs to (Task dcc53013): head H, tested
+    // commit S and attempt. A train front batch (S != H) and an attempt 2 are
+    // batches of their own; naming only H made them find an earlier batch's burn.
     const answer = await native.command({ action: 'scan_start_independent', scope,
       repository_id: REPOSITORY_ID, repository: job.repo, execution_id: executionId,
       claim_id: facts.claimId, fence: facts.fence, epoch: facts.epoch, pr: job.pr,
-      head_sha: job.headSha, base_sha: job.baseSha, changed_paths: paths, role: job.role,
+      head_sha: job.headSha, base_sha: job.baseSha, test_sha: job.testSha, attempt: job.attempt,
+      changed_paths: paths, role: job.role,
       source_manifest_sha256: job.sourceManifestSha256, registry_sha256: registrySha256 });
     live();
     const grant = validateScanStartGrant(answer, { job, executionId, repositoryId: REPOSITORY_ID });
