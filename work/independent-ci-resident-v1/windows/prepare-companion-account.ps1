@@ -12,9 +12,9 @@
        and its profile (C:\Users\<name>). An existing account is only checked (local, enabled, not an administrator);
     3. hides the account from the sign-in screen (Winlogon\SpecialAccounts\UserList\<name> = 0);
     4. the account's own .wslconfig (its WSL VM is its own; the values are this script's parameters), only if it has none;
-    5. the companion's GitHub token from the clipboard into the account's profile (companion-gh-login.ps1 -Login -ProfileDirectory
-       -AccountSid, a child process: the token never passes through this script), then -Check; skipped when the clipboard holds no
-       classic token (then run that step alone later, also elevated);
+    5. the companion's GitHub token into the account's profile, in a child process (the token never passes through this script): the
+       Owner's existing companion token when there is a classic one (companion-gh-login.ps1 -CopyFromOwner), else from the clipboard
+       (-Login), then -Check; skipped when neither holds a classic token (then run that step alone later, also elevated);
     6. read-only facts for the Agent: the account's facts (registrar account-facts), the scheduled tasks whose principal is one of the
        local service accounts (clued-runner, clued-control, the new account), the user-rights lines that name them (secedit export into a
        protected temporary folder), and this user's WSL registrations.
@@ -111,7 +111,7 @@ if ($Plan) {
   $log.status = 'PLAN_ONLY_NOTHING_CHANGED'
   $log.steps = [ordered]@{ account = $(if ($existing) { 'exists: checked only (' + $existing.SID.Value + ')' } else { 'created with a random password nobody learns' })
     rights = 'SeBatchLogonRight; SeDenyNetworkLogonRight, SeDenyRemoteInteractiveLogonRight'; profile = ('C:\Users\' + $AccountName + ' (CreateProfile)')
-    signInScreen = 'hidden'; wslconfig = (Get-CompanionWslConfig $WslMemory $WslProcessors $WslSwap); token = 'from the clipboard by companion-gh-login.ps1 -Login -ProfileDirectory -AccountSid (child process)' }
+    signInScreen = 'hidden'; wslconfig = (Get-CompanionWslConfig $WslMemory $WslProcessors $WslSwap); token = 'the Owner''s existing companion token (companion-gh-login.ps1 -CopyFromOwner), else the clipboard (-Login); child process' }
   $log | ConvertTo-Json -Depth 6
   exit 0
 }
@@ -148,8 +148,14 @@ try {
   else { [IO.File]::WriteAllText($wslcfg, (Get-CompanionWslConfig $WslMemory $WslProcessors $WslSwap), (New-Object Text.UTF8Encoding($false))); $log.steps.wslconfig = 'written' }
   # 5. The token (a child process reads the clipboard; nothing of it here), then the read-only check.
   $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'; $gl = Join-Path $PSScriptRoot 'companion-gh-login.ps1'
-  $login = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -Login -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
-  $log.steps.tokenLogin = [ordered]@{ exit = $LASTEXITCODE; status = $(if ($login -match '"status":\s*"([A-Z_]+)"') { $Matches[1] } elseif ($login -match '(CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN|[A-Z][A-Z_]{8,})') { $Matches[1] } else { 'UNREADABLE' }) }
+  # The Owner's existing companion token first (copied inside the child, -CopyFromOwner); else the clipboard (-Login).
+  $copy = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
+  $copyStatus = if ($copy -match '"status":\s*"([A-Z_]+)"') { $Matches[1] } else { 'UNREADABLE' }
+  if ($copyStatus -ceq 'COMPANION_GH_LOGIN_COPIED') { $log.steps.tokenLogin = [ordered]@{ source = 'owner-existing-token'; exit = 0; status = $copyStatus } }
+  else {
+    $login = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -Login -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
+    $log.steps.tokenLogin = [ordered]@{ source = 'clipboard'; ownerTokenCopy = $copyStatus; exit = $LASTEXITCODE; status = $(if ($login -match '"status":\s*"([A-Z_]+)"') { $Matches[1] } elseif ($login -match '(CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN|[A-Z][A-Z_]{8,})') { $Matches[1] } else { 'UNREADABLE' }) }
+  }
   $check = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -Check -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
   $log.steps.tokenCheck = [ordered]@{ exit = $LASTEXITCODE; status = $(if ($check -match '"status":\s*"([A-Za-z_:,-]+)"') { $Matches[1] } else { 'UNREADABLE' }) }
   # 6. Facts for the Agent (read-only).

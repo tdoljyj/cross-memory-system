@@ -516,6 +516,25 @@ Yes ($rm.Contains("if (`$me.User.Value -cne (Get-CompanionOperatorSid `$Root `$n
 Yes ($texts['request-upgrade.ps1'].Contains("-cne (Get-OperatorSid `$node)) { throw 'OWNER_ACCOUNT_REQUIRED' }") -and $texts['request-upgrade.ps1'].Contains("'clued.independent-ci.companion-account/1'")) 'request-upgrade-operator'
 $gl = & $codeOf $texts['companion-gh-login.ps1']
 Yes ($gl.Contains("throw 'RUN_ELEVATED_FOR_THE_COMPANION_ACCOUNT'") -and $gl.Contains("throw 'PROFILE_DIRECTORY_NOT_THE_ACCOUNTS'") -and $gl.Contains('$ownerSid = $AccountSid') -and $gl.Contains("throw 'RUN_NOT_ELEVATED_IN_YOUR_OWN_WINDOW'")) 'gh-login-for-the-account-elevated-only'
+# M5-b: the account's token is the Owner's existing companion token when there is a classic one (fake tokens, scratch files only).
+. ([scriptblock]::Create($functions['companion-gh-login.ps1:Test-OwnerHostsShape']))
+. ([scriptblock]::Create($functions['companion-gh-login.ps1:Copy-OwnerHosts']))
+$cpDir = Join-Path $Scratch 'copy-owner'; [void][IO.Directory]::CreateDirectory($cpDir)
+$fakeClassic = 'ghp_' + ('A1b2' * 9); $fakeHosts = "github.com:`n    oauth_token: $fakeClassic`n    git_protocol: https`n"
+$ow = Join-Path $cpDir 'owner-hosts.yml'; $tg = Join-Path $cpDir 'target-hosts.yml'
+[IO.File]::WriteAllText($ow, $fakeHosts)
+Yes ((Test-OwnerHostsShape $ow) -ceq 'classic' -and (Copy-OwnerHosts $ow $tg) -ceq 'copied' -and [IO.File]::ReadAllText($tg) -ceq $fakeHosts -and @(Get-ChildItem -LiteralPath $cpDir -Filter '*.tmp').Count -eq 0) 'copy-owner-token-classic-copied-verbatim'
+Remove-Item -LiteralPath $tg -Force
+Yes ((Copy-OwnerHosts (Join-Path $cpDir 'absent.yml') $tg) -ceq 'missing' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-missing-nothing-written'
+[IO.File]::WriteAllText($ow, "github.com:`n    oauth_token: github_pat_" + ('x' * 40) + "`n")
+Yes ((Copy-OwnerHosts $ow $tg) -ceq 'not-classic' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-wrong-format-refused'
+[IO.File]::WriteAllText($ow, "github.com:`n    git_protocol: https`n")
+Yes ((Copy-OwnerHosts $ow $tg) -ceq 'none' -and -not (Test-Path -LiteralPath $tg)) 'copy-owner-token-no-token-line-refused'
+$glc = & $codeOf $texts['companion-gh-login.ps1']
+Yes ($glc.Contains("throw 'COPYFROMOWNER_NEEDS_THE_ACCOUNT'") -and $glc.Contains("'COMPANION_GH_OWNER_TOKEN_MISSING'") -and $glc.Contains("'COMPANION_GH_OWNER_TOKEN_NOT_CLASSIC'") -and ([regex]::Matches($glc, 'Initialize-CompanionGhFolder \$dirs')).Count -eq 2) 'copy-mode-needs-account-shares-the-acl-function'
+# prepare: the child copy first, the clipboard login as the fallback, the source recorded in the log
+$prc = & $codeOf $texts['prepare-companion-account.ps1']
+Yes ($prc.IndexOf('-CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid') -gt 0 -and $prc.IndexOf('-CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid') -lt $prc.IndexOf('-Login -ProfileDirectory $profileDir -AccountSid $sid') -and $prc.Contains("source = 'owner-existing-token'") -and $prc.Contains("source = 'clipboard'") -and $prc.Contains("'COMPANION_GH_LOGIN_COPIED'")) 'prepare-copies-owner-token-else-clipboard'
 $tpl = [IO.File]::ReadAllText((Join-Path $here '..\reinstall\launcher\template.ps1'))
 Yes ($tpl.Contains("if (`$id.User.Value -cne `$OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }") -and $tpl.Contains("@('-CompanionAccount', '-WslVhdxDirectory', `$CompanionWslVhdxDirectory)") -and $tpl.Contains("'-OperatorSid', `$OperatorSid)")) 'launcher-operator-and-account-step'
 # the prepare script: elevated runs only; -Plan is read-only and runs here (not elevated); it never handles a password or the token
