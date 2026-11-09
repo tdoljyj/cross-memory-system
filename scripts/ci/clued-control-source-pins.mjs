@@ -31,6 +31,12 @@ function readPlain(root,name){
   }
   return lf(new TextDecoder('utf-8',{fatal:true}).decode(fs.readFileSync(full)));
 }
+function assertBaseMode(root,base,name){
+  const old=git(root,['ls-tree','-z',base,'--',name]).match(/^([0-9]{6}) blob [a-f0-9]{40}\t[^\0]+\0$/);
+  const current=git(root,['ls-files','--stage','-z','--',name]).match(/^([0-9]{6}) [a-f0-9]{40} 0\t[^\0]+\0$/);
+  if(!old||!current||!['100644','100755'].includes(old[1])||current[1]!==old[1])refuse(`file mode differs from trusted base: ${name}`);
+  if(process.platform!=='win32'&&Boolean(fs.statSync(path.join(root,name)).mode&0o111)!==(old[1]==='100755'))refuse(`working file mode differs from trusted base: ${name}`);
+}
 function descriptor(text){
   const start=text.indexOf(EXPORT);
   if(start<0||text.indexOf(EXPORT,start+1)!==-1)refuse('one descriptor export required');
@@ -69,6 +75,7 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   root=path.resolve(root);
   if(!/^[a-f0-9]{40}$/.test(base??''))refuse('exact trusted base commit required');
   git(root,['rev-parse','--verify',`${base}^{commit}`]);
+  for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,PROFILE,COMPARISON_POLICY,...CONTROL_SOURCE_MECHANICAL_FILES])assertBaseMode(root,base,name);
   const source=readPlain(root,CONTROL_SOURCE_MODULE),registered=readPlain(root,CONTROL_SOURCE_REGISTRY);
   const before=lf(git(root,['show',`${base}:${CONTROL_SOURCE_MODULE}`]));
   const beforeRegistry=JSON.parse(git(root,['show',`${base}:${CONTROL_SOURCE_REGISTRY}`]));

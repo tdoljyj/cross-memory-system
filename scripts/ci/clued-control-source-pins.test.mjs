@@ -14,6 +14,7 @@ const files=[CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-compone
 function fixture(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'control-source-pins-'));
   execFileSync('git',['clone','--shared','--no-checkout','--quiet',ROOT,dir],{stdio:'pipe'});
+  execFileSync('git',['read-tree','HEAD'],{cwd:dir,stdio:'pipe'});
   for(const name of files){const f=path.join(dir,name);fs.mkdirSync(path.dirname(f),{recursive:true});fs.copyFileSync(path.join(ROOT,name),f);}
   // The checked-in descriptor is a frozen base snapshot. Make every case
   // independent from whether another successful test already materialised it.
@@ -99,4 +100,8 @@ test('candidate comparison-policy substitution is refused without evaluating it'
 test('candidate workflow-profile substitution is refused before compiling Source',async t=>{
   const root=fixture(t);edit(root,'scripts/ci/clued-workflow-profile.mjs',()=>"throw new Error('CANDIDATE_PROFILE_EXECUTED');\n");
   await refusesWithoutWrites(root,/workflow profile differs from trusted base/);
+});
+test('a Git executable-mode substitution is refused even when all bytes are unchanged',async t=>{
+  const root=fixture(t);execFileSync('git',['update-index','--chmod=+x','--',CONTROL_SOURCE_MECHANICAL_FILES[0]],{cwd:root,stdio:'pipe'});
+  await refusesWithoutWrites(root,/file mode differs from trusted base/);
 });
