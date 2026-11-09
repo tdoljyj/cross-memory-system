@@ -441,11 +441,17 @@ $script:CompanionRegistrarExe = Join-Path $Scratch 'bin\CluedCompanionTaskRegist
 $c = Copy-CompanionFileVerified $src $dst
 Yes ($c.sourceSha256 -ceq $c.targetSha256 -and $c.length -eq 9437185 -and $c.sourceSha256 -ceq (Get-CompanionFileSha256 $src)) 'wsl-copy-hashed-on-both-sides'
 $mv = $functions['companion-headless.ps1:Invoke-CompanionWslMove']
-Yes ($mv.IndexOf('WSL_COPY_HASH_MISMATCH') -lt $mv.IndexOf('Remove-Item -LiteralPath $source') -and $mv.IndexOf('Invoke-CompanionWslTerminate') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('Wait-CompanionVhdxFree') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('[IO.File]::Move($partial, $target)') -gt $mv.IndexOf('WSL_COPY_HASH_MISMATCH')) 'wsl-move-terminate-free-copy-verify-then-delete'
-Yes (-not $mv.Contains('Remove-CompanionLxssKey') -and $mv.IndexOf('Export-CompanionLxssKey') -lt $mv.IndexOf('Invoke-CompanionWslTerminate') -and $functions['companion-headless.ps1:Remove-CompanionOwnerRegistration'].Contains('Remove-CompanionLxssKey $guid')) 'wsl-move-exports-first-and-never-forgets-the-owner-registration'
+Yes ($mv.IndexOf('WSL_COPY_HASH_MISMATCH') -lt $mv.IndexOf('Remove-Item -LiteralPath $source') -and $mv.IndexOf('Invoke-CompanionWslTerminate') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('Assert-CompanionWslVhdxReleased') -ge 0 -and $mv.IndexOf('Assert-CompanionWslVhdxReleased') -lt $mv.IndexOf('Copy-CompanionFileVerified') -and $mv.IndexOf('[IO.File]::Move($partial, $target)') -gt $mv.IndexOf('WSL_COPY_HASH_MISMATCH')) 'wsl-move-terminate-free-copy-verify-then-delete'
+Yes (-not $mv.Contains('Remove-CompanionLxssKey') -and $mv.IndexOf('Export-CompanionLxssKey') -lt $mv.IndexOf('Invoke-CompanionWslTerminate', $mv.IndexOf('# 2. moved')) -and $functions['companion-headless.ps1:Remove-CompanionOwnerRegistration'].Contains('Remove-CompanionLxssKey $guid')) 'wsl-move-exports-first-and-never-forgets-the-owner-registration'
 foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-resident.ps1', 'verify-resident.ps1', 'prepare-companion-account.ps1')) {
-  Yes (-not ((& $codeOf $texts[$file]) -match '--unregister|--shutdown|wsl(\.exe)?''?\s+--export|--import(?!-in-place)')) ('never-unregister-shutdown-export-import:' + $file)
+  $normal = $texts[$file]
+  if ($file -ceq 'companion-headless.ps1') { $normal = $normal.Replace($functions['companion-headless.ps1:Invoke-CompanionWslControl'], '') }
+  Yes (-not ((& $codeOf $normal) -match '--unregister|--shutdown|wsl(\.exe)?''?\s+--export|--import(?!-in-place)')) ('normal-route-never-unregister-shutdown-export-import:' + $file)
 }
+$releaseGate = $functions['companion-headless.ps1:Assert-CompanionWslVhdxReleased']
+Yes ($releaseGate.IndexOf('if (-not $AllowVmShutdown)') -lt $releaseGate.IndexOf("Invoke-CompanionWslControl 'shutdown'") -and $releaseGate.Contains("throw 'WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE'")) 'whole-vm-stop-requires-explicit-maintenance'
+Yes ($mv.Contains('WSL_COPY_SOURCE_CHANGED') -and $mv.IndexOf('WSL_COPY_SOURCE_CHANGED') -lt $mv.IndexOf('Remove-Item -LiteralPath ([string]$record.source)')) 'copied-resume-rechecks-the-source-before-delete'
+
 # the account switch: preflight before the fall-back task, the marker before the move, the move before the registrar, the registrar
 # before the import task, qualified before the WSL record and before the marker goes; no password argument anywhere
 $as = $functions['companion-headless.ps1:Invoke-CompanionAccountSwitch']
@@ -877,6 +883,26 @@ R2 'n7-uninstall-refuses-an-unfinished-move' {
   $i = $u.IndexOf("throw ('COMPANION_WSL_MOVE_UNFINISHED:'")
   if ($i -lt 0 -or $i -gt $u.IndexOf('UPGRADER_STILL_RUNNING_NOTHING_REMOVED')) { throw 'NOT_BEFORE_ANY_CHANGE' }
 }
+
+# A restart after a verified copy must not delete a source changed in between.
+R2 'm5b-copied-source-changed-is-never-deleted' {
+  $sc = New-R1Scenario 'm5b-source-changed'; $script:sc = $sc
+  [void][IO.Directory]::CreateDirectory($sc.targetDir)
+  Copy-Item -LiteralPath $sc.source -Destination (Join-Path $sc.targetDir 'ext4.vhdx')
+  [IO.File]::WriteAllText($sc.source, 'NEW_OWNER_DATA')
+  Write-CompanionWslRecord $rootR ([ordered]@{ contract = $CompanionWslContract; distro = 'CluedResident-Linux'; target = (Join-Path $sc.targetDir 'ext4.vhdx'); companionSid = $acctR; stage = 'copied'; imported = $false
+    source = $sc.source; ownerRegistration = [ordered]@{ guid = '{g1}'; values = [ordered]@{ DefaultUid = 0 } }; ownerExport = (Join-Path $rootR 'install\x.reg'); copy = [ordered]@{ sourceSha256 = $sc.sha; targetSha256 = $sc.sha; length = 3145730 } })
+  $refused = & {
+    function Invoke-CompanionWslTerminate { }
+    function Wait-CompanionVhdxFree { $true }
+    function Get-CompanionFileSha256Unbuffered($path) { Get-CompanionFileSha256 $path }
+    try { Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc.targetDir $acctR | Out-Null; $false }
+    catch { $_.Exception.Message -ceq 'WSL_COPY_SOURCE_CHANGED' }
+  }
+  if (-not $refused -or -not (Test-Path -LiteralPath $sc.source) -or [IO.File]::ReadAllText($sc.source) -cne 'NEW_OWNER_DATA') { throw 'CHANGED_SOURCE_WAS_NOT_PRESERVED' }
+  if ((Get-CompanionFileSha256 (Join-Path $sc.targetDir 'ext4.vhdx')) -cne $sc.sha) { throw 'VERIFIED_COPY_CHANGED' }
+}
+
 $r2Failed = @($r2.Keys | Where-Object { $r2[$_] -ne 'pass' })
 if ($r2Failed.Count) { $r2 | ConvertTo-Json | Write-Host }
 Yes ($r2Failed.Count -eq 0) ('review-r2:' + ($r2Failed -join ','))

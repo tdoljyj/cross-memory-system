@@ -312,3 +312,14 @@ T8 里的 junction 测试需要提权的测试机，不在生产节点上做。
 ### 9.7 TURING 先确认
 
 TURING 的常驻发行版是 `Ubuntu-24.04`，也是那台机器唯一的通用发行版。迁走以后，你和 TURING 的 Agent 都不能再直接 `wsl` 进去。做之前由 TURING 一侧只读确认那里没有别的用途（例如家里 Linux runner 的单元、日常开发）；有的话，先另建一个专用的常驻发行版（reinstall README 第 8c 节），再做 M5-b。TURING 的 D: 只剩 27 GB，vhdx 留在 C:，这次不回收 C:。
+
+
+### M5-b 实装修复：明确的整机 WSL 维护停机（候选，随精确包验收）
+
+普通 `-CompanionAccount` 仍只停止本发行版，不因磁盘被占用就静默停止其他 CI。若返回 `WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE`，说明单发行版停止后独占打开 VHDX 未成功；同一个 WSL 2 虚拟机里的其他发行版可能仍持有磁盘。这不是“再等120秒就一定释放”的证据。
+
+维护窗口需要明确覆盖本调用能影响的全部 WSL 发行版，包含仍运行的 CluedCI-Linux。沿原流程先确认相关 CI 无执行、暂停并保留证据；精确包/Grant及维护范围审定后，由原管理员 operator 在安装副本执行同一 `-CompanionAccount` 命令并加 `-CompanionWslVmShutdown`。此参数只允许账户切换，不能用于普通启动、升级或任意其它 rearm 请求；它不是自动判定全体 CI 空闲的证明。不要在普通开发或未确定其它发行版用途时使用。
+
+该路径先记录完整运行发行版清单，调用固定的 `wsl --shutdown`，核对退出码及停止后清单，再独占打开目标 VHDX，才允许原有复制/移动/校验步骤。枚举未知、停机失败/超时、仍有运行发行版或磁盘仍被占用均拒绝移动并保留 Owner 注册和原文件；已复制阶段恢复也会再次确认释放和原源文件 SHA 后才删除原源文件。`install/companion-wsl.json` 的 `vhdxRelease` 记录这次维护动作，不充当业务/生产授权。
+
+Microsoft 命令语义依据：[WSL 基本命令](https://learn.microsoft.com/windows/wsl/reference)：`--terminate` 仅停止指定发行版，`--shutdown` 会终止所有运行发行版及 WSL 2 虚拟机。因此此候选维护分支必须按其影响范围审查，不能把既有单发行版权限当作全部发行版的停机权限。TURING 本地离线检查不等于此动作已在生产执行或真机验收完成。
