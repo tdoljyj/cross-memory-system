@@ -43,11 +43,11 @@ jobs:
       enforced: ${{ steps.gate.outputs.enforced }}
       verdict: ${{ steps.gate.outputs.verdict }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
       - name: Configure job temporary storage
@@ -75,7 +75,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -92,7 +92,7 @@ jobs:
       # The admission check runs main's copy of these self-tests; running the
       # pull request's copy here fails a change that would break them on main
       # before it merges (the self-test deadlock of #552 and #598).
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
       - name: Admission self-tests on this head
@@ -116,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -133,7 +133,7 @@ jobs:
       # The admission check runs main's copy of these self-tests; running the
       # pull request's copy here fails a change that would break them on main
       # before it merges (the self-test deadlock of #552 and #598).
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
       - name: Admission self-tests on this head

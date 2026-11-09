@@ -157,11 +157,11 @@ jobs:
       enforced: ${{ steps.gate.outputs.enforced }}
       verdict: ${{ steps.gate.outputs.verdict }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
       - name: Configure job temporary storage
@@ -185,12 +185,12 @@ jobs:
     outputs:
       run_heavy: ${{ steps.reuse.outputs.run_heavy }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         if: github.event_name == 'push'
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         if: github.event_name == 'push'
         with:
           node-version: 22.23.3
@@ -234,10 +234,10 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
@@ -281,7 +281,7 @@ jobs:
         run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
       - name: Upload S2c gate evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-runtime-gate-evidence-self-hosted
           path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
@@ -306,7 +306,7 @@ jobs:
         run: node ../../scripts/ci/clued-push-reuse.mjs --report
       - name: Upload the actual PR test tree
         if: success() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: clued-tested-tree-clued-connection-authorization.yml-${{ github.run_attempt }}
           path: ${{ runner.temp }}/clued-tested-tree.json
@@ -341,10 +341,10 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.19.0
           cache: npm
@@ -389,7 +389,7 @@ jobs:
         run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
       - name: Upload S2c gate evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-runtime-gate-evidence-hosted
           path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
