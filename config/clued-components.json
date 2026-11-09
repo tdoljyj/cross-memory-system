@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "cd8846e390ef54e667e0514b1c34458809978eed0d458f417cb39f18ebae4c07"
+      "content_sha256": "352e1f43417afe6ab131d8cc21b244e857f71c910fa044eeba4a2ef11d1eac13"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.38",
+      "version": "1.1.39",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "297d51456b6fc170cccdbaab7de1460beda1b801e8a9e5a5a6590696496bc889"
+      "content_sha256": "69887195f07b2bbcde079e2079cf895bcc5f383ef271ab53066a89dd10a4a91c"
     },
     {
       "id": "script.resource-maintenance",
@@ -907,7 +907,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.22",
+      "version": "1.0.23",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -925,7 +925,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0358b314634b482d09ab15d26bc8f8e51845ba1db0dd42a97b256bb98c7caa7f"
+      "content_sha256": "5e3ff9efe1b1d5cffc32da36d50bfe0869d017ebd5608788d9f195cf1a0d9803"
     }
   ]
 }
