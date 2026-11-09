@@ -84,6 +84,8 @@ const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', own
   owner_grant_required: 'OWNER_REVIEW_REQUIRED', owner_grant_missing: 'OWNER_REVIEW_REQUIRED', owner_grant_revoked: 'OWNER_REVIEW_REQUIRED', owner_grant_expired: 'OWNER_REVIEW_REQUIRED',
   protected_change_not_up_to_date: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', path_outside_write_set: 'PATHS_OUTSIDE_WRITE_SET', paths_outside_write_set: 'PATHS_OUTSIDE_WRITE_SET',
   claim_trailer_missing: 'CLAIM_NOT_CURRENT', claim_not_found: 'CLAIM_NOT_CURRENT', claim_not_current: 'CLAIM_NOT_CURRENT', fence_superseded: 'CLAIM_NOT_CURRENT',
+  pr_task_binding_unbound: 'CLAIM_NOT_CURRENT', pr_task_binding_no_live_claim: 'CLAIM_NOT_CURRENT',
+  pr_task_binding_handover_pending: 'CLAIM_NOT_CURRENT', pr_task_binding_head_not_authorized: 'CLAIM_NOT_CURRENT',
   claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
   claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
   workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
@@ -115,7 +117,8 @@ const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission
 export function notAdmittedCode(diagnostic) {
   const codes = Array.isArray(diagnostic?.reasonCodes) ? [...diagnostic.reasonCodes, ...(diagnostic.nativeReasonCodes ?? [])] : [];
   for (const c of ['admission_binding_required', 'protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
-    'path_outside_write_set', 'paths_outside_write_set', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
+    'path_outside_write_set', 'paths_outside_write_set', 'pr_task_binding_unbound', 'pr_task_binding_no_live_claim', 'pr_task_binding_handover_pending',
+    'pr_task_binding_head_not_authorized', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
     'work_claim_execution_epoch_stale', 'task_ci_head_cap_reached', 'claim_head_cap_reached', 'ci_budget_exhausted', 'head_budget_exhausted',
     'workflow_change_not_authorized', 'workflow_runs_unavailable', 'owner_review_unavailable']) if (codes.includes(c)) return DIAG[c];
   return 'NATIVE_NOT_ADMITTED';

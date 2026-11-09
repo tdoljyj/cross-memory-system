@@ -1,268 +1,249 @@
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { test } from "node:test";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { POLLER_TRAILER, checkRepush, main, parseArgs } from "./pr-repush-preflight.mjs";
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { checkRepush, createDefaultPorts, main, parseArgs, readPrMetadata } from './pr-repush-preflight.mjs';
 
-const NEW = "d6a771bf-400d-498f-a043-e9e3ac605f8b";
-const OLD = "796078d6-6785-43b4-ac48-45c4d1ed14b0";
-const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
-const HEAD = "378da6e1bfba2a46cb62203766d1827b4b86974f";
-const text = (claim, scope = SCOPE) => `Summary line.\n\nDetails.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${scope}\n`;
-const codes = r => r.problems.map(p => p.code).sort();
+const CURRENT = 'd6a771bf-400d-498f-a043-e9e3ac605f8b';
+const OLD = '796078d6-6785-43b4-ac48-45c4d1ed14b0';
+const TASK = '257d262e-7afc-4055-85b7-299e0b2129b4';
+const AUTH = ['232821de', '6886', '47ae', 'a27d', 'bef315823fef'].join('-');
+const SCOPE = 'project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+const HEAD = '378da6e1bfba2a46cb62203766d1827b4b86974f';
+const REMOTE_HEAD = '2'.repeat(40), BASE = 'b'.repeat(40);
+const ARGV = ['--repo', 'o/r', '--pr', '992', '--head', HEAD];
+const env = { CLUED_CONTEXT_READ_TOKEN: 'synthetic-read-binding-token', CLUED_SUPABASE_URL: 'https://native.fixture.invalid',
+  CLUED_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture', GITHUB_REPOSITORY: 'unrelated/environment' };
+const metadata = () => ({ number: 992, state: 'open', head: { sha: REMOTE_HEAD },
+  base: { sha: BASE, ref: 'main', repo: { full_name: 'o/r' } } });
+const binding = (extra = {}) => ({
+  status: 'ok', binding_status: 'bound', reason: null, repository: 'o/r', pr_number: 992, pr_ref: 'o/r#992',
+  head_sha: HEAD, base_sha: BASE, target_branch: 'main', scope: SCOPE, task_id: TASK,
+  claim: { claim_id: CURRENT, task_id: TASK, context_key: SCOPE, fence: 4, execution_epoch: 3,
+    lease_version: 2, expires_at: '2099-01-01T00:00:00Z', status: 'ACTIVE', execution_handover_pending: false },
+  head_authorization_id: AUTH, auto_bound: false, receipt_id: null, ...extra,
+});
+const capture = () => ({ text: '', write(t) { this.text += t; } });
+function fixture({ pr = metadata(), reply = binding(), fetchError, metadataError, transportEnv = env } = {}) {
+  const calls = [];
+  return { calls, ports: { env: transportEnv, workspace: 'not-read-fixture',
+    async readPrMetadata(repo, number) { calls.push({ kind: 'github', repo, number }); if (metadataError) throw metadataError; return pr; },
+    async fetchImpl(url, init) { calls.push({ kind: 'native', url, input: JSON.parse(init.body).p_input });
+      if (fetchError) throw fetchError;
+      return { status: 200, text: async () => JSON.stringify(reply), headers: { get() { return null; } } }; },
+    readPrBody() { throw new Error('retired body authority was read'); },
+    readCommitMessage() { throw new Error('retired commit authority was read'); },
+  } };
+}
+async function run(argv = ARGV, options) {
+  const f = fixture(options), out = capture(), err = capture();
+  return { code: await main(argv, f.ports, out, err), out: out.text, err: err.text, calls: f.calls };
+}
 
-test("the poller trailer here is the resident poller's own, character for character", () => {
-  const poller = fs.readFileSync(new URL("../../work/independent-ci-resident-v1/src/poller.mjs", import.meta.url), "utf8");
-  const m = /^const TRAILER = (\/.+\/m);$/m.exec(poller);
-  assert.ok(m, "poller.mjs no longer declares TRAILER on one line: update POLLER_TRAILER and this test together");
-  assert.equal(String(POLLER_TRAILER), m[1]);
+test('write-set mode derives the complete real PR union with only read calls', async () => {
+  const f=fixture({pr:{...metadata(),base:{...metadata().base,repo:{full_name:'O/R'}},changed_files:2}}), out=capture(),err=capture();
+  const current={...binding().claim,write_set:['src/**','other/pr.py','execution/active.py']};
+  f.ports.readPrFilesPage=async (repo,number,page)=>{
+    f.calls.push({kind:'github-files',repo,number,page});
+    return [{filename:'src/new.py',previous_filename:'src/old.py',status:'renamed'},
+      {filename:'config/clued-components.json',status:'modified'}];
+  };
+  const fetch=f.ports.fetchImpl;
+  f.ports.fetchImpl=async (url,init)=>{
+    const input=JSON.parse(init.body).p_input;
+    if(input.action)return fetch(url,init);
+    f.calls.push({kind:'native-read',input});
+    return {status:200,text:async()=>JSON.stringify({status:'ok',verdict:'ADMITTED',claim:current}),headers:{get(){return null;}}};
+  };
+  const code=await main([...ARGV,'--write-set'],f.ports,out,err);
+  assert.equal(code,0,err.text);
+  const plan=JSON.parse(out.text.split('\n').find(line=>line.startsWith('WRITE_SET_PLAN: ')).slice('WRITE_SET_PLAN: '.length));
+  assert.deepEqual(plan.write_set,['config/clued-components.json','execution/active.py','other/pr.py','src/**']);
+  assert.deepEqual(plan.changed_paths,['config/clued-components.json','src/new.py','src/old.py']);
+  assert.equal(plan.head_sha,REMOTE_HEAD);assert.equal(plan.planned_head_sha,HEAD);
+  assert.equal(plan.read_only,true);assert.equal(plan.requires_renewal,true);
+  assert.equal(Object.hasOwn(plan,'lease_key'),false);
+  assert.ok(f.calls.every(c=>!c.input?.lease_key&&!c.input?.progress_ref));
+  assert.equal(f.calls.filter(c=>c.kind==='native-read').length,1);
 });
 
-test("body and head commit both name the live claim and scope: OK", () => {
-  const r = checkRepush({ prBody: text(NEW), commitMessage: text(NEW), claim: NEW, scope: SCOPE });
-  assert.deepEqual(r, { ok: true, problems: [], notes: [] });
+test('write-set mode rejects a stale current Native generation and never guesses resources',async()=>{
+  const f=fixture({pr:{...metadata(),changed_files:1}}),out=capture(),err=capture();
+  f.ports.readPrFilesPage=async()=>[{filename:'source/file.py',status:'modified'}];
+  const fetch=f.ports.fetchImpl;
+  f.ports.fetchImpl=async(url,init)=>JSON.parse(init.body).p_input.action?fetch(url,init):
+    {status:200,text:async()=>JSON.stringify({status:'ok',verdict:'ADMITTED',claim:{...binding().claim,fence:99,write_set:['**']}}),headers:{get(){return null;}}};
+  assert.equal(await main([...ARGV,'--write-set'],f.ports,out,err),2);
+  assert.doesNotMatch(out.text,/WRITE_SET_PLAN:/);
 });
 
-test("the PR body still names the old claim (the #992 case): refused with the body edit to make", () => {
-  const r = checkRepush({ prBody: text(OLD), commitMessage: text(NEW), claim: NEW, scope: SCOPE });
-  assert.deepEqual(codes(r), ["BODY_CLAIM_MISMATCH"]);
-  assert.equal(r.problems[0].found, OLD);
-  assert.match(r.problems[0].fix, new RegExp(`Clued-Work-Claim: ${NEW}`));
+test('Native binding passes without prose, reads exact metadata and planned head through the shared readonly resolver', async () => {
+  const r = await run();
+  assert.equal(r.code, 0); assert.equal(r.err, '');
+  assert.match(r.out, /BOUND: 绑定检查通过/); assert.match(r.out, /not execution admission/);
+  assert.deepEqual(r.calls[0], { kind: 'github', repo: 'o/r', number: 992 });
+  assert.equal(r.calls.length, 2);
+  assert.match(r.calls[1].url, /\/rest\/v1\/rpc\/clued_work_verify_v1$/);
+  assert.deepEqual(r.calls[1].input, { action: 'resolve_pr_claim', pr_ref: 'o/r#992', head_sha: HEAD,
+    base_sha: BASE, target_branch: 'main', read_only: true });
+  assert.notEqual(HEAD, REMOTE_HEAD, 'planned push head intentionally differs from the current remote PR head');
+  assert.doesNotMatch(r.out + r.err, /synthetic-read-binding-token|sb_publishable_fixture/);
 });
 
-test("the head commit still names the old claim: refused even though the body wins, and told to check the new SHA", () => {
-  const r = checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE });
-  assert.deepEqual(codes(r), ["COMMIT_CLAIM_MISMATCH"]);
-  assert.match(r.problems[0].fix, /run this check again with the new SHA/);
+test('contradictory PR/body/commit trailers and deprecated body flag cannot change Native identity', async () => {
+  const pr = { ...metadata(), body: 'Clued-Work-Claim: ' + OLD + '\nClued-Work-Scope: global',
+    commitMessage: 'Clued-Work-Claim: ' + OLD };
+  const r = await run([...ARGV, '--body-governs'], { pr });
+  assert.equal(r.code, 0); assert.match(r.out, /DEPRECATED/);
+  assert.match(r.out, new RegExp(CURRENT)); assert.doesNotMatch(r.out, new RegExp(OLD));
 });
 
-test("bodyGoverns: the head commit's claim and scope mismatches become notes, the run stays ok", () => {
-  const other = "project:11111111-2222-3333-4444-555555555555";
-  const r = checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE, bodyGoverns: true });
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.problems, []);
-  assert.deepEqual(r.notes.map(n => n.code), ["COMMIT_CLAIM_MISMATCH"]);
-  assert.deepEqual(r.notes, [{ where: "head-commit", code: "COMMIT_CLAIM_MISMATCH", found: OLD, expected: NEW }]);
-  const s = checkRepush({ prBody: text(NEW), commitMessage: text(NEW, other), claim: NEW, scope: SCOPE, bodyGoverns: true });
-  assert.equal(s.ok, true);
-  assert.deepEqual(s.notes, [{ where: "head-commit", code: "COMMIT_SCOPE_MISMATCH", found: other, expected: SCOPE }]);
-  // off by default: the same input without the option is refused as before
-  assert.deepEqual(codes(checkRepush({ prBody: text(NEW), commitMessage: text(OLD), claim: NEW, scope: SCOPE, bodyGoverns: false })), ["COMMIT_CLAIM_MISMATCH"]);
+test('--claim is optional diagnostic; a changed current claim passes and never requests prose edits', async () => {
+  const r = await run([...ARGV, '--claim', OLD]);
+  assert.equal(r.code, 0); assert.match(r.out, /CLAIM_CHANGED/); assert.match(r.out, /PR prose needs no change/);
+  assert.match(r.out, new RegExp(CURRENT));
 });
 
-test("bodyGoverns: every check on the body is still an error, whatever the head commit says", () => {
-  const other = "project:11111111-2222-3333-4444-555555555555";
-  const noScope = `x\n\nClued-Work-Claim: ${NEW}\n`;
-  const cases = [
-    [text(OLD), "BODY_CLAIM_MISMATCH"], [text(NEW, other), "BODY_SCOPE_MISMATCH"], [noScope, "BODY_SCOPE_MISMATCH"],
-    [text(NEW.toUpperCase()), "BODY_TRAILER_MISSING"], ["Summary only.\n", "BODY_TRAILER_MISSING"],
-    [`x\n\nClued-Work-Claim:\u00a0${NEW}\n`, "BODY_TRAILER_UNPARSEABLE"],
+test('omitted scope is Native-derived while an explicit scope is checked exactly', async () => {
+  assert.equal((await run([...ARGV, '--scope', SCOPE])).code, 0);
+  const explicit = await run([...ARGV, '--scope', 'global']);
+  assert.equal(explicit.code, 2); assert.match(explicit.err, /UNCONFIRMED/);
+  assert.equal(explicit.calls[1].input.scope, 'global');
+  const nativeScopeConflict = await run([...ARGV, '--scope', 'global'], { reply: binding({
+    binding_status: 'conflict', reason: 'scope_not_served', scope: 'global', task_id: null, claim: null, head_authorization_id: null }) });
+  assert.equal(nativeScopeConflict.code, 1);
+});
+
+test('unbound and unknown lifecycle return discovery pending without blocking the normal first-push discovery flow', async () => {
+  const replies = [
+    binding({ binding_status: 'unbound', reason: 'pr_task_binding_unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }),
+    binding({ binding_status: 'no_live_claim', reason: 'pr_task_binding_unknown', claim: null, head_authorization_id: null }),
+    binding({ binding_status: 'no_live_claim', reason: 'pr_task_binding_closed', claim: null, head_authorization_id: null }),
   ];
-  for (const [prBody, code] of cases) {
-    const r = checkRepush({ prBody, commitMessage: text(OLD, other), claim: NEW, scope: SCOPE, bodyGoverns: true });
-    assert.equal(r.ok, false, code);
-    assert.deepEqual(codes(r), [code]);
-    assert.deepEqual(r.notes.map(n => n.code).sort(), ["COMMIT_CLAIM_MISMATCH", "COMMIT_SCOPE_MISMATCH"], code);
+  for (const reply of replies) {
+    const r = await run(ARGV, { reply });
+    assert.equal(r.code, 3); assert.match(r.out, /DISCOVERY_PENDING/); assert.match(r.out, /normal push\/create/);
+    assert.match(r.out, /not activate a relation or edit PR prose/); assert.doesNotMatch(r.out, /BOUND:/);
+    assert.equal(r.calls[1].input.read_only, true);
   }
 });
 
-test("both stale: both reported", () => {
-  const r = checkRepush({ prBody: text(OLD), commitMessage: text(OLD), claim: NEW, scope: SCOPE });
-  assert.deepEqual(codes(r), ["BODY_CLAIM_MISMATCH", "COMMIT_CLAIM_MISMATCH"]);
+test('head authorization and handover waits are exit 3; current Task/claim conflicts are exit 1', async () => {
+  for (const reply of [
+    binding({ binding_status: 'head_not_authorized', reason: 'head_authorization_required', head_authorization_id: null }),
+    binding({ binding_status: 'handover_pending', reason: 'work_claim_handover_pending', head_authorization_id: null,
+      claim: { ...binding().claim, execution_handover_pending: true } }),
+  ]) assert.equal((await run(ARGV, { reply })).code, 3);
+  for (const reply of [
+    binding({ binding_status: 'conflict', reason: 'pr_task_binding_ambiguous', task_id: null, claim: null, head_authorization_id: null }),
+    binding({ binding_status: 'no_live_claim', reason: 'task_not_current', claim: null, head_authorization_id: null }),
+    binding({ binding_status: 'no_live_claim', reason: 'claim_not_current', claim: null, head_authorization_id: null }),
+  ]) assert.equal((await run(ARGV, { reply })).code, 1);
 });
 
-test("no trailer in the body: refused, because the resident never proposes such a PR", () => {
-  const r = checkRepush({ prBody: "Summary only.\n", commitMessage: text(NEW), claim: NEW, scope: SCOPE });
-  assert.deepEqual(codes(r), ["BODY_TRAILER_MISSING"]);
-  assert.match(r.problems[0].fix, /never proposes/);
-  assert.equal(checkRepush({ prBody: null, commitMessage: "", claim: NEW }).problems[0].code, "BODY_TRAILER_MISSING");
-  assert.equal(checkRepush({ prBody: "\n", commitMessage: "", claim: NEW }).problems[0].code, "BODY_TRAILER_MISSING");
-});
-
-test("an upper-case claim in the body passes admission's parser but not the poller's: refused, saying so", () => {
-  const r = checkRepush({ prBody: text(NEW.toUpperCase()), commitMessage: "", claim: NEW, scope: SCOPE });
-  assert.deepEqual(codes(r), ["BODY_TRAILER_MISSING"]);
-  assert.equal(r.problems[0].found, NEW);
-  assert.match(r.problems[0].fix, /not lower case/);
-});
-
-test("a claim line the poller accepts but admission cannot read is refused, not a crash", () => {
-  // escapes, not literal characters, so the cases stay visible in review
-  for (const body of [`x\n\nClued-Work-Claim:\n${NEW}\n`, `x\n\nClued-Work-Claim:\u00a0${NEW}\n`, `x\n\nClued-Work-Claim: ${NEW}\u00a0\n`,
-    `x\n\nClued-Work-Claim:\v${NEW}\n`]) {
-    assert.ok(POLLER_TRAILER.test(body));
-    const r = checkRepush({ prBody: body, commitMessage: text(OLD), claim: NEW, scope: SCOPE });
-    assert.deepEqual(codes(r), ["BODY_TRAILER_UNPARSEABLE", "COMMIT_CLAIM_MISMATCH"]);
-  }
-});
-
-test("CRLF bodies, and a first upper-case line followed by a lower-case one, are read as the runtime reads them", () => {
-  assert.equal(checkRepush({ prBody: text(NEW).replace(/\n/g, "\r\n"), commitMessage: "", claim: NEW, scope: SCOPE }).ok, true);
-  // admission takes the first line (upper case, OLD here); the poller only needs some lower-case line: a mismatch
-  const mixed = `x\n\nClued-Work-Claim: ${OLD.toUpperCase()}\nClued-Work-Claim: ${NEW}\nClued-Work-Scope: ${SCOPE}\n`;
-  assert.deepEqual(codes(checkRepush({ prBody: mixed, commitMessage: "", claim: NEW, scope: SCOPE })), ["BODY_CLAIM_MISMATCH"]);
-});
-
-test("no trailer in the head commit is fine: the body decides", () => {
-  assert.equal(checkRepush({ prBody: text(NEW), commitMessage: "ci: something\n", claim: NEW, scope: SCOPE }).ok, true);
-});
-
-test("scope mismatches are reported where they are; a missing scope line and a missing --scope both mean global", () => {
-  const other = "project:11111111-2222-3333-4444-555555555555";
-  assert.deepEqual(codes(checkRepush({ prBody: text(NEW, other), commitMessage: text(NEW, other), claim: NEW, scope: SCOPE })),
-    ["BODY_SCOPE_MISMATCH", "COMMIT_SCOPE_MISMATCH"]);
-  const noScope = `x\n\nClued-Work-Claim: ${NEW}\n`;
-  assert.deepEqual(codes(checkRepush({ prBody: noScope, commitMessage: "", claim: NEW, scope: SCOPE })), ["BODY_SCOPE_MISMATCH"]);
-  assert.equal(checkRepush({ prBody: noScope, commitMessage: "", claim: NEW, scope: "global" }).ok, true);
-  assert.equal(checkRepush({ prBody: noScope, commitMessage: noScope, claim: NEW }).ok, true);
-  const r = checkRepush({ prBody: text(NEW, other), commitMessage: text(NEW, other), claim: NEW });
-  assert.deepEqual(codes(r), ["BODY_SCOPE_MISMATCH", "COMMIT_SCOPE_MISMATCH"]);
-  assert.match(r.problems.find(p => p.code === "BODY_SCOPE_MISMATCH").fix, /remove the Clued-Work-Scope line/);
-});
-
-test("arguments: every malformed or repeated one is refused, naming it", () => {
-  const good = ["--repo", "o/r", "--pr", "992", "--head", HEAD, "--claim", NEW];
-  assert.deepEqual(parseArgs(good), { args: { repo: "o/r", pr: 992, head: HEAD, claim: NEW, scope: "global", bodyGoverns: false } });
-  assert.equal(parseArgs([...good, "--scope", SCOPE]).args.scope, SCOPE);
-  assert.equal(parseArgs(good.map(v => (v === "o/r" ? "tdoljyj/.github" : v))).args.repo, "tdoljyj/.github");
-  // --body-governs takes no value, wherever it stands
-  assert.equal(parseArgs([...good, "--body-governs"]).args.bodyGoverns, true);
-  assert.deepEqual(parseArgs(["--body-governs", ...good, "--scope", SCOPE]).args, { repo: "o/r", pr: 992, head: HEAD, claim: NEW, scope: SCOPE, bodyGoverns: true });
-  assert.equal(parseArgs(["--repo", "o/r", "--body-governs", "--pr", "992", "--head", HEAD, "--claim", NEW]).args.bodyGoverns, true);
-  const swap = (from, to) => good.map(v => (v === from ? to : v));
-  const cases = [
-    [[], /--repo is required/], [["--repo", "o/r"], /--pr is required/], [[...good, "--pr", "1"], /--pr given twice/],
-    [[...good, "--body-governs", "--body-governs"], /--body-governs given twice/], [[...good, "--body-governs", "true"], /unknown argument "true"/],
-    [[...good, "--scope", "--body-governs"], /--scope must/], [[...good, "--body-governs", "--scope"], /--scope needs a value/], [["--repo", "o/r", "--pr", "--body-governs", "--head", HEAD, "--claim", NEW], /--pr must/],
-    [[...good, "--extra", "x"], /unknown argument "--extra"/], [["--repo=o/r", "--pr"], /unknown argument "--repo=o\/r"/],
-    [[...good, "--scope", "project:x"], /--scope/], [[...good, "--scope", "project:0597AA60-9b98-4da6-a4ab-63d7705b632f"], /--scope/],
-    [swap(NEW, NEW.toUpperCase()), /--claim/], [swap(HEAD, HEAD.slice(0, 12)), /--head/], [swap("992", "0"), /--pr must/],
-    [good.slice(0, -1), /--claim needs a value/], [swap("o/r", "o/.."), /--repo/], [swap("o/r", "-o/r"), /--repo/],
-    [swap("o/r", "o/r/x"), /--repo/], [swap("o/r", "o/."), /--repo/], [swap("o/r", ".o/r"), /--repo/],
-  ];
-  for (const [argv, why] of cases) assert.match(parseArgs(argv).error ?? "", why, JSON.stringify(argv));
-});
-
-function capture() { const s = { text: "", write(t) { s.text += t; } }; return s; }
-const ARGV = ["--repo", "o/r", "--pr", "992", "--head", HEAD, "--claim", NEW, "--scope", SCOPE];
-
-test("main: exit 0 / 1 / 2 with injected readers, and the readers get the PR and head asked for", async () => {
-  const seen = [];
-  const ports = (body, msg) => ({
-    readPrBody: async (repo, pr) => { seen.push([repo, pr]); return body; },
-    readCommitMessage: async head => { seen.push([head]); return msg; },
-  });
-  let out = capture(), err = capture();
-  assert.equal(await main(ARGV, ports(text(NEW), text(NEW)), out, err), 0);
-  assert.equal(out.text, `OK: PR #992 body and head 378da6e1 name claim ${NEW}, scope ${SCOPE}\n`);
-  assert.deepEqual(seen, [["o/r", 992], [HEAD]]);
-
-  out = capture();
-  assert.equal(await main(ARGV, ports(text(NEW), "ci: x\n"), out, err), 0);
-  assert.match(out.text, /head 378da6e1 has no trailer, so the body decides/);
-
-  out = capture();
-  assert.equal(await main(ARGV, ports(text(OLD), text(NEW)), out, err), 1);
-  assert.match(out.text, /BODY_CLAIM_MISMATCH \(pr-body\): found 796078d6/);
-
-  out = capture(); err = capture();
-  assert.equal(await main(["--pr", "1"], ports("", ""), out, err), 2);
-  assert.match(err.text, /^--repo is required\nusage:/);
-
-  err = capture();
-  const failing = { readPrBody: async () => { throw new Error("gh pr failed (1): Could not resolve to a PullRequest"); }, readCommitMessage: async () => "" };
-  assert.equal(await main(ARGV, failing, capture(), err), 2);
-  assert.match(err.text, /^PREFLIGHT_READ_FAILED: gh pr failed \(1\): Could not resolve/);
-});
-
-test("main --body-governs: the head commit's old claim or scope is a NOTE on stdout and exit 0; the body still decides exit 1", async () => {
-  const other = "project:11111111-2222-3333-4444-555555555555";
-  const ports = (body, msg) => ({ readPrBody: async () => body, readCommitMessage: async () => msg });
-  const argv = [...ARGV, "--body-governs"];
-  let out = capture(), err = capture();
-  assert.equal(await main(argv, ports(text(NEW), text(OLD)), out, err), 0);
-  assert.equal(out.text,
-    `NOTE (head-commit): COMMIT_CLAIM_MISMATCH: found ${OLD}, expected ${NEW}; --body-governs: this does not fail the run\n`
-    + `OK: PR #992 body names claim ${NEW}, scope ${SCOPE}; head 378da6e1's trailer names another claim, so the body governs (--body-governs)\n`);
-  assert.equal(err.text, "");
-
-  out = capture();
-  assert.equal(await main(argv, ports(text(NEW), text(NEW, other)), out, err), 0);
-  assert.equal(out.text,
-    `NOTE (head-commit): COMMIT_SCOPE_MISMATCH: found ${other}, expected ${SCOPE}; --body-governs: this does not fail the run\n`
-    + `OK: PR #992 body names claim ${NEW}, scope ${SCOPE}; head 378da6e1's trailer names another scope, so the body governs (--body-governs)\n`);
-
-  out = capture();
-  assert.equal(await main(argv, ports(text(NEW), text(OLD, other)), out, err), 0);
-  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH.*\nNOTE \(head-commit\): COMMIT_SCOPE_MISMATCH.*\nOK: .*head 378da6e1's trailer names another claim and scope, so the body governs/);
-
-  // a head commit that agrees (or has no trailer) keeps the usual OK line, flag or not
-  out = capture();
-  assert.equal(await main(argv, ports(text(NEW), text(NEW)), out, err), 0);
-  assert.equal(out.text, `OK: PR #992 body and head 378da6e1 name claim ${NEW}, scope ${SCOPE}\n`);
-  out = capture();
-  assert.equal(await main(argv, ports(text(NEW), "ci: x\n"), out, err), 0);
-  assert.match(out.text, /has no trailer, so the body decides/);
-
-  // the body is still checked: exit 1, the body's problem listed, the head commit's mismatch still shown as a note
-  out = capture();
-  assert.equal(await main(argv, ports(text(OLD), text(OLD)), out, err), 1);
-  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH/);
-  assert.match(out.text, /BODY_CLAIM_MISMATCH \(pr-body\): found 796078d6/);
-  assert.doesNotMatch(out.text, /^OK/m);
-
-  // no trailer in the body at all: exit 1 on the body, the head commit's mismatch still only a note
-  out = capture();
-  assert.equal(await main(argv, ports("Summary only.\n", text(OLD)), out, err), 1);
-  assert.match(out.text, /^NOTE \(head-commit\): COMMIT_CLAIM_MISMATCH/m);
-  assert.match(out.text, /^BODY_TRAILER_MISSING \(pr-body\)/m);
-  assert.doesNotMatch(out.text, /^COMMIT_CLAIM_MISMATCH/m);
-
-  // without the flag the same input is exit 1 and no NOTE
-  out = capture();
-  assert.equal(await main(ARGV, ports(text(NEW), text(OLD)), out, err), 1);
-  assert.match(out.text, /^COMMIT_CLAIM_MISMATCH \(head-commit\)/);
-  assert.doesNotMatch(out.text, /NOTE/);
-
-  err = capture();
-  assert.equal(await main([...argv, "--body-governs"], ports("", ""), capture(), err), 2);
-  assert.match(err.text, /^--body-governs given twice\nusage:.*\[--body-governs\]\n$/);
-});
-
-test("main: anything unexpected is exit 2 PREFLIGHT_INTERNAL_ERROR, never exit 1 or a stack", async () => {
-  const err = capture();
-  const ports = { readPrBody: async () => text(NEW), readCommitMessage: async () => text(NEW) };
-  const out = { write() { throw new Error("stdout closed"); } };
+test('missing authorized transport is unconfirmed exit 2, with no GitHub or Native read', async () => {
+  const r = await run(ARGV, { transportEnv: {} });
+  assert.equal(r.code, 2); assert.match(r.err, /UNCONFIRMED/); assert.deepEqual(r.calls, []);
+  const out = capture(), err = capture();
+  const ports = createDefaultPorts({ env: {}, run() { throw new Error('must not read Host credentials or GitHub'); } });
   assert.equal(await main(ARGV, ports, out, err), 2);
-  assert.equal(err.text, "PREFLIGHT_INTERNAL_ERROR: stdout closed\n");
 });
 
-const TOOL = fileURLToPath(new URL("./pr-repush-preflight.mjs", import.meta.url));
-const runNode = args => spawnSync(process.execPath, args, { encoding: "utf8", timeout: 30_000 });
+test('Native repository, PR, head, base, target, scope and generation mismatches all fail closed', async () => {
+  for (const extra of [
+    { repository: 'other/repo' }, { pr_number: 993 }, { pr_ref: 'o/r#993' }, { head_sha: REMOTE_HEAD },
+    { base_sha: 'c'.repeat(40) }, { target_branch: 'other' }, { scope: 'global' },
+    { claim: { ...binding().claim, execution_epoch: 0 } }, { claim: { ...binding().claim, context_key: 'global' } },
+    { auto_bound: true, receipt_id: AUTH },
+  ]) {
+    const r = await run([...ARGV, '--scope', SCOPE], { reply: binding(extra) });
+    assert.equal(r.code, 2, JSON.stringify(extra)); assert.match(r.err, /UNCONFIRMED/); assert.doesNotMatch(r.out, /BOUND:/);
+  }
+});
 
-test("CLI: run directly it checks (a usage error is exit 2), also through a junction or symlink; importing it runs nothing", () => {
+test('metadata is exact and actual base/target assertions are optional; closed PR does not reopen', async () => {
+  assert.equal((await run([...ARGV, '--base', BASE, '--target', 'main'])).code, 0);
+  assert.equal((await run([...ARGV, '--base', 'c'.repeat(40)])).code, 1);
+  assert.equal((await run([...ARGV, '--target', 'release'])).code, 1);
+  for (const pr of [
+    { ...metadata(), number: 993 }, { ...metadata(), base: { ...metadata().base, repo: { full_name: 'other/repo' } } },
+    { ...metadata(), base: { ...metadata().base, sha: 'short' } }, { ...metadata(), head: { sha: 'short' } },
+    { ...metadata(), base: { ...metadata().base, ref: 'main\ninjected' } }, { ...metadata(), state: 'unknown' },
+  ]) assert.equal((await run(ARGV, { pr })).code, 2);
+  const closed = await run(ARGV, { pr: { ...metadata(), state: 'closed' } });
+  assert.equal(closed.code, 1); assert.equal(closed.calls.length, 1);
+});
+
+test('parameters reject duplicates, unknowns, shell fragments and invalid identifiers without defaulting scope', () => {
+  assert.equal(parseArgs(ARGV).args.scope, undefined); assert.equal(parseArgs(ARGV).args.claim, undefined);
+  assert.equal(parseArgs(['--repo', 'Owner/.github', '--pr', '1', '--head', HEAD]).args.repo, 'owner/.github');
+  const replace = (from, to) => ARGV.map(v => v === from ? to : v);
+  for (const argv of [
+    [], [...ARGV, '--head', HEAD], [...ARGV, '--scope'], [...ARGV, '--claim', OLD.toUpperCase()],
+    [...ARGV, '--scope', 'project:x'], [...ARGV, '--scope', SCOPE.toUpperCase()],
+    [...ARGV, '--body-governs', '--body-governs'], [...ARGV, '--unknown', 'secret'],
+    [...ARGV, '--target', 'main; echo private'], [...ARGV, '--target', '../main'], [...ARGV, '--target', 'main//branch'],
+    replace('o/r', 'o/..'), replace('o/r', '-o/r'), replace('o/r', 'o/r/extra'),
+    replace('o/r', 'o/r;whoami'), replace('992', '0'), replace('992', '1;whoami'),
+    replace(HEAD, HEAD.slice(0, 12)), replace(HEAD, 'a'.repeat(40) + ';whoami'),
+  ]) assert.equal(typeof parseArgs(argv).error, 'string', JSON.stringify(argv));
+});
+
+test('gh metadata uses argument arrays with shell disabled and never forwards command stderr', () => {
+  let seen;
+  const result = readPrMetadata('o/r', 992, (...args) => { seen = args; return { status: 0, stdout: JSON.stringify(metadata()) }; });
+  assert.equal(result.number, 992);
+  assert.deepEqual(seen[0], 'gh'); assert.deepEqual(seen[1], ['api', 'repos/o/r/pulls/992', '--method', 'GET']);
+  assert.equal(seen[2].shell, false); assert.equal(seen[2].windowsHide, true); assert.ok(seen[2].timeout > 0);
+  const secret = 'private-token-must-not-leak';
+  assert.throws(() => readPrMetadata('o/r', 992, () => ({ status: 1, stderr: secret, error: new Error(secret) })),
+    e => e.message === 'PR metadata unavailable' && !e.message.includes(secret));
+});
+
+test('transport exceptions, raw server refusal and gh failures are opaque and cannot leak private details', async () => {
+  const secret = 'private-token-must-not-leak';
+  for (const options of [
+    { fetchError: new Error(secret) }, { metadataError: new Error(secret) },
+    { reply: { status: 'rejected', error_code: secret } }, { reply: { ...binding(), status: secret } },
+  ]) {
+    const r = await run(ARGV, options);
+    assert.equal(r.code, 2); assert.match(r.err, /UNCONFIRMED/); assert.doesNotMatch(r.out + r.err, new RegExp(secret));
+    assert.doesNotMatch(r.out + r.err, /Error:| at /);
+  }
+});
+
+test('unexpected output failures are unconfirmed exit 2 without a stack or raw exception', async () => {
+  const f = fixture(), err = capture();
+  assert.equal(await main(ARGV, f.ports, { write() { throw new Error('private output exception'); } }, err), 2);
+  assert.equal(err.text, 'UNCONFIRMED: binding check could not complete.\n');
+  assert.equal(checkRepush({ binding: binding(), claim: OLD }).exitCode, 0);
+});
+
+const TOOL = fileURLToPath(new URL('./pr-repush-preflight.mjs', import.meta.url));
+const runNode = args => spawnSync(process.execPath, args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+test('direct and junction entry points run the check; importing from existing or missing importer paths runs nothing', () => {
   const direct = runNode([TOOL]);
-  assert.equal(direct.status, 2, direct.stderr);
-  assert.match(direct.stderr, /--repo is required/);
-  const twice = runNode([TOOL, "--body-governs", "--body-governs"]);
-  assert.equal(twice.status, 2, twice.stderr);
-  assert.match(twice.stderr, /^--body-governs given twice\r?\nusage:/);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repush-preflight-"));
+  assert.equal(direct.status, 2, direct.stderr); assert.match(direct.stderr, /--repo is required/);
+  const twice = runNode([TOOL, '--body-governs', '--body-governs']);
+  assert.equal(twice.status, 2); assert.match(twice.stderr, /given twice/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repush-native-'));
   try {
-    const link = path.join(dir, "ci");
-    fs.symlinkSync(path.dirname(TOOL), link, process.platform === "win32" ? "junction" : "dir");
-    const linked = runNode([path.join(link, "pr-repush-preflight.mjs")]);
-    assert.equal(linked.status, 2, `through a link the check must still run (stderr: ${linked.stderr})`);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  const imported = runNode(["--input-type=module", "-e", `await import(${JSON.stringify(new URL("./pr-repush-preflight.mjs", import.meta.url).href)}); console.log("imported")`]);
-  assert.equal(imported.status, 0, imported.stderr);
-  assert.equal(imported.stdout, "imported\n");
-  // an importer whose first argument is a path that does not exist still runs nothing
-  const missing = path.join(os.tmpdir(), "repush-preflight-no-such-file.mjs");
-  const importedWithArg = runNode(["--input-type=module", "-e", `await import(${JSON.stringify(new URL("./pr-repush-preflight.mjs", import.meta.url).href)}); console.log("imported")`, missing]);
-  assert.equal(importedWithArg.status, 0, importedWithArg.stderr);
-  assert.equal(importedWithArg.stdout, "imported\n");
+    const link = path.join(dir, 'ci');
+    fs.symlinkSync(path.dirname(TOOL), link, process.platform === 'win32' ? 'junction' : 'dir');
+    const linked = runNode([path.join(link, 'pr-repush-preflight.mjs')]);
+    assert.equal(linked.status, 2, linked.stderr); assert.match(linked.stderr, /--repo is required/);
+  } finally {
+    const relative = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(dir));
+    assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  for (const extra of [[], [path.join(os.tmpdir(), 'repush-native-no-such-file.mjs')],
+    [path.join(os.tmpdir(), 'repush-native-no-such-directory', 'pr-repush-preflight.mjs')]]) {
+    const imported = runNode(['--input-type=module', '-e',
+      'await import(' + JSON.stringify(new URL('./pr-repush-preflight.mjs', import.meta.url).href) + '); console.log("imported")', ...extra]);
+    assert.equal(imported.status, 0, imported.stderr); assert.equal(imported.stdout, 'imported\n');
+  }
 });

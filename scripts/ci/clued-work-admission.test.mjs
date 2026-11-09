@@ -110,6 +110,7 @@ import {
   workflowApplies,
   APP_CHECK_NAME,
   appCheck,
+  postAppCheckCore,
   appJwt,
   GATE_JOB_SHA256,
   GATE_WAIT_SECONDS,
@@ -150,7 +151,7 @@ import {
   mergeSlotState,
   appChecksOnHead,
 } from "./clued-work-admission.mjs";
-import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
+import { fixedPolicy, RECOMMENDED_POLICY_TEXT } from "./merge-admission-policy.fixtures.mjs";
 import { parseModeLabel } from "./merge-admission-policy.mjs";
 import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
 
@@ -163,6 +164,7 @@ const main = (argv, environment, fetchImpl) => mainWith(argv, environment, fetch
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
+const TASK = "00000000-0000-4000-8000-000000000452";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const CLAIM_BASE = "c".repeat(40);
@@ -219,6 +221,13 @@ function fakeFetch(script) {
     calls.push(call);
     const key = Object.keys(script).find((k) => k.startsWith(`${method} `) && call.url.startsWith(k.slice(method.length + 1)));
     let responder = key ? script[key] : undefined;
+    if (call.body?.p_input?.action === 'resolve_pr_claim') {
+      // A separate Native authority fixture; never derive its choice from the
+      // body/commit text being tested. Explicit cases may override this action.
+      const actionKey = `${method} ${call.url}#resolve_pr_claim`;
+      responder = Object.hasOwn(script, actionKey) ? script[actionKey]
+        : { body: bindingPayload(call.body.p_input) };
+    }
     if (!responder && call.url === EPOCH_URL && call.body?.p_input?.action === "execution_current")
       responder = { body: { status: "ok", guard_required: false, epoch_current: null } };
     // Re-review 10: unless a test scripts them, the base branch's tip is TIP
@@ -266,7 +275,20 @@ const COMPARE = `GET https://api.test/repos/o/r/compare/`;
 const RUNS = `GET https://api.test/repos/o/r/actions/runs`;
 const VERIFY = `POST ${RPC_URL}`;
 const files = { body: [{ filename: "apps/clued-cloud/worker/index.ts" }, { filename: "docs/new.md", previous_filename: "docs/old.md" }] };
-const admittedPayload = { status: "ok", verdict: "ADMITTED", reasons: [], paths_outside_write_set: [], current_fence: 1, claim: { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-01T13:00:00Z", base_commit: CLAIM_BASE, write_set: ["apps/clued-cloud/**", "docs/**"], holder_binding_id: "should-not-leak" } };
+const admittedPayload = { status: "ok", verdict: "ADMITTED", reasons: [], paths_outside_write_set: [], current_fence: 1,
+  execution_epoch: 1, claim: { claim_id: CLAIM, task_id: TASK, context_key: 'global', status: "ACTIVE", fence: 1,
+    execution_epoch: 1, lease_version: 1, expires_at: "2026-10-01T13:00:00Z", base_commit: CLAIM_BASE,
+    write_set: ["apps/clued-cloud/**", "docs/**"], holder_binding_id: "should-not-leak" } };
+function bindingPayload(input, changes = {}) {
+  const split = input.pr_ref.lastIndexOf('#');
+  return { status: 'ok', binding_status: 'bound', reason: null, repository: input.pr_ref.slice(0, split),
+    pr_number: Number(input.pr_ref.slice(split + 1)), pr_ref: input.pr_ref, head_sha: input.head_sha,
+    base_sha: input.base_sha, target_branch: input.target_branch, scope: 'global', task_id: TASK,
+    claim: { claim_id: CLAIM, task_id: TASK, context_key: 'global', fence: 1, execution_epoch: 1,
+      lease_version: 1, status: 'ACTIVE', expires_at: '2099-01-01T00:00:00.000Z', execution_handover_pending: false },
+    head_authorization_id: '00000000-0000-4000-8000-000000000453', auto_bound: false, receipt_id: null,
+    ...changes };
+}
 const withClaim = () => event({ body: `Body\n\nClued-Work-Claim: ${CLAIM}` });
 // Re-review 7, m2: an admitted evaluation reads the pull request once more to
 // see that its head did not move. Tests that do not script that read get the
@@ -302,7 +324,7 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.equal(outcome.advisory, undefined);
   assert.equal(outcome.claim.base_commit, CLAIM_BASE);
   assert.equal("holder_binding_id" in outcome.claim, false);
-  const call = calls.find((c) => c.url === RPC_URL);
+  const call = calls.find((c) => c.url === RPC_URL && c.body?.p_input?.action !== 'resolve_pr_claim');
   assert.equal(call.headers.apikey, PUBLIC.key);
   assert.equal(call.headers.authorization, `Bearer ${PUBLIC.key}`);
   assert.equal(PUBLIC.source, PUBLIC_CONFIG_SOURCE);
@@ -319,29 +341,67 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.ok(calls.find((c) => c.url.includes("/compare/") && !c.url.includes(`/compare/${TIP}...`)).url.endsWith(`/compare/${CLAIM_BASE}...${BASE}`));
 });
 
-test("enforced: trailer in the head commit, project scope and a custom Supabase URL are honored", async () => {
+test("Native project binding and custom Supabase URL govern despite explanatory text", async () => {
   const scope = "project:11111111-2222-4333-8444-555555555555";
   const custom = "https://db.test";
   const { fetchImpl, calls } = fakeFetch({
     [FILES]: files,
     [COMMIT]: { body: { commit: { message: `feat: x\n\nClued-Work-Claim: ${CLAIM.toUpperCase()}\nClued-Work-Scope: ${scope}\n` } } },
     [COMPARE]: { body: { status: "identical" } },
-    [`POST ${custom}/rest/v1/rpc/clued_work_verify_v1`]: { body: admittedPayload },
+    [`POST ${custom}/rest/v1/rpc/clued_work_verify_v1#resolve_pr_claim`]: call => {
+      const value = bindingPayload(call.body.p_input);
+      return { body: { ...value, scope, claim: { ...value.claim, context_key: scope } } };
+    },
+    [`POST ${custom}/rest/v1/rpc/clued_work_verify_v1`]: { body: { ...admittedPayload,
+      claim: { ...admittedPayload.claim, context_key: scope } } },
   });
   const outcome = await evaluateIn({ env: env({ CLUED_SUPABASE_URL: `${custom}/`, CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_x" }), event: event(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, true);
   assert.equal(outcome.scope, scope);
-  const call = calls.find((c) => c.method === "POST");
+  const call = calls.find((c) => c.method === "POST" && c.body?.p_input?.action !== 'resolve_pr_claim');
   assert.equal(call.headers.apikey, "sb_publishable_x");
   assert.equal(call.body.p_input.scope, scope);
 });
 
-test("enforced: no trailer anywhere is REJECTED claim_trailer_missing", async () => {
-  const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [COMMIT]: { body: { commit: { message: "feat: no trailer" } } } });
+test("a Native-unbound PR waits without falling back to any explanatory trailer or burning a head", async () => {
+  const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [`${VERIFY}#resolve_pr_claim`]: call => ({
+    body: bindingPayload(call.body.p_input, { binding_status: 'unbound', scope: null, task_id: null, claim: null,
+      head_authorization_id: null }) }) });
   const outcome = await evaluateIn({ env: env(), event: event(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, ["claim_trailer_missing"]);
-  assert.ok(!calls.some((c) => c.method === "POST"), "no verification without a claim");
+  assert.deepEqual(outcome.reasons, ["pr_task_binding_unbound"]);
+  assert.ok(calls.filter(c => c.method === 'POST').every(c => c.body.p_input.action === 'resolve_pr_claim'),
+    'only lookup, no metered verification or head authorization');
+  assert.ok(!calls.some(c => c.url === `${COMMIT}${HEAD}`), 'no commit fallback');
+});
+
+test("Native identity admits both missing and contradictory explanatory text", async () => {
+  for (const body of ["", "Clued-Work-Claim: 00000000-0000-4000-8000-000000000999\nClued-Work-Scope: project:00000000-0000-4000-8000-000000000998"]) {
+    const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: 'identical' } }, [VERIFY]: { body: admittedPayload } });
+    const outcome = await evaluateIn({ env: env(), event: event({ body }), eventName: "pull_request", fetchImpl });
+    assert.equal(outcome.admitted, true);
+    assert.equal(outcome.claim_id, CLAIM);
+    assert.equal(outcome.task_id, TASK);
+    assert.equal(outcome.scope, 'global');
+    assert.ok(!calls.some(c => c.url === `${COMMIT}${HEAD}`), 'text is not a fallback identity source');
+  }
+});
+
+test("full Native verification cannot substitute the projected Task or claim generation", async () => {
+  const changes = [
+    { claim: { ...admittedPayload.claim, task_id: '00000000-0000-4000-8000-000000000998' } },
+    { claim: { ...admittedPayload.claim, claim_id: '00000000-0000-4000-8000-000000000999' } },
+    { claim: { ...admittedPayload.claim, context_key: `project:${TASK}` } },
+    { claim: { ...admittedPayload.claim, fence: 2 } },
+    { claim: { ...admittedPayload.claim, execution_epoch: 2 } },
+    { current_fence: 2 }, { execution_epoch: 2 },
+  ];
+  for (const change of changes) {
+    const { fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: { ...admittedPayload, ...change } } });
+    const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+    assert.equal(outcome.admitted, false);
+    assert.ok(outcome.reasons.includes('pr_task_binding_changed'));
+  }
 });
 
 test("enforced: REJECTED with paths outside the write set is not admitted and lists them", async () => {
@@ -424,8 +484,11 @@ test("retired switches (Merge Admission step 6): CLUED_WORK_ADMISSION_ENFORCE an
     assert.ok(!/advisory|NOT_ENFORCED|ENFORCE/.test(renderSummary(outcome)));
     assert.equal(outcome.admission_mode.legacy_advisory, undefined);
 
-    const missing = await evaluateIn({ env: env(off), event: event(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
-    assert.deepEqual([missing.admitted, missing.verdict, missing.reasons], [false, "REJECTED", ["claim_trailer_missing"]]);
+    const missingFetch = fakeFetch({ ...base, [`${VERIFY}#resolve_pr_claim`]: call => ({
+      body: bindingPayload(call.body.p_input, { binding_status: 'unbound', scope: null, task_id: null,
+        claim: null, head_authorization_id: null }) }) });
+    const missing = await evaluateIn({ env: env(off), event: event(), eventName: "pull_request", fetchImpl: missingFetch.fetchImpl });
+    assert.deepEqual([missing.admitted, missing.verdict, missing.reasons], [false, "REJECTED", ["pr_task_binding_unbound"]]);
 
     const run = (extra, overrides = {}) => evaluateIn({ env: env({ ...off, ...overrides }), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, ...extra }).fetchImpl });
     await assert.rejects(run({}, { CLUED_CONTEXT_READ_TOKEN: "" }), /CLUED_CONTEXT_READ_TOKEN is not set/);
@@ -555,7 +618,7 @@ test("pull_request_target: the PR is read fresh, so an edited body or a re-run s
   assert.equal(outcome.verdict, "ADMITTED");
   assert.equal(outcome.head_sha, "d".repeat(40), "the head comes from the fresh read, not the payload");
   assert.equal(outcome.pr_ref, "o/r#452");
-  const verifyCall = calls.find((c) => c.url === RPC_URL);
+  const verifyCall = calls.find((c) => c.url === RPC_URL && c.body?.p_input?.action !== 'resolve_pr_claim');
   assert.equal(verifyCall.body.p_input.pr_ref, "o/r#452");
   assert.equal(verifyCall.body.p_input.head_sha, "d".repeat(40));
   assert.ok(!calls.some((c) => c.url.includes("/commits/")), "the trailer was found in the fresh body");
@@ -632,7 +695,7 @@ test("a changed-file list shorter than the PR's changed_files fails closed", asy
 // Re-review 7, MAJOR-1: re-verification follows the App check the ruleset
 // reads, per pull request, and posts the failing check itself.
 const appKeyPem = () => crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" });
-const reverifyScript = (pulls, checksFor, extra = {}) => {
+const reverifyScript = (pulls, checksFor, extra = {}, nativeClaims = {}) => {
   const script = {
     [OPEN_PULLS]: { body: pulls },
     "GET https://api.test/repos/o/r/commits/": (call) => {
@@ -645,8 +708,14 @@ const reverifyScript = (pulls, checksFor, extra = {}) => {
     "POST https://api.test/repos/o/r/check-runs": { status: 201, body: { id: 5005 } },
     [RERUN]: { status: 201, body: null },
     [COMPARE]: { body: { status: "ahead" } },
+    [`${VERIFY}#resolve_pr_claim`]: call => {
+      const input = call.body.p_input, value = bindingPayload(input);
+      return { body: { ...value, claim: { ...value.claim,
+        claim_id: nativeClaims[input.pr_ref] ?? CLAIM } } };
+    },
     [VERIFY]: (call) => ({ body: call.body.p_input.claim_id === CLAIM
-      ? { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } : admittedPayload }),
+      ? { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] }
+      : { ...admittedPayload, claim: { ...admittedPayload.claim, claim_id: call.body.p_input.claim_id } } }),
     ...extra,
   };
   for (const pull of pulls) {
@@ -680,7 +749,7 @@ test("reverify: a pull request whose green App check outlived its claim gets a f
     [sha("7")]: [appCheckOn(sha("7"), 9, "success", "pr:999:run:90"), appCheckOn(sha("7"), 8, "success", "pr:458:run:89")],
   })[head] ?? null;
   const pem = appKeyPem();
-  const { fetchImpl, calls } = reverifyScript(pulls, checksFor);
+  const { fetchImpl, calls } = reverifyScript(pulls, checksFor, {}, { 'o/r#453': other });
   const result = await reverify({ env: env({ CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem }), fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
   assert.deepEqual(result.checked.map((c) => [c.pr, c.verdict]), [[452, "REJECTED"], [453, "ADMITTED"], [458, "REJECTED"]]);
   assert.deepEqual(result.blocked.map((b) => [b.pr, b.check_run_id]), [[452, 5005], [458, 5005]]);
@@ -717,7 +786,7 @@ test("reverify reason=state_change (Merge Admission step 3): every open pull req
     freshPull({ number: 457, head: { sha: sha("8") }, base: { sha: BASE, ref: "dev", repo: { default_branch: "main" } } }),
   ];
   // No App check is read: a red check is judged again too.
-  const { fetchImpl, calls } = reverifyScript(pulls, () => { throw new Error("no check lookup in state_change"); });
+  const { fetchImpl, calls } = reverifyScript(pulls, () => { throw new Error("no check lookup in state_change"); }, {}, { 'o/r#453': other });
   const appEnv = { CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem(), CLUED_REVERIFY_REASON: "state_change" };
   const result = await reverify({ env: env(appEnv), fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
   assert.deepEqual(result.errors, []);
@@ -737,7 +806,7 @@ test("reverify reason=state_change (Merge Admission step 3): every open pull req
 
   // Passing checks are posted too: a switch back from frozen has to turn red
   // checks green (the retired CLUED_WORK_ADMISSION_ENFORCE changes nothing).
-  const green = reverifyScript([freshPull({ number: 453, head: { sha: sha("e") }, body: `x\n\nClued-Work-Claim: ${other}` })], () => []);
+  const green = reverifyScript([freshPull({ number: 453, head: { sha: sha("e") }, body: `x\n\nClued-Work-Claim: ${other}` })], () => [], {}, { 'o/r#453': other });
   const again = await reverify({ env: env({ ...appEnv, CLUED_WORK_ADMISSION_ENFORCE: "" }), fetchImpl: green.fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
   assert.deepEqual(again.rejudged.map((r) => [r.pr, r.admitted]), [[453, true]]);
   assert.deepEqual(green.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).map((c) => c.body.conclusion), ["success", "success"]);
@@ -1679,7 +1748,7 @@ test("enforced: a PR that unties a heavy job from the gate is REJECTED even with
   assert.deepEqual(calls.filter((c) => c.url.includes("old.yml")).map((c) => c.url.endsWith(`?ref=${BASE}`)), [true]);
   // Re-review N8: a PR the guard refuses is verified read-only, so it neither
   // binds the claim nor uses the Task's CI budget.
-  const refusedVerify = calls.find((c) => c.method === "POST");
+  const refusedVerify = calls.find((c) => c.method === "POST" && c.body?.p_input?.action !== 'resolve_pr_claim');
   assert.deepEqual(Object.keys(refusedVerify.body.p_input).sort(), ["changed_paths", "claim_id", "scope"]);
   // The same PR with the gate intact is admitted (its workflow paths are
   // protected, so with the Owner Grant that Owner review always needs now).
@@ -1698,6 +1767,61 @@ test("enforced: a PR that unties a heavy job from the gate is REJECTED even with
 });
 
 // --- App-posted check (Owner Decision 37e01bb1).
+
+test("efficiency claimless code and docs still publish only through Native's existing no-publication decision", async () => {
+  for (const filename of ['apps/clued-cloud/worker/example.ts', 'docs/example.md']) {
+    const unbound = call => ({ body: bindingPayload(call.body.p_input, { binding_status: 'unbound', scope: null,
+      task_id: null, claim: null, head_authorization_id: null }) });
+    const actualPR = freshPull({ body: '', head: { sha: HEAD }, changed_files: 1 });
+    const environment = env({ CLUED_MERGE_ADMISSION_STATE: 'efficiency', CLUED_ADMISSION_APP_ID: '12345',
+      CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() });
+    const { fetchImpl, calls } = fakeFetch({
+      [FILES]: { body: [{ filename }] }, [PULL]: { body: actualPR },
+      [`${VERIFY}#resolve_pr_claim`]: unbound,
+      [VERIFY]: { body: { status: 'ok', publication_required: false } },
+      'GET https://api.test/repos/o/r/installation': { body: { id: 99 } },
+      'POST https://api.test/app/installations/99/access_tokens': { body: { token: 'ghs_app' } },
+      'POST https://api.test/repos/o/r/check-runs': { body: { id: 5 } },
+    });
+    const evaluated = await evaluateIn({ env: environment, event: { pull_request: actualPR }, eventName: 'pull_request', fetchImpl,
+      readPolicyFile: fixedPolicy(RECOMMENDED_POLICY_TEXT) });
+    assert.equal(evaluated.admitted, true);
+    const posted = await postAppCheckCore({ env: environment, fetchImpl, headSha: HEAD, success: true,
+      title: 'ADMITTED', summary: 'fixture', prNumber: 452, readPolicyFile: fixedPolicy(RECOMMENDED_POLICY_TEXT) });
+    assert.equal(posted.posted, true, posted.error);
+    assert.equal(posted.conclusion, 'success');
+    const input = calls.find(c => c.body?.p_input?.action === 'publication_begin').body.p_input;
+    assert.equal(Object.hasOwn(input, 'scope'), false);
+    assert.equal(Object.hasOwn(input, 'claim_id'), false);
+  }
+});
+
+test("claimless publication cannot bypass strict policy, protected tip paths or an explicit Native refusal", async () => {
+  const cases = [
+    { mode: 'normal' }, { mode: 'efficiency', filename: 'scripts/ci/protected.mjs' },
+    { mode: 'efficiency', tipPaths: [{ filename: 'config/merge-admission-policy.json' }] },
+    { mode: 'efficiency', native: { status: 'rejected', publication_required: false } },
+    { mode: 'efficiency', native: { status: 'ok', publication_required: false, verdict: 'REJECTED' } },
+    { mode: 'efficiency', native: { status: 'ok', publication_required: true, verdict: 'ADMITTED' } },
+    { mode: 'efficiency', binding_status: 'conflict' },
+  ];
+  for (const item of cases) {
+    const { fetchImpl, calls } = fakeFetch({
+      [FILES]: { body: [{ filename: item.filename ?? 'docs/example.md' }] },
+      [PULL]: { body: freshPull({ body: '', head: { sha: HEAD }, changed_files: 1 }) },
+      [`GET https://api.test/repos/o/r/compare/${TIP}...`]: { body: { status: 'ahead', files: item.tipPaths ?? [] } },
+      [`${VERIFY}#resolve_pr_claim`]: call => ({ body: bindingPayload(call.body.p_input, {
+        binding_status: item.binding_status ?? 'unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }) }),
+      [VERIFY]: { body: item.native ?? { status: 'ok', publication_required: false } },
+    });
+    const posted = await postAppCheckCore({ env: env({ CLUED_MERGE_ADMISSION_STATE: item.mode,
+      CLUED_ADMISSION_APP_ID: '12345', CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }), fetchImpl,
+      headSha: HEAD, success: true, title: 'ADMITTED', summary: 'fixture', prNumber: 452,
+      readPolicyFile: fixedPolicy(RECOMMENDED_POLICY_TEXT) });
+    assert.equal(posted.posted, false, JSON.stringify(item));
+    assert.ok(!calls.some(c => c.url.endsWith('/check-runs') && c.method === 'POST'));
+  }
+});
 
 test("app check: posts the admission result as the App on the evaluated head", async () => {
   const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -1772,14 +1896,20 @@ test("adopt: a merged copy's pull request is reported with the token hash, its p
   assert.equal(ADOPT_RPC, "clued_work_claim_adopt_v1");
   const adopted = { status: "ok", adopted: true, replayed: false, claim_id: CLAIM, task_id: "t-1", copy_index: 2,
     receipt_id: "r-1", not_adopted: ["c-1", "c-3"], pr_ref: "o/r#452" };
-  const { fetchImpl, calls } = fakeFetch({ [ADOPT]: { body: adopted } });
+  const adoptedScope = 'project:11111111-2222-4333-8444-555555555555';
+  const { fetchImpl, calls } = fakeFetch({ [ADOPT]: { body: adopted }, [`${VERIFY}#resolve_pr_claim`]: call => {
+    const value = bindingPayload(call.body.p_input);
+    return { body: { ...value, scope: adoptedScope, claim: { ...value.claim, context_key: adoptedScope } } };
+  } });
   const result = await adoptMerged({ env: env(), event: merged({ body: `B\n\nClued-Work-Claim: ${CLAIM}\nClued-Work-Scope: project:11111111-2222-4333-8444-555555555555` }),
     eventName: "pull_request_target", fetchImpl, workspace: ROOT });
   assert.deepEqual([result.adopted, result.error, result.pr_ref, result.merge_sha], [true, null, "o/r#452", MERGE]);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].headers.apikey, PUBLIC.key);
-  assert.equal(calls[0].headers.authorization, `Bearer ${PUBLIC.key}`);
-  assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_test"),
+  assert.equal(calls.length, 2, 'read-only identity lookup followed by the one adoption mutation');
+  assert.equal(calls[0].body.p_input.read_only, true);
+  const adoption = calls.find(c => c.url.endsWith(`/rpc/${ADOPT_RPC}`));
+  assert.equal(adoption.headers.apikey, PUBLIC.key);
+  assert.equal(adoption.headers.authorization, `Bearer ${PUBLIC.key}`);
+  assert.deepEqual(adoption.body, { p_token_hash: sha256Hex("clued_bnd_test"),
     p_input: { scope: "project:11111111-2222-4333-8444-555555555555", pr_ref: "o/r#452", merge_sha: MERGE } });
 });
 
@@ -1798,11 +1928,12 @@ test("adopt: not a copy, a lost race and an unmerged close change nothing; failu
     r = await adoptMerged({ env: env(), event: value, eventName: name, fetchImpl, workspace: ROOT });
     assert.deepEqual([r.adopted, r.reason, calls.length], [false, "not a merged pull request", 0]);
   }
-  let fake = fakeFetch({ [COMMIT]: { body: { commit: { message: "no trailer" } } } });
+  let fake = fakeFetch({ [`${VERIFY}#resolve_pr_claim`]: call => ({ body: bindingPayload(call.body.p_input,
+    { binding_status: 'unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }) }) });
   r = await adoptMerged({ env: env(), event: merged({ body: "no trailer" }), eventName: "pull_request_target", fetchImpl: fake.fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /no Clued-Work-Claim trailer/);
-  assert.ok(!fake.calls.some((c) => c.url.startsWith(PUBLIC.url)));
-  // The trailer may live in the head commit only.
+  assert.match(r.reason, /no Native PR Task binding/);
+  assert.ok(fake.calls.every(c => c.body?.p_input?.action === 'resolve_pr_claim'), 'no mutation without a binding');
+  // Explanatory text does not determine the already-bound identity.
   fake = fakeFetch({ [COMMIT]: { body: { commit: { message: `x\n\nClued-Work-Claim: ${CLAIM}` } } },
     [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr" } } });
   r = await adoptMerged({ env: env(), event: merged({ body: "no trailer" }), eventName: "pull_request_target", fetchImpl: fake.fetchImpl, workspace: ROOT });
@@ -2861,18 +2992,20 @@ test("merge slot: a pull request closed without a merge gives its slot back; a m
   let r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
   assert.deepEqual([r.adopted, r.error, r.closed_unmerged, r.merge_slot_returned], [false, null, true, [CLAIM]]);
   assert.match(r.reason, /merge slot returned/);
-  assert.deepEqual(calls.map((c) => c.url), [`${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`]);
-  assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_test"), p_input: { scope: "global", pr_ref: "o/r#452" } });
+  assert.deepEqual(calls.map((c) => c.url), [RPC_URL, `${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`]);
+  assert.equal(calls[0].body.p_input.read_only, true);
+  assert.deepEqual(calls[1].body, { p_token_hash: sha256Hex("clued_bnd_test"), p_input: { scope: "global", pr_ref: "o/r#452" } });
   // Nothing held, not deployed yet, no trailer, no token: quiet.
   for (const [script, reason] of [[{ [SLOT_RETURN]: { body: { status: "ok", returned: false, merge_slot_returned: [] } } }, /no merge slot held/],
     [{ [SLOT_RETURN]: { status: 404, body: { code: "PGRST202" } } }, /not deployed/]]) {
     r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
     assert.deepEqual([r.error, reason.test(r.reason)], [null, true]);
   }
-  ({ fetchImpl, calls } = fakeFetch({ [COMMIT]: { body: { commit: { message: "no trailer" } } } }));
+  ({ fetchImpl, calls } = fakeFetch({ [`${VERIFY}#resolve_pr_claim`]: call => ({ body: bindingPayload(call.body.p_input,
+    { binding_status: 'unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }) }) }));
   r = await adoptMerged({ env: env(), event: merged({ body: "none", pull_request: { merged: false } }), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /no Clued-Work-Claim trailer/);
-  assert.ok(!calls.some((c) => c.url.startsWith(PUBLIC.url)));
+  assert.match(r.reason, /no Native PR Task binding/);
+  assert.ok(calls.every(c => c.body?.p_input?.action === 'resolve_pr_claim'), 'no return mutation without a binding');
   r = await adoptMerged({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
   assert.match(r.reason, /not set/);
   // Refusals are errors.
@@ -2915,7 +3048,7 @@ test("merge slot (review MINOR-2/3/4): the retired switch does not skip it; a tr
   // #471: a protected change whose Owner review door is down: neither check is touched.
   const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
   ({ fetchImpl: f1, calls } = reverifyScript([freshPull({ number: 471, head: { sha: sha("5") }, body: `x\n\nClued-Work-Claim: ${other}` })],
-    (head) => both(head, 471)));
+    (head) => both(head, 471), {}, { 'o/r#471': other }));
   const protectedFiles = async (url, init) => (String(url).startsWith("https://api.test/repos/o/r/pulls/471/files")
     ? { ok: true, status: 200, headers: { get: () => null }, json: async () => [{ filename: "scripts/ci/x.mjs" }, { filename: "docs/x.md" }], text: async () => "" }
     : f1(url, init));

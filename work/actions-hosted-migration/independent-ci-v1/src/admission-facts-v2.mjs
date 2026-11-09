@@ -5,6 +5,7 @@
 import { digest } from './proof.mjs';
 import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { sameClaimGeneration } from './job-v2.mjs';
+import { normalizeTerminalAdmission } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { mergeQueueEntryV2, MERGE_QUEUE_STATES } from './independent-control-checks-v2/queue-facts.mjs';
 
 export const FULL_ADMISSION_CONTRACT_V2 = 'clued.independent-ci.full-admission/2';
@@ -19,6 +20,8 @@ const at = value => typeof value === 'string' ? Date.parse(value) : NaN;
 // ---- the rejection diagnostic of a BLOCKED admission (fixed enums only; full-admission-v2.mjs builds it) ----
 // Native and evaluator reasons are reduced to these codes; anything else is 'unknown_reason'.
 export const REASON_CODES = Object.freeze(['claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded',
+  'pr_task_binding_unbound', 'pr_task_binding_no_live_claim', 'pr_task_binding_handover_pending',
+  'pr_task_binding_head_not_authorized', 'pr_task_binding_conflict',
   'copy_not_adopted', 'claim_bound_to_other_pr', 'claim_head_cap_reached', 'task_ci_head_cap_reached', 'work_claim_conflict',
   'path_outside_write_set', 'paths_outside_write_set', 'head_budget_exhausted', 'ci_budget_exhausted', 'merge_slot_required',
   'merge_slot_missing', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
@@ -99,7 +102,8 @@ function executionFactsValid(facts) {
   return facts.contract === FULL_ADMISSION_CONTRACT_V3 && facts.executionPolicy === 'active' && typeof facts.guarded === 'boolean'
     && facts.publicationRequired === true && (facts.guarded ? typeof facts.headAuthorizationId === 'string' && uuid.test(facts.headAuthorizationId) : facts.headAuthorizationId === null);
 }
-const fieldsFor = facts => facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2;
+const fieldsFor = facts => [...(facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2),
+  ...(Object.hasOwn(facts ?? {}, 'terminalAdmission') ? ['terminalAdmission'] : [])];
 export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } = {}) {
   const serverCurrent = retainedServerAnswerCurrent(facts);
   if (!plain(facts) || !executionFactsValid(facts) || Object.keys(facts).sort().join('|') !== [...fieldsFor(facts)].sort().join('|')
@@ -110,6 +114,8 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
     || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
     || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
     || !(serverCurrent === null ? freshStamp(at(facts.observedAt), now) && at(facts.claimExpiresAt) > now : serverCurrent)) return false;
+  try { if (Object.hasOwn(facts, 'terminalAdmission')) normalizeTerminalAdmission(facts.terminalAdmission, facts.observedClaim); }
+  catch { return false; }
   if (batchClaim && !sameClaimGeneration(facts.observedClaim, batchClaim)) return false;
   const { observationSha256, ...body } = facts;
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;

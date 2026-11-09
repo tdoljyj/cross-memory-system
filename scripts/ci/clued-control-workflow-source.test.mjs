@@ -127,11 +127,18 @@ test('fixed retirement snapshot keeps old consumer metadata while the explicit s
   assert.equal(pins['scripts/ci/clued-control-workflow-source.mjs'],undefined);
   for(const [name,blob]of Object.entries(pins)){
     const current=fs.readFileSync(new URL(name,root),'utf8');
-    if(name==='scripts/ci/clued-work-admission.mjs'){
-      // Preserve this old metadata pin, without claiming to re-read its old
-      // bytes or requalify the historical snapshot. Its current successor is
-      // bound separately; the earlier historical-catalogue digest stays fixed.
-      assert.equal(blob,'b6d65b5987aed5442ddb89087950c2c4369644f2');
+    const successors={
+      'scripts/ci/clued-work-admission.mjs':['b6d65b5987aed5442ddb89087950c2c4369644f2','543c1ca9ea4d56cd4c517e9e45ab054bc2ee75795c1140b30161ead3744d5db5'],
+      'scripts/ci/clued-merge-slot-ci.mjs':['b26a73bc6e05c4917d236a15e62b5ff01955f7b0','b0bd6da8c83353e74bd82ac8df471ee1f6ee16a2182888a8e5c702f43f5aa235'],
+      'scripts/ci/merge-admission-source-producer.mjs':['2f428d400de4dbf0a9feca2bd27269c0dd353033','67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7'],
+    };
+    if(Object.hasOwn(successors,name)){
+      // Authenticate each frozen historical object; bind its current successor
+      // only in the separately reviewed initial Source. Never rewrite history.
+      assert.equal(blob,successors[name][0]);
+      const historical=execFileSync('git',['cat-file','blob',blob],{cwd:fileURLToPath(root)});
+      assert.equal(workflowBlob(historical),blob,name);
+      assert.equal(createHash('sha256').update(historical).digest('hex'),successors[name][1],name);
       assert.equal(workflowBlob(current),MERGE_RECONCILE_CONTROL_SOURCE.implementation_blobs[name],name);
       assert.notEqual(workflowBlob(current),blob,name);
     }else if(name==='.github/actions/ci-temporary-storage/coverage.json'){

@@ -1,168 +1,180 @@
-// Pre-push check for a pull request that is pushed again under a claim (Clued-Work-Claim) it did not carry before.
+// PR push binding check. PR prose and commit trailers never establish authority.
 //
-//   node scripts/ci/pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <uuid> [--scope global|project:<uuid>] [--body-governs]
+// node scripts/ci/pr-repush-preflight.mjs --repo owner/name --pr N --head <planned 40-hex SHA>
+//     [--claim <diagnostic UUID>] [--scope global|project:<UUID>] [--base <SHA>] [--target <branch>]
+// --head is the local head about to be pushed; the remote PR may still name an older head.
+// GitHub supplies the actual PR/base/target metadata. Native alone supplies Task,
+// scope and current claim; an omitted --scope is unknown, never global.
+// Existing CLUED_CONTEXT_READ_TOKEN and public Supabase configuration supply the
+// authorized read transport. This script never reads Host credentials or lease keys.
 //
-// Run it BEFORE `git push`, with --head the full SHA of the branch head about to be pushed (from a main checkout, for example
-// `$(git -C <branch checkout> rev-parse HEAD)`; plain `git rev-parse HEAD` there would name main's head) and --claim
-// the claim that is live now (check it first with clued_work_verify, read-only). --scope defaults to global, as a missing
-// Clued-Work-Scope line does. Exit 0 prints OK with the claim and scope checked; exit 1 lists every place that names another
-// claim or scope and how to fix it (with --body-governs the head commit's places are NOTE lines instead, see below); exit 2
-// is a usage, read or internal error (nothing was checked). It reads the PR body with `gh` and the commit message with local
-// `git` (run it from any checkout whose object store holds --head), and never reads, prints or keeps a token or lease key.
-//
-// Why: the claim a head is judged under is whatever the PR names, read in two places with two parsers.
-//   - The resident's poller (work/independent-ci-resident-v1/src/poller.mjs, TRAILER) proposes a PR only when its BODY has a
-//     lower-case `Clued-Work-Claim:` line; a head commit trailer alone is never proposed.
-//   - Admission (full-admission-v2.mjs, this directory's clued-work-admission.mjs#parseClaimReference) takes the body's
-//     trailer, else the head commit's, and the scope line next to it (no scope line means `global`), and requires that
-//     scope to be the node's.
-// The parser is imported from THIS checkout's clued-work-admission.mjs, while admission runs main's copy: run the tool from a
-// checkout of main (or a branch that does not change parseClaimReference) so both read the trailer alike.
-// PR #992 (2026-11-04) was re-pushed under a new claim while its body still named the expired one: the resident refused
-// it with CLAIM_NOT_CURRENT. Fix the body BEFORE the push. Editing it while a batch runs is worse: admission then
-// refuses that batch with full_admission_claim_changed.
-// The head commit's trailer is checked too when it has one, so the two never disagree (it decides whenever the body loses
-// its trailer).
-// --body-governs relaxes that for a head commit that cannot be amended (already reviewed, or pinned byte for byte): its
-// trailer then names an older claim or scope while the body names the live one, and admission still passes because the body
-// is read first. With the flag a mismatch in the head commit's trailer is printed as `NOTE (head-commit):`, also when the run
-// fails on the body, and does not fail the run; every check on the body stays an error. Keep the body's trailer in place: if
-// it is removed later, admission falls back to the stale head commit trailer and refuses.
-import fs from 'node:fs';
-import path from 'node:path';
+// Exit 0: binding check passed, NOT execution admission.
+// Exit 1: a confirmed binding/Task/PR conflict needs resolution.
+// Exit 2: invalid input or UNCONFIRMED transport/subject; nothing is authorized.
+// Exit 3: DISCOVERY_PENDING, NOT execution-ready. Unknown/open lifecycle or a
+// missing head grant must not prevent the normal holder-key authorization +
+// push/create -> existing qualified CI discovery flow. Local claim guards still
+// apply; ordinary Agents cannot activate a relation and need not edit PR prose.
+// --claim is diagnostic only. --body-governs is accepted as deprecated, without authority.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseClaimReference } from './clued-work-admission.mjs';
+import { resolvePullRequestBinding, cluedRpc } from './clued-work-admission.mjs';
+import { collectPRPaths, planPRWriteSet } from './clued-pr-write-set.mjs';
 
-// The poller's own test, character for character; pr-repush-preflight.test.mjs fails if poller.mjs changes it.
-export const POLLER_TRAILER = /^Clued-Work-Claim:\s*[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$/m;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SCOPE = /^(global|project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
-const HEX40 = /^[0-9a-f]{40}$/;
-const REPO_OWNER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
-const REPO_NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,99}$/;   // `.github` is a valid name; `.` and `..` are refused below
-const AMEND = 'then run this check again with the new SHA';
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const SCOPE = /^(global|project:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
+const SHA = /^[0-9a-f]{40}$/;
+const REPO = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_.-]{1,100}$/;
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+const USAGE = 'usage: pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> [--claim <diagnostic uuid>] [--scope global|project:<uuid>] [--base <40-hex sha>] [--target <branch>] [--write-set] [--body-governs]';
+const branchValid = v => typeof v === 'string' && BRANCH.test(v) && !v.includes('..') && !v.includes('//') && !v.endsWith('/');
 
-// Every mismatch between what the PR body and the head commit name and the claim and scope the push is meant for.
-// scope defaults to 'global' and is always checked (a missing scope line reads as global); there is no "unchecked" value.
-// With bodyGoverns the head commit's mismatches come back in `notes` (no `fix`) instead of `problems`; the body's are
-// always problems.
-export function checkRepush({ prBody, commitMessage, claim, scope = 'global', bodyGoverns = false }) {
-  const problems = [], notes = [];
-  const body = parseClaimReference(prBody);
-  const pollerSees = POLLER_TRAILER.test(typeof prBody === 'string' ? prBody : '');
-  if (!pollerSees) {
-    problems.push({ where: 'pr-body', code: 'BODY_TRAILER_MISSING', found: body?.claim_id ?? null, expected: claim,
-      fix: body
-        ? `the body's Clued-Work-Claim line is not lower case, so the resident's poller skips the PR; write "Clued-Work-Claim: ${claim}"`
-        : `add the line "Clued-Work-Claim: ${claim}" to the PR body: the resident never proposes a PR without it` });
-  } else if (!body) {
-    problems.push({ where: 'pr-body', code: 'BODY_TRAILER_UNPARSEABLE', found: null, expected: claim,
-      fix: `the poller sees a claim line that admission cannot read (whitespace other than spaces and tabs, such as a line break, NBSP or vertical tab, after the colon or at the end of the line), so admission would fall back to the head commit; write "Clued-Work-Claim: ${claim}" on one line with plain spaces only` });
-  } else if (body.claim_id !== claim) {
-    problems.push({ where: 'pr-body', code: 'BODY_CLAIM_MISMATCH', found: body.claim_id, expected: claim,
-      fix: `edit the PR body before the push: Clued-Work-Claim: ${claim}` });
-  }
-  if (body && body.scope !== scope) {
-    problems.push({ where: 'pr-body', code: 'BODY_SCOPE_MISMATCH', found: body.scope, expected: scope,
-      fix: scope === 'global' ? 'edit the PR body before the push: remove the Clued-Work-Scope line' : `edit the PR body before the push: Clued-Work-Scope: ${scope}` });
-  }
-  const commit = parseClaimReference(commitMessage);
-  const commitIssue = (code, found, expected, fix) => {
-    if (bodyGoverns) notes.push({ where: 'head-commit', code, found, expected });
-    else problems.push({ where: 'head-commit', code, found, expected, fix });
-  };
-  if (commit && commit.claim_id !== claim) {
-    commitIssue('COMMIT_CLAIM_MISMATCH', commit.claim_id, claim, `amend the head commit's trailer before the push (Clued-Work-Claim: ${claim}), ${AMEND}`);
-  }
-  if (commit && commit.scope !== scope) {
-    commitIssue('COMMIT_SCOPE_MISMATCH', commit.scope, scope,
-      scope === 'global' ? `amend the head commit to drop its Clued-Work-Scope trailer, ${AMEND}` : `amend the head commit's trailer before the push (Clued-Work-Scope: ${scope}), ${AMEND}`);
-  }
-  return { ok: problems.length === 0, problems, notes };
-}
-
-const USAGE = 'usage: pr-repush-preflight.mjs --repo owner/name --pr N --head <40-hex sha> --claim <lower-case uuid> [--scope global|project:<lower-case uuid>] [--body-governs]';
-
-// { args } or { error } naming the first argument that is wrong.
 export function parseArgs(argv) {
   const out = {};
-  let i = 0;
-  while (i < argv.length) {
-    const key = argv[i], value = argv[i + 1];
-    if (key === '--body-governs') {   // the only argument without a value
-      if ('body-governs' in out) return { error: `${key} given twice` };
-      out['body-governs'] = true;
-      i += 1;
-      continue;
+  for (let i = 0; i < argv.length;) {
+    const key = argv[i];
+    if (key === '--write-set') {
+      if(out.writeSet) return {error:'--write-set given twice'};
+      out.writeSet=true;i++;continue;
     }
-    if (!['--repo', '--pr', '--head', '--claim', '--scope'].includes(key)) return { error: `unknown argument ${JSON.stringify(key)} (use "--name value")` };
-    if (value === undefined) return { error: `${key} needs a value` };
-    if (key.slice(2) in out) return { error: `${key} given twice` };
-    out[key.slice(2)] = value;
-    i += 2;
+    if (key === '--body-governs') {
+      if (out.bodyGoverns) return { error: '--body-governs given twice' };
+      out.bodyGoverns = true; i++; continue;
+    }
+    if (!['--repo', '--pr', '--head', '--claim', '--scope', '--base', '--target'].includes(key))
+      return { error: 'unknown argument (use --name value)' };
+    const name = key.slice(2), value = argv[i + 1];
+    if (value === undefined || value.startsWith('--')) return { error: key + ' needs a value' };
+    if (Object.hasOwn(out, name)) return { error: key + ' given twice' };
+    out[name] = value; i += 2;
   }
-  for (const k of ['repo', 'pr', 'head', 'claim']) if (out[k] === undefined) return { error: `--${k} is required` };
-  const parts = out.repo.split('/');
-  if (parts.length !== 2 || !REPO_OWNER.test(parts[0]) || !REPO_NAME.test(parts[1]) || parts[1] === '.' || parts[1] === '..') return { error: '--repo must be owner/name' };
+  for (const key of ['repo', 'pr', 'head']) if (!Object.hasOwn(out, key)) return { error: '--' + key + ' is required' };
+  if (!REPO.test(out.repo) || ['.', '..'].includes(out.repo.split('/')[1])) return { error: '--repo must be owner/name' };
   if (!/^[1-9][0-9]{0,9}$/.test(out.pr)) return { error: '--pr must be a pull request number' };
-  if (!HEX40.test(out.head)) return { error: '--head must be the full 40-hex lower-case SHA (git rev-parse HEAD)' };
-  if (!UUID.test(out.claim)) return { error: '--claim must be a lower-case claim UUID' };
+  if (!SHA.test(out.head)) return { error: '--head must be the full 40-hex lower-case SHA' };
+  if (out.claim !== undefined && !UUID.test(out.claim)) return { error: '--claim must be a lower-case diagnostic UUID' };
   if (out.scope !== undefined && !SCOPE.test(out.scope)) return { error: '--scope must be global or project:<lower-case uuid>' };
-  return { args: { repo: out.repo, pr: Number(out.pr), head: out.head, claim: out.claim, scope: out.scope ?? 'global', bodyGoverns: out['body-governs'] === true } };
+  if (out.base !== undefined && !SHA.test(out.base)) return { error: '--base must be the full 40-hex lower-case SHA' };
+  if (out.target !== undefined && !branchValid(out.target)) return { error: '--target must be a valid branch name' };
+  return { args: { ...out, repo: out.repo.toLowerCase(), pr: Number(out.pr), bodyGoverns: out.bodyGoverns === true } };
 }
 
-function read(cmd, args) {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
-  if (r.status !== 0) {
-    const why = String(r.stderr ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
-    throw new Error(`${cmd} ${args[0]} failed (${r.status ?? r.error?.code ?? 'no status'})${why ? `: ${why}` : ''}`);
-  }
-  return r.stdout;
+class MetadataError extends Error {}
+export function readPrMetadata(repo, pr, run = spawnSync) {
+  // No shell, interpolation, PR code execution, or raw stderr forwarding.
+  const r = run('gh', ['api', 'repos/' + repo + '/pulls/' + pr, '--method', 'GET'],
+    { encoding: 'utf8', shell: false, windowsHide: true, timeout: 20_000, maxBuffer: 2 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw new MetadataError('PR metadata unavailable');
+  try { return JSON.parse(r.stdout); } catch { throw new MetadataError('PR metadata invalid'); }
 }
+export function readPrFilesPage(repo,pr,page,run=spawnSync) {
+  if(!REPO.test(repo)||!Number.isSafeInteger(pr)||pr<1||!Number.isSafeInteger(page)||page<1||page>30)
+    throw new MetadataError('file subject invalid');
+  const r=run('gh',['api',`repos/${repo}/pulls/${pr}/files?per_page=100&page=${page}`,'--method','GET'],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:20_000,maxBuffer:4*1024*1024});
+  if(r.error||r.status!==0)throw new MetadataError('PR files unavailable');
+  try{return JSON.parse(r.stdout);}catch{throw new MetadataError('PR files invalid');}
+}
+export function createDefaultPorts({ env = process.env, fetchImpl = globalThis.fetch, run = spawnSync } = {}) {
+  return {
+    env, workspace: env.GITHUB_WORKSPACE || fileURLToPath(new URL('../../', import.meta.url)),
+    readPrMetadata: (repo, pr) => readPrMetadata(repo, pr, run),
+    readPrFilesPage: (repo,pr,page) => readPrFilesPage(repo,pr,page,run),
+    fetchImpl: (url, init) => fetchImpl(url, { ...init, signal: AbortSignal.timeout(10_000) }),
+  };
+}
+export const defaultPorts = createDefaultPorts();
 
-export const defaultPorts = {
-  readPrBody: (repo, pr) => read('gh', ['pr', 'view', String(pr), '-R', repo, '--json', 'body', '--jq', '.body']),
-  readCommitMessage: head => read('git', ['log', '-1', '--format=%B', head, '--']),
-};
+// Classification only: the caller has already used the one shared Native
+// normalizer through resolvePullRequestBinding. No admission is synthesized.
+export function checkRepush({ binding, claim }) {
+  const state = binding.binding_status;
+  const notes = claim && binding.claim && claim !== binding.claim.claim_id ? ['CLAIM_CHANGED'] : [];
+  if (state === 'bound') return { ok: true, exitCode: 0, state: 'BOUND', notes };
+  if (state === 'conflict') return { ok: false, exitCode: 1, state: 'BINDING_CONFLICT', notes };
+  if (state === 'no_live_claim' && ['task_not_current', 'claim_not_current', 'holder_not_authorized'].includes(binding.reason))
+    return { ok: false, exitCode: 1, state: 'CURRENT_CLAIM_REQUIRED', notes };
+  return { ok: false, exitCode: 3, state: 'DISCOVERY_PENDING', notes };
+}
 
 export async function main(argv = process.argv.slice(2), ports = defaultPorts, out = process.stdout, err = process.stderr) {
   try {
     const parsed = parseArgs(argv);
-    if (parsed.error) { err.write(`${parsed.error}\n${USAGE}\n`); return 2; }
+    if (parsed.error) { err.write(parsed.error + '\n' + USAGE + '\n'); return 2; }
     const { args } = parsed;
-    let prBody, commitMessage;
-    try {
-      prBody = await ports.readPrBody(args.repo, args.pr);
-      commitMessage = await ports.readCommitMessage(args.head);
-    } catch (e) { err.write(`PREFLIGHT_READ_FAILED: ${e.message}\n`); return 2; }
-    const result = checkRepush({ prBody, commitMessage, claim: args.claim, scope: args.scope, bodyGoverns: args.bodyGoverns });
-    for (const n of result.notes) out.write(`NOTE (${n.where}): ${n.code}: found ${n.found ?? 'none'}, expected ${n.expected}; --body-governs: this does not fail the run\n`);
-    if (result.ok) {
-      const head = args.head.slice(0, 8);
-      if (result.notes.length) {
-        const claimStale = result.notes.some(n => n.code === 'COMMIT_CLAIM_MISMATCH'), scopeStale = result.notes.some(n => n.code === 'COMMIT_SCOPE_MISMATCH');
-        const stale = claimStale && scopeStale ? 'claim and scope' : claimStale ? 'claim' : 'scope';
-        out.write(`OK: PR #${args.pr} body names claim ${args.claim}, scope ${args.scope}; head ${head}'s trailer names another ${stale}, so the body governs (--body-governs)\n`);
-      } else {
-        out.write(parseClaimReference(commitMessage)
-          ? `OK: PR #${args.pr} body and head ${head} name claim ${args.claim}, scope ${args.scope}\n`
-          : `OK: PR #${args.pr} body names claim ${args.claim}, scope ${args.scope}; head ${head} has no trailer, so the body decides\n`);
-      }
-      return 0;
+    if (args.bodyGoverns) out.write('DEPRECATED: --body-governs has no authority; PR prose is not used.\n');
+    const env = ports.env ?? {};
+    if (typeof env.CLUED_CONTEXT_READ_TOKEN !== 'string' || !env.CLUED_CONTEXT_READ_TOKEN.trim()
+      || typeof ports.fetchImpl !== 'function') {
+      err.write('UNCONFIRMED: authorized Native read transport is unavailable; binding was not checked.\n'); return 2;
     }
-    for (const p of result.problems) out.write(`${p.code} (${p.where}): found ${p.found ?? 'none'}, expected ${p.expected}. Fix: ${p.fix}\n`);
-    return 1;
-  } catch (e) { err.write(`PREFLIGHT_INTERNAL_ERROR: ${e?.message ?? e}\n`); return 2; }
+    let pr;
+    try { pr = await ports.readPrMetadata(args.repo, args.pr); }
+    catch { err.write('UNCONFIRMED: PR metadata could not be read.\n'); return 2; }
+    if (!pr || pr.number !== args.pr || typeof pr.base?.repo?.full_name !== 'string'
+      || pr.base.repo.full_name.toLowerCase() !== args.repo || !SHA.test(pr.base?.sha ?? '')
+      || !SHA.test(pr.head?.sha ?? '') || !branchValid(pr.base?.ref)) {
+      err.write('UNCONFIRMED: PR repository/base/target metadata does not match the requested subject.\n'); return 2;
+    }
+    if ((args.base !== undefined && args.base !== pr.base.sha) || (args.target !== undefined && args.target !== pr.base.ref)) {
+      out.write('BINDING_CONFLICT: PR base or target changed; check the current subject before proceeding.\n'); return 1;
+    }
+    if (pr.state !== 'open') {
+      if (pr.state !== 'closed') { err.write('UNCONFIRMED: PR lifecycle metadata is invalid.\n'); return 2; }
+      out.write('BINDING_CONFLICT: the PR is closed; binding checks do not reopen it.\n'); return 1;
+    }
+    // --head is intentionally the planned local push head, not remote pr.head.sha.
+    const subject = { number: pr.number, head: { sha: args.head }, base: { sha: pr.base.sha, ref: pr.base.ref } };
+    let binding;
+    try {
+      binding = await resolvePullRequestBinding(ports.fetchImpl, { ...env, GITHUB_REPOSITORY: args.repo }, subject,
+        { workspace: ports.workspace, ...(args.scope === undefined ? {} : { scope: args.scope }), readOnly: true });
+    } catch {
+      // Transport exceptions and rejected/malformed Native bodies are opaque:
+      // neither private tokens nor server/gh stderr enter stdout or stderr.
+      err.write('UNCONFIRMED: Native binding could not be verified for the exact subject.\n'); return 2;
+    }
+    const result = checkRepush({ binding, claim: args.claim });
+    let writeSetPlan;
+    if(args.writeSet && result.exitCode===0) {
+      try {
+        // A binding projection is identity only; obtain the ordinary Native
+        // read's full live write_set before making a non-mutating union plan.
+        const response=await cluedRpc(ports.fetchImpl,env,ports.workspace,'clued_work_verify_v1',
+          {scope:binding.scope,claim_id:binding.claim.claim_id});
+        const current=response.body?.claim;
+        if(response.status!==200||response.body?.status!=='ok'||response.body?.verdict!=='ADMITTED'
+          ||current?.status!=='ACTIVE'||current.execution_handover_pending!==false
+          ||current.context_key!==binding.scope||current.task_id!==binding.task_id
+          ||['claim_id','fence','execution_epoch','lease_version'].some(k=>current[k]!==binding.claim[k]))
+          throw new MetadataError('Native generation changed');
+        if(typeof ports.readPrFilesPage!=='function')throw new MetadataError('complete files reader unavailable');
+        const packet=await collectPRPaths({repository:args.repo,prNumber:args.pr,
+          readPR:()=>ports.readPrMetadata(args.repo,args.pr),
+          readPage:page=>ports.readPrFilesPage(args.repo,args.pr,page)});
+        if(packet.headSha!==pr.head.sha||packet.baseSha!==pr.base.sha||packet.targetBranch!==pr.base.ref)
+          throw new MetadataError('PR moved while resolving Native identity');
+        writeSetPlan={...planPRWriteSet({claim:current,packet}),planned_head_sha:args.head};
+      } catch {
+        err.write('UNCONFIRMED: complete PR resources or current Native generation could not be verified.\n');return 2;
+      }
+    }
+    if (result.notes.includes('CLAIM_CHANGED')) out.write('CLAIM_CHANGED: the diagnostic claim differs; Native current claim is ' + binding.claim.claim_id + '. PR prose needs no change.\n');
+    if (result.exitCode === 0) {
+      out.write('BOUND: 绑定检查通过 — PR #' + args.pr + ', Task ' + binding.task_id + ', claim ' + binding.claim.claim_id
+        + ', scope ' + binding.scope + ', planned head ' + args.head + '. This is not execution admission.\n');
+      if(writeSetPlan)out.write('WRITE_SET_PLAN: '+JSON.stringify(writeSetPlan)+'\n');
+    } else if (result.exitCode === 3) {
+      out.write('DISCOVERY_PENDING: 绑定检查待发现或授权；非执行就绪。Use the existing holder-key authorization and normal push/create flow; qualified CI discovers the open PR. Do not activate a relation or edit PR prose to pass this check.\n');
+    } else {
+      out.write(result.state + ': 绑定检查未通过；resolve the Native Task/current-claim conflict. No execution is authorized.\n');
+    }
+    return result.exitCode;
+  } catch {
+    try { err.write('UNCONFIRMED: binding check could not complete.\n'); } catch {}
+    return 2;
+  }
 }
 
-// Real paths on both sides: a junction or symlink on the way to this file must not skip the check and exit 0. When the
-// entry script cannot be resolved but is named like this file, run the check anyway (exit 2 at worst) rather than exit 0
-// having checked nothing; an importer whose first argument is some other missing path runs nothing.
-function invokedDirectly() {
-  if (!process.argv[1]) return false;
-  const self = fileURLToPath(import.meta.url);
-  try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(self); } catch { return path.basename(process.argv[1]) === path.basename(self); }
-}
-
-if (invokedDirectly()) process.exitCode = await main();
+// Node resolves the entry identity through links; an importer basename is not authority.
+if (import.meta.main) process.exitCode = await main();

@@ -186,14 +186,175 @@ public static class RegistrarCore {
   // accepted when the distribution then starts; the Owner's DefaultUid is written back (it was 1000 on TURING; import-in-place gives 0).
   public static string ImportScript(string distro, string vhdx, long defaultUid) {
     if (!ValidDistro(distro) || !ValidVhdx(vhdx) || defaultUid < 0 || defaultUid > 4294967295L) throw new ArgumentException("IMPORT_ARGUMENTS_INVALID");
-    return "$ErrorActionPreference = 'Stop'\n"
-      + "$wsl = '" + WslExe + "'\n"
-      + "& $wsl --import-in-place '" + distro + "' '" + vhdx + "' | Out-Null\n"
-      + "if ($LASTEXITCODE -ne 0) { & $wsl --distribution '" + distro + "' --exec /bin/true | Out-Null; if ($LASTEXITCODE -ne 0) { exit 3 } }\n"
-      + "$k = @(Get-ChildItem -LiteralPath 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss' | Where-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath).DistributionName -ceq '" + distro + "' })\n"
-      + "if ($k.Count -ne 1) { exit 4 }\n"
-      + "try { Set-ItemProperty -LiteralPath $k[0].PSPath -Name 'DefaultUid' -Value " + defaultUid + " -Type DWord } catch { exit 5 }\n"
-      + "exit 0\n";
+    // Fixed commands, bounded streams and an atomic result under the already
+    // protected VHDX directory. This file is diagnostic only, never a grant or
+    // the success verdict used to remove the Owner's registration.
+    string script = @"$ErrorActionPreference = 'Stop'
+$wsl = 'C:\Windows\System32\wsl.exe'
+$distro = '__DISTRO__'; $vhdx = '__VHDX__'; $defaultUid = __UID__
+$directory = [IO.Path]::GetDirectoryName($vhdx)
+$diagnosticPath = [IO.Path]::Combine($directory, 'companion-wsl-import-result.json')
+$record = [ordered]@{ contract = 'clued.independent-ci.companion-wsl-import-result/1'; runId = [guid]::NewGuid().ToString('D')
+  startedAt = [DateTimeOffset]::UtcNow.ToString('o'); finishedAt = $null; phase = 'starting'; exitCode = $null
+  distro = $distro; vhdx = $vhdx; defaultUid = $defaultUid; identity = $null; file = $null; commands = @(); registration = $null; error = $null }
+$diagnosticSid = ''
+function Get-ImportDiagnosticAcl {
+  if ($script:diagnosticSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'DIAGNOSTIC_OWNER_UNCONFIRMED' }
+  $acl = New-Object Security.AccessControl.FileSecurity
+  $acl.SetSecurityDescriptorSddlForm(('D:P(A;;FR;;;SY)(A;;FR;;;BA)(A;;0x1301bf;;;' + $script:diagnosticSid + ')'), [Security.AccessControl.AccessControlSections]::Access)
+  $acl
+}
+function Assert-ImportDiagnosticAcl($acl) {
+  $actual = New-Object Security.AccessControl.RawSecurityDescriptor($acl.GetSecurityDescriptorBinaryForm(), 0)
+  $want = New-Object Security.AccessControl.RawSecurityDescriptor((Get-ImportDiagnosticAcl).GetSecurityDescriptorBinaryForm(), 0)
+  if ($null -eq $actual.Owner -or $actual.Owner.Value -cne $script:diagnosticSid -or ($actual.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or $actual.DiscretionaryAcl.Count -ne 3) { throw 'DIAGNOSTIC_ACL_REFUSED' }
+  for ($i = 0; $i -lt 3; $i++) {
+    $a = $actual.DiscretionaryAcl[$i]; $w = $want.DiscretionaryAcl[$i]
+    if ($a.AceType -ne $w.AceType -or $a.AceFlags -ne $w.AceFlags -or $a.AccessMask -ne $w.AccessMask -or $a.SecurityIdentifier.Value -cne $w.SecurityIdentifier.Value) { throw 'DIAGNOSTIC_ACL_REFUSED' }
+  }
+}
+function Protect-ImportDiagnostic([string]$path) {
+  $owner = ([IO.File]::GetAccessControl($path, [Security.AccessControl.AccessControlSections]::Owner)).GetOwner([Security.Principal.SecurityIdentifier]).Value
+  if ($owner -cne $script:diagnosticSid) { throw 'DIAGNOSTIC_OWNER_UNCONFIRMED' }
+  [IO.File]::SetAccessControl($path, (Get-ImportDiagnosticAcl))
+  Assert-ImportDiagnosticAcl ([IO.File]::GetAccessControl($path))
+}
+function Write-ImportDiagnostic {
+  foreach ($path in @($directory, $diagnosticPath)) {
+    if ([IO.File]::Exists($path) -or [IO.Directory]::Exists($path)) {
+      if (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'DIAGNOSTIC_REPARSE_REFUSED' }
+    }
+  }
+  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(($script:record | ConvertTo-Json -Depth 7 -Compress))
+  if ($bytes.Length -gt 65536) { throw 'DIAGNOSTIC_SIZE_REFUSED' }
+  $tmp = $diagnosticPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  try {
+    $rights = [Security.AccessControl.FileSystemRights]([Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::ReadPermissions)
+    $stream = New-Object IO.FileStream($tmp, [IO.FileMode]::CreateNew, $rights, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, (Get-ImportDiagnosticAcl))
+    try { Assert-ImportDiagnosticAcl ($stream.GetAccessControl()); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    if ([IO.File]::Exists($diagnosticPath)) { Protect-ImportDiagnostic $diagnosticPath; [IO.File]::Replace($tmp, $diagnosticPath, [NullString]::Value) }
+    else { [IO.File]::Move($tmp, $diagnosticPath) }
+    Protect-ImportDiagnostic $diagnosticPath
+  } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
+}
+function Convert-ImportOutput($reader) {
+  $bytes = $reader.bytes.ToArray(); $unicode = $false
+  if ($bytes.Length -ge 2) {
+    $unicode = ($bytes[0] -eq 255 -and $bytes[1] -eq 254)
+    if (-not $unicode) {
+      $nullOdd = 0
+      for ($i = 1; $i -lt [Math]::Min(64, $bytes.Length); $i += 2) { if ($bytes[$i] -eq 0) { $nullOdd++ } }
+      $unicode = ($nullOdd -ge 3)
+    }
+  }
+  $text = if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { [Text.Encoding]::UTF8.GetString($bytes) }
+  if ($text.Length -gt 1024) { $reader.truncated = $true }
+  $text = $text.TrimStart([char]0xFEFF) -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ''
+  $text = $text -replace '(?im)^.*(?:token|password|secret|credential|authorization|private[_ -]?key|BEGIN .*PRIVATE KEY).*$', '[REDACTED_SENSITIVE_LINE]'
+  $text = $text -replace '(?i)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|clued_(?:bnd|hbt|lk)_[A-Za-z0-9_-]+|Bearer\s+\S+)', '[REDACTED]'
+  $text = $text -replace '[A-Za-z0-9_+\/=\-]{48,}', '[REDACTED_LONG_VALUE]'
+  if ($text.Length -gt 1024) { $reader.truncated = $true; $text = $text.Substring(0, 1024) }
+  $text
+}
+function Invoke-ImportWsl([string]$phase, [string[]]$arguments, [int]$timeoutMs) {
+  $script:record.phase = $phase; Write-ImportDiagnostic
+  $entry = [ordered]@{ phase = $phase; exitCode = $null; stdout = ''; stderr = ''; truncated = $false; timedOut = $false; error = $null }
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = New-Object Diagnostics.ProcessStartInfo
+  $process.StartInfo.FileName = $wsl
+  $process.StartInfo.Arguments = '""' + ($arguments -join '"" ""') + '""'
+  $process.StartInfo.UseShellExecute = $false; $process.StartInfo.CreateNoWindow = $true
+  $process.StartInfo.WorkingDirectory = $directory
+  $process.StartInfo.RedirectStandardOutput = $true; $process.StartInfo.RedirectStandardError = $true
+  $process.StartInfo.EnvironmentVariables['WSL_UTF8'] = '1'
+  $readers = @(); $watch = [Diagnostics.Stopwatch]::StartNew(); $exitSeen = $null
+  try {
+    if (-not $process.Start()) { throw 'WSL_PROCESS_NOT_STARTED' }
+    foreach ($stream in @($process.StandardOutput.BaseStream, $process.StandardError.BaseStream)) {
+      $reader = [ordered]@{ stream = $stream; buffer = (New-Object byte[] 4096); bytes = (New-Object IO.MemoryStream); pending = $null; ended = $false; truncated = $false }
+      $reader.pending = $stream.BeginRead($reader.buffer, 0, $reader.buffer.Length, $null, $null)
+      $readers += $reader
+    }
+    while ($true) {
+      foreach ($reader in $readers) {
+        if (-not $reader.ended -and $reader.pending.IsCompleted) {
+          $count = $reader.stream.EndRead($reader.pending)
+          if ($count -eq 0) { $reader.ended = $true; continue }
+          $keep = [Math]::Min($count, [Math]::Max(0, 16384 - [int]$reader.bytes.Length))
+          if ($keep -gt 0) { $reader.bytes.Write($reader.buffer, 0, $keep) }
+          if ($keep -lt $count) { $reader.truncated = $true }
+          $reader.pending = $reader.stream.BeginRead($reader.buffer, 0, $reader.buffer.Length, $null, $null)
+        }
+      }
+      if ($process.HasExited) {
+        if ($null -eq $exitSeen) { $exitSeen = $watch.ElapsedMilliseconds }
+        if (($readers[0].ended -and $readers[1].ended) -or $watch.ElapsedMilliseconds - $exitSeen -gt 1000) { break }
+      }
+      if ($watch.ElapsedMilliseconds -ge $timeoutMs) {
+        $entry.timedOut = $true
+        try { $process.Kill(); [void]$process.WaitForExit(2000) } catch { }
+        break
+      }
+      [Threading.Thread]::Sleep(10)
+    }
+    $entry.exitCode = if ($process.HasExited -and -not $entry.timedOut) { $process.ExitCode } else { -1 }
+  } catch {
+    $entry.error = [ordered]@{ type = $_.Exception.GetType().Name; hresult = ('0x{0:X8}' -f $_.Exception.HResult) }
+    $entry.exitCode = -1
+  } finally {
+    if ($readers.Count -eq 2) {
+      $entry.stdout = Convert-ImportOutput $readers[0]; $entry.stderr = Convert-ImportOutput $readers[1]
+      $entry.truncated = [bool]($readers[0].truncated -or $readers[1].truncated -or -not $readers[0].ended -or -not $readers[1].ended)
+    }
+    foreach ($reader in $readers) { $reader.stream.Dispose(); $reader.bytes.Dispose() }
+    $process.Dispose(); $watch.Stop()
+    $script:record.commands += $entry
+    Write-ImportDiagnostic
+  }
+  $entry
+}
+$code = 6
+try {
+  $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $script:diagnosticSid = $sid
+  $hive = [Microsoft.Win32.Registry]::Users.OpenSubKey($sid)
+  try { $record.identity = [ordered]@{ sid = $sid; profileDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile); userHiveLoaded = ($null -ne $hive) } }
+  finally { if ($null -ne $hive) { $hive.Dispose() } }
+  try {
+    $v = [IO.File]::Open($vhdx, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try { $record.file = [ordered]@{ readable = $true; hresult = $null } } finally { $v.Dispose() }
+  } catch { $record.file = [ordered]@{ readable = $false; hresult = ('0x{0:X8}' -f $_.Exception.HResult) } }
+  Write-ImportDiagnostic
+  $null = Invoke-ImportWsl 'version' @('--version') 15000
+  $null = Invoke-ImportWsl 'status' @('--status') 15000
+  $import = Invoke-ImportWsl 'import' @('--import-in-place', $distro, $vhdx) 120000
+  $probe = Invoke-ImportWsl 'probe' @('--distribution', $distro, '--exec', '/bin/true') 120000
+  if ($probe.exitCode -ne 0) { $code = 3 }
+  else {
+    $record.phase = 'registration'
+    $k = @(Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | Where-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath).DistributionName -ceq $distro })
+    $sameBase = $false
+    if ($k.Count -eq 1) {
+      $registered = Get-ItemProperty -LiteralPath $k[0].PSPath
+      $base = ([string]$registered.BasePath) -replace '^\\\\\?\\', ''
+      $sameBase = [string]::Equals($base.TrimEnd('\'), $directory.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    }
+    $record.registration = [ordered]@{ matches = $k.Count; basePathMatches = $sameBase }
+    if ($k.Count -ne 1 -or -not $sameBase) { $code = 4 }
+    else {
+      $record.phase = 'default_uid'
+      try { Set-ItemProperty -LiteralPath $k[0].PSPath -Name 'DefaultUid' -Value $defaultUid -Type DWord; $code = 0; $record.phase = 'complete' }
+      catch { $code = 5; $record.error = [ordered]@{ type = $_.Exception.GetType().Name; hresult = ('0x{0:X8}' -f $_.Exception.HResult) } }
+    }
+  }
+} catch { $record.error = [ordered]@{ type = $_.Exception.GetType().Name; hresult = ('0x{0:X8}' -f $_.Exception.HResult) } }
+finally {
+  $record.exitCode = $code; $record.finishedAt = [DateTimeOffset]::UtcNow.ToString('o')
+  try { Write-ImportDiagnostic } catch { $code = 7; [Console]::Error.WriteLine('WSL_IMPORT_DIAGNOSTICS_UNWRITABLE') }
+}
+exit $code
+";
+    return script.Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
+      .Replace("__UID__", defaultUid.ToString(System.Globalization.CultureInfo.InvariantCulture));
   }
   public const string PowerShellExe = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
   public static string ImportArguments(string distro, string vhdx, long defaultUid) {

@@ -26,11 +26,19 @@ events, chosen by the payload's hook_event_name:
   non-read-only Agent subtask) and edit (Edit, Write or NotebookEdit on a
   repository file). Text inside the quoted arguments of a read-only text
   command (grep, rg, git log, git commit, echo and the like) is data, not a
-  command. Before publishing it also reads, locally, what stage 1 of the CI
-  reads (Decision 349f6e42 item 2a): the pushed head commit message and the
-  pull request body must carry `Clued-Work-Claim: <id>` naming a live claim
-  recorded here, and `Clued-Work-Scope: <scope>` when that claim is in a
-  project. Each finding blocks once per session.
+  command. Before publishing it checks local live-claim lease and queue
+  readiness. PR bodies and commit messages are explanatory, not authority;
+  Native resolves the PR's Task and exact-head authorization after discovery.
+  A first PR need not already have its future PR binding. Each local finding
+  blocks once per session.
+  Structured repository edits are checked on every attempt for local resource
+  coverage, including both ends of a supplied apply_patch move. Missing coverage
+  produces the system-generated union for the original holder renewal; an
+  environment claim id and earlier reminder never waive it. This is a local
+  cooperative finding, not Native authorization: authenticated verify_edit,
+  renewal and perform belong to execute_claimed_edit. The current installed
+  Claude matcher covers Edit/Write/NotebookEdit; patch payload handling applies
+  only when a Host actually supplies it. Arbitrary shell writes are not parsed.
 * Stop reads the transcript (no network): when the latest agent_inbox from a
   resume or renewal reported messages and no clued_agent_inbox read followed
   it, or reported requests while messages are enabled and no committed
@@ -47,6 +55,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -57,7 +66,13 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.11"
+# One concrete-path/union implementation shared with the authenticated holder
+# adapter. This hook has no private key or Native editing transport of its own.
+_edit_spec = importlib.util.spec_from_file_location("clued_holder_edit_resources", Path(__file__).with_name("clued_work_write_set.py"))
+_edit_resources = importlib.util.module_from_spec(_edit_spec)
+_edit_spec.loader.exec_module(_edit_resources)
+
+__version__ = "1.1.12"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -628,17 +643,13 @@ RULE = (
     "are enabled, answer each one first. When messages_enabled is false or sending returns "
     "agent_messages_disabled, do not send or reply or bypass through another channel or Binding. "
     "Tell the Owner in one line whom you need to reach and why; do not ask the Owner to turn the switch "
-    "on. Put `Clued-Work-Claim: <claim_id>` and, for a claim in a project, `Clued-Work-Scope: "
-    "project:<id>` in the pull request body and the head commit: clued-work-admission enforces them "
-    "on pull requests to main. Renew before the lease ends and release when the work ends."
+    "on. Authorize the exact repository/head with the current holder key; Native resolves a discovered PR "
+    "to its Task and current claim. Body and commit trailers are explanatory only, never a scope default. "
+    "Renew before the lease ends and release when the work ends. Structured edit targets must be covered; "
+    "use the authenticated holder execute_claimed_edit adapter for fresh verify_edit/key/CAS, any necessary "
+    "ordinary renewal and the actual write. Local cached coverage is not Native holder authorization."
 )
 
-# Stage 1 of the CI reads the claim as scripts/ci/clued-work-admission.mjs#parseClaimReference does:
-# the first Claim line and the first Scope line, a missing Scope meaning global.
-CLAIM_TRAILER = re.compile(r"^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-                           r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$", re.MULTILINE)
-SCOPE_TRAILER = re.compile(r"^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$", re.MULTILINE)
-SCOPE_VALUE = re.compile(r"global|project:[0-9a-fA-F-]{36}")
 # A heredoc body is lifted out, so the command line parses and a quoted body can be read.
 HEREDOC_START = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)(\w+)\2([^\n]*)\n")
 WORD_LINE = re.compile(r"^[ \t]*(\w+)[ \t\r]*$", re.MULTILINE)
@@ -747,7 +758,8 @@ def record_claim(payload: dict) -> None:
     if claim.get("status") in LIVE_STATUSES:
         kept = {key: claim.get(key) for key in ("claim_id", "task_id", "context_key", "fence",
                                                  "lease_version", "status", "expires_at",
-                                                 "write_set", "base_commit", "trigger_refs")}
+                                                 "write_set", "base_commit", "trigger_refs",
+                                                 "execution_epoch", "execution_handover_pending")}
         if "trigger_refs" not in claim and isinstance(claims.get(claim["claim_id"]), dict):
             kept["trigger_refs"] = claims[claim["claim_id"]].get("trigger_refs")  # a response without them
         claims[claim["claim_id"]] = {**kept, "session_id": payload.get("session_id")}
@@ -780,6 +792,8 @@ def guarded_kind(payload: dict) -> str | None:
         return None if kind in READ_ONLY_AGENTS else "spend"
     if name in EDIT_TOOLS:
         return "edit" if in_repository(payload, tool_input) else None
+    if name.rsplit(".", 1)[-1].rsplit("__", 1)[-1].lower() == "apply_patch":
+        return "edit"
     return None
 
 
@@ -1159,57 +1173,6 @@ def publish_texts(payload: dict) -> list[tuple[str, str, str]]:
     return [(field[1], field[2], tool_input[field[0]])]
 
 
-def trailer_lines(claims: list[dict]) -> str:
-    blocks = []
-    for claim in claims:
-        lines = f"Clued-Work-Claim: {claim.get('claim_id')}"
-        scope = claim.get("context_key")
-        if isinstance(scope, str) and scope != "global" and SCOPE_VALUE.fullmatch(scope):
-            lines += f"\nClued-Work-Scope: {scope}"
-        blocks.append(lines)
-    return "\n".join(blocks) if len(blocks) == 1 else "\nor\n".join(blocks)
-
-
-def trailer_findings(where: str, label: str, text: str, claims: dict[str, dict], mine: list[dict],
-                     now: datetime) -> list[tuple[str, str]]:
-    """(key, reason) for each way stage 1 would refuse this text's claim reference."""
-    text = re.sub(r"\r\n?|[  ]", "\n", text)
-    named, scoped = CLAIM_TRAILER.search(text), SCOPE_TRAILER.search(text)
-    lines = ("these lines" if len(mine) == 1 else "the lines of the claim this work is under (one of these)") \
-        + ", each at the start of its own line:\n" + trailer_lines(mine)
-    if named is None:
-        if not mine:
-            return []  # no live claim: the no-claim report says what to do
-        return [(f"trailer:{where}:missing-claim", f"{label} has no `Clued-Work-Claim:` line. Add {lines}")]
-    claim_id = named.group(1).lower()
-    claim = claims.get(claim_id)
-    if claim is None:
-        if not mine:
-            return []
-        return [(f"trailer:{where}:unknown-claim:{claim_id}",
-                 f"{label} names claim {claim_id}, which is not a claim recorded in this checkout "
-                 f"({CLAIM_FILE.as_posix()}). Use {lines}\nIf you hold that claim from elsewhere, set "
-                 "CLUED_WORK_CLAIM=<claim_id>.")]
-    if not is_live(claim, now):
-        return [(f"lease:{claim_id}:{claim.get('expires_at')}",
-                 f"{label} names claim {claim_id}, which is not live by this machine's clock (status "
-                 f"{claim.get('status')}, lease until {claim.get('expires_at')}). Renew it with clued_work_renew "
-                 "(its fence, lease_version and a new progress_ref) before publishing. A claim that has ended "
-                 "needs a new clued_work_claim and new trailer lines.")]
-    expected = claim.get("context_key")
-    found = scoped.group(1) if scoped else "global"
-    if not isinstance(expected, str) or not SCOPE_VALUE.fullmatch(expected) or found == expected:
-        return queue_findings(claim_id, claim, label, now)
-    if scoped is None:
-        return [(f"trailer:{where}:missing-scope:{claim_id}",
-                 f"{label} names claim {claim_id} but has no `Clued-Work-Scope:` line, so stage 1 reads the scope "
-                 f"as global while the claim is in {expected} (CLAIM_NOT_CURRENT, full_admission_claim_changed). "
-                 f"Add this line at the start of its own line:\nClued-Work-Scope: {expected}")]
-    return [(f"trailer:{where}:wrong-scope:{claim_id}",
-             f"{label} has `Clued-Work-Scope: {found}`, but claim {claim_id} is in {expected}. "
-             f"Change that line to:\nClued-Work-Scope: {expected}")]
-
-
 # Stage 8 publishes kooyumi-merge-slot only for the head of this merge queue
 # (independent-control-checks-v2/publisher.mjs queueHeadReady), and a renewal while a batch
 # runs changes the binding its publishers compare, voiding that batch (Decision b30b1b79,
@@ -1238,22 +1201,82 @@ def queue_findings(claim_id: str, claim: dict, label: str, now: datetime) -> lis
 
 
 def publish_findings(payload: dict, claims: dict[str, dict], now: datetime) -> list[tuple[str, str]]:
-    """What stage 1 of the CI would refuse in the commits and bodies this call publishes.
+    """Pre-publication lease/queue advice; text never chooses an authority.
 
-    The candidates for the exact lines are this session's live claims, else every live claim here.
+    The PR may not exist yet. Native resolves its Task after discovery and is
+    the only authority for the claim, scope and exact-head execution checks.
     """
+    if not publish_texts(payload):
+        return []
     by_id = {str(key).lower(): claim for key, claim in claims.items()}
     live = [claim for claim in by_id.values() if is_live(claim, now)]
     mine = [claim for claim in live if claim.get("session_id") == payload.get("session_id")] or live
-    findings: dict[str, str] = {}
-    for where, label, text in publish_texts(payload):
-        for key, reason in trailer_findings(where, label, text, by_id, mine, now):
-            findings.setdefault(key, reason)
-    return list(findings.items())
+    candidates = [queue_findings(str(claim.get("claim_id")), claim, "This publication", now) for claim in mine]
+    # Several local claims do not let the hook guess which Task owns a PR.
+    # One locally ready claim permits discovery; the complete CI/Native check
+    # still selects and validates the actual current Task and authorization.
+    if not candidates or any(not findings for findings in candidates):
+        return []
+    return list(dict(item for findings in candidates for item in findings).items())
+
+
+def check_edit_coverage(payload: dict, claims: dict[str, dict], now: datetime) -> int:
+    """Repeated cooperative coverage findings, never a cached Native grant.
+
+    PreToolUse supplies targets but no authenticated holder transport, private
+    key or perform callback. Only execute_claimed_edit can run that real chain.
+    Clearing this local finding does not authorize a write or prove currentness.
+    """
+    root = project_dir(payload).resolve()
+    try:
+        targets = _edit_resources.derive_edit_targets(payload.get("tool_name", ""), payload.get("tool_input"),
+                                                     root=root, cwd=payload.get("cwd") or root)
+    except _edit_resources.WriteSetError as error:
+        print("BeamingFace work-claim guard: structured repository edit targets are unconfirmed (" + str(error)
+              + "). Use a bounded structured editor and the authenticated holder adapter; do not guess shell write scope.", file=sys.stderr)
+        return 2
+    session = payload.get("session_id")
+    candidates = [c for c in claims.values() if isinstance(session, str) and session
+                  and c.get("session_id") == session and c.get("status") == "ACTIVE" and is_live(c, now)
+                  and not c.get("execution_handover_pending")
+                  and isinstance(c.get("context_key"), str)
+                  and re.fullmatch(r"global|project:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", c["context_key"])]
+    possible = []
+    for current in candidates:
+        try:
+            union = _edit_resources.required_write_set(current.get("write_set"), targets)
+        except _edit_resources.WriteSetError:
+            continue
+        possible.append((current, union))
+    covered = [(c, union) for c, union in possible if set(union) == set(c["write_set"])]
+    if len(covered) == 1:
+        return 0  # Local coverage only. Native key/CAS verification is not cached.
+    print("BeamingFace work-claim guard: this changes a repository file; exact edit targets are "
+          + json.dumps(list(targets)) + ". Local coverage is not Native holder authorization. "
+          "CLUED_WORK_CLAIM and a previous reminder cannot waive missing coverage. "
+          "Use execute_claimed_edit with the original holder's authenticated verify/renew transports and in-memory key.", file=sys.stderr)
+    if not covered and len(possible) == 1:
+        current, union = possible[0]
+        if (isinstance(current.get("claim_id"), str)
+                and type(current.get("fence")) is int and current["fence"] > 0
+                and type(current.get("lease_version")) is int and current["lease_version"] > 0):
+            public = {key: current[key] for key in ("context_key", "claim_id", "fence", "lease_version")}
+            public["scope"] = public.pop("context_key")
+            public["write_set"] = list(union)
+            print("The system generated write_set union preserves all existing PR, planned and typed resources. "
+                  "Re-read Native holder/key/CAS, use fresh real progress and the current private key only in session; "
+                  "omit trigger_refs to preserve them. Reverify actual targets and readiness=false after renewal before any write.", file=sys.stderr)
+            print("clued_work_renew public arguments: " + json.dumps(public, sort_keys=True), file=sys.stderr)
+            return 2
+    print("No unique own-session ACTIVE cached claim can select this renewal. Inspect the current Native Task/claim/scope; "
+          "do not infer authority from another holder, a public session label, an environment claim id or an arbitrary live claim.", file=sys.stderr)
+    return 2
 
 
 def check_claim(payload: dict) -> int:
     kind = guarded_kind(payload)
+    if kind == "edit":
+        return check_edit_coverage(payload, load_claims(project_dir(payload) / CLAIM_FILE), datetime.now(timezone.utc))
     if kind is None or os.environ.get("CLUED_WORK_CLAIM", "").strip():
         return 0
     now = datetime.now(timezone.utc)
@@ -1267,12 +1290,10 @@ def check_claim(payload: dict) -> int:
         if not reasons:
             return 0
         print(
-            "BeamingFace work-claim guard (agent-contract §1.7, Decision 349f6e42 item 2a): stage 1 of the CI "
-            "would refuse this. clued-work-admission reads the claim from the pull request body, or from the "
-            "head commit when the body names none, and a refused head is released at most twice in 24 hours.\n- "
+            "BeamingFace work-claim guard (agent-contract §1.7): current local claim readiness needs attention. "
+            "Native resolves PR -> Task -> current claim; body and commit text are explanatory only.\n- "
             + "\n- ".join(reasons)
-            + "\nFix the commit message before it is pushed (when the commit is already on the remote, add a new "
-            "commit; never force-push) and the body through --body or --body-file, then run the command again. "
+            + "\nResolve the lease or queue condition, then retry. A PR need not already be bound before creation. "
             "Each finding is reported once per session; CLUED_WORK_CLAIM_GUARD=off turns the guard off.",
             file=sys.stderr,
         )
@@ -1282,8 +1303,8 @@ def check_claim(payload: dict) -> int:
     if not first_report(payload, kind):
         return 0
     if kind == "publish":
-        what = ("This pushes, or opens or edits a pull request. clued-work-admission is enforced on main, so a "
-                "pull request without `Clued-Work-Claim: <claim_id>` in its body and head commit is rejected.")
+        what = ("This pushes, or opens or edits a pull request. Native binds the PR to its Task using an authorized "
+                "exact head and validates the current claim; explanatory trailers do not grant authority.")
     elif kind == "edit":
         what = "This changes a repository file, which is work on a Task."
     else:

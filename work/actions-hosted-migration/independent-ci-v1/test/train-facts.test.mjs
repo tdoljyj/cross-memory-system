@@ -16,7 +16,7 @@ import { tempDir } from './resident-v2-fixtures.mjs';
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905;
 const T = '1'.repeat(40), H = '2'.repeat(40), S = '3'.repeat(40), TREE = 'c'.repeat(40), OLD = '9'.repeat(40);
 const CLAIM = '11111111-2222-4333-8444-555555555555';
-const holderRow = (o = {}) => ({ claim_id: CLAIM, bound_pr: `${REPO}#910`, progress_ref: 'x', merge_refs: [`merge:${REPO}:main`], merge_slot_until: '2026-10-23T06:00:00Z',
+const holderRow = (o = {}) => ({ claim_id: CLAIM, task_id: CLAIM, bound_pr: `${REPO}#910`, bound_prs: [`${REPO}#910`], progress_ref: 'x', merge_refs: [`merge:${REPO}:main`], merge_slot_until: '2026-10-23T06:00:00Z',
   merge_slot_ci: { taken_at: '2026-10-23T05:00:00Z', ci_state: null, ci_head_sha: null, hard_cap_until: null }, ...o });
 const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
 const rules = (strict = true) => [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge', 'squash', 'rebase'] } },
@@ -29,10 +29,27 @@ test('holders: the live holder, and "not on duty" is never "queue empty"', () =>
   assert.deepEqual([r.onDuty, r.holders.length, r.holders[0].pr, r.holders[0].takenAt], [true, 1, 910, '2026-10-23T05:00:00Z']);
   assert.deepEqual(parseHolders(200, { status: 'ok', holders: [], reason: 'admission_binding_required' }, REPO), { onDuty: false, holders: [] });
   assert.deepEqual(parseHolders(200, { status: 'ok', repository: REPO, holders: [] }, REPO), { onDuty: true, holders: [] });
-  assert.equal(parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow({ bound_pr: null })] }, REPO).holders[0].pr, null);
+  assert.equal(parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow({ bound_pr: null, bound_prs: [] })] }, REPO).holders[0].pr, null);
   for (const [status, body] of [[500, {}], [200, { status: 'error' }], [200, { status: 'ok', repository: 'other/repo', holders: [] }], [200, { status: 'ok', repository: REPO, holders: [{ claim_id: 'x' }] }],
     [200, { status: 'ok', repository: REPO, holders: [], reason: 'something_else' }]])
     assert.throws(() => parseHolders(status, body, REPO), e => e.code === 'MERGE_SLOT_HOLDERS_UNREADABLE');
+});
+
+test('holders: Task and complete validated PR projection are authoritative; legacy scalar never overrides them', () => {
+  const read = row => parseHolders(200, { status: 'ok', repository: REPO, holders: [row] }, REPO).holders[0];
+  const one = read(holderRow({ bound_pr: 'foreign/repo#1' }));
+  assert.equal(one.taskId, CLAIM);
+  assert.deepEqual(one.boundPrs, [`${REPO}#910`]);
+  assert.equal(one.pr, 910);
+  const many = read(holderRow({ bound_pr: `${REPO}#999`, bound_prs: [`${REPO}#912`, `${REPO}#910`] }));
+  assert.deepEqual(many.boundPrs, [`${REPO}#910`, `${REPO}#912`]);
+  assert.deepEqual(many.prs, [910, 912]);
+  assert.equal(many.pr, null, 'selection needs exact per-PR Native/head observation, not a scalar compatibility field');
+  for (const patch of [{ task_id: undefined }, { bound_prs: undefined }])
+    assert.throws(() => read(holderRow(patch)), { code: 'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED' });
+  for (const patch of [{ task_id: 'not-a-task' }, { bound_prs: [`${REPO}#910`,`${REPO}#910`] },
+    { bound_prs: ['foreign/repo#1'] }, { bound_prs: [`${REPO}#01`] }, { bound_prs: Array.from({length:51},(_,n)=>`${REPO}#${n+1}`) }])
+    assert.throws(() => read(holderRow(patch)), { code: 'MERGE_SLOT_HOLDERS_UNREADABLE' });
 });
 
 test('holders: one read-only POST with the token hash, the scope and the repository; a transport failure is unreadable', async () => {

@@ -13,6 +13,7 @@ import { serverAnswerCurrent } from '../clock-skew.mjs';
 import { createGitHubChecksPort } from '../github.mjs';
 import { createGitHubBudgetObserver, guardedGitHubBudgetObserver } from '../github-budget.mjs';
 import { createFullAdmissionPortV2 } from '../full-admission-v2.mjs';
+import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { INSTALL_ROOT, APP_KEY_FILE, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule } from './held-record.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mjs';
@@ -35,6 +36,7 @@ const check = (ok, code) => { if (!ok) fail(code); };
 const PUBLIC_ENTRY_REASONS = new Set([...ALL_STAGE_CODES,
   'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED',
   'NATIVE_PUBLICATION_SCOPE_REFUSED', 'NATIVE_PUBLICATION_UNAVAILABLE', 'independent_revoker_qualification_required',
+  'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED',
   'OBSERVATION_KIND_REFUSED', 'OBSERVATION_LOG_BOUNDARY', 'OBSERVATION_LOG_UNCONFIRMED', 'HELD_SOURCE_PINS_CHANGED',
   'ACTUAL_HELD_RECORD_LEASE_REQUIRED', 'ACTUAL_WINDOWS_HELD_RECORD_REQUIRED', 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED',
   'HELD_POLICY_BYTES_CHANGED', 'HELD_RECORD_CONTROLLER_REFUSED', 'HELD_RECORD_DOCUMENTS_REFUSED',
@@ -233,15 +235,26 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   const env = { CLUED_CONTEXT_READ_TOKEN: nativeToken, CLUED_SUPABASE_URL: record.config.supabaseUrl,
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
-    'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent']);
-  const native = Object.freeze({ async command(input) {
+    'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
+  const native = Object.freeze({ async command(input, options = {}) {
     live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
-    const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
+    if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
+      && input.pr_ref.startsWith(`${record.config.repository}#`)
+      && /^[1-9][0-9]*$/.test(input.pr_ref.slice(record.config.repository.length + 1)), 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    const commandFetch = options.signal ? (url, opts) => fetchImpl(url, { ...opts, signal: options.signal }) : fetchImpl;
+    const reply = await cluedRpc(commandFetch, env, sourceRoot, 'clued_work_verify_v1', input);
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
     return reply.body;
   }, async current(identity,mode) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
       ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
+    let binding;
+    try {
+      binding = await resolvePRTaskBinding({ command: input => native.command(input), scope: record.config.scope,
+        repository: record.config.repository, prNumber: identity.job.pr, headSha: identity.job.headSha,
+        baseSha: identity.job.baseSha, targetBranch: 'main', readOnly: true });
+    } catch { return false; }
+    if (binding.binding_status !== 'bound') return false;
     const sentMono = monotonic();
     const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
       head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
@@ -251,7 +264,8 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
       ['handover_pending',c?.execution_handover_pending===false],['claim_status',c?.status==='ACTIVE'],
       ['claim_identity',c?.claim_id===identity.claim.claim_id&&c.fence===identity.claim.fence&&c.execution_epoch===identity.claim.execution_epoch],
       ['current_fence',b?.current_fence===c?.fence&&b?.execution_epoch===c?.execution_epoch],['context_key',c?.context_key===mode.scope],
-      ['bound_pr',c?.bound_pr===`${identity.job.repo}#${identity.job.pr}`]]) if (!ok) failed.push(name);
+      ['pr_task_binding',binding.pr_ref===`${identity.job.repo}#${identity.job.pr}`&&c?.task_id===binding.task_id
+        &&binding.claim.claim_id===c?.claim_id&&binding.claim.fence===c?.fence&&binding.claim.execution_epoch===c?.execution_epoch]]) if (!ok) failed.push(name);
     // Decision 1100a0ed: no comparison of KooYomi's clock with this host's (clock-skew.mjs#serverAnswerCurrent).
     failed.push(...serverAnswerCurrent({ verifiedAt: b?.verified_at, expiresAt: c?.expires_at, sentMono, nowMono: monotonic() }));
     // The log keeps only a digest of its data, so each failed check's name is the record kind itself.

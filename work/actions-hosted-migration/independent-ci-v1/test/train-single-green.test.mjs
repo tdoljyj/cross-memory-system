@@ -59,7 +59,7 @@ const listLedger = (earlier = []) => ({ records: [...earlier], refused: [], asyn
 function proven(now, claimId) {
   const since = iso(now - 20 * 60_000);
   return {
-    holders: { onDuty: true, holders: [{ claimId, boundPr: `${REPO}#${PR}`, pr: PR, mergeSlotUntil: iso(now + 600_000), takenAt: since, ciState: 'running', ciHeadSha: HEAD, hardCapUntil: iso(now + 3600_000) }] },
+    holders: { onDuty: true, holders: [{ claimId, taskId: claimId, boundPrs: [`${REPO}#${PR}`], prs: [PR], boundPr: `${REPO}#${PR}`, pr: PR, mergeSlotUntil: iso(now + 600_000), takenAt: since, ciState: 'running', ciHeadSha: HEAD, hardCapUntil: iso(now + 3600_000) }] },
     proof: { contract: 'clued.independent-ci.train-sweep-proof/1', writtenAt: iso(now - 60_000), runId: '0123456789abcdef-0123456789ab', mode: 'on', pr: PR, headSha: HEAD, claimId, since,
       mainSha: BASE, clean: true, unconfirmed: 0, fullSweepSinceOn: true, slotHardCapMinutes: 120, sweepFreshMs: 900_000, prUpdatedCursor: iso(now - 61_000) },
     front: { contract: 'clued.independent-ci.train-front-batch/1', writtenAt: iso(now - 60_000), runId: '0123456789abcdef-0123456789ab', pr: PR, headSha: HEAD, baseSha: BASE, testSha: S, testTree: S_TREE,
@@ -149,7 +149,7 @@ test('trainHeadReady (§41.2): every condition, one at a time; each unmet one is
     'two holders': [w => { w.holders.holders.push({ ...w.holders.holders[0], claimId: other, pr: 889, boundPr: `${REPO}#889` }); }],
     'no holder': [w => { w.holders.holders = []; }],
     'another claim holds the slot': [w => { w.holders.holders[0].claimId = other; }],
-    'the holder is bound to another PR': [w => { w.holders.holders[0].pr = 889; w.holders.holders[0].boundPr = `${REPO}#889`; }],
+    'the holder is bound to another PR': [w => { w.holders.holders[0].pr = 889; w.holders.holders[0].boundPr = `${REPO}#889`; w.holders.holders[0].boundPrs = [`${REPO}#889`]; w.holders.holders[0].prs = [889]; }],
     'no proof': [w => { w.proof = null; }],
     'a proof of another PR': [w => { w.proof.pr = 889; }],
     'a proof of another H': [w => { w.proof.headSha = OTHER; }],
@@ -358,8 +358,19 @@ test('stage 1 binding (§41.8): a renewal between the observations no longer voi
   assert.equal(moved.r.status, 'REVOKED');
 });
 
+test('stage8: Task multi-PR membership needs the exact CI head and signed front, not a scalar PR field', () => {
+  const now = Date.now(), claimId = randomUUID(), job = jobsFor()['control-merge-slot'], w = proven(now, claimId);
+  const h = w.holders.holders[0]; h.boundPrs = [`${REPO}#${PR}`,`${REPO}#889`]; h.prs = [PR,889]; h.pr = null; h.boundPr = null;
+  const decide = () => trainHeadDecision({ job, claimId, holders: w.holders, proof: w.proof, front: w.front,
+    ledger: { entries: [], refused: [] }, pulls: w.pulls, now });
+  assert.equal(decide(), null);
+  h.ciHeadSha = OTHER; assert.equal(decide(), TRAIN_SINGLE_GREEN_NOT_PROVEN); h.ciHeadSha = HEAD;
+  w.front.pr = 889; assert.equal(decide(), TRAIN_SINGLE_GREEN_NOT_PROVEN); w.front.pr = PR;
+  h.taskId = null; assert.equal(decide(), TRAIN_SINGLE_GREEN_NOT_PROVEN);
+});
+
 test('merge-slot port: holders and the role probe ignore anything optional (review R1 MAJOR-1); the writes and nodesStatus are Source A\'s port', async () => {
-  const row = { claim_id: '11111111-2222-4333-8444-555555555555', bound_pr: `${REPO}#910`, merge_slot_until: '2026-10-31T06:00:00Z', merge_slot_ci: { taken_at: '2026-10-31T05:00:00Z' } };
+  const row = { claim_id: '11111111-2222-4333-8444-555555555555', task_id: '11111111-2222-4333-8444-555555555555', bound_pr: `${REPO}#910`, bound_prs: [`${REPO}#910`], merge_slot_until: '2026-10-31T06:00:00Z', merge_slot_ci: { taken_at: '2026-10-31T05:00:00Z' } };
   assert.deepEqual(Object.keys(parseHolders(200, { status: 'ok', repository: REPO, holders: [row] }, REPO)).sort(), ['holders', 'onDuty']);
   // a node never heard (nulls), a malformed node, a stray watermark: neither holders nor the probe changes
   for (const extra of [{ nodes: [{ node: null, source_manifest_sha256: null, state: null, last_heartbeat_at: null }] }, { nodes: [{ node: 'x y' }] }, { nodes: {} },

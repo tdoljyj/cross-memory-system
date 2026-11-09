@@ -39,6 +39,7 @@ import path from 'node:path';
 import { HEX40, ResidentError, UUID, canonicalJson, check, isoNow, parseBoundedJson } from './canonical.mjs';
 import { ensureDir, exists, nonce, readBounded } from './store.mjs';
 import { POSITIONS } from './breaker.mjs';
+import { claimBindingFingerprint } from './train.mjs';
 
 export const QUEUE_CONTRACT = 'clued.independent-ci.resident-queue/1';
 export const QUEUE_FILE = 'queue.json';
@@ -90,9 +91,7 @@ export const CLAIM_WAIT_MAX_MS = 24 * 60 * MIN;
 const CLAIM_MISSING_REASONS = ['claim_trailer_missing', 'claim_not_found', 'full_admission_claim_missing'];
 export const claimWaitText = reason => (CLAIM_MISSING_REASONS.includes(reason) ? '等认领授权此提交' : '认领在推送后变动或队位过期，等下一次检查');
 const claimsOk = c => Array.isArray(c) && c.length <= SEEN_MAX && c.every(x => typeof x === 'string' && UUID.test(x));
-// The claims an evaluation saw (begin), or null: unknown (no live read answered, or a companion that does not read the body).
-const claimsOf = c => (claimsOk(c) ? [...new Set(c)].sort() : null);
-const sameClaims = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// claimsOk validates old snapshots only; current scheduling never consumes them.
 
 const delayAt = (table, level) => table[Math.min(Math.max(level, 0), table.length - 1)];
 // A queue file that could not be read took the breaker's state with it: half-open, failing "everywhere".
@@ -121,7 +120,9 @@ export function validateQueue(q) {
       && Array.isArray(r.superseded) && r.superseded.length <= SUPERSEDED_MAX && r.superseded.every(commitOk)
       && Array.isArray(r.seen) && r.seen.length <= SEEN_MAX && r.seen.every(h => HEX40.test(h))
       && Number.isSafeInteger(r.order) && Number.isSafeInteger(r.level) && r.level >= 0 && (r.stopKind === null || STOP_KINDS.includes(r.stopKind))
-      && (r.origin === null || ORIGINS.includes(r.origin)) && (r.evalClaims === undefined || r.evalClaims === null || claimsOk(r.evalClaims)), 'QUEUE_FILE_INVALID', r?.pr);
+      && (r.origin === null || ORIGINS.includes(r.origin)) && (r.evalClaims === undefined || r.evalClaims === null || claimsOk(r.evalClaims))
+      && (r.evalBinding == null || (typeof r.evalBinding === 'string' && r.evalBinding.length <= 512))
+      && (r.evalBindingHead == null || HEX40.test(r.evalBindingHead)), 'QUEUE_FILE_INVALID', r?.pr);
     prs.add(r.pr);
   }
   return q;
@@ -219,7 +220,7 @@ export class RunQueue {
       row.poke = { at: now, dueAt: Math.max(now, (row.lastEvalAt ?? 0) + cooldownMs) };
       // A row backing off after a claim refusal whose evaluation saw the PR's claims: the executor reads the PR once before its next
       // scheduling pass and makes the poke due now when the PR names other claims (claimChanged; field defect 2026-11-08, PR #1039).
-      if (this.claimRefused(row) && row.evalClaims.length > 0) row.poke.claimCheck = true;
+      if (this.claimRefused(row)) row.poke.claimCheck = true;
       row.deferUntil = null;
       row.updatedAt = now;
       return { action: 'new-trigger', dueAt: row.poke.dueAt };
@@ -243,30 +244,29 @@ export class RunQueue {
     return { action, seq: row.current.seq };
   }
 
-  // A row that backs off after a claim refusal of its current commit, and knows the claims that evaluation saw.
+  // A claim refusal of the current commit, still eligible for bounded rechecking.
   claimRefused(row) {
-    return !!row && row.state === 'BACKOFF' && CLAIM_REASONS.includes(row.reason) && !row.running && !!row.current && claimsOk(row.evalClaims);
+    return !!row && row.state === 'BACKOFF' && CLAIM_REASONS.includes(row.reason) && !row.running && !!row.current;
   }
 
-  // The rows whose poke waits for the PR's claims to be read (offer set claimCheck).
+  // A protected read-only observation can recheck these rows without a body edit.
   claimChecks() {
-    return this.data.rows.filter(r => r.poke?.claimCheck === true && this.claimRefused(r)).map(r => ({ pr: r.pr, headSha: r.current.headSha }));
+    return this.data.rows.filter(r => this.claimRefused(r)).map(r => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha }));
   }
 
-  // Field defect 2026-11-08 (PR #1039): one live read of the PR (companion pr-head: { state, headSha, claims }) answers a poke's claim
-  // check. When the PR is still open at this commit and names claims, and they are not the ones the refused evaluation saw, the poke is
-  // due now and skips the cool-down (claimChanged: candidates, executor precheck). The back-off itself (nextAt, level) stays: when the
-  // re-evaluation cannot run (the re-evaluation cap, the PR's daily batches) the row retries at its own time, as before. The same
-  // claims, none, no answer or another head: the poke keeps its due time. Each poke is checked once. Returns true when it changed.
+  // Only a changed, confirmed bound generation makes a poke due. A first known
+  // observation establishes the baseline; unknown keeps the original back-off.
+  // Once-only, re-evaluation and daily caps still decide whether it can run.
   claimChanged(pr, live, now) {
     const r = this.row(pr);
-    if (!r?.poke?.claimCheck) return false;
-    delete r.poke.claimCheck;
-    r.updatedAt = now;
-    if (!this.claimRefused(r) || !live || live.state !== 'open' || live.headSha !== r.current.headSha) return false;
-    const claims = claimsOf(live.claims);
-    if (!claims || claims.length === 0 || sameClaims(claims, r.evalClaims)) return false;
-    r.poke = { ...r.poke, dueAt: now, claimChanged: true };
+    if (!this.claimRefused(r) || !live || live.pr !== pr || live.headSha !== r.current.headSha || live.baseSha !== r.current.baseSha) return false;
+    const fingerprint = claimBindingFingerprint(live);
+    if (fingerprint === null) return false;
+    if (r.poke) delete r.poke.claimCheck;
+    const before = r.evalBindingHead === live.headSha ? r.evalBinding : null;
+    r.evalBinding = fingerprint; r.evalBindingHead = live.headSha; r.updatedAt = now;
+    if (before == null || fingerprint === before || live.bindingStatus !== 'bound') return false;
+    r.poke = { ...r.poke, at: now, dueAt: now, claimChanged: true };
     r.deferUntil = null;
     return true;
   }
@@ -344,13 +344,15 @@ export class RunQueue {
     else { r.deferred = reason; r.updatedAt = now; }
   }
 
-  // The batch of this row's current commit was reserved. claims: the PR body's claims the live read before the reservation saw
-  // (companion.mjs#claimTrailers), kept as evalClaims for a claim refusal's next trigger (claimChanged); null when unknown.
-  begin(pr, headSha, key, origin, now, { claims = null } = {}) {
+  // Record the last protected observation, if known, for a later claim wait.
+  begin(pr, headSha, key, origin, now, { binding = null } = {}) {
     const r = this.row(pr);
     check(r && r.current?.headSha === headSha && !r.running && ORIGINS.includes(origin), 'QUEUE_ROW_NOT_CURRENT', pr);
     r.running = { ...commitOf(r.current), key };
-    r.evalClaims = claimsOf(claims);
+    r.evalClaims = null; // legacy body claims are never authority for rechecking.
+    const fingerprint = claimBindingFingerprint(binding);
+    r.evalBinding = fingerprint ?? (r.evalBindingHead === headSha ? r.evalBinding ?? null : null);
+    r.evalBindingHead = headSha;
     r.lastEvalAt = now;
     r.poke = null;
     r.deferred = null;

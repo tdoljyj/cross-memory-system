@@ -4,6 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { generateKeyPairSync } from 'node:crypto';
 import { createGitHubChecksPort } from '../src/github.mjs';
+import { READ_REQUEST_DEADLINE } from '../src/read-retry.mjs';
 
 const REPO = 'owner/repo', REPO_ID = 41, APP_ID = 77, INSTALLATION_ID = 99;
 const HEAD = 'a'.repeat(40), BASE = 'b'.repeat(40);
@@ -25,10 +26,11 @@ const pr = { number: 7, state: 'open', changed_files: 1,
 // A fake GitHub. `faults` maps "METHOD path" to a queue consumed one entry per
 // call: an Error is thrown, a function runs against the state, a response is
 // returned, null passes through to the real answer. Every call is counted.
-function github({ faults = {}, checks = [] } = {}) {
+function github({ faults = {}, checks = [], observe = () => {} } = {}) {
   const calls = {}, delays = [], state = { now: Date.parse('2026-10-20T00:00:00Z'), checks: checks.map(check => ({ ...check })), nextId: 500 };
   const queues = Object.fromEntries(Object.entries(faults).map(([key, list]) => [key, [...list]]));
   async function fetchImpl(url, options) {
+    observe(url, options);
     const { pathname } = new URL(url), key = `${options.method} ${pathname}`;
     calls[key] = (calls[key] ?? 0) + 1;
     let fault = queues[key]?.shift();
@@ -67,6 +69,21 @@ const ours = (extra = {}) => ({ ...publication, id: 600, app: { id: APP_ID }, ..
 const prKey = `GET /repos/${REPO}/pulls/7`, filesKey = `GET /repos/${REPO}/pulls/7/files`;
 const postKey = `POST /repos/${REPO}/check-runs`, listKey = `GET /repos/${REPO}/commits/${HEAD}/check-runs`;
 const patchKey = `PATCH /repos/${REPO}/check-runs/600`, runKey = `GET /repos/${REPO}/check-runs/600`;
+
+test('bounded observation forwards one deadline through PR, pull-list and credential reads', async () => {
+  const requests = [];
+  const f = github({ observe: (url, options) => requests.push({ url, deadline: options[READ_REQUEST_DEADLINE] }),
+    faults: { [`GET /repos/${REPO}/pulls`]: [reply([])] } });
+  const port = f.port(), until = f.state.now + 5000;
+  await port.readPullRequest(7, { until });
+  await port.readPullsPage({ state: 'open', until });
+  assert.ok(requests.length >= 5);
+  assert.ok(requests.every(r => r.deadline === until));
+  const before = requests.length;
+  await assert.rejects(port.readPullRequest(7, { until: f.state.now }));
+  await assert.rejects(port.readPullsPage({ until: f.state.now }));
+  assert.equal(requests.length, before, 'no call starts after the deadline');
+});
 test('revocation reads the complete current PR commit history and refuses truncation or drift',async()=>{
  const historyKey=`GET /repos/${REPO}/pulls/7/commits`,pull={...pr,commits:2};
  const f=github({faults:{[prKey]:[reply(pull),reply(pull)],[historyKey]:[reply([{sha:BASE},{sha:HEAD}])]}});

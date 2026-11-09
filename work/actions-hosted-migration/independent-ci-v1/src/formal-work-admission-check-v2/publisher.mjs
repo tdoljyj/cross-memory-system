@@ -255,7 +255,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
             || (PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)))), 'BATCH_CLAIM_CHANGED');
           assertLive(); check(fresh(current.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
         };
-        await batchClaims.rewrite(job, oldClaim, current.facts.observedClaim, current.facts.observedAt, verifyUnpublished);
+        await batchClaims.rewrite(job, oldClaim, current.facts.observedClaim, current.facts.observedAt, verifyUnpublished, current.facts.terminalAdmission ?? null);
         claimed = await batchClaims.read(job);
         check(claimed && sameClaimGeneration(claimed, current.facts.observedClaim), 'BATCH_CLAIM_CHANGED');
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
@@ -275,7 +275,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       before = bound(job, evaluated);
       if (!claimed) {
         // First admission of this batch: the observed generation becomes the sticky batch claim.
-        await batchClaims.record(job, before.facts.observedClaim, before.facts.observedAt);
+        await batchClaims.record(job, before.facts.observedClaim, before.facts.observedAt, before.facts.terminalAdmission ?? null);
         claimed = claimGeneration(before.facts.observedClaim);
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);

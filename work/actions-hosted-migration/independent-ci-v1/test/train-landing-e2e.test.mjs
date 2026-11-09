@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { setup, jobOf, iso, REPO, NOW, SOURCE } from './train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
 import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
+import { recordBatchClaim, readTerminalAdmission } from '../src/batch-claim-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
@@ -38,8 +39,10 @@ const body = pr => `Change.\n\nClued-Work-Claim: ${claimOf(pr)}\nClued-Work-Scop
 const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] };
 
 // ---- the world ----
-async function world(t, { prs, bad = () => false }) {
+async function world(t, { prs, bad = () => false, sharedClaim = false, terminalReceipts = false }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
+  e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
+  e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
   const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [] };
   e.W = W;
   const treeOf = set => h(`tree:${[...set].sort().join(',')}`);
@@ -62,7 +65,20 @@ async function world(t, { prs, bad = () => false }) {
     const id = W.nextCheck++; // stage 1 admitted it: App 5368905's kooyumi-work-admission on the head
     W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: head, status: 'completed', conclusion: 'success' });
   }
-  const markMerged = () => { for (const p of W.pulls.values()) if (p.state === 'open' && ancestor(p.head, W.refs.get('heads/main'))) Object.assign(p, { state: 'closed', merged: true }); };
+  const markMerged = () => { for (const p of W.pulls.values()) if (p.state === 'open' && ancestor(p.head, W.refs.get('heads/main'))) Object.assign(p, { state: 'closed', merged: true, mergeSha: W.refs.get('heads/main') }); };
+  if (terminalReceipts) {
+    e.claimsDir = path.join(await tempDir(t), 'batch-claims');
+    e.originalAdmissions = new Map(); e.terminalReads = 0;
+    for (const n of prs) {
+      const terminalAdmission = { receipt_id: claimOf(n+1000), claim_id:e.claimFor(n),fence:3,execution_epoch:1,
+        lease_version:5,head_authorization_id:claimOf(n+2000) };
+      e.originalAdmissions.set(n, terminalAdmission);
+      const job = batchJobsV2({repo:REPO,pr:n,headSha:W.pulls.get(n).head,baseSha:T0,testSha:W.pulls.get(n).head,
+        sourceManifestSha256:SOURCE,createdAt:iso(NOW),attempt:1})['work-admission'];
+      await recordBatchClaim(e.claimsDir,job,{claimId:e.claimFor(n),fence:3,epoch:1,expiresAt:iso(NOW+3600_000)},iso(NOW),terminalAdmission);
+    }
+    e.readTerminalAdmission = subject => { e.terminalReads++; return readTerminalAdmission(e.claimsDir,subject); };
+  }
   // GitHub (the checks port's reads, over this world)
   const gh = e.gh;
   gh.world.pulls.clear();
@@ -76,8 +92,8 @@ async function world(t, { prs, bad = () => false }) {
   gh.readPullRequest = async n => {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
-    return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: testMerge, body: p.body,
-      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main } };
+    return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
+      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main, repo: { full_name: REPO } } };
   };
   gh.readCompare = async (base, head) => base === head ? { status: 'identical', aheadBy: 0, behindBy: 0 }
     : ancestor(base, head) ? { status: 'ahead', aheadBy: 1, behindBy: 0 } : ancestor(head, base) ? { status: 'behind', aheadBy: 0, behindBy: 1 } : { status: 'diverged', aheadBy: 1, behindBy: 1 };
@@ -118,19 +134,26 @@ async function world(t, { prs, bad = () => false }) {
   // Native: one slot holder (the head of the queue), the rest waiting; adopt and touch failed leave the queue.
   const queue = [...prs];
   let takenAt = iso(NOW - 300_000), ci = { ciState: null, ciHeadSha: null }, slotUntil = NOW + 3_600_000;
-  const holder = () => queue.length ? { claimId: claimOf(queue[0]), boundPr: `${REPO}#${queue[0]}`, pr: queue[0], mergeSlotUntil: iso(slotUntil), takenAt, ...ci, hardCapUntil: null } : null;
+  const holder = () => {
+    if (!queue.length) return null;
+    const prs = queue.filter(pr => e.claimFor(pr) === e.claimFor(queue[0])).sort((a,b)=>a-b), boundPrs = prs.map(pr=>`${REPO}#${pr}`);
+    return { claimId: e.claimFor(queue[0]), taskId: e.claimFor(queue[0]), boundPrs, prs,
+      boundPr: prs.length === 1 ? boundPrs[0] : null, pr: prs.length === 1 ? prs[0] : null,
+      mergeSlotUntil: iso(slotUntil), takenAt, ...ci, hardCapUntil: null };
+  };
   const leave = pr => { const i = queue.indexOf(pr); if (i < 0) return; queue.splice(i, 1); if (i === 0) { takenAt = iso(e.now); ci = { ciState: null, ciHeadSha: null }; slotUntil = e.now + 3_600_000; } };
-  e.queue = queue; e.adopted = []; e.failed = [];
+  e.queue = queue; e.adopted = []; e.adoptCalls = []; e.failed = [];
   Object.assign(e.native.port, {
     async holders() { const x = holder(); return { onDuty: true, holders: x ? [x] : [] }; },
     async nodesStatus() { return { deployed: true, onDuty: true, dropped: 0, nodes: [{ node: { ...healthy.nodes[0].node, lastHeartbeatAt: iso(e.now) } }] }; },
-    async keepalive() { return { onDuty: true, keptAlive: queue.map(pr => ({ claimId: claimOf(pr), boundPr: `${REPO}#${pr}`, expiresAt: iso(e.now + 7_200_000) })) }; },
+    async keepalive() { return { onDuty: true, keptAlive: queue.map(pr => ({ claimId: e.claimFor(pr), boundPr: `${REPO}#${pr}`, expiresAt: iso(e.now + 7_200_000) })) }; },
     async touch(i) {
       if (i.ciState === 'running') { ci = { ciState: 'running', ciHeadSha: i.headSha }; slotUntil = e.now + 90 * 60_000; }
-      if (i.ciState === 'failed') { e.failed.push(i.pr); leave(i.pr); return { onDuty: true, touched: true, returned: true, claims: [claimOf(i.pr)] }; }
-      return { onDuty: true, touched: true, until: iso(slotUntil), claims: [claimOf(i.pr)], returned: null };
+      if (i.ciState === 'failed') { e.failed.push(i.pr); leave(i.pr); return { onDuty: true, touched: true, returned: true, claims: [e.claimFor(i.pr)] }; }
+      return { onDuty: true, touched: true, until: iso(slotUntil), claims: [e.claimFor(i.pr)], returned: null };
     },
-    async adopt(i) { const was = queue.includes(i.pr); e.adopted.push([i.pr, i.mergeSha]); leave(i.pr); return { onDuty: true, adopted: was, returned: [] }; },
+    async adopt(i) { const was = queue.includes(i.pr); e.adopted.push([i.pr, i.mergeSha]);e.adoptCalls.push(structuredClone(i)); leave(i.pr); return { onDuty: true, adopted: was, returned: [],
+      ...(i.terminalProof ? { autoRelease: {status:'released',released:true,reason:'completed',receipt_id:i.terminalProof.last_admission.receipt_id,retryable:false} } : {}) }; },
   });
   e.head = pr => W.pulls.get(pr).head;
   e.main = () => W.refs.get('heads/main');
@@ -147,11 +170,12 @@ async function stage10(e, outcome = null) {
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
+    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: e.trainLanding ?? CHAIN4,
+    terminalAdmissions: e.readTerminalAdmission ?? null });
 }
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal' } = {}) {
   e.now += 60_000;
-  const claim = pr => ({ claimId: claimOf(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
+  const claim = pr => ({ claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
   const jobs = batchJobsV2({ repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, testSha: b.testSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: b.attempt });
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: e.journal, trainMode: 'on', batchClaim: claimGeneration(claim(b.pr)), slotNative: e.native.port,
@@ -183,6 +207,34 @@ async function drive(t, e, { until, steps = 40, opened = null }) {
   }
   return log;
 }
+
+test('push: two PRs sharing one Task current claim land in stable sequence without dropping the second PR', async t => {
+  const e = await world(t, { prs: [910, 911], sharedClaim: true });
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 8 });
+  assert.deepEqual(log.filter(l => l[0] === '8').map(l => l[3]), [[910], [911]], JSON.stringify(log));
+  assert.deepEqual(e.adopted.map(a => a[0]), [910, 911]);
+  assert.ok(e.W.pulls.get(910).merged && e.W.pulls.get(911).merged);
+});
+
+test('push: Native rider bindings land when bodies are missing or name another claim and scope', async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  e.W.pulls.get(910).body = null;
+  e.W.pulls.get(911).body = 'No trailers';
+  e.W.pulls.get(912).body = `Clued-Work-Claim: ${claimOf(999)}\nClued-Work-Scope: global`;
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 6 });
+  assert.deepEqual(log.filter(l => l[0] === '8').map(l => l[3]), [[910, 911, 912]], JSON.stringify(log));
+  assert.equal(e.queue.length, 0);
+});
+
+test('push: an admission green and advisory trailer cannot admit an unbound rider', async t => {
+  const e = await world(t, { prs: [910, 911] });
+  e.native.bindings.delete(911);
+  let batch;
+  for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(batch);
+  assert.deepEqual((await e.store.landingBatchByTest(batch.testSha)).members.map(m => m.pr), [910]);
+  assert.equal(e.W.pulls.get(911).merged, false);
+});
 
 test('push: three queued PRs -> one batch -> main fast-forwarded to the tested S -> all three marked merged and adopted', async t => {
   const e = await world(t, { prs: [910, 911, 912] });
@@ -460,6 +512,51 @@ test('push: GitHub marks the PRs merged late; stage 10 still adopts each member 
   assert.equal(r.facts.decision, 'FRONT_ADOPTED');
   assert.deepEqual([...r.facts.landing.notMarkedMerged].sort(), [910, 911, 912]);
   assert.deepEqual(e.adopted.map(a => a[0]), [911, 912, 910]);
+});
+
+test('terminal: original stage-one Receipts survive the durable landing batch and reach the real terminal calls', async t => {
+  const {e,b} = await opened(t,[910,911,912],{terminalReceipts:true});
+  const saved = await e.store.landingBatchByTest(b.testSha);
+  assert.deepEqual(saved.members.map(m=>m.terminalAdmission),[910,911,912].map(n=>e.originalAdmissions.get(n)));
+  e.terminalReads=0;
+  assert.equal((await stage8(t,e,b)).status,'SETTLED');
+  await stage10(e);
+  assert.equal(e.terminalReads,0,'termination uses the captured records, never a fresh resolver/claim lookup');
+  assert.deepEqual(e.adoptCalls.map(c=>c.pr),[911,912,910]);
+  for(const c of e.adoptCalls) {
+    assert.deepEqual(c.terminalProof.last_admission,e.originalAdmissions.get(c.pr));
+    assert.equal(c.terminalProof.observation.state,'closed');
+    assert.equal(c.terminalProof.observation.merge_sha,b.testSha);
+  }
+});
+
+test('terminal: an open landed PR gets only its original adoption; closed proof is retried when GitHub confirms it', async t => {
+  const {e,b} = await opened(t,[910],{terminalReceipts:true}), ff=e.port.fastForwardMain;
+  e.port.fastForwardMain=async s=>{const r=await ff(s);Object.assign(e.W.pulls.get(910),{state:'open',merged:false});return r;};
+  assert.equal((await stage8(t,e,b)).status,'SETTLED');
+  await stage10(e);
+  assert.equal(e.adoptCalls[0].terminalProof,undefined,'code landing is not a closed PR observation');
+  assert.equal((await e.store.readLandingState()).adopted.includes(b.testSha),false,'a pending terminal observation is not forgotten');
+  Object.assign(e.W.pulls.get(910),{state:'closed',merged:true,mergeSha:b.testSha});
+  await stage10(e);
+  assert.deepEqual(e.adoptCalls.at(-1).terminalProof.last_admission,e.originalAdmissions.get(910));
+});
+
+test('terminal: Native pending is retried from the original record after the holder and slot have gone', async t => {
+  const {e,b}=await opened(t,[910],{terminalReceipts:true}), adopt=e.native.port.adopt;
+  let pending=true;
+  e.native.port.adopt=async input=>{const r=await adopt(input);return pending ? {...r,autoRelease:{status:'pending',released:false,
+    reason:'runtime_inventory_unconfirmed',receipt_id:input.terminalProof.last_admission.receipt_id,retryable:true}} : r;};
+  assert.equal((await stage8(t,e,b)).status,'SETTLED');
+  const waiting=await stage10(e);
+  assert.equal(waiting.facts.landing.error,'TRAIN_TERMINAL_RUNTIME_INVENTORY_UNCONFIRMED');
+  assert.equal(e.queue.length,0);
+  assert.equal((await e.store.readLandingState()).adopted.includes(b.testSha),false);
+  pending=false;
+  await stage10(e);
+  assert.equal(e.adoptCalls.length,2);
+  assert.deepEqual(e.adoptCalls[1].terminalProof.last_admission,e.adoptCalls[0].terminalProof.last_admission);
+  assert.equal((await e.store.readLandingState()).adopted.includes(b.testSha),true);
 });
 
 test('push: a member that moved to a new head after its batch landed is not adopted (its claim goes on with the new head)', async t => {

@@ -13,15 +13,74 @@ const sessionTitle = JSON.parse(await readFile(new URL('./fixtures/agent-contrac
 const branding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v52-v53-map.json', import.meta.url), 'utf8'));
 const ciQueueAssist = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v53-v54-map.json', import.meta.url), 'utf8'));
 const ciQueueParticipation = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v54-v55-map.json', import.meta.url), 'utf8'));
+const prTaskBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v55-v56-map.json', import.meta.url), 'utf8'));
+const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v56-v57-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
 // three scoped replacements separately, followed by exact v49 review and v50
 // runtime additions, the v51 claim-renewal clarification, the v52 title
 // metadata correction, the v53 display-name changes, the v54 resident CI queue assist,
-// and the v55 queue participation and explicit holder removal. Undo only these declared
+// the v55 queue participation and explicit holder removal, and the v56 Native
+// PR/Task identity successor, then the v57 holder-edit/terminal successor. Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v56Source() {
+  assert.equal(terminalRelease.schema,'clued.agent-contract-terminal-release-successor/1');
+  assert.equal(terminalRelease.source_version,56);assert.equal(terminalRelease.target_version,57);
+  assert.deepEqual(terminalRelease.edits.map(row=>row.id),['version','holder-readiness','holder-edit-verification','trusted-pr-terminal']);
+  assert.equal(terminalRelease.source_document_normalized_sha256,'767b47354d7dbf56079f265780b4c83b61a054bc2ed51dd59f52d290b37d5864');
+  assert.equal(sha256(source),terminalRelease.target_document_normalized_sha256);
+  assert.deepEqual(terminalRelease.edits[0],{id:'version',before:'Contract version: 56',after:'Contract version: 57'});
+  const prefixes=['- A guarded holder authorizes each exact full head SHA','- Before the lease expires, call `clued_work_renew`',
+    '- The `clued-work-admission` check then fully verifies'];
+  let restored=source;
+  for(const [index,edit] of terminalRelease.edits.entries()){
+    if(index){
+      assert.ok(edit.before.startsWith(prefixes[index-1]));
+      assert.ok(edit.after.startsWith(edit.before+'\n\n'),'append only within the three existing appendix blocks');
+      assert.equal(/(?:^|\n)(?:### |<a id=)/.test(edit.after),false,'no edit may consume another appendix');
+    }
+  }
+  for(const {id,before,after} of [...terminalRelease.edits].reverse()){
+    assert.equal(restored.split(after).length-1,1,`${id}: exact terminal successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),terminalRelease.source_document_normalized_sha256);
+  return restored;
+}
+function v55Source() {
+  const source=v56Source();
+  assert.equal(prTaskBinding.schema, 'clued.agent-contract-pr-task-binding-successor/1');
+  assert.equal(prTaskBinding.source_version, 55);
+  assert.equal(prTaskBinding.target_version, 56);
+  assert.deepEqual(prTaskBinding.edits.map(row => row.id), ['version', 'pr-task-core', 'pr-task-admission']);
+  assert.equal(prTaskBinding.source_document_normalized_sha256, 'b675b6fd89423b08d71e36b010b960af9636bfd6ecf3870847a3025eb5b9a94a');
+  assert.equal(sha256(source), prTaskBinding.target_document_normalized_sha256);
+  const [version, core, admission] = prTaskBinding.edits;
+  assert.deepEqual(version, { id: 'version', before: 'Contract version: 55', after: 'Contract version: 56' });
+  assert.ok(core.before.startsWith('   Put `Clued-Work-Claim:'));
+  assert.ok(core.after.startsWith('   Native binds each PR to one Task;'));
+  assert.equal(core.before.trim().split('\n').length, 1);
+  assert.equal(core.after.trim().split('\n').length, 1);
+  assert.ok(core.after.endsWith(core.before.slice(core.before.indexOf('Follow admission state and layer'))),
+    'existing core admission/Owner/freshness/rerun/frozen rules remain exact');
+  assert.ok(admission.before.startsWith('- Put `Clued-Work-Claim:'));
+  assert.ok(admission.after.startsWith('- Native is the single source of PR-to-Task identity:'));
+  for (const text of [admission.before, admission.after]) {
+    assert.equal(text.includes('- Each pull request has a layer,'), false, 'A.5 layer and Owner rules are outside the edit');
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text), false, 'the admission edit cannot consume another section');
+  }
+  let restored = source;
+  for (const { id, before, after } of [...prTaskBinding.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact PR Task successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), prTaskBinding.source_document_normalized_sha256);
+  return restored;
+}
+
 function v54Source() {
+  const source = v55Source();
   assert.equal(ciQueueParticipation.schema, 'clued.agent-contract-ci-queue-participation-successor/1');
   assert.equal(ciQueueParticipation.source_version, 54);
   assert.equal(ciQueueParticipation.target_version, 55);
@@ -162,7 +221,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v55 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v57 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

@@ -42,6 +42,17 @@ export const trainFrontRefusal = trainModeUnreadable => (trainModeUnreadable ===
 
 const SHA = /^[a-f0-9]{40}$/;
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const TASK_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+function projectedHolderForJob(h, job, claimId) {
+  if (!plain(h) || h.claimId !== claimId || !TASK_UUID.test(h.taskId ?? '') || !Array.isArray(h.boundPrs)
+    || h.boundPrs.length > 50 || new Set(h.boundPrs).size !== h.boundPrs.length
+    || h.boundPrs.some(ref => typeof ref !== 'string' || !ref.startsWith(`${job.repo}#`)
+      || !/^[1-9][0-9]{0,9}$/.test(ref.slice(job.repo.length+1))) || !h.boundPrs.includes(`${job.repo}#${job.pr}`)) return null;
+  // Several PRs share the Task's slot. The signed front/batch records below
+  // choose this exact PR; the live CI head must still be its tested head.
+  if (h.boundPrs.length > 1 && (!['running','green'].includes(h.ciState) || h.ciHeadSha !== job.headSha)) return null;
+  return { ...h, pr: job.pr, boundPr: `${job.repo}#${job.pr}` };
+}
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 
@@ -152,7 +163,7 @@ export function trainHeadDecision({ job, claimId, holders, proof, storeRefused =
   const no = TRAIN_SINGLE_GREEN_NOT_PROVEN, at = v => (typeof v === 'string' ? Date.parse(v) : NaN);
   if (!plain(job) || !isTrainFrontJobV2(job) || typeof claimId !== 'string' || !Number.isSafeInteger(now)) return no;
   if (!plain(holders) || holders.onDuty !== true || !Array.isArray(holders.holders) || holders.holders.length !== 1) return no;
-  const h = holders.holders[0], since = at(h?.takenAt);
+  const h = projectedHolderForJob(holders.holders[0], job, claimId), since = at(h?.takenAt);
   if (!plain(h) || h.claimId !== claimId || h.pr !== job.pr || h.boundPr !== `${job.repo}#${job.pr}` || !Number.isFinite(since)) return no;
   if (!plain(proof) || proof.mode !== 'on' || proof.pr !== job.pr || proof.headSha !== job.headSha || proof.claimId !== claimId || proof.mainSha !== job.baseSha) return no;
   let limited = false;
@@ -198,7 +209,7 @@ export function strictFrontHeadDecision({ job, holders, frontProof, proof, fullS
     if (!sameClaimGeneration(observedClaim, batchClaim) || frontProof.front.claimId !== observedClaim.claimId
       || frontProof.repo !== job.repo || frontProof.sourceManifestSha256 !== job.sourceManifestSha256 || frontProof.mainSha !== job.baseSha) return no;
     if (!plain(holders) || holders.onDuty !== true || !Array.isArray(holders.holders) || holders.holders.length !== 1) return no;
-    const h = holders.holders[0], since = Date.parse(h?.takenAt ?? ''), written = Date.parse(frontProof.writtenAt);
+    const h = projectedHolderForJob(holders.holders[0], job, observedClaim.claimId), since = Date.parse(h?.takenAt ?? ''), written = Date.parse(frontProof.writtenAt);
     if (h?.claimId !== observedClaim.claimId || h.pr !== job.pr || h.boundPr !== `${job.repo}#${job.pr}`
       || !Number.isFinite(since) || Date.parse(frontProof.front.since) !== since || frontProof.front.pr !== job.pr
       || frontProof.front.headSha !== job.headSha || written < since || written > now || now - written >= frontProof.sweepFreshMs) return no;

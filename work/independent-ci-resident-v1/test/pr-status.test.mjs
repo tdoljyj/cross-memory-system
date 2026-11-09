@@ -9,6 +9,12 @@ import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatu
 import { nodeContext, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named turing (node: 'turing').
 const PR_STATUS_CONTEXT = nodeContext('turing');
+
+test('a Native claim or head authorization change notice does not claim that PR text changed', () => {
+  const shown = events({ status: { pending: [], notices: [{ kind: 'new-trigger', code: 'CLAIM_CHANGED', key: 'native:1', pr: 1, headSha: 'a'.repeat(40) }] }, now: Date.now() });
+  assert.match(shown[0].title, /认领或授权已更新/);
+  assert.ok(!shown[0].body.includes('正文'));
+});
 import { lane } from '../src/companion-main.mjs';
 import { restPolls } from './gh-rest-stub.mjs';
 

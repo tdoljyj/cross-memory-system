@@ -68,7 +68,7 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.equal(off.length + WORK_TOOLS.length, on.length, 'the flag adds exactly the five tools');
   const byName = Object.fromEntries(on.map((tool) => [tool.name, tool]));
   assert.deepEqual(byName.clued_work_verify._meta['clued/requiredScopes'], ['context:read']);
-  assert.equal(byName.clued_work_verify.annotations.readOnlyHint, false, 'pr_ref binds the claim');
+  assert.equal(byName.clued_work_verify.annotations.readOnlyHint, false, 'qualified CI resolve can bind a relation');
   assert.equal(byName.clued_work_verify.annotations.idempotentHint, true);
   assert.equal(byName.clued_work_verify.inputSchema.properties.pr_ref.pattern, '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$');
   assert.equal(byName.clued_work_verify.annotations.destructiveHint, false);
@@ -89,25 +89,41 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   for(const branch of alternatives) {
     assert.equal(branch.type,'object');assert.equal(branch.additionalProperties,false);
     for(const [name,definition] of Object.entries(byName.clued_work_renew.inputSchema.properties))
-      if(name!=='action') assert.deepEqual(branch.properties[name],definition,'complete branch preserves '+name);
+      if(name!=='action'&&name!=='terminal_release_ready') assert.deepEqual(branch.properties[name],definition,'complete branch preserves '+name);
+    assert.equal(Object.hasOwn(branch.properties,'terminal_release_ready'),branch.properties.action?.const==='authorize_head');
   }
   assert.deepEqual(commands.prepare_handover,['action','claim_id','fence','holder_label','idempotency_key']);
   assert.deepEqual(commands.offer_handover,['action','request_id','lease_key']);
   assert.deepEqual(commands.accept_handover,['action','request_id','receiver_key']);
   assert.deepEqual(byName.clued_work_release.inputSchema.required, ['claim_id', 'fence', 'outcome']);
-  assert.deepEqual(byName.clued_work_verify.inputSchema.required, ['claim_id']);
+  const verifySchema=byName.clued_work_verify.inputSchema;
+  assert.equal(verifySchema.type,'object');
+  assert.equal(verifySchema.required,undefined,'claim_id belongs only to normal verify');
+  assert.equal(verifySchema.additionalProperties,false);
+  assert.equal(verifySchema.properties.scope.default,undefined,'Host union must never default an unknown resolve scope');
+  assert.deepEqual(verifySchema.anyOf[0].required,['claim_id']);
+  assert.deepEqual(verifySchema.anyOf[0].not,{required:['action']});
+  assert.deepEqual(verifySchema.anyOf[1].required,['action','pr_ref','head_sha','base_sha','target_branch']);
+  assert.deepEqual(verifySchema.anyOf[2].required,['action','scope','claim_id','fence','execution_epoch','lease_version','changed_paths','lease_key']);
+  for(const branch of verifySchema.anyOf) {
+    assert.equal(branch.type,'object');assert.equal(branch.additionalProperties,false);
+    for(const name of Object.keys(branch.properties)) assert.ok(Object.hasOwn(verifySchema.properties,name),'outer Host properties preserve '+name);
+  }
   assert.deepEqual(byName.clued_work_takeover.inputSchema.required, ['claim_id', 'idempotency_key', 'holder_label']);
   assert.deepEqual(byName.clued_work_release.inputSchema.properties.outcome.enum, ['completed', 'abandoned', 'draining']);
   for (const name of WORK_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
-  // The private lease key (migration 20261005190000) is an optional input of renew and release only.
+  // Existing renewal/release compatibility remains; only the explicit holder
+  // edit branch adds the private key to verification, never normal or resolve.
   for (const name of ['clued_work_renew', 'clued_work_release']) {
     assert.equal(byName[name].inputSchema.properties.lease_key.pattern, '^clued_lk_[0-9a-f]{64}$', name);
     const required=name==='clued_work_renew'?normal.required:byName[name].inputSchema.required;
     assert.ok(!required.includes('lease_key'), name);
   }
-  for (const name of ['clued_work_claim', 'clued_work_verify', 'clued_work_takeover']) {
+  for (const name of ['clued_work_claim', 'clued_work_takeover']) {
     assert.equal(byName[name].inputSchema.properties.lease_key, undefined, name);
   }
+  assert.equal(verifySchema.properties.lease_key.pattern,'^clued_lk_[0-9a-f]{64}$');
+  for(const branch of verifySchema.anyOf.slice(0,2)) assert.equal(branch.properties.lease_key,undefined);
   assert.ok(byName.clued_work_renew.inputSchema.properties.holder_session_ref);
   // The self-reported holder label (migration 20261005200000) on claim, takeover and renew.
   for (const name of ['clued_work_claim', 'clued_work_takeover', 'clued_work_renew']) {
@@ -120,6 +136,137 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.match(byName.clued_work_claim.description, /A continuation takes none/);
   assert.match(byName.clued_work_release.inputSchema.properties.evidence_ref.description, /continue without a token/);
   assert.equal(byName.clued_work_claim._meta['clued/scopeEnforcement'], 'server-side');
+});
+
+test('verify schema keeps complete Host properties and closed normal/resolve/edit alternatives without a resolve scope default',async()=>{
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_verify').inputSchema;
+  const Ajv=require('ajv');
+  const ajv=new Ajv({allErrors:true,useDefaults:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
+  const validate=ajv.compile(schema), [normal,resolve,edit]=schema.anyOf;
+  const claim_id='22222222-2222-4222-8222-222222222222';
+  const lookup={action:'resolve_pr_claim',pr_ref:'owner/repository#12',head_sha:'a'.repeat(40),base_sha:'b'.repeat(40),target_branch:'main'};
+  const normalInput={claim_id,changed_paths:['source/file.mjs'],head_sha:'a'.repeat(7),base_sha:'b'.repeat(64),pr_ref:'owner/repository#0'};
+  const editing={action:'verify_edit',scope:'global',claim_id,fence:2,execution_epoch:3,lease_version:4,
+    changed_paths:['source/file.mjs'],lease_key:'clued_lk_'+'e'.repeat(64)};
+  const project=(properties,input)=>Object.fromEntries(Object.entries(input).filter(([key])=>Object.hasOwn(properties,key)));
+  const cases=[normalInput,lookup,{...lookup,read_only:true},{...lookup,read_only:false},{...lookup,scope:'global'},
+    {...lookup,scope:'project:55555555-5555-4555-8555-555555555555'},editing,{...editing,changed_paths:[]}];
+  for(const input of cases) {
+    const fresh=structuredClone(input);
+    assert.equal(validate(fresh),true,JSON.stringify(validate.errors));
+    assert.deepEqual(fresh,input,'AJV must not inject a scope into resolve or otherwise alter business input');
+    assert.deepEqual(project(schema.properties,input),input,'a Host that projects only outer properties loses no fields');
+    const branch=input.action==='verify_edit'?edit:input.action?resolve:normal;
+    assert.deepEqual(project(branch.properties,input),input,'independent alternative normalization loses no fields');
+  }
+  assert.equal(schema.properties.scope.default,undefined);assert.equal(resolve.properties.scope.default,undefined);
+  assert.equal(edit.properties.scope.default,undefined,'editing always requires the actual explicit Task scope');
+  assert.equal(normal.properties.scope.default,'global','legacy normal verification keeps its original context semantics');
+  assert.equal(resolve.properties.claim_id,undefined);assert.equal(resolve.properties.changed_paths,undefined);
+  assert.equal(resolve.properties.mechanical_paths_proven,undefined);
+  assert.equal(schema.properties.head_sha.pattern,'^[0-9a-f]{7,64}$');
+  assert.equal(resolve.properties.head_sha.pattern,'^[0-9a-f]{40}$');
+  assert.equal(resolve.properties.base_sha.pattern,'^[0-9a-f]{40}$');
+  for(const key of ['action','pr_ref','head_sha','base_sha','target_branch']) {
+    const missing={...lookup};delete missing[key];assert.equal(validate(missing),false,'resolve missing '+key);
+  }
+  for(const key of ['action','scope','claim_id','fence','execution_epoch','lease_version','changed_paths','lease_key']){
+    const missing={...editing};delete missing[key];assert.equal(validate(missing),false,'edit missing '+key);
+  }
+  for(const extra of [{pr_ref:lookup.pr_ref},{head_sha:lookup.head_sha},{base_sha:lookup.base_sha},
+    {target_branch:'main'},{mechanical_paths_proven:['generated/file']},{read_only:true},{terminal_release_ready:true},
+    {fence:0},{execution_epoch:0},{lease_version:0},{lease_key:'invalid'}])
+    assert.equal(validate({...editing,...extra}),false,JSON.stringify(extra));
+  assert.equal(validate({...normalInput,lease_key:editing.lease_key}),false,'normal verification never takes a holder key');
+  for(const bad of [{}, {...lookup,claim_id}, {...lookup,changed_paths:['source/file.mjs']},
+    {...lookup,mechanical_paths_proven:['generated/file']}, {...lookup,lease_key:'clued_lk_'+'c'.repeat(64)},
+    {...lookup,head_sha:'a'.repeat(7)}, {...lookup,base_sha:'b'.repeat(7)}, {...lookup,pr_ref:'owner/repository#0'},
+    {...lookup,read_only:'true'}, {...lookup,action:'execution_current'}, {...lookup,target_branch:'main\nother'},
+    {...lookup,unexpected_authority:true}, {...normalInput,read_only:true}, {...normalInput,action:'resolve_pr_claim'}])
+    assert.equal(validate(structuredClone(bad)),false,JSON.stringify(bad));
+  const mechanical={...normalInput,mechanical_paths_proven:['generated/file']};
+  const hasMechanical=Object.hasOwn(normal.properties,'mechanical_paths_proven');
+  assert.equal(validate(mechanical),hasMechanical,'only the mechanical successor advertises normal-only proof');
+  if(hasMechanical) assert.deepEqual(schema.properties.mechanical_paths_proven,normal.properties.mechanical_paths_proven);
+});
+
+test('only authorize_head can declare holder terminal readiness through complete advertised Host schemas',async()=>{
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_renew').inputSchema;
+  const Ajv=require('ajv'),ajv=new Ajv({allErrors:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
+  const validate=ajv.compile(schema),auth=schema.anyOf.find(branch=>branch.properties.action.const==='authorize_head');
+  const input={action:'authorize_head',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,lease_version:1,
+    lease_key:'clued_lk_'+'e'.repeat(64),repository:'owner/repository',head_sha:'f'.repeat(40),target_branch:'main',
+    idempotency_key:'terminal-ready-fixture',terminal_release_ready:true};
+  for(const ready of [true,false]){
+    const business={...input,terminal_release_ready:ready};assert.equal(validate(business),true,JSON.stringify(validate.errors));
+    for(const props of [schema.properties,auth.properties])
+      assert.deepEqual(Object.fromEntries(Object.entries(business).filter(([key])=>Object.hasOwn(props,key))),business);
+  }
+  assert.equal(validate({...input,terminal_release_ready:'true'}),false);
+  for(const branch of schema.anyOf.filter(branch=>branch!==auth)){
+    assert.equal(branch.properties.terminal_release_ready,undefined,'other commands cannot declare or clear readiness');
+    const action=branch.properties.action?.const;
+    const invalid={...input,...(action?{action}:{progress_ref:'new-progress'})};if(!action)delete invalid.action;
+    assert.equal(validate(invalid),false);
+  }
+});
+
+test('real Worker Binding and OAuth preserve holder edit and readiness business fields but never use Host metadata as proof',async()=>{
+  const worker=await loadContinuityWorker();
+  const editing={action:'verify_edit',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,execution_epoch:2,
+    lease_version:3,lease_key:'clued_lk_'+'e'.repeat(64),changed_paths:['source/file.mjs']};
+  const authorizing={action:'authorize_head',scope:'global',claim_id:editing.claim_id,fence:1,lease_version:3,lease_key:editing.lease_key,
+    repository:'owner/repository',head_sha:'f'.repeat(40),target_branch:'main',idempotency_key:'worker-ready-fixture',terminal_release_ready:true};
+  const {calls,restore}=mockFetch(({body})=>{
+    assert.equal(Object.hasOwn(body.p_input,'_meta'),false);
+    return Response.json(body.p_input.lease_key?{status:'ok',verdict:'ADMITTED',holder_edit_authorized:true}
+      :{status:'rejected',error_code:'work_claim_lease_key_required'});
+  });
+  try{
+    for(const token of [bindingToken,oauthToken])for(const [tool,business] of [['clued_work_verify',editing],['clued_work_renew',authorizing]]){
+      const annotated={...business,_meta:{lease_key:'clued_lk_'+'a'.repeat(64),execution_epoch:99,terminal_release_ready:false}};
+      const response=(await (await worker.fetch(mcp(token,tool,annotated),enabled,ctx)).json()).result;
+      assert.equal(response.isError,false);assert.deepEqual(calls.at(-1).body.p_input,business);
+      if(token===bindingToken)assert.equal(calls.at(-1).rpc,tool+'_v1');
+      else{assert.equal(calls.at(-1).rpc,'clued_oauth_call');assert.equal(calls.at(-1).body.p_tool,tool);}
+      const missing={...annotated};delete missing.lease_key;
+      const denied=(await (await worker.fetch(mcp(token,tool,missing),enabled,ctx)).json()).result.structuredContent;
+      assert.equal(denied.error_code,'work_claim_lease_key_required');assert.equal(Object.hasOwn(calls.at(-1).body.p_input,'lease_key'),false);
+    }
+  }finally{restore();}
+});
+
+test('real Worker Binding and OAuth resolve preserve omitted scope/claim and read_only while stripping Host metadata',async()=>{
+  const worker=await loadContinuityWorker();
+  const business={action:'resolve_pr_claim',pr_ref:'owner/repository#12',head_sha:'a'.repeat(40),base_sha:'b'.repeat(40),target_branch:'main'};
+  const {calls,restore}=mockFetch(({body})=>{
+    assert.equal(Object.hasOwn(body.p_input,'_meta'),false);
+    assert.equal(Object.hasOwn(body.p_input,'scope'),false);
+    assert.equal(Object.hasOwn(body.p_input,'claim_id'),false);
+    assert.equal(Object.hasOwn(body.p_input,'lease_key'),false);
+    return Response.json(body.p_input.head_sha?{status:'ok',binding_status:'unbound',scope:null,task_id:null,claim:null,
+      auto_bound:false,receipt_id:null}:{status:'rejected',error_code:'work_claim_pr_binding_input_invalid'});
+  });
+  try {
+    for(const token of [bindingToken,oauthToken]) for(const input of [business,{...business,read_only:true}]) {
+      const annotated={...input,_meta:{scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',
+        read_only:false,head_sha:'c'.repeat(40),lease_key:'clued_lk_'+'d'.repeat(64),mechanical_paths_proven:['forged/file']}};
+      const result=(await (await worker.fetch(mcp(token,'clued_work_verify',annotated),enabled,ctx)).json()).result;
+      assert.equal(result.isError,false);assert.equal(result.structuredContent.binding_status,'unbound');
+      const command=calls.at(-1);
+      if(token===bindingToken) { assert.equal(command.rpc,'clued_work_verify_v1');assert.match(command.body.p_token_hash,/^[0-9a-f]{64}$/); }
+      else { assert.equal(command.rpc,'clued_oauth_call');assert.equal(command.body.p_tool,'clued_work_verify'); }
+      assert.deepEqual(command.body.p_input,input);
+      const missing={...annotated};delete missing.head_sha;
+      const denied=(await (await worker.fetch(mcp(token,'clued_work_verify',missing),enabled,ctx)).json()).result.structuredContent;
+      assert.equal(denied.error_code,'work_claim_pr_binding_input_invalid');
+      assert.equal(Object.hasOwn(calls.at(-1).body.p_input,'head_sha'),false,'Host metadata never supplies missing business proof');
+    }
+  } finally {restore();}
 });
 
 test('complete command alternatives preserve validation and Host-normalized private business fields', async () => {

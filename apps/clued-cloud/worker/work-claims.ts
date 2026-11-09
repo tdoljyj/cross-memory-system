@@ -52,7 +52,11 @@ const holderClient = { type: "string", minLength: 1, maxLength: 80, description:
 const holderSessionTitle = { type: "string", minLength: 1, maxLength: 200, description: "Your session's title as the Owner sees it in your client, when you can read it. Self-reported." } as const;
 const leaseKey = {
   type: "string", pattern: "^clued_lk_[0-9a-f]{64}$",
-  description: "The claim's current private lease key. Required for offer_handover, authorize_head and every renew/release after a handover, even on the same Binding. Keep it only in this session. Never send it to another Agent or put it in a file, commit, pull request, Record, Event, Receipt, checkpoint or log.",
+  description: "The claim's current private lease key. Required for verify_edit, offer_handover, authorize_head and every renew/release after a handover, even on the same Binding. Keep it only in this session. Never send it to another Agent or put it in a file, commit, pull request, Record, Event, Receipt, checkpoint or log.",
+} as const;
+const terminalReleaseReady = {
+  type: "boolean",
+  description: "authorize_head only: the actual holder explicitly declares no unfinished editing in the claim's exact current resources and conditionally permits release after every PR reliably terminates and all execution is proved idle. False revokes this intent; a later successful authorization that omits this field also revokes it. Renewal, changed resources, key reissue or handover invalidate it. This is neither CI nor production permission, and unknown runtime evidence retains the claim.",
 } as const;
 
 const headAuthorization = {
@@ -64,6 +68,7 @@ const headAuthorization = {
   head_sha: { type: "string", pattern: "^[0-9a-f]{40}$", description: "Full exact commit SHA. No wildcard or future head is authorized." },
   target_branch: { type: "string", minLength: 1, maxLength: 200, pattern: "^\\S+$" },
   pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
+  pr_number: { type: "integer", minimum: 1, maximum: 9999999999, description: "Optional known PR number for authorize_head. The holder-authorized call atomically binds this PR to the claim's Task; it must agree with pr_ref when both are given. A new relation has unknown PR lifecycle until the existing qualified CI observes it open; holder authorization never reopens a closed relation." },
   workflow: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,200}\\.ya?ml$", description: "Exact manually dispatched workflow file. Omit for a pull request." },
   idempotency_key: idempotencyKey,
 } as const;
@@ -81,9 +86,51 @@ const renewProperties = {
 // also tolerates a Host that cannot apply `not`, without an ambiguous oneOf.
 // SQL remains the command validator and authority boundary.
 const renewCommand = (action: string, required: readonly string[]) => ({
-  type: "object", properties: { ...renewProperties, action: { type: "string", const: action } },
+  type: "object", properties: { ...renewProperties,
+    ...(action === "authorize_head" ? { terminal_release_ready: terminalReleaseReady } : {}),
+    action: { type: "string", const: action } },
   required, additionalProperties: false,
 });
+
+// Hosts may build a form from outer properties before selecting an alternative.
+// Keep the complete union there, with no global default on the resolve path;
+// each alternative independently remains closed and fully validates its input.
+const verifyScope = {
+  type: "string", pattern: "^(global|project:[0-9a-fA-F-]{36})$",
+  description: "Optional fixed context constraint; omitted means derive and authorize the Task's actual context, never default global.",
+} as const;
+const verifyNormalProperties = {
+  scope, claim_id: uuid,
+  changed_paths: { type: "array", maxItems: 2000, items: { type: "string", minLength: 1, maxLength: 400 } },
+  mechanical_paths_proven: {
+    type: "array", maxItems: 2000,
+    description: "CI-admission Binding only: declared mechanical literal paths independently verified against the exact PR base/head bytes; every entry must occur in changed_paths. Other callers cannot assert this proof. Without it full write-set coverage applies.",
+    items: { type: "string", minLength: 1, maxLength: 400 },
+  },
+  head_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" },
+  pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
+} as const;
+const verifyResolveProperties = {
+  action: { type: "string", const: "resolve_pr_claim" },
+  scope: verifyScope,
+  pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[1-9][0-9]{0,9}$" },
+  head_sha: { type: "string", pattern: "^[0-9a-f]{40}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{40}$" },
+  target_branch: { type: "string", minLength: 1, maxLength: 200, pattern: "^\\S+$" },
+  read_only: { type: "boolean", description: "True only narrows authority: do not bind or reactivate even for CI; ordinary Agents are always read-only." },
+} as const;
+const verifyEditProperties = {
+  action: { type: "string", const: "verify_edit" },
+  scope: { ...verifyScope, description: "Required actual Task context for holder editing; never inferred or defaulted." }, claim_id: uuid,
+  fence: { type: "integer", minimum: 1 }, execution_epoch: { type: "integer", minimum: 1 },
+  lease_version: { type: "integer", minimum: 1 },
+  changed_paths: verifyNormalProperties.changed_paths, lease_key: leaseKey,
+} as const;
+const verifyProperties = {
+  ...verifyNormalProperties, ...verifyResolveProperties, ...verifyEditProperties, scope: verifyScope,
+  action: { type: "string", enum: ["resolve_pr_claim", "verify_edit"] },
+  head_sha: verifyNormalProperties.head_sha, base_sha: verifyNormalProperties.base_sha,
+  pr_ref: verifyNormalProperties.pr_ref,
+} as const;
 
 export const workClaimTools = [
   {
@@ -117,7 +164,7 @@ export const workClaimTools = [
         { type: "object", properties: renewProperties, additionalProperties: false,
           not: { required: ["action"] }, required: ["claim_id", "fence", "lease_version", "progress_ref"] },
       ],
-      properties: renewProperties,
+      properties: { ...renewProperties, terminal_release_ready: terminalReleaseReady },
       additionalProperties: false,
     },
   },
@@ -140,22 +187,17 @@ export const workClaimTools = [
   {
     name: "clued_work_verify",
     description:
-      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, copy_not_adopted, task_ci_head_cap_reached, admission_binding_required). Without pr_ref it is read-only, and that is how an Agent checks a claim. With pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused; once the Owner has marked a CI admission Binding, only that Binding may pass pr_ref (others get admission_binding_required). Each distinct head_sha it admits counts once toward the Task's GitHub CI meter: at most 40 heads per Task in any 24 hours, across all of its claims; a refusal gives ci_retry_after.",
+      "Check a CI gate, read the single Native PR-to-Task projection, or verify actual holder editing authority. Normal verify requires claim_id and preserves the live Task/fence, write-set, head authorization and CI-role checks; it never binds from PR prose. action=resolve_pr_claim takes an exact pr_ref/head_sha/base_sha/target_branch and derives the Task's current claim/scope/fence/epoch. Scope is optional only for this action: omission means unknown, never global; actual context permission is checked after deriving the Task. Ordinary Agents read existing bindings only. The existing explicit CI-admission Binding may discover an unbound PR from one unique current holder-key-authorized exact repo/head/target; read_only=true prohibits that write even for CI. read_only=false gives no extra authority. Resolution is not execution admission, never consumes the CI head meter and returns no private key. One PR belongs to one Task; a Task may have multiple PRs. action=verify_edit instead requires explicit scope, claim_id, fence, execution_epoch, lease_version, changed_paths and the current private lease_key. The server additionally checks context:write, the actual current holder, live Task and exact CAS/key/coverage; only success returns holder_edit_authorized:true and current terminal_release_ready. It creates no PR binding, execution admission, head-meter use or renewal; normal/resolve never accept a lease key or prove editing authority. Normal admitting verify still meters distinct heads per Task and requires the original CI identity and protected gates.",
     inputSchema: {
-      type: "object",
-      required: ["claim_id"],
-      properties: {
-        scope, claim_id: uuid,
-        changed_paths: { type: "array", maxItems: 2000, items: { type: "string", minLength: 1, maxLength: 400 } },
-        mechanical_paths_proven: {
-          type: "array", maxItems: 2000,
-          description: "CI-admission Binding only: declared mechanical literal paths independently verified against the exact PR base/head bytes; every entry must occur in changed_paths. Other callers cannot assert this proof. Without it full write-set coverage applies.",
-          items: { type: "string", minLength: 1, maxLength: 400 },
-        },
-        head_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" },
-        pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
-      },
-      additionalProperties: false,
+      type: "object", properties: verifyProperties, additionalProperties: false,
+      anyOf: [
+        { type: "object", required: ["claim_id"], not: { required: ["action"] },
+          properties: verifyNormalProperties, additionalProperties: false },
+        { type: "object", required: ["action", "pr_ref", "head_sha", "base_sha", "target_branch"],
+          properties: verifyResolveProperties, additionalProperties: false },
+        { type: "object", required: ["action", "scope", "claim_id", "fence", "execution_epoch", "lease_version", "changed_paths", "lease_key"],
+          properties: verifyEditProperties, additionalProperties: false },
+      ],
     },
   },
   {
@@ -186,7 +228,7 @@ export const workClaimToolPolicies = {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
   },
   clued_work_verify: {
-    // With pr_ref the first admitting verify binds the claim (one receipt), so not read-only.
+    // Qualified CI resolve may bind or reactivate a relation; ordinary Agents remain read-only.
     scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
   clued_work_takeover: {
