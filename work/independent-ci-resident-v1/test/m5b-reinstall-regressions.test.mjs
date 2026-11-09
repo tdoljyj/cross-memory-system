@@ -56,7 +56,7 @@ async function fixture() {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-m5b-import-'));
     const csc = path.join(framework, 'csc.exe');
     const dumpSource = path.join(dir, 'Dump.cs'), dump = path.join(dir, 'dump.exe');
-    await fs.writeFile(dumpSource, 'public static class Dump { public static int Main(string[] a) { System.Console.Write(RegistrarCore.ImportScript("M5TestDistro", a[0], 1000)); return 0; } }');
+    await fs.writeFile(dumpSource, 'public static class Dump { public static int Main(string[] a) { System.Console.Write(a[0] == "--validator" ? RegistrarCore.MachineWslClientScript : RegistrarCore.ImportScript("M5TestDistro", a[0], 1000)); return 0; } }');
     const refs = ['System.dll', 'System.Core.dll', 'System.Web.Extensions.dll'].map(n => `/reference:${path.join(framework, n)}`);
     const compiled = run(csc, ['/nologo', '/noconfig', '/target:exe', '/main:Dump', ...refs, `/out:${dump}`, source, dumpSource]);
     assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
@@ -65,6 +65,7 @@ async function fixture() {
 public static class FakeWsl {
   public static int Main(string[] a) {
     if (Environment.GetEnvironmentVariable("FAKE_UTF16") == "1") Console.OutputEncoding = System.Text.Encoding.Unicode;
+    if (Environment.GetEnvironmentVariable("FAKE_GBK") == "1") Console.OutputEncoding = System.Text.Encoding.GetEncoding(936);
     string step = a[0] == "--import-in-place" ? "IMPORT" : a[0] == "--distribution" ? "PROBE" : "INFO";
     if (step == "PROBE" && Environment.GetEnvironmentVariable("FAKE_HANG") == "1") System.Threading.Thread.Sleep(10000);
     Console.WriteLine("WSL fixture " + step + " \\u7248\\u672c\\u6d4b\\u8bd5");
@@ -84,18 +85,23 @@ public static class FakeWsl {
 }
 
 async function execute(t, { importExit = 9, probeExit = 7, registered = true, wrongBase = false,
-  extendedBase = false, utf16 = false, hang = false, stale = false, weakOldAcl = false } = {}) {
+  extendedBase = false, utf16 = false, gbk = false, hang = false, stale = false, weakOldAcl = false, clientRefusal = false } = {}) {
   const tools = await fixture(), dir = await fs.mkdtemp(path.join(tools.dir, 'run-'));
   const vhdx = path.join(dir, 'ext4.vhdx'), uidFile = path.join(dir, 'uid.txt');
   await fs.writeFile(vhdx, 'offline fixture; never imported');
   const dumped = run(tools.dump, [vhdx]);
   assert.equal(dumped.status, 0, dumped.stdout + dumped.stderr);
-  // The production program fixes System32 wsl.exe. This one transport literal
-  // is replaced in the test copy; every lifecycle/diagnostic branch stays real.
-  assert.ok(dumped.stdout.includes("$wsl = 'C:\\Windows\\System32\\wsl.exe'"));
-  let program = dumped.stdout.replace("$wsl = 'C:\\Windows\\System32\\wsl.exe'", `$wsl = '${tools.fake}'`);
+  // Substitute only the trust transport. The shared resolver has its own negative
+  // tests below; the complete generated lifecycle/diagnostic program stays real.
+  assert.ok(dumped.stdout.includes("$p = 'C:\\Program Files\\WSL\\wsl.exe'"));
+  assert.ok(dumped.stdout.includes('$r.client = Get-CluedMachineWslClient'));
+  let program = dumped.stdout.replace('$r.client = Get-CluedMachineWslClient', '$r.client = Get-FixtureWslClient');
   if (hang) program = program.replace("$distro, '--exec', '/bin/true') 120000", "$distro, '--exec', '/bin/true') 300");
   const adapter = `
+function Get-FixtureWslClient {
+  if ($env:FAKE_CLIENT_REFUSAL -eq '1') { throw 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID' }
+  [pscustomobject]@{ contract = 'clued.independent-ci.wsl-client/1'; path = '${tools.fake}'; sha256 = ('a'*64); signerThumbprint = ('B'*40) }
+}
 function global:Get-ChildItem { param([string]$LiteralPath)
   if ($LiteralPath -eq 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss') {
     if ($env:FAKE_REGISTERED -eq '1') { [pscustomobject]@{ PSPath = 'HKCU:\\Fixture\\one' } }; return
@@ -125,7 +131,7 @@ if (@($raw.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -eq 'S-
   const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
     env: { ...process.env, FAKE_IMPORT_EXIT: String(importExit), FAKE_PROBE_EXIT: String(probeExit),
       FAKE_REGISTERED: registered ? '1' : '0', FAKE_REG_BASE: wrongBase ? 'C:\\wrong' : (extendedBase ? '\\\\?\\' : '') + dir,
-      FAKE_UID_FILE: uidFile, FAKE_OUTPUT_PATH: output, FAKE_UTF16: utf16 ? '1' : '0', FAKE_HANG: hang ? '1' : '0' },
+      FAKE_UID_FILE: uidFile, FAKE_OUTPUT_PATH: output, FAKE_UTF16: utf16 ? '1' : '0', FAKE_GBK: gbk ? '1' : '0', FAKE_CLIENT_REFUSAL: clientRefusal ? '1' : '0', FAKE_HANG: hang ? '1' : '0' },
   });
   assert.equal(await fs.stat(output).then(() => true, () => false), true,
     `a failed import must retain its diagnostic result; exit=${result.status}`);
@@ -207,5 +213,99 @@ test('M5-b import success still requires a runnable distribution; missing or wro
     const bad = await execute(t, { importExit: 0, probeExit: 0, ...patch });
     assert.equal(bad.result.status, 4);
     assert.equal(await fs.stat(bad.uidFile).then(() => true, () => false), false);
+  }
+});
+
+test('M5-b invalid machine client leaves a protected refusal and runs no WSL command', { skip: !windows }, async t => {
+  const { result, diagnostic: d, uidFile } = await execute(t, { clientRefusal: true });
+  assert.equal(result.status, 8); assert.equal(d.exitCode, 8);
+  assert.equal(d.refusal, 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID');
+  assert.deepEqual(d.commands, []);
+  assert.equal(await fs.stat(uidFile).then(() => true, () => false), false);
+});
+
+test('M5-b diagnostic capture decodes explicit non-ASCII GBK bytes independent of OS code page', { skip: !windows }, async t => {
+  const { result, diagnostic: d } = await execute(t, { gbk: true });
+  assert.equal(result.status, 3);
+  assert.match(d.commands[0].stdout, /\u7248\u672c\u6d4b\u8bd5/);
+  assert.ok(!d.commands[0].stdout.includes('\uFFFD'));
+});
+
+
+test('shared machine WSL validator is identical in Registrar and refuses unsafe fixed-path facts', { skip: !windows }, async () => {
+  const tools = await fixture();
+  const helper = await fs.readFile(new URL('../windows/wsl-client.ps1', import.meta.url), 'utf8');
+  assert.equal(run(tools.dump, ['--validator']).stdout.replace(/\r\n/g, '\n'), helper.replace(/\r\n/g, '\n'));
+  const management = (await fs.readFile(new URL('../windows/companion-headless.ps1', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const embedded = management.match(/^# begin shared machine WSL client[^\n]*\n([\s\S]*?)^# end shared machine WSL client/m);
+  assert.ok(embedded, 'management contains a marked shared resolver');
+  assert.equal(embedded[1].trim(), helper.replace(/\r\n/g, '\n').trim(), 'management trust resolver must match package and Registrar');
+  assert.ok(!helper.includes('param('), 'resolver has no configurable executable path');
+  const isolated = helper.replaceAll('Microsoft.PowerShell.Management\\Get-Item', 'Get-FixtureItem')
+    .replaceAll('Microsoft.PowerShell.Security\\Get-AuthenticodeSignature', 'Get-FixtureSignature')
+    .replaceAll('Microsoft.PowerShell.Utility\\Get-FileHash', 'Get-FixtureHash');
+  const harness = String.raw`
+$ErrorActionPreference = 'Stop'
+function Get-FixtureItem { param([string]$LiteralPath, [switch]$Force, $ErrorAction)
+  $script:seen.Add($LiteralPath)
+  if ($script:c.kind -eq 'missing' -and $LiteralPath -eq $script:c.path) { Write-Error 'fixture missing' -Category ObjectNotFound -ErrorAction Stop }
+  if ($script:c.kind -eq 'unreadable' -and $LiteralPath -eq $script:c.path) { throw 'fixture denied' }
+  $dir = $LiteralPath -cne 'C:\Program Files\WSL\wsl.exe'
+  if ($script:c.kind -eq 'wrongkind' -and $LiteralPath -eq $script:c.path) { $dir = -not $dir }
+  [pscustomobject]@{ Attributes = $(if ($script:c.kind -eq 'reparse' -and $LiteralPath -eq $script:c.path) { [IO.FileAttributes]::ReparsePoint } else { [IO.FileAttributes]::Normal }); PSIsContainer = $dir }
+}
+function Get-FixtureSignature { param([string]$LiteralPath, $ErrorAction)
+  if ($LiteralPath -cne 'C:\Program Files\WSL\wsl.exe') { throw 'UNEXPECTED_SIGNATURE_PATH' }
+  [pscustomobject]@{ Status = $(if ($script:c.kind -eq 'signature') { 'HashMismatch' } else { 'Valid' }); SignerCertificate = [pscustomobject]@{
+    Subject = $(switch ($script:c.kind) { 'cn' { 'CN=Microsoft Corporation Evil, O=Microsoft Corporation, C=US' }; 'org' { 'CN=Microsoft Corporation, O=Microsoft Corporation Evil, C=US' }; default { 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' } });
+    Thumbprint = $(if ($script:c.kind -eq 'thumb') { 'INVALID' } else { '0123456789abcdef0123456789abcdef01234567' }) }
+  }
+}
+function Get-FixtureHash { param([string]$LiteralPath, [string]$Algorithm, $ErrorAction)
+  if ($LiteralPath -cne 'C:\Program Files\WSL\wsl.exe' -or $Algorithm -cne 'SHA256') { throw 'UNEXPECTED_HASH_PATH' }
+  [pscustomobject]@{ Hash = $(if ($script:c.kind -eq 'hash') { 'INVALID' } else { 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789' }) }
+}
+$cases = @(@{ kind = 'valid'; path = ''; want = '' })
+foreach ($p in @('C:\', 'C:\Program Files', 'C:\Program Files\WSL', 'C:\Program Files\WSL\wsl.exe')) {
+  foreach ($k in @('reparse', 'wrongkind', 'missing', 'unreadable')) {
+    $cases += @{ kind = $k; path = $p; want = $(switch ($k) { 'reparse' { 'WSL_MACHINE_CLIENT_NOT_PLAIN' }; 'wrongkind' { 'WSL_MACHINE_CLIENT_NOT_PLAIN' }; 'missing' { 'WSL_MACHINE_CLIENT_MISSING' }; default { 'WSL_MACHINE_CLIENT_UNREADABLE' } }) }
+  }
+}
+foreach ($k in @('signature','cn','org','thumb','hash')) {
+  $cases += @{ kind = $k; path = ''; want = $(switch ($k) { 'signature' { 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID' }; 'hash' { 'WSL_MACHINE_CLIENT_UNREADABLE' }; default { 'WSL_MACHINE_CLIENT_PUBLISHER_INVALID' } }) }
+}
+$results = foreach ($script:c in $cases) {
+  $script:seen = New-Object 'Collections.Generic.List[string]'
+  $actual = ''; $value = $null
+  try { $value = Get-CluedMachineWslClient } catch { $actual = $_.Exception.Message }
+  if ($actual -cne $script:c.want) { throw ('CASE_FAILED:' + $script:c.kind + ':' + $script:c.path + ':' + $actual) }
+  if ($value) {
+    if (($value.PSObject.Properties.Name -join ',') -cne 'contract,path,sha256,signerThumbprint' -or
+        $value.contract -cne 'clued.independent-ci.wsl-client/1' -or $value.path -cne 'C:\Program Files\WSL\wsl.exe' -or
+        $value.sha256 -cne 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' -or
+        $value.signerThumbprint -cne '0123456789ABCDEF0123456789ABCDEF01234567') { throw 'VALID_METADATA_WRONG' }
+    if (($script:seen -join '|') -cne 'C:\|C:\Program Files|C:\Program Files\WSL|C:\Program Files\WSL\wsl.exe') { throw 'ANCESTOR_ORDER_WRONG' }
+  }
+  [pscustomobject]@{ kind = $script:c.kind; path = $script:c.path; refusal = $actual }
+}
+$results | ConvertTo-Json -Compress
+`;
+  const script = path.join(tools.dir, 'validator-cases.ps1');
+  await fs.writeFile(script, isolated + harness);
+  const checked = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script]);
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+  const cases = JSON.parse(checked.stdout);
+  assert.equal(cases.length, 22);
+  assert.equal(cases.filter(c => c.refusal === '').length, 1, 'rotated valid Microsoft signer is accepted');
+});
+
+test('root-shell trust validation precedes password generation and account mutation', async () => {
+  const code = await fs.readFile(source, 'utf8');
+  const flow = code.slice(code.indexOf('static int RegisterAccountSteps('), code.indexOf('static int RegisterAccountSteps(') + 7000);
+  const verified = flow.indexOf('RegistrarCore.MachineWslClientRefusal()');
+  assert.ok(verified > 0);
+  for (const mutation of ['NewRandomPassword()', 'NetUserAdd(', 'NetUserSetInfo(', 'Call(svc, "NewTask"']) {
+    const index = flow.indexOf(mutation);
+    if (index >= 0) assert.ok(verified < index, mutation);
   }
 });

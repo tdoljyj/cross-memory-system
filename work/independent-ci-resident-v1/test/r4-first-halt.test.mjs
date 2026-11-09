@@ -91,7 +91,7 @@ test('the companion starts only with Source scripts under the Source the install
   const main = await read(path.join(HERE, 'src', 'companion-main.mjs'));
   const start = main.slice(main.indexOf('export async function main'));
   assert.match(start, /const ciSourceManifestSha256 = sha256\(await fs\.readFile\(path\.join\(values\.root, 'record', 'source-manifest\.json'\)\)\);/);
-  assert.match(start, /const cfg = validateCompanionConfig\(raw\.companion, \{ root: values\.root, ciSourceManifestSha256 \}\);/);
+  assert.match(start, /\bcfg = validateCompanionConfig\(raw\.companion, \{ root: values\.root, ciSourceManifestSha256 \}\);/);
   assert.ok(start.indexOf('record\', \'source-manifest.json') < start.indexOf('validateCompanionConfig(raw.companion'), 'the record hash is read first');
 });
 

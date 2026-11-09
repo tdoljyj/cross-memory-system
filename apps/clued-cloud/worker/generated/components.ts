@@ -13,7 +13,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.run-python": "1.0.3",
   "hook.settings": "1.1.2",
   "script.runner-handover-qualifier": "1.0.0",
-  "script.components": "1.0.6",
+  "script.components": "1.0.7",
   "script.update-clued-skills": "1.0.2",
   "script.memory-sync": "1.0.1",
   "script.gated-proof-runtime": "1.0.5",
@@ -28,14 +28,14 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.38",
+  "script.independent-native-publication": "1.1.39",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.3",
   "script.source-only-workflow": "1.0.0",
-  "script.control-workflow-source": "1.0.9",
+  "script.control-workflow-source": "1.0.10",
   "script.required-applicability": "1.0.5",
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.3",
-  "script.merge-reconciliation": "1.0.22"
+  "script.merge-reconciliation": "1.0.23"
 };
 export const MCP_SERVER_VERSION = "0.9.2";

@@ -7,6 +7,30 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
+$env:PSModulePath='C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
+# BEGIN fixed machine WSL validator (identical to resident/windows/wsl-client.ps1).
+function Get-CluedMachineWslClient {
+  try { foreach ($m in @('Management', 'Security', 'Utility')) { Import-Module ('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.' + $m + '\Microsoft.PowerShell.' + $m + '.psd1') -ErrorAction Stop } } catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  $p = 'C:\Program Files\WSL\wsl.exe'
+  foreach ($v in @('C:\', 'C:\Program Files', 'C:\Program Files\WSL', $p)) {
+    try { $i = Microsoft.PowerShell.Management\Get-Item -LiteralPath $v -Force -ErrorAction Stop }
+    catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { throw 'WSL_MACHINE_CLIENT_MISSING' }; throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+    if (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($v -ceq $p -and $i.PSIsContainer) -or ($v -cne $p -and -not $i.PSIsContainer)) { throw 'WSL_MACHINE_CLIENT_NOT_PLAIN' }
+  }
+  try { $s = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ([string]$s.Status -cne 'Valid') { throw 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID' }
+  $c = $s.SignerCertificate
+  if ($null -eq $c -or $c.Subject -cnotmatch '(?:^|,\s*)CN=Microsoft Corporation(?:,|$)' -or
+      $c.Subject -cnotmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)' -or
+      $c.Thumbprint -cnotmatch '^[0-9A-Fa-f]{40}$') { throw 'WSL_MACHINE_CLIENT_PUBLISHER_INVALID' }
+  try { $h = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ($h -cnotmatch '^[0-9A-Fa-f]{64}$') { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  [pscustomobject]@{ contract = 'clued.independent-ci.wsl-client/1'; path = $p; sha256 = $h.ToLowerInvariant(); signerThumbprint = $c.Thumbprint.ToUpperInvariant() }
+}
+# END fixed machine WSL validator.
 # Public bytes only. This entry never starts a worker or grants an admission.
 # Source v2 (DESIGN S7, S10, S12): run by the resident companion as the Owner from the installed, admin-only
 # copy resident\source\<sha>\...\protected-job-bridge-v4 (the directory name is the accepted CI Source
@@ -102,7 +126,10 @@ try{
     $inputText=@{bytes=$raw.Length;sha256=(Hash-Bytes $raw);base64=[Convert]::ToBase64String($raw)}|ConvertTo-Json -Compress
   }else{foreach($leaf in @($name+'.json',$name+'.ready.json')){if(Test-Path -LiteralPath (Join-Path (Join-Path $Spool 'incoming') $leaf)){throw 'EXISTING_RECORD_PRESERVED_NO_RETRY'}}}
   $utf8=New-Object Text.UTF8Encoding($false,$true);$ib=$utf8.GetBytes($inputText);if($ib.Length -gt 1399000){throw 'PUBLIC_STDIN_BOUND'}
-  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName='C:\Windows\System32\wsl.exe'
+  # Standalone relay execution has the same trust gate as companion startup.
+  # The validator is part of this accepted, self-pinned Source file, with no path parameter.
+  $WslClient=Get-CluedMachineWslClient
+  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=[string]$WslClient.path
   $psi.Arguments='--distribution '+$Node.WslDistribution+' --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C '+$LinuxNode+' '+$LinuxEntry+' '+$operation
   $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.EnvironmentVariables.Clear()
   foreach($p in @(@('SystemRoot','C:\Windows'),@('WINDIR','C:\Windows'),@('PATH','C:\Windows\System32;C:\Windows'),@('USERPROFILE',$Node.OwnerProfileDirectory),@('LOCALAPPDATA',(Join-Path $Node.OwnerProfileDirectory 'AppData\Local')))){$psi.EnvironmentVariables[$p[0]]=$p[1]}

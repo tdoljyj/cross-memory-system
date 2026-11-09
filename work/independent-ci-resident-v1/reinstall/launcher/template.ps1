@@ -501,24 +501,84 @@ function Test-CurrentRootCarryShape {
 # (roleProbeMaintenance, 90392be5 executor.mjs:883-887) and then the stage-10 train; both have the swap broker put the
 # runner service on the helper binary, so verify-resident.ps1 must never run while either is in progress.
 #   phase 1: up to $FirstTrainWaitSeconds for a finished train (status.json train.last set) or a HALT;
+#            a fresh, matching standby observation with no live work makes only this wait inapplicable;
 #   phase 2, ALWAYS (also after a phase-1 timeout): up to $RunnerQuietWaitSeconds for the runner on its original binary AND
 #            stopped AND the executor not RUNNING, seen on two consecutive polls 5 s apart.
 # runnerQuiet = false -> the launcher does NOT run verify (treated as not verified: pause request + resident stopped).
+function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [DateTimeOffset]::MinValue) {
+  # status.json is an advisory view, not role authority. It can avoid a wait,
+  # never start work or bypass the independent runner-quiet and verify gates.
+  # Do not use Get-Key here: its pipeline output unwraps singleton JSON arrays.
+  # An array around an otherwise plausible object or scalar is still unknown.
+  if ($status -isnot [Collections.IDictionary]) { return $false }
+  foreach ($key in @('contract', 'writtenAt', 'node', 'executor', 'queue', 'current', 'pending', 'halt')) {
+    if ($status.Keys -cnotcontains $key) { return $false }
+  }
+  if ($status['contract'] -isnot [string] -or
+      $status['contract'] -cnotin @('clued.independent-ci.resident-status/6', 'clued.independent-ci.resident-status/7', 'clued.independent-ci.resident-status/8')) { return $false }
+  $node = $status['node']; $queue = $status['queue']; $executor = $status['executor']
+  if ($node -isnot [Collections.IDictionary] -or $queue -isnot [Collections.IDictionary] -or $executor -isnot [Collections.IDictionary]) { return $false }
+  foreach ($key in @('name', 'source', 'mode', 'probe')) { if ($node.Keys -cnotcontains $key) { return $false } }
+  $probe = $node['probe']
+  if ($probe -isnot [Collections.IDictionary]) { return $false }
+  foreach ($key in @('at', 'result', 'failures', 'failingSince')) { if ($probe.Keys -cnotcontains $key) { return $false } }
+  foreach ($key in @('generation', 'live')) { if ($queue.Keys -cnotcontains $key) { return $false } }
+  if ($executor.Keys -cnotcontains 'state' -or $executor['state'] -isnot [string] -or $executor['state'] -cne 'IDLE' -or
+      $node['name'] -isnot [string] -or $node['name'] -cne $NodeName -or
+      $node['source'] -isnot [string] -or $node['source'] -cne $CiSourceManifestSha256.Substring(0, 12) -or
+      $node['mode'] -isnot [string] -or $node['mode'] -cne 'STANDBY' -or
+      $probe['result'] -isnot [string] -or $probe['result'] -cne 'not-held' -or $null -ne $probe['failingSince'] -or
+      $probe['failures'] -isnot [int] -or $probe['failures'] -ne 0) { return $false }
+  $now = [DateTimeOffset]::UtcNow
+  foreach ($field in @(@($status, 'writtenAt', 300), @($probe, 'at', 900))) {
+    $text = $field[0][$field[1]]; $at = [DateTimeOffset]::MinValue
+    if ($text -isnot [string] -or $text -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})$' -or
+        -not [DateTimeOffset]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$at)) { return $false }
+    $age = ($now - $at).TotalSeconds
+    if ($age -lt -30 -or $age -gt $field[2]) { return $false }
+    if ($field[1] -ceq 'writtenAt' -and $at -lt $notBefore) { return $false }
+  }
+  if ($null -ne $status['halt'] -or $null -ne $status['current'] -or
+      $status['pending'] -isnot [Array] -or $status['pending'].Count -gt 100 -or
+      $queue['generation'] -isnot [string] -or $queue['generation'] -cnotmatch '^[0-9a-f]{12}$' -or
+      $queue['live'] -isnot [int] -or $queue['live'] -ne 0) { return $false }
+  # The producer retains terminal history in pending. It is not queued work;
+  # every live, unknown or malformed row still keeps the first-train wait.
+  foreach ($row in $status['pending']) {
+    if ($row -isnot [Collections.IDictionary]) { return $false }
+    foreach ($key in @('state', 'pr', 'headSha', 'baseSha')) { if ($row.Keys -cnotcontains $key) { return $false } }
+    if ($row['state'] -isnot [string] -or $row['state'] -cnotin @('DONE', 'STOPPED') -or
+        $row['pr'] -isnot [int] -or $row['pr'] -le 0 -or
+        $row['headSha'] -isnot [string] -or $row['headSha'] -cnotmatch '^[0-9a-f]{40}$' -or
+        $row['baseSha'] -isnot [string] -or $row['baseSha'] -cnotmatch '^[0-9a-f]{40}$') { return $false }
+  }
+  return $true
+}
 function Step-WaitFirstTrain {
-  $r = [ordered]@{ observed = $false; halted = $false; runnerQuiet = $false; seconds = $null; last = $null; error = $null }
+  $r = [ordered]@{ observed = $false; notApplicable = $false; notApplicableObservation = $null; halted = $false; runnerQuiet = $false; seconds = $null; last = $null; error = $null }
   $sf = Join-Path $ResidentRoot 'state\status.json'
   $script:FirstTrainSeen = $null
   $t0 = [DateTime]::UtcNow
   try {
     $r.observed = Wait-Until {
-      $s = $null; try { if ([IO.File]::Exists($sf)) { $s = Parse-Json ([IO.File]::ReadAllText($sf)) } } catch { $s = $null }
+      # Direct deserialization preserves the raw top-level JSON shape; the
+      # general Parse-Json helper intentionally enumerates array output.
+      $s = $null; try { if ([IO.File]::Exists($sf)) { $s = $Js.DeserializeObject([IO.File]::ReadAllText($sf)) } } catch { $s = $null }
       if ($null -eq $s -or $s -isnot [Collections.IDictionary]) { return $false }
       $e = Get-Key $s 'executor'; $tr = Get-Key $s 'train'
       $script:FirstTrainSeen = [ordered]@{ writtenAt = (Get-Key $s 'writtenAt'); state = (Get-Key $e 'state'); reason = (Get-Key $e 'reason'); trainEnabled = (Get-Key $tr 'enabled'); trainLast = (Get-Key $tr 'last'); halt = (Get-Key $s 'halt') }
       if ($null -ne $script:FirstTrainSeen.halt -or [string]$script:FirstTrainSeen.state -ceq 'HALTED') { return $true }
+      if (Test-FirstTrainNotApplicable $s $t0) {
+        $n = $s['node']; $p = $n['probe']
+        $r.notApplicable = $true
+        $r.notApplicableObservation = [ordered]@{ writtenAt = $s['writtenAt']; nodeName = $n['name']; source = $n['source']
+          mode = $n['mode']; probeAt = $p['at']; probeResult = $p['result']; queueLive = $s['queue']['live']; pendingCount = $s['pending'].Count }
+        return $true
+      }
       ($null -ne $script:FirstTrainSeen.trainLast) -and ([string]$script:FirstTrainSeen.state -cne 'RUNNING') -and (& { $f = (Get-RunnerState).flags; $f.originalBinary -and $f.stoppedPid0 })
     } $FirstTrainWaitSeconds
   } catch { $r.error = $_.Exception.Message }
+  if ($r.notApplicable) { $r.observed = $false }
   $r.last = $script:FirstTrainSeen
   if ($null -ne $r.last) { $r.halted = ($null -ne $r.last.halt -or [string]$r.last.state -ceq 'HALTED') }
   try {
@@ -533,7 +593,7 @@ function Step-WaitFirstTrain {
   $r.seconds = [int]([DateTime]::UtcNow - $t0).TotalSeconds
   $r['runnerAfter'] = (Get-RunnerState).flags
   Write-Json 'first-train-report.json' $r
-  $Done.Add($(if (-not $r.runnerQuiet) { 'runner-not-quiet-verify-skipped' } elseif ($r.observed -and -not $r.halted) { 'first-train' } else { 'first-train-not-observed' }))
+  $Done.Add($(if (-not $r.runnerQuiet) { 'runner-not-quiet-verify-skipped' } elseif ($r.notApplicable) { 'first-train-not-applicable' } elseif ($r.observed -and -not $r.halted) { 'first-train' } else { 'first-train-not-observed' }))
   $r
 }
 # R5/F2 (from r3, unchanged): after install + verify and BEFORE the companion starts: one ordinary pause request,

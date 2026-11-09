@@ -59,6 +59,9 @@ test('the install package is assembled create-only, pins every file and binds po
   }
   assert.ok(pkg.files.some(f => f.target.endsWith('\\windows\\rearm-resident.ps1')), 'elevated scripts are installed into the admin-only copy');
   assert.ok(pkg.files.some(f => f.target === ['resident', r.residentManifestSha256, 'src', 'executor.mjs'].join('\\')));
+  for (const parts of [['src', 'wsl-client.mjs'], ['windows', 'wsl-client.ps1']]) {
+    assert.ok(pkg.files.some(f => f.target === ['resident', r.residentManifestSha256, ...parts].join('\\')), 'the runtime and its WSL trust validator belong to the same pinned generation');
+  }
   // S5/S12: the Source sits under the record's CI Source manifest hash; the record is admin-only in record\
   assert.ok(pkg.files.some(f => f.target === ['source', r.ciSourceManifestSha256, ...sourceFiles[0].split('/')].join('\\')));
   for (const n of ['installation.json', 'acceptance.json', 'source-manifest.json', 'signers.json', 'record-manifest.json']) assert.ok(pkg.files.some(f => f.target === `record\\${n}`), n);

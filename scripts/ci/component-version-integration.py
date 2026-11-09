@@ -60,6 +60,7 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
         ["node", "scripts/ci/merge-admission-r9-reregister.mjs", "--write", "--base", base],
         ["node", "apps/clued-cloud/scripts/generate-agent-contract.mjs"],
         [sys.executable, "scripts/build_claude_code_plugin.py"],
+        ["node", "scripts/ci/clued-control-source-pins.mjs", "--base", base, "--write"],
         ["node", "scripts/ci/clued-merge-reconcile-source-build.mjs"],
     ]
     # Only fixed, existing deterministic generators are permitted. Their own

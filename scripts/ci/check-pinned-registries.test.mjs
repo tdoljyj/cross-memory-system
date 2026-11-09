@@ -19,6 +19,12 @@ test('component remediation uses the automatic clean-candidate integrator instea
   assert.doesNotMatch(COMPONENTS_FIX, /clued_components\.py bump/);
 });
 
+test('unobservable control Source version pins fail closed even in CI', () => {
+  assert.equal(exitCode([{ id: 'control-source-pins', status: 'unchecked', reason: 'trusted base unavailable' }], { GITHUB_ACTIONS: 'true' }), 1);
+  assert.equal(exitCode([{ id: 'control-source-pins', status: 'stale' }], { GITHUB_ACTIONS: 'true' }), 1);
+  assert.equal(exitCode([{ id: 'control-source-pins', status: 'ok' }], { GITHUB_ACTIONS: 'true' }), 0);
+});
+
 test('a change to the mechanical policy always selects pinned registries', () => {
   assert.ok(PINNED_REGISTRY_PATHS.some(pattern => globToRegExp(pattern).test('config/clued-mechanical-files.json')),
     'the selector integration must register config/clued-mechanical-files.json');

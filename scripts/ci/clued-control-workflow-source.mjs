@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.9';
+export const COMPONENT_VERSION='1.0.10';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -528,7 +528,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "7bd6642aff58eb96ceff622da5f1feaba36c274a",
     "scripts/ci/clued-independent-publication-identity.mjs": "1abf7547bf9a2edf22eb748bb0eeea17410ddf77",
     "scripts/ci/clued-independent-publication-identity.test.mjs": "4f4c10cf2bb978e569bccd71ec5613fe787ba55a",
-    "scripts/ci/clued-independent-publication-port.mjs": "887d6e75cfcb2a4a7c45a65125fb35d4847c2343",
+    "scripts/ci/clued-independent-publication-port.mjs": "88634f035783598ef7f2e882cf223bb3d660b502",
     "scripts/ci/clued-independent-publication-port.test.mjs": "4491ae0f7a2d0d6c589cc87c9010490b00b09882",
     "scripts/ci/clued-independent-publication-runtime.mjs": "afe70fbd4f10f446bb51b16b39102e5f9ae42676",
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "f3218b078c77926d7db5c34cae4e2bdda6ce7c94",
@@ -548,7 +548,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-merge-reconcile-source-build.mjs": "860478495500a7f22e29b0ac6d31b6285352330e",
     "scripts/ci/clued-merge-reconcile-source.mjs": "c3660096b818e8b432ac641f84526c7a4e0d0664",
     "scripts/ci/clued-merge-reconcile-source.test.mjs": "68801654aa3adab6cb971a0f56c9fdc8b7159bc5",
-    "scripts/ci/clued-merge-reconcile.mjs": "d925cfe3d1bbd05a532c8b825cab01a0063df21b",
+    "scripts/ci/clued-merge-reconcile.mjs": "151d536579db87badf392fc86cf8ac67abf99455",
     "scripts/ci/clued-merge-reconcile.test.mjs": "4ba6676ccb86455b8a65a870830aed9189c266c9",
     "scripts/ci/clued-merge-slot-ci.mjs": "3482c6f326affff333ac02bb1c944b544687ab14",
     "scripts/ci/clued-merge-slot-ci.test.mjs": "614692d169f847992cb95d8359986e245a5eae02",

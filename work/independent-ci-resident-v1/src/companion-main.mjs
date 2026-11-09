@@ -31,6 +31,7 @@ import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } f
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
+import { resolveCompanionWslClient } from './wsl-client.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads once a minute too (Decision 1b99e7e4; it was five minutes): its two
@@ -224,7 +225,7 @@ export async function main(args = process.argv.slice(2)) {
   // DESIGN §33: the Source directory is named by the hash of the installed record's source-manifest.json (the install put the Source
   // there); the config's script paths must lie under it, or the companion does not start with a stale Source in its hands.
   const ciSourceManifestSha256 = sha256(await fs.readFile(path.join(values.root, 'record', 'source-manifest.json')));
-  const cfg = validateCompanionConfig(raw.companion, { root: values.root, ciSourceManifestSha256 });
+  let cfg = validateCompanionConfig(raw.companion, { root: values.root, ciSourceManifestSha256 });
   check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
   // One companion per node (Task 42fe5ae4): op 8e3b3e1b's rollback started one more every minute and all of them served the
   // same mailboxes. Refreshed every minute while the lanes run.
@@ -244,6 +245,11 @@ export async function main(args = process.argv.slice(2)) {
   // companion before its first heartbeat, so the service only defers.
   await assertNotElevated((a, o) => runner.run(a, o));
   await assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe });
+  const wslClient = await resolveCompanionWslClient({ root: values.root, declaredWslExe: cfg.wslExe, run: (a, o) => runner.run(a, o) });
+  // A legacy config may still declare the inbox stub. It is inert: every pump,
+  // upgrade, session-facts and keepalive command below receives this verified
+  // machine-wide path, or start-up ends before the first heartbeat.
+  cfg = Object.freeze({ ...cfg, wslExe: wslClient.path });
   // The six notification sites write into the Owner's notification queue; the notifier task shows it at log-on (ADR 0022 §4.3).
   const notify = queueNotify(new NotifyQueue({ dir: notifyQueueDir(cfg.node.ownerProfileDirectory) }));
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
@@ -332,7 +338,7 @@ export async function main(args = process.argv.slice(2)) {
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
     run: (a, o) => upgradeRunner.run(a, o) })
-    .then(f => writeSessionFacts(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI'), f)).catch(() => {});
+    .then(f => writeSessionFacts(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI'), { ...f, wslClient })).catch(() => {});
   let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
