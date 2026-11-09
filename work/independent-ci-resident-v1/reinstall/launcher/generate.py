@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '3335fce6c1b84191885f94c631bd915dadb19210f6ab4147ad1bb16a3719c414'   # M5-b (ADR 0023): $OperatorSid, -CompanionAccount; was 86f047e5 (M5, #1039)
+TEMPLATE_SHA = '370c128e8a435c9b7cd334941dfabdc00194b31f84847207cf857667489b6eb4'   # M5-b: reviewed heartbeat carry preview from #1054, including -PreviewAfterUninstall
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
