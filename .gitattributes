@@ -1,16 +1,6 @@
 * text eol=lf
 *.png binary
 
-# Preserve exact bytes of the M5-b physical-test sources and reviewed entries.
-# Their SHA-256 values identify actual executed evidence, including line endings.
-work/independent-ci-resident-v1/test/fixtures/m5b-diagnostic-ntfs.ps1 -text whitespace=cr-at-eol
-work/independent-ci-resident-v1/windows/M5bPhysicalImportAcceptance.cs -text whitespace=cr-at-eol
-work/independent-ci-resident-v1/windows/resume-m5b-physical-registered-reviewed.ps1 -text whitespace=cr-at-eol
-work/independent-ci-resident-v1/windows/start-m5b-disk-access-correction-reviewed.ps1 -text whitespace=cr-at-eol
-work/independent-ci-resident-v1/windows/start-m5b-logging-blocked-reviewed.ps1 -text whitespace=cr-at-eol
-# The original reviewed first entry also keeps its recorded final blank line.
-work/independent-ci-resident-v1/windows/start-m5b-physical-import-reviewed.ps1 whitespace=-blank-at-eof
-
 # Preserve the exact independently reviewed bytes of these frozen evidence files.
 artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExistingR05R06SourceMapping.json -text
 artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateRuntimeActualEmptyInstallation.json -text

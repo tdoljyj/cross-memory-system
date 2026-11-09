@@ -2,6 +2,15 @@
 
 此入口用于验证 M5-b 导入路径，默认只编译。它没有执行授权；Agent 须先核实当前 Owner 授权并完成独立审核，再拉起已批准的管理员进程。Owner 只处理 UAC，命令与结果由 Agent 运行和观察。
 
+## 原始执行字节
+
+实测及当时审查使用的原始字节保留在
+[提交 975e2ac7](https://github.com/tdoljyj/cross-memory-system/tree/975e2ac7d89ea35f3c5cc4c7009ebec5803cfe10/work/independent-ci-resident-v1)
+的 Git blob；普通合并保留该提交历史。当前六份同名明文仅按既有规则改为 LF，
+最初入口另收为一个末尾换行；根 `.gitattributes` 恢复原内容。
+以下 harness `766bae28…`、入口 `2384b1c7…` 等指纹指向该历史提交中的原始字节。
+规范化文本及重新编译结果没有新增实机验收，也不能据此重跑已消耗的阶段。
+
 ## 2026-11-09 22:04（Asia/Shanghai）实际结果
 
 已审 `logging-blocked` 新阶段实际构建退出 0、主程序退出 0。原导入任务
