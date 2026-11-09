@@ -140,7 +140,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
@@ -324,7 +324,7 @@ export const SUPERSEDED_AT_SAFE_POINT = 'SUPERSEDED_AT_SAFE_POINT';
 export const SUPERSEDED_ARCHIVE_REASON = 'superseded';
 // The status code of a reservation released for a newer commit before stage 1 (release reason SUPERSEDED).
 export const BATCH_SUPERSEDED = 'BATCH_SUPERSEDED';
-// The code of a new-trigger notice whose poke found another claim in the PR body after a claim refusal (recheckClaims; field defect
+// The code of a new-trigger notice whose protected observation found changed claim/authorization conditions after a refusal (recheckClaims; field defect
 // 2026-11-08, PR #1039): the PR page says the head is evaluated again now, not after the cool-down.
 export const CLAIM_CHANGED = 'CLAIM_CHANGED';
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
@@ -2233,7 +2233,9 @@ export class ResidentExecutor {
   // normal ending; any other ending with a side effect HALTs as before. paused: called from the PAUSE path of the tick.
   async trainMaintenance({ paused = false } = {}) {
     const train = this.policy.train;
-    if (!this.trainRuns || train.enabled === 'off') return null;
+    const observationOnly = train.enabled === 'off' && !paused && this.queue.claimChecks().length > 0;
+    if (!this.trainRuns || (train.enabled === 'off' && !observationOnly)) return null;
+    const cadence = observationOnly ? { ...train, enabled: 'shadow' } : train;
     const now = this.clock();
     if (Number.isSafeInteger(this.tickSeq) && this.trainMaintenanceTick === this.tickSeq) return null;
     this.trainRuns = this.trainRuns.filter(at => at > now - DAY);
@@ -2249,7 +2251,7 @@ export class ResidentExecutor {
     }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
     const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
-    const routineDue = trainDue({ train, now, runs: this.trainRuns, busy: false, urgent, recheck });
+    const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
     // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
     if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
@@ -2266,7 +2268,7 @@ export class ResidentExecutor {
       if (held?.state === 'HALTED') return held;
       intakeHeld = held !== null;
     }
-    const { mode } = trainRunMode({ enabled: train.enabled, active, paused, intakeHeld });
+    const { mode } = trainRunMode({ enabled: cadence.enabled, active, paused, intakeHeld });
     if (!mode) return null;
     if (idleProgressExtra && mode !== 'on') return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + this.policy.stageRunMilliseconds[TRAIN_STAGE - 1] + Math.max(this.policy.limits.stageMarginMs, TRAIN_HELPER_MARGIN_MS)) return null;
@@ -2278,7 +2280,7 @@ export class ResidentExecutor {
     const acting = mode !== 'shadow';
     const revokeHead = acting ? this.revokeHeadInForce() : null;
     const frontOutcome = mode === 'on' ? this.trainFrontOutcome : null;
-    const input = trainRunInput({ mode, settings: trainSettings(train), sweep: trainSweepMode(train), onSince: this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
+    const input = trainRunInput({ mode, settings: trainSettings(train), sweep: trainSweepMode(train), onSince: mode === 'shadow' ? null : this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
       frontOutcome: frontOutcome ? { pr: frontOutcome.pr, headSha: frontOutcome.headSha, testSha: frontOutcome.testSha, attempt: frontOutcome.attempt, code: frontOutcome.code } : null });
     const progress = this.trainLast?.sweep?.progress;
     const progressKey = idleProgressExtra ? `${progress.roundId}:${progress.token}` : null;
@@ -2308,6 +2310,7 @@ export class ResidentExecutor {
     const clean = proven && ((quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
       || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN')) || (effects && summary !== null));
     const haltCode = !proven ? 'TRAIN_STAGE_CLEANUP_UNCONFIRMED' : 'TRAIN_STAGE_OUTCOME_UNCONFIRMED';
+    if (!clean || !summary) this.claimBindingObservations = new Map();
     if (!clean) await this.haltWith(haltCode, { phase: 'train-maintenance', intentSeq: intent.seq, failureCode, sideEffects: o?.sideEffects ?? null });
     const base = { intentSeq: intent.seq, runId: TRAIN_RUN_ID.test(r?.runId ?? '') ? r.runId : null, mode: train.enabled, ok: summary !== null, failureCode,
       wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null };
@@ -2320,6 +2323,17 @@ export class ResidentExecutor {
       requestPause: summary?.requestPause ?? null, frontOutcomeSeq: frontOutcome?.seq ?? null, ...(frontOutcome ? { frontOutcomeCleared: frontCleared } : {}),
       revokeHeadRequestId: input.revokeHeadRequestId } : base);
     if (summary) {
+      if (clean) {
+        this.claimBindingObservations = new Map();
+        for (const candidate of summary.claimBindings ?? []) {
+          const b = claimBindingObservationOf(candidate), at = Date.parse(b?.observedAt ?? '');
+          if (b && b.repository === this.policy.repo && b.targetBranch === this.policy.baseBranch
+            && b.sourceManifestSha256 === this.policy.ciSourceManifestSha256 && at <= this.clock() && this.clock() - at <= 30_000)
+            this.claimBindingObservations.set(`${b.pr}:${b.headSha}:${b.baseSha}`, b);
+        }
+        await this.recheckClaims(this.clock());
+        await this.persistQueue();
+      }
       this.trainLast = summary;
       this.trainSweep = trainSweepView({ summary, previous: this.trainSweep, onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString() });
       if (acting && clean) await this.trainActed(summary, { mode, input, frontOutcome, frontCleared, revokeHead });
@@ -3022,24 +3036,26 @@ export class ResidentExecutor {
     return last ?? { state: 'IDLE' };
   }
 
-  // Field defect 2026-11-08 (PR #1039): a poke of a row backing off after a claim refusal (queue.mjs#claimChecks) is answered by one
-  // live read of the PR before the candidates are taken: when the PR body names other claims than the refused evaluation saw, the
-  // poke is due now and skips the cool-down (queue.mjs#claimChanged), so the same head is evaluated again (same batch key, attempt 1)
-  // right after its author fixed the claim, not when the back-off ends. Only scheduling: stage 1's Native admission decides again, the
-  // once-only ledger, burned heads, the breaker, the re-evaluation cap and the daily budgets apply as to any new trigger. No answer:
-  // the poke keeps its due time.
+  // Fresh exact-subject data from a clean protected Stage10 may wake a claim
+  // wait. Native stage1 still admits it; all existing head/budget caps remain.
   async recheckClaims(now) {
-    for (const { pr, headSha } of this.queue.claimChecks()) {
-      const live = await this.livePull(pr);
+    for (const { pr, headSha, baseSha } of this.queue.claimChecks()) {
+      const live = this.currentClaimBinding({ pr, headSha, baseSha });
       if (!this.queue.claimChanged(pr, live, now)) continue;
       this.queue.notice({ key: `poke-claim:${pr}:${headSha}:${now}`, kind: 'new-trigger', pr, headSha, code: CLAIM_CHANGED });
       try { await this.receipt('queue-claim-changed', { pr, headSha }); } catch { /* the queue row and the notice show it */ }
     }
   }
 
+  currentClaimBinding(subject) {
+    const b = this.claimBindingObservations?.get(`${subject.pr}:${subject.headSha}:${subject.baseSha}`);
+    const at = Date.parse(b?.observedAt ?? '');
+    return b && at <= this.clock() && this.clock() - at <= 30_000 ? b : null;
+  }
+
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.
   //   usage: ledger.mjs#usage for the last 24 hours; origin: how the queue picked the subject (queue.mjs#ORIGINS).
-  //   claimChanged: the queue's poke found another claim in the PR body after a claim refusal (recheckClaims): no cool-down.
+  //   claimChanged: the queue observed changed Native claim/authorization conditions after a refusal: no cool-down.
   // A deferral with perRow waits for this row only; any other one ends the scheduling pass.
   async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued', claimChanged = false } = {}) {
     const now = this.clock();
@@ -3169,8 +3185,8 @@ export class ResidentExecutor {
     } else this.frontBindKeys.delete(key); // an earlier binding run of this key that was released: this run is an ordinary one
     await this.ledger.reserve(key, subject, { origin: c.origin });
     await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
-    // The claims the PR body names now (the live read above), for a claim refusal's next trigger (queue.mjs#claimChanged).
-    this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock(), { claims: live?.claims ?? null });
+    // Keep only a protected Native observation for any later claim wait.
+    this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock(), { binding: this.currentClaimBinding(c) });
     await this.persistQueue();
     // t0 of the hosted wait: the row is reserved in this very tick.
     return this.driveReserved(key, subject, this.clock(), c.origin);
@@ -3246,7 +3262,7 @@ export class ResidentExecutor {
     await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1, origin: 'attempt2' });
     // The row of attempt 1's head shows attempt 2 running (when that head is still the PR's current one in the queue).
     const row = this.queue.row(subject.pr);
-    if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock(), { claims: live?.claims ?? null }); await this.persistQueue(); }
+    if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock(), { binding: this.currentClaimBinding(subject) }); await this.persistQueue(); }
     return this.driveReserved(key2, subject, this.clock(), 'attempt2');
   }
 

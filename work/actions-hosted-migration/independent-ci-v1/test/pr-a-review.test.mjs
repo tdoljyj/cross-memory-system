@@ -40,6 +40,7 @@ export function staticClosure(entry) {
 test('v1 one-shot pins exactly the transitive static load closure of runtime/one-shot.mjs (publisher, admission, evaluator)', () => {
   const closure = staticClosure(CI + 'runtime/one-shot.mjs');
   assert.deepEqual([...V1_REQUIRED_SOURCE], closure);
+  assert.ok(V1_REQUIRED_SOURCE.includes('scripts/ci/clued-pr-task-binding.mjs'), 'the shared Native binding normalizer is in the actual admission import closure');
   // The round-3 omission: full-admission.mjs imports queue-facts.mjs, which only a transitive walk reaches.
   assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/independent-control-checks-v1/queue-facts.mjs`));
   for (const p of ['attest.mjs', 'registry.mjs', 'oidc.mjs']) assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/hosted-relay-v1/${p}`), p);

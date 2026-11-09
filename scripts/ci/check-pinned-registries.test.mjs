@@ -108,7 +108,7 @@ test('an up to date tree passes', () => {
 test('changing a pinned file names the stale registries and the commands that fix them; regenerating clears them', () => {
   const dir = registeredCopy();
   try {
-    // Pinned by the R9 registry and part of the reconcile closure.
+    // Pinned by R9 and reconcile, and explicitly owned by the Native-publication component.
     fs.appendFileSync(path.join(dir, 'scripts/ci/merge-admission-source-producer.mjs'), '\n// changed after registration\n');
 
     let r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
@@ -118,13 +118,17 @@ test('changing a pinned file names the stale registries and the commands that fi
     assert.match(r.stdout, /STALE\s+reconcile\s+\(scripts\/ci\/clued-merge-reconcile-source\.json\)/);
     assert.match(r.stdout, /bytes differ from the registry: scripts\/ci\/merge-admission-source-producer\.mjs/);
     assert.match(r.stdout, /regenerate: node scripts\/ci\/clued-merge-reconcile-source-build\.mjs/);
-    assert.match(r.stdout, /ok\s+components/);
-    assert.match(r.stdout, /2 registries are stale/);
+    assert.match(r.stdout, /STALE\s+components/);
+    assert.match(r.stdout, /script\.independent-native-publication: files changed/);
+    assert.match(r.stdout, /3 registries are stale/);
     assert.match(r.stdout, /fix sequence/);
     assert.match(r.stdout, /clued-merge-reconcile-source-build\.mjs[\s\S]*clued_components\.py update[\s\S]*generate-agent-contract\.mjs[\s\S]*check-pinned-registries\.mjs/);
 
-    r = cli(dir, '--base', 'HEAD', '--only', 'components'); assert.equal(r.status, 0, r.stdout);
-    assert.doesNotMatch(r.stdout, /r9|reconcile/);
+    r = cli(dir, '--base', 'HEAD', '--only', 'components'); assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stdout, /STALE\s+components/);
+    // Remediation text may mention its dependencies; --only must still run/report only the component check.
+    assert.doesNotMatch(r.stdout, /^\s*(?:ok|STALE|UNCHECKED)\s+(?:r9|reconcile)\b/m);
+    assert.match(r.stdout, /1 registry is stale/);
 
     // The printed commands, in the printed order. The reconcile build script needs yaml, which is not
     // installed everywhere; its effect on the registry is applied directly.
@@ -140,6 +144,7 @@ test('changing a pinned file names the stale registries and the commands that fi
     // The full chain the check prints: bump (the bump edits the version marker, a locked file), regenerate the
     // reconcile registry, update the digests, then check again.
     const py = (...args) => { const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', ...args], { cwd: dir, encoding: 'utf8' }); assert.equal(x.status, 0, x.stdout + x.stderr); };
+    py('bump', 'script.independent-native-publication', '99.0.0');
     py('bump', 'script.merge-reconciliation', '99.0.0');
     r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1); assert.match(r.stdout, /STALE\s+reconcile/);

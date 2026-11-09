@@ -6,7 +6,7 @@
 // (on only, after a confirmed sweep and a confirmed touch running: the executor's one source of a test commit S),
 // `sweep`, `actions`, `requestPause` and the holders' `nodes`.
 // `frontBind` (on only, optional; DESIGN §62.4): during the take-over sweep, with strict confirmed in this run, the one open PR
-// {pr, headSha, claimId} whose body names the single queue head's claim that Native has bound to no PR yet (FRONT_NOT_BOUND).
+// {pr, headSha, claimId} whose Native Task projection names the single queue head's current claim (FRONT_NOT_BOUND).
 // It is a scheduling observation, never publication authority: the resident may run that PR's stage 1 only, which binds the claim
 // through Native's verify; the front, the proofs and stage 8 are then decided exactly as before.
 //
@@ -147,6 +147,18 @@ const validNodes = n => n === null || (Array.isArray(n) && n.length <= 64 && n.e
   && (x.sourceManifestSha256 === null || HEX64.test(x.sourceManifestSha256 ?? '')) && (x.state === null || (typeof x.state === 'string' && x.state.length <= 40))
   && (x.lastHeartbeatAt === null || iso(x.lastHeartbeatAt))));
 const validFrontBind = b => plain(b) && Object.keys(b).length === 3 && Number.isSafeInteger(b.pr) && b.pr > 0 && SHA.test(b.headSha ?? '') && UUID.test(b.claimId ?? '');
+const BINDING_FIELDS = ['repository','scope','pr','headSha','baseSha','targetBranch','bindingStatus','taskId','claimId','fence','epoch',
+  'headAuthorizationId','observedAt','sourceManifestSha256'];
+const validBindingObservation = b => {
+  if (!plain(b) || Object.keys(b).length !== BINDING_FIELDS.length || !BINDING_FIELDS.every(k => Object.hasOwn(b,k))
+    || !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(b.repository ?? '') || !/^(?:global|project:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/.test(b.scope ?? '')
+    || !Number.isSafeInteger(b.pr) || b.pr < 1 || !SHA.test(b.headSha ?? '') || !SHA.test(b.baseSha ?? '') || b.targetBranch !== 'main'
+    || !['bound','unbound','no_live_claim','handover_pending','conflict','head_not_authorized'].includes(b.bindingStatus)
+    || !iso(b.observedAt) || !HEX64.test(b.sourceManifestSha256 ?? '') || !(b.headAuthorizationId === null || UUID.test(b.headAuthorizationId ?? ''))) return false;
+  const task = !['unbound','conflict'].includes(b.bindingStatus), claim = ['bound','handover_pending','head_not_authorized'].includes(b.bindingStatus);
+  return (task ? UUID.test(b.taskId ?? '') : b.taskId === null) && (claim ? UUID.test(b.claimId ?? '') && Number.isSafeInteger(b.fence) && b.fence > 0
+    && Number.isSafeInteger(b.epoch) && b.epoch > 0 : b.claimId === null && b.fence === null && b.epoch === null);
+};
 const prList = v => Array.isArray(v) && v.length <= 64 && v.every(n => Number.isSafeInteger(n) && n > 0);
 const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect'].includes(k))
   && (l.error === undefined || (typeof l.error === 'string' && CODE.test(l.error))) && (l.mainSha === undefined || l.mainSha === null || SHA.test(l.mainSha))
@@ -174,6 +186,9 @@ export function validateTrainFacts(f) {
     || !(f.frontBind === undefined || (f.mode === 'on' && f.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' && validFrontBind(f.frontBind)
       && f.front?.pr === null && f.front.claimId === f.frontBind.claimId))
     || !(f.landing === undefined || (f.mode === 'on' && validLanding(f.landing)))
+    || !(f.claimBindings === undefined || (Array.isArray(f.claimBindings) && f.claimBindings.length <= 50 && f.claimBindings.every(validBindingObservation)
+      && new Set(f.claimBindings.map(b => b.pr)).size === f.claimBindings.length
+      && new Set(f.claimBindings.map(b => JSON.stringify([b.repository,b.scope,b.sourceManifestSha256]))).size <= 1))
     || (f.mode === 'shadow' && (!quiet(f) || f.decision !== f.wouldDo))
     || (f.mode === 'revoke-only' && (f.openFrontBatch !== null || f.actions.touchedRunning || f.actions.adopted || f.actions.returned || f.actions.failedReported || f.actions.keptAlive > 0))
     || JSON.stringify(f).length > MAX_TRAIN_FACTS_BYTES) fail('invalid_train_facts');

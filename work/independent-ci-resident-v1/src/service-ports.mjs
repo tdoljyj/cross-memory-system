@@ -72,7 +72,8 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
     // Phase 2, step 1: one live read of the PR (state, head) for the run queue, or null (no answer is never a fact).
     async prHead(pr, batch = null) {
       const r = await ask('pr-head', { batchId: batch?.batchId ?? NO_BATCH, pr });
-      return r?.ok === true && r.pull ? r.pull : null;
+      const p = r?.ok === true ? r.pull : null;
+      return p ? { number: p.number, state: p.state, headSha: p.headSha, ...(p.mergeSha ? { mergeSha: p.mergeSha } : {}) } : null;
     },
     async archiveLinux(batch, reason) {
       const r = await ask('archive-linux', { batchId: batch.batchId, reason });

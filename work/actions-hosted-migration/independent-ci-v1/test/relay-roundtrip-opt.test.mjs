@@ -432,10 +432,10 @@ const SCOPE = `project:${randomUUID()}`;
 const NATIVE_RPC = 'https://fixture.supabase.co/rest/v1/rpc/clued_work_verify_v1';
 function admissionWorld({ modeDelay = 0, modeThrows = null, modeValue = null, tokenThrows = null, credentials = null, prStatus = 200, nativeLog = [], githubReads = 0 } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
-  const claimId = randomUUID(), prRef = `${REPO}#888`, events = [], counts = {};
+  const claimId = randomUUID(), taskId = randomUUID(), prRef = `${REPO}#888`, events = [], counts = {};
   const pr = { number: 888, state: 'open', body: `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n`, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
   const native = () => ({ status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: 3, execution_epoch: 1, bound_pr: prRef, pr_ref: prRef, head_sha: HEAD, base_sha: BASE,
-    verified_at: iso(Date.now()), paths_outside_write_set: [], claim: { claim_id: claimId, fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: iso(Date.now() + 3600_000),
+    verified_at: iso(Date.now()), paths_outside_write_set: [], claim: { claim_id: claimId, task_id: taskId, fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: iso(Date.now() + 3600_000),
       lease_key_required: false, execution_handover_pending: false, merge_slot_until: iso(Date.now() + 600_000), merge_queue: [] } });
   const fetchImpl = async (url, opts) => {
     const u = String(url), k = u.startsWith('https://fixture') ? 'native' : new URL(u).pathname.replace(/^\/repos\/[^/]+\/[^/]+/, '');
@@ -454,7 +454,12 @@ function admissionWorld({ modeDelay = 0, modeThrows = null, modeValue = null, to
       for (let i = 0; i < githubReads; i++) { await f(`https://api.github.com/repos/${REPO}/pulls/888/files?page=${i + 1}`, {}); await new Promise(r => setTimeout(r, 15)); }
       const reply = await (await f(NATIVE_RPC, { method: 'POST', body: '{}' })).json();
       observation_recorder.record('claim_verification', { result: { payload: reply } });
-      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: claimId, scope: SCOPE, changed_paths: ['a.txt'],
+      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: claimId, task_id: taskId, scope: SCOPE,
+        claim_binding: { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: 888, pr_ref: prRef,
+          head_sha: HEAD, base_sha: BASE, target_branch: 'main', scope: SCOPE, task_id: taskId,
+          claim: { claim_id: claimId, task_id: taskId, context_key: SCOPE, fence: 3, execution_epoch: 1, lease_version: 1,
+            expires_at: iso(Date.now() + 3600_000), status: 'ACTIVE', execution_handover_pending: false },
+          head_authorization_id: null, auto_bound: false, receipt_id: null }, changed_paths: ['a.txt'],
         admission_mode: { state: 'normal', layer: 'code', policy_version: 1 }, merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(Date.now() + 600_000) }, owner_review: null, workflow_gate_findings: [] };
     } };
   const port = createFullAdmissionPortV2({ protectedConfig: config,

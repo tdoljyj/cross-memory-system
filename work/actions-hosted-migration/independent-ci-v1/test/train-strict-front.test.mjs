@@ -10,9 +10,9 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { validStrictFrontReadiness, strictIdentity } from '../src/independent-control-checks-v2/train-strict.mjs';
-import { runTrain, claimReferenceOf, FRONT_BIND_MAX_READS } from '../src/independent-control-checks-v2/train-maintenance.mjs';
+import { runTrain, FRONT_BIND_MAX_READS } from '../src/independent-control-checks-v2/train-maintenance.mjs';
+import { parseHolders } from '../src/independent-control-checks-v2/merge-slot-native.mjs';
 import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
-import { parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
 const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] };
 async function cold(t) { return setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 }); }
@@ -354,11 +354,46 @@ test('strict front: legacy foreign strict pending survives a lost-duty filter wi
 
 // ---- generation 19 field defect (DESIGN §62.4): the take-over front binding observation ----
 const BIND_SCOPE = 'project:00000000-0000-4000-8000-000000000000';
+
+test('protected shadow observation reads exact Native PR generations without binding or any train action', async t => {
+  const e = await setup(t, { native: { onDuty: false } });
+  e.native.bindings = new Map([[910, { claimId: CLAIM, scope: BIND_SCOPE }]]);
+  const oldRead = e.gh.readPullRequest;
+  e.gh.readPullRequest = async pr => ({ ...await oldRead(pr), head: { sha: H, repo: { full_name: REPO } } });
+  const r = await runTrain({ job: jobOf({ mode: 'shadow', onSince: null }), github: e.gh, native: e.native.port,
+    clock: e.clock, claimScope: BIND_SCOPE, observeBindings: true });
+  assert.equal(r.sideEffects, 0);
+  assert.equal(r.facts.claimBindings.length, 1);
+  assert.deepEqual([r.facts.claimBindings[0].pr, r.facts.claimBindings[0].claimId], [910, CLAIM]);
+  const calls = e.native.calls.filter(c => c[0] === 'resolve-pr');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].readOnly, true);
+  assert.ok(!e.native.kinds().some(k => ['touch', 'adopt', 'keepalive', 'return'].includes(k)));
+  assert.equal(validateTrainFacts(r.facts), r.facts);
+  assert.throws(() => validateTrainFacts({ ...r.facts, claimBindings: [...r.facts.claimBindings,
+    { ...r.facts.claimBindings[0], pr: 911, scope: 'global' }] }), { code: 'invalid_train_facts' });
+});
+
+test('protected claim observation has a whole-pass deadline and leaves unread PRs unknown', async t => {
+  const e = await setup(t, { native: { onDuty: false }, tick: 1000 });
+  e.native.bindings = new Map();
+  for (let n = 1; n <= 60; n++) { e.gh.pull(n); e.native.bindings.set(n, { claimId: CLAIM, scope: BIND_SCOPE }); }
+  const oldRead = e.gh.readPullRequest;
+  e.gh.readPullRequest = async pr => { const p = await oldRead(pr); return { ...p, head: { ...p.head, repo: { full_name: REPO } } }; };
+  const started = e.now;
+  const r = await runTrain({ job: jobOf({ mode: 'shadow', onSince: null }), github: e.gh, native: e.native.port,
+    clock: e.clock, claimScope: BIND_SCOPE, observeBindings: true });
+  assert.equal(r.sideEffects, 0);
+  assert.ok(r.facts.claimBindings.length > 0 && r.facts.claimBindings.length < 50);
+  assert.ok(e.now - started <= 30_000);
+  assert.ok(e.native.calls.filter(c => c[0] === 'resolve-pr').every(c => c[1].readOnly === true));
+});
 const bindBody = (claim, scope = BIND_SCOPE) => `Change.\n\nClued-Work-Claim: ${claim}\nClued-Work-Scope: ${scope}\n`;
 // A take-over in progress (the full sweep anchored and running), then an unbound head claim whose PR is open.
 async function unbound(t, { native = healthy } = {}) {
-  const e = await setup(t, { strict: true, fullDone: false, native: { ...native, holder: { boundPr: null, pr: null } }, tick: 1 });
+  const e = await setup(t, { strict: true, fullDone: false, native: { ...native, holder: { boundPr: null, pr: null, boundPrs: [], prs: [] } }, tick: 1 });
   e.gh.world.pulls.get(910).body = bindBody(CLAIM);
+  e.native.bindings = new Map([[910, { claimId: CLAIM, scope: BIND_SCOPE }]]);
   // The full sweep runs for hours: every full-sweep page read outlasts this stage's sweep budget.
   e.gh.world.hooks.pullsPage = sort => { if (sort === 'created' && e.slowFull !== false) e.now += 160_000; };
   const read = e.gh.readPullRequest.bind(e.gh);
@@ -369,9 +404,54 @@ async function unbound(t, { native = healthy } = {}) {
   return e;
 }
 
-test('take-over front binding: the trailer reader is the evaluator\'s', () => {
-  for (const text of [bindBody(CLAIM), bindBody(CLAIM.toUpperCase(), 'global'), `Clued-Work-Claim: ${CLAIM}`, 'Clued-Work-Claim: nope', `x\nClued-Work-Claim:\t${CLAIM} \n`, null, 7])
-    assert.deepEqual(claimReferenceOf(text), parseClaimReference(text) && { claimId: parseClaimReference(text).claim_id, scope: parseClaimReference(text).scope }, String(text));
+test('take-over front binding: missing or contradictory body is advisory; Native projection supplies the claim', async t => {
+  for (const body of [null, bindBody('99999999-8888-4777-8666-555555555555', 'global')]) {
+    const e = await unbound(t);
+    e.gh.world.pulls.get(910).body = body;
+    assert.deepEqual((await e.bind()).facts.frontBind, { pr: 910, headSha: H, claimId: CLAIM });
+    assert.ok(e.native.kinds().includes('resolve-pr'));
+  }
+});
+
+test('take-over front binding: advisory claim cannot substitute for absent, ambiguous or unauthorized Native binding', async t => {
+  for (const state of ['unbound', 'no_live_claim', 'handover_pending', 'head_not_authorized', 'conflict']) {
+    const e = await unbound(t);
+    e.native.bindings.set(910, { state });
+    const result = await e.bind();
+    assert.equal(result.facts.frontBind, undefined, state);
+    assert.equal(result.facts.openFrontBatch, null, state);
+    assert.ok(!e.native.kinds().includes('touch'), state);
+  }
+});
+
+test('take-over front binding: auto-binding is counted and shadow/revoke-only never invoke the writing lookup', async t => {
+  const a = await unbound(t), b = await unbound(t);
+  b.native.bindings.set(910, { claimId: CLAIM, scope: BIND_SCOPE, auto_bound: true });
+  assert.equal((await b.bind()).sideEffects, (await a.bind()).sideEffects + 1);
+  for (const mode of ['shadow', 'revoke-only']) {
+    const e = await unbound(t);
+    await e.bind(jobOf({ createdAt: iso(e.now), mode, ...(mode === 'shadow' ? { onSince: null } : {}) }));
+    assert.ok(!e.native.kinds().includes('resolve-pr'), mode);
+  }
+});
+
+test('binding dispatch: lost writable reply remains a possible effect, explicit no-write clears it and read-only loss stays zero', async t => {
+  for (const mode of ['writable-lost','no-write','read-only-lost']) await t.test(mode, async t => {
+    const e = await unbound(t), original = e.native.port.resolvePRBinding;
+    if (mode === 'writable-lost') e.native.bindings.delete(910);
+    if (mode === 'read-only-lost') e.native.holder = { ...e.native.holder, boundPrs: [`${REPO}#910`,`${REPO}#912`], prs: [910,912] };
+    e.native.port.resolvePRBinding = async expected => {
+      if (mode === 'writable-lost') e.native.bindings.set(expected.prNumber, { claimId: CLAIM, scope: BIND_SCOPE, auto_bound: true });
+      const result = await original(expected);
+      if (mode !== 'no-write') throw Object.assign(new Error('reply lost after Native dispatch'), { code: 'ETIMEDOUT' });
+      return result;
+    };
+    const r = await e.bind(mode === 'read-only-lost' ? jobOf({ mode: 'shadow', onSince: null, createdAt: iso(e.now) }) : undefined);
+    const knownWrites = e.native.calls.filter(c=>['touch','adopt','return','keepalive','watermark'].includes(c[0])).length;
+    assert.equal(r.sideEffects-knownWrites, mode === 'writable-lost' ? 1 : 0, mode);
+    if (mode === 'writable-lost') assert.ok(e.native.bindings.has(910), 'the Native target committed before its reply was lost');
+    if (mode === 'read-only-lost') assert.ok(e.native.calls.filter(c=>c[0]==='resolve-pr').every(c=>c[1].readOnly===true));
+  });
 });
 
 test('take-over front binding: an unbound head claim names its one open PR; once bound, the strict front opens while the full sweep runs', async t => {
@@ -384,7 +464,7 @@ test('take-over front binding: an unbound head claim names its one open PR; once
   assert.equal(first.facts.openFrontBatch, null);
   assert.ok(!e.native.kinds().includes('touch'), 'no slot write for an unbound claim');
   // Stage 1 of that PR bound the claim (Native's verify with pr_ref): the next stage 10 decides the front exactly as before.
-  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910, boundPrs: [`${REPO}#910`], prs: [910] };
   e.now += 60_000;
   const second = await e.bind();
   assert.equal(second.facts.sweep.strictFrontReadiness.state, 'ready', JSON.stringify(second.facts));
@@ -394,8 +474,45 @@ test('take-over front binding: an unbound head claim names its one open PR; once
   assert.equal(second.facts.sweep.fullSweep.state, 'running');
 });
 
+test('one Task with two authorized PRs chooses a stable front while preserving its next PR', async t => {
+  const e = await unbound(t);
+  e.native.bindings.set(910, { claimId: CLAIM, scope: BIND_SCOPE, headAuthorizationId: CLAIM });
+  e.gh.pull(912, { updated: iso(NOW) });
+  e.native.bindings.set(912, { claimId: CLAIM, scope: BIND_SCOPE, headAuthorizationId: '99999999-8888-4777-8666-555555555555' });
+  assert.deepEqual((await e.bind()).facts.frontBind, { pr: 910, headSha: H, claimId: CLAIM });
+  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910, boundPrs: [`${REPO}#910`], prs: [910] };
+  e.now += 60_000;
+  const next = await e.bind();
+  assert.equal(next.facts.openFrontBatch.pr, 910);
+  assert.equal(e.gh.world.pulls.get(912).state, 'open');
+  assert.ok(e.native.bindings.has(912));
+});
+
+test('real multi-PR holder projection opens a stable front, preserves inflight head and rejects a generation race', async t => {
+  for (const mode of ['stable','inflight','race']) await t.test(mode, async t => {
+    const e = await unbound(t), otherHead = sha(0x8000+912);
+    e.gh.pull(912, { updated: iso(NOW) });
+    e.native.bindings.set(912, { claimId: mode === 'race' ? '99999999-8888-4777-8666-555555555555' : CLAIM, taskId: CLAIM, scope: BIND_SCOPE });
+    if (mode === 'inflight') e.native.holder = { ...e.native.holder, ciState: 'running', ciHeadSha: otherHead };
+    const old = e.native.port.holders;
+    e.native.port.holders = async () => {
+      await old(); const h = e.native.holder;
+      return parseHolders(200, { status: 'ok', repository: REPO, holders: [{ claim_id: CLAIM, task_id: CLAIM,
+        bound_pr: `${REPO}#999`, bound_prs: [`${REPO}#912`,`${REPO}#910`], merge_slot_until: h.mergeSlotUntil,
+        merge_slot_ci: { taken_at: h.takenAt, ci_state: h.ciState, ci_head_sha: h.ciHeadSha, hard_cap_until: h.hardCapUntil } }] }, REPO);
+    };
+    const r = await e.bind();
+    if (mode === 'stable') {
+      assert.equal(r.facts.front.pr, 910);
+      assert.equal(r.facts.openFrontBatch?.pr, 910, JSON.stringify(r.facts));
+      assert.equal(e.gh.world.pulls.get(912).state, 'open');
+    } else if (mode === 'inflight') assert.equal(r.facts.front.pr, 912);
+    else { assert.equal(r.facts.front.pr, null); assert.equal(r.facts.openFrontBatch, null); }
+  });
+});
+
 test('take-over front binding: nothing is named without strict, healthy Source and store, one holder, one PR, its scope and an open non-draft PR', async t => {
-  for (const change of ['strict-off', 'fleet', 'pending', 'revoke-head', 'two-holders', 'bound-elsewhere', 'ambiguous', 'scope', 'draft', 'fork', 'beyond-reads', 'full-done', 'shadow'])
+  for (const change of ['strict-off', 'fleet', 'pending', 'revoke-head', 'two-holders', 'bound-elsewhere', 'ambiguous', 'generation-race', 'scope', 'draft', 'fork', 'beyond-reads', 'full-done', 'shadow'])
     await t.test(change, async t => {
       const e = await unbound(t);
       let job = jobOf({ createdAt: iso(e.now) });
@@ -406,8 +523,9 @@ test('take-over front binding: nothing is named without strict, healthy Source a
       if (change === 'revoke-head') job = jobOf({ createdAt: iso(e.now), revokeHeadRequestId: '0a1b2c3d-0000-4000-8000-000000000001' });
       if (change === 'two-holders') e.native.holders = [e.native.holder, { ...e.native.holder, claimId: '99999999-8888-4777-8666-555555555555' }];
       if (change === 'bound-elsewhere') e.native.holder = { ...e.native.holder, boundPr: 'other/repo#3' };
-      if (change === 'ambiguous') e.gh.pull(912, { updated: iso(NOW), body: bindBody(CLAIM) });
-      if (change === 'scope') e.gh.world.pulls.get(910).body = bindBody(CLAIM, 'global');
+      if (change === 'ambiguous') { e.gh.pull(912, { updated: iso(NOW), body: bindBody(CLAIM) }); e.native.bindings.set(912, { state: 'conflict' }); }
+      if (change === 'generation-race') { e.gh.pull(912, { updated: iso(NOW) }); e.native.bindings.set(912, { claimId: '99999999-8888-4777-8666-555555555555', taskId: CLAIM, scope: BIND_SCOPE }); }
+      if (change === 'scope') e.native.bindings.set(910, { claimId: CLAIM, scope: 'global' });
       if (change === 'draft') e.gh.world.pulls.get(910).draft = true;
       if (change === 'fork') e.gh.world.pulls.get(910).headRepo = 'someone/fork';
       if (change === 'beyond-reads') for (let n = 0; n < FRONT_BIND_MAX_READS; n++) e.gh.pull(920 + n, { updated: iso(NOW) });
@@ -466,7 +584,7 @@ test('take-over front (task e30b5a36): the binding round and the OPEN_FRONT_BATC
   assert.equal(bind.facts.sweep.complete, true, 'its incremental sweep still ran and completed');
   assert.deepEqual([bind.full.nextPage, bind.full.nextIndex, bind.full.startedAt], [anchored.nextPage, anchored.nextIndex, anchored.startedAt],
     'a skipped round records no full-sweep progress');
-  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+  e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910, boundPrs: [`${REPO}#910`], prs: [910] };
   const open = await e.round();
   assert.equal(open.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(open.facts));
   assert.ok(open.facts.openFrontBatch);
@@ -525,7 +643,7 @@ test('take-over front (task e30b5a36): a binding that never binds, or an open th
       const H2 = sha(0x4242), S2 = sha(0x4343);
       e.gh.world.commits.set(S2, { sha: S2, tree: sha(0x4444), parents: [T, H2] });
       assert.equal((await e.round()).created, 0, 'the binding round skips');
-      e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+      e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910, boundPrs: [`${REPO}#910`], prs: [910] };
       const open = await e.round();
       assert.deepEqual([open.facts.decision, open.created], ['OPEN_FRONT_BATCH', 0]);
       const refresh = await e.round();
@@ -543,7 +661,7 @@ test('take-over front (task e30b5a36): a binding that never binds, or an open th
   });
   await t.test('touch running refused', async t => {
     const e = await takeoverRunning(t);
-    e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910 };
+    e.native.holder = { ...e.native.holder, boundPr: `${REPO}#910`, pr: 910, boundPrs: [`${REPO}#910`], prs: [910] };
     e.native.port.touch = async i => { e.native.calls.push(['touch', i]); return { onDuty: true, touched: false, until: e.native.holder.mergeSlotUntil, claims: [CLAIM], returned: null }; };
     const first = await e.round();
     assert.equal(first.facts.decision, 'TRAIN_FRONT_BUDGET_SHORT', JSON.stringify(first.facts));

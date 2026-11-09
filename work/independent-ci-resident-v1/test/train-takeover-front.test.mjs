@@ -45,6 +45,40 @@ async function world(t, { quick = false } = {}) {
   const read = e.gh.readPullRequest.bind(e.gh);
   e.gh.readPullRequest = async n => { const p = e.gh.world.pulls.get(n); return { ...(await read(n)), body: p.body ?? null, draft: p.draft === true,
     head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: p.headRepo ?? REPO } } }; };
+  // `claim` is this offline fixture's explicit holder authorization input,
+  // never a parsed PR body. Keep authorization and Native relation separate:
+  // only a writable qualified-CI lookup may first associate an authorized head.
+  const authorizations = new Map(), relations = new Map();
+  e.native.revokePRHead = number => authorizations.delete(number);
+  e.native.bindingConflicts = new Set();
+  e.native.bindings = new Map();
+  const pull = e.gh.pull;
+  e.gh.pull = (number, options = {}) => {
+    pull(number, options);
+    if (options.claim) authorizations.set(number, { claimId: options.claim, taskId: options.claim,
+      headSha: e.gh.world.pulls.get(number).head, targetBranch: options.base ?? 'main' });
+  };
+  const resolve = e.native.port.resolvePRBinding;
+  e.native.port.resolvePRBinding = async expected => {
+    const authorization = authorizations.get(expected.prNumber), known = relations.get(expected.prNumber);
+    let projection, autoBound = false;
+    if (e.native.bindingConflicts.has(expected.prNumber)) projection = { state: 'conflict' };
+    else if (authorization?.headSha === expected.headSha && authorization.targetBranch === expected.targetBranch
+      && expected.repository === REPO && expected.scope === SCOPE && (known || expected.readOnly !== true)) {
+      projection = { ...authorization, scope: SCOPE };
+      autoBound = !known;
+      if (autoBound) relations.set(expected.prNumber, projection);
+    } else projection = known ? { ...known, state: 'head_not_authorized' } : null;
+    if (projection) e.native.bindings.set(expected.prNumber, { ...projection, auto_bound: autoBound });
+    else e.native.bindings.delete(expected.prNumber);
+    const answer = await resolve(expected);
+    if (answer.binding_status === 'bound' && answer.claim.claim_id === e.native.holder?.claimId) {
+      const prs = [...relations.entries()].filter(([, r]) => r.claimId === answer.claim.claim_id).map(([number]) => number).sort((a,b) => a-b);
+      e.native.holder = { ...e.native.holder, taskId: answer.task_id, prs, boundPrs: prs.map(number => `${REPO}#${number}`),
+        pr: prs.length === 1 ? prs[0] : null, boundPr: prs.length === 1 ? `${REPO}#${prs[0]}` : null };
+    }
+    return answer;
+  };
   e.native.port.nodesStatus = async () => ({ deployed: true, onDuty: true, dropped: 0,
     nodes: [{ node: { name: 'fixture-node', sourceManifestSha256: CI_SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(e.now) } }] });
   return e;
@@ -90,12 +124,11 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true } =
     if (subject.testSha && stage.number >= 2 && stage.number <= 7) at.advance(frontStageMs);
     const ok = { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF };
     if (stage.number === 1) {
-      const pr = e.gh.world.pulls.get(subject.pr);
-      // Native binds the claim the PR names to the PR (migration 20261003200000: only the ci-admission verify with pr_ref does).
-      if (pr.claim && e.native.holder?.claimId === pr.claim) e.native.holder = { ...e.native.holder, boundPr: `${REPO}#${subject.pr}`, pr: subject.pr };
+      const binding = await e.native.port.resolvePRBinding({ scope: SCOPE, repository: REPO, prNumber: subject.pr,
+        headSha: subject.headSha, baseSha: subject.baseSha, targetBranch: 'main' });
       e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
       if (!queueFacts) return ok;
-      const head = Boolean(pr.claim) && e.native.holder?.claimId === pr.claim;
+      const head = binding.binding_status === 'bound' && e.native.holder?.claimId === binding.claim.claim_id;
       return { ...ok, outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
         scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: head ? { entered: true, state: 'head', position: 1 } : { entered: true, state: 'waiting', position: 2 } } } };
     }
@@ -126,6 +159,23 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true } =
   return engine;
 }
 
+test('take-over fixture uses exact Native holder authorization, never body prose or a readonly discovery', async t => {
+  const e = await world(t), expected = { scope: SCOPE, repository: REPO, prNumber: 910, headSha: H, baseSha: T, targetBranch: 'main' };
+  e.gh.pull(910, { head: H, body: body(CLAIM) });
+  assert.equal((await e.native.port.resolvePRBinding(expected)).binding_status, 'unbound', 'a body alone grants nothing');
+  e.gh.pull(910, { head: H, body: body(OTHER_CLAIM), claim: CLAIM });
+  assert.equal((await e.native.port.resolvePRBinding({ ...expected, readOnly: true })).binding_status, 'unbound', 'read-only cannot activate');
+  const bound = await e.native.port.resolvePRBinding(expected);
+  assert.equal(bound.binding_status, 'bound'); assert.equal(bound.auto_bound, true); assert.equal(bound.claim.claim_id, CLAIM);
+  assert.equal((await e.native.port.resolvePRBinding({ ...expected, readOnly: true })).auto_bound, false);
+  assert.equal((await e.native.port.resolvePRBinding({ ...expected, headSha: sha(123) })).binding_status, 'head_not_authorized');
+  await assert.rejects(e.native.port.resolvePRBinding({ ...expected, scope: 'global' }), 'a different context cannot reuse the relation');
+  e.gh.pull(912, { head: sha(124), body: 'No binding trailers.', claim: CLAIM });
+  const other = await e.native.port.resolvePRBinding({ ...expected, prNumber: 912, headSha: sha(124) });
+  assert.equal(other.task_id, bound.task_id, 'multiple independently authorized PRs of one Task are legal');
+  assert.deepEqual(e.native.holder.boundPrs, [`${REPO}#910`, `${REPO}#912`]);
+});
+
 // Task 7100ff62: with nonFrontRuns false the schedule kept only the front rows (S), so the binding run (no S) was deferred as
 // TRAIN_NON_FRONT_RUNS_OFF and the claim was never bound. The binding run is the front's own prelude: it runs under both settings.
 for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027): a queue-head PR pushed after train=on gets the merge-slot green within 30 minutes while the full sweep still runs (nonFrontRuns ${nonFrontRuns})`, async t => {
@@ -146,7 +196,7 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
   // is not the head, is pushed too.
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   e.gh.pull(911, { head: sha(0x7777), updated: iso(arrival), body: body(OTHER_CLAIM), claim: OTHER_CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
@@ -228,7 +278,7 @@ async function steadyState(t, { relay = false, queueFacts = true, pr = 910, clai
   assert.deepEqual(engine.stages, []);
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(pr, { head, mergeCommitSha: S, updated: iso(arrival), body: body(claim), claim });
   await f.drop(triggerBytes({ pr, headSha: head, baseSha: T }));
   const refused = async () => (await f.receipts.latest(['train-front-refused'], 50)).map(r => r.value.body.failureCode);
@@ -343,8 +393,8 @@ test('DESIGN §62.6: no yield in shadow or off, nor in on without strict, before
   assert.equal(f.exec.trainFrontYield(subject, headOutcome), false, 'the newest run not on');
 });
 
-test('take-over front: no binding run without strict, for a PR that names another claim, or for two PRs naming the head claim', async t => {
-  for (const change of ['strict-off', 'other-claim', 'ambiguous', 'draft']) await t.test(change, async t => {
+test('take-over front: no binding run without strict, for another Native claim, a Native conflict, or a draft', async t => {
+  for (const change of ['strict-off', 'other-claim', 'native-conflict', 'draft']) await t.test(change, async t => {
     const e = await world(t);
     const at = { t };
     const engine = engineFor(e, at);
@@ -355,10 +405,10 @@ test('take-over front: no binding run without strict, for a PR that names anothe
     if (change === 'strict-off') e.gh.world.strict = false;
     const arrival = f.clock();
     e.native.holders = undefined;
-    e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+    e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
     const named = change === 'other-claim' ? OTHER_CLAIM : CLAIM;
     e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(named), claim: named, draft: change === 'draft' });
-    if (change === 'ambiguous') e.gh.pull(912, { head: sha(0x7778), updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+    if (change === 'native-conflict') e.native.bindingConflicts.add(910);
     await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
     for (let i = 0; i < 15; i++) { await f.exec.tick(); f.advance(MIN); }
     assert.deepEqual(engine.stages, [], 'nothing runs before the take-over sweep');
@@ -430,7 +480,7 @@ async function bound(t) {
   for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   const ended = async () => (await f.receipts.latest(['batch-terminal', 'batch-unexecuted'], 50)).map(r => r.value.body).find(b => b.failureCode === 'TRAIN_FRONT_CLAIM_BOUND');
@@ -458,7 +508,7 @@ test('defect a8910e41: after the binding run the node goes back to shadow: the s
 test('defect a8910e41: in the same duty the released head is never bound a second time nor run as an ordinary batch', async t => {
   const { e, f, engine } = await bound(t);
   // the claim comes unbound again (the front was not opened): stage 10 names the same PR and head as the binding run's subject again
-  e.native.holder = { ...e.native.holder, boundPr: null, pr: null };
+  e.native.holder = { ...e.native.holder, boundPrs: [], prs: [], boundPr: null, pr: null };
   for (let i = 0; i < 40; i++) { await f.exec.tick(); f.advance(MIN); }
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1], 'one binding run of this head in this duty, no ordinary batch');
   assert.equal((await f.receipts.latest(['train-front-bind'], 50)).length, 1);
@@ -478,7 +528,7 @@ test('gen 22 (PR #1029): a front batch whose stages 1-7 outlast the strict proof
   for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 90 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 90 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   let green = null;
@@ -530,7 +580,7 @@ test('take-over front (task 60f83aa3): a PR arriving after a NO_FRONT run gets i
   const arrival = f.clock();
   const before = engine.trainRuns.length;
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   let bound = null;
@@ -574,7 +624,7 @@ test('steady state (task 60f83aa3): after the ordinary batch\'s stage 1 bound th
   const arrival = f.clock();
   const before = engine.trainRuns.length;
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   let stage1At = null, open = null;
@@ -615,8 +665,8 @@ test('steady state (task 60f83aa3): a head makes stage 10 urgent at most twice, 
 // The policy names no train.sweep: the default is the Owner's decision ('audit'). Strict stays on for good, so no full sweep gates
 // anything: the queue head's ordinary batch binds its claim at stage 1 (no take-over binding exception needed), gives way, and the front
 // batch gets the merge-slot green on the strict current-front proof while the full sweep (here: hours) still runs.
-// The PR names its claim only in the head commit (not in its body), so the take-over binding exception (§62.4, body trailer only) cannot
-// help: before this change (gate mode) the PR waited for the whole full sweep.
+// The fixture authorizes the exact head independently of PR prose. Native may discover that association through qualified CI;
+// permanent mode does not need the take-over scheduling exception in either case.
 const permanentPolicy = (extra = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
   train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, ...(extra.train ?? {}) } });
 
@@ -641,7 +691,7 @@ async function permanentArrival(t, { strict = true, restart = false, sweep } = {
   }
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: 'Change.\n', claim: CLAIM });
   e.gh.pull(911, { head: sha(0x7777), updated: iso(arrival), body: 'Other change.\n', claim: OTHER_CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
@@ -679,9 +729,10 @@ for (const restart of [false, true]) test(`strict-permanent (DESIGN §65): train
   assert.equal(slotGreen(e, sha(0x7777)), undefined);
 });
 
-// The way back: the same arrival with train.sweep 'gate' (the take-over gate of §62) waits for the full sweep: no green in 30 minutes.
-test('strict-permanent (DESIGN §65): with train.sweep gate the same PR still waits for the take-over full sweep', async t => {
+// Gate mode retains an unbound PR that has no exact holder authorization: body prose or a claim label cannot discover it.
+test('strict-permanent (DESIGN §65): train.sweep gate still holds an unbound PR without Native holder authorization', async t => {
   const { e, f, engine } = await permanentArrival(t, { sweep: 'gate' });
+  e.native.revokePRHead(910);
   assert.equal(await untilGreen(f, e), null);
   assert.equal(f.exec.trainTakeoverDone, false);
   assert.deepEqual(engine.stages, [], 'gate mode holds every batch before the take-over sweep');
@@ -743,7 +794,7 @@ test('strict-permanent (DESIGN §65): the audit round runs at its daily cadence 
     // And the green does not wait for it.
     const arrival = f.clock();
     e.native.holders = undefined;
-    e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+    e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
     e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: 'Change.\n', claim: CLAIM });
     await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
     assert.ok(await untilGreen(f, e), `${sweep}: no green; stage 10 said ${engine.lastFacts?.decision}`);
@@ -781,7 +832,7 @@ for (const [sweep, liveLate] of [['gate', false], ['audit', false], ['gate', tru
   for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
@@ -841,7 +892,7 @@ test('field #1035: during the take-over a superseded parked batch ends at its sa
   await f.exec.tick(); f.advance(10 * MIN);
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
@@ -920,7 +971,7 @@ test('field #1037 (1b31b06b): the front PR\'s old head rests at B after a failed
   // The PR arrives; its claim is the queue head (not yet bound): the ordinary batch gives way, the front batch (H, S) runs and rests at B.
   const arrival = f.clock();
   e.native.holders = undefined;
-  e.native.holder = holderOf({ boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
   await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
   const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);

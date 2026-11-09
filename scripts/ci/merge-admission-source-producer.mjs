@@ -67,6 +67,10 @@ const reasonCodes=rows=>Array.isArray(rows)?[...new Set(rows.map(x=>{
   return REASONS.has(p)?p.toUpperCase():'UNKNOWN_REASON';}))]:[];
 function prOf(pr){return {pr_number:number(pr?.number),head_sha:sha(pr?.head?.sha),base_sha:sha(pr?.base?.sha),
   base_ref:safe(pr?.base?.ref),base_repository:safe(pr?.base?.repo?.full_name),state:['open','closed'].includes(pr?.state)?pr.state:null,draft:typeof pr?.draft==='boolean'?pr.draft:null};}
+function operationAuthorityFields(data){return {
+  ...(data.task_id===undefined?{}:{task_id:uuid(data.task_id)}),
+  ...(data.execution_epoch===undefined?{}:{execution_epoch:number(data.execution_epoch)}),
+  ...(data.head_authorization_id===undefined?{}:{head_authorization_id:uuid(data.head_authorization_id)})};}
 function finalOf(o){return {pr_ref:prReference(o?.pr_ref),head_sha:sha(o?.head_sha),base_sha:sha(o?.base_sha),enforced:o?.enforced===true,
   scope:scope(o?.scope),claim_id:uuid(o?.claim_id),admitted:o?.admitted===true,
   verdict:['ADMITTED','REJECTED','ERROR','PR_NOT_OPEN','NOT_APPLICABLE'].includes(o?.verdict)?o.verdict:'ERROR',
@@ -110,6 +114,7 @@ export function formatNaturalPayload(kind,data={}){
       run_attempt_binding:'NATIVE_CONFIRMATION_REQUIRED'};
     case 'operation_request':return {operation_id:uuid(data.operation_id),action:safe(data.action),scope:scope(data.scope),...prOf(data.pr),
       expected_head_sha:sha(data.expected_head_sha),main_sha:sha(data.main_sha),claim_id:uuid(data.claim_id),fence:number(data.fence),
+      ...operationAuthorityFields(data),
       pre_observation_id:uuid(data.pre_observation_id),
       reason_code:data.reason_code==='MAIN_MOVED_REQUIRES_RERUN'?'MAIN_MOVED_REQUIRES_RERUN':data.action==='update_branch'?'DEFAULT_BRANCH_UPDATE_REQUEST':'UNKNOWN_OPERATION_REASON',
       origin:data.origin===undefined?'executor':['executor','holder_adapter','platform_operation'].includes(data.origin)?data.origin:null,
@@ -133,6 +138,7 @@ export function formatNaturalPayload(kind,data={}){
       kind:'new_main_requires_rerun',main_sha:sha(data.main_sha),run_keys:Array.isArray(data.run_keys)?data.run_keys.slice(0,2000).map(safe):null,
       provider_round_basis:'explicit original operation supersession of this supplied Native execution set; full jobs/source binding still required'};
     case 'manual_operation_input':return {operation_id:uuid(data.operation_id),action:safe(data.action),pr_number:number(data.pr_number),expected_head_sha:sha(data.expected_head_sha),
+      ...operationAuthorityFields(data),
       run_id:id(data.run_id),attempt:number(data.attempt),origin:'holder',authority:'CURRENT_ORIGINAL_GATES_REQUIRED'};
     case 'round_ci_observation':return {scope:scope(data.scope),...prOf(data.pr),state:safe(data.seen?.state),
       native_runs:refs(data.seen?.execution?.native_runs),tip:sha(data.seen?.execution?.tip),

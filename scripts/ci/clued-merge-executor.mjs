@@ -27,14 +27,14 @@ import {
   cluedRpc,
   githubJson,
   githubPaged,
-  parseClaimReference,
+  resolvePullRequestBinding,
   evaluate,
   withTokenHint,
 } from "./clued-work-admission.mjs";
 import { cleanupManagedAutoMerge,managedAutoMerge,executorToken,appRequest } from "./clued-managed-auto-merge.mjs";
 export {executorToken,managedAutoMerge,EXECUTOR_PERMISSIONS} from "./clued-managed-auto-merge.mjs";
 import { HOLDERS_RPC, INDEPENDENT_CI_APP_ID, ciStateOf, ciWorkflows, independentCheckBindsPullRequest, requiredBarrier, requiredChecksOf,
-  matchesOperationPR } from "./clued-merge-slot-ci.mjs";
+  matchesOperationPR, samePRBindingAuthority, selectHolderBinding } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
@@ -177,28 +177,34 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   return { action: "merge_pull_request", execution:gated, reason: `up to date, admitted, ${renewed ? `opted in by the claim renewal at ${pr.head.sha}` : "opted in"} and ${gated.reason}` };
 }
 
-export async function currentOperationAuthority({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action}) {
+const plannedAuthorityFields = binding => ({ task_id: binding.task_id, claim_id: binding.claim.claim_id,
+  fence: binding.claim.fence, execution_epoch: binding.claim.execution_epoch, head_authorization_id: binding.head_authorization_id });
+
+export async function currentOperationAuthority({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action,expectedBinding}) {
   try {
+    if (repository !== env.GITHUB_REPOSITORY || !samePRBindingAuthority(expectedBinding,expectedBinding)
+      || expectedBinding.scope !== scope) return {valid:false};
     const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
     const mode=resolveMode({env,workspace,readFile:readPolicyFile});
-    const reference=parseClaimReference(current?.body),expected=parseClaimReference(pr.body);
     if(current?.number!==pr.number || current.state!=='open' || current.draft!==false || current.head?.sha!==pr.head.sha ||
       current.base?.ref!==pr.base.ref || current.base?.repo?.full_name!==repository ||
-      current.base.repo.default_branch!==pr.base.repo.default_branch || !reference ||
-      reference.claim_id!==expected?.claim_id || reference.scope!==scope || mode.state==='frozen')return {valid:false};
+      current.base.repo.default_branch!==pr.base.repo.default_branch || mode.state==='frozen')return {valid:false};
+    const binding=await resolvePullRequestBinding(fetchImpl,env,current,{workspace,scope,readOnly:true});
+    if(!samePRBindingAuthority(expectedBinding,binding))return {valid:false};
     const branch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(current.base.ref)}`);
     if(branch?.commit?.sha!==tip)return {valid:false};
     const holders=await cluedRpc(fetchImpl,env,workspace,HOLDERS_RPC,{scope,repository});
     const ref=`merge:${repository}:${current.base.ref}`.toLowerCase();
-    const holder=holders.body?.status==='ok' && holders.body.holders?.find(row=>row.claim_id===reference.claim_id &&
-      String(row.bound_pr).toLowerCase()===`${repository}#${current.number}`.toLowerCase() &&
+    const holder=holders.status===200 && holders.body?.status==='ok' && holders.body.holders?.find(row=>
+      selectHolderBinding(row,[{pr:current,binding}],repository)!==null &&
       row.merge_refs?.some(value=>String(value).toLowerCase()===ref));
     if(!holder)return {valid:false};
     // This reuses admission's existing live permission/withdrawal verifier;
     // execution qualification never enters the ADMITTED evaluator.
     const outcome=await evaluate({env,event:{pull_request:current},eventName:'pull_request_target',fetchImpl,workspace,
-      withSummary:false,readPolicyFile});
-    if(outcome.admitted!==true || outcome.head_sha!==current.head.sha || outcome.scope!==scope || outcome.claim_id!==reference.claim_id ||
+      withSummary:false,readPolicyFile,bindingScope:scope});
+    if(outcome.admitted!==true || !samePRBindingAuthority(expectedBinding,outcome.claim_binding)
+      || outcome.head_sha!==current.head.sha || outcome.scope!==scope || outcome.claim_id!==expectedBinding.claim.claim_id ||
       outcome.merge_slot?.tip!==tip ||
       outcome.admission_mode?.state!==mode.state || outcome.admission_mode.rules?.auto_merge!=='allowed')return {valid:false};
     const held=outcome.merge_slot?.state==='held' ||
@@ -217,7 +223,8 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
     if(final?.number!==current.number || final.state!=='open' || final.draft!==false || final.head?.sha!==current.head.sha ||
       final.body!==current.body || final.base?.ref!==current.base.ref || final.base?.repo?.full_name!==repository ||
       finalBranch?.commit?.sha!==tip)return {valid:false};
-    return {valid:true,pr:current,mode,progress_ref:holder.progress_ref,observation_fence:outcome.claim?.fence??null};
+    return {valid:true,pr:current,mode,progress_ref:holder.progress_ref,claim_binding:binding,
+      observation_fence:expectedBinding.claim.fence};
   } catch {return {valid:false};}
 }
 
@@ -228,8 +235,7 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
   const result = { state: mode.state, heads: [], actions: [], notices: [], errors: [] };
   const observations=arguments[0].observation_recorder;
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
-  // Only pull requests whose body names their claim: an update-branch merge commit carries no
-  // trailer, so a claim named only in a commit would be lost (review MINOR-3).
+  // PR text carries only the separate auto-merge opt-in; Native supplies Task authority.
   const openPulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
   const cleanup=await cleanupManagedAutoMerge({env,fetchImpl,pulls:openPulls,now});
   result.actions.push(...cleanup.actions);result.notices.push(...cleanup.notices);result.errors.push(...cleanup.errors);
@@ -240,9 +246,16 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
 
   const pulls = openPulls.filter(pr=>!cleanup.blocked.has(pr.number))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch
-      && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft && parseClaimReference(pr.body));
-  const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
-  const scopes = [...new Set(pulls.map((pr) => parseClaimReference(pr.body)).filter(Boolean).map((ref) => ref.scope))].sort();
+      && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft);
+  const candidates=[];
+  for(const pr of pulls) {
+    try {
+      const binding=await resolvePullRequestBinding(fetchImpl,env,pr,{workspace,readOnly:true});
+      if(binding.binding_status==='bound' && samePRBindingAuthority(binding,binding))candidates.push({pr,binding});
+      else result.notices.push(`#${pr.number}: Native PR binding is ${binding.binding_status}; waiting`);
+    }catch {result.notices.push(`#${pr.number}: Native PR binding unavailable; waiting`);}
+  }
+  const scopes = [...new Set(candidates.map(c=>c.binding.scope))].sort();
   const heads = [];
   for (const scope of scopes) {
     const response = await cluedRpc(fetchImpl, env, workspace, HOLDERS_RPC, { scope, repository });
@@ -255,13 +268,13 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
       continue;
     }
     for (const holder of Array.isArray(response.body.holders) ? response.body.holders : []) {
-      const pr = typeof holder.bound_pr === "string" ? byRef.get(holder.bound_pr.toLowerCase()) : undefined;
+      const selected=selectHolderBinding(holder,candidates.filter(c=>c.binding.scope===scope),repository),pr=selected?.pr;
       if (!pr || heads.some((entry) => entry.pr === pr)) continue;
       // Only the head of the default branch's queue: another branch's slot is not this merge.
       const ref = `merge:${repository}:${pr.base.repo.default_branch}`.toLowerCase();
       if (!(Array.isArray(holder.merge_refs) ? holder.merge_refs : []).some((r) => String(r).toLowerCase() === ref)) continue;
       const since = Date.parse(holder.merge_slot_ci && holder.merge_slot_ci.taken_at || "");
-      heads.push({ scope, pr, progress_ref: holder.progress_ref, since: Number.isFinite(since) ? since : null });
+      heads.push({ scope, pr, expectedBinding:selected.binding, progress_ref: holder.progress_ref, since: Number.isFinite(since) ? since : null });
     }
   }
   result.heads = heads.map(({ pr }) => ({ pr: pr.number, head_sha: pr.head.sha }));
@@ -284,16 +297,16 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
   const branchRules = () => (rulesRead ??= requiredChecksOf(fetchImpl, env, repository, defaultBranch));
   const liveMode = admissionMode ?? (pr => liveAdmissionModeOf({ env, fetchImpl, workspace, readPolicyFile, pr }));
   const plans = [];
-  for (const { pr, since, progress_ref, scope, orphaned } of heads) {
+  for (const { pr, since, progress_ref, scope, orphaned, expectedBinding } of heads) {
     try {
       let plan=orphaned?{action:'disable_auto_merge',reason:'managed auto-merge no longer holds a live FIFO slot'}:
         await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state,qualifyExecution:qualify,
           required: await branchRules(), admissionMode: liveMode });
       if(managedAutoMerge(pr) && plan.action==='none') {
-        const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action:'merge_pull_request'});
+        const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,expectedBinding,action:'merge_pull_request'});
         if(authority?.valid!==true)plan={action:'disable_auto_merge',reason:'managed request lost current permission, withdrawal or FIFO eligibility'};
       }
-      plans.push({pr,scope,since,progress_ref,...plan});
+      plans.push({pr,scope,since,progress_ref,expectedBinding,...plan});
     } catch (error) {
       if(managedAutoMerge(pr))plans.push({pr,scope,action:'disable_auto_merge',reason:'execution eligibility could not be revalidated'});
       else result.errors.push(`#${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
@@ -323,7 +336,7 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
       }
     } else {
       const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
-        scope:plan.scope,action:plan.action});
+        scope:plan.scope,expectedBinding:plan.expectedBinding,action:plan.action});
       if(authority?.valid!==true) {
         result.actions.push({...entry,action:'none',reason:'current permission, withdrawal, policy or FIFO gate refused the operation'});continue;
       }
@@ -335,7 +348,7 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
       // Qualification may take time: recheck live authority after it, rather
       // than retaining the permission/withdrawal decision from before it.
       const lastAuthority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
-        scope:plan.scope,action:plan.action});
+        scope:plan.scope,expectedBinding:plan.expectedBinding,action:plan.action});
       if(lastAuthority?.valid!==true || lastAuthority.progress_ref!==authority.progress_ref ||
         lastAuthority.pr.body!==authority.pr.body || lastAuthority.mode.state!==authority.mode.state) {
         result.actions.push({...entry,action:'none',reason:'live authority changed during execution qualification'});continue;
@@ -362,9 +375,10 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
     } else if (plan.action === "update_branch") {
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(!matchesOperationPR(current,lastPr,plan.action)) {result.actions.push({...entry,action:'none',reason:'native PR permission changed before update'});continue;}
-      const operation_id=observations.newId(),reference=parseClaimReference(current.body);
+      const operation_id=observations.newId();
       const pre=observations.record("operation_pre",{operation_id,pr:current,main_sha:tip});
-      observations.record("operation_request",{operation_id,pre_observation_id:pre.record_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,claim_id:reference?.claim_id,fence:lastFence,reason_code:'MAIN_MOVED_REQUIRES_RERUN'});
+      observations.record("operation_request",{operation_id,pre_observation_id:pre.record_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,
+        ...plannedAuthorityFields(plan.expectedBinding),reason_code:'MAIN_MOVED_REQUIRES_RERUN'});
       const response = await observeMutation(()=>appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/update-branch`, token,
         { expected_head_sha: plan.pr.head.sha }),observations,{operation_id,action:plan.action});
       entry.status = response.status;
@@ -389,7 +403,8 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
         const operation_id=observations.newId();
         const run_keys=(lastExecution.native_runs??[]).map(r=>String(r.id)+':'+r.run_attempt).sort();
         observations.record('round_ci_observation',{scope:plan.scope,pr:current,seen:{state:'green',execution:lastExecution}});
-        observations.record("operation_request",{operation_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,fence:lastFence,run_keys,original_round_id:naturalRoundId(run_keys)});
+        observations.record("operation_request",{operation_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,
+          ...plannedAuthorityFields(plan.expectedBinding),run_keys,original_round_id:naturalRoundId(run_keys)});
         const merged=await observeMutation(()=>appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${plan.pr.number}/merge`,token,
           {merge_method:'merge',sha:plan.pr.head.sha}),observations,{operation_id,action:plan.action});
         entry.merge_status=merged.status;
@@ -429,26 +444,32 @@ export async function runRecordedHolderOperation({env,fetchImpl,workspace,input,
   if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR!==env.GITHUB_REPOSITORY_OWNER||input?.measurement_opt_in!=='true')return refused('explicit Owner holder dispatch required');
   if(!['update_branch','cancel_ci_attempt'].includes(input.measurement_operation)||!/^\d+$/.test(String(input.measurement_pr??''))||
     !Number.isSafeInteger(Number(input.measurement_pr))||Number(input.measurement_pr)<1||!/^[a-f0-9]{40}$/.test(input.measurement_head??''))return refused('invalid exact operation subject');
-  const repository=env.GITHUB_REPOSITORY,pr=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${Number(input.measurement_pr)}`),reference=parseClaimReference(pr?.body);
-  if(!reference||pr.head?.sha!==input.measurement_head||pr.state!=='open'||pr.draft||pr.base?.repo?.full_name!==repository)return refused('current original PR/claim subject required');
+  const repository=env.GITHUB_REPOSITORY,pr=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${Number(input.measurement_pr)}`);
+  if(pr.head?.sha!==input.measurement_head||pr.state!=='open'||pr.draft||pr.base?.repo?.full_name!==repository)return refused('current original PR subject required');
+  let expectedBinding;
+  try { expectedBinding=await resolvePullRequestBinding(fetchImpl,env,pr,{workspace,readOnly:true}); }
+  catch {return refused('current Native PR binding unavailable');}
+  if(!samePRBindingAuthority(expectedBinding,expectedBinding))return refused('current Native PR binding required');
+  const scope=expectedBinding.scope;
   const branch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`),tip=branch?.commit?.sha;
   const action=input.measurement_operation==='update_branch'?'holder_update_branch':'holder_cancel_ci_attempt';
-  let authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope:reference.scope,action});
+  let authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,expectedBinding,action});
   if(authority?.valid!==true)return refused('current original permission/withdrawal/admission/FIFO gates refused');
   const recorder=observation_recorder??createNaturalRecorder({env,workspace,sourceUrl:import.meta.url,sourcePath:'scripts/ci/clued-merge-executor.mjs'}),operation_id=recorder.newId();
   let completion='exception';
   try{
-    recorder.record('manual_operation_input',{operation_id,action:input.measurement_operation,pr_number:pr.number,expected_head_sha:pr.head.sha,run_id:input.measurement_run,attempt:input.measurement_attempt});
+    recorder.record('manual_operation_input',{operation_id,action:input.measurement_operation,pr_number:pr.number,expected_head_sha:pr.head.sha,
+      ...plannedAuthorityFields(expectedBinding),run_id:input.measurement_run,attempt:input.measurement_attempt});
     const operationToken=input.measurement_operation==='update_branch'?(await getToken({env,fetchImpl,now})).token:null;
     if(input.measurement_operation==='update_branch'&&!operationToken)return refused('existing operation App permission unavailable');
-    const last=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope:reference.scope,action});
+    const last=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,expectedBinding,action});
     if(last?.valid!==true||last.pr.body!==authority.pr.body||last.pr.head.sha!==pr.head.sha||last.mode.state!==authority.mode.state)return refused('final live original authority changed');
     authority=last;
     const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`),main=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`);
     if(!matchesOperationPR(current,authority.pr,input.measurement_operation)||main.commit?.sha!==tip)return refused('final Native PR/default branch changed');
     const pre=recorder.record('operation_pre',{operation_id,pr:current,main_sha:tip});
-    const requestPayload={operation_id,pre_observation_id:pre.record_id,action:input.measurement_operation,origin:'holder_adapter',scope:reference.scope,pr:current,
-      expected_head_sha:pr.head.sha,main_sha:tip,claim_id:reference.claim_id,fence:authority.observation_fence,
+    const requestPayload={operation_id,pre_observation_id:pre.record_id,action:input.measurement_operation,origin:'holder_adapter',scope,pr:current,
+      expected_head_sha:pr.head.sha,main_sha:tip,...plannedAuthorityFields(expectedBinding),
       reason_code:input.measurement_reason==='MAIN_MOVED_REQUIRES_RERUN'?'MAIN_MOVED_REQUIRES_RERUN':'GENERAL_UPDATE'};
     let response;
     if(input.measurement_operation==='update_branch'){
@@ -473,7 +494,7 @@ export async function runRecordedHolderOperation({env,fetchImpl,workspace,input,
     recorder.record('operation_post',{operation_id,pr:post,main_sha:tip,parents:commit.parents.map(x=>x.sha),provider_request_id:response.request_id});
     if(input.measurement_operation==='update_branch'&&response.status===202&&input.measurement_reason==='MAIN_MOVED_REQUIRES_RERUN'&&
       post.head.sha!==pr.head.sha&&commit.parents.some(x=>x.sha===pr.head.sha)&&commit.parents.some(x=>x.sha===tip))
-      recorder.record('round_termination',{operation_id,round_id:null,scope:reference.scope,pr:current,main_sha:tip});
+      recorder.record('round_termination',{operation_id,round_id:null,scope,pr:current,main_sha:tip});
     completion='returned';return {status:'RECORDED_ORIGINAL_OPERATION',operation_id,response_status:response.status,
       native_post_head:post.head.sha,confirmation:post.head.sha===pr.head.sha?'NOT_YET_CHANGED':'ACTUAL_NATIVE_POST_CHANGED',cancel_cause:'UNKNOWN_CAUSE'};
   }finally{if(!observation_recorder)recorder.finish(completion);}

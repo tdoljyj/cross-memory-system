@@ -5,13 +5,14 @@
 // {status:'ok', holders:[], reason:'admission_binding_required'}, which means "not on duty", never "queue empty".
 // Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, keepalive and the sweep watermark, and the read
 // nodesStatus (ci_nodes_status: nodes, watchdog, watermarks), are Source A's port (scripts/ci/clued-merge-train-native.mjs),
-// offered here with the same config and token. The holders answer is unchanged by step 2b and parsed exactly as before:
-// nothing optional can make the role probe uncertain (review R1 MAJOR-1).
+// offered here with the same config and token. Holders require the Native Task/PR
+// projection; an older API is unknown, never authority from its old scalar column.
 import { digest } from '../proof.mjs';
 import { createMergeTrainNativeWriter } from '../../../../../scripts/ci/clued-merge-train-native.mjs';
 
 export const HOLDERS_RPC = 'clued_work_merge_slot_holders_v1';
 export const NOT_ON_DUTY = 'admission_binding_required';
+export const HOLDERS_PROJECTION_UNSUPPORTED = 'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED';
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const PR_REF = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,9}$/;
 const ISO = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
@@ -54,13 +55,26 @@ async function roleProbeBody(response) {
 // Pure: the reply -> { onDuty, holders }. Anything else is unreadable (MERGE_SLOT_HOLDERS_UNREADABLE).
 export function parseHolders(status, body, repository) {
   if (status !== 200 || !plain(body) || body.status !== 'ok' || !Array.isArray(body.holders)) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
-  if (body.reason === NOT_ON_DUTY) return { onDuty: false, holders: [] };
+  if (body.reason === NOT_ON_DUTY) {
+    if (body.holders.length !== 0) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+    return { onDuty: false, holders: [] };
+  }
   if (body.reason !== undefined || body.repository !== repository || body.holders.length > 20) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+  const claims = new Set(), tasks = new Set(), targets = new Set();
   const holders = body.holders.map(h => {
-    if (!plain(h) || !UUID.test(h.claim_id ?? '') || !(h.bound_pr === null || PR_REF.test(h.bound_pr ?? '')) || !ISO(h.merge_slot_until)) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+    if (!plain(h) || !UUID.test(h.claim_id ?? '') || !ISO(h.merge_slot_until)) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+    if (h.task_id === undefined || h.bound_prs === undefined) fail(HOLDERS_PROJECTION_UNSUPPORTED);
+    if (!UUID.test(h.task_id ?? '') || !Array.isArray(h.bound_prs) || h.bound_prs.length > 50
+      || claims.has(h.claim_id) || tasks.has(h.task_id)) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+    const refs = h.bound_prs;
+    if (refs.some(ref => typeof ref !== 'string' || !PR_REF.test(ref) || !ref.startsWith(`${repository}#`) || targets.has(ref))
+      || new Set(refs).size !== refs.length) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
+    claims.add(h.claim_id); tasks.add(h.task_id); refs.forEach(ref => targets.add(ref));
+    const prs = refs.map(ref => Number(ref.slice(repository.length + 1))).sort((a,b) => a-b);
+    const boundPrs = prs.map(pr => `${repository}#${pr}`), pr = prs.length === 1 ? prs[0] : null;
     const ci = plain(h.merge_slot_ci) ? h.merge_slot_ci : {};
-    const pr = h.bound_pr && h.bound_pr.startsWith(`${repository}#`) ? Number(h.bound_pr.slice(repository.length + 1)) : null;
-    return Object.freeze({ claimId: h.claim_id, boundPr: h.bound_pr ?? null, pr, mergeSlotUntil: h.merge_slot_until,
+    return Object.freeze({ claimId: h.claim_id, taskId: h.task_id, boundPrs: Object.freeze(boundPrs), prs: Object.freeze(prs),
+      boundPr: pr === null ? null : `${repository}#${pr}`, pr, mergeSlotUntil: h.merge_slot_until,
       takenAt: ISO(ci.taken_at) ? ci.taken_at : null, ciState: typeof ci.ci_state === 'string' ? ci.ci_state : null,
       ciHeadSha: typeof ci.ci_head_sha === 'string' ? ci.ci_head_sha : null, hardCapUntil: ISO(ci.hard_cap_until) ? ci.hard_cap_until : null });
   });

@@ -5,6 +5,15 @@ import { ALL_STAGE_CODES, githubTransientReason, outcomeFailureCode } from '../s
 
 const UNKNOWN = 'ENTRY_OPERATION_UNCONFIRMED';
 
+test('Native PR Task waiting states preserve the existing unburned claim wait; conflicts refuse', () => {
+  for (const state of ['unbound', 'no_live_claim', 'handover_pending', 'head_not_authorized']) {
+    assert.equal(outcomeFailureCode({ status: 'BLOCKED', sideEffects: 0, mayHavePublished: false,
+      reason: 'full_admission_rejected', diagnostic: { reasonCodes: [`pr_task_binding_${state}`] } }, 1), 'CLAIM_NOT_CURRENT');
+  }
+  assert.equal(outcomeFailureCode({ status: 'BLOCKED', sideEffects: 0, mayHavePublished: false,
+    reason: 'full_admission_rejected', diagnostic: { reasonCodes: ['pr_task_binding_conflict'] } }, 1), 'NATIVE_NOT_ADMITTED');
+});
+
 test('public entry reasons preserve fixed stage, lifecycle and transport semantics', () => {
   for (const code of [...ALL_STAGE_CODES, 'HELD_RECORD_LEASE_LOST', 'HELD_RECORD_PROCESS_UNCONFIRMED',
     'RECORD_ACCEPTANCE_INVALID', 'FIXED_V2_ENTRY_ARGUMENTS_REQUIRED', 'STAGE_INPUT_CHANGED',

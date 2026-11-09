@@ -16,7 +16,7 @@ import { main as invokeMain } from '../src/resident-v2/invoke-stage.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
 const H64 = c => c.repeat(64);
 const BASE_RUN = { repo: REPO, runId: '0123456789abcdef-0123456789ab', sourceManifestSha256: H64('a'), nodeProfileSha256: H64('b'), createdAt: '2026-11-05T08:00:00.000Z' };
-const row = pr => ({ claim_id: randomUUID(), bound_pr: `${REPO}#${pr}`, merge_slot_until: '2026-11-05T09:00:00Z', merge_slot_ci: {} });
+const row = pr => ({ claim_id: randomUUID(), task_id: randomUUID(), bound_pr: `${REPO}#${pr}`, bound_prs: [`${REPO}#${pr}`], merge_slot_until: '2026-11-05T09:00:00Z', merge_slot_ci: {} });
 const ok = holders => ({ status: 'ok', repository: REPO, holders });
 
 test('role-probe-run: /1 unchanged without a watch, /2 with watchPr; the PR is part of the id; a bad PR is refused', () => {
@@ -45,7 +45,9 @@ test('parseRoleProbe with a watch: only exactly one holder bound to that PR is t
   assert.equal(parseRoleProbe(200, ok([row(885)]), REPO, 884).code, 'ROLE_PROBE_HELD');
   assert.equal(parseRoleProbe(200, ok([]), REPO, 884).code, 'ROLE_PROBE_HELD');
   assert.equal(parseRoleProbe(200, ok([row(884), row(885)]), REPO, 884).code, 'ROLE_PROBE_HELD', 'two holders: not a single head');
-  assert.equal(parseRoleProbe(200, ok([{ ...row(884), bound_pr: 'other/repo#884' }]), REPO, 884).code, 'ROLE_PROBE_HELD', 'another repository');
+  assert.equal(parseRoleProbe(200, ok([{ ...row(884), bound_pr: 'other/repo#884' }]), REPO, 884).code, 'ROLE_PROBE_HELD_WATCHED_HEAD', 'legacy scalar cannot override the validated PR projection');
+  assert.equal(parseRoleProbe(200, ok([{ ...row(884), bound_prs: ['other/repo#884'] }]), REPO, 884).code, 'ROLE_PROBE_UNCERTAIN', 'foreign repository projection refused');
+  assert.equal(parseRoleProbe(200, ok([{ ...row(884), bound_prs: undefined }]), REPO, 884).code, 'ROLE_PROBE_UNCERTAIN', 'old API is unknown');
   assert.equal(parseRoleProbe(200, { status: 'ok', holders: [], reason: 'admission_binding_required' }, REPO, 884).code, 'ROLE_PROBE_NOT_HELD');
   assert.equal(parseRoleProbe(502, { message: 'bad gateway' }, REPO, 884).code, 'ROLE_PROBE_UNCERTAIN');
   assert.deepEqual(roleProbeFact('ROLE_PROBE_HELD_WATCHED_HEAD'), { result: 'held', code: 'ROLE_PROBE_HELD_WATCHED_HEAD' });

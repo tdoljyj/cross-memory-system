@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { runTrain, settleTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { MAX_REVOKES_PER_RUN, REVOKE_READBACK_DELAY_MS, createSweeper, revokeGreens, revokeTargets, publicationHeads } from '../src/independent-control-checks-v2/train-sweep.mjs';
 import { trainHeadDecision, TRAIN_SINGLE_GREEN_NOT_PROVEN } from '../src/independent-control-checks-v2/train-rules.mjs';
-import { TrainSweepStore, validateSweepProof } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
+import { TrainSweepStore, validateSweepProof, validateLandingState } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
 import { GreenLedger } from '../src/independent-control-checks-v2/green-ledger.mjs';
 import { closeGreenLedgerGroups, CLOSE_AFTER_MS } from '../src/independent-control-checks-v2/green-ledger-closed.mjs';
 import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
@@ -28,6 +28,198 @@ const ON_SINCE = iso(NOW - 3_600_000), CURSOR = iso(NOW - 600_000);
 const jobOf = (o = {}) => makeTrainRun({ repo: REPO, runId: RUN, mode: 'on', sourceManifestSha256: SOURCE, createdAt: iso(NOW), ...TRAIN_RUN_SHADOW_DEFAULTS,
   onSince: ON_SINCE, frontBatchBudgetMs: 1_800_000, ...o });
 const summaryOf = base => `front PR #910, head ${H}, main@${base}, tested ${S} (tree ${TREE})`;
+
+test('front and landing records retain only the original admission Receipt as optional immutable metadata', async t => {
+  const e = await setup(t);
+  const terminalAdmission = { receipt_id: CLAIM, claim_id: CLAIM, fence: 3, execution_epoch: 1,
+    lease_version: 5, head_authorization_id: '22222222-2222-4222-8222-222222222222' };
+  const batch = { writtenAt: iso(NOW), runId: RUN, pr: 910, headSha: H, baseSha: T, testSha: S,
+    testTree: TREE, claimId: CLAIM, since: iso(NOW - 1000), attempt: 1, terminalAdmission };
+  await e.store.appendFrontBatch(batch);
+  assert.deepEqual((await e.store.frontBatches({ pr:910, headSha:H }))[0].terminalAdmission, terminalAdmission);
+  await e.store.appendLandingBatch({ writtenAt:iso(NOW),runId:RUN,frontPr:910,frontHeadSha:H,baseSha:T,testSha:S,testTree:TREE,
+    attempt:1,members:[{pr:910,headSha:H,claimId:CLAIM,terminalAdmission}] });
+  assert.deepEqual((await e.store.landingBatches())[0].members[0].terminalAdmission, terminalAdmission);
+  await assert.rejects(e.store.appendFrontBatch({ ...batch, terminalAdmission: { ...terminalAdmission, claim_id: '33333333-3333-4333-8333-333333333333' } }));
+});
+
+test('terminal front records retry an unmerged close without a queue holder and refuse changed or unreadable GitHub facts', async t => {
+  for(const mode of ['pending','reopened','moved','unreadable','legacy']) await t.test(mode,async t=>{
+    const e=await setup(t), terminalAdmission={receipt_id:CLAIM,claim_id:CLAIM,fence:3,execution_epoch:1,lease_version:5,
+      head_authorization_id:'22222222-2222-4222-8222-222222222222'};
+    await e.store.appendFrontBatch({writtenAt:iso(NOW),runId:RUN,pr:910,headSha:H,baseSha:T,testSha:S,testTree:TREE,
+      claimId:CLAIM,since:iso(NOW-1000),attempt:1,...(mode==='legacy'?{}:{terminalAdmission})});
+    e.native.holders=[];
+    Object.assign(e.gh.world.pulls.get(910),{state:mode==='reopened'?'open':'closed',head:mode==='moved'?sha(999):H});
+    const read=e.gh.readPullRequest;
+    e.gh.readPullRequest=async n=>{if(mode==='unreadable')throw Error('GitHub unavailable');const p=await read(n);
+      return {...p,head:{...p.head,repo:{full_name:REPO}},base:{...p.base,repo:{full_name:REPO}}};};
+    const calls=[];
+    e.native.port.returnSlot=async input=>{calls.push(input);return {onDuty:true,returned:false,claims:[],autoRelease:{status:'pending',released:false,
+      reason:'runtime_inventory_unconfirmed',receipt_id:CLAIM,retryable:true}};};
+    const first=await e.run(jobOf({sweep:'audit'}));
+    if(mode!=='pending'){assert.equal(calls.length,0,mode);return;}
+    assert.deepEqual(calls[0].terminalProof.last_admission,terminalAdmission);
+    assert.equal(calls[0].terminalProof.observation.merged,false);
+    assert.equal(first.facts.landing.error,'TRAIN_TERMINAL_RUNTIME_INVENTORY_UNCONFIRMED');
+    e.now+=60_000;
+    await e.run(jobOf({sweep:'audit',createdAt:iso(e.now)}));
+    assert.equal(calls.length,2,'the original record retries while the queue is empty');
+    assert.deepEqual(calls[1].terminalProof,calls[0].terminalProof);
+  });
+});
+
+test('terminal retries filter completed records before the shared twenty-record budget', async t => {
+  const e=await setup(t),terminalAdmission={receipt_id:CLAIM,claim_id:CLAIM,fence:3,execution_epoch:1,lease_version:5,
+    head_authorization_id:'22222222-2222-4222-8222-222222222222'};
+  const front={writtenAt:iso(NOW),runId:RUN,pr:910,headSha:H,baseSha:T,testSha:S,testTree:TREE,
+    claimId:CLAIM,since:iso(NOW-1000),attempt:1,terminalAdmission};
+  await e.store.appendFrontBatch(front);
+  const completed=[];
+  for(let i=0;i<20;i++) {
+    const testSha=sha(0x9000+i);completed.push(testSha);
+    await e.store.appendFrontBatch({...front,writtenAt:iso(NOW+i+1),pr:1000+i,testSha});
+  }
+  const state=await e.store.readLandingState();
+  await e.store.writeLandingState({...state,writtenAt:iso(NOW+30),runId:RUN,adopted:completed});
+  e.now+=60_000;e.native.holders=[];
+  const read=e.gh.readPullRequest;
+  e.gh.readPullRequest=async n=>{assert.equal(n,910,'completed records consume no GitHub/Native budget');const p=await read(n);
+    return {...p,state:'closed',merged:false,head:{...p.head,repo:{full_name:REPO}},base:{...p.base,repo:{full_name:REPO}}};};
+  const calls=[];
+  e.native.port.returnSlot=async input=>{calls.push(input);return {onDuty:true,returned:false,claims:[],autoRelease:{status:'pending',released:false,
+    reason:'runtime_inventory_unconfirmed',receipt_id:CLAIM,retryable:true}};};
+  await e.run(jobOf({sweep:'audit',createdAt:iso(e.now)}));
+  assert.equal(calls.length,1,'new completed records cannot hide an older unfinished terminal request');
+  assert.deepEqual(calls[0].terminalProof.last_admission,terminalAdmission);
+});
+
+test('terminal scan rotates both kinds past more than one completion ring and persists an exact record cursor', async t => {
+  const e=await setup(t), reference={receipt_id:CLAIM,claim_id:CLAIM,fence:3,execution_epoch:1,lease_version:5,
+    head_authorization_id:'22222222-2222-4222-8222-222222222222'};
+  const front={writtenAt:iso(NOW),runId:RUN,pr:910,headSha:H,baseSha:T,testSha:S,testTree:TREE,
+    claimId:CLAIM,since:iso(NOW-1000),attempt:1,terminalAdmission:reference};
+  for(let i=0;i<105;i++) {
+    await e.store.appendFrontBatch({...front,writtenAt:iso(NOW+i),pr:1000+i,testSha:sha(0xa000+i)});
+    await e.store.appendLandingBatch({writtenAt:iso(NOW+i),runId:RUN,frontPr:2000+i,frontHeadSha:H,baseSha:T,
+      testSha:sha(0xb000+i),testTree:TREE,attempt:1,members:[{pr:2000+i,headSha:H,claimId:CLAIM,terminalAdmission:reference}]});
+  }
+  let state=await e.store.readLandingState(), seen=new Set();
+  for(let round=0;round<12;round++) {
+    const rows=[];
+    for await(const item of e.store.terminalRecords({cursor:state.terminalScan,clock:()=>NOW,until:NOW+1000})) rows.push(item);
+    assert.ok(rows.length<=20,'one shared bounded record budget');
+    for(let i=1;i<rows.length;i++)assert.notEqual(rows[i].kind,rows[i-1].kind,'both nonempty kinds alternate');
+    for(const row of rows){assert.match(row.cursor[row.kind==='front'?'front':'landing'].recordSha256,/^[a-f0-9]{64}$/);seen.add(row.record.testSha);}
+    state={...state,terminalScan:rows.at(-1).cursor};
+    await e.store.writeLandingState({...state,writtenAt:iso(NOW+1000+round),runId:RUN});
+    state=await e.store.readLandingState();
+  }
+  assert.equal(seen.size,210,'forgotten completed rows cannot permanently hide either kind of pending record');
+  let clock=NOW, count=0, last=null;
+  for await(const row of e.store.terminalRecords({cursor:state.terminalScan,clock:()=>clock,until:NOW+1})) { count++;last=row.cursor;clock=NOW+1; }
+  assert.equal(count,1,'the local scan checks the same deadline before another file');
+  const continued=[];
+  for await(const row of e.store.terminalRecords({cursor:last,clock:()=>NOW,until:NOW+1,limit:1}))continued.push(row);
+  assert.notDeepEqual(continued[0].cursor,last,'the saved cursor continues after the consumed record');
+});
+
+test('stage ten eventually retries older pending generations and the other record kind after the hundred-entry ring wraps', async t => {
+  const e=await setup(t), reference={receipt_id:CLAIM,claim_id:CLAIM,fence:3,execution_epoch:1,lease_version:5,
+    head_authorization_id:'22222222-2222-4222-8222-222222222222'}, completed=[], landingSha=sha(0xc000);
+  for(let i=0;i<230;i++) {
+    const testSha=sha(0xd000+i);if(i>=130)completed.push(testSha);
+    await e.store.appendFrontBatch({writtenAt:iso(NOW+i),runId:RUN,pr:1000+i,headSha:H,baseSha:T,testSha,testTree:TREE,
+      claimId:CLAIM,since:iso(NOW-1000),attempt:1,terminalAdmission:reference});
+  }
+  await e.store.appendLandingBatch({writtenAt:iso(NOW+1000),runId:RUN,frontPr:3000,frontHeadSha:H,baseSha:T,
+    testSha:landingSha,testTree:TREE,attempt:1,members:[{pr:3000,headSha:H,claimId:CLAIM,terminalAdmission:reference}]});
+  await e.store.writeLandingState({...(await e.store.readLandingState()),writtenAt:iso(NOW+2000),runId:RUN,adopted:completed});
+  e.native.holders=[];e.now+=60_000;
+  e.gh.readPullRequest=async n=>({number:n,state:'closed',merged:n===3000,merge_commit_sha:n===3000?landingSha:null,
+    head:{sha:H,repo:{full_name:REPO}},base:{ref:'main',sha:T,repo:{full_name:REPO}}});
+  const compare=e.gh.readCompare;e.gh.readCompare=async(base,head)=>base===landingSha?{status:'identical',aheadBy:0,behindBy:0}:compare(base,head);
+  const seen=new Set();let calls=0;
+  const result=input=>{seen.add(input.pr);calls++;return {onDuty:true,adopted:false,returned:false,claims:[],autoRelease:{
+    status:input.pr===1110||input.pr===3000?'pending':'released',released:input.pr!==1110&&input.pr!==3000,
+    reason:input.pr===1110||input.pr===3000?'runtime_inventory_unconfirmed':'released',receipt_id:CLAIM,retryable:input.pr===1110||input.pr===3000}};};
+  e.native.port.returnSlot=async input=>result(input);e.native.port.adopt=async input=>result(input);
+  for(let round=0;round<12;round++) {
+    const before=calls;await runTrain({job:jobOf({sweep:'audit',createdAt:iso(e.now)}),github:e.gh,native:e.native.port,
+      ledger:e.ledger,sweepStore:e.store,publications:e.publications,clock:e.clock,sleep:e.sleep,
+      trainLanding:{landing:'push',batchMax:1,unreadable:false},landing:{async fastForwardMain(){throw new Error('no front');}}});
+    assert.ok(calls-before<=20);e.now+=60_000;
+  }
+  assert.ok(seen.has(1110),'older still-pending generation must be reached despite forgotten completions');
+  assert.ok(seen.has(3000),'the other kind must not be hidden behind twenty older front records');
+});
+
+test('a released terminal replay does not report old writes or block the current front', async t => {
+  const e=await setup(t), oldClaim='33333333-3333-4333-8333-333333333333',oldHead=sha(0xee),reference={receipt_id:oldClaim,
+    claim_id:oldClaim,fence:2,execution_epoch:1,lease_version:2,head_authorization_id:'22222222-2222-4222-8222-222222222222'};
+  await e.store.appendFrontBatch({writtenAt:iso(NOW-2000),runId:RUN,pr:911,headSha:oldHead,baseSha:T,testSha:sha(0xef),testTree:TREE,
+    claimId:oldClaim,since:iso(NOW-3000),attempt:1,terminalAdmission:reference});
+  e.gh.pull(911,{state:'closed',head:oldHead,merged:false});
+  const read=e.gh.readPullRequest;e.gh.readPullRequest=async n=>{const p=await read(n);return {...p,
+    head:{...p.head,repo:{full_name:REPO}},base:{...p.base,repo:{full_name:REPO}}};};
+  e.native.port.returnSlot=async()=>({onDuty:true,returned:true,claims:[oldClaim],terminalReplayed:true,
+    autoRelease:{status:'released',released:true,reason:'released',receipt_id:oldClaim,retryable:false}});
+  const result=await e.run();
+  assert.equal(result.facts.actions.returned,false,'stored original returned=true is not a new return');
+  assert.equal(result.facts.decision,'OPEN_FRONT_BATCH','a previous claim cannot stall the new front');
+  assert.equal(result.sideEffects,2,'the actual keepalive and current-slot renewal are writes; the replay is not');
+});
+
+test('an old SHA-only completion cannot retire a later original terminal proof generation', async t => {
+  const e=await setup(t),front={writtenAt:iso(NOW-2000),runId:RUN,pr:910,headSha:H,baseSha:T,testSha:S,testTree:TREE,
+    claimId:CLAIM,since:iso(NOW-3000),attempt:1},reference={receipt_id:CLAIM,claim_id:CLAIM,fence:4,execution_epoch:2,
+      lease_version:7,head_authorization_id:'22222222-2222-4222-8222-222222222222'};
+  await e.store.appendFrontBatch(front);
+  await e.store.writeLandingState({...(await e.store.readLandingState()),writtenAt:iso(NOW-1000),runId:RUN,adopted:[S]});
+  await e.store.appendFrontBatch({...front,writtenAt:iso(NOW),terminalAdmission:reference});
+  e.native.holders=[];
+  e.gh.readPullRequest=async n=>({number:n,state:'closed',merged:false,head:{sha:H,repo:{full_name:REPO}},
+    base:{ref:'main',sha:T,repo:{full_name:REPO}}});
+  const calls=[];e.native.port.returnSlot=async input=>{calls.push(input);return {onDuty:true,returned:false,claims:[],autoRelease:{
+    status:'pending',released:false,reason:'runtime_inventory_unconfirmed',receipt_id:CLAIM,retryable:true}};};
+  await e.run();assert.equal(calls.length,1);assert.deepEqual(calls[0].terminalProof.last_admission,reference);
+  const state=await e.store.readLandingState(),record={contract:'clued.independent-ci.train-landing-state/1',
+    writtenAt:iso(NOW),runId:RUN,...state};
+  for(const terminalScan of [{...state.terminalScan,lease_key:'not-authority'},
+    {...state.terminalScan,front:{...state.terminalScan.front,name:'../outside.json'}},
+    {...state.terminalScan,front:{...state.terminalScan.front,recordSha256:'bad'}}])
+    assert.throws(()=>validateLandingState({...record,terminalScan}),/invalid_train_landing_state/);
+});
+
+test('multi-member landings share twenty Native attempts with fronts without skipping an unstarted batch', async t => {
+  const e=await setup(t),merges=new Map(),seen=new Set();let calls=0,exhaustDeadline=true;
+  const reference=n=>({receipt_id:`${n.toString(16).padStart(8,'0')}-2222-4333-8444-555555555555`,claim_id:CLAIM,
+    fence:3,execution_epoch:1,lease_version:5,head_authorization_id:CLAIM});
+  for(let i=0;i<10;i++){
+    const testSha=sha(0xf000+i),members=Array.from({length:4},(_,j)=>({pr:2000+i*4+j,headSha:H,claimId:CLAIM,terminalAdmission:reference(2000+i*4+j)}));
+    members.forEach(m=>merges.set(m.pr,testSha));
+    await e.store.appendLandingBatch({writtenAt:iso(NOW+i),runId:RUN,frontPr:members[0].pr,frontHeadSha:H,baseSha:T,
+      testSha,testTree:TREE,attempt:1,members});
+    await e.store.appendFrontBatch({writtenAt:iso(NOW+i),runId:RUN,pr:1000+i,headSha:H,baseSha:T,testSha:sha(0xfa00+i),testTree:TREE,
+      claimId:CLAIM,since:iso(NOW-1000),attempt:1,terminalAdmission:reference(1000+i)});
+  }
+  e.native.holders=[];e.now+=60_000;
+  e.gh.readPullRequest=async n=>({number:n,state:'closed',merged:merges.has(n),merge_commit_sha:merges.get(n)??null,
+    head:{sha:H,repo:{full_name:REPO}},base:{ref:'main',sha:T,repo:{full_name:REPO}}});
+  e.gh.readCompare=async()=>({status:'identical',aheadBy:0,behindBy:0});
+  const answer=input=>{seen.add(input.pr);calls++;if(exhaustDeadline){exhaustDeadline=false;e.now+=250_001;}return {onDuty:true,adopted:false,returned:false,claims:[],autoRelease:{
+    status:'pending',released:false,reason:'runtime_inventory_unconfirmed',receipt_id:CLAIM,retryable:true}};};
+  e.native.port.returnSlot=async input=>answer(input);e.native.port.adopt=async input=>answer(input);
+  for(let round=0;round<5;round++){
+    const before=calls;await runTrain({job:jobOf({sweep:'audit',createdAt:iso(e.now)}),github:e.gh,native:e.native.port,
+      ledger:e.ledger,sweepStore:e.store,publications:e.publications,clock:e.clock,sleep:e.sleep,
+      trainLanding:{landing:'push',batchMax:4,unreadable:false},landing:{async fastForwardMain(){throw new Error('no front');}}});
+    assert.ok(calls-before<=20,'the record limit must also bound multi-member Native attempts');
+    if(round===0){assert.equal(calls-before,1);assert.equal((await e.store.readLandingState()).terminalScan,undefined,'a deadline-interrupted batch remains the next record');}
+    e.now+=60_000;
+  }
+  assert.equal(seen.size,50,'cursor stays before a batch that could not fit in the prior Native budget');
+});
 
 // ---- fakes ----
 function fakeGithub(e, w) {
@@ -89,7 +281,7 @@ function fakeGithub(e, w) {
   gh.pull = (number, o = {}) => world.pulls.set(number, { number, state: 'open', updated: iso(NOW - 3_600_000), head: sha(0x8000 + number), ...o });
   return gh;
 }
-const holderOf = (o = {}) => ({ claimId: CLAIM, boundPr: `${REPO}#910`, pr: 910, mergeSlotUntil: iso(NOW + 600_000), takenAt: iso(NOW - 300_000), ciState: null, ciHeadSha: null, hardCapUntil: null, ...o });
+const holderOf = (o = {}) => ({ claimId: CLAIM, taskId: CLAIM, boundPrs: [`${REPO}#910`], prs: [910], boundPr: `${REPO}#910`, pr: 910, mergeSlotUntil: iso(NOW + 600_000), takenAt: iso(NOW - 300_000), ciState: null, ciHeadSha: null, hardCapUntil: null, ...o });
 function fakeNative(e, o = {}) {
   const n = { ...o, calls: [], holder: holderOf(o.holder), onDuty: o.onDuty ?? true, reread: o.reread ?? null, moveUntil: o.moveUntil ?? true };
   n.port = {
@@ -1087,7 +1279,7 @@ test('shadow over the real GitHub and KooYomi ports: every GitHub call a read (G
   const { createMergeSlotNative, HOLDERS_RPC } = await import('../src/independent-control-checks-v2/merge-slot-native.mjs');
   const base = `/repos/${REPO}`, OLDH = sha(0x50001);
   const { port, seen, fetchImpl } = await realPort(async (u, method) => {
-    if (u.host === 'x.supabase.co') return { status: 200, json: async () => ({ status: 'ok', repository: REPO, holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#910`, merge_slot_until: iso(NOW + 600_000), merge_slot_ci: {} }] }) };
+    if (u.host === 'x.supabase.co') return { status: 200, json: async () => ({ status: 'ok', repository: REPO, holders: [{ claim_id: CLAIM, task_id: CLAIM, bound_pr: `${REPO}#910`, bound_prs: [`${REPO}#910`], merge_slot_until: iso(NOW + 600_000), merge_slot_ci: {} }] }) };
     if (method !== 'GET' && u.pathname !== '/graphql') return undefined;
     if (u.pathname === `${base}/branches/main`) return { name: 'main', commit: { sha: T } };
     if (u.pathname === `${base}/rules/branches/main`) return [];

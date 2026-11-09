@@ -140,19 +140,31 @@ test('legacy entry wiring still publishes without creating a Native publication'
 test('the real read-only controller request carries the complete admitted packet paths',async t=>{
  const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),job=batchJobsV2(subject({testSha:subject().headSha})).gitleaks;
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:randomUUID(),fence:4,execution_epoch:3},controller_id:randomUUID()});
- const paths=['scripts/ci/a.mjs','work/a.mjs'],requests=[],original=globalThis.fetch;
+ const paths=['scripts/ci/a.mjs','work/a.mjs'],requests=[],original=globalThis.fetch,taskId=randomUUID();
  t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(url,options)=>{
   const input=JSON.parse(options.body).p_input;requests.push(input);
+  if(input.action==='resolve_pr_claim'){
+   assert.equal(input.scope,record.config.scope);assert.equal(input.pr_ref,`${job.repo}#${job.pr}`);
+   assert.equal(input.read_only,true,'publication recheck cannot auto-bind or spend a CI head');
+   return new Response(JSON.stringify({status:'ok',binding_status:'bound',reason:null,repository:job.repo,pr_number:job.pr,
+    pr_ref:input.pr_ref,head_sha:job.headSha,base_sha:job.baseSha,target_branch:'main',scope:record.config.scope,task_id:taskId,
+    claim:{...identity.claim,task_id:taskId,context_key:record.config.scope,lease_version:1,status:'ACTIVE',execution_handover_pending:false,
+     expires_at:new Date(Date.now()+60000).toISOString()},head_authorization_id:null,auto_bound:false,receipt_id:null}),{status:200});
+  }
   assert.deepEqual(input.changed_paths,paths);assert.equal(Object.hasOwn(input,'pr_ref'),false,'Agent observation must not bind or spend a CI head');
   return new Response(JSON.stringify({status:'ok',verdict:'ADMITTED',execution_policy:'staged',current_fence:4,execution_epoch:3,
-   verified_at:new Date().toISOString(),claim:{...identity.claim,status:'ACTIVE',lease_key_required:false,execution_handover_pending:false,
+   verified_at:new Date().toISOString(),claim:{...identity.claim,task_id:taskId,status:'ACTIVE',lease_key_required:false,execution_handover_pending:false,
    context_key:record.config.scope,bound_pr:`${job.repo}#${job.pr}`,expires_at:new Date(Date.now()+60000).toISOString()}}),{status:200});
  };
  const ports=controllerPorts({record,appKey:'fixture-unused-key',nativeToken:'fixture-unused-token',policyText:'',sourceRoot:'.',live(){},log(){}});
  assert.equal(await ports.native.current(identity,{scope:record.config.scope,executionPolicy:'staged',guarded:false,paths}),true);
  assert.equal(await ports.native.current(identity,{scope:record.config.scope,executionPolicy:'staged',guarded:false,paths:[]}),false);
- assert.equal(requests.length,1);
+ assert.equal(requests.length,2);
+ const before=requests.length;
+ await assert.rejects(ports.native.command({action:'resolve_pr_claim',scope:record.config.scope,pr_ref:'foreign/repo#1',
+  head_sha:job.headSha,base_sha:job.baseSha,target_branch:'main'}),{code:'NATIVE_PUBLICATION_SCOPE_REFUSED'});
+ assert.equal(requests.length,before,'foreign repository rejected before the RPC can create a binding');
 });
 
 test('active hosted relay reaches the actual entry adapter without replacing its attested external identity',async t=>{

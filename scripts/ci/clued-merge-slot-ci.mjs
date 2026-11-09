@@ -38,8 +38,7 @@
 // It runs from clued-merge-slot-ci.yml (a CI workflow of a pull request
 // completed) and as a step of the hourly clued-work-admission-reverify run.
 //
-// GitHub requests per run: one list of open pull requests, one commit for
-// each open pull request whose body names no claim, and for each pull request
+// GitHub requests per run: one list of open pull requests, and for each pull request
 // that holds a slot one complete check-run snapshot, one complete PR run list and, while something
 // runs, one directory listing. Every run looks at every slot, whichever pull
 // request's run completed: concurrency keeps one run pending and drops the
@@ -65,19 +64,75 @@ import {
   cluedRpc,
   githubJson,
   githubPaged,
-  parseClaimReference,
+  resolvePullRequestBinding,
   postAppCheck,
   withTokenHint,
   gateFindings,
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
+import { normalizePRTaskBinding } from './clued-pr-task-binding.mjs';
 import { githubGraphReader, githubAttemptLogReader, observeCompletedSource, createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 import {cleanupManagedAutoMerge} from "./clued-managed-auto-merge.mjs";
 
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
+const BINDING_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const BINDING_SHA = /^[0-9a-f]{40}$/;
+function normalizedBinding(value, subject) {
+  const normalized = normalizePRTaskBinding(value, subject ?? { scope: value?.scope, repository: value?.repository,
+    prNumber: value?.pr_number, headSha: value?.head_sha, baseSha: value?.base_sha, targetBranch: value?.target_branch });
+  if (normalized.binding_status !== 'bound' || !BINDING_UUID.test(normalized.head_authorization_id ?? ''))
+    throw new Error('current Native binding required');
+  return normalized;
+}
+// A renewal may extend a lease, but must never silently change the exact PR
+// subject, Task, current holder generation or its private head authorization.
+export function samePRBindingAuthority(expected, actual) {
+  try {
+    const a = normalizedBinding(expected), b = normalizedBinding(actual, { scope: a.scope, repository: a.repository,
+      prNumber: a.pr_number, headSha: a.head_sha, baseSha: a.base_sha, targetBranch: a.target_branch });
+    return a.task_id === b.task_id && a.claim.claim_id === b.claim.claim_id && a.claim.fence === b.claim.fence
+      && a.claim.execution_epoch === b.claim.execution_epoch && a.head_authorization_id === b.head_authorization_id;
+  } catch { return false; }
+}
+// The holder is the raw, repository-scoped Native API response. Array
+// membership only schedules independently authorized current PR projections.
+export function selectHolderBinding(holder, candidates, repository) {
+  try {
+    if (!holder || !BINDING_UUID.test(holder.claim_id ?? '') || !BINDING_UUID.test(holder.task_id ?? '')
+      || !Array.isArray(holder.bound_prs) || !Array.isArray(candidates)) return null;
+    const refs = new Set();
+    for (const ref of holder.bound_prs) {
+      if (typeof ref !== 'string' || !ref.startsWith(repository + '#')
+        || !/^[1-9][0-9]{0,9}$/.test(ref.slice(repository.length + 1)) || refs.has(ref)) return null;
+      refs.add(ref);
+    }
+    const eligible = [], numbers = new Set();
+    for (const candidate of candidates) {
+      const pr = candidate?.pr, raw = candidate?.binding;
+      if (!pr || !refs.has(repository + '#' + pr.number)) continue;
+      if (raw?.binding_status !== 'bound') continue;
+      if (pr.state !== 'open' || pr.draft !== false || pr.base?.repo?.full_name !== repository) return null;
+      const binding = normalizedBinding(raw, { scope: raw.scope, repository, prNumber: pr.number,
+        headSha: pr.head?.sha, baseSha: pr.base?.sha, targetBranch: pr.base?.ref });
+      if (binding.task_id !== holder.task_id || binding.claim.claim_id !== holder.claim_id || numbers.has(pr.number)) return null;
+      numbers.add(pr.number); eligible.push({ candidate, binding });
+    }
+    if (!eligible.length) return null;
+    const first = eligible[0].binding;
+    if (eligible.some(({ binding: b }) => b.scope !== first.scope || b.claim.fence !== first.claim.fence
+      || b.claim.execution_epoch !== first.claim.execution_epoch)) return null;
+    const ci = holder.merge_slot_ci;
+    if (['running', 'green'].includes(ci?.ci_state) && BINDING_SHA.test(ci?.ci_head_sha ?? '')) {
+      const current = eligible.filter(({ binding }) => binding.head_sha === ci.ci_head_sha);
+      if (!current.length) return null; // preserve an in-flight head instead of overwriting it with another PR
+      return current.sort((a, b) => a.binding.pr_number - b.binding.pr_number)[0].candidate;
+    }
+    return eligible.sort((a, b) => a.binding.pr_number - b.binding.pr_number)[0].candidate;
+  } catch { return null; }
+}
 export const ACTIONS_APP_ID = 15368;
 export const INDEPENDENT_CI_APP_ID = 5368905;
 // The main ruleset's mapping before 2026-10-20 (docs/maintenance/
@@ -489,24 +544,21 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
   }
   const pulls = openPulls.filter(pr=>!cleanup.blocked.has(pr.number))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);
-  const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
-  // The scopes the open pull requests name; a slot's pull request names its
-  // claim, in its body or, as admission also reads it, its head commit.
-  const references = [];
+  // Only authenticated Native PR projections identify a Task/scope/current
+  // claim. PR prose, commits and an assumed global scope have no authority.
+  const candidates = [];
   for (const pr of pulls) {
-    let reference = parseClaimReference(pr.body);
-    if (!reference) {
-      try {
-        const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${pr.head.sha}`);
-        reference = parseClaimReference(commit && commit.commit && commit.commit.message);
-      } catch (error) {
-        // One unreadable commit does not stop the other pull requests' reports.
-        result.errors.push(`#${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    try {
+      if (pr.state !== 'open' || pr.draft !== false || pr.base.repo.full_name !== repository) continue;
+      const binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, readOnly: true });
+      if (binding.binding_status === 'bound') candidates.push({ pr, binding });
+      else if (binding.binding_status === 'conflict') result.errors.push(`#${pr.number}: Native PR Task binding is ambiguous or outside the served scope`);
+      else result.notices.push(`#${pr.number}: Native binding is ${binding.binding_status}; no CI state is reported`);
+    } catch {
+      result.errors.push(`#${pr.number}: Native PR Task binding is unconfirmed`);
     }
-    if (reference) references.push(reference);
   }
-  const scopes = [...new Set(references.map((ref) => ref.scope))].sort();
+  const scopes = [...new Set(candidates.map(({ binding }) => binding.scope))].sort();
   const live = [];
   for (const scope of scopes) {
     const response = await cluedRpc(fetchImpl, env, workspace, HOLDERS_RPC, { scope, repository });
@@ -517,13 +569,31 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
     }
     const error = rpcError(HOLDERS_RPC, response);
     if (error) { result.errors.push(error); continue; }
-    for (const holder of Array.isArray(response.body.holders) ? response.body.holders : []) {
-      const pr = typeof holder.bound_pr === "string" ? byRef.get(holder.bound_pr.toLowerCase()) : undefined;
-      result.holders.push({ scope, claim_id: holder.claim_id, bound_pr: holder.bound_pr ?? null, open: Boolean(pr),
+    const holders = response.body.holders;
+    const claims = new Set(), tasks = new Set(), refs = new Set();
+    if (response.body.repository !== repository || !Array.isArray(holders) || holders.some(holder => {
+      if (!holder || !BINDING_UUID.test(holder.claim_id ?? '') || !BINDING_UUID.test(holder.task_id ?? '')
+        || !Array.isArray(holder.bound_prs) || !Number.isFinite(Date.parse(holder.merge_slot_until ?? ''))
+        || claims.has(holder.claim_id) || tasks.has(holder.task_id)) return true;
+      claims.add(holder.claim_id); tasks.add(holder.task_id);
+      for (const ref of holder.bound_prs) {
+        if (typeof ref !== 'string' || !ref.startsWith(repository + '#')
+          || !/^[1-9][0-9]{0,9}$/.test(ref.slice(repository.length + 1)) || refs.has(ref)) return true;
+        refs.add(ref);
+      }
+      return false;
+    })) { result.errors.push(`Clued ${HOLDERS_RPC}: unsupported or inconsistent Native holder projection`); continue; }
+    for (const holder of holders) {
+      const possible = candidates.filter(({ binding }) => binding.scope === scope);
+      const selected = selectHolderBinding(holder, possible, repository), pr = selected?.pr;
+      const memberCount = possible.filter(({ pr }) => holder.bound_prs.includes(`${repository}#${pr.number}`)).length;
+      if (!selected && memberCount) result.errors.push(`Clued ${HOLDERS_RPC}: Task/current-claim ambiguity or in-flight head changed`);
+      result.holders.push({ scope, claim_id: holder.claim_id, task_id: holder.task_id,
+        bound_pr: pr ? `${repository}#${pr.number}` : holder.bound_prs.length === 1 ? holder.bound_prs[0] : null,
+        bound_prs: holder.bound_prs, open: Boolean(pr),
         merge_slot_until: holder.merge_slot_until ?? null });
-      // Two claims bound to one pull request are reported once: the report is per pull request.
       const since = Date.parse(holder.merge_slot_ci && holder.merge_slot_ci.taken_at || "");
-      if (pr && !live.some((entry) => entry.pr === pr)) live.push({ scope, pr, since: Number.isFinite(since) ? since : null });
+      if (selected) live.push({ scope, pr, binding: selected.binding, since: Number.isFinite(since) ? since : null });
     }
   }
   // The slot check is failed only where the policy requires the slot: in
@@ -532,7 +602,7 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
   const slotRequired = mode.state !== "efficiency";
   // The branch rules are read once per run, only when a live slot is reported.
   let required = null;
-  for (const { pr, scope, since } of live) {
+  for (const { pr, scope, since, binding } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
       required ??= await requiredChecksOf(fetchImpl, env, repository, pr.base.repo.default_branch);
@@ -555,6 +625,11 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
           Object.assign(report,{ci_state:'idle',reason:'required checks or active runs changed before reporting CI'});
           result.reports.push(report);continue;
         }
+        const freshBinding = await resolvePullRequestBinding(fetchImpl, env, current, { workspace, scope, readOnly: true });
+        if (!samePRBindingAuthority(binding, freshBinding)) {
+          Object.assign(report, { ci_state: 'idle', reason: 'Native PR Task/current-claim authority changed before reporting CI' });
+          result.reports.push(report); continue;
+        }
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {
           scope, pr_ref: prRef, head_sha: pr.head.sha, ci_state: seen.state,
           ...(seen.state === "failed" ? { reason: [...seen.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 300).join("") } : { hard_cap_minutes: hardCap }),
@@ -575,7 +650,7 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
           const posted = await postAppCheck({ env, fetchImpl, headSha: pr.head.sha, success: false, prNumber: pr.number,
             name: MERGE_SLOT_CHECK_NAME, title: "Merge slot returned: CI failed",
             summary: `${seen.reason} on this head, so Clued gave the merge slot back (Merge Admission v0.1 §7.3). `
-              + "Turn auto-merge off and fix the cause; then take the slot again and push, or edit the pull request body, to run this check again." });
+              + "Turn auto-merge off and fix the cause; then take the slot again and push to run this check again. PR prose does not establish claim authority." });
           if (!posted.posted) throw new Error(`the slot was returned but no failing ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
           report.merge_slot_check_run_id = posted.check_run_id;
         }

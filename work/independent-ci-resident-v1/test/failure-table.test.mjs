@@ -128,6 +128,12 @@ test('every Native reason code is placed: a named code, deterministic, a named n
     assert.deepEqual([d.row.class, d.row.breaker, d.release], ['unmapped-stage-1', 'counts', null], JSON.stringify(codes));
   }
   assert.deepEqual([decide(['workflow_gate']).row.class, decide(['workflow_gate']).release], ['not-admitted', 'NOT_ADMITTED']);
+  assert.deepEqual([decide(['pr_task_binding_conflict']).row.class, decide(['pr_task_binding_conflict']).release],
+    ['not-admitted', 'NOT_ADMITTED'], 'a named binding conflict grants nothing; a clean pre-publication refusal may await repaired Native authority');
+  const unsafe = decideFailure({ code: 'NATIVE_NOT_ADMITTED', stage: 1, proof: CLEAN_PROOF, started: false,
+    outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 1, mayHavePublished: true, safeToRerun: false,
+      diagnostic: { reasonCodes: ['pr_task_binding_conflict'], nativeReasonCodes: [] } } });
+  assert.equal(unsafe.release, null, 'an uncertain or possibly published conflict cannot release the reservation');
   assert.deepEqual([decide(['merge_slot_required']).row.class, decide(['merge_slot_required']).release], ['waiting', 'NOT_ADMITTED']);
 });
 

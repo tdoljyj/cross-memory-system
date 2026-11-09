@@ -22,7 +22,6 @@ import { HEX40, check } from './canonical.mjs';
 import { TRIGGER_CONTRACT_V2 } from './trigger.mjs';
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
-const TRAILER = /^Clued-Work-Claim:\s*[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$/m;
 export const UP_TO_DATE_HINTS = Object.freeze(['merge-main', 'push-any-commit', 'compare-unavailable']);
 const COMPARE_CACHE_MAX = 512;
 // A compare is one short call, and at most MAX_COMPARES_PER_PASS uncached ones run per pass (independent review of
@@ -104,7 +103,7 @@ export class Poller {
   // The open pulls into main, in the shape the pass reads (gh pr list's names: headRefOid, baseRefOid, isDraft, updatedAt).
   openPulls() {
     return this.conditional(PULLS_ROUTE(this.repo), v => (Array.isArray(v) ? v.map(p => ({ number: p?.number, headRefOid: p?.head?.sha ?? null,
-      baseRefOid: p?.base?.sha ?? null, isDraft: p?.draft === true, body: typeof p?.body === 'string' ? p.body : '', updatedAt: p?.updated_at ?? null })) : null),
+      baseRefOid: p?.base?.sha ?? null, isDraft: p?.draft === true, updatedAt: p?.updated_at ?? null })) : null),
     'POLLER_PULLS_UNAVAILABLE', 60_000);
   }
 
@@ -146,7 +145,7 @@ export class Poller {
     let proposed = 0;
     const pulls = [];
     for (const p of await this.openPulls()) {
-      if (p.isDraft || !Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '') || !TRAILER.test(p.body ?? '')) continue;
+      if (p.isDraft || !Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '')) continue;
       const prBase = HEX40.test(p.baseRefOid ?? '') ? p.baseRefOid : null;
       const behind = await this.behindBy(base, p.headRefOid);
       const verdict = upToDate({ mainSha: base, baseSha: prBase, behindBy: behind });

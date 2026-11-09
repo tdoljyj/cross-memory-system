@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { validateJob } from './queue.mjs';
 import { digest } from './proof.mjs';
-import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { evaluate, githubJson } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { normalizePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
@@ -18,6 +19,8 @@ const FAILURE_REASONS = new Set(['not_configured','subject_invalid','source_chan
   'principal_unknown','observer_unknown','subject_changed','claim_changed','observation_expired','rejected',
   'native_unsupported','native_changed','incomplete','unavailable'].map(value => `full_admission_${value}`));
 const REASON_CODES = new Set(['claim_trailer_missing','claim_not_found','claim_not_current','fence_superseded',
+  'pr_task_binding_unbound','pr_task_binding_no_live_claim','pr_task_binding_handover_pending',
+  'pr_task_binding_head_not_authorized','pr_task_binding_conflict',
   'copy_not_adopted','claim_bound_to_other_pr','claim_head_cap_reached','task_ci_head_cap_reached','work_claim_conflict',
   'path_outside_write_set','paths_outside_write_set','head_budget_exhausted','ci_budget_exhausted','merge_slot_required',
   'merge_slot_missing','owner_grant_required','owner_grant_missing','owner_grant_revoked','owner_grant_expired',
@@ -127,21 +130,24 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
           CLUED_SUPABASE_PUBLISHABLE_KEY: config.publishableKey, [VARIABLE]: mode.exists ? mode.value : '' };
         phase='pull_request';const pr = await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`);
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
-        phase='claim_reference';let reference = parseClaimReference(pr.body);
-        if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
-        if (reference?.claim_id !== job.claimId || reference.scope !== config.scope) return blocked('full_admission_claim_changed');
         let native = null;
         const recorder = { newId: () => baseRecorder.newId(), record(kind, data) {
           baseRecorder.record(kind, data);
           if (kind === 'claim_verification') native = structuredClone(data.result?.payload);
         } };
         phase='evaluate';const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl,
-          workspace: config.workspace, withSummary: false, readPolicyFile: () => config.policyText,
+          workspace: config.workspace, bindingScope: config.scope, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
         phase='post_evaluate';const finished = clock(), prRef = `${REPO}#${job.pr}`;
         if (!Number.isSafeInteger(finished) || finished < started || !fresh(mode.observedAt, finished)
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired',rejectionDiagnostic(outcome,native,{modeFresh:fresh(mode.observedAt,finished),recorderFresh:fresh(observation.observedAt,finished)}));
         if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected',rejectionDiagnostic(outcome,native));
+        phase='claim_reference';
+        const binding = normalizePRTaskBinding(outcome.claim_binding, { scope: config.scope, repository: REPO,
+          prNumber: job.pr, headSha: job.headSha, baseSha: job.baseSha, targetBranch: pr.base.ref });
+        if (binding.binding_status !== 'bound' || binding.claim.claim_id !== job.claimId || binding.claim.fence !== job.fence
+          || binding.claim.execution_epoch !== job.epoch || outcome.task_id !== binding.task_id)
+          return blocked('full_admission_claim_changed');
         phase='post_pull_request';
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== job.baseSha || outcome.pr_ref !== prRef
           || outcome.claim_id !== job.claimId || outcome.scope !== config.scope
@@ -155,7 +161,7 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
           || claim.execution_handover_pending !== false) return blocked('full_admission_native_unsupported');
         if (native.current_fence !== job.fence || native.execution_epoch !== job.epoch || claim.fence !== job.fence
           || claim.execution_epoch !== job.epoch || claim.claim_id !== job.claimId || claim.context_key !== config.scope
-          || claim.status !== 'ACTIVE' || claim.bound_pr !== prRef || native.bound_pr !== prRef || native.pr_ref !== prRef
+          || claim.status !== 'ACTIVE' || claim.task_id !== binding.task_id || binding.pr_ref !== prRef || native.pr_ref !== prRef
           || native.head_sha !== job.headSha || native.base_sha !== job.baseSha || !fresh(native.verified_at, finished)
           || !(at(claim.expires_at) > finished) || !Array.isArray(native.paths_outside_write_set)
           || native.paths_outside_write_set.length) return blocked('full_admission_native_changed');

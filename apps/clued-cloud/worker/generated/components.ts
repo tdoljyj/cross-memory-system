@@ -4,11 +4,11 @@ export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
   "skill.clued": "1.0.25",
-  "agent-contract": "55",
-  "mcp.server": "0.9.1",
+  "agent-contract": "57",
+  "mcp.server": "0.9.2",
   "hook.runner-job-started": "1.0.2",
   "hook.capture-guard": "1.0.4",
-  "hook.work-claim-guard": "1.1.11",
+  "hook.work-claim-guard": "1.1.12",
   "hook.version-check": "1.0.4",
   "hook.run-python": "1.0.3",
   "hook.settings": "1.1.2",
@@ -28,14 +28,14 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.37",
+  "script.independent-native-publication": "1.1.38",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.3",
   "script.source-only-workflow": "1.0.0",
-  "script.control-workflow-source": "1.0.8",
+  "script.control-workflow-source": "1.0.9",
   "script.required-applicability": "1.0.4",
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.3",
-  "script.merge-reconciliation": "1.0.21"
+  "script.merge-reconciliation": "1.0.22"
 };
-export const MCP_SERVER_VERSION = "0.9.1";
+export const MCP_SERVER_VERSION = "0.9.2";

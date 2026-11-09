@@ -24,7 +24,7 @@ export async function tempDir(t, prefix = 'clued-v2-') {
   return dir;
 }
 
-export const SOURCE_PATHS = Object.freeze(['scripts/ci/clued-work-admission.mjs', 'config/merge-admission-policy.json', ...Object.values(ENTRY_V2),
+export const SOURCE_PATHS = Object.freeze(['scripts/ci/clued-work-admission.mjs', 'scripts/ci/clued-pr-task-binding.mjs', 'config/merge-admission-policy.json', ...Object.values(ENTRY_V2),
   'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/proof-v2.mjs',
   'work/actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs',
   'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/layout.mjs', '.gitleaks.toml']);

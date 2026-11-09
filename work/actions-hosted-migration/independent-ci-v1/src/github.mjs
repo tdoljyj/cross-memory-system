@@ -1,4 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
+import { collectPRPaths } from '../../../../scripts/ci/clued-pr-write-set.mjs';
 // Shared with the optional modern controller's retry wrapper without adding a
 // module dependency to the legacy v1 Source's frozen closure.
 const READ_REQUEST_DEADLINE = Symbol.for('clued-read-request-deadline');
@@ -253,10 +254,11 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
   }
   // One page of pulls (state open|closed|all, sort created|updated, direction asc|desc), normalized; `last` when the page
   // is not full (merge-train sweeps, DESIGN §41.3).
-  async function pullsPage({ state = 'all', sort = 'updated', direction = 'desc', page = 1, perPage = 100 } = {}) {
+  async function pullsPage({ state = 'all', sort = 'updated', direction = 'desc', page = 1, perPage = 100, until = null } = {}) {
     if (!['open', 'closed', 'all'].includes(state) || !['created', 'updated'].includes(sort) || !['asc', 'desc'].includes(direction)
-      || !positive(page) || page > 1000 || !positive(perPage) || perPage > 100) fail('invalid_pulls_request');
-    const rows = await scoped(`/pulls?state=${state}&sort=${sort}&direction=${direction}&per_page=${perPage}&page=${page}`);
+      || !positive(page) || page > 1000 || !positive(perPage) || perPage > 100
+      || (until !== null && (!Number.isSafeInteger(until) || until <= clock()))) fail('invalid_pulls_request');
+    const rows = await scoped(`/pulls?state=${state}&sort=${sort}&direction=${direction}&per_page=${perPage}&page=${page}`, 'GET', undefined, { until });
     if (!Array.isArray(rows) || rows.length > perPage) fail('invalid_pulls_reply');
     const seen = new Set();
     const pulls = rows.map(p => {
@@ -296,7 +298,10 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         source: 'github-repository-variables', scopeObservations: observations,
         proofRef: `independent-observation:sha256:${createHash('sha256').update(JSON.stringify(proof)).digest('hex')}` };
     },
-    async readPullRequest(number) { if (!positive(number)) fail('invalid_pr'); return scoped(`/pulls/${number}`); },
+    async readPullRequest(number, { until = null } = {}) {
+      if (!positive(number) || (until !== null && (!Number.isSafeInteger(until) || until <= clock()))) fail('invalid_pr');
+      return scoped(`/pulls/${number}`, 'GET', undefined, { until });
+    },
     async readPullRequestCommits(number) {
       if(!positive(number))fail('invalid_pr');
       const before=await scoped(`/pulls/${number}`),commits=[],seen=new Set();
@@ -317,28 +322,11 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     },
     async readChangedPaths(job) {
       if (job?.repo !== repository || !positive(job.pr) || !sha.test(job.headSha) || !sha.test(job.baseSha)) fail('invalid_pr_subject');
-      const before = await scoped(`/pulls/${job.pr}`);
-      if (!exactPr(before, job)) fail('pr_subject_changed');
-      const filenames = new Set(), paths = new Set();
-      let complete = false;
-      for (let page = 1; page <= maxPages; page++) {
-        const files = await scoped(`/pulls/${job.pr}/files?per_page=100&page=${page}`);
-        if (!Array.isArray(files) || files.length > 100) fail('invalid_pr_files');
-        for (const file of files) {
-          if (!safePath(file?.filename) || filenames.has(file.filename)
-            || !['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'].includes(file.status)
-            || (file.status === 'renamed' && !safePath(file.previous_filename))) fail('invalid_pr_files');
-          filenames.add(file.filename); paths.add(file.filename);
-          if (file.status === 'renamed') paths.add(file.previous_filename);
-        }
-        if (filenames.size > before.changed_files) fail('pr_files_changed');
-        if (filenames.size === before.changed_files) { complete = true; break; }
-        if (files.length < 100) fail('incomplete_pr_files');
-      }
-      if (!complete) fail('pr_files_page_limit');
-      const after = await scoped(`/pulls/${job.pr}`);
-      if (!exactPr(after, job) || after.changed_files !== before.changed_files || after.base.sha !== before.base.sha) fail('pr_subject_changed');
-      return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
+      const packet = await collectPRPaths({ repository, prNumber: job.pr, maxPages: Math.min(maxPages, 30),
+        readPR: () => scoped(`/pulls/${job.pr}`),
+        readPage: page => scoped(`/pulls/${job.pr}/files?per_page=100&page=${page}`),
+        subjectCheck: pr => exactPr(pr, job) });
+      return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...packet.paths] };
     },
     async readChecks(headSha) { return inventory(headSha); },
     // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
