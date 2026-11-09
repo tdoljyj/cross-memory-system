@@ -81,6 +81,9 @@ param(
   # omitted, the Owner is ownerSid (the companion runs as the Owner).
   [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid,
   [switch]$Apply,
+  # Reinstall carry preview only: the old root will be retired before install creates its heartbeat directory.
+  # It cannot be used to apply a plan or to inspect/supply the heartbeat secret.
+  [switch]$PreviewAfterUninstall,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
@@ -92,6 +95,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
+if ($PreviewAfterUninstall -and ($Apply -or $HeartbeatTokenFile -or $HeartbeatBindingId)) { throw 'AFTER_UNINSTALL_PREVIEW_READ_ONLY_WITHOUT_HEARTBEAT_INPUT' }
 
 if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
 # M5-b (ADR 0023): the companion runs as its own account ($OwnerSid, the node profile's ownerSid); the Owner ($OperatorSid) keeps what he
@@ -1029,13 +1033,15 @@ function Get-UpgradeTokenPlan {
 # The node heartbeat token (DESIGN.md section 41.6a): optional; read once, fingerprinted like the ci-admission token, and it must be
 # neither the ci-admission token nor the resident-upgrade token (each is its own connection). The bytes wait in $script:SecretBytes.
 # -HeartbeatBindingId only with -HeartbeatTokenFile (informational: recorded, never sent anywhere).
-function Get-HeartbeatTokenPlan {
+function Get-HeartbeatTokenPlan([switch]$PreviewAfterUninstall) {
+  if ($PreviewAfterUninstall -and ($HeartbeatTokenFile -or $HeartbeatBindingId)) { Clear-SecretBytes; throw 'AFTER_UNINSTALL_PREVIEW_READ_ONLY_WITHOUT_HEARTBEAT_INPUT' }
   if ($HeartbeatBindingId -and -not $HeartbeatTokenFile) { Clear-SecretBytes; throw 'HEARTBEAT_BINDING_ID_REQUIRES_HEARTBEAT_TOKEN_FILE' }
-  $entry = [ordered]@{ target = $HeartbeatTokenTarget; supplied = [bool]$HeartbeatTokenFile; targetExists = (Test-Path -LiteralPath $HeartbeatTokenTarget)
+  $entry = [ordered]@{ target = $HeartbeatTokenTarget; supplied = [bool]$HeartbeatTokenFile; targetExists = (-not $PreviewAfterUninstall -and (Test-Path -LiteralPath $HeartbeatTokenTarget))
     directory = $HeartbeatTokenDirectory; directorySddl = (Get-HeartbeatDirectorySddl $OwnerSid); sddl = (Get-HeartbeatFileSddl $OwnerSid); fingerprint = $null; verified = $false
     bindingId = $(if ($HeartbeatBindingId) { $HeartbeatBindingId.ToLowerInvariant() } else { $null }) }
-  # An existing folder (supplied or not: the companion reads the token there) must have exactly its ACL.
-  if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and -not (Test-HeartbeatDirectoryAcl $HeartbeatTokenDirectory $entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }
+  # Ordinary plans and apply inspect the actual folder, supplied or not. Only the explicit readonly carry preview models the
+  # future root: uninstall retires the old tree, so that folder and its old Owner ACL are not reused or re-ACLed.
+  if (-not $PreviewAfterUninstall -and (Test-Path -LiteralPath $HeartbeatTokenDirectory) -and -not (Test-HeartbeatDirectoryAcl $HeartbeatTokenDirectory $entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }
   if ($HeartbeatTokenFile) {
     if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS' }
     if ($entry.targetExists) { throw 'HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN' }
@@ -1158,7 +1164,7 @@ function Build-Plan {
     windowsLayout = $WindowsLayout; stateCompat = $pkg.stateCompat; acceptanceDecisionRef = $pkg.acceptance.decisionRef
     upgrader = (Get-UpgraderPlan $pkg)
     # DESIGN.md section 41.6a: the node heartbeat token (after the upgrader's, which it must not equal).
-    heartbeatToken = (Get-HeartbeatTokenPlan)
+    heartbeatToken = (Get-HeartbeatTokenPlan -PreviewAfterUninstall:$PreviewAfterUninstall)
     generation = [ordered]@{ number = 1; record = 'generations\g1\generation.json'; current = 'upgrade\current.json'; movesFiles = $false; afterReceipt = $true
       files = 'config\*, record\*, bin\*, helpers\*, install\install-receipt.json (Get-GenerationFilesSha256)'
       linux = [ordered]@{ generation = 1; manifestSha256 = $pkg.linux.manifestSha256; ciSourceManifestSha256 = $pkg.ciSourceManifestSha256 } }
@@ -1170,6 +1176,7 @@ function Build-Plan {
       spool = [ordered]@{ folders = $CompanionSpoolFolders; rule = 'the operator''s write entries move to the companion account; its read entries are kept and copied' }
       brokerStableDigest = 'read as LocalSystem (Source v2 admits LocalSystem or the elevated node-profile owner)'; passwordLogon = 'rearm-resident.ps1 -CompanionAccount (random password, never typed)' }
   }
+  if ($PreviewAfterUninstall) { $p.afterUninstallPreview = [ordered]@{ heartbeatDirectoryRecreated = $true; applyAllowed = $false } }
   $p
 }
 

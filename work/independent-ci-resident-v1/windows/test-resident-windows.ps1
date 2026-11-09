@@ -247,7 +247,7 @@ Yes ($installText.Contains('[string]$HeartbeatTokenFile') -and $installText.Cont
 Yes ($installText.Contains("`$HeartbeatTokenTarget = `$HeartbeatTokenDirectory + '\ci-node-heartbeat.token'")) 'heartbeat-target-is-the-companion-path'
 $hbPlan = $functions['install-resident.ps1:Get-HeartbeatTokenPlan']
 Yes ($hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN'")) 'heartbeat-plan-refusals'
-Yes ($installText.IndexOf('upgrader = (Get-UpgraderPlan $pkg)') -lt $installText.IndexOf('heartbeatToken = (Get-HeartbeatTokenPlan)')) 'heartbeat-planned-after-the-upgrade-token'
+Yes ($installText.IndexOf('upgrader = (Get-UpgraderPlan $pkg)') -lt $installText.IndexOf('heartbeatToken = (Get-HeartbeatTokenPlan -PreviewAfterUninstall:$PreviewAfterUninstall)')) 'heartbeat-planned-after-the-upgrade-token'
 Yes ($installText.Contains('if ($ht.supplied) {') -and $installText.Contains('New-DirectoryWithAcl $ht.directory $ht.directorySddl') -and $installText.Contains("Write-NewSecret `$ht.target `$script:SecretBytes['heartbeatToken'] `$ht.sddl")) 'heartbeat-placed-only-when-supplied'
 $companionHeartbeat = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $here) 'src\companion-heartbeat.mjs') -Raw
 Yes ($companionHeartbeat.Contains("HEARTBEAT_TOKEN_DIR = path.join('secrets', 'heartbeat')") -and $companionHeartbeat.Contains("HEARTBEAT_TOKEN_FILE = 'ci-node-heartbeat.token'")) 'heartbeat-companion-reads-the-same-file'

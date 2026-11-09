@@ -67,9 +67,10 @@
 param([ValidateSet('Rearm', 'Resume', 'Abort', 'ReleaseBreaker')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256,
   [switch]$CompanionHeadless, [switch]$CompanionCredential, [switch]$CompanionInteractive, [switch]$CompanionAccount, [switch]$CompanionRootShell, [switch]$CompanionWslRestore,
-  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$WslVhdxDirectory)
+  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$WslVhdxDirectory, [switch]$CompanionWslVmShutdown)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+if ($CompanionWslVmShutdown -and -not $CompanionAccount) { throw 'WSL_VM_SHUTDOWN_ONLY_WITH_COMPANION_ACCOUNT' }
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
@@ -102,7 +103,7 @@ if ($companionModes.Count -gt 0) {
     $code = Invoke-CompanionRootShell $Root
     [ordered]@{ status = $code }
   } elseif ($mode -ceq 'account') {
-    $r = Invoke-CompanionAccountSwitch $Root $node $WslVhdxDirectory $(if ($CompanionCredential) { 'credential' } else { 'account' })
+    $r = Invoke-CompanionAccountSwitch $Root $node $WslVhdxDirectory $(if ($CompanionCredential) { 'credential' } else { 'account' }) -AllowWslVmShutdown:$CompanionWslVmShutdown
     [ordered]@{ status = $(if ($r.qualified) { 'COMPANION_HEADLESS_QUALIFIED' } elseif ($r.failed -ceq 'PREFLIGHT') { 'COMPANION_HEADLESS_PREFLIGHT_REFUSED' } elseif ($r.fellBack) { 'COMPANION_HEADLESS_FELL_BACK' } else { 'COMPANION_HEADLESS_FAILED' }); result = $r }
   } elseif ($mode -ceq 'interactive') {
     $r = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)
