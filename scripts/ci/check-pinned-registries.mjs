@@ -11,6 +11,7 @@
 // Registries covered (id: registry -> regeneration):
 //   r9         scripts/ci/merge-admission-r9-source.json      merge-admission-r9-reregister.mjs --write
 //   reconcile  scripts/ci/clued-merge-reconcile-source.json   clued-merge-reconcile-source-build.mjs (needs yaml)
+//   control-source-pins  pure component-version changes in the initial control Source; all other historical pins stay fixed
 //   components config/clued-components.json                   scripts/clued_components.py (bump, update)
 //   agent-contract worker/generated/{agent-contract,components}.ts  generate-agent-contract.mjs
 //   plugin     integrations/claude-code/clued/ (copies of skills/hooks)  build_claude_code_plugin.py
@@ -23,7 +24,8 @@
 // The last four are generated files, not pinned hashes: each generator has a --check mode and a test in CI that fails
 // when the committed output is out of date, so they fail the same way and are listed here for the same reason.
 // Looked at and deliberately not covered (no regeneration command, or not changed by editing a file): the
-// clued-*-sources.json / source-pins / gated-proof registries (hand-reviewed pins of historical blobs), the
+// clued-*-sources.json / source-pins / gated-proof registries (hand-reviewed pins of historical blobs, except the narrowly
+// checked component-version derivation above), the
 // handover-external acceptance (Owner-signed), existing-release-v3-host/source-freeze.json (a frozen, versioned package),
 // .github/actions/ci-temporary-storage/check-workflows.mjs (hashes written by hand after review).
 // Nothing here needs the yaml package; only the reconcile regeneration does. The registries pin each other:
@@ -159,7 +161,18 @@ async function checkSelectorPin(root) {
     details: [`${pin.path} changed: pinned blob ${pin.blob}, now blob: '${blob}'`, `pinned sha256 ${pin.sha256}, now sha256: '${sha256}'`], fix };
 }
 
-export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id), 'selector-pin', 'mechanical-policy'];
+const CONTROL_SOURCE_FIX = 'node scripts/ci/clued-control-source-pins.mjs --base <main commit> --write';
+async function checkControlPins(root, base) {
+  try {
+    const mod = await import(pathToFileURL(path.join(root, 'scripts/ci/clued-control-source-pins.mjs')).href);
+    return mod.checkControlSourcePins(root, { base });
+  } catch (error) {
+    return { id: 'control-source-pins', status: 'unchecked', reason: error.message,
+      fix: CONTROL_SOURCE_FIX.replace('<main commit>', base ?? '<main commit>') };
+  }
+}
+
+export const CHECK_IDS = ['r9', 'reconcile', 'components', ...GENERATED.map((g) => g.id), 'selector-pin', 'mechanical-policy', 'control-source-pins'];
 
 export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], env = process.env, knownMainRefs } = {}) {
   let refs = knownMainRefs;
@@ -173,6 +186,7 @@ export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], en
   for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g));
   if (want('selector-pin')) results.push(await checkSelectorPin(root));
   if (want('mechanical-policy')) results.push(checkMechanicalPolicy(root));
+  if (want('control-source-pins')) results.push(await checkControlPins(root, resolved));
   return { base: resolved, results };
 }
 
@@ -192,6 +206,7 @@ export function render({ base, results }) {
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
     if (stale.some((r) => r.id === 'selector-pin')) out.push(`  ${n++}. ${SELECTOR_PIN_FIX}`);
+    if (stale.some((r) => r.id === 'control-source-pins')) out.push(`  ${n++}. ${CONTROL_SOURCE_FIX.replace('<main commit>', base ?? '<main commit>')}`);
     if (stale.some((r) => r.id === 'components')) out.push(`  ${n++}. ${COMPONENTS_FIX.replace('<main commit>', base ?? '<main commit>')}   (commit generated outputs before testing the final candidate)`);
     for (const g of GENERATED) if (g.id !== 'agent-contract' && stale.some((r) => r.id === g.id)) out.push(`  ${n++}. ${g.fix.replace(CLOUD_DEPS_HINT, '')}`);
     out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,
@@ -205,6 +220,9 @@ export function render({ base, results }) {
 }
 
 export function exitCode(results, env = process.env) {
+  // This check closes a real integration blind spot. An unavailable trusted
+  // baseline or validator must fail early in CI, never become a warning-only skip.
+  if (results.some((r) => r.id === 'control-source-pins' && r.status !== 'ok')) return 1;
   if (results.some((r) => r.status === 'stale')) return 1;
   if (results.some((r) => r.status === 'unchecked')) return env.GITHUB_ACTIONS === 'true' ? 0 : 2;
   return 0;

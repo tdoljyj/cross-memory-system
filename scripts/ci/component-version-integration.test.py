@@ -76,6 +76,22 @@ class CandidateIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integration step failed"):
             integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
 
+    def test_control_source_generation_observes_materialized_versions_and_exact_base(self):
+        write(self.repo.dir / "scripts/ci/clued-control-source-pins.mjs", r'''
+import fs from 'node:fs';
+const args=process.argv.slice(2), at=args.indexOf('--base');
+if(at<0 || !args.includes('--write')) process.exit(3);
+const manifest=JSON.parse(fs.readFileSync('config/clued-components.json','utf8'));
+fs.writeFileSync('control-source-observed.json',JSON.stringify({
+  base:args[at+1], version:manifest.components.find(c=>c.id==='tool').version
+})+'\n');
+''')
+        self.commit("control Source generator fixture")
+        report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+        self.assertTrue(report["applied"])
+        observed = json.loads((self.repo.dir / "control-source-observed.json").read_text())
+        self.assertEqual(observed, {"base": self.base, "version": "3"})
+
 
 if __name__ == "__main__":
     unittest.main()
