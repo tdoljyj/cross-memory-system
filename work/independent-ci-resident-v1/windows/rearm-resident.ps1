@@ -67,10 +67,14 @@
 param([ValidateSet('Rearm', 'Resume', 'Abort', 'ReleaseBreaker')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256,
   [switch]$CompanionHeadless, [switch]$CompanionCredential, [switch]$CompanionInteractive, [switch]$CompanionAccount, [switch]$CompanionRootShell, [switch]$CompanionWslRestore,
-  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$WslVhdxDirectory, [switch]$CompanionWslVmShutdown)
+  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$WslVhdxDirectory, [switch]$CompanionWslVmShutdown,
+  [ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$CompanionMaintenanceContextFile,
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedCompanionMaintenanceContextSha256)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 if ($CompanionWslVmShutdown -and -not $CompanionAccount) { throw 'WSL_VM_SHUTDOWN_ONLY_WITH_COMPANION_ACCOUNT' }
+if (($CompanionMaintenanceContextFile -or $ExpectedCompanionMaintenanceContextSha256) -and
+    (-not $CompanionAccount -or -not $CompanionWslVmShutdown -or -not $CompanionMaintenanceContextFile -or -not $ExpectedCompanionMaintenanceContextSha256)) { throw 'ONE_UAC_MAINTENANCE_CONTEXT_PAIR_REQUIRED' }
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
@@ -85,6 +89,10 @@ if ($companionModes.Count -gt 0) {
   if ($companionModes.Count -ne 1 -or $Request) { throw 'ONE_COMPANION_MODE_ONLY' }
   if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
   . (Join-Path $PSScriptRoot 'companion-headless.ps1')
+  if ($CompanionMaintenanceContextFile) {
+    if ([IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -cne (Join-Path $Root ('resident\' + [string]$installed.residentManifestSha256 + '\windows'))) { throw 'MAINTENANCE_INSTALLED_GENERATION_REQUIRED' }
+    . (Join-Path $PSScriptRoot 'companion-maintenance.ps1')
+  }
   $node = (Get-Content -LiteralPath (Join-Path $Root 'record\acceptance.json') -Raw | ConvertFrom-Json).node
   if ([string]$node.ownerSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\z') { throw 'OWNER_ACCOUNT_REQUIRED' }
   # M5-b (ADR 0023): on a node whose companion runs as its own account the Owner is the install's operator (install\companion-account.json).
@@ -103,7 +111,7 @@ if ($companionModes.Count -gt 0) {
     $code = Invoke-CompanionRootShell $Root
     [ordered]@{ status = $code }
   } elseif ($mode -ceq 'account') {
-    $r = Invoke-CompanionAccountSwitch $Root $node $WslVhdxDirectory $(if ($CompanionCredential) { 'credential' } else { 'account' }) -AllowWslVmShutdown:$CompanionWslVmShutdown
+    $r = Invoke-CompanionAccountSwitch $Root $node $WslVhdxDirectory $(if ($CompanionCredential) { 'credential' } else { 'account' }) -AllowWslVmShutdown:$CompanionWslVmShutdown -MaintenanceContextFile $CompanionMaintenanceContextFile -ExpectedMaintenanceContextSha256 $ExpectedCompanionMaintenanceContextSha256
     [ordered]@{ status = $(if ($r.qualified) { 'COMPANION_HEADLESS_QUALIFIED' } elseif ($r.failed -ceq 'PREFLIGHT') { 'COMPANION_HEADLESS_PREFLIGHT_REFUSED' } elseif ($r.fellBack) { 'COMPANION_HEADLESS_FELL_BACK' } else { 'COMPANION_HEADLESS_FAILED' }); result = $r }
   } elseif ($mode -ceq 'interactive') {
     $r = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)

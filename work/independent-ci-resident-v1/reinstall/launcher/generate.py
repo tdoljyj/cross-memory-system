@@ -29,6 +29,9 @@ A = sys.argv[2:]
 def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
 FINAL = '--final' in A
+MAINTENANCE_HOST_DROP = opt('--maintenance-host-drop')
+if MAINTENANCE_HOST_DROP:
+    assert re.fullmatch(r'[A-Z]:\\[A-Za-z0-9._\\-]+', MAINTENANCE_HOST_DROP), 'MAINTENANCE_HOST_DROP_PATH_REFUSED'
 COMMIT = opt('--commit'); PKG = os.path.abspath(opt('--package') or ''); PKG_SHA = opt('--package-sha')
 assert COMMIT and re.fullmatch(r'[0-9a-f]{40}', COMMIT), 'COMMIT_40HEX_REQUIRED'
 assert PKG_SHA and re.fullmatch(r'[0-9a-f]{64}', PKG_SHA), 'PACKAGE_SHA_REQUIRED'
@@ -48,7 +51,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'e5ee68933f7a7f05fda20372e2fc7026b8ec3e0cd806e2110a4f5ce270df016e'   # Reviewed first-train applicability; runner-quiet and verify gates retained
+TEMPLATE_SHA = 'bbbec7419020af507454a67b5539101054c6e143e9f7d6692fa9e8ba1b9a6bba'   # Reviewed first-train applicability; runner-quiet and verify gates retained
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -140,6 +143,16 @@ exact_guard = "if ($back -cne $sddl) { throw ('ACL_READBACK_MISMATCH:' + $path) 
 canonical = "$back -cne $acl.GetSecurityDescriptorSddlForm('All')" in installer
 assert exact_guard != canonical
 rearm = by_path['resident/windows/rearm-resident.ps1']
+maintenance = by_path.get('resident/windows/companion-maintenance.ps1')
+if MAINTENANCE_HOST_DROP:
+    assert VHDX_DIR and maintenance, 'MAINTENANCE_REQUIRES_ACCOUNT_AND_PACKAGED_HELPER'
+    assert maintenance['target'] == 'resident' + BS + pkg['residentManifestSha256'] + BS + 'windows' + BS + 'companion-maintenance.ps1', 'MAINTENANCE_HELPER_NOT_THIS_INSTALLED_GENERATION'
+    assert sha(os.path.join(PKG, *maintenance['path'].split('/'))) == maintenance['sha256'], 'MAINTENANCE_HELPER_HASH_CHANGED'
+    # The assembler recursively includes windows/ in the resident manifest;
+    # additionally require the rearm/final guard context route in this package.
+    for rel in ('resident/windows/rearm-resident.ps1', 'resident/windows/companion-headless.ps1'):
+        guard_text = open(os.path.join(PKG, *rel.split('/')), encoding='utf8').read()
+        assert 'MaintenanceContextFile' in guard_text and 'Expected' in guard_text, 'MAINTENANCE_FINAL_GUARD_NOT_WIRED'
 # ---- r5c: package /4 placing the upgrader (fresh install), its configuration, the installer's token constants ----
 assert pkg['contract'] == 'clued.independent-ci.resident-package/4', ('PACKAGE_4_REQUIRED', pkg['contract'])
 UPG_SECTION = pkg['upgrader']
@@ -451,6 +464,9 @@ lines = [
     '$RunnerQuietWaitSeconds = ' + str(RUNNER_QUIET_WAIT_SECONDS) + '   # Q2 phase 2: runner original+stopped, executor not RUNNING, before any verify',
     '$InstalledPausedSha256 = ' + (q(paused_sha) if paused_sha else '$null') + '   # review m6: the W1 PAUSED.json (null in a DRAFT generated before W1)',
     '$RearmSha256 = ' + q(rearm['sha256']),
+    '$MaintenanceHostDropPin = ' + (q(MAINTENANCE_HOST_DROP) if MAINTENANCE_HOST_DROP else '$null') + '   # opt-in only; trusted Owner/Root Host statement drop, never App Actions/RPC',
+    '$MaintenanceHelperSha256 = ' + (q(maintenance['sha256']) if maintenance else '$null'),
+    '$MaintenanceWslDistribution = ' + q(node['wslDistribution']),
     '$RearmReason = ' + q(REARM_REASON),
     '$UpgradeTokenFile = ' + q(TOKEN_FILE) + '   # r5c: the resident-upgrade token placed by the Owner (path only; read by install-resident.ps1, never here)',
     '$UpgradeTokenTarget = ' + q(TOKEN_TARGET) + '   # install-resident.ps1 of this package',

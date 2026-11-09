@@ -18,7 +18,14 @@ if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-18
 $node = (Get-Content -LiteralPath (Join-Path $Root 'record\acceptance.json') -Raw | ConvertFrom-Json).node
 $pending = Read-CompanionPending $Root
 $did = 'nothing'
-if ($null -eq $pending) { Remove-CompanionFallbackTask; $did = 'no-marker' }
+$maintenanceHold = $true
+try {
+  . (Join-Path $PSScriptRoot 'companion-maintenance.ps1')
+  $held = Test-CompanionMaintenanceRecoveryHold -Root $Root
+  if ($held -is [bool]) { $maintenanceHold = $held }
+} catch { $maintenanceHold = $true }
+if ($maintenanceHold -or (Test-CompanionPendingMaintenance $pending)) { $did = 'maintenance-manual-recovery-held' }
+elseif ($null -eq $pending) { Remove-CompanionFallbackTask; $did = 'no-marker' }
 elseif (Test-CompanionPendingAbandoned $pending ([DateTimeOffset]::UtcNow)) {
   $null = Invoke-CompanionStopAndFallback $Root ([string]$node.ownerSid)   # also deletes this task
   try { Start-CompanionTask } catch { }   # the interactive task starts only while the Owner is logged on; else at the next log-on

@@ -238,13 +238,25 @@ function Test-CompanionPendingOwnerAlive($pending) {
 }
 # Abandoned: older than 15 minutes AND the switch that wrote it has ended (window closed, restart, error). Only then is it rolled back.
 function Test-CompanionPendingAbandoned($pending, [DateTimeOffset]$now) { (Test-CompanionPendingStale $pending $now) -and -not (Test-CompanionPendingOwnerAlive $pending) }
-function Write-CompanionPending([string]$root, [string]$mode, [string]$ownerSid) {
+function Write-CompanionPending([string]$root, [string]$mode, [string]$ownerSid, [string]$maintenanceOperationId, [string]$maintenanceContextSha256) {
   $me = Get-Process -Id $PID
   $body = [ordered]@{ contract = $CompanionPendingContract; mode = $mode; startedAt = [DateTimeOffset]::UtcNow.ToString('o'); by = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     pid = $PID; processStart = $me.StartTime.ToUniversalTime().ToString('o')
     fallback = [ordered]@{ logonType = 'InteractiveToken'; trigger = 'AtLogOn'; principal = $ownerSid; action = (Get-SupervisorAction $root); sddl = (Get-CompanionTaskSddl $ownerSid) } }
+  if ($maintenanceOperationId -or $maintenanceContextSha256) {
+    if ($maintenanceOperationId -cnotmatch '^[0-9a-f]{64}$' -or $maintenanceContextSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_MAINTENANCE_PENDING_IDENTITY_REFUSED' }
+    $body['maintenanceOperationId'] = $maintenanceOperationId
+    $body['maintenanceContextSha256'] = $maintenanceContextSha256
+  }
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(($body | ConvertTo-Json -Depth 5 -Compress))
   $f = [IO.File]::Open((Join-Path $root $CompanionPendingFile), 'CreateNew', 'Write', 'None'); try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+}
+function Test-CompanionPendingMaintenance($pending) {
+  if ($null -eq $pending) { return $false }
+  $names = if ($pending -is [Collections.IDictionary]) { @($pending.Keys) } else { @($pending.PSObject.Properties.Name) }
+  # An incomplete maintenance identity must hold for recovery too, never fall
+  # through to the legacy force-stop path.
+  ($names -ccontains 'maintenanceOperationId') -or ($names -ccontains 'maintenanceContextSha256')
 }
 # Back to the interactive token (no password needed), then the marker goes. Elevated only (the task and install\ are admin-only).
 function Invoke-CompanionFallback([string]$root, [string]$ownerSid) {
@@ -573,11 +585,16 @@ function Test-CompanionAccountRecord($a, $node) {
 # Who may run the elevated companion modes and the Owner's requests: the operator on an M5-b node, the profile's ownerSid otherwise.
 function Get-CompanionOperatorSid([string]$root, $node) { $a = Read-CompanionAccountRecord $root $node; if ($null -eq $a) { [string]$node.ownerSid } else { [string]$a.operatorSid } }
 
-# The moved ext4.vhdx and its folder: SYSTEM and Administrators full, the companion account modify (WSL opens it as that user), nothing
-# inherited, nothing for the Owner's session. Missing parents of the folder are created SYSTEM / Administrators full, Users read.
+# The folder stays Modify-only for the companion. The data VHD alone also needs
+# WRITE_DAC: WSL impersonates this user to grant its VM access to the file.
+# Neither the directories nor executable/configuration files receive that right.
 $CompanionVhdxParentSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
 $CompanionRestoredVhdxSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
 function Get-CompanionVhdxSddl([string]$companionSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $companionSid + ')' }
+function Get-CompanionVhdxFileSddl([string]$companionSid) {
+  if ($companionSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'WSL_VHDX_ACL_SID_REFUSED' }
+  'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1701bf;;;' + $companionSid + ')'
+}
 # The current user's WSL registrations (Lxss): guid, name, base path (the \\?\ prefix dropped), default uid and every value of the key
 # (review r1 M4: VhdFileName, PackageFamilyName, KernelCommandLine, DefaultEnvironment, Flavor, OsVersion, ... all of them).
 $CompanionLxssKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
@@ -644,7 +661,22 @@ function Get-CompanionRunningWslDistros {
   }
   $names
 }
-function Assert-CompanionWslVhdxReleased([string]$path, [switch]$AllowVmShutdown) {
+function Assert-CompanionWslVhdxReleased([string]$path, [switch]$AllowVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
+  if ($MaintenanceContextFile -or $ExpectedMaintenanceContextSha256) {
+    if (-not $AllowVmShutdown -or -not $MaintenanceContextFile -or $ExpectedMaintenanceContextSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        -not (Get-Command Assert-CompanionMaintenanceShutdownGuard -CommandType Function -ErrorAction SilentlyContinue) -or
+        -not (Get-Command Complete-CompanionMaintenanceShutdown -CommandType Function -ErrorAction SilentlyContinue)) { throw 'WSL_MAINTENANCE_CONTEXT_REQUIRED' }
+    # The new one-UAC route never reduces its authority/quiet/once checks to
+    # the legacy explicit manual-maintenance switch. The helper rechecks the
+    # accepted subject and local scene immediately before creating its intent.
+    $guard = Assert-CompanionMaintenanceShutdownGuard -Path $path -ContextFile $MaintenanceContextFile -ExpectedContextSha256 $ExpectedMaintenanceContextSha256
+    if ($null -eq $guard -or $guard.vmShutdownRequired -isnot [bool] -or $guard.operationId -isnot [string] -or $guard.operationId -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_MAINTENANCE_GUARD_RESULT_REFUSED' }
+    if (-not $guard.vmShutdownRequired) { return [ordered]@{ vmShutdown = $false; exclusiveFileConfirmed = $true; maintenanceOperationId = $guard.operationId } }
+    $stop = Invoke-CompanionWslControl 'shutdown'
+    $completed = Complete-CompanionMaintenanceShutdown -ContextFile $MaintenanceContextFile -ExpectedContextSha256 $ExpectedMaintenanceContextSha256 -Result $stop
+    if ($null -eq $completed -or $completed.completed -isnot [bool] -or -not $completed.completed -or $completed.exclusiveFileConfirmed -isnot [bool] -or -not $completed.exclusiveFileConfirmed) { throw 'WSL_MAINTENANCE_COMPLETION_UNCONFIRMED' }
+    return [ordered]@{ vmShutdown = $true; exclusiveFileConfirmed = $true; maintenanceOperationId = $guard.operationId; maintenanceResult = $completed }
+  }
   # Preserve the original terminate-only wait unless the operator explicitly
   # selected the reviewed whole-account WSL maintenance action. A file lock
   # alone never authorizes stopping another CI distribution.
@@ -663,12 +695,76 @@ function Assert-CompanionWslVhdxReleased([string]$path, [switch]$AllowVmShutdown
 function Test-CompanionSameVolume([string]$a, [string]$b) { [string]::Equals([IO.Path]::GetPathRoot($a), [IO.Path]::GetPathRoot($b), [StringComparison]::OrdinalIgnoreCase) }
 function Get-CompanionDirSddl([string]$path) { (Get-Acl -LiteralPath $path).Sddl }
 function New-CompanionProtectedDirectory([string]$path, [string]$sddl) { $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl); [void][IO.Directory]::CreateDirectory($path, $ds) }
+function Get-CompanionVhdxAclNative {
+  $cached = Get-Variable -Name CompanionVhdxAclNative -Scope Script -ErrorAction SilentlyContinue
+  if ($null -ne $cached -and $cached.Value -is [type]) { return $cached.Value }
+  $name = New-Object Reflection.AssemblyName ('CluedVhdxAcl' + [guid]::NewGuid().ToString('N'))
+  $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly($name, [Reflection.Emit.AssemblyBuilderAccess]::Run)
+  $module = $assembly.DefineDynamicModule($name.Name)
+  $type = $module.DefineType('VhdxAclNative', [Reflection.TypeAttributes]'Public,Abstract,Sealed')
+  foreach ($definition in @(
+    @{ Name='CreateFileW'; Return=[IntPtr]; Parameters=[type[]]@([string],[uint32],[uint32],[IntPtr],[uint32],[uint32],[IntPtr]) },
+    @{ Name='GetFileInformationByHandle'; Return=[bool]; Parameters=[type[]]@([IntPtr],[IntPtr]) },
+    @{ Name='GetFinalPathNameByHandleW'; Return=[uint32]; Parameters=[type[]]@([IntPtr],[Text.StringBuilder],[uint32],[uint32]) }
+  )) {
+    $method = $type.DefinePInvokeMethod($definition.Name,'kernel32.dll',$definition.Name,[Reflection.MethodAttributes]'Public,Static,PinvokeImpl',[Reflection.CallingConventions]::Standard,$definition.Return,$definition.Parameters,[Runtime.InteropServices.CallingConvention]::Winapi,[Runtime.InteropServices.CharSet]::Unicode)
+    $method.SetImplementationFlags($method.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+  }
+  $script:CompanionVhdxAclNative = $type.CreateType()
+  return $script:CompanionVhdxAclNative
+}
+function Invoke-CompanionVhdxAclNative([string]$name, [object[]]$arguments) {
+  $native = Get-CompanionVhdxAclNative
+  $values = New-Object object[] $arguments.Length
+  for ($index=0; $index -lt $arguments.Length; $index++) { $values[$index] = if ($null -eq $arguments[$index]) { $null } else { $arguments[$index].PSObject.BaseObject } }
+  $native.GetMethod($name).Invoke($null,$values)
+}
+function Open-CompanionVhdxAclEntry([string]$path, [bool]$directory) {
+  $full = [IO.Path]::GetFullPath($path)
+  if ($full -cnotmatch '^[A-Z]:\\[A-Za-z0-9._\\-]+$' -or -not [string]::Equals($full,$path,[StringComparison]::OrdinalIgnoreCase)) { throw 'WSL_VHDX_ACL_PATH_REFUSED' }
+  $flags = [uint32]0x00200000; if ($directory) { $flags = [uint32]0x02200000 }
+  $handle = Invoke-CompanionVhdxAclNative 'CreateFileW' @($full,[uint32]2147745792,[uint32]1,[IntPtr]::Zero,[uint32]3,$flags,[IntPtr]::Zero)
+  if ($handle -eq [IntPtr](-1)) { throw 'WSL_VHDX_ACL_OPEN_FAILED' }
+  $safe = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle($handle,$true)
+  $information = [Runtime.InteropServices.Marshal]::AllocHGlobal(52)
+  try {
+    if (-not (Invoke-CompanionVhdxAclNative 'GetFileInformationByHandle' @($handle,$information))) { throw 'WSL_VHDX_ACL_INFORMATION_FAILED' }
+    $attributes = [Runtime.InteropServices.Marshal]::ReadInt32($information)
+    if (($attributes -band 0x400) -ne 0 -or (($attributes -band 0x10) -ne 0) -ne $directory -or
+        (-not $directory -and [Runtime.InteropServices.Marshal]::ReadInt32($information,40) -ne 1)) { throw 'WSL_VHDX_ACL_LINK_OR_KIND_REFUSED' }
+    $final = New-Object Text.StringBuilder(32768)
+    $length = Invoke-CompanionVhdxAclNative 'GetFinalPathNameByHandleW' @($handle,$final,[uint32]32768,[uint32]0)
+    if ($length -le 0 -or $length -ge 32768 -or -not [string]::Equals($final.ToString(),('\\?\'+$full),[StringComparison]::OrdinalIgnoreCase)) { throw 'WSL_VHDX_ACL_FINAL_PATH_REFUSED' }
+    return ,$safe
+  } catch { $safe.Dispose(); throw } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($information) }
+}
 function Set-CompanionVhdxAcl([string]$dir, [string]$file, [string]$companionSid) {
-  $sddl = Get-CompanionVhdxSddl $companionSid
-  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl, [Security.AccessControl.AccessControlSections]::Access)
-  (Get-Item -LiteralPath $dir -Force).SetAccessControl($ds)
-  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm($sddl.Replace('(A;OICI;', '(A;;'), [Security.AccessControl.AccessControlSections]::Access)
-  (Get-Item -LiteralPath $file -Force).SetAccessControl($fs)
+  $fileSddl = Get-CompanionVhdxFileSddl $companionSid
+  if ([IO.Path]::GetFileName($file) -cne 'ext4.vhdx' -or -not [string]::Equals([IO.Path]::GetDirectoryName($file),$dir,[StringComparison]::OrdinalIgnoreCase)) { throw 'WSL_VHDX_ACL_LEAF_REFUSED' }
+  $directoryHandle = Open-CompanionVhdxAclEntry $dir $true
+  $stream = $null
+  try {
+    $safe = Open-CompanionVhdxAclEntry $file $false
+    try { $stream = New-Object IO.FileStream($safe,[IO.FileAccess]::Read,4096,$false) } catch { $safe.Dispose(); throw }
+    $ownerBefore = $stream.GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $ds = New-Object Security.AccessControl.DirectorySecurity
+    $ds.SetSecurityDescriptorSddlForm((Get-CompanionVhdxSddl $companionSid), [Security.AccessControl.AccessControlSections]::Access)
+    (Get-Item -LiteralPath $dir -Force).SetAccessControl($ds)
+    $fs = New-Object Security.AccessControl.FileSecurity
+    $fs.SetSecurityDescriptorSddlForm($fileSddl, [Security.AccessControl.AccessControlSections]::Access)
+    # FileStream persists through the same no-follow, no-write/delete-sharing
+    # handle; a companion-writable filename is never re-resolved for this write.
+    $stream.SetAccessControl($fs)
+    $after = New-Object Security.AccessControl.RawSecurityDescriptor($stream.GetAccessControl().GetSecurityDescriptorBinaryForm(),0)
+    $expected = New-Object Security.AccessControl.RawSecurityDescriptor($fileSddl)
+    if ($after.Owner.Value -cne $ownerBefore -or ([int]$after.ControlFlags -band [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or $after.DiscretionaryAcl.Count -ne 3) { throw 'WSL_VHDX_ACL_READBACK_FAILED' }
+    for ($index=0; $index -lt 3; $index++) {
+      $left = New-Object byte[] $after.DiscretionaryAcl[$index].BinaryLength
+      $right = New-Object byte[] $expected.DiscretionaryAcl[$index].BinaryLength
+      $after.DiscretionaryAcl[$index].GetBinaryForm($left,0); $expected.DiscretionaryAcl[$index].GetBinaryForm($right,0)
+      if ([Convert]::ToBase64String($left) -cne [Convert]::ToBase64String($right)) { throw 'WSL_VHDX_ACL_READBACK_FAILED' }
+    }
+  } finally { if ($null -ne $stream) { $stream.Dispose() }; $directoryHandle.Dispose() }
 }
 # The file moved back on a roll-back gets its folder's inherited ACL again (only the DACL).
 function Set-CompanionOwnerFileAcl([string]$file) {
@@ -798,7 +894,7 @@ function Set-CompanionWslStage($record, [string]$stage) { if ($record -is [Colle
 # everything: exported (the Owner's full registration key, reg.exe's own copy, in install\ and its values in the record) -> moved
 # (ext4.vhdx in targetDir, protected) -> imported (the account's import task returned 0) -> forgotten (the Owner's key removed) ->
 # qualified. This function does exported and moved; nothing of the Owner's registration is removed here. Returns the record.
-function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid, [switch]$AllowVmShutdown) {
+function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid, [switch]$AllowVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
   $target = Join-Path $targetDir 'ext4.vhdx'; $partial = $target + '.partial'
   $existing = Read-CompanionWslRecord $root
   $record = if ($null -ne $existing) { $existing } else { [ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $target; companionSid = $companionSid; stage = 'new'; imported = $false } }
@@ -815,7 +911,7 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
     } else { throw 'WSL_COPY_MISSING' }
     if ($record.source -and (Test-Path -LiteralPath ([string]$record.source) -PathType Leaf)) {
       Invoke-CompanionWslTerminate $distro
-      $release = Assert-CompanionWslVhdxReleased ([string]$record.source) -AllowVmShutdown:$AllowVmShutdown
+      $release = Assert-CompanionWslVhdxReleased ([string]$record.source) -AllowVmShutdown:$AllowVmShutdown -MaintenanceContextFile $MaintenanceContextFile -ExpectedMaintenanceContextSha256 $ExpectedMaintenanceContextSha256
       if ((Get-CompanionFileSha256Unbuffered ([string]$record.source)) -cne [string]$record.copy.sourceSha256) { throw 'WSL_COPY_SOURCE_CHANGED' }
       $record = ConvertTo-CompanionOrdered $record; $record['vhdxRelease'] = $release
       Write-CompanionWslRecord $root $record
@@ -845,7 +941,7 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
   if ($plan.action -ceq 'move' -or $plan.action -ceq 'forget') {
     Invoke-CompanionWslTerminate $distro
     if ($source -and (Test-Path -LiteralPath $source -PathType Leaf)) {
-      $release = Assert-CompanionWslVhdxReleased $source -AllowVmShutdown:$AllowVmShutdown
+      $release = Assert-CompanionWslVhdxReleased $source -AllowVmShutdown:$AllowVmShutdown -MaintenanceContextFile $MaintenanceContextFile -ExpectedMaintenanceContextSha256 $ExpectedMaintenanceContextSha256
       $record = ConvertTo-CompanionOrdered $record; $record['vhdxRelease'] = $release
       Write-CompanionWslRecord $root $record
     }
@@ -956,12 +1052,22 @@ function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vh
 # Invoke-CompanionWslMove, then the registrar (a new random password, the task, the import task with the Owner's DefaultUid), the import
 # (exit 0 or WSL_IMPORT_FAILED:<code>), only then the Owner's registration key goes. A run that was cut off resumes from the record
 # (no -WslVhdxDirectory needed). Not qualified: the task goes back to the account's interactive definition (the companion stays off).
-function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode, [switch]$AllowWslVmShutdown) {
+function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode, [switch]$AllowWslVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
   $sid = [string]$node.ownerSid; $distro = [string]$node.wslDistribution
   $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
+  $maintenance = $null
+  if ($MaintenanceContextFile -or $ExpectedMaintenanceContextSha256) {
+    if (-not $MaintenanceContextFile -or $ExpectedMaintenanceContextSha256 -cnotmatch '^[0-9a-f]{64}$' -or -not $AllowWslVmShutdown -or $mode -cne 'account' -or -not $vhdxDir -or
+        -not (Get-Command Assert-CompanionMaintenanceEntry -CommandType Function -ErrorAction SilentlyContinue)) { throw 'WSL_MAINTENANCE_CONTEXT_REQUIRED' }
+    # Required even when an existing moved/imported/qualified record will skip
+    # the VHD release guard. No export, terminate, build or task mutation first.
+    $maintenance = Assert-CompanionMaintenanceEntry -Root $root -TargetVhdxPath (Join-Path $vhdxDir 'ext4.vhdx') -CompanionSid $sid -ContextFile $MaintenanceContextFile -ExpectedContextSha256 $ExpectedMaintenanceContextSha256
+    if ($null -eq $maintenance -or $maintenance.operationId -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_MAINTENANCE_ENTRY_RESULT_REFUSED' }
+  }
   $pending = Read-CompanionPending $root
   if ($null -ne $pending) {
     if (Test-CompanionPendingOwnerAlive $pending) { $result.failed = 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'; return $result }
+    if ($MaintenanceContextFile -or (Test-CompanionPendingMaintenance $pending)) { $result.failed = 'WSL_MAINTENANCE_PENDING_RECOVERY_REQUIRED'; $result.manualRecovery = $true; return $result }
     $null = Invoke-CompanionStopAndFallback $root $sid
     $result.earlierPendingFellBack = $true
   }
@@ -981,15 +1087,21 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $result.preflight = Get-CompanionAccountPreflight $root $node (Get-CompanionAccountFacts $root $sid $build.registrar.exe) $vhdxDir (Get-CompanionDomainCredsDisabled) (Get-LockoutPolicy)
     if (@($result.preflight.refusals).Count) { $result.failed = 'PREFLIGHT'; return $result }
     Register-CompanionFallbackTask $root ([string](Get-Content -LiteralPath (Join-Path $root 'install\install-receipt.json') -Raw | ConvertFrom-Json).residentManifestSha256)
-    Write-CompanionPending $root $mode $sid
+    if ($MaintenanceContextFile) { Write-CompanionPending $root $mode $sid ([string]$maintenance.operationId) $ExpectedMaintenanceContextSha256 }
+    else { Write-CompanionPending $root $mode $sid }
     # Whatever runs now (an instance of an earlier definition) ends before the distribution stops.
-    Stop-CompanionTask
-    foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+    if ($MaintenanceContextFile) {
+      if (@((Get-CompanionProcessTree $root).supervisors).Count) { throw 'WSL_MAINTENANCE_SUPERVISOR_NOT_QUIET' }
+    } else {
+      Stop-CompanionTask
+      foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+    }
     Wait-CompanionTaskNotRunning
-    try { $record = Invoke-CompanionWslMove $root $distro $vhdxDir $sid -AllowVmShutdown:$AllowWslVmShutdown; $result.wsl = $record } catch {
+    try { $record = Invoke-CompanionWslMove $root $distro $vhdxDir $sid -AllowVmShutdown:$AllowWslVmShutdown -MaintenanceContextFile $MaintenanceContextFile -ExpectedMaintenanceContextSha256 $ExpectedMaintenanceContextSha256; $result.wsl = $record } catch {
       $why = [string]$_.Exception.Message
       $result.failed = 'COMPANION_WSL_MOVE_FAILED:' + $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' })
-      $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
+      if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+      else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
       return $result
     }
     $vhdx = Join-Path $vhdxDir 'ext4.vhdx'
@@ -1003,15 +1115,17 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $d = try { [string]($reg | ConvertFrom-Json).detail } catch { $null }
     if ($d -cmatch '^[a-z]{1,16}:[A-Za-z0-9_]{1,40}:0x[0-9A-F]{8}\z|^0x[0-9A-F]{8}:(parked|park-failed)\z') { $result.registrarDetail = $d }
     if ($result.registrar -cne 'REGISTERED') {
-      $null = Invoke-CompanionFallback $root $sid
-      $result.fellBack = $true; $result.failed = $result.registrar
+      if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+      else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
+      $result.failed = $result.registrar
       return $result
     }
     if ($needImport) {
       $result.importResult = Invoke-CompanionWslImportTask
       if (-not (($result.importResult -is [long] -or $result.importResult -is [int]) -and [int64]$result.importResult -eq 0)) {
         $result.failed = 'WSL_IMPORT_FAILED:' + [string]$result.importResult
-        $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
+        if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+        else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
         return $result
       }
       $record = ConvertTo-CompanionOrdered $record; $record.stage = 'imported'; $record.imported = $true; $record.importedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -1020,7 +1134,8 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     if ([string]$record.stage -ceq 'imported') {
       try { $record = Remove-CompanionOwnerRegistration $root $record } catch {
         $result.failed = 'COMPANION_WSL_FORGET_FAILED'
-        $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true
+        if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+        else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
         return $result
       }
     }
@@ -1034,12 +1149,15 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       $result.wsl = $record
       Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
       Remove-CompanionFallbackTask
+      if ($MaintenanceContextFile) {
+        $null = Complete-CompanionMaintenanceQualification -ContextFile $MaintenanceContextFile -ExpectedContextSha256 $ExpectedMaintenanceContextSha256 -QualifiedSince $since -TaskFacts $result.task
+      }
       $result.qualified = $true
       return $result
     }
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
-    $null = Invoke-CompanionStopAndFallback $root $sid
-    $result.fellBack = $true
+    if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+    else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
     $result
   } finally { $script:CompanionRegistrarExe = $null; Remove-CompanionBuild $build.directory }
 }
@@ -1130,6 +1248,16 @@ function Restore-CompanionTargetDirectory($record, $node) {
   } catch { throw 'WSL_RESTORE_TARGET_ACL_READBACK_MISMATCH' }
   [ordered]@{ status = 'REUSABLE'; path = $dir; kept = $kept; beforeSddl = $before; afterSddl = $after }
 }
+function Get-CompanionRestoreError($failure, [string]$operation) {
+  # A fixed stage plus bounded type/HRESULT chains identifies handled failures
+  # without copying exception messages, paths, source lines or credentials.
+  $chain = @(); $exception = $failure.Exception
+  while ($null -ne $exception -and $chain.Count -lt 5) {
+    $chain += [ordered]@{ type = $exception.GetType().FullName; hresult = ('0x{0:X8}' -f $exception.HResult) }
+    $exception = $exception.InnerException
+  }
+  [ordered]@{ operation = $operation; chain = $chain; line = [int]$failure.InvocationInfo.ScriptLineNumber }
+}
 function Invoke-CompanionWslRestore([string]$root, $node) {
   $result = [ordered]@{ restored = $false; failed = $null; record = $null }
   # Review r2 n3: never while a switch is running (its window is open).
@@ -1141,36 +1269,51 @@ function Invoke-CompanionWslRestore([string]$root, $node) {
   if (-not $record.Contains('source') -or -not $record.source -or -not $record.Contains('ownerExport')) { $result.failed = 'WSL_RECORD_INCOMPLETE'; return $result }
   # Review r2 N1: the copy back is hashed from the disk by this generation's registrar (file-sha256), built here as the switch does.
   $build = $null
-  try { $build = New-CompanionBuild $root } catch { $why = [string]$_.Exception.Message; $result.failed = 'COMPANION_BUILD_FAILED:' + $(if ($why -cmatch '^COMPANION_BUILD_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' }); return $result }
+  try { $build = New-CompanionBuild $root } catch { $why = [string]$_.Exception.Message; $result.failed = 'COMPANION_BUILD_FAILED:' + $(if ($why -cmatch '^COMPANION_BUILD_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' }); $result['error'] = Get-CompanionRestoreError $_ 'build'; return $result }
   $script:CompanionRegistrarExe = $build.registrar.exe
-  $null = Invoke-CompanionStopAndFallback $root ([string]$node.ownerSid)
   $source = [string]$record.source; $target = [string]$record.target
+  $operation = 'stop-companion'
   try {
+    $null = Invoke-CompanionStopAndFallback $root ([string]$node.ownerSid)
+    $operation = 'check-vhdx-paths'
     if (Test-Path -LiteralPath $target -PathType Leaf) {
       # Review r2 n2: the account's own WSL VM may still hold the file; the Owner cannot stop it. The task is parked (above), so after a
       # restart nothing starts that VM: WSL_VHDX_STILL_IN_USE means restart, then run -CompanionWslRestore again (runbook 9.5, T13).
+      $operation = 'wait-vhdx-release'
       if (-not (Wait-CompanionVhdxFree $target 300)) { throw 'WSL_VHDX_STILL_IN_USE' }
+      $operation = 'check-source'
       if (Test-Path -LiteralPath $source) { throw 'WSL_SOURCE_EXISTS' }
+      $operation = 'create-source-parent'
       [void][IO.Directory]::CreateDirectory((Split-Path -Parent $source))
-      if (Test-CompanionSameVolume $source $target) { [IO.File]::Move($target, $source) }
+      $operation = 'select-volume-path'
+      if (Test-CompanionSameVolume $source $target) { $operation = 'move-back'; [IO.File]::Move($target, $source) }
       else {
         $partial = $source + '.partial'
+        $operation = 'check-partial'
         if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+        $operation = 'copy-back'
         $copy = Copy-CompanionFileVerified $target $partial
+        $operation = 'verify-copy'
         if ($copy.sourceSha256 -cne $copy.targetSha256) { Remove-Item -LiteralPath $partial -Force; throw 'WSL_COPY_HASH_MISMATCH' }
+        $operation = 'promote-copy'
         [IO.File]::Move($partial, $source)
+        $operation = 'remove-target'
         Remove-Item -LiteralPath $target -Force
       }
+      $operation = 'restore-source-acl'
       Set-CompanionOwnerFileAcl $source
     } elseif (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'WSL_VHDX_MISSING' }
+    $operation = 'restore-owner-registration'
     $guid = if ($null -ne $record.ownerRegistration) { [string]$record.ownerRegistration.guid } else { $null }
     if ($guid -and @(Get-WslRegistrations | Where-Object { $_.guid -ceq $guid }).Count -eq 0) { Import-CompanionLxssKey ([string]$record.ownerExport) }
     $result['sourceRestored'] = $true
+    $operation = 'restore-target-directory'
     $record['restoreTargetDirectory'] = Restore-CompanionTargetDirectory $record $node
     $record.stage = 'restored'; $record.restoredAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $operation = 'write-record'
     Write-CompanionWslRecord $root $record
     $result.restored = $true
-  } catch { $why = [string]$_.Exception.Message; $result.failed = $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'WSL_RESTORE_UNEXPECTED' }) }
+  } catch { $why = [string]$_.Exception.Message; $result.failed = $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'WSL_RESTORE_UNEXPECTED' }); $result['error'] = Get-CompanionRestoreError $_ $operation }
   finally { $script:CompanionRegistrarExe = $null; Remove-CompanionBuild $build.directory }
   $result
 }

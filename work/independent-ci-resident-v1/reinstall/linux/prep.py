@@ -168,7 +168,27 @@ sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
 W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
-COMMON = f"""set -euo pipefail
+DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
+# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+docker_ready() {
+  local started=$SECONDS remaining state
+  while :; do
+    remaining=$((60 - (SECONDS - started)))
+    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
+    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
+    case "$state" in
+      active) return 0 ;;
+      activating)
+        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
+        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
+        ;;
+      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
+    esac
+  done
+}
+"""
+
+COMMON = DOCKER_READY + f"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
 refuse() {{ echo "{{\\"status\\":\\"REFUSED\\",\\"code\\":\\"$1\\"}}"; exit 1; }}
 # M-1: the Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`
@@ -240,7 +260,7 @@ quiet_and_installed_after_switch() {{
 reinstall_tail() {{
   T="$STG/tail-$(date -u +%Y%m%dT%H%M%SZ)"; install -d -m 0700 "$T"
   quiet_and_installed_after_switch
-  systemctl is-active --quiet docker.service || refuse DOCKER_SERVICE_NOT_ACTIVE
+  docker_ready
   UPA=$(grep -o '"planSha256":"[0-9a-f]\\{{64\\}}"' "$STG/uninstall-plan.A.stdout.txt" | cut -d'"' -f4) || refuse UNINSTALL_PLAN_UNREADABLE
   # (1) backup of what the uninstall moves and of the resident state it leaves, once, before the uninstall
   if [ -e "$BASE/pre-uninstall-backup.tar.sha256" ]; then
@@ -322,7 +342,7 @@ OLDF=$($CLEAN $PY -I "$UPG/bin/clued-ci-upgrade-linux" version-facts) || refuse 
 printf '%s\\n' "$OLDF" | $CLEAN $PY -I -c 'import json,sys; f=json.load(sys.stdin); sys.exit(not (f.get("generation")==int(sys.argv[4]) and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[1] and f.get("sourceCommit")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True))' "$OLD_MANIFEST" "$OLD_COMMIT" "$OLD_LINUX_RES_MANIFEST" "$OLD_GENERATION" || {{ printf '%s\\n' "$OLDF"; refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION; }}
 # r7: the resident install refuses a non-empty runs directory and needs docker.service active (continue-after-boot): fail here, before B
 [ -z "$(ls -A /var/lib/clued-independent-ci/runs 2>/dev/null)" ] || refuse RUNS_NOT_EMPTY
-systemctl is-active --quiet docker.service || refuse DOCKER_SERVICE_NOT_ACTIVE
+docker_ready
 # r7: what phase B backs up before the uninstall: at most 2 GiB, room for it in /root, and no key, pem or token file in it
 BK_BYTES=$(du -scb $BACKUP_PATHS | tail -1 | cut -f1) || refuse BACKUP_SIZE_UNREADABLE
 [ "$BK_BYTES" -le 2147483648 ] || refuse BACKUP_TOO_LARGE
@@ -414,7 +434,7 @@ src_git_clean
 for f in host-B0.stdout.json sign.stdout.json verify-signed.stdout.json package.stdout.json; do [ ! -e "$STG/$f" ] || refuse PHASE_B_OUTPUT_EXISTS_SEE_RECOVERY; done
 [ ! -e "$BASE/pre-uninstall-backup.tar" ] && [ ! -e "$BASE/uninstall-apply.stdout.json" ] || refuse PHASE_B_OUTPUT_EXISTS_SEE_RECOVERY
 # r7 (review MAJOR-1): what the reinstall needs is checked here, before the Source switch, read-only: docker, and the three plans again
-systemctl is-active --quiet docker.service || refuse DOCKER_SERVICE_NOT_ACTIVE
+docker_ready
 B0T="$STG/b0-$(date -u +%Y%m%dT%H%M%SZ)"; install -d -m 0700 "$B0T"
 bash --noprofile --norc "$STG/tools/uninstall-resident-linux.sh" --plan > "$B0T/uninstall-plan.stdout.txt" || {{ cat "$B0T/uninstall-plan.stdout.txt"; refuse UNINSTALL_PLAN_REFUSED; }}
 UPA=$(grep -o '"planSha256":"[0-9a-f]\\{{64\\}}"' "$STG/uninstall-plan.A.stdout.txt" | cut -d'"' -f4) || refuse UNINSTALL_PLAN_UNREADABLE

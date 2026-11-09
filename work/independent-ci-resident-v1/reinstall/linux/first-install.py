@@ -167,7 +167,27 @@ BASE = '/root/clued-ci-first-install-' + COMMIT[:8]
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 
-COMMON = r"""set -euo pipefail
+DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
+# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+docker_ready() {
+  local started=$SECONDS remaining state
+  while :; do
+    remaining=$((60 - (SECONDS - started)))
+    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
+    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
+    case "$state" in
+      active) return 0 ;;
+      activating)
+        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
+        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
+        ;;
+      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
+    esac
+  done
+}
+"""
+
+COMMON = DOCKER_READY + r"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
 refuse() { echo "{\"status\":\"REFUSED\",\"code\":\"$1\"}"; exit 1; }
 # The Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`
@@ -217,7 +237,7 @@ src_git_clean() {
 host_ready() {
   [ "$(cat /proc/1/comm)" = systemd ] || refuse SYSTEMD_NOT_PID1
   [ -e /sys/fs/cgroup/cgroup.controllers ] || refuse CGROUP_V2_REQUIRED
-  systemctl is-active --quiet docker.service || refuse DOCKER_SERVICE_NOT_ACTIVE
+  docker_ready
   [ "$(sha256sum "$NODE" | cut -d' ' -f1)" = "$NODE_SHA" ] || refuse TOOLCHAIN_NODE_NOT_THE_CONFIGURED_ONE
   [ "$(sha256sum /etc/clued-independent-ci/verify-result-public.pem | cut -d' ' -f1)" = "$PUB_SHA" ] || refuse RESULT_PUBLIC_KEY_NOT_THE_CONFIGURED_ONE
   [ -f /etc/clued-independent-ci/verify-result-key.pem ] || refuse RESULT_KEY_MISSING

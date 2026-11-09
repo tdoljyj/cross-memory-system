@@ -449,7 +449,45 @@ foreach ($file in @('companion-headless.ps1', 'rearm-resident.ps1', 'install-res
   Yes (-not ((& $codeOf $normal) -match '--unregister|--shutdown|wsl(\.exe)?''?\s+--export|--import(?!-in-place)')) ('normal-route-never-unregister-shutdown-export-import:' + $file)
 }
 $releaseGate = $functions['companion-headless.ps1:Assert-CompanionWslVhdxReleased']
-Yes ($releaseGate.IndexOf('if (-not $AllowVmShutdown)') -lt $releaseGate.IndexOf("Invoke-CompanionWslControl 'shutdown'") -and $releaseGate.Contains("throw 'WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE'")) 'whole-vm-stop-requires-explicit-maintenance'
+$legacyReleaseGate = $releaseGate.Substring($releaseGate.IndexOf('# Preserve the original'))
+Yes ($legacyReleaseGate.IndexOf('if (-not $AllowVmShutdown)') -lt $legacyReleaseGate.IndexOf("Invoke-CompanionWslControl 'shutdown'") -and $legacyReleaseGate.Contains("throw 'WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE'")) 'whole-vm-stop-requires-explicit-maintenance'
+# Exercise the final boundary with no real SCM, WSL or VHD access. An explicit
+# context must be checked even when the old free-file path would return early.
+& {
+  . ([scriptblock]::Create($releaseGate))
+  $script:maintenanceEvents = New-Object Collections.Generic.List[string]
+  $script:maintenanceMode = 'refuse'
+  function Wait-CompanionVhdxFree { $script:maintenanceEvents.Add('legacy-free-check'); $true }
+  function Assert-CompanionMaintenanceShutdownGuard($Path, $ContextFile, $ExpectedContextSha256) {
+    $script:maintenanceEvents.Add('guard')
+    if ($Path -cne 'C:\fixture\ext4.vhdx' -or $ContextFile -cne 'C:\fixture\context.json' -or $ExpectedContextSha256 -cne ('a' * 64)) { throw 'CONTEXT_ARGUMENT_BINDING_LOST' }
+    if ($script:maintenanceMode -ceq 'refuse') { throw 'FIXTURE_AUTHORITY_REFUSED' }
+    [ordered]@{ operationId = ('b' * 64); vmShutdownRequired = ($script:maintenanceMode -cne 'free') }
+  }
+  function Invoke-CompanionWslControl($operation) {
+    if ($operation -cne 'shutdown') { throw 'UNEXPECTED_WSL_CONTROL' }
+    $script:maintenanceEvents.Add('shutdown'); [ordered]@{ completed = $true; exitCode = 0 }
+  }
+  function Complete-CompanionMaintenanceShutdown($ContextFile, $ExpectedContextSha256, $Result) {
+    $script:maintenanceEvents.Add('complete')
+    if ($script:maintenanceMode -ceq 'completion-failed') { return [ordered]@{ completed = $false; exclusiveFileConfirmed = $false } }
+    [ordered]@{ completed = $true; exclusiveFileConfirmed = $true }
+  }
+  $bound = @{ MaintenanceContextFile = 'C:\fixture\context.json'; ExpectedMaintenanceContextSha256 = ('a' * 64) }
+  $refused = try { Assert-CompanionWslVhdxReleased 'C:\fixture\ext4.vhdx' @bound; $false } catch { $_.Exception.Message -ceq 'WSL_MAINTENANCE_CONTEXT_REQUIRED' }
+  Yes ($refused -and $script:maintenanceEvents.Count -eq 0) 'context-cannot-enable-shutdown-without-explicit-mode'
+  $refused = try { Assert-CompanionWslVhdxReleased 'C:\fixture\ext4.vhdx' -AllowVmShutdown @bound; $false } catch { $_.Exception.Message -ceq 'FIXTURE_AUTHORITY_REFUSED' }
+  Yes ($refused -and ($script:maintenanceEvents -join ',') -ceq 'guard') 'context-refusal-never-falls-through-to-free-file-or-shutdown'
+  $script:maintenanceEvents.Clear(); $script:maintenanceMode = 'free'
+  $free = Assert-CompanionWslVhdxReleased 'C:\fixture\ext4.vhdx' -AllowVmShutdown @bound
+  Yes (-not $free.vmShutdown -and ($script:maintenanceEvents -join ',') -ceq 'guard') 'context-free-vhd-never-shuts-down'
+  $script:maintenanceEvents.Clear(); $script:maintenanceMode = 'shutdown'
+  $done = Assert-CompanionWslVhdxReleased 'C:\fixture\ext4.vhdx' -AllowVmShutdown @bound
+  Yes ($done.vmShutdown -and ($script:maintenanceEvents -join ',') -ceq 'guard,shutdown,complete') 'context-order-intent-guard-fixed-shutdown-completion'
+  $script:maintenanceEvents.Clear(); $script:maintenanceMode = 'completion-failed'
+  $refused = try { Assert-CompanionWslVhdxReleased 'C:\fixture\ext4.vhdx' -AllowVmShutdown @bound; $false } catch { $_.Exception.Message -ceq 'WSL_MAINTENANCE_COMPLETION_UNCONFIRMED' }
+  Yes ($refused -and ($script:maintenanceEvents -join ',') -ceq 'guard,shutdown,complete') 'context-unknown-completion-cannot-report-released'
+}
 Yes ($mv.Contains('WSL_COPY_SOURCE_CHANGED') -and $mv.IndexOf('WSL_COPY_SOURCE_CHANGED') -lt $mv.IndexOf('Remove-Item -LiteralPath ([string]$record.source)')) 'copied-resume-rechecks-the-source-before-delete'
 
 # the account switch: preflight before the fall-back task, the marker before the move, the move before the registrar, the registrar
@@ -753,6 +791,66 @@ R1 'M4-restore-moves-back-and-reimports-the-key' {
     Invoke-CompanionWslRestore $rootR $nodeR }
   if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or -not (@($sc.log) -contains 'import-key') -or -not (@($sc.log) -contains 'restore-leaf-acl') -or $res.record.restoreTargetDirectory.status -cne 'REUSABLE') { throw ('restore:' + $res.failed) }
 }
+R1 'M4-restore-unexpected-failure-retains-stage-and-cleans-build-without-secret-message' {
+  $sc = New-R1Scenario 'm4diag'
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  $script:sc = $sc
+  $res = & {
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-error-build'); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe') } } }
+    function Remove-CompanionBuild { [void]$script:sc.log.Add('error-build-cleaned') }
+    function Invoke-CompanionStopAndFallback { throw [InvalidOperationException]::new('fixture-private-message-must-not-appear') }
+    Invoke-CompanionWslRestore $rootR $nodeR
+  }
+  $json = $res | ConvertTo-Json -Depth 10 -Compress
+  if ($res.restored -or $res.failed -cne 'WSL_RESTORE_UNEXPECTED' -or $res.error.operation -cne 'stop-companion' -or
+      $res.error.chain[0].type -cne 'System.InvalidOperationException' -or $res.error.chain[0].hresult -cnotmatch '^0x[0-9A-F]{8}$' -or
+      $json.Contains('fixture-private-message') -or -not (@($sc.log) -contains 'error-build-cleaned') -or
+      -not (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or (Test-Path -LiteralPath $sc.source)) { throw ('restore-diagnostic:' + $json) }
+}
+R1 'M4-restore-expected-refusal-keeps-code-and-identifies-stage' {
+  $sc = New-R1Scenario 'm4known'
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  $script:sc = $sc
+  [IO.File]::WriteAllText($sc.source, 'existing source must be preserved')
+  $res = & {
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-known-build'); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe') } } }
+    function Remove-CompanionBuild { }
+    function Invoke-CompanionStopAndFallback { }
+    Invoke-CompanionWslRestore $rootR $nodeR
+  }
+  if ($res.restored -or $res.failed -cne 'WSL_SOURCE_EXISTS' -or $res.error.operation -cne 'check-source' -or
+      [IO.File]::ReadAllText($sc.source) -cne 'existing source must be preserved' -or
+      -not (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx'))) { throw 'RESTORE_REFUSAL_NOT_PRESERVED' }
+}
+R1 'M4-restore-missing-vhdx-reports-path-check-not-stop' {
+  $sc = New-R1Scenario 'm4missing'
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  [IO.File]::Delete((Join-Path $sc.targetDir 'ext4.vhdx'))
+  $res = & {
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-missing-build'); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe') } } }
+    function Remove-CompanionBuild { }
+    function Invoke-CompanionStopAndFallback { }
+    Invoke-CompanionWslRestore $rootR $nodeR
+  }
+  if ($res.restored -or $res.failed -cne 'WSL_VHDX_MISSING' -or $res.error.operation -cne 'check-vhdx-paths') { throw 'MISSING_VHDX_WRONG_DIAGNOSTIC_STAGE' }
+}
+R1 'M4-restore-same-volume-move-race-reports-move-and-retains-vhdx' {
+  $sc = New-R1Scenario 'm4moverace'
+  $null = Invoke-R1Switch $sc @{} $sc.targetDir
+  $held = [IO.File]::Open((Join-Path $sc.targetDir 'ext4.vhdx'), 'Open', 'Read', 'Read')
+  try {
+    $res = & {
+      function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-move-build'); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe') } } }
+      function Remove-CompanionBuild { }
+      function Invoke-CompanionStopAndFallback { }
+      function Wait-CompanionVhdxFree { $true } # A new holder races the preflight.
+      function Test-CompanionSameVolume { $true }
+      Invoke-CompanionWslRestore $rootR $nodeR
+    }
+    if ($res.restored -or $res.failed -cne 'WSL_RESTORE_UNEXPECTED' -or $res.error.operation -cne 'move-back' -or
+        -not (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or (Test-Path -LiteralPath $sc.source)) { throw 'MOVE_RACE_WRONG_DIAGNOSTIC_OR_LOST_VHDX' }
+  } finally { $held.Dispose() }
+}
 R1 'm2-preflight-domain-creds-and-lockout-before-the-move' {
   $p = Get-CompanionAccountPreflight $rootR $nodeR $factsR 'D:\clued-resident\wsl\CluedResident-Linux' 1 ([ordered]@{ threshold = 3; durationMinutes = 10; windowMinutes = 30 })
   if (-not (@($p.refusals) -ccontains 'COMPANION_HEADLESS_DOMAIN_CREDS_DISABLED') -or -not (@($p.refusals) -ccontains 'COMPANION_LOCKOUT_MARGIN_INSUFFICIENT')) { throw (@($p.refusals) -join ',') }
@@ -975,5 +1073,16 @@ $r2Failed = @($r2.Keys | Where-Object { $r2[$_] -ne 'pass' })
 if ($r2Failed.Count) { $r2 | ConvertTo-Json | Write-Host }
 Yes ($r2Failed.Count -eq 0) ('review-r2:' + ($r2Failed -join ','))
 $n += $r2.Count
+
+$leafOutput = @(& 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'test-vhdx-file-acl.ps1') -Scratch (Join-Path $Scratch 'vhdx-leaf-access'))
+Yes ($LASTEXITCODE -eq 0 -and $leafOutput.Count -eq 1) 'real-file-acl-fixture-exit'
+$leafResult = $leafOutput[0] | ConvertFrom-Json
+Yes ($leafResult.status -ceq 'VHDX_FILE_ACL_FIXTURE_PASS' -and -not $leafResult.wslExecuted -and $leafResult.accountTaskServiceEffects -eq 0) 'real-file-acl-fixture-isolated'
+$n += [int]$leafResult.assertions
+$maintenanceOutput = @(& 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'test-companion-maintenance-switch.ps1') -Scratch (Join-Path $Scratch 'maintenance-switch'))
+Yes ($LASTEXITCODE -eq 0 -and $maintenanceOutput.Count -eq 1) 'maintenance-switch-fixture-exit'
+$maintenanceResult = $maintenanceOutput[0] | ConvertFrom-Json
+Yes ($maintenanceResult.status -ceq 'MAINTENANCE_SWITCH_OFFLINE_PASS' -and $maintenanceResult.scmTaskWslEffects -eq 0) 'maintenance-switch-fixture-isolated'
+$n += [int]$maintenanceResult.assertions
 
 [ordered]@{ status = 'COMPANION_HEADLESS_WINDOWS_OFFLINE_PASS'; assertions = $n; supervisorCsharpAssertions = $supervisorCsharp; registrarCsharpAssertions = $registrarCsharp; pinvokeBound = $pinvokeBound; gitconfigNode = $nodeText; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
