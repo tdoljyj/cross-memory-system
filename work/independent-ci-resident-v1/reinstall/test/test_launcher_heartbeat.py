@@ -100,6 +100,15 @@ class LauncherHeartbeat(unittest.TestCase):
         for k in ('noTokenArgs', 'carryArgs'):   # the reviewed plan and the carry-forward preview before the uninstall: no heartbeat
             self.assertNotIn('-HeartbeatTokenFile', r[k], k)
 
+    def test_after_uninstall_projection_is_only_used_by_readonly_carry_preview(self):
+        r = self.run_case(*plans(True, BID), hb_file='C:\\t\\ci-node-heartbeat.token', hb_binding=BID)
+        self.assertIn('-PreviewAfterUninstall', r['carryArgs'])
+        for key in ('withTokenArgs', 'noTokenArgs', 'applyArgs'):
+            self.assertNotIn('-PreviewAfterUninstall', r[key], key)
+        with open(TEMPLATE, encoding='utf-8') as f:
+            text = f.read()
+        self.assertIn('(Get-InstallArgs -NoHeartbeat)', text)
+
     def test_configured_token_without_binding_id(self):
         r = self.run_case(*plans(True), hb_file='C:\\t\\ci-node-heartbeat.token')
         self.assertEqual(r['codes'], [])
@@ -115,6 +124,80 @@ class LauncherHeartbeat(unittest.TestCase):
         r = self.run_case(*plans(True, BID, with_hb=False), hb_file=f, hb_binding=BID)   # an installer without heartbeat support
         self.assertEqual(r['codes'], ['TOKEN_PLAN_CHECK_FAILED:PLAN_HAS_NO_HEARTBEAT_TOKEN'])
         self.assertIsNone(r['applyPlanSha256'])
+
+
+INSTALLER = os.path.join(RE, '..', 'windows', 'install-resident.ps1')
+PREVIEW_DRIVER = r"""
+param([string]$Installer, [string]$Case)
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+$c = Get-Content -LiteralPath $Case -Raw | ConvertFrom-Json
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$tokens,[ref]$errors)
+foreach($name in @('Get-HeartbeatDirectorySddl','Get-HeartbeatFileSddl','Get-HeartbeatTokenPlan')) {
+  $f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true) | Where-Object { $_.Name -ceq $name })
+  if($f.Count -ne 1) {throw 'INSTALLER_FUNCTION_REQUIRED'}
+  . ([scriptblock]::Create($f[0].Extent.Text))
+}
+$OwnerSid='S-1-5-21-1-2-3-1008'; $oldOwner='S-1-5-21-1-2-3-1000'
+$HeartbeatTokenDirectory='C:\fixture\resident\secrets\heartbeat'; $HeartbeatTokenTarget=$HeartbeatTokenDirectory+'\ci-node-heartbeat.token'
+$HeartbeatTokenFile=''; $HeartbeatBindingId=''; $script:SecretBytes=@{}; $script:AclCalls=0
+function Test-Path {param([string]$LiteralPath) @($HeartbeatTokenDirectory,$HeartbeatTokenTarget) -ccontains $LiteralPath}
+function Test-HeartbeatDirectoryAcl {param([string]$path,[string]$sddl) $script:AclCalls++; $sddl -ceq (Get-HeartbeatDirectorySddl $oldOwner)}
+function Clear-SecretBytes { $script:SecretBytes.Clear() }
+$errorCode=$null; $plan=$null
+try {
+  if($c.preview) {$plan=Get-HeartbeatTokenPlan -PreviewAfterUninstall}
+  else {$plan=Get-HeartbeatTokenPlan}
+} catch {$errorCode=$_.Exception.Message}
+[ordered]@{errorCode=$errorCode; plan=$plan; aclCalls=$script:AclCalls; secrets=$script:SecretBytes.Count} | ConvertTo-Json -Depth 5 -Compress
+"""
+
+
+@unittest.skipUnless(os.path.isfile(POWERSHELL), 'Windows PowerShell 5.1 required')
+class InstallerHeartbeatPreview(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='m5b-heartbeat-')
+        self.addCleanup(self.tmp.cleanup)
+        self.driver = os.path.join(self.tmp.name, 'preview.ps1')
+        with open(self.driver, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(PREVIEW_DRIVER)
+
+    def run_preview(self, preview):
+        case = os.path.join(self.tmp.name, 'case.json')
+        with open(case, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump({'preview': preview}, f)
+        p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', self.driver, INSTALLER, case], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def test_changed_owner_previews_recreated_heartbeat_without_reading_old_acl(self):
+        r = self.run_preview(True)
+        self.assertIsNone(r['errorCode'])
+        self.assertFalse(r['plan']['targetExists'])
+        self.assertFalse(r['plan']['supplied'])
+        self.assertEqual(r['aclCalls'], 0)
+        self.assertIn('1008', r['plan']['directorySddl'])
+        self.assertEqual(r['secrets'], 0)
+
+    def test_ordinary_install_still_refuses_existing_previous_owner_acl(self):
+        r = self.run_preview(False)
+        self.assertEqual(r['errorCode'], 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH')
+        self.assertEqual(r['aclCalls'], 1)
+        self.assertIsNone(r['plan'])
+
+    def test_future_preview_rejects_apply_and_heartbeat_inputs_before_host_reads(self):
+        for extra in (['-Apply'], ['-HeartbeatTokenFile', os.path.join(self.tmp.name, 'unused.token')], ['-HeartbeatBindingId', BID]):
+            with self.subTest(extra=extra):
+                before = sorted(os.listdir(self.tmp.name))
+                p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', INSTALLER,
+                    '-PackageRoot', self.tmp.name, '-ExpectedPackageManifestSha256', '1' * 64,
+                    '-OwnerSid', 'S-1-5-21-1-2-3-1008', '-ControllerSid', 'S-1-5-21-1-2-3-1015',
+                    '-PreviewAfterUninstall', *extra], capture_output=True, text=True)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn('AFTER_UNINSTALL_PREVIEW_READ_ONLY_WITHOUT_HEARTBEAT_INPUT', p.stderr)
+                self.assertEqual(sorted(os.listdir(self.tmp.name)), before)
+                self.assertNotIn('clued_hbt_', p.stdout)
 
 
 if __name__ == '__main__':

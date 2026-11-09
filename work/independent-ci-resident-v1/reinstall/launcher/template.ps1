@@ -231,7 +231,9 @@ function Test-LeftoversAsPinned($found) {
 # DESIGN section 41.6a: with a configured heartbeat token also -HeartbeatTokenFile (and -HeartbeatBindingId when configured), except
 # -NoHeartbeat: the carry-forward preview before the uninstall, while the old root (and any heartbeat token in it) is still there.
 function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat) {   # r5c: -UpgradeTokenFile unless -NoToken; -Apply with the with-token plan
+  if ($Apply -and $NoHeartbeat) { Stop-Launch 'AFTER_UNINSTALL_PREVIEW_CANNOT_APPLY' $null }
   $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid, '-OperatorSid', $OperatorSid)
+  if ($NoHeartbeat) { $a += @('-PreviewAfterUninstall') }
   if ($Apply) {
     if ([string]$R5c.applyPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { Stop-Launch 'APPLY_PLAN_NOT_CONFIRMED' $null }
     $a += @('-Apply', '-ExpectedPlanSha256', $R5c.applyPlanSha256)
