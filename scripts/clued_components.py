@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.6"
+__version__ = "1.0.7"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
