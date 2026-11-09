@@ -112,6 +112,12 @@ $taskAfter=$task.PSObject.Copy();$taskAfter.action='C:\other.exe';$result.change
 $taskAfter=$task.PSObject.Copy();$taskAfter.path='\Other\SameConhost';$result.otherTaskRefused=-not(Test-CompanionTaskAnchorPair $task $taskAfter $taskProcess 'C:\ProgramData\CluedIndependentCI\resident')
 $taskAfter=$task.PSObject.Copy();$taskProcess.executablePath='C:\unrelated\conhost.exe';$result.otherConhostRefused=-not(Test-CompanionTaskAnchorPair $task $taskAfter $taskProcess 'C:\ProgramData\CluedIndependentCI\resident')
 $taskProcess.executablePath=$task.action;$taskAfter.state=3;$result.stoppedTaskRefused=-not(Test-CompanionTaskAnchorPair $task $taskAfter $taskProcess 'C:\ProgramData\CluedIndependentCI\resident')
+$sup='C:\ProgramData\CluedIndependentCI\resident\bin\CluedCompanionSupervisor.exe'
+$supTask=[pscustomobject]@{path='\Clued\CluedCIResidentCompanion';instance='{12345678-1234-1234-1234-123456789abc}';pid=26080;state=4;action=$sup;currentAction=$sup}
+$supProcess=[pscustomobject]@{pid=26080;startedFileTime=$base;executablePath=$sup}
+$result.registeredSupervisorAccepted=Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $supProcess 'C:\ProgramData\CluedIndependentCI\resident'
+$other='C:\elsewhere\bin\CluedCompanionSupervisor.exe';$supTask.action=$other;$supTask.currentAction=$other;$supProcess.executablePath=$other
+$result.otherSupervisorPathRefused=-not(Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $supProcess 'C:\ProgramData\CluedIndependentCI\resident')
 $result|ConvertTo-Json -Compress
 '''
 
@@ -127,7 +133,7 @@ class FileLocks(unittest.TestCase):
                                     text=True, encoding='utf-8', timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             data = json.loads(result.stdout)
-            self.assertEqual(len(data), 18)
+            self.assertEqual(len(data), 20)
             self.assertTrue(all(value is True for value in data.values()), data)
 
     def test_native_observation_is_read_only_and_binds_pid_start_time(self):

@@ -167,7 +167,8 @@ function Test-CompanionTaskAnchorPair($before, $after, $snapshot, [string]$resid
       $before.state -ne 4 -or $after.state -ne 4 -or $before.pid -le 0 -or
       $before.pid -ne $after.pid -or $before.pid -ne $snapshot.pid) { return $false }
   $allowed = @((Join-Path $env:SystemRoot 'System32\conhost.exe'),
-    (Join-Path $residentRoot 'runtime\node.exe'), (Join-Path $residentRoot 'bin\CluedCompanionJobHost.exe'))
+    (Join-Path $residentRoot 'runtime\node.exe'), (Join-Path $residentRoot 'bin\CluedCompanionJobHost.exe'),
+    (Join-Path $residentRoot 'bin\CluedCompanionSupervisor.exe'))
   $action = [string]$before.action
   if (-not @($allowed | Where-Object { [string]::Equals($_, $action, [StringComparison]::OrdinalIgnoreCase) }).Count) { return $false }
   foreach ($value in @($after.action, $before.currentAction, $after.currentAction, $snapshot.executablePath)) {
