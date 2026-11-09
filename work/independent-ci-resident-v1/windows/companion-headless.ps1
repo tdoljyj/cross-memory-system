@@ -576,6 +576,62 @@ function Remove-CompanionLxssKey([string]$guid) { Remove-Item -LiteralPath (Join
 function Get-CompanionLxssDefault { try { [string](Get-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null } }
 function Remove-CompanionLxssDefault { Remove-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -Force }
 function Invoke-CompanionWslTerminate([string]$distro) { $null = & 'C:\Windows\System32\wsl.exe' --terminate $distro 2>&1 }
+# Only the account-switch maintenance option can request a whole-VM stop.
+# These two fixed management commands never run a distribution or arbitrary code.
+function Invoke-CompanionWslControl([ValidateSet('list-running', 'shutdown')][string]$operation) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = 'C:\Windows\System32\wsl.exe'
+  $psi.Arguments = if ($operation -ceq 'list-running') { '--list --running --quiet' } else { '--shutdown' }
+  $psi.WorkingDirectory = 'C:\Windows\System32'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::Unicode; $psi.StandardErrorEncoding = [Text.Encoding]::Unicode
+  foreach ($key in @($psi.EnvironmentVariables.Keys)) { if ([string]$key -cmatch $CompanionInjectVariables) { $psi.EnvironmentVariables.Remove([string]$key) } }
+  $p = New-Object Diagnostics.Process; $p.StartInfo = $psi
+  try {
+    if (-not $p.Start()) { return [ordered]@{ completed = $false; exitCode = $null; stdout = '' } }
+    $output = $p.StandardOutput.ReadToEndAsync(); $errorOutput = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(45000)) {
+      try { $p.Kill(); $null = $p.WaitForExit(5000) } catch { }
+      return [ordered]@{ completed = $false; exitCode = $null; stdout = '' }
+    }
+    # A client exit does not close a pipe inherited by a still-running shim.
+    # Bound stream completion as well; an unknown drain never permits a move.
+    if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($output, $errorOutput), 2000)) {
+      return [ordered]@{ completed = $false; exitCode = $p.ExitCode; stdout = '' }
+    }
+    $text = [string]$output.GetAwaiter().GetResult(); $null = $errorOutput.GetAwaiter().GetResult()
+    if ($text.Length -gt 32768) { return [ordered]@{ completed = $false; exitCode = $p.ExitCode; stdout = '' } }
+    [ordered]@{ completed = $true; exitCode = $p.ExitCode; stdout = $text }
+  } catch { [ordered]@{ completed = $false; exitCode = $null; stdout = '' } } finally { $p.Dispose() }
+}
+function Get-CompanionRunningWslDistros {
+  $r = Invoke-CompanionWslControl 'list-running'
+  if (-not $r.completed -or $null -eq $r.exitCode -or [int64]$r.exitCode -ne 0 -or $r.stdout -isnot [string]) { throw 'WSL_RUNNING_INVENTORY_UNCONFIRMED' }
+  $names = @()
+  foreach ($line in ($r.stdout -split "`r?`n")) {
+    $name = $line.Trim([char]0xFEFF).Trim()
+    if (-not $name) { continue }
+    if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\z' -or $names -icontains $name -or $names.Count -ge 256) { throw 'WSL_RUNNING_INVENTORY_UNCONFIRMED' }
+    $names += $name
+  }
+  $names
+}
+function Assert-CompanionWslVhdxReleased([string]$path, [switch]$AllowVmShutdown) {
+  # Preserve the original terminate-only wait unless the operator explicitly
+  # selected the reviewed whole-account WSL maintenance action. A file lock
+  # alone never authorizes stopping another CI distribution.
+  $wait = if ($AllowVmShutdown) { 2 } else { 120 }
+  if (Wait-CompanionVhdxFree $path $wait) { return [ordered]@{ vmShutdown = $false; exclusiveFileConfirmed = $true } }
+  if (-not $AllowVmShutdown) { throw 'WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE' }
+  $before = @(Get-CompanionRunningWslDistros)
+  $started = [DateTimeOffset]::UtcNow.ToString('o')
+  $stop = Invoke-CompanionWslControl 'shutdown'
+  if (-not $stop.completed -or $null -eq $stop.exitCode -or [int64]$stop.exitCode -ne 0) { throw 'WSL_VM_SHUTDOWN_FAILED' }
+  $after = @(Get-CompanionRunningWslDistros)
+  if ($after.Count) { throw 'WSL_VM_NOT_STOPPED' }
+  if (-not (Wait-CompanionVhdxFree $path 120)) { throw 'WSL_VHDX_STILL_IN_USE' }
+  [ordered]@{ vmShutdown = $true; startedAt = $started; finishedAt = [DateTimeOffset]::UtcNow.ToString('o'); beforeRunning = $before; afterRunning = $after; exitCode = [int64]$stop.exitCode; exclusiveFileConfirmed = $true }
+}
 function Test-CompanionSameVolume([string]$a, [string]$b) { [string]::Equals([IO.Path]::GetPathRoot($a), [IO.Path]::GetPathRoot($b), [StringComparison]::OrdinalIgnoreCase) }
 function Get-CompanionDirSddl([string]$path) { (Get-Acl -LiteralPath $path).Sddl }
 function New-CompanionProtectedDirectory([string]$path, [string]$sddl) { $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl); [void][IO.Directory]::CreateDirectory($path, $ds) }
@@ -714,7 +770,7 @@ function Set-CompanionWslStage($record, [string]$stage) { if ($record -is [Colle
 # everything: exported (the Owner's full registration key, reg.exe's own copy, in install\ and its values in the record) -> moved
 # (ext4.vhdx in targetDir, protected) -> imported (the account's import task returned 0) -> forgotten (the Owner's key removed) ->
 # qualified. This function does exported and moved; nothing of the Owner's registration is removed here. Returns the record.
-function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid) {
+function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid, [switch]$AllowVmShutdown) {
   $target = Join-Path $targetDir 'ext4.vhdx'; $partial = $target + '.partial'
   $existing = Read-CompanionWslRecord $root
   $record = if ($null -ne $existing) { $existing } else { [ordered]@{ contract = $CompanionWslContract; distro = $distro; target = $target; companionSid = $companionSid; stage = 'new'; imported = $false } }
@@ -729,7 +785,14 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
     } elseif (Test-Path -LiteralPath $target -PathType Leaf) {
       if ((Get-CompanionFileSha256Unbuffered $target) -cne $want) { throw 'WSL_TARGET_NOT_THE_COPY' }
     } else { throw 'WSL_COPY_MISSING' }
-    if ($record.source -and (Test-Path -LiteralPath ([string]$record.source) -PathType Leaf)) { Remove-Item -LiteralPath ([string]$record.source) -Force }
+    if ($record.source -and (Test-Path -LiteralPath ([string]$record.source) -PathType Leaf)) {
+      Invoke-CompanionWslTerminate $distro
+      $release = Assert-CompanionWslVhdxReleased ([string]$record.source) -AllowVmShutdown:$AllowVmShutdown
+      if ((Get-CompanionFileSha256Unbuffered ([string]$record.source)) -cne [string]$record.copy.sourceSha256) { throw 'WSL_COPY_SOURCE_CHANGED' }
+      $record = ConvertTo-CompanionOrdered $record; $record['vhdxRelease'] = $release
+      Write-CompanionWslRecord $root $record
+      Remove-Item -LiteralPath ([string]$record.source) -Force
+    }
     Set-CompanionVhdxAcl $targetDir $target $companionSid
     $record = ConvertTo-CompanionOrdered $record
     $record.stage = 'moved'; $record.imported = $false; $record.movedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -753,7 +816,11 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
   # 2. moved
   if ($plan.action -ceq 'move' -or $plan.action -ceq 'forget') {
     Invoke-CompanionWslTerminate $distro
-    if ($source -and (Test-Path -LiteralPath $source -PathType Leaf)) { if (-not (Wait-CompanionVhdxFree $source)) { throw 'WSL_VHDX_STILL_IN_USE' } }
+    if ($source -and (Test-Path -LiteralPath $source -PathType Leaf)) {
+      $release = Assert-CompanionWslVhdxReleased $source -AllowVmShutdown:$AllowVmShutdown
+      $record = ConvertTo-CompanionOrdered $record; $record['vhdxRelease'] = $release
+      Write-CompanionWslRecord $root $record
+    }
     $created = Assert-CompanionVhdxParents $targetDir
     if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }   # a cut-off copy of this move (its own name, in its own folder)
     $copy = $null
@@ -845,7 +912,7 @@ function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vh
 # Invoke-CompanionWslMove, then the registrar (a new random password, the task, the import task with the Owner's DefaultUid), the import
 # (exit 0 or WSL_IMPORT_FAILED:<code>), only then the Owner's registration key goes. A run that was cut off resumes from the record
 # (no -WslVhdxDirectory needed). Not qualified: the task goes back to the account's interactive definition (the companion stays off).
-function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode) {
+function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode, [switch]$AllowWslVmShutdown) {
   $sid = [string]$node.ownerSid; $distro = [string]$node.wslDistribution
   $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
   $pending = Read-CompanionPending $root
@@ -875,7 +942,7 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     Stop-CompanionTask
     foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
     Wait-CompanionTaskNotRunning
-    try { $record = Invoke-CompanionWslMove $root $distro $vhdxDir $sid; $result.wsl = $record } catch {
+    try { $record = Invoke-CompanionWslMove $root $distro $vhdxDir $sid -AllowVmShutdown:$AllowWslVmShutdown; $result.wsl = $record } catch {
       $why = [string]$_.Exception.Message
       $result.failed = 'COMPANION_WSL_MOVE_FAILED:' + $(if ($why -cmatch '^WSL_[A-Z_]{1,60}\z') { $why } else { 'UNEXPECTED' })
       $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true

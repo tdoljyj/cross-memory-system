@@ -15,6 +15,16 @@ const framework = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319';
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const secret = 'ghp_012345678901234567890123456789012345'; // fixture only
 let fixturePromise;
+
+test('M5-b VM management bounds inherited output after an exited client', { skip: !windows }, () => {
+  const script = fileURLToPath(new URL('../windows/test-m5b-wsl-release.ps1', import.meta.url));
+  const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-InheritedPipeProbe'], { timeout: 6000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const facts = JSON.parse(result.stdout.trim());
+  assert.equal(facts.boundedInheritedPipe, true);
+  assert.equal(facts.actualWslCalls, 0);
+  assert.ok(facts.elapsedMs < 4000);
+});
 after(async () => {
   if (!fixturePromise) return;
   const tools = await fixturePromise;
