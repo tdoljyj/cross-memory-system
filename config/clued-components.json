@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "279c716158dee3b61e56df845646e1f984c7481a3b525f284c8d05b2b3917160"
+      "content_sha256": "cd8846e390ef54e667e0514b1c34458809978eed0d458f417cb39f18ebae4c07"
     },
     {
       "id": "hook.runner-job-started",
@@ -719,7 +719,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "01093ab39380f8e0078a527d9ef726ac61fea0d8e887b6929fd532526fa2d310"
+      "content_sha256": "5f63eb5eefe2bd1cd4e98a8e4d35c5404e93b466c851028108594ed44e8631b2"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -925,7 +925,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7c858550370809df1de5fb03d70fdea15cc6bf617eaa73c07b571d3f0deb88a0"
+      "content_sha256": "0358b314634b482d09ab15d26bc8f8e51845ba1db0dd42a97b256bb98c7caa7f"
     }
   ]
 }
