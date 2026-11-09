@@ -32,7 +32,42 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
-$Wsl = 'C:\Windows\System32\wsl.exe'
+# The validator is executable code. Even a probe launched from a checkout loads
+# only the installed, receipt-bound generation after checking its exact bytes.
+function Get-ProbeSha256([byte[]]$bytes) {
+  $h = [Security.Cryptography.SHA256]::Create()
+  try { ([BitConverter]::ToString($h.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $h.Dispose() }
+}
+function Read-ProbePlain([string]$p, [int]$max) {
+  $i = Get-Item -LiteralPath $p -Force -ErrorAction Stop
+  if ($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $i.Length -lt 1 -or $i.Length -gt $max) { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  return ,([IO.File]::ReadAllBytes($p))
+}
+try {
+  foreach ($d in @('C:\', 'C:\ProgramData', 'C:\ProgramData\CluedIndependentCI', $Root, (Join-Path $Root 'install'), (Join-Path $Root 'config'), (Join-Path $Root 'resident'))) {
+    $i = Get-Item -LiteralPath $d -Force -ErrorAction Stop
+    if (-not $i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  }
+  $receipt = [Text.Encoding]::UTF8.GetString((Read-ProbePlain (Join-Path $Root 'install\install-receipt.json') 1048576)) | ConvertFrom-Json
+  $gen = [string]$receipt.residentManifestSha256
+  if ($gen -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  $manifestBytes = Read-ProbePlain (Join-Path $Root 'config\resident-installed-manifest.json') 4194304
+  if ((Get-ProbeSha256 $manifestBytes) -cne $gen) { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  $manifest = [Text.Encoding]::UTF8.GetString($manifestBytes) | ConvertFrom-Json
+  if ($manifest.contract -cne 'clued.independent-ci.resident-installed-manifest/1' -or $manifest.root -cne 'resident') { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  $pins = @($manifest.files | Where-Object { $_.path -ceq 'windows/wsl-client.ps1' })
+  if ($pins.Count -ne 1 -or $pins[0].sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  foreach ($d in @((Join-Path $Root ('resident\' + $gen)), (Join-Path $Root ('resident\' + $gen + '\windows')))) {
+    $i = Get-Item -LiteralPath $d -Force -ErrorAction Stop
+    if (-not $i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+  }
+  $clientHelper = Join-Path $Root ('resident\' + $gen + '\windows\wsl-client.ps1')
+  $helperBytes = Read-ProbePlain $clientHelper 65536
+  if ($helperBytes.Length -ne $pins[0].bytes -or (Get-ProbeSha256 $helperBytes) -cne $pins[0].sha256) { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+} catch { throw 'WSL_CLIENT_VALIDATOR_UNTRUSTED' }
+. $clientHelper
+$WslClient = Get-CluedMachineWslClient
+$Wsl = [string]$WslClient.path
 $GhExe = 'C:\Program Files\GitHub CLI\gh.exe'
 $Git = 'C:\Program Files\Git\cmd\git.exe'
 
@@ -99,5 +134,5 @@ if ($elevated -and (Test-Path -LiteralPath $registrar -PathType Leaf)) {
 $task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue
 $taskView = if ($task) { [ordered]@{ logonType = [string]$task.Principal.LogonType; runLevel = [string]$task.Principal.RunLevel; action = [string]@($task.Actions)[0].Execute
     lastTaskResult = $(try { '0x' + ('{0:X8}' -f ([int64](Get-ScheduledTaskInfo -InputObject $task).LastTaskResult -band 0xFFFFFFFFL)) } catch { $null }) } } else { $null }
-[ordered]@{ contract = 'clued.independent-ci.companion-headless-probe/1'; at = [DateTimeOffset]::UtcNow.ToString('o'); distribution = $Distribution; here = $here; task = $taskView
+[ordered]@{ contract = 'clued.independent-ci.companion-headless-probe/1'; at = [DateTimeOffset]::UtcNow.ToString('o'); distribution = $Distribution; wslClient = $WslClient; here = $here; task = $taskView
   q1 = $q1; q2 = $q2; q3 = $q3; q4 = $q4; background = $background; writesAnything = 'nothing-of-its-own (gh may keep its own state files)' } | ConvertTo-Json -Depth 6

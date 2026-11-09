@@ -742,13 +742,16 @@ R1 'M4-restore-moves-back-and-reimports-the-key' {
   $null = Invoke-R1Switch $sc @{} $sc.targetDir
   $script:sc = $sc
   $res = & {
+    $script:restoreLeafAcl = Get-CompanionVhdxSddl $acctR
+    function Get-CompanionDirSddl([string]$path) { if ($path -ieq $script:sc.targetDir) { $script:restoreLeafAcl } else { $CompanionVhdxParentSddl } }
+    function Set-CompanionRestoreTargetAcl([string]$dir) { if ($dir -ine $script:sc.targetDir) { throw 'UNEXPECTED_RESTORE_ACL_TARGET' }; $script:restoreLeafAcl = $CompanionRestoredVhdxSddl; [void]$script:sc.log.Add('restore-leaf-acl') }
     function Get-WslRegistrations { @() }; function Import-CompanionLxssKey($f) { [void]$script:sc.log.Add('import-key') }; function Invoke-CompanionStopAndFallback { [void]$script:sc.log.Add('stop-and-fallback') }
     function Test-CompanionSameVolume { $false }; function Set-CompanionOwnerFileAcl { }
     # review r2 N1: the real unbuffered hash through a real registrar build (only the build's location is the scratch one)
     function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-restore-build'); generation = ('a' * 64); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'); sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
     function Remove-CompanionBuild { }
     Invoke-CompanionWslRestore $rootR $nodeR }
-  if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or -not (@($sc.log) -contains 'import-key')) { throw ('restore:' + $res.failed) }
+  if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha -or (Test-Path -LiteralPath (Join-Path $sc.targetDir 'ext4.vhdx')) -or -not (@($sc.log) -contains 'import-key') -or -not (@($sc.log) -contains 'restore-leaf-acl') -or $res.record.restoreTargetDirectory.status -cne 'REUSABLE') { throw ('restore:' + $res.failed) }
 }
 R1 'm2-preflight-domain-creds-and-lockout-before-the-move' {
   $p = Get-CompanionAccountPreflight $rootR $nodeR $factsR 'D:\clued-resident\wsl\CluedResident-Linux' 1 ([ordered]@{ threshold = 3; durationMinutes = 10; windowMinutes = 30 })
@@ -817,9 +820,74 @@ function New-R2Moved([string]$name, [string]$stage = 'qualified') {
   if ($stage -cne 'qualified') { $rec = ConvertTo-CompanionOrdered (Read-CompanionWslRecord $rootR); $rec.stage = $stage; Write-CompanionWslRecord $rootR $rec }
   $sc
 }
+# Real move/copy/restore/record code over scratch files, with only platform ACL,
+# registry, task and binary-build operations replaced. New restore helpers run.
+function Invoke-R2RestoreFixture($scenario) {
+  $script:sc = $scenario; $script:restoreLeafAcl = Get-CompanionVhdxSddl $acctR
+  & {
+    function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r2-cycle-build'); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe') } } }
+    function Remove-CompanionBuild { }
+    function Get-WslRegistrations { @() }
+    function Import-CompanionLxssKey { $script:sc.keyPresent = $true }
+    function Invoke-CompanionStopAndFallback { }
+    function Test-CompanionSameVolume { $false }
+    function Set-CompanionOwnerFileAcl { }
+    function Get-CompanionDirSddl([string]$path) { if ($path -ieq $script:sc.targetDir) { $script:restoreLeafAcl } else { $CompanionVhdxParentSddl } }
+    function Set-CompanionRestoreTargetAcl([string]$dir) { if ($dir -ine $script:sc.targetDir) { throw 'UNEXPECTED_RESTORE_ACL_TARGET' }; $script:restoreLeafAcl = $CompanionRestoredVhdxSddl }
+    Invoke-CompanionWslRestore $rootR $nodeR
+  }
+}
+R2 'restore-move-restore-retains-exact-record-creation-proof' {
+  $sc = New-R1Scenario 'twice'
+  $one = Invoke-R1Switch $sc @{} $sc.targetDir
+  if (-not $one.qualified) { throw ('FIRST_MOVE:' + $one.failed) }
+  $proof = @((Read-CompanionWslRecord $rootR).parentsCreated)
+  if ($proof -inotcontains $sc.targetDir) { throw 'FIRST_PROOF_MISSING' }
+  $one = Invoke-R2RestoreFixture $sc
+  if (-not $one.restored) { throw ('FIRST_RESTORE:' + $one.failed) }
+  $two = Invoke-R1Switch $sc @{} $sc.targetDir
+  if (-not $two.qualified) { throw ('SECOND_MOVE:' + $two.failed) }
+  if (@((Read-CompanionWslRecord $rootR).parentsCreated) -inotcontains $sc.targetDir) { throw 'SECOND_MOVE_ERASED_PROOF' }
+  $two = Invoke-R2RestoreFixture $sc
+  if (-not $two.restored -or $two.record.restoreTargetDirectory.status -cne 'REUSABLE' -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha) { throw ('SECOND_RESTORE:' + $two.failed) }
+}
+R2 'copied-cut-persists-proof-before-copy-and-restores-after-resume' {
+  $sc = New-R1Scenario 'proof-cut'; $script:sc = $sc
+  $script:realWriteWslRecord = ${function:Write-CompanionWslRecord}
+  $script:realCopyVerified = ${function:Copy-CompanionFileVerified}
+  $platform = {
+    function Get-WslRegistrations { @([ordered]@{ guid = '{g1}'; name = 'CluedResident-Linux'; basePath = $script:sc.sourceDir; values = [ordered]@{ DefaultUid = 0 } }) }
+    function Export-CompanionLxssKey($g, $f) { [IO.File]::WriteAllText($f, 'x') }
+    function Invoke-CompanionWslTerminate { }
+    function Test-CompanionSameVolume { $false }
+    function Get-CompanionDirSddl { $CompanionVhdxParentSddl }
+    function New-CompanionProtectedDirectory($p, $s) { [void][IO.Directory]::CreateDirectory($p) }
+    function Set-CompanionVhdxAcl { }
+    function Get-CompanionFileSha256Unbuffered($p) { Get-CompanionFileSha256 $p }
+  }
+  $cut = & {
+    . $platform
+    function Copy-CompanionFileVerified($source, $partial, $progress) {
+      if (@((Read-CompanionWslRecord $rootR).parentsCreated) -inotcontains $script:sc.targetDir) { throw 'COPY_BEFORE_PROOF_PERSISTED' }
+      & $script:realCopyVerified $source $partial $progress
+    }
+    function Write-CompanionWslRecord($root, $record) { & $script:realWriteWslRecord $root $record; if ($record.stage -ceq 'copied') { throw 'SIMULATED_COPIED_CUT' } }
+    try { $null = Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc.targetDir $acctR; 'NO_CUT' } catch { [string]$_.Exception.Message }
+  }
+  if ($cut -cne 'SIMULATED_COPIED_CUT') { throw ('CUT:' + $cut) }
+  $rec = Read-CompanionWslRecord $rootR
+  if ($rec.stage -cne 'copied' -or @($rec.parentsCreated) -inotcontains $sc.targetDir -or -not (Test-Path -LiteralPath ($sc.targetDir + '\ext4.vhdx.partial'))) { throw 'CUT_PROOF_OR_PARTIAL_MISSING' }
+  $rec = & { . $platform; Invoke-CompanionWslMove $rootR 'CluedResident-Linux' $sc.targetDir $acctR }
+  if ($rec.stage -cne 'moved' -or @($rec.parentsCreated) -inotcontains $sc.targetDir) { throw 'RESUME_LOST_PROOF' }
+  $res = Invoke-R2RestoreFixture $sc
+  if (-not $res.restored -or (Get-CompanionFileSha256 $sc.source) -cne $sc.sha) { throw ('COPIED_RESTORE:' + $res.failed) }
+}
 R2 'N1-restore-across-volumes-builds-its-own-hash-tool' {
   $sc = New-R2Moved 'n1'; $script:sc = $sc; $script:built = 0; $script:removed = 0
   $res = & {
+    $script:restoreLeafAcl = Get-CompanionVhdxSddl $acctR
+    function Get-CompanionDirSddl([string]$path) { if ($path -ieq $script:sc.targetDir) { $script:restoreLeafAcl } else { $CompanionVhdxParentSddl } }
+    function Set-CompanionRestoreTargetAcl([string]$dir) { if ($dir -ine $script:sc.targetDir) { throw 'UNEXPECTED_RESTORE_ACL_TARGET' }; $script:restoreLeafAcl = $CompanionRestoredVhdxSddl; [void]$script:sc.log.Add('restore-leaf-acl') }
     function New-CompanionBuild { $script:built++; [ordered]@{ directory = (Join-Path $Scratch 'r2-build'); generation = ('a' * 64); registrar = [ordered]@{ exe = (Join-Path $Scratch 'bin\CluedCompanionTaskRegistrar.exe'); sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
     function Remove-CompanionBuild { $script:removed++ }
     function Get-WslRegistrations { @() }; function Import-CompanionLxssKey($f) { [void]$script:sc.log.Add('import-key') }; function Invoke-CompanionStopAndFallback { }

@@ -3,7 +3,7 @@
   "ghExe": "C:\\Program Files\\GitHub CLI\\gh.exe",
   "companion": {
     "contract": "clued.independent-ci.resident-companion-config/2",
-    "wslExe": "C:\\Windows\\System32\\wsl.exe",
+    "wslExe": "C:\\Program Files\\WSL\\wsl.exe",
     "powershellExe": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     "relayScript": "C:\\ProgramData\\CluedIndependentCI\\resident\\source\\<sourceManifestSha256>\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v4\\relay-public.ps1",
     "bundleScript": "C:\\ProgramData\\CluedIndependentCI\\resident\\source\\<sourceManifestSha256>\\work\\actions-hosted-migration\\independent-ci-v1\\src\\resident-v2\\build-bundle.ps1",

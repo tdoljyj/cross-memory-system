@@ -26,6 +26,7 @@ if ($InheritedPipeProbe) {
     Microsoft.PowerShell.Utility\New-Object -TypeName $TypeName
   }
   $CompanionInjectVariables = '^M5B_TEST_UNUSED$'
+  function Get-CluedMachineWslClient { [pscustomobject]@{ path = 'C:\Program Files\WSL\wsl.exe' } } # transport fixture only; no WSL process
   . ([scriptblock]::Create($definitions['Invoke-CompanionWslControl']))
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $r = Invoke-CompanionWslControl 'list-running'

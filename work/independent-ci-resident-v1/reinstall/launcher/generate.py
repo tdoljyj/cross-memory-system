@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '370c128e8a435c9b7cd334941dfabdc00194b31f84847207cf857667489b6eb4'   # M5-b: reviewed heartbeat carry preview from #1054, including -PreviewAfterUninstall
+TEMPLATE_SHA = 'e5ee68933f7a7f05fda20372e2fc7026b8ec3e0cd806e2110a4f5ce270df016e'   # Reviewed first-train applicability; runner-quiet and verify gates retained
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -409,6 +409,7 @@ lines = [
     '$ReviewedDryRunPath = ' + q(dry_file.replace('/', BS)),
     '$StageParent = ' + q('C:' + BS + 'ProgramData' + BS + 'CluedIndependentCI' + BS + 'resident-launch-' + COMMIT[:8]),
     '$NodeHostname = ' + q(node['hostname']) + '   # the node profile: Step-Identity, the child COMPUTERNAME, the runner account',
+    '$NodeName = ' + q(node['nodeName']) + '   # exact node identity for advisory first-train applicability',
     '$OwnerSid = ' + q(OWNER),
     '$OperatorSid = ' + q(OPERATOR) + '   # M5-b (ADR 0023): Step-Identity; equal to $OwnerSid without a companion account',
     '$CompanionWslVhdxDirectory = ' + (q(VHDX_DIR) if VHDX_DIR else '$null') + '   # M5-b: set, the last step is -CompanionAccount',

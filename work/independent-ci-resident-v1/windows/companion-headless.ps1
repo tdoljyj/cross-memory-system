@@ -12,6 +12,32 @@
 #>
 Set-StrictMode -Version 2.0
 
+# begin shared machine WSL client (same reviewed resolver as the registrar/runtime)
+# Shared with RegistrarCore.MachineWslClientScript; tests hold the resolver identical.
+# Definitions only. No WSL command, installation or account change occurs here.
+function Get-CluedMachineWslClient {
+  try { foreach ($m in @('Management', 'Security', 'Utility')) { Import-Module ('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.' + $m + '\Microsoft.PowerShell.' + $m + '.psd1') -ErrorAction Stop } } catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  $p = 'C:\Program Files\WSL\wsl.exe'
+  foreach ($v in @('C:\', 'C:\Program Files', 'C:\Program Files\WSL', $p)) {
+    try { $i = Microsoft.PowerShell.Management\Get-Item -LiteralPath $v -Force -ErrorAction Stop }
+    catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { throw 'WSL_MACHINE_CLIENT_MISSING' }; throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+    if (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($v -ceq $p -and $i.PSIsContainer) -or ($v -cne $p -and -not $i.PSIsContainer)) { throw 'WSL_MACHINE_CLIENT_NOT_PLAIN' }
+  }
+  try { $s = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ([string]$s.Status -cne 'Valid') { throw 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID' }
+  $c = $s.SignerCertificate
+  if ($null -eq $c -or $c.Subject -cnotmatch '(?:^|,\s*)CN=Microsoft Corporation(?:,|$)' -or
+      $c.Subject -cnotmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)' -or
+      $c.Thumbprint -cnotmatch '^[0-9A-Fa-f]{40}$') { throw 'WSL_MACHINE_CLIENT_PUBLISHER_INVALID' }
+  try { $h = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ($h -cnotmatch '^[0-9A-Fa-f]{64}$') { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  [pscustomobject]@{ contract = 'clued.independent-ci.wsl-client/1'; path = $p; sha256 = $h.ToLowerInvariant(); signerThumbprint = $c.Thumbprint.ToUpperInvariant() }
+}
+# end shared machine WSL client
+
 $CompanionTaskName = 'CluedCIResidentCompanion'
 $NotifierTaskName = 'CluedCIResidentNotifier'
 $CompanionLaunchContract = 'clued.independent-ci.companion-launch/1'
@@ -550,6 +576,7 @@ function Get-CompanionOperatorSid([string]$root, $node) { $a = Read-CompanionAcc
 # The moved ext4.vhdx and its folder: SYSTEM and Administrators full, the companion account modify (WSL opens it as that user), nothing
 # inherited, nothing for the Owner's session. Missing parents of the folder are created SYSTEM / Administrators full, Users read.
 $CompanionVhdxParentSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
+$CompanionRestoredVhdxSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
 function Get-CompanionVhdxSddl([string]$companionSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $companionSid + ')' }
 # The current user's WSL registrations (Lxss): guid, name, base path (the \\?\ prefix dropped), default uid and every value of the key
 # (review r1 M4: VhdFileName, PackageFamilyName, KernelCommandLine, DefaultEnvironment, Flavor, OsVersion, ... all of them).
@@ -575,12 +602,13 @@ function Import-CompanionLxssKey([string]$file) { $null = & 'C:\Windows\System32
 function Remove-CompanionLxssKey([string]$guid) { Remove-Item -LiteralPath (Join-Path $CompanionLxssKey $guid) -Recurse -Force }
 function Get-CompanionLxssDefault { try { [string](Get-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null } }
 function Remove-CompanionLxssDefault { Remove-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -Force }
-function Invoke-CompanionWslTerminate([string]$distro) { $null = & 'C:\Windows\System32\wsl.exe' --terminate $distro 2>&1 }
+function Invoke-CompanionWslTerminate([string]$distro) { $client = Get-CluedMachineWslClient; $null = & $client.path --terminate $distro 2>&1 }
 # Only the account-switch maintenance option can request a whole-VM stop.
 # These two fixed management commands never run a distribution or arbitrary code.
 function Invoke-CompanionWslControl([ValidateSet('list-running', 'shutdown')][string]$operation) {
   $psi = New-Object Diagnostics.ProcessStartInfo
-  $psi.FileName = 'C:\Windows\System32\wsl.exe'
+  $client = Get-CluedMachineWslClient
+  $psi.FileName = $client.path
   $psi.Arguments = if ($operation -ceq 'list-running') { '--list --running --quiet' } else { '--shutdown' }
   $psi.WorkingDirectory = 'C:\Windows\System32'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
@@ -821,7 +849,23 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
       $record = ConvertTo-CompanionOrdered $record; $record['vhdxRelease'] = $release
       Write-CompanionWslRecord $root $record
     }
+    # Creation is evidence for this exact move record, not for another source,
+    # target or account. Keep it across restore -> move retries; an existing
+    # leaf alone is never evidence that this move created it.
+    $record = ConvertTo-CompanionOrdered $record
+    $previousCreated = @()
+    if ($record.Contains('parentsCreated')) {
+      if ($record.parentsCreated -isnot [Array] -or -not $record.Contains('source') -or $record.source -isnot [string] -or
+          -not [string]::Equals($record.source, $source, [StringComparison]::OrdinalIgnoreCase) -or
+          $record.companionSid -cne $companionSid -or $record.contract -cne $CompanionWslContract -or
+          @($record.parentsCreated | Where-Object { $_ -isnot [string] -or $_ -cnotmatch $CompanionVhdxDirPattern -or $_.Contains('\..') -or $_.Contains('\.\') }).Count) { throw 'WSL_TARGET_CREATION_RECORD_REFUSED' }
+      $previousCreated = @($record.parentsCreated)
+    }
     $created = Assert-CompanionVhdxParents $targetDir
+    $record['parentsCreated'] = @(@($previousCreated) + @($created) | Select-Object -Unique)
+    $record['source'] = $source
+    # Persist before any copy/rename/source deletion, including stage copied.
+    Write-CompanionWslRecord $root $record
     if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }   # a cut-off copy of this move (its own name, in its own folder)
     $copy = $null
     if ($plan.action -ceq 'move') {
@@ -839,7 +883,7 @@ function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$target
     }
     Set-CompanionVhdxAcl $targetDir $target $companionSid
     $record = ConvertTo-CompanionOrdered $record
-    $record.stage = 'moved'; $record.imported = $false; $record.copy = $copy; $record.parentsCreated = $created; $record.movedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $record.stage = 'moved'; $record.imported = $false; $record.copy = $copy; $record.movedAt = [DateTimeOffset]::UtcNow.ToString('o')
     Write-CompanionWslRecord $root $record
   }
   $record
@@ -1003,6 +1047,89 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
 # companion stops, so its WSL VM lets the file go); ext4.vhdx goes back to the recorded source (a rename on one volume, else the same
 # verified copy through a .partial); the Owner's registration key comes back from its export when it is gone. The account's own
 # registration then names a missing file and is harmless (remove-companion-account.ps1 deletes it with the account's profile).
+function Test-CompanionRestoreTargetAcl([string]$sddl, [string]$sid, [switch]$RestoredOnly) {
+  $raw = try { New-Object Security.AccessControl.RawSecurityDescriptor($sddl) } catch { return $false }
+  if ($null -eq $raw.Owner -or $CompanionTrustedSids -cnotcontains $raw.Owner.Value -or $null -eq $raw.DiscretionaryAcl -or
+      ($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { return $false }
+  $expected = @($CompanionRestoredVhdxSddl)
+  if (-not $RestoredOnly) { $expected += @($CompanionVhdxParentSddl, (Get-CompanionVhdxSddl $sid)) }
+  foreach ($candidate in $expected) {
+    $want = New-Object Security.AccessControl.RawSecurityDescriptor($candidate)
+    if ($raw.DiscretionaryAcl.Count -ne $want.DiscretionaryAcl.Count) { continue }
+    $actualAces = @(); $wantedAces = @(); $plain = $true
+    foreach ($ace in $raw.DiscretionaryAcl) {
+      if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback -or
+          $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { $plain = $false; break }
+      $actualAces += ([string]$ace.SecurityIdentifier.Value + ':' + [int]$ace.AceFlags + ':' + $ace.AccessMask)
+    }
+    if (-not $plain) { continue }
+    foreach ($ace in $want.DiscretionaryAcl) { $wantedAces += ([string]$ace.SecurityIdentifier.Value + ':' + [int]$ace.AceFlags + ':' + $ace.AccessMask) }
+    if ((($actualAces | Sort-Object) -join '|') -ceq (($wantedAces | Sort-Object) -join '|')) { return $true }
+  }
+  $false
+}
+# Isolated setter: offline tests replace this function; production changes only
+# the proven leaf's DACL, preserving its owner and every retained file.
+function Set-CompanionRestoreTargetAcl([string]$dir) {
+  $security = New-Object Security.AccessControl.DirectorySecurity
+  $security.SetSecurityDescriptorSddlForm($CompanionRestoredVhdxSddl, [Security.AccessControl.AccessControlSections]::Access)
+  (Get-Item -LiteralPath $dir -Force).SetAccessControl($security)
+}
+function Restore-CompanionTargetDirectory($record, $node) {
+  # Keep evidence in place, but revoke the account's write access after its VHD
+  # has been restored. Only a leaf this exact move created may become reusable.
+  if (($record -isnot [Collections.IDictionary] -and $record -isnot [pscustomobject]) -or
+      ($node -isnot [Collections.IDictionary] -and $node -isnot [pscustomobject])) { throw 'WSL_RESTORE_TARGET_RECORD_REFUSED' }
+  $r = ConvertTo-CompanionOrdered $record; $n = ConvertTo-CompanionOrdered $node
+  foreach ($name in @('contract', 'target', 'source', 'companionSid')) {
+    if (-not $r.Contains($name) -or $r[$name] -isnot [string] -or -not $r[$name]) { throw 'WSL_RESTORE_TARGET_RECORD_REFUSED' }
+  }
+  if ($r.contract -cne $CompanionWslContract -or -not $n.Contains('ownerSid') -or $n.ownerSid -isnot [string]) { throw 'WSL_RESTORE_TARGET_RECORD_REFUSED' }
+  $target = $r.target; $source = $r.source
+  $dir = Split-Path -Parent $target
+  if ($dir -cnotmatch $CompanionVhdxDirPattern -or $dir.Contains('\..') -or $dir.Contains('\.\') -or
+      (Split-Path -Leaf $target) -cne 'ext4.vhdx' -or $r.companionSid -cne $n.ownerSid -or
+      $n.ownerSid -cnotmatch $CompanionSidPattern -or -not [IO.Path]::IsPathRooted($source) -or
+      $source.Contains('\..') -or $source.Contains('\.\') -or
+      [string]::Equals((Split-Path -Parent $source), $dir, [StringComparison]::OrdinalIgnoreCase)) { throw 'WSL_RESTORE_TARGET_RECORD_REFUSED' }
+  if (-not (Test-Path -LiteralPath $dir)) { return [ordered]@{ status = 'ABSENT'; path = $dir } }
+  if (-not $r.Contains('parentsCreated') -or $r.parentsCreated -isnot [Array] -or
+      @($r.parentsCreated | Where-Object { $_ -isnot [string] -or $_ -cnotmatch $CompanionVhdxDirPattern -or $_.Contains('\..') -or $_.Contains('\.\') }).Count -or
+      -not @($r.parentsCreated | Where-Object {
+      $_ -is [string] -and [string]::Equals($_, $dir, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'WSL_RESTORE_TARGET_OWNERSHIP_UNCONFIRMED' }
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
+      ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_RESTORE_SOURCE_NOT_PLAIN' }
+  for ($parent = Split-Path -Parent $source; $parent; $parent = Split-Path -Parent $parent) {
+    $item = Get-Item -LiteralPath $parent -Force
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_RESTORE_SOURCE_NOT_PLAIN' }
+  }
+  if (Test-Path -LiteralPath $target) { throw 'WSL_RESTORE_TARGET_VHDX_REMAINS' }
+  # Never traverse or change an untrusted ancestor, including a raced link.
+  for ($parent = $dir; $parent; $parent = Split-Path -Parent $parent) {
+    $item = Get-Item -LiteralPath $parent -Force
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'WSL_RESTORE_TARGET_NOT_PLAIN' }
+    if ($parent -cne $dir) {
+      $isRoot = [IO.Path]::GetPathRoot($parent).TrimEnd('\') -ieq $parent.TrimEnd('\')
+      if ($null -ne (Get-CompanionDirAclProblem (Get-CompanionDirSddl $parent) $isRoot)) { throw 'WSL_RESTORE_TARGET_PARENT_UNSAFE' }
+    }
+  }
+  $before = Get-CompanionDirSddl $dir
+  if (-not (Test-CompanionRestoreTargetAcl $before $r.companionSid)) { throw 'WSL_RESTORE_TARGET_ACL_UNCONFIRMED' }
+  $kept = @()
+  foreach ($entry in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)) {
+    if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        @('ext4.vhdx.partial', 'companion-wsl-import-result.json') -cnotcontains $entry.Name) { throw 'WSL_RESTORE_TARGET_CONTENTS_UNCONFIRMED' }
+    $kept += $entry.Name
+  }
+  try { Set-CompanionRestoreTargetAcl $dir } catch { throw 'WSL_RESTORE_TARGET_ACL_WRITE_FAILED' }
+  try {
+    $after = Get-CompanionDirSddl $dir
+    $item = Get-Item -LiteralPath $dir -Force
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not (Test-CompanionRestoreTargetAcl $after $r.companionSid -RestoredOnly)) { throw 'WSL_RESTORE_TARGET_ACL_READBACK_MISMATCH' }
+  } catch { throw 'WSL_RESTORE_TARGET_ACL_READBACK_MISMATCH' }
+  [ordered]@{ status = 'REUSABLE'; path = $dir; kept = $kept; beforeSddl = $before; afterSddl = $after }
+}
 function Invoke-CompanionWslRestore([string]$root, $node) {
   $result = [ordered]@{ restored = $false; failed = $null; record = $null }
   # Review r2 n3: never while a switch is running (its window is open).
@@ -1038,6 +1165,8 @@ function Invoke-CompanionWslRestore([string]$root, $node) {
     } elseif (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'WSL_VHDX_MISSING' }
     $guid = if ($null -ne $record.ownerRegistration) { [string]$record.ownerRegistration.guid } else { $null }
     if ($guid -and @(Get-WslRegistrations | Where-Object { $_.guid -ceq $guid }).Count -eq 0) { Import-CompanionLxssKey ([string]$record.ownerExport) }
+    $result['sourceRestored'] = $true
+    $record['restoreTargetDirectory'] = Restore-CompanionTargetDirectory $record $node
     $record.stage = 'restored'; $record.restoredAt = [DateTimeOffset]::UtcNow.ToString('o')
     Write-CompanionWslRecord $root $record
     $result.restored = $true

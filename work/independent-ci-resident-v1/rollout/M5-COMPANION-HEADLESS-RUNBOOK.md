@@ -316,6 +316,10 @@ TURING 的常驻发行版是 `Ubuntu-24.04`，也是那台机器唯一的通用�
 
 ### M5-b 实装修复：明确的整机 WSL 维护停机（候选，随精确包验收）
 
+M5-b 的账户导入、root shell、companion 运行时、只读探测和 v4 relay 固定使用机器级 `C:\Program Files\WSL\wsl.exe`。执行前校验文件及其父目录没有链接、Authenticode 签名有效且发布者为 Microsoft Corporation；缺失或无法确认时明确返回 `WSL_MACHINE_CLIENT_*`，不退回 System32 的入口，也不代替账户安装 MSIX。旧配置中的 System32 路径仅作兼容输入，不能指定其他可执行文件。companion 的校验器必须来自本次安装回执和清单绑定的 resident 代；运行时在启动任何 WSL 子进程或心跳之前校验一次，依赖 Program Files 的管理员保护，relay 每次调用重新校验。
+
+`-CompanionWslRestore` 把盘恢复并恢复原注册后，只对移动记录证明由本次流程创建的目标叶目录收回专用账户的写权限，再读回确认。诊断 JSON 和 `.partial` 文件保留；未知文件、链接、未知所有者或写权限、缺少创建证明时拒绝整理，不删除现场。源盘已恢复但目录整理未完成会分别报告，可保留现场后按记录继续处理。
+
 普通 `-CompanionAccount` 仍只停止本发行版，不因磁盘被占用就静默停止其他 CI。若返回 `WSL_VM_SHUTDOWN_REQUIRES_MAINTENANCE`，说明单发行版停止后独占打开 VHDX 未成功；同一个 WSL 2 虚拟机里的其他发行版可能仍持有磁盘。这不是“再等120秒就一定释放”的证据。
 
 维护窗口需要明确覆盖本调用能影响的全部 WSL 发行版，包含仍运行的 CluedCI-Linux。沿原流程先确认相关 CI 无执行、暂停并保留证据；精确包/Grant及维护范围审定后，由原管理员 operator 在安装副本执行同一 `-CompanionAccount` 命令并加 `-CompanionWslVmShutdown`。此参数只允许账户切换，不能用于普通启动、升级或任意其它 rearm 请求；它不是自动判定全体 CI 空闲的证明。不要在普通开发或未确定其它发行版用途时使用。

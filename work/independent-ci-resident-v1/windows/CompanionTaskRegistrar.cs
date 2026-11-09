@@ -152,7 +152,31 @@ public static class RegistrarCore {
   public const int RandomPasswordChars = 32;
   public const string ImportTaskName = "CluedCIResidentCompanionWslImport";
   public const string ImportTaskSddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
-  public const string WslExe = @"C:\Windows\System32\wsl.exe";
+  public const string WslExe = @"C:\Program Files\WSL\wsl.exe";
+  public const string MachineWslClientScript = @"# Shared with RegistrarCore.MachineWslClientScript; tests hold the resolver identical.
+# Definitions only. No WSL command, installation or account change occurs here.
+function Get-CluedMachineWslClient {
+  try { foreach ($m in @('Management', 'Security', 'Utility')) { Import-Module ('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.' + $m + '\Microsoft.PowerShell.' + $m + '.psd1') -ErrorAction Stop } } catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  $p = 'C:\Program Files\WSL\wsl.exe'
+  foreach ($v in @('C:\', 'C:\Program Files', 'C:\Program Files\WSL', $p)) {
+    try { $i = Microsoft.PowerShell.Management\Get-Item -LiteralPath $v -Force -ErrorAction Stop }
+    catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { throw 'WSL_MACHINE_CLIENT_MISSING' }; throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+    if (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($v -ceq $p -and $i.PSIsContainer) -or ($v -cne $p -and -not $i.PSIsContainer)) { throw 'WSL_MACHINE_CLIENT_NOT_PLAIN' }
+  }
+  try { $s = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ([string]$s.Status -cne 'Valid') { throw 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID' }
+  $c = $s.SignerCertificate
+  if ($null -eq $c -or $c.Subject -cnotmatch '(?:^|,\s*)CN=Microsoft Corporation(?:,|$)' -or
+      $c.Subject -cnotmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)' -or
+      $c.Thumbprint -cnotmatch '^[0-9A-Fa-f]{40}$') { throw 'WSL_MACHINE_CLIENT_PUBLISHER_INVALID' }
+  try { $h = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash }
+  catch { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  if ($h -cnotmatch '^[0-9A-Fa-f]{64}$') { throw 'WSL_MACHINE_CLIENT_UNREADABLE' }
+  [pscustomobject]@{ contract = 'clued.independent-ci.wsl-client/1'; path = $p; sha256 = $h.ToLowerInvariant(); signerThumbprint = $c.Thumbprint.ToUpperInvariant() }
+}
+";
   const string PwUpper = "ABCDEFGHJKLMNPQRSTUVWXYZ", PwLower = "abcdefghijkmnopqrstuvwxyz", PwDigits = "23456789", PwSymbols = "!#%+-.:=?@^_~";
   public static string PasswordAlphabet { get { return PwUpper + PwLower + PwDigits + PwSymbols; } }
   // One random byte -> one password character, by rejection (bytes 210..255 are dropped, so every character of the 70 is as likely):
@@ -190,13 +214,14 @@ public static class RegistrarCore {
     // protected VHDX directory. This file is diagnostic only, never a grant or
     // the success verdict used to remove the Owner's registration.
     string script = @"$ErrorActionPreference = 'Stop'
-$wsl = 'C:\Windows\System32\wsl.exe'
+$wsl = $null
+__WSL_CLIENT__
 $distro = '__DISTRO__'; $vhdx = '__VHDX__'; $defaultUid = __UID__
 $directory = [IO.Path]::GetDirectoryName($vhdx)
 $diagnosticPath = [IO.Path]::Combine($directory, 'companion-wsl-import-result.json')
 $record = [ordered]@{ contract = 'clued.independent-ci.companion-wsl-import-result/1'; runId = [guid]::NewGuid().ToString('D')
   startedAt = [DateTimeOffset]::UtcNow.ToString('o'); finishedAt = $null; phase = 'starting'; exitCode = $null
-  distro = $distro; vhdx = $vhdx; defaultUid = $defaultUid; identity = $null; file = $null; commands = @(); registration = $null; error = $null }
+  distro = $distro; vhdx = $vhdx; defaultUid = $defaultUid; identity = $null; file = $null; commands = @(); registration = $null; client = $null; refusal = $null; error = $null }
 $diagnosticSid = ''
 function Get-ImportDiagnosticAcl {
   if ($script:diagnosticSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'DIAGNOSTIC_OWNER_UNCONFIRMED' }
@@ -247,7 +272,8 @@ function Convert-ImportOutput($reader) {
       $unicode = ($nullOdd -ge 3)
     }
   }
-  $text = if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { [Text.Encoding]::UTF8.GetString($bytes) }
+  # Strict UTF8 first; GB18030 also decodes the GBK bytes observed from legacy WSL.
+  $text = if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { try { (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) } catch { [Text.Encoding]::GetEncoding(54936).GetString($bytes) } }
   if ($text.Length -gt 1024) { $reader.truncated = $true }
   $text = $text.TrimStart([char]0xFEFF) -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ''
   $text = $text -replace '(?im)^.*(?:token|password|secret|credential|authorization|private[_ -]?key|BEGIN .*PRIVATE KEY).*$', '[REDACTED_SENSITIVE_LINE]'
@@ -324,6 +350,9 @@ try {
     try { $record.file = [ordered]@{ readable = $true; hresult = $null } } finally { $v.Dispose() }
   } catch { $record.file = [ordered]@{ readable = $false; hresult = ('0x{0:X8}' -f $_.Exception.HResult) } }
   Write-ImportDiagnostic
+  $record.phase = 'client-validation'
+  try { $record.client = Get-CluedMachineWslClient; $wsl = [string]$record.client.path }
+  catch { $record.refusal = if ($_.Exception.Message -cmatch '^WSL_MACHINE_CLIENT_[A-Z_]+$') { $_.Exception.Message } else { 'WSL_MACHINE_CLIENT_UNREADABLE' }; $code = 8; throw }
   $null = Invoke-ImportWsl 'version' @('--version') 15000
   $null = Invoke-ImportWsl 'status' @('--status') 15000
   $import = Invoke-ImportWsl 'import' @('--import-in-place', $distro, $vhdx) 120000
@@ -353,10 +382,47 @@ finally {
 }
 exit $code
 ";
+    // Fixed source only: drop indentation to retain the Win32 EncodedCommand limit, including the maximum validated VHDX path.
+    script = Regex.Replace(script.Replace("__WSL_CLIENT__", MachineWslClientScript), @"(?m)^[ \t]+", "");
+    script = Regex.Replace(script, @"(?m)^#[^\r\n]*(?:\r?\n|$)", "");
+    // Short fixed-local spellings keep the generated action below Win32's 32767-character limit. No input is code.
+    foreach (string[] pair in new string[][] {
+      new string[] { "$script:record", "$script:r" }, new string[] { "$record", "$r" },
+      new string[] { "$script:diagnosticSid", "$script:ds" }, new string[] { "$diagnosticPath", "$dp" }, new string[] { "$diagnosticSid", "$ds" },
+      new string[] { "$directory", "$dir" }, new string[] { "$readers", "$rr" }, new string[] { "$reader", "$rd" },
+      new string[] { "$process", "$proc" }, new string[] { "$timeoutMs", "$ms" }, new string[] { "$entry", "$e" },
+      new string[] { "$count", "$n" }, new string[] { "$keep", "$kp" }, new string[] { "$phase", "$ph" }, new string[] { "$path", "$pt" }, new string[] { "$bytes", "$b" }, new string[] { "$text", "$t" }, new string[] { "$registered", "$reg" }, new string[] { "$sameBase", "$same" }, new string[] { "$unicode", "$uni" },
+      new string[] { "$nullOdd", "$odd" }, new string[] { "$defaultUid", "$uid" }, new string[] { "$arguments", "$av" },
+      new string[] { "$watch", "$sw" }, new string[] { "$exitSeen", "$ex" }, new string[] { "$stream", "$st" },
+      new string[] { "$owner", "$ow" }, new string[] { "$rights", "$fr" }, new string[] { "$actual", "$ac" }, new string[] { "$want", "$wa" },
+      new string[] { "Invoke-ImportWsl", "Invoke-IW" }, new string[] { "Convert-ImportOutput", "Convert-IO" }, new string[] { "Get-ImportDiagnosticAcl", "Get-DiagAcl" }, new string[] { "Assert-ImportDiagnosticAcl", "Assert-DiagAcl" },
+      new string[] { "Protect-ImportDiagnostic", "Protect-Diag" }, new string[] { "Write-ImportDiagnostic", "Write-Diag" }
+    }) script = script.Replace(pair[0], pair[1]);
     return script.Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
       .Replace("__UID__", defaultUid.ToString(System.Globalization.CultureInfo.InvariantCulture));
   }
   public const string PowerShellExe = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+  // Same read-only trust check as the account's import program. In particular a
+  // root-shell refusal happens before drawing or changing any account password.
+  public static string MachineWslClientRefusal() {
+    string command = MachineWslClientScript + "\ntry { $null = Get-CluedMachineWslClient; [Console]::Out.Write('WSL_MACHINE_CLIENT_VALID') } catch { $c = $_.Exception.Message; if ($c -cnotmatch '^WSL_MACHINE_CLIENT_[A-Z_]+$') { $c = 'WSL_MACHINE_CLIENT_UNREADABLE' }; [Console]::Out.Write($c); exit 2 }";
+    System.Diagnostics.ProcessStartInfo info = new System.Diagnostics.ProcessStartInfo(PowerShellExe,
+      "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(command)));
+    info.UseShellExecute = false; info.CreateNoWindow = true; info.WorkingDirectory = @"C:\Windows\System32";
+    info.RedirectStandardOutput = true; info.RedirectStandardError = true;
+    using (System.Diagnostics.Process process = new System.Diagnostics.Process()) {
+      process.StartInfo = info;
+      try {
+        if (!process.Start()) return "WSL_MACHINE_CLIENT_UNREADABLE";
+        System.Threading.Tasks.Task<string> output = process.StandardOutput.ReadToEndAsync(), errors = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30000)) { try { process.Kill(); process.WaitForExit(2000); } catch { } return "WSL_MACHINE_CLIENT_UNREADABLE"; }
+        if (!System.Threading.Tasks.Task.WaitAll(new System.Threading.Tasks.Task[] { output, errors }, 2000)) return "WSL_MACHINE_CLIENT_UNREADABLE";
+        string code = output.Result.Trim();
+        if (process.ExitCode == 0 && code == "WSL_MACHINE_CLIENT_VALID") return null;
+        return Regex.IsMatch(code, @"\AWSL_MACHINE_CLIENT_[A-Z_]+\z") ? code : "WSL_MACHINE_CLIENT_UNREADABLE";
+      } catch { return "WSL_MACHINE_CLIENT_UNREADABLE"; }
+    }
+  }
   public static string ImportArguments(string distro, string vhdx, long defaultUid) {
     return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(ImportScript(distro, vhdx, defaultUid)));
   }
@@ -818,6 +884,11 @@ public static class CluedCompanionTaskRegistrar {
     if (why != null) { Print(why, null); return 2; }
     string[] acct = SplitAccount(sid);
     string account = acct[0] + "\\" + acct[1];
+    if (rootShell || distro != null) {
+      step = "wslclient";
+      string clientWhy = RegistrarCore.MachineWslClientRefusal();
+      if (clientWhy != null) { Print(clientWhy, null); return 2; }
+    }
     step = "service";
     object svc = Service();
     step = "folder";
