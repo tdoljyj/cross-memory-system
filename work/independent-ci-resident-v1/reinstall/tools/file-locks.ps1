@@ -160,6 +160,29 @@ function Get-CompanionTaskObservations {
     }
   } finally { if ($null -ne $schedule) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($schedule) } }
 }
+function Test-TaskAccessDeniedException([Exception]$exception) {
+  # PowerShell wraps COM failures in MethodInvocationException. Match the
+  # exact HRESULT anywhere in that bounded chain, never a localized message.
+  for ($depth = 0; $null -ne $exception -and $depth -lt 32; $depth++) {
+    if ($exception.HResult -eq -2147024891) { return $true } # E_ACCESSDENIED (0x80070005)
+    $exception = $exception.InnerException
+  }
+  return $false
+}
+function Get-CompanionTaskSnapshot {
+  try {
+    # Materialize atomically: a failed enumeration must not leave a partial
+    # task anchor eligible for the expected-process tree.
+    $instances = @(Get-CompanionTaskObservations)
+    return [pscustomobject]@{ status = 'OBSERVED'; code = $null; instances = $instances }
+  } catch {
+    if (-not (Test-TaskAccessDeniedException $_.Exception)) { throw }
+    # A standard user may not read an account-owned task. This gives it NO
+    # exemptions: RM still enumerates every public-file locker below, and any
+    # locker without a separately verified anchor stays external.
+    return [pscustomobject]@{ status = 'UNREADABLE'; code = 'COMPANION_TASK_ACCESS_DENIED'; instances = @() }
+  }
+}
 function Test-CompanionTaskAnchorPair($before, $after, $snapshot, [string]$residentRoot) {
   if ($null -eq $snapshot -or $before.path -cne '\Clued\CluedCIResidentCompanion' -or
       $before.path -cne $after.path -or $before.instance -cne $after.instance -or
@@ -204,10 +227,12 @@ foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
   if ($null -ne $snapshot) { $processes[$snapshot.pid] = $snapshot }
 }
 $servicesBefore = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
-$taskBefore = @(Get-CompanionTaskObservations)
+$taskSnapshotBefore = Get-CompanionTaskSnapshot
+$taskBefore = @($taskSnapshotBefore.instances)
 $observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray()))
 $servicesAfter = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
-$taskAfter = @(Get-CompanionTaskObservations)
+$taskSnapshotAfter = Get-CompanionTaskSnapshot
+$taskAfter = @($taskSnapshotAfter.instances)
 $expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 $precisions = New-Object 'Collections.Generic.Dictionary[uint32,int]'
 foreach ($service in $servicesBefore) {
@@ -246,4 +271,6 @@ foreach ($item in $observed) {
   if (-not $identity.expected) { $external += $identity }
 }
 [ordered]@{ contract = 'clued.independent-ci.rehearsal-file-locks/1'; status = 'OBSERVED'; coverage = 'installed-public-binaries-only'
-  directoryHandlesCovered = $false; secretsEnumerated = $false; fileCount = $files.Count; lockers = $lockers; external = $external } | ConvertTo-Json -Depth 5 -Compress
+  directoryHandlesCovered = $false; secretsEnumerated = $false; fileCount = $files.Count; lockers = $lockers; external = $external
+  companionTaskObservation = [ordered]@{ before = $taskSnapshotBefore.status; after = $taskSnapshotAfter.status
+    beforeCode = $taskSnapshotBefore.code; afterCode = $taskSnapshotAfter.code; unverifiedTaskLockersRemainExternal = $true } } | ConvertTo-Json -Depth 5 -Compress
