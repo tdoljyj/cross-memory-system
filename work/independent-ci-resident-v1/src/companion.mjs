@@ -10,7 +10,7 @@
 //   - every Linux unit it starts re-checks its own preconditions as root;
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
-import { BATCH_ID, PULL_CLAIMS_MAX, validatePrune } from './mailbox.mjs';
+import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
@@ -393,27 +393,16 @@ export const CHECK_REFS_SECOND_TRY_MAX_MS = 3 * 60_000; // the refs gate: a seco
 export const timedOutGone = r => r?.timedOut === true && r.tree !== 'unconfirmed';
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
-  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha, body: .body}'];
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
 }
-// The PR body's Clued-Work-Claim trailers (the same line the poller requires, poller.mjs TRAILER), at most PULL_CLAIMS_MAX, sorted
-// and unique: what the run queue compares to tell a PR that now names another claim (queue.mjs#claimChanged; field defect
-// 2026-11-08, PR #1039). Data only: stage 1's Native admission alone decides whether a claim is current.
-const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[ \t]*\r?$/gm;
-export function claimTrailers(body) {
-  if (typeof body !== 'string') return [];
-  return [...new Set([...body.matchAll(CLAIM_TRAILER)].map(m => m[1]))].sort().slice(0, PULL_CLAIMS_MAX);
-}
-// The gh answer -> { number, state: open | closed | merged, headSha, claims? }, or null when it is not exactly that shape.
+// GitHub's PR state/ref only. PR text carries no Task or claim authority.
 export function parsePull(stdout, pr) {
   const v = json(stdout);
   if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
   // Advisory only: it may defer a qualification read, never authorize one.
   // Older companion answers have no mergeSha; absence is not ref movement.
-  // claims only when the answer carried the body (an empty body is null in GitHub's answer: no trailer); an answer without it
-  // says nothing about the claim.
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head,
-    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}),
-    ...(Object.hasOwn(v, 'body') && (v.body === null || typeof v.body === 'string') ? { claims: claimTrailers(v.body) } : {}) };
+    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}) };
 }
 
 // DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end

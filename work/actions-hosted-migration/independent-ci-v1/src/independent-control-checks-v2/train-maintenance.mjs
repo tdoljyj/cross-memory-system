@@ -31,7 +31,7 @@
 // port, mode on also (a) adopts every member of each batch of this node whose S main now contains (riders first, the front last;
 // a member whose PR moved to another head is not adopted), (b) turns the executor's frontOutcome of a batch of several members into
 // bisection instead of touch failed, and (c) opens the front batch on the batch it composes: the front, then riders (open PRs into
-// main with this install's claim trailer and App 5368905's kooyumi-work-admission success on their head, by PR number, up to the
+// main with this install's Native Task binding and App 5368905's kooyumi-work-admission success on their head, by PR number, up to the
 // effective batch size), S = GitHub's test merge for one member or the cumulative merge on clued-train/staging.tmp for several,
 // clued-train/staging pointed at S (the CI trigger) and a landing-batch record. A strict head that does not contain main's tip is no
 // longer FRONT_NEEDS_MAIN_MERGE there (the train lands merge(T, H) itself); a protected-layer one still is.
@@ -49,12 +49,14 @@ import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
-import { decideShadow, frontPullFacts, trainFacts, NO_ACTIONS } from './train-facts.mjs';
+import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
-import { TrainSweepStore } from './train-sweep-store.mjs';
+import { TrainSweepStore, validateLandingState, LANDING_STATE_CONTRACT } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
+import { resolvePRTaskBinding, normalizeTerminalAdmission, terminalProofForPull } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { readTerminalAdmission as readRecordedTerminalAdmission } from '../batch-claim-v2.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, MAX_BAD, MAX_ADOPTED } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
@@ -95,22 +97,10 @@ const AUDIT_RESTART_NOW = Object.freeze(['TRAIN_MAIN_REWRITTEN', 'TRAIN_LEGACY_R
 const freshFull = () => ({ state: 'none', via: null, startedAt: null, completedAt: null, onSince: null, mainSha: null, nextPage: 1, nextIndex: 0, prs: 0, commits: 0,
   heads: 0, revoked: 0, unconfirmed: 0, wouldRevoke: 0, calls: 0, ms: 0, reason: null, scope: 'all', scopeReason: null });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-// Generation 19 field defect (DESIGN §62.4): while the take-over sweep runs, the merge queue's head claim may be bound to no PR yet
-// (only an admission stage 1 binds it, and the take-over gate holds every batch). Stage 10 then names the one open PR whose body
-// trailer names that claim (the merge executor reads the claim from the body only, too) so the resident may run that PR's stage 1
-// and nothing more. At most this many of the most recently updated open PRs into main are read per run.
+// While the take-over sweep runs, discover the unique open PR whose Native Task projection
+// names the queue's current claim. Only mode on may auto-bind a uniquely authorized head.
+// At most this many of the most recently updated open PRs into main are read per run.
 export const FRONT_BIND_MAX_READS = 10;
-// The trailers exactly as scripts/ci/clued-work-admission.mjs#parseClaimReference reads them (not imported: stage 10 does not load
-// the Windows evaluator; a test keeps the two equal).
-const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$/m;
-const SCOPE_TRAILER = /^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$/m;
-export function claimReferenceOf(text) {
-  if (typeof text !== 'string') return null;
-  const claim = CLAIM_TRAILER.exec(text);
-  if (!claim) return null;
-  const scope = SCOPE_TRAILER.exec(text);
-  return { claimId: claim[1].toLowerCase(), scope: scope ? scope[1] : 'global' };
-}
 
 // Shadow wrapper kept for the 3c-1 callers: the facts only.
 export async function readTrainFacts(ports) { return (await runTrain(ports)).facts; }
@@ -121,14 +111,71 @@ export async function readTrainFacts(ports) { return (await runTrain(ports)).fac
 // -> { facts, sideEffects }. A throw after a write carries the count (e.sideEffects; settleTrain, review R2 M5).
 export async function runTrain(ports) {
   const fx = { n: 0 };
-  try { return await runTrainCounted(ports, fx); }
-  catch (e) { if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e; }
+  const startedAt = (ports.clock ?? Date.now)();
+  // Cursor progress and the existing bisection/completion updates form one
+  // local publication. Two writes in the same millisecond have no nonce order.
+  let pendingLanding = null, flushStarted = false;
+  const originalStore = ports.sweepStore;
+  const store = originalStore ? Object.create(originalStore) : null;
+  if (store) {
+    store.writeLandingState = async input => {
+      const state = validateLandingState({ contract: LANDING_STATE_CONTRACT, ...input,
+        bad: input.bad.slice(-MAX_BAD), adopted: input.adopted.slice(-MAX_ADOPTED), handled: input.handled.slice(-MAX_ADOPTED) });
+      const { contract, writtenAt, runId, ...meaning } = state;
+      pendingLanding = { writtenAt, runId, ...meaning };
+    };
+    store.readLandingState = async () => pendingLanding
+      ? Object.fromEntries(Object.entries(pendingLanding).filter(([key]) => !['writtenAt', 'runId'].includes(key)))
+      : originalStore.readLandingState();
+  }
+  const flushLanding = async () => {
+    if (pendingLanding && !flushStarted) { flushStarted = true; await originalStore.writeLandingState(pendingLanding); }
+  };
+  try {
+    const result = await runTrainCounted({ ...ports, ...(store ? { sweepStore: store } : {}), startedAt }, fx);
+    await flushLanding();
+    const claimBindings = ports.observeBindings === true ? await observePRClaimBindings(ports, startedAt) : null;
+    return claimBindings === null ? result : { ...result, facts: validateTrainFacts({ ...result.facts, claimBindings }) };
+  }
+  catch (e) {
+    try { await flushLanding(); } catch (failure) { e = failure; }
+    if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e;
+  }
+}
+
+// This bounded observation is data for rechecking waiting rows, never admission.
+// It also works off duty, since read_only forbids the CI lookup from auto-binding.
+async function observePRClaimBindings({ github, native, job, claimScope, clock = Date.now }, startedAt) {
+  if (typeof claimScope !== 'string' || typeof native?.resolvePRBinding !== 'function') return [];
+  const out = [], until = Math.min(startedAt + STAGE_WORK_BEFORE_MS, clock() + 30_000);
+  if (clock() >= until) return out;
+  let rows;
+  try { rows = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: 50, until })).pulls; }
+  catch { return out; }
+  if (!Array.isArray(rows)) return out;
+  for (const row of rows.slice(0, 50)) {
+    if (clock() >= until) break;
+    try {
+      const pull = await github.readPullRequest(row.number, { until });
+      if (clock() >= until) break;
+      if (pull?.number !== row.number || !eligibleBindingPull(pull, job.repo)) continue;
+      const binding = await native.resolvePRBinding({ scope: claimScope, repository: job.repo, prNumber: pull.number,
+        headSha: pull.head.sha, baseSha: pull.base.sha, targetBranch: pull.base.ref, readOnly: true },
+      { signal: AbortSignal.timeout(Math.max(1, Math.min(5000, until - clock()))) });
+      if (binding.auto_bound || clock() >= until) continue;
+      out.push({ repository: job.repo, scope: claimScope, pr: pull.number, headSha: pull.head.sha, baseSha: pull.base.sha,
+        targetBranch: pull.base.ref, bindingStatus: binding.binding_status, taskId: binding.task_id,
+        claimId: binding.claim?.claim_id ?? null, fence: binding.claim?.fence ?? null, epoch: binding.claim?.execution_epoch ?? null,
+        headAuthorizationId: binding.head_authorization_id, observedAt: isoOf(clock()), sourceManifestSha256: job.sourceManifestSha256 });
+    } catch { /* no confirmed exact observation: preserve the existing back-off */ }
+  }
+  return out;
 }
 
 async function runTrainCounted({ job, github: plainGithub, native, ledger, sweepStore = null, publications = null, appId = APP_ID, clock = Date.now, sleep = wait,
-  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null }, fx) {
+  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null, terminalAdmissions = null, startedAt = clock() }, fx) {
   validateTrainRun(job);
-  const started = clock(), at = isoOf(started), acting = job.mode !== 'shadow';
+  const started = startedAt, at = isoOf(started), acting = job.mode !== 'shadow';
   // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
   const gating = job.sweep === 'gate', permanent = !gating;
   // ADR 0018: push lands main itself (strict-permanent mode only; the landing port present; a stage file that could not be read is no push).
@@ -137,7 +184,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const actions = { ...NO_ACTIONS, revokeHead: job.revokeHeadRequestId ? { requestId: job.revokeHeadRequestId, done: false } : null };
   const until = { write: started + REVOKE_WRITE_BEFORE_MS, read: started + STAGE_WORK_BEFORE_MS };
   let budgetReadFailed = false;
-  const duty = await native.holders();
+  let duty = await native.holders();
   let frontSourceHealthy = false;
   let nodes = null, nodesDropped = 0;
   const facts = o => ({ facts: trainFacts({ mode: job.mode, at, nodes, nodesDropped, actions, ...o }), sideEffects: fx.n });
@@ -179,7 +226,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     if (reply?.complete !== true) fail(RULESET_UNREADABLE);
     rules = rulesetFacts(reply.rules, appId);
   } catch { rulesReason = RULESET_UNREADABLE; }
-  const holder = duty.holders.length === 1 ? duty.holders[0] : null;
+  let holder = duty.holders.length === 1 ? duty.holders[0] : null;
+  if (holder?.boundPrs?.length > 1) {
+    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock });
+    holder = selected ?? { ...holder, pr: null, boundPr: null };
+    duty = { ...duty, holders: [holder] };
+  }
   let front = null, pull = null, mergeCommit = null, frontChecks = [];
   if (holder?.pr) {
     pull = await github.readPullRequest(holder.pr);
@@ -367,7 +419,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     && (lastProof === null || await lastRoundSwept({ sweepStore, mode, lastProof, lastFull }));
   if (bindCandidate) {
     try { bindRows = (await github.readPullsPage({ state: 'open', sort: 'updated', direction: 'desc', page: 1, perPage: KEEPALIVE_MAX_PRS })).pulls; } catch { bindRows = null; }
-    if (Array.isArray(bindRows)) bindFound = await findFrontBind({ github, job, holder, rows: bindRows, claimScope, until: until.read, clock });
+    if (Array.isArray(bindRows)) bindFound = await findFrontBind({ github, native, fx, job, holder, rows: bindRows, claimScope, until: until.read, clock });
   }
   const frontBindSkip = bindFound !== null;
   const historyDeferred = frontFastOnly || frontOpenSkip || frontRefreshSkip;
@@ -521,15 +573,20 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       }
     } catch { /* keepalive is best effort: the lease clocks still run */ }
     let frontLanded = false;
-    if (push && !takeoverPending && !lostDuty) {
-      const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx });
+    let terminalHandled = new Set();
+    let terminalBudgetExhausted = false;
+    if (!takeoverPending && !lostDuty) {
+      const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx, includeLanding: push, until: until.read });
       landingFacts = l.facts;
       if (l.lostDuty) lostDuty = true;
       if (l.adopted.length) actions.adopted = true;
+      if (l.returned.length) actions.returned = true;
+      terminalHandled = l.handled;
+      terminalBudgetExhausted = l.nativeAttempts >= 20;
       frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
       landingState = l.state;
     }
-    if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
+    if (!takeoverPending && !lostDuty && !terminalBudgetExhausted && holder?.pr && front && !frontLanded && !terminalHandled.has(`${holder.pr}:${front.headSha}`)) {
       try {
         const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
           ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
@@ -570,13 +627,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     }
     // DESIGN §62.4: the same live conditions as the strict current-front observation (strict confirmed now, every node on this
     // Source, a healthy store, no pending or unconfirmed revocation, main's history known and not rewritten), for exactly one
-    // holder that Native has bound to no PR yet. Only a read: the resident runs that PR's stage 1, which binds the claim through
-    // Native's own verify; the next stage 10 then decides the front exactly as before.
+    // holder that has no front PR yet. Native may bind the unique authorized PR head; that lookup is counted if it wrote.
+    // The resident still runs its complete stage 1 before opening the front batch.
     const frontBindEligible = takeoverPending && !lostDuty && holder !== null && holder.boundPr === null && !!holder.takenAt && job.revokeHeadRequestId === null
       && rules?.strict === true && frontSourceHealthy && fastStoreHealthy && !stateReason && !ledgerReason && history !== 'rewritten' && history !== 'unknown'
       && allPending !== 'TRAIN_MAIN_REWRITTEN' && pendingRevocations.length === 0 && unconfirmed.length === 0 && leftover === 0 && !othersRefused && proofWritten;
     if (frontBindEligible && Array.isArray(openRows)) frontBind = Array.isArray(bindRows) ? bindFound
-      : await findFrontBind({ github, job, holder, rows: openRows, claimScope, until: until.read, clock });
+      : await findFrontBind({ github, native, fx, job, holder, rows: openRows, claimScope, until: until.read, clock });
     // §65 (the guard of strict-permanent mode): strict read off is never a state to work in. No front batch opens, and the resident
     // latches PAUSE and tells the Owner; stage 8 writes no green either (no proof says fullSweepSinceOn, its strict route needs strict).
     if (permanent && rules !== null && rules.strict !== true && !requestPause) requestPause = 'TRAIN_STRICT_OFF';
@@ -595,8 +652,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
-    const o = await openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
-      pushing: push ? { github, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
+    const o = await openFront({ job, github, native, claimScope, terminalAdmissions, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
+      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
   } else decision = wouldDo;
   // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
@@ -640,22 +697,61 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
     scope: full && full.state !== 'none' ? full.scope : null, scopeReason: full && full.state !== 'none' ? full.scopeReason : null, allPending },
   proofWritten, calls: counter.calls, ms: Math.max(0, clock() - started) });
 
-// DESIGN §62.4: the one open PR into main, from this repository and not a draft, whose body names the holder's claim (and this
-// install's scope), among the FRONT_BIND_MAX_READS most recently updated open PRs into main. None, two or more, a read that fails
-// or the stage's read deadline: null (nothing is proven unique, nothing runs).
-async function findFrontBind({ github, job, holder, rows, claimScope, until, clock }) {
-  const matches = [];
-  for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, FRONT_BIND_MAX_READS)) {
+// Choose the lowest-numbered eligible PR of the holder's uniquely projected
+// Task/current generation. Several PRs of that Task are normal scheduling choices;
+// contradictory Task/generation projections, unreadable data and deadline fail closed.
+async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS }) {
+  const matches = [], observed = [];
+  for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
     let pull;
-    try { pull = await github.readPullRequest(row.number); } catch { return null; }
-    const ref = claimReferenceOf(pull?.body);
-    if (ref?.claimId === holder.claimId && (claimScope === null || ref.scope === claimScope)) matches.push(pull);
+    try { pull = await github.readPullRequest(row.number, { until }); } catch { return null; }
+    if (!eligibleBindingPull(pull, job.repo)) continue;
+    let binding;
+    try { binding = await projectPull({ native, fx, pull, job, claimScope, readOnly, until, clock }); } catch { return null; }
+    if (clock() >= until) return null;
+    if (binding.binding_status === 'conflict') return null;
+    observed.push(binding);
+    if (binding.binding_status === 'bound' && binding.claim.claim_id === holder.claimId) matches.push({ pull, binding });
   }
-  const p = matches.length === 1 ? matches[0] : null;
+  const generations = new Set(matches.map(({ binding: b }) => JSON.stringify([b.task_id,b.claim.claim_id,b.claim.fence,b.claim.execution_epoch])));
+  if (generations.size !== 1 || (holder.taskId && matches.some(({ binding: b }) => b.task_id !== holder.taskId))) return null;
+  const first = matches[0].binding;
+  if (observed.some(b => b.task_id === first.task_id && (!b.claim || b.binding_status === 'handover_pending'
+    || b.claim.claim_id !== first.claim.claim_id || b.claim.fence !== first.claim.fence || b.claim.execution_epoch !== first.claim.execution_epoch))) return null;
+  const eligible = preferredHead === null ? matches : matches.filter(m => m.pull.head.sha === preferredHead);
+  if (preferredHead !== null && eligible.length !== 1) return null;
+  const p = eligible.sort((a,b) => a.pull.number - b.pull.number)[0]?.pull ?? null;
   if (!p || !Number.isSafeInteger(p.number) || p.state !== 'open' || p.draft !== false || p.base?.ref !== 'main' || p.head?.repo?.full_name !== job.repo
     || !SHA.test(p.head?.sha ?? '')) return null;
   return { pr: p.number, headSha: p.head.sha, claimId: holder.claimId };
+}
+
+async function selectProjectedHolder({ holder, ...ports }) {
+  if (!Array.isArray(holder.prs) || !holder.prs.length || typeof holder.taskId !== 'string') return null;
+  const activeHead = ['running','green'].includes(holder.ciState) && SHA.test(holder.ciHeadSha ?? '') ? holder.ciHeadSha : null;
+  const selected = await findFrontBind({ ...ports, holder, rows: holder.prs.map(number => ({ number, state: 'open', baseRef: 'main' })),
+    readOnly: true, preferredHead: activeHead, maxReads: 50 });
+  return selected ? { ...holder, pr: selected.pr, boundPr: `${ports.job.repo}#${selected.pr}` } : null;
+}
+
+function eligibleBindingPull(pull, repository) {
+  return Number.isSafeInteger(pull?.number) && pull.number > 0 && pull.state === 'open' && pull.draft === false
+    && pull.base?.ref === 'main' && pull.head?.repo?.full_name === repository
+    && SHA.test(pull.head?.sha ?? '') && SHA.test(pull.base?.sha ?? '');
+}
+
+async function projectPull({ native, fx, pull, job, claimScope, readOnly = false, until = null, clock = Date.now }) {
+  if (typeof claimScope !== 'string' || typeof native?.resolvePRBinding !== 'function') fail('TRAIN_PR_BINDING_UNAVAILABLE');
+  // Like the other Native writes: a lost reply may follow an atomic commit.
+  // Only a validated response explicitly saying no write can clear the count.
+  if (!readOnly) fx.n++;
+  const binding = await native.resolvePRBinding({ scope: claimScope, repository: job.repo, prNumber: pull.number,
+    headSha: pull.head.sha, baseSha: pull.base.sha, targetBranch: pull.base.ref, ...(readOnly ? { readOnly: true } : {}) },
+  until === null ? undefined : { signal: AbortSignal.timeout(Math.max(1, Math.min(5000, until-clock()))) });
+  if (!readOnly && binding.auto_bound === false) fx.n--;
+  return binding;
 }
 
 // No role (review R2 M3): the front is unknown here (holders answered admission_binding_required), so a green that may be the
@@ -744,7 +840,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
 // same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
 // infrastructure failure) counts as running until the holder's running clock or slot ends.
-async function openFront({ job, native, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
+async function openFront({ job, github, native, claimScope, terminalAdmissions, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
   try {
@@ -769,45 +865,60 @@ async function openFront({ job, native, sweepStore, holder, front, mainSha, kept
   actions.touchedRunning = true;
   let again;
   try { again = await native.holders(); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
-  const h = again.onDuty && again.holders.length === 1 ? again.holders[0] : null;
+  let h = again.onDuty && again.holders.length === 1 ? again.holders[0] : null;
+  if (h?.boundPrs?.length > 1) h = await selectProjectedHolder({ github, native, fx, job, holder: h, claimScope, until, clock });
   if (!h || h.claimId !== holder.claimId || h.pr !== holder.pr || !(Date.parse(h.mergeSlotUntil) > Date.parse(holder.mergeSlotUntil))
     || !(Date.parse(h.mergeSlotUntil) - clock() >= need)) return no('TRAIN_FRONT_BUDGET_SHORT');
   const batch = { pr: holder.pr, headSha: front.headSha, baseSha: mainSha, testSha: composed?.testSha ?? front.testMerge.sha, testTree: composed?.testTree ?? front.testMerge.tree,
     claimId: holder.claimId, since, attempt: Math.min(used, MAX_FRONT_BATCHES_PER_HEAD - 1) + 1 };
+  const capture = async member => {
+    if (typeof terminalAdmissions !== 'function') return member;
+    try {
+      const reference = normalizeTerminalAdmission(await terminalAdmissions({ repo: job.repo, pr: member.pr,
+        headSha: member.headSha, sourceManifestSha256: job.sourceManifestSha256 }));
+      return reference.claim_id === member.claimId ? { ...member, terminalAdmission: reference } : member;
+    } catch { return member; } // Historical or ambiguous evidence never becomes permission.
+  };
+  const capturedFront = await capture({ pr: batch.pr, headSha: batch.headSha, claimId: batch.claimId });
   if (composed) {
     try {
+      const members = [];
+      for (const member of composed.members) members.push(member.pr === capturedFront.pr ? capturedFront : await capture(member));
       await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: batch.pr, frontHeadSha: batch.headSha, baseSha: batch.baseSha,
-        testSha: batch.testSha, testTree: batch.testTree, attempt: batch.attempt, members: composed.members });
+        testSha: batch.testSha, testTree: batch.testTree, attempt: batch.attempt, members });
       if (composed.suspect !== composed.stateSuspect) await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...composed.state, suspect: composed.suspect });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
-  try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
+  try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch,
+    ...(capturedFront.terminalAdmission ? { terminalAdmission: capturedFront.terminalAdmission } : {}) }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   // ADR 0019: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
   // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
   const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
   return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: members ? { ...batch, members } : batch };
 }
 
-// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose body names a claim of this install and
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose Native binding names a current claim of this install and
 // whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
 // PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
 export const RIDER_MAX_READS = 10;
-async function findRiders({ github, job, rows, claimScope, holder, want }) {
+async function findRiders({ github, native, fx, job, rows, claimScope, holder, want }) {
   const out = [];
   if (want <= 0) return out;
   const open = rows.filter(r => r?.state === 'open' && r.baseRef === 'main' && r.number !== holder.pr).sort((a, b) => a.number - b.number).slice(0, RIDER_MAX_READS);
   for (const row of open) {
     if (out.length >= want) break;
     try {
-      const pull = await github.readPullRequest(row.number), ref = claimReferenceOf(pull?.body);
-      if (!ref || (claimScope !== null && ref.scope !== claimScope) || pull.state !== 'open' || pull.draft !== false || pull.base?.ref !== 'main'
-        || pull.head?.repo?.full_name !== job.repo || !SHA.test(pull.head?.sha ?? '') || ref.claimId === holder.claimId) continue;
+      const pull = await github.readPullRequest(row.number);
+      if (!eligibleBindingPull(pull, job.repo)) continue;
+      const binding = await projectPull({ native, fx, pull, job, claimScope });
+      if (binding.binding_status === 'conflict') fail('TRAIN_PR_BINDING_CONFLICT');
+      if (binding.binding_status !== 'bound' || binding.claim.claim_id === holder.claimId) continue;
       const listed = await github.readChecks(pull.head.sha);
       const admitted = (listed?.checks ?? []).filter(c => c?.app?.id === APP_ID && c.name === 'kooyumi-work-admission' && c.head_sha === pull.head.sha)
         .sort((a, b) => b.id - a.id)[0];
-      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: ref.claimId });
-    } catch { break; }
+      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
+    } catch (error) { if (error?.code === 'TRAIN_PR_BINDING_CONFLICT') throw error; break; }
   }
   return out;
 }
@@ -815,10 +926,10 @@ async function findRiders({ github, job, rows, claimScope, holder, want }) {
 // ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
-async function composeBatch({ github, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
+async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
   if (!state) return { refusal: 'TRAIN_SWEEP_INCOMPLETE' };
   const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
-  const candidates = max > 1 ? await findRiders({ github, job, rows, claimScope, holder, want: max - 1 }) : [];
+  const candidates = max > 1 ? await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1 }) : [];
   const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
   let members = picked.members, testSha = front.testMerge?.sha ?? null, testTree = front.testMerge?.tree ?? null;
   try {
@@ -848,44 +959,98 @@ async function composeBatch({ github, landing, max, rows, claimScope, state, job
 // ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
 // the batch's head (merged, or open while GitHub has not marked it yet) is adopted with S, riders first and the front last. A batch is
 // recorded as adopted once each member was answered (adopted, or moved on to another head); the bisection learns from it once.
-async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx }) {
-  const out = { facts: null, adopted: [], lostDuty: false, state: null };
-  let state, batches;
-  try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
+async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx, includeLanding = true, until }) {
+  const out = { facts: null, adopted: [], returned: [], handled: new Set(), lostDuty: false, state: null, nativeAttempts: 0 };
+  let state;
+  try {
+    state = await sweepStore.readLandingState();
+  }
   catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
   const notMarkedMerged = [], landed = [];
-  let changed = false;
-  for (const b of [...batches].reverse()) {
-    if (state.adopted.includes(b.testSha)) continue;
-    let cmp;
-    try { cmp = await github.readCompare(b.testSha, mainSha); } catch { continue; }
-    if (!(cmp?.status === 'identical' || (cmp?.status === 'ahead' && cmp.behindBy === 0))) continue;
-    let answered = true;
+  const attempted = new Set();
+  let changed = false, scanned = false, nativeAttempts = 0;
+  try { for await (const item of sweepStore.terminalRecords({ cursor: state.terminalScan, includeLanding, clock, until })) {
+    const beforeScan = state.terminalScan;
+    const advance = () => { state = { ...state, terminalScan: item.cursor }; changed = true; scanned = true; };
+    const rewind = () => { const { terminalScan, ...rest } = state; state = beforeScan ? { ...rest, terminalScan: beforeScan } : rest; };
+    if (!item.record || item.kind === 'front' && !item.record.terminalAdmission) { advance(); continue; }
+    const b = item.kind === 'front' ? { ...item.record, terminalFront: true, members: [{ pr: item.record.pr,
+      headSha: item.record.headSha, claimId: item.record.claimId, terminalAdmission: item.record.terminalAdmission }] } : item.record;
+    // Reserve the whole batch. A cursor must not skip its unattempted riders
+    // just because another kind used the last part of the shared RPC budget.
+    if (nativeAttempts + b.members.length > 20) break;
+    advance();
+    for (const member of b.members) if (member.terminalAdmission) out.handled.add(`${member.pr}:${member.headSha}`);
+    if (clock() >= until) { rewind(); break; }
+    // Old completion rings name only test SHAs, not proof generations. They
+    // cannot retire a new terminal witness. Exact Native replay is harmless.
+    if (!b.members.some(m => m.terminalAdmission) && state.adopted.includes(b.testSha)) continue;
+    if (!b.terminalFront) {
+      let cmp;
+      try { cmp = await github.readCompare(b.testSha, mainSha); }
+      catch { if (clock() >= until) rewind(); continue; }
+      if (clock() >= until) { rewind(); break; }
+      if (!(cmp?.status === 'identical' || (cmp?.status === 'ahead' && cmp.behindBy === 0))) continue;
+    }
+    let answered = true, mergedBatch = !b.terminalFront;
     for (const m of [...b.members.slice(1), b.members[0]]) {
+      if (clock() >= until) { answered = false; break; }
+      const identity = `${b.testSha}:${m.pr}:${m.headSha}:${m.terminalAdmission?.receipt_id ?? ''}`;
+      if (attempted.has(identity)) { answered = false; continue; }
+      attempted.add(identity);
       let pull;
-      try { pull = await github.readPullRequest(m.pr); } catch { answered = false; continue; }
-      if (pull?.head?.sha !== m.headSha || (pull.state !== 'open' && pull.merged !== true)) continue;
-      if (pull.merged !== true) notMarkedMerged.push(m.pr);
+      try { pull = await github.readPullRequest(m.pr, { until }); } catch { answered = false; continue; }
+      if (pull?.number !== m.pr || pull?.head?.sha !== m.headSha) continue;
+      if (b.terminalFront && pull.state !== 'closed') { answered = false; continue; }
+      if (!b.terminalFront && pull.state !== 'open' && pull.merged !== true) continue;
+      if (pull.merged !== true && !b.terminalFront) notMarkedMerged.push(m.pr);
       try {
-        fx.n++;
-        const a = await native.adopt({ pr: m.pr, mergeSha: b.testSha });
+        let mergeSha = b.testSha;
+        if (b.terminalFront && pull.merged === true) {
+          const commit = await github.readGitCommit(pull.merge_commit_sha);
+          if (commit?.sha !== pull.merge_commit_sha || commit.tree !== b.testTree || commit.parents?.length !== 2
+            || commit.parents[0] !== b.baseSha || commit.parents[1] !== m.headSha) { answered = false; continue; }
+          mergeSha = commit.sha; mergedBatch = true;
+        }
+        const terminalProof = m.terminalAdmission && pull.state === 'closed'
+          ? terminalProofForPull(m.terminalAdmission, pull, { repository: job.repo, prNumber: m.pr,
+            headSha: m.headSha, targetBranch: 'main', ...(pull.merged ? { mergeSha } : {}) }) : null;
+        fx.n++; nativeAttempts++;
+        const a = b.terminalFront && pull.merged === false
+          ? await native.returnSlot({ pr: m.pr, terminalProof })
+          : await native.adopt({ pr: m.pr, mergeSha, ...(terminalProof ? { terminalProof } : {}) });
         if (!a.onDuty) { fx.n--; out.lostDuty = true; answered = false; break; }
-        if (a.adopted) out.adopted.push(m.pr);
+        out.handled.add(`${m.pr}:${m.headSha}`);
+        if (a.terminalReplayed === true) fx.n--;
+        else {
+          if (a.adopted) out.adopted.push(m.pr);
+          if (b.terminalFront && pull.merged === false && a.returned) out.returned.push(m.pr);
+        }
+        if (a.autoRelease && a.autoRelease.status !== 'released') {
+          const reason = `TRAIN_TERMINAL_${a.autoRelease.reason.toUpperCase()}`;
+          out.facts ??= {};
+          out.facts.error ??= /^[A-Z][A-Z0-9_]{1,79}$/.test(reason) ? reason : 'TRAIN_TERMINAL_UNCONFIRMED';
+        }
+        // The same durable record drives retries after the slot/holder is gone.
+        // An open landed PR is only adoption, never proof of PR termination.
+        if (m.terminalAdmission && (!terminalProof || !a.autoRelease || a.autoRelease.retryable)) answered = false;
       } catch { answered = false; }
     }
+    if (!answered && clock() >= until) rewind();
     if (out.lostDuty) break;
     if (answered) {
-      const next = bisectAfter({ suspect: state.suspect, members: b.members, landed: true });
+      const next = mergedBatch ? bisectAfter({ suspect: state.suspect, members: b.members, landed: true }) : { suspect: state.suspect, bad: [] };
       state = { ...state, suspect: next.suspect, bad: [...state.bad, ...next.bad], adopted: [...state.adopted, b.testSha] };
-      landed.push({ testSha: b.testSha, members: b.members.map(m => m.pr) });
+      if (mergedBatch) landed.push({ testSha: b.testSha, members: b.members.map(m => m.pr) });
       changed = true;
     }
-  }
+  } } catch { out.facts = { ...(out.facts ?? {}), error: 'TRAIN_LANDING_STATE_UNREADABLE' }; }
   if (changed) {
     try { await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...state }); } catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNWRITTEN' }; }
   }
   out.state = state;
-  out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
+  out.nativeAttempts = nativeAttempts;
+  if (includeLanding || scanned) out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
   return out;
 }
 
@@ -959,7 +1124,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.trainShadow, job.id);
     const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
-    const native = createMergeSlotNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken });
+    const slotNative = createMergeSlotNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken });
+    const native = Object.freeze({ ...slotNative, resolvePRBinding: (expected, options) => resolvePRTaskBinding({ ...expected,
+      scope: inputs.record.config.scope, repository: inputs.record.config.repository, command: input => ports.native.command(input, options) }) });
     let ledger = null, sweepStore = null;
     try { ledger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* listed as nothing; the facts say so */ }
     try { sweepStore = await TrainSweepStore.open(STATE_V2.trainSweep); } catch { /* no sweep state: the sweep is incomplete */ }
@@ -972,7 +1139,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const landing = trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
     return settleTrain({
-      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope, landing, trainLanding }),
+      run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope,
+        observeBindings: true, landing, trainLanding,
+        terminalAdmissions: subject => readRecordedTerminalAdmission(STATE_V2.batchClaims, subject) }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are

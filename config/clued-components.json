@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "55",
+      "version": "57",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "2b408b5a4155f5b5d7257d4b6ffa22ede83d5a1b0291fde21c5a87c81297343b",
+      "content_sha256": "1429726fca7a7245096670aef4f62aca4fa0888312b8327beba225149b6500d0",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.1",
+      "version": "0.9.2",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "4095ac1f3482fa485795b4d629167421b5f022511a83f8723582aacacb81cded"
+      "content_sha256": "279c716158dee3b61e56df845646e1f984c7481a3b525f284c8d05b2b3917160"
     },
     {
       "id": "hook.runner-job-started",
@@ -92,13 +92,14 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.11",
+      "version": "1.1.12",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
-        "clued_work_claim_guard.py"
+        "clued_work_claim_guard.py",
+        "clued_work_write_set.py"
       ],
-      "content_sha256": "8232f3535c25352e6cafedbc0778e02889f06273a73c0bbd37f3545badacea6f",
+      "content_sha256": "c9500af87479aab78ccc9f20e4eb6fab23501a3571cd0fc6e3b0c6dd83874d50",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -422,16 +423,25 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.37",
+      "version": "1.1.38",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
         "apps/clued-cloud/supabase/migrations/20261029050000_work_claim_independent_publication_v1.sql",
         "apps/clued-cloud/supabase/migrations/20261102151506_ci_scan_start_keys_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261108144312_work_claim_mechanical_files_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261108161615_work_claim_pr_task_binding_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261108204157_work_claim_pr_terminal_release_v1.sql",
         "apps/clued-cloud/tests/bootstrap-ordinary-gitleaks-successor.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-worker.test.mjs",
+        "apps/clued-cloud/tests/work-claims-generated-files-db.test.mjs",
+        "apps/clued-cloud/tests/work-claims-pr-task-binding-db.test.mjs",
+        "apps/clued-cloud/tests/work-claims-pr-terminal-release-db.test.mjs",
+        "apps/clued-cloud/tests/work-claims-transport.test.mjs",
         "apps/clued-cloud/worker/ci-scan-start-v1.ts",
+        "apps/clued-cloud/worker/work-claims.ts",
+        "config/clued-mechanical-files.json",
         "scripts/ci/clued-gated-proof-profiles.json",
         "scripts/ci/clued-gated-proof-role-specs.json",
         "scripts/ci/clued-independent-legacy-drain.mjs",
@@ -448,18 +458,33 @@
         "scripts/ci/clued-independent-revoker.test.mjs",
         "scripts/ci/clued-independent-supervisor.mjs",
         "scripts/ci/clued-independent-supervisor.test.mjs",
+        "scripts/ci/clued-merge-train-native.mjs",
+        "scripts/ci/clued-merge-train-native.test.mjs",
+        "scripts/ci/clued-pr-task-binding.mjs",
+        "scripts/ci/clued-pr-task-binding.test.mjs",
+        "scripts/ci/clued-pr-write-set.mjs",
+        "scripts/ci/clued-pr-write-set.test.mjs",
         "scripts/ci/clued-scan-start-prereg.test.mjs",
         "scripts/ci/clued-scan-start.mjs",
         "scripts/ci/clued-scan-start.test.mjs",
         "scripts/ci/clued-work-admission.mjs",
         "scripts/ci/clued-work-admission.test.mjs",
+        "scripts/ci/component-version-integration-policy.mjs",
+        "scripts/ci/component-version-integration-policy.test.mjs",
+        "scripts/ci/merge-admission-policy.test.mjs",
+        "scripts/ci/merge-admission-source-producer.mjs",
+        "scripts/ci/merge-admission-source-producer.test.mjs",
+        "scripts/ci/pr-repush-preflight.mjs",
+        "scripts/ci/pr-repush-preflight.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/clock-skew.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/startup.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/github-budget.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs",
@@ -470,6 +495,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.spec.json",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-entry-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/merge-slot-native.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
@@ -522,25 +548,32 @@
         "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-record.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-stage.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/pr-a-review.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/provenance-v1.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/qualification-observer.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/relay-roundtrip-opt.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-admission.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-entry-runtime-reasons.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-publishers.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-engine.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-entry.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-run.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-stage.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-window.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/role-probe-watch.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/scan-result-cache.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/scan-start-native-port.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/state-retention.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-facts.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-gen16-offline.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-landing-e2e.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-run.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-single-green.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-strict-front.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/train-strict.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-sweep.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v2/adapter.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/adapter.mjs",
         "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v4/adapter.mjs",
@@ -566,20 +599,30 @@
         "work/independent-ci-resident-v1/qualification/duplicate-execution.test.mjs",
         "work/independent-ci-resident-v1/qualification/scan-start-cutover-plan.mjs",
         "work/independent-ci-resident-v1/qualification/scan-start-cutover-plan.test.mjs",
+        "work/independent-ci-resident-v1/src/companion.mjs",
         "work/independent-ci-resident-v1/src/engine-windows.mjs",
         "work/independent-ci-resident-v1/src/executor.mjs",
+        "work/independent-ci-resident-v1/src/failure-table.json",
         "work/independent-ci-resident-v1/src/hosted-wait.mjs",
         "work/independent-ci-resident-v1/src/ledger.mjs",
+        "work/independent-ci-resident-v1/src/poller.mjs",
         "work/independent-ci-resident-v1/src/pr-status.mjs",
+        "work/independent-ci-resident-v1/src/queue.mjs",
         "work/independent-ci-resident-v1/src/relay-qualification-hold.mjs",
         "work/independent-ci-resident-v1/src/relay-qualification-observations.mjs",
         "work/independent-ci-resident-v1/src/revocation-maintenance.mjs",
+        "work/independent-ci-resident-v1/src/service-ports.mjs",
         "work/independent-ci-resident-v1/src/status.mjs",
         "work/independent-ci-resident-v1/src/train.mjs",
+        "work/independent-ci-resident-v1/test/claim-change-backoff.test.mjs",
+        "work/independent-ci-resident-v1/test/companion.test.mjs",
+        "work/independent-ci-resident-v1/test/failure-table.test.mjs",
         "work/independent-ci-resident-v1/test/helpers.mjs",
         "work/independent-ci-resident-v1/test/hosted-wait.test.mjs",
         "work/independent-ci-resident-v1/test/native-revocation-maintenance.test.mjs",
         "work/independent-ci-resident-v1/test/node-mode.test.mjs",
+        "work/independent-ci-resident-v1/test/poller-conditional.test.mjs",
+        "work/independent-ci-resident-v1/test/pr-status.test.mjs",
         "work/independent-ci-resident-v1/test/relay-qualification-hold.test.mjs",
         "work/independent-ci-resident-v1/test/relay-qualification-observations.test.mjs",
         "work/independent-ci-resident-v1/test/relay.test.mjs",
@@ -593,19 +636,13 @@
         "work/independent-ci-resident-v1/windows/BrokerPureTests.cs",
         "work/independent-ci-resident-v1/windows/SwapBroker.cs",
         "work/independent-ci-resident-v1/windows/test-upgrade-windows.ps1",
-        "work/independent-ci-resident-v1/windows/verify-resident.ps1",
-        "config/clued-mechanical-files.json",
-        "scripts/ci/component-version-integration-policy.mjs",
-        "scripts/ci/component-version-integration-policy.test.mjs",
-        "apps/clued-cloud/supabase/migrations/20261108144312_work_claim_mechanical_files_v1.sql",
-        "apps/clued-cloud/tests/work-claims-generated-files-db.test.mjs",
-        "apps/clued-cloud/worker/work-claims.ts"
+        "work/independent-ci-resident-v1/windows/verify-resident.ps1"
       ],
       "version_marker": {
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "447fa63bc7dd27c1fad6480977ce1e65ffb2c0e73d0245bc91df9d4461885ae3"
+      "content_sha256": "297d51456b6fc170cccdbaab7de1460beda1b801e8a9e5a5a6590696496bc889"
     },
     {
       "id": "script.resource-maintenance",
@@ -660,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.8",
+      "version": "1.0.9",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -677,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "4df6dcf30361abd0f6f987e3ed9563e4759e978a9c5af541134f7b85fc890375"
+      "content_sha256": "3adf133aab41e73df17f8643eb52a153cf8703c8fb560acad56ad66c00708d3a"
     },
     {
       "id": "script.required-applicability",
@@ -870,13 +907,14 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.21",
+      "version": "1.0.22",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
         ".github/workflows/clued-merge-reconcile.yml",
         "docs/maintenance/clued-merge-executor.md",
         "scripts/ci/clued-merge-executor.mjs",
+        "scripts/ci/clued-merge-executor.test.mjs",
         "scripts/ci/clued-merge-reconcile*",
         "work/independent-ci-resident-v1/src/companion-main.mjs",
         "work/independent-ci-resident-v1/src/merge-reconcile*.mjs",
@@ -887,7 +925,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "c249355ec0d15d62e67841fc15df8f06d0eab7294382c567c3b9da04ea94ec78"
+      "content_sha256": "7c858550370809df1de5fb03d70fdea15cc6bf617eaa73c07b571d3f0deb88a0"
     }
   ]
 }

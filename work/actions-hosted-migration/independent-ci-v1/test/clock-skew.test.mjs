@@ -60,9 +60,15 @@ test('native.current: this host 2 s or 10 s slow or fast passes; a round trip ov
   const record = { config: { repository: repo, scope, supabaseUrl: 'https://example.invalid', publishableKey: 'sb_publishable_test' }, accepted: {} };
   let serverNow = NOW, lease = 3600_000, roundTrip = 200, mono = 0;
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => { mono += roundTrip; return new Response(JSON.stringify({ status: 'ok', verdict: 'ADMITTED', execution_policy: 'active',
+  globalThis.fetch = async (url, options) => { mono += roundTrip;
+    const input = JSON.parse(options.body).p_input;
+    if (input.action === 'resolve_pr_claim') return new Response(JSON.stringify({ status: 'ok', binding_status: 'bound', reason: null,
+      repository: repo, pr_number: 7, pr_ref: `${repo}#7`, head_sha: input.head_sha, base_sha: input.base_sha, target_branch: 'main', scope,
+      task_id: claim.claim_id, claim: { ...claim, task_id: claim.claim_id, context_key: scope, lease_version: 1, status: 'ACTIVE',
+        expires_at: iso(serverNow + lease), execution_handover_pending: false }, head_authorization_id: null, auto_bound: false, receipt_id: null }), { status: 200 });
+    return new Response(JSON.stringify({ status: 'ok', verdict: 'ADMITTED', execution_policy: 'active',
     current_fence: 3, execution_epoch: 1, verified_at: iso(serverNow),
-    claim: { ...claim, lease_key_required: false, execution_handover_pending: false, status: 'ACTIVE', context_key: scope,
+    claim: { ...claim, task_id: claim.claim_id, lease_key_required: false, execution_handover_pending: false, status: 'ACTIVE', context_key: scope,
       bound_pr: `${repo}#7`, expires_at: iso(serverNow + lease) } }), { status: 200 }); };
   t.after(() => { globalThis.fetch = realFetch; });
   const logged = [];

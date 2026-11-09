@@ -20,13 +20,18 @@ const MAINISH = "d".repeat(40);
 const CLAIM = "11111111-2222-4333-8444-555555555555";
 const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const SLOT = `merge:${REPO}:main`;
+const HEAD_AUTH = '22222222-2222-4222-8222-222222222222';
+function nativeBinding(pr, patch={}) { return {status:'ok',binding_status:'bound',reason:null,repository:REPO,pr_number:pr.number,
+  pr_ref:`${REPO}#${pr.number}`,head_sha:pr.head.sha,base_sha:pr.base.sha,target_branch:pr.base.ref,scope:SCOPE,task_id:CLAIM,
+  claim:{claim_id:CLAIM,task_id:CLAIM,context_key:SCOPE,fence:3,execution_epoch:1,lease_version:1,status:'ACTIVE',
+    execution_handover_pending:false,expires_at:'2099-01-01T00:00:00.000Z'},head_authorization_id:HEAD_AUTH,auto_bound:false,receipt_id:null,...patch}; }
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, ...extra });
 const BODY = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`;
 const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, state: "open", mergeable_state:"clean", draft: false, auto_merge: null,
-  head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main", full_name: REPO } }, ...extra });
+  head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", sha: TIP, repo: { default_branch: "main", full_name: REPO } }, ...extra });
 const verified = (extra = {}) => ({ id: 20, name: "kooyumi-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
   app: { id: ADMISSION_APP_ID }, external_id: "pr:5:run:900", output: { title: "ADMITTED [normal · code · reruns 1]" }, ...extra });
 const check = (name, extra = {}) => (name === "kooyumi-admission-verified" ? verified(extra)
@@ -50,6 +55,12 @@ function fakeFetch(routes) {
     const method = init.method ?? "GET";
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method, input: body && body.p_input, body,
       authorization: init.headers && init.headers.authorization });
+    if(rpc?.[1]===VERIFY_RPC && body?.p_input?.action==='resolve_pr_claim') {
+      const input=body.p_input,selected=routes['binding:resolve'];
+      const binding=selected ? (typeof selected==='function'?selected(body):selected) : nativeBinding({number:Number(input.pr_ref.split('#')[1]),
+        head:{sha:input.head_sha},base:{sha:input.base_sha,ref:input.target_branch}});
+      return new Response(JSON.stringify(binding),{status:200});
+    }
     // Branch rules not given by a test are the legacy mapping (design A2).
     if (method === "GET" && route.startsWith(`/repos/${REPO}/rules/branches/`) && !Object.keys(routes).some((key) => route.startsWith(key)))
       return new Response(JSON.stringify(branchRules(LEGACY_RULES)), { status: 200, headers: { "content-type": "application/json" } });
@@ -80,7 +91,7 @@ const allGreen = () => checksRoute(Object.fromEntries(CI_REQUIRED_CHECKS.map(({ 
 
 const PROOF = Symbol("execution fixture");
 const fixtureProof = pr => ({passed:true,state:"qualified",head:pr.head.sha,pr_number:pr.number,reason:"qualified execution fixture",native_runs:[]});
-function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], merge_slot_until: "2026-10-09T12:00:00Z",
+function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, task_id: CLAIM, bound_pr: `${REPO}#5`, bound_prs:[`${REPO}#5`], merge_refs: [SLOT], merge_slot_until: "2026-10-09T12:00:00Z",
   merge_slot_ci: { taken_at: "2026-10-09T10:00:00Z" } }], behindBy = 0, token = { token: "ghs_exec" }, extra = {} } = {}) {
   const result = fakeFetch({
     ...Object.fromEntries(pulls.map(pr=>[`/repos/${REPO}/pulls/${pr.number}`,pr])),
@@ -115,6 +126,23 @@ const run = (fetch, extraEnv = {}, dependencies = {}) => runExecutor({ env: env(
       pr:current,mode,progress_ref:fetch.progress_ref};
   },...dependencies });
 const writes = (fetch) => fetch.calls.filter((call) => call.method !== "GET" && !call.route.startsWith("rpc:") && !call.route.includes("access_tokens"));
+
+test('Native PR binding discovers missing and contradictory claim trailers in the real scope',async()=>{
+  for(const body of [`Clued-Auto-Merge: ${HEAD}`,`Clued-Work-Claim: ${HEAD_AUTH}\nClued-Work-Scope: global\nClued-Auto-Merge: ${HEAD}`]){
+    const fetch=world({pulls:[pull({body})]});const result=await run(fetch);
+    assert.deepEqual(result.heads,[{pr:5,head_sha:HEAD}]);
+    assert.ok(fetch.calls.some(c=>c.input?.action==='resolve_pr_claim'&&c.input.read_only===true));
+    assert.ok(fetch.calls.filter(c=>c.route===`rpc:${HOLDERS_RPC}`).every(c=>c.input.scope===SCOPE));
+  }
+});
+
+test('unbound PRs never query a default global holder scope',async()=>{
+  const fetch=world({extra:{'binding:resolve':body=>({...nativeBinding(pull()),binding_status:'unbound',task_id:null,claim:null,scope:null,
+    head_authorization_id:null})}});
+  const result=await run(fetch);assert.deepEqual(result.heads,[]);
+  assert.equal(fetch.calls.some(c=>c.route===`rpc:${HOLDERS_RPC}`),false);
+  assert.deepEqual(writes(fetch),[]);
+});
 
 test("optInSha: only an exact body line naming a full head sha", () => {
   assert.equal(optInSha(`x\nClued-Auto-Merge: ${HEAD}\n`), HEAD);
@@ -301,13 +329,14 @@ test("without the App permissions it reports and changes nothing", async () => {
   assert.match(uninstalled.notices[0], /installation returned 404/);
 });
 
-test("only the default branch's queue head, an open same-repository non-draft pull request that names its claim, is acted on", async () => {
+test("only the default branch's queue head and an open same-repository non-draft Native-bound PR is acted on", async () => {
   for (const [name, options] of [
-    ["another branch's queue", { holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [`merge:${REPO}:release`] }] }],
+    ["another branch's queue", { holders: [{ claim_id: CLAIM, task_id:CLAIM, bound_pr: `${REPO}#5`, bound_prs:[`${REPO}#5`], merge_refs: [`merge:${REPO}:release`] }] }],
     ["a pull request not open", { pulls: [] }],
     ["a fork", { pulls: [pull({ head: { sha: HEAD, repo: { full_name: "someone/fork" } } })] }],
     ["a draft", { pulls: [pull({ draft: true })] }],
-    ["no claim in the body (review MINOR-3)", { pulls: [pull({ body: `Clued-Auto-Merge: ${HEAD}` })] }],
+    ["no current Native PR binding", { pulls: [pull({ body: `Clued-Auto-Merge: ${HEAD}` })],extra:{'binding:resolve':{
+      ...nativeBinding(pull()),binding_status:'unbound',scope:null,task_id:null,claim:null,head_authorization_id:null}} }],
     ["no head", { holders: [] }],
   ]) {
     const fetch = world({ behindBy: 1, ...options });
@@ -341,7 +370,7 @@ test("claim renewal opts in only a full matching head of a non-protected layer",
   for (const [layer, progress, expected] of [['code', HEAD, 'merge_pull_request'], ['docs', HEAD.toUpperCase(), 'merge_pull_request'],
     ['protected', HEAD, 'none'], ['code', HEAD.slice(0, 12), 'none'], ['code', APPROVED, 'none'], ['code', `receipt:${HEAD}`, 'none']]) {
     const fetch = world({ pulls: [pull({ body: BODY })],
-      holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], progress_ref: progress }],
+      holders: [{ claim_id: CLAIM, task_id:CLAIM, bound_pr: `${REPO}#5`, bound_prs:[`${REPO}#5`], merge_refs: [SLOT], progress_ref: progress }],
       extra: checksRoute({ 'kooyumi-admission-verified': [verified({ output: { title: `ADMITTED [normal · ${layer} · reruns 1]` } })] }) });
     const result = await run(fetch);
     assert.equal(result.actions[0].action, expected, `${layer}: ${progress}`);
@@ -423,18 +452,46 @@ function authorityWorld(extra={}) {
     ...checksRoute({"kooyumi-admission-verified":[verified({output:{title:"ADMITTED [normal · docs · reruns 2]"}})]}),
     [`/repos/${REPO}/pulls/5/files`]:[{filename:"README.md",status:"modified"}],
     [`/repos/${REPO}/compare/${TIP}...${HEAD}`]:{status:"ahead",files:[{filename:"README.md",status:"modified"}]},
-    [`rpc:${VERIFY_RPC}`]:{verdict:"ADMITTED",reasons:[],verified_at:"2026-10-10T20:00:00Z",
-      claim:{trigger_refs:[SLOT],merge_slot_until:"2026-10-10T21:00:00Z"}},...extra}});
+    [`rpc:${VERIFY_RPC}`]:{status:'ok',verdict:"ADMITTED",reasons:[],execution_authorized:true,execution_policy:'staged',
+      current_fence:3,execution_epoch:1,head_authorization_id:HEAD_AUTH,verified_at:"2026-10-10T20:00:00Z",
+      claim:{...nativeBinding(current).claim,lease_key_required:false,trigger_refs:[SLOT],merge_slot_until:"2099-01-01T00:00:00Z"}},...extra}});
   return {fetch,current};
 }
 test("real live authority reader admits the current claimed FIFO head and rejects withdrawal",async()=>{
   for(const revoked of [false,true]) {
     const {fetch,current}=authorityWorld(revoked?{[`rpc:${VERIFY_RPC}`]:{verdict:"REJECTED",reasons:["claim_revoked"]}}:{});
     const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
-      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
+      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,expectedBinding:nativeBinding(current),action:"merge_pull_request"});
     assert.equal(result.valid,!revoked);assert.deepEqual(writes(fetch),[]);
     assert.ok(fetch.calls.some(c=>c.route===`rpc:${VERIFY_RPC}`));
   }
+});
+
+test('a planned Native binding rejects Task claim generation and private head-key changes before an old operation',async()=>{
+  const other='33333333-3333-4333-8333-333333333333';
+  for(const field of ['task','claim','fence','epoch','head-key']){
+    const current=pull(),expected=nativeBinding(current),fresh=structuredClone(expected);
+    if(field==='task'){fresh.task_id=other;fresh.claim.task_id=other;}
+    if(field==='claim')fresh.claim.claim_id=other;
+    if(field==='fence')fresh.claim.fence++;
+    if(field==='epoch')fresh.claim.execution_epoch++;
+    if(field==='head-key')fresh.head_authorization_id=other;
+    const {fetch}=authorityWorld({'binding:resolve':fresh});
+    const r=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,readPolicyFile:fs.readFileSync,
+      repository:REPO,pr:current,tip:TIP,scope:SCOPE,expectedBinding:expected,action:'update_branch'});
+    assert.equal(r.valid,false,field);assert.deepEqual(writes(fetch),[]);
+  }
+});
+
+test('one Task with two authorized PRs plans one stable front and retains the same expected binding through rechecks',async()=>{
+  const second=pull({number:6,node_id:'PR_node6'}),seen=[];
+  const fetch=world({pulls:[second,pull()],holders:[{claim_id:CLAIM,task_id:CLAIM,bound_pr:null,bound_prs:[`${REPO}#6`,`${REPO}#5`],
+    merge_refs:[SLOT],merge_slot_until:'2099-01-01T00:00:00Z',merge_slot_ci:{taken_at:'2026-10-09T10:00:00Z'}}]});
+  const result=await run(fetch,{}, {authorizeOperation:async({pr,env:environment,expectedBinding})=>{
+    assert.equal(expectedBinding.pr_number,5);seen.push(expectedBinding);
+    return {valid:true,pr,mode:resolveMode({env:environment,workspace:ROOT,readFile:fs.readFileSync}),progress_ref:fetch.progress_ref};
+  }});
+  assert.deepEqual(result.heads,[{pr:5,head_sha:HEAD}]);assert.ok(seen.length>=2);assert.ok(seen.every(b=>b===seen[0]));
 });
 test("the real production qualifier refuses fixture head/source; required greens do not mint execution proof",async()=>{
   const fetch=world();const result=await runExecutor({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT});
@@ -495,7 +552,7 @@ test("final native barrier after authority refuses newer run, changed attempt, n
 test("production live authority retains efficiency's actual FIFO holder",async()=>{
   const {fetch,current}=authorityWorld(checksRoute({"kooyumi-admission-verified":[verified({output:{title:"ADMITTED [efficiency · docs · reruns 2]"}})]}));
   const result=await currentOperationAuthority({env:env({CLUED_MERGE_ADMISSION_STATE:"efficiency"}),fetchImpl:fetch.fetchImpl,workspace:ROOT,
-    readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
+    readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,expectedBinding:nativeBinding(current),action:"merge_pull_request"});
   assert.equal(result.valid,true);assert.deepEqual(writes(fetch),[]);
 });
 
@@ -503,7 +560,7 @@ test("a stale App layer or retry limit does not describe the current policy",asy
   for(const title of ["ADMITTED [normal · code · reruns 1]","ADMITTED [normal · docs · reruns 1]"]) {
     const {fetch,current}=authorityWorld(checksRoute({"kooyumi-admission-verified":[verified({output:{title}})]}));
     const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
-      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"rerun_gated"});
+      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,expectedBinding:nativeBinding(current),action:"rerun_gated"});
     assert.equal(result.valid,false,title);assert.deepEqual(writes(fetch),[]);
   }
 });
@@ -627,7 +684,7 @@ test("A2: the live authority reader accepts an independent admission check by it
   ]) {
     const { fetch, current } = authorityWorld({ ...rulesRoute(INDEPENDENT_RULES), ...checksRoute(checks) });
     const result = await currentOperationAuthority({ env: env(), fetchImpl: fetch.fetchImpl, workspace: ROOT,
-      readPolicyFile: fs.readFileSync, repository: REPO, pr: current, tip: TIP, scope: SCOPE, action: "merge_pull_request" });
+      readPolicyFile: fs.readFileSync, repository: REPO, pr: current, tip: TIP, scope: SCOPE, expectedBinding:nativeBinding(current), action: "merge_pull_request" });
     assert.equal(result.valid, valid, label); assert.deepEqual(writes(fetch), [], label);
   }
 });

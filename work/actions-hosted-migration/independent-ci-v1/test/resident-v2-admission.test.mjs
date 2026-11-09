@@ -12,17 +12,38 @@ const REPO = 'tdoljyj/cross-memory-system';
 const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
+test('full admission retains only its original Native terminal admission Receipt and CAS', async () => {
+  const receipt = randomUUID(), authorization = randomUUID();
+  const w = world({ claimOverrides: { lease_version: 5 }, nativeOverrides: {
+    terminal_admission_receipt_id: receipt, head_authorization_id: authorization } });
+  // Populate the authentic verifier response, never the resolver projection.
+  const reference = { receipt_id: receipt, claim_id: w.claimId, fence: 3, execution_epoch: 1,
+    lease_version: 5, head_authorization_id: authorization };
+  const p = world({ claimId: w.claimId, claimOverrides: { lease_version: 5 }, nativeOverrides: {
+    terminal_admission_receipt_id: receipt, terminal_admission: reference, head_authorization_id: authorization } });
+  const facts = await p.port.evaluatePr(p.job, p.packet);
+  assert.deepEqual(facts.terminalAdmission, reference);
+  assert.equal(admittedFactsMatchJobV2(facts, p.job, Date.now()), true);
+  const legacy = world();
+  assert.equal(Object.hasOwn(await legacy.port.evaluatePr(legacy.job, legacy.packet), 'terminalAdmission'), false);
+});
+
 // testSha: the tested commit S (a train front batch when S != H); prBase: the base.sha GitHub and Native report.
-function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase, monotonic } = {}) {
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, bindingOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase, monotonic } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
   const pr = { number: 888, state: 'open', body, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: prBase, ref: 'main', repo: { full_name: REPO } } };
   let prReads = 0;
-  const state = { claimId, fence, epoch, expiresAt: iso(Date.now() + 3600_000) };
+  const state = { claimId, taskId: randomUUID(), fence, epoch, expiresAt: iso(Date.now() + 3600_000) };
+  const binding = () => ({ status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: 888,
+    pr_ref: prRef, head_sha: HEAD, base_sha: prBase, target_branch: 'main', scope: SCOPE, task_id: state.taskId,
+    claim: { claim_id: state.claimId, task_id: state.taskId, context_key: SCOPE, fence: state.fence, execution_epoch: state.epoch,
+      lease_version: 1, expires_at: state.expiresAt, status: 'ACTIVE', execution_handover_pending: false },
+    head_authorization_id: null, auto_bound: false, receipt_id: null, ...bindingOverrides });
   const native = () => ({ status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: state.fence, execution_epoch: state.epoch,
     bound_pr: prRef, pr_ref: prRef, head_sha: HEAD, base_sha: prBase, verified_at: iso(Date.now()), paths_outside_write_set: [],
-    claim: { claim_id: state.claimId, fence: state.fence, execution_epoch: state.epoch, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: state.expiresAt,
+    claim: { claim_id: state.claimId, task_id: state.taskId, fence: state.fence, execution_epoch: state.epoch, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: state.expiresAt,
       lease_key_required: false, execution_handover_pending: false, merge_slot_until: iso(Date.now() + 600_000),
       merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: state.claimId, bound_pr: prRef, since: iso(Date.now() - 1000), until: iso(Date.now() + 600_000) } }],
       ...claimOverrides }, ...nativeOverrides });
@@ -40,7 +61,8 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
     evaluateImpl: async ({ observation_recorder }) => {
       const n = native();
       observation_recorder.record('claim_verification', { result: { payload: n } });
-      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: prBase, pr_ref: prRef, claim_id: n.claim.claim_id, scope: SCOPE, changed_paths: ['a.txt'],
+      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: prBase, pr_ref: prRef, claim_id: n.claim.claim_id,
+        task_id: state.taskId, claim_binding: binding(), scope: SCOPE, changed_paths: ['a.txt'],
         admission_mode: { state: 'normal', layer: 'code', policy_version: 1 }, merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(Date.now() + 600_000) },
         owner_review: null, workflow_gate_findings: [], ...outcomeOverrides };
     } };
@@ -53,7 +75,7 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
   return { job, port, packet, state, claimId };
 }
 
-test('full admission v2: the claim comes live from the PR trailer, not from the job', async () => {
+test('full admission v2: the claim comes live from the Native PR Task binding, not from the job', async () => {
   const w = world();
   const facts = await w.port.evaluatePr(w.job, w.packet);
   assert.equal(facts.contract, FULL_ADMISSION_CONTRACT_V2);
@@ -95,10 +117,11 @@ test('full admission v2: batch stickiness allows a renewal, refuses another gene
   assert.equal((await w.port.evaluatePr(w.job, w.packet, { batchClaim: { claimId: 'not-a-uuid', fence: 1, epoch: 1 } })).reason, 'full_admission_subject_invalid');
 });
 
-test('full admission v2: missing trailer, commit trailer fallback, guarded claim and inconsistent Native', async () => {
-  assert.equal((await (w => w.port.evaluatePr(w.job, w.packet))(world({ trailer: 'no trailer here' }))).reason, 'full_admission_claim_missing');
+test('full admission v2: missing and contradictory trailers are advisory, guarded claim and inconsistent Native still refuse', async () => {
+  assert.equal((await (w => w.port.evaluatePr(w.job, w.packet))(world({ trailer: 'no trailer here' }))).status, 'ADMITTED');
   const id = randomUUID();
-  const viaCommit = world({ trailer: 'none', claimId: id, commitTrailer: `x\n\nClued-Work-Claim: ${id}\nClued-Work-Scope: ${SCOPE}` });
+  const viaCommit = world({ trailer: `Clued-Work-Claim: ${randomUUID()}\nClued-Work-Scope: global`, claimId: id,
+    commitTrailer: `x\n\nClued-Work-Claim: ${randomUUID()}\nClued-Work-Scope: global` });
   assert.equal((await viaCommit.port.evaluatePr(viaCommit.job, viaCommit.packet)).status, 'ADMITTED');
   const guarded = world({ claimOverrides: { lease_key_required: true } });
   assert.equal((await guarded.port.evaluatePr(guarded.job, guarded.packet)).reason, 'full_admission_native_unsupported');
@@ -108,6 +131,26 @@ test('full admission v2: missing trailer, commit trailer fallback, guarded claim
   assert.equal(fullAdmissionFailureV2(blocked).reason, 'full_admission_native_changed');
   // a v1 job is refused outright
   assert.equal((await torn.port.evaluatePr({ ...torn.job, contract: 'clued.independent-ci.job/1' }, torn.packet)).reason, 'full_admission_unavailable');
+});
+
+test('full admission v2: Native projection never falls back to advisory trailers', async () => {
+  for (const binding_status of ['unbound', 'no_live_claim', 'handover_pending', 'head_not_authorized']) {
+    const w = world({ outcomeOverrides: { admitted: false, verdict: 'REJECTED', reasons: [`pr_task_binding_${binding_status}`],
+      claim_binding: { status: 'ok', binding_status } } });
+    const answer = await w.port.evaluatePr(w.job, w.packet);
+    assert.equal(answer.reason, 'full_admission_rejected', binding_status);
+    assert.equal(answer.admitted, false);
+    assert.deepEqual(answer.diagnostic.reasonCodes, [`pr_task_binding_${binding_status}`]);
+  }
+  const w = world({ bindingOverrides: { pr_number: 889 } });
+  assert.equal((await w.port.evaluatePr(w.job, w.packet)).admitted, false);
+});
+
+test('full admission v2: an old single bound_pr field cannot override the exact Native PR Task projection', async () => {
+  const w = world({ nativeOverrides: { bound_pr: `${REPO}#777` }, claimOverrides: { bound_pr: `${REPO}#777` } });
+  assert.equal((await w.port.evaluatePr(w.job, w.packet)).status, 'ADMITTED');
+  const wrongTask = world({ claimOverrides: { task_id: randomUUID() } });
+  assert.equal((await wrongTask.port.evaluatePr(wrongTask.job, wrongTask.packet)).reason, 'full_admission_native_changed');
 });
 
 test('queue facts v2: head only for the observed claim generation', () => {

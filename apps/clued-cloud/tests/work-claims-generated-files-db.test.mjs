@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -36,6 +36,7 @@ test('mechanical files do not serialize independent source claims or widen sourc
   const clients = [];
   try {
     await server.initialise(); await server.start();
+    process.stderr.write('mechanical fixture started own PostgreSQL pid=' + server.process?.pid + '\n');
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -164,11 +165,45 @@ test('mechanical files do not serialize independent source claims or widen sourc
         assert.deepEqual(unproven.paths_outside_write_set, artifacts.toSorted());
         const missingHeadGrant = await verify(a.claim.claim_id, artifacts, scope, proven);
         assert.equal(missingHeadGrant.verdict, 'REJECTED');
-        assert.ok(missingHeadGrant.reasons.includes('head_authorization_required'));
+        assert.deepEqual(missingHeadGrant.reasons, ['pr_task_binding_unbound']);
+        const unresolved = await call(tokens.verifier, 'clued_work_verify_v1', {
+          action: 'resolve_pr_claim', scope, ...subject, read_only: true,
+        });
+        assert.deepEqual([unresolved.binding_status, unresolved.reason, unresolved.claim],
+          ['unbound', 'pr_task_binding_unbound', null], 'readonly verification cannot create a Task relation');
+        const unauthorizedDiscovery = await call(tokens.verifier, 'clued_work_verify_v1', {
+          action: 'resolve_pr_claim', scope, ...subject,
+        });
+        assert.deepEqual([unauthorizedDiscovery.binding_status, unauthorizedDiscovery.reason, unauthorizedDiscovery.claim],
+          ['unbound', 'head_authorization_required', null], 'mechanical byte proof cannot supply holder authorization');
         const wrongKey = await authorize({ ...a, lease_key: 'clued_lk_' + '0'.repeat(64) }, subject);
         assert.equal(wrongKey.error_code, 'work_claim_lease_key_invalid');
-        committed(await authorize(a, subject));
-        assert.equal((await verify(a.claim.claim_id, ['src/covered/a.ts', ...artifacts], scope, proven)).verdict, 'ADMITTED');
+        const authorization = committed(await authorize(a, subject));
+        const headsBeforeDiscovery = (await admin.query('select count(*)::int n from clued_private.work_claim_door_usage_v1 where task_id=$1',
+          [a.claim.task_id])).rows[0].n;
+        const knownUnknown = await call(tokens.verifier, 'clued_work_verify_v1', {
+          action: 'resolve_pr_claim', scope, ...subject, read_only: true,
+        });
+        assert.deepEqual([knownUnknown.binding_status, knownUnknown.reason, knownUnknown.task_id, knownUnknown.claim,
+          knownUnknown.auto_bound, knownUnknown.receipt_id],
+          ['no_live_claim', 'pr_task_binding_unknown', a.claim.task_id, null, false, null],
+          'holder authorization associates the Task but does not itself prove an open PR');
+        // This qualified-CI fixture now observes the actual exact open subject,
+        // like Source admission does before invoking the full mechanical gate.
+        // The read-only lookup above must never perform this lifecycle write.
+        const discovered = await call(tokens.verifier, 'clued_work_verify_v1', {
+          action: 'resolve_pr_claim', scope, ...subject,
+        });
+        assert.equal(discovered.binding_status, 'bound', JSON.stringify(discovered));
+        assert.equal(discovered.claim.claim_id, a.claim.claim_id);
+        assert.equal(discovered.claim.fence, a.claim.fence);
+        assert.equal(discovered.claim.execution_epoch, a.claim.execution_epoch);
+        assert.equal(discovered.head_authorization_id, authorization.authorization_id);
+        assert.equal(discovered.auto_bound, true);assert.match(discovered.receipt_id, /^[0-9a-f-]{36}$/);
+        assert.equal((await admin.query('select count(*)::int n from clued_private.work_claim_door_usage_v1 where task_id=$1',
+          [a.claim.task_id])).rows[0].n, headsBeforeDiscovery, 'CI discovery alone does not consume admission/head budget');
+        const admitted = await verify(a.claim.claim_id, ['src/covered/a.ts', ...artifacts], scope, proven);
+        assert.equal(admitted.verdict, 'ADMITTED', JSON.stringify(admitted));
         const unauthorizedHead = await verify(a.claim.claim_id, artifacts, scope, { ...proven, head_sha: 'e'.repeat(40) });
         assert.equal(unauthorizedHead.verdict, 'REJECTED');
         assert.ok(unauthorizedHead.reasons.includes('head_authorization_required'));
@@ -245,6 +280,10 @@ test('mechanical files do not serialize independent source claims or widen sourc
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
+    const ownPid=server.process?.pid;
     await stopCluster(server);
+    const stopped=await waitForPidExit(ownPid);
+    process.stderr.write('mechanical fixture cleanup pid=' + ownPid + ' exited=' + stopped + '\n');
+    assert.equal(stopped,true,'this fixture must stop its own PostgreSQL child');
   }
 });

@@ -10,6 +10,8 @@ import { runExecutor } from './clued-merge-executor.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPO = 'tdoljyj/cross-memory-system';
 const CLAIM = '11111111-2222-4333-8444-555555555555';
+const TASK = '66666666-2222-4333-8444-555555555555';
+const AUTH = '77777777-2222-4333-8444-555555555555';
 const scope = 'project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
 const activation = enabled => Buffer.from(JSON.stringify({ contract: ACTIVATION_CONTRACT, enabled }));
 
@@ -67,11 +69,20 @@ test('on: frozen/env/body/caller labels cannot make an ordinary fetch enter the 
 test('on: the marked wrapper enters the original live Native role gate, which can still refuse it', async t => {
   withActivation(t, activation(true)); const calls = [];
   const fetchImpl = markDurableFetch(async (url, options = {}) => {
-    calls.push({ url: String(url), method: options.method ?? 'GET' });
+    const input = options.body ? JSON.parse(options.body).p_input : null;
+    calls.push({ url: String(url), method: options.method ?? 'GET', input });
     if (String(url).startsWith(`https://api.github.com/repos/${REPO}/pulls?`)) return new Response(JSON.stringify([{ number: 5,
       node_id: 'fixture', state: 'open', draft: false, auto_merge: null,
-      body: `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${scope}`, head: { sha: 'a'.repeat(40), repo: { full_name: REPO } },
-      base: { ref: 'main', repo: { default_branch: 'main', full_name: REPO } } }]), { status: 200 });
+      body: 'Clued-Work-Claim: forged\nClued-Work-Scope: global', head: { sha: 'a'.repeat(40), repo: { full_name: REPO } },
+      base: { sha: 'b'.repeat(40), ref: 'main', repo: { default_branch: 'main', full_name: REPO } } }]), { status: 200 });
+    if (String(url).includes('/rest/v1/rpc/clued_work_verify_v1') && input?.action === 'resolve_pr_claim') {
+      assert.equal(input.read_only, true);
+      return new Response(JSON.stringify({ status: 'ok', binding_status: 'bound', reason: null,
+        repository: REPO, pr_number: 5, pr_ref: `${REPO}#5`, head_sha: 'a'.repeat(40), base_sha: 'b'.repeat(40),
+        target_branch: 'main', scope, task_id: TASK, auto_bound: false, receipt_id: null, head_authorization_id: AUTH,
+        claim: { claim_id: CLAIM, task_id: TASK, context_key: scope, fence: 1, execution_epoch: 1, lease_version: 1,
+          expires_at: '2099-01-01T00:00:00Z', status: 'ACTIVE', execution_handover_pending: false } }), { status: 200 });
+    }
     if (String(url).includes('/rest/v1/rpc/clued_work_merge_slot_holders_v1')) return new Response(JSON.stringify({ status: 'ok',
       holders: [], reason: 'admission_binding_required' }), { status: 200 });
     throw Error('unexpected route');
@@ -80,7 +91,10 @@ test('on: the marked wrapper enters the original live Native role gate, which ca
     observation_recorder: { record() {}, finish() {} } });
   assert.notEqual(result.state, 'DELEGATED'); assert.ok(result.errors.some(v => v.includes('admission_binding_required')));
   assert.equal(calls.filter(v => v.url.startsWith('https://api.github.com')).length, 1);
-  assert.equal(calls.filter(v => v.url.includes('/rest/v1/rpc/')).length, 1);
+  assert.equal(calls.filter(v => v.url.includes('/rest/v1/rpc/')).length, 2);
+  assert.deepEqual(calls.find(v => v.url.includes('/clued_work_merge_slot_holders_v1')).input, { scope, repository: REPO },
+    'Native supplies the real project scope despite forged global PR prose');
+  assert.deepEqual(result.actions, [], 'the actual Native role refusal still prevents every mutation');
   assert.ok(calls.every(v => v.method === 'GET' || v.url.includes('/rest/v1/rpc/')));
 });
 

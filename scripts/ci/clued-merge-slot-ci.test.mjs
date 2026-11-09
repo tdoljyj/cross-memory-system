@@ -30,6 +30,8 @@ import {
   renderSummary,
   reportMergeSlots,
   requiredBarrier,
+  samePRBindingAuthority,
+  selectHolderBinding,
 } from "./clued-merge-slot-ci.mjs";
 import { ADMISSION_APP_ID, workflowFormFindings, workflowIsGated, gateFindings } from "./clued-work-admission.mjs";
 
@@ -38,6 +40,9 @@ const REPO = "tdoljyj/cross-memory-system";
 const HEAD = "a".repeat(40);
 const OTHER = "b".repeat(40);
 const CLAIM = "11111111-2222-4333-8444-555555555555";
+const TASK = '33333333-4444-4555-8666-777777777777';
+const HEAD_AUTH = '44444444-5555-4666-8777-888888888888';
+const VERIFY_RPC = 'clued_work_verify_v1';
 const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const WORKFLOWS = ciWorkflows(ROOT);
 test('default CI enumeration excludes only exact registered dispatch publisher bytes',()=>{
@@ -236,7 +241,16 @@ const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
-  ({ number, node_id:`PR_${number}`, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
+  ({ number, node_id:`PR_${number}`, state: "open", body, draft: false, head: { sha }, base: { sha: 'c'.repeat(40), ref: "main", repo: { default_branch: "main", full_name:REPO } } });
+const nativeBinding = (pr, extra = {}) => ({ status: 'ok', binding_status: 'bound', reason: null,
+  repository: REPO, pr_number: pr.number, pr_ref: `${REPO}#${pr.number}`, head_sha: pr.head.sha,
+  base_sha: pr.base.sha, target_branch: pr.base.ref, scope: SCOPE, task_id: TASK,
+  claim: { claim_id: CLAIM, task_id: TASK, context_key: SCOPE, fence: 3, execution_epoch: 2,
+    lease_version: 1, expires_at: '2099-01-01T00:00:00Z', status: 'ACTIVE', execution_handover_pending: false },
+  head_authorization_id: HEAD_AUTH, auto_bound: false, receipt_id: null, ...extra });
+const nativeResolver = pulls => input => nativeBinding(pulls.find(pr => `${REPO}#${pr.number}` === input.pr_ref));
+const rawHolder = (refs = [`${REPO}#5`], extra = {}) => ({ claim_id: CLAIM, task_id: TASK,
+  bound_prs: refs, bound_pr: refs.length === 1 ? refs[0] : null, merge_slot_until: '2099-01-01T00:00:00Z', ...extra });
 const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed',native_runs:[]});
 // Design A2: the branch rules decide what counts. The earlier fixtures keep the
 // pre-2026-10-20 mapping; the A2 tests below use the live one (App 5368905)
@@ -489,19 +503,20 @@ test("ciStateOf: a failure from before the slot was taken is not reported and ho
     ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "running");
   // reportMergeSlots passes the slot's taken_at from Clued.
-  fetch = slotWorld({ holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: "2026-10-09T05:45:00Z",
-    merge_slot_ci: { taken_at: "2026-10-09T05:00:00Z" } }],
+  fetch = slotWorld({ holders: [rawHolder([`${REPO}#5`], { merge_slot_until: "2026-10-09T05:45:00Z",
+    merge_slot_ci: { taken_at: "2026-10-09T05:00:00Z" } })],
   extra: { ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [old] }), ...runsRoute(HEAD, []) } });
   const result = await report(fetch);
   assert.deepEqual([result.errors, result.reports[0].ci_state, fetch.calls.some((call) => call.route === `rpc:${TOUCH_RPC}`)],
     [[], "idle", false]);
 });
 
-function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: "2026-10-08T12:00:00Z" }], pulls = [pull(5)], extra = {},
+function slotWorld({ holders = [rawHolder()], pulls = [pull(5)], extra = {},
   touch = (input) => ({ status: "ok", touched: true, claims: [CLAIM], merge_slot_until: "2026-10-08T12:45:00Z", ci_state: input.ci_state, returned: input.ci_state === "failed" }) } = {}) {
   return fakeFetch({
     [`/repos/${REPO}/pulls?state=open`]: pulls,
     ...Object.fromEntries(pulls.map(pr=>[`/repos/${REPO}/pulls/${pr.number}`,pr])),
+    [`rpc:${VERIFY_RPC}`]: nativeResolver(pulls),
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`rpc:${TOUCH_RPC}`]: touch,
     [`/repos/${REPO}/installation`]: { id: 99 },
@@ -512,6 +527,81 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
 }
 const report = (fetch, more = {}) => reportMergeSlots({ env: env(more.env), event: more.event ?? null, eventName: more.eventName ?? "schedule",
   fetchImpl: fetch.fetchImpl, workspace: ROOT, qualifyExecution:more.qualifyExecution??fixtureQualification });
+
+test('Native authority comparison preserves exact subject, Task, claim generation and head grant while allowing ordinary renewal', () => {
+  const expected = nativeBinding(pull(5));
+  assert.equal(samePRBindingAuthority(expected, nativeBinding(pull(5), { claim: { ...expected.claim,
+    lease_version: 9, expires_at: '2099-01-02T00:00:00Z' } })), true);
+  for (const changed of [
+    { head_sha: OTHER }, { base_sha: OTHER }, { target_branch: 'release' }, { pr_number: 6 }, { repository: 'other/repo' },
+    { scope: 'global' }, { task_id: CLAIM }, { claim: { ...expected.claim, claim_id: TASK } },
+    { claim: { ...expected.claim, fence: 4 } }, { claim: { ...expected.claim, execution_epoch: 3 } },
+    { head_authorization_id: TASK }, { head_authorization_id: null }, { binding_status: 'head_not_authorized' },
+  ]) assert.equal(samePRBindingAuthority(expected, nativeBinding(pull(5), changed)), false, JSON.stringify(changed));
+});
+
+test('one holder selects one independently normalized same-generation PR, preserving in-flight head and refusing true ambiguity', () => {
+  const a = { pr: pull(5), binding: nativeBinding(pull(5)) }, b = { pr: pull(7, OTHER), binding: nativeBinding(pull(7, OTHER)) };
+  const holder = rawHolder([`${REPO}#7`, `${REPO}#5`], { bound_pr: 'forged/body#99' });
+  assert.equal(selectHolderBinding(holder, [b, a], REPO), a, 'stable PR number is independent of array order or legacy display');
+  assert.equal(selectHolderBinding({ ...holder, merge_slot_ci: { ci_state: 'running', ci_head_sha: OTHER } }, [a, b], REPO), b);
+  assert.equal(selectHolderBinding({ ...holder, merge_slot_ci: { ci_state: 'green', ci_head_sha: 'c'.repeat(40) } }, [a, b], REPO), null,
+    'another PR cannot overwrite an existing in-flight/green head');
+  assert.equal(selectHolderBinding(holder, [a, { pr: b.pr, binding: { ...b.binding, claim: { ...b.binding.claim, claim_id: TASK } } }], REPO), null,
+    'a different race copy cannot be filtered away by matching only holder.claim_id');
+  assert.equal(selectHolderBinding(holder, [a, { pr: b.pr, binding: { ...b.binding, claim: { ...b.binding.claim, fence: 4 } } }], REPO), null);
+  assert.equal(selectHolderBinding(holder, [a, { pr: b.pr, binding: { ...b.binding, claim: { ...b.binding.claim, execution_epoch: 3 } } }], REPO), null);
+  assert.equal(selectHolderBinding(holder, [a, { pr: b.pr, binding: { ...b.binding, task_id: CLAIM,
+    claim: { ...b.binding.claim, task_id: CLAIM } } }], REPO), null);
+  assert.equal(selectHolderBinding(holder, [{ pr: a.pr, binding: { ...a.binding, head_sha: OTHER } }], REPO), null);
+  assert.equal(selectHolderBinding(holder, [{ pr: a.pr, binding: { ...a.binding, head_authorization_id: null } }], REPO), null);
+  assert.equal(selectHolderBinding({ ...holder, bound_prs: ['other/repo#5'] }, [a], REPO), null);
+  assert.equal(selectHolderBinding(holder, [a, a], REPO), null);
+});
+
+test('reporter uses Native without prose, schedules one same-Task PR and rechecks generation before every touch', async () => {
+  const pulls = [pull(7, OTHER, 'Clued-Work-Claim: forged'), pull(5, HEAD, 'no authority in prose')];
+  let fetch = slotWorld({ pulls, holders: [rawHolder([`${REPO}#7`, `${REPO}#5`])], extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
+  let result = await report(fetch);
+  assert.deepEqual(result.errors, []); assert.deepEqual(result.reports.map(r => r.pr), [5]);
+  assert.equal(fetch.calls.filter(c => c.route === `rpc:${TOUCH_RPC}`).length, 1);
+  const reads = fetch.calls.filter(c => c.route === `rpc:${VERIFY_RPC}`);
+  assert.equal(reads.length, 3); assert.ok(reads.every(c => c.input.read_only === true));
+  assert.equal(Object.hasOwn(reads[0].input, 'scope'), false, 'scope must be derived from Native, never prose or global');
+  assert.equal(reads.at(-1).input.scope, SCOPE, 'final Native recheck pins the originally derived scope');
+  for (const change of ['claim', 'fence', 'epoch', 'head-grant', 'lifecycle']) {
+    let requests = 0;
+    fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []), [`rpc:${VERIFY_RPC}`]: () => {
+      const reply = nativeBinding(pull(5));
+      if (++requests > 1) {
+        if (change === 'claim') reply.claim.claim_id = TASK;
+        if (change === 'fence') reply.claim.fence++;
+        if (change === 'epoch') reply.claim.execution_epoch++;
+        if (change === 'head-grant') reply.head_authorization_id = TASK;
+        if (change === 'lifecycle') { reply.binding_status = 'no_live_claim'; reply.reason = 'pr_task_binding_closed'; reply.claim = null; }
+      }
+      return reply;
+    } } });
+    result = await report(fetch);
+    assert.equal(result.reports[0].ci_state, 'idle', change);
+    assert.equal(fetch.calls.some(c => c.route === `rpc:${TOUCH_RPC}`), false, change);
+  }
+});
+
+test('reporter refuses unsupported holders, cross-repository refs and Native scope/subject mismatches without fallback', async () => {
+  for (const holder of [ { claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: '2099-01-01T00:00:00Z' },
+    rawHolder(['other/repo#5']), rawHolder([`${REPO}#5`, `${REPO}#5`]) ]) {
+    const fetch = slotWorld({ holders: [holder] }), result = await report(fetch);
+    assert.ok(result.errors.length); assert.equal(fetch.calls.some(c => c.route === `rpc:${TOUCH_RPC}`), false);
+  }
+  for (const extra of [{ repository: 'other/repo' }, { head_sha: OTHER }, { scope: 'global' }]) {
+    const reply = nativeBinding(pull(5), extra);
+    if (extra.scope) reply.claim.context_key = SCOPE; // intentionally inconsistent Native projection
+    const fetch = slotWorld({ extra: { [`rpc:${VERIFY_RPC}`]: () => reply } }), result = await report(fetch);
+    assert.match(result.errors[0], /Native PR Task binding is unconfirmed/);
+    assert.equal(fetch.calls.some(c => c.route === `rpc:${TOUCH_RPC}`), false);
+  }
+});
 
 test('required green cannot extend a slot with gate-only, unknown, wrong-identity or skipped execution',async()=>{
   const props=[{passed:false,state:'unknown',reason:'gate only',rerun:{id:7,run_attempt:1}},
@@ -598,20 +688,21 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
 });
 
 test("reportMergeSlots: nothing in the event is trusted, and nothing is asked when no slot is held", async () => {
-  // No open pull request names a claim, in its body or head commit: no Clued call at all.
-  let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer")], extra: { [`/repos/${REPO}/commits/${HEAD}`]: { commit: { message: "no trailer" } } } });
+  // Native identity needs no PR prose or head commit fallback.
+  let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer")], extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   let result = await report(fetch);
-  assert.deepEqual([result.holders, fetch.calls.map((call) => call.route)],
-    [[], [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`, `/repos/${REPO}/commits/${HEAD}`]]);
-  // An unreadable commit is an error for that pull request; the others are still reported.
-  fetch = slotWorld({ pulls: [pull(4, OTHER, "no trailer"), pull(5)], extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
+  assert.deepEqual([result.errors, result.reports.map(r => [r.pr, r.ci_state])], [[], [[5, 'green']]]);
+  assert.equal(fetch.calls.some(call => call.route === `/repos/${REPO}/commits/${HEAD}`), false);
+  // One unconfirmed Native projection does not replace another PR's authority.
+  fetch = slotWorld({ pulls: [pull(4, OTHER, "no trailer"), pull(5)], extra: { ...allGreen(), ...runsRoute(HEAD, []),
+    [`rpc:${VERIFY_RPC}`]: input => input.pr_ref.endsWith('#4') ? { __status: 403, body: {} } : nativeBinding(pull(5)) } });
   result = await report(fetch);
   assert.deepEqual([result.errors.length, result.reports.map((r) => [r.pr, r.ci_state])], [1, [[5, "green"]]]);
-  assert.match(result.errors[0], /^#4: GitHub API .*returned 404/);
-  // No holder: one GitHub call and one Clued call.
+  assert.match(result.errors[0], /^#4: Native PR Task binding is unconfirmed/);
+  // No holder: GitHub list, one readonly Native projection and holders query.
   fetch = slotWorld({ holders: [] });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: HEAD } } });
-  assert.deepEqual(fetch.calls.map((call) => call.route), [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`, `rpc:${HOLDERS_RPC}`]);
+  assert.deepEqual(fetch.calls.map((call) => call.route), [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`, `rpc:${VERIFY_RPC}`, `rpc:${HOLDERS_RPC}`]);
   // A workflow_run for another head still reports every slot: concurrency may have dropped the holder's own run (confirmation review MINOR-A).
   fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: OTHER, conclusion: "failure", pull_requests: [{ number: 5 }] } } });
@@ -622,24 +713,27 @@ test("reportMergeSlots: nothing in the event is trusted, and nothing is asked wh
   assert.equal(result.reports[0].ci_state, "green");
   // A slot whose pull request is not open into the default branch is listed, not reported.
   fetch = slotWorld({ pulls: [pull(5), { ...pull(6), base: { ref: "release", repo: { default_branch: "main" } } }],
-    holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#6` }, { claim_id: CLAIM, bound_pr: `${REPO}#9` }] });
+    holders: [rawHolder([`${REPO}#6`, `${REPO}#9`])] });
   result = await report(fetch);
-  assert.deepEqual([result.holders.map((holder) => holder.open), result.reports], [[false, false], []]);
-  // Two claims bound to one pull request: one report.
-  fetch = slotWorld({ holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5` }, { claim_id: "22222222-2222-4333-8444-555555555555", bound_pr: `${REPO}#5` }],
+  assert.deepEqual([result.holders.map((holder) => holder.open), result.reports], [[false], []]);
+  // Two claims naming the same target are an inconsistent authority, never
+  // "deduplicated" into an admission under whichever one came first.
+  fetch = slotWorld({ holders: [rawHolder(), rawHolder([`${REPO}#5`], { claim_id: "22222222-2222-4333-8444-555555555555" })],
     extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
-  assert.equal(fetch.calls.filter((call) => call.route === `rpc:${TOUCH_RPC}`).length, 1);
+  assert.equal(fetch.calls.filter((call) => call.route === `rpc:${TOUCH_RPC}`).length, 0);
+  assert.match(result.errors[0], /inconsistent Native holder projection/);
 });
 
-test("reportMergeSlots: a claim named only in the head commit counts; a service without the RPC is a notice", async () => {
+test("reportMergeSlots: contradictory prose has no authority; a service without holders RPC is a notice", async () => {
   let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer in the body")], extra: { ...allGreen(), ...runsRoute(HEAD, []),
     [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, commit: { message: `step\n\nClued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}` } } } });
   let result = await report(fetch);
   assert.deepEqual([result.errors, result.reports.map((r) => r.ci_state)], [[], ["green"]]);
+  assert.equal(fetch.calls.some(call => call.route === `/repos/${REPO}/commits/${HEAD}`), false);
   assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${HOLDERS_RPC}`).input, { scope: SCOPE, repository: REPO });
   // Merged before the migration is applied (review MINOR-6): PostgREST answers 404 PGRST202.
-  fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)] });
+  fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)], [`rpc:${VERIFY_RPC}`]: nativeResolver([pull(5)]) });
   const missing = async (url, init) => (String(url).includes(`/rpc/${HOLDERS_RPC}`)
     ? new Response(JSON.stringify({ code: "PGRST202", message: "Could not find the function" }), { status: 404 })
     : fetch.fetchImpl(url, init));
@@ -654,6 +748,7 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   assert.match(result.errors[0], /CLUED_CONTEXT_READ_TOKEN is not set.*CLUED_ADMISSION_CLUED_TOKEN/);
   assert.equal(fetch.calls.length, 1, "cleanup checks open PRs before returning for a missing Clued token");
   fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)],
+    [`rpc:${VERIFY_RPC}`]: nativeResolver([pull(5)]),
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", holders: [], reason: "admission_binding_required" }) });
   result = await report(fetch);
   assert.match(result.errors[0], /admission_binding_required.*ci-admission role/);
@@ -672,6 +767,7 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
     assert.equal(await main(base, slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } }).fetchImpl), 0);
     assert.equal(await main(base, fetch.fetchImpl), 0, 'no touch until real default-branch qualification is available');
     const refused=fakeFetch({[`/repos/${REPO}/pulls?state=open`]:[pull(5)],
+      [`rpc:${VERIFY_RPC}`]: nativeResolver([pull(5)]),
       [`rpc:${HOLDERS_RPC}`]:()=>({status:'ok',reason:'admission_binding_required',holders:[]})});
     assert.equal(await main(base, refused.fetchImpl), 1);
   } finally {

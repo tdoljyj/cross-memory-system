@@ -1,12 +1,28 @@
 // The merge train on the resident side, shadow mode (quota redesign phase 2, step 3c-1; DESIGN §22.3).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trainDue, trainPageLine, trainSummary, WOULD_DO } from '../src/train.mjs';
+import { trainDue, trainPageLine, trainSummary, WOULD_DO, claimBindingFingerprint } from '../src/train.mjs';
 import { executorFixture, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
 import { WOULD_DO as SOURCE_WOULD_DO, TRAIN_FACTS_CONTRACT } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const MIN = 60_000, NOW = Date.parse('2026-10-23T12:00:00Z');
 const train = { enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200 };
+
+test('claim observations retain exact current generation and authorization; timestamp refresh alone cannot retrigger', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const b = { repository: 'tdoljyj/cross-memory-system', scope: `project:${id}`, pr: 1, headSha: '1'.repeat(40), baseSha: '2'.repeat(40), targetBranch: 'main',
+    bindingStatus: 'bound', taskId: id, claimId: id, fence: 1, epoch: 1, headAuthorizationId: null,
+    observedAt: new Date(NOW).toISOString(), sourceManifestSha256: 'e'.repeat(64) };
+  const key = claimBindingFingerprint(b);
+  assert.ok(key);
+  assert.equal(claimBindingFingerprint({ ...b, observedAt: new Date(NOW + MIN).toISOString() }), key);
+  for (const patch of [{ epoch: 2 }, { fence: 2 }, { bindingStatus: 'head_not_authorized' }, { headAuthorizationId: id }])
+    assert.notEqual(claimBindingFingerprint({ ...b, ...patch }), key);
+  assert.equal(claimBindingFingerprint({ ...b, lease_version: 2 }), null, 'renewal metadata is outside this observation contract');
+  const facts = { contract: TRAIN_FACTS_CONTRACT, mode: 'shadow', at: b.observedAt, wouldDo: 'NO_FRONT', front: null, claimBindings: [b] };
+  assert.deepEqual(trainSummary(facts).claimBindings, [b]);
+  assert.equal(trainSummary({ ...facts, claimBindings: [b, { ...b, pr: 2, scope: 'global' }] }), null, 'one protected install has one fixed scope');
+});
 
 test('stage 10 is due when the train is not off, nothing runs, and the interval and the daily cap allow it', () => {
   assert.equal(trainDue({ train, now: NOW, runs: [], busy: false }), true);

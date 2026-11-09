@@ -1,10 +1,10 @@
 // Full Native admission for job contract v2 (DESIGN S6, claim decoupling A-strict).
 //
-// Identical evaluator, door and freshness rules as full-admission.mjs (v1, unchanged), with one
-// change of source for the claim: v1 required the PR trailer and Native to name the claim pinned in
-// the job; v2 resolves the claim live from the PR trailer (body, then head commit), lets the
+// Identical evaluator, door and freshness rules as full-admission.mjs (v1), with one
+// change of source for the claim: v1 fixes the claim in the job; v2 resolves
+// the current claim from Native's PR -> Task binding, lets the
 // existing evaluator perform the complete Native door for it, and then requires Native to be
-// internally consistent about that claim (claim id, fence, epoch, ACTIVE, bound PR, lease left).
+// internally consistent about that claim (claim id, Task, fence, epoch, ACTIVE, exact PR, lease left).
 // Inside one batch the caller passes the sticky batch claim (batch-claim-v2.mjs): a different claim
 // id, fence or epoch fails closed (a renewal, which only moves expires_at, does not).
 // Active guarded claims additionally bind the real private head authorization;
@@ -18,7 +18,8 @@ import { verificationUnavailable } from './withdrawal-text.mjs';
 import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './clock-skew.mjs';
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
-import { evaluate, githubJson, parseClaimReference, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { evaluate, githubJson, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { normalizePRTaskBinding, terminalAdmissionFromVerification } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
@@ -180,11 +181,8 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         const pr = prResult.value;
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
         const prBase = pr.base.sha;
-        // A-strict: the claim is whatever the PR names NOW (body trailer, else head commit trailer).
-        phase = 'claim_reference'; let reference = parseClaimReference(pr.body);
-        if (!reference) reference = parseClaimReference((await githubJson(readFetch, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
-        if (!reference || !uuid.test(reference.claim_id ?? '')) return blocked('full_admission_claim_missing');
-        if (reference.scope !== config.scope || (batchClaim && reference.claim_id !== batchClaim.claimId)) return blocked('full_admission_claim_changed');
+        // The evaluator resolves Native's current PR -> Task -> claim. Source
+        // does not repeat that RPC or trust an advisory body/commit trailer.
         // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
         // (Decision 1100a0ed); without a seen send, from the start of the evaluation, which is earlier.
         let native = null, nativeSentMono = null, verifySentMono = null;
@@ -201,12 +199,18 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           if (kind === 'claim_verification') { native = structuredClone(data.result?.payload); nativeSentMono = verifySentMono ?? evaluateStartMono; }
         } };
         phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl: timedFetch,
-          workspace: config.workspace, withSummary: false, readPolicyFile: () => config.policyText,
+          workspace: config.workspace, bindingScope: config.scope, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
         phase = 'post_evaluate'; tell(outcome, native); const finished = clock(), prRef = `${REPO}#${job.pr}`;
         if (!Number.isSafeInteger(finished) || finished < started || !fresh(mode.observedAt, finished)
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired', rejectionDiagnostic(outcome, native, { modeFresh: fresh(mode.observedAt, finished), recorderFresh: fresh(observation.observedAt, finished) }));
         if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected', rejectionDiagnostic(outcome, native));
+        phase = 'claim_reference';
+        const binding = normalizePRTaskBinding(outcome.claim_binding, { scope: config.scope, repository: REPO,
+          prNumber: job.pr, headSha: job.headSha, baseSha: prBase, targetBranch: pr.base.ref });
+        if (binding.binding_status !== 'bound') return blocked('full_admission_claim_missing');
+        const reference = binding.claim;
+        if (outcome.task_id !== binding.task_id || (batchClaim && reference.claim_id !== batchClaim.claimId)) return blocked('full_admission_claim_changed');
         phase = 'post_pull_request';
         if (deferred) packet = await packetGate();
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== prBase || outcome.pr_ref !== prRef
@@ -218,10 +222,12 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           || !supportedNativeExecution(native.execution_policy, claim?.lease_key_required)
           || (claim.lease_key_required && !uuid.test(native.head_authorization_id ?? ''))
           || claim.execution_handover_pending !== false) return blocked('full_admission_native_unsupported');
-        // Native must be internally consistent about the claim the PR names now.
+        // Native must be internally consistent about this exact PR's Task and
+        // current claim. The old single-PR claim field is not binding authority.
         if (claim.claim_id !== reference.claim_id || native.current_fence !== claim.fence || native.execution_epoch !== claim.execution_epoch
           || !Number.isSafeInteger(claim.fence) || claim.fence < 1 || !Number.isSafeInteger(claim.execution_epoch) || claim.execution_epoch < 1
-          || claim.context_key !== config.scope || claim.status !== 'ACTIVE' || claim.bound_pr !== prRef || native.bound_pr !== prRef
+          || claim.fence !== reference.fence || claim.execution_epoch !== reference.execution_epoch || claim.task_id !== binding.task_id
+          || claim.context_key !== config.scope || claim.status !== 'ACTIVE' || binding.pr_ref !== prRef
           || native.pr_ref !== prRef || native.head_sha !== job.headSha || native.base_sha !== prBase
           || serverAnswerCurrent({ verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono, nowMono: monotonic() }).length
           || !Array.isArray(native.paths_outside_write_set)
@@ -232,6 +238,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (!plain(outcome.admission_mode) || !plain(outcome.merge_slot)
           || !['normal', 'efficiency', 'frozen'].includes(outcome.admission_mode.state)) return blocked('full_admission_incomplete');
         const active = native.execution_policy === 'active';
+        const terminalAdmission = terminalAdmissionFromVerification(native);
         const facts = { contract: active ? FULL_ADMISSION_CONTRACT_V3 : FULL_ADMISSION_CONTRACT_V2, status: 'ADMITTED', admitted: true,
           completeAdmission: true, evaluator: ENGINE, domain: config.domain, repository: REPO, scope: config.scope,
           prRef, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
@@ -245,7 +252,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
             kind: outcome.owner_review.kind, grantId: outcome.owner_review.grant_id, carriedFrom: outcome.owner_review.carried_from ?? null } : null,
           workflowGateFindings: [...(outcome.workflow_gate_findings ?? [])], observedAt: new Date(finished).toISOString(),
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,
-          packetSha256: digest(packet), evaluationSha256: digest(outcome) };
+          packetSha256: digest(packet), evaluationSha256: digest(outcome), ...(terminalAdmission ? { terminalAdmission } : {}) };
         return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
           { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
       } catch (error) { return blocked('full_admission_unavailable', { phase, transport: transportFault(error) }); }

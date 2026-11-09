@@ -50,6 +50,26 @@ const isoOrNull = v => (typeof v === 'string' && ISO.test(v) && Number.isFinite(
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const exact = (v, keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const isoExact = v => isoOrNull(v) !== null && new Date(Date.parse(v)).toISOString() === v;
+const CLAIM_BINDING_FIELDS = ['repository','scope','pr','headSha','baseSha','targetBranch','bindingStatus','taskId','claimId','fence','epoch',
+  'headAuthorizationId','observedAt','sourceManifestSha256'];
+// Protected stage-10 data is still advisory. Keep its exact subject and stable
+// generation; a lease renewal alone must never trigger another evaluation.
+export function claimBindingObservationOf(b) {
+  if (!exact(b, CLAIM_BINDING_FIELDS) || !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(b.repository ?? '')
+    || !/^(?:global|project:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/.test(b.scope ?? '') || !Number.isSafeInteger(b.pr) || b.pr < 1
+    || !SHA.test(b.headSha ?? '') || !SHA.test(b.baseSha ?? '') || b.targetBranch !== 'main'
+    || !['bound','unbound','no_live_claim','handover_pending','conflict','head_not_authorized'].includes(b.bindingStatus)
+    || !isoExact(b.observedAt) || !/^[0-9a-f]{64}$/.test(b.sourceManifestSha256 ?? '')
+    || !(b.headAuthorizationId === null || UUID.test(b.headAuthorizationId ?? ''))) return null;
+  const task = !['unbound','conflict'].includes(b.bindingStatus), claim = ['bound','handover_pending','head_not_authorized'].includes(b.bindingStatus);
+  if (!(task ? UUID.test(b.taskId ?? '') : b.taskId === null) || !(claim ? UUID.test(b.claimId ?? '') && Number.isSafeInteger(b.fence) && b.fence > 0
+    && Number.isSafeInteger(b.epoch) && b.epoch > 0 : b.claimId === null && b.fence === null && b.epoch === null)) return null;
+  return Object.freeze({ ...b });
+}
+export function claimBindingFingerprint(b) {
+  const v = claimBindingObservationOf(b);
+  return v ? JSON.stringify([v.bindingStatus,v.taskId,v.claimId,v.fence,v.epoch,v.headAuthorizationId]) : null;
+}
 export const TRAIN_STRICT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-readiness/1';
 export const TRAIN_STRICT_FRONT_READINESS_CONTRACT = 'clued.independent-ci.train-strict-front-readiness/1';
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -254,9 +274,14 @@ const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunn
 export function trainSummary(f) {
   if (!f || ![TRAIN_FACTS_CONTRACT, TRAIN_FACTS_CONTRACT_V2].includes(f.contract) || !WOULD_DO.includes(f.wouldDo) || typeof f.at !== 'string') return null;
   const v2 = f.contract === TRAIN_FACTS_CONTRACT_V2;
+  const claimBindings = f.claimBindings === undefined ? [] : Array.isArray(f.claimBindings) && f.claimBindings.length <= 50
+    ? f.claimBindings.map(claimBindingObservationOf) : null;
+  if (!claimBindings || claimBindings.some(b => b === null) || new Set(claimBindings.map(b => b.pr)).size !== claimBindings.length
+    || new Set(claimBindings.map(b => JSON.stringify([b.repository,b.scope,b.sourceManifestSha256]))).size > 1) return null;
   if (v2 ? !RUN_MODES.includes(f.mode) : f.mode !== 'shadow') return null;
   const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null } : null;
   const base = { at: f.at, mode: f.mode, wouldDo: f.wouldDo, onDuty: f.onDuty === true, front, mainSha: SHA.test(f.mainSha ?? '') ? f.mainSha : null,
+    ...(f.claimBindings === undefined ? {} : { claimBindings }),
     strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0 };
   if (!v2) return Object.freeze(base);
   const decision = DECISIONS.includes(f.decision) ? f.decision : null;

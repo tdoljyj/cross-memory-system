@@ -28,6 +28,17 @@ const {appRequest}=await import('./clued-managed-auto-merge.mjs');
 const {runRecordedHolderOperation}=await import('./clued-merge-executor.mjs');
 const {collectNaturalSourceArtifacts,mapNaturalSourceEvents}=await import('./merge-admission-natural-intake.mjs');
 const {R9_HISTORY_CAPS,R9_REREGISTER_COMMAND,assertHistoryInvariants,sealedWindowAgrees}=await import('./merge-admission-r9-reregister.mjs');
+
+test('original operation snapshots retain the planned Task epoch and exact head authorization',()=>{
+  const id='11111111-2222-4333-8444-555555555555';
+  for(const kind of ['operation_request','manual_operation_input']){
+    const base=formatNaturalPayload(kind,{}),planned=formatNaturalPayload(kind,{task_id:id,execution_epoch:7,head_authorization_id:id});
+    assert.equal(Object.hasOwn(base,'task_id'),false,'old events keep their original shape');
+    assert.deepEqual([planned.task_id,planned.execution_epoch,planned.head_authorization_id],[id,7,id]);
+    const invalid=formatNaturalPayload(kind,{task_id:'free text',execution_epoch:'not-an-epoch',head_authorization_id:'secret'});
+    assert.deepEqual([invalid.task_id,invalid.execution_epoch,invalid.head_authorization_id],[null,null,null]);
+  }
+});
 const head='a'.repeat(40),base='b'.repeat(40),at='2026-10-11T06:00:03.000Z';
 const env={GITHUB_REPOSITORY:'tdoljyj/cross-memory-system',GITHUB_RUN_ID:'42',GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'admission',GITHUB_SHA:base};
 const recorder=write=>createNaturalRecorder({env,sourcePath:'scripts/ci/clued-work-admission.mjs',now:()=>at,write});
@@ -195,9 +206,14 @@ test('actual publication begin/finish evidence survives the recorder and binds N
     const events=[],r=recorder(e=>events.push(e));let posted=null,patches=0;
     const fetchImpl=async(url,init={})=>{let body;
       if(url.includes('/rpc/clued_work_verify_v1')){const input=JSON.parse(init.body).p_input;
-        body=input.action==='publication_begin'?{verdict:'ADMITTED',publication_id:pub,receipt_id:begin,execution_epoch:3}:
+        body=input.action==='resolve_pr_claim'?{status:'ok',binding_status:'bound',reason:null,repository:env.GITHUB_REPOSITORY,pr_number:727,
+          pr_ref:`${env.GITHUB_REPOSITORY}#727`,head_sha:head,base_sha:base,target_branch:'main',scope:'project:0597aa60-9b98-4da6-a4ab-63d7705b632f',task_id:uid(24),
+          claim:{claim_id:claim,task_id:uid(24),context_key:'project:0597aa60-9b98-4da6-a4ab-63d7705b632f',fence:3,execution_epoch:3,lease_version:1,
+            status:'ACTIVE',execution_handover_pending:false,expires_at:'2099-01-01T00:00:00.000Z'},head_authorization_id:uid(25),auto_bound:false,receipt_id:null}:
+          input.action==='publication_begin'?{verdict:'ADMITTED',publication_id:pub,receipt_id:begin,execution_epoch:3}:
           {status:'committed',receipt_id:finish,execution_epoch:3,must_revoke:revoked};}
-      else if(url.endsWith('/pulls/727'))body={state:'open',head:{sha:head},base:{sha:base,ref:'main'},changed_files:1,body:`Clued-Work-Claim: ${claim}`};
+      else if(url.endsWith('/pulls/727'))body={number:727,state:'open',draft:false,head:{sha:head,repo:{full_name:env.GITHUB_REPOSITORY}},
+        base:{sha:base,ref:'main',repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},changed_files:1,body:`Clued-Work-Claim: ${claim}`};
       else if(url.includes('/pulls/727/files?'))body=[{filename:'docs/test.md',status:'modified'}];
       else if(url.endsWith('/installation'))body={id:99};
       else if(url.endsWith('/access_tokens'))body={token:'mock-app-only'};
@@ -241,28 +257,40 @@ test('a known no-prior-green candidate records exclusion and a closed original r
 const sha256=x=>createHash('sha256').update(x).digest('hex');
 const gitBlob=x=>createHash('sha1').update('blob '+Buffer.byteLength(x)+'\0').update(x).digest('hex');
 const subject='891ea2e7a68e0a3201b64a8fd173f4d50a4c18dc';
+const holderEnv={...env,CLUED_CONTEXT_READ_TOKEN:'fixture-native-read'};
+const holderFetch=(fetchImpl,pr)=>async(url,init={})=>{
+  if(String(url).includes('/rest/v1/rpc/clued_work_verify_v1')){
+    const input=JSON.parse(init.body).p_input,id='10000000-0000-4000-8000-000000000001',scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+    assert.equal(input.action,'resolve_pr_claim');assert.equal(input.read_only,true);
+    return Response.json({status:'ok',binding_status:'bound',reason:null,repository:env.GITHUB_REPOSITORY,pr_number:pr.number,
+      pr_ref:`${env.GITHUB_REPOSITORY}#${pr.number}`,head_sha:pr.head.sha,base_sha:pr.base.sha,target_branch:'main',scope,task_id:id,
+      claim:{claim_id:id,task_id:id,context_key:scope,fence:12,execution_epoch:1,lease_version:1,expires_at:'2099-01-01T00:00:00.000Z',status:'ACTIVE',execution_handover_pending:false},
+      head_authorization_id:'10000000-0000-4000-8000-000000000002',auto_bound:false,receipt_id:null});
+  }
+  return fetchImpl(url,init);
+};
 test('recorded holder entry refuses non-opt-in and changed live authority without issuing an operation',async()=>{
   let calls=0;const fetchImpl=()=>{calls++;throw Error('NETWORK_FORBIDDEN');};
   assert.equal((await runRecordedHolderOperation({env:{},input:{},fetchImpl})).status,'REFUSED');assert.equal(calls,0);
-  const pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
+  const pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',sha:base,repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
     body:'Clued-Work-Claim: 10000000-0000-4000-8000-000000000001\nClued-Work-Scope: project:0597aa60-9b98-4da6-a4ab-63d7705b632f'};
-  const outcome=await runRecordedHolderOperation({env:{...env,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},
+  const outcome=await runRecordedHolderOperation({env:{...holderEnv,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},
     input:{measurement_opt_in:'true',measurement_operation:'update_branch',measurement_pr:'727',measurement_head:head},
-    fetchImpl:async url=>{assert.ok(!url.includes('update-branch'));return Response.json(url.includes('/pulls/')?pr:{commit:{sha:base}});},authorizeOperation:async()=>({valid:false})});
+    fetchImpl:holderFetch(async url=>{assert.ok(!url.includes('update-branch'));return Response.json(url.includes('/pulls/')?pr:{commit:{sha:base}});},pr),authorizeOperation:async()=>({valid:false})});
   assert.equal(outcome.status,'REFUSED');
 });
 test('holder actual source entry records its own pre/request/real response/fresh post and never authenticates caller JSON',async()=>{
   const events=[],r=recorder(e=>events.push(e)),next='c'.repeat(40);let changed=false;const methods=[];
-  const pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
+  const pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',sha:base,repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
     body:'Clued-Work-Claim: 10000000-0000-4000-8000-000000000001\nClued-Work-Scope: project:0597aa60-9b98-4da6-a4ab-63d7705b632f'};
   const fetchImpl=async(url,init={})=>{methods.push(init.method??'GET');
     if(url.endsWith('/update-branch')){changed=true;return Response.json({message:'accepted',head:'untrusted extra',token:'SECRET'},{status:202,headers:{'x-github-request-id':'provider:actual'}});}
     if(url.includes('/commits/'))return Response.json({sha:next,parents:[{sha:head},{sha:base}]});
     return Response.json(url.includes('/pulls/')?{...pr,head:{sha:changed?next:head}}:{commit:{sha:base}});
   };
-  const actual=await runRecordedHolderOperation({env:{...env,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},workspace:repo,
+  const actual=await runRecordedHolderOperation({env:{...holderEnv,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},workspace:repo,
     input:{measurement_opt_in:'true',measurement_operation:'update_branch',measurement_pr:'727',measurement_head:head,source_authenticated:true,receipt_id:'HANDWRITTEN'},
-    observation_recorder:r,fetchImpl,authorizeOperation:async()=>({valid:true,pr,mode:{state:'normal'},observation_fence:12}),getToken:async()=>({token:'mock-only'})});
+    observation_recorder:r,fetchImpl:holderFetch(fetchImpl,pr),authorizeOperation:async()=>({valid:true,pr,mode:{state:'normal'},observation_fence:12}),getToken:async()=>({token:'mock-only'})});
   assert.equal(actual.status,'RECORDED_ORIGINAL_OPERATION');assert.equal(methods.filter(m=>m==='PUT').length,1);
   assert.deepEqual(events.map(e=>e.kind),['manual_operation_input','operation_pre','operation_request','operation_response','operation_post']);
   assert.equal(events.at(-1).payload.head_sha,next);assert.equal(events[3].payload.status,202);assert.equal(events[3].payload.provider_request_id,'provider:actual');
@@ -272,11 +300,11 @@ test('holder actual source entry records its own pre/request/real response/fresh
   assert.equal(mapped.operations.length,1);assert.equal(JSON.parse(mapped.operations[0].after_raw).head_sha,next);assert.equal(JSON.parse(mapped.operations[0].before_raw).origin,'holder_adapter');
 });
 test('holder 202 with unchanged actual fresh post stays unconfirmed, rather than inventing a success',async()=>{
-  const events=[],r=recorder(e=>events.push(e)),pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
+  const events=[],r=recorder(e=>events.push(e)),pr={number:727,state:'open',draft:false,auto_merge:null,head:{sha:head},base:{ref:'main',sha:base,repo:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}},
     body:'Clued-Work-Claim: 10000000-0000-4000-8000-000000000001\nClued-Work-Scope: project:0597aa60-9b98-4da6-a4ab-63d7705b632f'};
-  const result=await runRecordedHolderOperation({env:{...env,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},workspace:repo,
+  const result=await runRecordedHolderOperation({env:{...holderEnv,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'owner',GITHUB_REPOSITORY_OWNER:'owner'},workspace:repo,
     input:{measurement_opt_in:'true',measurement_operation:'update_branch',measurement_pr:'727',measurement_head:head},observation_recorder:r,
-    fetchImpl:async url=>Response.json(url.endsWith('/update-branch')?{message:'accepted'}:url.includes('/commits/')?{sha:head,parents:[{sha:base}]}:url.includes('/pulls/')?pr:{commit:{sha:base}},url.endsWith('/update-branch')?{status:202}:{}),
+    fetchImpl:holderFetch(async url=>Response.json(url.endsWith('/update-branch')?{message:'accepted'}:url.includes('/commits/')?{sha:head,parents:[{sha:base}]}:url.includes('/pulls/')?pr:{commit:{sha:base}},url.endsWith('/update-branch')?{status:202}:{}),pr),
     authorizeOperation:async()=>({valid:true,pr,mode:{state:'normal'},observation_fence:12}),getToken:async()=>({token:'mock-only'})});
   assert.equal(result.confirmation,'NOT_YET_CHANGED');assert.equal(events.at(-1).payload.head_sha,head);
 });

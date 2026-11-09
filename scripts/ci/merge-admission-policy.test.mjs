@@ -259,7 +259,7 @@ const LAYER_FILE = { protected: "scripts/ci/tool.mjs", code: "apps/clued-cloud/w
 
 const SCENARIOS = {
   ok: {},
-  claim_missing: { trailer: false },
+  claim_missing: { bindingMissing: true, trailer: false },
   claim_expired: { verdict: "REJECTED", reasons: ["claim_expired"] },
   write_set_not_covering: { verdict: "REJECTED", reasons: ["paths_outside_write_set"] },
   no_grant: { grant: false },
@@ -271,6 +271,16 @@ const SCENARIOS = {
   auto_merge_on: { autoMerge: { merge_method: "squash" } },
 };
 
+// Native relation is independently scripted; explanatory PR prose is never authority.
+const bindingReply = (input, claim, missing = false) => ({
+  status: 'ok', binding_status: missing ? 'unbound' : 'bound', reason: null,
+  repository: 'o/r', pr_number: 9, pr_ref: 'o/r#9', head_sha: input.head_sha,
+  base_sha: input.base_sha, target_branch: input.target_branch, scope: 'global',
+  task_id: missing ? null : claim.task_id, claim: missing ? null : claim,
+  auto_bound: false, receipt_id: null,
+  head_authorization_id: missing ? null : '00000000-0000-4000-8000-000000000902',
+});
+
 const json = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
 
 function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
@@ -279,7 +289,7 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
   const calls = [];
   const pull = { number: 9, body: s.trailer ? `Why\n\nClued-Work-Claim: ${CLAIM}` : "Why", changed_files: files.length, auto_merge: s.autoMerge,
     head: { sha: HEAD, repo: { full_name: "o/r" } }, base: { sha: BASE, ref: "main" } };
-  const claim = { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-08T05:00:00Z", write_set: files.map((f) => f.filename),
+  const claim = { claim_id: CLAIM, task_id: "00000000-0000-4000-8000-000000000901", context_key: "global", execution_epoch: 1, lease_version: 1, execution_handover_pending: false, status: "ACTIVE", fence: 1, expires_at: "2026-10-08T05:00:00Z", write_set: files.map((f) => f.filename),
     trigger_refs: s.slotHeld ? [SLOT] : [], merge_slot_until: "2026-10-08T03:00:00Z",
     ...(s.claimBaseStatus ? { base_commit: CLAIM_BASE } : {}) };
   const commits = { [HEAD]: s.carried ? [EARLIER, MERGED] : [BASE], [EARLIER]: [BASE] };
@@ -301,7 +311,8 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
       status: "completed", conclusion: "success", app: { id: s.historicalCheckApp ?? ADMISSION_APP_ID } }] })],
     ["GET", `${API}/repos/o/r/commits/${HEAD}`, () => ({ sha: HEAD, commit: { message: "x" }, parents: commits[HEAD].map((sha) => ({ sha })) })],
     ["GET", `${API}/repos/o/r/commits/${EARLIER}`, () => ({ sha: EARLIER, commit: { message: "x" }, parents: commits[EARLIER].map((sha) => ({ sha })) })],
-    ["POST", `${CLUED}/rest/v1/rpc/clued_work_verify_v1`, () => ({ status: "ok", verdict: s.verdict, reasons: s.reasons,
+    ["POST", `${CLUED}/rest/v1/rpc/clued_work_verify_v1`, (body) => body.p_input.action === "resolve_pr_claim"
+      ? bindingReply(body.p_input, claim, s.bindingMissing) : ({ status: "ok", verdict: s.verdict, reasons: s.reasons,
       paths_outside_write_set: s.reasons.includes("paths_outside_write_set") ? [files[0].filename] : [], verified_at: "2026-10-08T02:30:00Z", claim })],
     ["POST", `${CLUED}/rest/v1/rpc/clued_owner_grant_admission_door_v1`, (body) => {
       const granted = body.p_input.resources[0] === `repo:o/r/${EARLIER}` ? s.carried : s.grant;
@@ -350,7 +361,7 @@ const byLayer = (protectedCell, otherCell, frozenCell) => [protectedCell, otherC
 // efficiency alike; frozen judges every layer as protected, with no carry-over.
 const COMPAT_EXPECTED = {
   ok: all("A+"),
-  claim_missing: all(R("claim_trailer_missing")),
+  claim_missing: all(R("pr_task_binding_unbound")),
   claim_expired: all(R("claim_expired")),
   write_set_not_covering: all(R("paths_outside_write_set")),
   no_grant: byLayer(R("owner_review_required"), "A+", R("owner_review_required")),
@@ -364,7 +375,7 @@ const COMPAT_EXPECTED = {
 const efficiencyRelaxed = (strict) => [strict, strict, strict, strict, "A+", "A+", strict, strict, strict];
 const RECOMMENDED_EXPECTED = {
   ...COMPAT_EXPECTED,
-  claim_missing: efficiencyRelaxed(R("claim_trailer_missing")),
+  claim_missing: efficiencyRelaxed(R("pr_task_binding_unbound")),
   claim_expired: efficiencyRelaxed(R("claim_expired")),
   write_set_not_covering: efficiencyRelaxed(R("paths_outside_write_set")),
   slot_not_held: efficiencyRelaxed("A-"),
@@ -374,7 +385,7 @@ const RECOMMENDED_EXPECTED = {
 const looseEverywhere = (strict, frozen = strict) => [strict, "A+", "A+", strict, "A+", "A+", frozen, frozen, frozen];
 const LOOSEST_EXPECTED = {
   ok: all("A+"),
-  claim_missing: looseEverywhere(R("claim_trailer_missing")),
+  claim_missing: looseEverywhere(R("pr_task_binding_unbound")),
   claim_expired: looseEverywhere(R("claim_expired")),
   write_set_not_covering: looseEverywhere(R("paths_outside_write_set")),
   no_grant: looseEverywhere(R("owner_review_required")),
@@ -429,11 +440,19 @@ test("conservation (I1 as behavior): the protected layer's verdict is the same i
 // ---------------------------------------------------------------------------
 // What the matrix's cells mean, one by one.
 
-test("advise: a missing claim is admitted with a notice, Clued is not asked, and the merge slot is not required", async () => {
+test("policy claim requirement follows Native binding independently of explanatory prose", async () => {
+  const bound = await judge({ state: "normal", layer: "code", scenario: { trailer: false } });
+  assert.equal(bound.outcome.admitted, true);
+  const unbound = await judge({ state: "normal", layer: "code", scenario: { bindingMissing: true, trailer: true } });
+  assert.deepEqual([unbound.outcome.admitted, unbound.outcome.reasons], [false, ["pr_task_binding_unbound"]]);
+});
+
+test("advise: an unbound PR is advised after Native resolution without a full CI verification or merge slot", async () => {
   const { outcome, calls } = await judge({ table: RECOMMENDED_POLICY_TEXT, state: "efficiency", layer: "code", scenario: "claim_missing" });
   assert.equal(outcome.verdict, "ADMITTED");
   assert.ok(outcome.notices.some((notice) => notice.startsWith("claim_advisory_missing:")));
-  assert.equal(calls.some((call) => call.url.endsWith("/clued_work_verify_v1")), false);
+  assert.equal(calls.filter((call) => call.url.endsWith("/clued_work_verify_v1")).length, 1);
+  assert.equal(calls.find((call) => call.url.endsWith("/clued_work_verify_v1")).body.p_input.action, "resolve_pr_claim");
   assert.deepEqual([outcome.merge_slot.state, outcome.merge_slot.observed], ["not_required", "missing"]);
   assert.match(mergeSlotCheck({ admitted: true, state: "not_required", mode: outcome.admission_mode.label }).title, /^not_required\(code, efficiency\)$/);
   // A claim that does not admit the pull request: its reasons become notices.
@@ -524,7 +543,7 @@ test("policy file: a pull request whose head's policy would not load, or that re
     const { outcome, calls } = await judge({ state: "normal", layer: "protected", scenario, policyFileAtHead: head });
     assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], name);
     assert.match(outcome.reasons.find((reason) => reason.startsWith("policy_file_")), reason, name);
-    const verify = calls.find((call) => call.url.endsWith("/clued_work_verify_v1"));
+    const verify = calls.find((call) => call.url.endsWith("/clued_work_verify_v1") && call.body.p_input.action !== "resolve_pr_claim");
     assert.equal(verify.body.p_input.head_sha, undefined, `${name}: verified read-only, so the claim is not bound`);
   }
 });
@@ -550,7 +569,7 @@ test("the retired switches (Merge Admission step 6): CLUED_WORK_ADMISSION_ENFORC
   }
   const off = { CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_OWNER_REVIEW_ENFORCE: "" };
   const claim = await judge({ state: "normal", layer: "protected", scenario: "claim_missing", env: off });
-  assert.deepEqual([claim.cell, claim.outcome.verdict], [R("claim_trailer_missing"), "REJECTED"]);
+  assert.deepEqual([claim.cell, claim.outcome.verdict], [R("pr_task_binding_unbound"), "REJECTED"]);
   const review = await judge({ state: "normal", layer: "protected", scenario: "no_grant", env: off });
   assert.deepEqual([review.cell, review.outcome.owner_review.kind], [R("owner_review_required"), "pending"]);
 });
@@ -610,10 +629,15 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
     if (init.method === "POST" && target.endsWith("/check-runs")) posts.push(JSON.parse(init.body));
     let body, status = 200;
     if (target.includes("/rest/v1/rpc/clued_work_verify_v1")) {
-      publicationInputs.push(JSON.parse(init.body).p_input);
-      body = { status: "ok", publication_required: false };
+      const input = JSON.parse(init.body).p_input;
+      if (input.action === 'resolve_pr_claim') body = bindingReply(input, {
+        claim_id: CLAIM, task_id: '00000000-0000-4000-8000-000000000901', context_key: 'global',
+        fence: 1, execution_epoch: 1, lease_version: 1, status: 'ACTIVE',
+        expires_at: '2099-01-01T00:00:00Z', execution_handover_pending: false,
+      });
+      else { publicationInputs.push(input); body = { status: "ok", publication_required: false }; }
     } else if (target.endsWith("/pulls/9")) {
-      body = { state: "open", head: { sha: HEAD }, base: { sha: BASE, ref: "main" }, changed_files: 1,
+      body = { number: 9, state: "open", head: { sha: HEAD }, base: { sha: BASE, ref: "main" }, changed_files: 1,
         body: `Clued-Work-Claim: ${CLAIM}` };
     } else if (target.includes("/pulls/9/files?")) body = [{ filename: "docs/change.md", status: "modified" }];
     else if (target.endsWith("/installation")) body = { id: 99 };

@@ -28,21 +28,23 @@
 // The required check runs on `pull_request_target`: the workflow file and this
 // script come from the base branch, and no code of the PR is checked out or
 // executed. The PR is read through the API only, fetched fresh on every run so
-// an edited body or a re-run sees the current trailer and head.
+// a re-run sees the current PR head and target.
 //
-// Each verify call carries pr_ref "<owner>/<repo>#<number>". The first verify
-// that admits binds the claim to that pull request in Clued; any other PR
-// naming the same claim is REJECTED (claim_bound_to_other_pr).
+// Native owns PR -> Task identity. A CI resolve may discover a previously
+// unknown PR only from one current holder-key-authorized exact head/target.
+// One Task can have several PRs; text never selects their Task or claim.
+// The following full verification still checks the current generation,
+// scope, paths, head, role, Owner approval and all existing CI limits.
 //
 // The required and reverify modes ask Clued whether the PR's work claim admits
-// the PR's head, base and changed files: clued_work_verify_v1 (read-only, no receipt), called on
+// the PR's head, base and changed files: clued_work_verify_v1, called on
 // the Clued database's PostgREST endpoint with the public publishable key and
 // the SHA-256 of the read-only Binding token in CLUED_CONTEXT_READ_TOKEN. The
 // database resolves the Binding and its scope itself, exactly as it does for
 // the Worker. The public /mcp route cannot be used here: in production it is
 // owned by the delegated OAuth provider and accepts OAuth access tokens only.
 //
-// Admission is always enforced: a missing trailer, a REJECTED verdict, a
+// Admission is always enforced: a missing Native binding, a REJECTED verdict, a
 // missing RPC, a refused token or a transport error all fail closed, except
 // where the merge admission policy itself only advises the claim (below).
 // Until Merge Admission step 6 (2026-10-09) the repository variables
@@ -87,6 +89,7 @@ import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
+import { resolvePRTaskBinding, claimReferenceFromBinding, PRTaskBindingError } from './clued-pr-task-binding.mjs';
 
 import {
   effectiveProtectedPaths,
@@ -1796,7 +1799,7 @@ export async function verifyClaim(fetchImpl, env, args, workspace) {
 function emptyOutcome(eventName) {
   return {
     mode: null, event: eventName, admitted: false, enforced: true, verdict: null, reasons: [], notices: [],
-    claim_id: null, scope: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
+    claim_id: null, scope: null, task_id: null, claim_binding: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
     applicable_workflows: [], error: null, admission_mode: null,
   };
 }
@@ -2012,7 +2015,8 @@ function modeOutcome(mode) {
 // readPolicyFile reads config/merge-admission-policy.json of the workspace;
 // the self-tests pass a fixed table so that they never depend on the
 // repository's copy (review MAJOR-1).
-async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withSummary, readPolicyFile = fs.readFileSync, observation_recorder, evaluation_id, observation_entry = "required" }) {
+async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withSummary, bindingScope,
+  readPolicyFile = fs.readFileSync, observation_recorder, evaluation_id, observation_entry = "required" }) {
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const outcome = emptyOutcome(eventName);
   outcome.admission_mode = modeOutcome(mode);
@@ -2071,30 +2075,36 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
 
   if (!env.CLUED_CONTEXT_READ_TOKEN) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
 
-  let reference = parseClaimReference(pr.body);
-  if (!reference) {
-    const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${pr.head.sha}`);
-    reference = parseClaimReference(commit && commit.commit && commit.commit.message);
-  }
-  if (!reference) {
-    if (!claimAdvisory) {
-      outcome.verdict = "REJECTED";
-      outcome.reasons.push("claim_trailer_missing");
-      return outcome;
-    }
-    // Merge Admission v0.1 §5.1: work_claim: advise admits it and says so.
-    outcome.notices.push(`claim_advisory_missing: no Clued-Work-Claim trailer in the PR body or head commit (the ${layer} layer only advises a claim in ${mode.state})`);
-  } else {
-    outcome.claim_id = reference.claim_id;
-    outcome.scope = reference.scope;
-  }
+  // Resolving under a CI identity may create the Task relation. An incomplete
+  // file packet must refuse before even that first Native side effect.
   if (truncated) {
-    // Paths past the API limit cannot be checked against the write set.
     outcome.verdict = "REJECTED";
     outcome.reasons.push(`changed_files_truncated:${pr.changed_files}`);
     return outcome;
   }
 
+  let reference = null;
+  try {
+    outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr,
+      { workspace, scope: bindingScope, readOnly: gateFindingsOfPr.length > 0 });
+    if (outcome.claim_binding.binding_status === 'bound') reference = claimReferenceFromBinding(outcome.claim_binding);
+  } catch (error) {
+    if (!claimAdvisory) throw error;
+    outcome.notices.push(`claim_advisory_unverified: ${error.code ?? 'pr_binding_unavailable'}`);
+  }
+  if (!reference) {
+    if (!claimAdvisory) {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(`pr_task_binding_${outcome.claim_binding?.binding_status ?? 'unknown'}`);
+      return outcome;
+    }
+    // Merge Admission v0.1 §5.1: work_claim: advise admits it and says so.
+    outcome.notices.push(`claim_advisory_missing: no current Native PR Task binding (the ${layer} layer only advises a claim in ${mode.state})`);
+  } else {
+    outcome.claim_id = reference.claim_id;
+    outcome.scope = reference.scope;
+    outcome.task_id = reference.task_id;
+  }
   let verified = null;
   if (reference) {
     // Re-review N8: a PR the workflow guard already refuses is verified
@@ -2142,6 +2152,17 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
       observation_recorder?.record("claim_verification",{evaluation_id,input:{scope:reference.scope,claim_id:reference.claim_id,head_sha:pr.head.sha},result});
       outcome.verdict = verified.verdict;
       outcome.reasons.push(...verified.reasons);
+      if (verified.verdict === 'ADMITTED') {
+        const current = verified.payload.claim;
+        if (!current || current.claim_id !== reference.claim_id || current.task_id !== reference.task_id
+          || current.context_key !== reference.scope || current.fence !== reference.fence
+          || current.execution_epoch !== reference.execution_epoch
+          || (verified.payload.current_fence !== undefined && verified.payload.current_fence !== reference.fence)
+          || (verified.payload.execution_epoch !== undefined && verified.payload.execution_epoch !== reference.execution_epoch)) {
+          outcome.verdict = 'REJECTED';
+          outcome.reasons.push('pr_task_binding_changed');
+        }
+      }
       const outside = verified.payload.paths_outside_write_set;
       if (Array.isArray(outside) && outside.length) outcome.paths_outside_write_set = outside;
       if (Number.isInteger(verified.payload.admitted_heads)) {
@@ -3387,14 +3408,15 @@ async function appRequest(fetchImpl, env, method, route, bearer, body) {
 
 // Posts one completed kooyumi-admission-verified check as the App. externalId
 // names the pull request and the run that decided ("pr:<n>:run:<run id>").
-export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME }) {
+export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME,
+  readPolicyFile = fs.readFileSync }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
   const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
   const repository = env.GITHUB_REPOSITORY;
   let publication = null;
   let publicationSettlement = null;
-  let publicationScope = "global";
+  let publicationScope = null;
   let publicationPostStarted = false;
   try {
     if (success) {
@@ -3403,12 +3425,27 @@ export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(),
       }
       const pr = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${prNumber}`);
       if (pr?.state !== "open" || pr?.head?.sha !== headSha) throw new Error("the publication head is no longer current");
-      const reference = await claimReferenceOf(fetchImpl, env, pr);
-      publicationScope = reference?.scope ?? "global";
+      const binding = await resolvePullRequestBinding(fetchImpl, env, pr, { readOnly: true });
+      const reference = binding.binding_status === 'bound' ? claimReferenceFromBinding(binding) : null;
+      const unbound = binding.binding_status === 'unbound' && binding.task_id === null && binding.claim === null;
+      if (!reference && !unbound) throw new PRTaskBindingError('pr_binding_current_claim_required');
+      publicationScope = reference?.scope ?? null;
       const paths = await changedPathsOfPullRequest(fetchImpl, env, repository, prNumber);
       if (paths.file_count !== pr.changed_files) throw new Error("publication changed paths are incomplete");
+      if (!reference) {
+        // Preserve the existing Owner-policy advisory case. The trusted
+        // Source classifies actual paths, including changes against main's
+        // current tip; it does not invent a Task scope or waive Native's
+        // existing publication_begin decision.
+        const mode = resolveMode({ env, workspace: env.GITHUB_WORKSPACE, readFile: readPolicyFile });
+        const comparison = await baseTipCompare(fetchImpl, env, repository, pr);
+        const layer = layerOf([...new Set([...paths.paths, ...comparison.paths])], mode.policy,
+          { unknown: comparison.truncated });
+        if (effectiveRules(mode.policy, mode.state, layer).work_claim !== 'advise')
+          throw new PRTaskBindingError('pr_binding_current_claim_required');
+      }
       const publicationReply = await cluedRpc(fetchImpl, env, env.GITHUB_WORKSPACE, VERIFY_RPC, {
-        action: "publication_begin", scope: publicationScope, ...(reference ?? {}),
+        action: "publication_begin", ...(reference ? { scope: reference.scope, claim_id: reference.claim_id } : {}),
         pr_ref: `${repository}#${prNumber}`, head_sha: headSha, base_sha: pr.base.sha,
         target_branch: pr.base.ref, changed_paths: paths.paths, run_id: String(env.GITHUB_RUN_ID),
         publication_key: randomUUID(),
@@ -3417,6 +3454,9 @@ export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(),
         throw new Error(`live publication verification failed: ${publicationReply.detail}`);
       }
       publication = publicationReply.body;
+      if (!reference && !(publication.status === 'ok' && publication.publication_required === false
+        && !publication.publication_id && (!Object.hasOwn(publication, 'verdict') || publication.verdict === 'ADMITTED')))
+        throw new PRTaskBindingError('pr_binding_publication_not_exempt');
       if (typeof publication.scope === "string") publicationScope = publication.scope;
       if (publication.publication_required !== false && publication.verdict !== "ADMITTED") {
         success = false; title = "REJECTED: handover authorization changed";
@@ -3531,13 +3571,29 @@ export const ADOPT_QUIET_REASONS = new Set(["no_copy_for_pr", "not_a_copy"]);
 // (migration 20261006120000, Owner Decision 2ea795e4).
 export const MERGE_SLOT_RETURN_RPC = "clued_work_merge_slot_return_v1";
 
-async function claimReferenceOf(fetchImpl, env, pr) {
-  let reference = parseClaimReference(pr.body);
-  if (!reference && env.GITHUB_TOKEN && pr.head && pr.head.sha) {
-    const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${pr.head.sha}`);
-    reference = parseClaimReference(commit && commit.commit && commit.commit.message);
-  }
-  return reference;
+export async function resolvePullRequestBinding(fetchImpl, env, pr,
+  { workspace = env.GITHUB_WORKSPACE, scope, readOnly = false } = {}) {
+  return resolvePRTaskBinding({ scope, repository: env.GITHUB_REPOSITORY, prNumber: pr?.number,
+    headSha: pr?.head?.sha, baseSha: pr?.base?.sha, targetBranch: pr?.base?.ref, readOnly,
+    command: async input => {
+      const response = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, input);
+      if (response.status !== 200) throw new PRTaskBindingError('pr_binding_transport_refused');
+      if (response.body?.status === 'rejected') {
+        const code = response.body.error_code;
+        throw new PRTaskBindingError(typeof code === 'string' && /^[a-z][a-z0-9_]{0,100}$/i.test(code)
+          ? code : 'pr_binding_native_refused');
+      }
+      return response.body;
+    } });
+}
+
+async function claimReferenceOf(fetchImpl, env, pr, { requireCurrent = true, workspace = env.GITHUB_WORKSPACE } = {}) {
+  const binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, readOnly: true });
+  if (requireCurrent) return claimReferenceFromBinding(binding);
+  // Closing a PR does not require reviving its claim. The authoritative Task
+  // relation still supplies its scope when the current claim has already ended.
+  if (!binding.task_id || !binding.scope) return null;
+  return { scope: binding.scope, task_id: binding.task_id, claim_id: binding.claim?.claim_id ?? null };
 }
 
 export async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
@@ -3572,9 +3628,9 @@ async function returnMergeSlot({ env, pr, fetchImpl, workspace, result }) {
     return result;
   }
   try {
-    const reference = await claimReferenceOf(fetchImpl, env, pr);
+    const reference = await claimReferenceOf(fetchImpl, env, pr, { requireCurrent: false, workspace });
     if (!reference) {
-      result.reason = "no Clued-Work-Claim trailer; no merge slot to return";
+      result.reason = "no Native PR Task binding; no merge slot to return";
       return result;
     }
     result.claim_id = reference.claim_id;
@@ -3623,11 +3679,9 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
     return result;
   }
   try {
-    // Only a pull request that names a claim can be a copy; its scope trailer
-    // picks the context the claim lives in.
-    const reference = await claimReferenceOf(fetchImpl, env, pr);
+    const reference = await claimReferenceOf(fetchImpl, env, pr, { requireCurrent: false, workspace });
     if (!reference) {
-      result.reason = "no Clued-Work-Claim trailer; not a copy";
+      result.reason = "no Native PR Task binding; not a copy";
       return result;
     }
     result.claim_id = reference.claim_id;

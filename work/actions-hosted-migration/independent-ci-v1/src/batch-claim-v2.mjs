@@ -21,7 +21,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from './proof.mjs';
-import { batchRefV2, claimGeneration, isTrainFrontJobV2, sameClaimGeneration, validateJobV2, validateObservedClaim } from './job-v2.mjs';
+import { batchRefV2, claimGeneration, isTrainFrontJobV2, sameClaimGeneration, validateJobV2, validateObservedClaim, makeJobV2 } from './job-v2.mjs';
+import { normalizeTerminalAdmission } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 
 export const BATCH_CLAIM_CONTRACT = 'clued.independent-ci.batch-claim/1';
 export const BATCH_CLAIM_CONTRACT_FRONT = 'clued.independent-ci.batch-claim/2';
@@ -62,22 +63,25 @@ async function withClaimLock(directory, job, operation) {
   finally { await handle.close(); await fs.unlink(lock); }
 }
 
-function body(job, claim, observedAt) {
+function body(job, claim, observedAt, terminalAdmission = null) {
   const shape = shapeFor(job);
   const v = { contract: shape.contract, batchRef: batchRefV2(job), ...Object.fromEntries(shape.subject.map(k => [k, job[k]])),
-    claim: claimGeneration(claim), observedAt };
+    claim: claimGeneration(claim), observedAt,
+    ...(terminalAdmission === null ? {} : { terminalAdmission: normalizeTerminalAdmission(terminalAdmission, claim) }) };
   return { ...v, integrity: digest(v) };
 }
 
 export function validateBatchClaimRecord(record, job) {
   validateJobV2(job);
   const shape = shapeFor(job);
-  if (!plain(record) || Object.keys(record).length !== shape.fields.length || !shape.fields.every(k => Object.hasOwn(record, k))
+  const fields = [...shape.fields, ...(Object.hasOwn(record ?? {}, 'terminalAdmission') ? ['terminalAdmission'] : [])];
+  if (!plain(record) || Object.keys(record).length !== fields.length || !fields.every(k => Object.hasOwn(record, k))
     || record.contract !== shape.contract || record.batchRef !== batchRefV2(job) || !identityOf(shape.subject).every(k => record[k] === job[k])
     || typeof record.createdAt !== 'string' || !Number.isFinite(Date.parse(record.createdAt))
     || !plain(record.claim) || Object.keys(record.claim).sort().join('|') !== 'claimId|epoch|fence'
     || typeof record.observedAt !== 'string' || !Number.isFinite(Date.parse(record.observedAt))) fail('BATCH_CLAIM_RECORD_INVALID');
   validateObservedClaim({ ...record.claim, expiresAt: record.observedAt });
+  if (Object.hasOwn(record, 'terminalAdmission')) normalizeTerminalAdmission(record.terminalAdmission, record.claim);
   const { integrity, ...rest } = record;
   if (integrity !== digest(rest)) fail('BATCH_CLAIM_RECORD_INVALID');
   return record;
@@ -95,12 +99,12 @@ async function readRecord(file, job) {
 // Stage 1 only (role work-admission): create the record from the facts it just observed, or, if a
 // record for this exact batch already exists (a repeated evaluation of the same content+attempt),
 // require the same claim generation.
-export async function recordBatchClaim(directory, job, observedClaim, observedAt) {
+export async function recordBatchClaim(directory, job, observedClaim, observedAt, terminalAdmission = null) {
   validateJobV2(job); validateObservedClaim(observedClaim);
   if (job.role !== 'work-admission') fail('BATCH_CLAIM_RECORD_STAGE_ONE_ONLY');
   return withClaimLock(directory, job, async () => {
     const file = fileFor(directory, batchRefV2(job));
-    const record = body(job, observedClaim, observedAt);
+    const record = body(job, observedClaim, observedAt, terminalAdmission);
     // A crash after archiving the old record must never reopen create-only admission.
     if (!(await exists(file)) && await exists(archiveFor(directory, job))) fail('BATCH_CLAIM_REWRITE_INCOMPLETE');
     let handle;
@@ -119,10 +123,10 @@ export async function recordBatchClaim(directory, job, observedClaim, observedAt
 // Stage one only. The installed publisher supplies the fresh no-publication proof under
 // the same lock used to begin an effect. All uncertainty fails closed; the one-time
 // reservation is intentionally retained after any crash or incomplete replacement.
-export async function rewriteUnpublishedBatchClaim(directory, job, expectedClaim, observedClaim, observedAt, verifyUnpublished) {
+export async function rewriteUnpublishedBatchClaim(directory, job, expectedClaim, observedClaim, observedAt, verifyUnpublished, terminalAdmission = null) {
   validateJobV2(job); validateObservedClaim(observedClaim);
   if (job.role !== 'work-admission' || typeof verifyUnpublished !== 'function') fail('BATCH_CLAIM_RECORD_STAGE_ONE_ONLY');
-  const next = body(job, observedClaim, observedAt);
+  const next = body(job, observedClaim, observedAt, terminalAdmission);
   validateBatchClaimRecord(next, job);
   return withClaimLock(directory, job, async () => {
     const file = fileFor(directory, batchRefV2(job)), archive = archiveFor(directory, job), marker = rewriteMarker(directory, job);
@@ -168,4 +172,28 @@ export async function readBatchClaim(directory, job) {
   const record = await readRecord(fileFor(directory, batchRefV2(job)), job);
   if (!record) fail('BATCH_CLAIM_MISSING');
   return Object.freeze({ ...record.claim });
+}
+
+// Read only original stage-one records in the existing protected batch store.
+// Multiple receipts/CAS generations are unknown; never select the newest claim.
+export async function readTerminalAdmission(directory, subject) {
+  await directoryOk(directory);
+  const names = (await fs.readdir(directory)).filter(name => /^[a-f0-9]{64}\.json$/.test(name));
+  if (names.length > 2000) return null;
+  const references = new Map();
+  for (const name of names) {
+    const file = path.join(directory, name), st = await fs.lstat(file);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > 65536) fail('BATCH_CLAIM_RECORD_INVALID');
+    let candidate;
+    try { candidate = JSON.parse(await fs.readFile(file, 'utf8')); } catch { fail('BATCH_CLAIM_RECORD_INVALID'); }
+    if (!['repo', 'pr', 'headSha', 'sourceManifestSha256'].every(key => candidate?.[key] === subject?.[key])) continue;
+    const job = makeJobV2({ ...Object.fromEntries(SUBJECT.map(key => [key, candidate[key]])),
+      testSha: recordTestShaV2(candidate), role: 'work-admission' });
+    const record = await readRecord(file, job);
+    if (fileFor(directory, batchRefV2(job)) !== file) fail('BATCH_CLAIM_RECORD_INVALID');
+    if (!record.terminalAdmission) return null;
+    references.set(canonical(record.terminalAdmission), record.terminalAdmission);
+    if (references.size > 1) return null;
+  }
+  return references.size === 1 ? Object.freeze({ ...references.values().next().value }) : null;
 }

@@ -76,10 +76,15 @@ test('limited certificate: same-claim new generation rejects old batch and permi
     mainSha: T, clean: true, unconfirmed: 0, fullSweepSinceOn: false, sweepFreshMs: 900_000, slotHardCapMinutes: 120, prUpdatedCursor: writtenAt };
   validateSweepProof(proof);
   const generation = { claimId: CLAIM, fence: 4, epoch: 7 };
-  const input = { job, claimId: CLAIM, holders: { onDuty: true, holders: [{ claimId: CLAIM, pr: 910, boundPr: `${REPO}#910`, takenAt: since }] }, proof, strictProof,
+  const input = { job, claimId: CLAIM, holders: { onDuty: true, holders: [{ claimId: CLAIM, taskId: CLAIM,
+    boundPrs: [`${REPO}#910`], pr: 910, boundPr: `${REPO}#910`, takenAt: since }] }, proof, strictProof,
     front: { pr: 910, headSha: H, baseSha: T, testSha: S, testTree: TREE, claimId: CLAIM, since }, ledger: { entries: [], refused: [] },
     pulls: { complete: true, pulls: [] }, now: NOW, liveRules: { strict: true }, observedClaim: generation, batchClaim: generation, testTree: TREE };
   assert.equal(trainHeadDecision(input), null);
+  for (const holder of [{ ...input.holders.holders[0], taskId: undefined },
+    { ...input.holders.holders[0], boundPrs: [] }, { ...input.holders.holders[0], boundPrs: [`${REPO}#911`] }])
+    assert.equal(trainHeadDecision({ ...input, holders: { onDuty: true, holders: [holder] } }), TRAIN_SINGLE_GREEN_NOT_PROVEN,
+      'legacy scalar PR data never substitutes for the actual Task and Native association');
   for (const patch of [{ liveRules: { strict: false } }, { liveRules: null }, { strictStoreRefused: 1 }, { strictProof: null },
     { batchClaim: { ...generation, fence: 3 } }, { batchClaim: { ...generation, epoch: 6 } }, { testTree: sha(1000) },
     { front: { ...input.front, since: iso(NOW - 90_000) } }, { strictProof: { ...strictProof, sourceManifestSha256: '0'.repeat(64) } },

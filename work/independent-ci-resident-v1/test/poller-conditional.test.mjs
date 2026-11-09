@@ -39,7 +39,7 @@ test('an unchanged minute is two 304s: nothing is proposed again, the last answe
   assert.deepEqual(written.map(w => w.prUpdatedAt), ['2026-10-30T01:00:00.000Z', '2026-10-30T01:05:00.000Z']);
 });
 
-test('a new main tip is read fresh; drafts and PRs without the trailer stay out, as with gh pr list', async () => {
+test('a new main tip is read fresh; drafts stay out and missing claim trailers do not hide PRs', async () => {
   let main = MAIN;
   const pulls = [
     { number: 1, headRefOid: 'a'.repeat(40), baseRefOid: MAIN, isDraft: false, body: TRAILER, updatedAt: 't' },
@@ -48,7 +48,7 @@ test('a new main tip is read fresh; drafts and PRs without the trailer stay out,
   ];
   const cmp = async argv => argv.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: main }) } : { code: 9, stdout: '' };
   const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(cmp, { main: () => main, pulls: () => pulls }), writeTrigger: async () => {}, clock: () => 0 });
-  assert.equal(await p.pass(), 1);
+  assert.equal(await p.pass(), 2);
   main = 'e'.repeat(40);
   await p.pass();
   assert.deepEqual(p.lastPass.reads, { fresh: 1, notModified: 1 });
