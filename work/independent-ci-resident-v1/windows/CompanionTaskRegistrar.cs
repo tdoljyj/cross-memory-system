@@ -210,6 +210,10 @@ function Get-CluedMachineWslClient {
   // accepted when the distribution then starts; the Owner's DefaultUid is written back (it was 1000 on TURING; import-in-place gives 0).
   public static string ImportScript(string distro, string vhdx, long defaultUid) {
     if (!ValidDistro(distro) || !ValidVhdx(vhdx) || defaultUid < 0 || defaultUid > 4294967295L) throw new ArgumentException("IMPORT_ARGUMENTS_INVALID");
+    // WSL parses its leading options from the raw command line, unlike a CRT
+    // argv consumer: quoting "--version" makes it a Linux command. Every token
+    // below is fixed or passes the no-whitespace/no-quote Distro/Vhdx grammar,
+    // so join the validated tokens without quotes. FileName remains separate.
     // Fixed commands, bounded streams and an atomic result under the already
     // protected VHDX directory. This file is diagnostic only, never a grant or
     // the success verdict used to remove the Owner's registration.
@@ -288,7 +292,7 @@ function Invoke-ImportWsl([string]$phase, [string[]]$arguments, [int]$timeoutMs)
   $process = New-Object Diagnostics.Process
   $process.StartInfo = New-Object Diagnostics.ProcessStartInfo
   $process.StartInfo.FileName = $wsl
-  $process.StartInfo.Arguments = '""' + ($arguments -join '"" ""') + '""'
+  $process.StartInfo.Arguments = $arguments -join ' '
   $process.StartInfo.UseShellExecute = $false; $process.StartInfo.CreateNoWindow = $true
   $process.StartInfo.WorkingDirectory = $directory
   $process.StartInfo.RedirectStandardOutput = $true; $process.StartInfo.RedirectStandardError = $true

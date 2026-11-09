@@ -28,7 +28,7 @@ elevated Windows PowerShell 5.1 started with -NoProfile. Without -RunApprovedIns
 Every stop writes the raw values to W\launch (terminal.json detail and the *-report.json files).
 #>
 [CmdletBinding()]
-param([switch]$RunApprovedInstall)
+param([switch]$RunApprovedInstall,[switch]$CompanionMaintenance)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 if (-not $RunApprovedInstall) { '{"status":"DISABLED"}'; return }
@@ -880,10 +880,25 @@ function Step-CompanionHeadless {
     $rearm = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\rearm-resident.ps1')
     if ((Get-FileSha $rearm) -cne $RearmSha256) { throw 'INSTALLED_REARM_SCRIPT_NOT_AS_PACKAGED' }
     # M5-b (ADR 0023): with a companion account, the account switch (the distribution moves to the account; no password is typed).
-    $c = Invoke-Child 'companion-headless' $rearm $(if ($CompanionWslVhdxDirectory) { @('-CompanionAccount', '-WslVhdxDirectory', $CompanionWslVhdxDirectory) } else { @('-CompanionHeadless') })
+    $accountArgs = $(if ($CompanionWslVhdxDirectory) { @('-CompanionAccount', '-WslVhdxDirectory', $CompanionWslVhdxDirectory) } else { @('-CompanionHeadless') })
+    if ($CompanionMaintenance) {
+      if (-not $CompanionWslVhdxDirectory -or -not $MaintenanceHostDropPin -or $MaintenanceHelperSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'ONE_UAC_MAINTENANCE_NOT_PINNED' }
+      $helper = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\companion-maintenance.ps1')
+      if ((Get-FileSha $helper) -cne $MaintenanceHelperSha256) { throw 'ONE_UAC_MAINTENANCE_HELPER_CHANGED' }
+      . $helper
+      $subject = @{ node=$NodeName; packageManifestSha256=$PackageManifestSha256; ciSourceManifestSha256=$CiSourceManifestSha256; residentManifestSha256=$ResidentManifestSha256; installReceiptSha256=(Get-CompanionMaintenanceHash (Read-CompanionMaintenanceBytes (Join-Path $ResidentRoot 'install\install-receipt.json') -Live)); rearmSha256=$RearmSha256; operatorSid=$OperatorSid; companionSid=$OwnerSid; runnerService=$RunnerService; runnerBinary=$RunnerBinary; runnerSddl=$RunnerSddl; wslDistribution=$MaintenanceWslDistribution; vhdxPath=(Get-CompanionMaintenanceRegisteredVhd $MaintenanceWslDistribution); targetVhdxPath=(Join-Path $CompanionWslVhdxDirectory 'ext4.vhdx') }
+      # The existing child is already elevated. Maintenance never invokes
+      # RunAs, Resume, the force-kill quiesce tail or a startup-type change.
+      $maintenanceEvidence = Join-Path $StageParent ('maintenance-'+[guid]::NewGuid().ToString('N'))
+      $r['maintenanceEvidenceDirectory'] = $maintenanceEvidence
+      $c = Invoke-CompanionMaintenance -Root $ResidentRoot -ExpectedSubject $subject -HostDrop $MaintenanceHostDropPin -EvidenceDirectory $maintenanceEvidence -Action {
+        param($contextFile,$contextSha)
+        Invoke-Child 'companion-headless' $rearm ($accountArgs + @('-CompanionWslVmShutdown','-CompanionMaintenanceContextFile',$contextFile,'-ExpectedCompanionMaintenanceContextSha256',$contextSha))
+      }
+    } else { $c = Invoke-Child 'companion-headless' $rearm $accountArgs }
     $r.ran = $true; $r.exit = $c.exit; $r.stdout = (Tail $c.stdout)
     $r.status = if ([string]$c.stdout -match '"status":\s*"(COMPANION_HEADLESS_[A-Z_]+)"') { $Matches[1] } else { 'UNREADABLE' }
-  } catch { $r.error = $_.Exception.Message }
+  } catch { $r.error = $_.Exception.Message; if ($CompanionMaintenance) { $r.status = 'COMPANION_MAINTENANCE_NOT_COMPLETED_PRESERVED' } }
   Write-Json 'companion-headless-report.json' $r
   $Done.Add('companion-headless')
   $r
@@ -907,9 +922,12 @@ try {
   $train = Step-WaitFirstTrain   # r4 Q2 (review M1)
   $verify = if ($train.runnerQuiet) { Step-Verify $install.receiptSha256 } else { [ordered]@{ exit = $null; status = 'NOT_RUN_RUNNER_NOT_QUIET'; notOk = @() } }
   $pause = Step-PauseAfterInstall ($verify.status -ceq 'RESIDENT_VERIFIED')   # R5
-  $companion = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
+  $maintenanceDeferred = $CompanionMaintenance -and $verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed
+  # The controlled maintenance path must reach a genuinely empty process tree.
+  # Its account switch starts/qualifies the companion after the move itself.
+  $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
-  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   if (-not [IO.File]::Exists((Join-Path $Out 'terminal.json'))) { Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = 'LAUNCHER_EXCEPTION'; detail = $_.Exception.Message; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; at = [DateTimeOffset]::UtcNow.ToString('o') }) }
   Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw
