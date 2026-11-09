@@ -101,6 +101,8 @@ Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`
 
 服务身份绑定前后两次 SCM 服务名/PID 和进程创建时间，不要求普通用户能读 `ExecutablePath`。优先使用仅 `PROCESS_QUERY_LIMITED_INFORMATION` 的原生查询；加固 DACL 连此查询也拒绝时，用系统 CIM provider 的创建时间和即时重查，明确按微秒（10个 FILETIME tick）与 RM 对齐，报告 `identityPrecisionTicks`。缺创建时间、PID重用、进程已退出或重查失败仍不能豁免。companion 的根绑定固定注册任务的两次运行实例 GUID、EnginePID、状态和 action 路径，支持实际 conhost 形态；同名 conhost/JobHost 或仅凭相邻 PID 不构成身份。子进程仍须核父子创建时序及当前身份。
 
+账户所属 companion 任务可能对非提权 Operator 拒绝读取。仅确切的 `E_ACCESSDENIED`（包括 PowerShell 的异常包装）会记录为 `companionTaskObservation` 的 `UNREADABLE` / `COMPANION_TASK_ACCESS_DENIED`；整次任务观察原子丢弃，不保留异常前得到的部分实例。它不意味着任务不存在或进程可信，也不会绕过 Restart Manager：公开文件的真实占用仍全部扫描；没有独立核实身份的锁持有者及其子进程仍为 external，从而产生原 `EXTERNAL_RESIDENT_BINARY_LOCK` finding。两次观察只要有一次不可读，就没有 companion 任务身份豁免；独立 SCM 身份检查保持。任务不存在、其他 COM 错误及非权限观察失败仍直接失败，不作为无占用。只有真实扫描未发现外部占用时，这项公开文件占用检查才可通过；它不证明 companion 运行资格。探针不提权、不改任务 ACL 或状态。
+
 只读 API 依据：[GetProcessTimes](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)、[Win32_Process](https://learn.microsoft.com/windows/win32/cimwin32prov/win32-process)、[CIM_DATETIME](https://learn.microsoft.com/windows/win32/wmisdk/cim-datetime)、[IRunningTask.EnginePID](https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-irunningtask-get_enginepid)。
 
 此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
