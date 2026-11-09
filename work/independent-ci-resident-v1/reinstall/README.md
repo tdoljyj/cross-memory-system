@@ -109,7 +109,15 @@ Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`
 python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 ```
 
-非提权、只读。每一项都直接运行节点上的真实工具或读取真实文件，不一致的地方就记为 finding（差异清单）。唯一以 root 身份运行的是 linuxHost 探查：只读，不写任何文件，git 不取可选锁。
+非提权、只读。每一项都直接运行节点上的真实工具或读取真实文件，不一致的地方就记为 finding（差异清单）。linuxHost 探查以 root 运行；显式快照恢复还会以 root 调用既有冻结工具的只读 `version-facts` 命令作现场复核，两者均不签名、不切代、不修改安装状态，git 不取可选锁。
+
+当 companion 未运行、默认 `upgrade/mailbox/responses/version-facts.json` 不存在时，可使用从原冻结工具采集、未经重编码或改动的 stdout 文件：
+
+```
+python -I rehearse.py config\desk-w-591.json --commit <40hex> --package <包目录> --linux-version-facts <原始版本事实快照文件>
+```
+
+默认文件和显式快照都按 32 KiB 上限读取，校验合同、固定三角色及全部摘要形状、正整数代数、`pinsOk=true`、无 staged、带时区的 `observedAt`（最多一小时旧、最多三十秒超前）。缺失、不可读、坏 JSON、过期或不合形状都成为明确 finding，不抛出文件缺失回溯。显式快照另经配置发行版的现装冻结工具 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux version-facts` 真实复核：以隔离环境调用 `/usr/bin/python3.12 -I`，退出非零、超时或观察无效均拒绝；除两次采集时间外，每一业务字段都必须相同。现装工具的 `pinsOk` 同时核对现装 resident 和冻结升级工具 manifest；这里比较的是快照与现装工具摘要，不要求等于新提交的工具，因为全量重装可以更换冻结工具（普通原地升级的门不同）。快照路径和文件时间本身不构成真实性证明。报告保留输入原字节 SHA-256、来源、现场复核摘要及观察时间；不把快照写回 mailbox，不改 JSON、钉值或签名。原有代记录、公开副本摘要、真实 host 探针和普通用户角色派生检查仍全部执行。超过时限应重取真实事实，不能修改时间戳。此输入只用于预演，不替代 Linux B 的事实、最终精确包验收或系统授权。
 
 | 检查 | 内容 |
 |---|---|
@@ -117,7 +125,7 @@ python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 | upgrader | 装着 CluedCIUpgrader 时，模板的停服步骤必须经 SCM 停它 |
 | verify | 新包的 `verify-resident.ps1` 输出形状（`status` 和 `checks.*.ok`）必须是启动器读的那样。已装的 verify 也真跑一次：不提权时它会被管理员专属文件挡住，此时只记为"未提权不可运行"，不算 finding；能跑出结果时，必须是 VERIFIED 或 PARTIALLY |
 | status | `state/status.json` 的 `writtenAt`、`executor`、`current`、`halt`；`upgrade/status.json` 里没有 op；`upgrade/current.json` 的合同 |
-| linux | Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`）与第 1 代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
+| linux | 默认 Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`），或经现装冻结工具现场复核的显式快照，与现装代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
 | pins | 包里 Linux 常驻 manifest 的外部钉值：形状与已装一致，`source-v2` 钉值等于新提交里的文件 |
 | linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`） |
 | roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。默认使用发行版默认用户；可用 `linux.rehearsalUser` 显式指定已有普通用户（如 `nobody`），只影响本项，不修改发行版默认用户、账户或权限。真实 UID 或 EUID 为 0 时仍拒绝运行 |

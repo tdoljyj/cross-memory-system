@@ -17,6 +17,7 @@ Output: one create-only JSON report (clued.independent-ci.reinstall-rehearsal/1)
 observed value; exit 0 only on REHEARSAL_PASS.
 
   python -I rehearse.py <config.json> --commit <40hex> --package <dir> [--report-dir <dir>] [--skip-roles]
+         [--linux-version-facts <original frozen-tool stdout snapshot>]
 """
 import datetime, hashlib, importlib.util, json, os, re, subprocess, sys
 
@@ -27,6 +28,11 @@ POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 
 SC = BS.join(['C:', 'Windows', 'System32', 'sc.exe'])
 CONTRACT = 'clued.independent-ci.reinstall-rehearsal/1'
 VERIFY_OK = ('RESIDENT_VERIFIED', 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED')
+FACTS_CONTRACT = 'clued.independent-ci.linux-version-facts/1'
+FACTS_MAX_BYTES = 32 * 1024
+FACTS_MAX_AGE = datetime.timedelta(hours=1)
+FACTS_FUTURE_TOLERANCE = datetime.timedelta(seconds=30)
+FACTS_ROLES = ('gitleaks', 'trivy', 'contract-placement')
 
 
 def load_module(name, path):
@@ -52,6 +58,51 @@ def read_json(p):
         return json.loads(f.read().decode('utf-8-sig'))
 
 
+def version_facts(raw):
+    """Bounded public facts only. An invalid document never supplies role names or comparison values."""
+    if not 0 < len(raw) <= FACTS_MAX_BYTES:
+        raise ValueError('LINUX_FACTS_INVALID')
+
+    def unique(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError('LINUX_FACTS_INVALID')
+            obj[key] = value
+        return obj
+
+    try:
+        f = json.loads(raw.decode('utf-8-sig'), object_pairs_hook=unique)
+    except (ValueError, RecursionError):
+        raise ValueError('LINUX_FACTS_INVALID') from None
+    required = {'contract', 'generation', 'staged', 'pinsOk', 'sourceCommit', 'ciSourceManifestSha256',
+                'manifestSha256', 'roles', 'upgradeToolSha256', 'observedAt'}
+    digest = lambda value: isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+    if (not isinstance(f, dict) or set(f) != required or f.get('contract') != FACTS_CONTRACT
+            or type(f.get('generation')) is not int or not 1 <= f['generation'] <= 999999999
+            or type(f.get('pinsOk')) is not bool
+            or not isinstance(f.get('sourceCommit'), str) or re.fullmatch(r'[0-9a-f]{40}', f['sourceCommit']) is None
+            or not all(digest(f.get(k)) for k in ('ciSourceManifestSha256', 'manifestSha256', 'upgradeToolSha256'))
+            or not isinstance(f.get('roles'), dict) or set(f['roles']) != set(FACTS_ROLES)
+            or any(not isinstance(v, dict) or set(v) != {'policySha256', 'qualificationSha256'}
+                   or not all(digest(x) for x in v.values()) for v in f['roles'].values())):
+        raise ValueError('LINUX_FACTS_INVALID')
+    if f['staged'] is not None or f['pinsOk'] is not True:
+        raise ValueError('LINUX_FACTS_NOT_A_SETTLED_GENERATION')
+    try:
+        observed = datetime.datetime.fromisoformat(f['observedAt'].replace('Z', '+00:00'))
+        if observed.tzinfo is None:
+            raise ValueError()
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError('LINUX_FACTS_OBSERVATION_INVALID') from None
+    age = datetime.datetime.now(datetime.timezone.utc) - observed
+    if age > FACTS_MAX_AGE:
+        raise ValueError('LINUX_FACTS_NOT_FRESH')
+    if age < -FACTS_FUTURE_TOLERANCE:
+        raise ValueError('LINUX_FACTS_OBSERVED_IN_FUTURE')
+    return f
+
+
 class Host:
     """What the rehearsal reads or runs on the node. Tests replace it; every method is read-only."""
     def __init__(self, root=ROOT):
@@ -65,6 +116,18 @@ class Host:
 
     def read_json(self, p):
         return read_json(p)
+
+    def read_facts(self, p):
+        with open(p, 'rb') as f:
+            return f.read(FACTS_MAX_BYTES + 1)
+
+    def live_version_facts(self, distribution):
+        """Existing frozen, root-only read command: no signing, staging, lock or mailbox writes."""
+        p = subprocess.run(['wsl.exe', '-d', distribution, '-u', 'root', '--exec', '/usr/bin/env', '-i',
+                            'PATH=/usr/bin:/bin', 'HOME=/root', 'LANG=C', 'LC_ALL=C', 'GIT_NO_REPLACE_OBJECTS=1',
+                            '/usr/bin/python3.12', '-I', '/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux',
+                            'version-facts'], capture_output=True, timeout=90)
+        return p.returncode, p.stdout
 
     def sha(self, p):
         return sha_file(p)
@@ -121,7 +184,7 @@ def to_wsl(p):
     return '/mnt/' + p[0].lower() + p[2:].replace(BS, '/')
 
 
-def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
+def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, linux_version_facts=None):
     rconfig.need_installed_linux(cfg)   # a rehearsal is against an installed node; a first install has nothing to rehearse
     findings, checks = [], {}
 
@@ -227,7 +290,41 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
     st = host.read_json(host.path('state', 'status.json'))
     ust = host.read_json(host.path('upgrade', 'status.json')) if host.exists(host.path('upgrade', 'status.json')) else None
     gen = host.read_json(host.path('upgrade', 'current.json'))
-    facts = host.read_json(host.path('upgrade', 'mailbox', 'responses', 'version-facts.json'))
+    facts_path = linux_version_facts if linux_version_facts is not None else host.path('upgrade', 'mailbox', 'responses', 'version-facts.json')
+    facts = {}
+    checks['linuxFactsInput'] = {'source': 'explicit-snapshot' if linux_version_facts is not None else 'installed-mailbox', 'path': facts_path}
+    try:
+        raw_facts = host.read_facts(facts_path)
+        checks['linuxFactsInput']['sha256'] = sha_bytes(raw_facts)
+        facts = version_facts(raw_facts)
+    except FileNotFoundError:
+        find('LINUX_FACTS_MISSING')
+    except OSError:
+        find('LINUX_FACTS_UNREADABLE')
+    except ValueError as error:
+        find(str(error))
+    if facts:
+        if linux_version_facts is not None:
+            # A supplied path and its timestamp are not authority. Corroborate every business field with the installed
+            # frozen tool on THIS configured distro; the two collection timestamps may differ. The normal host probe and
+            # real normal-user role derivation below still run, and none of the supplied bytes enter the installed cache.
+            # Unlike an in-place upgrade, a full reinstall may replace the frozen tool: its live, pinsOk-verified digest
+            # must agree with the snapshot, not necessarily with the NEW commit's tool.
+            try:
+                live_exit, live_raw = host.live_version_facts(cfg['linux']['distribution'])
+                checks['linuxFactsInput']['liveExit'] = live_exit
+                if live_exit != 0:
+                    find('LINUX_FACTS_LIVE_OBSERVATION_REFUSED', exit=live_exit)
+                else:
+                    live = version_facts(live_raw)
+                    checks['linuxFactsInput']['liveSha256'] = sha_bytes(live_raw)
+                    checks['linuxFactsInput']['liveObservedAt'] = live['observedAt']
+                    if {k: v for k, v in facts.items() if k != 'observedAt'} != {k: v for k, v in live.items() if k != 'observedAt'}:
+                        find('LINUX_FACTS_SNAPSHOT_NOT_THE_LIVE_NODE')
+            except ValueError as error:
+                find('LINUX_FACTS_LIVE_OBSERVATION_INVALID', refusal=str(error))
+            except (OSError, subprocess.SubprocessError):
+                find('LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE')
     checks['status'] = {'statusKeys': sorted(st), 'executorState': (st.get('executor') or {}).get('state'), 'current': st.get('current'), 'halt': st.get('halt'),
                         'upgradeOp': (ust or {}).get('op'), 'generation': gen.get('generation'), 'generationContract': gen.get('contract')}
     for k in ('writtenAt', 'executor', 'current', 'halt'):
@@ -351,7 +448,8 @@ def main(argv):
     opt = lambda n, d=None: a[a.index(n) + 1] if n in a else d
     commit, pkg_dir = opt('--commit'), opt('--package')
     assert commit and re.fullmatch(r'[0-9a-f]{40}', commit) and pkg_dir, 'USAGE: <config> --commit <40hex> --package <dir>'
-    report = rehearse(cfg, commit, os.path.abspath(pkg_dir), Host(), skip_roles='--skip-roles' in a)
+    report = rehearse(cfg, commit, os.path.abspath(pkg_dir), Host(), skip_roles='--skip-roles' in a,
+                      linux_version_facts=opt('--linux-version-facts'))
     out_dir = opt('--report-dir', os.path.join(cfg['workDir'], 'rehearsal'))
     os.makedirs(out_dir, exist_ok=True)
     name = 'rehearsal.%s.%s.%s.%s.json' % (cfg['node'], commit[:8], report['packageManifestSha256'][:8], report['observedAt'].replace('-', '').replace(':', ''))

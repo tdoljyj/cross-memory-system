@@ -6,7 +6,8 @@ Regression cases (README.md section 5): the three refusals of the r7 TURING rein
   3. the launcher accepted only uninstall plan /2 while the installed uninstall writes /3 (UNINSTALL_PLAN_REFUSED, launcher f3).
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
-import hashlib, importlib.util, json, os, shutil, subprocess, tempfile, unittest
+import datetime, hashlib, importlib.util, json, os, shutil, subprocess, tempfile, unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RE = os.path.dirname(HERE)
@@ -72,7 +73,9 @@ class Fixture:
         src_manifest = b'{"installed":"source manifest"}'
         open(os.path.join(inst_dir, 'roles-v3', 'formal-source-manifest-v2.json'), 'wb').write(src_manifest)
         self.facts = {'contract': 'clued.independent-ci.linux-version-facts/1', 'generation': 1, 'staged': None, 'pinsOk': True, 'sourceCommit': 'c' * 40,
-                      'ciSourceManifestSha256': sha(src_manifest), 'manifestSha256': sha(im), 'roles': self.facts_roles, 'upgradeToolSha256': 'd' * 64}
+                      'ciSourceManifestSha256': sha(src_manifest), 'manifestSha256': sha(im), 'roles': self.facts_roles,
+                      'upgradeToolSha256': 'd' * 64,
+                      'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
         pkg = self.pkg = os.path.join(w, 'package')
         os.makedirs(os.path.join(pkg, 'record')); os.makedirs(os.path.join(pkg, 'linux'))
         pins = [(NODE, 'b' * 64), (SV2 + WORKER, sha(new_worker) if package_pins_follow_new else sha(b'old worker'))]
@@ -128,6 +131,9 @@ class FakeHost:
             ('upgrade', 'current.json'): {'contract': 'clued.independent-ci.resident-generation/1', 'generation': 1, 'packageManifestSha256': '8' * 64, 'linux': gen_linux},
             ('upgrade', 'mailbox', 'responses', 'version-facts.json'): fx.facts,
         }
+        self.live_facts = json.loads(json.dumps(fx.facts))
+        self.live_exit = 0
+        self.live_exception = None
 
     def path(self, *rel):
         return rel
@@ -137,6 +143,19 @@ class FakeHost:
 
     def read_json(self, p):
         return json.loads(json.dumps(self.json[p]))
+
+    def read_facts(self, p):
+        if isinstance(p, tuple):
+            if p not in self.json:
+                raise FileNotFoundError()
+            return json.dumps(self.json[p]).encode('utf-8')
+        return rehearse.Host().read_facts(p)
+
+    def live_version_facts(self, distribution):
+        self.live_distribution = distribution
+        if self.live_exception is not None:
+            raise self.live_exception
+        return self.live_exit, json.dumps(self.live_facts).encode('utf-8')
 
     def sha(self, p):
         return '7' * 64
@@ -194,6 +213,132 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
         self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
+
+    def snapshot(self, facts=None, raw=None):
+        path = os.path.join(self.fx.dir, 'snapshot.json')
+        with open(path, 'wb') as f:
+            f.write(raw if raw is not None else json.dumps(facts if facts is not None else self.fx.facts).encode('utf-8'))
+        return path
+
+    def test_explicit_snapshot_recovers_missing_mailbox_without_writing_it(self):
+        host = FakeHost(self.fx)
+        key = ('upgrade', 'mailbox', 'responses', 'version-facts.json')
+        del host.json[key]
+        path = self.snapshot()
+        before = open(path, 'rb').read()
+        report = self.run_with(host, linux_version_facts=path)
+        self.assertEqual(report['status'], 'REHEARSAL_PASS', report['findings'])
+        self.assertEqual(report['checks']['linuxFactsInput']['source'], 'explicit-snapshot')
+        self.assertEqual(report['checks']['linuxFactsInput']['sha256'], sha(before))
+        self.assertEqual(host.live_distribution, self.fx.cfg['linux']['distribution'])
+        self.assertIsNotNone(host.probe_argv)   # the real-root host probe is still required
+        self.assertIsNotNone(host.derive_argv)  # the normal-user role derivation is still required
+        self.assertNotIn(key, host.json)
+        self.assertEqual(open(path, 'rb').read(), before)
+
+    def test_live_reader_uses_only_the_existing_fixed_read_command(self):
+        expected = ['wsl.exe', '-d', 'configured-distro', '-u', 'root', '--exec', '/usr/bin/env', '-i',
+                    'PATH=/usr/bin:/bin', 'HOME=/root', 'LANG=C', 'LC_ALL=C', 'GIT_NO_REPLACE_OBJECTS=1',
+                    '/usr/bin/python3.12', '-I', '/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux', 'version-facts']
+        with mock.patch.object(rehearse.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout=b'original stdout')) as run:
+            self.assertEqual(rehearse.Host().live_version_facts('configured-distro'), (0, b'original stdout'))
+        run.assert_called_once_with(expected, capture_output=True, timeout=90)
+
+    def test_snapshot_and_live_observation_can_have_different_fresh_timestamps(self):
+        host = FakeHost(self.fx)
+        host.live_facts['observedAt'] = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)).isoformat()
+        self.assertNotEqual(host.live_facts['observedAt'], self.fx.facts['observedAt'])
+        self.assertEqual(self.run_with(host, linux_version_facts=self.snapshot())['status'], 'REHEARSAL_PASS')
+
+    def test_missing_mailbox_or_explicit_snapshot_is_a_finding(self):
+        for explicit in (False, True):
+            host = FakeHost(self.fx)
+            del host.json[('upgrade', 'mailbox', 'responses', 'version-facts.json')]
+            kw = {'linux_version_facts': os.path.join(self.fx.dir, 'missing.json')} if explicit else {}
+            report = self.run_with(host, **kw)
+            self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+            self.assertIn('LINUX_FACTS_MISSING', codes(report))
+            self.assertIsNotNone(host.probe_argv)
+
+    def test_unreadable_mailbox_is_a_finding(self):
+        host = FakeHost(self.fx)
+        host.read_facts = lambda p: (_ for _ in ()).throw(PermissionError())
+        self.assertIn('LINUX_FACTS_UNREADABLE', codes(self.run_with(host)))
+
+    def test_bad_json_and_oversized_facts_are_findings(self):
+        for raw in (b'{', b'[]', b'null', b'\xff', b' ' * (rehearse.FACTS_MAX_BYTES + 1),
+                    b'{"contract":"x","contract":"y"}', b'[' * 2000 + b']' * 2000):
+            with self.subTest(raw=raw[:30]):
+                report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot(raw=raw))
+                self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+                self.assertIn('LINUX_FACTS_INVALID', codes(report))
+
+    def test_malformed_default_mailbox_is_a_finding(self):
+        for value in (None, [], {}, {'contract': 'wrong'}):
+            with self.subTest(value=value):
+                host = FakeHost(self.fx)
+                host.json[('upgrade', 'mailbox', 'responses', 'version-facts.json')] = value
+                self.assertIn('LINUX_FACTS_INVALID', codes(self.run_with(host)))
+
+    def test_fact_shape_rejects_role_path_injection_missing_roles_and_bad_hashes(self):
+        for change in ({'generation': True}, {'contract': 'wrong'}, {'roles': {'../outside': self.fx.facts_roles['gitleaks']}},
+                       {'roles': {'gitleaks': self.fx.facts_roles['gitleaks']}}, {'sourceCommit': 'wrong'}, {'manifestSha256': None}):
+            with self.subTest(change=change):
+                report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot(dict(self.fx.facts, **change)))
+                self.assertIn('LINUX_FACTS_INVALID', codes(report))
+
+    def test_stale_naive_and_future_facts_fail_closed(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for timestamp, code in (((now - datetime.timedelta(hours=2)).isoformat(), 'LINUX_FACTS_NOT_FRESH'),
+                                ((now + datetime.timedelta(minutes=2)).isoformat(), 'LINUX_FACTS_OBSERVED_IN_FUTURE'),
+                                (now.replace(tzinfo=None).isoformat(), 'LINUX_FACTS_OBSERVATION_INVALID'),
+                                ('bad', 'LINUX_FACTS_OBSERVATION_INVALID'), (None, 'LINUX_FACTS_OBSERVATION_INVALID')):
+            with self.subTest(timestamp=timestamp):
+                report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot(dict(self.fx.facts, observedAt=timestamp)))
+                self.assertIn(code, codes(report))
+
+    def test_staged_or_failed_pins_facts_fail_closed(self):
+        for change in ({'pinsOk': False}, {'staged': {'generation': 2}}):
+            with self.subTest(change=change):
+                report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot(dict(self.fx.facts, **change)))
+                self.assertIn('LINUX_FACTS_NOT_A_SETTLED_GENERATION', codes(report))
+
+    def test_snapshot_wrong_tool_and_generation_still_fail(self):
+        for change, code in (({'upgradeToolSha256': '0' * 64}, 'LINUX_FACTS_SNAPSHOT_NOT_THE_LIVE_NODE'),
+                             ({'generation': 2}, 'LINUX_FACTS_NOT_THE_GENERATION_RECORD')):
+            with self.subTest(change=change):
+                report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot(dict(self.fx.facts, **change)))
+                self.assertIn(code, codes(report))
+                self.assertIn('LINUX_FACTS_SNAPSHOT_NOT_THE_LIVE_NODE', codes(report))
+
+    def test_full_reinstall_can_replace_the_frozen_tool(self):
+        tool = os.path.join(self.fx.w, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux', 'bin', 'clued-ci-upgrade-linux')
+        os.makedirs(os.path.dirname(tool), exist_ok=True)
+        with open(tool, 'wb') as f:
+            f.write(b'new frozen tool installed only by this full reinstall')
+        self.assertNotEqual(rehearse.sha_file(tool), self.fx.facts['upgradeToolSha256'])
+        report = self.run_with(FakeHost(self.fx), linux_version_facts=self.snapshot())
+        self.assertEqual(report['status'], 'REHEARSAL_PASS', report['findings'])
+
+    def test_snapshot_needs_live_confirmation_and_all_original_gates(self):
+        host = FakeHost(self.fx)
+        host.live_facts['sourceCommit'] = 'e' * 40
+        self.assertIn('LINUX_FACTS_SNAPSHOT_NOT_THE_LIVE_NODE', codes(self.run_with(host, linux_version_facts=self.snapshot())))
+        for kwargs, code in (({'probe': {'checkHostExit': 1}}, 'LINUX_HOST_PINS_NOT_THE_CONFIGURED'),
+                             ({'derive': {'status': 'REFUSED', 'code': 'fixture_refusal'}}, 'ROLE_DERIVATION_REFUSED')):
+            with self.subTest(code=code):
+                self.assertIn(code, codes(self.run_with(FakeHost(self.fx, **kwargs), linux_version_facts=self.snapshot())))
+
+    def test_refused_unavailable_and_stale_live_observations_do_not_accept_snapshot(self):
+        path = self.snapshot()
+        host = FakeHost(self.fx); host.live_exit = 1
+        self.assertIn('LINUX_FACTS_LIVE_OBSERVATION_REFUSED', codes(self.run_with(host, linux_version_facts=path)))
+        for error in (OSError(), subprocess.TimeoutExpired('frozen public read', 90)):
+            host = FakeHost(self.fx); host.live_exception = error
+            self.assertIn('LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE', codes(self.run_with(host, linux_version_facts=path)))
+        host = FakeHost(self.fx)
+        host.live_facts['observedAt'] = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2)).isoformat()
+        self.assertIn('LINUX_FACTS_LIVE_OBSERVATION_INVALID', codes(self.run_with(host, linux_version_facts=path)))
 
     def test_explicit_ordinary_user_does_not_change_the_root_host_probe(self):
         self.fx.cfg['linux']['rehearsalUser'] = 'nobody'

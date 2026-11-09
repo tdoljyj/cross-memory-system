@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const windows = process.platform === 'win32';
 const source = fileURLToPath(new URL('../windows/CompanionTaskRegistrar.cs', import.meta.url));
@@ -15,6 +16,16 @@ const framework = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319';
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const secret = ['ghp', '_', '0123456789'.repeat(3), '012345'].join(''); // fixture only: assembled at runtime so secret scanners do not flag a literal
 let fixturePromise;
+
+test('the reinstall generator pin accepts the committed reviewed launcher template', async () => {
+  const generator = await fs.readFile(new URL('../reinstall/launcher/generate.py', import.meta.url), 'utf8');
+  const template = await fs.readFile(new URL('../reinstall/launcher/template.ps1', import.meta.url), 'utf8');
+  const pins = [...generator.matchAll(/^TEMPLATE_SHA = '([0-9a-f]{64})'/gm)];
+  assert.equal(pins.length, 1, 'one explicit reviewed-template pin');
+  // Python text-mode reading in generate.py normalizes Windows line endings.
+  const actual = createHash('sha256').update(template.replace(/\r\n?/g, '\n'), 'utf8').digest('hex');
+  assert.equal(actual, pins[0][1], 'template changes must update their reviewed generator pin in the same delivery');
+});
 
 test('M5-b VM management bounds inherited output after an exited client', { skip: !windows }, () => {
   const script = fileURLToPath(new URL('../windows/test-m5b-wsl-release.ps1', import.meta.url));
