@@ -33,8 +33,9 @@ LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
 SCHEDULING_END = 729
 PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
-EXPECTED_COUNT = 734
+EXPECTED_COUNT = 737
 ORIGINAL_733_RECORD_LINES_SHA256 = "26e6b5423894ef77561199fc87179a18e64c2d4da0ae9540b16d34f02fa5a5d7"
+ORIGINAL_734_RECORD_LINES_SHA256 = "b58907134f76eb201c29a882488c0e8cc1ece30d08058f3b972dbb06d994bc4e"
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -73,14 +74,30 @@ ROLE_PROBE_FINDINGS = {
 ROLE_PROBE_KINDS = {spec["kind"] for spec in ROLE_PROBE_FINDINGS.values()}
 # Candidate only: the one reviewed public archive/HALT correlation identifier.
 # This does not accept a successor Source or authorize any scanner/runtime use.
-BATCH_KEY_COMMIT = "f5046d7e569dc2d35a98061a6d7ff84eb553a4ea"
-BATCH_KEY_PATH = "work/independent-ci-resident-v1/windows/recover-m5b-archive-reviewed.ps1"
-BATCH_KEY_FINGERPRINT = f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}:generic-api-key:40"
-BATCH_KEY_KIND = "EXACT_PUBLIC_RECOVERY_BATCH_KEY"
-BATCH_KEY_BLOB = {"blob": "960490c2e0e3f3b227ba97f99fbd5febaf845394", "bytes": 16462,
+PUBLIC_BATCH_COMMIT = "f5046d7e569dc2d35a98061a6d7ff84eb553a4ea"
+PUBLIC_BATCH_PATH = "work/independent-ci-resident-v1/windows/recover-m5b-archive-reviewed.ps1"
+PUBLIC_BATCH_FINGERPRINT = f"{PUBLIC_BATCH_COMMIT}:{PUBLIC_BATCH_PATH}:generic-api-key:40"
+PUBLIC_BATCH_KIND = "EXACT_PUBLIC_RECOVERY_BATCH_KEY"
+PUBLIC_BATCH_BLOB = {"blob": "960490c2e0e3f3b227ba97f99fbd5febaf845394", "bytes": 16462,
                   "sha256": "a45595835e2ac962125d67aec1f45a1168843bffa1b801e44b27d74615f30c84"}
-BATCH_KEY_LINE_SHA256 = "244ad2f1cc40193212145d1d025c60e6f9b382728e0deeb20c6f006e9694605c"
-BATCH_KEY_CONTEXT_SHA256 = "b7e5d02e882736007b14db64a520aa11f2832b79cdb77298c3f67be3e3011c0c"
+PUBLIC_BATCH_LINE_SHA256 = "244ad2f1cc40193212145d1d025c60e6f9b382728e0deeb20c6f006e9694605c"
+PUBLIC_BATCH_CONTEXT_SHA256 = "b7e5d02e882736007b14db64a520aa11f2832b79cdb77298c3f67be3e3011c0c"
+INTEGRITY_COMMIT = "4bd6d582c7a27fb0ad4e0fa4cf6112cfa7d0e6f0"
+INTEGRITY_PATH = "scripts/ci/reviewed_gitleaks.py"
+INTEGRITY_KIND = "EXACT_INTEGRITY_METADATA"
+INTEGRITY_BLOB = {"blob": "02530f3a9a7681e6d7f053af05194fed88cd41c4", "bytes": 63215,
+                  "sha256": "2bd5df9a69e00f83413afabc7b8b7ce3ca67af798eb14571c7aa33ac75380a10"}
+INTEGRITY_CONTEXT_SHA256 = "c5782f4126d06a150e99993a79058f1efb5c578b3bb07e7091bcce2c71e94964"
+INTEGRITY_SPECS = {
+    76: {"bytes": 62, "sha256": "b309c89312ac6faae3246a4483dea1f8fcec84918e657762f9c95f3d64de5595",
+         "uses": [78, 618, 906], "meaning": "commit_object"},
+    82: {"bytes": 91, "sha256": "c6dda217687378cdbdaa8582932e9ce5d35276a68d1aaaa3288152e808b38dc3",
+         "uses": [624], "meaning": "line_digest"},
+    83: {"bytes": 94, "sha256": "cf9ab4c3c7a3eaf2fb02e80d3e2d561237e0287437e554ca8babcd2467db5d56",
+         "uses": [625], "meaning": "context_digest"},
+}
+INTEGRITY_FINDINGS = {f"{INTEGRITY_COMMIT}:{INTEGRITY_PATH}:generic-api-key:{line}": spec
+                      for line, spec in INTEGRITY_SPECS.items()}
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -181,7 +198,8 @@ KINDS = {
 KINDS |= SCHEDULING_KINDS
 KINDS |= ROLE_PROBE_KINDS
 KINDS.add(HISTORICAL_KIND)
-KINDS.add(BATCH_KEY_KIND)
+KINDS.add(PUBLIC_BATCH_KIND)
+KINDS.add(INTEGRITY_KIND)
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -240,9 +258,12 @@ def parse_records(text):
         if ((historical is not None and record["kinds"] != [HISTORICAL_KIND])
                 or (HISTORICAL_KIND in record["kinds"] and historical is None)):
             raise ValueError("Exact historical escaped-JSON identity changed")
-        if ((record["fingerprint"] == BATCH_KEY_FINGERPRINT and record["kinds"] != [BATCH_KEY_KIND])
-                or (BATCH_KEY_KIND in record["kinds"] and record["fingerprint"] != BATCH_KEY_FINGERPRINT)):
+        if ((record["fingerprint"] == PUBLIC_BATCH_FINGERPRINT and record["kinds"] != [PUBLIC_BATCH_KIND])
+                or (PUBLIC_BATCH_KIND in record["kinds"] and record["fingerprint"] != PUBLIC_BATCH_FINGERPRINT)):
             raise ValueError("Exact public batch-key identity changed")
+        if ((record["fingerprint"] in INTEGRITY_FINDINGS and record["kinds"] != [INTEGRITY_KIND])
+                or (INTEGRITY_KIND in record["kinds"] and record["fingerprint"] not in INTEGRITY_FINDINGS)):
+            raise ValueError("Exact integrity metadata identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -312,10 +333,15 @@ def parse_records(text):
             or hashlib.sha256(("\n".join(record_lines[:732])+"\n").encode()).hexdigest()
             != PRIOR_732_RECORD_LINES_SHA256):
         raise ValueError("Prior732 bytes or the one exact appended d94cd486 subject changed")
-    if (records[733:] != [{"fingerprint": BATCH_KEY_FINGERPRINT, "kinds": [BATCH_KEY_KIND]}]
+    if (records[733:734] != [{"fingerprint": PUBLIC_BATCH_FINGERPRINT, "kinds": [PUBLIC_BATCH_KIND]}]
             or hashlib.sha256(("\n".join(record_lines[:733])+"\n").encode()).hexdigest()
             != ORIGINAL_733_RECORD_LINES_SHA256):
         raise ValueError("Original733 bytes or the one exact appended public batch-key subject changed")
+    if (records[734:] != [{"fingerprint": fingerprint, "kinds": [INTEGRITY_KIND]}
+                         for fingerprint in INTEGRITY_FINDINGS]
+            or hashlib.sha256(("\n".join(record_lines[:734])+"\n").encode()).hexdigest()
+            != ORIGINAL_734_RECORD_LINES_SHA256):
+        raise ValueError("Original734 bytes or exact appended integrity metadata subjects changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
@@ -609,20 +635,20 @@ def verify_role_probe_token(repo, fingerprint, text):
 
 def verify_public_batch_key(repo, fingerprint, text):
     """Prove one immutable public metadata/archive identifier, never an auth input."""
-    if fingerprint != BATCH_KEY_FINGERPRINT:
+    if fingerprint != PUBLIC_BATCH_FINGERPRINT:
         raise ValueError("Unreviewed public batch-key identity")
     raw = text.encode("utf-8")
     object_id = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-    if (len(raw) != BATCH_KEY_BLOB["bytes"] or object_id != BATCH_KEY_BLOB["blob"]
-            or hashlib.sha256(raw).hexdigest() != BATCH_KEY_BLOB["sha256"]
-            or run(["git", "rev-parse", f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}"], cwd=repo).decode().strip()
-            != BATCH_KEY_BLOB["blob"]):
+    if (len(raw) != PUBLIC_BATCH_BLOB["bytes"] or object_id != PUBLIC_BATCH_BLOB["blob"]
+            or hashlib.sha256(raw).hexdigest() != PUBLIC_BATCH_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{PUBLIC_BATCH_COMMIT}:{PUBLIC_BATCH_PATH}"], cwd=repo).decode().strip()
+            != PUBLIC_BATCH_BLOB["blob"]):
         raise ValueError("Public batch-key immutable blob changed")
     lines = text.splitlines(keepends=True)
     line = lines[39].encode()
     context = "".join(lines[36:50]).encode()
-    if (len(line) != 79 or hashlib.sha256(line).hexdigest() != BATCH_KEY_LINE_SHA256
-            or len(context) != 1097 or hashlib.sha256(context).hexdigest() != BATCH_KEY_CONTEXT_SHA256):
+    if (len(line) != 79 or hashlib.sha256(line).hexdigest() != PUBLIC_BATCH_LINE_SHA256
+            or len(context) != 1097 or hashlib.sha256(context).hexdigest() != PUBLIC_BATCH_CONTEXT_SHA256):
         raise ValueError("Public batch-key exact line or context changed")
     declaration = re.fullmatch(r"\$BatchKey = '([a-f0-9]{64})'\n", lines[39])
     uses = [number for number, source in enumerate(lines, 1)
@@ -634,6 +660,57 @@ def verify_public_batch_key(repo, fingerprint, text):
             or uses != [40, 61, 114, 183, 185, 188]
             or any(marker not in lines[number - 1] for number, marker in required.items())):
         raise ValueError("Public batch-key metadata/archive use changed")
+
+
+def verify_integrity_metadata(repo, fingerprint, text):
+    """Classify only the old complete artifact and independently recomputed metadata."""
+    spec = INTEGRITY_FINDINGS.get(fingerprint)
+    if spec is None:
+        raise ValueError("Unreviewed integrity metadata identity")
+    raw = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    if (len(raw) != INTEGRITY_BLOB["bytes"] or object_id != INTEGRITY_BLOB["blob"]
+            or hashlib.sha256(raw).hexdigest() != INTEGRITY_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{INTEGRITY_COMMIT}:{INTEGRITY_PATH}"], cwd=repo).decode().strip()
+            != INTEGRITY_BLOB["blob"]):
+        raise ValueError("Integrity metadata immutable artifact changed")
+    lines = text.splitlines(keepends=True)
+    number = int(fingerprint.rsplit(":", 1)[1])
+    line = lines[number - 1].encode()
+    context = "".join(lines[73:83]).encode()
+    if (len(line) != spec["bytes"] or hashlib.sha256(line).hexdigest() != spec["sha256"]
+            or len(context) != 813 or hashlib.sha256(context).hexdigest() != INTEGRITY_CONTEXT_SHA256):
+        raise ValueError("Integrity metadata exact line or context changed")
+    original = run(["git", "cat-file", "blob", f"{PUBLIC_BATCH_COMMIT}:{PUBLIC_BATCH_PATH}"], cwd=repo).decode()
+    verify_public_batch_key(repo, PUBLIC_BATCH_FINGERPRINT, original)
+    original_lines = original.splitlines(keepends=True)
+    derived = {"commit_object": PUBLIC_BATCH_COMMIT,
+               "line_digest": hashlib.sha256(original_lines[39].encode()).hexdigest(),
+               "context_digest": hashlib.sha256("".join(original_lines[36:50]).encode()).hexdigest()}
+    tree = ast.parse(text)
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign) and node.lineno == number]
+    if (len(assignments) != 1 or len(assignments[0].targets) != 1
+            or not isinstance(assignments[0].targets[0], ast.Name)
+            or not isinstance(assignments[0].value, ast.Constant)
+            or assignments[0].value.value != derived[spec["meaning"]]):
+        raise ValueError("Integrity metadata derivation changed")
+    symbol = assignments[0].targets[0].id
+    uses = [node for node in ast.walk(tree) if isinstance(node, ast.Name)
+            and node.id == symbol and isinstance(node.ctx, ast.Load)]
+    if sorted(node.lineno for node in uses) != spec["uses"]:
+        raise ValueError("Integrity metadata usage changed")
+    if spec["meaning"] != "commit_object":
+        argument = "line" if spec["meaning"] == "line_digest" else "context"
+        expected = ast.parse(f"hashlib.sha256({argument}).hexdigest() != {symbol}", mode="eval").body
+        comparisons = [node for node in ast.walk(tree) if isinstance(node, ast.Compare)
+                       and node.lineno == spec["uses"][0]
+                       and any(isinstance(n, ast.Name) and n.id == symbol for n in ast.walk(node))]
+        if len(comparisons) != 1 or ast.dump(comparisons[0]) != ast.dump(expected):
+            raise ValueError("Integrity metadata equality usage changed")
+    else:
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        if any(not isinstance(parents.get(node), ast.FormattedValue) for node in uses):
+            raise ValueError("Integrity metadata object-reference usage changed")
 
 
 def verify_history(repo, records, *, read_only=False):
@@ -654,8 +731,10 @@ def verify_history(repo, records, *, read_only=False):
             verify_scheduling_fixture(repo, record["fingerprint"], text)
         if record["fingerprint"] in ROLE_PROBE_FINDINGS:
             verify_role_probe_token(repo, record["fingerprint"], text)
-        if record["fingerprint"] == BATCH_KEY_FINGERPRINT:
+        if record["fingerprint"] == PUBLIC_BATCH_FINGERPRINT:
             verify_public_batch_key(repo, record["fingerprint"], text)
+        if record["fingerprint"] in INTEGRITY_FINDINGS:
+            verify_integrity_metadata(repo, record["fingerprint"], text)
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:
@@ -790,6 +869,7 @@ def self_test(config, production_ignore):
     code, first = scan()
     if code != 1 or {f["RuleID"] for f in first} != {"sourcegraph-access-token", "generic-api-key"}:
         raise ValueError("Baseline no longer detects both synthetic token types")
+    oid_rule = next(iter({f["RuleID"] for f in first} - {"generic-api-key"}))
     ignore.write_text(production_ignore + "".join(f["Fingerprint"] + "\n" for f in first), encoding="utf-8", newline="\n")
     code, suppressed = scan()
     if code != 0 or suppressed:
@@ -903,16 +983,16 @@ def self_test(config, production_ignore):
         raise ValueError("Genuine credential-shaped curl fixture was suppressed")
     # This exact public value is exempt only at its old immutable fingerprint.
     # Copying its bytes never exempts another commit, path or newly added line.
-    batch_blob = run(["git", "cat-file", "blob", f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}"], cwd=config.parent)
-    if hashlib.sha256(batch_blob).hexdigest() != BATCH_KEY_BLOB["sha256"]:
+    batch_blob = run(["git", "cat-file", "blob", f"{PUBLIC_BATCH_COMMIT}:{PUBLIC_BATCH_PATH}"], cwd=config.parent)
+    if hashlib.sha256(batch_blob).hexdigest() != PUBLIC_BATCH_BLOB["sha256"]:
         raise ValueError("Public batch-key detector fixture blob changed")
-    batch_target = test_repo / BATCH_KEY_PATH
+    batch_target = test_repo / PUBLIC_BATCH_PATH
     batch_target.parent.mkdir(parents=True, exist_ok=True); batch_target.write_bytes(batch_blob); commit()
     code, batch_new_commit = scan()
-    if code != 1 or not any(f["File"] == BATCH_KEY_PATH and f["RuleID"] == "generic-api-key"
+    if code != 1 or not any(f["File"] == PUBLIC_BATCH_PATH and f["RuleID"] == "generic-api-key"
                             and f["StartLine"] == 40 for f in batch_new_commit):
         raise ValueError("Public batch key was suppressed in a new commit")
-    other_batch_path = "other-path/" + BATCH_KEY_PATH
+    other_batch_path = "other-path/" + PUBLIC_BATCH_PATH
     other_batch = test_repo / other_batch_path
     other_batch.parent.mkdir(parents=True, exist_ok=True); other_batch.write_bytes(batch_blob); commit()
     code, batch_path = scan()
@@ -921,9 +1001,39 @@ def self_test(config, production_ignore):
         raise ValueError("Public batch key was suppressed at another path")
     batch_target.unlink(); commit(); batch_target.write_bytes(b"\n" + batch_blob); commit()
     code, batch_line = scan()
-    if code != 1 or not any(f["File"] == BATCH_KEY_PATH and f["RuleID"] == "generic-api-key"
+    if code != 1 or not any(f["File"] == PUBLIC_BATCH_PATH and f["RuleID"] == "generic-api-key"
                             and f["StartLine"] == 41 for f in batch_line):
         raise ValueError("Public batch key was suppressed at another line")
+    integrity_blob = run(["git", "cat-file", "blob", f"{INTEGRITY_COMMIT}:{INTEGRITY_PATH}"], cwd=config.parent)
+    if hashlib.sha256(integrity_blob).hexdigest() != INTEGRITY_BLOB["sha256"]:
+        raise ValueError("Integrity metadata detector fixture changed")
+    integrity_target = test_repo / INTEGRITY_PATH
+    integrity_target.parent.mkdir(parents=True, exist_ok=True); integrity_target.write_bytes(integrity_blob); commit()
+    integrity_head = run(["git", "rev-parse", "HEAD"], cwd=test_repo).decode().strip()
+    code, integrity_commit = scan()
+    def all_integrity_locations(findings, path, expected_commit, shift=0):
+        # The pinned whole artifact's public Git OID is also recognized by the
+        # baseline's closed dedicated OID rule. Digests retain their own rule.
+        # This is detector-regression evidence, never a broader ignore entry.
+        return all(any(f.get("File") == path and f.get("Commit") == expected_commit
+                       and f.get("RuleID") in ({"generic-api-key", oid_rule}
+                                               if line == 76 else {"generic-api-key"})
+                       and f.get("StartLine") == line + shift and f.get("EndLine") == line + shift
+                       for f in findings) for line in INTEGRITY_SPECS)
+    if code != 1 or not all_integrity_locations(integrity_commit, INTEGRITY_PATH, integrity_head):
+        raise ValueError("Integrity metadata was suppressed in a new commit")
+    other_integrity_path = "other-path/" + INTEGRITY_PATH
+    other_integrity = test_repo / other_integrity_path
+    other_integrity.parent.mkdir(parents=True, exist_ok=True); other_integrity.write_bytes(integrity_blob); commit()
+    integrity_head = run(["git", "rev-parse", "HEAD"], cwd=test_repo).decode().strip()
+    code, integrity_path = scan()
+    if code != 1 or not all_integrity_locations(integrity_path, other_integrity_path, integrity_head):
+        raise ValueError("Integrity metadata was suppressed at another path")
+    integrity_target.unlink(); commit(); integrity_target.write_bytes(b"\n" + integrity_blob); commit()
+    integrity_head = run(["git", "rev-parse", "HEAD"], cwd=test_repo).decode().strip()
+    code, integrity_line = scan()
+    if code != 1 or not all_integrity_locations(integrity_line, INTEGRITY_PATH, integrity_head, 1):
+        raise ValueError("Integrity metadata was suppressed at another line")
     return {"baseline_detection": True, "exact_history_only": True,
             "new_commit_detection": True, "different_path_detection": True,
             "scheduling_marker_new_commit_detection": True,
@@ -939,6 +1049,9 @@ def self_test(config, production_ignore):
             "public_batch_key_new_commit_detection": True,
             "public_batch_key_different_path_detection": True,
             "public_batch_key_different_line_detection": True,
+            "integrity_metadata_new_commit_detection": True,
+            "integrity_metadata_different_path_detection": True,
+            "integrity_metadata_different_line_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
 
@@ -973,7 +1086,8 @@ def prepare_candidate(args):
         "all_record_lines_sha256":hashlib.sha256(("\n".join(line for line in Path(args.config).read_text().splitlines()
              if line.startswith(PREFIX))+"\n").encode()).hexdigest(),
         "old730_preserved":True,"old732_preserved":True,"old733_preserved":True,
-        "public_batch_key_subjects":1,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
+        "public_batch_key_subjects":1,"old734_preserved":True,"integrity_metadata_subjects":3,
+        "exact_new_subjects":len(HISTORICAL_FINDINGS)}))
 
 
 def parse_cli(argv=None):

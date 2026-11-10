@@ -49,32 +49,32 @@ function execution() {
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 734, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 737, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };
 }
 
-test('Source v4 successor has exactly 734 findings/105 commits; the legacy Source remains 726/100', () => {
-  assert.deepEqual(REVIEWED_COMMITS, { findings: 734, commits: 105, sha256: '0b0f44bbaa026178dbb203a53c85de20a41ae9ff0d40fc9163b4170accfa0779' });
+test('Source v4 successor has exactly 737 findings/106 commits; the legacy Source remains 726/100', () => {
+  assert.deepEqual(REVIEWED_COMMITS, { findings: 737, commits: 106, sha256: '3c632792af82ed938c2b99302ef1ed422433a8fc413fbe9c96e1fec17f1dd23f' });
   assert.deepEqual(LEGACY_COMMITS, { findings: 726, commits: 100, sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 });
 
-test('the pinned proof is exactly 176 files at 105 commits and 130 objects (adjacent values are refused)', () => {
-  assert.deepEqual({ ...REVIEWED_HISTORY_PROOF }, { commits: 105, files_at_commits: 176, verified_git_objects: 130,
-    reviewed_commits_sha256: REVIEWED_COMMITS.sha256, reviewed_ignore_sha256: '21fa92fa8773262a53848a3f9338bff1d8766d01af218d660ba176eab7d8c73b' });
-  for (const [key, values] of [['commits', [104, 106]], ['files_at_commits', [175, 177]], ['verified_git_objects', [129, 131]]]) for (const value of values) {
+test('the pinned proof is exactly 177 files at 106 commits and 130 objects (adjacent values are refused)', () => {
+  assert.deepEqual({ ...REVIEWED_HISTORY_PROOF }, { commits: 106, files_at_commits: 177, verified_git_objects: 130,
+    reviewed_commits_sha256: REVIEWED_COMMITS.sha256, reviewed_ignore_sha256: 'feaee7014fbfcfc42d58470751720dd641d4b0ab8208228f62abf71b9e081d60' });
+  for (const [key, values] of [['commits', [105, 107]], ['files_at_commits', [176, 178]], ['verified_git_objects', [129, 131]]]) for (const value of values) {
     assert.equal(matchesReviewedHistoryProof({ ...REVIEWED_HISTORY_PROOF, [key]: value }), false, `${key}=${value}`);
   }
   assert.equal(matchesReviewedHistoryProof({ ...REVIEWED_HISTORY_PROOF }), true);
 });
 
-test('the actual self-test retains every old guard and proves public batch-key variants, markers and valid-PEM detection', async () => {
+test('the actual self-test retains every old guard and proves integrity metadata, public batch-key variants, markers and valid-PEM detection', async () => {
   assert.equal(report().regression.synthetic_test_repository, '/controlled-helper-return/repo');
   assert.doesNotThrow(() => validateSelfTestReport(report()));
-  for (const edit of [r => r.exact_historical_fingerprints = 733, r => r.exact_historical_fingerprints = 735,
-    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 104,
-    r => r.files_at_commits = 170, r => r.files_at_commits = 175, r => r.files_at_commits = 177,
+  for (const edit of [r => r.exact_historical_fingerprints = 733, r => r.exact_historical_fingerprints = 734, r => r.exact_historical_fingerprints = 735, r => r.exact_historical_fingerprints = 736, r => r.exact_historical_fingerprints = 738,
+    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 104, r => r.commits = 105,
+    r => r.files_at_commits = 170, r => r.files_at_commits = 175, r => r.files_at_commits = 176, r => r.files_at_commits = 178,
     r => r.verified_git_objects = 129, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
     r => r.regression.extra = true, r => delete r.regression.synthetic_test_repository,
     r => r.regression.synthetic_test_repository = false, r => r.regression.synthetic_test_repository = 'relative/repo']) {
@@ -84,8 +84,9 @@ test('the actual self-test retains every old guard and proves public batch-key v
     'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
     'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection',
     'historical_json_new_commit_detection','historical_json_different_path_detection','historical_json_different_line_detection','genuine_curl_credential_detection',
-    'public_batch_key_new_commit_detection','public_batch_key_different_path_detection','public_batch_key_different_line_detection']) {
-    const values = key.startsWith('public_batch_key_') ? [false, undefined, 1, 'true'] : [false, undefined];
+    'public_batch_key_new_commit_detection','public_batch_key_different_path_detection','public_batch_key_different_line_detection',
+    'integrity_metadata_new_commit_detection','integrity_metadata_different_path_detection','integrity_metadata_different_line_detection']) {
+    const values = (key.startsWith('public_batch_key_') || key.startsWith('integrity_metadata_')) ? [false, undefined, 1, 'true'] : [false, undefined];
     for (const value of values) {
       const changed = report(); changed.regression[key] = value;
       assert.throws(() => validateSelfTestReport(changed), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' }, key);
@@ -99,11 +100,11 @@ test('the actual self-test retains every old guard and proves public batch-key v
     { code: 'ACTUAL_TRUSTED_SELF_TEST_OBSERVATION_REQUIRED' });
 });
 
-test('policy and result bridge agree on 734 and reject both legacy/mismatched counts and incomplete cleanup', () => {
+test('policy and result bridge agree on 737 and reject both legacy/mismatched counts and incomplete cleanup', () => {
   const { job, observation, issue, now } = execution();
   assert.equal(validateCleanupObservation(job, observation), observation);
   assert.equal(observationFacts(issue, observation, now).exitCode, 0);
-  for (const count of [726, 730, 731, 732, 733, 735, undefined]) {
+  for (const count of [726, 730, 731, 732, 733, 734, 735, 736, 738, undefined]) {
     const changed = { ...observation, requiredHistoricalExceptions: count };
     assert.throws(() => validateCleanupObservation(job, changed), { code: 'ACTUAL_ROLE_CLEANUP_UNCONFIRMED' });
     assert.throws(() => observationFacts(issue, changed, now), { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
@@ -128,9 +129,21 @@ test('the self-test git shim admits exactly the cc353e29 and d94cd486 one-commit
   const diff = (from, to) => ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
     from, to, '--', 'scripts/ci/clued-gated-proof-profiles.json'];
   const c = { templates: '/templates' }, cc353 = 'cc353e29a32b991696df95d5fc3f9b9d107e8d1c', d94 = 'd94cd486e29a7362888fc32cd807ceb38890acb6';
-  for (const commit of [cc353, d94]) assert.deepEqual(safeGitArguments(diff(`${commit}^`, commit), c).slice(-11), diff(`${commit}^`, commit));
+  for (const commit of [cc353, d94]) {
+    const args = safeGitArguments(diff(`${commit}^`, commit), c);
+    assert.deepEqual(args.slice(-13), ['-c', 'core.abbrev=8', ...diff(`${commit}^`, commit)]);
+    assert.equal(args.filter(value => value === 'core.abbrev=8').length, 1);
+  }
+  for (const args of [['cat-file', '-t', cc353], ['rev-parse', `${d94}:scripts/ci/clued-gated-proof-profiles.json`]]) {
+    const actual = safeGitArguments(args, c);
+    assert.deepEqual(actual.slice(-args.length), args);
+    assert.equal(actual.some(value => value.startsWith('core.abbrev=')), false);
+  }
   for (const args of [diff(`${d94}^`, cc353), diff(`${cc353}^`, d94), diff(`${d94}^`, '0'.repeat(40)), diff(`${'0'.repeat(40)}^`, '0'.repeat(40)),
     [...diff(`${d94}^`, d94), '--stat'], ['diff', `${d94}^`, d94], ['log', d94], ['show', d94], ['fetch', 'origin', d94]]) {
     assert.throws(() => safeGitArguments(args, c), { code: 'SELF_TEST_GIT_COMMAND_REFUSED' });
+  }
+  for (const option of ['core.abbrev=8', 'core.abbrev=7', 'core.abbrev=40']) {
+    assert.throws(() => safeGitArguments(['-c', option, ...diff(`${d94}^`, d94)], c), { code: 'SELF_TEST_GIT_OPTION_REFUSED' });
   }
 });

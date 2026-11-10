@@ -47,7 +47,10 @@ export function safeGitArguments(args, c) {
     .some(commit => canonical(args) === canonical(historicalDiff(commit)));
   check(exactHistoricalDiff || ['init', 'add', 'commit', 'rev-parse', 'cat-file', 'merge-base', 'commit-tree'].includes(rest[0]), 'SELF_TEST_GIT_COMMAND_REFUSED');
   return ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/nonexistent-clued-hooks', '-c', 'protocol.allow=never',
-    '-c', `init.templateDir=${c.templates}`, ...args];
+    '-c', `init.templateDir=${c.templates}`,
+    // These two immutable patch digests include Git's eight-character index display.
+    // Normalise only their display; caller options and all other Git commands stay closed.
+    ...(exactHistoricalDiff ? ['-c', 'core.abbrev=8'] : []), ...args];
 }
 async function run(executable, args, { timeoutMs, maxBytes = 4 * 1024 * 1024, stdin = null } = {}) {
   return new Promise(resolve => {

@@ -14,12 +14,12 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '2bd5df9a69e00f83413afabc7b8b7ce3ca67af798eb14571c7aa33ac75380a10',
-  '.gitleaks.toml': 'bfdf023e59649adc75146205f8102e064d806ae1081958e618b129bc2dc976fd',
+  'scripts/ci/reviewed_gitleaks.py': '66eef4926112636255299592db4cd5bb2e1eef3eecdeca36737a5a31639c8f94',
+  '.gitleaks.toml': 'f8f822256f746bb621e99038b616e2b00b4f59c7bb2eb636fb66eeb6b9394d82',
   'scripts/ci/reviewed_gitleaks_historical.py': '7656040557f4dbc7f04c1439eb99ef45021610ca7698fe2f6eb186a625141595',
 });
-// This v4 candidate adds one exact historical public recovery batch key to the
-// preserved reviewed set. Its helper, config and proof remain single exact pins;
+// This v4 candidate preserves the reviewed set and adds exact immutable public
+// Source-integrity metadata subjects. Helper, config and proof remain single exact pins;
 // this derivation does not accept or install the new Source.
 // The hosted workflow and its independently frozen successor are unchanged here.
 // Legacy main/PR-B v3/H5 never inherits these new helper/config bytes.
@@ -37,12 +37,12 @@ export function acceptedWorkflowSha256(role) {
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 734, commits: 105,
-  sha256: '0b0f44bbaa026178dbb203a53c85de20a41ae9ff0d40fc9163b4170accfa0779' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 737, commits: 106,
+  sha256: '3c632792af82ed938c2b99302ef1ed422433a8fc413fbe9c96e1fec17f1dd23f' });
 // Recomputed by the pinned helper's actual verify_history, not inferred by adding counts.
-export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 176,
+export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 177,
   verified_git_objects: 130, reviewed_commits_sha256: REVIEWED_COMMITS.sha256,
-  reviewed_ignore_sha256: '21fa92fa8773262a53848a3f9338bff1d8766d01af218d660ba176eab7d8c73b' });
+  reviewed_ignore_sha256: 'feaee7014fbfcfc42d58470751720dd641d4b0ab8208228f62abf71b9e081d60' });
 export function matchesReviewedHistoryProof(value) {
   return value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).sort().join('|') === Object.keys(REVIEWED_HISTORY_PROOF).sort().join('|')
@@ -284,7 +284,7 @@ export function validateSelfTestReport(selfTestReport) {
     && selfTestReport.commits === REVIEWED_HISTORY_PROOF.commits && selfTestReport.files_at_commits === REVIEWED_HISTORY_PROOF.files_at_commits
     && selfTestReport.verified_git_objects === REVIEWED_HISTORY_PROOF.verified_git_objects
     && selfTestReport.global_fingerprints === 0 && selfTestReport.ignore_sha256 === REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256
-    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|genuine_curl_credential_detection|handover_acceptance_artifact_proof|historical_json_different_line_detection|historical_json_different_path_detection|historical_json_new_commit_detection|new_commit_detection|public_batch_key_different_line_detection|public_batch_key_different_path_detection|public_batch_key_new_commit_detection|role_probe_different_line_detection|role_probe_different_path_detection|role_probe_new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
+    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|genuine_curl_credential_detection|handover_acceptance_artifact_proof|historical_json_different_line_detection|historical_json_different_path_detection|historical_json_new_commit_detection|integrity_metadata_different_line_detection|integrity_metadata_different_path_detection|integrity_metadata_new_commit_detection|new_commit_detection|public_batch_key_different_line_detection|public_batch_key_different_path_detection|public_batch_key_new_commit_detection|role_probe_different_line_detection|role_probe_different_path_detection|role_probe_new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
     && typeof selfTestReport.regression.synthetic_test_repository === 'string' && selfTestReport.regression.synthetic_test_repository.length <= 4096
     && !/[\x00-\x1f\x7f]/.test(selfTestReport.regression.synthetic_test_repository)
     && path.posix.isAbsolute(selfTestReport.regression.synthetic_test_repository) && path.posix.basename(selfTestReport.regression.synthetic_test_repository) === 'repo'
@@ -293,7 +293,8 @@ export function validateSelfTestReport(selfTestReport) {
     && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
       'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection',
       'historical_json_new_commit_detection', 'historical_json_different_path_detection', 'historical_json_different_line_detection', 'genuine_curl_credential_detection',
-      'public_batch_key_new_commit_detection', 'public_batch_key_different_path_detection', 'public_batch_key_different_line_detection']
+      'public_batch_key_new_commit_detection', 'public_batch_key_different_path_detection', 'public_batch_key_different_line_detection',
+      'integrity_metadata_new_commit_detection', 'integrity_metadata_different_path_detection', 'integrity_metadata_different_line_detection']
       .every(key => selfTestReport.regression[key] === true)
     && Object.keys(selfTestReport.regression.handover_acceptance_artifact_proof ?? {}).sort().join('|') === 'actual_git_artifact_passes|forged_digest_rejected|valid_nonancestor_rejected|wrong_line_rejected|wrong_path_rejected'
     && ['actual_git_artifact_passes', 'forged_digest_rejected', 'valid_nonancestor_rejected', 'wrong_line_rejected', 'wrong_path_rejected']
