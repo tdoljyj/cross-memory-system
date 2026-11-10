@@ -172,5 +172,22 @@ try{
  # 8. A repeat finds nothing and still verifies (the service's own re-arm archive after an Owner recovery moved the scene).
  $s=New-M5bFixture;$roots+=$s;$v=Run $s 'owner-m5b-recovery';Yes ($v.verified -eq $true -and $v.moved -eq 5 -and $v.directory -like 'failed-aaaaaaaaaaaa-owner-m5b-recovery-*') 'recovery-reason-failure-scene'
  $v2=Run $s 'rearm-unknown-failure';Yes ($v2.verified -eq $true -and $v2.moved -eq 0 -and $v2.directory -like 'failed-*') 'repeat-after-recovery-moves-nothing'
+ # 9. -ExactSceneSha256: only the exact pinned outgoing scene moves; an extra, replaced or unknown leaf moves nothing.
+ function Scene([string]$spool){[string[]]$l=@();foreach($n in @('issue.json','issue.ready.json','active.lock')){$b=[IO.File]::ReadAllBytes((Join-Path $spool ('outgoing\'+$n)));$l+=('outgoing/'+$n+'|'+$b.Length+'|'+(Hash $b))};[Array]::Sort($l,[StringComparer]::Ordinal);Hash ($utf8.GetBytes(($l -join [string][char]10)))}
+ function RunExact([string]$spool,[string]$sha){$out=& $Powershell -NoProfile -NonInteractive -File $tool -BatchKey ('a'*64) -Reason 'owner-m5b-recovery' -ExactSceneSha256 $sha -OfflineFixtureSpool $spool -OfflineFixtureNodeProfileBase64 ([Convert]::ToBase64String($utf8.GetBytes($FixtureNodeProfile)));return ($out|Select-Object -Last 1)|ConvertFrom-Json}
+ function OutgoingOnly([string]$spool){foreach($n in @('result.json','result.ready.json')){[IO.File]::Delete((Join-Path $spool ('incoming\'+$n)))}}
+ function NothingMoved($v,[string]$spool,[string]$code,[string]$what){Yes ($v.verified -eq $false -and $v.code -ceq $code -and [IO.File]::Exists((Join-Path $spool 'outgoing\issue.json')) -and [IO.File]::Exists((Join-Path $spool 'outgoing\active.lock')) -and @(Get-ChildItem -LiteralPath $spool -Directory|Where-Object{$_.Name -like 'failed-*'}).Count -eq 0) ($what+':'+$v.code)}
+ $s=New-M5bFixture;$roots+=$s;OutgoingOnly $s;$pin=Scene $s;$v=RunExact $s $pin
+ $r=Get-Content -LiteralPath (Join-Path (Join-Path $s $v.directory) 'archive-receipt.json') -Raw|ConvertFrom-Json
+ Yes ($v.verified -eq $true -and $v.moved -eq 3 -and $v.sceneSha256 -ceq $pin -and $r.exactScene.expected -ceq $pin -and $r.exactScene.moved -ceq $pin -and @($r.exactScene.protocolLeavesLeft).Count -eq 0) ('exact-scene-moves-exactly-three:'+($v|ConvertTo-Json -Compress))
+ $s=New-M5bFixture;$roots+=$s;$pin=Scene $s;NothingMoved (RunExact $s $pin) $s 'EXACT_SCENE_MISMATCH_NOTHING_MOVED' 'exact-scene-extra-incoming-leaf'
+ Yes ([IO.File]::Exists((Join-Path $s 'incoming\result.json'))) 'exact-scene-extra-leaf-left'
+ $s=New-M5bFixture;$roots+=$s;OutgoingOnly $s;$pin=Scene $s;Pair $s 'outgoing' 'response-01' '{"r":9}';foreach($f in @('response-01.json','response-01.ready.json')){Set-LeafAcl (Join-Path $s ('outgoing\'+$f)) $outAcl}
+ NothingMoved (RunExact $s $pin) $s 'EXACT_SCENE_MISMATCH_NOTHING_MOVED' 'exact-scene-extra-outgoing-pair'
+ $s=New-M5bFixture;$roots+=$s;OutgoingOnly $s;$pin=Scene $s;$f=Join-Path $s 'outgoing\active.lock';$acl=Leaf-Acl $f;[IO.File]::WriteAllText($f,'m5b-lock-2',$utf8);Set-LeafAcl $f $acl
+ NothingMoved (RunExact $s $pin) $s 'EXACT_SCENE_MISMATCH_NOTHING_MOVED' 'exact-scene-replaced-leaf'
+ $s=New-M5bFixture;$roots+=$s;OutgoingOnly $s;$pin=Scene $s;[IO.File]::WriteAllText((Join-Path $s 'outgoing\planted.txt'),'x',$utf8)
+ NothingMoved (RunExact $s $pin) $s 'EXACT_SCENE_UNKNOWN_LEAF_NOTHING_MOVED' 'exact-scene-unknown-leaf'
+ $s=New-M5bFixture;$roots+=$s;OutgoingOnly $s;NothingMoved (RunExact $s ('0'*64)) $s 'EXACT_SCENE_MISMATCH_NOTHING_MOVED' 'exact-scene-wrong-pin'
  [pscustomobject]@{status='WINDOWS_SPOOL_ARCHIVE_OFFLINE_PASS';cases=$cases;hostRead=$false;hostWrite=$false}|ConvertTo-Json -Compress
 }finally{foreach($r in $roots){try{$p=Split-Path -Parent $r;$j=Join-Path $r 'incoming';if((Get-Item -LiteralPath $j -Force -ErrorAction SilentlyContinue).Attributes -band [IO.FileAttributes]::ReparsePoint){[IO.Directory]::Delete($j)};Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue}catch{}}}

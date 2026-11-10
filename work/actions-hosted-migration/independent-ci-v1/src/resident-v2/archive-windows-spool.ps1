@@ -1,9 +1,13 @@
 <#
 Source v2 handle-based Windows formal-spool archive (DESIGN S14, §6.4). Runs as NT SERVICE\CluedCIResident.
-The one elevated use is a hash-pinned, admin-only staged copy started by a reviewed one-shot Owner recovery
-(independent-ci-resident-v1/windows/recover-m5b-archive-reviewed.ps1); nothing in it depends on the caller's
-identity: the new directory grants modify to the fixed resident SID, never to the caller, and every leaf is
-moved through its own held handle. Rename only: nothing is deleted, overwritten or re-ACLed.
+Nothing in it depends on the caller's identity: the new directory grants modify to the fixed resident SID,
+never to the caller, and every leaf is moved through its own held handle. (An elevated run is still not an
+approved route: a caller must first prove two-host quiescence the way the service's re-arm does.)
+-ExactSceneSha256 (optional; the service never passes it) binds the run to one exact scene: the SHA-256 of
+the ordinal-sorted "folder/name|bytes|sha256" lines (LF-joined, UTF-8) of every protocol leaf found. Any other,
+extra, replaced or unknown leaf refuses before the destination exists; after the moves the moved set must be
+that same set and no protocol leaf may be left, else the receipt is written and the run reports unverified.
+Rename only: nothing is deleted, overwritten or re-ACLed.
 
   powershell -NoProfile -NonInteractive -File archive-windows-spool.ps1 -BatchKey <64hex> -Reason <reason>
   stdout: {"verified":true|false,"directory":"<archive dir name>"|null,"moved":<n>|null,"code":null|"<CODE>",...}
@@ -35,7 +39,8 @@ param(
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,39}$')][string]$Reason,
   [string]$OfflineFixtureSpool,
   [string]$OfflineFixtureNodeProfileBase64,
-  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256
+  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256,
+  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExactSceneSha256
 )
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
 $Spool='C:\ProgramData\CluedIndependentCI\formal-spool'
@@ -108,6 +113,8 @@ function Archive-AclRights([string]$Text,[string]$Folder){
  }
  return $d.Owner.Value+'|'+$d.Group.Value+'|'+((@($aces|Sort-Object))-join ';')
 }
+function Scene-Sha256($Items){[string[]]$l=@($Items|ForEach-Object{[string]$_.from+'|'+[string]$_.bytes+'|'+[string]$_.sha256});[Array]::Sort($l,[StringComparer]::Ordinal);return Hash ((New-Object Text.UTF8Encoding($false)).GetBytes(($l -join [string][char]10)))}
+function Protocol-LeavesPresent{$n=@();foreach($folder in @('incoming','outgoing')){foreach($x in $allow[$folder]){foreach($y in @($x+'.json',$x+'.ready.json')){if([IO.File]::Exists((Join-Path (Join-Path $Spool $folder) $y))){$n+=($folder+'/'+$y)}}}};if([IO.File]::Exists((Join-Path $Spool 'outgoing\active.lock'))){$n+='outgoing/active.lock'};return ,$n}
 function Read-Held($Stream){if($Stream.Length -gt 1MB){throw 'SPOOL_LEAF_TOO_LARGE'};$Stream.Position=0;$b=New-Object byte[] ([int]$Stream.Length);$at=0;while($at -lt $b.Length){$n=$Stream.Read($b,$at,$b.Length-$at);if($n -lt 1){throw 'SPOOL_LEAF_TRUNCATED'};$at+=$n};$Stream.Position=0;return ,$b}
 # Only the already installed, admin-written identity record supplies the additional reader.
 # The explicit offline mode derives the same leaf beneath the fixture's TEMP parent; no path/SID input is accepted.
@@ -203,6 +210,11 @@ try{
   if($data.Count -eq 1){try{$r=(New-Object Text.UTF8Encoding($false,$true)).GetString($o.bytes)|ConvertFrom-Json;$ok=((@($r.PSObject.Properties.Name|Sort-Object)-join '|') -ceq 'bytes|contract|sha256' -and $r.contract -ceq 'clued.independent-ci.complete-public-file/1' -and $r.bytes -eq $data[0].bytes.Length -and $r.sha256 -ceq $data[0].sha256)}catch{$ok=$false}}
   if(-not $ok){$unbound+=($o.leaf.folder+'/'+$o.leaf.pair)}
  }}
+ if($ExactSceneSha256){
+  $found=Scene-Sha256 @($opened|ForEach-Object{[pscustomobject]@{from=($_.leaf.folder+'/'+$_.leaf.name);bytes=$_.bytes.Length;sha256=$_.sha256}})
+  $result['sceneSha256']=$found
+  if($found -cne $ExactSceneSha256){throw 'EXACT_SCENE_MISMATCH_NOTHING_MOVED'};if($remainder.Count){throw 'EXACT_SCENE_UNKNOWN_LEAF_NOTHING_MOVED'}
+ }
  if($protocolScope){
   if($half.Count){throw 'HALF_PROTOCOL_PAIR_PRESERVED'};if($unbound.Count){throw 'READY_MARKER_BINDING_PRESERVED'};if($remainder.Count){throw 'UNKNOWN_SPOOL_LEAF_PRESERVED'}
  }
@@ -228,9 +240,15 @@ try{
   if(-not [CluedSpoolArchiveV2]::Same($o.meta,$after) -or (Archive-AclRights $afterSddl $o.leaf.folder) -cne $o.rights -or (Hash (Read-Held $o.stream)) -cne $o.sha256){throw 'ARCHIVE_IDENTITY_CHANGED'}
   $moved+=[ordered]@{from=($o.leaf.folder+'/'+$o.leaf.name);to=$flat;bytes=$o.bytes.Length;sha256=$o.sha256;fileIdOwnerGroupAndEffectiveAccessPreserved=$true;inheritanceOrOrderChanged=($afterSddl -cne $o.sddl)}
  }
+ $exactAfter=$null
+ if($ExactSceneSha256){$exactAfter=[ordered]@{expected=$ExactSceneSha256;moved=(Scene-Sha256 @($moved|ForEach-Object{[pscustomobject]$_}));protocolLeavesLeft=(Protocol-LeavesPresent)}}
  $receipt=[ordered]@{contract='clued.independent-ci.resident-windows-spool-archive-receipt/2';batchKey=$BatchKey;reason=$Reason;scope=$result.scope;moved=$moved;halfPairs=$half;unboundReadyMarkers=$unbound;remainderLeftInPlace=$remainder;deletesAnything=$false;at=[DateTimeOffset]::UtcNow.ToString('o')}
+ if($null -ne $exactAfter){$receipt['exactScene']=$exactAfter}
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes(($receipt|ConvertTo-Json -Depth 6)+[char]10);$rf=[IO.File]::Open((Join-Path $target 'archive-receipt.json'),'CreateNew','Write','None');try{$rf.Write($rb,0,$rb.Length);$rf.Flush($true)}finally{$rf.Dispose()}
- $result.verified=$true;$result.directory=$name;$result.moved=$moved.Count;$result['halfPairs']=$half.Count;$result['remainderLeftInPlace']=$remainder.Count
+ $result.directory=$name;$result.moved=$moved.Count
+ # The receipt is on disk first, so a scene that changed during the run stays documented.
+ if($null -ne $exactAfter -and ($exactAfter.moved -cne $ExactSceneSha256 -or @($exactAfter.protocolLeavesLeft).Count -ne 0)){throw 'EXACT_SCENE_CHANGED_DURING_ARCHIVE'}
+ $result.verified=$true;$result.moved=$moved.Count;$result['halfPairs']=$half.Count;$result['remainderLeftInPlace']=$remainder.Count
 }catch{
  $id=$_.FullyQualifiedErrorId.Split(',')[0];$inner=$_.Exception;while($null -ne $inner.InnerException){$inner=$inner.InnerException}
  $result.code=if($id -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$id}elseif($inner.Message -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$inner.Message}else{'WINDOWS_ARCHIVE_UNCONFIRMED'}
