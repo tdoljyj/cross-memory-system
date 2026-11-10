@@ -1,6 +1,13 @@
 <#
-Source v2 handle-based Windows formal-spool archive (DESIGN S14, §6.4). Runs as NT SERVICE\CluedCIResident,
-NEVER elevated. Rename only: nothing is deleted, overwritten or re-ACLed.
+Source v2 handle-based Windows formal-spool archive (DESIGN S14, §6.4). Runs as NT SERVICE\CluedCIResident.
+Nothing in it depends on the caller's identity: the new directory grants modify to the fixed resident SID,
+never to the caller, and every leaf is moved through its own held handle. (An elevated run is still not an
+approved route: a caller must first prove two-host quiescence the way the service's re-arm does.)
+-ExactSceneSha256 (optional; the service never passes it) binds the run to one exact scene: the SHA-256 of
+the ordinal-sorted "folder/name|bytes|sha256" lines (LF-joined, UTF-8) of every protocol leaf found. Any other,
+extra, replaced or unknown leaf refuses before the destination exists; after the moves the moved set must be
+that same set and no protocol leaf may be left, else the receipt is written and the run reports unverified.
+Rename only: nothing is deleted, overwritten or re-ACLed.
 
   powershell -NoProfile -NonInteractive -File archive-windows-spool.ps1 -BatchKey <64hex> -Reason <reason>
   stdout: {"verified":true|false,"directory":"<archive dir name>"|null,"moved":<n>|null,"code":null|"<CODE>",...}
@@ -10,8 +17,10 @@ Rules (same allow-list as independent-ci-resident-v1/src/archive.mjs, the offlin
     .json and .ready.json) and outgoing\active.lock; there is no directory walk, so a junction planted under
     the spool is never followed;
   - every parent (spool, incoming, outgoing) is held by handle without FILE_SHARE_DELETE for the whole run,
-    so it cannot be renamed or replaced; every leaf is held with FILE_SHARE_DELETE, moved by name, and its
-    identity is re-read from the SAME handle after the move;
+    so it cannot be renamed or replaced; every leaf is held with DELETE access and WITHOUT FILE_SHARE_DELETE
+    (nobody else can rename, replace or delete it while held), renamed through that SAME handle into the held
+    destination directory handle (FileRenameInformation, never replacing), and its identity is re-read from
+    the same handle after the move; no source or destination name is resolved again for the move;
   - archive ACL criterion = the reviewed b22 rule (advance-functions.ps1 Archive-AclRights, branch
     claude/hosted-free-minutes-checks 5634c0e4): file id unchanged, owner and group unchanged, and the
     sorted set of plain allow ACEs (SID|mask|qualifier, only the INHERITED flag allowed) unchanged; a
@@ -30,10 +39,15 @@ param(
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,39}$')][string]$Reason,
   [string]$OfflineFixtureSpool,
   [string]$OfflineFixtureNodeProfileBase64,
-  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256
+  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256,
+  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExactSceneSha256
 )
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
 $Spool='C:\ProgramData\CluedIndependentCI\formal-spool'
+$ResidentSid='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'   # NT SERVICE\CluedCIResident
+# Who gets modify on the new archive directory: always the resident service in production, whoever runs it
+# (the service itself, or the elevated Owner recovery); only the explicit TEMP fixture mode grants its own caller.
+function Get-ArchiveWriterSid{if($OfflineFixtureSpool){return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value};return $ResidentSid}
 Add-Type -Path (Join-Path $PSScriptRoot 'windows\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
 Add-Type -TypeDefinition @'
 using System;using System.IO;using System.Text;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
@@ -60,6 +74,20 @@ public static class CluedSpoolArchiveV2 {
  public static void ExactPath(SafeFileHandle h,string path){var b=new StringBuilder(32768);uint n=GetFinalPathNameByHandleW(h,b,32768,0);
   if(n==0||n>=32768||!String.Equals(b.ToString().TrimEnd('\\'),("\\\\?\\"+path).TrimEnd('\\'),StringComparison.OrdinalIgnoreCase))throw new IOException("SPOOL_PATH_REDIRECTED");}
  public static bool Same(Info a,Info b){return a.Volume==b.Volume&&a.IndexHigh==b.IndexHigh&&a.IndexLow==b.IndexLow&&a.SizeHigh==b.SizeHigh&&a.SizeLow==b.SizeLow&&a.Links==b.Links;}
+ [DllImport("ntdll.dll")] static extern int NtSetInformationFile(SafeFileHandle h,out IoStatus io,IntPtr info,uint length,int infoClass);
+ [StructLayout(LayoutKind.Sequential)] struct IoStatus {public IntPtr Status,Information;}
+ // Leaf: GENERIC_READ|DELETE, shared for READ only (no write, no delete/rename by anyone else), reparse point not followed.
+ public static SafeFileHandle HoldLeaf(string path){var h=CreateFileW(path,0x80010000u,1u,IntPtr.Zero,3,0x00200000u,IntPtr.Zero);if(h.IsInvalid){h.Dispose();throw new IOException("SPOOL_LEAF_HOLD_REFUSED");}return h;}
+ // Same-handle move: FILE_RENAME_INFORMATION {ReplaceIfExists=FALSE, RootDirectory=the held destination, FileName=flat leaf}.
+ public static void RenameInto(SafeFileHandle leaf,SafeFileHandle directory,string name){
+  if(String.IsNullOrEmpty(name)||name.Length>64||name.IndexOfAny(new char[]{'\\','/',':'})>=0)throw new IOException("ARCHIVE_LEAF_NAME_REFUSED");
+  int at=2*IntPtr.Size,size=at+4+2*name.Length+2;IntPtr b=Marshal.AllocHGlobal(size);bool added=false;
+  try{
+   for(int i=0;i<size;i++)Marshal.WriteByte(b,i,0);
+   directory.DangerousAddRef(ref added);Marshal.WriteIntPtr(b,IntPtr.Size,directory.DangerousGetHandle());Marshal.WriteInt32(b,at,2*name.Length);Marshal.Copy(name.ToCharArray(),0,IntPtr.Add(b,at+4),name.Length);
+   IoStatus io;if(NtSetInformationFile(leaf,out io,b,(uint)size,10)!=0)throw new IOException("ARCHIVE_HANDLE_RENAME_REFUSED");
+  }finally{if(added)directory.DangerousRelease();Marshal.FreeHGlobal(b);}
+ }
 }
 '@ | Out-Null
 $held=New-Object 'Collections.Generic.List[IDisposable]';$result=[ordered]@{verified=$false;directory=$null;moved=$null;code=$null;scope=$null;contract='clued.independent-ci.resident-windows-spool-archive/2'}
@@ -77,7 +105,7 @@ function Archive-AclRights([string]$Text,[string]$Folder){
  if($d.DiscretionaryAcl.Count -eq 6){
   if($Folder -cne 'outgoing'){throw 'EXACT_M5B_ARCHIVE_ROLES_REQUIRED'}
   $operator=Get-TrustedArchiveOperator
-  $resident='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
+  $resident=$ResidentSid
   if(@('S-1-5-18','S-1-5-32-544',$Node.ControllerSid,$Node.OwnerSid,$operator,$resident|Sort-Object -Unique).Count -ne 6){throw 'EXACT_M5B_ARCHIVE_ROLES_REQUIRED'}
   if(@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464',$Node.ControllerSid) -notcontains $d.Owner.Value){throw 'EXACT_M5B_ARCHIVE_OWNER_REQUIRED'}
   $want=@('S-1-5-18|2032127|AccessAllowed','S-1-5-32-544|2032127|AccessAllowed',($Node.ControllerSid+'|1245631|AccessAllowed'),($Node.OwnerSid+'|1179817|AccessAllowed'),($operator+'|1179817|AccessAllowed'),($resident+'|1179785|AccessAllowed'))
@@ -85,6 +113,8 @@ function Archive-AclRights([string]$Text,[string]$Folder){
  }
  return $d.Owner.Value+'|'+$d.Group.Value+'|'+((@($aces|Sort-Object))-join ';')
 }
+function Scene-Sha256($Items){[string[]]$l=@($Items|ForEach-Object{[string]$_.from+'|'+[string]$_.bytes+'|'+[string]$_.sha256});[Array]::Sort($l,[StringComparer]::Ordinal);return Hash ((New-Object Text.UTF8Encoding($false)).GetBytes(($l -join [string][char]10)))}
+function Protocol-LeavesPresent{$n=@();foreach($folder in @('incoming','outgoing')){foreach($x in $allow[$folder]){foreach($y in @($x+'.json',$x+'.ready.json')){if([IO.File]::Exists((Join-Path (Join-Path $Spool $folder) $y))){$n+=($folder+'/'+$y)}}}};if([IO.File]::Exists((Join-Path $Spool 'outgoing\active.lock'))){$n+='outgoing/active.lock'};return ,$n}
 function Read-Held($Stream){if($Stream.Length -gt 1MB){throw 'SPOOL_LEAF_TOO_LARGE'};$Stream.Position=0;$b=New-Object byte[] ([int]$Stream.Length);$at=0;while($at -lt $b.Length){$n=$Stream.Read($b,$at,$b.Length-$at);if($n -lt 1){throw 'SPOOL_LEAF_TRUNCATED'};$at+=$n};$Stream.Position=0;return ,$b}
 # Only the already installed, admin-written identity record supplies the additional reader.
 # The explicit offline mode derives the same leaf beneath the fixture's TEMP parent; no path/SID input is accepted.
@@ -169,7 +199,7 @@ try{
  # Open every leaf by handle (share delete), check type/link/size/path, capture identity and ACL rights.
  $opened=@()
  foreach($l in $leaves){
-  $f=[IO.File]::Open($l.path,'Open','Read',([IO.FileShare]::Read -bor [IO.FileShare]::Delete));$held.Add($f)
+  $lh=[CluedSpoolArchiveV2]::HoldLeaf($l.path);$held.Add($lh);$f=New-Object IO.FileStream($lh,[IO.FileAccess]::Read);$held.Add($f)
   $m=[CluedSpoolArchiveV2]::Metadata($f.SafeFileHandle);[CluedSpoolArchiveV2]::ExactPath($f.SafeFileHandle,$l.path)
   if(($m.Attributes -band 0x410) -ne 0 -or $m.Links -ne 1 -or $m.SizeHigh -ne 0 -or $m.SizeLow -gt 1MB){throw 'SPOOL_LEAF_TYPE_LINK_SIZE_REFUSED'}
   $bytes=Read-Held $f;$sddl=Archive-Sddl $f
@@ -180,6 +210,11 @@ try{
   if($data.Count -eq 1){try{$r=(New-Object Text.UTF8Encoding($false,$true)).GetString($o.bytes)|ConvertFrom-Json;$ok=((@($r.PSObject.Properties.Name|Sort-Object)-join '|') -ceq 'bytes|contract|sha256' -and $r.contract -ceq 'clued.independent-ci.complete-public-file/1' -and $r.bytes -eq $data[0].bytes.Length -and $r.sha256 -ceq $data[0].sha256)}catch{$ok=$false}}
   if(-not $ok){$unbound+=($o.leaf.folder+'/'+$o.leaf.pair)}
  }}
+ if($ExactSceneSha256){
+  $found=Scene-Sha256 @($opened|ForEach-Object{[pscustomobject]@{from=($_.leaf.folder+'/'+$_.leaf.name);bytes=$_.bytes.Length;sha256=$_.sha256}})
+  $result['sceneSha256']=$found
+  if($found -cne $ExactSceneSha256){throw 'EXACT_SCENE_MISMATCH_NOTHING_MOVED'};if($remainder.Count){throw 'EXACT_SCENE_UNKNOWN_LEAF_NOTHING_MOVED'}
+ }
  if($protocolScope){
   if($half.Count){throw 'HALF_PROTOCOL_PAIR_PRESERVED'};if($unbound.Count){throw 'READY_MARKER_BINDING_PRESERVED'};if($remainder.Count){throw 'UNKNOWN_SPOOL_LEAF_PRESERVED'}
  }
@@ -187,12 +222,12 @@ try{
  $prefix=if($protocolScope){'archive'}else{'failed'}
  $nonce=([Guid]::NewGuid().ToString('N')).Substring(0,12);$name=$prefix+'-'+$BatchKey.Substring(0,12)+'-'+$Reason+'-'+$nonce;$target=Join-Path $Spool $name
  if([IO.Directory]::Exists($target) -or [IO.File]::Exists($target)){throw 'ARCHIVE_TARGET_EXISTS'}
- # Created with its final protected DACL: management full, this account (the resident in production)
- # modify, clued-control read. The resident's spool ACEs are this-folder-only (S3), so nothing else
- # would let it add files to a directory it just created.
- $me=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$ds=New-Object Security.AccessControl.DirectorySecurity;$ds.SetAccessRuleProtection($true,$false)
- foreach($p in @(@('S-1-5-18','FullControl'),@('S-1-5-32-544','FullControl'),@($me,'Modify'),@($Node.ControllerSid,'ReadAndExecute'))){$ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($p[0])),$p[1],'ContainerInherit,ObjectInherit','None','Allow')))}
- [void][IO.Directory]::CreateDirectory($target,$ds);$held.Add([CluedSpoolArchiveV2]::HoldDirectory($target))
+ # Created with its final protected DACL: management full, the resident service modify (fixed SID, not the
+ # caller: an elevated Owner recovery gives the directory the same roles as the service would), clued-control
+ # read. The resident's spool ACEs are this-folder-only (S3), so nothing else would let it add files to it.
+ $writer=Get-ArchiveWriterSid;$ds=New-Object Security.AccessControl.DirectorySecurity;$ds.SetAccessRuleProtection($true,$false)
+ foreach($p in @(@('S-1-5-18','FullControl'),@('S-1-5-32-544','FullControl'),@($writer,'Modify'),@($Node.ControllerSid,'ReadAndExecute'))){$ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($p[0])),$p[1],'ContainerInherit,ObjectInherit','None','Allow')))}
+ [void][IO.Directory]::CreateDirectory($target,$ds);$targetHandle=[CluedSpoolArchiveV2]::HoldDirectory($target);$held.Add($targetHandle)
  $moved=@();$names=@{}
  foreach($o in $opened){
   Assert-ArchiveAccountStable
@@ -200,14 +235,20 @@ try{
   $dst=Join-Path $target $flat;if([IO.File]::Exists($dst)){throw 'ARCHIVE_LEAF_TARGET_EXISTS'}
   $before=[CluedSpoolArchiveV2]::Metadata($o.stream.SafeFileHandle);[CluedSpoolArchiveV2]::ExactPath($o.stream.SafeFileHandle,$o.leaf.path)
   if(-not [CluedSpoolArchiveV2]::Same($before,$o.meta)){throw 'ARCHIVE_LEAF_CHANGED_BEFORE_MOVE'}
-  [IO.File]::Move($o.leaf.path,$dst)
+  [CluedSpoolArchiveV2]::RenameInto($o.stream.SafeFileHandle,$targetHandle,$flat)
   $after=[CluedSpoolArchiveV2]::Metadata($o.stream.SafeFileHandle);[CluedSpoolArchiveV2]::ExactPath($o.stream.SafeFileHandle,$dst);$afterSddl=Archive-Sddl $o.stream
   if(-not [CluedSpoolArchiveV2]::Same($o.meta,$after) -or (Archive-AclRights $afterSddl $o.leaf.folder) -cne $o.rights -or (Hash (Read-Held $o.stream)) -cne $o.sha256){throw 'ARCHIVE_IDENTITY_CHANGED'}
   $moved+=[ordered]@{from=($o.leaf.folder+'/'+$o.leaf.name);to=$flat;bytes=$o.bytes.Length;sha256=$o.sha256;fileIdOwnerGroupAndEffectiveAccessPreserved=$true;inheritanceOrOrderChanged=($afterSddl -cne $o.sddl)}
  }
+ $exactAfter=$null
+ if($ExactSceneSha256){$exactAfter=[ordered]@{expected=$ExactSceneSha256;moved=(Scene-Sha256 @($moved|ForEach-Object{[pscustomobject]$_}));protocolLeavesLeft=(Protocol-LeavesPresent)}}
  $receipt=[ordered]@{contract='clued.independent-ci.resident-windows-spool-archive-receipt/2';batchKey=$BatchKey;reason=$Reason;scope=$result.scope;moved=$moved;halfPairs=$half;unboundReadyMarkers=$unbound;remainderLeftInPlace=$remainder;deletesAnything=$false;at=[DateTimeOffset]::UtcNow.ToString('o')}
+ if($null -ne $exactAfter){$receipt['exactScene']=$exactAfter}
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes(($receipt|ConvertTo-Json -Depth 6)+[char]10);$rf=[IO.File]::Open((Join-Path $target 'archive-receipt.json'),'CreateNew','Write','None');try{$rf.Write($rb,0,$rb.Length);$rf.Flush($true)}finally{$rf.Dispose()}
- $result.verified=$true;$result.directory=$name;$result.moved=$moved.Count;$result['halfPairs']=$half.Count;$result['remainderLeftInPlace']=$remainder.Count
+ $result.directory=$name;$result.moved=$moved.Count
+ # The receipt is on disk first, so a scene that changed during the run stays documented.
+ if($null -ne $exactAfter -and ($exactAfter.moved -cne $ExactSceneSha256 -or @($exactAfter.protocolLeavesLeft).Count -ne 0)){throw 'EXACT_SCENE_CHANGED_DURING_ARCHIVE'}
+ $result.verified=$true;$result.moved=$moved.Count;$result['halfPairs']=$half.Count;$result['remainderLeftInPlace']=$remainder.Count
 }catch{
  $id=$_.FullyQualifiedErrorId.Split(',')[0];$inner=$_.Exception;while($null -ne $inner.InnerException){$inner=$inner.InnerException}
  $result.code=if($id -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$id}elseif($inner.Message -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$inner.Message}else{'WINDOWS_ARCHIVE_UNCONFIRMED'}
