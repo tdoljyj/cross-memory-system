@@ -11,7 +11,15 @@ $buffers=@{archive=[IO.File]::ReadAllBytes($archivePath);native=[IO.File]::ReadA
 Yes ((Recovery-Hash $buffers.archive) -ceq $native.archiver) 'exact-archiver-pin';Yes ((Recovery-Hash $buffers.native) -ceq $native.native) 'exact-native-pin'
 Initialize-RecoveryNative @{buffers=$buffers}
 $ActualManagerAcl=${function:Assert-RecoveryManagerAcl};$ActualRunner=${function:Assert-RecoveryRunner};$ActualVhdAcl=${function:Assert-RecoveryVhdAcl};$ActualNewPause=${function:New-RecoveryPause};$ActualRequest=${function:Request-RecoveryRearm};$ActualNoProducers=${function:Assert-RecoveryNoProducers};$ActualOwners=${function:Read-RecoveryProcessOwnerSids};$ActualPause=${function:New-RecoveryPause};$ActualRead=${function:Read-RecoveryProtected};$ActualJournal=${function:Write-RecoveryJournal};$ActualWait=${function:Wait-RecoveryRearm};$ActualConfirm=${function:Confirm-RecoveryArchive};$ActualHold=${function:Hold-RecoveryQuietProof}
+$ActualTransitionPins=${function:Get-RecoveryServiceTransitionPins}
+$ActualQuietPins=${function:Get-RecoveryQuietOwnerPins}
 $testRoots=New-Object Collections.Generic.List[string];$script:active=$null
+function Get-RecoveryServiceTransitionPins {
+ $p=& $ActualTransitionPins
+ # Never inspect the real protected production once-marker from the TEMP test harness.
+ if($null -ne $script:active){$p.once=Join-Path $script:active.pins.root 'fixture-resume-never-started.json'}
+ return $p
+}
 function Assert-RecoveryManagerAcl($Context,[byte[]]$Bytes,[string]$Path){
  if(-not $Path.StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){return}
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor($Bytes,0);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -46,7 +54,7 @@ function New-TestContext([string]$Fail='',[ValidateSet('desk-31080','turing-b2ea
  $task|Add-Member ScriptMethod GetSecurityDescriptor {param($flags);return ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;'+$this.operatorSid+')')}
  $task|Add-Member ScriptMethod GetInstances {param($flags);[pscustomobject]@{Count=$this.instances}}
  $task|Add-Member ScriptMethod Stop {param($flags);$this.stops++;if($script:active.fail -ceq 'task-stop'){throw 'RECOVERY_TASK_REFUSED'};$this.instances=0}
- $task|Add-Member ScriptMethod Run {param($args);$this.runs++;$this.instances=1;return [pscustomobject]@{}}
+ $task|Add-Member ScriptMethod Run {param($args);$this.runs++;$script:active.calls.Add('task-run');if($script:active.fail -ceq 'task-run-failed'){throw 'RECOVERY_RESTORE_REFUSED'};$this.instances=1;return [pscustomobject]@{}}
  $services=@{};$pidSeed=40000;foreach($n in $p.services){
  $image=if($n -ceq 'CluedCIUpgrader'){'upgrader\bin\UpgraderServiceHost.exe'}elseif($n -ceq 'CluedCIResident'){'bin\ResidentServiceHost.exe'}else{'bin\SwapBroker.exe'}
  $binary='"'+(Join-Path $root $image)+'"';if($n -ceq 'CluedCIResident'){$binary+=' "'+(Join-Path $root ('resident\'+$p.resident+'\src\service-main.mjs'))+'"'}
@@ -64,9 +72,11 @@ function Read-RecoveryService([string]$Name){$v=$script:active.services[$Name]|S
 function Set-RecoveryServiceStart($Before,[bool]$Disabled){
  $c=$script:active;$c.calls.Add($(if($Disabled){'disable-'}else{'enable-'})+$Before.name)
  if($c.fail -ceq 'disable-service' -and $Disabled -and $Before.name -ceq 'CluedCIResident'){throw 'RECOVERY_SERVICE_REFUSED'}
- if($c.fail -ceq 'restore-type' -and -not $Disabled){throw 'RECOVERY_RESTORE_REFUSED'}
+ if(($c.fail -ceq 'restore-type' -or ($c.Contains('resumeRestoreFailure') -and $c.resumeRestoreFailure)) -and -not $Disabled){throw 'RECOVERY_RESTORE_REFUSED'}
  $c.services[$Before.name].startMode=if($Disabled){'Disabled'}else{$Before.startMode}
- if($c.fail -ceq 'delayed-drift' -and $Disabled){$c.services[$Before.name].delayedAutoStart=-not $Before.delayedAutoStart}
+ # Actual sc.exe transition clears delayed on disable and restores it only via auto/delayed-auto.
+ $c.services[$Before.name].delayedAutoStart=if($Disabled){$false}else{$Before.delayedAutoStart}
+ if($c.fail -ceq 'delayed-drift' -and $Disabled){$c.services[$Before.name].delayedAutoStart=$true}
  if($c.fail -ceq 'disable-readback' -and $Disabled){$c.services[$Before.name].startMode='Auto'}
  Assert-RecoveryServiceConfig (Read-RecoveryService $Before.name) $Before $Disabled
 }
@@ -296,11 +306,182 @@ try{
  $before=[pscustomobject]@{binary='fixed-test-image';account='LocalSystem';startMode='Auto';sddl=($serviceDacl+$serviceAudit);delayedAutoStart=$true}
  $now=$before|Select-Object *;$now|Add-Member NoteProperty config (Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl)))
  Assert-RecoveryServiceConfig $now $before $false;Yes $true 'full-service-audit-preserved-with-dacl-only-config-pin'
- $now.startMode='Disabled';$now.config=Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl));Assert-RecoveryServiceConfig $now $before $true;Yes $true 'disabled-mode-retains-complete-service-security'
+ $now.startMode='Disabled';$now.delayedAutoStart=$false;$now.config=Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl));Assert-RecoveryServiceConfig $now $before $true;Yes $true 'disabled-mode-retains-complete-service-security'
+ # Test the production assertion, including the exact real SCM transition and strict original restoration.
+ $now.delayedAutoStart=$true;$blocked=$false;try{Assert-RecoveryServiceConfig $now $before $true}catch{$blocked=$true};Yes $blocked 'disabled-must-not-retain-or-regain-delayed-flag'
+ $now.delayedAutoStart=0;$blocked=$false;try{Assert-RecoveryServiceConfig $now $before $true}catch{$blocked=$true};Yes $blocked 'disabled-delayed-flag-still-requires-boolean'
+ $now.startMode='Auto';$now.delayedAutoStart=$false;$now.config=Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl));$blocked=$false;try{Assert-RecoveryServiceConfig $now $before $false}catch{$blocked=$true};Yes $blocked 'restore-delayed-original-must-not-stay-cleared'
+ $now.delayedAutoStart=$true;Assert-RecoveryServiceConfig $now $before $false;Yes $true 'restore-delayed-original-exact-bool-accepted'
+ $plainBefore=$before|Select-Object *;$plainBefore.delayedAutoStart=$false;$blocked=$false;try{Assert-RecoveryServiceConfig $now $plainBefore $false}catch{$blocked=$true};Yes $blocked 'restore-nondelayed-original-must-not-gain-delay'
+ $now.delayedAutoStart=$false;Assert-RecoveryServiceConfig $now $plainBefore $false;Yes $true 'restore-nondelayed-original-exact-bool-accepted'
+ $now.startMode='Disabled';$now.config=Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl))
  $now.sddl=$serviceDacl+'S:(AU;SA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)';$blocked=$false;try{Assert-RecoveryServiceConfig $now $before $true}catch{$blocked=$true};Yes $blocked 'audit-only-change-refused-even-with-same-dacl-pin'
  $c=New-TestContext -Scene turing-b2ea;$script:active=$c;$c.node|Add-Member NoteProperty runnerService 'CluedControlRunner';$c.install|Add-Member NoteProperty runnerSddlUnchanged $serviceDacl
  $c.services['CluedControlRunner']=[pscustomobject]@{name='CluedControlRunner';state='Stopped';pid=0;config='';binary='"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"';account='TURING\clued-control';startMode='Manual';sddl=($serviceDacl+$serviceAudit);delayedAutoStart=$false}
  $c.runner=& $ActualRunner $c;Yes $true 'runner-original-dacl-receipt-compatible-with-admin-audit-read'
  $c.services['CluedControlRunner'].sddl=$serviceDacl+'S:(AU;SA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)';$blocked=$false;try{& $ActualRunner $c|Out-Null}catch{$blocked=$true};Yes $blocked 'runner-audit-change-still-refused';Finish-Test $c
+ # Closed continuation inputs are changed only inside this TEMP fixture scope; production has no override parameter.
+ $fixed=& $ActualTransitionPins
+ Yes ($fixed.snapshotSha -ceq '457cf25a93e23e10027676afcd9e4046409ff6c37987dcf63c609dcf60bc73a5' -and $fixed.finalSha -ceq 'e999813e408810719a49e2f967a5b919155b35e07d712dba6e0c706b4f7f6b23' -and $fixed.stage -ceq 'C:\ProgramData\CluedIndependentCI\resident-launch-m5b-recovery\9831601b280a4f1a9e790e3777bb6102') 'resume-production-exact-private-proof-pins'
+ Yes ($fixed.pids.CluedCIUpgrader -eq 17616 -and $fixed.pids.CluedCIResident -eq 5892 -and $fixed.pids.CluedCISwapBroker -eq 28188 -and $fixed.taskHash -ceq 'b91fca4e9ccbac1cca7ec682b1796c0d9d455d30dc04f12af7c47aaf5ae76a1d') 'resume-production-exact-task-and-process-pins'
+ & {
+ function Get-RecoveryServiceTransitionPins{
+  if($script:active.Contains('resumeFixturePins')){return $script:active.resumeFixturePins}
+  $p=& $ActualTransitionPins;$p.once=Join-Path $script:active.pins.root 'fixture-resume-never-started.json';return $p
+ }
+ function New-TestServiceTransition([string]$Fail=''){
+  $c=New-TestContext -Scene turing-b2ea -Fail $Fail;$script:active=$c
+  $saved=Save-RecoveryOriginal $c;$oldStage=Join-Path $c.pins.root 'prior-stage';[void][IO.Directory]::CreateDirectory($oldStage)
+  $p=[ordered]@{stage=$oldStage;snapshot=(Join-Path $oldStage 'original-task-and-services.json');final=(Join-Path $oldStage '005-SERVICES-FINAL.json');once=(Join-Path $oldStage 'service-transition-resume-started.json');taskHash=$saved.taskHash;pids=@{}}
+  foreach($svc in $saved.services){$p.pids[$svc.name]=$svc.pid}
+  $a=Recovery-Bytes $saved;$p.snapshotSha=Recovery-Hash $a;Write-RecoveryNew $p.snapshot $a
+  $prior=New-RecoveryState;$prior.stage=$oldStage;$prior.status='UNKNOWN_PRESERVED';$prior.phase='SERVICES';$prior.code='RECOVERY_RESTORE_REFUSED';$prior.taskAttempted=$true;$prior.servicesAttempted=$true;$prior.servicesDisableAttempted=@('CluedCIUpgrader');$prior.manualRecoveryHeld=$true
+  $b=Recovery-Bytes $prior;$p.finalSha=Recovery-Hash $b;Write-RecoveryNew $p.final $b
+  $c.resumeFixturePins=$p;$c.resumeServiceTransition=$true;$c.task.Enabled=$false;$c.task.instances=0;Hold-RecoveryWslRecord $c
+  return $c
+ }
+ $c=New-TestServiceTransition;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $r.archiveVerified -and $r.restored -and -not $r.taskRemainsParked -and $c.task.Enabled -and $c.task.instances -eq 1 -and $c.task.runs -eq 1) 'fixed-resume-restores-proven-original-task-only-after-verified-archive'
+ Yes ($c.calls.IndexOf('archive') -lt $c.calls.IndexOf('task-run') -and $c.calls.IndexOf('task-run') -lt $c.calls.IndexOf('rearm') -and $c.task.credential -ceq 'opaque-scheduler-owned') 'fixed-resume-order-and-task-credential-preserved'
+ Yes ($r.resumedFromSnapshotSha -ceq $c.resumeFixturePins.snapshotSha -and $r.resumedFromFinalSha -ceq $c.resumeFixturePins.finalSha -and (Recovery-Hash ([IO.File]::ReadAllBytes((Join-Path $c.stage 'resumed-original-task-and-services.json')))) -ceq $c.resumeFixturePins.snapshotSha -and (Recovery-Hash ([IO.File]::ReadAllBytes((Join-Path $c.stage 'resumed-prior-final.json')))) -ceq $c.resumeFixturePins.finalSha) 'fixed-resume-raw-prior-evidence-preserved'
+ Yes ([IO.File]::Exists($c.resumeFixturePins.once) -and (Recovery-Hash ([IO.File]::ReadAllBytes($c.resumeFixturePins.once))) -ceq (Recovery-Hash ([IO.File]::ReadAllBytes((Join-Path $c.stage 'service-transition-resume-started.json'))))) 'fixed-resume-once-latch-correlated'
+ Finish-Test $c
+ foreach($bad in @('wrong-scene','snapshot-hash','final-hash','current-task-enabled','current-task-running','task-fingerprint','service-pid','service-delay','service-security','prior-archive','prior-pause','prior-rearm','prior-services-stopped','prior-disable-other','old-task-disabled','existing-latch')){
+  $c=New-TestServiceTransition;$script:active=$c
+  switch($bad){
+   'wrong-scene'{$c.pins.sceneId='desk-31080'}
+   'snapshot-hash'{$c.resumeFixturePins.snapshotSha='0'*64}
+   'final-hash'{$c.resumeFixturePins.finalSha='0'*64}
+   'current-task-enabled'{$c.task.Enabled=$true}
+   'current-task-running'{$c.task.Enabled=$true;$c.task.instances=1}
+   'task-fingerprint'{$c.task.Xml=$c.task.Xml.Replace('opaque-scheduler-owned','different-task')}
+   'service-pid'{$c.services.CluedCIResident.pid++}
+   'service-delay'{$c.services.CluedCIResident.delayedAutoStart=-not $c.services.CluedCIResident.delayedAutoStart}
+   'service-security'{$c.services.CluedCIResident.sddl+='S:(AU;SA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)'}
+   'existing-latch'{Write-RecoveryNew $c.resumeFixturePins.once ([Text.Encoding]::UTF8.GetBytes('unknown-prior-continuation'))}
+   'old-task-disabled'{$v=Get-Content -LiteralPath $c.resumeFixturePins.snapshot -Raw|ConvertFrom-Json;$v.enabled=$false;$b=Recovery-Bytes $v;[IO.File]::WriteAllBytes($c.resumeFixturePins.snapshot,$b);$c.resumeFixturePins.snapshotSha=Recovery-Hash $b}
+   default{
+    $v=Get-Content -LiteralPath $c.resumeFixturePins.final -Raw|ConvertFrom-Json
+    switch($bad){'prior-archive'{$v.archiveAttempted=$true};'prior-pause'{$v.pauseAttempted=$true};'prior-rearm'{$v.rearmAttempted=$true};'prior-services-stopped'{$v.servicesStopped=@('CluedCIResident')};'prior-disable-other'{$v.servicesDisableAttempted=@('CluedCIResident')}}
+    $b=Recovery-Bytes $v;[IO.File]::WriteAllBytes($c.resumeFixturePins.final,$b);$c.resumeFixturePins.finalSha=Recovery-Hash $b
+   }
+  }
+  $r=Invoke-RecoveryCore $c
+  Yes ($c.archiveCalls -eq 0 -and -not $r.taskAttempted -and -not $r.pauseAttempted -and -not $r.rearmAttempted -and $c.task.runs -eq 0 -and @($c.calls|Where-Object{$_ -like 'disable-*' -or $_ -like 'stop-*'}).Count -eq 0) ('fixed-resume-precondition-zero-effect:'+ $bad)
+  Finish-Test $c
+ }
+ foreach($fail in @('task-stop','disable-service','service-stop','pause-create-race','process')){
+  $c=New-TestServiceTransition -Fail $fail;$script:active=$c;$r=Invoke-RecoveryCore $c
+  Yes ($c.archiveCalls -eq 0 -and $c.task.runs -eq 0 -and -not $c.task.Enabled -and $c.task.instances -eq 0 -and -not $r.restored -and $r.manualRecoveryHeld -and -not $r.rearmAttempted) ('fixed-resume-prearchive-failure-keeps-task-parked:'+ $fail)
+  Finish-Test $c
+ }
+ $c=New-TestServiceTransition -Fail process;$script:active=$c;$c.resumeRestoreFailure=$true;$r=Invoke-RecoveryCore $c
+ Yes ($r.status -ceq 'UNKNOWN_PRESERVED' -and $r.code -ceq 'RECOVERY_RESTORE_REFUSED' -and -not $r.restored -and $r.manualRecoveryHeld -and $c.task.runs -eq 0 -and -not $c.task.Enabled -and $c.archiveCalls -eq 0) 'fixed-resume-prearchive-compensation-failure-does-not-unpark-or-claim-restored'
+ Finish-Test $c
+ $c=New-TestServiceTransition -Fail restore-type;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.archiveVerified -and $r.status -ceq 'UNKNOWN_PRESERVED' -and -not $r.restored -and $r.manualRecoveryHeld -and $c.task.runs -eq 0 -and -not $c.task.Enabled -and -not $r.rearmAttempted) 'fixed-resume-postarchive-restore-failure-still-keeps-task-parked'
+ Finish-Test $c
+ $c=New-TestServiceTransition -Fail process;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.taskRemainsParked -eq $true -and @($c.services.Values|Where-Object{$_.startMode -cne 'Auto' -or $_.state -cne 'Running'}).Count -eq 0) 'fixed-resume-prearchive-compensates-only-own-service-changes'
+ # New nonce/new evidence stage cannot bypass the fixed prior-stage latch after an unknown attempt.
+ $c.fail='';$c.state=New-RecoveryState;$c.sequence=0;$c.operation=[guid]::NewGuid().ToString('N');$c.stage=Join-Path $c.pins.root 'new-stage';[void][IO.Directory]::CreateDirectory($c.stage);$c.state.stage=$c.stage;$c.Remove('resumeProof')
+ $r=Invoke-RecoveryCore $c
+ Yes ($r.code -ceq 'RECOVERY_SERVICE_TRANSITION_REFUSED' -and -not $r.taskAttempted -and $c.archiveCalls -eq 0 -and $c.task.runs -eq 0) 'fixed-resume-unknown-cannot-replay-with-new-nonce-or-stage'
+ $c.resumeServiceTransition=$false;$c.state=New-RecoveryState;$r=Invoke-RecoveryCore $c
+ Yes ($r.code -ceq 'RECOVERY_SERVICE_TRANSITION_REFUSED' -and -not $r.taskAttempted -and $c.archiveCalls -eq 0 -and $c.task.runs -eq 0 -and -not $c.task.Enabled) 'fixed-resume-once-latch-cannot-be-bypassed-by-removing-flag'
+ Finish-Test $c
+ $c=New-TestServiceTransition -Fail task-run-failed;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.status -ceq 'UNKNOWN_PRESERVED' -and $r.archiveVerified -and -not $r.restored -and $r.manualRecoveryHeld -and $null -eq $r.taskRemainsParked -and $c.task.Enabled -and $c.task.instances -eq 0 -and $c.task.runs -eq 1 -and -not $r.rearmAttempted) 'fixed-resume-partial-task-restore-does-not-falsely-report-parked'
+ Finish-Test $c
+ foreach($fail in @('partial','receipt','journal-after')){
+  $c=New-TestServiceTransition -Fail $fail;$script:active=$c;$r=Invoke-RecoveryCore $c
+  Yes ($r.status -ceq 'UNKNOWN_PRESERVED' -and $r.archiveAttempted -and -not $r.archiveVerified -and -not $r.restored -and $r.manualRecoveryHeld -and $c.task.runs -eq 0 -and -not $c.task.Enabled -and -not $r.rearmAttempted) ('fixed-resume-unconfirmed-archive-never-unparks:'+ $fail)
+  Finish-Test $c
+ }
+ }
+ # Exact public ACL observation: same bytes as the real qualified TURING leaf, no owner projection.
+ $turingPins=Get-RecoveryPins turing-b2ea;$ctx=@{pins=$turingPins}
+ $observedSddl='O:S-1-5-21-1173730660-3877291096-655431861-1001G:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1701bf;;;S-1-5-21-1173730660-3877291096-655431861-1017)'
+ $sd=New-Object Security.AccessControl.RawSecurityDescriptor($observedSddl);$observedBytes=New-Object byte[] $sd.BinaryLength;$sd.GetBinaryForm($observedBytes,0)
+ Yes ((Recovery-Hash $observedBytes) -ceq '4e8610cdcbf6d5703038d9d03b445329a2e1d36d9f70403f31a7e8dac80d1438') 'quiet-owner-positive-descriptor-is-exact-root-observed-native-bytes'
+ & $ActualVhdAcl $ctx $observedBytes $turingPins.vhdx;Yes $true 'quiet-owner-exact-turing-leaf-operator-owner-accepted'
+ foreach($path in @([IO.Path]::GetDirectoryName($turingPins.vhdx),($turingPins.vhdx+'.sibling'))){$blocked=$false;try{& $ActualVhdAcl $ctx $observedBytes $path}catch{$blocked=$true};Yes $blocked 'quiet-owner-exception-never-applies-to-parent-or-sibling'}
+ $ctx.pins.sceneId='desk-31080';$blocked=$false;try{& $ActualVhdAcl $ctx $observedBytes $turingPins.vhdx}catch{$blocked=$true};Yes $blocked 'quiet-owner-exception-never-applies-to-other-scene';$ctx.pins.sceneId='turing-b2ea'
+ foreach($changed in @($observedSddl.Replace('-1001G:','-1002G:'),$observedSddl.Replace('-513D:','-545D:'),$observedSddl.Replace('0x1701bf','0x1301bf'),$observedSddl.Replace('D:PAI','D:P'),($observedSddl+'(A;;WD;;;S-1-1-0)'))){
+  $other=New-Object Security.AccessControl.RawSecurityDescriptor($changed);$bytes=New-Object byte[] $other.BinaryLength;$other.GetBinaryForm($bytes,0);$blocked=$false;try{& $ActualVhdAcl $ctx $bytes $turingPins.vhdx}catch{$blocked=$true}
+  Yes $blocked 'quiet-owner-any-owner-group-mask-control-or-extra-ace-byte-drift-refused'
+ }
+ $quietFixed=& {function Get-RecoveryServiceTransitionPins{& $ActualTransitionPins};& $ActualQuietPins}
+ Yes ($quietFixed.stage -ceq 'C:\ProgramData\CluedIndependentCI\resident-launch-m5b-recovery\ee4ad600f71c442facb0821c8bd5e358' -and $quietFixed.finalSha -ceq '29a7ee17c9880b10ab31fb680e38715786e3f8755cf7f52a695ee9de9b7501fd' -and $quietFixed.previousOnceSha -ceq 'e2a8a6d10b62e2dd9be5b94e8cd70787402764933105d852b2792d72c766b103') 'quiet-resume-fixed-private-case-and-link-pins'
+ Yes ($quietFixed.pids.CluedCIUpgrader -eq 6316 -and $quietFixed.pids.CluedCIResident -eq 2660 -and $quietFixed.pids.CluedCISwapBroker -eq 32960 -and $quietFixed.oldPids.CluedCIUpgrader -eq 17616 -and $quietFixed.oldPids.CluedCIResident -eq 5892 -and $quietFixed.oldPids.CluedCISwapBroker -eq 28188) 'quiet-resume-distinct-real-old-and-current-pid-tuples'
+ & {
+ function Get-RecoveryServiceTransitionPins{
+  if($script:active.Contains('quietFixtureOldPins')){return $script:active.quietFixtureOldPins}
+  $p=& $ActualTransitionPins;$p.once=Join-Path $script:active.pins.root 'fixture-resume-never-started.json';return $p
+ }
+ function Get-RecoveryQuietOwnerPins{return $script:active.quietFixturePins}
+ function New-TestQuietOwner([string]$Fail=''){
+  $c=New-TestContext -Scene turing-b2ea -Fail $Fail;$script:active=$c
+  $saved=Save-RecoveryOriginal $c
+  $oldStage=Join-Path $c.pins.root 'old-service-stage';$priorStage=Join-Path $c.pins.root 'old-quiet-stage';[void][IO.Directory]::CreateDirectory($oldStage);[void][IO.Directory]::CreateDirectory($priorStage)
+  $old=& $ActualTransitionPins;$old.stage=$oldStage;$old.once=Join-Path $oldStage 'service-transition-resume-started.json';$old.pids=@{};$old.taskHash=$saved.taskHash
+  foreach($svc in $saved.services){$old.pids[$svc.name]=$svc.pid}
+  $c.quietFixtureOldPins=$old
+  # Production pins are closed. Only this test scope substitutes its own TEMP paths and fixture byte hashes.
+  $p=& $ActualQuietPins;$p.stage=$priorStage;$p.snapshot=Join-Path $priorStage 'original-task-and-services.json';$p.final=Join-Path $priorStage '006-QUIET-FINAL.json';$p.once=Join-Path $priorStage 'quiet-owner-resume-started.json';$p.previousCopy=Join-Path $priorStage 'service-transition-resume-started.json';$p.pids=@{}
+  $a=Recovery-Bytes $saved;$p.snapshotSha=Recovery-Hash $a;Write-RecoveryNew $p.snapshot $a
+  $link=Recovery-Bytes @{contract='clued.independent-ci.fixed-service-transition-resume/1';operation=$p.previousOperation;stage=$priorStage;snapshotSha256=$p.snapshotSha;finalSha256=$p.previousFinalSha;at='2026-11-10T13:56:00Z'}
+  $p.previousOnceSha=Recovery-Hash $link;Write-RecoveryNew $p.previousOnce $link;Write-RecoveryNew $p.previousCopy $link
+  $prior=New-RecoveryState;$prior.stage=$priorStage;$prior.status='UNKNOWN_PRESERVED';$prior.phase='QUIET';$prior.code='RECOVERY_PROTECTION_REFUSED';$prior.taskAttempted=$true;$prior.servicesAttempted=$true;$prior.servicesStopped=@($c.pins.services);$prior.servicesDisableAttempted=@($c.pins.services);$prior.manualRecoveryHeld=$true;$prior.taskRemainsParked=$true;$prior.resumedFromSnapshotSha=$p.snapshotSha;$prior.resumedFromFinalSha=$p.previousFinalSha
+  $b=Recovery-Bytes $prior;$p.finalSha=Recovery-Hash $b;Write-RecoveryNew $p.final $b
+  foreach($name in $c.pins.services){$c.services[$name].pid+=1000;$p.pids[$name]=$c.services[$name].pid}
+  $c.quietFixturePins=$p;$c.resumeQuietOwner=$true;$c.task.Enabled=$false;$c.task.instances=0;Hold-RecoveryWslRecord $c
+  return $c
+ }
+ $c=New-TestQuietOwner;$script:active=$c;$beforeFiles=@([IO.Directory]::GetFiles($c.pins.root,'*','AllDirectories')).Count;$snap=Save-RecoveryOriginal $c;Test-RecoveryReadGates $c
+ Yes ($c.state.readGatesObserved -and -not $c.state.serviceQuiescenceClaim -and @([IO.Directory]::GetFiles($c.pins.root,'*','AllDirectories')).Count -eq $beforeFiles -and -not [IO.File]::Exists($c.quietFixturePins.once) -and $c.calls.Count -eq 0 -and $c.task.runs -eq 0 -and -not $c.task.Enabled -and @($c.services.Values|Where-Object{$_.state -cne 'Running' -or $_.startMode -cne 'Auto'}).Count -eq 0) 'quiet-preflight-executes-real-read-gates-without-files-task-service-or-once-actions'
+ $disk=[IO.File]::Open($c.pins.vhdx,'Open','ReadWrite','None');$disk.Dispose();Yes $true 'quiet-preflight-disposes-real-exclusive-disk-handle'
+ Yes ($snap.enabled -and $snap.running -and $snap.services[0].pid -ne $c.quietFixturePins.oldPids[$snap.services[0].name] -and -not $c.state.servicePidContinuityClaim) 'quiet-preflight-carries-task-only-and-current-service-pids-without-continuity-claim';Finish-Test $c
+ $c=New-TestQuietOwner;$script:active=$c;$c.pins.scene='0'*64;$null=Save-RecoveryOriginal $c;$blocked=$false;try{Test-RecoveryReadGates $c}catch{$blocked=$true}
+ Yes ($blocked -and -not $c.state.readGatesObserved -and -not $c.state.serviceQuiescenceClaim -and $c.calls.Count -eq 0 -and -not [IO.File]::Exists($c.quietFixturePins.once) -and $c.task.runs -eq 0) 'quiet-preflight-scene-failure-has-zero-producer-actions-and-does-not-consume-once'
+ $disk=[IO.File]::Open($c.pins.vhdx,'Open','ReadWrite','None');$disk.Dispose();Yes $true 'quiet-preflight-failure-also-disposes-exclusive-disk-handle';Finish-Test $c
+ $c=New-TestQuietOwner;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $r.archiveVerified -and $r.restored -and $c.task.runs -eq 1 -and $c.calls.IndexOf('archive') -lt $c.calls.IndexOf('task-run') -and $c.calls.IndexOf('task-run') -lt $c.calls.IndexOf('rearm') -and -not $r.taskRemainsParked) 'quiet-resume-success-preserves-core-stop-archive-task-rearm-order'
+ Yes ([IO.File]::Exists($c.quietFixturePins.once) -and [IO.File]::Exists($c.quietFixturePins.previousOnce) -and (Recovery-Hash ([IO.File]::ReadAllBytes((Join-Path $c.stage 'resumed-service-transition-once.json')))) -ceq $c.quietFixturePins.previousOnceSha -and $r.resumedFromOnceSha -ceq $c.quietFixturePins.previousOnceSha) 'quiet-resume-keeps-old-once-and-copies-raw-chain-proof';Finish-Test $c
+ foreach($bad in @('wrong-scene','both-modes','current-old-pid','old-once-hash','copy-hash','link-operation','link-stage','link-snapshot','link-final','phase','prior-archive','prior-pause','prior-rearm','prior-task-not-parked','prior-stop-set','new-once-exists')){
+  $c=New-TestQuietOwner;$script:active=$c
+  switch($bad){
+   'wrong-scene'{$c.pins.sceneId='desk-31080'}
+   'both-modes'{$c.resumeServiceTransition=$true}
+   'current-old-pid'{$c.services.CluedCIResident.pid=$c.quietFixturePins.oldPids.CluedCIResident}
+   'old-once-hash'{[IO.File]::WriteAllText($c.quietFixturePins.previousOnce,'unknown-old-marker')}
+   'copy-hash'{[IO.File]::WriteAllText($c.quietFixturePins.previousCopy,'unknown-copy')}
+   'new-once-exists'{Write-RecoveryNew $c.quietFixturePins.once ([Text.Encoding]::UTF8.GetBytes('unknown-quiet-attempt'))}
+   {$_ -like 'link-*'}{
+    $v=Get-Content -LiteralPath $c.quietFixturePins.previousOnce -Raw|ConvertFrom-Json
+    switch($bad){'link-operation'{$v.operation='0'*32};'link-stage'{$v.stage='C:\wrong'};'link-snapshot'{$v.snapshotSha256='0'*64};'link-final'{$v.finalSha256='0'*64}}
+    $b=Recovery-Bytes $v;[IO.File]::WriteAllBytes($c.quietFixturePins.previousOnce,$b);[IO.File]::WriteAllBytes($c.quietFixturePins.previousCopy,$b);$c.quietFixturePins.previousOnceSha=Recovery-Hash $b
+   }
+   default{
+    $v=Get-Content -LiteralPath $c.quietFixturePins.final -Raw|ConvertFrom-Json
+    switch($bad){'phase'{$v.phase='WAIT'};'prior-archive'{$v.archiveAttempted=$true};'prior-pause'{$v.pauseCreated=$true};'prior-rearm'{$v.rearmRequested=$true};'prior-task-not-parked'{$v.taskRemainsParked=$false};'prior-stop-set'{$v.servicesStopped=@('CluedCIUpgrader','CluedCIResident','CluedCIResident')}}
+    $b=Recovery-Bytes $v;[IO.File]::WriteAllBytes($c.quietFixturePins.final,$b);$c.quietFixturePins.finalSha=Recovery-Hash $b
+   }
+  }
+  $r=Invoke-RecoveryCore $c
+  Yes ($c.archiveCalls -eq 0 -and -not $r.taskAttempted -and -not $r.pauseAttempted -and -not $r.rearmAttempted -and $c.calls.Count -eq 0 -and $c.task.runs -eq 0) ('quiet-resume-invalid-proof-zero-effects:'+ $bad)
+  Finish-Test $c
+ }
+ $c=New-TestQuietOwner -Fail process;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.manualRecoveryHeld -and $r.taskRemainsParked -and -not $r.restored -and -not $c.task.Enabled -and $c.task.runs -eq 0 -and $c.archiveCalls -eq 0) 'quiet-resume-prearchive-failure-never-unparks-task'
+ foreach($mode in @('quiet','none','old')){
+  $c.fail='';$c.state=New-RecoveryState;$c.sequence=0;$c.operation=[guid]::NewGuid().ToString('N');$c.stage=Join-Path $c.pins.root ('replay-'+$mode);[void][IO.Directory]::CreateDirectory($c.stage);$c.state.stage=$c.stage;$c.resumeQuietOwner=($mode -ceq 'quiet');$c.resumeServiceTransition=($mode -ceq 'old');$c.Remove('resumeProof')
+  $r=Invoke-RecoveryCore $c
+  Yes ($r.code -ceq 'RECOVERY_SERVICE_TRANSITION_REFUSED' -and -not $r.taskAttempted -and $c.archiveCalls -eq 0 -and $c.task.runs -eq 0) ('quiet-resume-consumed-onces-prevent-new-nonce-or-mode-bypass:'+ $mode)
+ }
+ Finish-Test $c
+ $c=New-TestQuietOwner -Fail partial;$script:active=$c;$r=Invoke-RecoveryCore $c
+ Yes ($r.archiveAttempted -and -not $r.archiveVerified -and -not $r.restored -and $r.manualRecoveryHeld -and -not $c.task.Enabled -and $c.task.runs -eq 0 -and -not $r.rearmAttempted) 'quiet-resume-unconfirmed-partial-archive-keeps-producers-held';Finish-Test $c
+ }
  [pscustomobject]@{status='RECOVERY_TEMP_FIXTURE_PASS';cases=$count;slowLockIncluded=[bool]$IncludeSlowLockTest;machineEffects=$false;taskRegistration=$false;wslCommands=$false}|ConvertTo-Json -Compress
-}catch{Write-Output ('RECOVERY_FIXTURE_ASSERTIONS_BEFORE_FAILURE='+$count);throw}finally{foreach($path in $testRoots){if([IO.Path]::GetFullPath($path).StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue;if([IO.Directory]::Exists($path)){throw 'RECOVERY_TEST_OWN_TEMP_CLEANUP_REFUSED'}}}}
+}catch{Write-Output ('RECOVERY_FIXTURE_ASSERTIONS_BEFORE_FAILURE='+$count);if($null -ne $script:active){Finish-Test $script:active};throw}finally{foreach($path in $testRoots){if([IO.Path]::GetFullPath($path).StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue;if([IO.Directory]::Exists($path)){throw 'RECOVERY_TEST_OWN_TEMP_CLEANUP_REFUSED'}}}}

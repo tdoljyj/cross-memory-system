@@ -4,9 +4,10 @@ The Owner must first review and approve the exact script, Source hashes and the 
 No account/password/task registration, WSL command, upgrade, Resume, HALT edit or ledger edit is performed.
 The final success state is a real service-cleared HALT with the same honest Owner manual PAUSED bytes still present.
 The quiet proof holds the qualified identity record, the already loaded HKU registration and the real VHDX exclusively.
+-ResumeServiceTransition and -ResumeQuietOwner are mutually exclusive, single-use TURING b2ea continuations of two pinned, never-archived failures only.
 #>
 [CmdletBinding()]
-param([ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$SourceRoot,[ValidateSet('desk-31080','turing-b2ea')][string]$Scene,[switch]$Run,[switch]$Preflight)
+param([ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$SourceRoot,[ValidateSet('desk-31080','turing-b2ea')][string]$Scene,[switch]$Run,[switch]$Preflight,[switch]$ResumeServiceTransition,[switch]$ResumeQuietOwner)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 if(-not $Run -and -not $Preflight){'{"status":"DISABLED"}';return}
@@ -49,7 +50,7 @@ function Recovery-Hash([byte[]]$Bytes){$h=[Security.Cryptography.SHA256]::Create
 function Recovery-Bytes($Value){(New-Object Text.UTF8Encoding($false)).GetBytes(($Value|ConvertTo-Json -Depth 16 -Compress)+[char]10)}
 function Write-RecoveryNew([string]$Path,[byte[]]$Bytes){$f=[IO.File]::Open($Path,'CreateNew','Write','None');try{$f.Write($Bytes,0,$Bytes.Length);$f.Flush($true)}finally{$f.Dispose()}}
 function Get-RecoveryCode($ErrorRecord){
- $known=@('RECOVERY_HOST_REFUSED','RECOVERY_ENVIRONMENT_REFUSED','RECOVERY_SOURCE_REFUSED','RECOVERY_PROTECTION_REFUSED','RECOVERY_INSTALL_REFUSED','RECOVERY_HALT_REFUSED','RECOVERY_TASK_REFUSED','RECOVERY_SERVICE_REFUSED','RECOVERY_RUNNER_REFUSED','RECOVERY_PROCESS_UNKNOWN','RECOVERY_NOT_QUIET','RECOVERY_QUIET_PROOF_REFUSED','RECOVERY_REGISTRATION_REFUSED','RECOVERY_VHDX_LOCK_REFUSED','RECOVERY_PAUSE_REFUSED','RECOVERY_PAUSE_CHANGED','RECOVERY_SCENE_REFUSED','RECOVERY_ARCHIVE_UNCONFIRMED','RECOVERY_RECEIPT_REFUSED','RECOVERY_RESTORE_REFUSED','RECOVERY_REARM_REFUSED','RECOVERY_HALT_NOT_CLEARED')
+ $known=@('RECOVERY_HOST_REFUSED','RECOVERY_SERVICE_TRANSITION_REFUSED','RECOVERY_ENVIRONMENT_REFUSED','RECOVERY_SOURCE_REFUSED','RECOVERY_PROTECTION_REFUSED','RECOVERY_INSTALL_REFUSED','RECOVERY_HALT_REFUSED','RECOVERY_TASK_REFUSED','RECOVERY_SERVICE_REFUSED','RECOVERY_RUNNER_REFUSED','RECOVERY_PROCESS_UNKNOWN','RECOVERY_NOT_QUIET','RECOVERY_QUIET_PROOF_REFUSED','RECOVERY_REGISTRATION_REFUSED','RECOVERY_VHDX_LOCK_REFUSED','RECOVERY_PAUSE_REFUSED','RECOVERY_PAUSE_CHANGED','RECOVERY_SCENE_REFUSED','RECOVERY_ARCHIVE_UNCONFIRMED','RECOVERY_RECEIPT_REFUSED','RECOVERY_RESTORE_REFUSED','RECOVERY_REARM_REFUSED','RECOVERY_HALT_NOT_CLEARED')
  $id=$ErrorRecord.FullyQualifiedErrorId.Split(',')[0];if($known -ccontains $id){return $id};return 'RECOVERY_UNCONFIRMED'
 }
 function New-RecoveryState {
@@ -75,7 +76,7 @@ function New-RecoveryPause($Context){
 function Invoke-RecoveryCore($Context){
  $proof=$null;$snapshot=$null
  try{
-  $Context.state.phase='SAVE';$snapshot=Save-RecoveryOriginal $Context;Write-RecoveryNew (Join-Path $Context.stage 'original-task-and-services.json') (Recovery-Bytes $snapshot);Write-RecoveryJournal $Context 'SAVED'
+  $Context.state.phase='SAVE';$snapshot=Save-RecoveryOriginal $Context;if($Context.Contains('resumeProof')){Start-RecoveryServiceTransition $Context};Write-RecoveryNew (Join-Path $Context.stage 'original-task-and-services.json') (Recovery-Bytes $snapshot);Write-RecoveryJournal $Context 'SAVED'
   $Context.state.phase='TASK';Write-RecoveryJournal $Context 'INTENT';$Context.state.taskAttempted=$true;Stop-RecoveryTask $Context $snapshot;Write-RecoveryJournal $Context 'STOPPED'
   $Context.state.phase='SERVICES';Write-RecoveryJournal $Context 'INTENT';$Context.state.servicesAttempted=$true;Stop-RecoveryServices $Context $snapshot;Write-RecoveryJournal $Context 'STOPPED'
   $Context.state.phase='QUIET';Assert-RecoveryQuiescent $Context $snapshot;$proof=Hold-RecoveryQuietProof $Context $snapshot;Assert-RecoveryQuietProof $Context $proof;Write-RecoveryJournal $Context 'PROVED'
@@ -85,7 +86,7 @@ function Invoke-RecoveryCore($Context){
   $archive=Invoke-RecoveryArchive $Context;$Context.state.archiveChildExit=$archive.exit;$Context.state.archiveObservedMoved=$archive.value.moved;Confirm-RecoveryArchive $Context $archive $before
   Write-RecoveryJournal $Context 'VERIFIED';$Context.state.archiveVerified=$true
   $proof.Dispose();$proof=$null
-  $Context.state.phase='RESTORE';Assert-RecoveryPause $Context;Restore-RecoveryOriginal $Context $snapshot;$Context.state.restored=$true;Write-RecoveryJournal $Context 'RESTORED'
+  $Context.state.phase='RESTORE';Assert-RecoveryPause $Context;if($Context.Contains('resumeProof')){$Context.state.taskRemainsParked=$null};Restore-RecoveryOriginal $Context $snapshot;$Context.state.restored=$true;if($Context.Contains('resumeProof')){$Context.state.taskRemainsParked=$false};Write-RecoveryJournal $Context 'RESTORED'
   $Context.state.phase='REARM';Assert-RecoveryHalt $Context;Assert-RecoveryPause $Context;Write-RecoveryJournal $Context 'INTENT';$Context.state.rearmAttempted=$true;Request-RecoveryRearm $Context;$Context.state.rearmRequested=$true;Write-RecoveryJournal $Context 'REQUESTED_ONLY'
   $Context.state.phase='WAIT';Wait-RecoveryRearm $Context;Assert-RecoveryPause $Context;$Context.state.haltCleared=$true
   $Context.state.status='RECOVERED_GLOBAL_PAUSED';$Context.state.phase='DONE';Write-RecoveryJournal $Context 'VERIFIED'
@@ -96,7 +97,16 @@ function Invoke-RecoveryCore($Context){
  }finally{
   if($null -ne $proof){try{$proof.Dispose()}catch{$Context.state.status='UNKNOWN_PRESERVED';$Context.state.code='RECOVERY_QUIET_PROOF_REFUSED'}}
   if($null -ne $snapshot -and -not $Context.state.restored -and -not $Context.state.archiveAttempted){
-   try{Assert-RecoveryHalt $Context;Restore-RecoveryOriginal $Context $snapshot;$Context.state.restored=$true}catch{$Context.state.status='UNKNOWN_PRESERVED';$Context.state.code='RECOVERY_RESTORE_REFUSED'}
+   try{
+    Assert-RecoveryHalt $Context
+    if($Context.Contains('resumeProof')){
+     # Before a verified archive, compensate this round's services only. Never unpark the original producer.
+     $parked=[ordered]@{enabled=$false;running=$false;taskHash=$snapshot.taskHash;services=$snapshot.services}
+     Restore-RecoveryOriginal $Context $parked
+     $t=Read-RecoveryTask $Context;if($t.Enabled -ne $false -or $t.GetInstances(0).Count -ne 0){throw 'RECOVERY_RESTORE_REFUSED'}
+     $Context.state.taskRemainsParked=$true;$Context.state.manualRecoveryHeld=$true
+    }else{Restore-RecoveryOriginal $Context $snapshot;$Context.state.restored=$true}
+   }catch{if($Context.Contains('resumeProof')){$Context.state.taskRemainsParked=$null};$Context.state.status='UNKNOWN_PRESERVED';$Context.state.code='RECOVERY_RESTORE_REFUSED'}
   }
   if(($Context.state.archiveAttempted -or $Context.state.taskAttempted -or $Context.state.servicesAttempted) -and -not $Context.state.restored){$Context.state.manualRecoveryHeld=$true}
   try{Write-RecoveryJournal $Context 'FINAL'}catch{$Context.state.status='UNKNOWN_PRESERVED';$Context.state.code='RECOVERY_JOURNAL_UNCONFIRMED'}
@@ -252,6 +262,11 @@ function Assert-RecoveryRunner($Context){
  if($null -ne $Context.runner -and ($r.config -cne $Context.runner.config -or $r.sddl -cne $Context.runner.sddl)){throw 'RECOVERY_RUNNER_REFUSED'};$r
 }
 function Save-RecoveryOriginal($Context){
+ # A consumed fixed continuation also blocks falling back to the unflagged entry.
+ # Absent marker leaves the original non-continuation semantics unchanged.
+ $quiet=$Context.Contains('resumeQuietOwner') -and $Context.resumeQuietOwner
+ if($quiet -and $Context.Contains('resumeServiceTransition') -and $Context.resumeServiceTransition){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ if($Context.pins.sceneId -ceq 'turing-b2ea' -and -not [RecoveryReadOnly]::Absent((Get-RecoveryServiceTransitionPins).once) -and -not $quiet){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
  Assert-RecoveryHalt $Context;if(-not [RecoveryReadOnly]::Absent((Join-Path $Context.pins.root 'state\PAUSED.json'))){throw 'RECOVERY_PAUSE_REFUSED'};$task=Read-RecoveryTask $Context;Assert-RecoveryTask $Context $task
  if($task.Enabled -isnot [bool]){throw 'RECOVERY_TASK_REFUSED'}
  $running=$task.GetInstances(0).Count -gt 0;if($running -and -not $task.Enabled){throw 'RECOVERY_TASK_REFUSED'}
@@ -261,7 +276,72 @@ function Save-RecoveryOriginal($Context){
   $account=if($name -ceq 'CluedCIResident'){'NT SERVICE\CluedCIResident'}else{'LocalSystem'}
   if(@('Running','Stopped') -cnotcontains $s.state -or $s.config -cne $Context.pins.serviceConfigs[$name] -or -not $s.binary.Contains((Join-Path $Context.pins.root $image)) -or $s.account -cne $account -or $s.startMode -cne 'Auto' -or ($name -ceq 'CluedCIResident' -and -not $s.binary.Contains((Join-Path $Context.pins.root ('resident\'+$Context.pins.resident+'\src\service-main.mjs'))))){throw 'RECOVERY_SERVICE_REFUSED'};$snap.services+=,$s
  }
- $Context.runner=Assert-RecoveryRunner $Context;$snap
+ $Context.runner=Assert-RecoveryRunner $Context;if($quiet -or ($Context.Contains('resumeServiceTransition') -and $Context.resumeServiceTransition)){Assert-RecoveryServiceTransition $Context $snap};$snap
+}
+# This is one fixed, never-archived failed operation, not a general saved-state import.
+function Get-RecoveryServiceTransitionPins {
+ $stage='C:\ProgramData\CluedIndependentCI\resident-launch-m5b-recovery\9831601b280a4f1a9e790e3777bb6102'
+ [ordered]@{stage=$stage;snapshot=(Join-Path $stage 'original-task-and-services.json');snapshotSha='457cf25a93e23e10027676afcd9e4046409ff6c37987dcf63c609dcf60bc73a5';final=(Join-Path $stage '005-SERVICES-FINAL.json');finalSha='e999813e408810719a49e2f967a5b919155b35e07d712dba6e0c706b4f7f6b23';once=(Join-Path $stage 'service-transition-resume-started.json');taskHash='b91fca4e9ccbac1cca7ec682b1796c0d9d455d30dc04f12af7c47aaf5ae76a1d';pids=@{CluedCIUpgrader=17616;CluedCIResident=5892;CluedCISwapBroker=28188}}
+}
+function Get-RecoveryQuietOwnerPins {
+ $old=Get-RecoveryServiceTransitionPins
+ $stage='C:\ProgramData\CluedIndependentCI\resident-launch-m5b-recovery\ee4ad600f71c442facb0821c8bd5e358'
+ [ordered]@{stage=$stage;snapshot=(Join-Path $stage 'original-task-and-services.json');snapshotSha='457cf25a93e23e10027676afcd9e4046409ff6c37987dcf63c609dcf60bc73a5';final=(Join-Path $stage '006-QUIET-FINAL.json');finalSha='29a7ee17c9880b10ab31fb680e38715786e3f8755cf7f52a695ee9de9b7501fd';once=(Join-Path $stage 'quiet-owner-resume-started.json');taskHash=$old.taskHash;oldPids=$old.pids;pids=@{CluedCIUpgrader=6316;CluedCIResident=2660;CluedCISwapBroker=32960};previousOnce=$old.once;previousCopy=(Join-Path $stage 'service-transition-resume-started.json');previousOnceSha='e2a8a6d10b62e2dd9be5b94e8cd70787402764933105d852b2792d72c766b103';previousFinalSha=$old.finalSha;previousOperation='ee4ad600f71c442facb0821c8bd5e358'}
+}
+function Assert-RecoveryServiceTransition($Context,$Snapshot){
+ if($Context.pins.sceneId -cne 'turing-b2ea'){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ $quiet=$Context.Contains('resumeQuietOwner') -and $Context.resumeQuietOwner
+ $p=if($quiet){Get-RecoveryQuietOwnerPins}else{Get-RecoveryServiceTransitionPins}
+ # Parent namespace/ACL checks and the original static held reads remain mandatory.
+ Hold-RecoveryPath $Context $p.once
+ if(-not [RecoveryReadOnly]::Absent($p.once)){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ $a=Read-RecoveryProtected $Context $p.snapshot 65536;$b=Read-RecoveryProtected $Context $p.final 65536
+ if((Recovery-Hash $a) -cne $p.snapshotSha -or (Recovery-Hash $b) -cne $p.finalSha){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ $utf8=New-Object Text.UTF8Encoding($false,$true);$old=$utf8.GetString($a)|ConvertFrom-Json;$prior=$utf8.GetString($b)|ConvertFrom-Json
+ if($old.enabled -isnot [bool] -or -not $old.enabled -or $old.running -isnot [bool] -or -not $old.running -or $old.taskHash -cne $p.taskHash -or $Snapshot.taskHash -cne $p.taskHash -or $Snapshot.enabled -ne $false -or $Snapshot.running -ne $false){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ if($prior.contract -cne 'clued.independent-ci.m5b-archive-recovery/2' -or $prior.stage -cne $p.stage -or $prior.status -cne 'UNKNOWN_PRESERVED'){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ $previous=$null
+ if($quiet){
+  if($prior.phase -cne 'QUIET' -or $prior.code -cne 'RECOVERY_PROTECTION_REFUSED' -or $prior.taskRemainsParked -isnot [bool] -or -not $prior.taskRemainsParked -or $prior.manualRecoveryHeld -isnot [bool] -or -not $prior.manualRecoveryHeld -or $prior.resumedFromSnapshotSha -cne $p.snapshotSha -or $prior.resumedFromFinalSha -cne $p.previousFinalSha){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+  foreach($key in @('servicesStopped','servicesDisableAttempted')){
+   if(@($prior.$key).Count -ne 3){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+   foreach($name in $Context.pins.services){if(@($prior.$key|Where-Object{$_ -ceq $name}).Count -ne 1){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}}
+  }
+  $previous=Read-RecoveryProtected $Context $p.previousOnce 65536;$copy=Read-RecoveryProtected $Context $p.previousCopy 65536
+  if((Recovery-Hash $previous) -cne $p.previousOnceSha -or (Recovery-Hash $copy) -cne $p.previousOnceSha){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+  $link=$utf8.GetString($previous)|ConvertFrom-Json
+  if($link.contract -cne 'clued.independent-ci.fixed-service-transition-resume/1' -or $link.operation -cne $p.previousOperation -or $link.stage -cne $p.stage -or $link.snapshotSha256 -cne $p.snapshotSha -or $link.finalSha256 -cne $p.previousFinalSha){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ }elseif($prior.phase -cne 'SERVICES' -or $prior.code -cne 'RECOVERY_RESTORE_REFUSED' -or @($prior.servicesStopped).Count -ne 0 -or @($prior.servicesDisableAttempted).Count -ne 1 -or $prior.servicesDisableAttempted[0] -cne 'CluedCIUpgrader'){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ foreach($key in @('taskAttempted','servicesAttempted')){if($prior.$key -isnot [bool] -or -not $prior.$key){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}}
+ foreach($key in @('pauseAttempted','pauseCreated','archiveAttempted','archiveVerified','restored','rearmAttempted','rearmRequested','haltCleared')){if($prior.$key -isnot [bool] -or $prior.$key){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}}
+ if(@($old.services).Count -ne 3){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ foreach($now in $Snapshot.services){
+  $rows=@($old.services|Where-Object{$_.name -ceq $now.name});if($rows.Count -ne 1){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'};$before=$rows[0]
+  Assert-RecoveryServiceConfig $now $before $false
+  $oldPid=if($quiet){$p.oldPids[$now.name]}else{$p.pids[$now.name]}
+  if($now.state -cne 'Running' -or $before.state -cne 'Running' -or $now.pid -ne $p.pids[$now.name] -or $before.pid -ne $oldPid -or $now.config -cne $before.config){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ }
+ $Context.resumeProof=@{pins=$p;snapshot=$a;final=$b;quietOwner=[bool]$quiet;previous=$previous}
+ if($quiet){$Context.state.resumedFromOnceSha=$p.previousOnceSha;$Context.state.servicePidContinuityClaim=$false}
+ $Context.state.resumedFromSnapshotSha=$p.snapshotSha;$Context.state.resumedFromFinalSha=$p.finalSha;$Context.state.taskRemainsParked=$true
+ # Services are the current live reads; only the two proven original Task booleans are carried.
+ $Snapshot.enabled=$true;$Snapshot.running=$true
+}
+function Start-RecoveryServiceTransition($Context){
+ $v=$Context.resumeProof;$p=$v.pins
+ # CreateNew consumes this fixed continuation even when a later phase is unknown.
+ # No cleanup/retry flag exists; a different operation/stage cannot bypass this latch.
+ $contract=if($v.quietOwner){'clued.independent-ci.fixed-quiet-owner-resume/1'}else{'clued.independent-ci.fixed-service-transition-resume/1'}
+ $marker=@{contract=$contract;operation=$Context.operation;stage=$Context.stage;snapshotSha256=$p.snapshotSha;finalSha256=$p.finalSha;at=[DateTimeOffset]::UtcNow.ToString('o')}
+ if($v.quietOwner){$marker.previousOnceSha256=$p.previousOnceSha}
+ $bytes=Recovery-Bytes $marker
+ Write-RecoveryNew $p.once $bytes
+ if((Recovery-Hash (Read-RecoveryProtected $Context $p.once 65536)) -cne (Recovery-Hash $bytes)){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
+ Write-RecoveryNew (Join-Path $Context.stage 'resumed-original-task-and-services.json') $v.snapshot
+ Write-RecoveryNew (Join-Path $Context.stage 'resumed-prior-final.json') $v.final
+ $leaf=if($v.quietOwner){'quiet-owner-resume-started.json'}else{'service-transition-resume-started.json'}
+ Write-RecoveryNew (Join-Path $Context.stage $leaf) $bytes
+ if($v.quietOwner){Write-RecoveryNew (Join-Path $Context.stage 'resumed-service-transition-once.json') $v.previous}
 }
 function Stop-RecoveryTask($Context,$Snapshot){
  $t=Read-RecoveryTask $Context;if((Recovery-TaskFingerprint $t) -cne $Snapshot.taskHash){throw 'RECOVERY_TASK_REFUSED'}
@@ -274,8 +354,11 @@ function Stop-RecoveryTask($Context,$Snapshot){
 }
 function Assert-RecoveryServiceConfig($Now,$Before,[bool]$Disabled){
  $mode=if($Disabled){'Disabled'}else{$Before.startMode}
+ # SCM clears DelayedAutoStart when disabling. Normal/restore must exactly recover the saved bool.
+ if($Before.delayedAutoStart -isnot [bool]){throw 'RECOVERY_SERVICE_REFUSED'}
+ $delayed=if($Disabled){$false}else{$Before.delayedAutoStart}
  $expected=Recovery-Hash (Recovery-Bytes @($Before.binary,$Before.account,$mode,(Recovery-ServiceDacl $Before.sddl)))
- if($Now.binary -cne $Before.binary -or $Now.account -cne $Before.account -or $Now.sddl -cne $Before.sddl -or $Now.startMode -cne $mode -or $Now.delayedAutoStart -isnot [bool] -or $Now.delayedAutoStart -ne $Before.delayedAutoStart -or $Now.config -cne $expected){throw 'RECOVERY_SERVICE_REFUSED'}
+ if($Now.binary -cne $Before.binary -or $Now.account -cne $Before.account -or $Now.sddl -cne $Before.sddl -or $Now.startMode -cne $mode -or $Now.delayedAutoStart -isnot [bool] -or $Now.delayedAutoStart -ne $delayed -or $Now.config -cne $expected){throw 'RECOVERY_SERVICE_REFUSED'}
 }
 function Set-RecoveryServiceStart($Before,[bool]$Disabled){
  # Fixed existing service only. sc config changes start mode, never credentials, failure actions, binary or ACL.
@@ -362,7 +445,10 @@ function Hold-RecoveryWslRecord($Context){
 function Assert-RecoveryWslRecord($Context){$r=$Context.wslRecordLease;[CluedSpoolArchiveV2]::ExactPath($r.handle,$r.path);if(-not [CluedSpoolArchiveV2]::Stable($r.meta,[CluedSpoolArchiveV2]::Metadata($r.handle)) -or $r.acl -cne [Convert]::ToBase64String([CluedSpoolArchiveV2]::Security($r.handle))){throw 'RECOVERY_QUIET_PROOF_REFUSED'}}
 function Assert-RecoveryVhdAcl($Context,[byte[]]$Bytes,[string]$Path){
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor($Bytes,0);$admins=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
- if($null -eq $sd.Owner -or $admins -notcontains $sd.Owner.Value -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_PROTECTION_REFUSED'}
+ # This exact qualified data-file descriptor preserves the original TURING operator as owner.
+ # No parent, other scene, different bytes, or general user-owned VHDX is admitted.
+ $qualifiedOwner=$Context.pins.sceneId -ceq 'turing-b2ea' -and $Path -ieq $Context.pins.vhdx -and $null -ne $sd.Owner -and $sd.Owner.Value -ceq $Context.pins.operator -and (Recovery-Hash $Bytes) -ceq '4e8610cdcbf6d5703038d9d03b445329a2e1d36d9f70403f31a7e8dac80d1438'
+ if($null -eq $sd.Owner -or (-not $qualifiedOwner -and $admins -notcontains $sd.Owner.Value) -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_PROTECTION_REFUSED'}
  $leaf=$Path -ieq $Context.pins.vhdx -or $Path -ieq [IO.Path]::GetDirectoryName($Context.pins.vhdx)
  # The accepted headless writer gives only ext4.vhdx Modify|WRITE_DAC; its parent stays Modify.
  $companionMask=if($Path -ieq $Context.pins.vhdx){0x1701bf}else{0x1301bf}
@@ -383,6 +469,16 @@ function Hold-RecoveryQuietProof($Context,$Snapshot){
   $proof|Add-Member ScriptMethod Dispose {if($null -ne $this.disk){$this.disk.Dispose();$this.disk=$null};for($i=$this.parents.Count-1;$i -ge 0;$i--){$this.parents[$i].Dispose()}}
   Assert-RecoveryQuietProof $Context $proof;return $proof
  }catch{if($null -ne $disk){$disk.Dispose()};for($i=$parents.Count-1;$i -ge 0;$i--){$parents[$i].Dispose()};throw}
+}
+function Test-RecoveryReadGates($Context){
+ $proof=$null;$Context.state.readGatesObserved=$false;$Context.state.serviceQuiescenceClaim=$false
+ try{
+  # Only read/hold checks. In particular, no Save, quiescence assertion, marker, service, Task or PAUSE action.
+  $proof=Hold-RecoveryQuietProof $Context $null
+  $null=Read-RecoveryScene $Context
+  Assert-RecoveryQuietProof $Context $proof
+  $Context.state.readGatesObserved=$true
+ }finally{if($null -ne $proof){$proof.Dispose()}}
 }
 function Assert-RecoveryQuietProof($Context,$Proof){
  if($null -eq $Proof -or $null -eq $Proof.disk -or $Proof.disk.SafeFileHandle.IsClosed){throw 'RECOVERY_QUIET_PROOF_REFUSED'}
@@ -519,9 +615,10 @@ function Prepare-RecoveryStage($Context){
 
 # Entry: fixed host and identity are checked before reading any installed state or emitting any machine action.
 $pins=if($Scene){Get-RecoveryPins $Scene}else{Get-RecoveryPins};$identity=[Security.Principal.WindowsIdentity]::GetCurrent();$admin=(New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$report=New-RecoveryState;$context=@{pins=$pins;state=$report;held=(New-Object 'Collections.Generic.List[IDisposable]');buffers=@{};stage=$null;sequence=0;runner=$null;operation=([Guid]::NewGuid().ToString('N'))}
+$report=New-RecoveryState;$context=@{pins=$pins;state=$report;held=(New-Object 'Collections.Generic.List[IDisposable]');buffers=@{};stage=$null;sequence=0;runner=$null;operation=([Guid]::NewGuid().ToString('N'));resumeServiceTransition=[bool]$ResumeServiceTransition;resumeQuietOwner=[bool]$ResumeQuietOwner}
 try{
  Assert-RecoverySceneIdentity $pins ([Environment]::MachineName) $identity.User.Value
+ if(($ResumeServiceTransition -and $ResumeQuietOwner) -or (($ResumeServiceTransition -or $ResumeQuietOwner) -and $pins.sceneId -cne 'turing-b2ea')){throw 'RECOVERY_SERVICE_TRANSITION_REFUSED'}
  if(-not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5 -or ($Run -and -not $admin)){throw 'RECOVERY_HOST_REFUSED'}
  foreach($name in [Environment]::GetEnvironmentVariables().Keys){if([string]$name -imatch '^(COR_|CORECLR_|COMPlus_|DOTNET|APPDOMAIN_MANAGER_|DEVPATH$)'){throw 'RECOVERY_ENVIRONMENT_REFUSED'}}
  $env:PSModulePath='C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
@@ -537,7 +634,7 @@ try{
  $context.rearm=Join-Path $pins.root ('resident\'+$pins.resident+'\windows\rearm-resident.ps1')
  if((Recovery-Hash (Read-RecoveryProtected $context $context.rearm 1048576)) -cne $pins.rearm){throw 'RECOVERY_SOURCE_REFUSED'}
  Assert-RecoveryHalt $context;Hold-RecoveryWslRecord $context;Open-RecoveryRegistration $context;$null=Save-RecoveryOriginal $context;$null=Read-RecoveryProcessOwnerSids
- if($Preflight){$report.status='PREFLIGHT_PASS'}else{Prepare-RecoveryStage $context;$report=Invoke-RecoveryCore $context}
+ if($Preflight){if($ResumeQuietOwner){Test-RecoveryReadGates $context};$report.status='PREFLIGHT_PASS'}else{Prepare-RecoveryStage $context;$report=Invoke-RecoveryCore $context}
 }catch{$report.status='REFUSED_BEFORE_ARCHIVE';$report.code=Get-RecoveryCode $_}
 finally{for($i=$context.held.Count-1;$i -ge 0;$i--){$context.held[$i].Dispose()}}
 $report|ConvertTo-Json -Depth 12 -Compress
