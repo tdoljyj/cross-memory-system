@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "d00cb3005caded0ad242a03278ed5f61246ced8e306a4636b28746b5c1518c32"
+      "content_sha256": "0722d83dc1caab4cfa9c2ad90ed6fa5fc9b3d62f71609bf5759ee427b7fb3d9f"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.39",
+      "version": "1.1.40",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "69887195f07b2bbcde079e2079cf895bcc5f383ef271ab53066a89dd10a4a91c"
+      "content_sha256": "e616f5c73113b89d6aeb7963f2c8ac69e52d65bba1fd9463793507ebfaf9e5f6"
     },
     {
       "id": "script.resource-maintenance",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "063dae8b1562899637487b1af3d817d46714d16637e2fb051f8d6ad0ed70fbda"
+      "content_sha256": "16026a67f75aaa6b52c352656e92c688debb649f0ea35eb2de6fdf311e383f56"
     },
     {
       "id": "script.required-applicability",
@@ -925,7 +925,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0148bf61a1ebeacf83741cd6291a7238160ef771d7ae70644f79c62e72d44956"
+      "content_sha256": "1affd545b4b8366296c0b764a38a0803e427873b0c66732a7862b9153c8236b8"
     }
   ]
 }
