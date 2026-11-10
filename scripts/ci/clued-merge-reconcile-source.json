@@ -153,7 +153,7 @@
     "scripts/ci/ci-usage-report.mjs": "63b107c6a732cc568b430c993eeeefd6d1940630c14e53b8a0622e344370b172",
     "scripts/ci/ci-usage-report.test.mjs": "3f938e22587568aa50c281d055f758ba4bbfc6e02031c542b34b27bf0cc394be",
     "scripts/ci/clued-control-source-pins.mjs": "8a584ee16ad7456bc0c68f1c4f7eb32c6c4f72fa90b7f5d061f471ee2683ee65",
-    "scripts/ci/clued-control-source-pins.test.mjs": "da72fc6f77c98d70ed4830177ac3efadbe5841d2727d595eb063b6b927268d1c",
+    "scripts/ci/clued-control-source-pins.test.mjs": "724786f99e219ca4d0c917142c33536d4f3342f0a5ca2b727682bc4dce60f4f2",
     "scripts/ci/clued-control-workflow-reconcile-source.test.mjs": "25af757f160fe371bc206c02933398e8d60263c98bf90c860a2df1e37507727e",
     "scripts/ci/clued-control-workflow-source.mjs": "ad281626d9981de7696348802cf3bfe4b8972cdfb83fbf2c51c7fc4a84cce0a7",
     "scripts/ci/clued-control-workflow-source.test.mjs": "15144fe7c8f3feae66532d4386af95641d5241fadf64d9a4f21893552f1303e5",
