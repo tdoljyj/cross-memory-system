@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.5";
+export const COMPONENT_VERSION = "1.0.6";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
