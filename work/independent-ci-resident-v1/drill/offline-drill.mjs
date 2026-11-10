@@ -536,7 +536,7 @@ await step('  a stage 10 whose cleanup is not proven HALTs like any stage', asyn
     }
     if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) return { code: 0, stdout: responses >= 3 ? 'result.ready.json\n' : `challenge-0${responses + 1}.ready.json\n` };
     if (a.some(x => x.startsWith('--property=ActiveState'))) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     return { code: 0, stdout: '' };
   };
   const pump = new Companion({ cfg: flapCfg, mailbox: { cancelled: async () => false, claimPump: async () => true }, run, fileExists: async p => p.includes('\\outgoing\\'), sleep: async ms => { now += ms; }, clock });
@@ -648,7 +648,7 @@ async function incidentReplay(variant) {
 212992
 ${zone(variant === 'memory-low' ? 0 : 900)}` };
     }
-    if (a.includes('quiescence')) { log.quiescenceAsks += 1; return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: !workerActive(), containersZero: true }) }; }
+    if (a.includes('quiescence')) { log.quiescenceAsks += 1; return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: !workerActive(), containersZero: true, pendingJobsQuiet: true }) }; }
     if (a.includes('archive-status')) { const inst = a[a.indexOf('--instance') + 1]; log.archiveReasons.push(inst.split('_')[1]); return { code: 0, stdout: JSON.stringify({ verified: true, directory: `failed-${inst.slice(0, 16)}-${inst.split('_')[1]}-000000000000` }) }; }
     if (a.includes('-CheckRefs')) return { code: 0, stdout: JSON.stringify({ status: 'REMOTE_REFS_UNCHANGED' }) };
     if (a.includes('-BatchId')) return { code: 0, stdout: JSON.stringify({ status: 'BUNDLE_WRITTEN' }) };
