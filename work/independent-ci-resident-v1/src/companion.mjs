@@ -24,6 +24,55 @@ export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoi
 export const LINUX_INCOMING = '/var/lib/clued-independent-ci/formal-spool/incoming';
 // The Linux end of every relay call; a Send* retry waits until none is left running (DESIGN §25.3).
 export const RELAY_RECORD_PROCESS = 'protected-job-bridge-v4/relay-record.mjs';
+// One WSL read, using the existing env-i/root transport. The old root tool's
+// inactive/cgroup/container snapshot does not see a start job waiting on a
+// dependency. Check jobs FIRST: an already queued job must not become active
+// between an earlier quiet snapshot and an empty jobs list. This is a snapshot,
+// not a barrier against a new external producer. Never publish command output.
+// systemd v255: systemctl-list-jobs.c (four columns; --no-legend is empty for no
+// jobs), core/job.c (the closed type/state sets below). --full prevents ellipses.
+const LINUX_QUIESCENCE_PROBE = String.raw`import json,re,subprocess,sys
+def collect():
+    if len(sys.argv)!=4 or sys.argv[1:3]!=['quiescence','--batch'] or not re.fullmatch(r'[0-9a-f]{16}-[0-9a-f]{12}',sys.argv[3]):
+        raise ValueError()
+    jobs=subprocess.run(['/usr/bin/systemctl','list-jobs','--no-legend','--no-pager','--plain','--full','clued-ci-worker@*.service','clued-ci-wsprep@*.service','clued-ci-archive@*.service'],capture_output=True,text=True,timeout=5)
+    if jobs.returncode!=0 or jobs.stderr or len(jobs.stdout)>262144:
+        raise ValueError()
+    types={'start','verify-active','stop','reload','reload-or-start','restart','try-restart','try-reload','nop'}
+    states={'waiting','running'}
+    seen=set()
+    quiet=True
+    for line in jobs.stdout.splitlines():
+        if not line.strip():
+            continue
+        row=re.fullmatch(r'[ \t]*([1-9][0-9]{0,9})[ \t]+([\x21-\x7e]{1,255})[ \t]+([a-z-]+)[ \t]+([a-z]+)[ \t]*',line)
+        if row is None:
+            raise ValueError()
+        job,unit,kind,state=row.groups()
+        if int(job)>4294967295 or job in seen or kind not in types or state not in states:
+            raise ValueError()
+        if re.fullmatch(r'[-A-Za-z0-9:_.@\\]+\.(?:service|socket|target|device|mount|automount|swap|timer|path|slice|scope)',unit) is None:
+            raise ValueError()
+        seen.add(job)
+        if unit.startswith(('clued-ci-worker@','clued-ci-wsprep@','clued-ci-archive@')):
+            if re.fullmatch(r'clued-ci-(?:worker|wsprep|archive)@[0-9a-z_-]{1,120}\.service',unit) is None:
+                raise ValueError()
+            quiet=False
+    if not quiet:
+        return {'linuxUnitsInactive':False,'containersZero':False,'pendingJobsQuiet':False}
+    root=subprocess.run(['/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux','quiescence','--batch',sys.argv[3]],capture_output=True,text=True,timeout=20)
+    if root.returncode!=0 or root.stderr or len(root.stdout)>1048576:
+        raise ValueError()
+    proof=json.loads(root.stdout)
+    if not isinstance(proof,dict) or any(type(proof.get(k)) is not bool for k in ('linuxUnitsInactive','containersZero')):
+        raise ValueError()
+    return {'linuxUnitsInactive':proof['linuxUnitsInactive'],'containersZero':proof['containersZero'],'pendingJobsQuiet':quiet}
+try:
+    answer=collect()
+except Exception:
+    print(json.dumps({'linuxUnitsInactive':False,'containersZero':False,'pendingJobsQuiet':False}))
+    sys.exit(2)
+print(json.dumps(answer))`;
 // One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
 export const CALLBACK_WINDOW_MS = 120_000;
 // How long the pump waits for one relay call. A relay call usually takes 4-6 s, but sometimes 25-45 s: PR #911 stage 4
@@ -350,7 +399,7 @@ export function argv(cfg) {
     startNoBlock: (template, instance) => wsl('/usr/bin/systemctl', 'start', '--no-block', unit(template, instance)),
     // DESIGN §26: the unit's state with the two facts that show it really ran (replaces the ActiveState-only read).
     unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
-    linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
+    linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl('/usr/bin/python3', '-I', '-c', LINUX_QUIESCENCE_PROBE, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
     // DESIGN §35: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
     archivePrune: () => wsl(cfg.linuxTool, 'archive-prune'),
@@ -459,8 +508,13 @@ export class Companion {
 
   async quiescence(batchId) {
     const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence');
-    const v = r.code === 0 ? json(r.stdout) : null;
-    return { linuxUnitsInactive: v?.linuxUnitsInactive === true, containersZero: v?.containersZero === true };
+    const observed = r?.code === 0 && (r.timedOut === undefined || r.timedOut === false)
+      && (r.refused === undefined || r.refused === null) && (r.tree === undefined || r.tree === 'zero')
+      && (r.stderr === undefined || r.stderr === '');
+    const v = observed ? json(r.stdout) : null;
+    const confirmed = plainObject(v) && Object.keys(v).sort().join('|') === 'containersZero|linuxUnitsInactive|pendingJobsQuiet'
+      && ['linuxUnitsInactive', 'containersZero', 'pendingJobsQuiet'].every(k => typeof v[k] === 'boolean') && v.pendingJobsQuiet;
+    return { linuxUnitsInactive: confirmed && v.linuxUnitsInactive, containersZero: confirmed && v.containersZero };
   }
 
   async handle(request) {

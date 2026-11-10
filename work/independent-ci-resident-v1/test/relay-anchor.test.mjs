@@ -57,7 +57,7 @@ async function world(t, { relayMs = () => 5000, challengeAt, transient = () => f
       return { code: 0, stdout: `${names.join('\n')}\n` };
     }
     if (a.includes('/usr/bin/ls') || a.includes('/usr/bin/pgrep')) return { code: a.includes('/usr/bin/pgrep') ? 1 : 0, stdout: '' };
-    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
   };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async p => p.includes('\\outgoing\\'), clock: () => now, sleep: async ms => { now += ms; }, ...(pace ? { listingDelay: pace } : {}) });
   const relay = c.relay.bind(c);

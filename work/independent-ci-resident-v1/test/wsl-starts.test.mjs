@@ -60,7 +60,7 @@ async function stage(t, { challengesAt, resultAt, endsAt }, ports = {}, { cancel
     if (a.includes('/usr/bin/ls') && a.includes(LINUX_OUTGOING)) { starts.listing += 1; listingAt.push(now); return { code: 0, stdout: `${listing().join('\n')}\n` }; }
     if (a.includes('/usr/bin/ls') && a.includes(LINUX_INCOMING)) { starts.other += 1; return { code: 0, stdout: '' }; }
     starts.other += 1; // quiescence, pgrep
-    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
   };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => true, clock: () => now, ...ports,
     sleep: async ms => { now += ms; if (cancelAfterMs !== null && startAt !== null && rel() >= cancelAfterMs) await box.cancel(req, 'stage-ended'); } });
@@ -184,7 +184,7 @@ test('the wait for the worker unit to be gone after the result backs off (0.5, 1
     if (mode(a)) return mode(a) === 'SendIssue' || mode(a) === 'ReceiveResult' ? TRANSFERRED : NOT_THERE;
     if (a.some(x => x.startsWith('--property=ActiveState'))) { reads.push(now - T0); return { code: 0, stdout: `ActiveState=${now - T0 > 40_000 ? 'inactive' : 'deactivating'}\nInvocationID=${'a'.repeat(32)}\nExecMainStartTimestampMonotonic=7\n` }; }
     if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'result.ready.json\n' };
-    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
   };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => true, sleep: async ms => { now += ms; }, clock: () => now });
   const req = await box.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 60 * 60_000);
