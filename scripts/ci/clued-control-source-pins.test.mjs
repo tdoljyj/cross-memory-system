@@ -76,7 +76,17 @@ test('a linked ancestor directory is refused before materialisation',async t=>{
   fs.symlinkSync(outside,dir,'junction');await refusesWithoutWrites(root,/not a plain path/);
 });
 test('a manifest version mismatch refuses rather than registering inconsistent code',async t=>{
-  const root=fixture(t);edit(root,'config/clued-components.json',x=>x.replace('"version": "1.1.39"','"version": "99.0.0"'));await refusesWithoutWrites(root,/version\/manifest mismatch/);
+  const root=fixture(t);
+  edit(root,'config/clued-components.json',x=>{
+    const manifest=JSON.parse(x),components=manifest.components.filter(c=>c.id==='script.independent-native-publication');
+    assert.equal(components.length,1,'the target component must exist exactly once');
+    const component=components[0],before=component.version;
+    assert.equal(typeof before,'string');
+    component.version=before==='99.0.0'?'98.0.0':'99.0.0';
+    assert.notEqual(component.version,before,'the fixture must change the target version');
+    return JSON.stringify(manifest,null,2)+'\n';
+  });
+  await refusesWithoutWrites(root,/version\/manifest mismatch/);
 });
 test('committing both descriptor and catalogue tampering cannot replace the explicit trusted base',async t=>{
   const root=fixture(t),pin='11d4b72a9f330801bdb44d3bd8a5b6c411cd328b02a6946ab9ada7485ec7dbf3';
