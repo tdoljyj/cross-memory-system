@@ -42,7 +42,7 @@ test('pending Native617 data refuses invented receipts, partial roles, route mix
 import test from 'node:test';
 import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest,workflowBlob,futureWorkflowSubject,
   futureWorkflowCatalogue,acceptedFutureWorkflowSource,parseWorkflowProfiles,REQUIRED_TESTS_SOURCE,
-  isExactAllRequiredPrimariesProfile} from './clued-workflow-profile.mjs';
+  isExactAllRequiredPrimariesProfile,registeredWorkflowSource,rolesForSource,completeLargeWorkflowProfile} from './clued-workflow-profile.mjs';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
@@ -197,4 +197,66 @@ test('candidate future Sources retain exact full-byte profiles and frozen gate h
     const gate=workflowJobs(entry.source_profile.source_yaml).filter(job=>job.name==='admission-gate');assert.equal(gate.length,1);
     assert.equal(createHash('sha256').update(gate[0].lines.join('\n')).digest('hex'),entry.exact_source_acceptance_scope.frozen_gate_sha256);
   }
+});
+
+
+test('G4 preregistration binds the future full YAML to unchanged independent roles while preserving the old consumer',()=>{
+  const file='.github/workflows/clued-g4-database.yml',beforeBlob='a09cfc44e506a9672e5221a7fa6737747ddcb787',afterBlob='d7876890a4df616fddae675c4d66737a70eb7045',
+    profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
+    roles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url))),
+    before=registeredWorkflowSource(profiles,file,beforeBlob).profile,after=registeredWorkflowSource(profiles,file,afterBlob).profile,
+    accepted=rolesForSource(roles,file,afterBlob),yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
+  assert.equal(workflowBlob(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8')),beforeBlob,
+    'PR-A registers only: the old workflow is still installed in this checkout');
+  assert.equal(after.source_sha256,'570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d');
+  assert.deepEqual(accepted,rolesForSource(roles,file,beforeBlob));
+  const definition=yaml.parse(after.source_yaml),oldDefinition=yaml.parse(before.source_yaml);
+  for(const role of accepted) {
+    assert.deepEqual(definition.jobs[role.job_id],oldDefinition.jobs[role.job_id]);
+    assert.equal(roleDefinitionDigest(definition.jobs[role.job_id]),role.definition_sha256);
+  }
+  assert.deepEqual(compileRegisteredWorkflow(after.source_yaml,{primary_ids:after.primary_ids,accepted_roles:accepted,parseYaml:yaml.parse}),after);
+  assert.deepEqual(after.pull_request,before.pull_request);
+  assert.ok(after.pull_request.paths.includes('apps/clued-cloud/supabase/**'));
+  const oldMain=structuredClone(profiles);oldMain.workflows[file].accepted_sources=oldMain.workflows[file].accepted_sources.filter(x=>x.workflow_blob!==afterBlob);
+  assert.equal(registeredWorkflowSource(oldMain,file,afterBlob).passed,false);
+  for(const source of [oldMain.workflows[file],...oldMain.workflows[file].accepted_sources])
+    assert.equal(registeredWorkflowSource(profiles,file,source.workflow_blob).passed,true);
+  assert.equal(registeredWorkflowSource(profiles,file,workflowBlob(after.source_yaml+'# changed\n')).passed,false);
+});
+
+
+test('large profile transport uses immutable tree and blob facts only, with every binding and byte boundary enforced',async()=>{
+  const repository='o/r',commit='1'.repeat(40),file='scripts/ci/clued-gated-proof-profiles.json';
+  const fixture=(bytes=Buffer.alloc(1048577,120))=>{
+    const oid=workflowBlob(bytes),calls=[],content={type:'file',path:file,sha:oid,size:bytes.length,encoding:'none',content:'',download_url:'https://untrusted.invalid/private'},
+      tree={sha:'2'.repeat(40),truncated:false,tree:[{path:file,type:'blob',mode:'100644',sha:oid,size:bytes.length}]},
+      blob={sha:oid,size:bytes.length,encoding:'base64',content:bytes.toString('base64')},
+      read=async route=>{calls.push(route);if(route===`/repos/${repository}/git/trees/${commit}?recursive=1`)return tree;
+        if(route===`/repos/${repository}/git/blobs/${oid}`)return blob;throw Error('UNEXPECTED_FIXED_ROUTE');};
+    return {bytes,oid,calls,content,tree,blob,read};
+  };
+  for(const size of [1048577,2097152]) {
+    const f=fixture(Buffer.alloc(size,120)),result=await completeLargeWorkflowProfile({repository,commit,content:f.content,expectedBlob:f.oid,read:f.read});
+    assert.equal(Buffer.from(result.content,'base64').compare(f.bytes),0);assert.equal(result.sha,f.oid);assert.equal(f.calls.length,2);
+    assert.equal(result.download_url,undefined);
+  }
+  for(const edit of [f=>f.content.path='scripts/ci/other.json',f=>f.content.type='symlink',f=>f.content.sha='3'.repeat(40),
+    f=>f.content.size=1048576,f=>f.content.size=2097153,f=>f.content.size=1048577.5,f=>f.content.content='not empty',
+    f=>f.tree.truncated=true,f=>f.tree.sha=null,f=>f.tree.tree.push({...f.tree.tree[0]}),f=>f.tree.tree[0].path='other',
+    f=>f.tree.tree[0].type='tree',f=>f.tree.tree[0].mode='120000',f=>f.tree.tree[0].mode='100755',
+    f=>f.tree.tree[0].sha='3'.repeat(40),f=>f.tree.tree[0].size++,f=>f.blob.sha='3'.repeat(40),
+    f=>f.blob.size++,f=>f.blob.encoding='none',f=>delete f.blob.content,f=>f.blob.content+='!',
+    f=>f.blob.content=Buffer.alloc(f.bytes.length,121).toString('base64')]) {
+    const f=fixture();edit(f);
+    await assert.rejects(completeLargeWorkflowProfile({repository,commit,content:f.content,expectedBlob:f.oid,read:f.read}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);
+  }
+  const badUtf8=fixture(Buffer.concat([Buffer.alloc(1048576,120),Buffer.from([255])]));
+  await assert.rejects(completeLargeWorkflowProfile({repository,commit,content:badUtf8.content,read:badUtf8.read}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);
+  for(const extra of [{commit:'main'},{commit:'1'.repeat(39)},{repository:'o/r?escape'},{expectedBlob:'3'.repeat(40)}]) {
+    const f=fixture();await assert.rejects(completeLargeWorkflowProfile({repository,commit,content:f.content,read:f.read,...extra}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);assert.equal(f.calls.length,0);
+  }
+  const foreign=fixture();await assert.rejects(completeLargeWorkflowProfile({repository:'other/r',commit,content:foreign.content,read:foreign.read}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);
+  const small={type:'file',path:file,sha:workflowBlob('old small'),size:9,encoding:'base64',content:Buffer.from('old small').toString('base64')};
+  assert.equal(await completeLargeWorkflowProfile({content:small,read:()=>{throw Error('NO_NEW_SMALL_FILE_READ');}}),small);
 });

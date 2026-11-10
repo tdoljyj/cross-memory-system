@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {readNaturalArtifact,admissionEnvelopeInput,operationEnvelopeInput} from './merge-admission-source-producer.mjs';
 import {nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
-import {registeredWorkflowSource,rolesForSource,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,rolesForSource,parseWorkflowProfiles,WORKFLOW_PROFILES_MAX_BYTES,completeLargeWorkflowProfile} from './clued-workflow-profile.mjs';
 import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
 export const NATURAL_CACHE_SCHEMA='clued.r9-natural-origin-cache/1';
 const digest=x=>createHash('sha256').update(x).digest('hex');
@@ -98,10 +98,14 @@ async function artifacts(request,repository,run){
   }refuse('NATURAL_ARTIFACT_PAGE_CAP');
 }
 async function source(request,repository,file,ref){
-  const x=await body(request,`/repos/${repository}/contents/${file}?ref=${encodeURIComponent(ref)}`);
+  let x=await body(request,`/repos/${repository}/contents/${file}?ref=${encodeURIComponent(ref)}`);
+  if(file==='scripts/ci/clued-gated-proof-profiles.json') {
+    try{x=await completeLargeWorkflowProfile({read:route=>body(request,route),repository,commit:ref,content:x});}
+    catch{refuse('NATURAL_NATIVE_SOURCE_INVALID');}
+  }
   if(x?.type!=='file'||x.path!==file||x.encoding!=='base64'||!sha(x.sha)||typeof x.content!=='string')refuse('NATURAL_NATIVE_SOURCE_INVALID');
   const b=Buffer.from(x.content.replace(/\s/g,''),'base64'),text=b.toString('utf8');
-  if(b.length>1024*1024||Buffer.from(text).compare(b)||blob(b)!==x.sha)refuse('NATURAL_NATIVE_SOURCE_INVALID');
+  if(b.length>(file==='scripts/ci/clued-gated-proof-profiles.json'?WORKFLOW_PROFILES_MAX_BYTES:1024*1024)||Buffer.from(text).compare(b)||blob(b)!==x.sha)refuse('NATURAL_NATIVE_SOURCE_INVALID');
   return {text,blob:x.sha,sha256:digest(b)};
 }
 // A positive scheduler duration is not execution evidence. For this exact

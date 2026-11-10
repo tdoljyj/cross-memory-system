@@ -6,12 +6,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {verifyReconcileSource} from './clued-merge-reconcile-source.mjs';
 import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,MERGE_RECONCILE_CONTROL_SOURCE,
   compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 import {gateFindings,workflowFindings} from './clued-work-admission.mjs';
 
 const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const historical=(blob,sha)=>{
+  const bytes=execFileSync('git',['cat-file','blob',blob],{cwd:root,maxBuffer:4*1024*1024});
+  assert.equal(workflowBlob(bytes),blob);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),sha);
+  return bytes;
+};
 const catalogueUrl=new URL('./clued-control-workflow-sources.json',import.meta.url);
 const load=()=>JSON.parse(fs.readFileSync(catalogueUrl,'utf8'));
 const FILE=MERGE_RECONCILE_CONTROL_SOURCE.file,REPO='tdoljyj/cross-memory-system';
@@ -43,7 +53,7 @@ test('one initial Source and full concrete Role are registered without inventing
   assert.equal(Object.keys(pin.implementation_blobs).length,384);
   for(const name of ['config/clued-mechanical-files.json','scripts/ci/component-version-integration-policy.mjs',
     'scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-merge-reconcile-source.mjs',
-    'scripts/ci/clued-merge-reconcile-source.test.mjs','scripts/ci/merge-admission-r9-collector.test.mjs',
+    'scripts/ci/clued-merge-reconcile-source.test.mjs',
     'scripts/ci/clued-pr-task-binding.mjs','scripts/ci/clued-pr-task-binding.test.mjs',
     'scripts/ci/clued-pr-write-set.mjs','scripts/ci/clued-pr-write-set.test.mjs'])
     assert.equal(pin.implementation_blobs[name],workflowBlob(fs.readFileSync(new URL('../../'+name,import.meta.url))),name);
@@ -53,8 +63,34 @@ test('one initial Source and full concrete Role are registered without inventing
     'scripts/ci/clued-merge-reconcile-gate.mjs','scripts/ci/clued-merge-reconcile-activation.json',
     'scripts/ci/clued-merge-executor.mjs','scripts/ci/clued-merge-slot-ci.mjs','scripts/ci/clued-work-admission.mjs'])
     assert.match(pin.implementation_blobs[name],/^[a-f0-9]{40}$/);
-  assert.equal(workflowBlob(fs.readFileSync(new URL('./clued-work-admission.mjs',import.meta.url),'utf8')),
-    pin.implementation_blobs['scripts/ci/clued-work-admission.mjs'],'new initial Source binds the current successor consumer');
+  // This initial Source is immutable historical metadata, not today's execution
+  // integrity registry. Authenticate its actual Git objects rather than repin it.
+  for(const [name,blob,sha] of [
+    ['scripts/ci/merge-admission-r9-collector.test.mjs','1053a17adfaecf5df9e6510bbdecb1c0b2ba93bf','6223ac697944d99a0ee2b5c9500cb6123498fbf33854445f9b04211525c4603b'],
+    ['scripts/ci/clued-work-admission.mjs','62ebce7bcaeb2402c5a92caa025f44e0c07c0735','61d070f4d1e3e733eddc22c1e7dcf32f4eb16ec2123bd61c4e2212dc869a6be5'],
+  ]) {assert.equal(pin.implementation_blobs[name],blob,name);historical(blob,sha);}
+});
+
+test('the separate current integrity registry binds every current file without granting authority',()=>{
+  const current=verifyReconcileSource(root);
+  for(const key of ['executionAuthority','dispatchAuthority','productionAuthority','runnerHookException'])assert.equal(current[key],false,key);
+  assert.equal(current.hostQualification,'separate_required');
+  for(const name of ['scripts/ci/clued-work-admission.mjs','scripts/ci/merge-admission-r9-collector.test.mjs'])
+    assert.equal(current.files[name],createHash('sha256').update(fs.readFileSync(new URL('../../'+name,import.meta.url))).digest('hex'));
+});
+
+test('historical object substitutions and current consumer byte mutations both refuse',()=>{
+  assert.throws(()=>historical('1053a17adfaecf5df9e6510bbdecb1c0b2ba93bf','0'.repeat(64)));
+  assert.throws(()=>historical('62ebce7bcaeb2402c5a92caa025f44e0c07c0735','6223ac697944d99a0ee2b5c9500cb6123498fbf33854445f9b04211525c4603b'));
+  for(const name of ['scripts/ci/clued-work-admission.mjs','scripts/ci/merge-admission-r9-collector.test.mjs']) {
+    let mutated=false;
+    assert.throws(()=>verifyReconcileSource(root,(filename,...options)=>{
+      const bytes=fs.readFileSync(filename,...options);
+      if(filename.replaceAll('\\','/').endsWith('/'+name)){mutated=true;return Buffer.concat([Buffer.from(bytes),Buffer.from('\n// unregistered mutation\n')]);}
+      return bytes;
+    }),/MERGE_RECONCILE_SOURCE_UNQUALIFIED/);
+    assert.equal(mutated,true,'the verifier must reach and reject the changed current file');
+  }
 });
 
 test('exact initial registration remains source-only and does not grant Host, dispatch or execution authority',()=>{

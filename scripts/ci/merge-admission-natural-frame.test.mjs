@@ -10,7 +10,7 @@ import {registerHooks} from 'node:module';
 import {loadSourceHistoryFixture} from './hosted-migration-source-history.fixture.mjs';
 import {loadPublisherSourceHistoryFixture} from './production-publisher-source-history.fixture.mjs';
 import {loadHistoricalWorkflowProfiles69e} from './fixtures/workflow-profiles-69e30b6/fixture.mjs';
-import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,WORKFLOW_PROFILES_MAX_BYTES} from './clued-workflow-profile.mjs';
 import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
 import {qualifiedCI} from './clued-gated-proof.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),repo=process.env.CLUED_PRODUCER_TEST_REPO_ROOT??path.resolve(here,'../..');
@@ -604,7 +604,7 @@ test('v2 actual 595 old22 replay preserves ac90 while current Source selects exa
   assert.equal(h(current.runtime.proof_profiles_raw),sealedExecution.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),sealedExecution.role_specs_sha256);
   const actualBlob=current.runtime.execution_workflow_blobs[file],selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
   assert.equal(selected.passed,true);assert.equal(actualBlob,future[0].workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
-  const {rolesForSource,roleDefinitionDigest}=await import('./clued-workflow-profile.mjs'),roles=rolesForSource(currentRoles,file,actualBlob);
+  const {rolesForSource,roleDefinitionDigest,WORKFLOW_PROFILES_MAX_BYTES}=await import('./clued-workflow-profile.mjs'),roles=rolesForSource(currentRoles,file,actualBlob);
   assert.equal(roles.length,1);assert.equal(roles[0].job_id,'qualify');assert.equal(roles[0].definition_sha256,'fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074');
   assert.equal(roleDefinitionDigest(roles[0].definition),roles[0].definition_sha256);
   assert.equal(roles[0].definition.env.QUALIFICATION_IDLE_RUN_ID,'${{ inputs.idle_run_id }}');
@@ -839,5 +839,45 @@ test('unknown shared references mixed raw pairs and changed historical directory
       request:async()=>{reads++;return {ok:false};}});
     assert.equal(r.status,'PARTIAL');assert.equal(reads,1);assert.equal(r.entries.length,first.entries.length);assert.deepEqual(r.execution_snapshots,{});
     assert.ok(r.gaps.some(g=>g.code==='NATURAL_SHARED_REQUEST_STOPPED'));assert.equal(r.entries[0].packet_raw,first.entries[0].packet_raw);assert.equal(r.t0,null);
+  }
+});
+
+
+test('natural intake reads large profile encoding:none through bound Git blobs and keeps other source limits',async()=>{
+  async function sized(file,size,change=()=>{}) {
+    const f=executionIntakeFixture(),tip=f.tips[0],snapshot=f.snapshots.get(tip),
+      key=file.endsWith('clued-gated-proof-profiles.json')?'proof_profiles_raw':'role_specs_raw',
+      original=snapshot[key],text=original+' '.repeat(size-Buffer.byteLength(original)),oid=blob(text),large=key==='proof_profiles_raw'&&size>1048576;
+    snapshot[key]=text;
+    const template=f.selection.execution_source_templates.find(row=>row.source_checkout_sha===tip);
+    template[key==='proof_profiles_raw'?'profiles_sha256':'role_specs_sha256']=h(text);
+    const facts={content:{type:'file',path:file,encoding:large?'none':'base64',sha:oid,size,content:large?'':Buffer.from(text).toString('base64')},
+      tree:f.responses.get(`/repos/${repository}/git/trees/${tip}?recursive=1`).body,
+      blob:{sha:oid,size,encoding:'base64',content:Buffer.from(text).toString('base64')}};
+    facts.tree.sha='9'.repeat(40);const row=facts.tree.tree.find(row=>row.path===file);row.sha=oid;row.size=size;
+    change(facts);
+    f.responses.set(`/repos/${repository}/contents/${file}?ref=${tip}`,{ok:true,body:facts.content});
+    f.responses.set(`/repos/${repository}/git/blobs/${oid}`,{ok:true,body:facts.blob});
+    return {result:await f.collect(),routes:f.routes};
+  }
+  for(const [file,size,allowed]of [
+    ['scripts/ci/clued-gated-proof-profiles.json',1048577,true],
+    ['scripts/ci/clued-gated-proof-profiles.json',WORKFLOW_PROFILES_MAX_BYTES,true],
+    ['scripts/ci/clued-gated-proof-profiles.json',WORKFLOW_PROFILES_MAX_BYTES+1,false],
+    ['scripts/ci/clued-gated-proof-role-specs.json',1048576,true],
+    ['scripts/ci/clued-gated-proof-role-specs.json',1048577,false],
+  ]) {
+    const {result,routes}=await sized(file,size);
+    assert.equal(result.status==='NATIVE_ORIGIN_BOUND',allowed,file+':'+size+':'+JSON.stringify(result.gaps));
+    if(allowed&&file.endsWith('clued-gated-proof-profiles.json'))assert.equal(routes.filter(route=>route.includes('/git/blobs/')).length,1);
+    if(!allowed)assert.match(JSON.stringify(result.gaps),/NATURAL_NATIVE_SOURCE_INVALID/);
+    assert.equal(result.source_authenticated,false);
+  }
+  for(const change of [f=>f.content.path='scripts/ci/other.json',f=>f.content.sha='a'.repeat(40),f=>f.content.size++,
+    f=>f.tree.truncated=true,f=>f.tree.tree.find(r=>r.path==='scripts/ci/clued-gated-proof-profiles.json').mode='120000',
+    f=>f.blob.sha='a'.repeat(40),f=>f.blob.size++,f=>delete f.blob.content,
+    f=>f.blob.content=Buffer.concat([Buffer.alloc(1048576,120),Buffer.from([255])]).toString('base64')]) {
+    const {result}=await sized('scripts/ci/clued-gated-proof-profiles.json',1048577,change);
+    assert.equal(result.status,'PARTIAL');assert.match(JSON.stringify(result.gaps),/NATURAL_NATIVE_SOURCE_INVALID/);
   }
 });

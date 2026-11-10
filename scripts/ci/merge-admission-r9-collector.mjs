@@ -5,7 +5,7 @@ import {inflateRawSync} from 'node:zlib';
 import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore,nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 import {readMergeAdmissionFourSources,parseFourSourceRawData} from './merge-admission-four-sources.mjs';
 import {integrateClockSourceCandidate} from './merge-admission-clock-source.mjs';
-import {registeredWorkflowSource,rolesForSource,workflowBlob,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {registeredWorkflowSource,rolesForSource,workflowBlob,parseWorkflowProfiles,WORKFLOW_PROFILES_MAX_BYTES,completeLargeWorkflowProfile} from './clued-workflow-profile.mjs';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
 import {collectNaturalSourceArtifacts} from './merge-admission-natural-intake.mjs';
 import {assembleNaturalFourSourceFrame,excludeQuarantinedMainMoves} from './merge-admission-natural-frame.mjs';
@@ -86,10 +86,15 @@ export function readSealedPacketZip(bytes,expectedMember=R9_PACKET_FILE){
   return raw.toString('utf8');
 }
 async function sourceText(request,repository,file,ref){
-  const p=await bodyOf(request,`/repos/${repository}/contents/${file}?ref=${encodeURIComponent(ref)}`);
+  let p=await bodyOf(request,`/repos/${repository}/contents/${file}?ref=${encodeURIComponent(ref)}`);
+  if(file==='scripts/ci/clued-gated-proof-profiles.json') {
+    try{p=await completeLargeWorkflowProfile({read:route=>bodyOf(request,route),repository,commit:ref,content:p});}
+    catch{fail('NATIVE_SOURCE_INVALID');}
+  }
   if(p?.type!=='file'||p.path!==file||p.encoding!=='base64'||typeof p.content!=='string'||!sha(p.sha))fail('NATIVE_SOURCE_INVALID');
   const bytes=Buffer.from(p.content.replace(/\s/g,''),'base64'),text=bytes.toString('utf8');
-  if(bytes.length>MAX_BYTES||Buffer.from(text).compare(bytes)!==0||workflowBlob(text)!==p.sha)fail('NATIVE_SOURCE_INVALID');
+  if(bytes.length>(file==='scripts/ci/clued-gated-proof-profiles.json'?WORKFLOW_PROFILES_MAX_BYTES:MAX_BYTES)||
+    Buffer.from(text).compare(bytes)!==0||workflowBlob(text)!==p.sha)fail('NATIVE_SOURCE_INVALID');
   return {text,blob:p.sha};
 }
 export async function loadR9DefaultBranchContract({request,repository}){

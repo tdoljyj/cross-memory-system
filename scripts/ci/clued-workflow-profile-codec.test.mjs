@@ -31,14 +31,17 @@ function sources(v,path=[],out=[]) {
   return out;
 }
 
-test('all original 66 sources, exact compound and 732 successor drafts roundtrip without losing bytes, roles or metadata',()=>{
+test('all original sources and complete successors roundtrip without losing bytes, roles or metadata',()=>{
   const semantic=read(),wire=encodeWorkflowProfiles(semantic),text=serializeWorkflowProfiles(semantic);
   const decoded=parseWorkflowProfiles(Buffer.from(text));
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,69);
+  assert.equal(sources(decoded).length,70);
   const original=structuredClone(decoded);delete original.workflows[REQUIRED_TESTS_SOURCE.file];
+  const G4='.github/workflows/clued-g4-database.yml',G4_BLOB='d7876890a4df616fddae675c4d66737a70eb7045';
+  assert.equal(original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob===G4_BLOB).length,1);
+  original.workflows[G4].accepted_sources=original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob!==G4_BLOB);
   const successor=original.workflows['.github/workflows/gitleaks.yml'].accepted_sources
     .filter(source=>source.workflow_blob==='6441fc32b084002de697415ea8343af07816c929');
   assert.equal(successor.length,1);
@@ -52,6 +55,8 @@ test('all original 66 sources, exact compound and 732 successor drafts roundtrip
   assert.equal(sources(original).length,66);
   assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
   const oldRoles=structuredClone(specs);delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
+  assert.ok(oldRoles.workflows[G4].sources[G4_BLOB]);
+  delete oldRoles.workflows[G4].sources[G4_BLOB];
   assert.equal(oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'][0]
     .definition_sha256,'9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf');
   delete oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'];
@@ -344,4 +349,17 @@ test('the guard command exits 1 with the rule and line for a looping file and 0 
     const relative=spawnSync(process.execPath,[path.relative(process.cwd(),guard),bad],{encoding:'utf8'});
     assert.equal(relative.status,1,relative.stderr);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('profile-only 2 MiB capacity decodes old and new bounded wire bytes, then refuses the next byte',()=>{
+  assert.equal(WORKFLOW_PROFILES_MAX_BYTES,2097152);
+  assert.equal(WORKFLOW_SOURCE_MAX_BYTES,524288);
+  const value=fixture(),text=JSON.stringify(value)+'\n';
+  for(const size of [1048576,1048577,2097152]) {
+    const raw=text+' '.repeat(size-Buffer.byteLength(text));
+    assert.equal(Buffer.byteLength(raw),size);
+    assert.deepEqual(parseWorkflowProfiles(raw),value);
+  }
+  bad(()=>parseWorkflowProfiles(text+' '.repeat(2097153-Buffer.byteLength(text))));
 });
