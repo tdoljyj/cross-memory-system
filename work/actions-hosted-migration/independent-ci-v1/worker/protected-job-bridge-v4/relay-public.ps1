@@ -43,7 +43,7 @@ $LinuxNode='/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node'
 $Spool='C:\ProgramData\CluedIndependentCI\formal-spool'
 $Max=1048576;$Held=New-Object 'System.Collections.Generic.List[System.IDisposable]'
 $proc=$null;$started=$false;$terminal=$false;$code=2
-$result=[ordered]@{contract='clued.independent-ci.formal-public-relay-receipt/2';status='BLOCKED';mode=$Mode;sequence=$Sequence;bundleSha256=$ExpectedBundleSha256;processId=$null;exitCode=$null;terminalConfirmed=$false;automaticRetryAllowed=$false;taskStarted=$false;qualificationIssued=$false;failureCode=$null;childError=$null;record=$null}
+$result=[ordered]@{contract='clued.independent-ci.formal-public-relay-receipt/2';status='BLOCKED';mode=$Mode;sequence=$Sequence;bundleSha256=$ExpectedBundleSha256;processId=$null;exitCode=$null;terminalConfirmed=$false;automaticRetryAllowed=$false;taskStarted=$false;qualificationIssued=$false;failureCode=$null;childError=$null;record=$null;failurePhase=$null;exceptionCategory=$null;exceptionHResult=$null}
 Add-Type -TypeDefinition @'
 using System; using System.IO; using System.Text; using System.Threading.Tasks;
 using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
@@ -97,7 +97,20 @@ function Safe-ChildError([string]$Text){
   if(-not($reasons -ccontains $v.reason)){$v.reason='FORMAL_RELAY_CODE_UNLISTED'}
   return [pscustomobject][ordered]@{status='BLOCKED';reason=$v.reason;stage=$v.stage;taskStarted=$false;qualificationIssued=$false}
 }
+# Diagnostics never decide transfer safety or retries. No exception text/type/path is serialized.
+function Get-RelayFailureDiagnostic([Management.Automation.ErrorRecord]$Failure,[string]$Phase){
+  $diagnostic=[ordered]@{failurePhase=$null;exceptionCategory=$null;exceptionHResult=$null}
+  if($null -eq $Failure -or $null -eq $Failure.Exception){return [pscustomobject]$diagnostic}
+  if(@('SOURCE','SPOOL','CLIENT','START','TRANSFER','RESULT') -ccontains $Phase){$diagnostic.failurePhase=$Phase}
+  $e=$Failure.Exception
+  for($depth=0;$depth -lt 8 -and $null -ne $e.InnerException;$depth++){$e=$e.InnerException}
+  $category=if($e -is [ComponentModel.Win32Exception]){'WIN32'}elseif($e -is [UnauthorizedAccessException]){'ACCESS'}elseif($e -is [Security.SecurityException]){'SECURITY'}elseif($e -is [IO.IOException]){'IO'}elseif($e -is [ArgumentException]){'ARGUMENT'}elseif($e -is [InvalidOperationException]){'INVALID_OPERATION'}else{'OTHER'}
+  $diagnostic.exceptionCategory=$category;$diagnostic.exceptionHResult=[int]$e.HResult
+  return [pscustomobject]$diagnostic
+}
+$phase=$null
 try{
+  $phase='SOURCE'
   if($FixedSource -cnotmatch $FixedSourcePattern){throw 'FIXED_SOURCE_LOCATION_REQUIRED'}
   Add-Type -Path (Join-Path $FixedSource '..\..\src\resident-v2\windows\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
   $nodeLease=[NodeProfileV2]::LoadProtectedProfile('C:\ProgramData\CluedIndependentCI\resident',$ExpectedNodeProfileSha256);$Held.Add($nodeLease);$Node=$nodeLease.Profile
@@ -118,6 +131,7 @@ try{
   # checked by one helper call after the three parent locks and before any record byte is read.
   $aclTargets=@($Spool,(Join-Path $Spool 'outgoing'),(Join-Path $Spool 'incoming'))
   if($send){$file=Join-Path (Join-Path $Spool 'outgoing') ($name+'.json');$ready=Join-Path (Join-Path $Spool 'outgoing') ($name+'.ready.json');$aclTargets+=@($file,$ready)}
+  $phase='SPOOL'
   Hold-Parents $Spool;Hold-Parents (Join-Path $Spool 'outgoing');Hold-Parents (Join-Path $Spool 'incoming');Check-Spool $aclTargets
   $inputText='';$raw=$null
   if($send){
@@ -128,13 +142,16 @@ try{
   $utf8=New-Object Text.UTF8Encoding($false,$true);$ib=$utf8.GetBytes($inputText);if($ib.Length -gt 1399000){throw 'PUBLIC_STDIN_BOUND'}
   # Standalone relay execution has the same trust gate as companion startup.
   # The validator is part of this accepted, self-pinned Source file, with no path parameter.
+  $phase='CLIENT'
   $WslClient=Get-CluedMachineWslClient
   $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=[string]$WslClient.path
   $psi.Arguments='--distribution '+$Node.WslDistribution+' --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C '+$LinuxNode+' '+$LinuxEntry+' '+$operation
   $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.EnvironmentVariables.Clear()
   foreach($p in @(@('SystemRoot','C:\Windows'),@('WINDIR','C:\Windows'),@('PATH','C:\Windows\System32;C:\Windows'),@('USERPROFILE',$Node.OwnerProfileDirectory),@('LOCALAPPDATA',(Join-Path $Node.OwnerProfileDirectory 'AppData\Local')))){$psi.EnvironmentVariables[$p[0]]=$p[1]}
+  $phase='START'
   $proc=New-Object Diagnostics.Process;$proc.StartInfo=$psi;$previous=[Console]::InputEncoding
   try{[Console]::InputEncoding=$utf8;if(-not $proc.Start()){throw 'PUBLIC_START_UNCONFIRMED'};$started=$true;$result.processId=$proc.Id}finally{[Console]::InputEncoding=$previous}
+  $phase='TRANSFER'
   $ot=[CluedFormalRelayIO]::Read($proc.StandardOutput,1399000);$et=[CluedFormalRelayIO]::Read($proc.StandardError,4096)
   $stdin=$proc.StandardInput.BaseStream;$wt=$stdin.WriteAsync($ib,0,$ib.Length);if(-not $wt.Wait(5000)){throw 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY'};[void]($wt.GetAwaiter().GetResult());$stdin.Dispose()
   # The finally block waits for the child in any case; this bound only decides whether a slow child that did finish
@@ -145,6 +162,7 @@ try{
   $stdout=$ot.GetAwaiter().GetResult();$stderr=$et.GetAwaiter().GetResult()
   if($stderr.Length -gt 0){$result.childError=Safe-ChildError $stderr;throw 'PUBLIC_CHILD_REFUSED_NO_RETRY'}
   if($proc.ExitCode -ne 0){throw 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY'}
+  $phase='RESULT'
   $v=$stdout|ConvertFrom-Json
   if($send){if($v.status -cne 'FORMAL_PUBLIC_RECORD_IMPORTED' -or $v.bytes -ne $raw.Length -or $v.sha256 -cne (Hash-Bytes $raw) -or $v.taskStarted -ne $false -or $v.qualificationIssued -ne $false){throw 'PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY'}}
   else{
@@ -157,7 +175,7 @@ try{
     New-Public (Join-Path $dir ($name+'.ready.json')) ($utf8.GetBytes($marker))
   }
   $result.record=[ordered]@{name=$name;bytes=$raw.Length;sha256=(Hash-Bytes $raw)};$result.status='PUBLIC_RECORD_TRANSFERRED';$code=0
-}catch{$id=$_.FullyQualifiedErrorId.Split(',')[0];$result.failureCode=if($id -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$id}else{'PUBLIC_TRANSFER_UNCONFIRMED'}}
+}catch{$id=$_.FullyQualifiedErrorId.Split(',')[0];$result.failureCode=if($id -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$id}else{'PUBLIC_TRANSFER_UNCONFIRMED'};$diagnostic=Get-RelayFailureDiagnostic $_ $phase;foreach($key in @('failurePhase','exceptionCategory','exceptionHResult')){$result[$key]=$diagnostic.$key}}
 finally{
   if($started -and -not $terminal){$result.status='UNCERTAIN_LOCKS_RETAINED_NO_RETRY';[Console]::Error.WriteLine('PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED');while(-not $terminal){try{if($proc.WaitForExit(1000)){$terminal=$true;$result.exitCode=$proc.ExitCode}}catch{Start-Sleep -Milliseconds 1000}}}
   $result.terminalConfirmed=$terminal;foreach($h in $Held){$h.Dispose()};if($null -ne $proc){$proc.Dispose()};$result|ConvertTo-Json -Depth 8

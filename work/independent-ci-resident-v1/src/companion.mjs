@@ -193,10 +193,14 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
   const r = runner ?? {}, v = plainObject(receipt) ? receipt : {};
   const code = s => (typeof s === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(s) ? s : null);
   const ce = plainObject(v.childError) ? { reason: code(v.childError.reason), stage: code(v.childError.stage) } : null;
+  const failed = ['BLOCKED', 'UNCERTAIN_LOCKS_RETAINED_NO_RETRY'].includes(v.status) && code(v.failureCode) !== null;
+  const failurePhase = failed && ['SOURCE', 'SPOOL', 'CLIENT', 'START', 'TRANSFER', 'RESULT'].includes(v.failurePhase) ? v.failurePhase : null;
+  const exceptionCategory = failed && ['IO', 'ACCESS', 'SECURITY', 'ARGUMENT', 'INVALID_OPERATION', 'WIN32', 'OTHER'].includes(v.exceptionCategory) ? v.exceptionCategory : null;
+  const exceptionHResult = failed && Number.isInteger(v.exceptionHResult) && v.exceptionHResult >= -2147483648 && v.exceptionHResult <= 2147483647 ? v.exceptionHResult : null;
   return { at: new Date(at).toISOString(), mode, seq, attempt, ms,
     runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: code(r.refused) },
     receipt: { status: code(v.status), failureCode: code(v.failureCode), exitCode: Number.isSafeInteger(v.exitCode) ? v.exitCode : null,
-      processIdPresent: v.processId !== null && v.processId !== undefined, terminalConfirmed: v.terminalConfirmed === true, childError: ce },
+      processIdPresent: v.processId !== null && v.processId !== undefined, terminalConfirmed: v.terminalConfirmed === true, childError: ce, failurePhase, exceptionCategory, exceptionHResult },
     class: klass, stderrTail: stderrTail(r.stderr) };
 }
 

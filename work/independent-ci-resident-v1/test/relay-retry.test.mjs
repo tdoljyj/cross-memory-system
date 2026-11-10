@@ -264,9 +264,38 @@ test('log entries: fixed keys, codes only, a scrubbed stderr tail of at most 512
   assert.equal(stderrTail(`k ${'Ab9+'.repeat(10)} end`), 'k <b64> end');
   const e = relayLogEntry({ at: T0, mode: 'SendIssue', seq: 0, attempt: 1, ms: 1500, runner: { code: 2, stderr: 'boom' }, receipt: JSON.parse(VM_FLAP.stdout), klass: 'CHILD_FAILED' });
   assert.deepEqual(Object.keys(e), ['at', 'mode', 'seq', 'attempt', 'ms', 'runner', 'receipt', 'class', 'stderrTail']);
-  assert.deepEqual(e.receipt, { status: 'BLOCKED', failureCode: 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY', exitCode: 1, processIdPresent: true, terminalConfirmed: true, childError: null });
+  assert.deepEqual(e.receipt, { status: 'BLOCKED', failureCode: 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY', exitCode: 1, processIdPresent: true, terminalConfirmed: true, childError: null, failurePhase: null, exceptionCategory: null, exceptionHResult: null });
   const odd = relayLogEntry({ at: T0, mode: 'SendIssue', seq: 0, attempt: 1, ms: 1, runner: {}, receipt: { status: 'free text here', childError: { reason: 'x y', stage: 'RECORD' } }, klass: 'PERMANENT' });
   assert.deepEqual([odd.receipt.status, odd.receipt.childError], [null, { reason: null, stage: 'RECORD' }]);
+});
+
+test('relay diagnostics accept only fixed enums and Int32, with legacy and success receipts remaining null',()=>{
+  const log=v=>relayLogEntry({at:T0,mode:'SendIssue',seq:0,attempt:1,ms:1,runner:{},receipt:v,klass:'NO_CHILD'});
+  const base=JSON.parse(NO_WSL.stdout),valid={failurePhase:'START',exceptionCategory:'IO',exceptionHResult:-2147024894};
+  assert.deepEqual(Object.fromEntries(Object.keys(valid).map(k=>[k,log({...base,...valid}).receipt[k]])),valid);
+  for(const phase of ['SOURCE','SPOOL','CLIENT','START','TRANSFER','RESULT'])assert.equal(log({...base,...valid,failurePhase:phase}).receipt.failurePhase,phase);
+  for(const category of ['IO','ACCESS','SECURITY','ARGUMENT','INVALID_OPERATION','WIN32','OTHER'])assert.equal(log({...base,...valid,exceptionCategory:category}).receipt.exceptionCategory,category);
+  const sensitive='C:\\Users\\private-user\\private-value.token';
+  for(const value of [sensitive,'MethodInvocationException',{},[],42,true,null]){
+    const e=log({...base,failurePhase:value,exceptionCategory:value,exceptionHResult:value,exceptionMessage:sensitive,FullyQualifiedErrorId:sensitive,stack:sensitive,stdout:sensitive,stderr:sensitive});
+    assert.equal(e.receipt.failurePhase,null);assert.equal(e.receipt.exceptionCategory,null);
+    assert.equal(e.receipt.exceptionHResult,value===42?42:null);assert.equal(JSON.stringify(e).includes('private-value'),false);
+  }
+  for(const value of [-2147483649,2147483648,1.5,NaN,Infinity,'-2147024894'])assert.equal(log({...base,...valid,exceptionHResult:value}).receipt.exceptionHResult,null);
+  for(const value of [-2147483648,0,2147483647])assert.equal(log({...base,...valid,exceptionHResult:value}).receipt.exceptionHResult,value);
+  for(const v of [base,{...JSON.parse(OK.stdout),...valid}])for(const key of Object.keys(valid))assert.equal(log(v).receipt[key],null);
+});
+
+test('diagnostic fields do not change classifications or the bounded NO_CHILD retry sequence',async t=>{
+  const diagnostic={failurePhase:'START',exceptionCategory:'OTHER',exceptionHResult:-2146233087};
+  for(const runner of [OK,NOT_YET,VM_FLAP,NO_WSL,CUT,failure('FORMAL_SPOOL_ACL_REFUSED'),failure('PUBLIC_STDIN_UNCERTAIN_NO_RETRY')]){
+    let v;try{v=JSON.parse(runner.stdout);}catch{v=null;}
+    assert.equal(classifyRelayAttempt(runner,v===null?v:{...v,...diagnostic}),classifyRelayAttempt(runner,v));
+  }
+  const f=await companion(t,mode=>mode==='SendIssue'?{...NO_WSL,stdout:receipt({...JSON.parse(NO_WSL.stdout),...diagnostic})}:mode==='pgrep'?{code:1,stdout:''}:mode==='incoming'?{code:0,stdout:''}:null);
+  await assert.rejects(f.c.relay('SendIssue',0,stage),e=>e.code==='RELAY_REFUSED_NO_RETRY'&&e.permanent===false);
+  assert.equal(attempts(f.calls,'SendIssue'),2);assert.deepEqual(f.sleeps,[3000]);
+  assert.ok(f.logs.every(e=>e.class==='NO_CHILD'&&e.receipt.failurePhase==='START'&&e.receipt.exceptionCategory==='OTHER'));
 });
 
 test('a failing log never decides anything', async t => {
