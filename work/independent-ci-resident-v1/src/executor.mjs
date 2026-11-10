@@ -1416,6 +1416,7 @@ export class ResidentExecutor {
   async takePauseRequests() {
     for (const entry of await this.requests.read(this.policy.limits.inboxMaxFiles, 1024)) {
       let disposition = 'rejected';
+      let pauseRequested = false;
       if (entry.bytes) {
         try {
           const v = parseBoundedJson(entry.bytes, 1024, 'PAUSE_REQUEST_REFUSED');
@@ -1426,13 +1427,19 @@ export class ResidentExecutor {
           } else {
             exactKeys(v, ['contract', 'reason'], 'PAUSE_REQUEST_REFUSED');
             const ok = v.contract === PAUSE_CONTRACT && typeof v.reason === 'string' && v.reason.length <= 200;
+            pauseRequested = ok;
             if (ok && await this.ledger.pause({ reason: v.reason, requestSha256: sha256(entry.bytes) })) {
               this.reportLatch({ paused: true });
               await this.receipt('paused', { reason: v.reason, requestSha256: sha256(entry.bytes) });
             }
             disposition = ok ? 'processed' : 'rejected';
           }
-        } catch { disposition = 'rejected'; }
+        } catch {
+          // Keep a valid stop pending and leave this tick before any scheduling. The service loop
+          // records its failure and exits; rejecting the request here could start the waiting batch.
+          if (pauseRequested) throw new ResidentError('PAUSE_PERSISTENCE_UNCONFIRMED');
+          disposition = 'rejected';
+        }
       }
       // 'keep': an accepted revoke-head request stays in requests\ until stage 10 reports it done or it is an hour old.
       if (disposition === 'keep') { this.intakeRequestFailures.delete(entry.name); continue; }
