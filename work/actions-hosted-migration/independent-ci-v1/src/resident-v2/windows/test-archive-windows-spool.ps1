@@ -135,5 +135,42 @@ try{
   Refuses-M5b $s ('m5b-identity-'+$kind)
   if($kind -ceq 'parent-link'){[IO.Directory]::Delete($install)}
  }
+ # 7. Elevated-recovery hardening (M5-b DESK interlock): the new directory's roles never follow the caller, and every
+ # leaf moves through its own held handle (no by-name move, nobody can rename/replace/delete it while held).
+ $s=New-M5bFixture;$roots+=$s;$v=Run $s 'success-close';$ad=Join-Path $s $v.directory
+ $raw=New-Object Security.AccessControl.RawSecurityDescriptor([ArchiveFixtureAcl]::Read($ad),0);$me=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+ # The fixture's controller is the caller itself, so .NET merges its read ACE into the caller's modify ACE.
+ $want=@('S-1-5-18|2032127|3','S-1-5-32-544|2032127|3',($me+'|1245631|3'))+@(if($controller -cne $me){$controller+'|1179817|3'})|Sort-Object
+ Yes ($v.verified -eq $true -and ($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0 -and ((@($raw.DiscretionaryAcl|ForEach-Object{$_.SecurityIdentifier.Value+'|'+$_.AccessMask+'|'+[int]$_.AceFlags})|Sort-Object) -join ';') -ceq ($want -join ';')) 'target-dacl-fixture-roles'
+ $ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$null,[ref]$null)
+ $fn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-ArchiveWriterSid'},$true))
+ Yes ($fn.Count -eq 1) 'writer-function-present'
+ $resident='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
+ $writerFor={param($fixture,$definition,$residentSid)$OfflineFixtureSpool=$fixture;$ResidentSid=$residentSid;. ([ScriptBlock]::Create($definition));Get-ArchiveWriterSid}
+ Yes ((& $writerFor $null $fn[0].Extent.Text $resident) -ceq $resident) 'production-writer-is-fixed-resident-not-caller'
+ Yes ((& $writerFor $s $fn[0].Extent.Text $resident) -ceq $me) 'fixture-writer-is-caller'
+ $text=[IO.File]::ReadAllText($tool);Yes (-not $text.Contains('File]::Move(') -and -not $text.Contains('GetCurrent().User.Value;$ds') -and $text.Contains('::RenameInto($o.stream.SafeFileHandle,$targetHandle,$flat)')) 'no-by-name-move-left'
+ # The tool's own native type, loaded here, on real NTFS in this test's TEMP fixture only.
+ $cs=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.StringConstantExpressionAst] -and $n.Value.Contains('public static class CluedSpoolArchiveV2')},$true))
+ Yes ($cs.Count -eq 1) 'native-type-found';Add-Type -TypeDefinition $cs[0].Value|Out-Null
+ $s=New-Fixture;$roots+=$s;$src=Join-Path $s 'outgoing\issue.json';$dst=Join-Path $s 'archive-handle-test';[void][IO.Directory]::CreateDirectory($dst)
+ [IO.File]::WriteAllText($src,'{"held":1}',$utf8);[IO.File]::WriteAllText((Join-Path $dst 'taken.json'),'{"taken":1}',$utf8)
+ $leaf=[CluedSpoolArchiveV2]::HoldLeaf($src);$dir=[CluedSpoolArchiveV2]::HoldDirectory($dst)
+ try{
+  $id=[CluedSpoolArchiveV2]::Metadata($leaf)
+  $swap=$false;try{[IO.File]::Move($src,(Join-Path $s 'outgoing\swapped.json'));$swap=$true}catch{};Yes (-not $swap -and [IO.File]::Exists($src)) 'held-leaf-cannot-be-renamed-away'
+  $gone=$false;try{[IO.File]::Delete($src);$gone=-not [IO.File]::Exists($src)}catch{};Yes (-not $gone) 'held-leaf-cannot-be-deleted'
+  $wrote=$false;try{$w=[IO.File]::Open($src,'Open','Write','ReadWrite,Delete');$w.Dispose();$wrote=$true}catch{};Yes (-not $wrote) 'held-leaf-cannot-be-opened-for-write'
+  $code=$null;try{[CluedSpoolArchiveV2]::RenameInto($leaf,$dir,'taken.json')}catch{$code=$_.Exception.InnerException.Message}
+  Yes ($code -ceq 'ARCHIVE_HANDLE_RENAME_REFUSED' -and [IO.File]::Exists($src) -and [IO.File]::ReadAllText((Join-Path $dst 'taken.json')) -ceq '{"taken":1}') ('rename-never-replaces:'+$code)
+  $code=$null;try{[CluedSpoolArchiveV2]::RenameInto($leaf,$dir,'..\escape.json')}catch{$code=$_.Exception.InnerException.Message};Yes ($code -ceq 'ARCHIVE_LEAF_NAME_REFUSED' -and [IO.File]::Exists($src)) 'rename-flat-name-only'
+  [CluedSpoolArchiveV2]::RenameInto($leaf,$dir,'issue.json');$moved=Join-Path $dst 'issue.json'
+  [CluedSpoolArchiveV2]::ExactPath($leaf,$moved)
+  Yes (-not [IO.File]::Exists($src) -and [IO.File]::Exists($moved) -and [CluedSpoolArchiveV2]::Same($id,[CluedSpoolArchiveV2]::Metadata($leaf))) 'same-handle-rename-same-file-id'
+ }finally{$leaf.Dispose();$dir.Dispose()}
+ Yes ([IO.File]::ReadAllText((Join-Path $dst 'issue.json')) -ceq '{"held":1}') 'same-handle-rename-bytes'
+ # 8. A repeat finds nothing and still verifies (the service's own re-arm archive after an Owner recovery moved the scene).
+ $s=New-M5bFixture;$roots+=$s;$v=Run $s 'owner-m5b-recovery';Yes ($v.verified -eq $true -and $v.moved -eq 5 -and $v.directory -like 'failed-aaaaaaaaaaaa-owner-m5b-recovery-*') 'recovery-reason-failure-scene'
+ $v2=Run $s 'rearm-unknown-failure';Yes ($v2.verified -eq $true -and $v2.moved -eq 0 -and $v2.directory -like 'failed-*') 'repeat-after-recovery-moves-nothing'
  [pscustomobject]@{status='WINDOWS_SPOOL_ARCHIVE_OFFLINE_PASS';cases=$cases;hostRead=$false;hostWrite=$false}|ConvertTo-Json -Compress
 }finally{foreach($r in $roots){try{$p=Split-Path -Parent $r;$j=Join-Path $r 'incoming';if((Get-Item -LiteralPath $j -Force -ErrorAction SilentlyContinue).Attributes -band [IO.FileAttributes]::ReparsePoint){[IO.Directory]::Delete($j)};Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue}catch{}}}
