@@ -1,30 +1,49 @@
 <#
-ONE-SCENE DESK preparation. Disabled without -Preflight or -Run. Production -Run is NOT authorized by an old M5-b grant.
+TWO FIXED SCENES (DESK 31080 / TURING b2ea) preparation. Disabled without -Preflight or -Run. Production -Run is NOT authorized by an old M5-b grant.
 The Owner must first review and approve the exact script, Source hashes and the explicit manual PAUSED operation and temporary disabling/restoring the three existing service start modes.
 No account/password/task registration, WSL command, upgrade, Resume, HALT edit or ledger edit is performed.
 The final success state is a real service-cleared HALT with the same honest Owner manual PAUSED bytes still present.
 The quiet proof holds the qualified identity record, the already loaded HKU registration and the real VHDX exclusively.
 #>
 [CmdletBinding()]
-param([ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$SourceRoot,[switch]$Run,[switch]$Preflight)
+param([ValidatePattern('^[A-Z]:\\[A-Za-z0-9._\\-]+$')][string]$SourceRoot,[ValidateSet('desk-31080','turing-b2ea')][string]$Scene,[switch]$Run,[switch]$Preflight)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 if(-not $Run -and -not $Preflight){'{"status":"DISABLED"}';return}
 if($Run -and $Preflight){throw 'ONE_MODE_ONLY'}
 
-function Get-RecoveryPins {
- [ordered]@{
-  machine='DESK-W-591';operator='S-1-5-21-858977881-4031698862-3006450925-1000';companion='S-1-5-21-858977881-4031698862-3006450925-1008';controller='S-1-5-21-858977881-4031698862-3006450925-1007'
-  batch='31080af4ceb1122c31997aa41903b91f8445941ba168833be21609aa896c9178';halt='1523b55a286b677a0d11bcbd1af1d8af6aa459eb4298871f0037dcda57e31a52'
-  profile='560489f43eb1642047af6bda8754acd484740a8806797e8f6e7bbf0d9d8e2354';resident='2a9f66f063ff2e71a1d7a12603b1545dd2c6d60368074b5383ff106f16d6728e'
-  rearm='57e274e26abc3962104a233804a8ff7b5bd0b7db66ac93ffb45ea0ea5ad2774c';archiver='bbdf6a1e9ffd2ce35fe8210786ce9dcb53a5528c6181c3e2e2de99765d50123d';native='a6c771510b7fb819cd1ff54eb1cf9f5f1a5b3d5c420a217aafb25f5df8df2085'
-  scene='238851d06434ec886448f1e8afa6926a91e36d3b117e5ab8ec36279d9671e7a0';reason='owner-m5b-recovery'
-  wslRecord='65d40a0761107b3a187dc9e9d6c8632bd019a73fc34838a65d851c5286bc20e6';vhdx='D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx';residentSid='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
+function Get-RecoveryPins([ValidateSet('desk-31080','turing-b2ea')][string]$Scene){
+ # No external scene document, path, SID or hash is accepted. The entry checks the selected host and operator before any installed read.
+ if(-not $Scene){$Scene=switch -CaseSensitive ([Environment]::MachineName){'DESK-W-591'{'desk-31080'};'TURING'{'turing-b2ea'};default{throw 'RECOVERY_HOST_REFUSED'}}}
+ $p=[ordered]@{
+  sceneId=$Scene;resident='2a9f66f063ff2e71a1d7a12603b1545dd2c6d60368074b5383ff106f16d6728e'
+  rearm='57e274e26abc3962104a233804a8ff7b5bd0b7db66ac93ffb45ea0ea5ad2774c';archiver='c4e556051f52cc57755443042b2eb7ae21ce52bcc3625f9225949bf96bfbf3a2';native='a6c771510b7fb819cd1ff54eb1cf9f5f1a5b3d5c420a217aafb25f5df8df2085'
+  reason='owner-m5b-recovery';residentSid='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
   root='C:\ProgramData\CluedIndependentCI\resident';spool='C:\ProgramData\CluedIndependentCI\formal-spool';stageParent='C:\ProgramData\CluedIndependentCI\resident-launch-m5b-recovery'
   ps='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';services=@('CluedCIUpgrader','CluedCIResident','CluedCISwapBroker')
-  serviceConfigs=@{CluedCIUpgrader='3c3d938e3045082d6da325555db74c33b5b23b81ded9cbc335e50e7d3ec1eb23';CluedCIResident='b6818732e4524a1ed1296d350c15ee28d62802aa6d1dca5b41f1a2197c52ee0d';CluedCISwapBroker='df9b094a7feabcd69978a18be5e34b5e382109a9bc65c79b217a730057bc2899'}
   leaves=@('outgoing/active.lock','outgoing/issue.json','outgoing/issue.ready.json')
  }
+ $selected=switch -CaseSensitive ($Scene){
+  'desk-31080'{[ordered]@{
+   machine='DESK-W-591';operator='S-1-5-21-858977881-4031698862-3006450925-1000';companion='S-1-5-21-858977881-4031698862-3006450925-1008';controller='S-1-5-21-858977881-4031698862-3006450925-1007';operatorProfile='C:\Users\Windows';distribution='CluedResident-Linux'
+   batch='31080af4ceb1122c31997aa41903b91f8445941ba168833be21609aa896c9178';batchId='31080af4ceb1122c-b28efd37b849';halt='1523b55a286b677a0d11bcbd1af1d8af6aa459eb4298871f0037dcda57e31a52'
+   profile='560489f43eb1642047af6bda8754acd484740a8806797e8f6e7bbf0d9d8e2354';scene='238851d06434ec886448f1e8afa6926a91e36d3b117e5ab8ec36279d9671e7a0'
+   wslRecord='65d40a0761107b3a187dc9e9d6c8632bd019a73fc34838a65d851c5286bc20e6';vhdx='D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx'
+   serviceConfigs=@{CluedCIUpgrader='3c3d938e3045082d6da325555db74c33b5b23b81ded9cbc335e50e7d3ec1eb23';CluedCIResident='b6818732e4524a1ed1296d350c15ee28d62802aa6d1dca5b41f1a2197c52ee0d';CluedCISwapBroker='df9b094a7feabcd69978a18be5e34b5e382109a9bc65c79b217a730057bc2899'}
+  }}
+  'turing-b2ea'{[ordered]@{
+   machine='TURING';operator='S-1-5-21-1173730660-3877291096-655431861-1001';companion='S-1-5-21-1173730660-3877291096-655431861-1017';controller='S-1-5-21-1173730660-3877291096-655431861-1015';operatorProfile='C:\Users\17531';distribution='Ubuntu-24.04'
+   batch='b2ea162eddf7756234f0596beee9a479eb2c9aeb61a8c616e908de2febdfab03';batchId='b2ea162eddf77562-a9e5c4fb6827';halt='2108b842c2aa887737407cdc23becad934d6c05607bbad97843cf975647f5785'
+   profile='67b6b61cf1048ecb775092c203c650795c419c039e9e25c05cd6901ea754c5ac';scene='bf998f595f7a8c3eaf55aceb188797798e9109ba68585de5ec7b68e3434fe162'
+   wslRecord='cf35c68d978dba09483a1f3ccf19ab49ea71dec542ce9d00559a066cc8303467';vhdx='C:\clued-resident\wsl\Ubuntu-24.04\ext4.vhdx'
+   serviceConfigs=@{CluedCIUpgrader='04e0be24aea6bfd41bfa0b4e24fc91ea80ef05c0b33f41075403777c0ad6aa8c';CluedCIResident='a77661629972cfe10c7750d2d69d1b732c99247893c80ef05fbd047ae84c6e70';CluedCISwapBroker='e986a58bdb60456ef41d9e8843242b97319453262ae81f664814074a6fcca81b'}
+  }}
+  default{throw 'RECOVERY_HOST_REFUSED'}
+ }
+ foreach($key in $selected.Keys){$p[$key]=$selected[$key]};return $p
+}
+function Assert-RecoverySceneIdentity($Pins,[string]$Machine,[string]$Sid){
+ if($Machine -cne $Pins.machine -or $Sid -cne $Pins.operator){throw 'RECOVERY_HOST_REFUSED'}
 }
 function Recovery-Hash([byte[]]$Bytes){$h=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($h.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$h.Dispose()}}
 function Recovery-Bytes($Value){(New-Object Text.UTF8Encoding($false)).GetBytes(($Value|ConvertTo-Json -Depth 16 -Compress)+[char]10)}
@@ -96,39 +115,86 @@ function Initialize-RecoveryNative($Context){
  $body=@($commands[0].CommandElements|Where-Object{$_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.StringConstantType -eq 'SingleQuotedHereString'})
  if($body.Count -ne 1 -or -not $body[0].Value.Contains('public static class CluedSpoolArchiveV2')){throw 'RECOVERY_SOURCE_REFUSED'}
  Add-Type -TypeDefinition ($u.GetString($Context.buffers.native)) -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
- Add-Type -TypeDefinition $body[0].Value
- Add-Type -TypeDefinition @'
-using System;using System.IO;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
+ # Same trusted compilation unit: the recovery-only GR hold uses the pinned archive metadata/path checks.
+ Add-Type -TypeDefinition ($body[0].Value + @'
 public static class RecoveryReadOnly {
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern SafeFileHandle CreateFileW(string p,uint a,uint s,IntPtr x,uint c,uint f,IntPtr t);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFileAttributesW(string p);
  public static SafeFileHandle Open(string p,bool exclusive){var h=CreateFileW(p,exclusive?0xc0020080u:0x80020080u,exclusive?0u:1u,IntPtr.Zero,3,0x00200000u,IntPtr.Zero);if(h.IsInvalid){h.Dispose();throw new IOException(exclusive?"RECOVERY_VHDX_LOCK_REFUSED":"RECOVERY_PROTECTION_REFUSED");}return h;}
+ public static SafeFileHandle HoldDirectory(string p){var h=CreateFileW(p,0x80020080u,3u,IntPtr.Zero,3,0x02200000u,IntPtr.Zero);try{if(h.IsInvalid)throw new IOException("RECOVERY_PROTECTION_REFUSED");var m=CluedSpoolArchiveV2.Metadata(h);if((m.Attributes&0x400)!=0||(m.Attributes&0x10)==0)throw new IOException("RECOVERY_PROTECTION_REFUSED");CluedSpoolArchiveV2.ExactPath(h,p);return h;}catch{h.Dispose();throw;}}
+ [DllImport("kernel32.dll",SetLastError=true)] static extern RecoveryProcessHandle OpenProcess(uint access,bool inherit,uint pid);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetProcessId(IntPtr process);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr process,uint milliseconds);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out RecoveryProcessHandle token);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(RecoveryProcessHandle token,int info,IntPtr buffer,uint length,out uint required);
+ internal static RecoveryProcessOwnerFact UnknownOwner(){return new RecoveryProcessOwnerFact("UNKNOWN",null);}
+ internal static RecoveryProcessOwnerFact OpenFailure(uint pid,int error){return pid>0&&error==87?new RecoveryProcessOwnerFact("GONE",null):UnknownOwner();}
+ internal static RecoveryProcessOwnerFact FailedOwnerWait(uint state){return state==0?new RecoveryProcessOwnerFact("GONE",null):UnknownOwner();}
+ internal static string DecodeTokenUser(IntPtr buffer,uint length){
+  if(buffer==IntPtr.Zero||length<(uint)(IntPtr.Size+4)||length>65536)return null;
+  long start=buffer.ToInt64(),end;try{end=checked(start+length);}catch{return null;}
+  long sid=Marshal.ReadIntPtr(buffer).ToInt64();if(sid<start+IntPtr.Size+4||sid>end-8)return null;
+  if(Marshal.ReadByte(new IntPtr(sid),0)!=1)return null;int count=Marshal.ReadByte(new IntPtr(sid),1);if(count>15)return null;int bytes=8+4*count;if(sid>end-bytes)return null;
+  var raw=new byte[bytes];Marshal.Copy(new IntPtr(sid),raw,0,bytes);
+  try{return new System.Security.Principal.SecurityIdentifier(raw,0).Value;}catch{return null;}
+ }
+ public static RecoveryProcessHandle OpenProcessForOwner(uint pid,out int error){
+  error=0;if(pid==0){error=87;return null;}
+  var h=OpenProcess(0x00101000u,false,pid);if(h==null||h.IsInvalid){error=Marshal.GetLastWin32Error();if(h!=null)h.Dispose();return null;}return h;
+ }
+ public static RecoveryProcessOwnerFact ProcessOwner(uint pid){
+  if(pid==0)return UnknownOwner();int error;using(var h=OpenProcessForOwner(pid,out error)){return h==null?OpenFailure(pid,error):ProcessOwnerFromHandle(h);}
+ }
+ public static RecoveryProcessOwnerFact ProcessOwnerFromHandle(RecoveryProcessHandle process){
+  if(process==null||process.IsClosed||process.IsInvalid)return UnknownOwner();bool held=false;
+  try{process.DangerousAddRef(ref held);IntPtr p=process.DangerousGetHandle();if(GetProcessId(p)==0)return UnknownOwner();
+   uint state=WaitForSingleObject(p,0);if(state==0)return new RecoveryProcessOwnerFact("GONE",null);if(state!=258)return UnknownOwner();
+   RecoveryProcessHandle token=null;IntPtr buffer=IntPtr.Zero;
+   try{
+    if(!OpenProcessToken(p,8u,out token))return FailedOwnerWait(WaitForSingleObject(p,0));
+    uint size;if(GetTokenInformation(token,1,IntPtr.Zero,0,out size)||Marshal.GetLastWin32Error()!=122||size<(uint)(IntPtr.Size+4)||size>65536)return FailedOwnerWait(WaitForSingleObject(p,0));
+    buffer=Marshal.AllocHGlobal((int)size);uint got;if(!GetTokenInformation(token,1,buffer,size,out got)||got>size)return FailedOwnerWait(WaitForSingleObject(p,0));
+    string sid=DecodeTokenUser(buffer,got);if(sid==null)return FailedOwnerWait(WaitForSingleObject(p,0));
+    state=WaitForSingleObject(p,0);if(state==0)return new RecoveryProcessOwnerFact("GONE",null);return state==258?new RecoveryProcessOwnerFact("OWNER",sid):UnknownOwner();
+   }catch{return FailedOwnerWait(WaitForSingleObject(p,0));}
+   finally{if(buffer!=IntPtr.Zero)Marshal.FreeHGlobal(buffer);if(token!=null)token.Dispose();}
+  }catch{return UnknownOwner();}finally{if(held)process.DangerousRelease();}
+ }
  public static bool Absent(string p){uint a=GetFileAttributesW(p);if(a!=0xffffffffu)return false;if(Marshal.GetLastWin32Error()==2)return true;throw new IOException("RECOVERY_PROTECTION_REFUSED");}
 }
-'@
+public sealed class RecoveryProcessHandle : Microsoft.Win32.SafeHandles.SafeHandleZeroOrMinusOneIsInvalid {
+ public RecoveryProcessHandle():base(true){}
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+ protected override bool ReleaseHandle(){return CloseHandle(handle);}
 }
-function Assert-RecoveryManagerAcl([byte[]]$Bytes,[string]$Path){
- $root='C:\ProgramData\CluedIndependentCI\resident\state'
- $spool='C:\ProgramData\CluedIndependentCI\formal-spool'
- $mailbox='C:\ProgramData\CluedIndependentCI\resident\mailbox'
- $archive='^C:\\ProgramData\\CluedIndependentCI\\formal-spool\\failed-31080af4ceb1-(?:owner-m5b-recovery|rearm-unknown-failure)-[0-9a-f]{12}(?:\\archive-receipt\.json)?$'
+public sealed class RecoveryProcessOwnerFact {
+ public readonly string Status,Sid;
+ internal RecoveryProcessOwnerFact(string status,string sid){Status=status;Sid=sid;}
+}
+'@)
+}
+function Assert-RecoveryManagerAcl($Context,[byte[]]$Bytes,[string]$Path){
+ $root=Join-Path $Context.pins.root 'state'
+ $spool=$Context.pins.spool
+ $mailbox=Join-Path $Context.pins.root 'mailbox'
+ $archive='^'+[regex]::Escape($spool+'\failed-'+$Context.pins.batch.Substring(0,12)+'-')+'(?:owner-m5b-recovery|rearm-unknown-failure)-[0-9a-f]{12}(?:\\archive-receipt\.json)?$'
  if(-not ($Path -ieq $root -or $Path.StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase) -or $Path -ieq $spool -or $Path -ieq ($spool+'\outgoing') -or $Path -ieq ($spool+'\incoming') -or $Path -ieq $mailbox -or $Path.StartsWith($mailbox+'\',[StringComparison]::OrdinalIgnoreCase) -or $Path -cmatch $archive)){[NodeProfilePublicFileV2]::ValidateBootstrapAcl($Bytes,$Path);return}
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor($Bytes,0);$res='S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';$admins=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
- $comp='S-1-5-21-858977881-4031698862-3006450925-1008';$response=$Path -ieq ($mailbox+'\responses') -or $Path.StartsWith($mailbox+'\responses\',[StringComparison]::OrdinalIgnoreCase)
+ $comp=$Context.pins.companion;$response=$Path -ieq ($mailbox+'\responses') -or $Path.StartsWith($mailbox+'\responses\',[StringComparison]::OrdinalIgnoreCase)
  $owners=@($admins+$res);if($response){$owners+=,$comp};if($null -eq $sd.Owner -or $owners -notcontains $sd.Owner.Value -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_PROTECTION_REFUSED'}
  $resMask=if($Path -ieq $spool){0x1200a5}elseif($Path -ieq ($spool+'\outgoing') -or $Path -ieq ($spool+'\incoming')){0x1200e1}else{0x1301bf}
- foreach($a in $sd.DiscretionaryAcl){if($a -isnot [Security.AccessControl.CommonAce] -or $a.IsCallback){throw 'RECOVERY_PROTECTION_REFUSED'};if($a.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or ([int]$a.AceFlags -band 8) -ne 0){continue};$mask=[int]$a.AccessMask;$sid=$a.SecurityIdentifier.Value;if($sid -ceq $res -and ($mask -band (-bnot $resMask)) -eq 0){continue};if(($response -and $sid -ceq $comp -or $Path -ieq ($spool+'\outgoing') -and $sid -ceq 'S-1-5-21-858977881-4031698862-3006450925-1007' -or $Path -ieq ($spool+'\incoming') -and $sid -ceq $comp) -and ($mask -band (-bnot 0x1301bf)) -eq 0){continue};if($admins -notcontains $sid -and ($mask -band 0x500d0156) -ne 0){throw 'RECOVERY_PROTECTION_REFUSED'}}
+ foreach($a in $sd.DiscretionaryAcl){if($a -isnot [Security.AccessControl.CommonAce] -or $a.IsCallback){throw 'RECOVERY_PROTECTION_REFUSED'};if($a.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or ([int]$a.AceFlags -band 8) -ne 0){continue};$mask=[int]$a.AccessMask;$sid=$a.SecurityIdentifier.Value;if($sid -ceq $res -and ($mask -band (-bnot $resMask)) -eq 0){continue};if((($response -and ($sid -ceq $comp)) -or (($Path -ieq ($spool+'\outgoing')) -and ($sid -ceq $Context.pins.controller)) -or (($Path -ieq ($spool+'\incoming')) -and ($sid -ceq $comp))) -and ($mask -band (-bnot 0x1301bf)) -eq 0){continue};if($admins -notcontains $sid -and ($mask -band 0x500d0156) -ne 0){throw 'RECOVERY_PROTECTION_REFUSED'}}
 }
 function Hold-RecoveryPath($Context,[string]$Path){
  $parents=New-Object Collections.Generic.List[string];for($p=[IO.Path]::GetDirectoryName($Path);$p;$p=[IO.Path]::GetDirectoryName($p)){$parents.Insert(0,$p)}
- foreach($p in $parents){$h=[CluedSpoolArchiveV2]::HoldDirectory($p);$Context.held.Add($h);Assert-RecoveryManagerAcl ([CluedSpoolArchiveV2]::Security($h)) $p}
+ foreach($p in $parents){$h=[RecoveryReadOnly]::HoldDirectory($p);$Context.held.Add($h);Assert-RecoveryManagerAcl $Context ([CluedSpoolArchiveV2]::Security($h)) $p}
 }
 function Read-RecoveryProtected($Context,[string]$Path,[int]$Max){
  Hold-RecoveryPath $Context $Path;$h=[RecoveryReadOnly]::Open($Path,$false)
  try{
   $m=[CluedSpoolArchiveV2]::Metadata($h);[CluedSpoolArchiveV2]::ExactPath($h,$Path)
   if(($m.Attributes -band 0x410) -ne 0 -or $m.Links -ne 1 -or $m.SizeHigh -ne 0 -or $m.SizeLow -gt $Max){throw 'RECOVERY_PROTECTION_REFUSED'}
-  $acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryManagerAcl $acl $Path
+  $acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryManagerAcl $Context $acl $Path
   $f=New-Object IO.FileStream($h,[IO.FileAccess]::Read)
   try{$bytes=New-Object byte[] ([int]$m.SizeLow);$at=0;while($at -lt $bytes.Length){$n=$f.Read($bytes,$at,$bytes.Length-$at);if($n -lt 1){throw 'RECOVERY_PROTECTION_REFUSED'};$at+=$n}
    if(-not [CluedSpoolArchiveV2]::Stable($m,[CluedSpoolArchiveV2]::Metadata($h)) -or [Convert]::ToBase64String($acl) -cne [Convert]::ToBase64String([CluedSpoolArchiveV2]::Security($h))){throw 'RECOVERY_PROTECTION_REFUSED'}
@@ -146,8 +212,13 @@ function Assert-RecoveryHalt($Context){
 function Read-RecoveryTask($Context){$svc=New-Object -ComObject Schedule.Service;$svc.Connect();$svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion')}
 function Recovery-TaskFingerprint($Task){
  $xml=New-Object Xml.XmlDocument;$xml.XmlResolver=$null;$xml.LoadXml([string]$Task.Xml)
- $nodes=$xml.SelectNodes("//*[local-name()='Settings']/*[local-name()='Enabled']")
- if($nodes.Count -ne 1){throw 'RECOVERY_TASK_REFUSED'};$nodes[0].InnerText='omitted-enabled-only'
+ $settings=$xml.SelectNodes("//*[local-name()='Settings']")
+ if($settings.Count -ne 1){throw 'RECOVERY_TASK_REFUSED'}
+ $nodes=$settings[0].SelectNodes("./*[local-name()='Enabled']")
+ if($nodes.Count -gt 1){throw 'RECOVERY_TASK_REFUSED'}
+ if($nodes.Count -eq 1){$null=$settings[0].RemoveChild($nodes[0])}
+ # Normalize only the empty Settings serialization (<Settings/> versus <Settings></Settings>), without changing its contents.
+ $settings[0].IsEmpty=$false
  Recovery-Hash ((New-Object Text.UTF8Encoding($false)).GetBytes($xml.OuterXml))
 }
 function Assert-RecoveryTask($Context,$Task){
@@ -160,6 +231,11 @@ function Assert-RecoveryTask($Context,$Task){
  if($null -eq $sd.Owner -or $admins -notcontains $sd.Owner.Value -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_TASK_REFUSED'}
  foreach($ace in $sd.DiscretionaryAcl){if($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback){throw 'RECOVERY_TASK_REFUSED'};if($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $admins -notcontains $ace.SecurityIdentifier.Value -and ([int]$ace.AccessMask -band 0x500d0156) -ne 0){throw 'RECOVERY_TASK_REFUSED'}}
 }
+function Recovery-ServiceDacl([string]$Sddl){
+ try{$sd=New-Object Security.AccessControl.RawSecurityDescriptor($Sddl)}catch{throw 'RECOVERY_SERVICE_REFUSED'}
+ if($null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_SERVICE_REFUSED'}
+ $sd.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+}
 function Read-RecoveryService([string]$Name){
  $rows=@(Get-CimInstance Win32_Service -Filter ("Name='"+$Name+"'") -ErrorAction Stop)
  if($rows.Count -ne 1){throw 'RECOVERY_SERVICE_REFUSED'}
@@ -167,12 +243,13 @@ function Read-RecoveryService([string]$Name){
  if($LASTEXITCODE -ne 0){throw 'RECOVERY_SERVICE_REFUSED'}
  $rk=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(('SYSTEM\CurrentControlSet\Services\'+$Name),$false);if($null -eq $rk){throw 'RECOVERY_SERVICE_REFUSED'};try{$delayed=$rk.GetValue('DelayedAutoStart',0,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);if($delayed -isnot [int] -or $delayed -notin @(0,1)){throw 'RECOVERY_SERVICE_REFUSED'}}finally{$rk.Dispose()}
  $d=@($sddl|Where-Object{$_ -match '^D:'});if($d.Count -ne 1){throw 'RECOVERY_SERVICE_REFUSED'}
- [pscustomobject]@{name=$Name;state=[string]$s.State;pid=[int]$s.ProcessId;config=(Recovery-Hash (Recovery-Bytes @([string]$s.PathName,[string]$s.StartName,[string]$s.StartMode,[string]$d[0])));binary=[string]$s.PathName;account=[string]$s.StartName;startMode=[string]$s.StartMode;sddl=[string]$d[0];delayedAutoStart=[bool]$delayed}
+ $full=[string]$d[0];$dacl=Recovery-ServiceDacl $full
+ [pscustomobject]@{name=$Name;state=[string]$s.State;pid=[int]$s.ProcessId;config=(Recovery-Hash (Recovery-Bytes @([string]$s.PathName,[string]$s.StartName,[string]$s.StartMode,$dacl)));binary=[string]$s.PathName;account=[string]$s.StartName;startMode=[string]$s.StartMode;sddl=$full;delayedAutoStart=[bool]$delayed}
 }
 function Assert-RecoveryRunner($Context){
  $r=Read-RecoveryService $Context.node.runnerService
- if($r.state -cne 'Stopped' -or $r.pid -ne 0 -or $r.startMode -cne 'Manual' -or $r.binary -cne '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"' -or @('.\clued-control','DESK-W-591\clued-control') -cnotcontains $r.account -or $r.sddl -cne $Context.install.runnerSddlUnchanged){throw 'RECOVERY_RUNNER_REFUSED'}
- if($null -ne $Context.runner -and $r.config -cne $Context.runner.config){throw 'RECOVERY_RUNNER_REFUSED'};$r
+ if($r.state -cne 'Stopped' -or $r.pid -ne 0 -or $r.startMode -cne 'Manual' -or $r.binary -cne '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"' -or @('.\clued-control',($Context.pins.machine+'\clued-control')) -cnotcontains $r.account -or (Recovery-ServiceDacl $r.sddl) -cne (Recovery-ServiceDacl $Context.install.runnerSddlUnchanged)){throw 'RECOVERY_RUNNER_REFUSED'}
+ if($null -ne $Context.runner -and ($r.config -cne $Context.runner.config -or $r.sddl -cne $Context.runner.sddl)){throw 'RECOVERY_RUNNER_REFUSED'};$r
 }
 function Save-RecoveryOriginal($Context){
  Assert-RecoveryHalt $Context;if(-not [RecoveryReadOnly]::Absent((Join-Path $Context.pins.root 'state\PAUSED.json'))){throw 'RECOVERY_PAUSE_REFUSED'};$task=Read-RecoveryTask $Context;Assert-RecoveryTask $Context $task
@@ -197,7 +274,7 @@ function Stop-RecoveryTask($Context,$Snapshot){
 }
 function Assert-RecoveryServiceConfig($Now,$Before,[bool]$Disabled){
  $mode=if($Disabled){'Disabled'}else{$Before.startMode}
- $expected=Recovery-Hash (Recovery-Bytes @($Before.binary,$Before.account,$mode,$Before.sddl))
+ $expected=Recovery-Hash (Recovery-Bytes @($Before.binary,$Before.account,$mode,(Recovery-ServiceDacl $Before.sddl)))
  if($Now.binary -cne $Before.binary -or $Now.account -cne $Before.account -or $Now.sddl -cne $Before.sddl -or $Now.startMode -cne $mode -or $Now.delayedAutoStart -isnot [bool] -or $Now.delayedAutoStart -ne $Before.delayedAutoStart -or $Now.config -cne $expected){throw 'RECOVERY_SERVICE_REFUSED'}
 }
 function Set-RecoveryServiceStart($Before,[bool]$Disabled){
@@ -218,13 +295,20 @@ function Stop-RecoveryServices($Context,$Snapshot){
   if($sent){$Context.state.servicesStopped+=,$before.name}
  }
 }
+function Read-RecoveryNativeProcessOwner([uint32]$ProcessId){[RecoveryReadOnly]::ProcessOwner($ProcessId)}
 function Read-RecoveryProcessOwnerSids{
  $rows=@(Get-CimInstance Win32_Process -Property ProcessId -ErrorAction Stop);if($rows.Count -eq 0 -or @($rows|Where-Object{[int]$_.ProcessId -eq $PID}).Count -ne 1){throw 'RECOVERY_PROCESS_UNKNOWN'}
  $sids=@();foreach($p in $rows){
-  if([int]$p.ProcessId -in @(0,4)){continue} # Reserved kernel/idle objects cannot be either application account.
-  try{$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop}catch{throw 'RECOVERY_PROCESS_UNKNOWN'}
-  if($owner.ReturnValue -ne 0 -or $owner.Sid -isnot [string]){throw 'RECOVERY_PROCESS_UNKNOWN'};try{$validSid=New-Object Security.Principal.SecurityIdentifier($owner.Sid);if($validSid.Value -cne $owner.Sid){throw 'RECOVERY_PROCESS_UNKNOWN'}}catch{throw 'RECOVERY_PROCESS_UNKNOWN'}
-  $sids+=,$owner.Sid
+  if([int]$p.ProcessId -in @(0,4)){continue} # Original reserved kernel/idle exceptions only.
+  $native=$null;try{$native=Read-RecoveryNativeProcessOwner ([uint32]$p.ProcessId)}catch{$native=$null}
+  if($null -ne $native -and $native.Status -ceq 'GONE'){continue}
+  if($null -ne $native -and $native.Status -ceq 'OWNER'){$sid=$native.Sid}
+  elseif($null -eq $native -or $native.Status -ceq 'UNKNOWN'){
+   try{$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop}catch{throw 'RECOVERY_PROCESS_UNKNOWN'}
+   if($owner.ReturnValue -ne 0 -or $owner.Sid -isnot [string]){throw 'RECOVERY_PROCESS_UNKNOWN'};$sid=$owner.Sid
+  }else{throw 'RECOVERY_PROCESS_UNKNOWN'}
+  if($sid -isnot [string]){throw 'RECOVERY_PROCESS_UNKNOWN'};try{$validSid=New-Object Security.Principal.SecurityIdentifier($sid);if($validSid.Value -cne $sid){throw 'RECOVERY_PROCESS_UNKNOWN'}}catch{throw 'RECOVERY_PROCESS_UNKNOWN'}
+  $sids+=,$sid
  }
  return ,$sids
 }
@@ -268,7 +352,7 @@ function Hold-RecoveryWslRecord($Context){
  $path=Join-Path $Context.pins.root 'install\companion-wsl.json';Hold-RecoveryPath $Context $path;$h=[RecoveryReadOnly]::Open($path,$false);$Context.held.Add($h)
  $m=[CluedSpoolArchiveV2]::Metadata($h);[CluedSpoolArchiveV2]::ExactPath($h,$path)
  if(($m.Attributes -band 0x410) -ne 0 -or $m.Links -ne 1 -or $m.SizeHigh -ne 0 -or $m.SizeLow -gt 65536){throw 'RECOVERY_QUIET_PROOF_REFUSED'}
- $acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryManagerAcl $acl $path;$f=New-Object IO.FileStream($h,[IO.FileAccess]::Read);$Context.held.Add($f)
+ $acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryManagerAcl $Context $acl $path;$f=New-Object IO.FileStream($h,[IO.FileAccess]::Read);$Context.held.Add($f)
  $b=New-Object byte[] ([int]$m.SizeLow);$at=0;while($at -lt $b.Length){$n=$f.Read($b,$at,$b.Length-$at);if($n -lt 1){throw 'RECOVERY_QUIET_PROOF_REFUSED'};$at+=$n}
  if((Recovery-Hash $b) -cne $Context.pins.wslRecord){throw 'RECOVERY_QUIET_PROOF_REFUSED'}
  $w=(New-Object Text.UTF8Encoding($false,$true)).GetString($b)|ConvertFrom-Json
@@ -290,7 +374,7 @@ function Hold-RecoveryQuietProof($Context,$Snapshot){
  $parents=New-Object 'Collections.Generic.List[IDisposable]';$entries=@();$disk=$null
  try{
   $chain=New-Object Collections.Generic.List[string];for($p=[IO.Path]::GetDirectoryName($Context.pins.vhdx);$p;$p=[IO.Path]::GetDirectoryName($p)){$chain.Insert(0,$p)}
-  foreach($p in $chain){$h=[CluedSpoolArchiveV2]::HoldDirectory($p);$parents.Add($h);$acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryVhdAcl $Context $acl $p;$entries+=,[pscustomobject]@{path=$p;handle=$h;meta=[CluedSpoolArchiveV2]::Metadata($h);acl=[Convert]::ToBase64String($acl)}}
+  foreach($p in $chain){$h=[RecoveryReadOnly]::HoldDirectory($p);$parents.Add($h);$acl=[CluedSpoolArchiveV2]::Security($h);Assert-RecoveryVhdAcl $Context $acl $p;$entries+=,[pscustomobject]@{path=$p;handle=$h;meta=[CluedSpoolArchiveV2]::Metadata($h);acl=[Convert]::ToBase64String($acl)}}
   $until=[DateTime]::UtcNow.AddSeconds(120)
   do{$h=$null;try{$h=[RecoveryReadOnly]::Open($Context.pins.vhdx,$true);$disk=New-Object IO.FileStream($h,[IO.FileAccess]::ReadWrite);break}catch{if($null -ne $h){$h.Dispose()};Start-Sleep -Milliseconds 250}}while([DateTime]::UtcNow -lt $until)
   if($null -eq $disk){throw 'RECOVERY_VHDX_LOCK_REFUSED'}
@@ -317,18 +401,18 @@ function Read-RecoveryLeafFact([string]$Path,[string]$Name){
   }finally{$h.Dispose()}
 }
 function Read-RecoveryScene($Context){
- foreach($d in @($Context.pins.spool,(Join-Path $Context.pins.spool 'incoming'),(Join-Path $Context.pins.spool 'outgoing'))){$h=[CluedSpoolArchiveV2]::HoldDirectory($d);$Context.held.Add($h);Assert-RecoveryManagerAcl ([CluedSpoolArchiveV2]::Security($h)) $d}
+ foreach($d in @($Context.pins.spool,(Join-Path $Context.pins.spool 'incoming'),(Join-Path $Context.pins.spool 'outgoing'))){$h=[RecoveryReadOnly]::HoldDirectory($d);$Context.held.Add($h);Assert-RecoveryManagerAcl $Context ([CluedSpoolArchiveV2]::Security($h)) $d}
  $rows=@();foreach($name in $Context.pins.leaves){$rows+=,(Read-RecoveryLeafFact (Join-Path $Context.pins.spool $name.Replace('/','\')) $name)}
  $lines=@($rows|ForEach-Object{$_.from+'|'+$_.bytes+'|'+$_.sha256}|Sort-Object)
  if((Recovery-Hash ((New-Object Text.UTF8Encoding($false)).GetBytes(($lines -join [char]10)))) -cne $Context.pins.scene){throw 'RECOVERY_SCENE_REFUSED'};return ,$rows
 }
-function Recovery-ChildEnv([string]$Temp){
- [ordered]@{SystemRoot='C:\Windows';WINDIR='C:\Windows';SystemDrive='C:';ComSpec='C:\Windows\System32\cmd.exe';PATH='C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0';PATHEXT='.COM;.EXE;.BAT;.CMD';PSModulePath='C:\Windows\System32\WindowsPowerShell\v1.0\Modules';TEMP=$Temp;TMP=$Temp;ProgramData='C:\ProgramData';ALLUSERSPROFILE='C:\ProgramData';USERPROFILE='C:\Users\Windows';LOCALAPPDATA=(Join-Path $Temp 'localappdata');APPDATA=(Join-Path $Temp 'appdata');COMPUTERNAME='DESK-W-591';OS='Windows_NT';PROCESSOR_ARCHITECTURE='AMD64'}
+function Recovery-ChildEnv($Context,[string]$Temp){
+ [ordered]@{SystemRoot='C:\Windows';WINDIR='C:\Windows';SystemDrive='C:';ComSpec='C:\Windows\System32\cmd.exe';PATH='C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0';PATHEXT='.COM;.EXE;.BAT;.CMD';PSModulePath='C:\Windows\System32\WindowsPowerShell\v1.0\Modules';TEMP=$Temp;TMP=$Temp;ProgramData='C:\ProgramData';ALLUSERSPROFILE='C:\ProgramData';USERPROFILE=$Context.pins.operatorProfile;LOCALAPPDATA=(Join-Path $Temp 'localappdata');APPDATA=(Join-Path $Temp 'appdata');COMPUTERNAME=$Context.pins.machine;OS='Windows_NT';PROCESSOR_ARCHITECTURE='AMD64'}
 }
 function Invoke-RecoveryChild($Context,[string]$File,[string[]]$Arguments){
  foreach($v in @($File)+$Arguments){if($v -match '[\s"]'){throw 'RECOVERY_SOURCE_REFUSED'}}
  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=$Context.pins.ps;$psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File '+$File+' '+($Arguments -join ' ');$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.WorkingDirectory=$Context.stage;$psi.EnvironmentVariables.Clear()
- $envs=Recovery-ChildEnv (Join-Path $Context.stage 'tmp');foreach($k in $envs.Keys){$psi.EnvironmentVariables[$k]=$envs[$k]}
+ $envs=Recovery-ChildEnv $Context (Join-Path $Context.stage 'tmp');foreach($k in $envs.Keys){$psi.EnvironmentVariables[$k]=$envs[$k]}
  $p=[Diagnostics.Process]::Start($psi);try{$o=$p.StandardOutput.ReadToEndAsync();$e=$p.StandardError.ReadToEndAsync();$p.WaitForExit();$stdout=[string]$o.Result;$stderr=[string]$e.Result
   if($stdout.Length -gt 1048576 -or $stderr.Length -ne 0){throw 'RECOVERY_ARCHIVE_UNCONFIRMED'}
   try{$v=$stdout.Trim()|ConvertFrom-Json}catch{throw 'RECOVERY_ARCHIVE_UNCONFIRMED'}
@@ -396,7 +480,7 @@ function Confirm-RecoveryRearmEvidence($Context){
  if($empty.contract -cne 'clued.independent-ci.resident-windows-spool-archive-receipt/2' -or $empty.batchKey -cne $Context.pins.batch -or $empty.reason -cne 'rearm-unknown-failure' -or @($empty.moved).Count -ne 0 -or $empty.deletesAnything -ne $false){throw 'RECOVERY_RECEIPT_REFUSED'}
  $transport=@();foreach($f in (Recovery-RecentFiles (Join-Path $Context.pins.root 'mailbox\requests') '????????-????-????-????-????????????.json' $Context.rearmAt 64)){
   $q=Read-RecoveryJson $Context $f 16384
-  if($q.contract -ceq 'clued.independent-ci.resident-companion-request/1' -and $q.kind -ceq 'archive-linux' -and $q.batchId -ceq '31080af4ceb1122c-b28efd37b849' -and $q.reason -ceq 'rearm-unknown-failure' -and [DateTimeOffset]::Parse([string]$q.createdAt) -ge $Context.rearmAt){
+  if($q.contract -ceq 'clued.independent-ci.resident-companion-request/1' -and $q.kind -ceq 'archive-linux' -and $q.batchId -ceq $Context.pins.batchId -and $q.reason -ceq 'rearm-unknown-failure' -and [DateTimeOffset]::Parse([string]$q.createdAt) -ge $Context.rearmAt){
    if($q.requestId -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or [IO.Path]::GetFileNameWithoutExtension($f) -cne $q.requestId){throw 'RECOVERY_RECEIPT_REFUSED'}
    $response=Join-Path (Join-Path $Context.pins.root 'mailbox\responses') ($q.requestId+'.json');$v=Read-RecoveryJson $Context $response 16384
    if($v.contract -ceq 'clued.independent-ci.resident-companion-response/4' -and $v.requestId -ceq $q.requestId -and $v.kind -ceq 'archive-linux' -and $v.ok -eq $true -and $v.verified -eq $true -and $v.directory -ceq $marked.facts.linux -and $null -eq $v.jobTree -and [DateTimeOffset]::Parse([string]$v.observedAt) -ge $Context.rearmAt){$transport+=,[pscustomobject]@{request=$f;response=$response}}
@@ -424,7 +508,7 @@ function Prepare-RecoveryStage($Context){
  $acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)',[Security.AccessControl.AccessControlSections]'Owner,Group,Access')
  $parent=$Context.pins.stageParent;Hold-RecoveryPath $Context $parent
  if(-not [IO.Directory]::Exists($parent)){[void][IO.Directory]::CreateDirectory($parent,$acl)}
- $h=[CluedSpoolArchiveV2]::HoldDirectory($parent);$Context.held.Add($h)
+ $h=[RecoveryReadOnly]::HoldDirectory($parent);$Context.held.Add($h)
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor([CluedSpoolArchiveV2]::Security($h),0)
  if($sd.GetSddlForm('Owner,Access') -cne $acl.GetSecurityDescriptorSddlForm('Owner,Access')){throw 'RECOVERY_PROTECTION_REFUSED'}
  $Context.stage=Join-Path $parent $Context.operation;if([IO.Directory]::Exists($Context.stage)){throw 'RECOVERY_PROTECTION_REFUSED'}
@@ -434,10 +518,11 @@ function Prepare-RecoveryStage($Context){
 }
 
 # Entry: fixed host and identity are checked before reading any installed state or emitting any machine action.
-$pins=Get-RecoveryPins;$identity=[Security.Principal.WindowsIdentity]::GetCurrent();$admin=(New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$pins=if($Scene){Get-RecoveryPins $Scene}else{Get-RecoveryPins};$identity=[Security.Principal.WindowsIdentity]::GetCurrent();$admin=(New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $report=New-RecoveryState;$context=@{pins=$pins;state=$report;held=(New-Object 'Collections.Generic.List[IDisposable]');buffers=@{};stage=$null;sequence=0;runner=$null;operation=([Guid]::NewGuid().ToString('N'))}
 try{
- if([Environment]::MachineName -cne $pins.machine -or $identity.User.Value -cne $pins.operator -or -not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5 -or ($Run -and -not $admin)){throw 'RECOVERY_HOST_REFUSED'}
+ Assert-RecoverySceneIdentity $pins ([Environment]::MachineName) $identity.User.Value
+ if(-not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5 -or ($Run -and -not $admin)){throw 'RECOVERY_HOST_REFUSED'}
  foreach($name in [Environment]::GetEnvironmentVariables().Keys){if([string]$name -imatch '^(COR_|CORECLR_|COMPlus_|DOTNET|APPDOMAIN_MANAGER_|DEVPATH$)'){throw 'RECOVERY_ENVIRONMENT_REFUSED'}}
  $env:PSModulePath='C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
  if(-not $SourceRoot){throw 'RECOVERY_SOURCE_REFUSED'}
@@ -446,7 +531,7 @@ try{
  $context.install=Read-RecoveryJson $context (Join-Path $pins.root 'install\install-receipt.json')
  if($context.install.residentManifestSha256 -cne $pins.resident){throw 'RECOVERY_INSTALL_REFUSED'}
  $lease=[NodeProfileV2]::LoadProtectedProfile($pins.root,$pins.profile);$context.held.Add($lease);$context.node=$lease.Profile
- if($context.node.OwnerSid -cne $pins.companion -or $context.node.ControllerSid -cne $pins.controller -or $context.node.Hostname -cne $pins.machine){throw 'RECOVERY_INSTALL_REFUSED'}
+ if($context.node.OwnerSid -cne $pins.companion -or $context.node.ControllerSid -cne $pins.controller -or $context.node.Hostname -cne $pins.machine -or $context.node.WslDistribution -cne $pins.distribution){throw 'RECOVERY_INSTALL_REFUSED'}
  $account=Read-RecoveryJson $context (Join-Path $pins.root 'install\companion-account.json') 4096
  if($account.operatorSid -cne $pins.operator -or $account.companionSid -cne $pins.companion -or [IO.File]::Exists((Join-Path $pins.root 'install\companion-headless-pending.json'))){throw 'RECOVERY_INSTALL_REFUSED'}
  $context.rearm=Join-Path $pins.root ('resident\'+$pins.resident+'\windows\rearm-resident.ps1')

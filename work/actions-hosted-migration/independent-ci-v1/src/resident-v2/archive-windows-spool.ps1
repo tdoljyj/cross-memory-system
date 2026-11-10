@@ -155,7 +155,7 @@ function Get-TrustedArchiveOperator{
  try{$text=(New-Object Text.UTF8Encoding($false,$true)).GetString($bytes);if($text.Contains('\')){throw 'COMPANION_ACCOUNT_RECORD_REFUSED'};$a=$text|ConvertFrom-Json}catch{throw 'COMPANION_ACCOUNT_RECORD_REFUSED'}
  $keys=@($a.PSObject.Properties.Name|Sort-Object)
  if(($keys -join '|') -cne 'companionSid|contract|operatorSid' -or $a.contract -isnot [string] -or $a.contract -cne 'clued.independent-ci.companion-account/1' -or $a.companionSid -isnot [string] -or $a.companionSid -cne $Node.OwnerSid -or $a.operatorSid -isnot [string] -or $a.operatorSid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}$' -or $a.operatorSid -ceq $a.companionSid){throw 'COMPANION_ACCOUNT_RECORD_REFUSED'}
- foreach($key in @('contract','companionSid','operatorSid')){if([regex]::Matches($text,('(?:\{|,)\s*"'+$key+'"\s*:')).Count -ne 1){throw 'COMPANION_ACCOUNT_RECORD_REFUSED'}}
+ foreach($key in @('contract','companionSid','operatorSid')){if(@([regex]::Matches($text,('(?:\{|,)\s*"'+$key+'"\s*:'))).Count -ne 1){throw 'COMPANION_ACCOUNT_RECORD_REFUSED'}}
  Assert-ArchiveAccountStable;$script:archiveOperator=[string]$a.operatorSid;return $script:archiveOperator
 }
 try{

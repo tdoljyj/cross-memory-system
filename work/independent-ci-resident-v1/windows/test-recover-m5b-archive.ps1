@@ -6,18 +6,18 @@ $errors=$null;$tokens=$null;$ast=[Management.Automation.Language.Parser]::ParseF
 if($errors.Count){throw 'RECOVERY_TEST_PARSE_FAILED'}
 foreach($f in @($ast.FindAll({param($a)$a -is [Management.Automation.Language.FunctionDefinitionAst]},$true))){. ([scriptblock]::Create($f.Extent.Text))}
 $count=0;function Yes([bool]$Value,[string]$Label){if(-not $Value){throw ('RECOVERY_TEST_FAILED:'+ $Label)};$script:count++}
-$native=Get-RecoveryPins;$archivePath=Join-Path $repo 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\archive-windows-spool.ps1';$profilePath=Join-Path $repo 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows\NodeProfileV2.cs'
+$native=Get-RecoveryPins desk-31080;$archivePath=Join-Path $repo 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\archive-windows-spool.ps1';$profilePath=Join-Path $repo 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows\NodeProfileV2.cs'
 $buffers=@{archive=[IO.File]::ReadAllBytes($archivePath);native=[IO.File]::ReadAllBytes($profilePath)}
 Yes ((Recovery-Hash $buffers.archive) -ceq $native.archiver) 'exact-archiver-pin';Yes ((Recovery-Hash $buffers.native) -ceq $native.native) 'exact-native-pin'
 Initialize-RecoveryNative @{buffers=$buffers}
-$ActualVhdAcl=${function:Assert-RecoveryVhdAcl};$ActualNewPause=${function:New-RecoveryPause};$ActualRequest=${function:Request-RecoveryRearm};$ActualNoProducers=${function:Assert-RecoveryNoProducers};$ActualOwners=${function:Read-RecoveryProcessOwnerSids};$ActualPause=${function:New-RecoveryPause};$ActualRead=${function:Read-RecoveryProtected};$ActualJournal=${function:Write-RecoveryJournal};$ActualWait=${function:Wait-RecoveryRearm};$ActualConfirm=${function:Confirm-RecoveryArchive};$ActualHold=${function:Hold-RecoveryQuietProof}
+$ActualManagerAcl=${function:Assert-RecoveryManagerAcl};$ActualRunner=${function:Assert-RecoveryRunner};$ActualVhdAcl=${function:Assert-RecoveryVhdAcl};$ActualNewPause=${function:New-RecoveryPause};$ActualRequest=${function:Request-RecoveryRearm};$ActualNoProducers=${function:Assert-RecoveryNoProducers};$ActualOwners=${function:Read-RecoveryProcessOwnerSids};$ActualPause=${function:New-RecoveryPause};$ActualRead=${function:Read-RecoveryProtected};$ActualJournal=${function:Write-RecoveryJournal};$ActualWait=${function:Wait-RecoveryRearm};$ActualConfirm=${function:Confirm-RecoveryArchive};$ActualHold=${function:Hold-RecoveryQuietProof}
 $testRoots=New-Object Collections.Generic.List[string];$script:active=$null
-function Assert-RecoveryManagerAcl([byte[]]$Bytes,[string]$Path){
+function Assert-RecoveryManagerAcl($Context,[byte[]]$Bytes,[string]$Path){
  if(-not $Path.StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){return}
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor($Bytes,0);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
  foreach($a in $sd.DiscretionaryAcl){if($a -is [Security.AccessControl.CommonAce] -and $a.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and ([int]$a.AceFlags -band 8) -eq 0 -and @($sid,'S-1-5-18','S-1-5-32-544') -notcontains $a.SecurityIdentifier.Value -and ([int]$a.AccessMask -band 0x500d0156) -ne 0){throw 'RECOVERY_PROTECTION_REFUSED'}}
 }
-function Assert-RecoveryVhdAcl($Context,[byte[]]$Bytes,[string]$Path){Assert-RecoveryManagerAcl $Bytes $Path}
+function Assert-RecoveryVhdAcl($Context,[byte[]]$Bytes,[string]$Path){Assert-RecoveryManagerAcl $Context $Bytes $Path}
 function New-FakeRegistryHandle($Node){
  $Node.leases++;$o=[pscustomobject]@{node=$Node;names=$Node.names;values=$Node.values;children=$Node.children;closed=$false}
  $o|Add-Member ScriptMethod GetSubKeyNames {if($this.closed){throw 'FIXTURE_KEY_CLOSED'};return ,$this.node.names}
@@ -28,38 +28,39 @@ function New-FakeRegistryHandle($Node){
 }
 function Fake-Key([string[]]$Names,$Values){New-FakeRegistryHandle ([pscustomobject]@{names=$Names;values=$Values;children=@{};leases=0})}
 function Open-RecoveryUsersHive{New-FakeRegistryHandle $script:active.registryRoot.node}
-function New-TestContext([string]$Fail=''){
+function New-TestContext([string]$Fail='',[ValidateSet('desk-31080','turing-b2ea')][string]$Scene='desk-31080'){
  $root=Join-Path ([IO.Path]::GetTempPath()) ('m5b-recovery-'+[guid]::NewGuid().ToString('N'));$testRoots.Add($root)
  [void][IO.Directory]::CreateDirectory($root);$acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetAccessRuleProtection($true,$false)
  foreach($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($sid)),'FullControl','ContainerInherit,ObjectInherit','None','Allow')))}
  [IO.Directory]::SetAccessControl($root,$acl)
  foreach($d in @('state','install','owner','stage','spool\outgoing','spool\incoming','disk','state\receipts','state\halts','state\ledger','mailbox\requests','mailbox\responses')){[void][IO.Directory]::CreateDirectory((Join-Path $root $d))}
- $p=Get-RecoveryPins;$p.root=$root;$p.spool=Join-Path $root 'spool';$p.vhdx=Join-Path $root 'disk\ext4.vhdx'
+ $p=Get-RecoveryPins $Scene;$p.root=$root;$p.spool=Join-Path $root 'spool';$p.vhdx=Join-Path $root 'disk\ext4.vhdx'
  [IO.File]::WriteAllBytes($p.vhdx,(New-Object byte[] 4096))
  $halt=[ordered]@{code='FAILURE_ARCHIVE_UNCONFIRMED';clearedOnlyBy='owner-rearm';facts=@{key=$p.batch;windowsArchiveCode='EXACT_FIXED_ACCESS_ACES_REQUIRED'}};$hb=Recovery-Bytes $halt;$p.halt=Recovery-Hash $hb;[IO.File]::WriteAllBytes((Join-Path $root 'state\HALT.json'),$hb)
- $w=[ordered]@{contract='clued.independent-ci.companion-wsl/1';stage='qualified';companionSid=$p.companion;distro='CluedResident-Linux';target=$p.vhdx};$wb=Recovery-Bytes $w;$p.wslRecord=Recovery-Hash $wb;[IO.File]::WriteAllBytes((Join-Path $root 'install\companion-wsl.json'),$wb)
+ $w=[ordered]@{contract='clued.independent-ci.companion-wsl/1';stage='qualified';companionSid=$p.companion;distro=$p.distribution;target=$p.vhdx};$wb=Recovery-Bytes $w;$p.wslRecord=Recovery-Hash $wb;[IO.File]::WriteAllBytes((Join-Path $root 'install\companion-wsl.json'),$wb)
  foreach($n in $p.leaves){[IO.File]::WriteAllBytes((Join-Path $p.spool $n.Replace('/','\')),([Text.Encoding]::UTF8.GetBytes($n)))}
  $lines=@($p.leaves|ForEach-Object{$b=[IO.File]::ReadAllBytes((Join-Path $p.spool $_.Replace('/','\')));$_+'|'+$b.Length+'|'+(Recovery-Hash $b)}|Sort-Object);$p.scene=Recovery-Hash ([Text.Encoding]::UTF8.GetBytes(($lines -join [char]10)))
- $task=[pscustomobject]@{Enabled=$true;Xml='<Task><Settings><Enabled>true</Enabled></Settings><CredentialReference>opaque-scheduler-owned</CredentialReference></Task>';instances=1;stops=0;runs=0;credential='opaque-scheduler-owned'}
+ $task=[pscustomobject]@{Enabled=$true;Xml='<Task><Settings><Enabled>true</Enabled></Settings><CredentialReference>opaque-scheduler-owned</CredentialReference></Task>';instances=1;stops=0;runs=0;credential='opaque-scheduler-owned';operatorSid=$p.operator}
  $actions=[pscustomobject]@{Count=1;action=[pscustomobject]@{Path=(Join-Path $root 'bin\CluedCompanionSupervisor.exe');Arguments=('"'+$root+'"')}};$actions|Add-Member ScriptMethod Item {param($index);return $this.action}
  $task|Add-Member NoteProperty Definition ([pscustomobject]@{Principal=[pscustomobject]@{UserId=$p.companion;LogonType=1;RunLevel=0};Actions=$actions})
- $task|Add-Member ScriptMethod GetSecurityDescriptor {param($flags);return 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;S-1-5-21-858977881-4031698862-3006450925-1000)'}
+ $task|Add-Member ScriptMethod GetSecurityDescriptor {param($flags);return ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;'+$this.operatorSid+')')}
  $task|Add-Member ScriptMethod GetInstances {param($flags);[pscustomobject]@{Count=$this.instances}}
  $task|Add-Member ScriptMethod Stop {param($flags);$this.stops++;if($script:active.fail -ceq 'task-stop'){throw 'RECOVERY_TASK_REFUSED'};$this.instances=0}
  $task|Add-Member ScriptMethod Run {param($args);$this.runs++;$this.instances=1;return [pscustomobject]@{}}
  $services=@{};$pidSeed=40000;foreach($n in $p.services){
  $image=if($n -ceq 'CluedCIUpgrader'){'upgrader\bin\UpgraderServiceHost.exe'}elseif($n -ceq 'CluedCIResident'){'bin\ResidentServiceHost.exe'}else{'bin\SwapBroker.exe'}
  $binary='"'+(Join-Path $root $image)+'"';if($n -ceq 'CluedCIResident'){$binary+=' "'+(Join-Path $root ('resident\'+$p.resident+'\src\service-main.mjs'))+'"'}
- $services[$n]=[pscustomobject]@{name=$n;state='Running';pid=$pidSeed;config='';binary=$binary;account=$(if($n -ceq 'CluedCIResident'){'NT SERVICE\CluedCIResident'}else{'LocalSystem'});startMode='Auto';sddl='fixed';delayedAutoStart=($n -ceq 'CluedCIUpgrader')};$p.serviceConfigs[$n]=Recovery-Hash (Recovery-Bytes @($binary,$services[$n].account,'Auto','fixed'));$pidSeed++
+ $serviceDacl='D:(A;;GA;;;SY)(A;;GA;;;BA)'
+ $services[$n]=[pscustomobject]@{name=$n;state='Running';pid=$pidSeed;config='';binary=$binary;account=$(if($n -ceq 'CluedCIResident'){'NT SERVICE\CluedCIResident'}else{'LocalSystem'});startMode='Auto';sddl=$serviceDacl;delayedAutoStart=($n -ceq 'CluedCIUpgrader')};$p.serviceConfigs[$n]=Recovery-Hash (Recovery-Bytes @($binary,$services[$n].account,'Auto',$serviceDacl));$pidSeed++
  }
- $guid='{11111111-1111-1111-1111-111111111111}';$key=Fake-Key @() @{DistributionName='CluedResident-Linux';BasePath=(Split-Path -Parent $p.vhdx);VhdFileName='ext4.vhdx'};$parent=Fake-Key @($guid) @{};$parent.children[$guid]=$key
- $c=@{pins=$p;state=(New-RecoveryState);held=(New-Object 'Collections.Generic.List[object]');buffers=$buffers;stage=(Join-Path $root 'stage');sequence=0;operation=[guid]::NewGuid().ToString('N');runner=$null;node=[pscustomobject]@{WslDistribution='CluedResident-Linux'};install=[pscustomobject]@{};registration=[pscustomobject]@{key=$key;parent=$parent;name=$guid};fail=$Fail;task=$task;services=$services;calls=(New-Object Collections.Generic.List[string]);archiveCalls=0;quietCalls=0;diskBlocked=0;rearmAt=[DateTimeOffset]::UtcNow}
+ $guid='{11111111-1111-1111-1111-111111111111}';$key=Fake-Key @() @{DistributionName=$p.distribution;BasePath=(Split-Path -Parent $p.vhdx);VhdFileName='ext4.vhdx'};$parent=Fake-Key @($guid) @{};$parent.children[$guid]=$key
+ $c=@{pins=$p;state=(New-RecoveryState);held=(New-Object 'Collections.Generic.List[object]');buffers=$buffers;stage=(Join-Path $root 'stage');sequence=0;operation=[guid]::NewGuid().ToString('N');runner=$null;node=[pscustomobject]@{WslDistribution=$p.distribution};install=[pscustomobject]@{};registration=[pscustomobject]@{key=$key;parent=$parent;name=$guid};fail=$Fail;task=$task;services=$services;calls=(New-Object Collections.Generic.List[string]);archiveCalls=0;quietCalls=0;diskBlocked=0;rearmAt=[DateTimeOffset]::UtcNow}
  $users=Fake-Key @() @{};$c.registrationPath=$p.companion+'\Software\Microsoft\Windows\CurrentVersion\Lxss';$users.children[$c.registrationPath]=$parent;$c.registrationUsers=$users;$c.held.Add($users);$c.held.Add($parent);$c.held.Add($key);$c.registryRoot=$users;$script:active=$c;Open-RecoveryRegistration $c
  $c.rearm=Join-Path $root 'installed-rearm.ps1';$rb=[Text.Encoding]::UTF8.GetBytes('# pinned fixture original rearm');[IO.File]::WriteAllBytes($c.rearm,$rb);$p.rearm=Recovery-Hash $rb
  $c.state.stage=$c.stage;return $c
 }
 function Read-RecoveryTask($Context){if($Context.fail -ceq 'task-disable'){$Context.task.Enabled=$true};return $Context.task}
-function Read-RecoveryService([string]$Name){$v=$script:active.services[$Name]|Select-Object *;$v.config=Recovery-Hash (Recovery-Bytes @($v.binary,$v.account,$v.startMode,$v.sddl));return $v}
+function Read-RecoveryService([string]$Name){$v=$script:active.services[$Name]|Select-Object *;$v.config=Recovery-Hash (Recovery-Bytes @($v.binary,$v.account,$v.startMode,(Recovery-ServiceDacl $v.sddl)));return $v}
 function Set-RecoveryServiceStart($Before,[bool]$Disabled){
  $c=$script:active;$c.calls.Add($(if($Disabled){'disable-'}else{'enable-'})+$Before.name)
  if($c.fail -ceq 'disable-service' -and $Disabled -and $Before.name -ceq 'CluedCIResident'){throw 'RECOVERY_SERVICE_REFUSED'}
@@ -115,7 +116,8 @@ function New-TestServiceEvidence($Context){
  if($Context.fail -ceq 'owner-request-sha'){$receipt.body.requestSha256='0'*64}
  Write-RecoveryNew (Join-Path $state 'receipts\00000001-owner-request.json') (Recovery-Bytes $receipt)
  $id='11111111-1111-1111-1111-111111111111'
- Write-RecoveryNew (Join-Path $Context.pins.root ('mailbox\requests\'+$id+'.json')) (Recovery-Bytes @{contract='clued.independent-ci.resident-companion-request/1';requestId=$id;kind='archive-linux';batchId='31080af4ceb1122c-b28efd37b849';reason='rearm-unknown-failure';createdAt=$now})
+ $transportBatchId=if($Context.fail -ceq 'transport-cross-scene'){'31080af4ceb1122c-b28efd37b849'}else{$Context.pins.batchId}
+ Write-RecoveryNew (Join-Path $Context.pins.root ('mailbox\requests\'+$id+'.json')) (Recovery-Bytes @{contract='clued.independent-ci.resident-companion-request/1';requestId=$id;kind='archive-linux';batchId=$transportBatchId;reason='rearm-unknown-failure';createdAt=$now})
  $response=@{contract='clued.independent-ci.resident-companion-response/4';requestId=$id;kind='archive-linux';ok=$true;verified=$true;directory='failed-fixture-linux';jobTree=$null;observedAt=$now}
  if($Context.fail -ceq 'linux-wrong-directory'){$response.directory='failed-unrelated'}
  Write-RecoveryNew (Join-Path $Context.pins.root ('mailbox\responses\'+$id+'.json')) (Recovery-Bytes $response)
@@ -129,8 +131,74 @@ function Wait-RecoveryRearm($Context){
 function Finish-Test($c){for($i=$c.held.Count-1;$i -ge 0;$i--){$c.held[$i].Dispose()}}
 $disabled=& $Powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $source
 Yes ($LASTEXITCODE -eq 0 -and $disabled -ceq '{"status":"DISABLED"}') 'real-entry-default-disabled'
-if([Environment]::MachineName -cne $native.machine){$refused=& $Powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $source -Preflight -SourceRoot $repo;$raw=$LASTEXITCODE;$v=$refused|ConvertFrom-Json;Yes ($raw -eq 1 -and $v.code -ceq 'RECOVERY_HOST_REFUSED' -and -not $v.taskAttempted -and -not $v.servicesAttempted -and -not $v.pauseAttempted) 'real-entry-wrong-host-zero-actions'}
+$wrongScene=if([Environment]::MachineName -ceq 'DESK-W-591'){'turing-b2ea'}else{'desk-31080'}
+$refused=& $Powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $source -Preflight -Scene $wrongScene -SourceRoot $repo;$raw=$LASTEXITCODE;$v=$refused|ConvertFrom-Json;Yes ($raw -eq 1 -and $v.code -ceq 'RECOVERY_HOST_REFUSED' -and -not $v.taskAttempted -and -not $v.servicesAttempted -and -not $v.pauseAttempted) 'real-entry-wrong-host-zero-actions'
 try{
+ # Scheduler may omit Enabled=true. Fingerprint only the rest; actual Task.Enabled remains separately authoritative.
+ $fpDefault=Recovery-TaskFingerprint ([pscustomobject]@{Xml='<Task><Settings/><Actions>fixed</Actions></Task>'})
+ foreach($value in @('true','false')){$fp=Recovery-TaskFingerprint ([pscustomobject]@{Xml=('<Task><Settings><Enabled>'+$value+'</Enabled></Settings><Actions>fixed</Actions></Task>')});Yes ($fp -ceq $fpDefault) 'default-or-explicit-enabled-has-same-definition-fingerprint'}
+ $fpRest=Recovery-TaskFingerprint ([pscustomobject]@{Xml='<Task><Settings><StartWhenAvailable>true</StartWhenAvailable></Settings><Actions>fixed</Actions></Task>'})
+ foreach($xml in @('<Task><Settings><Enabled>true</Enabled><StartWhenAvailable>true</StartWhenAvailable></Settings><Actions>fixed</Actions></Task>','<Task><Settings><StartWhenAvailable>true</StartWhenAvailable><Enabled>false</Enabled></Settings><Actions>fixed</Actions></Task>')){Yes ((Recovery-TaskFingerprint ([pscustomobject]@{Xml=$xml})) -ceq $fpRest) 'enabled-node-position-does-not-change-fingerprint'}
+ Yes ((Recovery-TaskFingerprint ([pscustomobject]@{Xml='<Task><Settings/><Actions>changed</Actions></Task>'})) -cne $fpDefault) 'other-task-field-change-is-not-hidden'
+ Yes ((Recovery-TaskFingerprint ([pscustomobject]@{Xml='<Task><Settings><StartWhenAvailable>false</StartWhenAvailable></Settings><Actions>fixed</Actions></Task>'})) -cne $fpRest) 'other-setting-change-is-not-hidden'
+ foreach($xml in @('<Task><Settings><Enabled>true</Enabled><Enabled>false</Enabled></Settings></Task>','<Task><Actions>fixed</Actions></Task>','<Task><Settings/><Settings/></Task>')){$blocked=$false;try{Recovery-TaskFingerprint ([pscustomobject]@{Xml=$xml})|Out-Null}catch{$blocked=$true};Yes $blocked 'duplicate-enabled-or-missing-duplicate-settings-refused'}
+ $fakeTask=[pscustomobject]@{Enabled=$false;Xml='<Task><Settings><Enabled>true</Enabled></Settings></Task>'};Recovery-TaskFingerprint $fakeTask|Out-Null;Yes ($fakeTask.Enabled -eq $false) 'fingerprint-does-not-assign-real-enabled-state'
+ # Actual old metadata-only primitive is the RED control; only the recovery GR primitive must deny rename.
+ $c=New-TestContext;$script:active=$c;$dir=Join-Path $c.pins.root 'rename-proof';[void][IO.Directory]::CreateDirectory($dir)
+ $h=[CluedSpoolArchiveV2]::HoldDirectory($dir)
+ try{[IO.Directory]::Move($dir,($dir+'.moved'));Yes ([IO.Directory]::Exists($dir+'.moved')) 'actual-metadata-only-hold-is-not-a-delete-barrier'}finally{$h.Dispose()}
+ [IO.Directory]::Move(($dir+'.moved'),$dir)
+ $h=[RecoveryReadOnly]::HoldDirectory($dir)
+ try{
+  $meta=[CluedSpoolArchiveV2]::Metadata($h);Yes (($meta.Attributes -band 0x410) -eq 0x10) 'actual-recovery-gr-hold-is-a-plain-directory'
+  $renamed=$false;try{[IO.Directory]::Move($dir,($dir+'.moved'));$renamed=$true}catch{}
+  Yes (-not $renamed -and [IO.Directory]::Exists($dir)) 'actual-recovery-gr-hold-denies-directory-rename'
+  [CluedSpoolArchiveV2]::ExactPath($h,$dir);Yes ([CluedSpoolArchiveV2]::Stable($meta,[CluedSpoolArchiveV2]::Metadata($h))) 'actual-recovery-gr-directory-identity-stable'
+ }finally{$h.Dispose()}
+ [IO.Directory]::Move($dir,($dir+'.moved'));Yes ([IO.Directory]::Exists($dir+'.moved')) 'actual-recovery-gr-release-allows-rename'
+ $bad=Join-Path $c.pins.root 'not-a-directory.txt';[IO.File]::WriteAllText($bad,'fixture');$refused=$false;$h=$null;try{$h=[RecoveryReadOnly]::HoldDirectory($bad)}catch{$refused=$true}finally{if($null -ne $h){$h.Dispose()}};Yes $refused 'actual-recovery-gr-hold-refuses-file-type'
+ Finish-Test $c
+ # Fixed selector and exact identity are pure; an unrecognized host never inherits the DESK default.
+ $desk=Get-RecoveryPins desk-31080;$turing=Get-RecoveryPins turing-b2ea
+ Yes ($desk.machine -ceq 'DESK-W-591' -and $desk.batchId -ceq '31080af4ceb1122c-b28efd37b849' -and $desk.scene -ceq '238851d06434ec886448f1e8afa6926a91e36d3b117e5ab8ec36279d9671e7a0') 'desk-fixed-scene-preserved'
+ Yes ($turing.machine -ceq 'TURING' -and $turing.batch -ceq 'b2ea162eddf7756234f0596beee9a479eb2c9aeb61a8c616e908de2febdfab03' -and $turing.batchId -ceq 'b2ea162eddf77562-a9e5c4fb6827' -and $turing.halt -ceq '2108b842c2aa887737407cdc23becad934d6c05607bbad97843cf975647f5785') 'turing-fixed-batch-and-halt'
+ Yes ($turing.profile -ceq '67b6b61cf1048ecb775092c203c650795c419c039e9e25c05cd6901ea754c5ac' -and $turing.wslRecord -ceq 'cf35c68d978dba09483a1f3ccf19ab49ea71dec542ce9d00559a066cc8303467' -and $turing.scene -ceq 'bf998f595f7a8c3eaf55aceb188797798e9109ba68585de5ec7b68e3434fe162') 'turing-public-evidence-sha-pins'
+ Yes ($turing.vhdx -ceq 'C:\clued-resident\wsl\Ubuntu-24.04\ext4.vhdx' -and $turing.distribution -ceq 'Ubuntu-24.04' -and $turing.operator.EndsWith('-1001') -and $turing.companion.EndsWith('-1017') -and $turing.controller.EndsWith('-1015')) 'turing-fixed-account-and-disk-identity'
+ Yes ($turing.serviceConfigs.CluedCIUpgrader -ceq '04e0be24aea6bfd41bfa0b4e24fc91ea80ef05c0b33f41075403777c0ad6aa8c' -and $turing.serviceConfigs.CluedCIResident -ceq 'a77661629972cfe10c7750d2d69d1b732c99247893c80ef05fbd047ae84c6e70' -and $turing.serviceConfigs.CluedCISwapBroker -ceq 'e986a58bdb60456ef41d9e8843242b97319453262ae81f664814074a6fcca81b') 'turing-original-service-configuration-pins'
+ $blocked=$false;try{Get-RecoveryPins arbitrary-scene|Out-Null}catch{$blocked=$true};Yes $blocked 'no-arbitrary-scene'
+ foreach($pins in @($desk,$turing)){
+  Assert-RecoverySceneIdentity $pins $pins.machine $pins.operator;Yes $true 'exact-scene-host-operator-accepted'
+  $other=if($pins.sceneId -ceq 'desk-31080'){$turing}else{$desk}
+  $blocked=$false;try{Assert-RecoverySceneIdentity $pins $other.machine $pins.operator}catch{$blocked=$true};Yes $blocked 'cross-machine-scene-refused'
+  $blocked=$false;try{Assert-RecoverySceneIdentity $pins $pins.machine $other.operator}catch{$blocked=$true};Yes $blocked 'cross-operator-scene-refused'
+  $envs=Recovery-ChildEnv @{pins=$pins} ([IO.Path]::GetTempPath());Yes ($envs.COMPUTERNAME -ceq $pins.machine -and $envs.USERPROFILE -ceq $pins.operatorProfile -and $envs.PSModulePath -ceq 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules') 'selected-clean-child-environment'
+ }
+ function Memory-Acl([string]$Owner,[string]$Role,[int]$Mask){$sd=New-Object Security.AccessControl.RawSecurityDescriptor(('O:'+ $Owner+'G:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x'+$Mask.ToString('x')+';;;'+$Role+')'));$b=New-Object byte[] $sd.BinaryLength;$sd.GetBinaryForm($b,0);return ,$b}
+ foreach($pins in @($desk,$turing)){
+  $ctx=@{pins=$pins};$outgoing=Join-Path $pins.spool 'outgoing';$incoming=Join-Path $pins.spool 'incoming'
+  & $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.controller 0x1301bf) $outgoing;Yes $true 'selected-controller-only-outgoing-modify'
+  & $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.companion 0x1301bf) $incoming;Yes $true 'selected-companion-only-incoming-modify'
+  $other=if($pins.sceneId -ceq 'desk-31080'){$turing}else{$desk}
+  $blocked=$false;try{& $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $other.controller 0x1301bf) $outgoing}catch{$blocked=$true};Yes $blocked 'other-scene-controller-write-refused'
+  $blocked=$false;try{& $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.companion 0x1301bf) $outgoing}catch{$blocked=$true};Yes $blocked 'wrong-direction-companion-write-refused'
+  $response=Join-Path $pins.root 'mailbox\responses';& $ActualManagerAcl $ctx (Memory-Acl $pins.companion $pins.companion 0x1301bf) $response;Yes $true 'selected-response-owner-and-writer'
+  $archive=Join-Path $pins.spool ('failed-'+$pins.batch.Substring(0,12)+'-owner-m5b-recovery-111111111111');& $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.residentSid 0x1301bf) $archive;Yes $true 'selected-archive-prefix-role-accepted'
+  $wrong=Join-Path $pins.spool ('failed-'+$other.batch.Substring(0,12)+'-owner-m5b-recovery-111111111111');$blocked=$false;try{& $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.residentSid 0x1301bf) $wrong}catch{$blocked=$true};Yes $blocked 'other-scene-archive-prefix-refused'
+  foreach($path in @([IO.Path]::GetDirectoryName($pins.root),$pins.spool)){
+   & $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.companion 0x120080) $path;Yes $true 'parent-self-metadata-ace-accepted-without-acl-write'
+   foreach($mask in @(0x160080,0x120180)){$blocked=$false;try{& $ActualManagerAcl $ctx (Memory-Acl 'S-1-5-32-544' $pins.companion $mask) $path}catch{$blocked=$true};Yes $blocked 'parent-metadata-write-dac-or-write-attributes-refused'}
+  }
+ }
+ # The original runner guard accepts the selected host's fixed account, not the other scene's domain spelling.
+ $c=New-TestContext -Scene turing-b2ea;$script:active=$c;$c.node|Add-Member NoteProperty runnerService 'CluedControlRunner';$c.install|Add-Member NoteProperty runnerSddlUnchanged 'D:(A;;GA;;;SY)(A;;GA;;;BA)'
+ $c.services['CluedControlRunner']=[pscustomobject]@{name='CluedControlRunner';state='Stopped';pid=0;config='';binary='"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"';account='TURING\clued-control';startMode='Manual';sddl='D:(A;;GA;;;SY)(A;;GA;;;BA)';delayedAutoStart=$false}
+ & $ActualRunner $c|Out-Null;Yes $true 'turing-fixed-runner-account-accepted'
+ $c.services.CluedControlRunner.account='DESK-W-591\clued-control';$blocked=$false;try{& $ActualRunner $c|Out-Null}catch{$blocked=$true};Yes $blocked 'other-scene-runner-account-refused';Finish-Test $c
+ # The same production core and original correlation predicate now run a complete TURING fixture.
+ $c=New-TestContext -Scene turing-b2ea;$script:active=$c;Hold-RecoveryWslRecord $c;$r=Invoke-RecoveryCore $c
+ Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $r.haltCleared -and $r.pauseCreated -and $c.archiveCalls -eq 1 -and $c.task.runs -eq 1 -and $c.task.credential -ceq 'opaque-scheduler-owned') 'turing-core-one-archive-original-credential-restored'
+ $corr=Get-Content -LiteralPath (Join-Path $c.stage 'recovery-correlation.json') -Raw|ConvertFrom-Json;Yes ($corr.batchKey -ceq $turing.batch -and $corr.haltSha256 -ceq $c.pins.halt) 'turing-correlation-is-not-desk';Finish-Test $c
+ foreach($fail in @('partial','transport-cross-scene')){$c=New-TestContext -Fail $fail -Scene turing-b2ea;$script:active=$c;Hold-RecoveryWslRecord $c;$r=Invoke-RecoveryCore $c;Yes ($r.status -ceq 'UNKNOWN_PRESERVED' -and -not $r.haltCleared -and $r.pauseCreated) ('turing-partial-or-cross-transport-preserved:'+ $fail);Finish-Test $c}
  $c=New-TestContext;$script:active=$c;Hold-RecoveryWslRecord $c;Assert-RecoveryRegistration $c;$r=Invoke-RecoveryCore $c
  Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $r.haltCleared -and $r.pauseCreated -and $r.archiveVerified -and $r.restored -and $r.rearmRequested) ('full-core-success:'+($r|ConvertTo-Json -Compress))
  Yes ($c.archiveCalls -eq 1 -and $c.diskBlocked -eq 1 -and $c.task.Enabled -and $c.task.instances -eq 1 -and $c.task.runs -eq 1 -and $c.task.credential -ceq 'opaque-scheduler-owned') 'original-task-credentials-preserved'
@@ -173,13 +241,16 @@ try{
  # Fresh registry namespace replacement cannot hide behind an old held key.
  $c=New-TestContext;$script:active=$c;Hold-RecoveryWslRecord $c;$replacement=Fake-Key @($c.registration.name) @{};$replacement.children[$c.registration.name]=Fake-Key @() @{DistributionName='CluedResident-Linux';BasePath='C:\wrong';VhdFileName='ext4.vhdx'};$c.registrationUsers.children[$c.registrationPath]=$replacement
  $r=Invoke-RecoveryCore $c;Yes ($c.archiveCalls -eq 0 -and -not $r.pauseCreated) 'fresh-registry-namespace-replacement-refused';Finish-Test $c
- # Exercise actual owner-query failure handling without querying the real machine.
+ # Original CIM failure cases explicitly exercise the fallback lane; the independent test executes the real Native owner lane.
+ & {
+ function Read-RecoveryNativeProcessOwner { [pscustomobject]@{Status='UNKNOWN';Sid=$null} }
  function Get-CimInstance{[CmdletBinding()]param([string]$ClassName,[string[]]$Property);return $script:ownerRows}
  function Invoke-CimMethod{[CmdletBinding()]param($InputObject,[string]$MethodName);return $script:ownerResult}
  $script:ownerRows=@([pscustomobject]@{ProcessId=$PID},[pscustomobject]@{ProcessId=65530});$script:ownerResult=[pscustomobject]@{ReturnValue=2;Sid=$null}
  $blocked=$false;try{& $ActualOwners}catch{$blocked=$true};Yes $blocked 'unreadable-owner-refuses-instead-of-quiet'
  $script:ownerResult=[pscustomobject]@{ReturnValue=0;Sid='unknown'};$blocked=$false;try{& $ActualOwners}catch{$blocked=$true};Yes $blocked 'malformed-owner-refuses'
  $script:ownerRows=@();$blocked=$false;try{& $ActualOwners}catch{$blocked=$true};Yes $blocked 'empty-process-inventory-refuses'
+ }
  # An original stopped service regains its precise start mode without an explicit Start call.
  $c=New-TestContext;$script:active=$c;Hold-RecoveryWslRecord $c;$c.services.CluedCIUpgrader.state='Stopped';$c.services.CluedCIUpgrader.pid=0;$r=Invoke-RecoveryCore $c
  Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $c.services.CluedCIUpgrader.state -ceq 'Stopped' -and $c.services.CluedCIUpgrader.startMode -ceq 'Auto' -and $c.services.CluedCIUpgrader.delayedAutoStart -and $c.calls -cnotcontains 'start-CluedCIUpgrader') 'original-stopped-service-not-started'
@@ -216,5 +287,20 @@ try{
  $acl=Get-TestNativeRoleAcl $c.pins.vhdx 0x1701bf;$blocked=$false;try{& $ActualVhdAcl $c $acl ($c.pins.vhdx+'.other')}catch{$blocked=$true};Yes $blocked 'role-acl-approval-bound-to-exact-registered-leaf';Finish-Test $c
  # Read-only identity records retain their own handle and refuse atomic replacement while proof exists.
  $c=New-TestContext;$script:active=$c;Hold-RecoveryWslRecord $c;$blocked=$false;try{[IO.File]::Move((Join-Path $c.pins.root 'install\companion-wsl.json'),(Join-Path $c.pins.root 'install\swapped.json'))}catch{$blocked=$true};Yes $blocked 'record-namespace-held';Finish-Test $c
+ # sc.exe exposes SACL audit rules to an elevated caller. Match the installed DACL-only pin, retain full security for restoration checks.
+ $serviceDacl='D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)'
+ $serviceAudit='S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)'
+ Yes ((Recovery-ServiceDacl $serviceDacl) -ceq $serviceDacl) 'service-original-dacl-only-projection-stable'
+ Yes ((Recovery-ServiceDacl ($serviceDacl+$serviceAudit)) -ceq $serviceDacl) 'admin-audit-visibility-does-not-change-dacl-pin'
+ $blocked=$false;try{Recovery-ServiceDacl 'invalid'|Out-Null}catch{$blocked=$true};Yes $blocked 'malformed-service-descriptor-refused'
+ $before=[pscustomobject]@{binary='fixed-test-image';account='LocalSystem';startMode='Auto';sddl=($serviceDacl+$serviceAudit);delayedAutoStart=$true}
+ $now=$before|Select-Object *;$now|Add-Member NoteProperty config (Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl)))
+ Assert-RecoveryServiceConfig $now $before $false;Yes $true 'full-service-audit-preserved-with-dacl-only-config-pin'
+ $now.startMode='Disabled';$now.config=Recovery-Hash (Recovery-Bytes @($now.binary,$now.account,$now.startMode,$serviceDacl));Assert-RecoveryServiceConfig $now $before $true;Yes $true 'disabled-mode-retains-complete-service-security'
+ $now.sddl=$serviceDacl+'S:(AU;SA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)';$blocked=$false;try{Assert-RecoveryServiceConfig $now $before $true}catch{$blocked=$true};Yes $blocked 'audit-only-change-refused-even-with-same-dacl-pin'
+ $c=New-TestContext -Scene turing-b2ea;$script:active=$c;$c.node|Add-Member NoteProperty runnerService 'CluedControlRunner';$c.install|Add-Member NoteProperty runnerSddlUnchanged $serviceDacl
+ $c.services['CluedControlRunner']=[pscustomobject]@{name='CluedControlRunner';state='Stopped';pid=0;config='';binary='"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"';account='TURING\clued-control';startMode='Manual';sddl=($serviceDacl+$serviceAudit);delayedAutoStart=$false}
+ $c.runner=& $ActualRunner $c;Yes $true 'runner-original-dacl-receipt-compatible-with-admin-audit-read'
+ $c.services['CluedControlRunner'].sddl=$serviceDacl+'S:(AU;SA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)';$blocked=$false;try{& $ActualRunner $c|Out-Null}catch{$blocked=$true};Yes $blocked 'runner-audit-change-still-refused';Finish-Test $c
  [pscustomobject]@{status='RECOVERY_TEMP_FIXTURE_PASS';cases=$count;slowLockIncluded=[bool]$IncludeSlowLockTest;machineEffects=$false;taskRegistration=$false;wslCommands=$false}|ConvertTo-Json -Compress
-}finally{foreach($path in $testRoots){if([IO.Path]::GetFullPath($path).StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue;if([IO.Directory]::Exists($path)){throw 'RECOVERY_TEST_OWN_TEMP_CLEANUP_REFUSED'}}}}
+}catch{Write-Output ('RECOVERY_FIXTURE_ASSERTIONS_BEFORE_FAILURE='+$count);throw}finally{foreach($path in $testRoots){if([IO.Path]::GetFullPath($path).StartsWith(([IO.Path]::GetTempPath().TrimEnd('\')+'\m5b-recovery-'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue;if([IO.Directory]::Exists($path)){throw 'RECOVERY_TEST_OWN_TEMP_CLEANUP_REFUSED'}}}}

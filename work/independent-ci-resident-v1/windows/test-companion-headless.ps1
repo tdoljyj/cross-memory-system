@@ -32,6 +32,7 @@ foreach ($file in @('companion-headless.ps1', 'install-resident.ps1', 'upgrade-a
 # The code without its comment lines and without the leading <# ... #> help block.
 $codeOf = { param([string]$t) $i = $t.IndexOf("`n#>"); if ($t.StartsWith('<#') -and $i -gt 0) { $t = $t.Substring($i + 3) }; (@($t -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n") }
 
+Yes ($functions['install-resident.ps1:Get-RelayParentAclPresence'] -ceq $functions['companion-headless.ps1:Get-RelayParentAclPresence']) 'relay-parent-rule-one-text'
 # 2. One text.
 $sharedUpgrade = @('Get-SupervisorAction', 'Get-CompanionTaskSddl', 'Get-CompanionLaunchArguments', 'Get-CompanionGhDirs', 'Get-CompanionPathDirs', 'Get-CompanionLaunchJson', 'Write-CompanionLaunch', 'Get-NotifierAction', 'Register-NotifierTask', 'Get-CompanionTaskFacts')
 # The frozen upgrade channel's Get-CompanionTaskFacts keeps the text comparison of the DACL (2026-11-08, 29th DESK reinstall: the
@@ -649,6 +650,7 @@ function New-R1Scenario([string]$name, [int]$bytes = 3145730) {
 function Invoke-R1Switch($sc, $opt, [string]$vhdxDir) {
   $script:sc = $sc; $script:opt = $opt
   & {
+    function Get-CompanionRelayParentsProblem { $null }
     function New-CompanionBuild { [ordered]@{ directory = (Join-Path $Scratch 'r1-build-none'); generation = ('a' * 64); registrar = [ordered]@{ exe = 'registrar.exe'; sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
     function Remove-CompanionBuild { }
     function Get-CompanionAccountFacts { $factsR }

@@ -878,6 +878,21 @@ function Invoke-AsSystemOnce([string]$exe, [string[]]$arguments) {
 # the first batch close HALTed. The service gets exactly the Owner's entry: 0x120080 on this folder only (no inheritance), no data
 # right and no write right. It is the one ACE this script appends to an existing directory; the plan shows the DACL it expects, the
 # step refuses if the DACL changed since the plan, and the result is read back with every earlier ACE kept.
+# Shared pure rule with install-resident.ps1; tests require identical function text.
+function Get-RelayParentAclPresence([string]$sddl, [string]$sid) {
+  try { $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl) } catch { return 'refused' }
+  if ($null -eq $raw.DiscretionaryAcl -or ($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { return 'refused' }
+  foreach ($a in $raw.DiscretionaryAcl) {
+    if ($a -isnot [Security.AccessControl.CommonAce] -or $a.IsCallback) { return 'refused' }
+    if (([int]$a.AceFlags -band 8) -eq 0 -and
+        $a.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessDenied -and ($a.AccessMask -band (0x120080 -bor 0x80000000 -bor 0x10000000)) -ne 0) { return 'refused' }
+  }
+  $mine = @(foreach ($a in $raw.DiscretionaryAcl) { if ($a.SecurityIdentifier.Value -ceq $sid) { $a } })
+  if ($mine.Count -eq 0) { return 'missing' }
+  if ($mine.Count -ne 1 -or $mine[0] -isnot [Security.AccessControl.CommonAce] -or $mine[0].IsCallback -or
+      $mine[0].AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or $mine[0].AccessMask -ne 0x120080 -or [int]$mine[0].AceFlags -ne 0) { return 'refused' }
+  'present'
+}
 function Get-ParentAce([string]$res) { '(A;;0x120080;;;' + $res + ')' }
 function Get-AceKeys([string]$sddl) {
   $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
@@ -916,6 +931,31 @@ function Add-ParentAce($p) {
   $newKeys = @(Get-AceKeys (Get-Acl -LiteralPath $p.path).Sddl)
   if (-not $back.present -or $newKeys.Count -ne $oldKeys.Count + 1 -or @($oldKeys | Where-Object { $newKeys -cnotcontains $_ }).Count -ne 0) { throw ('PARENT_ACL_READBACK_MISMATCH:' + $p.path) }
   return $true
+}
+
+# The existing service append stays unchanged; this wrapper binds the companion's stricter rule and the complete expected DACL.
+function Assert-CompanionRelayParentPlan($p) {
+  $now = Get-ParentAclState $p.path $p.sid
+  if ($now.before -cne $p.before -or (Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_CHANGED_SINCE_PLAN' }
+}
+function Add-CompanionRelayParentAce($p) {
+  Assert-CompanionRelayParentPlan $p
+  $wrote = Add-ParentAce $p
+  if ((Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -cne 'present') { throw 'COMPANION_RELAY_PARENT_READBACK_REFUSED' }
+  $wrote
+}
+function Get-CompanionRelayParentsPlan($residentParent) {
+  $parents = @()
+  foreach ($parent in @($CiRoot, (Join-Path $CiRoot 'formal-spool'))) {
+    $entry = Get-ParentAclState $parent $OwnerSid
+    if ((Get-RelayParentAclPresence ((Get-Acl -LiteralPath $parent).Sddl) $OwnerSid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_ACL_REFUSED' }
+    if ($parent -ceq $CiRoot -and -not $residentParent.present) {
+      $projected = New-Object Security.AccessControl.RawSecurityDescriptor($entry.before + $residentParent.ace)
+      $entry.before = $projected.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+    }
+    $parents += ,$entry
+  }
+  return ,$parents
 }
 
 # ---- Carry-forward of the executed heads (resident quota redesign v0.6 + section 9, phase 1, item 7) ----
@@ -1175,6 +1215,8 @@ function Build-Plan {
     $p.companionAccount = [ordered]@{ companionSid = $OwnerSid; operatorSid = $OperatorSid; record = $CompanionAccountFile
       spool = [ordered]@{ folders = $CompanionSpoolFolders; rule = 'the operator''s write entries move to the companion account; its read entries are kept and copied' }
       brokerStableDigest = 'read as LocalSystem (Source v2 admits LocalSystem or the elevated node-profile owner)'; passwordLogon = 'rearm-resident.ps1 -CompanionAccount (random password, never typed)' }
+    $p.companionAccount.relayParents = Get-CompanionRelayParentsPlan $p.parentAcl
+
   }
   if ($PreviewAfterUninstall) { $p.afterUninstallPreview = [ordered]@{ heartbeatDirectoryRecreated = $true; applyAllowed = $false } }
   $p
@@ -1253,6 +1295,18 @@ Step 'directories' {
 Step 'parent-acl' {
   $wrote = Add-ParentAce $plan.parentAcl
   $script:receipt.parentAcl = [ordered]@{ path = $plan.parentAcl.path; sid = $plan.parentAcl.sid; ace = $plan.parentAcl.ace; wrote = $wrote }
+}
+# M5-b relay preconditions: same append/CAS core as parent-acl, on exactly the two standard ancestors.
+# Before the Source ACL migration and companion launch; the plan includes the preceding service ACE where necessary.
+if ($AccountNode) {
+  Step 'companion-relay-parent-acl' {
+    $script:receipt.companionRelayParents = @()
+    foreach ($p in $plan.companionAccount.relayParents) { Assert-CompanionRelayParentPlan $p }
+    foreach ($p in $plan.companionAccount.relayParents) {
+      $wrote = Add-CompanionRelayParentAce $p
+      $script:receipt.companionRelayParents += ,[ordered]@{ path = $p.path; sid = $p.sid; ace = $p.ace; wrote = $wrote }
+    }
+  }
 }
 # 1b. Carry the earlier states' executed heads forward (the resident backfills from them before its first batch).
 Step 'carry-forward' {

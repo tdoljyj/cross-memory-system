@@ -722,7 +722,11 @@ Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $owne
 # M5-b (ADR 0023): on a node whose companion runs as its own account (install\companion-account.json; absent elsewhere).
 $companionAccountRecord = try { Read-CompanionAccountRecord $Root $Node } catch { 'COMPANION_ACCOUNT_RECORD_REFUSED' }
 if ($companionAccountRecord -is [string]) { Record 'companion-account' $false $companionAccountRecord }
-elseif ($null -ne $companionAccountRecord) { $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord ([bool]$verifyCanFix); Record 'companion-account' ($null -eq $accountProblem) $accountProblem }
+elseif ($null -ne $companionAccountRecord) {
+  $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord ([bool]$verifyCanFix); Record 'companion-account' ($null -eq $accountProblem) $accountProblem
+  $parentProblem = Get-CompanionRelayParentsProblem ([string]$Node.ownerSid)
+  Record 'companion-relay-parents' ($null -eq $parentProblem) $parentProblem
+}
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }
