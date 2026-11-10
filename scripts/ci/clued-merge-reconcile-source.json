@@ -312,7 +312,7 @@
     "scripts/ci/public-mcp-hosted-space.test.mjs": "c3f454a423b2e4ebe63bea1868c6cbc52ce67e3e2e8c8a8cdd5b36965a758e26",
     "scripts/ci/public-mcp-supabase-isolation.mjs": "0ceada873b00347bfbad03bb02f2e363a48f636f155f654d20a8551d9902a8f1",
     "scripts/ci/public-mcp-supabase-isolation.test.mjs": "fa369e2ce4778a8edeac05c063d22a9cee2b5968f5629d30ca69a6113cc02b56",
-    "scripts/ci/reviewed_gitleaks.py": "e7748d751a223403bcf023dd0d8e45813a2c6b07a416d97dc902d924b85fd4e9",
+    "scripts/ci/reviewed_gitleaks.py": "2bd5df9a69e00f83413afabc7b8b7ce3ca67af798eb14571c7aa33ac75380a10",
     "scripts/ci/reviewed_gitleaks_historical.py": "7656040557f4dbc7f04c1439eb99ef45021610ca7698fe2f6eb186a625141595",
     "scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1": "1bbf85dac7f8eb70a3d70448add424681fe681ed7b2a4e951ccf9e87fbeedff5",
     "scripts/ci/self-hosted/bootstrap-linux-runner.sh": "9ab960ebcdf95099a3c60d863ea6c1db6e70aad9a6e51b83c7622e5a37172e28",
