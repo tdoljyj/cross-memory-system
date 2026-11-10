@@ -163,6 +163,48 @@ test('queue facts v2: head only for the observed claim generation', () => {
   assert.equal(isCurrentMergeQueueHeadV2({ ...claim, merge_queue: [{ ...claim.merge_queue[0], position: 2 }] }, { claimId: id, fence: 2, epoch: 1 }, job, now), false);
 });
 
+test('queue facts v2: complete canonical PR membership coexists with legacy single-PR heads', () => {
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
+  const now = Date.now(), id = randomUUID(), observed = { claimId: id, fence: 2, epoch: 1 }, target = `${REPO}#888`;
+  const head = { claim_id: id, since: iso(now - 1), until: iso(now + 1000), bound_pr: null, bound_prs: [`${REPO}#887`, target] };
+  const claim = { claim_id: id, fence: 2, execution_epoch: 1, execution_handover_pending: false, lease_key_required: false, merge_slot_until: iso(now + 1000),
+    merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head }] };
+  const run = patch => isCurrentMergeQueueHeadV2({ ...claim, merge_queue: [{ ...claim.merge_queue[0], head: { ...head, ...patch } }] }, observed, job, now);
+  assert.equal(run({}), true, 'the higher-numbered member is a real head of the same Task slot');
+  assert.equal(run({ bound_prs: [target], bound_pr: target }), true);
+  assert.equal(run({ bound_prs: ['other/repository#1', target] }), true, 'a Task can have canonical targets in another repository too');
+  const legacy = { ...head, bound_pr: target }; delete legacy.bound_prs;
+  assert.equal(isCurrentMergeQueueHeadV2({ ...claim, merge_queue: [{ ...claim.merge_queue[0], head: legacy }] }, observed, job, now), true);
+  for (const patch of [
+    { bound_prs: undefined }, { bound_prs: null }, { bound_prs: {} }, { bound_prs: [] },
+    { bound_prs: [target, target] }, { bound_prs: Array.from({ length: 51 }, (_, i) => `${REPO}#${i + 1}`) },
+    ...[null, 888, `${REPO}#0`, `${REPO}#0888`, `${REPO}#888 `, `${REPO}#888\n`, `${REPO}#10000000000`, 'not-a-pr']
+      .map(ref => ({ bound_prs: [target, ref] })),
+    { bound_prs: ['other/repository#888', `${REPO}#887`] },
+    { bound_pr: target }, { bound_pr: `${REPO}#887` }, { bound_pr: undefined },
+    { bound_prs: [target], bound_pr: null }, { bound_prs: [target], bound_pr: `${REPO}#887` },
+  ]) assert.equal(run(patch), false, JSON.stringify(patch));
+  for (const patch of [
+    { fence: 3 }, { execution_epoch: 2 }, { execution_handover_pending: true }, { lease_key_required: null },
+    { merge_slot_until: iso(now) },
+    ...[{ position: 2 }, { state: 'waiting' }, { ahead: [randomUUID()] }, { head: { ...head, claim_id: randomUUID() } },
+      { head: { ...head, until: iso(now) } }, { head: { ...head, since: iso(now + 60_000) } }]
+      .map(q => ({ merge_queue: [{ ...claim.merge_queue[0], ...q }] })),
+  ]) assert.equal(isCurrentMergeQueueHeadV2({ ...claim, ...patch }, observed, job, now), false);
+});
+
+test('full admission v2: Native multi-PR queue projection selects exact membership without trusting the scalar', async () => {
+  for (const valid of [true, false]) {
+    const id = randomUUID(), now = Date.now();
+    const w = world({ claimId: id, claimOverrides: { merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [],
+      head: { claim_id: id, bound_pr: null, bound_prs: [`${REPO}#887`, `${REPO}#${valid ? 888 : 889}`], since: iso(now - 1), until: iso(now + 600_000) } }] } });
+    const facts = await w.port.evaluatePr(w.job, w.packet);
+    assert.equal(facts.status, 'ADMITTED');
+    assert.equal(facts.mergeQueueHead, valid);
+    assert.equal(admittedFactsMatchJobV2(facts, w.job, Date.now()), true);
+  }
+});
+
 // Resident quota redesign v0.6 §9 phase 1, item 4: the scheduling facts (ci_retry_after, merge-queue entry) reach the
 // caller of every evaluation that reached Native, and a rejection's diagnostic carries them, sanitized.
 test('full admission v2: scheduling facts are told on admission and carried in a rejection diagnostic', async () => {

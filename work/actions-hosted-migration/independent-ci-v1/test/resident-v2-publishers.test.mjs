@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../src/job-v2.mjs';
@@ -15,6 +16,7 @@ import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
 import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -172,6 +174,60 @@ test('control pair v2 (S8): read-only queue wait, then exactly two publications'
   assert.equal(r.status, 'SETTLED');
   assert.equal(sleeps, 2);
   assert.deepEqual(github.checks.map(x => x.name), ['kooyumi-admission-verified', 'kooyumi-merge-slot']);
+});
+
+test('control pair v2 (S8): real full admission recognizes a multi-PR Native head and refuses nonmembers before publication', async t => {
+  for (const [label, refs, scalar, ready] of [
+    ['multi-PR higher member', [`${REPO}#887`, `${REPO}#888`], null, true],
+    ['nonmember', [`${REPO}#887`, `${REPO}#889`], null, false],
+    ['duplicate', [`${REPO}#888`, `${REPO}#888`], null, false],
+    ['malformed extra member', [`${REPO}#888`, `${REPO}#0`], null, false],
+    ['contradictory scalar', [`${REPO}#887`, `${REPO}#888`], `${REPO}#888`, false],
+  ]) {
+    const jobs = jobsFor(), c = claim(), github = fakeGithub(), now = Date.now(), scope = `project:${randomUUID()}`, task = randomUUID();
+    const prRef = `${REPO}#888`, policyText = '{"policy":"fixture"}';
+    const config = { domain: 'fixture', repository: REPO, scope, workspace: os.tmpdir(), sourceManifestSha256: 'd'.repeat(64),
+      evaluatorSha256: digest('EVALUATOR'), policyText, policySha256: digest(policyText), ciPrincipalBindingId: randomUUID(),
+      ciPrincipalQualificationRef: 'qualification-ref', publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' };
+    const binding = { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: 888, pr_ref: prRef,
+      head_sha: HEAD, base_sha: BASE, target_branch: 'main', scope, task_id: task,
+      claim: { claim_id: c.claimId, task_id: task, context_key: scope, fence: c.fence, execution_epoch: c.epoch,
+        lease_version: 1, expires_at: c.expiresAt, status: 'ACTIVE', execution_handover_pending: false },
+      head_authorization_id: null, auto_bound: false, receipt_id: null };
+    let evaluations = 0;
+    const admission = createFullAdmissionPortV2({ protectedConfig: config, clock: () => now,
+      tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'),
+        ciPrincipalBindingId: config.ciPrincipalBindingId, ciPrincipalQualificationRef: config.ciPrincipalQualificationRef }),
+      modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(now), proofRef: 'mode' }),
+      recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(now), observationRef: 'obs', recorder: { newId: randomUUID, record() {} } }),
+      fetchImpl: async url => {
+        assert.equal(new URL(url).pathname, `/repos/${REPO}/pulls/888`);
+        return { ok: true, status: 200, json: () => github.readPullRequest(888) };
+      },
+      fixtureHooks: { evaluatorReader: () => 'EVALUATOR', evaluateImpl: async ({ observation_recorder }) => {
+        evaluations++;
+        const native = { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: c.fence, execution_epoch: c.epoch,
+          pr_ref: prRef, head_sha: HEAD, base_sha: BASE, verified_at: iso(now), paths_outside_write_set: [],
+          claim: { ...binding.claim, bound_pr: prRef, lease_key_required: false, merge_slot_until: iso(now + 600_000),
+            merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [],
+              head: { claim_id: c.claimId, bound_pr: scalar, bound_prs: refs, since: iso(now - 1000), until: iso(now + 600_000) } }] } };
+        observation_recorder.record('claim_verification', { result: { payload: native } });
+        return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: c.claimId,
+          task_id: task, claim_binding: binding, scope, changed_paths: ['a.txt'], admission_mode: { state: 'normal', layer: 'code', policy_version: 1 },
+          merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(now + 600_000) }, owner_review: null, workflow_gate_findings: [] };
+      } },
+    });
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => now });
+    const result = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: now + 1 });
+    assert.ok(evaluations > 0, 'the actual full-admission evaluator path ran: ' + JSON.stringify(result));
+    if (ready) {
+      assert.equal(result.status, 'SETTLED', label + ': ' + JSON.stringify(result));
+      assert.deepEqual(github.checks.map(check => check.name), ['kooyumi-admission-verified', 'kooyumi-merge-slot']);
+    } else {
+      assert.deepEqual([result.status, result.reason, result.sideEffects, github.checks.length], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, 0], label);
+    }
+  }
 });
 
 test('control pair v2 (S8): no queue head within the window ends cleanly with nothing published', async t => {
