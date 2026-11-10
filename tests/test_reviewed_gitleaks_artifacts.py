@@ -65,7 +65,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -151,7 +151,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 732'),
+        for changed in [self.config.replace('# clued-reviewed-count: 734', '# clued-reviewed-count: 733'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -427,7 +427,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
 
     def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:726], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
                          reviewed.LEGACY_RECORD_LINES_SHA256)
@@ -460,7 +460,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
                    self.config.replace(rows[0] + '\n', '', 1),
                    self.config.replace(rows[0], fourth, 1),
                    self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
-                   self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 734') + fourth + '\n']
+                   self.config.replace('# clued-reviewed-count: 734', '# clued-reviewed-count: 735') + fourth + '\n']
         for changed in changes:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -543,7 +543,7 @@ class RoleProbeExactTokenTests(unittest.TestCase):
 
     def test_only_one_exact_addition_preserves_every_prior_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:729], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:729]) + '\n').encode()).hexdigest(),
                          reviewed.PRIOR_RECORD_LINES_SHA256)
@@ -571,9 +571,9 @@ class RoleProbeExactTokenTests(unittest.TestCase):
     def test_deleted_duplicate_or_extra_record_is_rejected(self):
         row = self.rows()[729]
         second = row.replace(':generic-api-key:73', ':generic-api-key:74')
-        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 734', 'count: 733'),
                         self.config.replace(row, self.rows()[728], 1),
-                        self.config.replace('count: 733', 'count: 734') + second + '\n']:
+                        self.config.replace('count: 734', 'count: 735') + second + '\n']:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
 
@@ -721,6 +721,15 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                                         for spec in reviewed._candidate_policy.SPECS_D94])
             if index == 13:
                 return result(args, 1, [finding('curl-credential-probe.txt', 'curl-auth-user')])
+            if index in [14, 15, 16]:
+                prefix, line = [('','40'), ('other-path/','40'), ('','41')][index - 14]
+                path = prefix + reviewed.BATCH_KEY_PATH
+                self.assertTrue((repo / path).exists())
+                if index == 16:
+                    previous = actual_run(['git', 'cat-file', '-e', 'HEAD^:' + path],
+                                          cwd=repo, capture_output=True, check=False)
+                    self.assertNotEqual(previous.returncode, 0)
+                return result(args, 1, [finding(path, 'generic-api-key', int(line))])
             self.fail('Unexpected extra detector call')
 
         with tempfile.TemporaryDirectory(prefix='clued-role-probe-self-test-') as temporary:
@@ -736,11 +745,12 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
 
     def test_new_commit_other_path_and_added_line_are_all_detected(self):
         report, scans = self.run_self_test()
-        self.assertEqual(len(scans), 14)
+        self.assertEqual(len(scans), 17)
         for key in ['role_probe_new_commit_detection', 'role_probe_different_path_detection',
                     'role_probe_different_line_detection', 'historical_json_new_commit_detection',
                     'historical_json_different_path_detection', 'historical_json_different_line_detection',
-                    'genuine_curl_credential_detection']:
+                    'genuine_curl_credential_detection', 'public_batch_key_new_commit_detection',
+                    'public_batch_key_different_path_detection', 'public_batch_key_different_line_detection']:
             self.assertIs(report[key], True, key)
 
     def test_each_suppressed_role_probe_regression_fails_the_self_test(self):
@@ -756,6 +766,11 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                               (12, 'Historical d94cd486 JSON metadata was suppressed at a new commit'),
                               (13, 'Genuine credential-shaped curl fixture was suppressed')]:
             with self.subTest(scan=index), self.assertRaisesRegex(ValueError, reason):
+                self.run_self_test(suppress=index)
+
+    def test_each_suppressed_public_batch_key_regression_fails_the_self_test(self):
+        for index, reason in [(14, 'in a new commit'), (15, 'at another path'), (16, 'at another line')]:
+            with self.subTest(scan=index), self.assertRaisesRegex(ValueError, 'Public batch key was suppressed ' + reason):
                 self.run_self_test(suppress=index)
 
 
@@ -778,12 +793,12 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
 
     def test_exactly_one_record_is_appended_and_the_732_bytes_are_preserved(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:732], self.rows(self.old_config))
         self.assertEqual(len(self.rows(self.old_config)), 732)
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:732]) + '\n').encode()).hexdigest(),
                          reviewed.PRIOR_732_RECORD_LINES_SHA256)
-        self.assertEqual([r['fingerprint'] for r in records[732:]], [self.FINGERPRINT])
+        self.assertEqual([r['fingerprint'] for r in records[732:733]], [self.FINGERPRINT])
         self.assertEqual(records[732]['kinds'], [self.policy.KIND])
         self.assertEqual(set(self.policy.FINDINGS), set(self.policy.FINDINGS_CC353) | {self.FINGERPRINT})
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
@@ -820,11 +835,11 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
             with self.subTest(fingerprint=fingerprint), self.assertRaises(ValueError):
                 reviewed.parse_records(self.config.replace(row, replacement, 1))
             with self.subTest(extra=fingerprint), self.assertRaises(ValueError):
-                reviewed.parse_records(self.config.replace('count: 733', 'count: 734') + replacement + '\n')
+                reviewed.parse_records(self.config.replace('count: 734', 'count: 735') + replacement + '\n')
 
     def test_deleted_or_replaced_records_are_rejected(self):
         row = self.rows()[732]
-        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 734', 'count: 733'),
                         self.config.replace(row, self.rows()[731], 1)]:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -853,6 +868,84 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
             mutate(data[self.D94])
             with self.subTest(), self.assertRaises(ValueError):
                 self.policy.verify(self.FINGERPRINT, data)
+
+
+class PublicRecoveryBatchKeyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.blob = reviewed.run(['git', 'cat-file', 'blob',
+                                reviewed.BATCH_KEY_COMMIT + ':' + reviewed.BATCH_KEY_PATH], cwd=ROOT).decode()
+
+    def test_one_exact_addition_preserves_original733_record_bytes_and_default_rules(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), 734)
+        self.assertEqual(hashlib.sha256(('\n'.join(rows[:733]) + '\n').encode()).hexdigest(),
+                         reviewed.ORIGINAL_733_RECORD_LINES_SHA256)
+        self.assertEqual(records[733:], [{'fingerprint': reviewed.BATCH_KEY_FINGERPRINT,
+                                          'kinds': [reviewed.BATCH_KEY_KIND]}])
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
+
+    def test_commit_path_rule_line_kind_and_borrowed_kind_are_not_transferable(self):
+        row = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)][733]
+        record = json.loads(row[len(reviewed.PREFIX):])
+        commit, path, rule, line = reviewed.BATCH_KEY_FINGERPRINT.split(':')
+        for fp in [':'.join(['0' * 40, path, rule, line]), ':'.join([commit, path + '.other', rule, line]),
+                   ':'.join([commit, path, rule, '41']), ':'.join([commit, path, 'private-key', line])]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(dict(record, fingerprint=fp))))
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.verify_public_batch_key(ROOT, fp, self.blob)
+        changed = dict(record, kinds=['ARTIFACT_DIGEST'])
+        with self.assertRaises(ValueError):
+            reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(changed)))
+        old = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)][0]
+        value = json.loads(old[len(reviewed.PREFIX):]); value['kinds'] = [reviewed.BATCH_KEY_KIND]
+        with self.assertRaises(ValueError):
+            reviewed.parse_records(self.config.replace(old, reviewed.PREFIX + json.dumps(value)))
+
+    def test_deleted_duplicate_extra_reordered_or_rewritten_record_is_rejected(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        for text in [self.config.replace(rows[-1] + '\n', '').replace('count: 734', 'count: 733'),
+                     self.config.replace(rows[-1], rows[-2]),
+                     self.config.replace('count: 734', 'count: 735') + rows[-1] + '\n',
+                     self.config.replace(rows[0] + '\n' + rows[1], rows[1] + '\n' + rows[0]),
+                     self.config.replace(rows[0], rows[0].replace(': {', ': { ', 1))]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(text)
+
+    def test_actual_immutable_blob_line_context_and_public_usage_pass(self):
+        reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT, self.blob)
+
+    def test_changed_blob_git_binding_line_or_context_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT, self.blob + '\n')
+        with patch.object(reviewed, 'run', return_value=b'0' * 40 + b'\n'), self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT, self.blob)
+        for name in ['BATCH_KEY_LINE_SHA256', 'BATCH_KEY_CONTEXT_SHA256']:
+            with self.subTest(), patch.object(reviewed, name, '0' * 64), self.assertRaisesRegex(ValueError, 'exact line or context'):
+                reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT, self.blob)
+
+    def test_repinning_blob_cannot_admit_authentication_or_extra_use(self):
+        mutations = [self.blob + '\n$headers = @{ Authorization = $BatchKey }\n',
+                     self.blob.replace("'-BatchKey', $BatchKey", "'-Token', $BatchKey")]
+        for text in mutations:
+            self.assertNotEqual(text, self.blob)
+            raw = text.encode()
+            pin = {'blob': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
+                   'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+            with self.subTest(), patch.dict(reviewed.BATCH_KEY_BLOB, pin), \
+                    patch.object(reviewed, 'run', return_value=pin['blob'].encode() + b'\n'), \
+                    self.assertRaisesRegex(ValueError, 'metadata/archive use changed'):
+                reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT, text)
+
+    def test_genuine_credential_variants_do_not_gain_the_public_kind(self):
+        original = re.search(r"\$BatchKey = '([^']+)'", self.blob).group(1)
+        for replacement in ['clued_bnd_' + 'A' * 40, 'sk_live_' + 'A' * 32, 'A' * 64]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.verify_public_batch_key(ROOT, reviewed.BATCH_KEY_FINGERPRINT,
+                                                 self.blob.replace(original, replacement))
 
 
 if __name__ == '__main__':

@@ -33,7 +33,8 @@ LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
 SCHEDULING_END = 729
 PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
-EXPECTED_COUNT = 733
+EXPECTED_COUNT = 734
+ORIGINAL_733_RECORD_LINES_SHA256 = "26e6b5423894ef77561199fc87179a18e64c2d4da0ae9540b16d34f02fa5a5d7"
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -70,6 +71,16 @@ ROLE_PROBE_FINDINGS = {
         "test_start_line": 72, "test_end_line": 82},
 }
 ROLE_PROBE_KINDS = {spec["kind"] for spec in ROLE_PROBE_FINDINGS.values()}
+# Candidate only: the one reviewed public archive/HALT correlation identifier.
+# This does not accept a successor Source or authorize any scanner/runtime use.
+BATCH_KEY_COMMIT = "f5046d7e569dc2d35a98061a6d7ff84eb553a4ea"
+BATCH_KEY_PATH = "work/independent-ci-resident-v1/windows/recover-m5b-archive-reviewed.ps1"
+BATCH_KEY_FINGERPRINT = f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}:generic-api-key:40"
+BATCH_KEY_KIND = "EXACT_PUBLIC_RECOVERY_BATCH_KEY"
+BATCH_KEY_BLOB = {"blob": "960490c2e0e3f3b227ba97f99fbd5febaf845394", "bytes": 16462,
+                  "sha256": "a45595835e2ac962125d67aec1f45a1168843bffa1b801e44b27d74615f30c84"}
+BATCH_KEY_LINE_SHA256 = "244ad2f1cc40193212145d1d025c60e6f9b382728e0deeb20c6f006e9694605c"
+BATCH_KEY_CONTEXT_SHA256 = "b7e5d02e882736007b14db64a520aa11f2832b79cdb77298c3f67be3e3011c0c"
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -170,6 +181,7 @@ KINDS = {
 KINDS |= SCHEDULING_KINDS
 KINDS |= ROLE_PROBE_KINDS
 KINDS.add(HISTORICAL_KIND)
+KINDS.add(BATCH_KEY_KIND)
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -228,6 +240,9 @@ def parse_records(text):
         if ((historical is not None and record["kinds"] != [HISTORICAL_KIND])
                 or (HISTORICAL_KIND in record["kinds"] and historical is None)):
             raise ValueError("Exact historical escaped-JSON identity changed")
+        if ((record["fingerprint"] == BATCH_KEY_FINGERPRINT and record["kinds"] != [BATCH_KEY_KIND])
+                or (BATCH_KEY_KIND in record["kinds"] and record["fingerprint"] != BATCH_KEY_FINGERPRINT)):
+            raise ValueError("Exact public batch-key identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -293,10 +308,14 @@ def parse_records(text):
             or hashlib.sha256(("\n".join(record_lines[:730])+"\n").encode()).hexdigest()
             != ORIGINAL_730_RECORD_LINES_SHA256):
         raise ValueError("Original730 bytes or exact two appended subjects changed")
-    if ({record["fingerprint"] for record in records[732:]} != set(HISTORICAL_D94_FINDINGS)
+    if ({record["fingerprint"] for record in records[732:733]} != set(HISTORICAL_D94_FINDINGS)
             or hashlib.sha256(("\n".join(record_lines[:732])+"\n").encode()).hexdigest()
             != PRIOR_732_RECORD_LINES_SHA256):
         raise ValueError("Prior732 bytes or the one exact appended d94cd486 subject changed")
+    if (records[733:] != [{"fingerprint": BATCH_KEY_FINGERPRINT, "kinds": [BATCH_KEY_KIND]}]
+            or hashlib.sha256(("\n".join(record_lines[:733])+"\n").encode()).hexdigest()
+            != ORIGINAL_733_RECORD_LINES_SHA256):
+        raise ValueError("Original733 bytes or the one exact appended public batch-key subject changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
@@ -588,6 +607,35 @@ def verify_role_probe_token(repo, fingerprint, text):
         raise ValueError("Role-probe token use changed")
 
 
+def verify_public_batch_key(repo, fingerprint, text):
+    """Prove one immutable public metadata/archive identifier, never an auth input."""
+    if fingerprint != BATCH_KEY_FINGERPRINT:
+        raise ValueError("Unreviewed public batch-key identity")
+    raw = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    if (len(raw) != BATCH_KEY_BLOB["bytes"] or object_id != BATCH_KEY_BLOB["blob"]
+            or hashlib.sha256(raw).hexdigest() != BATCH_KEY_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}"], cwd=repo).decode().strip()
+            != BATCH_KEY_BLOB["blob"]):
+        raise ValueError("Public batch-key immutable blob changed")
+    lines = text.splitlines(keepends=True)
+    line = lines[39].encode()
+    context = "".join(lines[36:50]).encode()
+    if (len(line) != 79 or hashlib.sha256(line).hexdigest() != BATCH_KEY_LINE_SHA256
+            or len(context) != 1097 or hashlib.sha256(context).hexdigest() != BATCH_KEY_CONTEXT_SHA256):
+        raise ValueError("Public batch-key exact line or context changed")
+    declaration = re.fullmatch(r"\$BatchKey = '([a-f0-9]{64})'\n", lines[39])
+    uses = [number for number, source in enumerate(lines, 1)
+            for _ in re.finditer(r"\$BatchKey\b", source, re.IGNORECASE)]
+    required = {61: "batchKey = $BatchKey; haltSha256", 114: "$h.facts.key -cne $BatchKey",
+                183: "@('-BatchKey', $BatchKey, '-Reason'", 185: "$BatchKey.Substring(0, 12)",
+                188: "$receipt.batchKey -cne $BatchKey"}
+    if (declaration is None or text.count(declaration.group(1)) != 1
+            or uses != [40, 61, 114, 183, 185, 188]
+            or any(marker not in lines[number - 1] for number, marker in required.items())):
+        raise ValueError("Public batch-key metadata/archive use changed")
+
+
 def verify_history(repo, records, *, read_only=False):
     commits = _ensure_reviewed_commits(repo, records, allow_fetch=not read_only)
     blobs = {}
@@ -606,6 +654,8 @@ def verify_history(repo, records, *, read_only=False):
             verify_scheduling_fixture(repo, record["fingerprint"], text)
         if record["fingerprint"] in ROLE_PROBE_FINDINGS:
             verify_role_probe_token(repo, record["fingerprint"], text)
+        if record["fingerprint"] == BATCH_KEY_FINGERPRINT:
+            verify_public_batch_key(repo, record["fingerprint"], text)
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:
@@ -851,6 +901,29 @@ def self_test(config, production_ignore):
     code, genuine_shape = scan()
     if code != 1 or not has_exact(genuine_shape, "curl-credential-probe.txt", 1):
         raise ValueError("Genuine credential-shaped curl fixture was suppressed")
+    # This exact public value is exempt only at its old immutable fingerprint.
+    # Copying its bytes never exempts another commit, path or newly added line.
+    batch_blob = run(["git", "cat-file", "blob", f"{BATCH_KEY_COMMIT}:{BATCH_KEY_PATH}"], cwd=config.parent)
+    if hashlib.sha256(batch_blob).hexdigest() != BATCH_KEY_BLOB["sha256"]:
+        raise ValueError("Public batch-key detector fixture blob changed")
+    batch_target = test_repo / BATCH_KEY_PATH
+    batch_target.parent.mkdir(parents=True, exist_ok=True); batch_target.write_bytes(batch_blob); commit()
+    code, batch_new_commit = scan()
+    if code != 1 or not any(f["File"] == BATCH_KEY_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 40 for f in batch_new_commit):
+        raise ValueError("Public batch key was suppressed in a new commit")
+    other_batch_path = "other-path/" + BATCH_KEY_PATH
+    other_batch = test_repo / other_batch_path
+    other_batch.parent.mkdir(parents=True, exist_ok=True); other_batch.write_bytes(batch_blob); commit()
+    code, batch_path = scan()
+    if code != 1 or not any(f["File"] == other_batch_path and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 40 for f in batch_path):
+        raise ValueError("Public batch key was suppressed at another path")
+    batch_target.unlink(); commit(); batch_target.write_bytes(b"\n" + batch_blob); commit()
+    code, batch_line = scan()
+    if code != 1 or not any(f["File"] == BATCH_KEY_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 41 for f in batch_line):
+        raise ValueError("Public batch key was suppressed at another line")
     return {"baseline_detection": True, "exact_history_only": True,
             "new_commit_detection": True, "different_path_detection": True,
             "scheduling_marker_new_commit_detection": True,
@@ -863,6 +936,9 @@ def self_test(config, production_ignore):
             "historical_json_different_path_detection": True,
             "historical_json_different_line_detection": True,
             "genuine_curl_credential_detection": True,
+            "public_batch_key_new_commit_detection": True,
+            "public_batch_key_different_path_detection": True,
+            "public_batch_key_different_line_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
 
@@ -896,7 +972,8 @@ def prepare_candidate(args):
         "config_sha256":hashlib.sha256(Path(args.config).read_bytes()).hexdigest(),
         "all_record_lines_sha256":hashlib.sha256(("\n".join(line for line in Path(args.config).read_text().splitlines()
              if line.startswith(PREFIX))+"\n").encode()).hexdigest(),
-        "old730_preserved":True,"old732_preserved":True,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
+        "old730_preserved":True,"old732_preserved":True,"old733_preserved":True,
+        "public_batch_key_subjects":1,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
 
 
 def parse_cli(argv=None):
