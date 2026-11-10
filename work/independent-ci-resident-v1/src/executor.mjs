@@ -851,10 +851,38 @@ export class ResidentExecutor {
     } catch { return null; }
   }
 
-  // Generation 10 (DESIGN 53.4): the Owner's release of an open breaker. Its trial is due now; nothing else changes (the trial must still
-  // get past the failing place to close it). A breaker that is not open is refused (BREAKER_NOT_OPEN), so a stale request does nothing.
+  // An open breaker's trial is due now. While closed, the same authenticated Owner request can release only unexecuted environment
+  // cap stops after the fault was repaired. Neither path clears execution history or bypasses the ordinary scheduling prechecks.
   async releaseBreaker({ reason, by }) {
     const b = breakerOf(this.queue.breaker);
+    if (b.state === 'closed') {
+      check(this.queue.breaker === b, 'BREAKER_NOT_OPEN');
+      const subjectOf = row => ({ repo: this.policy.repo, pr: row.pr, headSha: row.current.headSha, baseSha: row.current.baseSha,
+        sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1,
+        ...(Object.hasOwn(row.current, 'testSha') ? { testSha: row.current.testSha } : {}) });
+      const candidates = this.queue.data.rows.filter(row => row.state === 'STOPPED' && row.stopKind === 'release-cap'
+        && row.stopClass === 'environment' && row.current && !row.running);
+      check(candidates.length > 0, 'BREAKER_NOT_OPEN');
+      const eligible = new Map(), skipped = [];
+      // Finish every authoritative read before changing the view: an unavailable ledger/index never grants a wake-up.
+      for (const row of candidates) {
+        const subject = subjectOf(row), key = batchKey(subject);
+        const code = await this.ledger.headBurned(headKey(subject)) ? 'HEAD_ALREADY_EXECUTED_NO_RETRY'
+          : await this.executedHeads.published(subject) ? 'HEAD_ALREADY_PUBLISHED_NO_RETRY'
+            : (await this.ledger.state(key)).state !== 'ABSENT' ? 'CONTENT_ALREADY_EXECUTED_NO_RETRY' : null;
+        if (code) skipped.push({ pr: subject.pr, headSha: subject.headSha, code });
+        else eligible.set(row, key);
+      }
+      check(this.queue.breaker === b && b.state === 'closed', 'BREAKER_STATE_CHANGED');
+      const lifted = this.queue.liftEnvironmentStops(this.clock(), { eligible: row => !row.running
+        && eligible.get(row) === batchKey(subjectOf(row)) });
+      await this.persistQueue();
+      this.reportQueue();
+      await this.flushStatus();
+      return { by, reason, mode: 'closed-environment-recovery', level: b.level, cause: b.cause ?? null,
+        openedAt: Number.isSafeInteger(b.openedAt) ? new Date(b.openedAt).toISOString() : null,
+        previousNextTrialAt: null, nextTrialAt: null, lifted, woke: [], skipped };
+    }
     this.queue.breaker = b;
     const r = breakerRelease(b, this.clock());
     check(r.released === true, r.code ?? 'BREAKER_NOT_OPEN');

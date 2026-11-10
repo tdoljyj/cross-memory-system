@@ -259,9 +259,10 @@ powershell.exe -NoProfile -NonInteractive -File <res>\windows\rearm-resident.ps1
 powershell.exe -NoProfile -NonInteractive -File <res>\windows\rearm-resident.ps1 -Request ReleaseBreaker -Reason "<例如：网络已恢复>"
 ```
 
-- 它让熔断的试跑立即到期，并解除全部环境类停止。
-- 它**不关**熔断器：试跑仍要越过上次失败的位置才算关闭。
-- 熔断器不在 open 状态时，拒绝为 `BREAKER_NOT_OPEN`。
+- 熔断器为 open 时，它让试跑立即到期，并解除全部环境类停止。
+- 它**不关**熔断器：open 的试跑仍要越过上次失败的位置才算关闭。
+- 熔断器已 closed 时，同一入口还可在修复环境后重新放行环境类 `release-cap` 停止项；先核实该项未执行、未发布且没有现存批次。回执标记 `closed-environment-recovery`，列出放行和跳过的项，不重置熔断计数或历史。后续仍经过正常冷却、日额度、资格和准入检查。
+- closed 时没有上述停止项，或熔断器处于 half-open 时，仍拒绝为 `BREAKER_NOT_OPEN`。请求不会重跑已执行或已发布的 head；重复提交同一请求不会再次放行。
 
 ### 3.6 其他请求（`rearm-tool.mjs`）
 
