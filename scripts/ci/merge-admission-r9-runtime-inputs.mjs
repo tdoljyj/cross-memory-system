@@ -1,6 +1,7 @@
 // Real default-branch source selection and existing C1 forward-epoch intake.
 // No packet-provided source/window, new token, retry, trigger or budget pool.
 import {createHash} from 'node:crypto';
+import {WORKFLOW_PROFILES_MAX_BYTES} from './clued-workflow-profile.mjs';
 export const R9_RUNTIME_CONFIG='scripts/ci/merge-admission-r9-source.json';
 // The accepted Worker authenticates the revocable audit Binding and owns its
 // gateway database identity. A public Supabase caller cannot invoke GW80.
@@ -29,7 +30,7 @@ export async function loadIndependentR9RuntimeInputs({request,budget,repository,
     if(tree.truncated!==false||!Array.isArray(tree.tree)||new Set(tree.tree.map(x=>x.path)).size!==tree.tree.length)throw Error();
     const files=new Map(tree.tree.map(x=>[x.path,x]));
     const read=async file=>{const f=files.get(file);if(!safe(file)||f?.type!=='blob'||f.mode!=='100644'||!sha(f.sha))throw Error();
-      const r=await get(`/repos/${repository}/git/blobs/${f.sha}`);if(r.sha!==f.sha||r.encoding!=='base64'||!Number.isSafeInteger(r.size)||r.size>1024*1024)throw Error();
+      const r=await get(`/repos/${repository}/git/blobs/${f.sha}`);if(r.sha!==f.sha||r.encoding!=='base64'||!Number.isSafeInteger(r.size)||r.size>(file==='scripts/ci/clued-gated-proof-profiles.json'?WORKFLOW_PROFILES_MAX_BYTES:1024*1024))throw Error();
       const raw=Buffer.from(r.content,'base64'),text=raw.toString();if(raw.length!==r.size||!Buffer.from(text).equals(raw)||blob(text)!==f.sha)throw Error();return text;};
     stage='INDEPENDENT_R9_SOURCE_CONFIG_NOT_INSTALLED';const cfg=JSON.parse(await read(R9_RUNTIME_CONFIG));
     stage='INDEPENDENT_R9_SOURCE_CONFIG_INVALID';

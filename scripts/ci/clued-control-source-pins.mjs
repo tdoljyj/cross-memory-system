@@ -105,10 +105,11 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
     next.implementation_blobs[name]=actual;
     if(d.value.implementation_blobs[name]!==actual)changes.push({file:name,before:d.value.implementation_blobs[name],after:actual});
   }
-  // Compile only verified in-memory bytes. Neither a mutable candidate policy
-  // nor a substituted profile module can execute before its base binding.
-  const profile=readPlain(root,PROFILE);
-  if(profile!==lf(git(root,['show',`${base}:${PROFILE}`])))refuse('workflow profile differs from trusted base');
+  // Historical descriptors use the compiler from the trusted base, even when
+  // the candidate contains a compiler successor. Keep the candidate path
+  // checks, but never execute its bytes to authenticate historical metadata.
+  readPlain(root,PROFILE);
+  const profile=lf(git(root,['show',`${base}:${PROFILE}`]));
   const profileImport="'./clued-workflow-profile.mjs'";
   if(source.split(profileImport).length!==2)refuse('one known profile import required');
   const profileUrl='data:text/javascript;base64,'+Buffer.from(profile).toString('base64');

@@ -1,3 +1,4 @@
+import {WORKFLOW_PROFILES_MAX_BYTES} from './clued-workflow-profile.mjs';
 import {loadPublisherSourceHistoryFixture} from './production-publisher-source-history.fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -746,4 +747,24 @@ test('actual RPC offset times retain microseconds, optional receipts do not repl
   }
   const onlyFinal=admissionEnvelopeInput({...args,claimEvent:undefined});assert.equal(onlyFinal.packet.claim_observation.disposition,'unverified');
   assert.notEqual(check(onlyFinal).status,'ADMISSION_PACKET_CANDIDATE');
+});
+
+
+test('R9 runtime applies 2 MiB only to the fixed profile blob and retains 1 MiB for other sources',async()=>{
+  for(const [file,size,allowed] of [
+    ['scripts/ci/clued-gated-proof-profiles.json',WORKFLOW_PROFILES_MAX_BYTES,true],
+    ['scripts/ci/clued-gated-proof-profiles.json',WORKFLOW_PROFILES_MAX_BYTES+1,false],
+    ['scripts/ci/clued-work-admission.mjs',1048576,true],
+    ['scripts/ci/clued-work-admission.mjs',1048577,false],
+  ]) {
+    const f=runtimeFixture(),original=f.files.get(file),text=original+' '.repeat(size-Buffer.byteLength(original));
+    f.files.set(file,text);
+    const cfg=JSON.parse(f.files.get(R9_RUNTIME_CONFIG));
+    if(file.endsWith('clued-gated-proof-profiles.json'))cfg.execution_source.profiles_sha256=sha256(text);
+    else cfg.admission_source.script_blob=gitBlob(text);
+    f.files.set(R9_RUNTIME_CONFIG,JSON.stringify(cfg));
+    const result=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
+    assert.equal(result.reason_code==='FORWARD_EPOCH_NOT_ESTABLISHED',allowed,file+':'+size+':'+result.reason_code);
+    assert.equal(result.source_authenticated,false);
+  }
 });

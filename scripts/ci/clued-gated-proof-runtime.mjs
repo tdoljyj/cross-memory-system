@@ -1,6 +1,6 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
-import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES,parseWorkflowProfiles,decodeWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES,parseWorkflowProfiles,decodeWorkflowProfiles,WORKFLOW_PROFILES_MAX_BYTES,completeLargeWorkflowProfile} from './clued-workflow-profile.mjs';
 import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
 import {ACTOR_WORKFLOW,registeredActorTransition} from './clued-standard-runner-actor-source.mjs';
 import {readRequiredApplicability} from './clued-required-applicability.mjs';
@@ -28,7 +28,7 @@ const PUBLISHER_SNAPSHOT_FILES=Object.freeze({
 const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
   'config/merge-admission-policy.json',...Object.values(PUBLISHER_SNAPSHOT_FILES)];
-const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?1048576:524288;
+const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?WORKFLOW_PROFILES_MAX_BYTES:524288;
 export const PUBLISHER_SNAPSHOT_QUERY=`query CluedPublisherSnapshot($owner:String!,$name:String!,$publisherRegistry:String!,$publisherCompiler:String!,$qualificationRegistry:String!,$qualificationCompiler:String!) {
   repository(owner:$owner,name:$name) { nameWithOwner
     publisherRegistry:object(expression:$publisherRegistry) { ...CluedPublisherBlob }
@@ -73,7 +73,7 @@ export function loadProofSnapshot(workspace,tip,workflows) {
   for(const file of SNAPSHOT_FILES) {
     const bytes=fs.readFileSync(path.join(workspace,file)),text=bytes.toString('utf8');
     // Complete registered workflow sources retain their historical choices.
-    // Only that registry may grow to 1 MiB; every other snapshot input keeps
+    // Only that registry may grow to 2 MiB; every other snapshot input keeps
     // its 512 KiB limit. Source identity, UTF-8 and checkout checks are unchanged.
     if(bytes.length>trustedSourceByteLimit(file) || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
     files[file]=workflowBlob(text);texts[file]=text;
@@ -160,7 +160,9 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
           if(file===PUBLISHER_PR_QUALIFICATION_PATH&&JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.qualificationSources))return false;
           continue;
         }
-        const content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
+        let content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
+        if(file===SNAPSHOT_FILES[0])content=await completeLargeWorkflowProfile({read,repository,commit:snapshot.tip,
+          content,expectedBlob:snapshot.files[file]});
         const text=decodedWorkflow(content,file,snapshot.files[file]);
         if(text===null)return false;
         if(file===SNAPSHOT_FILES[0] && JSON.stringify(parseWorkflowProfiles(text))!==JSON.stringify(snapshot.profiles))return false;

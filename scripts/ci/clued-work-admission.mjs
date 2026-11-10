@@ -84,7 +84,7 @@ import {CONTROL_WORKFLOW_FILES,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlW
 import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
-import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles} from "./clued-workflow-profile.mjs";
+import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles,WORKFLOW_PROFILES_MAX_BYTES} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -476,7 +476,7 @@ function trustedPlacementCatalogues() {
     if(bytes.length>limit || !Buffer.from(text,"utf8").equals(bytes))throw Error("trusted placement catalogue invalid");
     return name.endsWith("clued-gated-proof-profiles.json")?parseWorkflowProfiles(bytes):JSON.parse(text);
   };
-  try{return {profiles:read("./clued-gated-proof-profiles.json",1048576),
+  try{return {profiles:read("./clued-gated-proof-profiles.json",WORKFLOW_PROFILES_MAX_BYTES),
     roleSpecs:read("./clued-gated-proof-role-specs.json",524288)};}
   catch{return {profiles:null,roleSpecs:null};}
 }

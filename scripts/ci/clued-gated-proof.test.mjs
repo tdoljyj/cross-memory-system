@@ -368,3 +368,18 @@ test('ungated checkout identity requires a unique attempt checkout and exact two
     {log:{...w.log,complete:false}},{run:{...w.run,head_sha:base}}])
     assert.equal(checkoutIdentityWitness({...w,...changes}).state,'unknown');
 });
+
+
+test('registered G4 still requires one real complete primary and cannot borrow gate-only or migration-verify success',()=>{
+  const file='.github/workflows/clued-g4-database.yml',p=profiles.workflows[file].accepted_sources.find(source=>source.workflow_blob==='d7876890a4df616fddae675c4d66737a70eb7045'),
+    route=p.routes.find(route=>route.self_hosted),other=p.routes.find(route=>!route.self_hosted),
+    make=()=>[{...gate}, {id:2,name:route.name,status:'completed',conclusion:'success',labels:['self-hosted','Linux'],
+      steps:Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>step(name)))},
+      {id:3,name:other.name,status:'completed',conclusion:'skipped',labels:['ubuntu-latest'],steps:[]}];
+  assert.equal(qualifyPrimary(p,make(),file).passed,true);
+  for(const edit of [jobs=>jobs[1].steps.shift(),jobs=>jobs[1].steps.push({...jobs[1].steps[0]}),
+    jobs=>jobs[1].conclusion='skipped',jobs=>jobs[1].conclusion='failure',jobs=>jobs[1].labels=['ubuntu-latest'],
+    jobs=>jobs[1].name='migration-verify',jobs=>jobs.splice(1,1),jobs=>jobs[1].steps[0].conclusion='skipped']) {
+    const jobs=make();edit(jobs);assert.equal(qualifyPrimary(p,jobs,file).passed,false);
+  }
+});

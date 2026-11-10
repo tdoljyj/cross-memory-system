@@ -7,7 +7,7 @@ export const COMPONENT_VERSION = "1.0.5";
 // the actual disk bytes, never this decoded projection.
 export const WORKFLOW_PROFILES_SCHEMA_V2='clued.gated-proof-profiles/2';
 export const WORKFLOW_PROFILES_SCHEMA_V3='clued.gated-proof-profiles/3';
-export const WORKFLOW_PROFILES_MAX_BYTES=1048576;
+export const WORKFLOW_PROFILES_MAX_BYTES=2097152;
 export const WORKFLOW_SOURCE_MAX_BYTES=524288;
 export const WORKFLOW_SOURCE_MAX_LINES=8192;
 export const WORKFLOW_SOURCE_MAX_LINE_BYTES=65536;
@@ -161,6 +161,33 @@ const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof v
   Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+
+// Contents returns no data for this registry above 1 MiB. Hydrate only that
+// fixed file, after binding its metadata to a regular blob at an immutable
+// commit. This returns raw content facts, never Source or execution authority.
+export async function completeLargeWorkflowProfile({read,repository,commit,content,expectedBlob}={}) {
+  if(content?.encoding!=='none')return content;
+  const file='scripts/ci/clued-gated-proof-profiles.json',sha=/^[a-f0-9]{40}$/;
+  const refuse=()=>{throw Error('WORKFLOW_PROFILE_BLOB_UNAVAILABLE');};
+  const expected=expectedBlob??content?.sha;
+  if(typeof read!=='function'||!/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(repository??'')||
+    !sha.test(commit??'')||!sha.test(expected??'')||content?.type!=='file'||content.path!==file||
+    content.sha!==expected||content.content!==''||!Number.isSafeInteger(content.size)||
+    content.size<=1048576||content.size>WORKFLOW_PROFILES_MAX_BYTES)refuse();
+  const get=async route=>{try{return await read(route);}catch{refuse();}};
+  const tree=await get(`/repos/${repository}/git/trees/${commit}?recursive=1`);
+  if(!sha.test(tree?.sha??'')||tree.truncated!==false||!Array.isArray(tree.tree)||tree.tree.length>100000||
+    tree.tree.some(row=>typeof row?.path!=='string')||new Set(tree.tree.map(row=>row.path)).size!==tree.tree.length)refuse();
+  const row=tree.tree.find(row=>row.path===file);
+  if(row?.type!=='blob'||row.mode!=='100644'||row.sha!==expected||row.size!==content.size)refuse();
+  const value=await get(`/repos/${repository}/git/blobs/${expected}`);
+  if(value?.sha!==expected||value.size!==content.size||value.encoding!=='base64'||typeof value.content!=='string'||
+    !/^[A-Za-z0-9+/=\r\n]*$/.test(value.content))refuse();
+  const encoded=value.content.replace(/[\r\n]/g,''),bytes=Buffer.from(encoded,'base64'),text=bytes.toString('utf8');
+  if(bytes.length!==content.size||bytes.toString('base64')!==encoded||!Buffer.from(text,'utf8').equals(bytes)||
+    workflowBlob(bytes)!==expected)refuse();
+  return {type:'file',path:file,sha:expected,size:bytes.length,encoding:'base64',content:value.content};
+}
 // A draft Source successor, not an Owner acceptance or an execution grant.
 // The only compound primary family is bound to these exact existing Git bytes
 // and the three independently supplied complete roles. Other workflows retain

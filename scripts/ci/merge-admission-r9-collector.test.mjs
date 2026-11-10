@@ -1255,3 +1255,38 @@ test('complete authenticated clock source with an ambiguous percentile keeps int
   const badAuth=structuredClone(c.clock),responses=JSON.parse(badAuth.transport_raw);responses[0].server_auth.required_scope='context:read';
   badAuth.transport_raw=JSON.stringify(responses);assert.equal(C.bindClockSource(badAuth,selection(c.pins),repository,window).status,'PARTIAL');
 });
+
+
+test('default contract collector binds a large encoding:none profile to immutable regular tree and blob facts',async()=>{
+  const profilePath='scripts/ci/clued-gated-proof-profiles.json';
+  async function load(size,change=()=>{}) {
+    const base=nativeRequest(),sourceContract=contract(),original=JSON.stringify(sourceContract.profiles),
+      text=original+' '.repeat(size-Buffer.byteLength(original)),oid=workflowBlob(text),routes=[],
+      facts={content:{type:'file',path:profilePath,sha:oid,size,encoding:'none',content:'',download_url:'https://untrusted.invalid/ignored'},
+        tree:{sha:'9'.repeat(40),truncated:false,tree:[...Object.entries(content).map(([path,value])=>({path,type:'blob',mode:'100644',sha:workflowBlob(value)})),
+          {path:profilePath,type:'blob',mode:'100644',sha:oid,size}]},
+        blob:{sha:oid,size,encoding:'base64',content:Buffer.from(text).toString('base64')}};
+    change(facts);
+    const request=async(route,opts)=>{
+      routes.push(route);
+      if(route===`/repos/${repository}/contents/${profilePath}?ref=${head}`)return {ok:true,body:facts.content};
+      if(route===`/repos/${repository}/git/trees/${head}?recursive=1`)return {ok:true,body:facts.tree};
+      if(route===`/repos/${repository}/git/blobs/${oid}`)return {ok:true,body:facts.blob};
+      return base.request(route,opts);
+    };
+    return {result:await C.loadR9DefaultBranchContract({request,repository}),routes};
+  }
+  for(const size of [1048577,2097152]) {
+    const {result,routes}=await load(size);assert.equal(result.profiles_sha256.length,64);
+    assert.equal(routes.filter(route=>route.includes('/git/blobs/')).length,1);
+    assert.ok(!routes.some(route=>route.includes('untrusted.invalid')));
+  }
+  for(const change of [f=>f.content.path='scripts/ci/other.json',f=>f.content.type='symlink',f=>f.content.sha='a'.repeat(40),
+    f=>f.content.size++,f=>f.tree.truncated=true,f=>f.tree.tree.at(-1).mode='120000',f=>f.tree.tree.at(-1).size++,
+    f=>f.blob.sha='a'.repeat(40),f=>f.blob.size++,f=>delete f.blob.content,
+    f=>f.blob.content=Buffer.concat([Buffer.alloc(1048576,120),Buffer.from([255])]).toString('base64')])
+    await assert.rejects(load(1048577,change),/NATIVE_SOURCE_INVALID/);
+  await assert.rejects(load(2097153),/NATIVE_SOURCE_INVALID/);
+  const small=nativeRequest();assert.ok((await C.loadR9DefaultBranchContract({request:small.request,repository})).profiles);
+  assert.ok(!small.routes.some(route=>route.includes('/git/blobs/')));
+});
