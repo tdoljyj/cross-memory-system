@@ -1949,7 +1949,8 @@ export class ResidentExecutor {
   async roleProbeMaintenance({ upgradePaused = false, watch = null } = {}) {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
-    // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
+    // 15-minute interval, except that an uncertain answer is retried after 1, 2, 4, 8 minutes (role-probe.mjs), and `urgent` (a start,
+    // a re-arm, a failure that may mean the role is gone) is due at once.
     const mode = this.nodeMode(), now = this.clock();
     // A paused upgrade is quiet only with no open batch at all. Match both the fixed request shape and
     // its original bytes' digest; an ordinary/unknown/torn pause still prevents the probe.
@@ -1960,7 +1961,7 @@ export class ResidentExecutor {
       && source.requestSha256 === sha256(Buffer.from(canonicalJson({ contract: PAUSE_CONTRACT, reason: source.reason }) + '\n'));
     const idle = !(await this.ledger.halted()) && (watch ? !pause && open.every(e => Ledger.resumable(e)) : pause ? upgradePause && open.length === 0
       : (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0));
-    if (watch ? !idle || (this.roleProbe.last !== null && now < this.roleProbe.last.at) : !this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
+    if (watch ? !idle || (this.roleProbe.last !== null && now < this.roleProbe.last.at) : !this.roleProbe.due({ now, mode: mode === 'ACTIVE' || mode === 'UNCERTAIN' ? mode : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
     if (drift) { await this.haltWith(drift, { phase: watch ? 'queue-watch' : 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
