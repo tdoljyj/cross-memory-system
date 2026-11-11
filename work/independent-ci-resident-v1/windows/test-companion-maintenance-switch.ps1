@@ -32,6 +32,7 @@ function Remove-CompanionBuild { $script:events.Add('cleanup') }
 function Get-CompanionAccountFacts { @{} }
 function Get-CompanionDomainCredsDisabled { 0 }
 function Get-LockoutPolicy { @{} }
+function Get-CompanionRelayParentsProblem { $null }
 function Get-CompanionAccountPreflight { @{refusals=@()} }
 function Register-CompanionFallbackTask { $script:events.Add('register-fallback') }
 function Write-CompanionPending { $script:events.Add('write-pending') }

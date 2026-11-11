@@ -43,7 +43,7 @@ async function pump(t, { unitFacts, listing = () => '', relay = m => (m === 'Sen
     if (m) { modes.push(m); return relay(m, now); }
     if (a.some(x => x.startsWith('--property=ActiveState'))) { factsAt.push(now - T0); return unitFacts(now - T0); }
     if (a.includes('/usr/bin/ls')) { const l = listing(now - T0); return typeof l === 'string' ? { code: 0, stdout: l } : l; }
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     return { code: 0, stdout: '' }; // the worker start
   };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async p => p.includes('\\outgoing\\'),
@@ -123,7 +123,7 @@ test('a companion restarted after the cancel answers COMPANION_PUMP_CANCELLED an
   const req = await box.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
   await box.cancel(req, 'heartbeat-lost');
   const runs = [];
-  const c = new Companion({ cfg, mailbox: box, run: async a => { runs.push(a); return a.includes('quiescence') ? { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) } : { code: 0, stdout: '' }; },
+  const c = new Companion({ cfg, mailbox: box, run: async a => { runs.push(a); return a.includes('quiescence') ? { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) } : { code: 0, stdout: '' }; },
     fileExists: async () => true, sleep: async () => {}, clock: () => T0 });
   await c.step();
   assert.equal((await box.poll(req)).code, 'COMPANION_PUMP_CANCELLED');
@@ -194,7 +194,7 @@ test('the heartbeat timer: a beat at once and every 10 s apart from the lanes; a
   const box2 = await Mailbox.open(await tempRoot(t), () => T0);
   box2.beat = async () => { throw new Error('disk full'); };
   const q = await box2.send('linux-quiescence', { batchId: BATCH }, 60_000);
-  const c = new Companion({ cfg, mailbox: box2, run: async () => ({ code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) }), fileExists: async () => false, sleep: async () => {}, clock: () => T0 });
+  const c = new Companion({ cfg, mailbox: box2, run: async () => ({ code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) }), fileExists: async () => false, sleep: async () => {}, clock: () => T0 });
   await c.step();
   assert.equal((await box2.poll(q)).ok, true);
 });

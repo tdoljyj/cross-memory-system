@@ -110,7 +110,7 @@ test('companion: a request polled between its create and its last byte is left o
     linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux',
   });
   const runs = [];
-  const run = async args => { runs.push(args); return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) }; };
+  const run = async args => { runs.push(args); return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) }; };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: async ms => { now += ms; }, clock });
   const w = await slowWrite(t, path.join(box.requests, `${sent.requestId}.json`), bytes);
   for (const end of cuts(bytes)) {

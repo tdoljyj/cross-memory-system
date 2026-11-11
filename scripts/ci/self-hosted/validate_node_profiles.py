@@ -83,6 +83,18 @@ def main() -> int:
         if capacity not in capacity_profiles:
             fail(errors, f"{host_id}: unknown capacity profile {capacity}")
 
+        # The drives the host's watchdog watches (Task 5282d4ae); render-host-watchdog.ps1 checks the same.
+        drives = host.get("watchdog_drives", [{"drive": "C"}])
+        letters = [str(entry.get("drive", "")).upper() for entry in drives] if isinstance(drives, list) else []
+        if not isinstance(drives, list) or not all(re.fullmatch(r"[A-Z]", letter) for letter in letters) or len(set(letters)) != len(letters):
+            fail(errors, f"{host_id}: watchdog_drives must be a list of distinct single drive letters")
+        elif capacity in capacity_profiles:
+            for entry in drives:
+                suspend = entry.get("suspend_free_gb", capacity_profiles[capacity].get("suspend_c_free_gb", 0))
+                resume = entry.get("resume_free_gb", capacity_profiles[capacity].get("resume_c_free_gb", 0))
+                if not 0 < suspend < resume or not isinstance(entry.get("clean", True), bool):
+                    fail(errors, f"{host_id}: watchdog_drives {entry.get('drive')}: needs 0 < suspend_free_gb < resume_free_gb and a boolean clean")
+
         additional = host.get("additional_linux_runners", [])
         if not isinstance(additional, list):
             fail(errors, f"{host_id}: additional_linux_runners must be a list")

@@ -65,7 +65,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -151,7 +151,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 732'),
+        for changed in [self.config.replace('# clued-reviewed-count: 737', '# clued-reviewed-count: 736'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -427,7 +427,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
 
     def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:726], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
                          reviewed.LEGACY_RECORD_LINES_SHA256)
@@ -460,7 +460,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
                    self.config.replace(rows[0] + '\n', '', 1),
                    self.config.replace(rows[0], fourth, 1),
                    self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
-                   self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 734') + fourth + '\n']
+                   self.config.replace('# clued-reviewed-count: 737', '# clued-reviewed-count: 738') + fourth + '\n']
         for changed in changes:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -543,7 +543,7 @@ class RoleProbeExactTokenTests(unittest.TestCase):
 
     def test_only_one_exact_addition_preserves_every_prior_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:729], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:729]) + '\n').encode()).hexdigest(),
                          reviewed.PRIOR_RECORD_LINES_SHA256)
@@ -571,9 +571,9 @@ class RoleProbeExactTokenTests(unittest.TestCase):
     def test_deleted_duplicate_or_extra_record_is_rejected(self):
         row = self.rows()[729]
         second = row.replace(':generic-api-key:73', ':generic-api-key:74')
-        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 737', 'count: 736'),
                         self.config.replace(row, self.rows()[728], 1),
-                        self.config.replace('count: 733', 'count: 734') + second + '\n']:
+                        self.config.replace('count: 737', 'count: 738') + second + '\n']:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
 
@@ -650,7 +650,9 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
         cls.blob = reviewed.run(['git', 'cat-file', 'blob',
                                  f'{reviewed.ROLE_PROBE_COMMIT}:{reviewed.ROLE_PROBE_PATH}'], cwd=ROOT).decode()
 
-    def run_self_test(self, suppress=None):
+    def run_self_test(self, suppress=None, missing_integrity=None, integrity_rules=None,
+                      omitted_integrity_field=None, wrong_integrity_commit=False, spanning_integrity=False,
+                      use_oid_rule=False):
         actual_run = reviewed.subprocess.run
         scans = []
         docker = 'controlled-detector-wire-mock'
@@ -659,7 +661,7 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, code, json.dumps(findings).encode(), b'')
 
         def finding(path, rule, line=1, commit='0' * 40):
-            return {'File': path, 'RuleID': rule, 'StartLine': line, 'Commit': commit,
+            return {'File': path, 'RuleID': rule, 'StartLine': line, 'EndLine': line, 'Commit': commit,
                     'Fingerprint': commit + ':' + path + ':' + rule + ':' + str(line)}
 
         def route(args, **options):
@@ -721,6 +723,33 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                                         for spec in reviewed._candidate_policy.SPECS_D94])
             if index == 13:
                 return result(args, 1, [finding('curl-credential-probe.txt', 'curl-auth-user')])
+            if index in [14, 15, 16]:
+                prefix, line = [('','40'), ('other-path/','40'), ('','41')][index - 14]
+                path = prefix + reviewed.PUBLIC_BATCH_PATH
+                self.assertTrue((repo / path).exists())
+                if index == 16:
+                    previous = actual_run(['git', 'cat-file', '-e', 'HEAD^:' + path],
+                                          cwd=repo, capture_output=True, check=False)
+                    self.assertNotEqual(previous.returncode, 0)
+                return result(args, 1, [finding(path, 'generic-api-key', int(line))])
+            if index in [17, 18, 19]:
+                prefix, shift = [('', 0), ('other-path/', 0), ('', 1)][index - 17]
+                path = prefix + reviewed.INTEGRITY_PATH
+                expected = actual_run(['git', 'cat-file', 'blob', reviewed.INTEGRITY_COMMIT + ':' + reviewed.INTEGRITY_PATH],
+                                      cwd=ROOT, capture_output=True, check=True).stdout
+                self.assertEqual((repo / path).read_bytes(), (b'\n' if shift else b'') + expected)
+                head = actual_run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, check=True).stdout.decode().strip()
+                selected = {line:(integrity_rules or {}).get(line, rules[0] if use_oid_rule and line == 76 else 'generic-api-key')
+                            for line in reviewed.INTEGRITY_SPECS}
+                selected = {line:rules[0] if value == 'oid_default' else value for line,value in selected.items()}
+                values = [finding(path, selected[line], line + shift,
+                                  '0' * 40 if wrong_integrity_commit else head)
+                          for line in reviewed.INTEGRITY_SPECS if missing_integrity != (index, line)]
+                if omitted_integrity_field is not None:
+                    values[0].pop(omitted_integrity_field, None)
+                if spanning_integrity:
+                    values[0]['EndLine'] += 1
+                return result(args, 1, values)
             self.fail('Unexpected extra detector call')
 
         with tempfile.TemporaryDirectory(prefix='clued-role-probe-self-test-') as temporary:
@@ -736,11 +765,14 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
 
     def test_new_commit_other_path_and_added_line_are_all_detected(self):
         report, scans = self.run_self_test()
-        self.assertEqual(len(scans), 14)
+        self.assertEqual(len(scans), 20)
         for key in ['role_probe_new_commit_detection', 'role_probe_different_path_detection',
                     'role_probe_different_line_detection', 'historical_json_new_commit_detection',
                     'historical_json_different_path_detection', 'historical_json_different_line_detection',
-                    'genuine_curl_credential_detection']:
+                    'genuine_curl_credential_detection', 'public_batch_key_new_commit_detection',
+                    'public_batch_key_different_path_detection', 'public_batch_key_different_line_detection',
+                    'integrity_metadata_new_commit_detection', 'integrity_metadata_different_path_detection',
+                    'integrity_metadata_different_line_detection']:
             self.assertIs(report[key], True, key)
 
     def test_each_suppressed_role_probe_regression_fails_the_self_test(self):
@@ -757,6 +789,40 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                               (13, 'Genuine credential-shaped curl fixture was suppressed')]:
             with self.subTest(scan=index), self.assertRaisesRegex(ValueError, reason):
                 self.run_self_test(suppress=index)
+
+    def test_each_suppressed_public_batch_key_regression_fails_the_self_test(self):
+        for index, reason in [(14, 'in a new commit'), (15, 'at another path'), (16, 'at another line')]:
+            with self.subTest(scan=index), self.assertRaisesRegex(ValueError, 'Public batch key was suppressed ' + reason):
+                self.run_self_test(suppress=index)
+
+    def test_each_suppressed_integrity_metadata_regression_fails_the_self_test(self):
+        for index, reason in [(17, 'in a new commit'), (18, 'at another path'), (19, 'at another line')]:
+            with self.subTest(scan=index), self.assertRaisesRegex(ValueError, 'Integrity metadata was suppressed ' + reason):
+                self.run_self_test(suppress=index)
+
+    def test_a_single_missing_integrity_location_cannot_pass_a_canary(self):
+        for index, line in [(17, 76), (18, 82), (19, 83)]:
+            with self.subTest(scan=index, line=line), self.assertRaisesRegex(ValueError, 'Integrity metadata was suppressed'):
+                self.run_self_test(missing_integrity=(index, line))
+
+    def test_actual_whole_file_default_rule_for_public_oid_is_accepted(self):
+        report, scans = self.run_self_test(use_oid_rule=True)
+        self.assertEqual(len(scans), 20)
+        self.assertIs(report['integrity_metadata_new_commit_detection'], True)
+        self.assertIs(report['integrity_metadata_different_path_detection'], True)
+        self.assertIs(report['integrity_metadata_different_line_detection'], True)
+
+    def test_unreviewed_rules_cannot_replace_any_integrity_location(self):
+        for rules in [{76:'private-key'}, {82:'oid_default'}, {83:'oid_default'}]:
+            with self.subTest(), self.assertRaisesRegex(ValueError,'Integrity metadata was suppressed'):
+                self.run_self_test(integrity_rules=rules)
+
+    def test_missing_fields_prior_commit_or_spanning_match_cannot_prove_all_locations(self):
+        variants = [{'omitted_integrity_field':field} for field in ['File','RuleID','StartLine','EndLine','Commit']]
+        variants += [{'wrong_integrity_commit':True}, {'spanning_integrity':True}]
+        for variant in variants:
+            with self.subTest(), self.assertRaisesRegex(ValueError,'Integrity metadata was suppressed'):
+                self.run_self_test(**variant)
 
 
 class HistoricalD94ExactTwinTests(unittest.TestCase):
@@ -778,12 +844,12 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
 
     def test_exactly_one_record_is_appended_and_the_732_bytes_are_preserved(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 733)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
         self.assertEqual(self.rows()[:732], self.rows(self.old_config))
         self.assertEqual(len(self.rows(self.old_config)), 732)
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:732]) + '\n').encode()).hexdigest(),
                          reviewed.PRIOR_732_RECORD_LINES_SHA256)
-        self.assertEqual([r['fingerprint'] for r in records[732:]], [self.FINGERPRINT])
+        self.assertEqual([r['fingerprint'] for r in records[732:733]], [self.FINGERPRINT])
         self.assertEqual(records[732]['kinds'], [self.policy.KIND])
         self.assertEqual(set(self.policy.FINDINGS), set(self.policy.FINDINGS_CC353) | {self.FINGERPRINT})
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
@@ -820,11 +886,11 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
             with self.subTest(fingerprint=fingerprint), self.assertRaises(ValueError):
                 reviewed.parse_records(self.config.replace(row, replacement, 1))
             with self.subTest(extra=fingerprint), self.assertRaises(ValueError):
-                reviewed.parse_records(self.config.replace('count: 733', 'count: 734') + replacement + '\n')
+                reviewed.parse_records(self.config.replace('count: 737', 'count: 738') + replacement + '\n')
 
     def test_deleted_or_replaced_records_are_rejected(self):
         row = self.rows()[732]
-        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 737', 'count: 736'),
                         self.config.replace(row, self.rows()[731], 1)]:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -853,6 +919,185 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
             mutate(data[self.D94])
             with self.subTest(), self.assertRaises(ValueError):
                 self.policy.verify(self.FINGERPRINT, data)
+
+
+class PublicRecoveryBatchKeyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.blob = reviewed.run(['git', 'cat-file', 'blob',
+                                reviewed.PUBLIC_BATCH_COMMIT + ':' + reviewed.PUBLIC_BATCH_PATH], cwd=ROOT).decode()
+
+    def test_one_exact_addition_preserves_original733_record_bytes_and_default_rules(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), reviewed.EXPECTED_COUNT)
+        self.assertEqual(hashlib.sha256(('\n'.join(rows[:733]) + '\n').encode()).hexdigest(),
+                         reviewed.ORIGINAL_733_RECORD_LINES_SHA256)
+        self.assertEqual(records[733:734], [{'fingerprint': reviewed.PUBLIC_BATCH_FINGERPRINT,
+                                          'kinds': [reviewed.PUBLIC_BATCH_KIND]}])
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
+
+    def test_commit_path_rule_line_kind_and_borrowed_kind_are_not_transferable(self):
+        row = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)][733]
+        record = json.loads(row[len(reviewed.PREFIX):])
+        commit, path, rule, line = reviewed.PUBLIC_BATCH_FINGERPRINT.split(':')
+        for fp in [':'.join(['0' * 40, path, rule, line]), ':'.join([commit, path + '.other', rule, line]),
+                   ':'.join([commit, path, rule, '41']), ':'.join([commit, path, 'private-key', line])]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(dict(record, fingerprint=fp))))
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.verify_public_batch_key(ROOT, fp, self.blob)
+        changed = dict(record, kinds=['ARTIFACT_DIGEST'])
+        with self.assertRaises(ValueError):
+            reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(changed)))
+        old = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)][0]
+        value = json.loads(old[len(reviewed.PREFIX):]); value['kinds'] = [reviewed.PUBLIC_BATCH_KIND]
+        with self.assertRaises(ValueError):
+            reviewed.parse_records(self.config.replace(old, reviewed.PREFIX + json.dumps(value)))
+
+    def test_deleted_duplicate_extra_reordered_or_rewritten_record_is_rejected(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        for text in [self.config.replace(rows[733] + '\n', '').replace('count: 737', 'count: 736'),
+                     self.config.replace(rows[733], rows[732]),
+                     self.config.replace('count: 737', 'count: 738') + rows[733] + '\n',
+                     self.config.replace(rows[0] + '\n' + rows[1], rows[1] + '\n' + rows[0]),
+                     self.config.replace(rows[0], rows[0].replace(': {', ': { ', 1))]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(text)
+
+    def test_actual_immutable_blob_line_context_and_public_usage_pass(self):
+        reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT, self.blob)
+
+    def test_changed_blob_git_binding_line_or_context_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT, self.blob + '\n')
+        with patch.object(reviewed, 'run', return_value=b'0' * 40 + b'\n'), self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT, self.blob)
+        for name in ['PUBLIC_BATCH_LINE_SHA256', 'PUBLIC_BATCH_CONTEXT_SHA256']:
+            with self.subTest(), patch.object(reviewed, name, '0' * 64), self.assertRaisesRegex(ValueError, 'exact line or context'):
+                reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT, self.blob)
+
+    def test_repinning_blob_cannot_admit_authentication_or_extra_use(self):
+        mutations = [self.blob + '\n$headers = @{ Authorization = $BatchKey }\n',
+                     self.blob.replace("'-BatchKey', $BatchKey", "'-Token', $BatchKey")]
+        for text in mutations:
+            self.assertNotEqual(text, self.blob)
+            raw = text.encode()
+            pin = {'blob': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
+                   'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+            with self.subTest(), patch.dict(reviewed.PUBLIC_BATCH_BLOB, pin), \
+                    patch.object(reviewed, 'run', return_value=pin['blob'].encode() + b'\n'), \
+                    self.assertRaisesRegex(ValueError, 'metadata/archive use changed'):
+                reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT, text)
+
+    def test_genuine_credential_variants_do_not_gain_the_public_kind(self):
+        original = re.search(r"\$BatchKey = '([^']+)'", self.blob).group(1)
+        for replacement in ['clued_bnd_' + 'A' * 40, 'sk_live_' + 'A' * 32, 'A' * 64]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.verify_public_batch_key(ROOT, reviewed.PUBLIC_BATCH_FINGERPRINT,
+                                                 self.blob.replace(original, replacement))
+
+
+class ExactIntegrityMetadataTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.text = reviewed.run(['git', 'cat-file', 'blob',
+                                reviewed.INTEGRITY_COMMIT + ':' + reviewed.INTEGRITY_PATH], cwd=ROOT).decode()
+
+    def test_only_three_exact_additions_preserve_all734_record_lines_and_detection(self):
+        records = reviewed.parse_records(self.config)
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        self.assertEqual(len(records), 737)
+        self.assertEqual(hashlib.sha256(('\n'.join(rows[:734]) + '\n').encode()).hexdigest(),
+                         reviewed.ORIGINAL_734_RECORD_LINES_SHA256)
+        self.assertEqual([record['fingerprint'] for record in records[734:]], list(reviewed.INTEGRITY_FINDINGS))
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
+
+    def test_current_metadata_names_do_not_mislabel_digests_as_credentials(self):
+        tree = ast.parse((ROOT / 'scripts/ci/reviewed_gitleaks.py').read_text(encoding='utf-8'))
+        names = [target.id for node in tree.body if isinstance(node, ast.Assign) for target in node.targets
+                 if isinstance(target, ast.Name) and target.id.startswith(('PUBLIC_BATCH_', 'INTEGRITY_'))]
+        self.assertGreater(len(names), 10)
+        self.assertTrue(all(re.search(r'key|token|secret', name, re.I) is None for name in names))
+
+    def test_actual_old_blob_spans_derivations_and_uses_pass(self):
+        for fingerprint in reviewed.INTEGRITY_FINDINGS:
+            reviewed.verify_integrity_metadata(ROOT, fingerprint, self.text)
+
+    def test_exact_identity_and_kind_cannot_transfer_or_be_borrowed(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        for row in rows[734:]:
+            original = json.loads(row[len(reviewed.PREFIX):]); commit, path, rule, line = original['fingerprint'].split(':')
+            alternatives = [dict(original, fingerprint=':'.join(['0' * 40, path, rule, line])),
+                            dict(original, fingerprint=':'.join([commit, 'other/' + path, rule, line])),
+                            dict(original, fingerprint=':'.join([commit, path, rule, str(int(line)+1)])),
+                            dict(original, fingerprint=':'.join([commit, path, 'private-key', line])),
+                            dict(original, kinds=['ARTIFACT_DIGEST'])]
+            for value in alternatives:
+                with self.subTest(), self.assertRaises(ValueError):
+                    reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(value)))
+            changed = original['fingerprint'].replace(commit, '0' * 40)
+            with self.assertRaises(ValueError): reviewed.verify_integrity_metadata(ROOT, changed, self.text)
+        first = json.loads(rows[0][len(reviewed.PREFIX):]); first['kinds'] = [reviewed.INTEGRITY_KIND]
+        with self.assertRaises(ValueError):
+            reviewed.parse_records(self.config.replace(rows[0], reviewed.PREFIX + json.dumps(first)))
+
+    def test_removed_duplicate_extra_or_reordered_records_are_rejected(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        for text in [self.config.replace(rows[734] + '\n', '').replace('count: 737','count: 736'),
+                     self.config.replace(rows[734], rows[735]),
+                     self.config.replace('count: 737','count: 738') + rows[734] + '\n',
+                     self.config.replace(rows[733] + '\n', rows[733] + ' \n')]:
+            with self.subTest(), self.assertRaises(ValueError): reviewed.parse_records(text)
+
+    def test_changed_artifact_git_binding_line_context_or_origin_is_rejected(self):
+        fingerprint = next(iter(reviewed.INTEGRITY_FINDINGS))
+        with self.assertRaises(ValueError): reviewed.verify_integrity_metadata(ROOT, fingerprint, self.text + '\n')
+        with patch.object(reviewed, 'run', return_value=b'0' * 40 + b'\n'), self.assertRaises(ValueError):
+            reviewed.verify_integrity_metadata(ROOT, fingerprint, self.text)
+        with patch.object(reviewed, 'INTEGRITY_CONTEXT_SHA256', '0' * 64), self.assertRaises(ValueError):
+            reviewed.verify_integrity_metadata(ROOT, fingerprint, self.text)
+        for fp, spec in reviewed.INTEGRITY_FINDINGS.items():
+            with self.subTest(), patch.dict(spec, sha256='0' * 64), self.assertRaises(ValueError):
+                reviewed.verify_integrity_metadata(ROOT, fp, self.text)
+        real_run = reviewed.run
+        def altered_origin(args, **options):
+            value = real_run(args, **options)
+            return value + b' ' if args[:3] == ['git','cat-file','blob'] else value
+        with patch.object(reviewed, 'run', side_effect=altered_origin), self.assertRaises(ValueError):
+            reviewed.verify_integrity_metadata(ROOT, fingerprint, self.text)
+
+    def test_even_repinning_cannot_admit_an_authentication_use_or_wrong_digest(self):
+        tree = ast.parse(self.text)
+        for fp, spec in reviewed.INTEGRITY_FINDINGS.items():
+            number = int(fp.rsplit(':',1)[1])
+            assignment = next(node for node in tree.body if isinstance(node,ast.Assign) and node.lineno == number)
+            symbol = assignment.targets[0].id
+            text = self.text + '\nheaders = {"Authorization": ' + symbol + '}\n'
+            raw = text.encode(); pin = {'blob':hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest(),
+                                       'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+            real_run = reviewed.run
+            def route(args, **options):
+                if args[:2] == ['git','rev-parse'] and args[-1] == reviewed.INTEGRITY_COMMIT+':'+reviewed.INTEGRITY_PATH:
+                    return pin['blob'].encode()+b'\n'
+                return real_run(args, **options)
+            with self.subTest(), patch.dict(reviewed.INTEGRITY_BLOB,pin), patch.object(reviewed,'run',side_effect=route), \
+                    self.assertRaisesRegex(ValueError,'usage changed'):
+                reviewed.verify_integrity_metadata(ROOT,fp,text)
+            lines = self.text.splitlines(keepends=True)
+            value = assignment.value.value
+            lines[number - 1] = symbol + ' = ' + json.dumps('0' * len(value)) + '\n'
+            text = ''.join(lines); raw = text.encode()
+            pin = {'blob':hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest(),
+                   'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+            row_sha = hashlib.sha256(lines[number-1].encode()).hexdigest()
+            context_sha = hashlib.sha256(''.join(lines[73:83]).encode()).hexdigest()
+            with self.subTest(derivation=number), patch.dict(reviewed.INTEGRITY_BLOB,pin), \
+                    patch.dict(spec,sha256=row_sha), patch.object(reviewed,'INTEGRITY_CONTEXT_SHA256',context_sha), \
+                    patch.object(reviewed,'run',side_effect=route), self.assertRaisesRegex(ValueError,'derivation changed'):
+                reviewed.verify_integrity_metadata(ROOT,fp,text)
 
 
 if __name__ == '__main__':

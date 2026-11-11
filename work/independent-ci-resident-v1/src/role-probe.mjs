@@ -5,6 +5,10 @@ import { check, exactKeys } from './canonical.mjs';
 
 export const ROLE_PROBE_STAGE = 11;
 export const ROLE_PROBE_INTERVAL_MS = Object.freeze({ STANDBY: 15 * 60_000, ACTIVE: 30 * 60_000 });
+// Node mode UNCERTAIN (a start or a re-arm with no definite answer yet) retries an uncertain answer soon, backing off to STANDBY's
+// 15 minutes (DESIGN §29.2 item 5). TURING 2026-11-11: a probe 2.5 minutes after boot answered uncertain and the node stayed
+// UNCERTAIN, taking nothing, for the full 15 minutes. ACTIVE and STANDBY keep their intervals.
+export const ROLE_PROBE_UNCERTAIN_BACKOFF_MS = Object.freeze([60_000, 120_000, 240_000, 480_000, 15 * 60_000]);
 export const ROLE_PROBE_CODES = Object.freeze({ held: 'ROLE_PROBE_HELD', 'not-held': 'ROLE_PROBE_NOT_HELD',
   uncertain: 'ROLE_PROBE_UNCERTAIN', connection: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', watchedHead: 'ROLE_PROBE_HELD_WATCHED_HEAD' });
 export const ROLE_PROBE_FACT_FIELDS = Object.freeze(['result', 'code']);
@@ -45,9 +49,15 @@ export class RoleProbe {
     check(v.last !== null || v.failures === 0, 'ROLE_PROBE_BOOK_REFUSED');
     Object.assign(this, structuredClone(v));
   }
+  // mode: the node mode, ACTIVE, STANDBY or UNCERTAIN. UNCERTAIN is STANDBY, except that a run of uncertain answers backs off from
+  // one minute (failures > 0 only after an uncertain answer, restore() checks it).
+  interval(mode) {
+    if (mode !== 'UNCERTAIN') return ROLE_PROBE_INTERVAL_MS[mode];
+    return this.failures > 0 ? ROLE_PROBE_UNCERTAIN_BACKOFF_MS[Math.min(this.failures, ROLE_PROBE_UNCERTAIN_BACKOFF_MS.length) - 1] : ROLE_PROBE_INTERVAL_MS.STANDBY;
+  }
   due({ now, mode, idle }) {
-    return idle === true && Number.isSafeInteger(now) && now > 0 && Object.hasOwn(ROLE_PROBE_INTERVAL_MS, mode)
-      && (this.last === null || (now >= this.last.at && (this.urgent === true || now - this.last.at >= ROLE_PROBE_INTERVAL_MS[mode])));
+    return idle === true && Number.isSafeInteger(now) && now > 0 && (mode === 'UNCERTAIN' || Object.hasOwn(ROLE_PROBE_INTERVAL_MS, mode))
+      && (this.last === null || (now >= this.last.at && (this.urgent === true || now - this.last.at >= this.interval(mode))));
   }
   observe(fact, now) {
     const f = validateRoleProbeFact(fact);

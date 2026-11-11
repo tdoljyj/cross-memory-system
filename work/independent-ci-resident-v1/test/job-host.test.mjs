@@ -230,7 +230,7 @@ test('the companion answers a timed-out bundle with its job tree, then answers l
   const run = async (a, o) => {
     runs.push([a.at(-1), o.timeoutMs]);
     if (a.includes('-BatchId')) return { code: null, stdout: '', stderr: '', timedOut: true, tree: 'zero' };
-    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }), stderr: '' };
+    return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }), stderr: '' };
   };
   const companion = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: tick, clock: () => now });
   await companion.step();
@@ -259,7 +259,7 @@ test('a relay call past its limit: the pump refuses as before, and its blocked h
     }
     // the worker gives up on the round it never got an answer for: its clean 'blocked' record
     if (a.includes('/usr/bin/ls')) return { code: 0, stdout: gaveUp ? 'challenge-01.ready.json\nblocked.ready.json\n' : 'challenge-01.ready.json\n' };
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     return { code: 0, stdout: '' };
   };
   // The ended call may have written: the arrival check finds no challenge in Windows incoming (DESIGN §25.3).

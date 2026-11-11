@@ -183,7 +183,7 @@ test('the companion pump stops relaying on a cancel of its own request and never
   const clock = () => now;
   const mailbox = await Mailbox.open(root, clock);
   const log = [];
-  const run = async argv => { log.push(argv.join(' ')); return argv.join(' ').includes('quiescence') ? { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) } : { code: 0, stdout: '' }; };
+  const run = async argv => { log.push(argv.join(' ')); return argv.join(' ').includes('quiescence') ? { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) } : { code: 0, stdout: '' }; };
   const cfg = { contract: 'clued.independent-ci.resident-companion-config/2', node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
@@ -215,7 +215,7 @@ test('a cancel that comes with the issue transfer starts no worker', async t => 
   const run = async argv => {
     const a = argv.join(' ');
     log.push(a);
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     if (a.includes('-Mode SendIssue')) { await mailbox.cancel(req, 'owner-abort'); return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) }; }
     return { code: 0, stdout: '' };
   };
@@ -244,7 +244,7 @@ async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith(
   const ctx = { cancel: async () => { if (cancelAt === null) { cancelAt = now; await mailbox.cancel(req, 'owner-abort'); } }, advance: ms => { now += ms; } };
   const run = async (argv, { timeoutMs } = {}) => {
     const a = argv.join(' ');
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     if (a.includes('/usr/bin/ls')) return typeof listing === 'function' ? listing(ctx) : { code: 0, stdout: listing };
     const mode = /-Mode (\w+)/.exec(a)?.[1];
     if (mode) { log.push({ mode, afterCancel: cancelAt !== null }); return relay(mode, { ...ctx, timeoutMs }); }
@@ -359,7 +359,7 @@ test('a cancel during the callback rounds skips the blocked hand-over: the pump 
   const run = async argv => {
     const a = argv.join(' ');
     log.push(a);
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     if (a.includes('-Mode SendIssue')) return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
     return { code: 0, stdout: '' }; // worker start, and an empty Linux outgoing listing: nothing to relay yet
   };

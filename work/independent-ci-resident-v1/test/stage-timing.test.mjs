@@ -312,7 +312,7 @@ test('companion pump: relay calls and challenge rounds are recorded before the a
       }
       if (a.some(x => x.startsWith('--property=ActiveState'))) return { code: 0, stdout: 'ActiveState=active\nInvocationID=ab\nExecMainStartTimestampMonotonic=5\n' };
       if (a.includes('/usr/bin/ls')) return { code: 0, stdout: answered ? 'result.ready.json\n' : 'challenge-01.ready.json\n' };
-      if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+      if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
       return { code: 0, stdout: '' };
     };
     // the unit reads inactive once the result is relayed, so the pump ends
