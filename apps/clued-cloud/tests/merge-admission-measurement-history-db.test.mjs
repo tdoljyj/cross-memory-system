@@ -91,7 +91,7 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
       assert.equal((await admin.query(`select md5(array_to_string(statements,'')) value
         from supabase_migrations.schema_migrations where version=$1`, [version])).rows[0].value, expected);
     };
-    const seedUser = uuid(), seedToken = hash(); let seedClaim, seedQueue;
+    const seedUser = uuid(), seedToken = hash(); let seedClaim, seedQueue, seededDigest;
     for (const name of migrations) {
       if (name === candidate) {
         // Existing source state is created BEFORE the candidate, using the real
@@ -139,6 +139,33 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
             await applyPublished(candidateText, 'atomic_positive');
             assert.equal((await admin.query('select count(*)::int n from supabase_migrations.schema_migrations')).rows[0].n, 1);
           });
+          // The seeded stream is pinned to the source digest at install time. A later
+          // migration that legitimately redefines a pinned source function (for
+          // example 20261108161615 rewrites work_claim_merge_queue_v1) must turn it
+          // into SOURCE_CHANGED, so its bootstrap/FIFO facts are checked right here.
+          await t.test('bootstrap includes existing policy, claim and departing-head marker without changing the queue', async () => {
+            const seeded = (await admin.query(`select clued_private.merge_measurement_page_v1($1,'{}') v`, [seedUser])).rows[0].v;
+            assert.equal(seeded.status, 'ok');
+            assert.equal(seeded.events[0].kind, 'policy');
+            assert.equal(seeded.events[0].payload.initial_snapshot, true);
+            assert.ok(seeded.events.some(e => e.kind === 'claim' && e.payload.claim_id === seedClaim.claim_id));
+            assert.ok(seeded.events.some(e => e.kind === 'queue_marker' && e.payload.merge_ref === 'merge:owner/repo:main'));
+            assert.deepEqual((await admin.query(`select clued_private.work_claim_merge_queue_v1($1,'merge:owner/repo:main') v`, [seedUser])).rows[0].v, seedQueue);
+            assert.equal(new Set(seeded.events.map(e => e.transaction_id)).size, 1);
+          });
+          await t.test('microsecond replay agrees with the actual existing PostgreSQL FIFO on seeded inputs', async () => {
+            const seeded = (await admin.query(`select clued_private.merge_measurement_page_v1($1,'{}') v`, [seedUser])).rows[0].v;
+            const validated = validateJournal(JSON.stringify(seeded), { expectedSourceDigest: seeded.source_digest, expectedStream: seeded.stream_id });
+            assert.equal(validated.status, 'INTEGRITY_VALIDATED');
+            const state = emptyReplayState(); for (const group of validated.groups) applyTransaction(state, group);
+            const actual = (await admin.query(`select jsonb_build_object('at',clock_timestamp(),
+              'queue',clued_private.work_claim_merge_queue_v1($1,'merge:owner/repo:main')) v`, [seedUser])).rows[0].v;
+            const replay = queueAt(state, 'merge:owner/repo:main', timestampMicros(actual.at));
+            assert.equal(replay.depth, actual.queue.length); assert.equal(replay.head.claim_id, actual.queue.head.claim_id);
+            assert.equal(replay.head.since, timestampMicros(actual.queue.head.since));
+            assert.equal(replay.head.until, timestampMicros(actual.queue.head.until));
+          });
+          seededDigest = (await admin.query(`select clued_private.merge_measurement_page_v1($1,'{}') v`, [seedUser])).rows[0].v.source_digest;
         } else {
           await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
         }
@@ -168,29 +195,12 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
     assert.equal(initial.events[0].kind, 'policy');
     const watermark = initial.end_sequence;
 
-    await t.test('bootstrap includes existing policy, claim and departing-head marker without changing the queue', async () => {
+    await t.test('a later pinned-source change is reported for the bootstrap stream, never served as ok', async () => {
       const seeded = (await admin.query(`select clued_private.merge_measurement_page_v1($1,'{}') v`, [seedUser])).rows[0].v;
-      assert.equal(seeded.status, 'ok');
-      assert.equal(seeded.events[0].kind, 'policy');
-      assert.equal(seeded.events[0].payload.initial_snapshot, true);
-      assert.ok(seeded.events.some(e => e.kind === 'claim' && e.payload.claim_id === seedClaim.claim_id));
-      assert.ok(seeded.events.some(e => e.kind === 'queue_marker' && e.payload.merge_ref === 'merge:owner/repo:main'));
-      assert.deepEqual((await admin.query(`select clued_private.work_claim_merge_queue_v1($1,'merge:owner/repo:main') v`, [seedUser])).rows[0].v, seedQueue);
-      assert.equal(new Set(seeded.events.map(e => e.transaction_id)).size, 1);
+      const current = (await admin.query('select clued_private.merge_measurement_source_digest_v1() v')).rows[0].v;
+      assert.equal(seeded.source_digest, seededDigest);
+      assert.equal(seeded.status, current === seededDigest ? 'ok' : 'SOURCE_CHANGED');
     });
-    await t.test('microsecond replay agrees with the actual existing PostgreSQL FIFO on seeded inputs', async () => {
-      const seeded = (await admin.query(`select clued_private.merge_measurement_page_v1($1,'{}') v`, [seedUser])).rows[0].v;
-      const validated = validateJournal(JSON.stringify(seeded), { expectedSourceDigest: seeded.source_digest, expectedStream: seeded.stream_id });
-      assert.equal(validated.status, 'INTEGRITY_VALIDATED');
-      const state = emptyReplayState(); for (const group of validated.groups) applyTransaction(state, group);
-      const actual = (await admin.query(`select jsonb_build_object('at',clock_timestamp(),
-        'queue',clued_private.work_claim_merge_queue_v1($1,'merge:owner/repo:main')) v`, [seedUser])).rows[0].v;
-      const replay = queueAt(state, 'merge:owner/repo:main', timestampMicros(actual.at));
-      assert.equal(replay.depth, actual.queue.length); assert.equal(replay.head.claim_id, actual.queue.head.claim_id);
-      assert.equal(replay.head.since, timestampMicros(actual.queue.head.since));
-      assert.equal(replay.head.until, timestampMicros(actual.queue.head.until));
-    });
-
     await t.test('safe whitelist excludes credentials and mutable owner labels', async () => {
       const wire = JSON.stringify(initial);
       for (const forbidden of ['lease_key','token_hash','holder_label','budget','idempotency_key'])
