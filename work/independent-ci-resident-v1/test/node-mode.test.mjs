@@ -147,7 +147,7 @@ test('not-held makes the node STANDBY: nothing is taken, the probe comes every 1
 });
 
 test('an uncertain probe keeps the mode: UNCERTAIN at a start, ACTIVE, STANDBY alike', async t => {
-  // At a start there is no definite answer yet: still UNCERTAIN, nothing taken, and the urgent probe is spent (next in 15 minutes).
+  // At a start there is no definite answer yet: still UNCERTAIN, nothing taken, and the urgent probe is spent (next in a minute, see below).
   const a = await nodeFx(t, { facts: [UNCERTAIN, HELD] });
   await a.drop(triggerBytes());
   assert.deepEqual(pick(await a.exec.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN']);
@@ -174,6 +174,39 @@ test('an uncertain probe keeps the mode: UNCERTAIN at a start, ACTIVE, STANDBY a
   await c.drop(triggerBytes());
   assert.deepEqual(pick(await c.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.deepEqual(await receiptBodies(a, 'node-mode'), [{ from: 'UNCERTAIN', to: 'ACTIVE', why: 'probe-held' }], 'an uncertain answer changes nothing, so records nothing');
+});
+
+test('UNCERTAIN retries an uncertain answer soon (1, 2, 4, 8, then 15 minutes); ACTIVE and STANDBY keep their intervals', async t => {
+  // TURING 2026-11-11: a boot-time probe answered uncertain and the node stayed UNCERTAIN for the full 15 minutes.
+  const a = await nodeFx(t, { facts: [UNCERTAIN, UNCERTAIN, UNCERTAIN, HELD] });
+  await a.exec.tick();
+  assert.deepEqual([a.engine.probes.length, a.exec.roleProbeMode], [1, 'UNCERTAIN']);
+  for (const [wait, probes] of [[MIN - 1, 1], [1, 2], [2 * MIN - 1, 2], [1, 3], [4 * MIN - 1, 3], [1, 4]]) {
+    a.advance(wait);
+    await a.exec.tick();
+    assert.equal(a.engine.probes.length, probes, `after ${wait} ms`);
+  }
+  assert.equal(a.exec.roleProbeMode, 'ACTIVE');
+  // The backoff ends at STANDBY's 15 minutes.
+  const b = await nodeFx(t, { facts: [UNCERTAIN] });
+  await b.exec.tick();
+  for (const w of [MIN, 2 * MIN, 4 * MIN, 8 * MIN]) { b.advance(w); await b.exec.tick(); }
+  assert.equal(b.engine.probes.length, 5);
+  b.advance(15 * MIN - 1); await b.exec.tick();
+  assert.equal(b.engine.probes.length, 5);
+  b.advance(1); await b.exec.tick();
+  assert.equal(b.engine.probes.length, 6);
+  // STANDBY and ACTIVE after an uncertain answer: unchanged, 15 and 30 minutes.
+  const c = await nodeFx(t, { facts: [NOT_HELD, UNCERTAIN] });
+  await c.exec.tick();
+  c.advance(15 * MIN); await c.exec.tick();
+  c.advance(15 * MIN - 1); await c.exec.tick();
+  assert.deepEqual([c.engine.probes.length, c.exec.roleProbeMode], [2, 'STANDBY']);
+  const d = await nodeFx(t, { facts: [HELD, UNCERTAIN] });
+  await d.exec.tick();
+  d.advance(30 * MIN); await d.exec.tick();
+  d.advance(30 * MIN - 1); await d.exec.tick();
+  assert.deepEqual([d.engine.probes.length, d.exec.roleProbeMode], [2, 'ACTIVE']);
 });
 
 test('a restart begins UNCERTAIN again and probes at once, although the last probe was a minute ago', async t => {
