@@ -85,7 +85,7 @@ test('a clean Linux refusal (bridge v4 blocked record) ends the pump without wai
 const refused = { code: 2, stdout: JSON.stringify({ status: 'BLOCKED', failureCode: 'PUBLIC_CHILD_REFUSED_NO_RETRY', terminalConfirmed: true }) };
 function worker(a) {
   if (a.join(' ').includes('show --property=ActiveState')) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
-  if (a.join(' ').includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+  if (a.join(' ').includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
   return null;
 }
 test('a refused late response: the worker blocked record is handed to the issuer once, the code is kept', async t => {

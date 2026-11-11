@@ -25,11 +25,12 @@
   and records FAILED_CLEAN OWNER_ABORTED. It never publishes or retracts a check and never kills a
   process; when quiescence cannot be proven the batch HALTs as before and needs a re-arm.
 
-  -Request ReleaseBreaker -Reason <text> (generation 10, DESIGN 53.4): the run queue's circuit breaker is open (inspect shows it under
-  `breaker`) and the Owner knows the fault is gone (for example the network is back). The service makes the breaker's trial due now and
-  records the request with its reason in the receipts (owner-request, kind breaker-release). It never closes the breaker: one trial
-  batch must still get past the place that failed. A breaker that is not open refuses the request (BREAKER_NOT_OPEN), so a late or
-  repeated request changes nothing.
+  -Request ReleaseBreaker -Reason <text>: the Owner knows the environment fault is gone. If the breaker is open, the service makes
+  its trial due now; a trial must still get past the failing place before the breaker closes. If it is already closed, only
+  environment release-cap stops whose resident ledger is absent and whose head has neither executed nor published can be lifted.
+  Unknown evidence refuses recovery; failed or published heads remain protected, and ordinary scheduling checks still apply.
+  The request and its reason are recorded in receipts (owner-request, kind breaker-release). The service does not clear history
+  or breaker counters. Repeating the same request is deduplicated; without a closed recovery candidate it refuses BREAKER_NOT_OPEN.
 
   M5 (ADR 0022 section 4.4), the companion's log-on; elevated, the Owner's own account only, one at a time:
     -CompanionHeadless     switch the companion task to the password logon (the reinstall's last step, or to do it again). A read-only

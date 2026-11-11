@@ -80,8 +80,10 @@ test('a manifest version mismatch refuses rather than registering inconsistent c
   edit(root,'config/clued-components.json',x=>{
     const manifest=JSON.parse(x),components=manifest.components.filter(c=>c.id==='script.independent-native-publication');
     assert.equal(components.length,1,'the target component must exist exactly once');
-    assert.notEqual(components[0].version,'99.0.0');
-    components[0].version='99.0.0';
+    const component=components[0],before=component.version;
+    assert.equal(typeof before,'string');
+    component.version=before==='99.0.0'?'98.0.0':'99.0.0';
+    assert.notEqual(component.version,before,'the fixture must change the target version');
     return JSON.stringify(manifest,null,2)+'\n';
   });
   await refusesWithoutWrites(root,/version\/manifest mismatch/);

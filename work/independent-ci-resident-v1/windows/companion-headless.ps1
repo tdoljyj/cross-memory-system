@@ -1052,6 +1052,34 @@ function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vh
 # Invoke-CompanionWslMove, then the registrar (a new random password, the task, the import task with the Owner's DefaultUid), the import
 # (exit 0 or WSL_IMPORT_FAILED:<code>), only then the Owner's registration key goes. A run that was cut off resumes from the record
 # (no -WslVhdxDirectory needed). Not qualified: the task goes back to the account's interactive definition (the companion stays off).
+# Shared pure rule with install-resident.ps1; tests require identical function text.
+function Get-RelayParentAclPresence([string]$sddl, [string]$sid) {
+  try { $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl) } catch { return 'refused' }
+  if ($null -eq $raw.DiscretionaryAcl -or ($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { return 'refused' }
+  foreach ($a in $raw.DiscretionaryAcl) {
+    if ($a -isnot [Security.AccessControl.CommonAce] -or $a.IsCallback) { return 'refused' }
+    if (([int]$a.AceFlags -band 8) -eq 0 -and
+        $a.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessDenied -and ($a.AccessMask -band (0x120080 -bor 0x80000000 -bor 0x10000000)) -ne 0) { return 'refused' }
+  }
+  $mine = @(foreach ($a in $raw.DiscretionaryAcl) { if ($a.SecurityIdentifier.Value -ceq $sid) { $a } })
+  if ($mine.Count -eq 0) { return 'missing' }
+  if ($mine.Count -ne 1 -or $mine[0] -isnot [Security.AccessControl.CommonAce] -or $mine[0].IsCallback -or
+      $mine[0].AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or $mine[0].AccessMask -ne 0x120080 -or [int]$mine[0].AceFlags -ne 0) { return 'refused' }
+  'present'
+}
+# Fixed relay parents are outside resident\ and must also follow the dedicated account.
+function Get-CompanionRelayParentPaths { @('C:\ProgramData\CluedIndependentCI', 'C:\ProgramData\CluedIndependentCI\formal-spool') }
+function Get-CompanionRelayParentsProblem([string]$sid) {
+  if ($sid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { return 'COMPANION_RELAY_PARENT_SID_REFUSED' }
+  foreach ($path in (Get-CompanionRelayParentPaths)) {
+    try {
+      $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'COMPANION_RELAY_PARENT_TARGET_REFUSED' }
+      if ((Get-RelayParentAclPresence ((Get-Acl -LiteralPath $path -ErrorAction Stop).Sddl) $sid) -cne 'present') { return 'COMPANION_RELAY_PARENT_ACL_REFUSED' }
+    } catch { return 'COMPANION_RELAY_PARENT_UNREADABLE' }
+  }
+  $null
+}
 function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode, [switch]$AllowWslVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
   $sid = [string]$node.ownerSid; $distro = [string]$node.wslDistribution
   $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
@@ -1064,6 +1092,8 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $maintenance = Assert-CompanionMaintenanceEntry -Root $root -TargetVhdxPath (Join-Path $vhdxDir 'ext4.vhdx') -CompanionSid $sid -ContextFile $MaintenanceContextFile -ExpectedContextSha256 $ExpectedMaintenanceContextSha256
     if ($null -eq $maintenance -or $maintenance.operationId -cnotmatch '^[0-9a-f]{64}$') { throw 'WSL_MAINTENANCE_ENTRY_RESULT_REFUSED' }
   }
+  $parentProblem = Get-CompanionRelayParentsProblem $sid
+  if ($parentProblem) { $result.failed = $parentProblem; return $result }
   $pending = Read-CompanionPending $root
   if ($null -ne $pending) {
     if (Test-CompanionPendingOwnerAlive $pending) { $result.failed = 'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'; return $result }
@@ -1143,6 +1173,7 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $sid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $sid
+    if ($null -eq $why) { $why = Get-CompanionRelayParentsProblem $sid }
     if ($null -eq $why -and $result.task.mode -ceq 'password') {
       $record = ConvertTo-CompanionOrdered $record; $record.stage = 'qualified'; $record.qualifiedAt = [DateTimeOffset]::UtcNow.ToString('o')
       Write-CompanionWslRecord $root $record

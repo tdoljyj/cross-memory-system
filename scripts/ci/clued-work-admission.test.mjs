@@ -1225,9 +1225,9 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 // earlier gate-template rollouts. Their actual gates remain covered by the
 // all-workflows and retired-switch attack checks below.
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
-// The required-test workflow was introduced with the independently registered
-// Linux gate, never with the historical permission/bootstrap templates.
-const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml"];
+// These consumers use the independently registered Linux Native gate; their
+// current gates are covered separately from the historical permission/bootstrap templates.
+const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-g4-database.yml"];
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
@@ -1595,16 +1595,17 @@ test("gate guard: the gate runs on the self-hosted Linux pool with a pinned Node
   assert.ok(GATE_JOB_SHA256.has(sha256Hex(text)), "the gate is one of the exact registered versions");
   assert.match(text, /^    runs-on: \[self-hosted, Linux, X64, clued, pool-general, trust-internal\]$/m);
   assert.match(text, /^          node-version: 24\.19\.0$/m);
-  // Owner Decision f86179b3: the hosted gate, another runner or another Node is a changed gate.
+  // A different, unregistered hosted runner or Node remains a changed gate.
+  // ubuntu-latest with this complete Native gate is a separately registered family.
   const hosted = g4
-    .replace("    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n",
-      "    runs-on: ubuntu-latest\n    timeout-minutes: 10\n")
+    .replace("    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 15\n",
+      "    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n")
     .replace("      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n",
       "      - id: gate\n");
   assert.notEqual(hosted, g4);
   assert.deepEqual(gateFindings(hosted, g4), ["admission_gate_changed"]);
   assert.deepEqual(gateFindings(g4.replace("node-version: 24.19.0", "node-version: 24"), g4), ["admission_gate_changed"]);
-  assert.deepEqual(gateFindings(g4.replace("pool-general, trust-internal]\n    timeout-minutes: 10", "pool-general]\n    timeout-minutes: 10"), g4), ["admission_gate_changed"]);
+  assert.deepEqual(gateFindings(g4.replace("pool-general, trust-internal]\n    timeout-minutes: 15", "pool-general]\n    timeout-minutes: 15"), g4), ["admission_gate_changed"]);
 });
 
 test("gate guard: removing or loosening the gate is found", () => {
@@ -3694,4 +3695,50 @@ test('trusted admission catalogue reader permits only the profile through 2 MiB 
       if(allowed)assert.deepEqual(result.gate,[]);
     } finally {fs.lstatSync=originalStat;fs.readFileSync=originalRead;}
   }
+});
+
+test('G4 uses the registered required-tests Native gate without changing any execution route', async () => {
+  const file = '.github/workflows/clued-g4-database.yml';
+  const text = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
+  const required = fs.readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
+  const gateJob = value => admissionModule.workflowJobs(value).find(job => job.name === 'admission-gate');
+  assert.deepEqual(gateJob(text).lines, gateJob(required).lines);
+  assert.equal(admissionModule.sha256Hex(gateJob(text).lines.join('\n')),
+    '9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2');
+  const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json', import.meta.url)));
+  const before = registeredWorkflowSource(profiles, file, 'a09cfc44e506a9672e5221a7fa6737747ddcb787').profile.source_yaml;
+  assert.deepEqual(admissionModule.workflowJobs(text).filter(job => job.name !== 'admission-gate'),
+    admissionModule.workflowJobs(before).filter(job => job.name !== 'admission-gate'));
+  assert.deepEqual(admissionModule.gateFindings(text, before), []);
+  const { outcome } = await independentGate([nativeCheck()], { envOverrides: {
+    GITHUB_WORKFLOW_REF: `o/r/${file}@refs/pull/452/merge`,
+  } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source],
+    [true, 'ADMITTED', INDEPENDENT_GATE_SOURCE]);
+});
+
+test('G4 all-jobs repair requires a current Native admission and every prior heavy job to have skipped', async () => {
+  const file = '.github/workflows/clued-g4-database.yml';
+  const jobs = admissionModule.workflowJobs(fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8'));
+  const make = (n, notes = [pendingNote]) => earlierAttempt(n, { notes, gateJobs: jobs.map((job, i) => {
+    const name = job.lines.find(line => /^    name: /.test(line))?.slice('    name: '.length) ?? job.name;
+    return attemptJob(n * 100 + i, name, job.name === 'admission-gate' ? 'success' : 'skipped');
+  }) });
+  const envOverrides = { GITHUB_WORKFLOW_REF: `o/r/${file}@refs/pull/452/merge` };
+  assert.equal((await repairGate([make(1)], { envOverrides })).outcome.admitted, true);
+  for (const conclusion of ['success', 'failure', 'cancelled', 'neutral', null]) {
+    const earlier = make(1); earlier.jobs[2].conclusion = conclusion;
+    assert.equal((await repairGate([earlier], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
+  }
+  for (const verdict of ['NO_ADMISSION_RUN', 'REJECTED', 'UNKNOWN', 'NOT_APPLICABLE']) {
+    const earlier = make(1, [{ title: 'admission-gate', message: `${verdict}: old or unqualified gate` }]);
+    assert.equal((await repairGate([earlier], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
+  }
+  const gateOnly = make(1); gateOnly.jobs = gateOnly.jobs.filter(job => job.name === 'admission-gate');
+  assert.equal((await repairGate([gateOnly], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
+  const onceUsed = make(2); onceUsed.jobs[2].conclusion = 'success';
+  assert.equal((await repairGate([make(1), onceUsed], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
+  const oldHead = make(1); oldHead.jobs[2].head_sha = BASE;
+  assert.equal((await repairGate([oldHead], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
+  assert.equal((await repairGate([make(1)], { envOverrides, checks: [nativeCheck({ conclusion: 'failure' })] })).outcome.verdict, 'REJECTED');
 });

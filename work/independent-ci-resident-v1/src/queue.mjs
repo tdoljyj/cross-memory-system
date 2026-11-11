@@ -497,10 +497,11 @@ export class RunQueue {
   }
 
   // The breaker closed (breaker.mjs): rows the release cap stopped because of an environment fault are tried again.
-  liftEnvironmentStops(now) {
+  liftEnvironmentStops(now, { eligible = () => true } = {}) {
     const lifted = [];
     for (const r of this.data.rows) {
       if (r.state !== 'STOPPED' || r.stopKind !== 'release-cap' || r.stopClass !== 'environment' || !r.current) continue;
+      if (!eligible(r)) continue;
       // 'lifted': the next try is not held back by the release cap its environment releases reached (executor precheck).
       Object.assign(r, { stopKind: null, stopClass: null, level: 0, levelKind: null, nextAt: now, order: this.seq(), origin: 'lifted', deferUntil: null });
       this.setState(r, 'BACKOFF', null, now);

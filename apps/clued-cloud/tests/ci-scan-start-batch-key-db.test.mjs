@@ -2,7 +2,7 @@
 // must get its own one-time launch permission. Before 20261108090000 the K was (repository, head, role), so a
 // merge-train front batch (H, S) and an automatic attempt 2 found the K of an earlier batch of H already burned
 // (scan_start_already_consumed) and could never start. End to end: the real controller port
-// (scan-start-v1/native-port.mjs) asks the real Native command door of an isolated database with all migrations,
+// (scan-start-v1/native-port.mjs) asks the real Native command door of an isolated database through this Source,
 // and the adapter's own permission check (scanStartPermission in Native mode) accepts what comes back.
 // Review of the fix: S is not a fact Native can verify, so the distinct tested commits per (head, role) are capped;
 // the grant names S and attempt and the controller compares both; legacy K rows are carried over as S = H, attempt 1.
@@ -26,6 +26,8 @@ import {admittedFacts} from '../../../work/actions-hosted-migration/independent-
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const MIGRATION='20261108090000_ci_scan_start_batch_key_v1.sql';
 const FRONT_LIMIT=16; // distinct tested commits S != H per (repository, head, role), as in MIGRATION
+const ORIGINAL_SQL_SHA256='04d17351c8dca3f2d83acd193c21de23f4caff214c3d013bfa014363caad18b2';
+const BODY_TAG='$ci_scan_batch_key_sql_20261108090000$';
 const uuid=()=>crypto.randomUUID();
 const digest=(s='fixture')=>crypto.createHash('sha256').update(s).digest('hex');
 const sha=(s='fixture')=>crypto.createHash('sha1').update(s).digest('hex');
@@ -64,6 +66,76 @@ async function withCluster(prefix,body){
     await stopCluster(server);
     if(actual!==null)await removeTestDirectory(dir);
   }
+}
+
+// Covers every object the migration changes, its temporary patch function, and
+// the real pre-existing K rows. No receipt or authority is issued by this read.
+async function migrationState(admin){
+  const rows=async sql=>(await admin.query(sql)).rows;
+  return {
+    columns:await rows(`select column_name,data_type,is_nullable,column_default from information_schema.columns
+      where table_schema='clued_private' and table_name='ci_scan_start_keys_v1' order by ordinal_position`),
+    constraints:await rows(`select conname,pg_get_constraintdef(oid) definition from pg_constraint
+      where conrelid='clued_private.ci_scan_start_keys_v1'::regclass order by conname`),
+    indexes:await rows(`select indexname,indexdef from pg_indexes where schemaname='clued_private'
+      and tablename='ci_scan_start_keys_v1' order by indexname`),
+    triggers:await rows(`select tgname,tgenabled,pg_get_triggerdef(oid) definition from pg_trigger
+      where tgrelid='clued_private.ci_scan_start_keys_v1'::regclass order by tgname`),
+    functions:await rows(`select p.oid::regprocedure::text signature,pg_get_functiondef(p.oid) definition
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_private'
+      and (p.proname like 'ci_scan_start_%' or p.proname='ci_scan_batch_key_patch_v1') order by signature`),
+    keys:await rows('select to_jsonb(k) k from clued_private.ci_scan_start_keys_v1 k order by execution_id'),
+  };
+}
+
+async function verifyAtomicEntrypoints(ctx,t){
+  const text=await fs.readFile(path.join(root,'supabase/migrations',MIGRATION),'utf8');
+  const start=text.indexOf(`execute ${BODY_TAG}\n`)+`execute ${BODY_TAG}\n`.length;
+  assert.ok(start>`execute ${BODY_TAG}\n`.length);
+  assert.equal(text.split(BODY_TAG).length,3,'one complete inner dollar literal');
+  const end=text.indexOf(BODY_TAG,start),original=text.slice(start,end);
+  assert.equal(crypto.createHash('sha256').update(original).digest('hex'),ORIGINAL_SQL_SHA256,
+    'the complete original pending SQL remains contiguous and unchanged');
+  t.diagnostic('actual local PostgreSQL '+(await ctx.admin.query('show server_version')).rows[0].server_version);
+  const before=await migrationState(ctx.admin);
+  await ctx.admin.query('begin');
+  let expected;
+  try{await ctx.admin.query(original);expected=await migrationState(ctx.admin);}
+  finally{await ctx.admin.query('rollback');}
+
+  await t.test('the original production nested EXECUTE reaches identical DDL, functions, trigger state and K rows',async()=>{
+    await ctx.admin.query('begin');
+    try{
+      await ctx.admin.query("select set_config('clued.migration_text',$1,true)",[text]);
+      // Same nested execution boundary as production-schema-drift.mjs and the
+      // production release workflow; the migration contains no SQL COMMIT.
+      await ctx.admin.query("do $apply$ begin execute current_setting('clued.migration_text'); end $apply$");
+      assert.deepEqual(await migrationState(ctx.admin),expected);
+    }finally{await ctx.admin.query('rollback');}
+  });
+  await t.test('an error after carry-over or function patches rolls back all DDL, data and trigger changes',async()=>{
+    for(const anchor of [
+      'alter table clued_private.ci_scan_start_keys_v1 enable trigger ci_scan_start_no_update_delete_v1;',
+      'drop function clued_private.ci_scan_batch_key_patch_v1(text,text,text);',
+    ]){
+      assert.equal(original.split(anchor).length,2,'one exact failure boundary');
+      const injected=original.replace(anchor,
+        "do $atomicity_failure$ begin raise exception 'ci_scan_batch_key_atomicity_fixture'; end $atomicity_failure$;\n"+anchor);
+      const broken=text.slice(0,start)+injected+text.slice(end);
+      await assert.rejects(()=>ctx.admin.query({text:broken,queryMode:'extended'}),
+        {code:'P0001',message:'ci_scan_batch_key_atomicity_fixture'});
+      assert.deepEqual(await migrationState(ctx.admin),before,'nothing from the failed migration remains');
+    }
+  });
+  await t.test('one extended-protocol statement outside an explicit transaction applies the complete migration',async()=>{
+    const client=await ctx.connect();
+    // The same Parse/Bind/Execute boundary as CLI 2.115.0. An old bare LOCK
+    // fails with 25P01 here; splitting this envelope also fails preparation.
+    await assert.rejects(()=>client.query({text:'lock table clued_private.ci_scan_start_keys_v1 in access exclusive mode',
+      queryMode:'extended'}),{code:'25P01'});
+    await client.query({text,queryMode:'extended'});
+    assert.deepEqual(await migrationState(ctx.admin),expected);
+  });
 }
 
 // Account, project, claim holder, designated CI Binding with the ci-admission role, qualified consumer and an
@@ -143,9 +215,12 @@ async function fixture({admin,connect,json}){
   return {authorize,count,keyOf,verify,local,verified,hosted,ask,permit,job};
 }
 
-test('Native scan-start K per batch: front batch and attempt 2 each get exactly their own permission',{timeout:600000},async t=>{
+test('Native scan-start K per batch under its qualified Source: front batch and attempt 2 each get their own permission',{timeout:600000},async t=>{
   await withCluster('clued-scan-batch-key-',async ctx=>{
-    await ctx.migrate(()=>true);
+    // The launch fixture qualifies this migration's exact Native predecessor.
+    // Later Native rewrites intentionally invalidate its frozen source guard;
+    // the final test below applies those rewrites and checks that refusal.
+    await ctx.migrate(name=>name<=MIGRATION);
     const {authorize,count,keyOf,local,verified,hosted,ask,permit,job}=await fixture(ctx);
     const H=sha('head H'),T=sha('main T'),S=sha('test merge S of T and H'),T2=sha('main T2'),S2=sha('test merge S2 of T2 and H');
     const plain=job({head:H,base:T,testSha:H,attempt:1});
@@ -271,7 +346,7 @@ test('K rows taken before the migration are carried over as S = H, attempt 1 and
     const rows=async()=>(await ctx.admin.query('select to_jsonb(k) k from clued_private.ci_scan_start_keys_v1 k order by execution_id')).rows.map(r=>r.k);
     const before=await rows();assert.equal(before.length,2);assert.equal('test_sha' in before[0],false);
 
-    await ctx.migrate(name=>name>=MIGRATION);
+    await verifyAtomicEntrypoints(ctx,t);
     const after=await rows();assert.equal(after.length,2);
     for(const [i,row] of after.entries()){
       const {test_sha,attempt,...rest}=row;
@@ -286,6 +361,16 @@ test('K rows taken before the migration are carried over as S = H, attempt 1 and
       await f.authorize(H2);
       assert.equal((await f.hosted(f.verified(H2,T))).status,'consumed','the hosted K carried over the same way');
       assert.equal(await f.count(),4);
+    });
+    await t.test('later Native rewrites keep the old Source fail-closed without consuming another K',async()=>{
+      const beforeLater=await rows();
+      await ctx.migrate(name=>name>MIGRATION);
+      assert.equal((await ctx.admin.query('select clued_private.ci_scan_start_native_source_current_v1() current')).rows[0].current,false);
+      for(const result of [await f.local(H,T),await f.local(H,T,{test_sha:S,attempt:2}),await f.hosted(f.verified(H2,T))]){
+        assert.equal(result.status,'rejected');assert.equal(result.error_code,'ci_scan_start_native_source_changed');
+        assert.equal(result.launch_allowed,false);
+      }
+      assert.deepEqual(await rows(),beforeLater);
     });
   });
 });
