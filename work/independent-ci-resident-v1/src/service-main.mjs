@@ -19,7 +19,7 @@ import { WindowsEngine, installedTrainMode } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
-import { KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
+import { COMPANION_WSL_FILE, KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, readKeepList, wslDriveFromRecord } from './retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings, retentionRule, retentionKeep } from './retention-settings.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
@@ -118,7 +118,12 @@ export async function main(argv = process.argv.slice(2)) {
     policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue, versions, companionPresence,
     // Generation 10 (DESIGN 53.5): the executor writes status.json at once when a batch is claimed and when a breaker trial starts.
     statusFlush: () => statusTimer.flush(),
-    hostDiskFree: () => diskFreeBytes('C:\\'),
+    // The C: gate watches the drive of the resident WSL disk (install\companion-wsl.json); C: when the record says nothing.
+    hostDiskFree: async () => {
+      let drive = 'C:';
+      try { drive = wslDriveFromRecord((await readBounded(path.join(root, 'install', COMPANION_WSL_FILE), 1 << 20, 'WSL_RECORD_REFUSED')).toString('utf8')); } catch { /* none yet */ }
+      return { ...(await diskFreeBytes(drive + '\\')), drive };
+    },
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),

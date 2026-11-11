@@ -2,7 +2,7 @@
 // never HALT; the Owner is told through the retention notice channel (disk-space-reminder with blocksAnything, or an alert when unreadable).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOST_DISK_DEFER_BYTES, HOST_DISK_RESUME_BYTES } from '../src/retention.mjs';
+import { HOST_DISK_DEFER_BYTES, HOST_DISK_RESUME_BYTES, wslDriveFromRecord } from '../src/retention.mjs';
 import { executorFixture, triggerBytes } from './helpers.mjs';
 
 const GIB = 1024 ** 3;
@@ -85,4 +85,22 @@ test('without the port nothing changes (older wiring): the batch runs and no rec
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.equal((await bodies(f, 'disk-space-reminder')).length, 0);
+});
+
+// ---- the watched drive comes from the install record ----
+const BS = String.fromCharCode(92);
+const record = target => JSON.stringify({ contract: 'clued.independent-ci.companion-wsl/1', distro: 'x', target, stage: 'moved' });
+
+test('the drive is the one of the recorded vhdx (D: on DESK); a missing, malformed or foreign record gives C:', () => {
+  assert.equal(wslDriveFromRecord(record(`D:${BS}clued-resident${BS}wsl${BS}ext4.vhdx`)), 'D:');
+  assert.equal(wslDriveFromRecord(record(`d:${BS}x${BS}ext4.vhdx`)), 'D:');
+  for (const bad of ['', 'not json', '{}', record('ext4.vhdx'), record(`//server/share/ext4.vhdx`), record(7),
+    JSON.stringify({ contract: 'other/1', target: `D:${BS}x${BS}ext4.vhdx` })]) assert.equal(wslDriveFromRecord(bad), 'C:', String(bad));
+});
+
+test('the receipt names the drive that was read (D:)', async t => {
+  const { f } = await fixture(t, { value: { ok: true, freeBytes: 3 * GIB, drive: 'D:' } });
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'HOST_DISK_LOW']);
+  assert.equal((await bodies(f, 'disk-space-reminder'))[0].drive, 'D:');
 });

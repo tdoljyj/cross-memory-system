@@ -43,6 +43,16 @@ export const DISK_REMINDER_BYTES = 30 * GIB;
 // The C: gate of the executor (executor.mjs hostDiskGate): no new batch below 10 GiB, released again at 15 GiB (hysteresis).
 export const HOST_DISK_DEFER_BYTES = 10 * GIB;
 export const HOST_DISK_RESUME_BYTES = 15 * GIB;
+// The drive the resident WSL disk really sits on: the `target` (…\ext4.vhdx) of install\companion-wsl.json (written by companion-headless.ps1,
+// contract clued.independent-ci.companion-wsl/1). Anything missing or malformed gives C:, the default.
+export const COMPANION_WSL_FILE = 'companion-wsl.json';
+export function wslDriveFromRecord(text) {
+  try {
+    const r = JSON.parse(text);
+    const m = r?.contract === 'clued.independent-ci.companion-wsl/1' && typeof r.target === 'string' ? /^([A-Za-z]):\\/.exec(r.target) : null;
+    return m ? `${m[1].toUpperCase()}:` : 'C:';
+  } catch { return 'C:'; }
+}
 // The archive kinds the archive tools create (src/archive.mjs, resident-v2/archive-windows-spool.ps1, clued-ci-resident-linux);
 // any other name below the spool root is never considered for deletion. The length bound keeps a pass's answer within the
 // mailbox's 4 KB.
