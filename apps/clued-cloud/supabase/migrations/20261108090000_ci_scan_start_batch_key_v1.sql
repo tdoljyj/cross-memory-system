@@ -1,3 +1,8 @@
+-- One statement gives CLI replay and production EXECUTE the same atomic scope.
+-- The inner dollar literal preserves the complete pending migration body.
+do $ci_scan_batch_key_migration_20261108090000$
+begin
+  execute $ci_scan_batch_key_sql_20261108090000$
 -- Candidate only (Task dcc53013). No policy is activated or seeded by this migration.
 --
 -- The physical scan-start K of 20261102151506 was (repository, head, role). A
@@ -144,3 +149,6 @@ $r$    'provider',provider_name,'start_requested_at',to_char(authorized_at at ti
       then jsonb_build_object('test_sha',data->>'test_sha','attempt',(data->>'attempt')::int) else '{}'::jsonb end;$r$);
 
 drop function clued_private.ci_scan_batch_key_patch_v1(text,text,text);
+$ci_scan_batch_key_sql_20261108090000$;
+end
+$ci_scan_batch_key_migration_20261108090000$;

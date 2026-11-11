@@ -329,7 +329,7 @@ async function pumpAgain(t, { again, unitFacts, listing = () => '', relay = m =>
     if (m) return relay(m, now);
     if (a.some(x => x.startsWith('--property=ActiveState'))) { factsAt.push(now - T0); return unitFacts(now - T0, started === null ? null : now - started); }
     if (a.includes('/usr/bin/ls')) return { code: 0, stdout: listing(started === null ? -1 : now - started) };
-    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
     if (a.includes('--no-block')) started = now;
     return { code: 0, stdout: '' };
   };

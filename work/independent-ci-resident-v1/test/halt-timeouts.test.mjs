@@ -22,8 +22,8 @@ const REASON = 'formal-bridge-stage-deadline';
 const TIMED_OUT = { code: null, stdout: '', stderr: '', timedOut: true, tree: 'zero' };
 const TIMED_OUT_PLAIN = { code: null, stdout: '', stderr: '', timedOut: true };
 const TIMED_OUT_LEFTOVER = { code: null, stdout: '', stderr: '', timedOut: true, tree: 'unconfirmed' };
-const QUIET = { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
-const BUSY = { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: false, containersZero: true }) };
+const QUIET = { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) };
+const BUSY = { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: false, containersZero: true, pendingJobsQuiet: true }) };
 const facts = (state, { invocation = '', mono = 0 } = {}) => ({ code: 0, stdout: `ActiveState=${state}\nInvocationID=${invocation}\nExecMainStartTimestampMonotonic=${mono}\n` });
 const is = (a, ...words) => words.every(w => a.includes(w));
 
