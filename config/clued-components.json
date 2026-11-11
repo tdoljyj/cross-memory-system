@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "58a9ff11346045ac956c7df7f079344456fd4e97edf5f336a200160488e978fa"
+      "content_sha256": "59d7af88dd50f3c8075fb14707e5c6ac64a8b716938808ee32870f200a00e835"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.42",
+      "version": "1.1.43",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "1d43a0b5171a3ac984425010876b771393f4d5f64cb55ddbec3503a64474228a"
+      "content_sha256": "2ee74f76d2e42df47219e010dfc2046cddd8f6b00d8d3f5d0fbc5e10950893fd"
     },
     {
       "id": "script.resource-maintenance",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.13",
+      "version": "1.0.14",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "a95a9382be9f5be6b55f9df90ed6b0f92f5fc8d41399f6c91a0054a05a0cb649"
+      "content_sha256": "9cd16ea0d8dd4667bc72ddb93c609a9ad01a497959b34430d64e4e5451777923"
     },
     {
       "id": "script.required-applicability",
@@ -923,12 +923,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "e88b03bfb04a1b9c98d49074ea94c8e739a85fe80202da7667c16f5d296cbbd1"
+      "content_sha256": "5bcc198de81869fbd27ed1dab29e3a4c1c5c3d42ebc8d6a0cc14714c40c7b8d9"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.23",
+      "version": "1.0.24",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "d4b31d8380020fc6af9aa6d6fc6f73578665cdfb16078e4bf436b6965d1d92d0"
+      "content_sha256": "dfe63ab2e780ab1688f3c5284128bb5b0a2bc7cda956604454948abcfdb34d7c"
     }
   ]
 }
