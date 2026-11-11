@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "745961d94d4df7ca58b2122eb44ef2fa5e883b079591eef10a21fe1d69c4042c"
+      "content_sha256": "3a1a1b6db29e26cd3ea0c9129517943d1cf9ed87ea27871136c2a8d09a2eaa49"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.41",
+      "version": "1.1.42",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "481b15c435b37590ce311a0aeac1db798be5579f8f2a11b072a3ba91312e6da2"
+      "content_sha256": "1d43a0b5171a3ac984425010876b771393f4d5f64cb55ddbec3503a64474228a"
     },
     {
       "id": "script.resource-maintenance",
