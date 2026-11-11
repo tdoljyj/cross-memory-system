@@ -261,8 +261,11 @@ export function watchdogLevels({ hostname = os.hostname(), env = process.env, re
   if (host?.watchdog_path) {
     try {
       const installed = readText(host.watchdog_path);
-      const suspend = /\$SuspendDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
-      const resume = /\$ResumeDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
+      // a watchdog rendered since Task 5282d4ae lists its watched drives (@{Drive='C';Suspend=15;Resume=20;...});
+      // an older one has $suspendDisk/$resumeDisk
+      const drive = /Drive='C';\s*Suspend=(\d+(?:\.\d+)?);\s*Resume=(\d+(?:\.\d+)?)/i.exec(installed);
+      const suspend = drive ? [null, drive[1]] : /\$SuspendDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
+      const resume = drive ? [null, drive[2]] : /\$ResumeDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
       if (suspend && resume) levels = { suspend: Number(suspend[1]), resume: Number(resume[1]) };
     } catch { /* not installed here: the profile's levels */ }
   }

@@ -32,12 +32,16 @@ function render(t) {
 function harness(dir, text, body) {
   const block = /# BEGIN capacity-alert\r?\n([\s\S]*?)# END capacity-alert/.exec(text)?.[1];
   assert.ok(block, 'the alert block is in the rendered script');
+  // the notification is shared by every part of the watchdog (Task 5282d4ae)
+  const notify = /# BEGIN notify\r?\n([\s\S]*?)# END notify/.exec(text)?.[1];
+  assert.ok(notify, 'the notify block is in the rendered script');
   const log = path.join(dir, 'log.txt');
   const marker = path.join(dir, 'state', 'capacity-alert.json');
   const file = path.join(dir, 'harness.ps1');
   fs.writeFileSync(file, [
     "$ErrorActionPreference = 'Stop'",
     `$log = '${log}'; function Log([string]$m) { Add-Content -LiteralPath $log -Value $m }`,
+    notify,
     block,
     `$alertFile = '${marker}'`,
     body(marker),
@@ -64,9 +68,10 @@ test('the rendered watchdog parses (Windows PowerShell 5.1) and alerts on every 
   const profiles = JSON.parse(fs.readFileSync(path.join(HERE, 'node-profiles.json'), 'utf8'));
   const host = profiles.hosts.find((entry) => entry.host_id === 'company-primary');
   const capacity = profiles.capacity_profiles[host.capacity_profile];
-  assert.ok(text.includes(`$suspendDisk=${capacity.suspend_c_free_gb}; $resumeDisk=${capacity.resume_c_free_gb};`));
+  assert.ok(text.includes(`$hostDrives=@(@{Drive='C';Suspend=${capacity.suspend_c_free_gb};Resume=${capacity.resume_c_free_gb};Clean=$false})`), 'C: is a watched drive that only alerts');
   assert.ok(text.includes(`$suspendRunnerDisk=${capacity.suspend_runner_disk_free_gb}; $resumeRunnerDisk=${capacity.resume_runner_disk_free_gb};`));
-  assert.match(text, /Log \("Thresholds: the runner disk stops below \{0\} GB, resumes at \{1\} GB \(after a cleanup first\); memory stops below \{2\} GB, resumes at \{3\} GB; C: only alerts below \{4\} GB, clears at \{5\} GB" -f \$suspendRunnerDisk,\$resumeRunnerDisk,\$suspendMem,\$resumeMem,\$suspendDisk,\$resumeDisk\)/, 'a start logs the levels it works with');
+  assert.match(text, /Log \("Linux runners: the runner disk stops below \{0\} GB, resumes at \{1\} GB \(after a cleanup first\); memory stops below \{2\} GB, resumes at \{3\} GB" -f \$suspendRunnerDisk,\$resumeRunnerDisk,\$suspendMem,\$resumeMem\)/, 'a start logs the levels it works with');
+  assert.match(text, /Log \("Watched drives: \{0\}" -f /, 'and those of the watched drives');
 });
 
 test('the alert block: an ALERT line, a marker file (UTF-8 without a byte order mark) while suspended, kept since the first alert, removed on resume', { skip }, (t) => {
@@ -260,14 +265,12 @@ test('Owner decision 241824b2: the new levels: 16 GB on the runner disk stops no
   assert.equal(r.state.suspended, false);
 });
 
-test('Owner decision 241824b2: C: below its level only alerts (log and notification), never cleans or stops the runners', { skip }, (t) => {
+// The C: alert itself is the watched-drive part now (watchdog-host-disk.test.mjs, Task 5282d4ae).
+test('Owner decision 241824b2: C: low never cleans or stops the runners', { skip }, (t) => {
   const r = step(t, { caps: [{ c: 5, disk: 2000 }, { c: 5, disk: 2000 }, { c: 21, disk: 2000 }], body: 'Invoke-CapacityStep; Invoke-CapacityStep; Invoke-CapacityStep' });
   assert.equal(r.events, '');
   assert.equal(r.suspended, 'False');
-  const alerts = r.log.split(/\r?\n/).filter((line) => line.startsWith('ALERT C:'));
-  assert.equal(alerts.length, 2, `once while it lasts (not every minute), cleared once: ${r.log}`);
-  assert.match(alerts[0], /^ALERT C: 5 GB free, below 15 GB\. The runners are not stopped for C: \(their disk is D:\); free space on C:$/);
-  assert.match(alerts[1], /^ALERT C: cleared: 21 GB free$/);
+  assert.doesNotMatch(r.log, /ALERT/);
 });
 
 test('low memory alone stops the runners without a cleanup (a cleanup frees no memory); a busy runner holds back both', { skip }, (t) => {
