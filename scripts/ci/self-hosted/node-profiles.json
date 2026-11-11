@@ -65,8 +65,8 @@
       "watchdog_interval_seconds": 30,
       "suspend_free_memory_gb": 1.5,
       "resume_free_memory_gb": 2.5,
-      "suspend_c_free_gb": 40,
-      "resume_c_free_gb": 55,
+      "suspend_c_free_gb": 15,
+      "resume_c_free_gb": 20,
       "suspend_runner_disk_free_gb": 40,
       "resume_runner_disk_free_gb": 55
     },

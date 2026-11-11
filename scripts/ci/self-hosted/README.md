@@ -149,9 +149,11 @@ WSL processors  3
 WSL swap        2 GB
 capacity suspend: host free memory < 1.5 GB or runner disk free < 40 GB (after a cleanup first)
 capacity resume:  host free memory >= 2.5 GB and runner disk free >= 55 GB
-C: alert only:    C: free < 40 GB, cleared at >= 55 GB
+C: alert only:    C: free < 15 GB, cleared at >= 20 GB
 watchdog interval 30 s
 ```
+
+A host without an active Linux runner (home-primary since home-linux-01 retired) gets a disk-only watchdog instead (Task 5282d4ae): it supervises no runner, WSL or service; with C: below `suspend_c_free_gb` it removes files older than a day from the running account's `%TEMP%`, `%SystemRoot%\Temp` (what that account may delete), npm, pip and NuGet HTTP caches, never through a link and never under `C:\ProgramData\CluedIndependentCI`, `C:\clued-resident` or `C:\w`, and empties that account's recycle bin of C: (at most once an hour); still below, it alerts (`ALERT C:` and a notification, every 30 minutes), cleared at `resume_c_free_gb`.
 
 ### workstation-v1
 
