@@ -40,6 +40,9 @@ const GIB = 1024 ** 3;
 // Legacy defaults (Task 4aedda54); optional Owner settings do not change the installed policy contract.
 export const RETENTION_RULE = Object.freeze({ classBudgetBytes: 20 * GIB, minKeepPerClass: 10, maxDeletesPerPass: 16 });
 export const DISK_REMINDER_BYTES = 30 * GIB;
+// The C: gate of the executor (executor.mjs hostDiskGate): no new batch below 10 GiB, released again at 15 GiB (hysteresis).
+export const HOST_DISK_DEFER_BYTES = 10 * GIB;
+export const HOST_DISK_RESUME_BYTES = 15 * GIB;
 // The archive kinds the archive tools create (src/archive.mjs, resident-v2/archive-windows-spool.ps1, clued-ci-resident-linux);
 // any other name below the spool root is never considered for deletion. The length bound keeps a pass's answer within the
 // mailbox's 4 KB.
