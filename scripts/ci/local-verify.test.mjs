@@ -631,6 +631,7 @@ test('the watchdog levels come from where they live: the installed script wins o
   assert.deepEqual(at('Desk-A', '$suspendDisk=40; $resumeDisk=70; $interval=60'), { suspend: 40, resume: 70 }, 'a rendered one too');
   assert.deepEqual(at('Desk-A', 'no levels in here'), { suspend: 50, resume: 60 });
   assert.deepEqual(at('Desk-A', '$suspendDisk=42.5; $resumeDisk=66.5;'), { suspend: 42.5, resume: 66.5 }, 'levels with decimals');
+  assert.deepEqual(at('Desk-A', "$hostDrives=@(@{Drive='D';Suspend=5;Resume=6;Clean=$true},@{Drive='C';Suspend=12.5;Resume=21;Clean=$false})\n$suspendRunnerDisk=15"), { suspend: 12.5, resume: 21 }, 'the C: entry of the watched drives (Task 5282d4ae)');
   assert.deepEqual(at('Desk-B', null), { suspend: 50, resume: 60 }, 'a host without an installed script path: the profile');
   assert.equal(at('Somebody-Else', null), null, 'not a CI host');
   assert.deepEqual(at('Somebody-Else', null, { CLUED_CI_RESUME_FREE_GB: '90' }), { suspend: null, resume: 90 }, 'the variable names a level for any machine');

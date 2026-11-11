@@ -102,6 +102,7 @@
       "state": "active",
       "capacity_profile": "workstation-v1",
       "watchdog_path": "C:\\clued-ci\\watchdog-clued-ci.ps1",
+      "watchdog_drives": [{"drive": "C", "clean": false}],
       "windows_runner": {
         "profile": "windows-general-v1",
         "name": "clued-ci-company-win-01",
@@ -178,6 +179,7 @@
       "state": "active",
       "capacity_profile": "compact-v1",
       "watchdog_path": "C:\\clued-ci\\watchdog-home-runner.ps1",
+      "watchdog_drives": [{"drive": "C"}],
       "windows_runner": {
         "profile": "windows-general-v1",
         "name": "clued-ci-home-win-01",

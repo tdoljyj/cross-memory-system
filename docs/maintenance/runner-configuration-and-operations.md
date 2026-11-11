@@ -59,7 +59,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 | WSL 内存 / CPU / swap | 6 GB / 3 / 2 GB | 28 GB / 16 / 8 GB |
 | 暂停条件 | 空闲内存 < 1.5 GiB **或** runner 盘空闲 < 40 GiB（先清理） | < 6 GiB **或** runner 盘 < 15 GiB（先清理） |
 | 恢复条件 | 空闲内存 ≥ 2.5 GiB **且** runner 盘空闲 ≥ 55 GiB | ≥ 10 GiB **且** runner 盘 ≥ 20 GiB |
-| C 盘（不停 runner） | < 15 GiB 先清缓存仍低则告警（仅看门狗），≥ 20 GiB 解除 | < 15 GiB 告警，≥ 20 GiB 解除 |
+| C 盘（不停 runner） | < 15 GiB 先清缓存仍低则告警，≥ 20 GiB 解除 | < 15 GiB 告警，≥ 20 GiB 解除 |
 | 看门狗采样 | 30 秒 | 60 秒 |
 
 runner 盘指 runner 发行版虚拟磁盘所在的盘，看门狗运行时从该发行版的 WSL 注册（`HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss` 的 `BasePath`）取得；DESK-W-591 上 `CluedCI-Linux` 在 D:。runner 盘低于暂停线时先在该发行版内清理（`docker image prune --all --force`、`docker builder prune --all --force`、各活跃 runner 的 `_work/_temp`（仅当发行版内没有任何 `Runner.Worker`）、`fstrim -v /`），清理后仍低于暂停线才停；15 分钟内清理过则直接停。不删容器和卷。C 盘装的是常驻 CI 发行版和 Docker Desktop 的虚拟磁盘，不归看门狗停或清，只写 `ALERT C:` 日志并弹桌面通知。Owner 决定 241824b2（2026-11-08）。
@@ -149,7 +149,7 @@ Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。P
 
 看门狗由清单和 renderer 生成；不直接编辑生成文件来制造另一个配置来源。用最新受审配置在日常 WSL 所属 Windows 账号下生成到临时输出，解析并核对阈值、units、Windows report-only，然后在批准的主机部署窗口安装到 `watchdog_path`。
 
-renderer 按每个 Linux 条目的有效 `state` 选择 unit：显式 `linux_runner.state` 或额外槽位的 `state` 优先，仅未声明该字段时才取 `host.state`。例如主机为 `validated`、primary Linux 条目显式为 `active` 时，该条目可纳入预览；继承 `validated` 的条目仍不纳入。有效 active Linux 条目为空时改为生成只盯 C: 的看门狗（见下），这一选择规则不代替前述资格、激活或部署授权。
+renderer 按每个 Linux 条目的有效 `state` 选择 unit：显式 `linux_runner.state` 或额外槽位的 `state` 优先，仅未声明该字段时才取 `host.state`。例如主机为 `validated`、primary Linux 条目显式为 `active` 时，该条目可纳入预览；继承 `validated` 的条目仍不纳入。有效 active Linux 条目为空时不生成 Linux 部分，只生成被盯盘与其他执行器部分（见下），这一选择规则不代替前述资格、激活或部署授权。
 
 ```powershell
 # 从仓库根目录执行；只生成预览，不安装启动项、不启动进程
@@ -165,7 +165,7 @@ if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
 调度定义最低要求：WSL 所属日常账号，Interactive/Limited；登录触发 + 每分钟无限重复；IgnoreNew；ExecutionTimeLimit=0；失败后间隔一分钟重启三次；电池供电不停。沿用脚本的 mutex；不能让不同启动入口竞争管理同一主机。不得改成 SYSTEM 来“保证开机”，SYSTEM 看不到同一用户的 WSL 发行版。
 
-已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。home-linux-01 退役后家里没有 active Linux runner；renderer 为这种主机生成只盯 C: 的看门狗（Task 5282d4ae）：不碰 runner、WSL、服务或进程，C: < 15 GiB 时删除运行账号 `%TEMP%`、`%SystemRoot%\Temp`（该账号可删的部分）、npm/pip/NuGet HTTP 缓存中超过 1 天的文件（不跟随链接，不进 `C:\ProgramData\CluedIndependentCI`、`C:\clued-resident`、`C:\w`）并清空该账号 C: 回收站，至多每小时一次；仍低于 15 GiB 则 `ALERT C:` 并弹通知，≥ 20 GiB 解除。部署前家里看门狗仍保持停用。2026-10-21 复读：计划任务为 Disabled，无看门狗进程，Startup 启动文件已改名为 `.task-backup`（HKCU Run 项仍在，所指文件不存在）。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
+已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。home-linux-01 退役后家里没有 active Linux runner。renderer 对所有主机通用（Task 5282d4ae）：按主机条目的 `watchdog_drives`（盘符、可选阈值，默认取容量档 C: 阈值 15/20 GiB，`clean` 默认 true）与有效 active 的 runner 条目组合生成，不为某类主机写特例。被盯的盘低于阈值且 `clean` 时删除运行账号 `%TEMP%`、`%SystemRoot%\Temp`（该账号可删的部分）、npm/pip/NuGet HTTP 缓存中超过 1 天的文件（不跟随链接，不进 `C:\ProgramData\CluedIndependentCI`、`C:\clued-resident`、`C:\clued-ci`、`C:\w`、`D:\w`）并清空该账号该盘回收站，至多每小时一次；仍低则 `ALERT <盘>:` 并弹通知，达到恢复阈值解除。Linux runner 部分照旧在其发行版内清理、仍不够再停；Windows runner 只报告服务状态。家里配置为 C:（清理），公司为 C:（`clean: false`，只告警）。部署前家里看门狗仍保持停用。2026-10-21 复读：计划任务为 Disabled，无看门狗进程，Startup 启动文件已改名为 `.task-backup`（HKCU Run 项仍在，所指文件不存在）。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
 
 无窗口要求不能只靠 `/min` 或 `PowerShell -WindowStyle Hidden`。监督应使用不分配控制台的启动器，关闭标准输入并落盘 stdout/stderr、启动/退出结果。停维护前核对整条启动器→PowerShell→WSL keepalive 链；计划任务结束或启动器退出不证明所有后代已退出。只按已复读 PID、创建时间、完整启动命令和目标主机确认对应进程，不全机结束 PowerShell、pythonw 或 WSL 进程。
 

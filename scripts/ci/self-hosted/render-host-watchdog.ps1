@@ -1,9 +1,18 @@
 #requires -Version 5.1
 
+# One renderer for every host (Task 5282d4ae): the watchdog is put together from the host's entry in the profiles,
+# never from a special case for a kind of host.
+# - watchdog_drives: the drives it watches, [{drive, suspend_free_gb?, resume_free_gb?, clean?}]; default one C: entry,
+#   the levels default to the capacity profile's C: levels and clean to true. Each gets the host-disk part: below the
+#   level a cleanup of rebuildable caches (when clean), then an alert while still low.
+# - the executors are the host's runner entries whose effective state is active; each kind brings its own part:
+#   windows-runner reports its service (never starts it), linux-runner cleans its distribution and stops/starts its
+#   units for its own disk and for memory. A retired runner is not there; a host may have none.
 param(
     [Parameter(Mandatory = $true)]
     [string]$HostId,
     [string]$OutputPath,
+    [string]$ProfilesPath,   # default: node-profiles.json next to this script
     [switch]$InstallStartup,
     [switch]$StartNow
 )
@@ -11,8 +20,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$manifestPath = Join-Path $PSScriptRoot 'node-profiles.json'
-$data = Get-Content $manifestPath -Raw | ConvertFrom-Json
+if (-not $ProfilesPath) {
+    $ProfilesPath = Join-Path $PSScriptRoot 'node-profiles.json'
+}
+$data = Get-Content $ProfilesPath -Raw | ConvertFrom-Json
 $hosts = @($data.hosts | Where-Object { $_.host_id -eq $HostId })
 if ($hosts.Count -ne 1) {
     throw "Unknown or duplicate HostId: $HostId"
@@ -25,96 +36,44 @@ if (-not $capacityProperty) {
 }
 $capacity = $capacityProperty.Value
 
-if (-not $hostRecord.windows_runner -or -not $hostRecord.linux_runner) {
-    throw 'The v1 watchdog renderer expects one Windows runner and one WSL2 Linux runner on the host.'
-}
-
 if (-not $OutputPath) {
     $OutputPath = $hostRecord.watchdog_path
 }
-
-# The Windows runner is a Windows service run by a dedicated standard account.
-# The watchdog runs in the login session and must never start the runner itself:
-# that would run jobs as the login account again.
-if (-not ($hostRecord.windows_runner.PSObject.Properties.Name -contains 'service_name') -or -not $hostRecord.windows_runner.service_name) {
-    throw "windows_runner of $HostId has no service_name; the watchdog no longer starts the Windows runner from the login session."
+# The host id names the log, state and marker files and the mutex (in -f format strings).
+if ($HostId -notmatch '^[A-Za-z0-9._-]+$') {
+    throw "HostId has characters the watchdog's file names do not take: $HostId"
 }
 
 function Escape-SingleQuoted([string]$value) {
     return $value.Replace("'", "''")
 }
+function Get-Field($object, [string]$name) {
+    if ($null -ne $object -and $object.PSObject.Properties.Name -contains $name) { return $object.$name }
+    return $null
+}
+# A runner entry's own state, else the host's.
+function Get-EffectiveState($runner) {
+    $state = Get-Field $runner 'state'
+    if ($null -ne $state) { return $state }
+    return $hostRecord.state
+}
 
-$manageDocker = if ([bool]$hostRecord.linux_runner.manage_native_docker) { '$true' } else { '$false' }
-
-# Additional Linux slots share the primary WSL distro and are supervised by the
-# same watchdog. Every Linux runner, the primary included, is supervised only
-# while its own state (the host's when unset) is active; enrolling, retired and
-# other runners are left alone, so a retired unit is never restarted.
-$linuxRunners = @($hostRecord.linux_runner)
-if ($hostRecord.PSObject.Properties.Name -contains 'additional_linux_runners') {
-    $linuxRunners += @($hostRecord.additional_linux_runners)
-}
-$linuxUnits = @()
-$linuxRoots = @()
-foreach ($linuxRunner in $linuxRunners) {
-    $runnerState = if ($linuxRunner.PSObject.Properties.Name -contains 'state') { $linuxRunner.state } else { $hostRecord.state }
-    if ($runnerState -eq 'active') {
-        $linuxUnits += $linuxRunner.service_unit
-        # The capacity cleanup empties <root>/_work/_temp of these runners, passed unquoted to bash.
-        if ($linuxRunner.root -notmatch '^/[A-Za-z0-9._/-]+$' -or $linuxRunner.root -match '(^|/)\.\.?(/|$)' -or $linuxRunner.root -eq '/') {
-            throw "Linux runner $($linuxRunner.name) has a root the capacity cleanup does not take: $($linuxRunner.root)"
-        }
-        $linuxRoots += $linuxRunner.root.TrimEnd('/')
-    }
-}
-# The distro keepalive, native Docker and capacity suspend exist for these
-# runners. Without an active one (home-primary since home-linux-01 retired) there
-# is no runner to supervise, but C: still is: the host gets the disk-only watchdog
-# below (Task 5282d4ae), which cleans caches on C: and alerts, and touches no runner.
-$diskOnly = ($linuxUnits.Count -eq 0)
-# The host id names the log, state and marker files and the mutex (in -f format strings).
-if ($HostId -notmatch '^[A-Za-z0-9._-]+$') {
-    throw "HostId has characters the watchdog's file names do not take: $HostId"
-}
-foreach ($key in 'suspend_runner_disk_free_gb', 'resume_runner_disk_free_gb') {
-    if (-not ($capacity.PSObject.Properties.Name -contains $key)) {
-        throw "Capacity profile $($hostRecord.capacity_profile) has no $key"
-    }
-}
-$linuxUnitsLiteral = ($linuxUnits | ForEach-Object { "'" + (Escape-SingleQuoted $_) + "'" }) -join ','
-$linuxRootsLiteral = ($linuxRoots | ForEach-Object { "'" + (Escape-SingleQuoted $_) + "'" }) -join ','
-# The desktop notification, the same in both watchdogs.
-$showToast = @'
-function Show-Toast([string]$title,[string]$text){
-  if($env:CLUED_WATCHDOG_NO_TOAST -or $DryRun){return}
-  try{
-    # Windows shows a notification only for a registered application id
-    $registered='HKCU:\Software\Classes\AppUserModelId\Clued CI watchdog'
-    if(-not (Test-Path -LiteralPath $registered)){[void](New-Item -Path $registered -Force); [void](New-ItemProperty -Path $registered -Name DisplayName -Value 'Clued CI watchdog' -PropertyType String -Force)}
-    [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
-    $xml=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-    $nodes=$xml.GetElementsByTagName('text')
-    [void]$nodes.Item(0).AppendChild($xml.CreateTextNode($title)); [void]$nodes.Item(1).AppendChild($xml.CreateTextNode($text))
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Clued CI watchdog').Show([Windows.UI.Notifications.ToastNotification]::new($xml))
-  }catch{Log ("Alert notification failed: {0}" -f $_.Exception.Message)}
-}
-'@
-$template = @'
-param(
-  # Ops hooks (taken over from the hand-edited watchdog of DESK-W-591). The defaults are the production behaviour.
-  [int]$MaxIterations=0,   # 0: run forever
-  [switch]$DryRun          # read-only: every stop, start and cleanup is only logged as "would ..."; own log, state, marker and mutex; no notification
-)
-$ErrorActionPreference='Continue'
-$sfx=if($DryRun){'.dryrun'}else{''}
-$logDir='C:\clued-ci\logs'; $stateDir='C:\clued-ci\state'; New-Item -ItemType Directory -Force -Path $logDir,$stateDir | Out-Null
-$log=Join-Path $logDir ('watchdog-__HOST_ID__{0}.log' -f $sfx); function Log([string]$m){if($DryRun){$m='[DRYRUN] '+$m}; Add-Content $log ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$m)}
-$mutex=New-Object System.Threading.Mutex($false,('Local\CluedCIWatchdog-__HOST_ID__{0}' -f $sfx)); if(-not $mutex.WaitOne(0,$false)){exit 0}
+# The parts each kind of executor brings: its variables and functions (Body), what it does once at the start (Init)
+# and in each round after the watched drives (Step).
+$windowsBody = @'
 $winService='__WIN_SERVICE__'; $winServiceReported=''
+'@
+$windowsStep = @'
+  # Only report the Windows runner service's state when it changes; never start it from here.
+  $svc=Get-Service -Name $winService -ErrorAction SilentlyContinue
+  $svcState=if($svc){[string]$svc.Status}else{'missing'}
+  if($svcState -ne $winServiceReported){if($svcState -ne 'Running' -or $winServiceReported){Log ("Windows runner service {0}: {1}" -f $winService,$svcState)}; $winServiceReported=$svcState}
+'@
+$linuxBody = @'
 $distro='__DISTRO__'; $linuxUser='__LINUX_USER__'; $linuxUnits=@(__LINUX_UNITS__); $linuxRoots=@(__LINUX_ROOTS__); $manageDocker=__MANAGE_DOCKER__
 # Owner decision 241824b2 (2026-11-08): the runner disk levels apply to the drive that holds the runner distribution's
-# virtual disk; the C: levels ($suspendDisk/$resumeDisk) only raise an alert.
-$suspendMem=__SUSPEND_MEM__; $resumeMem=__RESUME_MEM__; $suspendDisk=__SUSPEND_DISK__; $resumeDisk=__RESUME_DISK__; $suspendRunnerDisk=__SUSPEND_RUNNER_DISK__; $resumeRunnerDisk=__RESUME_RUNNER_DISK__; $interval=__INTERVAL__; $capacitySuspended=$false
+# virtual disk; C: is a watched drive of the host (only alerts on DESK-W-591).
+$suspendMem=__SUSPEND_MEM__; $resumeMem=__RESUME_MEM__; $suspendRunnerDisk=__SUSPEND_RUNNER_DISK__; $resumeRunnerDisk=__RESUME_RUNNER_DISK__; $capacitySuspended=$false
 $lastDeferral=''
 # A suspend held back for the same reason is logged once per low-capacity episode.
 function Log-Deferral([string]$m){if($m -ne $script:lastDeferral){Log $m; $script:lastDeferral=$m}}
@@ -129,8 +88,6 @@ $alertFile=Join-Path $stateDir ('capacity-alert{0}.json' -f $sfx)
 # exactly while the runners are held back) and a desktop notification, repeated
 # every $alertEveryMinutes while the hold lasts; the resume removes the marker.
 $alertEveryMinutes=30; $lastAlert=[datetime]::MinValue; $firstLoop=$true; $holdSince=$null
-$cAlertOn=$false; $lastCAlert=[datetime]::MinValue
-__SHOW_TOAST__
 function Send-CapacityAlert([string]$kind,[string]$detail){
   try{
     if($kind -eq 'Resume'){
@@ -164,22 +121,6 @@ function Send-CapacityAlert([string]$kind,[string]$detail){
 function Clear-StaleCapacityAlert{
   try{if(Test-Path -LiteralPath $alertFile){Remove-Item -LiteralPath $alertFile -Force -ErrorAction Stop; Log 'ALERT marker of an earlier watchdog removed: the runners are not held back'}}
   catch{Log ("ALERT marker of an earlier watchdog could not be removed: {0}" -f $_.Exception.Message)}
-}
-# Owner decision 241824b2: C: below $suspendDisk only alerts (a line and a notification, again every $alertEveryMinutes
-# while it lasts, cleared once at $resumeDisk). What fills C: (the resident CI's distribution, Docker Desktop) is not
-# this watchdog's to stop or clean, and stopping the runners, whose disk is elsewhere, would free nothing on C:.
-function Update-SystemDriveAlert([double]$free,[string]$runnerDrive){
-  try{
-    if($free -lt $suspendDisk){
-      if($script:cAlertOn -and ((Get-Date)-$script:lastCAlert).TotalMinutes -lt $alertEveryMinutes){return}
-      $script:cAlertOn=$true; $script:lastCAlert=Get-Date
-      Log ("ALERT C: {0} GB free, below {1} GB. The runners are not stopped for C: (their disk is {2}:); free space on C:" -f $free,$suspendDisk,$runnerDrive)
-      Show-Toast 'Clued CI host: C: is low' ("C: {0} GB free (alerts below {1} GB). The CI runners keep running; free space on C:" -f $free,$suspendDisk)
-    }elseif($script:cAlertOn -and $free -ge $resumeDisk){
-      $script:cAlertOn=$false
-      Log ("ALERT C: cleared: {0} GB free" -f $free); Show-Toast 'Clued CI host: C: has space again' ("C: {0} GB free" -f $free)
-    }
-  }catch{Log ("C: alert failed: {0}" -f $_.Exception.Message)}
 }
 # END capacity-alert
 function Test-LinuxBusy {
@@ -302,8 +243,7 @@ function Restore-CapacityState {
 }
 function Invoke-CapacityStep {
   $c=Get-Capacity
-  Update-SystemDriveAlert $c.CFree $c.Drive
-  $note=if($null -eq $c.Free){"Runner disk unknown: no drive found for the virtual disk of $distro; its free space is not judged (the memory rule and the C: alert still are)"}else{''}
+  $note=if($null -eq $c.Free){"Runner disk unknown: no drive found for the virtual disk of $distro; its free space is not judged (the memory rule and the watched drives still are)"}else{''}
   if($note -ne $script:runnerDiskNote){if($note){Log $note}else{Log ("Runner disk found: {0}:" -f $c.Drive)}; $script:runnerDiskNote=$note}
   $diskLow=($null -ne $c.Free -and $c.Free -lt $suspendRunnerDisk)
   $belowSuspend=($c.Mem -lt $suspendMem -or $diskLow)
@@ -349,55 +289,145 @@ function Invoke-CapacityStep {
   if(((Get-Date)-$lastAlert).TotalMinutes -ge $alertEveryMinutes){Send-CapacityAlert 'Reminder' (Format-Capacity $c)}
 }
 # END capacity-step
-Log 'Clued P13 host watchdog started.'
-# the levels it works with, in the log: what a restart took over is readable without opening the script
-Log ("Thresholds: the runner disk stops below {0} GB, resumes at {1} GB (after a cleanup first); memory stops below {2} GB, resumes at {3} GB; C: only alerts below {4} GB, clears at {5} GB" -f $suspendRunnerDisk,$resumeRunnerDisk,$suspendMem,$resumeMem,$suspendDisk,$resumeDisk)
-$runnerDisk=Get-RunnerDisk
-Log ("Runner disk: {0}" -f $(if($runnerDisk){"{0}: ({1})" -f $runnerDisk.Drive,$runnerDisk.Vhdx}else{"unknown (no WSL registration of $distro found)"}))
-try{
+'@
+$linuxInit = @'
+  # the levels it works with, in the log: what a restart took over is readable without opening the script
+  Log ("Linux runners: the runner disk stops below {0} GB, resumes at {1} GB (after a cleanup first); memory stops below {2} GB, resumes at {3} GB" -f $suspendRunnerDisk,$resumeRunnerDisk,$suspendMem,$resumeMem)
+  $runnerDisk=Get-RunnerDisk
+  Log ("Runner disk: {0}" -f $(if($runnerDisk){"{0}: ({1})" -f $runnerDisk.Drive,$runnerDisk.Vhdx}else{"unknown (no WSL registration of $distro found)"}))
   Restore-CapacityState
-  $iter=0
-  while($true){
+'@
+$linuxStep = @'
   Invoke-CapacityStep
   if($firstLoop){$firstLoop=$false; if(-not $capacitySuspended){Clear-StaleCapacityAlert}}
-  # Only report the Windows runner service's state when it changes; never start it from here.
-  $svc=Get-Service -Name $winService -ErrorAction SilentlyContinue
-  $svcState=if($svc){[string]$svc.Status}else{'missing'}
-  if($svcState -ne $winServiceReported){if($svcState -ne 'Running' -or $winServiceReported){Log ("Windows runner service {0}: {1}" -f $winService,$svcState)}; $winServiceReported=$svcState}
   $keep=Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like ('*'+$distro+'*sleep*infinity*')}
   if(-not $keep){if($DryRun){Log 'would recover the WSL keepalive'}else{Start-Process "$env:SystemRoot\System32\wsl.exe" -ArgumentList '-d',$distro,'-u',$linuxUser,'-e','/bin/sleep','infinity' -WindowStyle Hidden; Start-Sleep 2; Log 'Recovered WSL keepalive.'}}
   if(-not $capacitySuspended){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl is-active --quiet docker 2>$null; if($LASTEXITCODE -ne 0){if($DryRun){Log 'would recover native Docker'}else{& wsl.exe -d $distro -u root -e systemctl start containerd docker 2>$null; Log 'Recovered native Docker.'}}}
     foreach($linuxUnit in $linuxUnits){& wsl.exe -d $distro -u root -e systemctl is-active --quiet $linuxUnit 2>$null; if($LASTEXITCODE -ne 0){if($DryRun){Log ("would recover Linux runner: {0}" -f $linuxUnit)}else{& wsl.exe -d $distro -u root -e systemctl start $linuxUnit 2>$null; Log ("Recovered Linux runner: {0}" -f $linuxUnit)}}}
   }
-  $iter++; if($MaxIterations -gt 0 -and $iter -ge $MaxIterations){break}
-  Start-Sleep -Seconds $interval
-}}finally{try{$mutex.ReleaseMutex()}catch{};$mutex.Dispose();Log 'Clued P13 host watchdog stopped.'}
 '@
+# The watched drives.
+$driveConfig = Get-Field $hostRecord 'watchdog_drives'
+if ($null -eq $driveConfig) {
+    $driveConfig = @([pscustomobject]@{ drive = 'C' })
+}
+$driveLiterals = @()
+$seenDrives = @{}
+foreach ($entry in @($driveConfig)) {
+    $letter = [string](Get-Field $entry 'drive')
+    if ($letter -notmatch '^[A-Za-z]$') {
+        throw "watchdog_drives of $HostId has an entry that is not one drive letter: '$letter'"
+    }
+    $letter = $letter.ToUpper()
+    if ($seenDrives.ContainsKey($letter)) {
+        throw "watchdog_drives of $HostId names $($letter): twice"
+    }
+    $seenDrives[$letter] = $true
+    $suspend = Get-Field $entry 'suspend_free_gb'
+    if ($null -eq $suspend) { $suspend = $capacity.suspend_c_free_gb }
+    $resume = Get-Field $entry 'resume_free_gb'
+    if ($null -eq $resume) { $resume = $capacity.resume_c_free_gb }
+    if (-not ([double]$suspend -gt 0 -and [double]$suspend -lt [double]$resume)) {
+        throw "watchdog_drives of $HostId, $($letter): needs 0 < suspend_free_gb < resume_free_gb (got $suspend, $resume)"
+    }
+    $clean = Get-Field $entry 'clean'
+    $cleanLiteral = if ($null -eq $clean -or [bool]$clean) { '$true' } else { '$false' }
+    $driveLiterals += ("@{{Drive='{0}';Suspend={1};Resume={2};Clean={3}}}" -f $letter, [string]$suspend, [string]$resume, $cleanLiteral)
+}
 
-# The disk-only watchdog of a host without an active Linux runner (Task 5282d4ae). It watches C:, which holds the
-# resident CI's WSL virtual disk (on TURING it filled to 1.33 GB on 2026-11-11 and the distribution's I/O failed):
-# below the profile's C: level it removes what is rebuildable and older than a day, from the caches of the account it
-# runs as and the system TEMP (what that account may delete), and empties that account's recycle bin of the drive;
-# when that was not enough it alerts. It never stops or starts a runner, a service, WSL or a process.
-$diskTemplate = @'
+# The executors: each active runner entry, by kind. The Linux part runs before the Windows report in each round.
+$executors = @()
+$replacements = [ordered]@{}
+
+# Linux runners (the primary and additional slots) share one WSL distribution and are supervised together while their
+# own state (the host's when unset) is active; enrolling, retired and other runners are left alone, so a retired unit
+# is never restarted.
+$linuxRunners = @()
+$primaryLinux = Get-Field $hostRecord 'linux_runner'
+if ($null -ne $primaryLinux) {
+    $linuxRunners += $primaryLinux
+    $additional = Get-Field $hostRecord 'additional_linux_runners'
+    if ($null -ne $additional) { $linuxRunners += @($additional) }
+}
+$linuxUnits = @()
+$linuxRoots = @()
+foreach ($linuxRunner in $linuxRunners) {
+    if ((Get-EffectiveState $linuxRunner) -eq 'active') {
+        $linuxUnits += $linuxRunner.service_unit
+        # The capacity cleanup empties <root>/_work/_temp of these runners, passed unquoted to bash.
+        if ($linuxRunner.root -notmatch '^/[A-Za-z0-9._/-]+$' -or $linuxRunner.root -match '(^|/)\.\.?(/|$)' -or $linuxRunner.root -eq '/') {
+            throw "Linux runner $($linuxRunner.name) has a root the capacity cleanup does not take: $($linuxRunner.root)"
+        }
+        $linuxRoots += $linuxRunner.root.TrimEnd('/')
+    }
+}
+if ($linuxUnits.Count -gt 0) {
+    foreach ($key in 'suspend_runner_disk_free_gb', 'resume_runner_disk_free_gb') {
+        if (-not ($capacity.PSObject.Properties.Name -contains $key)) {
+            throw "Capacity profile $($hostRecord.capacity_profile) has no $key"
+        }
+    }
+    $executors += @{ Body = $linuxBody; Init = $linuxInit; Step = $linuxStep }
+    $replacements['__DISTRO__'] = (Escape-SingleQuoted $primaryLinux.distro)
+    $replacements['__LINUX_USER__'] = (Escape-SingleQuoted $primaryLinux.user)
+    $replacements['__LINUX_UNITS__'] = (($linuxUnits | ForEach-Object { "'" + (Escape-SingleQuoted $_) + "'" }) -join ',')
+    $replacements['__LINUX_ROOTS__'] = (($linuxRoots | ForEach-Object { "'" + (Escape-SingleQuoted $_) + "'" }) -join ',')
+    $replacements['__MANAGE_DOCKER__'] = $(if ([bool](Get-Field $primaryLinux 'manage_native_docker')) { '$true' } else { '$false' })
+    $replacements['__SUSPEND_MEM__'] = [string]$capacity.suspend_free_memory_gb
+    $replacements['__RESUME_MEM__'] = [string]$capacity.resume_free_memory_gb
+    $replacements['__SUSPEND_RUNNER_DISK__'] = [string]$capacity.suspend_runner_disk_free_gb
+    $replacements['__RESUME_RUNNER_DISK__'] = [string]$capacity.resume_runner_disk_free_gb
+}
+
+$windowsRunner = Get-Field $hostRecord 'windows_runner'
+if ($null -ne $windowsRunner -and (Get-EffectiveState $windowsRunner) -eq 'active') {
+    # The Windows runner is a Windows service run by a dedicated standard account. The watchdog runs in the login
+    # session and must never start the runner itself: that would run jobs as the login account again.
+    if (-not (Get-Field $windowsRunner 'service_name')) {
+        throw "windows_runner of $HostId has no service_name; the watchdog no longer starts the Windows runner from the login session."
+    }
+    $executors += @{ Body = $windowsBody; Init = ''; Step = $windowsStep }
+    $replacements['__WIN_SERVICE__'] = (Escape-SingleQuoted $windowsRunner.service_name)
+}
+
+$template = @'
 param(
+  # Ops hooks (taken over from the hand-edited watchdog of DESK-W-591). The defaults are the production behaviour.
   [int]$MaxIterations=0,   # 0: run forever
-  [switch]$DryRun          # read-only: every removal is only logged as "would ..."; own log and mutex; no notification
+  [switch]$DryRun          # read-only: every stop, start and cleanup is only logged as "would ..."; own log, state, marker and mutex; no notification
 )
 $ErrorActionPreference='Continue'
 $sfx=if($DryRun){'.dryrun'}else{''}
-$logDir='C:\clued-ci\logs'; New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$logDir='C:\clued-ci\logs'; $stateDir='C:\clued-ci\state'; New-Item -ItemType Directory -Force -Path $logDir,$stateDir | Out-Null
 $log=Join-Path $logDir ('watchdog-__HOST_ID__{0}.log' -f $sfx); function Log([string]$m){if($DryRun){$m='[DRYRUN] '+$m}; Add-Content $log ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$m)}
 $mutex=New-Object System.Threading.Mutex($false,('Local\CluedCIWatchdog-__HOST_ID__{0}' -f $sfx)); if(-not $mutex.WaitOne(0,$false)){exit 0}
-$drive='C'; $suspendDisk=__SUSPEND_DISK__; $resumeDisk=__RESUME_DISK__; $interval=__INTERVAL__
-__SHOW_TOAST__
-# BEGIN disk-step
-# Below $suspendDisk: a cleanup, at most once per $cleanupGapMinutes; still below: an ALERT line and a notification,
-# again every $alertEveryMinutes while it lasts, cleared once at $resumeDisk.
-$alertEveryMinutes=30; $cleanupGapMinutes=60; $cleanAgeDays=1; $lastCleanup=[datetime]::MinValue; $alertOn=$false; $lastAlert=[datetime]::MinValue
-# Never touched, whatever a cleanup root or a link says: the resident CI's state, its WSL distribution, the evidence.
-$protectedRoots=@('C:\ProgramData\CluedIndependentCI','C:\clued-resident','C:\w')
+$interval=__INTERVAL__
+# BEGIN notify
+function Show-Toast([string]$title,[string]$text){
+  if($env:CLUED_WATCHDOG_NO_TOAST -or $DryRun){return}
+  try{
+    # Windows shows a notification only for a registered application id
+    $registered='HKCU:\Software\Classes\AppUserModelId\Clued CI watchdog'
+    if(-not (Test-Path -LiteralPath $registered)){[void](New-Item -Path $registered -Force); [void](New-ItemProperty -Path $registered -Name DisplayName -Value 'Clued CI watchdog' -PropertyType String -Force)}
+    [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
+    $xml=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+    $nodes=$xml.GetElementsByTagName('text')
+    [void]$nodes.Item(0).AppendChild($xml.CreateTextNode($title)); [void]$nodes.Item(1).AppendChild($xml.CreateTextNode($text))
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Clued CI watchdog').Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+  }catch{Log ("Alert notification failed: {0}" -f $_.Exception.Message)}
+}
+# END notify
+# BEGIN host-disk
+# Every watched drive of the host: below its Suspend level a host cleanup when it says Clean (at most once per
+# $cleanupGapMinutes), then, still below, an ALERT line and a notification, again every $alertEveryMinutes while it
+# lasts, cleared once at its Resume level. It never stops or starts anything.
+$hostDrives=@(__HOST_DRIVES__)
+$alertEveryMinutes=30; $cleanupGapMinutes=60; $cleanAgeDays=1; $driveState=@{}
+# Never touched, whatever a cleanup root or a link says: the resident CI's state and WSL distribution, the runners and
+# this watchdog (C:\clued-ci), the evidence.
+$protectedRoots=@('C:\ProgramData\CluedIndependentCI','C:\clued-resident','C:\clued-ci','C:\w','D:\w')
+# What is rebuildable, of the account the watchdog runs as (of the system TEMP, what that account may delete).
 $cleanRoots=@($env:TEMP,(Join-Path $env:SystemRoot 'Temp'),(Join-Path $env:LOCALAPPDATA 'npm-cache'),(Join-Path $env:LOCALAPPDATA 'pip\Cache'),(Join-Path $env:LOCALAPPDATA 'NuGet\v3-cache'))
 # A path inside a protected folder, or one that contains a protected folder.
 function Test-Protected([string]$p){
@@ -405,9 +435,9 @@ function Test-Protected([string]$p){
   foreach($r in $protectedRoots){$x=$r.TrimEnd('\')+'\'; if($f.StartsWith($x,[StringComparison]::OrdinalIgnoreCase) -or $x.StartsWith($f,[StringComparison]::OrdinalIgnoreCase)){return $true}}
   return $false
 }
-# The files older than $cleanAgeDays under $root on $drive, without entering a link (junction or symbolic link) or a
-# protected folder; a file in use is left.
-function Remove-OldFiles([string]$root){
+# The files older than $cleanAgeDays under $root when it is on $drive, without entering a link (junction or symbolic
+# link) or a protected folder; a file in use is left.
+function Remove-OldFiles([string]$root,[string]$drive){
   $n=0; $bytes=0L
   if(-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)){return @{Files=0;Bytes=0L}}
   if(-not [IO.Path]::GetFullPath($root).StartsWith($drive+':\',[StringComparison]::OrdinalIgnoreCase)){return @{Files=0;Bytes=0L}}
@@ -427,67 +457,65 @@ function Remove-OldFiles([string]$root){
   }
   return @{Files=$n;Bytes=$bytes}
 }
-function Invoke-HostCleanup {
+function Invoke-HostCleanup([string]$drive){
   $verb=if($DryRun){'would remove'}else{'removed'}
-  foreach($r in $cleanRoots){$x=Remove-OldFiles $r; if($x.Files -gt 0){Log ("Disk cleanup, {0}: {1} {2} file(s), {3} MB" -f $r,$verb,$x.Files,[math]::Round($x.Bytes/1MB))}}
+  foreach($r in $cleanRoots){$x=Remove-OldFiles $r $drive; if($x.Files -gt 0){Log ("Disk cleanup, {0}: {1} {2} file(s), {3} MB" -f $r,$verb,$x.Files,[math]::Round($x.Bytes/1MB))}}
   if($DryRun){Log ("would empty the recycle bin of {0}:" -f $drive); return}
   try{Clear-RecycleBin -DriveLetter $drive -Force -ErrorAction Stop; Log ("Disk cleanup: the recycle bin of {0}: emptied" -f $drive)}catch{}
 }
-function Get-FreeGB { [math]::Round((Get-PSDrive $drive -ErrorAction Stop).Free/1GB,1) }
-function Invoke-DiskStep {
-  $free=Get-FreeGB
-  if($free -lt $suspendDisk){
-    if(((Get-Date)-$script:lastCleanup).TotalMinutes -ge $cleanupGapMinutes){
-      $script:lastCleanup=Get-Date; $before=$free
-      Log ("Disk cleanup: {0}: {1} GB free, below {2} GB" -f $drive,$free,$suspendDisk)
-      Invoke-HostCleanup
-      $free=Get-FreeGB
-      Log ("Disk cleanup done: {0}: {1} -> {2} GB free" -f $drive,$before,$free)
+function Get-FreeGB([string]$drive){ [math]::Round((Get-PSDrive $drive -ErrorAction Stop).Free/1GB,1) }
+function Invoke-DriveStep($d){
+  $drive=$d.Drive
+  if(-not $script:driveState.ContainsKey($drive)){$script:driveState[$drive]=@{LastCleanup=[datetime]::MinValue;AlertOn=$false;LastAlert=[datetime]::MinValue}}
+  $s=$script:driveState[$drive]
+  $free=Get-FreeGB $drive
+  if($free -lt $d.Suspend){
+    $after=''
+    if($d.Clean){
+      $after=' after a cleanup'
+      if(((Get-Date)-$s.LastCleanup).TotalMinutes -ge $cleanupGapMinutes){
+        $s.LastCleanup=Get-Date; $before=$free
+        Log ("Disk cleanup: {0}: {1} GB free, below {2} GB" -f $drive,$free,$d.Suspend)
+        Invoke-HostCleanup $drive
+        $free=Get-FreeGB $drive
+        Log ("Disk cleanup done: {0}: {1} -> {2} GB free" -f $drive,$before,$free)
+      }
     }
-    if($free -ge $suspendDisk -or ($script:alertOn -and ((Get-Date)-$script:lastAlert).TotalMinutes -lt $alertEveryMinutes)){return}
-    $script:alertOn=$true; $script:lastAlert=Get-Date
-    Log ("ALERT {0}: {1} GB free, below {2} GB after a cleanup; free space on {0}:" -f $drive,$free,$suspendDisk)
-    Show-Toast ("Clued CI host: {0}: is low" -f $drive) ("{0}: {1} GB free after a cleanup (alerts below {2} GB); free space on {0}:" -f $drive,$free,$suspendDisk)
-  }elseif($script:alertOn -and $free -ge $resumeDisk){
-    $script:alertOn=$false
+    if($free -ge $d.Suspend -or ($s.AlertOn -and ((Get-Date)-$s.LastAlert).TotalMinutes -lt $alertEveryMinutes)){return}
+    $s.AlertOn=$true; $s.LastAlert=Get-Date
+    Log ("ALERT {0}: {1} GB free, below {2} GB{3}; free space on {0}:" -f $drive,$free,$d.Suspend,$after)
+    Show-Toast ("Clued CI host: {0}: is low" -f $drive) ("{0}: {1} GB free{3} (alerts below {2} GB); free space on {0}:" -f $drive,$free,$d.Suspend,$after)
+  }elseif($s.AlertOn -and $free -ge $d.Resume){
+    $s.AlertOn=$false
     Log ("ALERT {0}: cleared: {1} GB free" -f $drive,$free); Show-Toast ("Clued CI host: {0}: has space again" -f $drive) ("{0}: {1} GB free" -f $drive,$free)
   }
 }
-# END disk-step
-Log 'Clued host disk watchdog started (no active Linux runner: no runner is supervised).'
-Log ("Thresholds: {0}: below {1} GB removes caches older than {2} day(s), then alerts; the alert clears at {3} GB" -f $drive,$suspendDisk,$cleanAgeDays,$resumeDisk)
+function Invoke-HostDiskStep { foreach($d in $hostDrives){ try{Invoke-DriveStep $d}catch{Log ("Disk step for {0}: failed: {1}" -f $d.Drive,$_.Exception.Message)} } }
+# END host-disk
+__BODIES__
+Log 'Clued P13 host watchdog started.'
+Log ("Watched drives: {0}" -f (($hostDrives | ForEach-Object {"{0}: below {1} GB {2}alerts, clears at {3} GB" -f $_.Drive,$_.Suspend,$(if($_.Clean){"removes caches older than $cleanAgeDays day(s), then "}else{''}),$_.Resume}) -join '; '))
 try{
+__INITS__
   $iter=0
   while($true){
-    try{Invoke-DiskStep}catch{Log ("Disk step failed: {0}" -f $_.Exception.Message)}
-    $iter++; if($MaxIterations -gt 0 -and $iter -ge $MaxIterations){break}
-    Start-Sleep -Seconds $interval
-  }
-}finally{try{$mutex.ReleaseMutex()}catch{};$mutex.Dispose();Log 'Clued host disk watchdog stopped.'}
+  Invoke-HostDiskStep
+__STEPS__
+  $iter++; if($MaxIterations -gt 0 -and $iter -ge $MaxIterations){break}
+  Start-Sleep -Seconds $interval
+}}finally{try{$mutex.ReleaseMutex()}catch{};$mutex.Dispose();Log 'Clued P13 host watchdog stopped.'}
 '@
-if ($diskOnly) {
-    $template = $diskTemplate
-}
-
-$replacements = [ordered]@{
-    '__SHOW_TOAST__' = $showToast
-    '__HOST_ID__' = $HostId
-    '__WIN_SERVICE__' = (Escape-SingleQuoted $hostRecord.windows_runner.service_name)
-    '__DISTRO__' = (Escape-SingleQuoted $hostRecord.linux_runner.distro)
-    '__LINUX_USER__' = (Escape-SingleQuoted $hostRecord.linux_runner.user)
-    '__LINUX_UNITS__' = $linuxUnitsLiteral
-    '__LINUX_ROOTS__' = $linuxRootsLiteral
-    '__MANAGE_DOCKER__' = $manageDocker
-    '__SUSPEND_MEM__' = [string]$capacity.suspend_free_memory_gb
-    '__RESUME_MEM__' = [string]$capacity.resume_free_memory_gb
-    '__SUSPEND_RUNNER_DISK__' = [string]$capacity.suspend_runner_disk_free_gb
-    '__RESUME_RUNNER_DISK__' = [string]$capacity.resume_runner_disk_free_gb
-    '__SUSPEND_DISK__' = [string]$capacity.suspend_c_free_gb
-    '__RESUME_DISK__' = [string]$capacity.resume_c_free_gb
-    '__INTERVAL__' = [string]$capacity.watchdog_interval_seconds
-}
+$template = $template.Replace('__BODIES__', (@($executors | ForEach-Object { $_.Body }) -join "`n"))
+$template = $template.Replace('__INITS__', (@($executors | Where-Object { $_.Init } | ForEach-Object { $_.Init }) -join "`n"))
+$template = $template.Replace('__STEPS__', (@($executors | ForEach-Object { $_.Step }) -join "`n"))
+$replacements['__HOST_ID__'] = $HostId
+$replacements['__INTERVAL__'] = [string]$capacity.watchdog_interval_seconds
+$replacements['__HOST_DRIVES__'] = ($driveLiterals -join ',')
 foreach ($entry in $replacements.GetEnumerator()) {
     $template = $template.Replace($entry.Key, $entry.Value)
+}
+if ($template -match '__[A-Z_]+__') {
+    throw "The rendered watchdog still has a placeholder: $($Matches[0])"
 }
 
 $parent = Split-Path -Parent $OutputPath

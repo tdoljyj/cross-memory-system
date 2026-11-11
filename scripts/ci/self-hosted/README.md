@@ -153,7 +153,10 @@ C: alert only:    C: free < 15 GB, cleared at >= 20 GB
 watchdog interval 30 s
 ```
 
-A host without an active Linux runner (home-primary since home-linux-01 retired) gets a disk-only watchdog instead (Task 5282d4ae): it supervises no runner, WSL or service; with C: below `suspend_c_free_gb` it removes files older than a day from the running account's `%TEMP%`, `%SystemRoot%\Temp` (what that account may delete), npm, pip and NuGet HTTP caches, never through a link and never under `C:\ProgramData\CluedIndependentCI`, `C:\clued-resident` or `C:\w`, and empties that account's recycle bin of C: (at most once an hour); still below, it alerts (`ALERT C:` and a notification, every 30 minutes), cleared at `resume_c_free_gb`.
+One renderer serves every host (Task 5282d4ae); what its watchdog does comes from the host's entry, never from a special case for a kind of host:
+
+- `watchdog_drives`: the drives it watches, e.g. `[{"drive": "C"}]` (TURING) or `[{"drive": "C", "clean": false}]` (DESK-W-591); optional `suspend_free_gb`/`resume_free_gb` per drive, default the profile's `suspend_c_free_gb`/`resume_c_free_gb`; `clean` defaults to true; no entry means one C: entry. Below its level a drive with `clean` gets a host cleanup (files older than a day in the running account's `%TEMP%`, `%SystemRoot%\Temp` as far as that account may delete, the npm, pip and NuGet HTTP caches, never through a link and never under `C:\ProgramData\CluedIndependentCI`, `C:\clued-resident`, `C:\clued-ci`, `C:\w` or `D:\w`, and that account's recycle bin of the drive; at most once an hour); still below, it alerts (`ALERT <drive>:` and a notification, every 30 minutes), cleared at the resume level.
+- the executors are the runner entries whose effective state is active, each kind with its own part: `linux_runner` (and `additional_linux_runners`) clean their distribution and stop/start their units for their own disk and for memory, as above; `windows_runner` is only reported (the watchdog never starts it). A retired runner is not there; a host may have none.
 
 ### workstation-v1
 
