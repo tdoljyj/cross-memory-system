@@ -3667,3 +3667,31 @@ test('typed manual actor retains exact full Source/FullRole gate while generic P
   assert.ok(gateFindings(changed,text,{registeredActorTransition:true}).length>0,'boolean alone cannot self-register changed Source');
  }
 });
+
+
+test('trusted admission catalogue reader permits only the profile through 2 MiB and keeps role bounds',async()=>{
+  const file='.github/workflows/gitleaks.yml',profilesUrl=new URL('./clued-gated-proof-profiles.json',import.meta.url),
+    rolesUrl=new URL('./clued-gated-proof-role-specs.json',import.meta.url),raw=fs.readFileSync(profilesUrl),
+    profiles=parseWorkflowProfiles(raw),legacy=Buffer.from(JSON.stringify(profiles)+'\n'),source=blob=>registeredWorkflowSource(profiles,file,blob).profile.source_yaml,
+    before=source('ba4690650935961e7f4aa289a3aa0dc874b8b4fd'),after=source('6441fc32b084002de697415ea8343af07816c929'),
+    originalStat=fs.lstatSync,originalRead=fs.readFileSync;
+  assert.ok(raw.length>1048576,'the actual preregistered catalogue crosses the old bound');
+  const fetchImpl=async url=>{
+    const address=new URL(url);assert.equal(address.pathname,`/repos/o/r/contents/${file}`);
+    const text=address.searchParams.get('ref')===HEAD?after:before;
+    return Response.json({type:'file',encoding:'base64',content:Buffer.from(text).toString('base64')});
+  };
+  const run=()=>workflowFindings(fetchImpl,env(),'o/r',[{filename:file,status:'modified'}],HEAD,BASE);
+  for(const [size,roleTooLarge,allowed] of [[2097152,false,true],[2097153,false,false],[2097152,true,false]]) {
+    const padded=Buffer.concat([legacy,Buffer.alloc(size-legacy.length,32)]);
+    try {
+      fs.lstatSync=function(location,...args){const value=originalStat.call(this,location,...args),href=String(location);
+        if(href===String(profilesUrl)||roleTooLarge&&href===String(rolesUrl))return Object.assign(Object.create(value),{size:href===String(profilesUrl)?size:524289});
+        return value;};
+      fs.readFileSync=function(location,...args){return String(location)===String(profilesUrl)?padded:originalRead.call(this,location,...args);};
+      const result=await run();
+      assert.equal(result.gate.some(code=>code.includes('bootstrap_ordinary_Source_not_registered')),!allowed);
+      if(allowed)assert.deepEqual(result.gate,[]);
+    } finally {fs.lstatSync=originalStat;fs.readFileSync=originalRead;}
+  }
+});

@@ -52,7 +52,7 @@ import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from ".
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationSource} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
 import {NON_PR_CONTROL_FILES,NON_PR_CONTROL_SOURCE_PATH,parseNonPrControlCatalogue,classifyNonPrControlWorkflowSource} from './clued-non-pr-control-source.mjs';
-import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,compileRegisteredWorkflow} from './clued-workflow-profile.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,compileRegisteredWorkflow,WORKFLOW_PROFILES_MAX_BYTES} from './clued-workflow-profile.mjs';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -272,7 +272,7 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
   let ordinary=null;
   const ordinarySource=(workflowPath,text,bytes)=>{
     if(!ordinary){
-      const profiles=bounded(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),1048576,'ordinary Source registry'),
+      const profiles=bounded(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),WORKFLOW_PROFILES_MAX_BYTES,'ordinary Source registry'),
         roles=bounded(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),524288,'ordinary Role registry');
       ordinary={profiles:parseWorkflowProfiles(profiles.bytes),roles:JSON.parse(roles.text)};
     }

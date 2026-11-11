@@ -1,7 +1,7 @@
 import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
 import {ACTOR_WORKFLOW,classifyActorSource,trustedActorCatalogue} from './clued-standard-runner-actor-source.mjs';
 import {NON_PR_CONTROL_FILES,NON_PR_CONTROL_SOURCE_PATH,parseNonPrControlCatalogue,classifyNonPrControlWorkflowSource} from './clued-non-pr-control-source.mjs';
-import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,WORKFLOW_PROFILES_MAX_BYTES} from './clued-workflow-profile.mjs';
 import {CONTROL_WORKFLOW_SOURCE_PATH,CONTROL_WORKFLOW_FILES,MAIN_SECRET_CONTROLLER_ROUTE,SLOT_COMPLETION_OBSERVER_SOURCE,compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 // Merge Admission v0.1 §7.3, step 3: the merge slot follows CI
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
@@ -85,7 +85,7 @@ test('nongated ordinary CI needs an exact registered Source and independent comp
   const changed=JSON.parse(read(rolesPath));changed.workflows[file].sources[expected][0].definition.steps.reverse();
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolesPath?Buffer.from(JSON.stringify(changed)):read(p)),/unregistered default ordinary Role/);
   assert.equal(ciWorkflows(ROOT,()=>['renamed-budget.yml'],p=>p.endsWith('renamed-budget.yml')?text:read(p)).size,0,'another path cannot borrow the registered Source');
-  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===ordinaryPath?Buffer.alloc(1048577):read(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===ordinaryPath?Buffer.alloc(WORKFLOW_PROFILES_MAX_BYTES+1):read(p)),/exceeds bounds/);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolesPath?Buffer.alloc(524289):read(p)),/exceeds bounds/);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===ordinaryPath?Buffer.from([0xff]):read(p)),/invalid UTF-8/);
   let sourceReads=0;const fresh=p=>{if(p===ordinaryPath)sourceReads++;return read(p);};
@@ -1112,4 +1112,20 @@ test('manual actor exclusion never admits an unknown/mutated Source or creates a
  }
  assert.equal(ciWorkflows(ROOT,()=>['unknown-manual-actor.yml'],read).size,1);
  assert.equal(classifyActorSource(r,ACTOR_WORKFLOW,text).execution_authority,false);
+});
+
+
+test('ordinary catalogue reader accepts only the profile through 2 MiB and keeps role and workflow bounds',()=>{
+  const name='runner-budget-policy.yml',file='.github/workflows/'+name,
+    profilePath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),
+    rolePath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json'),
+    original=fs.readFileSync(profilePath),legacy=Buffer.from(JSON.stringify(parseWorkflowProfiles(original))+'\n'),expected=gitBlobSha(fs.readFileSync(path.join(ROOT,file)));
+  assert.ok(original.length>1048576,'the actual G4 successor crosses the old bound');
+  for(const size of [original.length,WORKFLOW_PROFILES_MAX_BYTES]) {
+    const padded=size===original.length?original:Buffer.concat([legacy,Buffer.alloc(size-legacy.length,32)]);
+    assert.deepEqual([...ciWorkflows(ROOT,()=>[name],p=>p===profilePath?padded:fs.readFileSync(p))],[[file,expected]]);
+  }
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===profilePath?Buffer.alloc(WORKFLOW_PROFILES_MAX_BYTES+1):fs.readFileSync(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolePath?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
 });

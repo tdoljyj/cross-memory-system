@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "d00cb3005caded0ad242a03278ed5f61246ced8e306a4636b28746b5c1518c32"
+      "content_sha256": "4a6001c2a0003a53038d251a48623e7f4ddda6f25c26d810c0616d327db3f632"
     },
     {
       "id": "hook.runner-job-started",
@@ -212,7 +212,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -220,7 +220,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "87351b41a742ec8b0357a9f8eda5a46b78451039f2938d9e5a1553500ef9bcf7",
+      "content_sha256": "d1c9b4713db9f3436641571a34ee1e0956dba13592bbd69409688e4541d8d540",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -309,13 +309,13 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "8e31e84b74759a093db5bd2f65eee1c7eb9fe4bb71ed8710170888dec74bc591",
+      "content_sha256": "df1c786855193a6c9a4766e8299952bbb4d2559eb808f2939012603bad43b754",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.39",
+      "version": "1.1.40",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "69887195f07b2bbcde079e2079cf895bcc5f383ef271ab53066a89dd10a4a91c"
+      "content_sha256": "a45829e31196bfbc418ee7e3c15263400b3e43b018cce50ddd4ef0c0e628aa8c"
     },
     {
       "id": "script.resource-maintenance",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "063dae8b1562899637487b1af3d817d46714d16637e2fb051f8d6ad0ed70fbda"
+      "content_sha256": "6a929e5f6406e134f063c1253c1c0d8dc7ae6503f187ee951b3947b8b7abc3c2"
     },
     {
       "id": "script.required-applicability",
@@ -925,7 +925,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0148bf61a1ebeacf83741cd6291a7238160ef771d7ae70644f79c62e72d44956"
+      "content_sha256": "e2c95a3e7a67693778bb80f768130a00a513e1481ccd7ebfdae6e87042ae5ab8"
     }
   ]
 }

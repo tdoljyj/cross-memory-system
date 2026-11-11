@@ -76,7 +76,15 @@ test('a linked ancestor directory is refused before materialisation',async t=>{
   fs.symlinkSync(outside,dir,'junction');await refusesWithoutWrites(root,/not a plain path/);
 });
 test('a manifest version mismatch refuses rather than registering inconsistent code',async t=>{
-  const root=fixture(t);edit(root,'config/clued-components.json',x=>x.replace('"version": "1.1.39"','"version": "99.0.0"'));await refusesWithoutWrites(root,/version\/manifest mismatch/);
+  const root=fixture(t);
+  edit(root,'config/clued-components.json',x=>{
+    const manifest=JSON.parse(x),components=manifest.components.filter(c=>c.id==='script.independent-native-publication');
+    assert.equal(components.length,1,'the target component must exist exactly once');
+    assert.notEqual(components[0].version,'99.0.0');
+    components[0].version='99.0.0';
+    return JSON.stringify(manifest,null,2)+'\n';
+  });
+  await refusesWithoutWrites(root,/version\/manifest mismatch/);
 });
 test('committing both descriptor and catalogue tampering cannot replace the explicit trusted base',async t=>{
   const root=fixture(t),pin='11d4b72a9f330801bdb44d3bd8a5b6c411cd328b02a6946ab9ada7485ec7dbf3';
@@ -97,9 +105,19 @@ test('candidate comparison-policy substitution is refused without evaluating it'
   const root=fixture(t);edit(root,'scripts/ci/component-version-integration-policy.mjs',()=>"throw new Error('CANDIDATE_POLICY_EXECUTED');\n");
   await refusesWithoutWrites(root,/comparison policy differs from trusted base/);
 });
-test('candidate workflow-profile substitution is refused before compiling Source',async t=>{
-  const root=fixture(t);edit(root,'scripts/ci/clued-workflow-profile.mjs',()=>"throw new Error('CANDIDATE_PROFILE_EXECUTED');\n");
-  await refusesWithoutWrites(root,/workflow profile differs from trusted base/);
+test('historical metadata uses the trusted-base compiler without evaluating a candidate successor',async t=>{
+  const root=fixture(t),expected=await planControlSourcePins(root,OPTIONS);
+  const candidate="throw new Error('CANDIDATE_PROFILE_EXECUTED');\n";
+  edit(root,'scripts/ci/clued-workflow-profile.mjs',()=>candidate);
+  assert.deepEqual(await planControlSourcePins(root,OPTIONS),expected);
+  assert.equal((await writeControlSourcePins(root,OPTIONS)).changed,true);
+  assert.equal((await checkControlSourcePins(root,OPTIONS)).status,'ok');
+  assert.equal(read(root,'scripts/ci/clued-workflow-profile.mjs'),candidate);
+});
+test('a compiler successor must still occupy a plain file path',async t=>{
+  const root=fixture(t),name=path.join(root,'scripts/ci/clued-workflow-profile.mjs');
+  fs.renameSync(name,name+'.saved');fs.mkdirSync(name);
+  await refusesWithoutWrites(root,/not a plain path|working file mode differs/);
 });
 test('a Git executable-mode substitution is refused even when all bytes are unchanged',async t=>{
   const root=fixture(t);execFileSync('git',['update-index','--chmod=+x','--',CONTROL_SOURCE_MECHANICAL_FILES[0]],{cwd:root,stdio:'pipe'});

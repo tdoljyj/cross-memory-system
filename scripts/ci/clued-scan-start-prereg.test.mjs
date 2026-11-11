@@ -55,6 +55,24 @@ function source(file, blob) {
   assert.equal(result.passed, true, result.reason);
   return result.profile.source_yaml;
 }
+function stripRegisteredG4Successor(profileBefore, rolesBefore) {
+  const file = '.github/workflows/clued-g4-database.yml';
+  const blob = 'd7876890a4df616fddae675c4d66737a70eb7045';
+  const oldBlob = 'a09cfc44e506a9672e5221a7fa6737747ddcb787';
+  assert.equal(profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob === blob).length, 1);
+  const result = registeredWorkflowSource(profileBefore, file, blob);
+  assert.equal(result.passed, true, result.reason);
+  const text = result.profile.source_yaml;
+  assert.equal(workflowBlob(text), blob);
+  assert.equal(sha256Hex(text), '570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d');
+  const roles = rolesForSource(rolesBefore, file, blob);
+  assert.deepEqual(roles, rolesForSource(rolesBefore, file, oldBlob));
+  assert.deepEqual(compileRegisteredWorkflow(text, {
+    primary_ids: result.profile.primary_ids, parseYaml, accepted_roles: roles,
+  }), result.profile);
+  profileBefore.workflows[file].accepted_sources = profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob);
+  delete rolesBefore.workflows[file].sources[blob];
+}
 function fixture(row) {
   return fs.readFileSync(new URL(`work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/${row.file.split('/').at(-1)}`, ROOT));
 }
@@ -118,6 +136,9 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   profileBefore.workflows[NODE22].accepted_sources = profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob !== NODE22_BLOB);
   assert.equal(Object.hasOwn(rolesBefore.workflows[NODE22].sources, NODE22_BLOB), true);
   delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
+  // A preregisters this exact later successor without consuming its YAML.
+  // Authenticate its full Source and unchanged roles before projecting history.
+  stripRegisteredG4Successor(profileBefore, rolesBefore);
   assert.equal(roleDefinitionDigest(profileBefore), 'ee9f3a94a83bb9dbfa0b02c5c7d2c9daaa7c48019bf98302a9f48877c7130c87');
   assert.equal(roleDefinitionDigest(rolesBefore), 'b884d1473b6aa27a124019f8e4a836a9e861fe7b8b96a970bdd8188d755bf75b');
   const admission = fs.readFileSync(new URL('./clued-work-admission.mjs', import.meta.url), 'utf8');
@@ -131,6 +152,21 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     gate_sha256: GATE_SHA, roles: [{ job_id: row.job, definition_sha256: row.role }],
   })));
   assert.deepEqual(descriptors[15],HISTORY_732);
+});
+
+test('the later G4 projection refuses missing, duplicate, altered Source or FullRole', () => {
+  const file = '.github/workflows/clued-g4-database.yml', blob = 'd7876890a4df616fddae675c4d66737a70eb7045';
+  for (const mutate of [
+    (p, r) => { p.workflows[file].accepted_sources = p.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob); },
+    (p, r) => { p.workflows[file].accepted_sources.push(structuredClone(p.workflows[file].accepted_sources.find(x => x.workflow_blob === blob))); },
+    (p, r) => { p.workflows[file].accepted_sources.find(x => x.workflow_blob === blob).source_yaml += '\n'; },
+    (p, r) => { delete r.workflows[file].sources[blob]; },
+    (p, r) => { r.workflows[file].sources[blob][0].definition_sha256 = '0'.repeat(64); },
+  ]) {
+    const p = structuredClone(profiles), r = structuredClone(roleSpecs);
+    mutate(p, r);
+    assert.throws(() => stripRegisteredG4Successor(p, r));
+  }
 });
 
 test('the existing condition parser stays byte-identical and refuses PR-first, OR and always bypasses', () => {

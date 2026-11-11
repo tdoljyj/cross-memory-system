@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject,external2FutureWorkflowCatalogue,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,registeredWorkflowSource,futureWorkflowSubject,external2FutureWorkflowCatalogue,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 import {createHash} from 'node:crypto';
 import {workflowJobs} from './clued-work-admission.mjs';
@@ -153,8 +153,8 @@ test('exact registered dispatch publisher remains outside the PR test catalogue;
     {candidate:after.replace('node-version: 24.19.0','node-version: 24')}])assert.equal((await call(options)).passed,false);
 });
 
-test('trusted snapshot admits the complete profile registry through 1 MiB without changing its raw source binding',()=>{
-  for(const bytes of [524289,1048576]) {
+test('trusted snapshot admits the complete profile registry through 2 MiB without changing its raw source binding',()=>{
+  for(const bytes of [524289,1048576,2097152]) {
     const text=paddedSnapshot(snapshotProfile,bytes);
     withSnapshotFixture({[snapshotProfile]:text},({workspace,tip,workflows})=>{
       const snapshot=loadProofSnapshot(workspace,tip,workflows);
@@ -163,7 +163,7 @@ test('trusted snapshot admits the complete profile registry through 1 MiB withou
       assert.equal(snapshot.tip,tip);
     });
   }
-  withSnapshotFixture({[snapshotProfile]:paddedSnapshot(snapshotProfile,1048577)},({workspace,tip,workflows})=>{
+  withSnapshotFixture({[snapshotProfile]:paddedSnapshot(snapshotProfile,2097153)},({workspace,tip,workflows})=>{
     assert.throws(()=>loadProofSnapshot(workspace,tip,workflows),/trusted snapshot file exceeds bounds/);
   });
 });
@@ -256,25 +256,38 @@ test('shared execution bridge binds native full execution to one trusted snapsho
     assert.equal((await qualifyPrExecution(missing)).state,'unknown',path+': compiler and catalogue identity are required');
   }
 });
-test('authenticated snapshot revalidation applies the same exact-path profile capacity without widening other source reads',async()=>{
-  async function proofWithSizedSource(file,bytes) {
-    const world=executionWorld(),read=world.read;
-    const route=`/repos/${repository}/contents/${file}?ref=${world.snapshot.tip}`;
-    const original=await read(route),source=Buffer.from(original.content,'base64').toString('utf8');
-    const text=source+' '.repeat(bytes-Buffer.byteLength(source)),blob=workflowBlob(text);
-    world.snapshot.files[file]=blob;
+test('authenticated snapshot revalidation uses real large-file Contents metadata and immutable Git blob bytes',async()=>{
+  async function proofWithSizedSource(file,bytes,change=()=>{}) {
+    const world=executionWorld(),read=world.read,original=await read(`/repos/${repository}/contents/${file}?ref=${world.snapshot.tip}`),
+      source=Buffer.from(original.content,'base64').toString('utf8'),text=source+' '.repeat(bytes-Buffer.byteLength(source)),oid=workflowBlob(text),routes=[];
+    world.snapshot.files[file]=oid;
     const graphRead=world.graphRead;
     world.graphRead=async(query,variables)=>query===PUBLISHER_SNAPSHOT_QUERY?
       publisherGraphFixture(query,variables,world.snapshot.tip,{...publisherFixtureTexts,[file]:text}):graphRead(query,variables);
-    world.read=async route=>route.includes(`/contents/${file}?`)?{
-      ...original,sha:blob,size:bytes,content:Buffer.from(text).toString('base64'),
-    }:read(route);
-    return qualifyPrExecution(world);
+    const large=file===snapshotProfile&&bytes>1048576,
+      facts={content:{...original,sha:oid,size:bytes,encoding:large?'none':'base64',content:large?'':Buffer.from(text).toString('base64')},
+        tree:{sha:'9'.repeat(40),truncated:false,tree:[{path:file,type:'blob',mode:'100644',sha:oid,size:bytes}]},
+        blob:{sha:oid,size:bytes,encoding:'base64',content:Buffer.from(text).toString('base64')}};
+    change(facts);
+    world.read=async route=>{
+      if(route===`/repos/${repository}/git/trees/${world.snapshot.tip}?recursive=1`){routes.push(route);return facts.tree;}
+      if(route===`/repos/${repository}/git/blobs/${oid}`){routes.push(route);return facts.blob;}
+      return route.includes(`/contents/${file}?`)?facts.content:read(route);
+    };
+    return {proof:await qualifyPrExecution(world),routes};
   }
-  for(const bytes of [524289,1048576])assert.equal((await proofWithSizedSource(snapshotProfile,bytes)).passed,true,`profile ${bytes}`);
-  assert.equal((await proofWithSizedSource(snapshotProfile,1048577)).state,'unknown');
+  for(const bytes of [524289,1048576,1048577,2097152]) {
+    const result=await proofWithSizedSource(snapshotProfile,bytes);assert.equal(result.proof.passed,true,`profile ${bytes}`);
+    assert.equal(result.routes.length,bytes>1048576?4:0,'initial and final barriers keep using the same bounded reads');
+  }
+  assert.equal((await proofWithSizedSource(snapshotProfile,2097153)).proof.state,'unknown');
   for(const file of Object.keys(snapshotFixtureFiles).filter(file=>file!==snapshotProfile))
-    assert.equal((await proofWithSizedSource(file,524289)).state,'unknown',file);
+    assert.equal((await proofWithSizedSource(file,524289)).proof.state,'unknown',file);
+  for(const change of [f=>f.content.path='scripts/ci/other.json',f=>f.content.sha='a'.repeat(40),
+    f=>f.content.size++,f=>f.tree.truncated=true,f=>f.tree.tree[0].mode='120000',f=>f.tree.tree[0].sha='a'.repeat(40),
+    f=>f.blob.sha='a'.repeat(40),f=>f.blob.size++,f=>delete f.blob.content,
+    f=>f.blob.content=Buffer.concat([Buffer.alloc(1048576,120),Buffer.from([255])]).toString('base64')])
+    assert.equal((await proofWithSizedSource(snapshotProfile,1048577,change)).proof.state,'unknown');
 });
 
 test('attempt log reader binds native job and follows only provider storage without credential forwarding',async()=>{
@@ -1047,4 +1060,25 @@ test('PR commit pagination must be complete and fixed across all pages',async()=
     {...second,merge_base_commit:{sha:head}},{...second,commits:[commits[0]]}])
     assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?
       route.endsWith('page=1')?first:alternate:pr})).state,'unknown');
+});
+
+
+test('runtime accepts the G4 successor only after trusted registration and never from an old catalogue or partial roles',async()=>{
+  const g4='.github/workflows/clued-g4-database.yml',blob='d7876890a4df616fddae675c4d66737a70eb7045',
+    registry=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
+    roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url))),
+    source=registeredWorkflowSource(registry,g4,blob).profile,text=source.source_yaml,
+    executedRun={...run,path:g4},record=payload();
+  record.data.node.file.path=g4;record.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${sha}/${g4}`;
+  const content={type:'file',path:g4,sha:blob,size:Buffer.byteLength(text),encoding:'base64',content:Buffer.from(text).toString('base64')};
+  const call=(extra={})=>workflowSourceOf({repository,headRepository,file:g4,run:executedRun,registry,roleSpecs,
+    graphRead:async()=>record,read:async()=>content,...extra});
+  assert.equal((await call()).passed,true);
+  const oldMain=structuredClone(registry);oldMain.workflows[g4].accepted_sources=oldMain.workflows[g4].accepted_sources.filter(p=>p.workflow_blob!==blob);
+  assert.equal((await call({registry:oldMain})).state,'unknown');
+  const partial=structuredClone(roleSpecs);delete partial.workflows[g4].sources[blob];
+  assert.equal((await call({roleSpecs:partial})).state,'unknown');
+  for(const changed of [{...content,sha:'f'.repeat(40)},{...content,path:'.github/workflows/other.yml'},
+    {...content,content:Buffer.from(text+'# altered\n').toString('base64')}])
+    assert.equal((await call({read:async()=>changed})).state,'unknown');
 });

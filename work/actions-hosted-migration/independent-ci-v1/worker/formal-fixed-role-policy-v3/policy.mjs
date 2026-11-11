@@ -75,6 +75,14 @@ export function validateTreePins(tree,pins){
   check(typeof tree==='string'&&tree.length<=16777216&&Array.isArray(pins),'BOUNDED_SOURCE_TREE_REQUIRED');const entries=new Map();for(const row of tree.split('\0').filter(Boolean)){const m=/^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(row);check(m&&!entries.has(m[3]),'REGULAR_SOURCE_TREE_REQUIRED');entries.set(m[3],m[2]);}
   check(pins.every(p=>entries.has(p.path)),'SOURCE_NOT_IN_TREE');return entries;
 }
+// The registered workflow catalogue has its own 2 MiB codec bound. Only that
+// fixed file may exceed the ordinary source-file limit; byte and Git pins still
+// have to agree. This check issues no actual-policy brand or qualification.
+export async function validateTrackedSourceBytes(pin,bytes,readGitObject,expectedObject){
+  const maxBytes=pin.path==='scripts/ci/clued-gated-proof-profiles.json'?2097152:1048576;
+  check(Buffer.isBuffer(bytes)&&bytes.length<=maxBytes&&hash(bytes)===pin.sha256,'ACTUAL_TRACKED_SOURCE_BYTES_CHANGED');
+  check((await readGitObject()).trim()===expectedObject,'ACTUAL_TRACKED_SOURCE_BYTES_CHANGED');
+}
 async function trackedSource(config,manifest,role){
   check(fileURLToPath(import.meta.url)===path.join(config.trustedSourceDirectory,P),'SELECTOR_OUTSIDE_ACCEPTED_SOURCE');
   await protectedPath(path.join(config.trustedSourceDirectory,'.git'),{directory:true});
@@ -82,7 +90,7 @@ async function trackedSource(config,manifest,role){
   for(const name of ['shallow','commondir','objects/info/alternates','objects/info/http-alternates','info/grafts']){try{await fsp.lstat(path.join(config.trustedSourceDirectory,'.git',name));fail('SOURCE_SHARED_OR_SHALLOW');}catch(e){if(e.code!=='ENOENT')throw e;}}
   check((await git(config,['rev-parse','--verify','HEAD^{commit}'])).trim()===manifest.sourceSha,'ACTUAL_SOURCE_COMMIT_CHANGED');
   const entries=validateTreePins(await git(config,['ls-tree','-r','-z','--full-tree',manifest.sourceSha]),role.sourceFiles);
-  for(const pin of role.sourceFiles){const file=path.join(config.trustedSourceDirectory,pin.path);await protectedPath(file);const b=await fsp.readFile(file);check(b.length<=1048576&&hash(b)===pin.sha256&&(await git(config,['hash-object','--no-filters','--',pin.path])).trim()===entries.get(pin.path),'ACTUAL_TRACKED_SOURCE_BYTES_CHANGED');}
+  for(const pin of role.sourceFiles){const file=path.join(config.trustedSourceDirectory,pin.path);await protectedPath(file);const b=await fsp.readFile(file);await validateTrackedSourceBytes(pin,b,()=>git(config,['hash-object','--no-filters','--',pin.path]),entries.get(pin.path));}
   check((await git(config,['status','--porcelain=v1','--untracked-files=all'])).trim()==='','DIRTY_SOURCE_NOT_QUALIFIED');
 }
 export async function loadFixedRolePolicy(job){
