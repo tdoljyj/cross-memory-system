@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RoleProbe, validateRoleProbeFact, ROLE_PROBE_CODES as C, ROLE_PROBE_INTERVAL_MS } from '../src/role-probe.mjs';
+import { RoleProbe, validateRoleProbeFact, ROLE_PROBE_CODES as C, ROLE_PROBE_INTERVAL_MS, ROLE_PROBE_UNCERTAIN_BACKOFF_MS } from '../src/role-probe.mjs';
 import { parseRoleProbe, createMergeSlotNative } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/merge-slot-native.mjs';
 import { probeRole } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/role-probe-entry.mjs';
 import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
@@ -14,7 +14,7 @@ test('C2 has exactly three role states and refuses extra authority', () => {
 test('idle-only cadence is 15min STANDBY, 30min ACTIVE; clocks never reset the floor', () => {
   const p = new RoleProbe();
   assert.equal(p.due({ now: at, mode: 'ACTIVE', idle: false }), false);
-  assert.equal(p.due({ now: at, mode: 'UNCERTAIN', idle: true }), false);
+  assert.equal(p.due({ now: at, mode: 'NONE', idle: true }), false);
   assert.equal(p.due({ now: at, mode: 'ACTIVE', idle: true }), true);
   p.observe(held, at);
   assert.equal(p.due({ now: at - 1, mode: 'ACTIVE', idle: true }), false);
@@ -25,6 +25,29 @@ test('idle-only cadence is 15min STANDBY, 30min ACTIVE; clocks never reset the f
   }
   assert.throws(() => p.observe(held, at - 1));
 });
+test('UNCERTAIN mode backs off an uncertain answer 1, 2, 4, 8, 15 minutes; ACTIVE and STANDBY keep their intervals', () => {
+  const p = new RoleProbe();
+  assert.equal(p.due({ now: at, mode: 'UNCERTAIN', idle: true }), true, 'a first probe is due');
+  assert.equal(p.due({ now: at, mode: 'UNCERTAIN', idle: false }), false, 'only when nothing runs');
+  let t0 = at;
+  for (const wait of ROLE_PROBE_UNCERTAIN_BACKOFF_MS) {
+    p.observe(uncertain, t0);
+    assert.equal(p.due({ now: t0 + wait - 1, mode: 'UNCERTAIN', idle: true }), false);
+    assert.equal(p.due({ now: t0 + wait, mode: 'UNCERTAIN', idle: true }), true);
+    for (const mode of ['ACTIVE', 'STANDBY']) assert.equal(p.due({ now: t0 + wait, mode, idle: true }), wait >= ROLE_PROBE_INTERVAL_MS[mode]);
+    t0 += wait;
+  }
+  p.observe(uncertain, t0);
+  assert.equal(p.due({ now: t0 + ROLE_PROBE_INTERVAL_MS.STANDBY - 1, mode: 'UNCERTAIN', idle: true }), false, 'capped at STANDBY');
+  assert.equal(p.due({ now: t0 + ROLE_PROBE_INTERVAL_MS.STANDBY, mode: 'UNCERTAIN', idle: true }), true);
+  assert.equal(p.due({ now: t0 - 1, mode: 'UNCERTAIN', idle: true }), false, 'a backward clock is never due');
+  const q = new RoleProbe();
+  q.observe(held, at);
+  assert.equal(q.due({ now: at + ROLE_PROBE_INTERVAL_MS.STANDBY - 1, mode: 'UNCERTAIN', idle: true }), false, 'without a failure UNCERTAIN is STANDBY');
+  assert.equal(q.due({ now: at + ROLE_PROBE_INTERVAL_MS.STANDBY, mode: 'UNCERTAIN', idle: true }), true);
+  assert.deepEqual(ROLE_PROBE_UNCERTAIN_BACKOFF_MS, [60_000, 120_000, 240_000, 480_000, 900_000]);
+  assert.deepEqual(ROLE_PROBE_INTERVAL_MS, { STANDBY: 15 * 60_000, ACTIVE: 30 * 60_000 });
+});
 test('C3 urgent: the next idle tick probes without waiting for the interval; any observation clears it; a backward clock is never due; it is not stored', () => {
   const p = new RoleProbe();
   p.observe(held, at);
@@ -34,7 +57,7 @@ test('C3 urgent: the next idle tick probes without waiting for the interval; any
   assert.equal(p.due({ now: at + 1000, mode: 'STANDBY', idle: true }), true);
   assert.equal(p.due({ now: at + 1000, mode: 'ACTIVE', idle: false }), false, 'only when nothing runs');
   assert.equal(p.due({ now: at - 1, mode: 'ACTIVE', idle: true }), false, 'a backward clock is never due');
-  assert.equal(p.due({ now: at + 1000, mode: 'UNCERTAIN', idle: true }), false, 'the executor maps UNCERTAIN to the STANDBY interval');
+  assert.equal(p.due({ now: at + 1000, mode: 'NONE', idle: true }), false, 'an unknown mode is never due');
   assert.deepEqual(Object.keys(p.snapshot()).sort(), ['connectionNotified', 'failingSince', 'failures', 'last', 'uncertainNotified'], 'urgent is not part of the book');
   p.observe(uncertain, at + 1000);
   assert.equal(p.urgent, false);
