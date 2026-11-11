@@ -46,7 +46,7 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
   const directory=await fs.mkdtemp(path.join(tempParent,'clued-r9-capabilities-'));
   const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:hash(),port:await freePort(),
     persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(message+'\n');}});
-  const clients=[];let admin,fixture,legacyBefore,beforeCatalog,beforeLedger;
+  const clients=[];let admin,legacy,fixture,legacyBefore,beforeCatalog,beforeLedger;
   const rpc=async(client,token,input)=>{
     try{return await workerGatewayRpc(client,'clued_mcp_audit_receipts',token,input);}
     finally{await client.query('reset role');await client.query("select set_config('request.jwt.claims','{}',false)");}
@@ -86,8 +86,8 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
     for(const migration of chain){
       try{
         if(migration.name!==candidateName){await admin.query(migration.text);continue;}
-        await allowRawTestBindings(admin);fixture=await makeReader();
-        legacyBefore=await rpc(admin,fixture.token,{context_key:'global',limit:2});beforeCatalog=await catalog(admin);
+        await allowRawTestBindings(admin);legacy=await makeReader();
+        legacyBefore=await rpc(admin,legacy.token,{context_key:'global',limit:2});beforeCatalog=await catalog(admin);
         const beforeAudit=(await admin.query("select pg_get_functiondef('public.clued_mcp_audit_receipts(text,jsonb)'::regprocedure) v")).rows[0].v;
         await t.test('history failure after full capability DDL rolls helper/public body back; success binds exact file bytes',async()=>{
           await admin.query("alter table supabase_migrations.schema_migrations add constraint test_capability_history_failure check(version<>'fault_injected')");
@@ -101,13 +101,22 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
         });
       }catch(error){throw new Error(`Migration ${migration.name}: ${error.message}`,{cause:error});}
     }
+    // legacy's stream is pinned to the source digest at the candidate. A later
+    // migration that redefines a pinned source (20261108161615 rewrites
+    // work_claim_merge_queue_v1) correctly makes it SOURCE_CHANGED, so the
+    // served-measurement checks use a stream started on the current chain.
+    fixture=await makeReader();
     const installedCatalog=await catalog(admin);
     await assertGatewayCloseoutBoundary(admin);
     beforeLedger=(await admin.query(`select jsonb_build_object(
       'streams',(select jsonb_agg(to_jsonb(s) order by user_id) from clued_private.merge_measurement_stream_v1 s),
       'events',(select jsonb_agg(to_jsonb(e) order by user_id,sequence) from clued_private.merge_measurement_events_v1 e)) v`)).rows[0].v;
     await t.test('legacy audit unchanged, helper still private, same public overload and ACL/role boundary',async()=>{
-      assert.deepEqual(await rpc(admin,fixture.token,{context_key:'global',limit:2}),legacyBefore);
+      assert.deepEqual(await rpc(admin,legacy.token,{context_key:'global',limit:2}),legacyBefore);
+      const pinned=(await admin.query('select source_digest v from clued_private.merge_measurement_stream_v1 where user_id=$1',[legacy.user])).rows[0].v;
+      const current=(await admin.query('select clued_private.merge_measurement_source_digest_v1() v')).rows[0].v;
+      const served=await rpc(admin,legacy.token,{measurement:{}});
+      assert.equal(served.status,pinned===current?'ok':'NOT_MEASURED');assert.equal(Object.hasOwn(served,'stream_id'),pinned===current);
       assert.deepEqual(await catalog(admin),installedCatalog);
       assert.equal((await admin.query(`select count(*)::int n from pg_proc where pronamespace='public'::regnamespace
         and proname='clued_mcp_audit_receipts'`)).rows[0].n,1);

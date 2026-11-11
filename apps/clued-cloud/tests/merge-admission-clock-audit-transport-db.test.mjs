@@ -68,7 +68,12 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // PR #833, normally merged as 1f45e7ab, adds bounded Native read trace and
   // recovery diagnostics. Bind its exact inherited source; keep every C1
   // permission, transport and transaction assertion below unchanged.
-  assert.equal(hash(workerSource),'f2277f9683c3d632e60015a1ae3c05c66cfc4001dcd6ea41e97f69c783d45a76');
+  // Prior Native read diagnostic pin (f3f4493f4):
+  // f2277f9683c3d632e60015a1ae3c05c66cfc4001dcd6ea41e97f69c783d45a76.
+  // Reviewed successors through a438599e8 change only brand strings, storage
+  // digest routes, the MTPE Owner Pin tool and two fixed /v1/ci/* doors; the
+  // C1 audit tool, its RPC mapping, error mapping and REST route are unchanged.
+  assert.equal(hash(workerSource),'2578493c142cf0181db9206a877f34ec72f7289b8305fb7dd590de4a64a194f6');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
