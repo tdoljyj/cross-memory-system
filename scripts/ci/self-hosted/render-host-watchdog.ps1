@@ -460,8 +460,6 @@ function Remove-OldFiles([string]$root,[string]$drive){
 function Invoke-HostCleanup([string]$drive){
   $verb=if($DryRun){'would remove'}else{'removed'}
   foreach($r in $cleanRoots){$x=Remove-OldFiles $r $drive; if($x.Files -gt 0){Log ("Disk cleanup, {0}: {1} {2} file(s), {3} MB" -f $r,$verb,$x.Files,[math]::Round($x.Bytes/1MB))}}
-  if($DryRun){Log ("would empty the recycle bin of {0}:" -f $drive); return}
-  try{Clear-RecycleBin -DriveLetter $drive -Force -ErrorAction Stop; Log ("Disk cleanup: the recycle bin of {0}: emptied" -f $drive)}catch{}
 }
 function Get-FreeGB([string]$drive){ [math]::Round((Get-PSDrive $drive -ErrorAction Stop).Free/1GB,1) }
 function Invoke-DriveStep($d){

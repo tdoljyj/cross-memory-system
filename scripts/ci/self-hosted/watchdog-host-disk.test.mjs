@@ -58,7 +58,7 @@ const windowsOnly = (extra = {}) => {
 
 // The host-disk step of a rendered watchdog in Windows PowerShell 5.1: the free space comes
 // from `free` (one value per Get-FreeGB call); the cleanup and the notifications are recorded
-// unless `realCleanup` (then only the recycle bin is).
+// unless `realCleanup` (then a call to empty the recycle bin would be recorded: there must be none).
 function run(t, { hostId = 'home-primary', free = [], realCleanup = false, before = '', body }) {
   const { dir, text } = render(t, hostId);
   const block = /# BEGIN host-disk\r?\n([\s\S]*?)# END host-disk/.exec(text)?.[1];
@@ -98,7 +98,7 @@ test('home-primary (Linux runner retired) renders: C: watched with the host clea
   }
   assert.ok(text.includes("$protectedRoots=@('C:\\ProgramData\\CluedIndependentCI','C:\\clued-resident','C:\\clued-ci','C:\\w','D:\\w')"), 'the protected folders');
   assert.match(text, /\$cleanAgeDays=1;/);
-  assert.match(text, /Clear-RecycleBin -DriveLetter \$drive -Force/);
+  assert.doesNotMatch(text, /RecycleBin|recycle bin/i, 'the recycle bin holds user data, not a cache: never emptied by the watchdog');
 });
 
 test('company-primary renders from the same parts: its Linux runners with their own cleanup and stop on their disk, its Windows runner reported, C: watched without a cleanup', { skip }, (t) => {
@@ -224,7 +224,7 @@ test('the cleanup removes only files older than a day under its roots on the dri
   assert.equal(fs.existsSync(path.join(temp, 'link')), true, 'the junction itself is left');
   assert.equal(fs.existsSync(path.join(guarded, 'inner', 'old.tmp')), true, 'a root under a protected folder is refused');
   assert.equal(fs.existsSync(path.join(guarded, 'old-protected.tmp')), true);
-  assert.match(r.events, /recycle-bin/, 'the recycle bin of the drive is emptied');
+  assert.doesNotMatch(r.events, /recycle-bin/, 'the recycle bin is left alone');
   assert.match(r.log, /Disk cleanup, .*temp: removed 2 file\(s\)/);
   assert.match(r.log, /Disk cleanup: .*inner refused: a protected folder/);
 });
@@ -248,6 +248,6 @@ test('a dry run removes nothing and says what it would remove', { skip }, (t) =>
     before: [`$DryRun = $true; $hostDrives=@(@{Drive='${base.slice(0, 1).toUpperCase()}';Suspend=15;Resume=20;Clean=$true})`, `$cleanRoots = @(${quote(base)})`].join('\n'), body: 'Invoke-HostDiskStep' });
   assert.equal(fs.existsSync(file), true);
   assert.match(r.log, /would remove 1 file\(s\)/);
-  assert.match(r.log, /would empty the recycle bin/);
+  assert.doesNotMatch(r.log, /recycle bin/);
   assert.doesNotMatch(r.events, /recycle-bin/);
 });
