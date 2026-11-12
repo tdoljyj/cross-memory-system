@@ -20,14 +20,17 @@
 --    question the verify path asks before it issues an admission (and, from
 --    phase 4, the node-based answer instead of the role row).
 --
--- Ordered after 20261112130500 (failover fast) and 20261113090000 (scan start):
--- it rewrites their current bodies, so it must run after both in production too.
+-- Ordered after 20261112130500 (failover fast), whose ci_duty_admits_decide_v1
+-- it rewrites, and after 20261113090000 (scan start), which ships first: no
+-- pending migration of production sorts after it.
 --
 -- tests/ci-admission-handover-db.test.mjs fails on any later function that
 -- reads binding_roles_v1 outside its list of role-row owners, or that compares
 -- effective_at with the clock anywhere but here; the block at the end of this
 -- file refuses the latter already at migration time.
--- tests/binding-role-single-reader-db.test.mjs holds both PR doors to it.
+-- tests/binding-role-single-reader-db.test.mjs holds both PR doors to it and,
+-- in the required migration-verify check, fails any later migration whose
+-- function compares a role row's start with the clock itself.
 
 create function clued_private.binding_role_in_force_v1(p_user uuid,p_binding uuid,p_role text)
 returns boolean language sql stable security definer set search_path='' as $$

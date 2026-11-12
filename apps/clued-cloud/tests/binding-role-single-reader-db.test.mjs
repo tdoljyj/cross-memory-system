@@ -65,6 +65,15 @@ test('a role row that has not started is in force for neither PR door', { timeou
     const judged = async () => (await admin.query(`select clued_private.binding_role_in_force_v1($1,$2,'ci-admission') in_force,
       clued_private.ci_duty_admits_v1($1,$2,'issuer_role') issuer`, [user, ci])).rows[0];
 
+    // Runs in the required migration-verify check (scripts/ci/ci-required-selection.mjs) on every migration change:
+    // a later migration whose function judges a role row's start itself fails there.
+    await t.test('after every migration, only binding_role_in_force_v1 compares a role row\'s start with the clock', async () => {
+      const judges = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname in ('public','clued_private') and p.prosrc ~ 'binding_roles_v1'
+          and p.prosrc ~ 'effective_at\\s*<=\\s*clock_timestamp\\(\\)' order by 1`)).rows.map((r) => r.sig);
+      assert.deepEqual(judges, ['clued_private.binding_role_in_force_v1(uuid,uuid,text)']);
+    });
+
     await t.test('before the row starts: not in force, PR discovery may not write, the mechanical proof gate refuses', async () => {
       assert.deepEqual(await judged(), { in_force: false, issuer: false });
       const pending = await resolve();
