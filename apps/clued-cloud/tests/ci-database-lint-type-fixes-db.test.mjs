@@ -21,7 +21,8 @@ const changedOnce=(text,before,after)=>{
 };
 
 test('G4 type repairs preserve ordinary verification, abort replay and all authority boundaries',{timeout:600000},async t=>{
-  const f=await schedulingFixture();
+  // The state this repair was written for: 20261113090000 later removes the UUID-principal clone it patches.
+  const f=await schedulingFixture({through:'20261111064000_ci_database_lint_type_fixes_v1.sql'});
   const {admin,binding,token,user,project,claim}=f;
   const scope='project:'+project;
   const one=async(sql,args=[])=>(await admin.query(sql,args)).rows[0];

@@ -101,18 +101,11 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
         await assert.rejects(()=>c.query('select clued_private.ci_phase_3_to_4_v1($1,$2,3,$3::jsonb)',[user,project,'{}']),/permission denied/);
         await assert.rejects(()=>c.query('select clued_private.ci_phase_4_to_3_v1($1,$2,4,false)',[user,project]),/permission denied/);
       }
-      // 20261102151506: each server-principal clone is still exactly its original with only the credential entry
-      // changed (that migration's transform applied to today's originals), and the source guard holds.
-      for(const [original,copy] of [['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
-        ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){
-        let body=(await one('select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)'])).v;
-        body=body.replace('FUNCTION '+original+'(p_token_hash text, p_input jsonb)','FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)')
-          .replace('clued_private.resolve_binding(p_token_hash,','clued_private.ci_scan_start_resolve_principal_v1(p_binding_id,')
-          .replaceAll('clued_private.work_claim_verify_before_execution_v1(p_token_hash,p_input)','clued_private.ci_scan_start_verify_core_principal_v1(p_binding_id,p_input)')
-          .replaceAll('p_token_hash','p_binding_id');
-        assert.equal((await one('select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)'])).v,body,copy);
-      }
-      assert.equal((await one('select clued_private.ci_scan_start_native_source_current_v1() v')).v,true);
+      // 20261113090000 removed the server-principal clones of the two verify functions (20261102151506) and their
+      // source guard: the hosted scan start calls the live verifier, so no copy of these rewrites can go stale.
+      for(const gone of ['clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)','clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)',
+        'clued_private.ci_scan_start_native_source_current_v1()'])
+        assert.equal((await one('select to_regprocedure($1) v',[gone])).v,null,gone);
       // every expression rewrite of the migration is in the equivalence matrix below
       assert.equal(pairs.length,19,JSON.stringify(pairs.map(p=>p.sig)));
     });

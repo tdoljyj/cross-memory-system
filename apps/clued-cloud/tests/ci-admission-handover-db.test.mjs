@@ -146,10 +146,6 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.binding_role_holders_v1(uuid,text,uuid[])', 'clued_private.binding_role_resident_held_v1(uuid,uuid[])',
       'clued_private.headless_binding_view_before_sources_v2(uuid,jsonb)', 'clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)',
       'clued_private.work_claim_verify_before_execution_v1(text,jsonb)',
-      // 20261102151506 (scan start keys): the server-principal clone of the core above, read for the same other
-      // roles; its ci-admission read is routed like the original's (the clone of verify and ci_scan_start_begin_v1
-      // no longer read the table after 20261105160000). Missing from this list on main 4eb9064b.
-      'clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)',
       // 20261105160000 (unified scheduling 2A): the command door, the independent publication commands, verify, the
       // Owner Grant admission door, admission validity and the Stage 1 publisher check no longer read the table
       // themselves; they ask ci_duty_admits_v1, which requires effective_at<=clock_timestamp() (checked below).

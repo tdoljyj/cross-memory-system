@@ -754,12 +754,12 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const columns=(await admin.query(`select column_name from information_schema.columns
         where table_schema='clued_private' and table_name='ci_scan_start_keys_v1' and column_name in ('test_sha','attempt') order by column_name`)).rows;
       assert.deepEqual(columns.map(x=>x.column_name),['attempt','test_sha'],'the current batch-key successor is installed');
-      const principal=(await admin.query("select pg_get_functiondef('clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)'::regprocedure) body")).rows[0].body;
       const abort=(await admin.query("select pg_get_functiondef('clued_private.work_claim_independent_abort_v1(text,jsonb)'::regprocedure) body")).rows[0].body;
-      assert.ok(principal.includes("raise exception 'ci_scan_start_verify_action_forbidden'"),'the final forward lint repair is installed');
       assert.ok(abort.includes('r.object_id=p.claim_id::text and r.metadata'),'the real text receipt comparison is repaired');
+      // 20261113090000 removed the UUID-principal verify clone the lint repair also patched: scan start calls the live verifier.
+      assert.equal((await admin.query("select to_regprocedure('clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)') p")).rows[0].p,null);
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
-        for(const signature of ['clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)','clued_private.work_claim_independent_abort_v1(text,jsonb)'])
+        for(const signature of ['clued_private.work_claim_independent_abort_v1(text,jsonb)'])
           assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed",[role,signature])).rows[0].allowed,false,role+' '+signature);
     });
   } finally {

@@ -362,15 +362,24 @@ test('K rows taken before the migration are carried over as S = H, attempt 1 and
       assert.equal((await f.hosted(f.verified(H2,T))).status,'consumed','the hosted K carried over the same way');
       assert.equal(await f.count(),4);
     });
-    await t.test('later Native rewrites keep the old Source fail-closed without consuming another K',async()=>{
-      const beforeLater=await rows();
+    await t.test('after every later Native rewrite, both providers verify with the live Native verifier: old K rows keep burning, new heads launch',async()=>{
       await ctx.migrate(name=>name>MIGRATION);
-      assert.equal((await ctx.admin.query('select clued_private.ci_scan_start_native_source_current_v1() current')).rows[0].current,false);
-      for(const result of [await f.local(H,T),await f.local(H,T,{test_sha:S,attempt:2}),await f.hosted(f.verified(H2,T))]){
-        assert.equal(result.status,'rejected');assert.equal(result.error_code,'ci_scan_start_native_source_changed');
-        assert.equal(result.launch_allowed,false);
-      }
+      // 20261113090000: no clone of the Native verifier and no source-hash pin remain that a later rewrite could leave stale.
+      for(const gone of ['clued_private.ci_scan_start_native_source_current_v1()','clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)',
+        'clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)'])
+        assert.equal((await ctx.admin.query('select to_regprocedure($1) p',[gone])).rows[0].p,null,gone);
+      // 20261108161615: the Native verifier admits a PR only for the Task the CI's discovery bound to it (the backfilled
+      // relation of this pre-existing claim is 'unknown'); the CI resolves it, as scripts/ci/clued-pr-task-binding.mjs does.
+      const resolved=await f.verify({action:'resolve_pr_claim',scope,pr_ref:`${repository}#${pr}`,head_sha:H,base_sha:T,target_branch:'main'});
+      assert.equal(resolved.binding_status,'bound',JSON.stringify(resolved));
+      const beforeLater=await rows();
+      assert.equal((await f.local(H,T)).status,'consumed');assert.equal((await f.hosted(f.verified(H2,T))).status,'consumed');
       assert.deepEqual(await rows(),beforeLater);
+      const H3=sha('head after later rewrites'),H4=sha('hosted head after later rewrites');
+      await f.authorize(H3);await f.authorize(H4);
+      const localNew=await f.local(H3,T);assert.equal(localNew.launch_allowed,true,JSON.stringify(localNew));
+      const hostedNew=await f.hosted(f.verified(H4,T));assert.equal(hostedNew.launch_allowed,true,JSON.stringify(hostedNew));
+      assert.equal(hostedNew.provider,'github-actions');assert.equal(await f.count(),beforeLater.length+2);
     });
   });
 });
