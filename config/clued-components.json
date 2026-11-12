@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "37f513c7d31c21212985a0dda6a787cafbe85ca2ce8ea747dfe3e0cbb6978db0"
+      "content_sha256": "efed1952cf2d5ddd372ac4dff6a71974a0e75fb19c544cc9c726932d63af0f31"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.50",
+      "version": "1.1.51",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "937e9108f5c4f9fa9f2a107593bd72ec06505e1b123d054374ba4c8d5fc2b8f2"
+      "content_sha256": "fbc424d007ea812216687fa8ee924197707fdd2e531b4d32871376d608426435"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "aca67333b37b971ce1f0a3aefc53b0fc42fa2bcf337d05d0a2351a4229750249"
+      "content_sha256": "90fb4051d1c51f5579fac1822306a06834cb24e39d93d01eee2134ccd3eeeacd"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "fdf5ad68aae26360e223c9163210c5c279c85a554a875d4cac8903e56e250fc5"
+      "content_sha256": "b7826163ccc9b42cd3b6c4af091e8ddc175e1978a8067e7ed0059f8be0defe93"
     }
   ]
 }
