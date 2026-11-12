@@ -250,6 +250,17 @@ test('a failing command against the same command on main: new, already failing t
   assert.equal(detail, 'passes on main: tests/a.test.mjs :: t');
 });
 
+test('a missing dependency is "cannot verify", never "fails on main too"', () => {
+  // 2026-11-12: an empty dependency store failed both sides alike and the run passed.
+  const gone = (name) => ({ ...fail(name, 'd'.repeat(16)), missing_dependency: 'ERR_MODULE_NOT_FOUND' });
+  const both = verdict(command(1, report(gone('t'), summary)), command(1, report(gone('t'), summary)));
+  assert.equal(both, 'unknown');
+  assert.equal(verdict(command(1, report(fail('t'), summary)), command(1, report(gone('t'), summary))), 'unknown', 'main could not load it either');
+  assert.match(compareCommand(command(1, report(gone('t'), summary)), command(1, report(gone('t'), summary)), { selector: selection }).detail,
+    /a dependency is missing \(ERR_MODULE_NOT_FOUND in tests\/a\.test\.mjs\): cannot verify/);
+  assert.equal(verdict(command(0, report(pass('t'), summary)), command(1, report(gone('t'), summary))), 'pass', 'a passing change still passes');
+});
+
 test('a suite is its worst command, every command compared', () => {
   const same = command(1, report(fail('old'), summary));
   assert.deepEqual(compareSuite([command(0), same], [command(0), same], { selector: selection }),
