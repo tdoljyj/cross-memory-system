@@ -248,6 +248,14 @@ try{
  function Read-RecoveryProcessOwnerSids{return ,@($script:ownerSid)}
  $script:ownerSid=$native.residentSid;$blocked=$false;try{& $ActualNoProducers @{pins=$native}}catch{$blocked=$true};Yes $blocked 'orphan-resident-service-child-refused'
  $script:ownerSid='S-1-5-18';& $ActualNoProducers @{pins=$native};Yes $true 'known-other-owner-not-in-producer-set'
+ # DESK D:\ root: exactly the observed native descriptor (SDDL round-trips to the same bytes) is admitted, only at that root and scene.
+ $deskRoot='O:SYG:SYD:(A;;FA;;;BA)(A;OICIIO;GA;;;BA)(A;;FA;;;SY)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)'
+ $toBytes={param($s)$d=New-Object Security.AccessControl.RawSecurityDescriptor($s);$b=New-Object byte[] $d.BinaryLength;$d.GetBinaryForm($b,0);,$b}
+ $rootBytes=& $toBytes $deskRoot;Yes ((Recovery-Hash $rootBytes) -ceq '548bcbdd7b0c6b4d4df07b2c0eebbe74414d8826b5dd0d436ffa8a2a3421fb86') 'desk-root-descriptor-is-observed-native-bytes'
+ $deskCtx=@{pins=(Get-RecoveryPins desk-31080)};& $ActualVhdAcl $deskCtx $rootBytes 'D:\';Yes $true 'desk-exact-volume-root-accepted'
+ foreach($case in @(@('desk-31080','D:\clued-resident',$deskRoot),@('turing-b2ea','C:\',$deskRoot),@('desk-31080','D:\',$deskRoot.Replace('(A;;0x1301bf;;;AU)','(A;;0x1301ff;;;AU)')),@('desk-31080','D:\',($deskRoot+'(A;;0x1301bf;;;WD)')),@('desk-31080','D:\',$deskRoot.Replace('O:SY','O:BU')))){
+  $ctx=@{pins=(Get-RecoveryPins $case[0])};$blocked=$false;try{& $ActualVhdAcl $ctx (& $toBytes $case[2]) $case[1]}catch{$blocked=$true};Yes $blocked ('desk-root-exception-never-applies-elsewhere-or-on-drift:'+$case[0]+':'+$case[1])
+ }
  # Companion WSL helpers that exit after the stopped producers idle out are waited for (bounded); a persistent owner still refuses.
  $c=New-TestContext 'transient';$script:active=$c;Hold-RecoveryWslRecord $c;$r=Invoke-RecoveryCore $c;Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $c.quietCalls -ge 3 -and $c.archiveCalls -eq 1) 'transient-companion-owner-cleared-within-bounded-quiet-wait';Finish-Test $c
  & {
