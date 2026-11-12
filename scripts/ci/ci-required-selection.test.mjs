@@ -159,12 +159,22 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
   assert.deepEqual(SUITE_COMMANDS['pinned-registries'][0].argv, ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}']);
 });
 
-test('maintenance source, policy and panel changes select filesystem tests without weakening other suites', () => {
-  for (const file of ['scripts/ci/self-hosted/resource-maintenance/maintenance.py', 'config/ci-resource-maintenance.json',
-    'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
-    assert.ok(selectSuites('ci-suites', [file]).suites.includes('resource-maintenance'), file);
+test('compute panel changes select the panel tests; the retired cache maintenance suite is gone', () => {
+  for (const file of ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('compute-panel'), file);
   }
-  assert.ok(SUITE_COMMANDS['resource-maintenance'].some(c => c.argv.includes('scripts/ci/self-hosted/resource-maintenance')));
+  assert.ok(SUITE_COMMANDS['compute-panel'].some(c => c.argv.includes('tests/test_compute_panel.py')));
+  assert.equal('resource-maintenance' in SUITE_COMMANDS, false);
+  assert.equal(Object.values(SUITES).some(suites => 'resource-maintenance' in suites), false);
+});
+
+test('node governance changes select its suite; the standard also selects the resident suites that hold its archive numbers', () => {
+  for (const file of ['scripts/ci/self-hosted/node-governance/render.ps1', 'scripts/ci/self-hosted/node-governance/linux-sweep.sh', 'scripts/ci/self-hosted/node-profiles.json',
+    'config/node-governance-standard.json', 'work/independent-ci-resident-v1/src/host-capacity.mjs']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('node-governance'), file);
+  }
+  for (const suite of ['resident-node', 'resident-python']) assert.ok(selectSuites('ci-suites', ['config/node-governance-standard.json']).suites.includes(suite), suite);
+  assert.ok(SUITE_COMMANDS['node-governance'].some(c => c.argv.includes('{tests:scripts/ci/self-hosted/node-governance}')));
 });
 
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', () => {

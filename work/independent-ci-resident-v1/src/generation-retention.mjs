@@ -1,4 +1,5 @@
-// Only archived generations. Live content and generations/ are outside this module's write boundary.
+// Only archived generations. Live content and generations/ are outside this module's write boundary. Node governance v1
+// (Owner decision): enabled, the three newest archived generations and the current one stay; settings may protect more.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { treeFacts, removeTree } from './retention.mjs';
@@ -46,7 +47,6 @@ export async function pruneArchivedGenerations({ root, settings = {}, allowDelet
       .sort((a, b) => a.generation - b.generation || a.name.localeCompare(b.name));
     result.candidates = candidates.slice(0, 16).map(e => e.name);
     if (!candidates.length) return result;
-    if (settings.generations?.enabled !== true) return { ...result, code: 'RETENTION_GENERATIONS_APPROVAL_REQUIRED' };
     if (!allowDelete) return { ...result, code: 'RETENTION_GENERATIONS_MAINTENANCE_REQUIRED' };
     for (const e of candidates.slice(0, 16)) {
       const p = path.join(dir, e.name), original = await fs.lstat(p), facts = await treeFacts(p);

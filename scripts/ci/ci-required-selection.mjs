@@ -63,10 +63,12 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
-    'resource-maintenance': ['scripts/ci/self-hosted/resource-maintenance/**', 'config/ci-resource-maintenance.json',
-      'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
-    'resident-node': RESIDENT_AND_SOURCE,
-    'resident-python': RESIDENT_AND_SOURCE,
+    'compute-panel': ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
+    // Node Resource Governance v1: the renderer, its sweep and installer, the declarations and the standard (whose archive numbers the resident tests hold too).
+    'node-governance': ['scripts/ci/self-hosted/node-governance/**', 'scripts/ci/self-hosted/node-profiles.json', 'scripts/ci/self-hosted/validate_node_profiles.py',
+      'config/node-governance-standard.json', 'work/independent-ci-resident-v1/src/host-capacity.mjs'],
+    'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
+    'resident-python': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
     // The reinstall tools' own tests (work/independent-ci-resident-v1/reinstall/test) pin the launcher template, read the resident's
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
     'reinstall-python': RESIDENT_AND_SOURCE,
@@ -118,10 +120,9 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
 export const SUITE_COMMANDS = {
-  'resource-maintenance': [
-    { cwd: '.', argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'scripts/ci/self-hosted/resource-maintenance', '-p', 'test_*.py'] },
-    { cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] },
-  ],
+  'compute-panel': [{ cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] }],
+  'node-governance': [{ cwd: '.', argv: ['node', '--test', '{tests:scripts/ci/self-hosted/node-governance}'] },
+    { cwd: '.', argv: [PYTHON, '-I', '-B', 'scripts/ci/self-hosted/validate_node_profiles.py'], quiet: true }],
   // The upgrade precheck and rollout tools' own tests (rollout/test) run with the resident's (defect 15894c2a review M1).
   'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}', '{tests:rollout/test}'] }],
   'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] },

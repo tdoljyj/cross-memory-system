@@ -617,26 +617,17 @@ test('a run says when the system drive is below the CI watchdog resume level, or
   assert.deepEqual(systemDriveNotes('/home/me/.cache', { platform: 'linux', env: {}, free: () => 1, levels: { suspend: 50, resume: 60 } }), []);
 });
 
-test('the watchdog levels come from where they live: the installed script wins over the profile, a machine that is no CI host has none', () => {
-  const profiles = JSON.stringify({ hosts: [{ hostname: 'Desk-A', capacity_profile: 'big', watchdog_path: 'C:\\w\\watchdog.ps1' }, { hostname: 'Desk-B', capacity_profile: 'big' }],
-    capacity_profiles: { big: { suspend_c_free_gb: 50, resume_c_free_gb: 60 } } });
-  const read = (installed) => (file) => {
-    if (file.endsWith('node-profiles.json')) return profiles;
-    if (installed !== null && file === 'C:\\w\\watchdog.ps1') return installed;
-    throw new Error('ENOENT');
-  };
-  const at = (hostname, installed, env = {}) => watchdogLevels({ hostname, env, readText: read(installed), profilesFile: 'x/node-profiles.json' });
-  assert.deepEqual(at('desk-a', null), { suspend: 50, resume: 60 }, "the profile's, host names compared in any case");
-  assert.deepEqual(at('Desk-A', '[int]$SuspendDisk=50, [int]$ResumeDisk=65, [double]$SuspendMem=6.0'), { suspend: 50, resume: 65 }, 'the installed watchdog (an older one) is what runs');
-  assert.deepEqual(at('Desk-A', '$suspendDisk=40; $resumeDisk=70; $interval=60'), { suspend: 40, resume: 70 }, 'a rendered one too');
-  assert.deepEqual(at('Desk-A', 'no levels in here'), { suspend: 50, resume: 60 });
-  assert.deepEqual(at('Desk-A', '$suspendDisk=42.5; $resumeDisk=66.5;'), { suspend: 42.5, resume: 66.5 }, 'levels with decimals');
-  assert.deepEqual(at('Desk-A', "$hostDrives=@(@{Drive='D';Suspend=5;Resume=6;Clean=$true},@{Drive='C';Suspend=12.5;Resume=21;Clean=$false})\n$suspendRunnerDisk=15"), { suspend: 12.5, resume: 21 }, 'the C: entry of the watched drives (Task 5282d4ae)');
-  assert.deepEqual(at('Desk-B', null), { suspend: 50, resume: 60 }, 'a host without an installed script path: the profile');
-  assert.equal(at('Somebody-Else', null), null, 'not a CI host');
-  assert.deepEqual(at('Somebody-Else', null, { CLUED_CI_RESUME_FREE_GB: '90' }), { suspend: null, resume: 90 }, 'the variable names a level for any machine');
-  assert.deepEqual(at('Desk-A', null, { CLUED_CI_RESUME_FREE_GB: '0' }).resume, 0);
+test('the system drive levels are the node governance standard\'s for a CI host; a machine that is no CI host has none', () => {
+  const profiles = JSON.stringify({ hosts: [{ hostname: 'Desk-A', capacity_profile: 'big' }], capacity_profiles: { big: {} } });
+  const standard = JSON.stringify({ disk: { red_gb: 10, recover_gb: 15 } });
+  const read = (file) => (file.endsWith('node-profiles.json') ? profiles : file.endsWith('node-governance-standard.json') ? standard : (() => { throw new Error('ENOENT'); })());
+  const at = (hostname, env = {}) => watchdogLevels({ hostname, env, readText: read, profilesFile: 'x/node-profiles.json', standardFile: 'y/node-governance-standard.json' });
+  assert.deepEqual(at('desk-a'), { suspend: 10, resume: 15 }, 'host names compared in any case');
+  assert.equal(at('Somebody-Else'), null, 'not a CI host');
+  assert.deepEqual(at('Somebody-Else', { CLUED_CI_RESUME_FREE_GB: '90' }), { suspend: null, resume: 90 }, 'the variable names a level for any machine');
+  assert.deepEqual(at('Desk-A', { CLUED_CI_RESUME_FREE_GB: '0' }).resume, 0);
   assert.equal(watchdogLevels({ hostname: 'x', env: {}, readText: () => { throw new Error('no profiles'); } }), null, 'outside a checkout');
+  assert.deepEqual(watchdogLevels({ hostname: 'DESK-W-591', env: {} }), { suspend: 10, resume: 15 }, 'the real profile and standard');
 });
 
 test('fixed drives are asked of Windows once and read as drive letters', () => {

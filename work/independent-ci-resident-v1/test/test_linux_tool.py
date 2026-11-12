@@ -214,7 +214,7 @@ class Retention(unittest.TestCase):
     def test_plan_matches_every_shared_case(self):
         for c in self.CASES['cases']:
             entries = [{'name': e[0], 'mtimeMs': e[1], 'bytes': e[2], 'complete': True, 'isDir': True, 'links': 0, **(e[3] if len(e) > 3 else {})} for e in c['entries']]
-            p = tool.plan_retention(entries, set(c.get('keep', [])), c.get('rule', self.CASES['rule']))
+            p = tool.plan_retention(entries, set(c.get('keep', [])), c.get('rule', self.CASES['rule']), c.get('now', 0))
             self.assertEqual([d['name'] for d in p['deletes']], c['deletes'], c['name'])
             self.assertEqual({'success': p['classes']['success']['refused'], 'failure': p['classes']['failure']['refused']}, c['refused'], c['name'])
             self.assertEqual(p['deferred'], c['deferred'], c['name'])
@@ -224,9 +224,9 @@ class Retention(unittest.TestCase):
         owner = self.root / 'owner'
         owner.mkdir()
         f = owner / 'retention-keep.json'
-        # a missing file refuses (review M2); only the Owner's file, even with an empty list, allows deletion
-        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': False, 'code': 'RETENTION_KEEP_LIST_MISSING'})
-        self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux')['code'], 'RETENTION_KEEP_LIST_MISSING')
+        # node governance v1 (Owner decision): no file is an empty list, no extra protection
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set(), 'entries': 0})
+        self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux'), {'ok': True, 'names': set(), 'entries': 0})
         f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
         self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set(), 'entries': 0})
         f.unlink()
@@ -245,34 +245,26 @@ class Retention(unittest.TestCase):
             os.utime(spool / name, ns=(1_700_000_000_000_000_000 + i * 60_000_000_000,) * 2)
         return spool
 
-    def test_owner_settings_apply_per_class_budgets_and_invalid_settings_delete_nothing(self):
-        spool = self._spool([('archive-a', 10), ('archive-b', 10), ('failed-a', 10), ('failed-b', 10), ('failed-c', 10)])
+    def test_rule_is_the_node_governance_standard(self):
+        std = json.loads((HERE.parent.parent.parent / 'config' / 'node-governance-standard.json').read_text(encoding='utf-8'))['classes']
+        self.assertEqual(tool.RETENTION_RULE, {'classBudgetBytes': std['archive_success']['max_gib'] * 1024 ** 3, 'minKeepPerClass': std['archive_success']['min_keep'],
+                                               'maxDeletesPerPass': 16, 'maxAgeDays': {'success': std['archive_success']['days'], 'failure': std['archive_failure']['days']}})
+
+    def test_settings_hold_only_protected_generations_and_invalid_settings_delete_nothing(self):
+        spool = self._spool([('archive-a', 10), ('archive-b', 10), ('failed-a', 10)])
         keep = self.root / 'keep.json'
         settings = self.root / 'settings.json'
-        keep.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
         settings.write_text('{')
         self.assertEqual(tool.configured_prune(str(spool), str(keep), str(settings))['refused'], 'RETENTION_SETTINGS_INVALID')
         self.assertTrue((spool / 'archive-a').exists())
-        s = {'contract': 'clued.independent-ci.retention-settings/1', 'emptyKeep': 'refuse',
-             'linux': {'success': {'classBudgetBytes': 0, 'minKeepPerClass': 1}, 'failure': {'classBudgetBytes': 0, 'minKeepPerClass': 2}}}
-        settings.write_text(json.dumps(s))
-        self.assertEqual(tool.configured_prune(str(spool), str(keep), str(settings))['refused'], 'RETENTION_EMPTY_KEEP_UNCONFIRMED')
-        s['emptyKeep'] = 'allow'
-        settings.write_text(json.dumps(s))
-        result = tool.configured_prune(str(spool), str(keep), str(settings))
-        self.assertEqual(len(result['deleted']), 2)
-        self.assertEqual(len([n for n in spool.iterdir() if tool.archive_class(n.name)]), 3)
-
-    def test_settings_parser_refuses_unsafe_numbers_and_unconfirmed_empty_warns(self):
-        for bad in (-1, 1.2, True, '1', 9007199254740992):
+        for gone in ({'emptyKeep': 'allow'}, {'linux': {}}, {'disk': {'drives': ['C:'], 'thresholdBytes': 1}}, {'generations': {'enabled': True, 'keepNewest': 3, 'protected': []}}):
             with self.assertRaises(tool.Refused):
-                tool.parse_retention_settings(json.dumps({'contract': 'clued.independent-ci.retention-settings/1',
-                    'linux': {'failure': {'classBudgetBytes': bad, 'minKeepPerClass': 1}}}).encode())
-        spool = self._spool([('archive-a', 1)])
-        keep = self.root / 'keep.json'
-        keep.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
-        result = tool.configured_prune(str(spool), str(keep), str(self.root / 'missing-settings'))
-        self.assertEqual(result['warnings'], ['RETENTION_EMPTY_KEEP_UNCONFIRMED'])
+                tool.parse_retention_settings(json.dumps({'contract': 'clued.independent-ci.retention-settings/1', **gone}).encode())
+        settings.write_text(json.dumps({'contract': 'clued.independent-ci.retention-settings/1', 'generations': {'protected': ['g2']}}))
+        result = tool.configured_prune(str(spool), str(keep), str(settings))
+        self.assertEqual(result['refused'], None)
+        self.assertNotIn('warnings', result)
+        # the _spool times are in 2023: past 14/30 days, the newest of each class stays only by the minimum of 10
         self.assertEqual(result['deleted'], [])
 
     def test_a_pass_deletes_oldest_over_budget_and_keeps_protected_newest_and_everything_else(self):

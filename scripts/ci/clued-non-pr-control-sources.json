@@ -85,17 +85,16 @@
             },
             {
               "env": {
-                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
               },
               "name": "Probe the runner",
-              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
               "shell": "bash"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "4cb8a59fce36545141fe1555a6e1e2ffdc19980165b643cceb41c80f4e20f288",
+        "definition_sha256": "96794dc2c7b6e48f7fa7d7f62ff84b2c6f74dd3a8bed39c412f8ef2600de4c09",
         "job_id": "probe-company-linux-01"
       },
       {
@@ -125,17 +124,16 @@
             },
             {
               "env": {
-                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
               },
               "name": "Probe the runner",
-              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
               "shell": "bash"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "5a1b2310bea18536ded0d193b75b2107759282f4e4a254dd5a7c7e516e141a17",
+        "definition_sha256": "561b704bbd0b8066d54d0fa13d089ec105e45f320157289fea31d8a8c88b9769",
         "job_id": "probe-company-linux-02"
       },
       {
@@ -165,17 +163,16 @@
             },
             {
               "env": {
-                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
               },
               "name": "Probe the runner",
-              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
               "shell": "bash"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "f70917829cb770a0e3e9c6f54a2b5e78873ddb132379f5fe87106bdd13714dbc",
+        "definition_sha256": "52f75abb45e4a2cee0364ead371ec8955beb43278341c5fabdf4da8177ece149",
         "job_id": "probe-company-linux-03"
       },
       {
@@ -205,17 +202,16 @@
             },
             {
               "env": {
-                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
               },
               "name": "Probe the runner",
-              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+              "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
               "shell": "bash"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "02c1274d680d2611206fd170d903ad8329638fda9dea9754b8e7f162bc9f517c",
+        "definition_sha256": "50f64197a6c55061e23063a21f2f0f4d92ad7d3af8beecda76bd76167cc5db7c",
         "job_id": "probe-company-linux-04"
       },
       {
@@ -249,13 +245,13 @@
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-win-01"
               },
               "name": "Probe the runner",
-              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\n# Node governance level from the node's one status file; never fails the probe.\n$level = 'unknown'; $written = $null\ntry {\n  $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json\n  if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }\n  if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }\n  elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }\n} catch { }\n$governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"\n",
               "shell": "powershell"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "4cc4f1e6c8c9a114cd81c11e1591ed3fa3312131d4a602b4bf39439eadbbf187",
+        "definition_sha256": "e9d3a88481e33b2fa7ab26fb4ccce67c87a95e70e47d4520eee3aab870e4c190",
         "job_id": "probe-company-win-01"
       },
       {
@@ -289,13 +285,13 @@
                 "EXPECTED_RUNNER_NAME": "clued-ci-home-win-01"
               },
               "name": "Probe the runner",
-              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+              "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\n# Node governance level from the node's one status file; never fails the probe.\n$level = 'unknown'; $written = $null\ntry {\n  $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json\n  if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }\n  if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }\n  elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }\n} catch { }\n$governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"\n",
               "shell": "powershell"
             }
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "4453ef9a9af1b2e3f705af656e5bbd8a84f789c4b571d369c015c175723c696b",
+        "definition_sha256": "1c8e63c417f3c139435bbbdc9eff3007d74b162c745f5cd0c6d88a00f50c6f8c",
         "job_id": "probe-home-win-01"
       },
       {
@@ -480,11 +476,11 @@
   "workflows": {
     ".github/workflows/clued-compute-panel.yml": {
       "family": "compute_panel",
-      "source_sha256": "35e0e05e323d608e873b3375f8ca5ac03601a6a767ed831cbba4df5dfa91adf5",
+      "source_sha256": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
       "source_yaml_lines": [
         "# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes",
-        "# each general-pool runner answers a route probe (its name, free disk and",
-        "# available memory), and one Linux runner rebuilds the panel issue from those",
+        "# each general-pool runner answers a route probe (its name, free disk,",
+        "# available memory and node governance level), and one Linux runner rebuilds the panel issue from those",
         "# probes, the in-progress jobs of every workflow, the resident executors'",
         "# info-only PR statuses and, for the duplicate-run alert (Task e435e658), the",
         "# check runs of recent PR heads (checks: read). It uses only this workflow's",
@@ -561,7 +557,6 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
-        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-01",
         "        run: |",
         "          set -euo pipefail",
@@ -573,7 +568,22 @@
         "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
         "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
         "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
-        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          python3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||",
+        "          import json, sys",
+        "          level, written = \"unknown\", None",
+        "          try:",
+        "              with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:",
+        "                  row = json.load(handle)",
+        "              if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):",
+        "                  level = row[\"level\"]",
+        "              if isinstance(row.get(\"writtenAt\"), str):",
+        "                  written = row[\"writtenAt\"][:64]",
+        "          except Exception:",
+        "              pass",
+        "          print(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))",
+        "          PY",
+        "            printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'",
         "",
         "  probe-company-linux-02:",
         "    name: compute-probe / clued-ci-company-linux-02",
@@ -590,7 +600,6 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
-        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-02",
         "        run: |",
         "          set -euo pipefail",
@@ -602,7 +611,22 @@
         "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
         "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
         "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
-        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          python3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||",
+        "          import json, sys",
+        "          level, written = \"unknown\", None",
+        "          try:",
+        "              with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:",
+        "                  row = json.load(handle)",
+        "              if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):",
+        "                  level = row[\"level\"]",
+        "              if isinstance(row.get(\"writtenAt\"), str):",
+        "                  written = row[\"writtenAt\"][:64]",
+        "          except Exception:",
+        "              pass",
+        "          print(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))",
+        "          PY",
+        "            printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'",
         "",
         "  probe-company-linux-03:",
         "    name: compute-probe / clued-ci-company-linux-03",
@@ -619,7 +643,6 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
-        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-03",
         "        run: |",
         "          set -euo pipefail",
@@ -631,7 +654,22 @@
         "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
         "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
         "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
-        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          python3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||",
+        "          import json, sys",
+        "          level, written = \"unknown\", None",
+        "          try:",
+        "              with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:",
+        "                  row = json.load(handle)",
+        "              if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):",
+        "                  level = row[\"level\"]",
+        "              if isinstance(row.get(\"writtenAt\"), str):",
+        "                  written = row[\"writtenAt\"][:64]",
+        "          except Exception:",
+        "              pass",
+        "          print(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))",
+        "          PY",
+        "            printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'",
         "",
         "  probe-company-linux-04:",
         "    name: compute-probe / clued-ci-company-linux-04",
@@ -648,7 +686,6 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
-        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-04",
         "        run: |",
         "          set -euo pipefail",
@@ -660,7 +697,22 @@
         "          memory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)",
         "          printf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\",
         "            \"$RUNNER_NAME\" \"$disk\" \"$memory\"",
-        "          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          python3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||",
+        "          import json, sys",
+        "          level, written = \"unknown\", None",
+        "          try:",
+        "              with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:",
+        "                  row = json.load(handle)",
+        "              if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):",
+        "                  level = row[\"level\"]",
+        "              if isinstance(row.get(\"writtenAt\"), str):",
+        "                  written = row[\"writtenAt\"][:64]",
+        "          except Exception:",
+        "              pass",
+        "          print(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))",
+        "          PY",
+        "            printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'",
         "",
         "  # The two general Windows runners are told apart by their site label.",
         "  probe-company-win-01:",
@@ -688,8 +740,16 @@
         "          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)",
         "          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress",
         "          Write-Output \"COMPUTE_PANEL_PROBE $line\"",
-        "          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
-        "          if ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          $level = 'unknown'; $written = $null",
+        "          try {",
+        "            $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json",
+        "            if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }",
+        "            if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }",
+        "            elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }",
+        "          } catch { }",
+        "          $governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress",
+        "          Write-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"",
         "",
         "  probe-home-win-01:",
         "    name: compute-probe / clued-ci-home-win-01",
@@ -716,8 +776,16 @@
         "          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)",
         "          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress",
         "          Write-Output \"COMPUTE_PANEL_PROBE $line\"",
-        "          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py",
-        "          if ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }",
+        "          # Node governance level from the node's one status file; never fails the probe.",
+        "          $level = 'unknown'; $written = $null",
+        "          try {",
+        "            $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json",
+        "            if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }",
+        "            if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }",
+        "            elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }",
+        "          } catch { }",
+        "          $governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress",
+        "          Write-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"",
         "",
         "  panel:",
         "    name: compute-panel",
@@ -747,7 +815,7 @@
         "        run: python3 -I scripts/ci/self-hosted/compute_panel.py",
         ""
       ],
-      "workflow_blob": "7d263683953b140897c30681828924d6a183b26c",
+      "workflow_blob": "baa297ef49804984999afd5b05d51386aa84cac4",
       "workflow_definition": {
         "concurrency": {
           "cancel-in-progress": true,
@@ -874,11 +942,10 @@
               },
               {
                 "env": {
-                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
                 },
                 "name": "Probe the runner",
-                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
                 "shell": "bash"
               }
             ],
@@ -910,11 +977,10 @@
               },
               {
                 "env": {
-                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
                 },
                 "name": "Probe the runner",
-                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
                 "shell": "bash"
               }
             ],
@@ -946,11 +1012,10 @@
               },
               {
                 "env": {
-                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
                 },
                 "name": "Probe the runner",
-                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
                 "shell": "bash"
               }
             ],
@@ -982,11 +1047,10 @@
               },
               {
                 "env": {
-                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
                 },
                 "name": "Probe the runner",
-                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\npython3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\n",
+                "run": "set -euo pipefail\nif [[ \"$RUNNER_NAME\" != \"$EXPECTED_RUNNER_NAME\" ]]; then\n  echo \"Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME\" >&2\n  exit 1\nfi\ndisk=$(df -Pk \"$GITHUB_WORKSPACE\" | awk 'NR==2 {printf \"%.1f\", $4/1048576}')\nmemory=$(awk '/^MemAvailable:/ {printf \"%.1f\", $2/1048576}' /proc/meminfo)\nprintf 'COMPUTE_PANEL_PROBE {\"runner\":\"%s\",\"os\":\"Linux\",\"disk_free_gb\":%s,\"mem_available_gb\":%s}\\n' \\\n  \"$RUNNER_NAME\" \"$disk\" \"$memory\"\n# Node governance level from the node's one status file; never fails the probe.\npython3 -I -B - /mnt/c/ProgramData/Clued/node-governance/status.json <<'PY' ||\nimport json, sys\nlevel, written = \"unknown\", None\ntry:\n    with open(sys.argv[1], encoding=\"utf-8-sig\") as handle:\n        row = json.load(handle)\n    if row.get(\"level\") in (\"green\", \"yellow\", \"red\"):\n        level = row[\"level\"]\n    if isinstance(row.get(\"writtenAt\"), str):\n        written = row[\"writtenAt\"][:64]\nexcept Exception:\n    pass\nprint(\"COMPUTE_PANEL_GOVERNANCE \" + json.dumps({\"level\": level, \"writtenAt\": written}, separators=(\",\", \":\")))\nPY\n  printf 'COMPUTE_PANEL_GOVERNANCE {\"level\":\"unknown\",\"writtenAt\":null}\\n'\n",
                 "shell": "bash"
               }
             ],
@@ -1022,7 +1086,7 @@
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-win-01"
                 },
                 "name": "Probe the runner",
-                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\n# Node governance level from the node's one status file; never fails the probe.\n$level = 'unknown'; $written = $null\ntry {\n  $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json\n  if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }\n  if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }\n  elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }\n} catch { }\n$governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"\n",
                 "shell": "powershell"
               }
             ],
@@ -1058,7 +1122,7 @@
                   "EXPECTED_RUNNER_NAME": "clued-ci-home-win-01"
                 },
                 "name": "Probe the runner",
-                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\npython -I -B scripts/ci/self-hosted/resource-maintenance/probe.py\nif ($LASTEXITCODE -ne 0) { throw \"Maintenance probe failed\" }\n",
+                "run": "if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {\n  throw \"Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME\"\n}\n$drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name\n$disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)\n$memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)\n$line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_PROBE $line\"\n# Node governance level from the node's one status file; never fails the probe.\n$level = 'unknown'; $written = $null\ntry {\n  $row = Get-Content -Raw -LiteralPath 'C:\\ProgramData\\Clued\\node-governance\\status.json' -ErrorAction Stop | ConvertFrom-Json\n  if (@('green', 'yellow', 'red') -ccontains $row.level) { $level = $row.level }\n  if ($row.writtenAt -is [string]) { $written = $row.writtenAt.Substring(0, [math]::Min(64, $row.writtenAt.Length)) }\n  elseif ($row.writtenAt -is [datetime]) { $written = $row.writtenAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }\n} catch { }\n$governance = [ordered]@{ level = $level; writtenAt = $written } | ConvertTo-Json -Compress\nWrite-Output \"COMPUTE_PANEL_GOVERNANCE $governance\"\n",
                 "shell": "powershell"
               }
             ],
@@ -1078,7 +1142,7 @@
           "contents": "read"
         }
       },
-      "workflow_definition_sha256": "e35d99eadf18acc62d66b8bac23507d55acda0214d1b7488e8ef8242caf90fc5"
+      "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d"
     },
     ".github/workflows/clued-native617-admission-dispatch.yml": {
       "family": "disabled_native617_dispatch",

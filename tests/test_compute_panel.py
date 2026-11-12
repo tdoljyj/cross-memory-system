@@ -266,29 +266,64 @@ class AlertAndStateTests(unittest.TestCase):
         self.assertIn("控制机", body)
 
 
-class MaintenanceTelemetryTests(unittest.TestCase):
-    def test_invalid_telemetry_never_becomes_healthy(self):
-        for value in ['{"status":"ok","removed_bytes":NaN}', '{"status":"ok","node_id":"<script>"}',
-                      '{"status":"unknown"}', '[]', '{"status":"ok","at":999999999999}',
-                      '{"status":"ok","removed_bytes":' + '9' * 400 + '}']:
-            self.assertEqual(panel.parse_maintenance("CACHE_MAINTENANCE_PROBE " + value, NOW)["status"], "invalid")
+class GovernanceStatusTests(unittest.TestCase):
+    """The probe prints one COMPUTE_PANEL_GOVERNANCE line from the node governance status file."""
 
-    def test_not_registered_is_explicit_but_registered_failures_alert(self):
-        self.assertEqual(panel.parse_maintenance('CACHE_MAINTENANCE_PROBE {"status":"not-registered"}', NOW),
-                         {"status": "not-registered"})
-        self.assertNotIn("maintenance", panel.health_flags({"maintenance": {"status": "not-registered"}}))
-        row = {"status": "online", "health": {"maintenance": {"status": "partial"}}, "flags": ["maintenance"]}
-        self.assertIn("缓存维护异常", panel.alerts_for({NAME: row}, {})["maintenance:" + NAME])
+    def test_reads_the_level_and_time_from_the_last_line(self):
+        log = ('2026-10-29T12:00:00Z printf \'COMPUTE_PANEL_GOVERNANCE {"level":"%s"}\\n\'\n'
+               '2026-10-29T12:00:01Z COMPUTE_PANEL_GOVERNANCE {"level":"yellow","writtenAt":"2026-10-29T11:58:00Z"}\n')
+        self.assertEqual(panel.parse_governance(log), {"level": "yellow", "writtenAt": "2026-10-29T11:58:00Z"})
+        self.assertEqual(panel.parse_governance('COMPUTE_PANEL_GOVERNANCE {"level":"unknown","writtenAt":null}'),
+                         {"level": "unknown", "writtenAt": None})
 
-    def test_cached_report_ages_without_new_log_fetch(self):
+    def test_missing_or_bad_lines_are_unknown_never_green(self):
+        for log in ["", "no line here", "COMPUTE_PANEL_GOVERNANCE not-json",
+                    'COMPUTE_PANEL_GOVERNANCE {"level":"purple","writtenAt":null}',
+                    'COMPUTE_PANEL_GOVERNANCE {"level":"green","writtenAt":"<script>"}',
+                    'COMPUTE_PANEL_GOVERNANCE ["green"]']:
+            self.assertEqual(panel.parse_governance(log)["level"], "unknown", log)
+            self.assertIsNone(panel.parse_governance(log)["writtenAt"], log)
+
+    def test_only_red_raises_an_alert(self):
+        self.assertEqual(panel.health_flags({"governance": {"level": "red", "writtenAt": None}}), ["governance"])
+        for level in ("green", "yellow", "unknown"):
+            self.assertEqual(panel.health_flags({"governance": {"level": level, "writtenAt": None}}), [])
+        row = {"status": "online", "health": {"governance": {"level": "red", "writtenAt": "2026-10-29T11:58:00Z"}},
+               "flags": ["governance"]}
+        text = panel.alerts_for({NAME: row}, {})["governance:" + NAME]
+        self.assertIn("节点治理红色", text)
+        self.assertIn("2026-10-29T11:58:00Z", text)
+
+    def test_the_level_is_cached_from_the_probe_log_and_shown_in_the_panel(self):
+        class Client:
+            def low(self):
+                return False
+
+            def job_log(self, job_id):
+                return ('COMPUTE_PANEL_PROBE {"runner":"r","os":"Linux","disk_free_gb":81.5,"mem_available_gb":4.2}\n'
+                        'COMPUTE_PANEL_GOVERNANCE {"level":"red","writtenAt":"2026-10-29T11:58:00Z"}\n')
+        cache = {NAME: {"fetched_at": panel.iso(NOW - timedelta(hours=2)), "maintenance": {"status": "ok"}}}
+        health = panel.latest_health(Client(), [probe("success", 6, 5)], cache, NOW)
+        self.assertEqual(health[NAME]["governance"], {"level": "red", "writtenAt": "2026-10-29T11:58:00Z"})
+        self.assertNotIn("maintenance", health[NAME])
+        self.assertNotIn("maintenance", cache[NAME])
+        pool = {node["name"]: {**panel.classify_node(node["name"], [], {}, NOW), "can_run": node["can_run"],
+                                "health": health.get(node["name"], {}), "flags": []} for node in panel.POOL}
+        report = {"schema": panel.SCHEMA, "generated_at": panel.iso(NOW), "pool": pool, "utilization": {},
+                  "residents": {}, "others": panel.OTHERS, "metrics": {}, "alerts": {}}
+        body = panel.render(report, {})
+        self.assertIn("治理等级", body)
+        self.assertIn("| 红 |", body)
+        self.assertNotIn("缓存维护", body)
+
+    def test_an_old_cache_without_governance_reads_unknown(self):
         class Client:
             def low(self):
                 return True
-        old = {NAME: {"fetched_at": panel.iso(NOW), "maintenance": {"node_id": "desk-w-591", "status": "ok",
-            "at": NOW.timestamp() - 7200, "stale_after_seconds": 3600, "removed_bytes": 100}}}
+        old = {NAME: {"fetched_at": panel.iso(NOW), "maintenance": {"status": "ok"}}}
         health = panel.latest_health(Client(), [], old, NOW)
-        self.assertEqual(health[NAME]["maintenance"]["status"], "stale")
-        self.assertEqual(old[NAME]["maintenance"]["status"], "ok")
+        self.assertEqual(health[NAME]["governance"], {"level": "unknown", "writtenAt": None})
+        self.assertNotIn("maintenance", health[NAME])
 
 
 _IDS = iter(range(1, 10**9))

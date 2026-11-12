@@ -248,6 +248,20 @@ try{
  function Read-RecoveryProcessOwnerSids{return ,@($script:ownerSid)}
  $script:ownerSid=$native.residentSid;$blocked=$false;try{& $ActualNoProducers @{pins=$native}}catch{$blocked=$true};Yes $blocked 'orphan-resident-service-child-refused'
  $script:ownerSid='S-1-5-18';& $ActualNoProducers @{pins=$native};Yes $true 'known-other-owner-not-in-producer-set'
+ # DESK D:\ root: exactly the observed native descriptor (SDDL round-trips to the same bytes) is admitted, only at that root and scene.
+ $deskRoot='O:SYG:SYD:(A;;FA;;;BA)(A;OICIIO;GA;;;BA)(A;;FA;;;SY)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)'
+ $toBytes={param($s)$d=New-Object Security.AccessControl.RawSecurityDescriptor($s);$b=New-Object byte[] $d.BinaryLength;$d.GetBinaryForm($b,0);,$b}
+ $rootBytes=& $toBytes $deskRoot;Yes ((Recovery-Hash $rootBytes) -ceq '548bcbdd7b0c6b4d4df07b2c0eebbe74414d8826b5dd0d436ffa8a2a3421fb86') 'desk-root-descriptor-is-observed-native-bytes'
+ $deskCtx=@{pins=(Get-RecoveryPins desk-31080)};& $ActualVhdAcl $deskCtx $rootBytes 'D:\';Yes $true 'desk-exact-volume-root-accepted'
+ foreach($case in @(@('desk-31080','D:\clued-resident',$deskRoot),@('turing-b2ea','C:\',$deskRoot),@('desk-31080','D:\',$deskRoot.Replace('(A;;0x1301bf;;;AU)','(A;;0x1301ff;;;AU)')),@('desk-31080','D:\',($deskRoot+'(A;;0x1301bf;;;WD)')),@('desk-31080','D:\',$deskRoot.Replace('O:SY','O:BU')))){
+  $ctx=@{pins=(Get-RecoveryPins $case[0])};$blocked=$false;try{& $ActualVhdAcl $ctx (& $toBytes $case[2]) $case[1]}catch{$blocked=$true};Yes $blocked ('desk-root-exception-never-applies-elsewhere-or-on-drift:'+$case[0]+':'+$case[1])
+ }
+ # DESK ext4.vhdx: the VM-stopped form (as TURING's real QUIET capture: SY, BA, companion Modify|WRITE_DAC) passes the generic rule;
+ # the running-VM grant (Hyper-V VM account + capability SID, both FA) is never admitted, so the leaf is judged only after the VM detached it.
+ $deskLeaf='O:BAG:S-1-5-21-858977881-4031698862-3006450925-513D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1701bf;;;S-1-5-21-858977881-4031698862-3006450925-1008)'
+ & $ActualVhdAcl $deskCtx (& $toBytes $deskLeaf) $deskCtx.pins.vhdx;Yes $true 'desk-vm-stopped-leaf-accepted-by-generic-rule-group-ignored'
+ $running=$deskLeaf.Replace('D:PAI','D:PAI(A;;FA;;;S-1-15-3-1024-2268835264-3721307629-241982045-173645152-1490879176-104643441-2915960892-1612460704)(A;;FA;;;S-1-5-83-1-2787275907-1301918704-2656253825-417653190)')
+ foreach($leaf in @($running,$deskLeaf.Replace('O:BA','O:S-1-5-21-858977881-4031698862-3006450925-1000'))){$blocked=$false;try{& $ActualVhdAcl $deskCtx (& $toBytes $leaf) $deskCtx.pins.vhdx}catch{$blocked=$true};Yes $blocked 'desk-running-vm-grant-or-operator-owner-leaf-refused'}
  # Companion WSL helpers that exit after the stopped producers idle out are waited for (bounded); a persistent owner still refuses.
  $c=New-TestContext 'transient';$script:active=$c;Hold-RecoveryWslRecord $c;$r=Invoke-RecoveryCore $c;Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $c.quietCalls -ge 3 -and $c.archiveCalls -eq 1) 'transient-companion-owner-cleared-within-bounded-quiet-wait';Finish-Test $c
  & {

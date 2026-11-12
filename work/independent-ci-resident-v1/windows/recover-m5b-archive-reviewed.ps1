@@ -459,6 +459,9 @@ function Assert-RecoveryVhdAcl($Context,[byte[]]$Bytes,[string]$Path){
  # No parent, other scene, different bytes, or general user-owned VHDX is admitted.
  $qualifiedOwner=$Context.pins.sceneId -ceq 'turing-b2ea' -and $Path -ieq $Context.pins.vhdx -and $null -ne $sd.Owner -and $sd.Owner.Value -ceq $Context.pins.operator -and (Recovery-Hash $Bytes) -ceq '4e8610cdcbf6d5703038d9d03b445329a2e1d36d9f70403f31a7e8dac80d1438'
  if($null -eq $sd.Owner -or (-not $qualifiedOwner -and $admins -notcontains $sd.Owner.Value) -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_PROTECTION_REFUSED'}
+ # DESK's D:\ is a stock data-volume root: SYSTEM-owned, Authenticated Users Modify on this folder only (no child delete,
+ # DAC or owner write). A volume root cannot be deleted or renamed, so only these exact root bytes are admitted for that scene.
+ if($Context.pins.sceneId -ceq 'desk-31080' -and $Path -ceq [IO.Path]::GetPathRoot($Context.pins.vhdx) -and (Recovery-Hash $Bytes) -ceq '548bcbdd7b0c6b4d4df07b2c0eebbe74414d8826b5dd0d436ffa8a2a3421fb86'){return}
  $leaf=$Path -ieq $Context.pins.vhdx -or $Path -ieq [IO.Path]::GetDirectoryName($Context.pins.vhdx)
  # The accepted headless writer gives only ext4.vhdx Modify|WRITE_DAC; its parent stays Modify.
  $companionMask=if($Path -ieq $Context.pins.vhdx){0x1701bf}else{0x1301bf}

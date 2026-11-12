@@ -6,7 +6,7 @@ import { RetentionWatch, RETENTION_RULE } from '../src/retention.mjs';
 import { NotifyQueue, queueNotify } from '../src/notify-queue.mjs';
 import { rawPolicy, tempRoot } from './helpers.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { SETTINGS_CONTRACT, parseRetentionSettings, readRetentionSettings, retentionRule, retentionKeep } from '../src/retention-settings.mjs';
+import { SETTINGS_CONTRACT, parseRetentionSettings, readRetentionSettings } from '../src/retention-settings.mjs';
 import { pruneSpool } from '../src/retention.mjs';
 import { pruneArchivedGenerations } from '../src/generation-retention.mjs';
 import { RetentionNotifier } from '../src/retention-notify.mjs';
@@ -16,17 +16,17 @@ import { main as generationTool } from '../tools/retention-generations.mjs';
 
 const DAY = 86_400_000;
 const START = Date.parse('2026-11-08T08:00:00Z');
-const missing = () => ({ rule: RETENTION_RULE, refused: 'RETENTION_KEEP_LIST_MISSING', classes: null, protected: null,
+const missing = () => ({ rule: RETENTION_RULE, refused: 'RETENTION_KEEP_LIST_UNREADABLE', classes: null, protected: null,
   deferred: 0, deleted: [], deletedBytes: 0, stopped: null });
 
-test('missing keep lists below the size threshold reach the normal notification queue, once per spool/day', async t => {
+test('unreadable keep lists below the size threshold reach the normal notification queue, once per spool/day', async t => {
   const root = await tempRoot(t), dir = path.join(root, 'notifications');
   let now = START;
   const rows = [], queue = new NotifyQueue({ dir, clock: () => now });
   const watch = new RetentionWatch({ policy: validatePolicy(rawPolicy()), clock: () => now,
     receipts: { append: async (type, body) => { rows.push({ type, body }); } }, notify: queueNotify(queue),
     companionReady: async () => true, idle: async () => ({ ok: true }),
-    pruneWindows: async () => missing(), pruneLinux: async () => ({ ok: false, code: 'RETENTION_KEEP_LIST_MISSING' }),
+    pruneWindows: async () => missing(), pruneLinux: async () => ({ ok: false, code: 'RETENTION_KEEP_LIST_UNREADABLE' }),
     measureWindows: async () => ({ bytes: 1, directories: 1, complete: true }),
     measureLinux: async () => ({ ok: true, bytes: 1, directories: 1 }),
   });
@@ -39,14 +39,14 @@ test('missing keep lists below the size threshold reach the normal notification 
   await watch.maybeCheck();
   assert.equal((await fs.readdir(dir)).length, 4);
   const notices = await Promise.all((await fs.readdir(dir)).map(n => fs.readFile(path.join(dir, n), 'utf8').then(JSON.parse)));
-  assert.ok(notices.every(n => n.body.includes('RETENTION_KEEP_LIST_MISSING')));
+  assert.ok(notices.every(n => n.body.includes('RETENTION_KEEP_LIST_UNREADABLE')));
   assert.ok(rows.filter(n => n.type === 'archive-retention-alert').every(n => n.body.deletesAnything === false));
 });
 
 test('real receipt chain reaches the normal queue through read-only companion and deduplicates after restart', async t => {
   const root = await tempRoot(t), dir = path.join(root, 'queue'), clock = () => START;
   const receipts = await ReceiptChain.open(path.join(root, 'receipts'), clock);
-  await receipts.append('archive-retention-alert', { spool: 'windows', code: 'RETENTION_KEEP_LIST_MISSING', deletesAnything: false });
+  await receipts.append('archive-retention-alert', { spool: 'windows', code: 'RETENTION_KEEP_LIST_UNREADABLE', deletesAnything: false });
   const storeFile = path.join(root, 'owner', 'notifications.json');
   const ports = { receipts: new ReceiptChain(path.join(root, 'receipts'), clock), clock,
     notify: queueNotify(new NotifyQueue({ dir, clock })) };
@@ -56,26 +56,24 @@ test('real receipt chain reaches the normal queue through read-only companion an
   assert.equal((await receipts.latest(['archive-retention-alert'], 8)).length, 1, 'companion wrote no service receipt');
 });
 
-test('settings preserve defaults, reject invalid numbers and support independent class limits', async t => {
+test('settings hold only the contract and the protected generations: numbers come from the standard; empty keep is no extra protection', async t => {
   const root = await tempRoot(t), file = path.join(root, 'settings.json');
   assert.deepEqual(await readRetentionSettings(file), { ok: true, settings: {} });
-  assert.equal(retentionRule({}, 'linux'), RETENTION_RULE);
-  const s = { contract: SETTINGS_CONTRACT, linux: { success: { classBudgetBytes: 0, minKeepPerClass: 1 }, failure: { classBudgetBytes: 0, minKeepPerClass: 2 } } };
+  const s = { contract: SETTINGS_CONTRACT, generations: { protected: ['g2-1'] } };
   assert.deepEqual(parseRetentionSettings(JSON.stringify(s)), s);
-  for (const value of [-1, 1.2, Number.MAX_SAFE_INTEGER + 1, true, '1']) {
-    assert.throws(() => parseRetentionSettings(JSON.stringify({ ...s, linux: { success: { classBudgetBytes: value, minKeepPerClass: 1 } } })), /RETENTION_SETTINGS_INVALID/);
+  for (const gone of [{ disk: { drives: ['C:'], thresholdBytes: 1 } }, { linux: { success: { classBudgetBytes: 0, minKeepPerClass: 1 } } }, { windows: {} },
+    { emptyKeep: 'refuse' }, { generations: { enabled: true, keepNewest: 3, protected: [] } }, { generations: { protected: ['../x'] } }]) {
+    assert.throws(() => parseRetentionSettings(JSON.stringify({ contract: SETTINGS_CONTRACT, ...gone })), /RETENTION_SETTINGS_INVALID/, JSON.stringify(gone));
   }
   await fs.writeFile(file, '{');
   assert.equal((await readRetentionSettings(file)).ok, false);
   const spool = path.join(root, 'spool'); await fs.mkdir(spool);
-  for (const name of ['archive-a', 'archive-b', 'failed-a', 'failed-b', 'failed-c']) {
-    await fs.mkdir(path.join(spool, name)); await fs.writeFile(path.join(spool, name, 'data'), 'x');
+  const old = new Date(START - 40 * DAY);
+  for (const name of ['archive-a', 'archive-b', 'archive-c', 'failed-a', 'failed-b']) {
+    await fs.mkdir(path.join(spool, name)); await fs.writeFile(path.join(spool, name, 'data'), 'x'); await fs.utimes(path.join(spool, name), old, old);
   }
-  const keep = { ok: true, entries: 0, names: new Set() };
-  assert.equal(retentionKeep(keep, {}).ok, true);
-  assert.equal(retentionKeep(keep, { emptyKeep: 'refuse' }).ok, false);
-  const p = await pruneSpool({ spool, keep, rule: retentionRule(s, 'linux') });
-  assert.equal(p.deleted.length, 2); assert.equal((await fs.readdir(spool)).length, 3);
+  const p = await pruneSpool({ spool, keep: { ok: true, entries: 0, names: new Set() }, rule: { ...RETENTION_RULE, minKeepPerClass: 1 }, now: START });
+  assert.deepEqual(p.deleted.map(d => d.name).sort(), ['archive-a', 'archive-b', 'failed-a'], 'past 14/30 days, the newest of each class stays');
 });
 
 test('changed authorization stops real deletion before the first archive', async t => {
@@ -98,17 +96,17 @@ test('archived generations retain three distinct newest generations and never to
     await fs.writeFile(path.join(root, 'archive', name, 'generation.json'), JSON.stringify({ generation: Number(/^g([0-9]+)/.exec(name)[1]),
       packageManifestSha256: 'a'.repeat(64), filesSha256: 'b'.repeat(64), residentBinPath: 'resident', brokerBinPath: 'broker', companionTaskArguments: 'companion' }));
   }
-  assert.equal((await pruneArchivedGenerations({ root })).code, 'RETENTION_GENERATIONS_APPROVAL_REQUIRED');
-  const result = await pruneArchivedGenerations({ root, allowDelete: true, settings: { generations: { enabled: true, keepNewest: 3, protected: ['g1-1'] } } });
+  assert.equal((await pruneArchivedGenerations({ root })).code, 'RETENTION_GENERATIONS_MAINTENANCE_REQUIRED', 'Owner decision: enabled, three newest plus the current');
+  const result = await pruneArchivedGenerations({ root, allowDelete: true, settings: { generations: { protected: ['g1-1'] } } });
   assert.deepEqual(result.deleted, ['g1', 'g2']);
   assert.deepEqual((await fs.readdir(path.join(root, 'archive'))).sort(), ['g1-1', 'g1-rolled-back-op', 'g3', 'g4', 'g4-1', 'g5']);
   assert.equal((await fs.stat(path.join(root, 'generations/g1'))).isDirectory(), true);
   await fs.mkdir(path.join(root, 'upgrade/ops/in-flight'));
-  assert.equal((await pruneArchivedGenerations({ root, settings: { generations: { enabled: true } } })).code, 'RETENTION_GENERATIONS_BOUNDARY_UNCONFIRMED');
+  assert.equal((await pruneArchivedGenerations({ root })).code, 'RETENTION_GENERATIONS_BOUNDARY_UNCONFIRMED');
 });
 
 test('unconfirmed generation record or changed approval deletes no archived generation', async t => {
-  const root = await tempRoot(t), settings = { generations: { enabled: true, keepNewest: 3, protected: [] } };
+  const root = await tempRoot(t), settings = { generations: { protected: [] } };
   await fs.mkdir(path.join(root, 'upgrade/ops'), { recursive: true });
   await fs.writeFile(path.join(root, 'upgrade/current.json'), JSON.stringify({ generation: 9 }));
   for (let n = 1; n <= 4; n++) {
@@ -135,9 +133,8 @@ test('unconfirmed generation record or changed approval deletes no archived gene
   assert.equal(applied.code, null);
 });
 
-test('notifier chooses latest disk fact, includes size reminders, and retries a failed queue write', async t => {
+test('notifier passes alerts and size reminders and retries a failed queue write; disk receipts are no longer its business', async t => {
   const root = await tempRoot(t), clock = () => START, receipts = await ReceiptChain.open(path.join(root, 'receipts'), clock);
-  await receipts.append('disk-space-reminder', { drive: 'D:', freeBytes: 10 * 1024 ** 3 });
   await receipts.append('disk-space-reminder', { drive: 'D:', freeBytes: 2 * 1024 ** 3 });
   await receipts.append('archive-retention-reminder', { totalBytes: 60 * 1024 ** 3 });
   const store = await LocalStore.open(path.join(root, 'notifications.json'), clock), messages = [];
@@ -147,12 +144,11 @@ test('notifier chooses latest disk fact, includes size reminders, and retries a 
   } });
   await assert.rejects(notifier.step()); assert.deepEqual(store.data.notified, {});
   fail = false; await notifier.step();
-  assert.equal(messages.length, 2);
-  assert.ok(messages.find(m => m.key === 'retention:disk:D:').body.includes('2 GiB'));
-  assert.ok(messages.find(m => m.key === 'retention:size').body.includes('60 GiB'));
+  assert.deepEqual(messages.map(m => m.key), ['retention:size']);
+  assert.ok(messages[0].body.includes('60 GiB'));
 });
 
-test('bad settings stop both spool ports and low D: space alerts without blocking', async t => {
+test('bad settings stop both spool ports', async t => {
   let called = 0;
   const root = await tempRoot(t), receipts = await ReceiptChain.open(path.join(root, 'receipts'), () => START);
   const ports = { policy: validatePolicy(rawPolicy()), receipts, clock: () => START, companionReady: async () => true,
@@ -161,9 +157,4 @@ test('bad settings stop both spool ports and low D: space alerts without blockin
     pruneWindows: async () => { called++; return missing(); }, pruneLinux: async () => { called++; return { ok: false }; } };
   const invalid = new RetentionWatch({ ...ports, readSettings: async () => ({ ok: false, code: 'RETENTION_SETTINGS_INVALID' }) });
   assert.equal((await invalid.maybeCheck()).prune.skipped, 'RETENTION_SETTINGS_INVALID'); assert.equal(called, 0);
-  const drives = [];
-  const valid = new RetentionWatch({ ...ports, readSettings: async () => ({ ok: true, settings: { disk: { drives: ['D:'], thresholdBytes: 200 } } }),
-    diskFree: async d => { drives.push(d); return { ok: true, freeBytes: 100 }; } });
-  assert.equal((await valid.maybeCheck()).disk.reminded, true); assert.deepEqual(drives, ['D:\\']);
-  assert.equal((await receipts.latest(['disk-space-reminder'], 1))[0].value.body.drive, 'D:');
 });

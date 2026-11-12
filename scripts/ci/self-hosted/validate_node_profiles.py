@@ -39,9 +39,7 @@ def main() -> int:
     for name, profile in capacity_profiles.items():
         required = (
             "minimum_host_memory_gb", "wsl_memory_gb", "wsl_processors", "wsl_swap_gb",
-            "watchdog_interval_seconds", "suspend_free_memory_gb", "resume_free_memory_gb",
-            "suspend_c_free_gb", "resume_c_free_gb",
-            "suspend_runner_disk_free_gb", "resume_runner_disk_free_gb",
+            "suspend_free_memory_gb", "resume_free_memory_gb",
         )
         missing = [key for key in required if key not in profile]
         if missing:
@@ -51,14 +49,12 @@ def main() -> int:
             fail(errors, f"{name} must leave host memory headroom")
         if profile["suspend_free_memory_gb"] >= profile["resume_free_memory_gb"]:
             fail(errors, f"{name} memory hysteresis is invalid")
-        if profile["suspend_c_free_gb"] >= profile["resume_c_free_gb"]:
-            fail(errors, f"{name} disk hysteresis is invalid")
-        # Owner decision 241824b2: the runner disk (the drive of the runner distribution's virtual disk)
-        # stops and resumes the runners; C: only alerts.
-        if profile["suspend_runner_disk_free_gb"] >= profile["resume_runner_disk_free_gb"]:
-            fail(errors, f"{name} runner disk hysteresis is invalid")
-        if profile["wsl_processors"] <= 0 or profile["watchdog_interval_seconds"] < 15:
-            fail(errors, f"{name} processor/watchdog values are invalid")
+        # Disk levels are the node governance standard's (config/node-governance-standard.json), not a profile's.
+        stale = [key for key in profile if key.endswith("_c_free_gb") or key.endswith("_runner_disk_free_gb") or key == "watchdog_interval_seconds"]
+        if stale:
+            fail(errors, f"{name} has disk or watchdog keys the governance standard now holds: {', '.join(stale)}")
+        if profile["wsl_processors"] <= 0:
+            fail(errors, f"{name} processor values are invalid")
 
     host_ids: set[str] = set()
     hostnames: set[str] = set()
@@ -83,17 +79,24 @@ def main() -> int:
         if capacity not in capacity_profiles:
             fail(errors, f"{host_id}: unknown capacity profile {capacity}")
 
-        # The drives the host's watchdog watches (Task 5282d4ae); render-host-watchdog.ps1 checks the same.
-        drives = host.get("watchdog_drives", [{"drive": "C"}])
-        letters = [str(entry.get("drive", "")).upper() for entry in drives] if isinstance(drives, list) else []
-        if not isinstance(drives, list) or not all(re.fullmatch(r"[A-Z]", letter) for letter in letters) or len(set(letters)) != len(letters):
-            fail(errors, f"{host_id}: watchdog_drives must be a list of distinct single drive letters")
-        elif capacity in capacity_profiles:
-            for entry in drives:
-                suspend = entry.get("suspend_free_gb", capacity_profiles[capacity].get("suspend_c_free_gb", 0))
-                resume = entry.get("resume_free_gb", capacity_profiles[capacity].get("resume_c_free_gb", 0))
-                if not 0 < suspend < resume or not isinstance(entry.get("clean", True), bool):
-                    fail(errors, f"{host_id}: watchdog_drives {entry.get('drive')}: needs 0 < suspend_free_gb < resume_free_gb and a boolean clean")
+        # Node governance v1: one governance block per host (render.ps1 checks the same).
+        gov = host.get("governance")
+        if "watchdog_drives" in host or "watchdog_path" in host:
+            fail(errors, f"{host_id}: watchdog_drives/watchdog_path are gone; declare the governance block")
+        if not isinstance(gov, dict) or set(gov) - {"drives", "resident_distro", "worktrees", "overrides"}:
+            fail(errors, f"{host_id}: governance must be an object of drives, resident_distro, worktrees, overrides")
+        else:
+            letters = gov.get("drives")
+            if not isinstance(letters, list) or not letters or not all(isinstance(x, str) and re.fullmatch(r"[A-Z]", x) for x in letters) or len(set(letters)) != len(letters):
+                fail(errors, f"{host_id}: governance.drives must be a non-empty list of distinct single drive letters")
+            distro = gov.get("resident_distro")
+            if distro is not None and not (isinstance(distro, str) and re.fullmatch(r"[A-Za-z0-9._-]+", distro)):
+                fail(errors, f"{host_id}: governance.resident_distro must be a distribution name")
+            worktrees = gov.get("worktrees", [])
+            if not isinstance(worktrees, list) or not all(isinstance(w, str) and re.fullmatch(r"[A-Za-z]:\\[^\"'`$]*", w) for w in worktrees):
+                fail(errors, f"{host_id}: governance.worktrees must be a list of absolute Windows paths")
+            if not isinstance(gov.get("overrides", {}), dict):
+                fail(errors, f"{host_id}: governance.overrides must be an object")
 
         additional = host.get("additional_linux_runners", [])
         if not isinstance(additional, list):

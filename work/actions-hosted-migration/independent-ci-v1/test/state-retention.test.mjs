@@ -78,7 +78,7 @@ test('outcome segments: the open month stays flat; a past month moves whole unde
 test('strict sweep retention: exact new kinds expire after 90 days while newest of each kind and foreign names stay', async t => {
   const r = roots(await tempDir(t)), now = Date.parse('2027-03-01T00:00:00Z');
   const old = [], kept = [];
-  for (const kind of ['strict-proof', 'strict-round', 'strict-front-proof', 'pending-revocations']) {
+  for (const kind of ['scan-on', 'scan-shadow', 'scan-strict', 'strict-proof', 'strict-round', 'strict-front-proof', 'pending-revocations']) {
     old.push(sweepName(kind, now - 300 * DAY));
     kept.push(sweepName(kind, now - 200 * DAY, 1));
   }
