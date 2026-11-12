@@ -2,8 +2,8 @@
 
 - 状态：已实现（分支 `claude/smooth-node-handover`，未安装；服务端迁移未上线）
 - 日期：2026-11-12
-- Owner Decision：Owner 2026-11-12 的要求（“丝滑一点，否则一台出问题要等好久”；探测约 1 分钟、失联判定约 3 分钟、保留“先收旧、至少等 5 分钟、再给新”）。失联判定从 30 分钟改为 3 分钟，改的是 Decision `199cf3de`（[ADR 0013](0013-multi-node-failover.md)）里的数字，需要 Owner 补一条 Decision 确认。
-- 代码：`src/role-probe.mjs`、`src/companion-heartbeat.mjs`、`src/node-duty.mjs`（`dutyCut`）、`src/pr-status.mjs`、`src/companion-main.mjs`；服务端迁移 `apps/clued-cloud/supabase/migrations/20261112120000_ci_failover_fast_v1.sql`；页面 `apps/clued-cloud/app/bindings/failover/page.tsx`
+- Owner Decision：Owner 2026-11-12 的要求（“丝滑一点，否则一台出问题要等好久”；探测约 1 分钟、失联判定约 3 分钟、保留“先收旧、至少等 5 分钟、再给新”）。Owner 2026-11-12 定为 3 分钟，仅替代 `199cf3de`（[ADR 0013](0013-multi-node-failover.md)）中的失联时长（30 分钟），该 Decision 的其余条件不变。
+- 代码：`src/role-probe.mjs`、`src/companion-heartbeat.mjs`、`src/node-duty.mjs`（`dutyCut`）、`src/pr-status.mjs`、`src/companion-main.mjs`；服务端迁移 `apps/clued-cloud/supabase/migrations/20261112130500_ci_failover_fast_v1.sql`；页面 `apps/clued-cloud/app/bindings/failover/page.tsx`
 - 测试：`test/handover-timing.test.mjs`（端到端时序）、`test/role-probe.test.mjs`、`test/node-mode.test.mjs`、`test/node-duty.test.mjs`、`test/companion-heartbeat.test.mjs`；`apps/clued-cloud/tests/merge-train-failover-db.test.mjs`、`merge-train-failover-ui.test.mjs`
 
 ## 背景
@@ -25,7 +25,7 @@
 1. **探测**：STANDBY（及 UNCERTAIN）每 1 分钟；空闲 ACTIVE 每 5 分钟。不确定时在所有模式下按 1、2、4、5 分钟退避，但不短于本模式的间隔。
    - ACTIVE 取 5 分钟而不是 1 分钟：服务端立即结束旧持有、5 分钟后才让新持有生效，所以空闲的旧节点在新节点能当班之前一定已经知道自己转了待命（`handover-timing.test.mjs` 对所有相位验证）。再密只多花换跑，换不来任何东西。
 2. **心跳**：companion 每 1 分钟发一次；失败的那次在下一个 30 秒就重发；本机时钟往回跳时立即发（服务端按自己的时钟记心跳，等本机时钟追上就等于沉默）。
-3. **服务端看门狗**（迁移 `20261112120000`，锚定改写，其余逻辑不动）：失联 30→3 分钟；连续报服务没在运行 30→3 分钟；状态快照过旧 1800→180 秒；目标节点“最近有心跳”20→3 分钟。“从没发过心跳”的告警宽限仍是 30 分钟。
+3. **服务端看门狗**（迁移 `20261112130500`，锚定改写，其余逻辑不动）：失联 30→3 分钟；连续报服务没在运行 30→3 分钟；状态快照过旧 1800→180 秒；目标节点“最近有心跳”20→3 分钟。“从没发过心跳”的告警宽限仍是 30 分钟。
 4. **接班核对**（companion，`node-duty.mjs#dutyCut`）：本节点是被看门狗自动接班的（心跳的回答里有交给本节点的 `auto_handovers`），那么别的节点在这次交接的 `created_at` 之前写的“当班/双活停机”不再挡本节点，也不让双活锁继续持有。交接之后再写的照旧挡（旧节点回来了还以为自己当班，或者真有第二个持有者）。Owner 手动移交不适用：那时旧节点还活着，它 1–5 分钟内自己探测到、写“已交班”。
 5. 页面 `/bindings/failover` 的时长改为读服务端的 `rules`，不再写死。
 

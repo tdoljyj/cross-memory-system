@@ -2,7 +2,7 @@
 // (role-probe.mjs, companion-heartbeat.mjs) and the real take-over check (node-duty.mjs), over a small model of the server: the
 // ci-admission role rows (the old holder's ends at once, the new one starts 5 minutes later: binding_role_activation_delay_v1) and
 // the failover watchdog (every minute; a holder silent for FAILOVER_SILENCE_MINUTES is handed to a STANDBY that beat twice
-// meanwhile and whose last probe said not-held; migration 20261112120000_ci_failover_fast_v1.sql, tested on the database by
+// meanwhile and whose last probe said not-held; migration 20261112130500_ci_failover_fast_v1.sql, tested on the database by
 // apps/clued-cloud/tests/merge-train-failover-db.test.mjs). Every phase of every node's probe and heartbeat is tried.
 import test from 'node:test';
 import assert from 'node:assert/strict';

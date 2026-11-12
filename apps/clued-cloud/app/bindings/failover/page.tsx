@@ -15,7 +15,7 @@ import "../../confirm/owner.css";
 // single-use token; "确认" commits exactly that. The page also shows each
 // node's latest heartbeat and self-report, the watchdog's last run, and the
 // recent alerts and automatic handovers. The thresholds come from the server's
-// rules (ci_failover_rules_v1; 3 minutes since migration 20261112120000, resident
+// rules (ci_failover_rules_v1; 3 minutes since migration 20261112130500, resident
 // ADR 0025), never from this page, so the page and the watchdog cannot disagree.
 type Json = Record<string, unknown>;
 type Pending = { confirmation_token: string; view_digest: string; view: Json };

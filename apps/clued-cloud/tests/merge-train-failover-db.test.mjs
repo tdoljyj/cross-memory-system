@@ -392,7 +392,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const s = await account('owner', ['a', 'b', 'c']);
       const empty = await s.view();
       assert.deepEqual([empty.setting.enabled, empty.setting.version, empty.members], [false, 0, []]);
-      // ADR 0025 (migration 20261112120000): 3 minutes, the heartbeat comes every minute.
+      // ADR 0025 (migration 20261112130500): 3 minutes, the heartbeat comes every minute.
       assert.deepEqual([empty.rules.silence_minutes, empty.rules.unhealthy_minutes, empty.rules.snapshot_stale_minutes, empty.rules.target_heartbeat_minutes],
         [3, 3, 3, 3]);
       assert.deepEqual(empty.connections.map((c) => c.agent_name).sort(), ['a', 'b', 'c', 'env', 'park', 'reader']);

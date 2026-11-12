@@ -43,7 +43,7 @@ export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', '
 // so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
 // whole interval, so one lost request never looks like silence.
 export const NODE_HEARTBEAT_EVERY_MS = 60_000;
-// The watchdog's own rule (migration 20261112120000_ci_failover_fast_v1.sql, ci_failover_rules_v1 silence_minutes); only for the texts.
+// The watchdog's own rule (migration 20261112130500_ci_failover_fast_v1.sql, ci_failover_rules_v1 silence_minutes); only for the texts.
 export const FAILOVER_SILENCE_MINUTES = 3;
 export const HEARTBEAT_FAILURES_NOTIFY = 3;
 export const WATCHDOG_STALE_MS = 5 * 60_000;
