@@ -54,7 +54,25 @@ test('missing, invalid or unavailable trusted base refuses before writes',async 
   const cli=path.join(ROOT,'scripts/ci/clued-control-source-pins.mjs');const p=spawnSync(process.execPath,[cli,'--root',root,'--base',BASE],{encoding:'utf8'});assert.equal(p.status,1);assert.equal(JSON.parse(p.stdout).status,'stale');assert.deepEqual(pair(root),before);
 });
 test('implementation logic changes cannot be converted to registry metadata',async t=>{
-  const root=fixture(t);edit(root,CONTROL_SOURCE_MECHANICAL_FILES[0],x=>x+'\nthrow new Error("not metadata");\n');await refusesWithoutWrites(root,/non-mechanical implementation change/);
+  const root=fixture(t),file=CONTROL_SOURCE_MECHANICAL_FILES[0];edit(root,file,x=>x+'\nthrow new Error("not metadata");\n');
+  const planned=await planControlSourcePins(root,OPTIONS);
+  assert.equal(planned.changes.some(c=>c.file===file),false,'a body edit never moves its pin');
+  await writeControlSourcePins(root,OPTIONS);
+  assert.equal(JSON.parse(read(root,CONTROL_SOURCE_REGISTRY)).workflows['.github/workflows/clued-merge-reconcile.yml'].sources[0].implementation_blobs[file],baseBlobs[file]);
+  const forged=JSON.parse(read(root,CONTROL_SOURCE_REGISTRY));
+  edit(root,CONTROL_SOURCE_MODULE,x=>x.replaceAll(baseBlobs[file],execFileSync('git',['hash-object',path.join(root,file)]).toString().trim()));
+  await assert.rejects(planControlSourcePins(root,OPTIONS),/neither trusted nor derived|descriptor\/catalogue pins disagree/);
+  assert.ok(forged);
+});
+// Regression (main 4b1cc800): the check was only ever run against a base whose
+// list predated marker_paths. The commit carrying a change must also pass as
+// its own trusted base, so the list format of the change itself is exercised.
+test('the checkout passes with its own commit as the trusted base',async()=>{
+  const head=execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT}).toString().trim();
+  const clean=execFileSync('git',['status','--porcelain','--',CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-mechanical-files.json'],{cwd:ROOT}).toString()==='';
+  const result=await checkControlSourcePins(ROOT,{base:head});
+  assert.equal(result.status,clean?'ok':result.status,JSON.stringify(result.details));
+  if(clean)assert.deepEqual(result.details,[]);
 });
 test('duplicate version markers and manifest mismatches refuse without any registry write',async t=>{
   const root=fixture(t);edit(root,CONTROL_SOURCE_MECHANICAL_FILES[0],x=>x+"\nexport const COMPONENT_VERSION = '9.9.9';\n");await refusesWithoutWrites(root,/one component version marker/);
