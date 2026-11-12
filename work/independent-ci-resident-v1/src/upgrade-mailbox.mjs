@@ -206,7 +206,10 @@ export function responseFromTool(request, { exit, stdout }, clock = Date.now) {
 
 export function validateVersionFacts(v) {
   const code = 'LINUX_VERSION_FACTS_REFUSED';
-  exactKeys(v, ['contract', 'generation', 'ciSourceManifestSha256', 'sourceCommit', 'manifestSha256', 'roles', 'pinsOk', 'staged', 'upgradeToolSha256', 'observedAt'], code);
+  // liveMatchesCurrent (optional; a tool from before it has none): whether the live Linux tree is the current generation as recorded.
+  const keys = ['contract', 'generation', 'ciSourceManifestSha256', 'sourceCommit', 'manifestSha256', 'roles', 'pinsOk', 'staged', 'upgradeToolSha256', 'observedAt'];
+  exactKeys(v, v !== null && typeof v === 'object' && Object.hasOwn(v, 'liveMatchesCurrent') ? [...keys, 'liveMatchesCurrent'] : keys, code);
+  check(v.liveMatchesCurrent === undefined || v.liveMatchesCurrent === null || typeof v.liveMatchesCurrent === 'boolean', code, 'liveMatchesCurrent');
   check(v.contract === LINUX_VERSION_FACTS_CONTRACT, code, 'contract');
   check(v.generation === null || isGeneration(v.generation), code, 'generation');
   check(HEX64.test(v.ciSourceManifestSha256 ?? '') && (v.sourceCommit === null || HEX40.test(v.sourceCommit)) && HEX64.test(v.manifestSha256 ?? ''), code, 'digests');

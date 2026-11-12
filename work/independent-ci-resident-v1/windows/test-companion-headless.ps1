@@ -233,6 +233,43 @@ foreach ($c in @(
   Yes ($why -ceq $c[0]) ('build-refused:' + $c[0] + ':' + $why)
   Yes (@(Get-ChildItem -LiteralPath (Join-Path $c[1] 'install') -Force | Where-Object { $_.Name -like 'companion-build-*' }).Count -eq 0) ('build-refused-leaves-nothing:' + $c[0])
 }
+# A reinstall builds the registrar from the NEW package (its root-run mode runs the Linux root steps as the companion account before
+# the uninstall; the installed generation's registrar may not have it): the caller's staged copy of the package's source, read once, must
+# be the pinned bytes; same directory, recipe and result shape as New-CompanionBuild; the installed generation's files are never read.
+$pkgRoot = Join-Path $Scratch ('pkg-build-' + [guid]::NewGuid().ToString('N')); [void][IO.Directory]::CreateDirectory((Join-Path $pkgRoot 'install'))
+$pkgSource = Join-Path $Scratch 'staged-CompanionTaskRegistrar.cs'; $regBytes = [IO.File]::ReadAllBytes((Join-Path $here 'CompanionTaskRegistrar.cs'))
+[IO.File]::WriteAllBytes($pkgSource, $regBytes); $pkgPin = Get-CompanionSha256 $regBytes
+$stalePkg = Join-Path $pkgRoot ('install\companion-build-' + ('b' * 32)); [void][IO.Directory]::CreateDirectory($stalePkg)
+$pb = New-CompanionBuildFromPackage $pkgRoot $pkgSource $pkgPin ('c' * 64) $testDacl
+Yes ((Split-Path -Leaf $pb.directory) -cmatch '^companion-build-[0-9a-f]{32}$' -and (Split-Path -Parent $pb.directory) -ceq (Join-Path $pkgRoot 'install') -and (@($pb.Keys) -join ',') -ceq 'directory,generation,registrar' -and $pb.generation -ceq ('c' * 64) -and
+  $pb.registrar.sourceSha256 -ceq $pkgPin -and $pb.registrar.sha256 -ceq (Get-CompanionSha256 ([IO.File]::ReadAllBytes($pb.registrar.exe))) -and -not (Test-Path -LiteralPath $stalePkg)) 'package-build-same-place-and-shape'
+Yes (-not (Test-Path -LiteralPath (Join-Path $pkgRoot 'install\install-receipt.json')) -and -not (Test-Path -LiteralPath (Join-Path $pkgRoot 'config'))) 'package-build-reads-no-installed-generation'
+$pacl = (Get-Acl -LiteralPath $pb.directory).Sddl
+Yes ($pacl.Contains('D:P') -and -not $pacl.Contains('ID;')) ('package-build-directory-protected:' + $pacl)
+# the built program has the root-run mode: one ROOT_RUN_* line on stdout, here a refusal (another root; never the real root)
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # the refusal's JSON on stderr must not stop the test (PowerShell 5.1)
+$v = (& $pb.registrar.exe root-run 'C:\Temp' ('C:\Temp\install\linux-run-' + ('0' * 32) + '\script.sh') ('a' * 64) ('C:\Temp\install\linux-run-' + ('0' * 32) + '\out') 60 2>$null | Out-String).Trim()
+$ErrorActionPreference = $eap
+Yes ($v -ceq 'ROOT_RUN_REFUSED REGISTRAR_ELEVATION_REQUIRED' -or $v -ceq 'ROOT_RUN_REFUSED REGISTRAR_ARGS_REFUSED') ('package-build-registrar-has-root-run:' + $v)
+Remove-CompanionBuild $pb.directory
+foreach ($c in @(
+    @('COMPANION_BUILD_SOURCE_NOT_THE_PACKAGE', $pkgSource, ('f' * 64), ('c' * 64)),
+    @('COMPANION_BUILD_PACKAGE_SOURCE_UNREADABLE', (Join-Path $Scratch 'no-such-source.cs'), $pkgPin, ('c' * 64)),
+    @('COMPANION_BUILD_PACKAGE_PIN_REFUSED', $pkgSource, 'x', ('c' * 64)),
+    @('COMPANION_BUILD_PACKAGE_PIN_REFUSED', $pkgSource, $pkgPin, 'x'))) {
+  $why = try { $null = New-CompanionBuildFromPackage $pkgRoot $c[1] $c[2] $c[3] $testDacl; 'built' } catch { $_.Exception.Message }
+  Yes ($why -ceq $c[0]) ('package-build-refused:' + $c[0] + ':' + $why)
+  Yes (@(Get-ChildItem -LiteralPath (Join-Path $pkgRoot 'install') -Force | Where-Object { $_.Name -like 'companion-build-*' }).Count -eq 0) ('package-build-refused-leaves-nothing:' + $c[0])
+}
+[IO.File]::WriteAllText((Join-Path $pkgRoot 'install\companion-headless-pending.json'), '{}'); $otherBuild = Join-Path $pkgRoot ('install\companion-build-' + ('d' * 32)); [void][IO.Directory]::CreateDirectory($otherBuild)
+$why = try { $null = New-CompanionBuildFromPackage $pkgRoot $pkgSource $pkgPin ('c' * 64) $testDacl; 'built' } catch { $_.Exception.Message }
+Yes ($why -ceq 'COMPANION_BUILD_SWITCH_IN_PROGRESS' -and (Test-Path -LiteralPath $otherBuild)) ('package-build-never-clears-a-running-switch:' + $why)
+Remove-Item -LiteralPath (Join-Path $pkgRoot 'install\companion-headless-pending.json') -Force; Remove-Item -LiteralPath $otherBuild -Recurse -Force
+$badSource = Join-Path $Scratch 'staged-bad.cs'; [IO.File]::WriteAllText($badSource, 'class X { void Main( }')
+$why = try { $null = New-CompanionBuildFromPackage $pkgRoot $badSource (Get-CompanionSha256 ([IO.File]::ReadAllBytes($badSource))) ('c' * 64) $testDacl; 'built' } catch { $_.Exception.Message }
+Yes ($why -ceq 'COMPANION_BUILD_COMPILE_FAILED' -and @(Get-ChildItem -LiteralPath (Join-Path $pkgRoot 'install') -Force).Count -eq 0) ('package-build-compile-failure-leaves-nothing:' + $why)
+Yes ($functions['companion-headless.ps1:New-CompanionBuild'].Contains('New-CompanionBuildFromBytes $root $gen $sources $dacl') -and $functions['companion-headless.ps1:New-CompanionBuildFromPackage'].Contains('New-CompanionBuildFromBytes $root $generation $sources $dacl') -and
+  -not $functions['companion-headless.ps1:New-CompanionBuildFromPackage'].Contains('install-receipt.json')) 'package-build-shares-the-one-compile-path'
 # The switch with fakes (no task is read or registered, no registrar runs, no credential box): the build is used for register-password and
 # token-facts and deleted on every way out; a build that fails changes nothing.
 $runSwitch = {

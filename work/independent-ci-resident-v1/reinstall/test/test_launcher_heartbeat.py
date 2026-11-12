@@ -31,7 +31,7 @@ $c = $Js.DeserializeObject([IO.File]::ReadAllText($Case))
 $PackageRoot = 'C:\p'; $PackageManifestSha256 = ('1' * 64); $OwnerSid = 'S-1-5-21-1-2-3-1001'; $ControllerSid = 'S-1-5-21-1-2-3-1015'; $OperatorSid = $OwnerSid
 $UpgradeTokenFile = 'C:\t\resident-upgrade.token'; $UpgradeTokenTarget = $c['upgradeTarget']; $SecretWorkParent = 'C:\w'; $SecretWorkSddl = 'O:BAG:BAD:P(A;;FA;;;SY)'
 $HeartbeatTokenFile = $c['hbFile']; $HeartbeatTokenTarget = $c['hbTarget']; $HeartbeatBindingId = $c['hbBinding']
-$Stage = 'C:\s'; $R5c = @{ applyPlanSha256 = $null; factsStaged = $null }
+$Stage = 'C:\s'; $R5c = @{ applyPlanSha256 = $null; factsStaged = $null }; $FleetPlanSha256 = $null   # every launcher pins it (null: not a package run)
 $script:ChildArgs = $null
 function Stop-Launch($code, $detail) { throw $code }
 function Write-Json($name, $obj) { }
