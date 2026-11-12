@@ -118,11 +118,13 @@
 //   - relayPlan keeps every role of a subject with S local (RELAY_TRAIN_FRONT_LOCAL) before writing 20-plan-intent;
 //   - HALT, PAUSE and the intake pause are written into the status board in the same tick they are latched.
 // requests\ also carries the "立即探测" and "撤车头" requests (resident-requests.mjs).
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { EARLIER_BOOT_MARGIN_MS, uptimeMs } from './instance-lock.mjs';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
 import { CLAIM_REASONS } from './queue.mjs';
-import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
+import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, EXECUTOR_RESTARTED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
 import { parseTrigger } from './trigger.mjs';
@@ -180,6 +182,20 @@ export const ABORT_POLL_MS = 5_000;
 export const ABORT_QUIESCENCE_ATTEMPTS = 9;
 export const ABORT_QUIESCENCE_POLL_MS = 20_000;
 export const ABORT_QUIESCENCE_WAIT_MS = 5 * 60_000;
+// DESIGN §71: the same re-check after a reboot, longer (the companion and WSL come up after the service), and its fixed archive reason.
+export const RESTART_QUIESCENCE_WAIT_MS = 15 * 60_000;
+export const RESTART_QUIESCENCE_ATTEMPTS = 45;
+export const RESTART_ARCHIVE_REASON = 'restarted-unpublished';
+// DESIGN §71: was the executor lock last held in an earlier boot? Read by the service right before it takes the lock over, with the
+// instance lock's own rule (instance-lock.mjs: the holder's, or its own liveness record's, uptime more than EARLIER_BOOT_MARGIN_MS above
+// this boot's; that module is part of the upgrader's frozen copy and stays unchanged). One-way: no lock or anything unreadable is false.
+export async function lockHeldInEarlierBoot(stateRoot, { uptime = uptimeMs } = {}) {
+  const read = async name => { try { return JSON.parse(await fs.readFile(path.join(stateRoot, 'executor.lock', name), 'utf8')); } catch { return null; } };
+  const at = r => (Number.isSafeInteger(r?.uptimeMs) && r.uptimeMs >= 0 ? r.uptimeMs : -1);
+  const holder = await read('holder.json'), alive = await read('alive.json');
+  const recorded = Math.max(at(holder), holder && alive?.token === holder.token ? at(alive) : -1);
+  return recorded > uptime() + EARLIER_BOOT_MARGIN_MS;
+}
 const OWNER_SCAN_MAX = 32;
 const DAY = 86_400_000;
 const codeOf = error => (error instanceof ResidentError && CODE.test(error.code)) ? error.code : 'RESIDENT_EXECUTOR_EXCEPTION';
@@ -427,6 +443,9 @@ export class ResidentExecutor {
   //     trial began. Without it the status timer writes within its 15 seconds as before.
   //   companionPresence (optional): companion-presence.mjs#CompanionPresence (M5, ADR 0022 §4.5): its companion-absent notice joins the
   //     status notices. A view only.
+  //   lockFromEarlierBoot (optional): true only when this start took over an executor lock held in an earlier boot
+  //     (lockHeldInEarlierBoot, read by service-main.mjs right before acquireInstanceLock). DESIGN §71: only then can recovery
+  //     know that no process of a batch left open still runs on Windows. Absent or false: every open batch is a crash scene.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
@@ -931,7 +950,8 @@ export class ResidentExecutor {
 
   // Crash recovery runs at the start of every tick, halted or not. At that point this single-threaded
   // loop has no batch in flight, so any open entry was left by a crash or an aborted tick: its
-  // processes may still exist, so it is UNKNOWN and HALT is latched (once).
+  // processes may still exist, so it is UNKNOWN and HALT is latched (once). The one exception (DESIGN §71): a batch an earlier boot
+  // left open, proven unpublished and quiet on both hosts, is closed FAILED_CLEAN and runs again as its attempt 2.
   async recover() {
     // A crash after creating the guard but before a Stage1 intent is a safe
     // pre-execution hold, not permission to repeat admission. Intent presence
@@ -944,11 +964,19 @@ export class ResidentExecutor {
         await this.ledger.beginQualificationHold(e.key, { t0: Date.parse(e.reserved.reservedAt), batch: { batchId: held.record.batchId, key: e.key } });
     }
     // A batch that only waits for hosted signals runs nothing: it is resumed by tick(), never a crash scene.
-    const open = await this.ledger.crashed();
+    let open = await this.ledger.crashed();
     // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT. An entry
     // with an accepted Owner abort and no terminal was interrupted in the middle of the abort: UNKNOWN, HALT.
     // An entry with the executor's own 81-self-abort and no terminal was interrupted in the middle of that end (phase 2).
     const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : entry.abort ? 'OWNER_ABORT_INTERRUPTED' : entry.selfAbort ? 'SUPERSEDE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
+    // DESIGN §71: the entries open at this process's first recovery after it took over a lock from an earlier boot were left by that
+    // boot (no executor ran in this one before this process). When every open entry is such a plain interrupted batch, each one proven
+    // unpublished and quiet is closed FAILED_CLEAN with its attempt 2; whatever is left goes the old way below.
+    this.priorBootKeys ??= new Set(this.lockFromEarlierBoot === true ? open.map(e => e.key) : []);
+    if (open.length > 0 && open.every(e => this.priorBootKeys.has(e.key) && codeFor(e) === 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH')) {
+      for (const entry of open) await this.restartedUnpublished(entry);
+      open = await this.ledger.crashed();
+    }
     // HALT is latched BEFORE any terminal or quarantine write, so no crash point can leave a closed
     // failure without a HALT (N1).
     const haltCode = ['RELAY_STAGE_INTERRUPTED', 'OWNER_ABORT_INTERRUPTED', 'SUPERSEDE_INTERRUPTED'].find(c => open.some(e => codeFor(e) === c)) ?? 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH';
@@ -977,6 +1005,41 @@ export class ResidentExecutor {
         await this.receipt('batch-quarantined', { key: entry.key, failureCode: 'LEDGER_ENTRY_UNREADABLE', kept: path.basename(kept) });
       }
     }
+  }
+
+  // DESIGN §71: one batch an earlier boot left open. Closed FAILED_CLEAN EXECUTOR_RESTARTED_UNPUBLISHED (stage 1 when it had not
+  // started, else 2), with the head's one attempt 2, only when it is proven to have published nothing: a plain interrupted entry (not
+  // parked, no abort or self-abort, no stage R without its plan), no relayed role, no "may have published" record of its head but its
+  // own "before stage R" one when its plan relayed nothing (stages R, 3, 5, 7 and 8 each write one first: executed-heads.mjs), no HALT,
+  // the installed bytes unchanged, and quiescence on both hosts, re-checked for up to RESTART_QUIESCENCE_WAIT_MS. Windows processes of
+  // the earlier boot are gone (the caller only passes such entries). Linux is archived only after 10-started (before it nothing of the
+  // batch reaches Linux, DESIGN §24.4). Anything not proven writes nothing here, and the caller's old path closes it UNKNOWN with a HALT.
+  // A failure after the terminal record was written is thrown (recovery unconfirmed, HALT): the old path cannot close it again.
+  async restartedUnpublished(entry) {
+    const { key } = entry, subject = entry.reserved?.subject, code = EXECUTOR_RESTARTED_UNPUBLISHED;
+    const stage = entry.state === 'STARTED' ? 2 : 1;
+    let row = null, closed = null;
+    try {
+      if (!['RESERVED', 'STARTED'].includes(entry.state) || !subject || entry.parked || entry.abort || entry.selfAbort || (entry.planIntent && !entry.plan)) return;
+      if (entry.plan && (!Array.isArray(entry.plan.relayed) || entry.plan.relayed.length > 0)) return;
+      if (await this.executedHeads.published(subject) && !(entry.plan && await this.executedHeads.onlyRelayRecordOf(subject, key, RELAY_STAGE))) return;
+      if (await this.ledger.halted() || await this.driftCode()) return;
+      row = failureRow({ code, stage });
+      if (row?.disposition !== 'burn') return;
+      const batch = { key, batchId: entry.started?.facts?.batchId ?? null };
+      if (entry.state === 'STARTED' && batch.batchId === null) return;
+      closed = await this.provenCleanEnd(key, batch, { stageProof: {}, reason: RESTART_ARCHIVE_REASON, failureCode: code, burn: true, linux: entry.state === 'STARTED',
+        quiescence: { waitMs: RESTART_QUIESCENCE_WAIT_MS, attempts: RESTART_QUIESCENCE_ATTEMPTS },
+        facts: (windows, linux) => ({ failureCode: code, basis: 'restart-earlier-boot-unpublished', stage, state: entry.state, batchId: batch.batchId, windows, linux,
+          class: row.class, retry: row.retry, breaker: row.breaker }),
+        receipt: { class: row.class, stage } });
+    } catch (error) {
+      if ((await this.ledger.state(key)).state === 'TERMINAL') throw error;
+      return;
+    }
+    if (!closed) return;
+    this.reportOutcome(subject, 'FAILED_CLEAN', { code, row, key });
+    await this.attempt2IfEligible(key, subject, { code, stageNumber: stage, phase: 'stage', relayedRoles: 0 });
   }
 
   // Owner requests. Their authority is the directory ACL (only Administrators, i.e. the Owner's
@@ -1365,12 +1428,13 @@ export class ResidentExecutor {
   }
 
   // Quiescence after an abort: the same fresh two-host proof as any failure, re-checked for a bounded time (the Linux
-  // worker of a stopped issuer may need its own short way out). Never longer than ABORT_QUIESCENCE_WAIT_MS.
-  async abortQuiescence(batch, stageProof) {
-    const until = this.clock() + ABORT_QUIESCENCE_WAIT_MS;
+  // worker of a stopped issuer may need its own short way out). Never longer than ABORT_QUIESCENCE_WAIT_MS (or the caller's bound:
+  // RESTART_QUIESCENCE_WAIT_MS after a reboot, DESIGN §71).
+  async abortQuiescence(batch, stageProof, { waitMs = ABORT_QUIESCENCE_WAIT_MS, attempts = ABORT_QUIESCENCE_ATTEMPTS } = {}) {
+    const until = this.clock() + waitMs;
     for (let attempt = 1; ; attempt += 1) {
       const proof = await this.proofFor(batch, stageProof);
-      if (proofComplete(proof) || attempt >= ABORT_QUIESCENCE_ATTEMPTS || this.clock() >= until) return proof;
+      if (proofComplete(proof) || attempt >= attempts || this.clock() >= until) return proof;
       await this.sleep(ABORT_QUIESCENCE_POLL_MS);
     }
   }
@@ -1401,12 +1465,14 @@ export class ResidentExecutor {
   // fixed reason, then the FAILED_CLEAN terminal record and its batch-terminal receipt. null: quiescence unproven, nothing
   // written (the caller HALTs with its own code). An archive or record that cannot be confirmed throws (the caller HALTs).
   // A crash anywhere in it leaves STARTED without a terminal: the next tick's recovery HALTs.
-  async provenCleanEnd(key, batch, { stageProof, reason, failureCode, burn, facts, receipt }) {
-    const proof = await this.abortQuiescence(batch, stageProof);
+  //   linux false: the batch never reached Linux (before 10-started, DESIGN §71): its quiescence is still proven, nothing is archived there.
+  //   quiescence: the re-check's bounds (abortQuiescence).
+  async provenCleanEnd(key, batch, { stageProof, reason, failureCode, burn, facts, receipt, linux: onLinux = true, quiescence = {} }) {
+    const proof = await this.abortQuiescence(batch, stageProof, quiescence);
     if (!proofComplete(proof)) return null;
     if (burn) await this.ledger.burnHead(key, { failureCode });
     const windows = await this.engine.archiveFailure(batch, reason);
-    const linux = await this.companion.archiveLinux(batch, reason);
+    const linux = onLinux ? await this.companion.archiveLinux(batch, reason) : { verified: true, directory: null };
     archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
     await this.ledger.terminal(key, 'FAILED_CLEAN', facts(windows.directory, linux.directory));
     await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode, ...receipt });
@@ -1972,8 +2038,8 @@ export class ResidentExecutor {
   async roleProbeMaintenance({ upgradePaused = false, watch = null } = {}) {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
-    // 15-minute interval, except that an uncertain answer is retried after 1, 2, 4, 8 minutes (role-probe.mjs), and `urgent` (a start,
-    // a re-arm, a failure that may mean the role is gone) is due at once.
+    // one-minute interval, an idle ACTIVE node five minutes, an uncertain answer backs off (role-probe.mjs, ADR 0026), and `urgent`
+    // (a start, a re-arm, a failure that may mean the role is gone) is due at once.
     const mode = this.nodeMode(), now = this.clock();
     // A paused upgrade is quiet only with no open batch at all. Match both the fixed request shape and
     // its original bytes' digest; an ordinary/unknown/torn pause still prevents the probe.

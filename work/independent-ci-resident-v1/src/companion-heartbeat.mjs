@@ -27,8 +27,8 @@
 // panel recognises the marker and does not mention the Owner again). The watchdog: stale (the server's own five minutes, or
 // older than WATCHDOG_STALE_MS) raises a notification and, while it stays so, "自动接班看门狗未运行" on the PR page status
 // (watchdogStale, read by pr-status.mjs#PrStatusReporter). Three failures in a row, or a token the server refused, raise one
-// notification per spell asking the Owner to replace the token (the server still judges silence as silence: the Owner has 30
-// minutes, or turns the master switch off).
+// notification per spell asking the Owner to replace the token (the server still judges silence as silence: after
+// FAILOVER_SILENCE_MINUTES it hands the role over, unless the Owner turned the master switch off).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -39,7 +39,12 @@ export const HEARTBEAT_RPC = 'clued_work_verify_v1';
 export const HEARTBEAT_ACTION = 'ci_node_heartbeat';
 export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', 'mode', 'probe', 'intake_paused_until', 'halt', 'ci_source_manifest_sha256',
   'service_running', 'snapshot_age_seconds', 'node_name']);
-export const NODE_HEARTBEAT_EVERY_MS = 10 * 60_000;
+// Every minute (ADR 0026; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
+// so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
+// whole interval, so one lost request never looks like silence.
+export const NODE_HEARTBEAT_EVERY_MS = 60_000;
+// The watchdog's own rule (migration 20261112130500_ci_failover_fast_v1.sql, ci_failover_rules_v1 silence_minutes); only for the texts.
+export const FAILOVER_SILENCE_MINUTES = 5;
 export const HEARTBEAT_FAILURES_NOTIFY = 3;
 export const WATCHDOG_STALE_MS = 5 * 60_000;
 // The executor's own staleness rule (status.mjs STATUS_STALE_MS): an older snapshot reports UNKNOWN.
@@ -111,7 +116,7 @@ const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: fa
 const NOT_READY = Object.freeze({ ...FAILED, serverNotReady: true });
 
 // The server's answer, tolerantly: { ok, tokenRefused, notRegistered, serverNotReady, connectionOnly, autoHandovers: [{ receiptId, from,
-// to, at, trigger }], watchdogTickAt (ms | null), watchdogStale (boolean | null: unknown), and on ok nodeBindingId (uuid | null) and
+// to, at (effective), trigger, createdAt (when the watchdog ended the old holder's role; null when not given) }], watchdogTickAt (ms | null), watchdogStale (boolean | null: unknown), and on ok nodeBindingId (uuid | null) and
 // viaLink (boolean | null): optional, never required }. Never throws. ok is status 'ok' alone: a missing or odd
 // watchdog or handover list only leaves that part unknown or empty; a handover entry that does not fit is skipped.
 export function parseHeartbeatReply(v) {
@@ -129,7 +134,8 @@ export function parseHeartbeatReply(v) {
     if (!plain(h) || !UUID.test(h.receipt_id ?? '')) continue;
     const at = isoOf(h.effective_at) ?? isoOf(h.created_at);
     autoHandovers.push(Object.freeze({ receiptId: h.receipt_id.toLowerCase(), from: UUID.test(h.from_binding_id ?? '') ? h.from_binding_id.toLowerCase() : null,
-      to: UUID.test(h.to_binding_id ?? '') ? h.to_binding_id.toLowerCase() : null, at, trigger: typeof h.trigger === 'string' && h.trigger.length <= 64 ? h.trigger : null }));
+      to: UUID.test(h.to_binding_id ?? '') ? h.to_binding_id.toLowerCase() : null, at, trigger: typeof h.trigger === 'string' && h.trigger.length <= 64 ? h.trigger : null,
+      createdAt: isoOf(h.created_at) }));
   }
   return { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze(autoHandovers), watchdogTickAt, watchdogStale,
     nodeBindingId: UUID.test(v.node_binding_id ?? '') ? v.node_binding_id.toLowerCase() : null, viaLink: typeof v.via_link === 'boolean' ? v.via_link : null };
@@ -189,6 +195,9 @@ export class CompanionHeartbeat {
     Object.assign(this, ports);
     this.lastSentAt = null; this.lastFingerprint = null; this.failures = 0; this.failingSince = null; this.watchdogStale = false; this.unregisteredSince = null;
     this.connectionOnlySince = null; this.notReadySince = null; this.nodeBindingId = null; this.viaLink = null;
+    // ADR 0026: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
+    // (node-duty.mjs) does not hold back for duty statements written before it: the server had found their writer silent.
+    this.autoHandoverSince = null;
   }
 
   async step() {
@@ -201,7 +210,9 @@ export class CompanionHeartbeat {
     try { running = await this.serviceRunning(); } catch { running = null; }
     const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now });
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
-    if (this.lastSentAt !== null && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
+    // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
+    // clock stamps every beat (ADR 0026; with a 5-minute silence rule a 10-minute jump back would hand the role away).
+    if (this.lastSentAt !== null && this.failures === 0 && now >= this.lastSentAt && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }
     this.lastSentAt = now;
@@ -233,8 +244,8 @@ export class CompanionHeartbeat {
       this.failingSince ??= now;
       if (this.failures >= HEARTBEAT_FAILURES_NOTIFY || r?.tokenRefused === true) {
         await this.say(`heartbeat-failing:${this.failingSince}`, '节点心跳发不出去', r?.tokenRefused === true
-          ? '服务端拒绝了本节点的心跳令牌（过期或被撤销）。请在 /bindings 换一个心跳令牌，用 -HeartbeatTokenFile 重新安装；30 分钟内不处理，服务端会按失联判断。'
-          : `已连续 ${this.failures} 次发不出心跳。请检查网络和心跳令牌；30 分钟内不处理，服务端会按失联判断（可先关掉自动接班总开关）。`);
+          ? `服务端拒绝了本节点的心跳令牌（过期或被撤销）。请在 /bindings 换一个心跳令牌，用 -HeartbeatTokenFile 重新安装；${FAILOVER_SILENCE_MINUTES} 分钟发不出心跳，服务端就按失联判断（可先关掉自动接班总开关）。`
+          : `已连续 ${this.failures} 次发不出心跳。请检查网络和心跳令牌；${FAILOVER_SILENCE_MINUTES} 分钟发不出心跳，服务端就按失联判断（可先关掉自动接班总开关）。`);
       }
       return { sent: false, payload, failures: this.failures };
     }
@@ -250,6 +261,10 @@ export class CompanionHeartbeat {
       await this.say(`watchdog-stale:${r.watchdogTickAt ?? 'never'}`, '自动接班看门狗未运行', `服务端看门狗${r.watchdogTickAt !== null ? `自 ${iso(r.watchdogTickAt)} 起` : ''}没有运行（超过 5 分钟）：失联的节点不会被自动交出。请检查 KooYomi 的 pg_cron 作业 clued-ci-admission-failover。`);
     }
     // The server lists only take-overs to this node's connection.
+    for (const h of r.autoHandovers ?? []) {
+      const created = Date.parse(h.createdAt ?? '');
+      if (Number.isFinite(created) && !(this.autoHandoverSince >= created)) this.autoHandoverSince = created;
+    }
     for (const h of r.autoHandovers ?? []) await this.relayHandover(h);
     return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [], nodeBindingId: this.nodeBindingId, viaLink: this.viaLink };
   }

@@ -124,7 +124,7 @@ test('a start begins UNCERTAIN with the probe due at once: no trigger is taken b
   assert.deepEqual(await receiptBodies(f, 'node-mode'), [{ from: 'UNCERTAIN', to: 'ACTIVE', why: 'probe-held' }]);
 });
 
-test('not-held makes the node STANDBY: nothing is taken, the probe comes every 15 minutes, a later held brings it back', async t => {
+test('not-held makes the node STANDBY: nothing is taken, the probe comes every minute (ADR 0025), a later held brings it back', async t => {
   const f = await nodeFx(t, { facts: [NOT_HELD, NOT_HELD, HELD] });
   await f.drop(triggerBytes());
   await f.exec.tick();
@@ -132,14 +132,14 @@ test('not-held makes the node STANDBY: nothing is taken, the probe comes every 1
   assert.equal(f.board.content.node.mode, 'STANDBY');
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.equal(f.engine.probes.length, 1, 'not due again at once');
-  f.advance(15 * MIN - 1);
+  f.advance(MIN - 1);
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.equal(f.engine.probes.length, 1);
   f.advance(1);
   await f.exec.tick();
   assert.deepEqual([f.engine.probes.length, f.exec.roleProbeMode], [2, 'STANDBY']);
   assert.equal(derives(f), 0, 'a STANDBY node starts nothing, whatever is queued');
-  f.advance(15 * MIN);
+  f.advance(MIN);
   await f.exec.tick();
   assert.deepEqual([f.engine.probes, f.exec.roleProbeMode], [['not-held', 'not-held', 'held'], 'ACTIVE']);
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
@@ -176,7 +176,7 @@ test('an uncertain probe keeps the mode: UNCERTAIN at a start, ACTIVE, STANDBY a
   assert.deepEqual(await receiptBodies(a, 'node-mode'), [{ from: 'UNCERTAIN', to: 'ACTIVE', why: 'probe-held' }], 'an uncertain answer changes nothing, so records nothing');
 });
 
-test('UNCERTAIN retries an uncertain answer soon (1, 2, 4, 8, then 15 minutes); ACTIVE and STANDBY keep their intervals', async t => {
+test('an uncertain answer is retried soon (1, 2, 4, then 5 minutes) in every mode; ACTIVE never sooner than its 5 minutes', async t => {
   // TURING 2026-11-11: a boot-time probe answered uncertain and the node stayed UNCERTAIN for the full 15 minutes.
   const a = await nodeFx(t, { facts: [UNCERTAIN, UNCERTAIN, UNCERTAIN, HELD] });
   await a.exec.tick();
@@ -187,25 +187,29 @@ test('UNCERTAIN retries an uncertain answer soon (1, 2, 4, 8, then 15 minutes); 
     assert.equal(a.engine.probes.length, probes, `after ${wait} ms`);
   }
   assert.equal(a.exec.roleProbeMode, 'ACTIVE');
-  // The backoff ends at STANDBY's 15 minutes.
+  // The backoff ends at 5 minutes.
   const b = await nodeFx(t, { facts: [UNCERTAIN] });
   await b.exec.tick();
-  for (const w of [MIN, 2 * MIN, 4 * MIN, 8 * MIN]) { b.advance(w); await b.exec.tick(); }
-  assert.equal(b.engine.probes.length, 5);
-  b.advance(15 * MIN - 1); await b.exec.tick();
-  assert.equal(b.engine.probes.length, 5);
+  for (const w of [MIN, 2 * MIN, 4 * MIN]) { b.advance(w); await b.exec.tick(); }
+  assert.equal(b.engine.probes.length, 4);
+  b.advance(5 * MIN - 1); await b.exec.tick();
+  assert.equal(b.engine.probes.length, 4);
   b.advance(1); await b.exec.tick();
-  assert.equal(b.engine.probes.length, 6);
-  // STANDBY and ACTIVE after an uncertain answer: unchanged, 15 and 30 minutes.
-  const c = await nodeFx(t, { facts: [NOT_HELD, UNCERTAIN] });
+  assert.equal(b.engine.probes.length, 5);
+  // STANDBY after an uncertain answer: a minute, then two.
+  const c = await nodeFx(t, { facts: [NOT_HELD, UNCERTAIN, UNCERTAIN] });
   await c.exec.tick();
-  c.advance(15 * MIN); await c.exec.tick();
-  c.advance(15 * MIN - 1); await c.exec.tick();
-  assert.deepEqual([c.engine.probes.length, c.exec.roleProbeMode], [2, 'STANDBY']);
+  c.advance(MIN); await c.exec.tick();
+  c.advance(MIN); await c.exec.tick();
+  c.advance(MIN); await c.exec.tick();
+  assert.deepEqual([c.engine.probes.length, c.exec.roleProbeMode], [3, 'STANDBY']);
+  // ACTIVE: 5 minutes, also after an uncertain answer.
   const d = await nodeFx(t, { facts: [HELD, UNCERTAIN] });
   await d.exec.tick();
-  d.advance(30 * MIN); await d.exec.tick();
-  d.advance(30 * MIN - 1); await d.exec.tick();
+  d.advance(5 * MIN - 1); await d.exec.tick();
+  assert.equal(d.engine.probes.length, 1);
+  d.advance(1); await d.exec.tick();
+  d.advance(5 * MIN - 1); await d.exec.tick();
   assert.deepEqual([d.engine.probes.length, d.exec.roleProbeMode], [2, 'ACTIVE']);
 });
 
@@ -501,7 +505,8 @@ test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A go
   const engine = perPr({ 900: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE) });
   const run = engine.runStage;
   engine.runStage = async (batch, stage, o) => (stage.number === 8 && batch.pr === 884 && tries++ === 0 ? (engine.calls.push(['stage', 8]), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')) : run(batch, stage, o));
-  const f = await nodeFx(t, { engine, facts: [HELD] });
+  // The role is really gone: every probe after the first says so (a STANDBY node now asks every minute, ADR 0025).
+  const f = await nodeFx(t, { engine, facts: [HELD, NOT_HELD] });
   await f.exec.tick();
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
@@ -528,7 +533,7 @@ test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A go
   let hostedDone = false;
   const hostedEngine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
   const g = await nodeFx(t, { engine: hostedEngine, policy: rawPolicy({ relay: RELAY_ON }),
-    hint: (s, at) => hostedDone ? hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at }) : null, facts: [HELD] });
+    hint: (s, at) => hostedDone ? hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at }) : null, facts: [HELD, NOT_HELD] });
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
