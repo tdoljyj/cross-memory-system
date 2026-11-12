@@ -8,7 +8,7 @@
 //     the KooYomi publication stream (every node's publications); every pull updated since the cursor: its head, all its
 //     commits, the before/after of its force pushes. No truncation: a bound reached is an incomplete sweep.
 //   Full sweep (segmented over runs, cursor in train-sweep-store.mjs): every pull of the listing, oldest first. A round of
-//     scope 'all' reads every pull the same as above (a pull with more than 250 commits, REST's limit, voids the round). A
+//     scope 'all' reads every pull the same as above. GraphQL inventories and per-head judgments can resume within a PR. A
 //     round of scope 'current' (generation 15, Owner Decision fb39ec73 v2, options c, c1 and a; DESIGN 60) reads an open pull
 //     the same way; a merged pull into main only the both ends of its force pushes (its commits are in main, the heads a
 //     force push replaced are not); a merged pull into another base the same as an open one; a closed unmerged pull its
@@ -18,6 +18,7 @@
 //   Revoke one (revokeGreens): GET the run (App, name, head, success); PATCH failure with the reason; read back; read back
 //     again 30 s later. Both read-backs must show this revocation; anything else is unconfirmed.
 // Any read that is incomplete fails the sweep closed (never "clean").
+import { scanHeads, scanPull } from './train-scan-progress.mjs';
 export const SLOT_CHECK = 'kooyumi-merge-slot';
 export const REVOKE_READBACK_DELAY_MS = 30_000;
 // Bounds of one run (stage 10's cap is 5 minutes, SwapBroker line 10): heads looked at by the incremental sweep, the
@@ -182,7 +183,7 @@ export function createSweeper({ github, appId, mainSha, inMain = [], clock = Dat
 // and the first pull step of a run is always taken, so one large pull cannot stop the sweep for ever (the time bound holds).
 // A step that fails ends the pass incomplete; the targets of the steps before it stand. -> { complete, reason, targets,
 // newest (complete only), progress }.
-export async function incrementalSweep({ sweeper, github, entries, stream, cursor, front, own, revokeHead = false, until = Infinity, clock = Date.now }) {
+export async function incrementalSweep({ sweeper, github, entries, stream, cursor, front, own, revokeHead = false, until = Infinity, clock = Date.now, scan = null }) {
   const targets = [], judged = new Set();
   let reason = null, progress = null, newest = null;
   const late = () => sweeper.late() || clock() > until;
@@ -192,7 +193,13 @@ export async function incrementalSweep({ sweeper, github, entries, stream, curso
   try {
     if (stream?.complete === true) base.push(...stream.heads); else reason = 'TRAIN_PUBLICATIONS_UNREADABLE';
     if (late()) fail('TRAIN_SWEEP_TIME_BOUND');
-    await take(fresh(base));
+    if (scan) {
+      const heads = fresh(base), unit = scan.unit('base', { heads, cursor });
+      const r = await scanHeads({ sweeper, heads, unit, options: { front, own, revokeHead }, late, cap: MAX_REVOKES_PER_RUN });
+      targets.push(...r.targets);
+      if (!r.complete) fail('TRAIN_SWEEP_TIME_BOUND');
+      scan.clear('base');
+    } else await take(fresh(base));
     if (cursor) {
       const updated = await github.readPullsUpdatedSince(cursor);
       if (updated?.complete !== true) fail('TRAIN_PULLS_INCOMPLETE');
@@ -201,6 +208,20 @@ export async function incrementalSweep({ sweeper, github, entries, stream, curso
         let j = i;
         while (j < pulls.length && Date.parse(pulls[j].updatedAt) === Date.parse(pulls[i].updatedAt)) j++;
         if (late()) fail('TRAIN_SWEEP_TIME_BOUND');
+        if (scan) {
+          if (i > 0 && sweeper.stats.heads >= MAX_SWEEP_HEADS) fail('TRAIN_SWEEP_HEAD_BOUND');
+          const group = pulls.slice(i, j), unit = scan.unit('incremental', { group });
+          if (unit.next > group.length) fail('TRAIN_SCAN_STATE_UNREADABLE');
+          while (unit.next < group.length) {
+            if (late() || targets.length >= MAX_REVOKES_PER_RUN) fail('TRAIN_SWEEP_TIME_BOUND');
+            const r = await scanPull({ sweeper, github, pull: group[unit.next], unit, options: { front, own, revokeHead }, late,
+              cap: MAX_REVOKES_PER_RUN - targets.length });
+            targets.push(...r.targets);
+            if (!r.complete) fail('TRAIN_SWEEP_TIME_BOUND');
+            unit.next++;
+          }
+          progress = pulls[i].updatedAt; i = j; scan.clear('incremental'); continue;
+        }
         const heads = [];
         for (const p of pulls.slice(i, j)) {
           const r = await sweeper.headsOfPull(p.number);
@@ -233,9 +254,10 @@ export async function fullSweepHeads(sweeper, pull, scope = 'current') {
 // One full-sweep segment from the cursor {nextPage, nextIndex}: pulls oldest first (open and closed: the listing only grows at
 // its end, so the cursor stays stable), until the time bound or the revoke cap would be passed. -> { ok, reason, tooMany,
 // targets, nextPage, nextIndex, reachedEnd }. A pull is consumed whole or not at all, so the cursor never splits one.
-export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, front, own, scope = 'all', revokeCap = MAX_REVOKES_PER_RUN }) {
+export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, front, own, scope = 'all', revokeCap = MAX_REVOKES_PER_RUN, scan = null }) {
   if (!['all', 'current'].includes(scope)) fail('TRAIN_FULL_SWEEP_SCOPE_INVALID');
   const targets = [];
+  const initialScan = scan ? structuredClone(scan.units.full ?? null) : null;
   let page = nextPage, index = nextIndex;
   try {
     for (;;) {
@@ -243,6 +265,13 @@ export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, f
       if (reply?.complete !== true || reply.page !== page || !Array.isArray(reply.pulls) || typeof reply.last !== 'boolean') fail('TRAIN_PULLS_INCOMPLETE');
       for (; index < reply.pulls.length; index++) {
         if (sweeper.late()) return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };
+        if (scan) {
+          const pull = reply.pulls[index], unit = scan.unit('full', { page, index, scope, pull });
+          const r = await scanPull({ sweeper, github, pull, scope, unit, options: { front, own }, cap: revokeCap - targets.length });
+          targets.push(...r.targets);
+          if (!r.complete) return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };
+          scan.clear('full'); continue;
+        }
         const r = await fullSweepHeads(sweeper, reply.pulls[index], scope);
         if (r.tooMany) return { ok: false, reason: 'TRAIN_PULL_OVER_250_COMMITS', tooMany: true, targets: [], nextPage, nextIndex, reachedEnd: false };
         const found = await sweeper.judge(r.heads, { front, own });
@@ -254,6 +283,7 @@ export async function fullSweepSegment({ sweeper, github, nextPage, nextIndex, f
     }
   } catch (e) {
     if (e?.code === 'TRAIN_SWEEP_TIME_BOUND') return { ok: true, reason: null, tooMany: false, targets, nextPage: page, nextIndex: index, reachedEnd: false };
+    if (scan) { if (initialScan) scan.units.full = initialScan; else scan.clear('full'); }
     // a stable upper-case code (GitHub's own codes such as github_http_502 stay in the observation log, not in the facts)
     return { ok: false, reason: /^[A-Z][A-Z0-9_]{1,79}$/.test(e?.code ?? '') ? e.code : 'TRAIN_SWEEP_INCOMPLETE', tooMany: false, targets: [], nextPage, nextIndex, reachedEnd: false };
   }
