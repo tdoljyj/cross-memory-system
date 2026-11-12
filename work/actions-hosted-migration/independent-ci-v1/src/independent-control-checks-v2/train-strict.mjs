@@ -2,6 +2,7 @@
 // invented from holders: stage 8 revalidates the exception against its authoritative Native batch generation.
 import { digest } from '../proof.mjs';
 import { createSweeper, incrementalSweep, fullSweepSegment, MAX_REVOKES_PER_RUN, SWEEP_BUDGET_MS, revokeGreens } from './train-sweep.mjs';
+import { ScanProgress } from './train-scan-progress.mjs';
 
 export const STRICT_PROOF_CONTRACT = 'clued.independent-ci.train-strict-coverage-proof/1';
 export const STRICT_ROUND_CONTRACT = 'clued.independent-ci.train-strict-coverage-round/1';
@@ -126,9 +127,9 @@ export function validSweepProgress(p) {
   return exact(p, ['contract', 'roundId', 'scope', 'required', 'advanced', 'token', 'at']) && p.contract === 'clued.independent-ci.train-sweep-progress/1'
     && HEX.test(p.roundId ?? '') && ['all', 'current'].includes(p.scope) && p.required === true && typeof p.advanced === 'boolean' && HEX.test(p.token ?? '') && iso(p.at);
 }
-export function sweepProgress({ identity, scope = identity.scope ?? 'all', startedAt, nextPage, nextIndex, revoked, advanced, at }) {
+export function sweepProgress({ identity, scope = identity.scope ?? 'all', startedAt, nextPage, nextIndex, revoked, continuation = null, advanced, at }) {
   return { contract: 'clued.independent-ci.train-sweep-progress/1', roundId: digest({ identity, startedAt }), scope, required: true, advanced,
-    token: digest({ nextPage, nextIndex, revoked }), at };
+    token: digest({ nextPage, nextIndex, revoked, continuation }), at };
 }
 
 // Independent cursor: the full sweep's cursor, completion and in-main cache are never advanced by deferred revocations.
@@ -143,11 +144,15 @@ export async function runStrictLane({ identity, job, sweepStore, github, native,
     && started - Date.parse(previous.startedAt) <= job.fullSweepMaxMs ? previous
     : { ...identity, startedAt: new Date(started).toISOString(), state: 'running', nextPage: 1, nextIndex: 0, incrementalCursor: null, coverage: zero, pending: [] };
   const priorToken = digest({ nextPage: round.nextPage, nextIndex: round.nextIndex, revoked: round.coverage.revoked });
+  let scan = null, scanWritten = false;
+  if (typeof sweepStore.readScanProgress === 'function') try {
+    scan = await ScanProgress.open({ store: sweepStore, lane: 'strict', identity: { ...identity, startedAt: round.startedAt }, clock });
+  } catch { return no('TRAIN_SCAN_STATE_UNREADABLE'); }
   const sweeper = createSweeper({ github, appId, mainSha: identity.mainSha, strictCoverage: true, clock, until: started + SWEEP_BUDGET_MS });
   const incremental = await incrementalSweep({ sweeper, github, entries, stream, cursor: round.incrementalCursor, front: identity.front, own, revokeHead,
-    clock, until: started + (round.state === 'running' ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
+    clock, scan, until: started + (round.state === 'running' ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
   const segment = round.state === 'running' && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: round.nextPage, nextIndex: round.nextIndex,
-    scope: identity.scope, front: identity.front, own }) : null;
+    scope: identity.scope, front: identity.front, own, scan }) : null;
   const targets = [...new Map([...(previous?.pending ?? []), ...incremental.targets, ...(segment?.targets ?? [])].map(t => [t.checkRunId, t])).values()];
   let onDuty = true;
   if (targets.some(t => !t.own)) {
@@ -172,10 +177,13 @@ export async function runStrictLane({ identity, job, sweepStore, github, native,
   const notSelected = (previous?.pending ?? []).filter(t => !selected.some(s => s.checkRunId === t.checkRunId));
   round = { ...round, coverage, pending: [...notSelected,
     ...selected.filter(t => r.pendingStateFailed || r.ledgerFailures > 0 || r.unconfirmed.some(u => u.checkRunId === t.checkRunId))] };
+  if (scan && confirmed) try { scanWritten = await scan.save(job.runId, sleep); }
+  catch { return { ...no('TRAIN_SCAN_STATE_UNWRITTEN'), attempted: selected.length, revoked: r.revoked, unconfirmed: r.unconfirmed.length }; }
   try { await sweepStore.writeStrictRound({ ...round, contract: STRICT_ROUND_CONTRACT, writtenAt: new Date(clock()).toISOString(), runId: job.runId }); }
   catch { return { ...no('TRAIN_STRICT_STATE_UNWRITTEN'), attempted: selected.length, revoked: r.revoked, unconfirmed: r.unconfirmed.length }; }
   const ready = round.state === 'complete' && incremental.complete && confirmed && segment?.ok !== false;
   return { ready, reason: ready ? null : r.unconfirmed.length ? 'TRAIN_REVOKE_UNCONFIRMED' : incremental.reason ?? segment?.reason ?? 'TRAIN_TAKEOVER_SWEEP_PENDING',
     attempted: selected.length, unconfirmed: r.unconfirmed.length, revoked: r.revoked, identity, round,
-    advanced: priorToken !== digest({ nextPage: round.nextPage, nextIndex: round.nextIndex, revoked: round.coverage.revoked }) };
+    continuation: scan?.token() ?? null,
+    advanced: scanWritten || priorToken !== digest({ nextPage: round.nextPage, nextIndex: round.nextIndex, revoked: round.coverage.revoked }) };
 }

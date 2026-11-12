@@ -62,7 +62,7 @@ function New-TestContext([string]$Fail='',[ValidateSet('desk-31080','turing-b2ea
  $services[$n]=[pscustomobject]@{name=$n;state='Running';pid=$pidSeed;config='';binary=$binary;account=$(if($n -ceq 'CluedCIResident'){'NT SERVICE\CluedCIResident'}else{'LocalSystem'});startMode='Auto';sddl=$serviceDacl;delayedAutoStart=($n -ceq 'CluedCIUpgrader')};$p.serviceConfigs[$n]=Recovery-Hash (Recovery-Bytes @($binary,$services[$n].account,'Auto',$serviceDacl));$pidSeed++
  }
  $guid='{11111111-1111-1111-1111-111111111111}';$key=Fake-Key @() @{DistributionName=$p.distribution;BasePath=(Split-Path -Parent $p.vhdx);VhdFileName='ext4.vhdx'};$parent=Fake-Key @($guid) @{};$parent.children[$guid]=$key
- $c=@{pins=$p;state=(New-RecoveryState);held=(New-Object 'Collections.Generic.List[object]');buffers=$buffers;stage=(Join-Path $root 'stage');sequence=0;operation=[guid]::NewGuid().ToString('N');runner=$null;node=[pscustomobject]@{WslDistribution=$p.distribution};install=[pscustomobject]@{};registration=[pscustomobject]@{key=$key;parent=$parent;name=$guid};fail=$Fail;task=$task;services=$services;calls=(New-Object Collections.Generic.List[string]);archiveCalls=0;quietCalls=0;diskBlocked=0;rearmAt=[DateTimeOffset]::UtcNow}
+ $c=@{pins=$p;state=(New-RecoveryState);held=(New-Object 'Collections.Generic.List[object]');buffers=$buffers;stage=(Join-Path $root 'stage');sequence=0;operation=[guid]::NewGuid().ToString('N');runner=$null;node=[pscustomobject]@{WslDistribution=$p.distribution};install=[pscustomobject]@{};registration=[pscustomobject]@{key=$key;parent=$parent;name=$guid};fail=$Fail;task=$task;services=$services;calls=(New-Object Collections.Generic.List[string]);archiveCalls=0;quietCalls=0;quietWaitSeconds=2;diskBlocked=0;rearmAt=[DateTimeOffset]::UtcNow}
  $users=Fake-Key @() @{};$c.registrationPath=$p.companion+'\Software\Microsoft\Windows\CurrentVersion\Lxss';$users.children[$c.registrationPath]=$parent;$c.registrationUsers=$users;$c.held.Add($users);$c.held.Add($parent);$c.held.Add($key);$c.registryRoot=$users;$script:active=$c;Open-RecoveryRegistration $c
  $c.rearm=Join-Path $root 'installed-rearm.ps1';$rb=[Text.Encoding]::UTF8.GetBytes('# pinned fixture original rearm');[IO.File]::WriteAllBytes($c.rearm,$rb);$p.rearm=Recovery-Hash $rb
  $c.state.stage=$c.stage;return $c
@@ -85,7 +85,7 @@ function Start-Service{[CmdletBinding()]param([string]$Name);if($script:active.f
 function Start-Sleep{[CmdletBinding()]param([int]$Milliseconds);if($null -ne $script:active){$script:active.calls.Add('wait')};[Threading.Thread]::Sleep($Milliseconds)}
 function Get-Process{[CmdletBinding()]param([int]$Id);return $null}
 function Assert-RecoveryRunner($Context){if($Context.fail -ceq 'runner'){throw 'RECOVERY_RUNNER_REFUSED'};return [pscustomobject]@{config='original-runner'}}
-function Assert-RecoveryNoProducers($Context){$Context.quietCalls++;if($Context.fail -ceq 'process'){throw 'RECOVERY_NOT_QUIET'};if($Context.fail -ceq 'restart' -and $Context.quietCalls -ge 2){$Context.services.CluedCIResident.state='Running';throw 'RECOVERY_NOT_QUIET'}}
+function Assert-RecoveryNoProducers($Context){$Context.quietCalls++;if($Context.fail -ceq 'process'){throw 'RECOVERY_NOT_QUIET'};if($Context.fail -ceq 'transient' -and $Context.quietCalls -le 2){throw 'RECOVERY_NOT_QUIET'};if($Context.fail -ceq 'restart' -and $Context.quietCalls -ge 2){$Context.services.CluedCIResident.state='Running';throw 'RECOVERY_NOT_QUIET'}}
 function New-RecoveryPause($Context){if($Context.fail -ceq 'pause-create-race'){Write-RecoveryNew (Join-Path $Context.pins.root 'state\PAUSED.json') ([Text.Encoding]::UTF8.GetBytes('prior-owner-marker'))};& $ActualNewPause $Context}
 function Read-RecoveryProtected($Context,[string]$Path,[int]$Max){if($Context.fail -ceq 'pause-read' -and $Path -like '*\PAUSED.json'){return ,([Text.Encoding]::UTF8.GetBytes('changed'))};& $ActualRead $Context $Path $Max}
 function Write-RecoveryJournal($Context,[string]$Kind){if($Context.fail -ceq 'journal-after' -and $Context.state.archiveAttempted -and $Kind -ceq 'VERIFIED'){throw 'CONTROLLED_JOURNAL_FAILURE'};& $ActualJournal $Context $Kind}
@@ -248,6 +248,30 @@ try{
  function Read-RecoveryProcessOwnerSids{return ,@($script:ownerSid)}
  $script:ownerSid=$native.residentSid;$blocked=$false;try{& $ActualNoProducers @{pins=$native}}catch{$blocked=$true};Yes $blocked 'orphan-resident-service-child-refused'
  $script:ownerSid='S-1-5-18';& $ActualNoProducers @{pins=$native};Yes $true 'known-other-owner-not-in-producer-set'
+ # DESK D:\ root: exactly the observed native descriptor (SDDL round-trips to the same bytes) is admitted, only at that root and scene.
+ $deskRoot='O:SYG:SYD:(A;;FA;;;BA)(A;OICIIO;GA;;;BA)(A;;FA;;;SY)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)'
+ $toBytes={param($s)$d=New-Object Security.AccessControl.RawSecurityDescriptor($s);$b=New-Object byte[] $d.BinaryLength;$d.GetBinaryForm($b,0);,$b}
+ $rootBytes=& $toBytes $deskRoot;Yes ((Recovery-Hash $rootBytes) -ceq '548bcbdd7b0c6b4d4df07b2c0eebbe74414d8826b5dd0d436ffa8a2a3421fb86') 'desk-root-descriptor-is-observed-native-bytes'
+ $deskCtx=@{pins=(Get-RecoveryPins desk-31080)};& $ActualVhdAcl $deskCtx $rootBytes 'D:\';Yes $true 'desk-exact-volume-root-accepted'
+ foreach($case in @(@('desk-31080','D:\clued-resident',$deskRoot),@('turing-b2ea','C:\',$deskRoot),@('desk-31080','D:\',$deskRoot.Replace('(A;;0x1301bf;;;AU)','(A;;0x1301ff;;;AU)')),@('desk-31080','D:\',($deskRoot+'(A;;0x1301bf;;;WD)')),@('desk-31080','D:\',$deskRoot.Replace('O:SY','O:BU')))){
+  $ctx=@{pins=(Get-RecoveryPins $case[0])};$blocked=$false;try{& $ActualVhdAcl $ctx (& $toBytes $case[2]) $case[1]}catch{$blocked=$true};Yes $blocked ('desk-root-exception-never-applies-elsewhere-or-on-drift:'+$case[0]+':'+$case[1])
+ }
+ # DESK ext4.vhdx: the VM-stopped form (as TURING's real QUIET capture: SY, BA, companion Modify|WRITE_DAC) passes the generic rule;
+ # the running-VM grant (Hyper-V VM account + capability SID, both FA) is never admitted, so the leaf is judged only after the VM detached it.
+ $deskLeaf='O:BAG:S-1-5-21-858977881-4031698862-3006450925-513D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1701bf;;;S-1-5-21-858977881-4031698862-3006450925-1008)'
+ & $ActualVhdAcl $deskCtx (& $toBytes $deskLeaf) $deskCtx.pins.vhdx;Yes $true 'desk-vm-stopped-leaf-accepted-by-generic-rule-group-ignored'
+ $running=$deskLeaf.Replace('D:PAI','D:PAI(A;;FA;;;S-1-15-3-1024-2268835264-3721307629-241982045-173645152-1490879176-104643441-2915960892-1612460704)(A;;FA;;;S-1-5-83-1-2787275907-1301918704-2656253825-417653190)')
+ foreach($leaf in @($running,$deskLeaf.Replace('O:BA','O:S-1-5-21-858977881-4031698862-3006450925-1000'))){$blocked=$false;try{& $ActualVhdAcl $deskCtx (& $toBytes $leaf) $deskCtx.pins.vhdx}catch{$blocked=$true};Yes $blocked 'desk-running-vm-grant-or-operator-owner-leaf-refused'}
+ # Companion WSL helpers that exit after the stopped producers idle out are waited for (bounded); a persistent owner still refuses.
+ $c=New-TestContext 'transient';$script:active=$c;Hold-RecoveryWslRecord $c;$r=Invoke-RecoveryCore $c;Yes ($r.status -ceq 'RECOVERED_GLOBAL_PAUSED' -and $c.quietCalls -ge 3 -and $c.archiveCalls -eq 1) 'transient-companion-owner-cleared-within-bounded-quiet-wait';Finish-Test $c
+ & {
+  function Assert-RecoveryNoProducers($Context){& $ActualNoProducers $Context}
+  $script:ownerSid=$native.companion;$w=@{pins=$native;state=[ordered]@{};quietWaitSeconds=2};$t0=[DateTime]::UtcNow;$code=$null;try{Wait-RecoveryNoProducers $w}catch{$code=Get-RecoveryCode $_}
+  Yes ($code -ceq 'RECOVERY_NOT_QUIET' -and ($w.state.notQuietOwners -join ',') -ceq 'companion' -and ([DateTime]::UtcNow-$t0).TotalSeconds -ge 2) 'persistent-companion-owner-refused-after-bound-and-named'
+  function Assert-RecoveryNoProducers($Context){throw 'RECOVERY_PROCESS_UNKNOWN'}
+  $w=@{pins=$native;state=[ordered]@{};quietWaitSeconds=60};$t0=[DateTime]::UtcNow;$code=$null;try{Wait-RecoveryNoProducers $w}catch{$code=Get-RecoveryCode $_}
+  Yes ($code -ceq 'RECOVERY_PROCESS_UNKNOWN' -and ([DateTime]::UtcNow-$t0).TotalSeconds -lt 5) 'unknown-owner-never-retried'
+ }
  # Fresh registry namespace replacement cannot hide behind an old held key.
  $c=New-TestContext;$script:active=$c;Hold-RecoveryWslRecord $c;$replacement=Fake-Key @($c.registration.name) @{};$replacement.children[$c.registration.name]=Fake-Key @() @{DistributionName='CluedResident-Linux';BasePath='C:\wrong';VhdFileName='ext4.vhdx'};$c.registrationUsers.children[$c.registrationPath]=$replacement
  $r=Invoke-RecoveryCore $c;Yes ($c.archiveCalls -eq 0 -and -not $r.pauseCreated) 'fresh-registry-namespace-replacement-refused';Finish-Test $c

@@ -207,6 +207,82 @@ test('issuer (gitleaks): before the issue a transient refs failure is collected 
   assert.deepEqual([r.status, r.reason, r.sideEffects, s.calls.length, w], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]]);
 });
 
+test('issuer (gitleaks): a ready marker is still empty while its writer holds the create-only handle', WINDOWS, async t => {
+  const f = issuerFixture(t), root = await spool(t), s = scripted(['github_transport_unconfirmed', 'ok']), waits = [];
+  const actual = await createFixtureMailbox(root, 'windows');
+  let handle = null, marker = null, reads = 0;
+  const writes = [];
+  t.after(async () => { await handle?.close().catch(() => {}); });
+  // Hold the writer exactly between exclusive()'s wx open and its writeFile. This is deterministic: no CPU pressure,
+  // timing assumption, WSL or fixture-only read bypass. The real mailbox reader sees the same empty ready inode.
+  const box = { ...actual, async write(name, bytes) { writes.push(name); return actual.write(name, bytes); }, async read(name) {
+    if (name === 'blocked' && reads++ === 0) {
+      const issue = decode(await fs.readFile(path.join(root, 'outgoing', 'issue.json')));
+      const bytes = encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'));
+      await fs.writeFile(path.join(root, 'incoming', 'blocked.json'), bytes, { flag: 'wx' });
+      marker = Buffer.from(canonical({ bytes: bytes.length, contract: 'clued.independent-ci.complete-public-file/1', sha256: sha(bytes) }));
+      handle = await fs.open(path.join(root, 'incoming', 'blocked.ready.json'), 'wx');
+    }
+    try { return await actual.read(name); }
+    catch (error) {
+      if (name === 'blocked' && handle) {
+        await handle.writeFile(marker); await handle.sync(); await handle.close(); handle = null;
+      }
+      throw error;
+    }
+  } };
+  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box, sleep: backoffSleep(waits),
+    stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, s.calls.length, waits], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]]);
+  assert.equal(reads, 2, 'wait for that same marker to commit; never reissue');
+  assert.deepEqual(writes, ['issue'], 'an empty incoming ready marker never repeats the issued packet');
+});
+
+test('mailbox: an empty ready marker is pending, but empty data, links and malformed committed markers remain refused', async t => {
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const bytes = Buffer.from('public fixture bytes');
+  await fs.writeFile(path.join(root, 'incoming', 'blocked.json'), bytes, { flag: 'wx' });
+  const ready = path.join(root, 'incoming', 'blocked.ready.json');
+  const writer = await fs.open(ready, 'wx');
+  t.after(async () => { await writer.close().catch(() => {}); });
+  await assert.rejects(box.read('blocked'), { code: 'ENOENT' });
+  await writer.writeFile(canonical({ bytes: bytes.length, contract: 'clued.independent-ci.complete-public-file/1', sha256: sha(bytes) }));
+  await writer.sync(); await writer.close();
+  assert.deepEqual(await box.read('blocked'), bytes);
+
+  const empty = await spool(t), emptyBox = await createFixtureMailbox(empty, 'windows');
+  await fs.writeFile(path.join(empty, 'incoming', 'blocked.json'), Buffer.alloc(0), { flag: 'wx' });
+  await fs.writeFile(path.join(empty, 'incoming', 'blocked.ready.json'), canonical({ bytes: bytes.length, contract: 'clued.independent-ci.complete-public-file/1', sha256: sha(bytes) }), { flag: 'wx' });
+  await assert.rejects(emptyBox.read('blocked'), { code: 'FORMAL_MAILBOX_FILE_BOUNDARY' });
+
+  const linked = await spool(t), linkedBox = await createFixtureMailbox(linked, 'windows');
+  const marker = path.join(linked, 'incoming', 'blocked.ready.json');
+  await fs.writeFile(marker, Buffer.alloc(0), { flag: 'wx' });
+  await fs.link(marker, path.join(linked, 'incoming', 'same-marker'));
+  await assert.rejects(linkedBox.read('blocked'), { code: 'FORMAL_MAILBOX_FILE_BOUNDARY' });
+
+  const malformed = await spool(t), malformedBox = await createFixtureMailbox(malformed, 'windows');
+  await fs.writeFile(path.join(malformed, 'incoming', 'blocked.ready.json'), '{', { flag: 'wx' });
+  await assert.rejects(malformedBox.read('blocked'), SyntaxError);
+});
+
+test('issuer (gitleaks): a ready marker that never commits stays uncertain at the existing deadline, never reissued', WINDOWS, async t => {
+  const f = issuerFixture(t), root = await spool(t), s = scripted(['ok']), actual = await createFixtureMailbox(root, 'windows');
+  await fs.writeFile(path.join(root, 'incoming', 'blocked.ready.json'), Buffer.alloc(0), { flag: 'wx' });
+  let skew = 0, expires = null;
+  const clock = () => Date.now() + skew;
+  const writes = [], waits = [];
+  const box = { ...actual, async write(name, bytes) {
+    writes.push(name); if (name === 'issue') expires = Date.parse(decode(bytes).expiresAt);
+    return actual.write(name, bytes);
+  } };
+  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: s.collect, box, clock,
+    sleep: async ms => { waits.push(ms); skew = expires - Date.now(); }, stageDeadline: clock() + CALLBACK_WINDOW_MS + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['UNCERTAIN', 'BRIDGE_RESULT_DEADLINE', 1]);
+  assert.deepEqual(writes, ['issue']);
+  assert.deepEqual(waits, [100], 'pending bytes use the existing bounded wait, never the refs retry');
+});
+
 test('issuer (gitleaks): a slow refs collection (35 s, then retried) does not leave the admission stale at the issue (review M2)', WINDOWS, async t => {
   const realNow = Date.now, start = realNow();
   let skew = 0;

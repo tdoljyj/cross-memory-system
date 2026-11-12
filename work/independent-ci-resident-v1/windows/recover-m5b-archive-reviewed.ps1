@@ -79,7 +79,7 @@ function Invoke-RecoveryCore($Context){
   $Context.state.phase='SAVE';$snapshot=Save-RecoveryOriginal $Context;if($Context.Contains('resumeProof')){Start-RecoveryServiceTransition $Context};Write-RecoveryNew (Join-Path $Context.stage 'original-task-and-services.json') (Recovery-Bytes $snapshot);Write-RecoveryJournal $Context 'SAVED'
   $Context.state.phase='TASK';Write-RecoveryJournal $Context 'INTENT';$Context.state.taskAttempted=$true;Stop-RecoveryTask $Context $snapshot;Write-RecoveryJournal $Context 'STOPPED'
   $Context.state.phase='SERVICES';Write-RecoveryJournal $Context 'INTENT';$Context.state.servicesAttempted=$true;Stop-RecoveryServices $Context $snapshot;Write-RecoveryJournal $Context 'STOPPED'
-  $Context.state.phase='QUIET';Assert-RecoveryQuiescent $Context $snapshot;$proof=Hold-RecoveryQuietProof $Context $snapshot;Assert-RecoveryQuietProof $Context $proof;Write-RecoveryJournal $Context 'PROVED'
+  $Context.state.phase='QUIET';Wait-RecoveryNoProducers $Context;Assert-RecoveryQuiescent $Context $snapshot;$proof=Hold-RecoveryQuietProof $Context $snapshot;Assert-RecoveryQuietProof $Context $proof;Write-RecoveryJournal $Context 'PROVED'
   $Context.state.phase='PAUSE';Write-RecoveryJournal $Context 'INTENT';New-RecoveryPause $Context;Write-RecoveryJournal $Context 'CREATED_AND_READ_BACK'
   $Context.state.phase='ARCHIVE';Assert-RecoveryQuiescent $Context $snapshot;Assert-RecoveryQuietProof $Context $proof;Assert-RecoveryHalt $Context;Assert-RecoveryPause $Context
   $before=Read-RecoveryScene $Context;Write-RecoveryJournal $Context 'INTENT';Assert-RecoveryQuiescent $Context $snapshot;Assert-RecoveryQuietProof $Context $proof;Assert-RecoveryPause $Context;$Context.state.archiveAttempted=$true
@@ -396,7 +396,17 @@ function Read-RecoveryProcessOwnerSids{
  return ,$sids
 }
 function Assert-RecoveryNoProducers($Context){
- foreach($sid in (Read-RecoveryProcessOwnerSids)){if(@($Context.pins.companion,$Context.pins.controller,$Context.pins.residentSid) -ccontains $sid){throw 'RECOVERY_NOT_QUIET'}}
+ $sids=Read-RecoveryProcessOwnerSids;$owners=[ordered]@{companion=$Context.pins.companion;controller=$Context.pins.controller;resident=$Context.pins.residentSid}
+ $seen=@($owners.Keys|Where-Object{$sids -ccontains $owners[$_]});if($seen.Count -gt 0){if($Context.Contains('state')){$Context.state.notQuietOwners=$seen};throw 'RECOVERY_NOT_QUIET'}
+}
+# The stopped companion's WSL VM keeps VM-lifetime companion-owned helpers outside its job: the Plan9FileSystem dllhost
+# (vp9fs, the Windows-side file server for its Linux writes) and wslrelay. They are not excluded: while any companion
+# distribution runs they can write. They end with the VM: distribution idle (inside the 120 s VHD release already allowed
+# below) + the default 60 s vmIdleTimeout + 60 s for VM and surrogate teardown. Only the same predicate is polled; nothing
+# is killed, and every later QUIET/ARCHIVE check stays immediate.
+function Wait-RecoveryNoProducers($Context){
+ $until=[DateTime]::UtcNow.AddSeconds($(if($Context.Contains('quietWaitSeconds')){[int]$Context.quietWaitSeconds}else{240}))
+ while($true){try{Assert-RecoveryNoProducers $Context;return}catch{if((Get-RecoveryCode $_) -cne 'RECOVERY_NOT_QUIET' -or [DateTime]::UtcNow -ge $until){throw}};Start-Sleep -Milliseconds 1000}
 }
 function Assert-RecoveryQuiescent($Context,$Snapshot){
  $t=Read-RecoveryTask $Context;if($t.Enabled -ne $false -or $t.GetInstances(0).Count -ne 0 -or (Recovery-TaskFingerprint $t) -cne $Snapshot.taskHash){throw 'RECOVERY_NOT_QUIET'}
@@ -449,6 +459,9 @@ function Assert-RecoveryVhdAcl($Context,[byte[]]$Bytes,[string]$Path){
  # No parent, other scene, different bytes, or general user-owned VHDX is admitted.
  $qualifiedOwner=$Context.pins.sceneId -ceq 'turing-b2ea' -and $Path -ieq $Context.pins.vhdx -and $null -ne $sd.Owner -and $sd.Owner.Value -ceq $Context.pins.operator -and (Recovery-Hash $Bytes) -ceq '4e8610cdcbf6d5703038d9d03b445329a2e1d36d9f70403f31a7e8dac80d1438'
  if($null -eq $sd.Owner -or (-not $qualifiedOwner -and $admins -notcontains $sd.Owner.Value) -or $null -eq $sd.DiscretionaryAcl){throw 'RECOVERY_PROTECTION_REFUSED'}
+ # DESK's D:\ is a stock data-volume root: SYSTEM-owned, Authenticated Users Modify on this folder only (no child delete,
+ # DAC or owner write). A volume root cannot be deleted or renamed, so only these exact root bytes are admitted for that scene.
+ if($Context.pins.sceneId -ceq 'desk-31080' -and $Path -ceq [IO.Path]::GetPathRoot($Context.pins.vhdx) -and (Recovery-Hash $Bytes) -ceq '548bcbdd7b0c6b4d4df07b2c0eebbe74414d8826b5dd0d436ffa8a2a3421fb86'){return}
  $leaf=$Path -ieq $Context.pins.vhdx -or $Path -ieq [IO.Path]::GetDirectoryName($Context.pins.vhdx)
  # The accepted headless writer gives only ext4.vhdx Modify|WRITE_DAC; its parent stays Modify.
  $companionMask=if($Path -ieq $Context.pins.vhdx){0x1701bf}else{0x1301bf}
