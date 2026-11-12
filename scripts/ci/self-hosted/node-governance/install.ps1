@@ -11,7 +11,11 @@
 #   2. registers Clued-Node-Governance for the Owner (at logon and daily at 04:00, Limited: it never needs elevation,
 #      so nothing it runs is ever elevated; single instance; restarted on failure), disabled for now;
 #   3. runs ONE read-only round (-DryRun -MaxIterations 1) as the Owner through a one-shot task and reads its status;
-#   4. only when that round wrote a status: retires the old mechanisms (the host watchdog's tasks, processes, startup
+#   4. deletes the archived upgrade generations beyond the three newest and the current one (standard class 12) with the
+#      installed resident's own maintenance tool: archive\ is writable by SYSTEM/Administrators only, the upgrade service
+#      that could do it on its own lives in the frozen channel (upgrader/src) and the governance task never elevates, so
+#      this elevation is where it happens (each install or re-install; the companion notifies when more are due);
+#   5. only when that round wrote a status: retires the old mechanisms (the host watchdog's tasks, processes, startup
 #      launchers and files; the cache maintenance worker's task, processes and folder), carries the watchdog's suspend
 #      intent over, enables and starts Clued-Node-Governance. A failed round changes nothing of the old ones.
 # -WhatIf prints the plan (what it would register and retire on this machine) without elevating or changing anything.
@@ -60,6 +64,19 @@ function Find-LegacyProcesses {
 }
 # No console window: conhost --headless (as the resident's notifier), never only -WindowStyle Hidden (runbook section 5).
 $Conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+$ResidentRoot = 'C:\ProgramData\CluedIndependentCI\resident'
+# The installed resident's node.exe and maintenance tool, read from its service's command line and only below its admin-only
+# root (never a checkout or another user-writable place: this runs elevated).
+function Get-GenerationTool {
+    $svc = Get-CimInstance Win32_Service -Filter "Name='CluedCIResident'" -ErrorAction SilentlyContinue
+    if (-not $svc) { return $null }
+    $m = [regex]::Match([string]$svc.PathName, '"(?<node>[^"]+\\runtime\\node\.exe)" [0-9a-f]{64} "(?<entry>[^"]+\\resident\\[0-9a-f]{64}\\src\\service-main\.mjs)"')
+    if (-not $m.Success) { return $null }
+    $node = [IO.Path]::GetFullPath($m.Groups['node'].Value)
+    $tool = [IO.Path]::GetFullPath(($m.Groups['entry'].Value -replace '\\src\\service-main\.mjs$', '\tools\retention-generations.mjs'))
+    foreach ($f in $node, $tool) { if (-not $f.StartsWith($ResidentRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null } }
+    return @{ Node = $node; Tool = $tool }
+}
 function New-TaskAction([string]$extra) {
     New-ScheduledTaskAction -Execute $Conhost -Argument ('--headless "{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}"{2}' -f $Powershell, $Script, $extra)
 }
@@ -74,6 +91,7 @@ if ($WhatIf) {
         retireFiles = @($Legacy.Files | Where-Object { Test-Path -LiteralPath $_ })
         retireFolders = @($Legacy.Folders | Where-Object { Test-Path -LiteralPath $_ })
         runValue = $Legacy.RunValue
+        generations = "<resident>\runtime\node.exe <resident>\resident\<sha>\tools\retention-generations.mjs --root $ResidentRoot --apply (elevated, once)"
     }
     $plan | ConvertTo-Json -Depth 4
     return
@@ -150,6 +168,12 @@ try {
             Remove-Item -LiteralPath $d -Recurse -Force; $done += "folder $d"
         }
         $done -join '; '
+    }
+    Step 'archived generations: three newest and the current one stay' {
+        $g = Get-GenerationTool
+        if (-not $g) { return 'no installed resident tool found: skipped' }
+        $out = @(& $g.Node $g.Tool --root $ResidentRoot --apply 2>&1 | ForEach-Object { [string]$_ })
+        'exit {0}: {1}' -f $LASTEXITCODE, (($out | Select-Object -Last 2) -join ' ')
     }
     Step 'enable and start' { Enable-ScheduledTask -TaskName $TaskName | Out-Null; Start-ScheduledTask -TaskName $TaskName; (Get-ScheduledTask -TaskName $TaskName).State }
     $result.ok = $true

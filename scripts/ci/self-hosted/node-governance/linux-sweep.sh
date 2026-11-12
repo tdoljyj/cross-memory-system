@@ -78,22 +78,15 @@ case "$cls" in
       candidates "$days" "$maxgb" "$maxobj" < <(for p in "$r"/_work/_tool/*/*; do printf '%s\n' "$p"; done)
       set -f
     done ;;
-  docker_dangling) # docker_dangling <hours> <leftover container regex> <volume regex> <maxobj>
-    hours=$1 cre=$2 vre=$3 maxobj=$4
+  docker_dangling) # docker_dangling <hours> <volume regex> <maxobj>: dangling images, STOPPED containers older than
+    # <hours> (leftover supabase_* stacks included; a running container is never removed, standard section 7.3) and their
+    # unreferenced volumes of the given names
+    hours=$1 vre=$2 maxobj=$3
     command -v docker >/dev/null || { say "kept: no docker"; say "freed 0"; exit 0; }
     need_idle
     if [ -n "${SWEEP_DRY_RUN:-}" ]; then say "would run docker image prune --force; docker container prune --force --filter until=${hours}h"
     else docker image prune --force >/dev/null 2>&1; docker container prune --force --filter "until=${hours}h" >/dev/null 2>&1; fi
     now=$(date +%s); n=0; left=0
-    # Leftover stacks of finished jobs (supabase_*), running or not, older than <hours>; only while no job runs (above).
-    while IFS='|' read -r name created; do
-      printf '%s' "$name" | grep -Eq -- "$cre" || continue
-      c=$(date -d "${created% [A-Z]*}" +%s 2>/dev/null) || continue
-      [ $((now - c)) -gt $((hours * 3600)) ] || continue
-      if [ "$n" -ge "$maxobj" ]; then left=$((left + 1)); continue; fi
-      if [ -n "${SWEEP_DRY_RUN:-}" ]; then say "would delete 0 container:$name"; else docker rm -f "$name" >/dev/null 2>&1 && say "deleted 0 container:$name"; fi
-      n=$((n + 1))
-    done < <(docker ps -a --format '{{.Names}}|{{.CreatedAt}}' 2>/dev/null)
     # Volumes nothing references (docker refuses one in use), of the given names, older than <hours>.
     while IFS= read -r v; do
       printf '%s' "$v" | grep -Eq -- "$vre" || continue

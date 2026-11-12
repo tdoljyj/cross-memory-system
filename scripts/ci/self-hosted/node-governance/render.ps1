@@ -35,7 +35,7 @@ $capacity = $capacityProperty.Value
 
 function Escape-SingleQuoted([string]$value) { return $value.Replace("'", "''") }
 function Get-Field($object, [string]$name) {
-    if ($null -ne $object -and $object.PSObject.Properties.Name -contains $name) { return $object.$name }
+    if ($null -ne $object -and @($object.PSObject.Properties | ForEach-Object { $_.Name }) -contains $name) { return $object.$name }
     return $null
 }
 function Get-EffectiveState($runner) {
@@ -67,7 +67,8 @@ foreach ($w in @(Get-Field $gov 'worktrees')) {
 $overrides = Get-Field $gov 'overrides'
 if ($null -ne $overrides) {
     foreach ($section in $overrides.PSObject.Properties) {
-        if ($section.Name -notin @('disk', 'budget', 'classes')) { throw "governance.overrides of $HostId may not set $($section.Name)" }
+        if ($section.Name -notin @('disk', 'drives', 'budget', 'classes')) { throw "governance.overrides of $HostId may not set $($section.Name)" }
+        if ($section.Name -eq 'drives') { continue }
         $targets = if ($section.Name -eq 'classes') { @($section.Value.PSObject.Properties | ForEach-Object { @{ Path = "classes.$($_.Name)"; Base = (Get-Field $standard.classes $_.Name); Value = $_.Value } }) }
                    else { @(@{ Path = $section.Name; Base = $standard.($section.Name); Value = $section.Value }) }
         foreach ($t in $targets) {
@@ -80,6 +81,33 @@ if ($null -ne $overrides) {
             }
         }
     }
+}
+
+# The levels of each drive (GiB): the standard's, or the node's per-drive override (overrides.drives.<letter>).
+function Test-Number($v) { return ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) }
+function Get-Levels($o) {
+    $l = [ordered]@{ Yellow = [double]$standard.disk.yellow_gb; Red = [double]$standard.disk.red_gb; Recover = [double]$standard.disk.recover_gb }
+    if ($null -ne $o) {
+        foreach ($k in $o.PSObject.Properties) {
+            $name = @{ yellow_gb = 'Yellow'; red_gb = 'Red'; recover_gb = 'Recover' }[$k.Name]
+            if (-not $name) { throw "governance.overrides.drives of $HostId names $($k.Name), which is not a disk level" }
+            if (-not (Test-Number $k.Value)) { throw "governance.overrides.drives of $HostId sets $($k.Name) to something that is not a number" }
+            $l[$name] = [double]$k.Value
+        }
+    }
+    if (-not (0 -lt $l.Red -and $l.Red -lt $l.Recover -and $l.Recover -le $l.Yellow)) { throw "the disk levels of $HostId need 0 < red < recover <= yellow (got $($l.Red), $($l.Recover), $($l.Yellow))" }
+    return $l
+}
+$driveOverrides = if ($null -ne $overrides) { Get-Field $overrides 'drives' } else { $null }
+if ($null -ne $driveOverrides) {
+    foreach ($d in $driveOverrides.PSObject.Properties) { if ($d.Name -notmatch '^[A-Z]$') { throw "governance.overrides.drives of $HostId names $($d.Name), which is not one drive letter" } }
+}
+$levelLiteral = { param($l) "@{{Yellow={0};Red={1};Recover={2}}}" -f $l.Yellow, $l.Red, $l.Recover }
+$defaultLevels = Get-Levels $null
+$driveLevelLiterals = @()
+foreach ($letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.ToCharArray()) {
+    $o = if ($null -ne $driveOverrides) { Get-Field $driveOverrides ([string]$letter) } else { $null }
+    if ($null -ne $o) { $driveLevelLiterals += ("{0}={1}" -f $letter, (& $levelLiteral (Get-Levels $o))) }
 }
 
 if (-not $OutputPath) { $OutputPath = Join-Path (Split-Path -Parent $standard.status_file) 'node-governance.ps1' }
@@ -151,7 +179,7 @@ function Get-RunnerDisk { Get-DistroDisk $distro }
 function Get-Capacity {
   $os=Get-CimInstance Win32_OperatingSystem; $disk=Get-RunnerDisk; $free=$null; $total=$null
   if($disk){try{$d=Get-PSDrive $disk.Drive -ErrorAction Stop; $free=[math]::Round($d.Free/1GB,1); $total=[math]::Round(($d.Free+$d.Used)/1GB,1)}catch{$free=$null}}
-  if($null -ne $total){$script:suspendRunnerDisk=Get-RedGb $total; $script:resumeRunnerDisk=Get-RecoverGb $total}
+  if($disk){$script:suspendRunnerDisk=Get-RedGb $disk.Drive; $script:resumeRunnerDisk=Get-RecoverGb $disk.Drive}
   [pscustomobject]@{Mem=[math]::Round($os.FreePhysicalMemory*1KB/1GB,2); CFree=[math]::Round((Get-PSDrive C).Free/1GB,1); Drive=$(if($disk){$disk.Drive}else{'?'}); Free=$free; Total=$total}
 }
 function Format-Capacity($c){
@@ -248,7 +276,7 @@ function Invoke-CapacityStep {
 function Invoke-RunnerSweep([switch]$Pressure,[switch]$Hourly){
   $d=if($Pressure){$pressureDays}else{$null}
   Invoke-Sweep $distro $linuxUser (@('runner_temp')+$linuxRoots) | Out-Null
-  if($manageDocker){Invoke-Sweep $distro $linuxUser @('docker_dangling',$C.docker_dangling.hours,$C.docker_dangling.leftover_container_regex,$C.docker_dangling.volume_regex,$maxObjects) | Out-Null}
+  if($manageDocker){Invoke-Sweep $distro $linuxUser @('docker_dangling',$C.docker_dangling.hours,$C.docker_dangling.volume_regex,$maxObjects) | Out-Null}
   if($Hourly){return}
   Invoke-Sweep $distro $linuxUser (@('runner_checkout',(Pick $d $C.runner_checkout.days),$C.runner_checkout.max_gb,$maxObjects)+$linuxRoots) | Out-Null
   Invoke-Sweep $distro $linuxUser (@('runner_tool',(Pick $d $C.runner_tool.days),$C.runner_tool.max_gb,$maxObjects)+$linuxRoots) | Out-Null
@@ -365,15 +393,16 @@ function Send-Alert([string]$key,[string]$title,[string]$text,[int]$everyMinutes
 }
 # END notify
 # BEGIN levels
-# Standard section 2: per drive the stricter of a share and an absolute level; red holds until the recover level.
-$disk=@{YellowPct=__YELLOW_PCT__;YellowGb=__YELLOW_GB__;RedPct=__RED_PCT__;RedGb=__RED_GB__;RecoverPct=__RECOVER_PCT__;RecoverGb=__RECOVER_GB__}
-function Get-RedGb([double]$total){[math]::Round([math]::Max($disk.RedGb,$total*$disk.RedPct/100),1)}
-function Get-RecoverGb([double]$total){[math]::Round([math]::Max($disk.RecoverGb,$total*$disk.RecoverPct/100),1)}
-function Get-YellowGb([double]$total){[math]::Round([math]::Max($disk.YellowGb,$total*$disk.YellowPct/100),1)}
-function Get-DriveLevel([double]$free,[double]$total,[string]$previous){
-  if($free -lt (Get-RedGb $total)){return 'red'}
-  if($previous -eq 'red' -and $free -lt (Get-RecoverGb $total)){return 'red'}
-  if($free -lt (Get-YellowGb $total)){return 'yellow'}
+# Standard section 2: fixed levels in GiB (the standard's, a drive may override them); red holds until the recover level.
+$diskDefault=__DEFAULT_LEVELS__; $diskLevels=@{__DRIVE_LEVELS__}
+function Get-Levels([string]$drive){if($diskLevels.ContainsKey($drive)){$diskLevels[$drive]}else{$diskDefault}}
+function Get-RedGb([string]$drive){(Get-Levels $drive).Red}
+function Get-RecoverGb([string]$drive){(Get-Levels $drive).Recover}
+function Get-YellowGb([string]$drive){(Get-Levels $drive).Yellow}
+function Get-DriveLevel([double]$free,[string]$drive,[string]$previous){
+  if($free -lt (Get-RedGb $drive)){return 'red'}
+  if($previous -eq 'red' -and $free -lt (Get-RecoverGb $drive)){return 'red'}
+  if($free -lt (Get-YellowGb $drive)){return 'yellow'}
   return 'green'
 }
 # END levels
@@ -381,7 +410,6 @@ $C=ConvertFrom-Json '__CLASSES_JSON__'
 $maxObjects=__MAX_OBJECTS__; $maxSeconds=__MAX_SECONDS__; $debtAlertRounds=__DEBT_ROUNDS__; $pressureDays=__PRESSURE_DAYS__
 $repeatMinutes=__REPEAT_MINUTES__; $redRepeatMinutes=__RED_REPEAT_MINUTES__; $pressureGapMinutes=__PRESSURE_GAP__; $dailyAfterHour=__DAILY_HOUR__
 $probeDrives=@(__DRIVES__); $residentDistro='__RESIDENT_DISTRO__'; $worktreeRoots=@(__WORKTREES__); $vhdxDistros=@()
-$residentStatusFile='C:\ProgramData\CluedIndependentCI\resident\state\status.json'
 function Pick($a,$b){if($null -ne $a){$a}else{$b}}
 # BEGIN distro-disk
 # The drive and virtual disk of a WSL distribution of this account, from its registration (BasePath, with or without \\?\).
@@ -437,24 +465,6 @@ function Invoke-Sweep([string]$name,[string]$user,[object[]]$sweepArgs){
   return [pscustomobject]@{Exit=$code;Freed=$freed;Objects=$n;Debt=$left;Lines=$out}
 }
 # END sweep
-# BEGIN idle
-# The resident CI is idle when every signal of its status view agrees (a view only ever adds a refusal: on 2026-11-04 it
-# read IDLE while a batch sat at stage 6); unknown is busy.
-$busyRowStates=@('RUNNING','PARKED','WAITING','QUEUED','BACKOFF'); $busyExecutorStates=@('STARTING','RUNNING','PARKED','WAITING','BACKFILL_PENDING')
-function Test-ResidentIdle($s,[datetime]$now,[int]$maxAgeSeconds=90){
-  if($null -eq $s -or ([string]$s.contract) -notmatch '^clued\.independent-ci\.resident-status/[5-8]$'){return $false}
-  $written=[datetime]::MinValue
-  if(-not [datetime]::TryParse([string]$s.writtenAt,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AdjustToUniversal,[ref]$written)){return $false}
-  if([math]::Abs(($now.ToUniversalTime()-$written).TotalSeconds) -gt $maxAgeSeconds){return $false}
-  $es=$null; if($null -ne $s.executor){$es=$s.executor.state}
-  if($es -isnot [string] -or $busyExecutorStates -ccontains $es){return $false}
-  if($null -ne $s.halt -or $s.paused -isnot [bool] -or $s.paused -or $null -ne $s.current){return $false}
-  if($s.pending -isnot [array]){return $false}
-  foreach($row in $s.pending){$st=$null; if($null -ne $row){$st=$row.state}; if($st -isnot [string] -or $busyRowStates -ccontains $st){return $false}}
-  return $true
-}
-function Read-ResidentStatus{try{$i=Get-Item -LiteralPath $residentStatusFile -ErrorAction Stop; if($i.Length -le 0 -or $i.Length -gt 262144){return $null}; return (Get-Content -LiteralPath $residentStatusFile -Raw -ErrorAction Stop | ConvertFrom-Json)}catch{return $null}}
-# END idle
 # BEGIN windows-sweep
 # This account's rebuildable files on Windows (standard 7, 8, 13): never inside a protected folder, never through a link,
 # a file in use is left; at most $maxSeconds per root.
@@ -491,29 +501,13 @@ function Invoke-WindowsSweep([switch]$Pressure){
   foreach($r in $roots){$x=Remove-OldFiles $r[0] $r[1]; if($x.Files -gt 0){Log ("Windows sweep, {0}: {1} {2} file(s), {3} MB" -f $r[0],$verb,$x.Files,[math]::Round($x.Bytes/1MB)); Add-Action ("windows:{0}" -f $r[0]) ("{0} file(s), {1} MB" -f $x.Files,[math]::Round($x.Bytes/1MB))}}
 }
 # END windows-sweep
-# BEGIN resident-sweep
-# The resident distribution: only Docker, temporary files, the scan cache and a trim, only while the resident CI is idle;
-# its archives are the resident executor's own (between batches, retention.mjs), never this task's.
-function Invoke-ResidentSweep([switch]$Pressure,[switch]$Hourly){
-  if(-not $residentDistro -or -not $residentReachable){return}
-  if(-not (Test-ResidentIdle (Read-ResidentStatus) (Get-Date))){Log 'Resident sweep deferred: the resident CI is not idle or its status cannot be read'; return}
-  $d=if($Pressure){$pressureDays}else{$null}
-  Invoke-Sweep $residentDistro 'root' @('docker_dangling',$C.docker_dangling.hours,$C.docker_dangling.leftover_container_regex,$C.docker_dangling.volume_regex,$maxObjects) | Out-Null
-  if($Hourly){return}
-  Invoke-Sweep $residentDistro 'root' @('docker_images',(Pick $d $C.docker_images.days)) | Out-Null
-  Invoke-Sweep $residentDistro 'root' @('docker_build_cache',(Pick $d $C.docker_build_cache.days),$C.docker_build_cache.max_gb) | Out-Null
-  Invoke-Sweep $residentDistro 'root' @('temp',(Pick $d $C.temp.days),$maxObjects) | Out-Null
-  Invoke-Sweep $residentDistro 'root' @('scan_db',(Pick $d $C.scan_db.days),$C.scan_db.max_gb) | Out-Null
-  Invoke-Sweep $residentDistro 'root' @('fstrim') | Out-Null
-}
-# END resident-sweep
 # BEGIN daily-checks
 # Standard 14 and 15, checks only: a virtual disk swollen past max(bloat_gb, bloat_pct) of its file (to be compacted in an
 # idle window, or better made sparse), and development worktrees untouched for their days.
 $vhdx=@()
 function Invoke-DailyChecks{
   $script:vhdx=@()
-  foreach($name in @($vhdxDistros+$(if($residentReachable){$residentDistro}) | Where-Object {$_} | Select-Object -Unique)){
+  foreach($name in @($vhdxDistros | Where-Object {$_} | Select-Object -Unique)){
     $dd=Get-DistroDisk $name
     if(-not $dd -or -not (Test-Path -LiteralPath $dd.Vhdx)){continue}
     $fileGb=[math]::Round((Get-Item -LiteralPath $dd.Vhdx).Length/1GB,1)
@@ -545,13 +539,13 @@ function Invoke-DriveRound{
     try{$p=Get-PSDrive $drive -ErrorAction Stop; $free=[math]::Round($p.Free/1GB,1); $total=[math]::Round(($p.Free+$p.Used)/1GB,1)}
     catch{[void](Send-Alert ("drive:{0}:unreadable" -f $drive) 'Clued node governance: a drive cannot be read' ("{0}: cannot be read: {1}" -f $drive,$_.Exception.Message) $repeatMinutes); continue}
     $prev=[string]$script:driveLevels[$drive]
-    $level=Get-DriveLevel $free $total $prev
+    $level=Get-DriveLevel $free $drive $prev
     $script:driveLevels[$drive]=$level
-    $facts+=[ordered]@{drive=$drive;freeGb=$free;totalGb=$total;level=$level;redGb=(Get-RedGb $total);yellowGb=(Get-YellowGb $total);recoverGb=(Get-RecoverGb $total)}
+    $facts+=[ordered]@{drive=$drive;freeGb=$free;totalGb=$total;level=$level;redGb=(Get-RedGb $drive);yellowGb=(Get-YellowGb $drive);recoverGb=(Get-RecoverGb $drive)}
     if($level -eq 'red'){$worst='red'}elseif($level -eq 'yellow' -and $worst -ne 'red'){$worst='yellow'}
     if($level -ne 'green'){$pressure=$true; $script:pressureDrives+=$drive}
-    if($level -eq 'red'){[void](Send-Alert ("drive:{0}:red" -f $drive) ("Clued node {0}: {1}: red" -f $hostId,$drive) ("{0}: {1} GB free of {2} GB, below {3} GB: new resident batches wait until {4} GB" -f $drive,$free,$total,(Get-RedGb $total),(Get-RecoverGb $total)) $redRepeatMinutes)}
-    elseif($level -eq 'yellow'){[void](Send-Alert ("drive:{0}:yellow" -f $drive) ("Clued node {0}: {1}: yellow" -f $hostId,$drive) ("{0}: {1} GB free of {2} GB, below {3} GB; pressure sweeps run" -f $drive,$free,$total,(Get-YellowGb $total)) $repeatMinutes)}
+    if($level -eq 'red'){[void](Send-Alert ("drive:{0}:red" -f $drive) ("Clued node {0}: {1}: red" -f $hostId,$drive) ("{0}: {1} GB free of {2} GB, below {3} GB: new resident batches wait until {4} GB" -f $drive,$free,$total,(Get-RedGb $drive),(Get-RecoverGb $drive)) $redRepeatMinutes)}
+    elseif($level -eq 'yellow'){[void](Send-Alert ("drive:{0}:yellow" -f $drive) ("Clued node {0}: {1}: yellow" -f $hostId,$drive) ("{0}: {1} GB free of {2} GB, below {3} GB; pressure sweeps run" -f $drive,$free,$total,(Get-YellowGb $drive)) $repeatMinutes)}
     if($prev -eq 'red' -and $level -ne 'red'){$script:alertsSent.Remove(("drive:{0}:red" -f $drive)); Log ("ALERT drive:{0}: recovered: {1} GB free" -f $drive,$free); Show-Toast ("Clued node {0}: {1}: recovered" -f $hostId,$drive) ("{0}: {1} GB free" -f $drive,$free)}
   }
   $script:driveFacts=$facts; $script:nodeLevel=$worst
@@ -584,13 +578,12 @@ function Write-Status{
 # END status
 __BODIES__
 # The resident CI's WSL disk: the install record's target (companion-headless.ps1; the distribution may belong to the
-# companion account), else this account's registration of resident_distro, else C:.
-$residentDrive='C'; $residentReachable=$false
+# companion account), else this account's registration of resident_distro, else C:. Only its drive is judged here: the
+# resident distribution's own cleanup is the resident's (its executor and companion), never this task's.
+$residentDrive='C'
 try{$rec=Get-Content -LiteralPath 'C:\ProgramData\CluedIndependentCI\resident\install\companion-wsl.json' -Raw -ErrorAction Stop | ConvertFrom-Json
   if($rec.contract -eq 'clued.independent-ci.companion-wsl/1' -and [string]$rec.target -match '^([A-Za-z]):\\'){$residentDrive=$Matches[1].ToUpper()}}catch{}
-$rd=Get-DistroDisk $residentDistro
-if($rd){$residentReachable=$true; if(-not (Test-Path -LiteralPath 'C:\ProgramData\CluedIndependentCI\resident\install\companion-wsl.json')){$residentDrive=$rd.Drive}}
-elseif($residentDistro){Log ("Resident distribution {0} is not registered for this account (the companion account's): its in-distribution sweep is left to the resident" -f $residentDistro)}
+if(-not (Test-Path -LiteralPath 'C:\ProgramData\CluedIndependentCI\resident\install\companion-wsl.json')){$rd=Get-DistroDisk $residentDistro; if($rd){$residentDrive=$rd.Drive}}
 if($probeDrives -notcontains $residentDrive){$probeDrives+=$residentDrive}
 Log ("Clued node governance of {0} started; drives {1}; resident {2} on {3}:" -f $hostId,($probeDrives -join ','),$(if($residentDistro){$residentDistro}else{'none'}),$residentDrive)
 $lastHourly=[datetime]::MinValue; $lastDailyDate=''; $nextDaily=''
@@ -605,10 +598,8 @@ __INITS__
   if($hourlyDue){$lastHourly=$now}
   if($dailyDue){$lastDailyDate=$now.ToString('yyyy-MM-dd'); $nextDaily=$now.Date.AddDays(1).AddHours($dailyAfterHour).ToString('o')}
 __STEPS__
-  if($hourlyDue){Invoke-ResidentSweep -Hourly}
-  if($dailyDue){Invoke-ResidentSweep; Invoke-WindowsSweep; Invoke-DailyChecks}
+  if($dailyDue){Invoke-WindowsSweep; Invoke-DailyChecks}
   if($pressureDue){
-    if($pressureDrives -contains $residentDrive){Invoke-ResidentSweep -Pressure}
     if($pressureDrives -contains $env:SystemDrive.Substring(0,1)){Invoke-WindowsSweep -Pressure}
     Invoke-DriveRound; $pressureDue=$false
   }
@@ -628,12 +619,8 @@ $replacements['__STATUS_FILE_DRYRUN__'] = (Escape-SingleQuoted ($standard.status
 $replacements['__STATUS_FILE__'] = (Escape-SingleQuoted $standard.status_file)
 $replacements['__PROTECTED_EXTRA__'] = $(if ($null -ne $windowsRunner -and (Get-Field $windowsRunner 'root')) { Quote-List @($windowsRunner.root) } else { "'C:\clued-ci\runner'" })
 $replacements['__INTERVAL__'] = [string]$standard.schedule.probe_seconds
-$replacements['__YELLOW_PCT__'] = [string]$standard.disk.yellow_pct
-$replacements['__YELLOW_GB__'] = [string]$standard.disk.yellow_gb
-$replacements['__RED_PCT__'] = [string]$standard.disk.red_pct
-$replacements['__RED_GB__'] = [string]$standard.disk.red_gb
-$replacements['__RECOVER_PCT__'] = [string]$standard.disk.recover_pct
-$replacements['__RECOVER_GB__'] = [string]$standard.disk.recover_gb
+$replacements['__DEFAULT_LEVELS__'] = (& $levelLiteral $defaultLevels)
+$replacements['__DRIVE_LEVELS__'] = ($driveLevelLiterals -join ';')
 $replacements['__CLASSES_JSON__'] = $classesJson
 $replacements['__MAX_OBJECTS__'] = [string]$standard.budget.max_objects
 $replacements['__MAX_SECONDS__'] = [string]$standard.budget.max_seconds

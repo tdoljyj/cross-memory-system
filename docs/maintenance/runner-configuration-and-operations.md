@@ -60,7 +60,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 | 暂停条件 | 空闲内存 < 1.5 GiB **或** runner 盘红线 | < 6 GiB **或** runner 盘红线 |
 | 恢复条件 | 空闲内存 ≥ 2.5 GiB **且** runner 盘恢复 | ≥ 10 GiB **且** runner 盘恢复 |
 
-盘的绿/黄/红与恢复线全网一份：`config/node-governance-standard.json`（黄：剩余 < 20 % 或 < 30 GB；红：< 10 % 或 < 15 GB；恢复：≥ 15 % 且 ≥ 20 GB）。runner 盘指 runner 发行版虚拟磁盘所在的盘（从 WSL 注册取得，DESK-W-591 上 `CluedCI-Linux` 在 D:）：红线时先在该发行版内做一轮压力回收，仍红才停 runner。常驻 CI 虚拟磁盘所在盘红线时暂停接新批；其余情况 C: 只告警。详见 [self-hosted README 的 Node governance 节](../../scripts/ci/self-hosted/README.md#node-governance)。
+盘的绿/黄/红与恢复线全网一份：`config/node-governance-standard.json`，固定值、不看盘大小（黄：剩余 < 30 GiB，只告警；红：< 10 GiB；恢复：≥ 15 GiB；可按盘覆盖）。runner 盘指 runner 发行版虚拟磁盘所在的盘（从 WSL 注册取得，DESK-W-591 上 `CluedCI-Linux` 在 D:）：红线时先在该发行版内做一轮压力回收，仍红才停 runner。常驻 CI 虚拟磁盘所在盘红线时暂停接新批；其余情况 C: 只告警。详见 [self-hosted README 的 Node governance 节](../../scripts/ci/self-hosted/README.md#node-governance)。
 
 若验收 workflow 涉及新 workflow、手动 dispatch 或重任务，按当时准入合同执行；不临时移除门禁。作业此前 skipped 时要让适用作业实际执行。本基线常规 PR/分支工作流禁止直接重跑；需要重试时用实际修复提交，或按精确范围的 Owner 例外与实际钩子能力处理。
 
@@ -74,7 +74,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\node-governance\install.ps1 -HostId home-primary
 ```
 
-安装脚本：建 `C:\ProgramData\Clued\node-governance`（SYSTEM/Administrators 完全、Owner 修改、Users 只读）→ 生成脚本 → 注册任务（Owner、Interactive/Limited、登录触发每分钟重复＋每日 04:00、IgnoreNew、无限时长、失败一分钟重启三次、`conhost --headless` 无窗口）→ 以 Owner 身份跑一轮只读（`-DryRun -MaxIterations 1`）→ 只读轮写出状态后才删除旧看门狗与缓存 worker 的任务、进程（按命令行，不按进程名）、启动项、脚本与目录，并沿用旧看门狗的暂停意图 → 启用并启动。只读轮失败则旧机制原样保留。结果写到 `%TEMP%\clued-node-governance-install.json`。
+安装脚本：建 `C:\ProgramData\Clued\node-governance`（SYSTEM/Administrators 完全、Owner 修改、Users 只读）→ 生成脚本 → 注册任务（Owner、Interactive/Limited、登录触发每分钟重复＋每日 04:00、IgnoreNew、无限时长、失败一分钟重启三次、`conhost --headless` 无窗口）→ 以 Owner 身份跑一轮只读（`-DryRun -MaxIterations 1`）→ 用已安装常驻自带的维护工具删除最近 3 代＋当前之外的升级代际归档（`archive\` 只有管理员可写，升级服务属冻结通道，治理任务不提权，所以放在这次提权里）→ 只读轮写出状态后才删除旧看门狗与缓存 worker 的任务、进程（按命令行，不按进程名）、启动项、脚本与目录，并沿用旧看门狗的暂停意图 → 启用并启动。只读轮失败则旧机制原样保留。结果写到 `%TEMP%\clued-node-governance-install.json`。
 
 验收：任务 Running、唯一进程、`logs\governance-<host>.log` 有 started、`status.json` 每分钟更新、阈值与单元列表正确、Windows runner 服务账号未变；受控结束治理进程后 90 秒内由每分钟重复触发拉起。维护停机时先 Disable 任务并结束其进程。
 

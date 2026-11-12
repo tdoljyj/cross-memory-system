@@ -74,7 +74,7 @@ test('both nodes render from the same parts: one standard, one governance block 
   for (const r of [company, home]) {
     assert.ok(!/__[A-Z_]+__/.test(r.text));
     assert.match(r.text, /\$statusFile=if\(\$DryRun\)\{'C:\\ProgramData\\Clued\\node-governance\\status\.dryrun\.json'\}else\{'C:\\ProgramData\\Clued\\node-governance\\status\.json'\}/);
-    assert.match(r.text, new RegExp(`\\$disk=@\\{YellowPct=${STANDARD.disk.yellow_pct};YellowGb=${STANDARD.disk.yellow_gb};RedPct=${STANDARD.disk.red_pct};RedGb=${STANDARD.disk.red_gb};RecoverPct=${STANDARD.disk.recover_pct};RecoverGb=${STANDARD.disk.recover_gb}\\}`));
+    assert.ok(r.text.includes(`$diskDefault=@{Yellow=${STANDARD.disk.yellow_gb};Red=${STANDARD.disk.red_gb};Recover=${STANDARD.disk.recover_gb}}; $diskLevels=@{}`));
     assert.match(r.text, /\$probeDrives=@\('C','D'\)/);
     assert.match(r.text, new RegExp(`^\\$interval=${STANDARD.schedule.probe_seconds}$`, 'm'));
     assert.doesNotMatch(r.text, /capacity-alert\.json|watchdog-clued-ci|C:\\clued-ci\\state/, 'one status file, no marker of the old watchdog');
@@ -86,7 +86,8 @@ test('both nodes render from the same parts: one standard, one governance block 
   assert.doesNotMatch(home.text, /Invoke-CapacityStep|\$distro=/, 'TURING\'s Linux runner is retired: no runner part');
   assert.match(home.text, /\$residentDistro='Ubuntu-24\.04'/);
   assert.match(home.text, /\$winService='actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-home-win-01'/);
-  assert.match(company.text, /\$suspendRunnerDisk=15; \$resumeRunnerDisk=20;/, 'the runner disk starts from the standard\'s absolute levels');
+  assert.match(company.text, /\$suspendRunnerDisk=10; \$resumeRunnerDisk=15;/, 'the runner disk starts from the standard\'s levels');
+  assert.doesNotMatch(company.text + home.text, /Invoke-ResidentSweep|Test-ResidentIdle/, 'the resident distribution is the resident\'s own: only read here');
 });
 
 test('the declaration is checked: no governance block, a bad drive, an override of an unknown or non-number key are refused; a number override applies', { skip }, (t) => {
@@ -98,19 +99,22 @@ test('the declaration is checked: no governance block, a bad drive, an override 
   assert.match(render(t, 'home-primary', (d) => { home(d).governance.overrides = { classes: { temp: { regex: 1 } } }; }).error, /not a number of the standard/);
   assert.match(render(t, 'home-primary', (d) => { home(d).governance.overrides = { classes: { temp: { days: 'x' } } }; }).error, /not a number/);
   assert.match(render(t, 'home-primary', (d) => { home(d).governance.overrides = { schedule: { probe_seconds: 1 } }; }).error, /may not set schedule/);
-  const ok = render(t, 'home-primary', (d) => { home(d).governance.overrides = { classes: { docker_build_cache: { max_gb: 10 } }, disk: { red_gb: 12 } }; });
+  assert.match(render(t, 'home-primary', (d) => { home(d).governance.overrides = { drives: { D: { red_gb: 20 } } }; }).error, /need 0 < red < recover <= yellow/);
+  assert.match(render(t, 'home-primary', (d) => { home(d).governance.overrides = { drives: { D: { size: 1 } } }; }).error, /not a disk level/);
+  const ok = render(t, 'home-primary', (d) => { home(d).governance.overrides = { classes: { docker_build_cache: { max_gb: 10 } }, disk: { red_gb: 12 }, drives: { D: { yellow_gb: 50, recover_gb: 25 } } }; });
   assert.match(ok.text, /"docker_build_cache":\{"days":7,"max_gb":10\}/);
-  assert.match(ok.text, /RedGb=12;/);
+  assert.ok(ok.text.includes('$diskDefault=@{Yellow=30;Red=12;Recover=15}; $diskLevels=@{D=@{Yellow=50;Red=12;Recover=25}}'), 'a drive overrides the default levels');
 });
 
-test('levels (standard section 2): the stricter of share and size; red holds until the recover level', { skip }, (t) => {
-  const r = render(t, 'home-primary');
+test('levels (standard section 2): fixed GiB whatever the drive size: below 30 yellow, below 10 red, red holds until 15; a drive may override', { skip }, (t) => {
+  const r = render(t, 'home-primary', (d) => { d.hosts.find((h) => h.host_id === 'home-primary').governance.overrides = { drives: { D: { red_gb: 40, recover_gb: 60, yellow_gb: 100 } } }; });
   const out = run(t, r, ['levels'], [
-    "'a=' + (Get-DriveLevel 20 237 '')", "'b=' + (Get-DriveLevel 30 237 'red')", "'c=' + (Get-DriveLevel 40 237 'red')", "'d=' + (Get-DriveLevel 50 237 'yellow')",
-    "'e=' + (Get-DriveLevel 200 2300 '')", "'f=' + (Get-DriveLevel 29 60 '')", "'g=' + (Get-DriveLevel 14.9 60 '')", "'h=' + (Get-DriveLevel 19.9 60 'red')", "'i=' + (Get-DriveLevel 20 60 'red')",
-    "'red=' + (Get-RedGb 2300) + ',' + (Get-RecoverGb 2300) + ',' + (Get-YellowGb 2300)"]);
-  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((k) => at(out.lines, k)), ['red', 'red', 'yellow', 'green', 'red', 'yellow', 'red', 'red', 'yellow']);
-  assert.equal(at(out.lines, 'red'), '230,345,460', 'a 2.3 TB drive: 10% / 15% / 20%');
+    "$l=''; foreach($free in 15,9,12,14.9,15,29.9,30){ $l=Get-DriveLevel $free 'C' $l; 'c' + $free + '=' + $l }",
+    "'d=' + (Get-DriveLevel 50 'D' '')", "'e=' + (Get-DriveLevel 200 'E' '')"]);
+  assert.deepEqual([15, 9, 12, 14.9, 15, 29.9, 30].map((f) => at(out.lines, `c${f}`)), ['yellow', 'red', 'red', 'red', 'yellow', 'yellow', 'green'],
+    'a 930 GB drive with 15 GB free is yellow, not red; 9 GB is red; back at 15 GB it recovers');
+  assert.equal(at(out.lines, 'd'), 'yellow', 'D: has its own levels');
+  assert.equal(at(out.lines, 'e'), 'green', 'no share of a large drive: 200 GB free is green');
 });
 
 test('the status file is the one every reader takes: the executor and the PR page read what Write-Status wrote', { skip }, async (t) => {
@@ -118,7 +122,7 @@ test('the status file is the one every reader takes: the executor and the PR pag
   const file = path.join(r.dir, 'status.json');
   run(t, r, ['notify', 'levels', 'drive-round', 'sweep', 'status'], [
     `$statusFile=${quote(file)}; $probeDrives=@('C','D'); $residentDrive='D'; $vhdx=@(); $staleWorktrees=0; $nextDaily=''; $linuxHold=$null`,
-    "$drv=@{C=@{Free=300GB;Used=600GB};D=@{Free=12GB;Used=2288GB}}",
+    "$drv=@{C=@{Free=300GB;Used=600GB};D=@{Free=8GB;Used=2292GB}}",
     "function Get-PSDrive($n){[pscustomobject]$drv[$n]}",
     "$driveLevels=@{}; Invoke-DriveRound; Write-Status"]);
   const raw = fs.readFileSync(file);
@@ -127,23 +131,23 @@ test('the status file is the one every reader takes: the executor and the PR pag
   assert.equal(s.contract, 'clued.node-governance-status/1');
   assert.equal(s.level, 'red');
   assert.deepEqual(s.intake, { drive: 'D', level: 'red' });
-  assert.deepEqual(s.drives.map((d) => [d.drive, d.level, d.freeGb]), [['C', 'green', 300], ['D', 'red', 12]]);
+  assert.deepEqual(s.drives.map((d) => [d.drive, d.level, d.freeGb]), [['C', 'green', 300], ['D', 'red', 8]]);
   const { readNodeStatus, readCapacityAlert } = await import(pathToFileURL(path.join(ROOT, 'work/independent-ci-resident-v1/src/host-capacity.mjs')).href);
   const read = await readNodeStatus(file);
   assert.equal(read.ok, true);
   assert.equal(read.intake.level, 'red');
-  assert.deepEqual(await readCapacityAlert(file, () => Date.parse(s.writtenAt)), { text: '节点资源红线（x D: 剩 12 GB，暂停接新批）' });
+  assert.deepEqual(await readCapacityAlert(file, () => Date.parse(s.writtenAt)), { text: '节点资源红线（x D: 剩 8 GB，暂停接新批）' });
   const alerts = fs.readFileSync(path.join(r.dir, 'log.txt'), 'utf8');
-  assert.match(alerts, /ALERT drive:D:red: D: 12 GB free of 2300 GB, below 230 GB: new resident batches wait until 345 GB/);
+  assert.match(alerts, /ALERT drive:D:red: D: 8 GB free of 2300 GB, below 10 GB: new resident batches wait until 15 GB/);
 });
 
 test('alerts: the same key at most once per its minutes; red every 30 minutes, yellow once a day; recovery said once', { skip }, (t) => {
   const r = render(t, 'home-primary');
   const out = run(t, r, ['notify', 'levels', 'drive-round'], [
-    "$probeDrives=@('C'); $free=20GB; function Get-PSDrive($n){[pscustomobject]@{Free=$script:free;Used=(237GB-$script:free)}}",
+    "$probeDrives=@('C'); $free=9GB; function Get-PSDrive($n){[pscustomobject]@{Free=$script:free;Used=(237GB-$script:free)}}",
     "$driveLevels=@{}; Invoke-DriveRound; Invoke-DriveRound; 'p1=' + $pressureDue",
     "$alertsSent['drive:C:red']=(Get-Date).AddMinutes(-31); Invoke-DriveRound",
-    "$free=40GB; Invoke-DriveRound; Invoke-DriveRound; 'level=' + $driveLevels['C']; 'p2=' + $pressureDue"]);
+    "$free=20GB; Invoke-DriveRound; Invoke-DriveRound; 'level=' + $driveLevels['C']; 'p2=' + $pressureDue"]);
   const alerts = out.log.split(/\r?\n/).filter((l) => l.startsWith('ALERT'));
   assert.equal(alerts.filter((l) => l.startsWith('ALERT drive:C:red')).length, 2, out.log);
   assert.equal(alerts.filter((l) => l.startsWith('ALERT drive:C: recovered')).length, 1, out.log);
@@ -179,34 +183,34 @@ function step(t, { caps, busy = false, active = [], state = null, body }) {
 }
 
 test('the runner disk below its red level gets a pressure sweep first; enough keeps the runners running', { skip }, (t) => {
-  const r = step(t, { caps: [{ disk: 14 }, { disk: 25 }], body: 'Invoke-CapacityStep' });
+  const r = step(t, { caps: [{ disk: 9 }, { disk: 25 }], body: 'Invoke-CapacityStep' });
   assert.equal(r.events, 'cleanup');
   assert.equal(r.suspended, 'False');
-  assert.match(r.log, /Capacity cleanup: D: 14 GB free, below 15 GB/);
+  assert.match(r.log, /Capacity cleanup: D: 9 GB free, below 10 GB/);
 });
 
 test('a sweep that is not enough stops the runners; the hold goes into the status (linuxRunners) and survives a restart', { skip }, (t) => {
-  const r = step(t, { caps: [{ disk: 14 }, { disk: 14.5 }], body: 'Invoke-CapacityStep' });
+  const r = step(t, { caps: [{ disk: 9 }, { disk: 9.5 }], body: 'Invoke-CapacityStep' });
   assert.equal(r.events, 'cleanup,stop');
   assert.equal(r.suspended, 'True');
   const hold = JSON.parse(r.hold);
   assert.equal(hold.suspended, true);
-  assert.match(hold.detail, /^D: 14\.5 GB free \(stops below 15, resumes at 20\), memory 30 GB free \(stops below 6, resumes at 10\); cleanup before the stop: 14 -> 14\.5 GB$/);
+  assert.match(hold.detail, /^D: 9\.5 GB free \(stops below 10, resumes at 15\), memory 30 GB free \(stops below 6, resumes at 10\); cleanup before the stop: 9 -> 9\.5 GB$/);
   assert.match(r.log, /ALERT Suspend: Linux runners are stopped for low capacity/);
   assert.equal(r.state.suspended, true);
 });
 
 test('resume at the recover level, not below; C: low never stops the runners; low memory stops without a sweep; a busy runner holds both', { skip }, (t) => {
-  const r = step(t, { caps: [{ disk: 14 }, { disk: 14 }, { disk: 19.9 }, { disk: 20 }], body: 'Invoke-CapacityStep; Invoke-CapacityStep; Invoke-CapacityStep' });
+  const r = step(t, { caps: [{ disk: 9 }, { disk: 9 }, { disk: 14.9 }, { disk: 15 }], body: 'Invoke-CapacityStep; Invoke-CapacityStep; Invoke-CapacityStep' });
   assert.equal(r.events, 'cleanup,stop,start');
   assert.equal(r.hold, '', 'the resume clears the hold');
   assert.equal(step(t, { caps: [{ c: 5 }, { c: 5 }], body: 'Invoke-CapacityStep; Invoke-CapacityStep' }).events, '');
   assert.equal(step(t, { caps: [{ mem: 2 }], body: 'Invoke-CapacityStep' }).events, 'stop');
-  assert.equal(step(t, { caps: [{ disk: 14 }], busy: true, body: 'Invoke-CapacityStep' }).events, '');
+  assert.equal(step(t, { caps: [{ disk: 9 }], busy: true, body: 'Invoke-CapacityStep' }).events, '');
 });
 
 test('a restart while held back restores the intent and the hold, and stops runners systemd started again', { skip }, (t) => {
-  const r = step(t, { caps: [{ disk: 14 }], active: ['actions.runner.x.service'], state: { suspended: true, reason: 'low capacity', changed: '2026-11-08T11:26:42.0109685+08:00' },
+  const r = step(t, { caps: [{ disk: 9 }], active: ['actions.runner.x.service'], state: { suspended: true, reason: 'low capacity', changed: '2026-11-08T11:26:42.0109685+08:00' },
     body: 'Restore-CapacityState; Invoke-CapacityStep' });
   assert.equal(r.events, 'stop');
   assert.equal(JSON.parse(r.hold).since, '2026-11-08T11:26:42.0109685+08:00');
@@ -244,17 +248,6 @@ test('a sweep goes to WSL as one bash -c with the script base64-encoded and no d
   assert.doesNotMatch(call, /"/);
   assert.equal(out.log.split(/\r?\n/).filter((l) => l.startsWith('ALERT debt:CluedCI-Linux:runner_checkout')).length, 1, 'debt three rounds running alerts once');
   assert.equal(at(out.lines, 'actions'), '3');
-});
-
-test('the resident is idle only when every signal of its status view agrees; unknown is busy (ported from the host adapters)', { skip }, (t) => {
-  const r = render(t, 'home-primary');
-  const now = '2026-11-12T05:00:00Z';
-  const base = { contract: 'clued.independent-ci.resident-status/8', writtenAt: '2026-11-12T04:59:30.000Z', executor: { state: 'IDLE' }, halt: null, paused: false, current: null, pending: [] };
-  const cases = [[base, true], [{ ...base, contract: 'clued.independent-ci.resident-status/4' }, false], [{ ...base, writtenAt: '2026-11-12T04:50:00Z' }, false],
-    [{ ...base, executor: { state: 'RUNNING' } }, false], [{ ...base, current: { pr: 1 } }, false], [{ ...base, pending: [{ state: 'PARKED' }] }, false],
-    [{ ...base, pending: [{ state: 'DONE' }] }, true], [{ ...base, paused: true }, false], [{ ...base, halt: { code: 'X' } }, false], [{ ...base, executor: { state: 'DEFERRED' } }, true], [null, false]];
-  const out = run(t, r, ['idle'], cases.map(([s], i) => `'c${i}=' + (Test-ResidentIdle (${s === null ? '$null' : `(${quote(JSON.stringify(s))} | ConvertFrom-Json)`}) ([datetime]::Parse('${now}').ToUniversalTime()))`));
-  cases.forEach(([, want], i) => assert.equal(at(out.lines, `c${i}`), want ? 'True' : 'False', `case ${i}`));
 });
 
 test('the Windows sweep removes only old files under its roots, never through a link or inside a protected folder; a dry run removes nothing', { skip }, (t) => {
@@ -331,7 +324,7 @@ test('linux-sweep: the budget leaves debt; a dry run deletes nothing; an unknown
   assert.equal(sweep(t, ['nope']).status, 2);
 });
 
-test('linux-sweep docker_dangling: leftover supabase_* containers older than a day and dangling volumes of the given names go, others stay; never while a job runs', { skip: skipBash }, (t) => {
+test('linux-sweep docker_dangling: stopped containers older than a day (leftover supabase_* included) and dangling volumes of the given names go; a running container never; nothing while a job runs', { skip: skipBash }, (t) => {
   const old = new Date(Date.now() - 3 * 86_400_000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000 UTC');
   const fresh = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000 UTC');
   const log = path.join(tempDir(t, 'docker-'), 'calls.txt');
@@ -345,17 +338,17 @@ esac
 exit 0
 `;
   const re = STANDARD.classes.docker_dangling;
-  const out = sweep(t, ['docker_dangling', '24', re.leftover_container_regex, re.volume_regex, '16'], { docker });
+  const out = sweep(t, ['docker_dangling', '24', re.volume_regex, '16'], { docker });
   assert.equal(out.status, 0, out.stderr);
   const calls = fs.readFileSync(log, 'utf8');
   assert.match(calls, /^image prune --force$/m);
   assert.match(calls, /^container prune --force --filter until=24h$/m);
-  assert.match(calls, /^rm -f supabase_db_x$/m);
-  assert.doesNotMatch(calls, /rm -f supabase_db_y|rm -f postgres/);
+  assert.doesNotMatch(calls, /^(rm|kill|stop)\b/m, 'no container is removed by name: a running supabase_* stack stays (standard 7.3)');
+  assert.doesNotMatch(calls, /^ps\b/m);
   assert.match(calls, new RegExp(`^volume rm ${'a'.repeat(64)}$`, 'm'));
   assert.doesNotMatch(calls, /volume rm named-data/);
   assert.doesNotMatch(calls, /system prune|volume prune/);
-  const busy = sweep(t, ['docker_dangling', '24', re.leftover_container_regex, re.volume_regex, '16'], { docker, busy: true });
+  const busy = sweep(t, ['docker_dangling', '24', re.volume_regex, '16'], { docker, busy: true });
   assert.ok(busy.lines[0].startsWith('kept:'));
 });
 
@@ -367,9 +360,11 @@ test('install.ps1 -WhatIf: one task for the Owner, Limited, a first read-only ro
   assert.equal(plan.runLevel, 'Limited');
   assert.deepEqual(plan.triggers, ['AtLogOn, repeated every minute', 'Daily 04:00']);
   assert.match(plan.firstRound, /-DryRun -MaxIterations 1/);
+  assert.match(plan.generations, /retention-generations\.mjs --root C:\\ProgramData\\CluedIndependentCI\\resident --apply/);
   for (const key of ['retireTasks', 'retireProcesses', 'retireFiles', 'retireFolders']) assert.ok(Array.isArray(plan[key]), key);
   const text = fs.readFileSync(path.join(HERE, 'install.ps1'), 'utf8');
   assert.equal((text.match(/-Verb RunAs/g) ?? []).length, 1, 'one elevation');
   assert.doesNotMatch(text, /Stop-Process\s+-Name|-RunLevel Highest|taskkill/i, 'never by image name, never a Highest task');
   assert.ok(text.indexOf("Step 'first read-only round'") < text.indexOf("Step 'retire the old mechanisms'"), 'nothing old is retired before the round wrote a status');
+  assert.match(text, /\$f\.StartsWith\(\$ResidentRoot \+ '\\'/, 'the elevated generation tool runs only from the resident\'s admin-only root');
 });
