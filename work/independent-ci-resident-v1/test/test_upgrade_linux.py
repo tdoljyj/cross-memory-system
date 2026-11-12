@@ -514,6 +514,37 @@ class IdentityTests(World):
         finally:
             tool.fs_id = real
 
+    def test_a_file_system_mounted_on_any_one_item_is_refused(self):
+        """Identity no longer compares st_dev, so same_device must look at every live item ITSELF, not only at its parent: another
+        file system mounted on one item keeps the parent's device. A stand-in os.lstat answers another st_dev for exactly one item at a
+        time (nothing can be mounted in a test); the tool's own code is unchanged."""
+        real = os.lstat
+        tool.same_device(self.P)                            # the template world is one file system
+        pkg, lm = self.package()
+        checked = []
+        for name, _, _ in tool.ITEMS:
+            target = tool.live_item(self.P, name)
+            if not os.path.lexists(target):
+                continue
+
+            def lstat(path, *args, _target=target, **kwargs):
+                st = real(path, *args, **kwargs)
+                if os.path.normcase(os.fspath(path)) != os.path.normcase(_target):
+                    return st
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev + 1, st.st_nlink, st.st_uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+            os.lstat = lstat
+            try:
+                with self.subTest(item=name):
+                    self.assertNotEqual(os.lstat(target).st_dev, os.lstat(os.path.dirname(target)).st_dev)   # the stand-in answers
+                    self.refused('CROSS_DEVICE_LAYOUT', tool.same_device, self.P)
+                    self.refused('CROSS_DEVICE_LAYOUT', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+                    checked.append(name)
+            finally:
+                os.lstat = real
+        self.assertEqual(checked, [name for name, _, _ in tool.ITEMS])   # every item of the live set was there and each one alone refuses
+        tool.same_device(self.P)                            # and nothing was changed by the refusals
+        self.assertEqual(tool.stage(self.P, self.host, OP2, pkg, 2, lm)['status'], 'LINUX_STAGED')
+
     def test_another_checked_out_source_commit_is_refused(self):
         self.rewrite_g1(lambda rec: rec.update(sourceCommit='0' * 40))
         pkg, lm = self.package()

@@ -83,6 +83,80 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 - **心跳令牌**（2026-10-31，模板 sha `5ff3a1c1`）：配置了 `heartbeat` 时，带令牌的 dry run 和 `-Apply` 再加 `-HeartbeatTokenFile`，配置了 `bindingId` 时再加 `-HeartbeatBindingId`。审过的计划（非提权、不带令牌）不变，卸载之前的 carry-forward 预览也不带心跳令牌。提权比对时把 `plan.heartbeatToken` 也剥出来逐项核对：目标是本包安装器的 `secrets\heartbeat\ci-node-heartbeat.token`、supplied、目标不存在、目录和两个 SDDL 与审过的计划相同、64 位 hex 指纹、verified、`bindingId` 恰好是配置的值；不对就报 `HEARTBEAT_TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED`。没配置时这一项留在其余字段里，必须与审过的相同，和以前一样。生成器核对包的安装器支持心跳令牌（不支持时报 `PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_TOKEN`），final 缺令牌文件时报 `HEARTBEAT_TOKEN_FILE_MISSING`。`HeartbeatBindingId` 在计划里的位置按 `plan.heartbeatToken.bindingId` 核对。
 - **心跳令牌补装或换新（90 天到期）**：今天没有不重装的办法。`install-resident.ps1` 只做全新安装，目标已存在时拒绝（`HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN`）；升级通道不碰 `secrets`。所以补装或换新都要整套重装一次。要免重装，需要一个新的提权小工具（放在 `windows/`，要审核）：按安装器同样的规则核对目录和文件的 ACL，拒绝 CI 令牌和升级令牌，在同一目录里按文件 SDDL 写新内容再原子替换，写一份回执。服务端关联新连接（`/bindings/failover`）会替换旧的关联。这个工具这里没有做。
 
+### 通用节点包：Linux A/B 在同一次 UAC 内执行（`--fleet-plan`）
+
+接口见 `rollout/fleet/BATCH1-INTERFACES.md` 第 3、4 节。节点上由 `rollout/fleet/install.mjs prepare` 调用，不需要按节点的配置文件：
+
+```
+python -I launcher\generate.py --fleet-plan <install-plan.json> --out <launcher.ps1>
+```
+
+- 只出 final。钉住：包、三个 Linux 脚本的路径与哈希、脚本自己写明的入/出目录（`W=`、`O=`，三个脚本必须一致并与 plan 的 `inDir`/`wslInDir` 相符）、生成时 install-plan 的哈希、已装现场。**不钉** B 的输出。plan 的 `launcher` 字段由调用方在本工具返回后才填，所以启动器运行时不再读 plan；所需的值都在启动器自身（由运行命令核哈希）。
+- 节点自己的值从节点读：包的 record（节点档案）；`companionAccount=true` 时读 `install\companion-account.json` 与 `install\companion-wsl.json`（operator、VHDX 目录；plan 与记录是否存在必须一致）；runner 的原始 binPath 取自包内安装器的常量，DACL 取现场 `sc sdshow`。
+- 其余全部来自 plan，缺了即拒绝：`linux.outDir`（必须等于脚本的 `O=`，`FLEET_PLAN_OUT_DIR_NOT_THE_SCRIPTS`）；`secrets`（`source` 必须是 `installed`；`upgradeToken` 为 `{target, fingerprint}`，`heartbeatToken` 为 null 或 `{target, fingerprint, bindingId}`，取自已装回执；target 必须是本包安装器的令牌位置。不指名也不读取任何令牌文件）；`expectedInstalledLinux`（`generation`、`manifestSha256`、`ciSourceManifestSha256`，必须等于 A 脚本里的 `OLD_*` 值，否则 `FLEET_SCRIPTS_NOT_FOR_THE_PLANS_INSTALLED_LINUX`；A 以 root 在暂存任何东西之前核对现场）；`reasons`（恰 `pause`、`rearm`、`w1Pause`）；`launcher` 此时必须为 null。本工具没有令牌相关的命令行参数。
+- 此路径不重建包、不读仓库、不要求预演报告（预演由 prepare 先跑并把关，`prep.py` 仍要求 24 小时内的 PASS 报告）；生成时不要求 W1 已暂停，但已有 `PAUSED.json` 时其 reason 必须是 plan 的 `reasons.w1Pause`（运行时 `Test-OldRootQuiet` 仍要求 `PAUSED.json`）。原有按配置生成的路径不变。
+- 输出一行 JSON：`{status: FLEET_LAUNCHER_GENERATED, launcher: {path, sha256}, elevatedCommand, installPlanSha256, ...}`。
+
+模板在 `$FleetPlanSha256` 非空时多出以下步骤，位置在暂存之后、卸载预检之前（`$Fleet*` 钉值在原有路径下全为 `$null`，这些步骤不运行）：
+
+| 步骤 | 内容 | 停止码 |
+|---|---|---|
+| `Step-WindowsPreflightBeforeLinux` | Linux B 不可逆，所以卸载预检里不依赖 Linux 的只读检查先跑一遍：已装回执/卸载脚本/HALT/终态证据/runner/CI 根 DACL 等于钉值，已装卸载器 dry run 接受现状，新安装器 `-PreviewAfterUninstall` dry run 通过且卸载改不了的计划字段等于审过的，controller 服务登录权，两处秘密文件，旧根已暂停且无开放批次，可结转形状。报告文件另起名字；B 之后 `Step-UninstallPreflight` 照常完整再跑 | 与卸载预检相同的码，另有 `PARENT_ACL_NOT_AS_REVIEWED` |
+| `Step-CarryTokens` | 把现装的升级令牌（和心跳令牌，若有）复制到新建的 `C:\ProgramData\CluedIndependentCI\reinstall-carry-<32hex>\`（仅 SYSTEM 与 Administrators），原件和副本都按 `tools/secret-fingerprint.mjs` 的公式算指纹，必须等于回执里钉住的值；副本路径交给安装器的 `-UpgradeTokenFile` / `-HeartbeatTokenFile`（`-HeartbeatBindingId` 取 plan）。副本不会留到本次运行之后：安装器跑完即删；任何停止（`Stop-Launch`）、任何异常（主 `catch`）和主 `finally` 都先删再写结局，`terminal.json` 的 `carriedTokens` 与 `carried-tokens-report.json` 记录目录、是否已删、删除失败时的异常类型。删掉不丢东西：卸载前现装令牌还在原位，卸载后在改名保留的 `resident-uninstalled-*` 里。断电等 `finally` 没跑的情况由下一次任何 launcher 运行的第一步 `Step-SweepCarry` 处理：逐个检查遗留的 `reinstall-carry-<32hex>`（ACL 是否仍只有 SYSTEM/Administrators、文件是否都是令牌形状），无论结果一律删除，并写 `carry-sweep-report.json`（目录名、条目数、两项判断、是否删除；不含内容）。卸载后安装器自己算出的指纹也必须等于钉值。令牌内容不进任何报告或输出 | `CARRIED_TOKEN_FINGERPRINT_MISMATCH`、`INSTALLED_TOKEN_NOT_A_PLAIN_FILE`、`CARRIED_TOKEN_COPY_FAILED` |
+| `Step-FileLocks` | 把钉住的 `tools\file-locks.ps1` 复制进仅管理员的暂存目录，以提权身份只读观察；有 external 占用即停 | `EXTERNAL_RESIDENT_BINARY_LOCK`、`RESIDENT_FILE_LOCK_OBSERVATION_INVALID` |
+| 目录 | 出目录必须为空，改为 Administrators 所有、受保护 DACL（SYSTEM/Administrators 全权，Owner 只读，companion 账户可写）；入目录给 companion 账户读权 | `LINUX_OUT_DIRECTORY_NOT_EMPTY` 等 |
+| registrar | 仅 companion 节点：从本包的 `CompanionTaskRegistrar.cs` 编译（`New-CompanionBuildFromPackage`，两份文件都核包清单与钉值），结束时删除 | `LINUX_REGISTRAR_BUILD_FAILED` |
+| A | `install\linux-run-<32hex>\script.sh`（仅管理员可写，复制后回读核哈希）、`out\`；companion 节点经 registrar `root-run`，其余节点由提权 Owner 直接 `wsl.exe --user root`，命令行相同 | `LINUX_PHASE_A_NOT_COMPLETED` |
+| B | 同上；失败（非超时）时 B-resume 一次 | `LINUX_PHASE_B_NOT_COMPLETED` |
+| 超时 | 任一步超时：只报告并停止，不杀进程，也不再跑后续脚本 | `LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED` |
+| 核 B 输出 | B 最后一行给出的 evidence / versionFacts 必须是出目录下的规定文件名；evidence 恰一行 `sha256:` 等于包的 `ciSourceManifestSha256` 且有 `exit: 0`，恰一行 `package:` 等于本包；facts 合同为 `linux-version-facts/1`、`generation` 为整数 1、有 `staged` 且为 null、Source 与 Linux manifest 等于包、`pinsOk` 为 true | `LINUX_EVIDENCE_UNPARSABLE`、`LIVE_LINUX_SOURCE_NOT_THIS_RECORD`、`LINUX_ADOPTED_ANOTHER_PACKAGE`、`LINUX_VERSION_FACTS_NOT_THIS_PACKAGE` 等 |
+
+通过规则的 facts 字节复制进暂存目录，之后的 verify `-LinuxVersionFactsFile` 用的就是这份。出目录是 launcher 自己在提权下新建的 `C:\ProgramData\CluedIndependentCI\reinstall-linux-out-<32hex>`（plan 的 `linux.outDir` 必须是这个形状且尚不存在，`prep.py` 不创建它）：路径上没有 Owner 的目录，Owner 会话无法替换它或其中的文件。每次运行的 `linux-run-<hex>\` 里有 `out\` 和 `captured\`：`out\` 下的 `stdout.txt`、`stderr.txt` 由 launcher 预建并各自带受保护 ACL（companion 只有写入/追加，不能删除、替换或改 ACL），`out\` 对 companion 只读；`captured\` 只有 SYSTEM 与 Administrators。进程结束后由 registrar 把两个文件抓进 `captured\`：以不跟随链接的方式打开（`FILE_FLAG_OPEN_REPARSE_POINT`），按句柄核对不是重解析点、不是目录、链接数为 1、不超过 4 MiB，否则拒绝且不读内容。抓取被拒时 registrar 仍输出 `ROOT_RUN_EXITED <code>`，另附一行 `CAPTURE_REFUSED <CODE>`：B 的输出抓不到不算"B 未完成"（不会跑 B-resume），launcher 以 `LINUX_PHASE_B_OUTPUT_NOT_CAPTURED` 停，由续行用 `capture-file`（来源可为运行目录自己的 `out\stdout.txt`/`stderr.txt`，目标为提权新建的 `captured-<32hex>\`）去抓取和核对；A 同理为 `LINUX_PHASE_A_OUTPUT_NOT_CAPTURED`。`Get-FleetRunProcesses <运行目录>`（CIM，只读）列出命令行仍含该运行目录的进程及其是否属于 companion，供续行区分"还没写完"和"进程已不在"。companion 节点上 launcher 只读 `captured\`，不再按路径读 companion 可写的位置；B 的 evidence 与 facts 同样先经 registrar 的 `capture-file` 抓进 `captured\` 再读。非 companion 节点上这些位置本来就只有 SYSTEM 与 Administrators 可写，直接受检读取。
+
+**写入探针（仅 companion 节点，`Step-LinuxOutAclProbe`）**：在 A 之前、任何改动之前，launcher 用与真实运行同一个函数建一个 `install\linux-run-<32hex>-probe\`（目录、预建文件、`captured\`、ACL 逐字相同），由 registrar 的 `write-probe` 以真实的 companion 身份（沿用 root-run 的全部前置）执行 `cmd.exe /d /c "echo x> out\stdout.txt 2> out\stderr.txt"` 并照样抓取。通过条件：退出码 0、抓到的 stdout 恰为 `x`、stderr 为空、`out\` 与两个文件的属主和 DACL 未变。不过即停 `LINUX_OUT_ACL_PROBE_FAILED`，`linux-out-acl-probe-report.json` 写明哪一项；探针目录无论结果都删除。
+
+**停在"节点尚未改动"时自动解除 W1 暂停（`Restore-W1Pause`）**：从进入通用包步骤到 A 启动之前（Windows 预检、令牌带入、文件锁、registrar 构建、写入探针），以及 registrar 在运行任何东西之前就拒绝了 A 的情况，停止时 launcher 通过已装常驻自己的恢复入口（`rearm-resident.ps1 -Request Resume -ExpectedPausedSha256`，服务端自己核对）解除暂停。只在 `state\PAUSED.json` 的 sha 等于钉住的本次 W1 暂停、且 reason 等于 plan 的 `reasons.w1Pause` 时才动，别的暂停绝不碰。结局的 `w1Pause` 写明 `restored` 或原因（`PAUSE_NOT_THIS_LAUNCHS_LEFT_AS_IT_IS`、`INSTALLED_RESUME_DOOR_NOT_AS_REVIEWED`、`RESUME_REQUEST_REFUSED`、`RESUME_REQUESTED_NOT_CONFIRMED_IN_TIME`）。A 启动之后的停止不解除暂停，走续行。两点限制：
+- 只有 registrar 在**改口令之前**的拒绝才算"节点未改动"（`Test-FleetRefusedBeforeAnyChange` 白名单：参数、提权、节点档案、账户、WSL 客户端、`ROOT_RUN_SCRIPT_*`、`ROOT_RUN_DIRECTORY_*`、`ROOT_RUN_PATH_REPARSE_REFUSED`、`TASK_FOLDER_MISSING`、`COMPANION_SWITCH_IN_PROGRESS`、`COMPANION_TASK_*`、`ROOT_RUN_TASK_DEFINITION_DIFFERS`）。任务被停放（`*_PARKED`）、退出码读不到、口令没设上、回读不符等一律不解除，结局写 `w1Pause.reason = NOT_LIFTED:<原因>`；写入探针同样按码区分（探针进程确实跑了、只是写入或 ACL 不过的，属于可解除）。
+- `Step-Package`、`Step-Stage` 在通用包步骤之前，它们失败时（包被改动、暂存目录 ACL 不符）暂停**不会**自动解除：重跑 prepare 即可（`pause-old-resident.py` 认得自己的暂停）。
+
+**`--check`**：`generate.py --fleet-plan <plan> --check` 在 W1 之前做生成前的全部检查（此时 plan 的 `w1Paused` 必须为 null），不要求已暂停、不写启动器，输出 `FLEET_PLAN_CHECK_PASSED` 或拒绝原因。不带 `--check` 时要求节点已被 plan 的 W1 暂停所暂停：`PAUSED.json` 存在、sha 等于 `w1Paused.sha256`、reason 相同（否则 `OLD_RESIDENT_NOT_PAUSED`、`OLD_RESIDENT_PAUSE_NOT_THE_PLANS`、`OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE`）。
+
+**每次运行的第一步清扫**：除遗留的令牌带入目录外，也清掉更早运行留下的 `reinstall-linux-out-<32hex>`（只有公开数据；记录目录名与条目数），但不动本 launcher 自己钉住的那个（B 超时后的续行要从里面读 B 的输出）；以及更早运行的进度记录 `reinstall-progress-<32hex>`（已完成的，或被本次运行取代的；记录是否完成），但不动本 launcher 所续行的那次运行的记录，也不动自己 launch 目录对应的那份（同一个 launcher 被误启动第二次时，第一次的记录必须留着）。
+
+**如实写明的残余**：companion 账户（即发行版里的 root）能写 `stdout.txt` 的内容，也能写出目录里的 evidence 与 facts，所以它能伪造"B 已完成"的状态行和通过规则的输出。这与已经给予该发行版的信任等同（它就是执行 B 的身份），规则核对和最后 verify 的两侧一致性检查之外不再设防。此类启动器不支持 `resume.py`（`FLEET_LAUNCH_RESUME_NOT_SUPPORTED`），续行见下。
+
+#### 中途停止或断电后的续行（`--fleet-continue`）
+
+```
+python -I launcher\generate.py --fleet-continue <上次的 launcher.ps1> --out <新 launcher.ps1>
+```
+
+每台节点命令相同，不带节点值：一切取自上次 launcher 的钉值、它的 launch 目录（停止时的 `terminal.json`；每完成一步就落盘的进度记录）和节点现状。实现在 `launcher/continue.py`（生成，非提权，只写新 launcher；模板与注入片段各有 sha 钉值）和 `launcher/continue-install.ps1`（注入的步骤）。输出一行 JSON：`FLEET_CONTINUATION_GENERATED`（含 `mode`、`launcher.{path,sha256}`、`elevatedCommand`、`launchDir`）或 `{status: REFUSED, code, detail}`（退出码 3）。
+
+**进度记录**：launcher 每完成一步，以 create-only 写两份 `NNN-<步骤>.json`：`<launch>\progress\` 和提权侧的 `C:\ProgramData\CluedIndependentCI\reinstall-progress-<id>\`（id 为 launch 目录路径的 SHA-256 前 32 位）。记录含步骤、序号、进程号与启动时间、钉值。断电（没有 `terminal.json`）时按它判断停在哪一步；续行运行时以提权侧那份为准，并拒绝上次进程仍在运行的情况。
+
+按"最后完成的步骤"决定从哪里接着跑：
+
+| 上次停在 | mode | 续行做什么 |
+|---|---|---|
+| B 输出已核对、卸载未开始（含断电） | `before-uninstall` | 跳过 Linux；重核上次保存的 B 输出；提权文件锁；从现装根带令牌；从 `Step-UninstallPreflight` 起是原文。此时 Linux 已是新代、Windows 仍是旧装，重新 prepare 描述不了这台节点，只能续行 |
+| A 超时 | `a-timeout` | 续行运行时由提权侧看上次 A 的 stdout/stderr：非 companion 节点直接读运行目录 `out\`；companion 节点先由 registrar `capture-file` 把 `out\stdout.txt|stderr.txt` 抓进本次续行在同一运行目录下新建的 `captured-<32hex>\`（仅 SY/BA）再读，抓取 create-only，每次续行一个新目录，旧的留作证据。末行已是 `PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED` → 其余全按原文重跑（Linux 前的 Windows 预检、带令牌、文件锁），`Step-LinuxRoot` 原样跑 B（B 自己按 `phaseA.sha256` 核对），只是其中 A 换成上次那次、出目录改为核对它就是上次建的。判读顺序：先按 `Get-FleetRunProcesses`（template）问该运行是否还有进程：有 → `LINUX_PHASE_STILL_RUNNING_RETRY`（稍后再跑同一条命令，什么也不读），查询失败 → `RUN_PROCESS_QUERY_FAILED`（不当作没有进程）；没有进程才抓取并读：registrar 拒绝抓取 stdout → `LINUX_PHASE_OUTPUT_NOT_CAPTURED`（报告里记 registrar 的拒绝码），读到终态照常往下，末行 REFUSED → `LINUX_PHASE_A_FAILED_AFTER_ITS_TIMEOUT`，其它（没有终态行）→ `LINUX_PHASE_ENDED_WITHOUT_STATUS`（硬失败，不无限重试）。A 已跑过，续行一开始就解除 W1 暂停的自动恢复 |
+| B 超时，或 B 的输出 registrar 拒绝抓取（`LINUX_PHASE_B_OUTPUT_NOT_CAPTURED`，最后一个 run 为 EXITED 且带 `captureRefused`） | `b-timeout` | 跳过 Linux；B 的 stdout 按上一行同样的方式读与判定（B 的终态是 `LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1`，REFUSED → `LINUX_PHASE_B_FAILED_AFTER_ITS_TIMEOUT`）；evidence/facts 经模板的 `Read-FleetOutFile` 读，companion 节点抓进同一个本次的 `captured-<32hex>\`；过规则后提权文件锁、从现装根带令牌，从 `Step-UninstallPreflight` 起是原文 |
+| 卸载半途：quiesce 已完成，已装卸载器 `-Apply` 失败（`UNINSTALL_NOT_COMPLETED`，且证据正是 §4.1 `resume.py` 审过的那种） | `inside-uninstall` | 跳过 Linux 与卸载；重核上次保存的 B 输出；根目录尚未改名，所以**在改名之前**从现装根带令牌（指纹不符即停，节点保持原样，可再生成同一续行）；随后由 `resume.py` 已审的 `Step-FinishUninstall`（`finish-uninstall.ps1` 原样注入、另钉 sha）重核 §4.1 的全部现场条件，只补同目录 rename 和原计划摘要的卸载回执；从 `Step-Preflight` 起是原文 |
+| 卸载半途且断电（无 `terminal.json`，最后一条进度是 quiesce） | 按现场判定 | 生成时非提权只读看现场（`sc query` 三服务、根目录是否在）：三服务都在且根目录在 → `before-uninstall`（从卸载预检重来，已停的服务算已 quiesce）；根目录在、服务已删（全部或部分）→ `inside-uninstall`：由 `resume.py` 的 `Step-FinishUninstall` 在提权侧重证 §4.1 全部守卫（还有服务在就以 `RESUME_SERVICES_NOT_ABSENT` 停），上次卸载的计划取它自己的 dry run （`uninstall.dry-run.stdout.json`，`-Apply` 之前写下）代替 terminal，回执里记 `priorDryRunSha256`；三服务都已删、根目录已改名、最新保留目录晚于那条 quiesce 记录 → `after-uninstall`，回执由提权侧按同一 dry run 的计划摘要核对；其它（服务状态不明、或已改名但还有服务）→ `PRIOR_LAUNCH_CUT_OFF_INSIDE_THE_UNINSTALL_STATE_UNKNOWN`，detail 写明看到的状态。任何续行运行时都先确认没有 `uninstall-resident.ps1` 进程还在跑（`CONTINUE_UNINSTALL_STILL_RUNNING`） |
+| 卸载已完成、安装未完成（含断电） | `after-uninstall` | 跳过 Linux 与卸载；核对保留目录；从保留目录的 `secrets\` 带令牌；从 `Step-Preflight` 起是原文 |
+| 安装已完成，之后首列车等待、verify、pause、companion、rearm、CompanionHeadless 任一未过（含断电） | `after-install` | 不重装、不带令牌。按进度记录和各步报告定出第一个未过的步骤（`$ContinueAfterInstallFrom`），从它起是原文的行，每步可重复（首列车等待、verify、companion 任务（IgnoreNew）、rearm、CompanionHeadless）或先核对已完成再跳过（pause：`PAUSED.json` 已指向本启动器那条固定内容请求的 sha 则不再写请求）。它之前已过的步骤在提权侧重核：现装回执等于上次安装留的回执；首列车报告 `runnerQuiet`；上次 verify 输出 `RESIDENT_VERIFIED`；`PAUSED.json` 仍指向上次的暂停请求；companion 再启动一次（运行中即无操作）；rearm 取上次报告。从 pause 及之前接着跑而 resident 服务已停：只有上次自己停的（进度里有 `pause-not-confirmed-resident-stopped`）才重新启动，否则停止 |
+
+**本版不续行、明确拒绝的情况**（都是告警，不是静默口子）：
+- A 未完成即停（`PRIOR_LAUNCH_STOPPED_BEFORE_LINUX_PHASE_A_COMPLETED_PREPARE_AGAIN`）：节点没有任何改动，重新 prepare（新后缀）。
+- A 完成、B 与 B-resume 都失败（`PRIOR_LINUX_PHASE_B_DID_NOT_COMPLETE_NODE_STAYS_PAUSED`）：节点保持暂停、Windows 侧未动，需要人按 root 脚本自己的恢复说明处理。launcher 只在 B 运行并以非零退出时才跑一次 B-resume；被拒绝或结果不可读的 B 不会被续跑。
+- 卸载半途但不是 `resume.py` 的情形：断电且现场不是上表两种之一（`PRIOR_LAUNCH_CUT_OFF_INSIDE_THE_UNINSTALL_STATE_UNKNOWN`）；在 `-Apply` 之前或之后被检查停下（`PRIOR_LAUNCH_STOPPED_INSIDE_THE_UNINSTALL_NOT_A_FAILED_APPLY`，码在 detail）；终结证据不合 `resume-evidence.py` 的规则（`PRIOR_UNINSTALL_NOT_RESUMES_CASE`，原规则码在 detail）；续行运行时现场不合 §4.1（`RESUME_*`）。
+- 安装之后：全部已过（`PRIOR_LAUNCH_COMPLETED_NOTHING_TO_CONTINUE`）；上次走的是 `-CompanionMaintenance` 路径（`PRIOR_LAUNCH_RAN_COMPANION_MAINTENANCE_NOT_CONTINUED`）；进度与报告互相矛盾（`PRIOR_POST_INSTALL_RECORDS_INCONSISTENT`）；运行时现装不是上次那次安装（`CONTINUE_INSTALL_NOT_THE_PRIOR_LAUNCHS`）、暂停已不在（`CONTINUE_PRIOR_PAUSE_NO_LONGER_IN_FORCE`）、resident 被别人停了（`CONTINUE_RESIDENT_STOPPED_NOT_BY_THE_PRIOR_LAUNCH`）。断电后不知道 companion 是否已启动时从 companion 起（可重复）。
+
+其它拒绝：上次 launcher 不是本模板原样或不是通用包 launcher；进度记录与 `terminal.json` 不一致（`PRIOR_PROGRESS_NOT_THE_TERMINALS`）；卸载报告不是钉住的那次安装的；保留目录不在或不是最新的 `resident-uninstalled-*`（更早的保留目录是正常的）；上次保存的 B 输出不是其报告记的字节或不再过规则。
+
+**续行可以再续行**：`--fleet-continue` 的输入也可以是上一次生成的续行启动器，与原启动器同等工作。生成器把它读回成“原启动器的钉值 + 续行钉值”，并要求用同一段代码对其重新生成得到逐字节相同的内容，否则 `PRIOR_LAUNCHER_REFUSED`（`NOT_A_CONTINUATION_OF_THIS_TEMPLATE`）；进度记录、钉值、证据都跟着上一次续行的 launch 目录走。为此每个续行步骤都把后续续行要读的证据写进自己的 launch 目录（`linux-report.json`、`uninstall-report.json`、安装后沿用的各步报告与 `install-receipt.json`），沿用的安装后步骤也记进度；续行步骤自身的进度记录（`continued-*`）代表它跳过的那些原步骤。上一次续行在它自己的步骤完成之前就停了（A 超时续行：在它的 B 之前）则它什么也没改，直接续它所续的那次（输出 `skippedContinuationLaunchDir`）。`install-plan.json` 若在旁边，核对的是链首原启动器的哈希（`$ContinueRootLauncherSha256`）。上一次续行若已做了不可撤的改名（进度里有 `uninstall-finish-only` 或 `uninstall`，或它是卸载半途续行且根目录已不在），则不跳过它，而按 `after-uninstall` 续它本身：保留目录取它的 `uninstall-report.json`；没有就取 `finish-uninstall-report.json`；都没有（改名后、记录前断电）就取晚于它最后一条记录的最新保留目录，回执按它钉的 `$ResumeUninstallPlanSha256` 在提权侧核对。
+
 ### 4.1 只完成先前卸载的目录改名
 
 `launcher/resume.py` 仅处理同一模板生成、已经审过的 final 启动器在 `UNINSTALL_NOT_COMPLETED` 停下，且旧 resident 根目录仍存在的半卸载。原启动器、原终结记录和原预检查都保留；已有成功卸载回执或根目录已经改名的情况会拒绝。
@@ -103,6 +177,8 @@ Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`
 服务身份绑定前后两次 SCM 服务名/PID 和进程创建时间，不要求普通用户能读 `ExecutablePath`。优先使用仅 `PROCESS_QUERY_LIMITED_INFORMATION` 的原生查询；加固 DACL 连此查询也拒绝时，用系统 CIM provider 的创建时间和即时重查，明确按微秒（10个 FILETIME tick）与 RM 对齐，报告 `identityPrecisionTicks`。缺创建时间、PID重用、进程已退出或重查失败仍不能豁免。companion 的根绑定固定注册任务的两次运行实例 GUID、EnginePID、状态和 action 路径，支持实际 conhost 形态；同名 conhost/JobHost 或仅凭相邻 PID 不构成身份。子进程仍须核父子创建时序及当前身份。
 
 账户所属 companion 任务可能对非提权 Operator 拒绝读取。仅确切的 `E_ACCESSDENIED`（包括 PowerShell 的异常包装）会记录为 `companionTaskObservation` 的 `UNREADABLE` / `COMPANION_TASK_ACCESS_DENIED`；整次任务观察原子丢弃，不保留异常前得到的部分实例。它不意味着任务不存在或进程可信，也不会绕过 Restart Manager：公开文件的真实占用仍全部扫描；没有独立核实身份的锁持有者及其子进程仍为 external，从而产生原 `EXTERNAL_RESIDENT_BINARY_LOCK` finding。两次观察只要有一次不可读，就没有 companion 任务身份豁免；独立 SCM 身份检查保持。任务不存在、其他 COM 错误及非权限观察失败仍直接失败，不作为无占用。只有真实扫描未发现外部占用时，这项公开文件占用检查才可通过；它不证明 companion 运行资格。探针不提权、不改任务 ACL 或状态。
+
+companion 专用账户节点（M5-b，见下文"companion 账户节点"）上，公开二进制被该账户的 `CluedCompanionSupervisor.exe` 和 `runtime\node.exe` 占用，它们仍记为 external，报告的 finding 另带 `companionProcessIdentity=UNREADABLE_NON_ELEVATED`。原因是非提权 Owner 在 Windows 11 上读不到另一本地账户进程的可核身份（DESK 2026-11-12 实测）：对这些进程 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` 返回 `ERROR_ACCESS_DENIED`，因此无法 `OpenProcessToken` 取 owner SID；CIM `Win32_Process.GetOwnerSid` 返回 2（拒绝访问），`ExecutablePath` 为空；`WTSEnumerateProcessesEx` 对这些进程给出空 `pUserSid`；账户的计划任务又是 `COMPANION_TASK_ACCESS_DENIED`。仅 `NtQuerySystemInformation(SystemProcessIdInformation)` 能读到映像路径，但路径或名称不是身份，不据此豁免。`tools/file-locks.ps1` 因此不变，fail-closed 规则不放宽；这项 finding 需提权观察或 companion 自己公开可核身份后才能消除。
 
 只读 API 依据：[GetProcessTimes](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)、[Win32_Process](https://learn.microsoft.com/windows/win32/cimwin32prov/win32-process)、[CIM_DATETIME](https://learn.microsoft.com/windows/win32/wmisdk/cim-datetime)、[IRunningTask.EnginePID](https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-irunningtask-get_enginepid)。
 
@@ -128,15 +204,30 @@ python -I rehearse.py config\desk-w-591.json --commit <40hex> --package <包目�
 | upgrader | 装着 CluedCIUpgrader 时，模板的停服步骤必须经 SCM 停它 |
 | verify | 新包的 `verify-resident.ps1` 输出形状（`status` 和 `checks.*.ok`）必须是启动器读的那样。已装的 verify 也真跑一次：不提权时它会被管理员专属文件挡住，此时只记为"未提权不可运行"，不算 finding；能跑出结果时，必须是 VERIFIED 或 PARTIALLY |
 | status | `state/status.json` 的 `writtenAt`、`executor`、`current`、`halt`；`upgrade/status.json` 里没有 op；`upgrade/current.json` 的合同 |
-| linux | 默认 Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`），或经现装冻结工具现场复核的显式快照，与现装代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
+| linux | 默认 Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`），或经现装冻结工具现场复核的显式快照，与现装代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对）。companion 账户节点上角色副本改取 companion 的公开副本（见下） |
 | pins | 包里 Linux 常驻 manifest 的外部钉值：形状与已装一致，`source-v2` 钉值等于新提交里的文件 |
-| linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`） |
-| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。默认使用发行版默认用户；可用 `linux.rehearsalUser` 显式指定已有普通用户（如 `nobody`），只影响本项，不修改发行版默认用户、账户或权限。真实 UID 或 EUID 为 0 时仍拒绝运行 |
+| linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`）。companion 账户节点上不运行，见下 |
+| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。默认使用发行版默认用户；可用 `linux.rehearsalUser` 显式指定已有普通用户（如 `nobody`），只影响本项，不修改发行版默认用户、账户或权限。真实 UID 或 EUID 为 0 时仍拒绝运行。companion 账户节点上改用本机 Windows Python，见下 |
 | node | 包里的节点档案就是配置所指的那份 |
 
 报告（`clued.independent-ci.reinstall-rehearsal/1`）只新建、不覆盖，写在 `workDir\rehearsal\`。
 
 `linux.rehearsalUser` 可省略或为 null；字符串只接受普通用户名形状，拒绝 `root`、数字 UID、空白、路径和选项。角色预演仅读取公开副本与已接受 Git 内容，在随机 `/tmp` 目录写入后清理；权限不足继续拒绝，不回退 root。报告的 `checks.roles.runAsUser` 记录所选用户，配置原字节仍绑定 `configSha256`；此配置不进入运行包或 Source 闭包。`linuxHost` 的既有 root 只读探针不变。
+
+### companion 账户节点（M5-b，ADR 0023；按记录判定，各节点通用）
+
+节点有 `install\companion-account.json`（`clued.independent-ci.companion-account/1`）或 `install\companion-wsl.json` 任一时，即按 companion 账户节点预演。常驻发行版注册在 companion 账户下，Owner 自己的 WSL 看不到它，所以预演**完全不调用 wsl**（不调用 `wsl_python`，也不调用显式快照的现场复核）。
+
+- 两份记录严格核对，不合即 finding（fail closed，不回退到 Owner 的 WSL）：账户记录恰为 `contract`、`companionSid`、`operatorSid` 三键，无重复键，两个 SID 为本地用户 SID 形状且不相同，`companionSid` 等于节点档案的 `ownerSid`（否则 `COMPANION_ACCOUNT_RECORD_REFUSED`，`reason` 为 `MISSING`/`SHAPE`/`COMPANION_NOT_THE_PROFILE_OWNER`/`UNREADABLE`）；WSL 记录合同为 `clued.independent-ci.companion-wsl/1`、`stage=qualified`、`distro` 等于配置的发行版、`companionSid` 等于账户记录（否则 `COMPANION_WSL_RECORD_REFUSED`，`reason` 为 `MISSING`/`SHAPE`/`NOT_QUALIFIED`/`NOT_THIS_DISTRIBUTION_AND_ACCOUNT`）。配置的 `operatorSid` 不等于记录时为 `COMPANION_ACCOUNT_NOT_THE_CONFIGURED`。
+- linux：facts 仍用默认的 Windows 侧副本，原有检查全部保留。角色文件改取 companion 的公开副本 `upgrade\mailbox\responses\roles-public.json`（`clued.independent-ci.linux-roles-public/1`）：形状、无重复键、规范 base64、每个文件的 sha256 等于其条目（否则 `ROLES_PUBLIC_COPY_INVALID`），`generation` 等于 facts（否则 `ROLES_PUBLIC_COPY_OTHER_GENERATION`），每个文件等于 facts 里的 policy/qualification sha（否则 `ROLES_PUBLIC_COPY_NOT_THE_FACTS`）；缺失或不可读为 `ROLES_PUBLIC_COPY_MISSING`/`UNREADABLE`。配置 `linux.installedRoles` 里有同名文件时必须逐字节相同（否则 `INSTALLED_ROLES_COPY_NOT_THE_COMPANION_COPY`）；`formal-source-manifest-v2.json` 仍取配置目录并照旧比对 facts。报告 `checks.linux.rolesCopySource=companion-roles-public`。
+- roles：同一个 `linux/tools/derive-roles.py`（字节不改）由本机 Windows Python `-I` 运行，输入是上述公开副本写入的私有临时目录，结束后连同工具的只读输出一起删除。runner 只补工具的 POSIX 专用部分：先拒绝提权令牌（`REHEARSAL_RUNNER_IS_ELEVATED`，对应 WSL 的拒绝 root），再模拟 `geteuid`；Windows 没有 `O_NOFOLLOW`，工具在新建私有目录里的 `O_CREAT|O_EXCL` 改带 `O_BINARY`；工具固定的 `/usr/bin/git` 换成 PATH 上的 Windows git（工具自己的干净环境和参数不变；找不到 git 为 `WINDOWS_GIT_NOT_FOUND`）。成功/拒绝语义和报告字段与原来相同，`checks.roles.runAsUser=windows-non-elevated-operator`。公开副本未通过时不派生，记 `ROLE_DERIVATION_NOT_REHEARSED`。
+- linuxHost：不运行，报告 `{"deferredTo": "launch-phase-A", "reason": "COMPANION_ACCOUNT_DISTRIBUTION"}`，不算 finding：启动时第 A 步以 companion 账户、root 身份在任何改动之前先跑 check-host 和角色派生。
+- 显式快照 `--linux-version-facts` 无法不经 wsl 现场复核，记 `LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE`（`reason=COMPANION_ACCOUNT_DISTRIBUTION`）；此类节点用 companion 写的默认 facts。
+- 其余检查不变；文件占用见上文（companion 进程仍为 external）。没有这两份记录的节点行为与之前完全相同。
+
+`--fleet`（通用节点包的 prepare 使用）必须与 `--file-locks-in-launcher` 同时给（否则参数错误）：已装 Linux manifest 的字节在 Windows 侧不存在，配置里的 `linux.installedManifest` 指向的文件可以不存在，这项记为 `checks.linux.installedManifestCopy = {deferredTo: linux-phase-a, expectedSha256}`，不算 finding，由 Linux A 以 root 核对现场 manifest（外部钉值在这里只核"source-v2 条目等于新提交的文件、toolchain node 等于配置值"，形状与其余条目由 A 核）。
+
+`--file-locks-in-launcher`：companion 账户节点上，非提权观察到的 external 占用不再记 finding，改记 `checks.fileLocksFinding = {deferredTo: launch-elevated-file-locks, ...}`，由启动器在 UAC 内以提权身份重查（`Step-FileLocks`，有 external 即停，早于任何改动）。观察本身无效仍是 finding；模板没有该步骤时为 `LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP`；没有 companion 记录的节点不受此开关影响。
 
 r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` 里有对应的回归测试：
 
@@ -168,10 +259,17 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
     - `verify-source-v2.sh` 的 `V1_HEAD` 为空，于是检查 `no-v1`。
     - 其余检查全部照旧：已装 Source v2 的 HEAD 和 manifest、已装常驻和升级通道、旧 version facts、check-host 的钉值、verify-signed、三份计划。
   - 有 Source v1 的节点：生成的三个脚本与改动之前逐字节相同。
+- `prep.py --in-dir <Windows 路径> --out-dir <Windows 路径>`（通用节点包；两项必须同时给，取代 `<in>` 名）：
+  - 脚本只读入目录（`W=`）、只把 review 副本、version facts、evidence 和 out-B 写进出目录（`O=`，不存在即拒绝 `OUT_DIRECTORY_MISSING`）；不再用 `$W/..`。两个路径只许字母、数字、`.`、`_`、`-` 和 `\`，出目录不能在入目录里。
+  - 脚本名为 `workDir\linux\A.sh`、`B.sh`、`B-resume.sh`，不带参数、不要求 `R4_CLEAN_ENV`（registrar 的固定环境没有它；脏环境变量检查保留）。B 和 resume 不再比对"审过的第 A 步清单哈希"（一次 UAC 内 A、B 之间没有人工环节），仍逐字节核 `phaseA.sha256`。其余文本与 Owner 手动运行的脚本相同（测试逐行比对）。
+  - Linux 工具取自本文件所在的树（解包后的包），不做 `git archive` 校验，不需要仓库。
+  - 通用节点包的 A 另有两项（Owner 手动运行的脚本没有）：一开头，若另有 `/root/clued-ci-reinstall-*/stg` 还没有 `phaseA.sha256`、且有别的进程在跑 `linux-run-<hex>/script.sh`，拒绝 `ANOTHER_PHASE_A_RUNNING`；暂存之后，以 root 读现场已装的 Linux manifest，核对合同与路径列表（含顺序）等于新包的，不等即停 `INSTALLED_LINUX_MANIFEST_NOT_THE_PACKAGES_SHAPE`（`rehearse.py --fleet` 看不到已装 manifest，这项由 A 核）。代价：新包若增删或调换了 Linux 常驻 manifest 里的文件条目，这条路径装不了它，A 会在暂存后、任何切换之前拒绝（节点保持暂停，Windows 侧未动）；那样的包需要先改这条规则并重新审核。
 - `tools/derive-roles.py`：与冻结工具 `clued-ci-upgrade-linux` 的 `derive_role` 一样，把 5 个 Source 钉值（entry、qualification、worker、proof、job）重钉为新提交的值，其余一律不许变。
 - 其余工具与 r7 审过的相同：`sign-qualification-v2.mjs`（9ee06a93）、`verify-source-v2.template.sh`（r7 的 60c078e0 加一处：v1 HEAD 改为变量 `V1_HEAD`，现 05314df4）、`check-host.py`（两项钉值改为参数）、`verify-signed.mjs`。
 
 ## 7. 一次整套重装的顺序
+
+多节点用同一个通用包重装（每台一次 UAC）的操作说明见 `../rollout/fleet/README.md`。
 
 1. `build.ps1 -Final`：得到 final 包 W0（final 启动器此时还出不来）。
 2. `rehearse.py`：结果必须是 REHEARSAL_PASS。

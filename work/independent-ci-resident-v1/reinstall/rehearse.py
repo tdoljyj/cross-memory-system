@@ -13,13 +13,18 @@ Every check runs the node's real tools or reads its real files, non-elevated, an
   roles       the role derivation the Linux phase A will run (linux/tools/derive-roles.py, as a normal user in the node's WSL distribution
               on the copies): it must succeed for the new commit; every repinned Source file is listed
   node        the package's node profile is the configured one
+A node whose resident distribution is registered to the companion's own account (M5-b, ADR 0023: install\\companion-account.json and
+install\\companion-wsl.json, stage qualified) is not visible to the Owner's WSL: there the rehearsal calls no wsl at all. The installed
+roles come from the companion's public copy (upgrade\\mailbox\\responses\\roles-public.json, checked against the facts), the derivation
+runs the same derive-roles.py with this Windows Python, and the root host probe is deferred to launch phase A (it checks the host as
+root before anything changes).
 Output: one create-only JSON report (clued.independent-ci.reinstall-rehearsal/1) with `findings` (the difference list) and every
 observed value; exit 0 only on REHEARSAL_PASS.
 
   python -I rehearse.py <config.json> --commit <40hex> --package <dir> [--report-dir <dir>] [--skip-roles]
          [--linux-version-facts <original frozen-tool stdout snapshot>]
 """
-import datetime, hashlib, importlib.util, json, os, re, subprocess, sys
+import base64, binascii, datetime, hashlib, importlib.util, json, os, re, shutil, stat, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BS = chr(92)
@@ -33,6 +38,30 @@ FACTS_MAX_BYTES = 32 * 1024
 FACTS_MAX_AGE = datetime.timedelta(hours=1)
 FACTS_FUTURE_TOLERANCE = datetime.timedelta(seconds=30)
 FACTS_ROLES = ('gitleaks', 'trivy', 'contract-placement')
+# M5-b (ADR 0023): the install's records of a companion account and of the resident distribution registered to it
+COMPANION_ACCOUNT_CONTRACT = 'clued.independent-ci.companion-account/1'
+COMPANION_WSL_CONTRACT = 'clued.independent-ci.companion-wsl/1'
+COMPANION_RECORD_MAX_BYTES = 64 * 1024
+USER_SID = re.compile(r'S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}')
+# the companion's public copy of the live roles-v3 (src/roles-public.mjs; its other reader is rollout/tools/roles-derived.py)
+ROLES_PUBLIC_CONTRACT = 'clued.independent-ci.linux-roles-public/1'
+ROLES_PUBLIC_NAMES = tuple(r + s for r in FACTS_ROLES for s in ('.json', '.qualification.json'))
+ROLES_PUBLIC_MAX_BYTES = 192 * 1024
+ROLES_PUBLIC_FILE_MAX_BYTES = 16 * 1024
+DEFERRED_HOST_PROBE = {'deferredTo': 'launch-phase-A', 'reason': 'COMPANION_ACCOUNT_DISTRIBUTION'}
+# The generic node package's launcher (launcher/template.ps1 Step-FileLocks, generate.py --fleet-plan) runs tools/file-locks.ps1 ELEVATED,
+# before anything changes; only from there are a companion account's processes and task readable.
+DEFERRED_FILE_LOCKS = {'deferredTo': 'launch-elevated-file-locks', 'reason': 'COMPANION_PROCESS_IDENTITY_UNREADABLE_NON_ELEVATED'}
+# derive-roles.py, unchanged, with this (Windows) Python: only the tool's POSIX-only parts are supplied. The tool requires root
+# (os.geteuid); like the WSL runner this first refuses a privileged runner (here an elevated token), then simulates it. Windows has no
+# O_NOFOLLOW: the tool's create is O_CREAT|O_EXCL in a new private directory, here with O_BINARY (no newline translation). Its fixed
+# /usr/bin/git is the given Windows git, with the tool's own clean environment and arguments.
+WINDOWS_ROLE_RUNNER = ("import ctypes,os,runpy,subprocess,sys\n"
+                       "if ctypes.windll.shell32.IsUserAnAdmin(): print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_RUNNER_IS_ELEVATED\"}'); sys.exit(3)\n"
+                       "t,git=sys.argv[1],sys.argv[2]; sys.argv=[t]+sys.argv[3:]\n"
+                       "os.geteuid=lambda:0; os.O_NOFOLLOW=os.O_BINARY; real=subprocess.run\n"
+                       "subprocess.run=lambda argv,*a,**k: real([git]+list(argv[1:]) if argv[:1]==['/usr/bin/git'] else argv,*a,**k)\n"
+                       "runpy.run_path(t, run_name='__main__')")
 
 
 def load_module(name, path):
@@ -58,23 +87,103 @@ def read_json(p):
         return json.loads(f.read().decode('utf-8-sig'))
 
 
-def version_facts(raw):
-    """Bounded public facts only. An invalid document never supplies role names or comparison values."""
-    if not 0 < len(raw) <= FACTS_MAX_BYTES:
-        raise ValueError('LINUX_FACTS_INVALID')
-
+def strict_json(raw, code):
+    """UTF-8 JSON without duplicate keys, else ValueError(code)."""
     def unique(pairs):
         obj = {}
         for key, value in pairs:
             if key in obj:
-                raise ValueError('LINUX_FACTS_INVALID')
+                raise ValueError(code)
             obj[key] = value
         return obj
-
     try:
-        f = json.loads(raw.decode('utf-8-sig'), object_pairs_hook=unique)
+        return json.loads(raw.decode('utf-8-sig'), object_pairs_hook=unique)
     except (ValueError, RecursionError):
-        raise ValueError('LINUX_FACTS_INVALID') from None
+        raise ValueError(code) from None
+
+
+class Finding(Exception):
+    def __init__(self, code, **detail):
+        super().__init__(code)
+        self.code, self.detail = code, detail
+
+
+def bounded_json(raw, limit):
+    try:
+        return strict_json(raw, 'SHAPE') if raw is not None and 0 < len(raw) <= limit else None
+    except ValueError:
+        return None
+
+
+def companion_records(account_raw, wsl_raw, owner_sid, distribution):
+    """The install's companion-account record and the qualified resident distribution registered to that account, each checked
+    strictly (the readers in windows/companion-headless.ps1); a Finding otherwise. None for an input: that file does not exist."""
+    if account_raw is None:
+        raise Finding('COMPANION_ACCOUNT_RECORD_REFUSED', reason='MISSING')
+    a = bounded_json(account_raw, COMPANION_RECORD_MAX_BYTES)
+    if (not isinstance(a, dict) or set(a) != {'contract', 'companionSid', 'operatorSid'} or a['contract'] != COMPANION_ACCOUNT_CONTRACT
+            or not all(isinstance(a[k], str) and USER_SID.fullmatch(a[k]) for k in ('companionSid', 'operatorSid'))
+            or a['companionSid'] == a['operatorSid']):
+        raise Finding('COMPANION_ACCOUNT_RECORD_REFUSED', reason='SHAPE')
+    if a['companionSid'] != owner_sid:   # on an M5-b node the profile's ownerSid is the companion account
+        raise Finding('COMPANION_ACCOUNT_RECORD_REFUSED', reason='COMPANION_NOT_THE_PROFILE_OWNER')
+    if wsl_raw is None:
+        raise Finding('COMPANION_WSL_RECORD_REFUSED', reason='MISSING')
+    w = bounded_json(wsl_raw, COMPANION_RECORD_MAX_BYTES)
+    if (not isinstance(w, dict) or w.get('contract') != COMPANION_WSL_CONTRACT
+            or not all(isinstance(w.get(k), str) for k in ('distro', 'target', 'companionSid', 'stage'))):
+        raise Finding('COMPANION_WSL_RECORD_REFUSED', reason='SHAPE')
+    if w['stage'] != 'qualified':
+        raise Finding('COMPANION_WSL_RECORD_REFUSED', reason='NOT_QUALIFIED', stage=w['stage'][:40])
+    if w['distro'] != distribution or w['companionSid'] != a['companionSid']:
+        raise Finding('COMPANION_WSL_RECORD_REFUSED', reason='NOT_THIS_DISTRIBUTION_AND_ACCOUNT')
+    return a
+
+
+def roles_public(raw, facts):
+    """{name: bytes} of the companion's public role copy: its own generation and entries, and every file the one the facts name."""
+    doc = bounded_json(raw, ROLES_PUBLIC_MAX_BYTES)
+    iso = lambda v: isinstance(v, str) and re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?(Z|[+-]\d\d:\d\d)', v) is not None
+    if (not isinstance(doc, dict) or set(doc) != {'contract', 'generation', 'factsObservedAt', 'observedAt', 'files'}
+            or doc['contract'] != ROLES_PUBLIC_CONTRACT or type(doc['generation']) is not int or doc['generation'] < 1
+            or not iso(doc['factsObservedAt']) or not iso(doc['observedAt'])
+            or not isinstance(doc['files'], dict) or set(doc['files']) != set(ROLES_PUBLIC_NAMES)):
+        raise Finding('ROLES_PUBLIC_COPY_INVALID')
+    if doc['generation'] != facts['generation']:
+        raise Finding('ROLES_PUBLIC_COPY_OTHER_GENERATION', copy=doc['generation'], facts=facts['generation'])
+    files = {}
+    for name in ROLES_PUBLIC_NAMES:
+        entry = doc['files'][name]
+        try:
+            if (not isinstance(entry, dict) or set(entry) != {'sha256', 'base64'} or not isinstance(entry['sha256'], str)
+                    or re.fullmatch(r'[0-9a-f]{64}', entry['sha256']) is None or not isinstance(entry['base64'], str)):
+                raise ValueError()
+            data = base64.b64decode(entry['base64'].encode('ascii'), validate=True)
+        except (ValueError, binascii.Error):
+            raise Finding('ROLES_PUBLIC_COPY_INVALID', file=name) from None
+        if (not 0 < len(data) <= ROLES_PUBLIC_FILE_MAX_BYTES or base64.b64encode(data).decode('ascii') != entry['base64']
+                or sha_bytes(data) != entry['sha256']):
+            raise Finding('ROLES_PUBLIC_COPY_INVALID', file=name)
+        want = facts['roles'][name.split('.', 1)[0]]['qualificationSha256' if name.endswith('.qualification.json') else 'policySha256']
+        if entry['sha256'] != want:
+            raise Finding('ROLES_PUBLIC_COPY_NOT_THE_FACTS', file=name, copy=entry['sha256'], installed=want)
+        files[name] = data
+    return files
+
+
+def remove_tree(path):
+    """A private temporary directory, with the read-only (0400) files derive-roles.py creates."""
+    def writable(func, p, _):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    shutil.rmtree(path, **({'onexc': writable} if sys.version_info >= (3, 12) else {'onerror': writable}))
+
+
+def version_facts(raw):
+    """Bounded public facts only. An invalid document never supplies role names or comparison values."""
+    if not 0 < len(raw) <= FACTS_MAX_BYTES:
+        raise ValueError('LINUX_FACTS_INVALID')
+    f = strict_json(raw, 'LINUX_FACTS_INVALID')
     required = {'contract', 'generation', 'staged', 'pinsOk', 'sourceCommit', 'ciSourceManifestSha256',
                 'manifestSha256', 'roles', 'upgradeToolSha256', 'observedAt'}
     digest = lambda value: isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
@@ -129,6 +238,10 @@ class Host:
                             'version-facts'], capture_output=True, timeout=90)
         return p.returncode, p.stdout
 
+    def read_bounded(self, p, limit):
+        with open(p, 'rb') as f:
+            return f.read(limit + 1)
+
     def sha(self, p):
         return sha_file(p)
 
@@ -151,6 +264,12 @@ class Host:
         itself), or as root for the read-only host probe (user='root')."""
         p = subprocess.run(['wsl.exe', '-d', distribution] + (['-u', user] if user else []) + ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin',
                             'LANG=C', 'LC_ALL=C', 'GIT_OPTIONAL_LOCKS=0', '/usr/bin/python3', '-I'] + list(argv), capture_output=True, timeout=600)
+        return p.returncode, p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')
+
+
+    def windows_python(self, argv):
+        """This (Windows) Python, isolated, as the non-elevated Owner who runs the rehearsal; no WSL."""
+        p = subprocess.run([sys.executable, '-I'] + list(argv), capture_output=True, timeout=600)
         return p.returncode, p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')
 
 
@@ -184,7 +303,7 @@ def to_wsl(p):
     return '/mnt/' + p[0].lower() + p[2:].replace(BS, '/')
 
 
-def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, linux_version_facts=None):
+def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, linux_version_facts=None, file_locks_in_launcher=False, installed_linux_in_phase_a=False):
     rconfig.need_installed_linux(cfg)   # a rehearsal is against an installed node; a first install has nothing to rehearse
     findings, checks = [], {}
 
@@ -203,6 +322,24 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     if pkg_node != profile:
         find('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', package=pkg_node.get('nodeName'))
 
+    # companion: M5-b (ADR 0023), the resident distribution registered to the companion's own account. Either install record there makes
+    # this a companion node: the Owner's WSL cannot see that distribution, so nothing below calls wsl. Records that do not check out
+    # are a finding (fail closed), never a reason to fall back to the Owner's WSL.
+    account_path, wsl_path = host.path('install', 'companion-account.json'), host.path('install', 'companion-wsl.json')
+    companion = host.exists(account_path) or host.exists(wsl_path)
+    if companion:
+        checks['companionAccount'] = {'records': True}
+        try:
+            raws = [host.read_bounded(p, COMPANION_RECORD_MAX_BYTES) if host.exists(p) else None for p in (account_path, wsl_path)]
+            account = companion_records(raws[0], raws[1], profile['ownerSid'], cfg['linux']['distribution'])
+            checks['companionAccount'].update({'companionSid': account['companionSid'], 'operatorSid': account['operatorSid'], 'wslStage': 'qualified'})
+            if cfg.get('operatorSid') != account['operatorSid']:   # the launcher's operator (README section 8, M5-b)
+                find('COMPANION_ACCOUNT_NOT_THE_CONFIGURED', installed=account['operatorSid'], configured=cfg.get('operatorSid'))
+        except Finding as refused:
+            find(refused.code, **refused.detail)
+        except OSError as error:
+            find('COMPANION_ACCOUNT_RECORD_REFUSED', reason='UNREADABLE', error=type(error).__name__)
+
     # This covers installed public binary files, not directories or protected
     # secrets. A later rename still has its own exact completion evidence.
     try:
@@ -218,8 +355,18 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
                        or type(row.get('expected')) is not bool for row in locks['lockers'])
                 or locks['external'] != [row for row in locks['lockers'] if row['expected'] is False]):
             find('RESIDENT_FILE_LOCK_OBSERVATION_INVALID')
+        elif locks['external'] and companion and file_locks_in_launcher:
+            # The launcher of the generic node package observes the locks again, elevated, where the account's processes can be told
+            # apart, and stops before anything changes on any external one. Only then, and only on a companion node (where this
+            # non-elevated observation cannot tell them apart), is the finding left to it; what was seen here is kept in the report.
+            if 'function Step-FileLocks' not in template or '$fileLocks = Step-FileLocks' not in template:
+                find('LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP')
+            checks['fileLocksFinding'] = dict(DEFERRED_FILE_LOCKS, processes=locks['external'])
         elif locks['external']:
-            find('EXTERNAL_RESIDENT_BINARY_LOCK', processes=locks['external'])
+            # On a companion node the account's processes stay external non-elevated: neither their token (owner SID) nor the
+            # account's task is readable to the Owner (README section 5), and a name or path is no identity.
+            find('EXTERNAL_RESIDENT_BINARY_LOCK', processes=locks['external'],
+                 **({'companionProcessIdentity': 'UNREADABLE_NON_ELEVATED'} if companion else {}))
     except Exception as error:
         find('RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE', reason=str(error)[:400])
 
@@ -304,7 +451,10 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     except ValueError as error:
         find(str(error))
     if facts:
-        if linux_version_facts is not None:
+        if linux_version_facts is not None and companion:
+            # the frozen tool's live read needs the account's distribution: no corroboration, so the snapshot is not accepted
+            find('LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE', reason='COMPANION_ACCOUNT_DISTRIBUTION')
+        elif linux_version_facts is not None:
             # A supplied path and its timestamp are not authority. Corroborate every business field with the installed
             # frozen tool on THIS configured distro; the two collection timestamps may differ. The normal host probe and
             # real normal-user role derivation below still run, and none of the supplied bytes enter the installed cache.
@@ -343,13 +493,45 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
         find('LINUX_FACTS_NOT_A_SETTLED_GENERATION', facts=lin)
     if gen.get('linux') != {'generation': facts.get('generation'), 'manifestSha256': facts.get('manifestSha256'), 'ciSourceManifestSha256': facts.get('ciSourceManifestSha256')}:
         find('LINUX_FACTS_NOT_THE_GENERATION_RECORD', record=gen.get('linux'))
-    copy_sha = sha_file(cfg['linux']['installedManifest'])
-    lin['installedManifestCopySha256'] = copy_sha
-    if copy_sha != facts.get('manifestSha256'):
-        find('INSTALLED_LINUX_MANIFEST_COPY_STALE', copy=copy_sha, installed=facts.get('manifestSha256'))
+    if installed_linux_in_phase_a:
+        # The generic node package: the installed Linux manifest's bytes do not exist on the Windows side (only its hash, in the version
+        # facts), so the configuration's file is no copy of it. Linux phase A, as root and before it stages anything, requires the live
+        # manifest to hash to exactly this value (prep.py: LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2), like linuxHost on a companion node.
+        lin['installedManifestCopy'] = {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_MANIFEST_BYTES_NOT_ON_WINDOWS', 'expectedSha256': facts.get('manifestSha256')}
+    else:
+        copy_sha = sha_file(cfg['linux']['installedManifest'])
+        lin['installedManifestCopySha256'] = copy_sha
+        if copy_sha != facts.get('manifestSha256'):
+            find('INSTALLED_LINUX_MANIFEST_COPY_STALE', copy=copy_sha, installed=facts.get('manifestSha256'))
     rd = cfg['linux']['installedRoles']
     lin['rolesCopy'] = {}
-    for role, want in sorted((facts.get('roles') or {}).items()):
+    role_files = None   # a companion node's role files for the derivation: the companion's public copy, once it checks out
+    if companion:
+        # The root copy in the configuration needs the Owner's WSL; the companion keeps the public copy of the live roles-v3 instead.
+        lin['rolesCopySource'] = 'companion-roles-public'
+        try:
+            if facts:
+                role_files = roles_public(host.read_bounded(host.path('upgrade', 'mailbox', 'responses', 'roles-public.json'), ROLES_PUBLIC_MAX_BYTES), facts)
+        except Finding as refused:
+            find(refused.code, **refused.detail)
+        except FileNotFoundError:
+            find('ROLES_PUBLIC_COPY_MISSING')
+        except OSError:
+            find('ROLES_PUBLIC_COPY_UNREADABLE')
+        for name, data in sorted((role_files or {}).items()):
+            role = name.split('.', 1)[0]
+            lin['rolesCopy'].setdefault(role, {})['qualificationSha256' if name.endswith('.qualification.json') else 'policySha256'] = sha_bytes(data)
+            # the configuration's root-made copy, where there is one, must be the same bytes
+            try:
+                with open(os.path.join(rd, name), 'rb') as f:
+                    same = f.read(ROLES_PUBLIC_FILE_MAX_BYTES + 1) == data
+            except FileNotFoundError:
+                continue
+            except OSError:
+                same = False
+            if not same:
+                find('INSTALLED_ROLES_COPY_NOT_THE_COMPANION_COPY', file=name)
+    for role, want in sorted((facts.get('roles') or {}).items()) if not companion else ():
         got = {'policySha256': sha_file(os.path.join(rd, role + '.json')), 'qualificationSha256': sha_file(os.path.join(rd, role + '.qualification.json'))}
         lin['rolesCopy'][role] = got
         if got != {'policySha256': want.get('policySha256'), 'qualificationSha256': want.get('qualificationSha256')}:
@@ -360,12 +542,30 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
         find('INSTALLED_SOURCE_MANIFEST_COPY_STALE')
 
     # pins: the package's Linux resident manifest against the installed one and the new commit's tree
-    p = subprocess.run([sys.executable, '-I', os.path.join(HERE, 'tools', 'linux-pins.py'), 'check', os.path.join(pkg_dir, 'linux', 'manifest.json'),
-                        cfg['linux']['installedManifest'], tree], capture_output=True, text=True)
-    checks['pins'] = {'exit': p.returncode, 'out': p.stdout.strip()[-1500:], 'err': p.stderr.strip()[-600:]}
-    if p.returncode != 0:
-        code = 'LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE' if 'NOT_THE_NEW_SOURCE' in p.stderr else 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE'
-        find(code, detail=p.stderr.strip().splitlines()[-1:] if p.stderr.strip() else None)
+    if installed_linux_in_phase_a:
+        # No installed manifest to compare the shape with (above). What can be checked here is: every external pin of the package's
+        # manifest is either a source-v2 file with the new commit's bytes or the node's toolchain node with the configured hash. The
+        # same rule, against the live host and for every entry, is Linux phase A's (RESIDENT_PINS_NOT_THE_NEW_SOURCE).
+        sv2, node_path, bad = '/opt/clued-independent-ci/source-v2/', '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', []
+        external = read_json(os.path.join(pkg_dir, 'linux', 'manifest.json'))['files'][4:]
+        for f in external:
+            path, rel = f.get('installedPath', ''), f.get('installedPath', '')[len(sv2):]
+            if path.startswith(sv2) and rel and '..' not in rel.split('/') and os.path.isfile(os.path.join(tree, *rel.split('/'))):
+                ok = sha_file(os.path.join(tree, *rel.split('/'))) == f.get('sha256')
+            else:
+                ok = path == node_path and f.get('sha256') == cfg['linux']['host']['toolchainNodeSha256']
+            if not ok:
+                bad.append(path)
+        checks['pins'] = {'externalPins': len(external), 'notTheNewSource': bad, 'installedShape': {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_MANIFEST_BYTES_NOT_ON_WINDOWS'}}
+        if bad:
+            find('LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE', entries=bad)
+    else:
+        p = subprocess.run([sys.executable, '-I', os.path.join(HERE, 'tools', 'linux-pins.py'), 'check', os.path.join(pkg_dir, 'linux', 'manifest.json'),
+                            cfg['linux']['installedManifest'], tree], capture_output=True, text=True)
+        checks['pins'] = {'exit': p.returncode, 'out': p.stdout.strip()[-1500:], 'err': p.stderr.strip()[-600:]}
+        if p.returncode != 0:
+            code = 'LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE' if 'NOT_THE_NEW_SOURCE' in p.stderr else 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE'
+            find(code, detail=p.stderr.strip().splitlines()[-1:] if p.stderr.strip() else None)
 
     # linuxHost (review 1-1): the host facts the root scripts pin are this node's. As root and read-only: the committed check-host.py
     # (what phase A, B0 and B4 run) on the installed role policies with the configured pins, the Source v1 HEAD that verify-source-v2
@@ -380,26 +580,29 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
              "v1=[x for x in ('/opt/clued-independent-ci/source-first-formal-v1','/etc/clued-independent-ci/roles','/etc/clued-independent-ci/formal-source-manifest-v1.json') if os.path.lexists(x)]\n"
              "q2={r:os.path.isfile('/etc/clued-independent-ci/roles-v3/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
              "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q,'v1Present':v1,'v2Qualifications':q2}))")
-    # the live installed role policies (the derivation keeps their host pins), not the Windows copy (review 2)
-    code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), '/etc/clued-independent-ci/roles-v3',
-                                     lh['toolchainNodeSha256'], lh['resultPublicKeySha256']], user='root')
-    hp = last_json(out) or {}
-    checks['linuxHost'] = {'exit': code, **hp, 'configured': lh, 'stderr': err[-300:]}
-    if code != 0 or not hp:
-        find('LINUX_HOST_PROBE_FAILED', exit=code)
+    if companion:   # not visible to the Owner's WSL; launch phase A runs check-host.py as root before anything changes
+        checks['linuxHost'] = dict(DEFERRED_HOST_PROBE)
     else:
-        if hp.get('checkHostExit') != 0:
-            find('LINUX_HOST_PINS_NOT_THE_CONFIGURED', refusal=(last_json(hp.get('checkHost') or '') or {}).get('code'))
-        if hp.get('v1Head') != lh['v1SourceHead']:
-            find('LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', installed=hp.get('v1Head'), configured=lh['v1SourceHead'])
-        if lh['v1SourceHead'] is not None:   # the signer's lineage: the installed v1 qualifications
-            if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
-                find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
-        else:   # no Source v1 (README section 6): none of it may be there, and the lineage is the installed roles-v3 qualifications
-            if hp.get('v1Present') != []:
-                find('LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED', present=hp.get('v1Present'))
-            if not all((hp.get('v2Qualifications') or {}).values()) or not hp.get('v2Qualifications'):
-                find('LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING', present=hp.get('v2Qualifications'))
+        # the live installed role policies (the derivation keeps their host pins), not the Windows copy (review 2)
+        code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), '/etc/clued-independent-ci/roles-v3',
+                                         lh['toolchainNodeSha256'], lh['resultPublicKeySha256']], user='root')
+        hp = last_json(out) or {}
+        checks['linuxHost'] = {'exit': code, **hp, 'configured': lh, 'stderr': err[-300:]}
+        if code != 0 or not hp:
+            find('LINUX_HOST_PROBE_FAILED', exit=code)
+        else:
+            if hp.get('checkHostExit') != 0:
+                find('LINUX_HOST_PINS_NOT_THE_CONFIGURED', refusal=(last_json(hp.get('checkHost') or '') or {}).get('code'))
+            if hp.get('v1Head') != lh['v1SourceHead']:
+                find('LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', installed=hp.get('v1Head'), configured=lh['v1SourceHead'])
+            if lh['v1SourceHead'] is not None:   # the signer's lineage: the installed v1 qualifications
+                if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
+                    find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
+            else:   # no Source v1 (README section 6): none of it may be there, and the lineage is the installed roles-v3 qualifications
+                if hp.get('v1Present') != []:
+                    find('LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED', present=hp.get('v1Present'))
+                if not all((hp.get('v2Qualifications') or {}).values()) or not hp.get('v2Qualifications'):
+                    find('LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING', present=hp.get('v2Qualifications'))
 
     # roles: the derivation phase A runs, on the copies, as a normal user in the node's WSL distribution
     # A record-only reinstall (README section 8b): the package's CI Source and Linux half are the installed ones, Linux phases A/B do not
@@ -411,6 +614,9 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     elif skip_roles:
         checks['roles'] = {'skipped': True}
         find('ROLE_DERIVATION_NOT_REHEARSED')
+    elif companion and role_files is None:   # the companion's public copy did not check out (its finding is above)
+        checks['roles'] = {'notRun': 'ROLES_PUBLIC_COPY_NOT_ACCEPTED'}
+        find('ROLE_DERIVATION_NOT_REHEARSED', reason='ROLES_PUBLIC_COPY_NOT_ACCEPTED')
     else:
         record_manifest = os.path.join(pkg_dir, 'record', 'source-manifest.json')
         acc = read_json(os.path.join(pkg_dir, 'record', 'acceptance.json'))
@@ -419,17 +625,38 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             os.makedirs(os.path.dirname(bare), exist_ok=True)
             subprocess.run(['git', 'init', '-q', '--bare', '--initial-branch=accepted', bare], check=True)
             subprocess.run(['git', '-C', bare, 'fetch', '-q', '--no-tags', cfg['repo'], commit + ':refs/heads/accepted'], check=True)
-        out_dir = '/tmp/clued-rehearsal-roles-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + os.urandom(4).hex()
-        # review 1-9: role derivation must really run as a normal user. An
-        # explicit existing rehearsalUser avoids changing a root-default distro.
-        role_user = cfg['linux'].get('rehearsalUser')
-        runner = ("import os,runpy,sys,shutil\n"
-                  "if os.getuid() == 0 or os.geteuid() == 0: print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_DEFAULT_USER_IS_ROOT\"}'); sys.exit(3)\n"
-                  "os.geteuid=lambda:0; t=sys.argv[1]; sys.argv=sys.argv[1:]\n"
-                  "try: runpy.run_path(t, run_name='__main__')\nfinally: shutil.rmtree(sys.argv[sys.argv.index('--out')+1], ignore_errors=True)")
-        code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', runner, to_wsl(os.path.join(HERE, 'linux', 'tools', 'derive-roles.py')),
-            '--installed', to_wsl(rd), '--old-manifest-file', to_wsl(os.path.join(rd, 'formal-source-manifest-v2.json')), '--new-manifest-file', to_wsl(record_manifest),
-            '--src', to_wsl(bare), '--commit', commit, '--source-acceptance-ref', acc['sourceAcceptanceRef'], '--host-acceptance-ref', acc['hostQualificationRef'], '--out', out_dir], user=role_user)
+        derive = os.path.join(HERE, 'linux', 'tools', 'derive-roles.py')
+        refs = ['--commit', commit, '--source-acceptance-ref', acc['sourceAcceptanceRef'], '--host-acceptance-ref', acc['hostQualificationRef']]
+        if companion:
+            # The same derive-roles.py with this Windows Python on the companion's public copy (checked above), no WSL. Its private
+            # temporary directory (the six files, the tool's create-only output) is removed afterwards.
+            role_user, git = 'windows-non-elevated-operator', shutil.which('git')
+            tmp = tempfile.mkdtemp(prefix='clued-rehearsal-roles-')
+            try:
+                os.mkdir(os.path.join(tmp, 'installed'))
+                for name, data in role_files.items():
+                    with open(os.path.join(tmp, 'installed', name), 'xb') as f:
+                        f.write(data)
+                if git is None:
+                    code, out, err = None, json.dumps({'status': 'REFUSED', 'code': 'WINDOWS_GIT_NOT_FOUND'}), ''
+                else:
+                    code, out, err = host.windows_python(['-c', WINDOWS_ROLE_RUNNER, derive, git, '--installed', os.path.join(tmp, 'installed'),
+                        '--old-manifest-file', os.path.join(rd, 'formal-source-manifest-v2.json'), '--new-manifest-file', record_manifest,
+                        '--src', bare] + refs + ['--out', os.path.join(tmp, 'out')])
+            finally:
+                remove_tree(tmp)
+        else:
+            out_dir = '/tmp/clued-rehearsal-roles-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + os.urandom(4).hex()
+            # review 1-9: role derivation must really run as a normal user. An
+            # explicit existing rehearsalUser avoids changing a root-default distro.
+            role_user = cfg['linux'].get('rehearsalUser')
+            runner = ("import os,runpy,sys,shutil\n"
+                      "if os.getuid() == 0 or os.geteuid() == 0: print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_DEFAULT_USER_IS_ROOT\"}'); sys.exit(3)\n"
+                      "os.geteuid=lambda:0; t=sys.argv[1]; sys.argv=sys.argv[1:]\n"
+                      "try: runpy.run_path(t, run_name='__main__')\nfinally: shutil.rmtree(sys.argv[sys.argv.index('--out')+1], ignore_errors=True)")
+            code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', runner, to_wsl(derive),
+                '--installed', to_wsl(rd), '--old-manifest-file', to_wsl(os.path.join(rd, 'formal-source-manifest-v2.json')), '--new-manifest-file', to_wsl(record_manifest),
+                '--src', to_wsl(bare)] + refs + ['--out', out_dir], user=role_user)
         r = last_json(out) or {}
         checks['roles'] = {'runAsUser': role_user or 'distribution-default', 'exit': code, 'status': r.get('status'), 'code': r.get('code'), 'repinned': {k: v.get('repinned') for k, v in (r.get('roles') or {}).items()},
                            'stderr': err[-400:]}
@@ -443,13 +670,14 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
 
 
 def main(argv):
+    assert '--fleet' not in argv or '--file-locks-in-launcher' in argv, 'USAGE: --fleet goes with --file-locks-in-launcher'
     cfg = rconfig.load(argv[0])
     a = argv[1:]
     opt = lambda n, d=None: a[a.index(n) + 1] if n in a else d
     commit, pkg_dir = opt('--commit'), opt('--package')
-    assert commit and re.fullmatch(r'[0-9a-f]{40}', commit) and pkg_dir, 'USAGE: <config> --commit <40hex> --package <dir>'
+    assert commit and re.fullmatch(r'[0-9a-f]{40}', commit) and pkg_dir, 'USAGE: <config> --commit <40hex> --package <dir> [--file-locks-in-launcher] [--fleet]'
     report = rehearse(cfg, commit, os.path.abspath(pkg_dir), Host(), skip_roles='--skip-roles' in a,
-                      linux_version_facts=opt('--linux-version-facts'))
+                      linux_version_facts=opt('--linux-version-facts'), file_locks_in_launcher='--file-locks-in-launcher' in a, installed_linux_in_phase_a='--fleet' in a)
     out_dir = opt('--report-dir', os.path.join(cfg['workDir'], 'rehearsal'))
     os.makedirs(out_dir, exist_ok=True)
     name = 'rehearsal.%s.%s.%s.%s.json' % (cfg['node'], commit[:8], report['packageManifestSha256'][:8], report['observedAt'].replace('-', '').replace(':', ''))

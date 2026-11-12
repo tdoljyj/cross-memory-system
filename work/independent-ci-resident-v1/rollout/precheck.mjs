@@ -98,10 +98,13 @@ export const relayParents = root => { const ci = path.dirname(path.resolve(root)
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 // The live DACL of one directory, read as the Owner (Get-Acl needs no elevation on these two). The path goes in through the
 // environment, never into the command text (-Command joins its arguments into code). Any error, stderr or empty answer throws.
+// PSModulePath is Windows PowerShell's own: a caller running under PowerShell 7 passes its module path down, and Windows
+// PowerShell 5.1 then cannot autoload Microsoft.PowerShell.Security (Get-Acl: CouldNotAutoloadMatchingModule).
+export const WINDOWS_POWERSHELL_MODULES = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
 export async function readSddl(dir) {
   const { stdout, stderr } = await execFileP(POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $env:CLUED_RELAY_PARENT).Sddl"],
-  { windowsHide: true, timeout: 60_000, env: { ...process.env, CLUED_RELAY_PARENT: dir } });
+  { windowsHide: true, timeout: 60_000, env: { ...process.env, PSModulePath: WINDOWS_POWERSHELL_MODULES, CLUED_RELAY_PARENT: dir } });
   const sddl = stdout.trim();
   if (stderr.trim() !== '' || !sddl.startsWith('O:')) throw new Error('RELAY_PARENT_SDDL_UNREADABLE');
   return sddl;
