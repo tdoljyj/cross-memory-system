@@ -172,7 +172,16 @@ const CONTROL_SOURCE_FIX = 'node scripts/ci/clued-control-source-pins.mjs --base
 async function checkControlPins(root, base) {
   try {
     const mod = await import(pathToFileURL(path.join(root, 'scripts/ci/clued-control-source-pins.mjs')).href);
-    return mod.checkControlSourcePins(root, { base });
+    const result = await mod.checkControlSourcePins(root, { base });
+    // Once merged, this commit is the trusted base of every later candidate.
+    // A committed checkout (as in CI) must therefore also pass as its own base;
+    // checking only against the old base let main 4b1cc800 break every PR.
+    let head = null;
+    try { head = git(root, ['rev-parse', 'HEAD']); } catch { /* not a Git checkout */ }
+    if (result.status !== 'ok' || !head || head === base || git(root, ['status', '--porcelain', '--untracked-files=no']) !== '') return result;
+    const self = await mod.checkControlSourcePins(root, { base: head });
+    return self.status === 'ok' ? result
+      : { ...self, details: (self.details ?? []).map((d) => `with this commit ${head.slice(0, 12)} as the trusted base: ${d}`) };
   } catch (error) {
     return { id: 'control-source-pins', status: 'unchecked', reason: error.message,
       fix: CONTROL_SOURCE_FIX.replace('<main commit>', base ?? '<main commit>') };
