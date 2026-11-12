@@ -168,17 +168,14 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         else:
             (app / "node_modules").symlink_to(store, target_is_directory=True)
         installed = []
-        integration.audit(self.repo.dir, self.base, install=lambda app, cache=None: installed.append(app))
+        integration.audit(self.repo.dir, self.base, install=installed.append)
         self.assertEqual(installed, [], "an existing node_modules is linked, not installed over")
         self.assertEqual(sorted(p.name for p in store.iterdir()), ["yaml"], "the shared store is untouched")
         self.assertTrue((store / "yaml" / "package.json").is_file())
         os.rmdir(app / "node_modules") if os.name == "nt" else (app / "node_modules").unlink()
-        caches = []
-        integration.audit(self.repo.dir, self.base, install=lambda app, cache=None: (installed.append(app), caches.append(cache)))
+        integration.audit(self.repo.dir, self.base, install=installed.append)
         self.assertEqual(len(installed), 1)
         self.assertIn("mechanical-outputs-", str(installed[0]), "installed into the throwaway worktree only")
-        self.assertEqual(caches, [self.repo.dir.resolve() / "apps/clued-cloud/.sites-runtime/npm-cache"],
-                         "the install reads the candidate's warm npm cache, never an empty one in the throwaway worktree")
         self.assertFalse((app / "node_modules").exists())
 
     def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):

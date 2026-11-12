@@ -143,23 +143,12 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
             "output_sha256": outputs}
 
 
-def _npm_ci(app: Path, cache: Path | None = None) -> None:
-    """Install into the throwaway worktree from the candidate's own npm cache.
-
-    apps/clued-cloud/.npmrc names a relative cache (.sites-runtime/npm-cache), which in a throwaway
-    worktree is always empty, so every run would download every package and a network blip fails the
-    check. The candidate checkout's cache is the one its other installs keep warm; use it."""
+def _npm_ci(app: Path) -> None:
     npm = shutil.which("npm")
     if not npm:
         raise ValueError("mechanical-outputs: npm is not installed; cannot verify")
-    env = dict(os.environ)
-    if cache is not None:
-        cache.mkdir(parents=True, exist_ok=True)
-        env["npm_config_cache"] = str(cache)
-    done = subprocess.run([npm, "ci", "--ignore-scripts", "--prefer-offline", "--fetch-retries=5",
-                           "--fetch-retry-mintimeout=2000", "--fetch-retry-maxtimeout=60000",
-                           "--fetch-timeout=60000", "--no-audit", "--no-fund"], cwd=app, capture_output=True, text=True,
-                          env=env)
+    done = subprocess.run([npm, "ci", "--ignore-scripts", "--prefer-offline", "--fetch-retries=2",
+                           "--fetch-timeout=30000", "--no-audit", "--no-fund"], cwd=app, capture_output=True, text=True)
     if done.returncode:
         raise ValueError("mechanical-outputs: npm ci in the throwaway worktree failed; cannot verify\n" + done.stderr[-2000:])
 
@@ -189,7 +178,7 @@ def audit(root: Path, base: str, *, install=_npm_ci) -> dict:
                 else:
                     target.symlink_to(modules, target_is_directory=True)
             elif (tree / "apps/clued-cloud/package-lock.json").is_file():
-                install(tree / "apps/clued-cloud", root / "apps/clued-cloud" / ".sites-runtime" / "npm-cache")
+                install(tree / "apps/clued-cloud")
             report = integrate_candidate(tree, base, head, write=True)
             return {"check": "mechanical-outputs", "status": "ok", "base_commit": base, "head_commit": head,
                     "outputs": sorted(report["output_sha256"])}
