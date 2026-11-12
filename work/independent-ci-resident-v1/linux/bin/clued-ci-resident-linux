@@ -97,6 +97,7 @@ LINUX_PROTOCOL = {
 MAX_LEAF = 1 << 20
 MAX_TREE = 1_000_000
 KEEP_FILE = '/mnt/c/ProgramData/CluedIndependentCI/resident/owner/retention-keep.json'
+SETTINGS_FILE = '/mnt/c/ProgramData/CluedIndependentCI/resident/owner/retention-settings.json'
 KEEP_CONTRACT = 'clued.independent-ci.archive-retention-keep/1'
 PRUNE_CONTRACT = 'clued.independent-ci.linux-archive-prune/1'
 SLIM_CONTRACT = 'clued.independent-ci.resident-linux-archive-slim/1'
@@ -459,11 +460,86 @@ def read_keep_list(path, spool):
             return {'ok': False, 'code': 'RETENTION_KEEP_LIST_INVALID'}
         with open(path, 'rb') as f:
             keep = parse_keep_list(f.read(256 * 1024 + 1))
-        return {'ok': True, 'names': {k['name'] for k in keep if k['spool'] in (spool, 'any')}}
+        return {'ok': True, 'names': {k['name'] for k in keep if k['spool'] in (spool, 'any')}, 'entries': len(keep)}
     except Refused as e:
         return {'ok': False, 'code': e.code}
     except OSError:
         return {'ok': False, 'code': 'RETENTION_KEEP_LIST_UNREADABLE'}
+
+
+def parse_retention_settings(raw):
+    code = 'RETENTION_SETTINGS_INVALID'
+    try:
+        v = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused(code)
+    def keys(obj, allowed):
+        return isinstance(obj, dict) and set(obj) <= set(allowed)
+    def count(n):
+        return type(n) is int and 0 <= n <= 9007199254740991
+    need(keys(v, ('contract', 'windows', 'linux', 'emptyKeep', 'generations', 'disk'))
+         and v.get('contract') == 'clued.independent-ci.retention-settings/1', code)
+    for spool in ('windows', 'linux'):
+        if spool in v:
+            need(keys(v[spool], ('success', 'failure')), code)
+            for r in v[spool].values():
+                need(keys(r, ('classBudgetBytes', 'minKeepPerClass')) and count(r.get('classBudgetBytes'))
+                     and count(r.get('minKeepPerClass')) and r['minKeepPerClass'] >= 1, code)
+    need('emptyKeep' not in v or v['emptyKeep'] in ('legacy', 'refuse', 'allow'), code)
+    if 'generations' in v:
+        g = v['generations']
+        need(keys(g, ('enabled', 'keepNewest', 'protected')) and type(g.get('enabled')) is bool and type(g.get('keepNewest')) is int
+             and g['keepNewest'] == 3 and isinstance(g.get('protected'), list) and len(g['protected']) <= 2000
+             and all(isinstance(n, str) and re.fullmatch(r'g[1-9][0-9]{0,8}(?:-[0-9]{1,8})?', n) for n in g['protected']), code)
+    if 'disk' in v:
+        d = v['disk']
+        need(keys(d, ('thresholdBytes', 'drives')) and count(d.get('thresholdBytes')) and isinstance(d.get('drives'), list)
+             and 1 <= len(d['drives']) <= 26 and all(isinstance(n, str) and re.fullmatch(r'[A-Z]:', n) for n in d['drives'])
+             and len(set(d['drives'])) == len(d['drives']), code)
+    return v
+
+
+def read_retention_settings(file):
+    found = False
+    try:
+        st = os.lstat(file)
+        found = True
+        need(_st.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_size <= 262144 and os.path.realpath(file) == os.path.abspath(file), 'RETENTION_SETTINGS_INVALID')
+        with open(file, 'rb') as f:
+            opened = os.fstat(f.fileno())
+            need((opened.st_ino, opened.st_dev) == (st.st_ino, st.st_dev) and _st.S_ISREG(opened.st_mode), 'RETENTION_SETTINGS_CHANGED')
+            raw = f.read(262145)
+        after = os.lstat(file)
+        need((st.st_ino, st.st_dev, st.st_size, st.st_mtime_ns) == (after.st_ino, after.st_dev, after.st_size, after.st_mtime_ns)
+             and len(raw) <= 262144, 'RETENTION_SETTINGS_CHANGED')
+        return {'ok': True, 'settings': parse_retention_settings(raw)}
+    except FileNotFoundError:
+        return {'ok': False, 'code': 'RETENTION_SETTINGS_UNREADABLE'} if found else {'ok': True, 'settings': {}}
+    except Refused as e:
+        return {'ok': False, 'code': e.code}
+    except OSError:
+        return {'ok': False, 'code': 'RETENTION_SETTINGS_UNREADABLE'}
+
+
+def configured_prune(spool, keep_file, settings_file):
+    settings = read_retention_settings(settings_file)
+    if not settings['ok']:
+        return _refused_pass(RETENTION_RULE, settings['code'])
+    s = settings['settings']
+    rule = dict(RETENTION_RULE)
+    if s.get('linux'):
+        rule['classRules'] = {c: s['linux'].get(c, {k: RETENTION_RULE[k] for k in ('classBudgetBytes', 'minKeepPerClass')}) for c in ('success', 'failure')}
+    keep = read_keep_list(keep_file, 'linux')
+    original_keep = keep
+    empty = keep.get('ok') and keep.get('entries') == 0
+    if empty and s.get('emptyKeep') == 'refuse':
+        keep = {'ok': False, 'code': 'RETENTION_EMPTY_KEEP_UNCONFIRMED'}
+    def unchanged():
+        return read_retention_settings(settings_file) == settings and read_keep_list(keep_file, 'linux') == original_keep
+    result = prune_spool(spool, keep, rule, authorize=unchanged)
+    if empty and s.get('emptyKeep', 'legacy') == 'legacy':
+        result['warnings'] = ['RETENTION_EMPTY_KEEP_UNCONFIRMED']
+    return result
 
 
 class _Desc:
@@ -505,10 +581,11 @@ def plan_retention(entries, keep=frozenset(), rule=RETENTION_RULE):
         out['classes'][cls] = summary
         if refused:
             continue
+        class_rule = rule.get('classRules', {}).get(cls, rule)
         newest_first = sorted(lst, key=lambda e: (-e['mtimeMs'], _Desc(e['name'])))
         remaining = len(newest_first)
         for e in reversed(newest_first):
-            if total <= rule['classBudgetBytes'] or remaining <= rule['minKeepPerClass']:
+            if total <= class_rule['classBudgetBytes'] or remaining <= class_rule['minKeepPerClass']:
                 break
             deletes.append({'name': e['name'], 'class': cls, 'bytes': e['bytes'], 'mtimeMs': e['mtimeMs']})
             total -= e['bytes']
@@ -578,7 +655,7 @@ def _refused_pass(rule, code):
     return {'rule': dict(rule), 'refused': code, 'classes': None, 'protected': None, 'deferred': 0, 'deleted': [], 'deletedBytes': 0, 'stopped': None}
 
 
-def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree):
+def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree, authorize=lambda: True):
     """One retention pass: inventory, plan, apply (each directory re-checked right before it goes)."""
     if not keep.get('ok'):
         return _refused_pass(rule, keep.get('code', 'RETENTION_KEEP_LIST_UNREADABLE'))
@@ -592,6 +669,9 @@ def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree):
     by_name = {e['name']: e for e in entries}
     deleted, stopped = [], None
     for d in plan['deletes']:
+        if not authorize():
+            stopped = {'name': d['name'], 'code': 'RETENTION_SETTINGS_CHANGED', 'partial': False}
+            break
         now, before = entry_facts(spool, d['name']), by_name[d['name']]
         if not now['isDir'] or now['links'] > 0:
             stopped = {'name': d['name'], 'code': 'RETENTION_LINK_REFUSED', 'partial': False}
@@ -967,7 +1047,7 @@ def main(argv):
     if cmd == 'archive-prune':
         q = quiescence()
         if q['linuxUnitsInactive'] and q['containersZero']:
-            facts = prune_spool(SPOOL, read_keep_list(KEEP_FILE, 'linux'))
+            facts = configured_prune(SPOOL, KEEP_FILE, SETTINGS_FILE)
         else:
             facts = _refused_pass(RETENTION_RULE, 'ARCHIVE_PRUNE_REQUIRES_QUIESCENCE')
         receipts = f'{RESIDENT_STATE}/retention'

@@ -228,7 +228,7 @@ class Retention(unittest.TestCase):
         self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': False, 'code': 'RETENTION_KEEP_LIST_MISSING'})
         self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux')['code'], 'RETENTION_KEEP_LIST_MISSING')
         f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
-        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set()})
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set(), 'entries': 0})
         f.unlink()
         f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': [{'name': 'failed-a-1', 'spool': 'linux', 'ref': 'Task 4aedda54'},
                                                                           {'name': 'archive-b', 'spool': 'windows', 'ref': 'owner'}, {'name': 'failed-c', 'spool': 'any', 'ref': 'Bug x'}]}))
@@ -244,6 +244,36 @@ class Retention(unittest.TestCase):
             (spool / name / 'sub' / 'f.bin').write_bytes(b'x' * size)
             os.utime(spool / name, ns=(1_700_000_000_000_000_000 + i * 60_000_000_000,) * 2)
         return spool
+
+    def test_owner_settings_apply_per_class_budgets_and_invalid_settings_delete_nothing(self):
+        spool = self._spool([('archive-a', 10), ('archive-b', 10), ('failed-a', 10), ('failed-b', 10), ('failed-c', 10)])
+        keep = self.root / 'keep.json'
+        settings = self.root / 'settings.json'
+        keep.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
+        settings.write_text('{')
+        self.assertEqual(tool.configured_prune(str(spool), str(keep), str(settings))['refused'], 'RETENTION_SETTINGS_INVALID')
+        self.assertTrue((spool / 'archive-a').exists())
+        s = {'contract': 'clued.independent-ci.retention-settings/1', 'emptyKeep': 'refuse',
+             'linux': {'success': {'classBudgetBytes': 0, 'minKeepPerClass': 1}, 'failure': {'classBudgetBytes': 0, 'minKeepPerClass': 2}}}
+        settings.write_text(json.dumps(s))
+        self.assertEqual(tool.configured_prune(str(spool), str(keep), str(settings))['refused'], 'RETENTION_EMPTY_KEEP_UNCONFIRMED')
+        s['emptyKeep'] = 'allow'
+        settings.write_text(json.dumps(s))
+        result = tool.configured_prune(str(spool), str(keep), str(settings))
+        self.assertEqual(len(result['deleted']), 2)
+        self.assertEqual(len([n for n in spool.iterdir() if tool.archive_class(n.name)]), 3)
+
+    def test_settings_parser_refuses_unsafe_numbers_and_unconfirmed_empty_warns(self):
+        for bad in (-1, 1.2, True, '1', 9007199254740992):
+            with self.assertRaises(tool.Refused):
+                tool.parse_retention_settings(json.dumps({'contract': 'clued.independent-ci.retention-settings/1',
+                    'linux': {'failure': {'classBudgetBytes': bad, 'minKeepPerClass': 1}}}).encode())
+        spool = self._spool([('archive-a', 1)])
+        keep = self.root / 'keep.json'
+        keep.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
+        result = tool.configured_prune(str(spool), str(keep), str(self.root / 'missing-settings'))
+        self.assertEqual(result['warnings'], ['RETENTION_EMPTY_KEEP_UNCONFIRMED'])
+        self.assertEqual(result['deleted'], [])
 
     def test_a_pass_deletes_oldest_over_budget_and_keeps_protected_newest_and_everything_else(self):
         spool = self._spool([('failed-a-1', 800), ('failed-a-2', 800), ('failed-a-3', 300), ('failed-a-4', 300), ('archive-b-1', 600), ('archive-b-2', 600), ('completed-b-3', 10)])

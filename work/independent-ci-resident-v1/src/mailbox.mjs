@@ -114,9 +114,18 @@ const codeOrNull = c => c === null || (typeof c === 'string' && CODE.test(c));
 // The exact shape of an archive-prune answer's facts (clued-ci-resident-linux archive-prune), at most 16 deletions per pass.
 export function validatePrune(p) {
   const code = 'MAILBOX_RESPONSE_PRUNE_REFUSED';
-  exactKeys(p, ['rule', 'refused', 'classes', 'protected', 'deferred', 'deleted', 'deletedBytes', 'stopped'], code);
-  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass'], code);
-  check(Object.values(p.rule).every(count) && codeOrNull(p.refused) && count(p.deferred) && count(p.deletedBytes), code);
+  exactKeys(p, ['rule', 'refused', 'classes', 'protected', 'deferred', 'deleted', 'deletedBytes', 'stopped', ...(p.warnings === undefined ? [] : ['warnings'])], code);
+  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass', ...(p.rule.classRules === undefined ? [] : ['classRules'])], code);
+  check(['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass'].every(k => count(p.rule[k])) && p.rule.maxDeletesPerPass <= 16
+    && codeOrNull(p.refused) && count(p.deferred) && count(p.deletedBytes), code);
+  if (p.rule.classRules !== undefined) {
+    exactKeys(p.rule.classRules, ['success', 'failure'], code);
+    for (const r of Object.values(p.rule.classRules)) {
+      exactKeys(r, ['classBudgetBytes', 'minKeepPerClass'], code);
+      check(count(r.classBudgetBytes) && count(r.minKeepPerClass) && r.minKeepPerClass >= 1, code);
+    }
+  }
+  if (p.warnings !== undefined) check(Array.isArray(p.warnings) && p.warnings.length <= 4 && p.warnings.every(c => typeof c === 'string' && CODE.test(c)), code);
   check(Array.isArray(p.deleted) && p.deleted.length <= 16, code);
   for (const d of p.deleted) { exactKeys(d, ['name', 'class', 'bytes'], code); check(PRUNE_NAME.test(d.name) && ['success', 'failure'].includes(d.class) && count(d.bytes), code); }
   check(p.deletedBytes === p.deleted.reduce((a, d) => a + d.bytes, 0), code);

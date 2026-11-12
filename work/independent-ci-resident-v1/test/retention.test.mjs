@@ -155,7 +155,7 @@ test('deletion runs only when idle; a pass with deletions writes its receipt eac
   assert.deepEqual(prunes[0].body.deleted, deleted);
 });
 
-test('the C: reminder: below 30 GiB once a day, never blocking; an unreadable drive reminds nothing', async t => {
+test('the default C: reminder: below 30 GiB once a day; unreadable drive cannot report a free-byte value', async t => {
   const root = await tempRoot(t);
   const now = { t: T0 };
   const receipts = await ReceiptChain.open(path.join(root, 'receipts'), () => now.t);
@@ -208,7 +208,7 @@ test('archive-prune: one fixed root command; its facts travel through the mailbo
 test('service-main wires the heartbeat gate, the idle check, both prunes and the C: reminder', async () => {
   const text = await fs.readFile(new URL('../src/service-main.mjs', import.meta.url), 'utf8');
   for (const s of ['companionReady:', 'clock() - beat.at <= policy.companion.heartbeatMaxAgeMs', "reason: 'BATCH_OPEN'", "reason: 'HALTED'", "reason: 'SCENE_UNARCHIVED'",
-    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', "diskFreeBytes('C:\\\\')"]) {
+    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', 'diskFreeBytes(drive)']) {
     assert.ok(text.includes(s), s);
   }
 });
