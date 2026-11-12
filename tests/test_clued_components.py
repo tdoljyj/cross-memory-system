@@ -385,12 +385,8 @@ class AutomaticIntegrationTest(unittest.TestCase):
         self.assertEqual(current["outer"]["version"], "4.0.0")
 
     def test_mechanical_only_change_does_not_raise_source_version(self):
-        policy = {"schema": 1, "repository": "tdoljyj/cross-memory-system",
-                  "context_keys": ["project:0597aa60-9b98-4da6-a4ab-63d7705b632f"],
-                  "mechanical_paths": ["config/clued-components.json",
-                  "apps/clued-cloud/worker/generated/**", "scripts/ci/clued-merge-reconcile.mjs",
-                  "scripts/ci/clued-merge-reconcile-source.json", "scripts/ci/clued-independent-publication-port.mjs"]}
-        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(policy))
+        write(self.repo.dir / "config/clued-mechanical-files.json",
+              (ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
         write(self.repo.dir / "apps/clued-cloud/worker/generated/example.ts", "old\n")
         data = cc.load_manifest(self.repo.dir)
         cc.by_id(data)["tool"]["files"].append("apps/clued-cloud/worker/generated/**")

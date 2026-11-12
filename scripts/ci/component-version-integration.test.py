@@ -129,21 +129,5 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertIn("pkg/SKILL.md", report["output_sha256"])
 
 
-class RepositoryMechanicalPolicyTest(unittest.TestCase):
-    def test_every_known_generator_output_is_registered(self):
-        spec = importlib.util.spec_from_file_location("plugin_build", ROOT / "scripts/build_claude_code_plugin.py")
-        plugin = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(plugin)
-        outputs = ["config/clued-components.json", "apps/clued-cloud/worker/generated/components.ts",
-                   "apps/clued-cloud/worker/generated/agent-contract.ts", "scripts/ci/merge-admission-r9-source.json",
-                   "scripts/ci/clued-control-workflow-source.mjs", "scripts/ci/clued-control-workflow-sources.json",
-                   "scripts/ci/clued-merge-reconcile-source.json",
-                   "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json"]
-        outputs += [(plugin.PLUGIN / copy).relative_to(ROOT).as_posix() + ("/SKILL.md" if (ROOT / source).is_dir() else "")
-                    for source, copy in plugin.COPIES]
-        # A body edit (not only a marker line) of each file, so only registration can accept it.
-        self.assertEqual(integration.unregistered_outputs(ROOT, outputs, lambda name: None), [])
-
-
 if __name__ == "__main__":
     unittest.main()

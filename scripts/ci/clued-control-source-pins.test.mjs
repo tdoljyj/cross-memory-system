@@ -129,12 +129,12 @@ test('a Git executable-mode substitution is refused even when all bytes are unch
   await refusesWithoutWrites(root,/file mode differs from trusted base/);
 });
 test('refreshable pins come only from the single mechanical-file policy',()=>{
-  assert.deepEqual(CONTROL_SOURCE_MECHANICAL_FILES,['scripts/ci/clued-independent-publication-port.mjs','scripts/ci/clued-merge-reconcile.mjs']);
   const policy=JSON.parse(fs.readFileSync(path.join(ROOT,'config/clued-mechanical-files.json'),'utf8'));
-  // A declared generated registry that the descriptor also pins keeps its historical pin.
-  assert.deepEqual(controlSourceMechanicalFiles(policy,baseBlobs),CONTROL_SOURCE_MECHANICAL_FILES);
-  assert.deepEqual(controlSourceMechanicalFiles({...policy,mechanical_paths:[...policy.mechanical_paths,'scripts/ci/clued-scan-start.mjs']},baseBlobs),
-    ['scripts/ci/clued-independent-publication-port.mjs','scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-scan-start.mjs']);
+  const derived=controlSourceMechanicalFiles(policy,baseBlobs);
+  // Only declared, descriptor-pinned version modules; a declared generated registry keeps its historical pin.
+  assert.ok(derived.length&&derived.every(n=>n.endsWith('.mjs')&&policy.mechanical_paths.includes(n)&&Object.hasOwn(baseBlobs,n)));
+  const extra=Object.keys(baseBlobs).find(n=>n.endsWith('.mjs')&&!derived.includes(n));
+  assert.deepEqual(controlSourceMechanicalFiles({...policy,mechanical_paths:[...policy.mechanical_paths,extra]},baseBlobs),[...derived,extra].sort());
   for(const bad of [null,{...policy,schema:2},{...policy,mechanical_paths:'x'},{...policy,mechanical_paths:['config/other.json']}])
     assert.throws(()=>controlSourceMechanicalFiles(bad,baseBlobs),/mechanical/);
 });

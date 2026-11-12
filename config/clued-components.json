@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "015bd76f7cafea1af966555839424fe88ceecad85b0e65286011c04354516ae2",
+      "content_sha256": "0ecdc73f8cc3497a71af59e9166828ba43bc564d87c718206b5698f373e7085b",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "461173016603fe66164294ca0934a22f9e664b041efc0a0da81f9c854797c351"
+      "content_sha256": "40010f197f298d87cfee6ed88e948fc6e049c0927849fe357fcebbd6ca22b221"
     }
   ]
 }
