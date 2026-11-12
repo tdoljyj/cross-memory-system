@@ -145,9 +145,9 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
-  // The reconcile generator parses YAML, so the throwaway integration needs the locked packages.
+  // Integrates a throwaway worktree. It never installs into the checkout: there
+  // node_modules may be a link to a shared store (local-verify), which npm ci would empty.
   'mechanical-outputs': [
-    { cwd: 'apps/clued-cloud', argv: ['npm', 'ci', '--ignore-scripts', '--prefer-offline', '--fetch-retries=2', '--fetch-timeout=30000'], quiet: true },
     { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.py', '--audit', '--base', '{base}'] },
   ],
   // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
