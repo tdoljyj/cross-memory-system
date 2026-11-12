@@ -48,12 +48,16 @@ async function safeFile(file,root,options={}){
   // marker into a generic PowerShell ACL refusal before observing ENOENT.
   await fsp.lstat(file);
   await guard([file],root,options);
-  return stableRead(file);
+  return stableRead(file,{pendingReady:options.pendingReady===true});
 }
 // The bytes of one guarded file, read through one handle that must stay the same file throughout.
-async function stableRead(file){
+async function stableRead(file,{pendingReady=false}={}){
   const h=await fsp.open(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW??0));
-  try{const before=await h.stat();check(before.isFile()&&before.nlink===1&&before.size>0&&before.size<=MAX,'FORMAL_MAILBOX_FILE_BOUNDARY');
+  try{const before=await h.stat();check(before.isFile()&&before.nlink===1&&(before.size>0||(pendingReady&&before.size===0))&&before.size<=MAX,'FORMAL_MAILBOX_FILE_BOUNDARY');
+    // exclusive() creates the ready inode before writing its bytes. While it is empty nothing is committed: wait for
+    // this same create-only marker, never read the data or reissue a packet. Keep ACL, regular-file, link and named-inode
+    // checks even for that wait. Data files and every nonempty marker retain the original strict byte/change checks.
+    if(pendingReady&&before.size===0){const named=await fsp.lstat(file);check(named.isFile()&&!named.isSymbolicLink()&&named.nlink===1&&named.dev===before.dev&&named.ino===before.ino,'FORMAL_MAILBOX_CHANGED');fail('ENOENT');}
     const raw=await h.readFile(),after=await h.stat(),named=await fsp.lstat(file);
     check([after,named].every(s=>s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.dev===before.dev&&s.ino===before.ino&&s.size===before.size&&s.mtimeMs===before.mtimeMs)&&raw.length===before.size,'FORMAL_MAILBOX_CHANGED');return raw;
   }finally{await h.close();}
@@ -86,7 +90,8 @@ async function openFixed({side,root,fixtureOnly=false,nodeProfileSha256=null,acl
       let checked=false,jointRefused=false;
       if(windows&&(acl||!fixtureOnly)){await fsp.lstat(readyFile);let both=false;try{await fsp.lstat(dataFile);both=true;}catch{/* the old order reports it */}
         if(both){try{await guard([readyFile,dataFile],root,o);checked=true;}catch{jointRefused=true;/* the old order decides which refusal */}}}
-      const ready=checked?await stableRead(readyFile):await safeFile(readyFile,root,o),r=JSON.parse(ready.toString('utf8'));
+      const pendingReady=!jointRefused;
+      const ready=checked?await stableRead(readyFile,{pendingReady}):await safeFile(readyFile,root,{...o,pendingReady}),r=JSON.parse(ready.toString('utf8'));
       check(canonical(r)===ready.toString('utf8')&&Object.keys(r).sort().join('|')==='bytes|contract|sha256'&&r.contract==='clued.independent-ci.complete-public-file/1'&&Number.isSafeInteger(r.bytes)&&r.bytes>0&&r.bytes<=MAX&&/^[a-f0-9]{64}$/.test(r.sha256??''),'FORMAL_MAILBOX_READY_REQUIRED');
       const bytes=checked?await stableRead(dataFile):await safeFile(dataFile,root,o);check(bytes.length===r.bytes&&hash(bytes)===r.sha256,'FORMAL_MAILBOX_PACKET_CHANGED');check(!jointRefused,'FORMAL_MAILBOX_ACL_JOINT_REFUSED');return bytes;
     },

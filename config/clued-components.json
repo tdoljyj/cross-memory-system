@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "57",
+      "version": "58",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "1429726fca7a7245096670aef4f62aca4fa0888312b8327beba225149b6500d0",
+      "content_sha256": "a50b864ceb2dfde7c6faa5ccf7ef4cef51b6dd2544d9a6ceddcedb0dc03bcd39",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "91fab6ce0e861b817866af847262ef9d68a5c8a3ebb228c503429edaa6373d00"
+      "content_sha256": "a82d897845c420a9422b3499b21248896e647e7c6bff9fac69ccae4156cf14b1"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.44",
+      "version": "1.1.45",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "341ea9040db2a1612d07494dbb5eacc6b39c87a580401b33376f3bcf1566a7da"
+      "content_sha256": "b87863151d7f8de55bbf3a478a9a236d8545a00f35aa446c6c0b27523ccfe56f"
     },
     {
       "id": "script.resource-maintenance",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "f8b1f40703857dea5591e0d3940e8d0ce7be2cda979622b1e4750194b21beb22"
+      "content_sha256": "e90b2a41eade68b4bdeb82d9238ffbdda76e8710b5141ad67688828c9b256543"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ce018bfa0a3f2ec348628b9bcaac509223f754ef8fb0eff3c78ac368dc62f189"
+      "content_sha256": "bd1e2e8e35ebf8cfed81e3de1405dc6b3e927620b8206210ee1098bd3729352b"
     }
   ]
 }
