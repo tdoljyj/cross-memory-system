@@ -185,8 +185,13 @@ export function onDutyElsewhere(others, now) {
   return allOnDutyElsewhere(others, now)[0] ?? null;
 }
 // Every other node on duty on this head now (review R3 M4: with three or more nodes two others may be on duty on one head).
-export function allOnDutyElsewhere(others, now) {
-  return [...others.values()].filter(d => (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS);
+// since (ADR 0025): a statement written at or before it does not count; the take-over check and the lock's release pass the time the
+// failover watchdog last handed ci-admission to this node (dutyCut). Both times are server clocks (GitHub's created_at, the
+// database's created_at), so the local clock's skew does not move this line.
+export const dutyNow = (d, now, since = null) => !!d && (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS
+  && !(Number.isFinite(since) && d.at <= since);
+export function allOnDutyElsewhere(others, now, since = null) {
+  return [...others.values()].filter(d => dutyNow(d, now, since));
 }
 
 // §5.3, for a STANDBY node: why a head should be picked up and is not, or null. firstSeenAt: when this companion first saw
@@ -220,8 +225,9 @@ export function standbyDoneText(why, ownName) {
   if (why === 'active') return { state: 'success', description: clip(`${ownName} 已接班，备用提醒结束`) };
   return { state: 'success', description: clip(`备用节点 ${ownName}，不参与本 PR${why === 'handled' ? '：当班节点已接手' : ''}`) };
 }
-// Review N2: the take-over time, idle and busy apart (never "45 minutes at most"); shown in the reminder's notification.
-export const TAKEOVER_TIME_TEXT = '移交后：对方空闲或停摆时，本节点下一次角色探测（通常 15 分钟内）就接班；对方还在跑批时，要等它发现没有角色、写“已交班”之后。';
+// Review N2: the take-over time, idle and busy apart (never "45 minutes at most"); shown in the reminder's notification. ADR 0025: a
+// STANDBY asks every minute, the new role starts 5 minutes after the hand-over.
+export const TAKEOVER_TIME_TEXT = '移交后：对方空闲或停摆时，新角色 5 分钟后生效，本节点约 1 分钟内（下一次角色探测）就接班；对方还在跑批时，要等它发现没有角色、写“已交班”之后。';
 
 // The read helpers' argv (fixed; every variable part matched first).
 export function statusesArgv(ghExe, repo, headSha) {
@@ -300,7 +306,8 @@ export function pruneMemory(m, now) {
 export class NodeDuty {
   // ports: { repo, ghExe, run(argv, { timeoutMs }), clock, memory (freshMemory shape, kept by the caller), fallbackName,
   //   writeRequest(value) -> Promise (creates one file in the resident's requests\; null: no lock can be held),
-  //   timeoutMs, inBudget() -> bool, staleMs }
+  //   timeoutMs, inBudget() -> bool, staleMs, autoHandoverSince() -> ms | null (optional, ADR 0025: when the failover watchdog last
+  //   handed ci-admission to this node; the heartbeat's answer) }
   constructor(ports) {
     Object.assign(this, ports);
     this.restarted = true; // the first passes after the companion started, until the restart writes are done (NIT 4)
@@ -310,6 +317,17 @@ export class NodeDuty {
     this.executorPid = null; // the executor's pid in the last status seen: another one starts the spacing over
     this.restartOwed = null; // the heads owed 停摆（NODE_RESTARTED）, fixed at the first pass after the start
     this.readAt = new Map(); // head -> { at, others, admitted }: a STANDBY reads a head at most every RELEASE_READ_MS
+  }
+
+  // ADR 0025: duty statements written at or before this (ms, server time) do not hold this node back, or null. The failover watchdog
+  // hands ci-admission over only after the holder has been silent for its silence rule (3 minutes): what that holder wrote before is
+  // a dead node's last word, which used to keep the new node out for up to DUTY_WINDOW_MS. A statement written after it still counts
+  // (the old node came back still thinking it is on duty, or a second holder: the lock as before). A hand-over by the Owner gives no
+  // cut: the old node is alive then and hands over itself within its next probe.
+  dutyCut() {
+    let v = null;
+    try { v = this.autoHandoverSince?.() ?? null; } catch { v = null; }
+    return Number.isFinite(v) ? v : null;
   }
 
   // The Owner's GitHub login (the companion runs under it); null when unknown (nobody else's status then counts).
@@ -423,7 +441,7 @@ export class NodeDuty {
         continue;
       }
       c.fails = 0;
-      for (const d of allOnDutyElsewhere(others, now)) c.found.push({ node: d.node, headSha: c.heads[c.idx] });
+      for (const d of allOnDutyElsewhere(others, now, this.dutyCut())) c.found.push({ node: d.node, headSha: c.heads[c.idx] });
       c.idx += 1;
     }
     return true;
@@ -448,6 +466,7 @@ export class NodeDuty {
     // Set before the reads: a head that cannot be read is tried again in RELEASE_READ_MS, not every pass (review M4).
     lock.releaseReadAt = now;
     const reads = new Map();
+    const cut = this.dutyCut();
     // Every node is read again each time, a cleared one too: a node that aged out and then writes 当班 again on a head it was
     // seen on (its role back, or a late refresh) holds the lock again; the age-out bound is DUTY_WINDOW_MS, the window every
     // duty status counts for (onDutyElsewhere, unclaimedReason's 'stale').
@@ -462,7 +481,7 @@ export class NodeDuty {
         }
         const d = reads.get(head).get(o.node);
         if (d?.word === WORD.HANDED) { handed = true; break; }
-        if (d && (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS) seenOnDuty = true;
+        if (dutyNow(d, now, cut)) seenOnDuty = true;
       }
       // A node with no head to look at (a lock kept from a shape that did not fit) is never cleared by a partner read.
       o.cleared = handed || (!seenOnDuty && o.heads.length > 0);

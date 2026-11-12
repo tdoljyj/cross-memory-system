@@ -11,42 +11,68 @@ test('C2 has exactly three role states and refuses extra authority', () => {
   for (const f of [held, notHeld, uncertain, { result: 'uncertain', code: C.connection }]) assert.deepEqual(validateRoleProbeFact(f), f);
   for (const f of [{ ...held, active: true }, { result: 'held', code: C.uncertain }, { result: 'unknown', code: C.uncertain }]) assert.throws(() => validateRoleProbeFact(f));
 });
-test('idle-only cadence is 15min STANDBY, 30min ACTIVE; clocks never reset the floor', () => {
+test('idle-only cadence is 1 min STANDBY (and UNCERTAIN), 5 min ACTIVE; clocks never reset the floor (ADR 0025)', () => {
+  assert.deepEqual(ROLE_PROBE_INTERVAL_MS, { STANDBY: 60_000, ACTIVE: 5 * 60_000 });
   const p = new RoleProbe();
   assert.equal(p.due({ now: at, mode: 'ACTIVE', idle: false }), false);
   assert.equal(p.due({ now: at, mode: 'NONE', idle: true }), false);
   assert.equal(p.due({ now: at, mode: 'ACTIVE', idle: true }), true);
   p.observe(held, at);
   assert.equal(p.due({ now: at - 1, mode: 'ACTIVE', idle: true }), false);
-  for (const mode of ['ACTIVE', 'STANDBY']) {
-    const end = at + ROLE_PROBE_INTERVAL_MS[mode];
-    assert.equal(p.due({ now: end - 1, mode, idle: true }), false);
-    assert.equal(p.due({ now: end, mode, idle: true }), true);
+  for (const [mode, every] of [['ACTIVE', 5 * 60_000], ['STANDBY', 60_000], ['UNCERTAIN', 60_000]]) {
+    assert.equal(p.due({ now: at + every - 1, mode, idle: true }), false);
+    assert.equal(p.due({ now: at + every, mode, idle: true }), true);
   }
   assert.throws(() => p.observe(held, at - 1));
 });
-test('UNCERTAIN mode backs off an uncertain answer 1, 2, 4, 8, 15 minutes; ACTIVE and STANDBY keep their intervals', () => {
+test('an idle ACTIVE node always learns it lost the role before the new holder can start (5-minute activation delay)', () => {
+  // The server ends the old holder's role at T0 and starts the new one at T0 + 5 minutes. Whatever the phase of the old node's
+  // last probe, its next one comes no later than T0 + 5 minutes; the new node's first held answer comes no earlier.
+  const ACTIVATION_DELAY_MS = 5 * 60_000;
+  for (const sinceLast of [0, 1, 60_000, 4 * 60_000 + 59_999]) {
+    const p = new RoleProbe();
+    const T0 = at + 10 * 60_000;
+    p.observe(held, T0 - sinceLast);
+    let t = T0;
+    while (!p.due({ now: t, mode: 'ACTIVE', idle: true })) t += 1000;
+    assert.ok(t <= T0 + ACTIVATION_DELAY_MS, `probed at T0+${t - T0} ms`);
+  }
+});
+test('an uncertain answer backs off 1, 2, 4, then 5 minutes in every mode, never below the mode interval', () => {
+  assert.deepEqual(ROLE_PROBE_UNCERTAIN_BACKOFF_MS, [60_000, 120_000, 240_000, 300_000]);
   const p = new RoleProbe();
   assert.equal(p.due({ now: at, mode: 'UNCERTAIN', idle: true }), true, 'a first probe is due');
   assert.equal(p.due({ now: at, mode: 'UNCERTAIN', idle: false }), false, 'only when nothing runs');
   let t0 = at;
   for (const wait of ROLE_PROBE_UNCERTAIN_BACKOFF_MS) {
     p.observe(uncertain, t0);
-    assert.equal(p.due({ now: t0 + wait - 1, mode: 'UNCERTAIN', idle: true }), false);
-    assert.equal(p.due({ now: t0 + wait, mode: 'UNCERTAIN', idle: true }), true);
-    for (const mode of ['ACTIVE', 'STANDBY']) assert.equal(p.due({ now: t0 + wait, mode, idle: true }), wait >= ROLE_PROBE_INTERVAL_MS[mode]);
+    for (const mode of ['UNCERTAIN', 'STANDBY']) {
+      assert.equal(p.due({ now: t0 + wait - 1, mode, idle: true }), false);
+      assert.equal(p.due({ now: t0 + wait, mode, idle: true }), true);
+    }
+    const active = Math.max(wait, ROLE_PROBE_INTERVAL_MS.ACTIVE);
+    assert.equal(p.due({ now: t0 + active - 1, mode: 'ACTIVE', idle: true }), false, 'ACTIVE never sooner than its 5 minutes');
+    assert.equal(p.due({ now: t0 + active, mode: 'ACTIVE', idle: true }), true);
     t0 += wait;
   }
   p.observe(uncertain, t0);
-  assert.equal(p.due({ now: t0 + ROLE_PROBE_INTERVAL_MS.STANDBY - 1, mode: 'UNCERTAIN', idle: true }), false, 'capped at STANDBY');
-  assert.equal(p.due({ now: t0 + ROLE_PROBE_INTERVAL_MS.STANDBY, mode: 'UNCERTAIN', idle: true }), true);
+  assert.equal(p.due({ now: t0 + 5 * 60_000 - 1, mode: 'STANDBY', idle: true }), false, 'capped at 5 minutes');
+  assert.equal(p.due({ now: t0 + 5 * 60_000, mode: 'STANDBY', idle: true }), true);
   assert.equal(p.due({ now: t0 - 1, mode: 'UNCERTAIN', idle: true }), false, 'a backward clock is never due');
-  const q = new RoleProbe();
-  q.observe(held, at);
-  assert.equal(q.due({ now: at + ROLE_PROBE_INTERVAL_MS.STANDBY - 1, mode: 'UNCERTAIN', idle: true }), false, 'without a failure UNCERTAIN is STANDBY');
-  assert.equal(q.due({ now: at + ROLE_PROBE_INTERVAL_MS.STANDBY, mode: 'UNCERTAIN', idle: true }), true);
-  assert.deepEqual(ROLE_PROBE_UNCERTAIN_BACKOFF_MS, [60_000, 120_000, 240_000, 480_000, 900_000]);
-  assert.deepEqual(ROLE_PROBE_INTERVAL_MS, { STANDBY: 15 * 60_000, ACTIVE: 30 * 60_000 });
+  p.observe(notHeld, t0 + 5 * 60_000);
+  assert.equal(p.due({ now: t0 + 6 * 60_000, mode: 'STANDBY', idle: true }), true, 'a definite answer ends the backoff');
+});
+test('clock skew: a clock that jumps back never probes early and never loses the book; one that jumps forward only probes sooner', () => {
+  const p = new RoleProbe();
+  p.observe(notHeld, at);
+  // Back by ten minutes: not due until the clock is past the last answer plus the interval again.
+  for (const now of [at - 10 * 60_000, at - 1, at + 59_999]) assert.equal(p.due({ now, mode: 'STANDBY', idle: true }), false);
+  assert.throws(() => p.observe(held, at - 10 * 60_000), /ROLE_PROBE_CLOCK_REFUSED/);
+  assert.equal(p.last.result, 'not-held', 'a refused observation leaves the book as it was');
+  // Forward by an hour: due at once (one extra read-only probe), and the next interval counts from there.
+  assert.equal(p.due({ now: at + 3_600_000, mode: 'STANDBY', idle: true }), true);
+  p.observe(held, at + 3_600_000);
+  assert.equal(p.due({ now: at + 3_600_000 + 59_999, mode: 'STANDBY', idle: true }), false);
 });
 test('C3 urgent: the next idle tick probes without waiting for the interval; any observation clears it; a backward clock is never due; it is not stored', () => {
   const p = new RoleProbe();

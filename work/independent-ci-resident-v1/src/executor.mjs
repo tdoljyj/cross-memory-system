@@ -1972,8 +1972,8 @@ export class ResidentExecutor {
   async roleProbeMaintenance({ upgradePaused = false, watch = null } = {}) {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
-    // 15-minute interval, except that an uncertain answer is retried after 1, 2, 4, 8 minutes (role-probe.mjs), and `urgent` (a start,
-    // a re-arm, a failure that may mean the role is gone) is due at once.
+    // one-minute interval, an idle ACTIVE node five minutes, an uncertain answer backs off (role-probe.mjs, ADR 0025), and `urgent`
+    // (a start, a re-arm, a failure that may mean the role is gone) is due at once.
     const mode = this.nodeMode(), now = this.clock();
     // A paused upgrade is quiet only with no open batch at all. Match both the fixed request shape and
     // its original bytes' digest; an ordinary/unknown/torn pause still prevents the probe.

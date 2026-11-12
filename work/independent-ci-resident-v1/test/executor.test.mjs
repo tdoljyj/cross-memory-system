@@ -263,7 +263,7 @@ test('the executor needs every port and a valid policy', () => {
 
 const probeResult = (fact = { result: 'held', code: 'ROLE_PROBE_HELD' }, override = {}) => ({ ok: true, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
   roleProbe: fact, outcome: { status: 'BLOCKED', reason: fact.code, sideEffects: 0, mayHavePublished: false }, ...override });
-test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; active cadence is 30min', async t => {
+test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; active cadence is 5 min (ADR 0025)', async t => {
   const f = await executorFixture(t); let calls = 0;
   f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
   assert.equal((await f.exec.tick()).state, 'IDLE'); assert.equal(calls, 1);
@@ -271,7 +271,7 @@ test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; a
   assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), networkReleasesByHead: new Map(), stage8Retries: 0 });
   assert.equal(f.companion.calls.length, 0); assert.equal(f.engine.calls.length, 0);
   await f.exec.tick(); assert.equal(calls, 1);
-  f.advance(1800000 - 1); await f.exec.tick(); assert.equal(calls, 1);
+  f.advance(300000 - 1); await f.exec.tick(); assert.equal(calls, 1);
   f.advance(1); await f.exec.tick(); assert.equal(calls, 2);
 });
 test('C2 probes never run during a batch or while paused/HALT; it never clears head burn', async t => {
