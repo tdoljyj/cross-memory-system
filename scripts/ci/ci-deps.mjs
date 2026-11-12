@@ -39,11 +39,16 @@ export const PREPARE_FLAGS = ['--prefer-offline', '--maxsockets=4', '--fetch-ret
   '--fetch-retry-maxtimeout=60000', '--fetch-timeout=120000'];
 // What a prepare may spend, inside ci-suites' 45-minute job. A round runs until it fails or the budget ends
 // (one large tarball can take minutes); what it fetched stays in the cache for the next round.
-const PREPARE_BUDGET_MS = 25 * 60_000;
+const PREPARE_BUDGET_MS = 18 * 60_000;
 const OFFLINE_MS = 10 * 60_000;
-const LOCK_WAIT_MS = 10 * 60_000;
+const LOCK_WAIT_MS = 5 * 60_000;
+// A lock this old outlived any prepare (its holder's pid may be another process's by now).
+const LOCK_STALE_MS = 30 * 60_000;
 // The cache lacks a package (or holds a damaged copy): prepare, never download during install.
-const MISSING = /\b(ENOTCACHED|EINTEGRITY)\b/;
+const MISSING = /\berror code (ENOTCACHED|EINTEGRITY)\b/;
+// The lockfile itself is wrong (out of step with package.json, a bad integrity, a version that does not
+// exist): no retry fixes it, and it is the change's fault, not the network's.
+const LOCKFILE_FAULT = /\berror code (EUSAGE|EINTEGRITY|E404|ETARGET|ENOVERSIONS)\b/;
 
 export class DepsError extends Error {
   constructor(message, exitCode) { super(message); this.exitCode = exitCode; }
@@ -76,7 +81,7 @@ export function runNpm(args, cwd, { timeoutMs = OFFLINE_MS } = {}) {
   const [npm, ...prefix] = npmCommand();
   const logs = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-deps-log-'));
   try {
-    const done = spawnSync(npm, [...prefix, ...args, '--logs-dir', logs], { cwd, stdio: ['ignore', 2, 2], windowsHide: true,
+    const done = spawnSync(npm, [...prefix, ...args, '--logs-dir', logs, '--logs-max', '10'], { cwd, stdio: ['ignore', 2, 2], windowsHide: true,
       timeout: timeoutMs, killSignal: 'SIGTERM' });
     const status = done.status ?? 1;
     let output = done.error ? done.error.message : '';
@@ -116,11 +121,16 @@ export function withKeyLock(cache, key, fn, { log = console.error, sleep = sleep
       held = true;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
+      let text = null;
+      let age = 0;
+      try { age = Date.now() - fs.statSync(lock).mtimeMs; text = fs.readFileSync(lock, 'utf8'); } catch { /* being removed */ }
       let owner = null;
-      try { owner = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch { /* being written or removed */ }
-      if (owner && owner.host === os.hostname() && !alive(owner.pid)) {
-        log(`ci-deps: the preparer of ${key} (pid ${owner.pid}) is gone; taking over`);
-        try { if (fs.readFileSync(lock, 'utf8') === JSON.stringify(owner)) fs.rmSync(lock, { force: true }); } catch { /* taken meanwhile */ }
+      try { owner = JSON.parse(text); } catch { /* being written, or its writer died first */ }
+      // gone: its process ended, it outlived any prepare, or it stayed empty past a minute
+      const stale = owner ? (owner.host === os.hostname() && !alive(owner.pid)) || age > LOCK_STALE_MS : text !== null && age > 60_000;
+      if (stale) {
+        log(`ci-deps: the lock of ${key} is stale (${owner ? `pid ${owner.pid}` : 'empty'}); taking over`);
+        try { if (fs.readFileSync(lock, 'utf8') === text) fs.rmSync(lock, { force: true }); } catch { /* taken meanwhile */ }
         continue;
       }
       if (now() > deadline) {
@@ -156,8 +166,10 @@ export function prepare(app, { cache = cacheRoot(), run = runNpm, log = console.
           log(`ci-deps: ${key} is in the dependency store`);
           return key;
         }
-        if (/\bEUSAGE\b/.test(fill.output)) {
-          throw new DepsError(`npm ci refuses ${app}'s package.json and package-lock.json (not the network; npm's output is above)`, 1);
+        const fault = LOCKFILE_FAULT.exec(fill.output);
+        if (fault) {
+          throw new DepsError(`npm ci refuses ${app}'s package-lock.json (${fault[1]}): the lockfile is wrong, not the network; ` +
+            "npm's output is above", 1);
         }
         const pause = 15_000 * round;
         if (now() + pause + 60_000 > deadline) break;

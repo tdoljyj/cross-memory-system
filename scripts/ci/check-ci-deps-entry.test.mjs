@@ -104,6 +104,7 @@ test('a new install in a CI script fails the check; so does a list that grew sin
   git('commit', '-qm', 'base');
   const base = git('rev-parse', 'HEAD').trim();
   assert.equal(main(['--root', repo, '--base', base]), 0);
+  assert.equal(main(['--root', repo, '--base', 'deadbeef']), 1, 'a base it cannot read is no reason to skip the shrink check');
   fs.writeFileSync(path.join(repo, 'scripts/ci/bad.py'), 'subprocess.run(["npm", "ci"], cwd=app)\n');
   git('add', '-A');
   assert.equal(main(['--root', repo, '--base', base]), 1);

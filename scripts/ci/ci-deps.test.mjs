@@ -81,15 +81,15 @@ test('prepare: a store that never fills fails as the store (exit 75), not as a t
   assert.ok(clock <= 25 * 60_000, `spent ${clock / 60000} minutes`);
 });
 
-test('prepare: a lockfile npm refuses is not retried as a network fault', (t) => {
+test('prepare: a wrong lockfile is the change\'s fault, failed at once, not retried as a network fault', (t) => {
   const dir = app(t);
-  let calls = 0;
-  const run = () => {
-    calls += 1;
-    return { status: 1, output: 'npm error code EUSAGE\nnpm ci can only install packages when your package.json and package-lock.json are in sync' };
-  };
-  assert.throws(() => prepare(dir, { cache: tempDir(t), run, log: quiet, sleep: quiet }), (error) => error.exitCode === 1 && /not the network/.test(error.message));
-  assert.equal(calls, 1);
+  for (const code of ['EUSAGE', 'EINTEGRITY', 'E404', 'ETARGET', 'ENOVERSIONS']) {
+    let calls = 0;
+    const run = () => { calls += 1; return { status: 1, output: `npm error code ${code}\nnpm error the lockfile says otherwise` }; };
+    assert.throws(() => prepare(dir, { cache: tempDir(t), run, log: quiet, sleep: quiet }),
+      (error) => error.exitCode === 1 && new RegExp(`\\(${code}\\): the lockfile is wrong, not the network`).test(error.message), code);
+    assert.equal(calls, 1, code);
+  }
 });
 
 test('install is offline; only a missing or damaged package prepares the store, and one still missing is 依赖库缺失 (exit 78)', (t) => {
@@ -115,7 +115,7 @@ test('install is offline; only a missing or damaged package prepares the store, 
     assert.deepEqual(prepared, [{ where: dir, cache }], code);
     assert.deepEqual(seen.map(({ args }) => args.includes('--offline')), [true, true], 'both installs offline');
   }
-  assert.throws(() => install(dir, { cache, run: offline([{ status: 1, output: 'ENOTCACHED' }, { status: 1, output: 'ENOTCACHED' }]), log: quiet,
+  assert.throws(() => install(dir, { cache, run: offline([{ status: 1, output: 'npm error code ENOTCACHED' }, { status: 1, output: 'npm error code ENOTCACHED' }]), log: quiet,
     prepareStore }), (error) => error.exitCode === EXIT_STORE_MISSING && /依赖库缺失/.test(error.message) && /没有联网安装/.test(error.message));
   prepared.length = 0;
   assert.throws(() => install(dir, { cache, run: offline([{ status: 1, output: 'npm error code ENOSPC' }]), log: quiet, prepareStore }),
@@ -138,6 +138,15 @@ test('runners preparing one lockfile take turns; a dead holder is replaced; a lo
   let clock = 0;
   assert.equal(withKeyLock(cache, 'k', () => 'alongside', { log: quiet, sleep: () => { clock += 60_000; }, now: () => clock, waitMs: 120_000 }), 'alongside');
   assert.equal(fs.readFileSync(lock, 'utf8'), other, 'a lock it never held is left to its holder');
+  // a lock older than any prepare (its pid may be reused), or left empty by a writer that died, is taken over
+  const old = (Date.now() - 31 * 60_000) / 1000;
+  fs.utimesSync(lock, old, old);
+  assert.equal(withKeyLock(cache, 'k', () => 'took over', { log: quiet, sleep: () => assert.fail('no wait') }), 'took over');
+  fs.writeFileSync(lock, '');
+  const minuteAgo = (Date.now() - 2 * 60_000) / 1000;
+  fs.utimesSync(lock, minuteAgo, minuteAgo);
+  assert.equal(withKeyLock(cache, 'k', () => 'took over', { log: quiet, sleep: () => assert.fail('no wait') }), 'took over');
+  assert.equal(fs.existsSync(lock), false);
 });
 
 test('the command line takes install or prepare and one app directory', () => {

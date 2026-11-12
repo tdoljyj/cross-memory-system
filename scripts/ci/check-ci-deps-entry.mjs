@@ -102,6 +102,11 @@ export function verdict(found, legacy, base = null) {
 
 export function baseLegacy(root, base) {
   try {
+    execFileSync('git', ['cat-file', '-e', `${base}^{commit}`], { cwd: root, stdio: 'ignore' });
+  } catch {
+    throw new Error(`--base ${base} is not a commit here: cannot check that ${LEGACY} only shrinks`);
+  }
+  try {
     return readLegacy(execFileSync('git', ['show', `${base}:${LEGACY}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
   } catch {
     return null; // the base predates the list (the change that adds it)
@@ -120,7 +125,12 @@ export function main(argv = process.argv.slice(2)) {
   const option = (name) => (argv.indexOf(name) >= 0 ? argv[argv.indexOf(name) + 1] : null);
   const root = path.resolve(option('--root') ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'));
   const base = option('--base');
-  const problems = verdict(scan(root), readLegacy(fs.readFileSync(path.join(root, LEGACY), 'utf8')), base ? baseLegacy(root, base) : null);
+  let problems;
+  try {
+    problems = verdict(scan(root), readLegacy(fs.readFileSync(path.join(root, LEGACY), 'utf8')), base ? baseLegacy(root, base) : null);
+  } catch (error) {
+    problems = [`ci-deps-entry: ${error.message}`];
+  }
   if (problems.length === 0) {
     console.log(`ci-deps-entry: every CI dependency install goes through ${ENTRY}`);
     return 0;
