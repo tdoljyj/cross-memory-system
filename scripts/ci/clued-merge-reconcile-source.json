@@ -274,7 +274,7 @@
     "scripts/ci/hosted-migration-source-history.fixture.mjs": "e1a68070aa3800282a8fe675006eb531ba255a4d23a4eaed755f9e39f9bfa3e5",
     "scripts/ci/local-verify-concurrency.test.mjs": "5048f93874ec5c510bcb66ba9799804f613c2e878342f856c92082466092536d",
     "scripts/ci/local-verify.mjs": "9cc482e800ac334f23d41056b28135604bf1a947eff0239bd487d64dbb774111",
-    "scripts/ci/local-verify.test.mjs": "0efe121649a0230aa407b65fe01533fa1bc9fe044d03cae654923b10ab8019c0",
+    "scripts/ci/local-verify.test.mjs": "68fdb3ea1c9e9ba09e4c302ee648a2edc2aa3cf535706019ea19df5728386256",
     "scripts/ci/main-entry-legacy.json": "7e46123f7ea426ee6034feab3c02c4faa6c98c79c8b88a6fd8a34731e81a1d10",
     "scripts/ci/main-entry-realpath.test.mjs": "77851148238c98fbd185d879cd93279e07d617e6dc10f3762694fc9be9cab0c1",
     "scripts/ci/merge-admission-clock-bootstrap.mjs": "a32404ea7b39e13e4484243198a2a286fb01e582d49b8328b6a1b519961b075e",
