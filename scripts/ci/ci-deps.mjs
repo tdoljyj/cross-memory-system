@@ -34,6 +34,10 @@ export const EXIT_PREPARE_FAILED = 75; // EX_TEMPFAIL: the store could not be fi
 export const EXIT_STORE_MISSING = 78; // EX_CONFIG: the store lacks a package after preparing
 const STATE = '_clued-ci-deps';
 const COMMON = ['--ignore-scripts', '--no-audit', '--no-fund'];
+// Measured on DESK through Clash TUN, empty cache, this lockfile (2026-11-12): npm's defaults (15 sockets,
+// 2 retries) failed 3 of 3 with ECONNRESET "network aborted" after ~8 minutes; 4 sockets and 6 retries passed
+// 2 of 3 and failed the third the same way with no request retried (a reset midway through a download is not
+// retried, hence the rounds); 1 socket fetched 1072 of 1322 tarballs in 10 minutes.
 export const PREPARE_FLAGS = ['--prefer-offline', '--maxsockets=4', '--fetch-retries=6', '--fetch-retry-mintimeout=2000',
   '--fetch-retry-maxtimeout=60000', '--fetch-timeout=120000'];
 // What a prepare may spend, inside ci-suites' 45-minute job. A round runs until it fails or the budget ends
