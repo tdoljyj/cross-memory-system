@@ -144,11 +144,16 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
 
 
 def _npm_ci(app: Path) -> None:
+    """Install from the runner's persistent ~/.npm, the one cache clued-cloud-tests and migration-verify
+    install from (clued-required-tests.yml). apps/clued-cloud/.npmrc names a relative cache, which in this
+    throwaway worktree is always empty: every run downloaded all ~1350 packages and an ECONNRESET failed
+    ci-suites (#1078, 2026-11-12)."""
     npm = shutil.which("npm")
     if not npm:
         raise ValueError("mechanical-outputs: npm is not installed; cannot verify")
-    done = subprocess.run([npm, "ci", "--ignore-scripts", "--prefer-offline", "--fetch-retries=2",
-                           "--fetch-timeout=30000", "--no-audit", "--no-fund"], cwd=app, capture_output=True, text=True)
+    done = subprocess.run([npm, "ci", "--ignore-scripts", "--cache", str(Path.home() / ".npm"), "--prefer-offline",
+                           "--fetch-retries=2", "--fetch-timeout=30000", "--no-audit", "--no-fund"],
+                          cwd=app, capture_output=True, text=True)
     if done.returncode:
         raise ValueError("mechanical-outputs: npm ci in the throwaway worktree failed; cannot verify\n" + done.stderr[-2000:])
 

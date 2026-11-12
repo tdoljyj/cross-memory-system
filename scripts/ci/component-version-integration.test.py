@@ -178,6 +178,21 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertIn("mechanical-outputs-", str(installed[0]), "installed into the throwaway worktree only")
         self.assertFalse((app / "node_modules").exists())
 
+    def test_npm_ci_installs_from_the_runners_persistent_npm_cache(self):
+        # The .npmrc's relative cache is empty in a throwaway worktree; ~/.npm is what the other CI installs keep warm.
+        calls = []
+        real_run, real_which = integration.subprocess.run, integration.shutil.which
+        integration.subprocess.run = lambda argv, **kw: calls.append((argv, kw)) or subprocess.CompletedProcess(argv, 0, "", "")
+        integration.shutil.which = lambda name: "npm"
+        try:
+            integration._npm_ci(Path("app"))
+        finally:
+            integration.subprocess.run, integration.shutil.which = real_run, real_which
+        argv = calls[0][0]
+        self.assertEqual(argv[:2], ["npm", "ci"])
+        self.assertEqual(argv[argv.index("--cache") + 1], str(Path.home() / ".npm"))
+        self.assertIn("--prefer-offline", argv)
+
     def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):
         self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")
         before = self.head()
