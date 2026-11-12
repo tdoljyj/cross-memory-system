@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "57",
+      "version": "58",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "1429726fca7a7245096670aef4f62aca4fa0888312b8327beba225149b6500d0",
+      "content_sha256": "a50b864ceb2dfde7c6faa5ccf7ef4cef51b6dd2544d9a6ceddcedb0dc03bcd39",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "91fab6ce0e861b817866af847262ef9d68a5c8a3ebb228c503429edaa6373d00"
+      "content_sha256": "74a1cd69f127ae2ff183ff25e536f0eacd1aeb1befce67edf96b06e97db2649c"
     },
     {
       "id": "hook.runner-job-started",
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "58d8a7ed9ccfe3e4c4f5f24a9961bbb4c3e0ecebd6160dff761d7f928fb9ca34"
+      "content_sha256": "d59272388d2e8ecd3595ec19ba7a05bb30840664722b281b3259b72ae78f1d29"
     },
     {
       "id": "script.resource-maintenance",

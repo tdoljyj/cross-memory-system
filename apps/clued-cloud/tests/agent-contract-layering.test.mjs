@@ -15,6 +15,7 @@ const ciQueueAssist = JSON.parse(await readFile(new URL('./fixtures/agent-contra
 const ciQueueParticipation = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v54-v55-map.json', import.meta.url), 'utf8'));
 const prTaskBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v55-v56-map.json', import.meta.url), 'utf8'));
 const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v56-v57-map.json', import.meta.url), 'utf8'));
+const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v57-v58-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -22,9 +23,24 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // runtime additions, the v51 claim-renewal clarification, the v52 title
 // metadata correction, the v53 display-name changes, the v54 resident CI queue assist,
 // the v55 queue participation and explicit holder removal, and the v56 Native
-// PR/Task identity successor, then the v57 holder-edit/terminal successor. Undo only these declared
+// PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head. Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v57Source() {
+  assert.equal(leasePin.schema,'clued.agent-contract-lease-pin-successor/1');
+  assert.equal(leasePin.source_version,57);assert.equal(leasePin.target_version,58);
+  assert.deepEqual(leasePin.edits.map(row=>row.id),['version','authorize-pins-lease','ci-extension-pinned','renew-at-deadline']);
+  assert.deepEqual(leasePin.edits[0],{id:'version',before:'Contract version: 57',after:'Contract version: 58'});
+  assert.equal(sha256(source),leasePin.target_document_normalized_sha256);
+  let restored=source;
+  for(const {id,before,after} of [...leasePin.edits].reverse()){
+    assert.equal(restored.split(after).length-1,1,`${id}: exact lease-pin successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),leasePin.source_document_normalized_sha256);
+  return restored;
+}
 function v56Source() {
+  const source=v57Source();
   assert.equal(terminalRelease.schema,'clued.agent-contract-terminal-release-successor/1');
   assert.equal(terminalRelease.source_version,56);assert.equal(terminalRelease.target_version,57);
   assert.deepEqual(terminalRelease.edits.map(row=>row.id),['version','holder-readiness','holder-edit-verification','trusted-pr-terminal']);
@@ -221,7 +237,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v57 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v58 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
