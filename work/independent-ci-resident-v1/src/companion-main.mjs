@@ -46,7 +46,7 @@ export const BACKSTOP_EVERY_MS = 5 * 60_000;
 // The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
 export const UPGRADE_LANE_EVERY_MS = 5_000;
 // The node heartbeat's own lane (DESIGN §41.6a, companion-heartbeat.mjs) looks this often whether what it reports changed; it
-// sends every minute (ADR 0025) and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
+// sends every minute (ADR 0026) and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
 export const HEARTBEAT_LANE_EVERY_MS = 30_000;
 // The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
 export const COMPANION_LOCK_TOUCH_MS = 60_000;
@@ -313,7 +313,7 @@ export async function main(args = process.argv.slice(2)) {
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
-  // ADR 0025: the last automatic take-over to this node, for the take-over check (node-duty.mjs).
+  // ADR 0026: the last automatic take-over to this node, for the take-over check (node-duty.mjs).
   reporter.autoHandoverSince = () => heartbeat?.autoHandoverSince ?? null;
   // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).

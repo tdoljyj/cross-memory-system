@@ -85,7 +85,7 @@ function beat(o = {}) {
   return { hb, sent, notes, comments, memo, advance: ms => { now += ms; }, setStatus: s => { st = s; }, setReplies: r => { replies = r; } };
 }
 
-test('no token installed: nothing runs; with one: every minute (ADR 0025), at once on a change, the token as the transport\'s credential', async () => {
+test('no token installed: nothing runs; with one: every minute (ADR 0026), at once on a change, the token as the transport\'s credential', async () => {
   assert.equal(NODE_HEARTBEAT_EVERY_MS, MIN);
   const none = beat({ token: null });
   assert.deepEqual(await none.hb.step(), { skipped: 'NO_TOKEN' });
@@ -130,7 +130,7 @@ test('three failures in a row, or a refused token, notify once per spell; a stal
   assert.equal(unreg.hb.failures, 0);
 });
 
-test('ADR 0025: a failed beat is tried again at the next lane pass (30 s), not a whole interval later; a good one waits the minute', async () => {
+test('ADR 0026: a failed beat is tried again at the next lane pass (30 s), not a whole interval later; a good one waits the minute', async () => {
   const fail = { ok: false, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null };
   const good = { ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: NOW, watchdogStale: false };
   const t = beat({ replies: [fail] });
@@ -150,7 +150,7 @@ test('ADR 0025: a failed beat is tried again at the next lane pass (30 s), not a
   assert.ok(FAILOVER_SILENCE_MINUTES * MIN >= 2 * NODE_HEARTBEAT_EVERY_MS + MIN);
 });
 
-test('ADR 0025: the last automatic take-over to this node is kept (its server time), for the take-over check', async () => {
+test('ADR 0026: the last automatic take-over to this node is kept (its server time), for the take-over check', async () => {
   const at = iso => ({ receiptId: RECEIPT, from: null, to: null, at: null, trigger: 'silence', createdAt: iso });
   const reply = list => ({ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: list, watchdogTickAt: NOW, watchdogStale: false });
   const t = beat({ replies: [reply([])] });

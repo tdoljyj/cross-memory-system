@@ -566,7 +566,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 信箱 | 持续 | 打 bundle（第 0 段）、refs 闸门、建工作区、Linux 归档与静止证明、泵（第 2/4/6 段）、`pr-head` 实时读、内存读数 |
 | 咨询 | 1 分钟 | 轮询：用 Owner 的 gh 登录，带 ETag 条件请求读 `git/ref/heads/main` 和 open PR，只提议已跟上 main 的 head；写 PR 页面状态（`resident-queue/<node> (info only)`）；发 Windows 通知；每 5 分钟做一次规则集兜底 |
 | 升级信箱 | 5 秒 | 把升级代理的请求交给冻结的 Linux 升级工具；刷新 Linux 版本事实和角色公开副本 |
-| 心跳 | 30 秒检查，每 1 分钟发一次（ADR 0025） | 用本节点专用的心跳令牌上报自身状态（§10.3） |
+| 心跳 | 30 秒检查，每 1 分钟发一次（ADR 0026） | 用本节点专用的心跳令牌上报自身状态（§10.3） |
 | 面板触发 | 30 秒 | 当班节点每 5 分钟对算力面板发一次 `workflow_dispatch` |
 | 准入补跑 | 1 分钟 | `admission-gate` 以 `ADMISSION_PENDING` 结束时，用 Owner 的 gh 登录点一次 "Re-run all jobs"，每个 head 最多一次（Decision `207c0cd0`） |
 | 合并对账 | 30 秒 | 唤醒原合并控制器（`clued-merge-reconcile.yml`），不做任何合并判断。**默认关闭**：只有 companion.json 写了 `mergeReconcile.enabled=true` 的包才运行，仓库里现有配置都没有打开 |
@@ -605,7 +605,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
   - not-held → STANDBY；
   - uncertain → 保持原模式。
 - 非 ACTIVE 时不开新批次（`NODE_STANDBY` / `NODE_ROLE_UNCERTAIN`），触发照常读进排队表，在途批次照常跑完。
-- 探测间隔（[ADR 0025](adr/0025-smooth-handover.md)）：UNCERTAIN 和 STANDBY 每 1 分钟；空闲的 ACTIVE 每 5 分钟（不超过新持有的 5 分钟激活延迟，所以空闲的旧节点总在新节点当班之前转待命）；不确定时 1、2、4、5 分钟退避，不短于本模式间隔；批次以 `NODE_ROLE_NOT_HELD` 等结束时立即探测。
+- 探测间隔（[ADR 0026](adr/0026-smooth-handover.md)）：UNCERTAIN 和 STANDBY 每 1 分钟；空闲的 ACTIVE 每 5 分钟（不超过新持有的 5 分钟激活延迟，所以空闲的旧节点总在新节点当班之前转待命）；不确定时 1、2、4、5 分钟退避，不短于本模式间隔；批次以 `NODE_ROLE_NOT_HELD` 等结束时立即探测。
 - 每次探测是一次经交换代理的换跑（约 4 秒，写 2 条回执），不是单纯的服务端查询。
 - 真正挡住"两个节点同时发布"的是服务端的 ci-admission 角色（每批第 1 段、第 8 段实时核验）。节点模式和 PR 页面上的当班状态都只是提示。
 
@@ -620,13 +620,13 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 
 见 [ADR 0013](adr/0013-multi-node-failover.md)。
 
-- companion 每 1 分钟发心跳（ADR 0025），失败后 30 秒重发，状态变化或本机时钟往回跳时立即补发。上报内容：`ciSourceManifestSha256`、模式、HALTED / PAUSED / INTAKE_PAUSED、服务是否在运行。
+- companion 每 1 分钟发心跳（ADR 0026），失败后 30 秒重发，状态变化或本机时钟往回跳时立即补发。上报内容：`ciSourceManifestSha256`、模式、HALTED / PAUSED / INTAKE_PAUSED、服务是否在运行。
 - 服务端看门狗（`pg_cron` 每分钟）**只在当班节点失联时**交接，条件包括：
-  - 5 分钟没有心跳，或连续 5 分钟报服务没在运行（ADR 0025，迁移 `20261112130500`；以前 30 分钟）；
+  - 5 分钟没有心跳，或连续 5 分钟报服务没在运行（ADR 0026，迁移 `20261112130500`；以前 30 分钟）；
   - 最近一条自报不是 HALTED、PAUSED 或未到期的暂停接新；
   - 目标是有资格、5 分钟内有心跳、沉默期间至少 2 次心跳、STANDBY 且最近探测为 not-held、健康、Source 全一致的备用节点，按 Owner 定的次序取第一个；
   - 6 小时冷却。
-- 交接 5 分钟后生效；旧持有者 210 秒内没有拿到任何肯定的当班答复时立即生效（服务端记录 `ci_duty_answers_v1`，ADR 0025）。写回执 `CI_ADMISSION_AUTO_HANDOVER`。接班节点在算力面板 Issue 里 @Owner。
+- 交接 5 分钟后生效；旧持有者 210 秒内没有拿到任何肯定的当班答复时立即生效（服务端记录 `ci_duty_answers_v1`，ADR 0026）。写回执 `CI_ADMISSION_AUTO_HANDOVER`。接班节点在算力面板 Issue 里 @Owner。
 - 接班节点的 companion 从心跳回答里得知这次自动交接；接班核对不再被别的节点在交接之前写的“当班”挡住（那是已证实沉默的节点的最后一句），交接之后写的照旧上锁（`node-duty.mjs#dutyCut`）。
 - 时序：计划内（旧节点空闲）约 5–6 分钟；当班节点失联约 5–7 分钟（`test/handover-timing.test.mjs`）。
 

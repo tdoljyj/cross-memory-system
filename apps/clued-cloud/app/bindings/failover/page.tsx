@@ -16,7 +16,7 @@ import "../../confirm/owner.css";
 // node's latest heartbeat and self-report, the watchdog's last run, and the
 // recent alerts and automatic handovers. The thresholds come from the server's
 // rules (ci_failover_rules_v1; 5 minutes since migration 20261112130500, resident
-// ADR 0025), never from this page, so the page and the watchdog cannot disagree.
+// ADR 0026), never from this page, so the page and the watchdog cannot disagree.
 type Json = Record<string, unknown>;
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);

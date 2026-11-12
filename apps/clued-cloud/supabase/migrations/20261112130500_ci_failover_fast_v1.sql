@@ -1,7 +1,7 @@
--- Smooth hand-over (resident ADR 0025): the ci-admission failover watchdog
+-- Smooth hand-over (resident ADR 0026): the ci-admission failover watchdog
 -- judges a holder lost after 5 minutes instead of 30.
 --
--- Design: work/independent-ci-resident-v1/docs/adr/0025-smooth-handover.md.
+-- Design: work/independent-ci-resident-v1/docs/adr/0026-smooth-handover.md.
 -- The resident companion now sends its heartbeat every minute (it was every 10
 -- minutes) and tries a failed one again after 30 seconds. The Owner set the
 -- silence rule to 5 minutes on 2026-11-12 (Decision b2e25a57 v3), replacing
@@ -54,7 +54,7 @@ select clued_private.ci_failover_fast_patch_v1('clued_private.ci_admission_failo
 $a$  -- refused, so it falls silent and the same 30 minutes apply.
   v_silent:=xn.last_heartbeat_at<=v_now-interval '30 minutes';
   v_stuck:=not v_silent and xn.unhealthy_since is not null and xn.unhealthy_since<=v_now-interval '30 minutes';$a$,
-$r$  -- refused, so it falls silent and the same 5 minutes apply (ADR 0025).
+$r$  -- refused, so it falls silent and the same 5 minutes apply (ADR 0026).
   v_silent:=xn.last_heartbeat_at<=v_now-interval '5 minutes';
   v_stuck:=not v_silent and xn.unhealthy_since is not null and xn.unhealthy_since<=v_now-interval '5 minutes';$r$);
 select clued_private.ci_failover_fast_patch_v1('clued_private.ci_admission_failover_owner_v1(uuid)',
@@ -78,7 +78,7 @@ $r$  v_unhealthy:=not v_running or coalesce(v_age>300,false);
   v_healthy:=v_running and coalesce(v_age<=300,false);$r$);
 
 -- ---------------------------------------------------------------------------
--- Quiet holder: an automatic take-over starts at once (ADR 0025, Owner 2026-11-12).
+-- Quiet holder: an automatic take-over starts at once (ADR 0026, Owner 2026-11-12).
 --
 -- The new holder waits 5 minutes (binding_role_activation_delay_v1) so that
 -- an answer the old holder got just before the hand-over (it can still land a

@@ -191,7 +191,11 @@ export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = 
 // stages only (attempts.mjs). Here, not in attempts.mjs, because the failure table's own check below needs it while this module
 // loads (attempts.mjs imports this module).
 // DESIGN §32: a stage-2 refusal of the memory gate (nothing of stage 2 ran, nothing was published) takes the same one attempt 2.
-export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]) });
+// DESIGN §71: a batch an earlier boot left open, proven to have published nothing and quiet on both hosts, is closed with this code
+// at stage 1 (it had not started) or 2 (it had, and no publication stage had begun) and takes the same one attempt 2.
+export const EXECUTOR_RESTARTED_UNPUBLISHED = 'EXECUTOR_RESTARTED_UNPUBLISHED';
+export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]),
+  [EXECUTOR_RESTARTED_UNPUBLISHED]: Object.freeze([1, 2]) });
 const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
 
 // The archive reason segment is derived from the stable code, never taken from untrusted text.

@@ -103,7 +103,7 @@ test('the page shows the switch, the watchdog, the order, every node heartbeat a
   assert.ok(shown.includes('没在运行'));
   assert.ok(shown.includes('cccccccccccc'));
   assert.ok(shown.includes('已自动把 CI 准入从 desk-w-591 移交给 turing（失联）'));
-  // ADR 0025: the thresholds are the server's rules, never written into the page.
+  // ADR 0026: the thresholds are the server's rules, never written into the page.
   assert.ok(shown.includes('持有 CI 准入的常驻节点失联 5 分钟（或连续 5 分钟报“服务没在运行”）时'));
   assert.ok(!shown.includes('30 分钟') && !shown.includes('20 分钟'));
   assert.ok(shown.includes('当前持有者 desk-w-591 失联，但没有可以接班的节点'));

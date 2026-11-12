@@ -39,7 +39,7 @@ export const HEARTBEAT_RPC = 'clued_work_verify_v1';
 export const HEARTBEAT_ACTION = 'ci_node_heartbeat';
 export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', 'mode', 'probe', 'intake_paused_until', 'halt', 'ci_source_manifest_sha256',
   'service_running', 'snapshot_age_seconds', 'node_name']);
-// Every minute (ADR 0025; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
+// Every minute (ADR 0026; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
 // so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
 // whole interval, so one lost request never looks like silence.
 export const NODE_HEARTBEAT_EVERY_MS = 60_000;
@@ -195,7 +195,7 @@ export class CompanionHeartbeat {
     Object.assign(this, ports);
     this.lastSentAt = null; this.lastFingerprint = null; this.failures = 0; this.failingSince = null; this.watchdogStale = false; this.unregisteredSince = null;
     this.connectionOnlySince = null; this.notReadySince = null; this.nodeBindingId = null; this.viaLink = null;
-    // ADR 0025: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
+    // ADR 0026: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
     // (node-duty.mjs) does not hold back for duty statements written before it: the server had found their writer silent.
     this.autoHandoverSince = null;
   }
@@ -211,7 +211,7 @@ export class CompanionHeartbeat {
     const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now });
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
-    // clock stamps every beat (ADR 0025; with a 5-minute silence rule a 10-minute jump back would hand the role away).
+    // clock stamps every beat (ADR 0026; with a 5-minute silence rule a 10-minute jump back would hand the role away).
     if (this.lastSentAt !== null && this.failures === 0 && now >= this.lastSentAt && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }

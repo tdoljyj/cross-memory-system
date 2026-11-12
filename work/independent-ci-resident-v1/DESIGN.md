@@ -238,6 +238,7 @@ Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constrai
 companion 轮询（每 60 秒，条件请求，§39；用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
 执行器 tick（空闲每 15 秒一次）：
   崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
+      例外（§71）：上一次开机留下、能证明没发布且两端静止的批次 → FAILED_CLEAN EXECUTOR_RESTARTED_UNPUBLISHED，排 attempt 2，不 HALT
       例外（v0.7）：只在等托管信号的批次（有 15-relay-wait、没有 20-plan-intent）什么都没在运行，不关，由 tick 继续
   处理 owner\ 里的复位 / 恢复请求
   HALT? → 停；处理暂停请求；处于 PAUSED → 停
@@ -2120,7 +2121,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 - **`build-bundle.ps1` 自设总时限**：不需要。宿主在每个子进程的时限到点时结束它的整棵树，覆盖 bundle、`-CheckRefs`、工作区准备、relay、gh。卡住的传输按 Task `4d3aaa64`（§10.1）约 60 秒就会由低速超时先处理。脚本自设时限只能多报一个阶段名，却要改 Source v2、要重装 Source，所以没做。本改动不动 Source v2：安装记录和 `ciSourceManifestSha256` 都不变。
 - 第 1 段失败后的释放（`NOT_ADMITTED` 等），仍然两端归档，没有改。
 - 第 1 段之前的安全点上，Owner 中止仍要 companion 的静止证明和 `archive-linux`（`executor.mjs`，Owner 中止的结束步骤），没有改。有了宿主，companion 在这时也总能回答。
-- 崩溃恢复对未终结批次仍然 HALT（`EXECUTOR_RESTARTED_WITH_OPEN_BATCH`），没有改。
+- 崩溃恢复对未终结批次仍然 HALT（`EXECUTOR_RESTARTED_WITH_OPEN_BATCH`），没有改。（后来 §71 对“上一次开机留下、能证明没发布”的批次改为干净关闭并排 attempt 2。）
 - **残余**：
   - `tree: 'unconfirmed'` 之后 companion 照常往下走。依据是作业已经终止并随宿主关闭，这是内核的保证，不是观察到的事实。
   - `archive-linux` 在 companion 里最坏是 5 分钟加 30 秒，再加排空，可能超过服务的 6 分钟。超过时服务按没有答复处理，结局和原来一样。
@@ -5548,3 +5549,76 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **worker 持有 docker socket**：代码执行级的漏洞可以绕过视图（例如起一个特权容器）。视图挡的是“写到不该写的路径”这一类原语，以及受信代码自己误读误写。
 - **state 根仍可写**：worker 能在 state 根新建条目；`ws-prep-<批次>` 和 `resident-uninstalled-*` 这类动态名字没有藏起来。rearm 且没有描述符时留下的工作区不在保留规则里，磁盘会一直涨。
 - **不带标签的容器**不在“起点干净”的检查范围内。
+
+## 71. 重启打断的批次：能证明没发布就自动重跑一次（分支 `claude/restart-rerun-open-batch`）
+
+### 71.1 现象与旧规则
+
+2026-11-12 TURING 在批次中途重启。下次启动的崩溃恢复把未终结的批次记为 `FAILED_UNKNOWN EXECUTOR_RESTARTED_WITH_OPEN_BATCH`，烧掉 head，整机 HALT。要 Owner 点 UAC 跑 `rearm-resident.ps1 -Request Rearm`，再推空提交才能重跑。
+
+旧规则 HALT 有三条安全理由（§6.5、ADR 0003、ADR 0004）：
+
+1. **进程可能还在。** 重启后的新进程看不到旧进程留下的子进程。`windowsQuiescence` 的 `windowsTreeZero` 只看本进程自己的子进程（`runner.busy`），同一次开机里执行器崩溃后，遗留的阶段进程它看不见。
+2. **检查可能已发布、或发布到一半。** 从第 R、3、5、7、8 段起，批次可能已经写过检查。这时不能当作“什么都没发生”。
+3. **只执行一次。** attempt 2 只能在发布之前（第 1 段、工作区准备、第 2 段）、干净失败之后排一次（`1b5d3687`）。
+
+### 71.2 决定
+
+崩溃恢复对一种情形不再 HALT：**上一次开机留下的、能证明什么都没发布的批次**。它按 `FAILED_CLEAN EXECUTOR_RESTARTED_UNPUBLISHED` 关闭，烧掉 attempt 1 的 head，并且排上这个 head 唯一的一次 attempt 2。其余情形一律照旧 HALT。
+
+条件全部成立才走这条路（`executor.mjs#recover`、`#restartedUnpublished`）：
+
+1. **上一次开机。** 服务在接管执行器锁之前读一次锁，用的是单实例锁同一条规则（§6.2：持有者或其存活记录的开机毫秒数比现在大 60 秒以上；`executor.mjs#lockHeldInEarlierBoot`），结果作为端口 `lockFromEarlierBoot` 交给执行器。只有本进程第一次恢复时看到的未终结条目算数（`priorBootKeys`）：本进程之后自己开的条目再出事，照旧 HALT。
+   - 理由 1 由此消掉：上一次开机的 Windows 进程已被内核全部结束，这是内核保证，不靠观察。
+   - 判断只朝一个方向：认不出（快速启动、同一次开机里执行器崩溃、开机不久又重启、锁记录读不了）就是 `false`，照旧 HALT。
+2. **普通的中断。** 条目是 RESERVED 或 STARTED；没有停靠记录（第 8 段会发布）；没有 Owner 中止、没有执行器自己的收尾；没有“有 20-plan-intent 没 25-plan”（第 R 段中断）。这些另有 HALT 码，不变。
+3. **没有发布。**
+   - 计划里没有已转发的角色；
+   - 这个 head 在 `executed-heads` 里没有记录。例外：只有本批次自己“第 R 段之前”的那一条，而且计划一个角色都没转发。这条例外和 attempt 2 预检（`precheck` 的 `onlyRelayRecordOf` + `relayedNothing`）完全一致。
+   - 依据：第 R、3、5、7、8 段开始之前，执行器先以“只能新建”的方式写 `executed-heads` 记录（`beforePublication`）。写到一半也算“可能已发布”，因为看的是目录是否存在。所以没有记录，就证明没有一个发布段开始过。理由 2 由此消掉。
+4. **没有 HALT，已装字节没漂移**（同 §27 的放弃路径）。
+5. **两端现取静止证明**（`provenCleanEnd`，与 Owner 中止、§27 同一套）：SCM 回读原始服务已停、Linux 所有 unit inactive、带标签的容器全部退出。重启后 companion 和 WSL 比服务起得晚，所以这里的复查放宽到最多 15 分钟、45 次（`RESTART_QUIESCENCE_WAIT_MS`、`RESTART_QUIESCENCE_ATTEMPTS`），超时照旧 HALT。
+
+关闭方式：
+
+- 烧掉 attempt 1 的 head。
+- 用固定原因 `restarted-unpublished` 只改名归档：Windows 按批次键归档；Linux 只在 10-started 之后才归档。在那之前批次还没到过 Linux（第 1 段不起 worker，工作区在 10-started 之后才建，§24.4），但 Linux 的静止证明照样要。
+- 写 `90-terminal` `FAILED_CLEAN`：没开始的记第 1 段，开始了的记第 2 段（发布之前能到的最后一段），`basis: restart-earlier-boot-unpublished`。
+- 写 `batch-terminal` 回执，然后 `attempt2IfEligible`。
+- `failure-table.json` 的 `EXECUTOR_RESTARTED_UNPUBLISHED` 一行：第 1、2 段为 `environment / burn / attempt2 / neutral`；其他段为 `new-commit`，实际不会出现。`ATTEMPT2_RESIDENT_CODES` 加上它，只限第 1、2 段。
+- `executed-heads.mjs#mayHavePublished` 认 `FAILED_CLEAN` 第 1、2 段为“没发布”，所以重装回填后这个 head 的 attempt 2 仍然可以跑。
+
+理由 3 不变：attempt 2 仍然每个 head 至多一次，没有 attempt 3。attempt 2 自己又被重启打断时，同样干净关闭，不 HALT，但不再重跑，要推新提交。
+
+失败与崩溃一致性：
+
+- 任何一条不成立、证明不全、归档没核实：这条路什么都不写（烧号和归档都可重复），条目照旧走 `EXECUTOR_RESTARTED_WITH_OPEN_BATCH` 的 HALT 路径。
+- 终态已经写下后才出错（例如回执写不进去）：异常向上抛，本 tick 以 `RECOVERY_UNCONFIRMED` HALT。
+- 关闭途中又断电：条目仍是打开的。下次开机同样是“上一次开机”，重做一遍。
+
+### 71.3 恢复期间
+
+恢复在 tick 开头做，最坏阻塞 15 分钟。期间不处理 Owner 请求，也不接新批次。服务停止请求在这之后才生效。这和一个批次在跑时相同。
+
+### 71.4 测试
+
+`test/restart-rerun.test.mjs`：在批次的每一段让服务“死掉”（打包、第 1 段、工作区准备、第 2–8 段、第 R 段），再以 `lockFromEarlierBoot` 启动：
+
+- 打包、第 1 段、工作区准备、第 2 段：`FAILED_CLEAN`，不 HALT，attempt 2 跑完全部阶段，没有 attempt 3；第 1 段之前不碰 Linux 归档。
+- 第 3–8 段：照旧 HALT `EXECUTOR_RESTARTED_WITH_OPEN_BATCH`，不排 attempt 2，现场不动。
+- 第 R 段中断：照旧 `RELAY_STAGE_INTERRUPTED`。有角色已转发时，本地段中断照旧 HALT。
+- 下列情形照旧 HALT：同一次开机、Linux 不静止、已有 HALT、head 有发布记录、字节漂移。
+- 静止复查等到 companion 上线后关闭；一直不静止时，复查 45 次后 HALT。
+- 本进程自己开的条目照旧 HALT；attempt 2 被重启打断时干净关闭，不排 attempt 3。
+- 锁的读法：没有锁、本次开机、上一次开机、余量以内、记录损坏。
+
+原有安全测试全部保持通过。只更新了两处钉住清单的断言：
+- `scanner-abandon.test.mjs` 里 `ATTEMPT2_RESIDENT_CODES` 的完整清单；
+- `failure-table.test.mjs` 的常驻码清单。
+
+### 71.5 没有改的
+
+- `instance-lock.mjs` 一个字节未动：它在升级器的冻结副本里。
+- `upgrader/src` 一个字节未动。
+- 同一次开机里执行器自己崩溃，仍然 HALT：遗留进程看不见，证明不了。
+- 发布段开始之后被打断，仍然 HALT：检查可能已写，不能重跑。

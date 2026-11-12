@@ -239,7 +239,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const privates = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p
         where p.pronamespace='clued_private'::regnamespace and (p.proname like 'ci_failover%' or p.proname like 'ci_admission_failover%'
           or p.proname in ('ci_node_heartbeat_v1','binding_role_handover_core_v1','work_claim_ci_command_v1','ci_sweep_watermark_v1'))`)).rows.map((r) => r.sig);
-      // ADR 0025 added ci_failover_quiet_seconds_v1 and ci_failover_holder_quiet_v1.
+      // ADR 0026 added ci_failover_quiet_seconds_v1 and ci_failover_holder_quiet_v1.
       assert.equal(privates.length, 27, privates.join(' '));
       for (const sig of privates) {
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
@@ -394,7 +394,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const s = await account('owner', ['a', 'b', 'c']);
       const empty = await s.view();
       assert.deepEqual([empty.setting.enabled, empty.setting.version, empty.members], [false, 0, []]);
-      // ADR 0025 (migration 20261112130500): 5 minutes (Owner, Decision b2e25a57 v3), the heartbeat comes every minute.
+      // ADR 0026 (migration 20261112130500): 5 minutes (Owner, Decision b2e25a57 v3), the heartbeat comes every minute.
       assert.deepEqual([empty.rules.silence_minutes, empty.rules.unhealthy_minutes, empty.rules.snapshot_stale_minutes, empty.rules.target_heartbeat_minutes],
         [5, 5, 5, 5]);
       assert.deepEqual(empty.connections.map((c) => c.agent_name).sort(), ['a', 'b', 'c', 'env', 'park', 'reader']);
@@ -500,7 +500,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         await s.beat('b');
         assert.equal(target(await s.tick(), s), 'b', 'only the latest report counts: ' + reason);
       }
-      // A heartbeat older than 5 minutes (ADR 0025; it was 20).
+      // A heartbeat older than 5 minutes (ADR 0026; it was 20).
       await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '301 seconds',
         heartbeat_previous_at=heartbeat_previous_at-interval '301 seconds' where node_id=$1`, [s.nodes.b]);
       o = await s.tick();
@@ -540,7 +540,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close();
     });
 
-    await t.test('silence: 4.9 minutes no, 5 yes (ADR 0025); receiver alive needs 2 heartbeats; handover, 5-minute start, one holder, receipts', async () => {
+    await t.test('silence: 4.9 minutes no, 5 yes (ADR 0026); receiver alive needs 2 heartbeats; handover, 5-minute start, one holder, receipts', async () => {
       const s = await account('silence', ['a', 'b']);
       await s.members(['a', 'b']);
       await s.switch(true);
@@ -639,7 +639,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close();
     });
 
-    await t.test('service not running or stale snapshot: 4.9 minutes no, 5 yes (ADR 0025), a healthy report restarts, no receiver rule', async () => {
+    await t.test('service not running or stale snapshot: 4.9 minutes no, 5 yes (ADR 0026), a healthy report restarts, no receiver rule', async () => {
       const s = await account('stuck', ['a', 'b']);
       await s.members(['a', 'b']);
       await s.switch(true);
@@ -1002,7 +1002,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close(); await other.close();
     });
 
-    await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 5 minutes of silence (ADR 0025)', async () => {
+    await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 5 minutes of silence (ADR 0026)', async () => {
       const s = await account('revoked', ['a', 'b'], { heartbeat: ['hbA', 'hbB'] });
       const base = async () => (await s.view()).setting.version;
       const link = async (hb, node) => committed(await s.apply(issued(await s.native('clued_resident_failover_confirmation_issue_v1',
@@ -1101,7 +1101,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await r.close();
     });
 
-    // ADR 0025 (Owner 2026-11-12): the watchdog's hand-over starts the new holder at once when the server gave the old holder
+    // ADR 0026 (Owner 2026-11-12): the watchdog's hand-over starts the new holder at once when the server gave the old holder
     // no positive duty answer for 210 seconds (150 s an answer can still land a check, plus 60 s); otherwise the 5 minutes stay.
     await t.test('quiet holder: an automatic take-over starts at once only when the old holder got no answer for 210 s', async () => {
       let n = 0;
@@ -1202,7 +1202,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
 
     await t.test('one-click handover through the shared core is unchanged', async () => {
       const s = await account('oneclick', ['a', 'b']);
-      // ADR 0025: the quiet start is the watchdog's alone; a quiet old holder changes nothing here.
+      // ADR 0026: the quiet start is the watchdog's alone; a quiet old holder changes nothing here.
       await admin.query("insert into clued_private.ci_duty_answers_v1(binding_id,user_id,at) values($1,$2,clock_timestamp()-interval '1 hour')",
         [s.ids.a, s.user]);
       const token = issued(await s.native('clued_binding_role_handover_confirmation_issue_v1', { from_binding_id: s.ids.a, to_binding_id: s.ids.b }));

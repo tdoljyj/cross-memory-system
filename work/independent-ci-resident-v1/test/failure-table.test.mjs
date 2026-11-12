@@ -24,7 +24,9 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   // DESIGN §32: the pre-stage memory gate's refusal (resident-side, never Source-mirrored)
   'LINUX_MEMORY_NOT_READY',
   // DESIGN §34: the engine's version gate before the first Linux stage (resident-side, never Source-mirrored)
-  'UPGRADE_VERSION_SKEW'];
+  'UPGRADE_VERSION_SKEW',
+  // DESIGN §71: recovery's clean end of a batch a reboot interrupted before any publication stage (resident-side, never Source-mirrored)
+  'EXECUTOR_RESTARTED_UNPUBLISHED'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 

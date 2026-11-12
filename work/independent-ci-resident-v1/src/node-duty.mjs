@@ -185,7 +185,7 @@ export function onDutyElsewhere(others, now) {
   return allOnDutyElsewhere(others, now)[0] ?? null;
 }
 // Every other node on duty on this head now (review R3 M4: with three or more nodes two others may be on duty on one head).
-// since (ADR 0025): a statement written at or before it does not count; the take-over check and the lock's release pass the time the
+// since (ADR 0026): a statement written at or before it does not count; the take-over check and the lock's release pass the time the
 // failover watchdog last handed ci-admission to this node (dutyCut). Both times are server clocks (GitHub's created_at, the
 // database's created_at), so the local clock's skew does not move this line.
 export const dutyNow = (d, now, since = null) => !!d && (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS
@@ -225,7 +225,7 @@ export function standbyDoneText(why, ownName) {
   if (why === 'active') return { state: 'success', description: clip(`${ownName} 已接班，备用提醒结束`) };
   return { state: 'success', description: clip(`备用节点 ${ownName}，不参与本 PR${why === 'handled' ? '：当班节点已接手' : ''}`) };
 }
-// Review N2: the take-over time, idle and busy apart (never "45 minutes at most"); shown in the reminder's notification. ADR 0025: a
+// Review N2: the take-over time, idle and busy apart (never "45 minutes at most"); shown in the reminder's notification. ADR 0026: a
 // STANDBY asks every minute, the new role starts 5 minutes after the hand-over.
 export const TAKEOVER_TIME_TEXT = '移交后：对方空闲或停摆时，新角色 5 分钟后生效，本节点约 1 分钟内（下一次角色探测）就接班；对方还在跑批时，要等它发现没有角色、写“已交班”之后。';
 
@@ -306,7 +306,7 @@ export function pruneMemory(m, now) {
 export class NodeDuty {
   // ports: { repo, ghExe, run(argv, { timeoutMs }), clock, memory (freshMemory shape, kept by the caller), fallbackName,
   //   writeRequest(value) -> Promise (creates one file in the resident's requests\; null: no lock can be held),
-  //   timeoutMs, inBudget() -> bool, staleMs, autoHandoverSince() -> ms | null (optional, ADR 0025: when the failover watchdog last
+  //   timeoutMs, inBudget() -> bool, staleMs, autoHandoverSince() -> ms | null (optional, ADR 0026: when the failover watchdog last
   //   handed ci-admission to this node; the heartbeat's answer) }
   constructor(ports) {
     Object.assign(this, ports);
@@ -319,7 +319,7 @@ export class NodeDuty {
     this.readAt = new Map(); // head -> { at, others, admitted }: a STANDBY reads a head at most every RELEASE_READ_MS
   }
 
-  // ADR 0025: duty statements written at or before this (ms, server time) do not hold this node back, or null. The failover watchdog
+  // ADR 0026: duty statements written at or before this (ms, server time) do not hold this node back, or null. The failover watchdog
   // hands ci-admission over only after the holder has been silent for its silence rule (5 minutes): what that holder wrote before is
   // a dead node's last word, which used to keep the new node out for up to DUTY_WINDOW_MS. A statement written after it still counts
   // (the old node came back still thinking it is on duty, or a second holder: the lock as before). A hand-over by the Owner gives no

@@ -509,7 +509,7 @@ export class PrStatusReporter {
   //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
   //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), hostCapacity() (optional:
   //   host-capacity.mjs#readCapacityAlert, the node governance status, node governance v1), notify(key, title, body)
-  //   (optional, M5: the notification queue instead of a toast), autoHandoverSince() (optional, ADR 0025: when the failover
+  //   (optional, M5: the notification queue instead of a toast), autoHandoverSince() (optional, ADR 0026: when the failover
   //   watchdog last handed ci-admission to this node, ms or null; companion-main.mjs sets it from the heartbeat) }
   constructor(ports) {
     Object.assign(this, ports);

@@ -157,7 +157,7 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.ci_phase_3_to_4_v1(uuid,uuid,integer,jsonb)', 'clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
       // 20261031090000 (merge train 2b): the one-click handover now calls this core.
       'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
-      // 20261112130500 (resident ADR 0025): the decision of ci_duty_admits_v1 moved unchanged into ci_duty_admits_decide_v1;
+      // 20261112130500 (resident ADR 0026): the decision of ci_duty_admits_v1 moved unchanged into ci_duty_admits_decide_v1;
       // ci_duty_admits_v1 now only takes FOR SHARE on the Binding's live rows (started or not) before asking it, and the
       // handover core takes FOR UPDATE on the old holder's live rows: locks, not decisions.
       'clued_private.ci_duty_admits_decide_v1(uuid,uuid,text,uuid)',
