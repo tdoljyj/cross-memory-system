@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "732893142acb707354d61b4898a9ff4d0d24e12c0de20e06b782c133773cca0c"
+      "content_sha256": "d9d05c75574173406de8b907bd0b13a0251fba4db7bfd5ac23c72fe06ec4b7f5"
     },
     {
       "id": "hook.runner-job-started",
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "cbae1f4f827a62d085140103a2ee7b75f6a1e33654675dfb377ce88e402d1de3",
+      "content_sha256": "2999e76bb47ded8fc23aa1b24999ca42c5fd9bd94692b5cd728e8dcbcad40648",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "c9a80df193fc6bf01b108fb04cf5342300472520ba2f04a6444474eb644bb379"
+      "content_sha256": "2188f232337ee9227e6ec623a0981afd1028fa3ab43a8588108bd8b994ee1397"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "6a4b6e1a48b0561fb5cba2ee2289a3036ce2e7d7f67e50c9347e4f35627fdae6"
+      "content_sha256": "0ebd76a5fc3c938bfb2dd8ca7f0885c8a4fcc4a6571b4ba18957dadc1f620ca3"
     }
   ]
 }

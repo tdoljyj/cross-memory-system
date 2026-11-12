@@ -178,6 +178,28 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertIn("mechanical-outputs-", str(installed[0]), "installed into the throwaway worktree only")
         self.assertFalse((app / "node_modules").exists())
 
+    def test_npm_ci_goes_through_the_ci_deps_entry_offline_install(self):
+        # The one CI entry: install offline from the runner's store (it prepares the store itself when it lacks packages).
+        calls = []
+        status = [0]
+        real_run, real_which = integration.subprocess.run, integration.shutil.which
+        integration.subprocess.run = lambda argv, **kw: (calls.append((argv, kw)) or subprocess.CompletedProcess(argv, status[0]))
+        integration.shutil.which = lambda name: "node"
+        app = Path("tree") / "apps" / "clued-cloud"
+        try:
+            integration._npm_ci(app)
+            self.assertEqual(len(calls), 1)
+            argv, kw = calls[0]
+            self.assertEqual(argv[1:], [str(Path("tree") / "scripts" / "ci" / "ci-deps.mjs"), "install", str(app)],
+                             "the worktree's own entry")
+            self.assertIs(kw["stdout"], sys.stderr, "npm's output never mixes into the JSON report on stdout")
+            for code, said in ((75, "not a test failure"), (78, "依赖库缺失"), (1, "install failed")):
+                status[0] = code
+                with self.assertRaisesRegex(ValueError, f"ci-deps install exited {code}: .*{said}"):
+                    integration._npm_ci(app)
+        finally:
+            integration.subprocess.run, integration.shutil.which = real_run, real_which
+
     def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):
         self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")
         before = self.head()

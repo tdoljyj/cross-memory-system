@@ -84,6 +84,8 @@ export const SUITES = {
     'pinned-registries': PINNED_REGISTRY_PATHS,
     'mechanical-outputs': GENERATED_OUTPUTS,
     'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
+    // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
+    'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json'],
   },
@@ -147,12 +149,15 @@ export const SUITE_COMMANDS = {
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
   // Integrates a throwaway worktree. It never installs into the checkout: there
   // node_modules may be a link to a shared store (local-verify), which npm ci would empty.
+  // It installs the worktree through ci-deps.mjs (offline from the runner's store).
   'mechanical-outputs': [
     { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.py', '--audit', '--base', '{base}'] },
   ],
   // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
   'powershell-count': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-powershell-count.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-powershell-count.mjs'] }],
+  'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
+    { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
