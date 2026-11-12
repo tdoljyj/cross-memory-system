@@ -29,7 +29,6 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const EXIT_PREPARE_FAILED = 75; // EX_TEMPFAIL: the store could not be filled (network); no test ran
 export const EXIT_STORE_MISSING = 78; // EX_CONFIG: the store lacks a package after preparing
@@ -216,4 +215,4 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();
+if (import.meta.main) process.exitCode = main();
