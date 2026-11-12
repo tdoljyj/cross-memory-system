@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "c555d2a9b57130113b6b85d5de63810723e138008d92f82a47e41bfae5fb2e80",
+      "content_sha256": "2999e76bb47ded8fc23aa1b24999ca42c5fd9bd94692b5cd728e8dcbcad40648",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "be68f99652a8dfcb1a7ef598aead49b9de381f74a43b4228ad06586381fcf897"
+      "content_sha256": "2188f232337ee9227e6ec623a0981afd1028fa3ab43a8588108bd8b994ee1397"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "43739c1bf2a455336b1ed719d4602dc250c00f61cc6b93dad1c7b4e921d74187"
+      "content_sha256": "a4815870744465f7926f5929fa984c24b7253e575d37c7cc6df6aed4385c6860"
     }
   ]
 }
