@@ -7,8 +7,8 @@ import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 export const COMPONENT_VERSION='1.0.6';
 export const REQUIRED_SELECTOR_SOURCE=Object.freeze({
   path:'scripts/ci/ci-required-selection.mjs',
-  blob:'a65a56a3f11514bcdd2d6e51c7e27408483f30a2',
-  sha256:'3b4f65be5ea43688940ce4a7b1a6448fa75e5df8abb473f98ac9bccc6a63a053',
+  blob:'896293d0b3d42834a6ad51c15e39f9f510c496c4',
+  sha256:'4bf3f9bf5a82068bff3224f9ca9e9b5ff7c2eb24a59c8cc5a139604f7e9cb428',
 });
 export const REQUIRED_MIGRATION_PATHS=Object.freeze([
   'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',
