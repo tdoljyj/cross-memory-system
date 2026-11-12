@@ -399,11 +399,13 @@ function Assert-RecoveryNoProducers($Context){
  $sids=Read-RecoveryProcessOwnerSids;$owners=[ordered]@{companion=$Context.pins.companion;controller=$Context.pins.controller;resident=$Context.pins.residentSid}
  $seen=@($owners.Keys|Where-Object{$sids -ccontains $owners[$_]});if($seen.Count -gt 0){if($Context.Contains('state')){$Context.state.notQuietOwners=$seen};throw 'RECOVERY_NOT_QUIET'}
 }
-# The stopped companion's WSL VM keeps companion-owned helpers (wslservice-spawned wslrelay/wslhost, outside its job) until its
-# distribution and VM idle out: up to the 120 s VHD release already allowed below plus the default 60 s vmIdleTimeout.
-# Only the same predicate is polled; nothing is killed or excluded, and every later QUIET/ARCHIVE check stays immediate.
+# The stopped companion's WSL VM keeps VM-lifetime companion-owned helpers outside its job: the Plan9FileSystem dllhost
+# (vp9fs, the Windows-side file server for its Linux writes) and wslrelay. They are not excluded: while any companion
+# distribution runs they can write. They end with the VM: distribution idle (inside the 120 s VHD release already allowed
+# below) + the default 60 s vmIdleTimeout + 60 s for VM and surrogate teardown. Only the same predicate is polled; nothing
+# is killed, and every later QUIET/ARCHIVE check stays immediate.
 function Wait-RecoveryNoProducers($Context){
- $until=[DateTime]::UtcNow.AddSeconds($(if($Context.Contains('quietWaitSeconds')){[int]$Context.quietWaitSeconds}else{180}))
+ $until=[DateTime]::UtcNow.AddSeconds($(if($Context.Contains('quietWaitSeconds')){[int]$Context.quietWaitSeconds}else{240}))
  while($true){try{Assert-RecoveryNoProducers $Context;return}catch{if((Get-RecoveryCode $_) -cne 'RECOVERY_NOT_QUIET' -or [DateTime]::UtcNow -ge $until){throw}};Start-Sleep -Milliseconds 1000}
 }
 function Assert-RecoveryQuiescent($Context,$Snapshot){
