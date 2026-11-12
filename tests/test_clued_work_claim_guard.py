@@ -1237,15 +1237,18 @@ class MechanicalClaimDisplayTest(unittest.TestCase):
         (self.root / "config").mkdir()
         self.file = self.root / "config/clued-mechanical-files.json"
         self.file.write_text(json.dumps(self.policy), encoding="utf-8")
+        self.generated = next(p for p in self.policy["mechanical_paths"] if not p.endswith("/**"))
+        self.marker = self.policy["marker_paths"][0]
 
     def test_generated_paths_do_not_appear_as_exclusive_source_occupancy(self):
         current = {**claim(), "context_key": self.policy["context_keys"][0],
-                   "write_set": ["source/a.py", "config/clued-components.json",
+                   "write_set": ["source/a.py", self.generated, self.marker,
                                  "apps/clued-cloud/worker/generated/**"]}
         rendered = GUARD.describe(current, root=self.root)
         self.assertIn("source/a.py", rendered)
-        self.assertNotIn("clued-components.json", rendered)
+        self.assertNotIn(self.generated, rendered)
         self.assertNotIn("worker/generated", rendered)
+        self.assertIn(self.marker, rendered, "a hand-written marker file stays exclusive")
 
     def test_other_context_or_repository_keeps_same_named_source_exclusive(self):
         current = {**claim(), "context_key": "global", "write_set": ["config/clued-components.json"]}
@@ -1256,10 +1259,10 @@ class MechanicalClaimDisplayTest(unittest.TestCase):
 
     def test_exact_typed_repository_is_filtered_but_broad_source_glob_is_not(self):
         current = {**claim(), "context_key": self.policy["context_keys"][0], "write_set": [
-            "repo:tdoljyj/cross-memory-system/config/clued-components.json", "apps/**",
+            "repo:tdoljyj/cross-memory-system/" + self.generated, "apps/**",
             "apps/clued-cloud/worker/generated-neighbour/source.ts"]}
         rendered = GUARD.describe(current, root=self.root)
-        self.assertNotIn("clued-components.json", rendered)
+        self.assertNotIn(self.generated, rendered)
         self.assertIn("apps/**", rendered)
         self.assertIn("generated-neighbour/source.ts", rendered)
 

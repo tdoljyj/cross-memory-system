@@ -106,9 +106,9 @@ test('an unavailable historical object is a refusal and never a new baseline',as
   const base=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before=pair(root);
   await assert.rejects(writeControlSourcePins(root,{base}));assert.deepEqual(pair(root),before);
 });
-test('candidate comparison-policy substitution is refused without evaluating it',async t=>{
+test('a candidate comparison policy is never evaluated',async t=>{
   const root=fixture(t);edit(root,'scripts/ci/component-version-integration-policy.mjs',()=>"throw new Error('CANDIDATE_POLICY_EXECUTED');\n");
-  await refusesWithoutWrites(root,/comparison policy differs from trusted base/);
+  assert.equal((await writeControlSourcePins(root,OPTIONS)).changed,true);
 });
 test('historical metadata uses the trusted-base compiler without evaluating a candidate successor',async t=>{
   const root=fixture(t),expected=await planControlSourcePins(root,OPTIONS);
@@ -132,9 +132,9 @@ test('refreshable pins come only from the single mechanical-file policy',()=>{
   const policy=JSON.parse(fs.readFileSync(path.join(ROOT,'config/clued-mechanical-files.json'),'utf8'));
   const derived=controlSourceMechanicalFiles(policy,baseBlobs);
   // Only declared, descriptor-pinned version modules; a declared generated registry keeps its historical pin.
-  assert.ok(derived.length&&derived.every(n=>n.endsWith('.mjs')&&policy.mechanical_paths.includes(n)&&Object.hasOwn(baseBlobs,n)));
+  assert.ok(derived.length&&derived.every(n=>n.endsWith('.mjs')&&[...policy.mechanical_paths,...(policy.marker_paths??[])].includes(n)&&Object.hasOwn(baseBlobs,n)));
   const extra=Object.keys(baseBlobs).find(n=>n.endsWith('.mjs')&&!derived.includes(n));
-  assert.deepEqual(controlSourceMechanicalFiles({...policy,mechanical_paths:[...policy.mechanical_paths,extra]},baseBlobs),[...derived,extra].sort());
-  for(const bad of [null,{...policy,schema:2},{...policy,mechanical_paths:'x'},{...policy,mechanical_paths:['config/other.json']}])
+  assert.deepEqual(controlSourceMechanicalFiles({...policy,marker_paths:[...(policy.marker_paths??[]),extra]},baseBlobs),[...derived,extra].sort());
+  for(const bad of [null,{...policy,schema:2},{...policy,mechanical_paths:'x'},{...policy,mechanical_paths:['config/other.json'],marker_paths:[]}])
     assert.throws(()=>controlSourceMechanicalFiles(bad,baseBlobs),/mechanical/);
 });

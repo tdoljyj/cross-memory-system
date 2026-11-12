@@ -48,6 +48,18 @@ export const PINNED_REGISTRY_PATHS = ['scripts/ci/**', 'scripts/runner/**', '.gi
   'protocol/agent/agent-contract.md', 'apps/clued-cloud/worker/generated/**', 'apps/clued-cloud/scripts/generate-*.mjs',
   'apps/clued-cloud/app/imprints/imprint-suggestions.ts', 'apps/clued-cloud/supabase/migrations/*_imprint_auto_domains_v1.sql', 'scripts/build_claude_code_plugin.py', 'config/clued-mechanical-files.json'];
 
+// Every file the one generated-file list names, read at run time from the
+// checkout this selector belongs to (no copy of the list here).
+export function generatedFilePatterns(file = fileURLToPath(new URL('../../config/clued-mechanical-files.json', import.meta.url))) {
+  try {
+    const policy = JSON.parse(readFileSync(file, 'utf8'));
+    return [...policy.mechanical_paths, ...(policy.marker_paths ?? [])].filter((p) => typeof p === 'string');
+  } catch { return []; }
+}
+// A generator, the list or a generated file changed: integrate a throwaway
+// copy and fail on any written file the list does not declare.
+const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFilePatterns()])];
+
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
@@ -68,6 +80,7 @@ export const SUITES = {
       'scripts/ci/test_validate_runner_budget_policy.py'],
     'admission-self-tests': [...RESIDENT_AND_SOURCE, '.github/workflows/**'],
     'pinned-registries': PINNED_REGISTRY_PATHS,
+    'mechanical-outputs': GENERATED_OUTPUTS,
     'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json'],
@@ -131,6 +144,11 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
+  // The reconcile generator parses YAML, so the throwaway integration needs the locked packages.
+  'mechanical-outputs': [
+    { cwd: 'apps/clued-cloud', argv: ['npm', 'ci', '--ignore-scripts', '--prefer-offline', '--fetch-retries=2', '--fetch-timeout=30000'], quiet: true },
+    { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.py', '--audit', '--base', '{base}'] },
+  ],
   // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
   'powershell-count': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-powershell-count.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-powershell-count.mjs'] }],

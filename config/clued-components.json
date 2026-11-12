@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "30213919a57110e37aafba2684f5d30a1bfcc558cd97896ac211b4c9250034f3"
+      "content_sha256": "019d9b6451d57f1a558529e4746e31a0fac7047978e7e9215cbb72408e8d2a85"
     },
     {
       "id": "hook.runner-job-started",
@@ -92,14 +92,14 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.12",
+      "version": "1.1.13",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py",
         "clued_work_write_set.py"
       ],
-      "content_sha256": "c9500af87479aab78ccc9f20e4eb6fab23501a3571cd0fc6e3b0c6dd83874d50",
+      "content_sha256": "2ab347ce6399970d55a493e575600d423dc0b7c4e7fcaa5cc2f5c680f2c89f62",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "0ecdc73f8cc3497a71af59e9166828ba43bc564d87c718206b5698f373e7085b",
+      "content_sha256": "ed7ffdfb11c8a50b802ebe3e935413e1ff7934ea1934bded411618070e7db9db",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "f0ddc6ae720e28d522f1541cf5f911626e64a0dec8511b5ea4bf4b7b47ce2018"
+      "content_sha256": "855a740fe85157d1d774a09a13286a22e96128a86305be304e7ca635630e1a84"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "6e2f87731bd04705192729dd42d647ef1c5200e7e0e2f1e380309b3740ec18dd"
+      "content_sha256": "d17d5df97d551768cec96bcd0e123dd1a803f9ea3836eed723f03cf4635bed96"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5f63eb5eefe2bd1cd4e98a8e4d35c5404e93b466c851028108594ed44e8631b2"
+      "content_sha256": "5cb22b801b08d5470a7ae1abe0dffb2da14b69453f4fb00c9f7e40eb93708550"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "40010f197f298d87cfee6ed88e948fc6e049c0927849fe357fcebbd6ca22b221"
+      "content_sha256": "32a52baa5510fb992f0e58d1c4abd4202a43de5dc2b8fd5269a55e5db110f022"
     }
   ]
 }

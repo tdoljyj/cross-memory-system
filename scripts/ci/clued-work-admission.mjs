@@ -77,7 +77,6 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import mechanicalPolicy from '../../config/clued-mechanical-files.json' with { type: 'json' };
 import { computeMechanicalPathsProven, parseMechanicalPolicy } from './component-version-integration-policy.mjs';
 import {isDeepStrictEqual} from "node:util";
 import {CONTROL_WORKFLOW_FILES,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
@@ -1418,9 +1417,25 @@ async function fileAt(fetchImpl, env, repository, path, ref) {
   return Buffer.from(body.content, "base64").toString("utf8");
 }
 
+// The one generated-file list, as bytes of the accepted gate's own checkout
+// (the default branch), never PR input. Native reads exactly these bytes.
+const MECHANICAL_POLICY_FILE = new URL('../../config/clued-mechanical-files.json', import.meta.url);
+export const readMechanicalPolicyText = () => fs.readFileSync(MECHANICAL_POLICY_FILE, 'utf8');
+
+// What CI admission publishes to Native: the list and the trusted main commit it
+// belongs to. Without that commit (no Git checkout) nothing is published and
+// Native keeps the list it has.
+export function trustedMechanicalPolicy({ text = readMechanicalPolicyText(), git = args => spawnSync('git', args,
+  { cwd: path.resolve(path.dirname(fileURLToPath(MECHANICAL_POLICY_FILE)), '..'), encoding: 'utf8' }) } = {}) {
+  parseMechanicalPolicy(text);
+  const head = git(['log', '-1', '--format=%H %cI', 'HEAD']);
+  const match = head.status === 0 && /^([0-9a-f]{40}) (\S+)\s*$/.exec(head.stdout ?? '');
+  if (!match) return null;
+  return { text, sha256: createHash('sha256').update(text, 'utf8').digest('hex'), base_sha: match[1], base_committed_at: match[2] };
+}
+
 export async function mechanicalProofForPull(fetchImpl, env, repository, pr, paths) {
-  // This policy is part of the accepted gate's source closure, never PR input.
-  const policy = parseMechanicalPolicy(JSON.stringify(mechanicalPolicy));
+  const policy = parseMechanicalPolicy(readMechanicalPolicyText());
   if (repository.toLowerCase() !== policy.repository) return [];
   const trees = new Map(), entries = new Map(), blobs = new Map();
   const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
@@ -2114,6 +2129,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
     try {
       const mechanicalProof = gateFindingsOfPr.length ? []
         : await mechanicalProofForPull(fetchImpl, env, repository, pr, outcome.changed_paths);
+      const mechanicalList = gateFindingsOfPr.length ? null : trustedMechanicalPolicy();
       result = await verifyClaim(fetchImpl, env, gateFindingsOfPr.length ? {
         scope: reference.scope,
         claim_id: reference.claim_id,
@@ -2125,7 +2141,8 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
         head_sha: pr.head.sha,
         base_sha: pr.base.sha,
         pr_ref: outcome.pr_ref,
-        ...(mechanicalProof.length ? { mechanical_paths_proven: mechanicalProof } : {}),
+        mechanical_paths_proven: mechanicalProof,
+        ...(pr.base.ref === 'main' && mechanicalList ? { mechanical_policy: mechanicalList } : {}),
         target_branch: pr.base.ref,
         // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
         // of a newly admitted head name the mode it was judged in. A service

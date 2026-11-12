@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// The committed JSON is the source; this check binds Native's installed policy
-// literal to it. It never deploys SQL or turns a candidate policy into authority.
+// config/clued-mechanical-files.json is the only list of generated files.
+//   mechanical_paths: wholly generated outputs (claim conflicts ignore them).
+//   marker_paths:     hand-written files whose generated lines only may change:
+//                     declared component version markers and 40/64-hex digests.
+// Native reads the same bytes, published by CI admission; nothing here deploys SQL.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const POLICY = 'config/clued-mechanical-files.json';
-const BEGIN = '-- BEGIN GENERATED MECHANICAL POLICY';
-const END = '-- END GENERATED MECHANICAL POLICY';
 const fail = message => { throw new Error(message); };
+const LITERAL = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
+const badParts = p => p.split('/').some(part => part === '.' || part === '..' || part === '.git');
 
 export function readMechanicalPolicy(root) {
   return parseMechanicalPolicy(fs.readFileSync(path.join(root, POLICY), 'utf8'));
@@ -17,7 +18,9 @@ export function readMechanicalPolicy(root) {
 
 export function parseMechanicalPolicy(text) {
   const policy = JSON.parse(text);
-  if (!policy || Array.isArray(policy) || Object.keys(policy).sort().join(',') !== 'context_keys,mechanical_paths,repository,schema'
+  const keys = policy && !Array.isArray(policy) ? Object.keys(policy).sort().join(',') : '';
+  // marker_paths is optional so a policy from before it existed still parses.
+  if (!['context_keys,mechanical_paths,repository,schema', 'context_keys,marker_paths,mechanical_paths,repository,schema'].includes(keys)
     || policy.schema !== 1 || typeof policy.repository !== 'string'
     || !/^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/.test(policy.repository)
     || !Array.isArray(policy.context_keys) || policy.context_keys.length === 0
@@ -26,8 +29,46 @@ export function parseMechanicalPolicy(text) {
     || !Array.isArray(policy.mechanical_paths) || policy.mechanical_paths.length === 0 || policy.mechanical_paths.length > 64
     || new Set(policy.mechanical_paths).size !== policy.mechanical_paths.length
     || policy.mechanical_paths.some(p => typeof p !== 'string' || !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*(?:\/\*\*)?$/.test(p)
-      || p.split('/').some(part => part === '.' || part === '..' || part === '.git'))) fail('invalid scoped mechanical-file policy');
+      || badParts(p))) fail('invalid scoped mechanical-file policy');
+  const markers = policy.marker_paths ?? [];
+  if (!Array.isArray(markers) || markers.length > 128 || new Set(markers).size !== markers.length
+    || markers.some(p => typeof p !== 'string' || !LITERAL.test(p) || badParts(p) || isMechanicalPath(policy, p))) fail('invalid scoped mechanical-file policy');
   return policy;
+}
+
+export const isMechanicalPath = (policy, p) => policy.mechanical_paths.some(pattern => p === pattern
+  || (pattern.endsWith('/**') && p.startsWith(pattern.slice(0, -2))));
+export const isMarkerPath = (policy, p) => (policy.marker_paths ?? []).includes(p);
+
+// The version-marker lines components declare for one file (config/clued-components.json).
+export function markerPatterns(manifestText, file) {
+  const manifest = JSON.parse(manifestText), result = [];
+  for (const c of manifest?.components ?? []) {
+    const m = c?.version_marker;
+    if (!m || typeof m.file !== 'string' || typeof m.pattern !== 'string') continue;
+    const root = c.root ?? '.';
+    if ((root === '.' ? m.file : `${root}/${m.file}`) !== file) continue;
+    const [head, tail, extra] = m.pattern.split('{version}');
+    if (tail === undefined || extra !== undefined) fail('component marker must have one {version}');
+    const esc = v => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result.push({ re: new RegExp('^' + esc(head) + '[0-9][0-9.]*' + esc(tail) + '[ \\t]*$'), line: head + '<version>' + tail });
+  }
+  return result;
+}
+
+// True when two texts differ only in declared version-marker lines and digests.
+// A version-bearing module's marker line, the same convention mechanicalFieldDiff uses.
+const MODULE_VERSION = /^export const COMPONENT_VERSION[ \t]*=[ \t]*(['"])[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\1[ \t]*;[ \t]*$/;
+export function markerOnlyDiff(before, after, patterns, file = '') {
+  if (typeof before !== 'string' || typeof after !== 'string' || before.length > 2 ** 21 || after.length > 2 ** 21) return false;
+  // The manifest's component entries are hand-written; only version/content_sha256 are generated.
+  if (file === 'config/clued-components.json') return mechanicalFieldDiff(file, before, after);
+  const mask = text => text.replace(/\r\n/g, '\n').split('\n').map(line => {
+    for (const p of patterns) if (p.re.test(line)) return p.line;
+    if (file.endsWith('.mjs') && MODULE_VERSION.test(line)) return '<component-version>';
+    return line.replace(/\b[0-9a-f]{40}(?:[0-9a-f]{24})?\b/g, '<digest>');
+  }).join('\n');
+  return mask(before) === mask(after);
 }
 
 const sameJson = (a, b) => {
@@ -67,14 +108,22 @@ export function mechanicalFieldDiff(file, before, after) {
 export async function computeMechanicalPathsProven({ policy, changedPaths, baseSha, headSha, readFileAt, readFileEntryAt }) {
   if (!/^[0-9a-f]{40}$/.test(baseSha ?? '') || !/^[0-9a-f]{40}$/.test(headSha ?? '') || !Array.isArray(changedPaths)) return [];
   const literal = p => typeof p === 'string' && /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(p) && !p.split('/').some(s => s === '.' || s === '..');
-  const declared = p => policy.mechanical_paths.some(pattern => p === pattern || (pattern.endsWith('/**') && p.startsWith(pattern.slice(0, -2))));
+  const declared = p => isMechanicalPath(policy, p) || isMarkerPath(policy, p);
   const paths = [...new Set(changedPaths)].filter(p => literal(p) && declared(p));
+  let manifest = null;
+  const manifestAtBase = () => (manifest ??= readFileAt('config/clued-components.json', baseSha));
   return (await Promise.all(paths.map(async file => {
     try {
       if (typeof readFileEntryAt !== 'function') return null;
       const [a, b] = await Promise.all([readFileEntryAt(file, baseSha), readFileEntryAt(file, headSha)]);
       if (!a || !b || a.type !== 'blob' || b.type !== 'blob' || !['100644', '100755'].includes(a.mode) || a.mode !== b.mode) return null;
     } catch { return null; }
+    if (isMarkerPath(policy, file)) {
+      try {
+        const [before, after, text] = await Promise.all([readFileAt(file, baseSha), readFileAt(file, headSha), manifestAtBase()]);
+        return markerOnlyDiff(before, after, text ? markerPatterns(text, file) : [], file) ? file : null;
+      } catch { return null; }
+    }
     if (file === 'config/clued-components.json' || file.endsWith('.mjs')) {
       try {
         const [before, after] = await Promise.all([readFileAt(file, baseSha), readFileAt(file, headSha)]);
@@ -85,48 +134,4 @@ export async function computeMechanicalPathsProven({ policy, changedPaths, baseS
     // still required to pass their deterministic pinned-registry generators.
     return file;
   }))).filter(Boolean).sort();
-}
-
-function projection(root) {
-  const policy = readMechanicalPolicy(root);
-  const dir = path.join(root, 'apps/clued-cloud/supabase/migrations');
-  const names = fs.readdirSync(dir).filter(n => /^\d+_work_claim_mechanical_files_v\d+\.sql$/.test(n)).sort();
-  if (!names.length) fail('mechanical-file Native migration is missing');
-  const file = path.join(dir, names.at(-1));
-  const sql = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-  if (sql.split(BEGIN).length !== 2 || sql.split(END).length !== 2) fail('mechanical-policy markers must occur exactly once');
-  const start = sql.indexOf(BEGIN) + BEGIN.length, end = sql.indexOf(END);
-  if (end <= start) fail('mechanical-policy marker order is invalid');
-  const expected = `\n  select $mechanical_policy$${JSON.stringify(policy, null, 2)}$mechanical_policy$::jsonb\n`;
-  return { file, sql, start, end, expected, changed: sql.slice(start, end) !== expected };
-}
-
-export function checkMechanicalPolicy(root) {
-  const fix = 'node scripts/ci/component-version-integration-policy.mjs --write';
-  try {
-    const p = projection(root);
-    return { id: 'mechanical-policy', status: p.changed ? 'stale' : 'ok', registry: POLICY,
-      ...(p.changed ? { details: ['Native policy literal differs from the single manifest'] } : {}), fix };
-  } catch (error) {
-    return { id: 'mechanical-policy', status: 'stale', registry: POLICY, details: [error.message], fix };
-  }
-}
-
-export function writeMechanicalPolicy(root) {
-  const p = projection(root);
-  if (p.changed) fs.writeFileSync(p.file, p.sql.slice(0, p.start) + p.expected + p.sql.slice(p.end));
-  return { changed: p.changed, file: path.relative(root, p.file).split(path.sep).join('/') };
-}
-
-if (import.meta.main) {
-  try {
-    let root = ROOT, write = false;
-    for (let i = 2; i < process.argv.length; i += 1) {
-      if (process.argv[i] === '--root' && process.argv[i + 1]) root = path.resolve(process.argv[++i]);
-      else if (process.argv[i] === '--write') write = true;
-      else fail(`unknown argument ${process.argv[i]}`);
-    }
-    if (write) console.log(JSON.stringify(writeMechanicalPolicy(root)));
-    else { const result = checkMechanicalPolicy(root); console.log(JSON.stringify(result)); process.exitCode = result.status === 'ok' ? 0 : 1; }
-  } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

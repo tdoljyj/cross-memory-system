@@ -327,12 +327,18 @@ def _glob_matches(name: str, pattern: str) -> bool:
     return matches(0, 0)
 
 
-def mechanical_paths(root: Path = ROOT) -> list[str]:
+def mechanical_policy(root: Path = ROOT) -> dict:
+    """config/clued-mechanical-files.json, the only list of generated files.
+
+    mechanical_paths are wholly generated; marker_paths are hand-written files
+    in which only generated lines (declared version markers, digests) may change.
+    """
     path = root / MECHANICAL_FILES
     if not path.exists():
-        return []  # A historical base/fixture may predate the policy.
+        return {"mechanical_paths": [], "marker_paths": []}  # A historical base/fixture may predate the policy.
     policy = json.loads(path.read_text(encoding="utf-8"))
-    if (set(policy) != {"schema", "repository", "context_keys", "mechanical_paths"} or policy["schema"] != 1
+    if (set(policy) - {"marker_paths"} != {"schema", "repository", "context_keys", "mechanical_paths"}
+            or policy["schema"] != 1
             or not isinstance(policy["repository"], str)
             or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", policy["repository"])
             or not isinstance(policy["context_keys"], list) or not policy["context_keys"]
@@ -340,14 +346,48 @@ def mechanical_paths(root: Path = ROOT) -> list[str]:
                 r"global|project:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", scope)
                 for scope in policy["context_keys"])):
         raise ValueError("invalid mechanical file policy")
-    paths = policy["mechanical_paths"]
-    if not isinstance(paths, list) or len(paths) != len(set(paths)):
-        raise ValueError("invalid mechanical file policy paths")
+    paths, markers = policy["mechanical_paths"], policy.setdefault("marker_paths", [])
+    for group in (paths, markers):
+        if not isinstance(group, list) or len(group) != len(set(group)):
+            raise ValueError("invalid mechanical file policy paths")
     for name in paths:
         _safe_component_path(name, pattern=True)
         if "*" in name and not (name.endswith("/**") and "*" not in name[:-3]):
             raise ValueError("mechanical file policy permits only a bounded directory /**")
-    return paths
+    for name in markers:
+        _safe_component_path(name)
+        if any(_glob_matches(name, pattern) for pattern in paths):
+            raise ValueError(f"{name} is both wholly generated and a marker file")
+    return policy
+
+
+def mechanical_paths(root: Path = ROOT) -> list[str]:
+    return mechanical_policy(root)["mechanical_paths"]
+
+
+def marker_paths(root: Path = ROOT) -> list[str]:
+    return mechanical_policy(root)["marker_paths"]
+
+
+_DIGEST = re.compile(rb"\b[0-9a-f]{40}(?:[0-9a-f]{24})?\b")
+
+
+def generated_only(name: str, before: bytes | None, after: bytes | None, markers: dict[str, set[str]]) -> bool:
+    """Whether a marker_paths file changed only in its generated lines."""
+    if before is None or after is None:
+        return False
+    if name == MANIFEST.as_posix():
+        def hand_written(data: bytes):
+            manifest = json.loads(data)
+            return {**manifest, "components": [{k: v for k, v in c.items() if k not in ("version", "content_sha256")}
+                                               for c in manifest["components"]]}
+        try:
+            return hand_written(before) == hand_written(after)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return False
+    def mask(data: bytes) -> bytes:
+        return _DIGEST.sub(b"<digest>", _without_versions(name, data, markers))
+    return mask(before) == mask(after)
 
 
 def _component_patterns(component: dict) -> list[str]:
@@ -441,7 +481,7 @@ def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | N
     if len(current) != len(data["components"]) or set(old) - set(current):
         raise ValueError("component integration refuses duplicate or removed components")
     markers = _marker_map(before, data)
-    ignored = mechanical_paths(root)
+    ignored, marked = mechanical_paths(root), set(marker_paths(root))
     changed = set(str(_git_output(root, ["diff", "--no-renames", "--name-only", "-z", base, "--"])).split("\0"))
     changed.update(str(_git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"))
     changed.discard("")
@@ -479,7 +519,9 @@ def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | N
                 continue
             path = _checked_file(root, name)
             actual = path.read_bytes() if path.is_file() else None
-            if _without_versions(name, actual, markers) != _without_versions(name, old_bytes(name), markers):
+            if name in marked:
+                semantic = semantic or not generated_only(name, old_bytes(name), actual, markers)
+            elif _without_versions(name, actual, markers) != _without_versions(name, old_bytes(name), markers):
                 semantic = True
         target = version
         if prior and semantic:

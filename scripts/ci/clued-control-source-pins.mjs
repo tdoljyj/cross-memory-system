@@ -15,7 +15,6 @@ export const MECHANICAL_POLICY='config/clued-mechanical-files.json';
 export const CONTROL_SOURCE_PIN_FIX='node scripts/ci/clued-control-source-pins.mjs --root <checkout> --base <trusted main commit> --write';
 const EXPORT='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(';
 const PROFILE='scripts/ci/clued-workflow-profile.mjs';
-const COMPARISON_POLICY='scripts/ci/component-version-integration-policy.mjs';
 const DEFAULT_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const refuse=m=>{throw new Error(`control Source pins: ${m}`);};
 const git=(root,args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe']});
@@ -60,7 +59,9 @@ function mechanicalVersionOnly(before,after){return withoutVersion(before)===wit
 export function controlSourceMechanicalFiles(policy,implementationBlobs){
   if(policy?.schema!==1||policy.repository!=='tdoljyj/cross-memory-system'||!Array.isArray(policy.mechanical_paths)
     ||policy.mechanical_paths.some(p=>typeof p!=='string'))refuse('trusted mechanical policy invalid');
-  const declared=name=>policy.mechanical_paths.some(p=>name===p||(p.endsWith('/**')&&name.startsWith(p.slice(0,-2))));
+  // Both sections of the one list; a policy from before marker_paths existed lists them as mechanical.
+  const listed=[...policy.mechanical_paths,...(Array.isArray(policy.marker_paths)?policy.marker_paths:[])];
+  const declared=name=>listed.some(p=>name===p||(typeof p==='string'&&p.endsWith('/**')&&name.startsWith(p.slice(0,-2))));
   const names=Object.keys(implementationBlobs??{}).filter(n=>n.endsWith('.mjs')&&declared(n)).sort();
   if(!names.length)refuse('no mechanical pin declared by trusted policy');
   return names;
@@ -90,7 +91,7 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   const old=descriptor(before);
   let policy;try{policy=JSON.parse(git(root,['show',`${base}:${MECHANICAL_POLICY}`]));}catch{refuse('trusted mechanical policy invalid');}
   const mechanical=controlSourceMechanicalFiles(policy,old.value.implementation_blobs);
-  for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,PROFILE,COMPARISON_POLICY,...mechanical])assertBaseMode(root,base,name);
+  for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,PROFILE,...mechanical])assertBaseMode(root,base,name);
   const source=readPlain(root,CONTROL_SOURCE_MODULE),registered=readPlain(root,CONTROL_SOURCE_REGISTRY);
   const d=descriptor(source),registry=JSON.parse(registered);
   if(!isDeepStrictEqual(projectedDescriptor(d.value,mechanical),projectedDescriptor(old.value,mechanical)))refuse('frozen descriptor changed beyond mechanical pins');
@@ -101,7 +102,6 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   if(!isDeepStrictEqual(entry.implementation_blobs,d.value.implementation_blobs))refuse('descriptor/catalogue pins disagree');
   const manifest=JSON.parse(readPlain(root,'config/clued-components.json'));
   ensureVersionManifest(manifest,CONTROL_SOURCE_MODULE,source);
-  if(readPlain(root,COMPARISON_POLICY)!==lf(git(root,['show',`${base}:${COMPARISON_POLICY}`])))refuse('comparison policy differs from trusted base');
   const next=structuredClone(d.value),changes=[];
   for(const name of mechanical){
     const expected=old.value.implementation_blobs[name],current=readPlain(root,name),actual=blob(current);

@@ -30,25 +30,21 @@ test('a change to the mechanical policy always selects pinned registries', () =>
     'the selector integration must register config/clued-mechanical-files.json');
 });
 
-test('mechanical exemption policy is verified by pinned registries and tampering fails', async t => {
+test('the single generated-file list must parse and tampering fails', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-mechanical-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'config'), { recursive: true });
-  fs.copyFileSync(path.join(repo, 'config/clued-mechanical-files.json'), path.join(root, 'config/clued-mechanical-files.json'));
-  const sub = 'apps/clued-cloud/supabase/migrations';
-  fs.mkdirSync(path.join(root, sub), { recursive: true });
-  const name = fs.readdirSync(path.join(repo, sub)).filter(n => /_work_claim_mechanical_files_v\d+\.sql$/.test(n)).sort().at(-1);
-  const file = path.join(root, sub, name);
-  fs.copyFileSync(path.join(repo, sub, name), file);
+  const file = path.join(root, 'config/clued-mechanical-files.json');
+  fs.copyFileSync(path.join(repo, 'config/clued-mechanical-files.json'), file);
   const run = () => checkAll({ root, only: ['mechanical-policy'], knownMainRefs: () => [] });
   let report = await run();
   assert.equal(report.results.length, 1);
   assert.equal(report.results[0].status, 'ok');
-  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('config/clued-components.json', 'source/private.ts'));
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('"marker_paths": [', '"marker_paths": ["../escape",'));
   report = await run();
   assert.equal(report.results[0].status, 'stale');
   assert.equal(exitCode(report.results, {}), 1);
-  assert.match(render(report), /Native policy literal differs/);
+  assert.match(render(report), /invalid scoped mechanical-file policy/);
 });
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (dir, message) => { git(dir, 'add', '-A'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', message); };

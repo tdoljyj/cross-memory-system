@@ -51,8 +51,7 @@ test('one initial Source and full concrete Role are registered without inventing
   assert.deepEqual(source.primary_ids,['reconcile']);assert.equal(rolesOf(r).length,1);
   assert.deepEqual(rolesOf(r)[0].definition,source.workflow_definition.jobs.reconcile);
   assert.equal(Object.keys(pin.implementation_blobs).length,384);
-  for(const name of ['scripts/ci/component-version-integration-policy.mjs',
-    'scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-merge-reconcile-source.mjs',
+  for(const name of ['scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-merge-reconcile-source.mjs',
     'scripts/ci/clued-merge-reconcile-source.test.mjs',
     'scripts/ci/clued-pr-task-binding.mjs','scripts/ci/clued-pr-task-binding.test.mjs',
     'scripts/ci/clued-pr-write-set.mjs','scripts/ci/clued-pr-write-set.test.mjs'])
@@ -68,8 +67,9 @@ test('one initial Source and full concrete Role are registered without inventing
   for(const [name,blob,sha] of [
     ['scripts/ci/merge-admission-r9-collector.test.mjs','1053a17adfaecf5df9e6510bbdecb1c0b2ba93bf','6223ac697944d99a0ee2b5c9500cb6123498fbf33854445f9b04211525c4603b'],
     ['scripts/ci/clued-work-admission.mjs','62ebce7bcaeb2402c5a92caa025f44e0c07c0735','61d070f4d1e3e733eddc22c1e7dcf32f4eb16ec2123bd61c4e2212dc869a6be5'],
-    // The single mechanical-file policy grows when a generator is added; the
-    // current integrity registry below binds its current bytes.
+    // The single generated-file list and its reader change with the generators;
+    // the current integrity registry below binds their current bytes.
+    ['scripts/ci/component-version-integration-policy.mjs','f64fadb108c552dbd2dec19d191720fbb236da06','92c876f373226ff0f1a9230317d8112bd829a9c8ab49a82cdc6b2e569de64cff'],
     ['config/clued-mechanical-files.json','ca52cf896a0c6fda896ef2341f79d9fa86c5da13','cc0e84cc388962fbea0f476374f17128bf109cb4652a8615178bcc7628399f82'],
   ]) {assert.equal(pin.implementation_blobs[name],blob,name);historical(blob,sha);}
 });
@@ -78,7 +78,8 @@ test('the separate current integrity registry binds every current file without g
   const current=verifyReconcileSource(root);
   for(const key of ['executionAuthority','dispatchAuthority','productionAuthority','runnerHookException'])assert.equal(current[key],false,key);
   assert.equal(current.hostQualification,'separate_required');
-  for(const name of ['scripts/ci/clued-work-admission.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','config/clued-mechanical-files.json'])
+  for(const name of ['scripts/ci/clued-work-admission.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','config/clued-mechanical-files.json',
+    'scripts/ci/component-version-integration-policy.mjs'])
     assert.equal(current.files[name],createHash('sha256').update(fs.readFileSync(new URL('../../'+name,import.meta.url))).digest('hex'));
 });
 

@@ -13,11 +13,14 @@ import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worke
 
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repository = path.resolve(cloud, '../..');
-const policy = JSON.parse(await fs.readFile(path.join(repository, 'config/clued-mechanical-files.json'), 'utf8'));
+const policyText = await fs.readFile(path.join(repository, 'config/clued-mechanical-files.json'), 'utf8');
+const policy = JSON.parse(policyText);
 const scope = policy.context_keys[0];
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
-const artifacts = policy.mechanical_paths.map(p => p.endsWith('/**') ? p.slice(0, -2) + 'components.ts' : p);
+const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+// Wholly generated outputs and one hand-written marker file (generated lines only).
+const artifacts = [...policy.mechanical_paths.map(p => p.endsWith('/**') ? p.slice(0, -2) + 'components.ts' : p), policy.marker_paths[0]];
 
 async function freePort() {
   const listener = net.createServer();
@@ -124,10 +127,43 @@ test('mechanical files do not serialize independent source claims or widen sourc
       return { ...r, claim: moved.claim, lease_key: moved.lease_key };
     };
 
+    // CI admission publishes the list of the trusted main commit it runs from.
+    const publish = (text, extra = {}) => call(tokens.verifier, 'clued_work_verify_v1', {
+      scope, claim_id: uuid(), changed_paths: [], pr_ref: `${policy.repository}#9`, head_sha: '9'.repeat(40),
+      base_sha: '8'.repeat(40), target_branch: 'main', mechanical_paths_proven: [],
+      mechanical_policy: { text, sha256: sha256(text), base_sha: '8'.repeat(40), base_committed_at: '2026-11-12T00:00:00Z' }, ...extra });
+    const published = async () => (await admin.query('select policy_text,policy_sha256,base_sha from clued_private.work_claim_mechanical_policy_published_v1')).rows;
+
+    await t.test('until CI publishes the list, generated files conflict like any source', async () => {
+      assert.deepEqual(await published(), []);
+      const a = committed(await claim(tokens.A, await createTask('before publish A'), ['src/pre-left/**', ...policy.mechanical_paths]));
+      const b = await claim(tokens.B, await createTask('before publish B'), ['src/pre-right/**', ...policy.mechanical_paths]);
+      try { assert.equal(b.error_code, 'work_claim_conflict'); }
+      finally { await release(tokens.B, b); await release(tokens.A, a); }
+      const forged = await call(tokens.A, 'clued_work_verify_v1', { scope, claim_id: uuid(), changed_paths: [],
+        pr_ref: `${policy.repository}#9`, target_branch: 'main', head_sha: '9'.repeat(40), base_sha: '8'.repeat(40),
+        mechanical_paths_proven: [], mechanical_policy: { text: policyText, sha256: sha256(policyText), base_sha: '8'.repeat(40), base_committed_at: '2026-11-12T00:00:00Z' } });
+      assert.deepEqual(forged.reasons, ['ci_binding_required'], 'only the CI-admission principal publishes');
+      for (const wrong of [{ text: policyText, sha256: '0'.repeat(64) }, { text: '{"schema":1}', sha256: sha256('{"schema":1}') },
+        { text: policyText.replace('tdoljyj/cross-memory-system', 'other/repo'), sha256: sha256(policyText.replace('tdoljyj/cross-memory-system', 'other/repo')) }]) {
+        const r = await publish(policyText, { mechanical_policy: { ...wrong, base_sha: '8'.repeat(40), base_committed_at: '2026-11-12T00:00:00Z' } });
+        assert.deepEqual(r.reasons, ['mechanical_policy_invalid']);
+      }
+      assert.deepEqual(await published(), []);
+      await publish(policyText);
+      assert.deepEqual(await published(), [{ policy_text: policyText, policy_sha256: sha256(policyText), base_sha: '8'.repeat(40) }]);
+    });
+
     await t.test('two different source edits sharing generated files can both claim', async () => {
       const a = await claim(tokens.A, await createTask('left'), ['src/left/**', ...policy.mechanical_paths]);
       const b = await claim(tokens.B, await createTask('right'), ['src/right/**', ...policy.mechanical_paths]);
       try { committed(a); committed(b); }
+      finally { await release(tokens.B, b); await release(tokens.A, a); }
+    });
+    await t.test('hand-written marker files still conflict', async () => {
+      const a = committed(await claim(tokens.A, await createTask('marker A'), [policy.marker_paths[0]]));
+      const b = await claim(tokens.B, await createTask('marker B'), [policy.marker_paths[0]]);
+      try { assert.equal(b.error_code, 'work_claim_conflict'); }
       finally { await release(tokens.B, b); await release(tokens.A, a); }
     });
     await t.test('same source path and same trigger remain conflicts', async () => {
@@ -162,7 +198,7 @@ test('mechanical files do not serialize independent source claims or widen sourc
       try {
         const unproven = await verify(a.claim.claim_id, ['src/covered/a.ts', ...artifacts]);
         assert.equal(unproven.verdict, 'REJECTED', 'file names alone prove neither runtime nor configuration edits mechanical');
-        assert.deepEqual(unproven.paths_outside_write_set, artifacts.toSorted());
+        assert.deepEqual(unproven.paths_outside_write_set.toSorted(), artifacts.toSorted());
         const missingHeadGrant = await verify(a.claim.claim_id, artifacts, scope, proven);
         assert.equal(missingHeadGrant.verdict, 'REJECTED');
         assert.deepEqual(missingHeadGrant.reasons, ['pr_task_binding_unbound']);
@@ -267,10 +303,23 @@ test('mechanical files do not serialize independent source claims or widen sourc
       try { assert.equal(g.error_code, 'work_claim_conflict'); }
       finally { await release(tokens.B, g, 'global'); await release(tokens.A, f); }
     });
-    await t.test('Native policy exactly matches the canonical source, with private helper ACLs', async () => {
+    await t.test('Native reads exactly the published list; an older commit or altered row grants nothing', async () => {
       const native = (await admin.query('select clued_private.work_claim_mechanical_policy_v1() value')).rows[0].value;
       assert.deepEqual(native, policy);
+      const older = policyText.replace('"marker_paths": [', '"marker_paths": [\n    "older/only.mjs",');
+      await publish(older, { mechanical_policy: { text: older, sha256: sha256(older), base_sha: '7'.repeat(40), base_committed_at: '2026-01-01T00:00:00Z' } });
+      assert.equal((await published())[0].policy_text, policyText, 'an older main commit never replaces a newer list');
+      await admin.query("update clued_private.work_claim_mechanical_policy_published_v1 set policy_text=policy_text||' '");
+      assert.equal((await admin.query('select clued_private.work_claim_mechanical_policy_v1() value')).rows[0].value, null);
+      const a = committed(await claim(tokens.A, await createTask('altered A'), ['src/alt-left/**', ...policy.mechanical_paths]));
+      const b = await claim(tokens.B, await createTask('altered B'), ['src/alt-right/**', ...policy.mechanical_paths]);
+      try { assert.equal(b.error_code, 'work_claim_conflict', 'a digest mismatch is conservative'); }
+      finally { await release(tokens.B, b); await release(tokens.A, a); }
+      await admin.query('delete from clued_private.work_claim_mechanical_policy_published_v1');
+      await publish(policyText);
+      assert.deepEqual((await admin.query('select clued_private.work_claim_mechanical_policy_v1() value')).rows[0].value, policy);
       await assert.rejects(() => anon.query('select clued_private.work_claim_mechanical_policy_v1()'), /permission denied/);
+      await assert.rejects(() => anon.query('select * from clued_private.work_claim_mechanical_policy_published_v1'), /permission denied/);
       await assert.rejects(() => anon.query("select clued_private.work_claim_mechanical_path_v1('config/clued-components.json',$1)", [scope]), /permission denied/);
       await assert.rejects(() => anon.query('select clued_private.work_claim_mechanical_proof_error_v1(null,null)'), /permission denied/);
       // The primitive glob matcher remains a generic matcher: exemption is

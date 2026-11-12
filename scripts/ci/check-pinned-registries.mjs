@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkMechanicalPolicy } from './component-version-integration-policy.mjs';
+import { POLICY, readMechanicalPolicy } from './component-version-integration-policy.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(HERE, '../..');
@@ -159,6 +159,13 @@ async function checkSelectorPin(root) {
   if (blob === pin.blob && sha256 === pin.sha256) return { id: 'selector-pin', status: 'ok' };
   return { id: 'selector-pin', status: 'stale', registry: 'scripts/ci/clued-required-applicability.mjs',
     details: [`${pin.path} changed: pinned blob ${pin.blob}, now blob: '${blob}'`, `pinned sha256 ${pin.sha256}, now sha256: '${sha256}'`], fix };
+}
+
+// The one generated-file list must parse; Native reads the same bytes (published by CI admission).
+function checkMechanicalPolicy(root) {
+  try { readMechanicalPolicy(root); return { id: 'mechanical-policy', status: 'ok' }; } catch (error) {
+    return { id: 'mechanical-policy', status: 'stale', registry: POLICY, details: [error.message], fix: `edit ${POLICY}` };
+  }
 }
 
 const CONTROL_SOURCE_FIX = 'node scripts/ci/clued-control-source-pins.mjs --base <main commit> --write';

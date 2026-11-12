@@ -72,7 +72,7 @@ _edit_spec = importlib.util.spec_from_file_location("clued_holder_edit_resources
 _edit_resources = importlib.util.module_from_spec(_edit_spec)
 _edit_spec.loader.exec_module(_edit_resources)
 
-__version__ = "1.1.12"
+__version__ = "1.1.13"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -1564,7 +1564,7 @@ def source_write_set(claim: dict, root: Path | None) -> list[str]:
         return paths
     try:
         policy = json.loads((root / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
-        if (set(policy) != {"schema", "repository", "context_keys", "mechanical_paths"}
+        if (set(policy) - {"marker_paths"} != {"schema", "repository", "context_keys", "mechanical_paths"}
                 or policy["schema"] != 1
                 or not isinstance(policy["repository"], str)
                 or not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", policy["repository"])
