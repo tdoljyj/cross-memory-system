@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { canonicalJson, sha256 } from '../../src/canonical.mjs';
 import { upgraderCopy } from '../../tools/build-package.mjs';
 import { DECISION, NODE, buildTestPackage, installGeneration1, tempDir } from '../../upgrader/test/fixtures.mjs';
-import { precheck } from '../precheck.mjs';
+import { precheck, readSddl, relayParentAclPresence, relayParents as relayParentsOf } from '../precheck.mjs';
 import { trainNodesView } from '../../src/train.mjs';
 import { trainFacts } from '../../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
@@ -259,6 +259,21 @@ test('precheck: identity, compatibility, acceptance and the same package are the
   await assert.rejects(precheck({ root, pkgDir: base.dir, pkgSha: 'a'.repeat(64), acceptance: DECISION, installedPkgDir: base.dir, clock: () => T }), { code: 'PRECHECK_PACKAGE_CHANGED' });
 });
 
+test('precheck: Linux facts that say the live tree is not the current generation are refused before the Grant (reinstall)', async t => {
+  const { run, root } = await world(t);
+  await writeFacts(root, { liveMatchesCurrent: false });
+  const r = await run();
+  assert.deepEqual([r.status, r.code], ['PRECHECK_REFUSED', 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION'], JSON.stringify(r));
+  assert.ok(r.advice.includes('此节点需用通用安装包重装'));
+  for (const ok of [true, null]) {
+    await writeFacts(root, { liveMatchesCurrent: ok });
+    assert.notEqual((await run()).code, 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION');
+  }
+  // not at rest (a staged generation): the upgrader's to finish or roll back, never "reinstall"
+  await writeFacts(root, { liveMatchesCurrent: false, staged: { opId: '33333333-3333-4333-8333-333333333333', generation: 2 } });
+  assert.notEqual((await run()).code, 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION');
+});
+
 test('precheck: the frozen Linux upgrade tool, signer and tool manifest must be the installed package\'s and the node\'s', async t => {
   for (const changed of [TOOL, SIGNER, TOOL_MANIFEST]) {
     const { run } = await world(t, { linux: { [changed]: FROZEN_LINUX[changed] + '# changed\n' } });
@@ -297,3 +312,141 @@ async function listing(root) {
   await walk(root);
   return out.sort();
 }
+
+// ---- M5-b relay parents: a companion-account node whose relay parents miss the account's ACE is refused before any request ----
+const COMPANION = 'S-1-5-21-858977881-4031698862-3006450925-1008';
+const BASE_SDDL = 'O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;S-1-5-21-858977881-4031698862-3006450925-1000)(A;OICI;0x1200a9;;;S-1-5-21-858977881-4031698862-3006450925-1007)';
+const RESIDENT_SID = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
+const OWN = `(A;;0x120080;;;${COMPANION})`;
+const WITH = `${BASE_SDDL}${OWN}(A;;0x120080;;;${RESIDENT_SID})`;
+const WITHOUT = `${BASE_SDDL}(A;;0x120080;;;${RESIDENT_SID})`;
+
+test('M5-b relay parents: the SDDL rule is install-resident.ps1 Get-RelayParentAclPresence, never looser', () => {
+  assert.equal(relayParentAclPresence(WITH, COMPANION), 'present');
+  assert.equal(relayParentAclPresence(WITHOUT, COMPANION), 'missing');
+  assert.equal(relayParentAclPresence(`${WITH}S:AI`, COMPANION), 'present');
+  assert.equal(relayParentAclPresence(`D:P${OWN}`, COMPANION), 'present');
+  const cases = [
+    [WITH.replace('D:PAI', 'D:AI'), 'DACL not protected'],
+    [`${WITH}${OWN}`, 'two entries for the account'],
+    [WITH.replace(OWN, `(A;OICI;0x120080;;;${COMPANION})`), 'inheritable entry'],
+    [WITH.replace(OWN, `(A;ID;0x120080;;;${COMPANION})`), 'inherited entry'],
+    [WITH.replace(OWN, `(A;;0x1200a9;;;${COMPANION})`), 'more than metadata'],
+    [WITH.replace(OWN, `(A;;FR;;;${COMPANION})`), 'mnemonic rights'],
+    [WITH.replace(OWN, `(D;;0x120080;;;${COMPANION})`), 'deny for the account'],
+    [`D:P(D;;RC;;;BU)${OWN}`, 'metadata deny (mnemonic)'],
+    [`D:P(D;;0x80000000;;;WD)${OWN}`, 'generic read deny'],
+    [`D:P(D;;0x10000000;;;AU)${OWN}`, 'generic all deny'],
+    [`D:P(OA;;RC;;bf967aba-0de6-11d0-a285-00aa003049e2;;${COMPANION})`, 'object ACE'],
+    [`D:P(XA;;0x120080;;;${COMPANION};(x==1))`, 'callback ACE'],
+    [`D:P(A;XY;0x120080;;;${COMPANION})`, 'unknown ACE flag'],
+    ['not an sddl', 'no DACL'],
+  ];
+  for (const [sddl, why] of cases) assert.equal(relayParentAclPresence(sddl, COMPANION), 'refused', why);
+  // a deny that cannot touch the relay: inherit-only, or a hex mask outside metadata / generic read / generic all
+  assert.equal(relayParentAclPresence(`D:P(D;OICIIO;FA;;;BU)${OWN}`, COMPANION), 'present');
+  assert.equal(relayParentAclPresence(`D:P(D;;0x2;;;BU)${OWN}`, COMPANION), 'present');
+  assert.equal(relayParentAclPresence(WITH, 'S-1-5-18'), 'refused');
+  assert.equal(relayParentAclPresence(null, COMPANION), 'refused');
+});
+
+// A node whose resident root is <tmp>\ci\resident, so its relay parents are <tmp>\ci and <tmp>\ci\formal-spool (never the OS temp dir).
+const RECORD = { contract: 'clued.independent-ci.companion-account/1', companionSid: COMPANION, operatorSid: 'S-1-5-21-858977881-4031698862-3006450925-1000' };
+// ensures: the target package's verify-resident.ps1 defines Invoke-CompanionRelayParentsEnsure (true), only something else (false),
+// or the package has no verify-resident.ps1 at all (null).
+async function relayWorld(t, { record = RECORD, spool = true, ensures = false } = {}) {
+  const dir = await tempDir(t, 'clued-precheck-relay-');
+  const base = await pkgWithCopy(path.join(dir, 'n1'), 'n1');
+  const verifyText = ensures ? '# verify\nfunction Invoke-CompanionRelayParentsEnsure([string]$root) { }\n' : '# verify\nfunction Something-Else { }\n';
+  const next = await pkgWithCopy(path.join(dir, 'n2'), 'n2', ensures === null ? {} : { mutate: (m, files, put) => {
+    put('resident/windows/verify-resident.ps1', verifyText);
+    m.files.push({ path: 'resident/windows/verify-resident.ps1', target: `resident\\${m.residentManifestSha256}\\windows\\verify-resident.ps1`,
+      sha256: sha256(files.get('resident/windows/verify-resident.ps1')) });
+  } });
+  const ci = path.join(dir, 'ci');
+  const root = path.join(ci, 'resident');
+  await fs.mkdir(root, { recursive: true });
+  await installGeneration1(root, base, { upgraderManifest: base.manifest.upgrader.manifestSha256 });
+  const policy = JSON.parse(await fs.readFile(path.join(root, 'config', 'policy.json'), 'utf8'));
+  await fs.writeFile(path.join(root, 'config', 'policy.json'), JSON.stringify({ ...policy, node: { nodeName: NODE } }));
+  if (spool) await fs.mkdir(path.join(ci, 'formal-spool'));
+  if (record !== null) {
+    await fs.mkdir(path.join(root, 'install'), { recursive: true });
+    await fs.writeFile(path.join(root, 'install', 'companion-account.json'), typeof record === 'string' ? record : JSON.stringify(record));
+  }
+  const reads = [];
+  const sddlOf = new Map([[ci, WITH], [path.join(ci, 'formal-spool'), WITH]]);
+  const run = (over = {}) => precheck({ root, pkgDir: next.dir, pkgSha: next.sha, acceptance: DECISION, installedPkgDir: base.dir, clock: () => T,
+    readParentSddl: async d => { reads.push(d); return sddlOf.get(d); }, ...over });
+  return { ci, root, run, reads, sddlOf };
+}
+
+test('M5-b relay parents: both parents carry the account\'s entry: PASS, and the result says what was checked', async t => {
+  const { ci, run, reads } = await relayWorld(t);
+  const r = await run();
+  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
+  assert.deepEqual(reads, [ci, path.join(ci, 'formal-spool')]);
+  assert.deepEqual(r.companionRelayParents, { companionSid: COMPANION, parents: reads.map(p => ({ path: p, presence: 'present' })), problem: null, targetEnsures: false });
+});
+
+test('M5-b relay parents: an entry missing and a target whose VERIFY does not add it is refused; no hand repair is offered', async t => {
+  for (const ensures of [false, null]) {
+    const { ci, run, sddlOf } = await relayWorld(t, { ensures });
+    sddlOf.set(path.join(ci, 'formal-spool'), WITHOUT);
+    for (const over of [{}, { allowFleetSourceMismatch: true }]) {
+      const r = await run(over);
+      assert.equal(r.status, 'PRECHECK_REFUSED', JSON.stringify(r));
+      assert.equal(r.code, 'COMPANION_RELAY_PARENT_ACL_MISSING_TARGET_DOES_NOT_ADD_IT');
+      assert.deepEqual([r.detail.parents.map(p => p.presence), r.detail.targetEnsures], [['present', 'missing'], false]);
+      assert.ok(r.advice.includes('Invoke-CompanionRelayParentsEnsure') && r.advice.includes('此节点需用通用安装包重装'));
+      assert.equal('fix' in r, false);
+      assert.doesNotMatch(r.advice, /powershell|ensure-companion/i);
+    }
+  }
+});
+
+test('M5-b relay parents: an entry missing and a target whose VERIFY adds it passes, with a notice (the generic upgrade fixes it)', async t => {
+  const { ci, run, sddlOf } = await relayWorld(t, { ensures: true });
+  sddlOf.set(ci, WITHOUT);
+  sddlOf.set(path.join(ci, 'formal-spool'), WITHOUT);
+  const r = await run();
+  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
+  assert.ok(r.warnings.includes('COMPANION_RELAY_PARENTS_ADDED_BY_THE_UPGRADE_VERIFY'));
+  assert.deepEqual([r.companionRelayParents.problem, r.companionRelayParents.targetEnsures], ['COMPANION_RELAY_PARENT_ACL_MISSING', true]);
+});
+
+test('M5-b relay parents: an unreadable, absent or odd parent, or a bad account record, is refused (never a pass by error)', async t => {
+  // a shape the installer's rule refuses is refused even when the target's VERIFY adds a missing entry: only a reinstall
+  const odd = await relayWorld(t, { ensures: true });
+  odd.sddlOf.set(odd.ci, WITH.replace('D:PAI', 'D:AI'));
+  const r0 = await odd.run();
+  assert.deepEqual([r0.status, r0.code], ['PRECHECK_REFUSED', 'COMPANION_RELAY_PARENT_ACL_REFUSED']);
+  assert.ok(r0.advice.includes('此节点需用通用安装包重装'));
+  const throws = await relayWorld(t);
+  const r1 = await throws.run({ readParentSddl: async () => { throw new Error('access denied'); } });
+  assert.deepEqual([r1.status, r1.code, r1.detail.parents.map(p => p.presence)], ['PRECHECK_REFUSED', 'COMPANION_RELAY_PARENT_ACL_REFUSED', ['unreadable', 'unreadable']]);
+  const noSpool = await relayWorld(t, { spool: false });
+  const r2 = await noSpool.run();
+  assert.deepEqual([r2.code, r2.detail.parents.map(p => p.presence)], ['COMPANION_RELAY_PARENT_ACL_REFUSED', ['present', 'unreadable']]);
+  const records = ['{not json', { contract: 'other/1', companionSid: COMPANION }, { contract: RECORD.contract, companionSid: 'S-1-5-18' }];
+  for (const record of records) {
+    const w = await relayWorld(t, { record });
+    const r = await w.run();
+    assert.deepEqual([r.status, r.code, w.reads.length], ['PRECHECK_REFUSED', 'COMPANION_ACCOUNT_RECORD_REFUSED', 0], JSON.stringify(record));
+  }
+});
+
+test('M5-b relay parents: a node without its own companion account is not asked about the parents', async t => {
+  const { run, reads } = await relayWorld(t, { record: null });
+  const r = await run();
+  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
+  assert.equal(reads.length, 0);
+  assert.equal('companionRelayParents' in r, false);
+});
+
+test('M5-b relay parents: the default reader returns the live SDDL of a real directory (read-only, not elevated)', { skip: process.platform !== 'win32' }, async t => {
+  const dir = await tempDir(t, 'clued-precheck-sddl-');
+  assert.match(await readSddl(dir), /^O:.*D:/);
+  await assert.rejects(readSddl(path.join(dir, 'absent')));
+  assert.equal(relayParentsOf(path.join(dir, 'resident'))[0], dir);
+});

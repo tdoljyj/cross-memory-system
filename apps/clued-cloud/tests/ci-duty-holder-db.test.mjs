@@ -52,15 +52,21 @@ async function anchorPairs(){
 // Functions allowed to contain each kind of direct ci-admission determination, by exact name (DESIGN 5.1
 // class A role management, class E failover watchdog, and the duty/phase functions themselves).
 const ALLOWED={
-  admits:['clued_private.ci_duty_admits_v1'],
+  // 20261112130500 moved the duty decision unchanged from ci_duty_admits_v1 into ci_duty_admits_decide_v1;
+  // ci_duty_admits_v1 keeps only a FOR SHARE lock on the Binding's live ci-admission rows before asking it.
+  admits:['clued_private.ci_duty_admits_decide_v1'],
   roleRead:['clued_private.binding_role_handover_check_v1','clued_private.binding_role_handover_core_v1','clued_private.binding_role_handover_view_v1',
-    // ci_duty_admits_v1 asks clued_private.binding_role_in_force_v1 since 20261112120000 instead of reading the rows itself.
-    'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_holder_v1',
+    // the decision asks clued_private.binding_role_in_force_v1 since 20261113100000 instead of reading the rows itself.
+    'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_admits_v1','clued_private.ci_duty_holder_v1',
     'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
-  holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_v1',
+  holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_decide_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1'],
-  mergeSlot:['clued_private.work_claim_ci_lease_extend_v1','clued_private.work_claim_ci_queue_join_v1','public.clued_work_claim_adopt_v1',
-    'public.clued_work_merge_slot_return_v1','public.clued_work_merge_slot_touch_v1'],
+  // 20261108161615 and 20261108204157 renamed the adopt/return bodies (with their merge-slot check) to the *_before_pr_task
+  // and *_before_terminal predecessors their new public wrappers call; the terminal admission (verify) and its apply ask it too.
+  mergeSlot:['clued_private.clued_work_claim_adopt_v1_before_pr_task','clued_private.clued_work_claim_adopt_v1_before_terminal',
+    'clued_private.clued_work_merge_slot_return_v1_before_pr_task','clued_private.work_claim_ci_lease_extend_v1',
+    'clued_private.work_claim_ci_queue_join_v1','clued_private.work_claim_pr_terminal_apply_v1','public.clued_work_merge_slot_touch_v1',
+    'public.clued_work_verify_v1'],
 };
 
 test('unified scheduling 2A: duty holder, equivalence of every routed entry point, phase moves',{timeout:1200000},async t=>{
@@ -102,18 +108,11 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
         await assert.rejects(()=>c.query('select clued_private.ci_phase_3_to_4_v1($1,$2,3,$3::jsonb)',[user,project,'{}']),/permission denied/);
         await assert.rejects(()=>c.query('select clued_private.ci_phase_4_to_3_v1($1,$2,4,false)',[user,project]),/permission denied/);
       }
-      // 20261102151506: each server-principal clone is still exactly its original with only the credential entry
-      // changed (that migration's transform applied to today's originals), and the source guard holds.
-      for(const [original,copy] of [['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
-        ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){
-        let body=(await one('select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)'])).v;
-        body=body.replace('FUNCTION '+original+'(p_token_hash text, p_input jsonb)','FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)')
-          .replace('clued_private.resolve_binding(p_token_hash,','clued_private.ci_scan_start_resolve_principal_v1(p_binding_id,')
-          .replaceAll('clued_private.work_claim_verify_before_execution_v1(p_token_hash,p_input)','clued_private.ci_scan_start_verify_core_principal_v1(p_binding_id,p_input)')
-          .replaceAll('p_token_hash','p_binding_id');
-        assert.equal((await one('select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)'])).v,body,copy);
-      }
-      assert.equal((await one('select clued_private.ci_scan_start_native_source_current_v1() v')).v,true);
+      // 20261113090000 removed the server-principal clones of the two verify functions (20261102151506) and their
+      // source guard: the hosted scan start calls the live verifier, so no copy of these rewrites can go stale.
+      for(const gone of ['clued_private.ci_scan_start_verify_principal_v1(uuid,jsonb)','clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)',
+        'clued_private.ci_scan_start_native_source_current_v1()'])
+        assert.equal((await one('select to_regprocedure($1) v',[gone])).v,null,gone);
       // every expression rewrite of the migration is in the equivalence matrix below
       assert.equal(pairs.length,19,JSON.stringify(pairs.map(p=>p.sig)));
     });

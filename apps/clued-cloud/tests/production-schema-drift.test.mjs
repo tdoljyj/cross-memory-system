@@ -2,6 +2,7 @@
 // replay itself (two embedded PostgreSQL clusters) runs as the
 // migration-verify CI check: `node scripts/production-schema-drift.mjs check`.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -177,6 +178,16 @@ test('a production row no repository text carries stops the check', () => {
   const chain = productionChain({ applied, ...repo });
   assert.ok(chain.errors.includes('production_row_not_in_repository:20261031164748_ci_node_registration_binding_expiry_v1'));
   assert.ok(chain.errors.includes('chain_row_unresolved:20261031164748_ci_node_registration_binding_expiry_v1'));
+});
+
+test('a failing check exits non-zero although embedded-postgres\'s exit hook ends the process with exit(0)', () => {
+  // The hook embedded-postgres registers (async-exit-hook) is the one that turned FAIL into exit 0.
+  const script = `import hook from 'async-exit-hook';hook((done)=>done());
+    const {settleExitCode}=await import(${JSON.stringify(new URL('../scripts/production-schema-drift.mjs', import.meta.url).href)});
+    settleExitCode(1);console.log('settled');`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  assert.equal(run.stdout.trim(), 'settled', run.stderr);
+  assert.equal(run.status, 1, run.stderr);
 });
 
 test('the check refuses a snapshot taken with a different catalog query before starting a database', async () => {

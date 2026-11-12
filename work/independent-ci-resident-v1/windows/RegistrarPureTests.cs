@@ -152,6 +152,90 @@ public static class RegistrarPureTests {
     Ok(string.Join(",", RegistrarCore.HardeningProblems(new[] { "Users", "Remote Desktop Users" }, "Users", 0x201, new[] { "SeBatchLogonRight" }, false).ToArray()) == "GROUPS_NOT_USERS_ONLY,PASSWORD_EXPIRES,PASSWORD_CHANGEABLE,NETWORK_LOGON_NOT_DENIED,RDP_LOGON_NOT_DENIED,NOT_HIDDEN", "hardening-every-problem");
     Ok(RegistrarCore.HardeningProblems(new string[0], "Users", 0x10040, new[] { "SeDenyNetworkLogonRight", "SeDenyRemoteInteractiveLogonRight" }, true)[0] == "GROUPS_NOT_USERS_ONLY", "hardening-no-group");
 
+    // root-run: one pinned root script as the companion account. Only <root>\install\linux-run-<32hex>\script.sh with that directory's
+    // out\, a lower-case SHA-256 and a timeout of 1..86400 s in plain digits; one stdout line.
+    string runId = "0123456789abcdef0123456789abcdef", runDir = Root + @"\install\linux-run-" + runId, runSha = new string('a', 64);
+    Func<string, string, string, string, string, RootRunRequest> rr = (root, script, sha, outDir, timeout) => RegistrarCore.ParseRootRun(new[] { "root-run", root, script, sha, outDir, timeout });
+    RootRunRequest rq = rr(Root, runDir + @"\script.sh", runSha, runDir + @"\out", "5400");
+    Ok(rq != null && rq.ScriptPath == runDir + @"\script.sh" && rq.Directory == runDir && rq.OutDirectory == runDir + @"\out" && rq.Sha256 == runSha && rq.TimeoutSeconds == 5400
+      && rq.WslScript == "/mnt/c/ProgramData/CluedIndependentCI/resident/install/linux-run-" + runId + "/script.sh", "root-run-arguments-accepted");
+    Ok(rr(Root.ToLowerInvariant(), runDir + @"\script.sh", runSha, runDir + @"\out", "1") != null && rr(Root, runDir + @"\script.sh", runSha, runDir + @"\out", "86400") != null, "root-run-root-any-case-and-timeout-bounds");
+    Ok(rr(@"C:\Temp", runDir + @"\script.sh", runSha, runDir + @"\out", "60") == null && rr(Root, @"C:\Temp\install\linux-run-" + runId + @"\script.sh", runSha, @"C:\Temp\install\linux-run-" + runId + @"\out", "60") == null, "root-run-refuses-another-root");
+    foreach (string bad in new[] { Root + @"\install\linux-run-" + runId.ToUpperInvariant() + @"\script.sh", Root + @"\install\linux-run-" + runId.Substring(1) + @"\script.sh", Root + @"\install\linux-run-" + runId + @"\other.sh",
+        Root + @"\install\linux-run-" + runId + @"\..\linux-run-" + runId + @"\script.sh", Root + @"\install\linux-run-" + runId + @"\sub\script.sh", Root + @"\state\linux-run-" + runId + @"\script.sh",
+        Root.ToLowerInvariant() + @"\install\linux-run-" + runId + @"\script.sh", runDir + "\\script.sh ", runDir + "\\script.sh\" & calc" })
+      Ok(rr(Root, bad, runSha, runDir + @"\out", "60") == null, "root-run-refuses-script-path:" + bad);
+    foreach (string bad in new[] { runDir, runDir + @"\out\", runDir + @"\OUT", Root + @"\install\linux-run-" + new string('f', 32) + @"\out", runDir + @"\out\..\out", @"D:\w\out" })
+      Ok(rr(Root, runDir + @"\script.sh", runSha, bad, "60") == null, "root-run-refuses-out-directory:" + bad);
+    foreach (string bad in new[] { "", runSha.Substring(1), runSha.ToUpperInvariant(), runSha + "a", new string('g', 64) })
+      Ok(rr(Root, runDir + @"\script.sh", bad, runDir + @"\out", "60") == null, "root-run-refuses-sha256:" + bad);
+    foreach (string bad in new[] { "", "0", "-1", "060", "86401", "100000", "1e3", " 60", "60 ", "+60", "9999999999" })
+      Ok(rr(Root, runDir + @"\script.sh", runSha, runDir + @"\out", bad) == null, "root-run-refuses-timeout:" + bad);
+    Ok(RegistrarCore.ParseRootRun(new[] { "root-run", Root, runDir + @"\script.sh", runSha, runDir + @"\out" }) == null && RegistrarCore.ParseRootRun(new[] { "root-run", Root, runDir + @"\script.sh", runSha, runDir + @"\out", "60", "x" }) == null
+      && RegistrarCore.ParseRootRun(new[] { "root-shell", Root, runDir + @"\script.sh", runSha, runDir + @"\out", "60" }) == null && RegistrarCore.ParseRootRun(null) == null, "root-run-refuses-argument-count-or-mode");
+    Ok(RegistrarCore.WslPath(@"D:\w\fleet\linux-in") == "/mnt/d/w/fleet/linux-in" && RegistrarCore.WslPath(@"C:\a b\c") == null && RegistrarCore.WslPath(@"C:\a\..\b") == null && RegistrarCore.WslPath(@"C:\a\.\b") == null
+      && RegistrarCore.WslPath(@"\\server\share\x") == null && RegistrarCore.WslPath(@"C:\a\b\") == null && RegistrarCore.WslPath("C:\\a\\$(id)") == null && RegistrarCore.WslPath("C:\\a\\b;c") == null && RegistrarCore.WslPath(null) == null, "wsl-path-plain-components-only");
+    Ok(RegistrarCore.WslPath(@"C:\a.\b") == null && RegistrarCore.WslPath(@"C:\a\b.") == null && RegistrarCore.WslPath(@"C:\a\b..c\d") == "/mnt/c/a/b..c/d" && RegistrarCore.WslPath(@"C:\a\b \c") == null, "wsl-path-no-component-ending-in-a-dot-or-blank");
+    // the task a process may be started over: root-shell only the password definition; root-run also the parked one (it heals it)
+    Ok(RegistrarCore.AccountTaskRefusal(1, true, false) == null && RegistrarCore.AccountTaskRefusal(1, true, true) == null && RegistrarCore.AccountTaskRefusal(3, true, true) == null, "account-task-password-or-parked-for-root-run");
+    Ok(RegistrarCore.AccountTaskRefusal(3, true, false) == "COMPANION_TASK_NOT_PASSWORD" && RegistrarCore.AccountTaskRefusal(1, false, true) == "COMPANION_TASK_NOT_PASSWORD" && RegistrarCore.AccountTaskRefusal(3, false, true) == "COMPANION_TASK_NOT_PASSWORD"
+      && RegistrarCore.AccountTaskRefusal(2, true, true) == "COMPANION_TASK_NOT_PASSWORD" && RegistrarCore.AccountTaskRefusal(5, true, true) == "COMPANION_TASK_NOT_PASSWORD", "account-task-refused-other-account-or-logon-type");
+    Ok(rq.CapturedDirectory == runDir + @"\captured" && !rq.Probe, "root-run-captured-directory-beside-out");
+    // write-probe: a run directory in everything but its name; the fixed echo, no WSL; 1..600 s
+    string probeDir = Root + @"\install\linux-run-" + runId + "-probe";
+    RootRunRequest pq = RegistrarCore.ParseWriteProbe(new[] { "write-probe", Root, probeDir, "60" });
+    Ok(pq != null && pq.Probe && pq.Directory == probeDir && pq.OutDirectory == probeDir + @"\out" && pq.CapturedDirectory == probeDir + @"\captured" && pq.ScriptPath == null && pq.TimeoutSeconds == 60, "write-probe-arguments-accepted");
+    Ok(RegistrarCore.ProbeCommandLine(pq) == "cmd.exe /d /c \"echo x> " + probeDir + @"\out\stdout.txt 2> " + probeDir + @"\out\stderr.txt" + "\"" && RegistrarCore.ProbeCommandLine(pq).IndexOf("wsl", StringComparison.OrdinalIgnoreCase) < 0, "write-probe-command-fixed-no-wsl");
+    foreach (string[] bad in new[] { new[] { "write-probe", Root, runDir, "60" }, new[] { "write-probe", Root, probeDir + @"\out", "60" }, new[] { "write-probe", @"C:\Temp", probeDir, "60" }, new[] { "write-probe", Root, probeDir, "0" },
+        new[] { "write-probe", Root, probeDir, "601" }, new[] { "write-probe", Root, probeDir, "6e1" }, new[] { "write-probe", Root, probeDir.ToUpperInvariant(), "60" }, new[] { "root-run", Root, probeDir, "60" }, new[] { "write-probe", Root, probeDir } })
+      Ok(RegistrarCore.ParseWriteProbe(bad) == null, "write-probe-refuses:" + string.Join(" ", bad));
+    threw = false; try { RegistrarCore.ProbeCommandLine(rq); } catch (ArgumentException) { threw = true; }
+    Ok(threw && RegistrarCore.ParseRootRun(new[] { "root-run", Root, probeDir + @"\script.sh", runSha, probeDir + @"\out", "60" }) == null, "probe-and-run-directories-never-mixed");
+    // the capture: a plain file with exactly one name, at most the limit; from the handle's facts
+    Ok(RegistrarCore.CaptureRefusal(0x20, 1, 0, RegistrarCore.CaptureMaxBytes) == null && RegistrarCore.CaptureRefusal(0x80, 1, (ulong)RegistrarCore.CaptureMaxBytes, RegistrarCore.CaptureMaxBytes) == null && RegistrarCore.CaptureMaxBytes == 4194304, "capture-plain-file-within-the-limit");
+    Ok(RegistrarCore.CaptureRefusal(0x420, 1, 0, 100) == "ROOT_RUN_OUTPUT_IS_A_LINK" && RegistrarCore.CaptureRefusal(0x410, 1, 0, 100) == "ROOT_RUN_OUTPUT_IS_A_LINK" && RegistrarCore.CaptureRefusal(0x10, 1, 0, 100) == "ROOT_RUN_OUTPUT_IS_A_DIRECTORY"
+      && RegistrarCore.CaptureRefusal(0x20, 2, 0, 100) == "ROOT_RUN_OUTPUT_HAS_ANOTHER_NAME" && RegistrarCore.CaptureRefusal(0x20, 0, 0, 100) == "ROOT_RUN_OUTPUT_HAS_ANOTHER_NAME"
+      && RegistrarCore.CaptureRefusal(0x20, 1, 101, 100) == "ROOT_RUN_OUTPUT_TOO_LARGE" && RegistrarCore.CaptureRefusal(0x20, 1, 1UL << 40, 100) == "ROOT_RUN_OUTPUT_TOO_LARGE", "capture-refuses-link-directory-second-name-or-size");
+    string outRoot = RegistrarCore.CiRoot + @"\reinstall-linux-out-" + runId, facts = "linux-version-facts.20261112T100000Z.json";
+    string[] cf = RegistrarCore.ParseCaptureFile(new[] { "capture-file", outRoot + @"\" + facts, runDir + @"\captured\" + facts });
+    Ok(cf != null && cf[0] == outRoot + @"\" + facts && cf[1] == runDir + @"\captured\" + facts && RegistrarCore.CiRoot == @"C:\ProgramData\CluedIndependentCI", "capture-file-arguments-accepted");
+    foreach (string[] bad in new[] { new[] { outRoot + @"\" + facts, runDir + @"\captured\other.json" }, new[] { outRoot + @"\sub\" + facts, runDir + @"\captured\" + facts }, new[] { outRoot + @"\" + facts, runDir + @"\out\" + facts },
+        new[] { @"D:\w\linux-out\" + facts, runDir + @"\captured\" + facts }, new[] { outRoot + @"\" + facts, Root + @"\secrets\" + facts }, new[] { outRoot + @"\a..b", runDir + @"\captured\a..b" }, new[] { outRoot + @"\a b", runDir + @"\captured\a b" },
+        new[] { Root + @"\secrets\resident-upgrade.token", runDir + @"\captured\resident-upgrade.token" }, new[] { outRoot + @"\" + facts + ".", runDir + @"\captured\" + facts + "." } })
+      Ok(RegistrarCore.ParseCaptureFile(new[] { "capture-file", bad[0], bad[1] }) == null, "capture-file-refuses:" + bad[0] + ">" + bad[1]);
+    // capture-file's second source: a run's own stdout.txt / stderr.txt, into captured\ or a new captured-<32hex>\ of that SAME run directory
+    string newCapture = runDir + @"\captured-" + new string('9', 32);
+    Ok(RegistrarCore.ParseCaptureFile(new[] { "capture-file", runDir + @"\out\stdout.txt", newCapture + @"\stdout.txt" }) != null && RegistrarCore.ParseCaptureFile(new[] { "capture-file", runDir + @"\out\stderr.txt", runDir + @"\captured\stderr.txt" }) != null
+      && RegistrarCore.ParseCaptureFile(new[] { "capture-file", outRoot + @"\" + facts, newCapture + @"\" + facts }) != null, "capture-file-run-output-and-new-capture-directory");
+    string otherRun = Root + @"\install\linux-run-" + new string('8', 32);
+    foreach (string[] bad in new[] { new[] { runDir + @"\out\stdout.txt", otherRun + @"\captured\stdout.txt" }, new[] { runDir + @"\out\stdout.txt", newCapture + @"\stderr.txt" }, new[] { runDir + @"\out\other.txt", newCapture + @"\other.txt" },
+        new[] { runDir + @"\script.sh", newCapture + @"\script.sh" }, new[] { runDir + @"\captured\stdout.txt", newCapture + @"\stdout.txt" }, new[] { runDir + @"\out\stdout.txt", runDir + @"\captured-9\stdout.txt" },
+        new[] { runDir + @"\out\stdout.txt", runDir + @"\out\stdout.txt" }, new[] { runDir + @"-probe\out\stdout.txt", runDir + @"-probe\captured\stdout.txt" }, new[] { Root + @"\secrets\stdout.txt", newCapture + @"\stdout.txt" },
+        new[] { runDir + @"\out\sub\stdout.txt", newCapture + @"\stdout.txt" }, new[] { runDir + @"\out\stdout.txt", newCapture + @"\sub\stdout.txt" } })
+      Ok(RegistrarCore.ParseCaptureFile(new[] { "capture-file", bad[0], bad[1] }) == null, "capture-file-refuses-run-output:" + bad[0] + ">" + bad[1]);
+    // where a capture is written: Administrators' own, protected, SYSTEM and Administrators only
+    Ok(RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new[] { "S-1-5-18", "S-1-5-32-544" }, 0) == null && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new[] { "S-1-5-32-544" }, 0) == null, "capture-directory-admin-only");
+    Ok(RegistrarCore.CaptureDirectoryRefusal(Owner, true, new[] { "S-1-5-18", "S-1-5-32-544" }, 0) != null && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", false, new[] { "S-1-5-18", "S-1-5-32-544" }, 0) != null
+      && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new[] { "S-1-5-18", "S-1-5-32-544", Owner }, 0) != null && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new[] { "S-1-5-32-545" }, 0) != null
+      && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new string[0], 0) != null && RegistrarCore.CaptureDirectoryRefusal("S-1-5-32-544", true, new[] { "S-1-5-18" }, 1) != null
+      && RegistrarCore.CaptureDirectoryRefusal(null, true, null, 0) == "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY", "capture-directory-refuses-other-owner-inheritance-or-anyone-else");
+    Ok(RegistrarCore.RootRunCaptureRefused("ROOT_RUN_OUTPUT_IS_A_LINK") == "CAPTURE_REFUSED ROOT_RUN_OUTPUT_IS_A_LINK" && RegistrarCore.RootRunCaptureRefused("free text\nROOT_RUN_EXITED 0") == "CAPTURE_REFUSED REGISTRAR_UNEXPECTED", "capture-refused-line-is-a-code-only");
+    // root-run only over the task this program registers: one action, the supervisor of this root
+    Ok(RegistrarCore.RootRunActionRefusal(1, Root + @"\bin\CluedCompanionSupervisor.exe", "\"" + Root + "\"", Root) == null, "root-run-task-action-as-registered");
+    Ok(RegistrarCore.RootRunActionRefusal(2, Root + @"\bin\CluedCompanionSupervisor.exe", "\"" + Root + "\"", Root) == "ROOT_RUN_TASK_DEFINITION_DIFFERS" && RegistrarCore.RootRunActionRefusal(1, @"C:\other.exe", "\"" + Root + "\"", Root) == "ROOT_RUN_TASK_DEFINITION_DIFFERS"
+      && RegistrarCore.RootRunActionRefusal(1, Root + @"\bin\CluedCompanionSupervisor.exe", "x", Root) == "ROOT_RUN_TASK_DEFINITION_DIFFERS" && RegistrarCore.RootRunActionRefusal(0, null, null, Root) == "ROOT_RUN_TASK_DEFINITION_DIFFERS"
+      && RegistrarCore.RootRunActionRefusal(1, (Root + @"\bin\CluedCompanionSupervisor.exe").ToUpperInvariant(), "\"" + Root + "\"", Root) == "ROOT_RUN_TASK_DEFINITION_DIFFERS", "root-run-task-action-differs-refused");
+    string runCmd = RegistrarCore.RootRunCommandLine("CluedResident-Linux", rq);
+    Ok(runCmd == "cmd.exe /d /c \"\"C:\\Program Files\\WSL\\wsl.exe\" --distribution CluedResident-Linux --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc "
+      + "/mnt/c/ProgramData/CluedIndependentCI/resident/install/linux-run-" + runId + "/script.sh > " + runDir + @"\out\stdout.txt 2> " + runDir + @"\out\stderr.txt" + "\"", "root-run-command-line:" + runCmd);
+    Ok(RegistrarCore.CmdExe == @"C:\Windows\System32\cmd.exe" && runCmd.IndexOf(runSha) < 0 && runCmd.Split('"').Length == 5, "root-run-command-line-fixed-shell-and-quotes");
+    threw = false; try { RegistrarCore.RootRunCommandLine("a b", rq); } catch (ArgumentException) { threw = true; }
+    threw2 = false; try { RegistrarCore.RootRunCommandLine("CluedResident-Linux", null); } catch (ArgumentException) { threw2 = true; }
+    Ok(threw && threw2, "root-run-command-line-refuses-bad-distro-or-request");
+    Ok(RegistrarCore.RootRunExited(0) == "ROOT_RUN_EXITED 0" && RegistrarCore.RootRunExited(1) == "ROOT_RUN_EXITED 1" && RegistrarCore.RootRunExited(4294967295u) == "ROOT_RUN_EXITED 4294967295" && RegistrarCore.RootRunTimeout == "ROOT_RUN_TIMEOUT", "root-run-lines-exited-and-timeout");
+    Ok(RegistrarCore.RootRunRefused("ROOT_RUN_SCRIPT_SHA256_MISMATCH") == "ROOT_RUN_REFUSED ROOT_RUN_SCRIPT_SHA256_MISMATCH" && RegistrarCore.RootRunRefused("my secret\nROOT_RUN_EXITED 0") == "ROOT_RUN_REFUSED REGISTRAR_UNEXPECTED"
+      && RegistrarCore.RootRunRefused(null) == "ROOT_RUN_REFUSED REGISTRAR_UNEXPECTED" && RegistrarCore.RootRunRefused("lower") == "ROOT_RUN_REFUSED REGISTRAR_UNEXPECTED", "root-run-refusal-line-is-a-code-only");
+
     // the compiled program: not elevated it refuses every mode but the read-only vtable self-test, which must pass
     if (args.Length == 1) {
       Func<string, string> run = a => { Process p = Process.Start(new ProcessStartInfo(args[0], a) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true }); string o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Trim() + "|" + p.ExitCode; };
@@ -165,6 +249,17 @@ public static class RegistrarPureTests {
       foreach (string a in new[] { "register-account C:\\Temp", "root-shell C:\\Temp", "prepare-account X", "account-facts S-1-5-18", "remove-account X", "register-account C:\\Temp a b c" }) {
         string r = run(a);
         Ok(r.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || r.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "account-mode-refuses-bad-arguments:" + a);
+      }
+      // root-run: one ROOT_RUN_* line and nothing else on stdout, whatever is refused. Never the real root with a well-formed request
+      // (elevated, that would change the account's password): another root, or a malformed request for the real one.
+      foreach (string a in new[] { "write-probe", "write-probe C:\\Temp C:\\Temp\\install\\linux-run-" + runId + "-probe 60", "write-probe \"" + Root + "\" x 0" }) {
+        string r = run(a);
+        Ok(r == "ROOT_RUN_REFUSED REGISTRAR_ELEVATION_REQUIRED|2" || r == "ROOT_RUN_REFUSED REGISTRAR_ARGS_REFUSED|2", "write-probe-refuses-in-the-one-line-form:" + a + ":" + r);
+      }
+      { string r = run("capture-file C:\\Temp\\a C:\\Temp\\b"); Ok(r.IndexOf("REGISTRAR_ELEVATION_REQUIRED") > 0 || r.IndexOf("REGISTRAR_ARGS_REFUSED") > 0, "capture-file-refuses-other-paths:" + r); }
+      foreach (string a in new[] { "root-run", "root-run C:\\Temp C:\\Temp\\install\\linux-run-" + runId + "\\script.sh " + runSha + " C:\\Temp\\install\\linux-run-" + runId + "\\out 60", "root-run \"" + Root + "\" x y z 0" }) {
+        string r = run(a);
+        Ok(r == "ROOT_RUN_REFUSED REGISTRAR_ELEVATION_REQUIRED|2" || r == "ROOT_RUN_REFUSED REGISTRAR_ARGS_REFUSED|2", "root-run-refuses-in-its-own-one-line-form:" + a + ":" + r);
       }
       // review r1 m3: file-sha256 reads unbuffered with the caller's token (no elevation) and gives the file's real hash
       string fh = run("file-sha256 \"" + args[0] + "\"");

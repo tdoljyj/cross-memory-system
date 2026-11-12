@@ -1,0 +1,89 @@
+{
+  "reason": "Installs in protected workflow files that predate scripts/ci/ci-deps.mjs. Only a protected change can move them to ci-deps.mjs prepare/install; this list may only shrink (check-ci-deps-entry.mjs fails on a line it does not list and on a listed line that is gone).",
+  "entries": [
+    {
+      "file": ".github/workflows/clued-cloud-node22-install.yml",
+      "line": "npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/clued-cloud-node22-install.yml",
+      "line": "run: npm ci --ignore-scripts"
+    },
+    {
+      "file": ".github/workflows/clued-cloud-production-release.yml",
+      "line": "run: npm ci --ignore-scripts"
+    },
+    {
+      "file": ".github/workflows/clued-cloud-quality-gate.yml",
+      "line": "npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/clued-cloud-quality-gate.yml",
+      "line": "run: npm ci --ignore-scripts"
+    },
+    {
+      "file": ".github/workflows/clued-connection-authorization.yml",
+      "line": "- run: npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/clued-connection-authorization.yml",
+      "line": "- run: npm ci --ignore-scripts"
+    },
+    {
+      "file": ".github/workflows/clued-currentness-post-deploy-attestation.yml",
+      "line": "- run: npm ci --ignore-scripts"
+    },
+    {
+      "file": ".github/workflows/clued-g4-database.yml",
+      "line": "run: npm ci --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/clued-g4-database.yml",
+      "line": "run: npm ci"
+    },
+    {
+      "file": ".github/workflows/clued-handover-external-qualification.yml",
+      "line": "npm ci --prefix apps/clued-cloud"
+    },
+    {
+      "file": ".github/workflows/clued-integration-runtime-nightly.yml",
+      "line": "- run: npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/clued-required-tests.yml",
+      "line": "run: timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+    },
+    {
+      "file": ".github/workflows/clued-required-tests.yml",
+      "line": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+    },
+    {
+      "file": ".github/workflows/contract-placement.yml",
+      "line": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1"
+    },
+    {
+      "file": ".github/workflows/information-flow-e2e.yml",
+      "line": "run: npm ci --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/information-flow-e2e.yml",
+      "line": "run: npm ci"
+    },
+    {
+      "file": ".github/workflows/public-mcp-behavior.yml",
+      "line": "- run: npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5"
+    },
+    {
+      "file": ".github/workflows/public-mcp-behavior.yml",
+      "line": "- run: npm ci"
+    },
+    {
+      "file": ".github/workflows/public-mcp-protocol.yml",
+      "line": "npm ci --cache \"$HOME/.npm\" --prefer-offline"
+    },
+    {
+      "file": ".github/workflows/public-mcp-protocol.yml",
+      "line": "- run: npm ci"
+    }
+  ]
+}

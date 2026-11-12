@@ -2,7 +2,10 @@
 from pathlib import Path
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 import sys
 import unittest
 
@@ -149,6 +152,53 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
                        "fs.writeFileSync('config/clued-components.json',JSON.stringify(m));\n")
         with self.assertRaises(ValueError):
             integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_audit_reads_a_linked_store_and_installs_only_into_its_own_worktree(self):
+        # The checkout's node_modules may be a link to a shared store: it is only linked, never written.
+        store = Path(tempfile.mkdtemp(prefix="shared-store-"))
+        self.addCleanup(shutil.rmtree, store, True)
+        (store / "yaml").mkdir()
+        (store / "yaml" / "package.json").write_text("{}")
+        app = self.repo.dir / "apps/clued-cloud"
+        write(app / "package-lock.json", "{}\n")
+        write(self.repo.dir / ".gitignore", "node_modules/\nnode_modules\n")
+        self.commit("application lockfile")
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(app / "node_modules"), str(store)], check=True, capture_output=True)
+        else:
+            (app / "node_modules").symlink_to(store, target_is_directory=True)
+        installed = []
+        integration.audit(self.repo.dir, self.base, install=installed.append)
+        self.assertEqual(installed, [], "an existing node_modules is linked, not installed over")
+        self.assertEqual(sorted(p.name for p in store.iterdir()), ["yaml"], "the shared store is untouched")
+        self.assertTrue((store / "yaml" / "package.json").is_file())
+        os.rmdir(app / "node_modules") if os.name == "nt" else (app / "node_modules").unlink()
+        integration.audit(self.repo.dir, self.base, install=installed.append)
+        self.assertEqual(len(installed), 1)
+        self.assertIn("mechanical-outputs-", str(installed[0]), "installed into the throwaway worktree only")
+        self.assertFalse((app / "node_modules").exists())
+
+    def test_npm_ci_goes_through_the_ci_deps_entry_offline_install(self):
+        # The one CI entry: install offline from the runner's store (it prepares the store itself when it lacks packages).
+        calls = []
+        status = [0]
+        real_run, real_which = integration.subprocess.run, integration.shutil.which
+        integration.subprocess.run = lambda argv, **kw: (calls.append((argv, kw)) or subprocess.CompletedProcess(argv, status[0]))
+        integration.shutil.which = lambda name: "node"
+        app = Path("tree") / "apps" / "clued-cloud"
+        try:
+            integration._npm_ci(app)
+            self.assertEqual(len(calls), 1)
+            argv, kw = calls[0]
+            self.assertEqual(argv[1:], [str(Path("tree") / "scripts" / "ci" / "ci-deps.mjs"), "install", str(app)],
+                             "the worktree's own entry")
+            self.assertIs(kw["stdout"], sys.stderr, "npm's output never mixes into the JSON report on stdout")
+            for code, said in ((75, "not a test failure"), (78, "依赖库缺失"), (1, "install failed")):
+                status[0] = code
+                with self.assertRaisesRegex(ValueError, f"ci-deps install exited {code}: .*{said}"):
+                    integration._npm_ci(app)
+        finally:
+            integration.subprocess.run, integration.shutil.which = real_run, real_which
 
     def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):
         self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")

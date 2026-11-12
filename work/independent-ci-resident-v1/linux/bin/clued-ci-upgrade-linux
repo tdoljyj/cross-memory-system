@@ -23,7 +23,7 @@ Layout (spec A6): the active paths never change (loadQualifiedPolicyV2 refuses l
   archive   /opt/clued-independent-ci/archive/                     (retention and leftovers: renamed, never deleted)
   state     /var/lib/clued-independent-ci/resident/upgrade/{current.json, g<N>.json}
 
-Every item is identified by (st_dev, st_ino), which a rename keeps, so a re-run re-observes where each item is:
+Every item is identified by (kind, st_ino) on its file system, which a rename keeps, so a re-run re-observes where each item is:
 "the old one still live / parked under generations / the new one live" (spec A4). g<N>.json is the commit point of
 `stage` (written create-only, last); current.json (whole-file replace) is the commit point of switch and rollback.
 Every move is a rename without replace: the destination is checked absent and renameat2(RENAME_NOREPLACE) is used
@@ -234,13 +234,46 @@ def content_digest(path):
     return h.hexdigest()
 
 
+def fs_id(path):
+    """The file system's own id (statfs f_fsid; on ext4 it is derived from the superblock UUID), as hex, or None where statfs has
+    none (not Linux). Unlike st_dev it does not change when the WSL2 utility VM attaches the same ext4.vhdx under another block
+    device number (DESK 2026-11-12: the distribution moved to the companion account's VM, st_dev changed, every item looked
+    replaced)."""
+    try:
+        return format(os.statvfs(path).f_fsid, 'x')
+    except (AttributeError, OSError, ValueError, TypeError):
+        return None
+
+
+FS_IOC_GETVERSION = 0x80087601  # _IOR('v', 1, long); ext4 writes the 32-bit i_generation into it
+
+
+def inode_generation(path, kind):
+    """The inode's generation number (ext4 i_generation, FS_IOC_GETVERSION), or None where there is none (not Linux, another
+    file system). It is drawn anew every time an inode is allocated, a rename keeps it and so does attaching the disk under
+    another device number: an inode number handed out again after someone deleted the original gets another generation."""
+    try:
+        import fcntl
+        import struct
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0) | (getattr(os, 'O_DIRECTORY', 0) if kind == 'dir' else 0)
+        fd = os.open(path, flags)
+        try:
+            return struct.unpack('<I', fcntl.ioctl(fd, FS_IOC_GETVERSION, b'\0' * 8)[:4])[0]
+        finally:
+            os.close(fd)
+    except (ImportError, AttributeError, OSError, ValueError, TypeError):
+        return None
+
+
 def ident(path, with_content=False, item=None):
-    """Where an item is: (dev, ino, kind) survives every rename; content only on request."""
+    """Where an item is: (kind, ino) on the file system fsid survives every rename and every re-attach of the disk; dev is kept
+    for the record only and is not compared (same). Content only on request."""
     if not os.path.lexists(path):
         return None
     st = os.lstat(path)
     kind = 'dir' if stat.S_ISDIR(st.st_mode) else 'file' if stat.S_ISREG(st.st_mode) else 'other'
-    out = {'kind': kind, 'dev': st.st_dev, 'ino': st.st_ino}
+    out = {'kind': kind, 'dev': st.st_dev, 'ino': st.st_ino, 'fsid': fs_id(path) if kind in ('dir', 'file') else None,
+           'igen': inode_generation(path, kind) if kind in ('dir', 'file') else None}
     if with_content:
         if kind == 'file':
             out['sha256'] = sha_file(path)
@@ -252,7 +285,36 @@ def ident(path, with_content=False, item=None):
 
 
 def same(observed, record):
-    return observed is not None and record is not None and observed['kind'] == record['kind'] and observed['dev'] == record['dev'] and observed['ino'] == record['ino']
+    """The same inode: kind and st_ino equal; the same file system (fsid) and the same inode generation (igen) wherever both sides
+    know them. st_dev is not compared: it is the block device number the VM happened to attach the disk under, not an identity.
+    A replacement is another inode. While the original exists, no other inode on that file system has its number; once something
+    deleted it (this tool never deletes, but an outside rm/cp/sed -i can), ext4 may hand the same number out again, and then the
+    new inode has another i_generation (igen), so it is still told apart. The file system: every live item is on the one file
+    system of /opt (same_device: stage, switch, rollback and verify check it first, each item itself included), and fsid (ext4:
+    from the superblock UUID) separates a different file system. Where a side has no fsid/igen (a record from before them, a host
+    without statfs or FS_IOC_GETVERSION) the remaining fields decide under that same one-file-system check, and stage and verify
+    also compare the recorded content digests and the Source checkout's commit."""
+    if observed is None or record is None or observed.get('kind') != record.get('kind') or observed.get('ino') != record.get('ino'):
+        return False
+    for key in ('fsid', 'igen'):
+        a, b = observed.get(key), record.get(key)
+        if a is not None and b is not None and a != b:
+            return False
+    return True
+
+
+def live_mismatches(P, rec):
+    """The items of generation record `rec` that are not live as recorded: another inode (same), other content where the record
+    has a digest, or (source-v2) another checked-out commit. Empty: the live tree is that generation."""
+    bad = []
+    for name, _, _ in ITEMS:
+        r = rec['items'][name]
+        live = ident(live_item(P, name), r.get('sha256') is not None, name)
+        if not same(live, r) or (r.get('sha256') is not None and live.get('sha256') != r['sha256']):
+            bad.append(name)
+    if rec.get('sourceCommit') is not None and head_commit(P['source']) != rec['sourceCommit'] and 'source-v2' not in bad:
+        bad.append('source-v2')
+    return bad
 
 
 def now_iso():
@@ -572,6 +634,12 @@ def version_facts(P, host):
     facts = {'contract': FACTS_CONTRACT, 'generation': cur['generation'] if cur else None, 'ciSourceManifestSha256': sha_or_none(P['manifest']),
              'sourceCommit': head_commit(P['source']), 'manifestSha256': sha_or_none(P['resident'] + '/manifest.json'), 'roles': roles,
              'pinsOk': pins_ok(P), 'staged': staged, 'upgradeToolSha256': sha_or_none(P['tool']), 'observedAt': host.now()}
+    # Whether the live tree is the current generation as recorded (stage's own check, read-only): false means no in-place upgrade
+    # can stage from here, and the precheck refuses before the Grant. None: no current generation, or its record unreadable.
+    try:
+        facts['liveMatchesCurrent'] = (not live_mismatches(P, read_gen(P, cur['generation']))) if cur is not None else None
+    except (Refused, OSError, KeyError, TypeError, AttributeError):
+        facts['liveMatchesCurrent'] = None
     # /1 has no "unknown" digest: an unreadable one is a refusal, never a null the reader could take for a value.
     need(all(facts[k] for k in ('ciSourceManifestSha256', 'manifestSha256', 'upgradeToolSha256')) and all(all(v.values()) for v in roles.values()),
          'LINUX_FACTS_UNREADABLE')
@@ -682,6 +750,7 @@ def same_device(P):
     """Every rename stays on one file system (renameat2 cannot cross one): the parents of all live items, the
     generations and the staging directory."""
     devs = {os.lstat(os.path.dirname(live_item(P, name))).st_dev for name, _, _ in ITEMS}
+    devs |= {os.lstat(live_item(P, name)).st_dev for name, _, _ in ITEMS if os.path.lexists(live_item(P, name))}  # nothing mounted on an item
     devs.add(os.lstat(P['opt']).st_dev)
     need(len(devs) == 1, 'CROSS_DEVICE_LAYOUT')
 
@@ -728,11 +797,11 @@ def stage(P, host, op, pkg_sha, gen, linux_manifest):
             need(sha_or_none(f"{P['upgrade']}/{inst}") == sha256(data[rel]), 'CHANNEL_CHANGE_NEEDS_REINSTALL', path=rel)
     old_ci = sha_or_none(P['manifest'])
     need(old_ci is not None and old_ci == rec_from['ciSourceManifestSha256'], 'LIVE_NOT_THE_CURRENT_GENERATION', item='formal-source-manifest-v2.json')
-    for name, _, _ in ITEMS:
-        need(same(ident(live_item(P, name)), rec_from['items'][name]), 'LIVE_NOT_THE_CURRENT_GENERATION', item=name)
+    same_device(P)
+    bad = live_mismatches(P, rec_from)
+    need(not bad, 'LIVE_NOT_THE_CURRENT_GENERATION', item=bad[0] if bad else None, items=len(bad))
     if sv is None:
         need(m['ciSourceManifestSha256'] == old_ci, 'SOURCE_V2_REQUIRED')
-    same_device(P)
     installed = {}
     for role in ROLES:
         policy = read_json(f"{P['roles']}/{role}.json", 'INSTALLED_POLICY_REFUSED')
@@ -828,7 +897,12 @@ def stage(P, host, op, pkg_sha, gen, linux_manifest):
         if name in staged_set:
             items[name] = {**ident(f'{nd}/{name}', True, name), 'switched': True}
         else:
-            items[name] = {**{k: rec_from['items'][name][k] for k in ('kind', 'dev', 'ino', 'sha256')}, 'switched': False}
+            carried = {k: rec_from['items'][name][k] for k in ('kind', 'dev', 'ino', 'sha256')}
+            # the live item was just proven to be this one (live_mismatches): its fsid and igen are recorded from now on
+            live = ident(live_item(P, name)) or {}
+            items[name] = {**carried, 'fsid': rec_from['items'][name].get('fsid') or live.get('fsid'),
+                           'igen': rec_from['items'][name].get('igen') if rec_from['items'][name].get('igen') is not None else live.get('igen'),
+                           'switched': False}
     record = {'contract': GENERATION_CONTRACT, 'generation': gen, 'opId': op, 'fromGeneration': frm, 'packageManifestSha256': pkg_sha,
               'linuxManifestSha256': linux_manifest, 'ciSourceManifestSha256': m['ciSourceManifestSha256'], 'sourceCommit': source_commit,
               'items': items, 'roles': roles_out, 'stagedAt': host.now()}
@@ -891,6 +965,7 @@ def converge(P, host, plan, rename):
 
 
 def switch(P, host, op, frm, to, linux_manifest, rename=rename_noreplace):
+    same_device(P)  # identities are compared without st_dev: every live item must be on the one file system of /opt
     cur = read_current(P)
     rec_to, rec_from = read_gen(P, to), read_gen(P, frm)
     need(rec_to.get('opId') == op and rec_to.get('fromGeneration') == frm and rec_to.get('linuxManifestSha256') == linux_manifest, 'SWITCH_NOT_THE_STAGED_GENERATION')
@@ -921,6 +996,7 @@ def switch(P, host, op, frm, to, linux_manifest, rename=rename_noreplace):
 
 
 def rollback(P, host, op, frm, to, rename=rename_noreplace):
+    same_device(P)
     """frm: the generation given up (its op is `op`), to: the generation it was staged from. Works after a complete
     switch and after a switch interrupted anywhere (items never switched are already 'done')."""
     cur = read_current(P)
@@ -952,7 +1028,12 @@ def verify(P, host, gen):
     cur = read_current(P)
     rec = read_gen(P, gen)
     checks = {'current': cur['generation'] == gen}
-    checks['identities'] = all(same(ident(live_item(P, n)), rec['items'][n]) for n, _, _ in ITEMS)
+    try:
+        same_device(P)
+        checks['oneFileSystem'] = True
+    except (Refused, OSError):
+        checks['oneFileSystem'] = False
+    checks['identities'] = all(same(ident(live_item(P, n)), rec['items'][n]) for n, _, _ in ITEMS)  # (kind, ino, fsid, igen): see same()
     checks['contents'] = all(rec['items'][n].get('sha256') is None or (ident(live_item(P, n), True, n) or {}).get('sha256') == rec['items'][n]['sha256']
                              for n, _, _ in ITEMS)
     checks['pins'] = pins_ok(P)

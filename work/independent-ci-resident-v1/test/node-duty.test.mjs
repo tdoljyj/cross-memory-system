@@ -712,3 +712,67 @@ test('review round 29: ACTIVE -> UNCERTAIN -> ACTIVE, or an executor started aga
   c.t += 3 * MIN;
   assert.equal((await d.prepare({ status: st(c.t, 'ACTIVE', c.t), pulls, now: c.t })).lock, null);
 });
+
+// ADR 0025: the failover watchdog hands ci-admission over only after the holder was silent for 5 minutes. What that holder wrote
+// before the hand-over is a silent node's last word; it no longer keeps the new node out for up to DUTY_WINDOW_MS.
+test('ADR 0025: after an automatic take-over a silent holder\'s earlier 当班 locks nothing; one written after it still does', async () => {
+  const handoverAt = NOW - 6 * MIN; // server time of the watchdog's hand-over (its created_at)
+  const takeOver = async (statuses, cut) => {
+    const t = duty({ statuses: { [H(1)]: statuses } });
+    t.memory.mode = 'STANDBY';
+    if (cut !== undefined) t.d.autoHandoverSince = () => cut;
+    return { t, p: await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW }) };
+  };
+  const lastWord = gh('company-01', '当班：运行中：第 3 段（gitleaks 发布）', NOW - 9 * MIN);
+  // The Owner's hand-over (no automatic one): the old node is alive and hands over itself, so its 当班 still holds this node back.
+  assert.equal((await takeOver([lastWord])).p.lock.reason, 'takeover-refused');
+  // The watchdog's: no lock, no intake pause, nothing to wait for.
+  const auto = await takeOver([lastWord], handoverAt);
+  assert.equal(auto.p.lock, null);
+  assert.equal(auto.t.requests.length, 0);
+  assert.equal(auto.t.memory.probeAt, NOW - MIN, 'the check ran to its end');
+  // Written at the very moment of the hand-over: still before it.
+  assert.equal((await takeOver([gh('company-01', '当班：排队第 1 位', handoverAt)], handoverAt)).p.lock, null);
+  // The old node back and still writing 当班 after the hand-over (or a second holder): the lock as before.
+  const revived = await takeOver([gh('company-01', '当班：排队第 1 位', handoverAt + 1000), lastWord], handoverAt);
+  assert.deepEqual([revived.p.lock.reason, revived.p.lock.other], ['takeover-refused', 'company-01']);
+  // The old node back as it should be (UNCERTAIN, then STANDBY): 停摆 and 已交班 are no duty.
+  for (const word of ['停摆（NODE_ROLE_UNCERTAIN）：本节点角色探测不确定', '已交班：本节点已不当班，这个提交由当班节点处理'])
+    assert.equal((await takeOver([gh('company-01', word, NOW - MIN), lastWord], handoverAt)).p.lock, null, word);
+  // A broken port is no cut.
+  const broken = await takeOver([lastWord], undefined);
+  assert.ok(broken.p.lock);
+  const throwing = duty({ statuses: { [H(1)]: [lastWord] } });
+  throwing.memory.mode = 'STANDBY';
+  throwing.d.autoHandoverSince = () => { throw new Error('x'); };
+  assert.ok((await throwing.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW })).lock);
+});
+
+test('ADR 0025: a lock taken before the heartbeat knew of the automatic take-over is released at the next read', async () => {
+  const lastWord = gh('company-01', '当班：排队第 1 位', NOW - 9 * MIN);
+  const t = duty({ statuses: { [H(1)]: [lastWord] } });
+  t.memory.mode = 'STANDBY';
+  const s = () => fresh({ node: known('ACTIVE'), writtenAt: t.now() });
+  await t.d.prepare({ status: s(), pulls: [pull(1)], now: NOW });
+  assert.equal(t.memory.lock.reason, 'takeover-refused');
+  t.d.autoHandoverSince = () => NOW - 6 * MIN;
+  t.advance(RELEASE_READ_MS);
+  const p = await t.d.prepare({ status: s(), pulls: [pull(1)], now: t.now() });
+  assert.equal(p.lock, null);
+  assert.equal(t.requests.at(-1).contract, INTAKE_RESUME_CONTRACT, 'its own hold is lifted');
+  assert.ok(p.events.some(e => e.key.startsWith('unlock:')));
+});
+
+test('ADR 0025, clock skew: the cut compares two server times, so a local clock off by 10 minutes either way does not move it', async () => {
+  const handoverAt = NOW - 6 * MIN;
+  for (const skew of [-10 * MIN, 0, 10 * MIN]) {
+    for (const [at, locks] of [[NOW - 9 * MIN, false], [handoverAt + 1000, true]]) {
+      const t = duty({ statuses: { [H(1)]: [gh('company-01', '当班：排队第 1 位', at)] } });
+      t.memory.mode = 'STANDBY';
+      t.d.autoHandoverSince = () => handoverAt;
+      const local = NOW + skew;
+      const p = await t.d.prepare({ status: fresh({ node: known('ACTIVE', { at: local - MIN, result: 'held', failures: 0 }), writtenAt: local - 10_000 }), pulls: [pull(1)], now: local });
+      assert.equal(!!p.lock, locks, `skew ${skew / MIN} min, statement at handover${(at - handoverAt) / MIN >= 0 ? '+' : ''}${((at - handoverAt) / MIN).toFixed(2)} min`);
+    }
+  }
+});

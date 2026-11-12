@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -142,30 +143,57 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
             "output_sha256": outputs}
 
 
-def audit(root: Path, base: str) -> dict:
+def _npm_ci(app: Path) -> None:
+    """Install through scripts/ci/ci-deps.mjs, the one CI entry: offline from the runner's ~/.npm dependency
+    store, which it prepares (the only networked step) only when the store lacks this lockfile's packages.
+    apps/clued-cloud/.npmrc names a relative cache, empty in this throwaway worktree: downloading every package
+    here failed ci-suites on an ECONNRESET (#1078, 2026-11-12). Its output goes to stderr as it comes."""
+    node = shutil.which("node")
+    if not node:
+        raise ValueError("mechanical-outputs: node is not installed; cannot verify")
+    entry = app.parents[1] / "scripts" / "ci" / "ci-deps.mjs"
+    done = subprocess.run([node, str(entry), "install", str(app)], stdout=sys.stderr, stderr=sys.stderr)
+    if done.returncode:
+        what = {75: "dependency store could not be prepared (network), not a test failure",
+                78: "依赖库缺失 (dependency store incomplete)"}.get(done.returncode, "install failed")
+        raise ValueError(f"mechanical-outputs: ci-deps install exited {done.returncode}: {what}; cannot verify")
+
+
+def _is_link(path: Path) -> bool:
+    return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+
+
+def audit(root: Path, base: str, *, install=_npm_ci) -> dict:
     """CI check mechanical-outputs: integrate a throwaway worktree of HEAD and
-    fail on any generator output that config/clued-mechanical-files.json lacks."""
+    fail on any generator output that config/clued-mechanical-files.json lacks.
+
+    Installed packages are only ever read: the candidate's node_modules (which
+    may be a link to a shared store) is linked into the throwaway worktree, or,
+    when there is none, packages are installed into that worktree alone."""
     root = root.resolve()
     head = str(components._git_output(root, ["rev-parse", "HEAD"])).strip()
     with tempfile.TemporaryDirectory(prefix="mechanical-outputs-") as temp:
         tree = Path(temp) / "candidate"
         components._git_output(root, ["worktree", "add", "--detach", "--quiet", str(tree), head])
+        modules, target = root / "apps/clued-cloud/node_modules", tree / "apps/clued-cloud/node_modules"
         try:
-            modules = root / "apps/clued-cloud/node_modules"
-            if modules.is_dir():  # generators that parse YAML use the candidate's installed packages
-                target = tree / "apps/clued-cloud/node_modules"
+            if modules.is_dir():
+                target.parent.mkdir(parents=True, exist_ok=True)
                 if os.name == "nt":
                     subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(modules)], check=True, capture_output=True)
                 else:
                     target.symlink_to(modules, target_is_directory=True)
+            elif (tree / "apps/clued-cloud/package-lock.json").is_file():
+                install(tree / "apps/clued-cloud")
             report = integrate_candidate(tree, base, head, write=True)
             return {"check": "mechanical-outputs", "status": "ok", "base_commit": base, "head_commit": head,
                     "outputs": sorted(report["output_sha256"])}
         finally:
-            junction = tree / "apps/clued-cloud/node_modules"
-            if junction.is_symlink() or (os.name == "nt" and junction.exists()):
-                os.rmdir(junction) if os.name == "nt" else junction.unlink()
-            subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=root, capture_output=True)
+            if _is_link(target):
+                os.rmdir(target) if os.name == "nt" else target.unlink()
+            # Never delete through a link that is still there: that would empty the store it points to.
+            if not _is_link(target):
+                subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=root, capture_output=True)
 
 
 def main(argv: list[str] | None = None) -> int:

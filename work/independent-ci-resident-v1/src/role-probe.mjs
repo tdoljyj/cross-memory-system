@@ -4,11 +4,17 @@
 import { check, exactKeys } from './canonical.mjs';
 
 export const ROLE_PROBE_STAGE = 11;
-export const ROLE_PROBE_INTERVAL_MS = Object.freeze({ STANDBY: 15 * 60_000, ACTIVE: 30 * 60_000 });
-// Node mode UNCERTAIN (a start or a re-arm with no definite answer yet) retries an uncertain answer soon, backing off to STANDBY's
-// 15 minutes (DESIGN §29.2 item 5). TURING 2026-11-11: a probe 2.5 minutes after boot answered uncertain and the node stayed
-// UNCERTAIN, taking nothing, for the full 15 minutes. ACTIVE and STANDBY keep their intervals.
-export const ROLE_PROBE_UNCERTAIN_BACKOFF_MS = Object.freeze([60_000, 120_000, 240_000, 480_000, 15 * 60_000]);
+// Smooth hand-over (ADR 0026): a node that is not on duty (STANDBY, and UNCERTAIN, which acts as STANDBY) asks every
+// minute, so it takes over about a minute after its new role starts. An idle ACTIVE node asks every 5 minutes: the server ends the
+// old holder's role at once but starts the new one only 5 minutes later (binding_role_activation_delay_v1), so an idle old node always
+// knows it is STANDBY before the new one can be ACTIVE; asking more often would buy nothing (its publishing is stopped by the live
+// admission, never by this probe). Before: STANDBY 15, ACTIVE 30 minutes (C2), chosen when nothing needed a fast take-over.
+export const ROLE_PROBE_INTERVAL_MS = Object.freeze({ STANDBY: 60_000, ACTIVE: 5 * 60_000 });
+// An uncertain answer (network, server) is retried after 1, 2, 4, then every 5 minutes, in every mode, but never sooner than the
+// mode's own interval (DESIGN §29.2 item 5; ADR 0026). TURING 2026-11-11: a probe 2.5 minutes after boot answered uncertain and the node
+// stayed UNCERTAIN, taking nothing, for the full 15 minutes; the tail was STANDBY's 15 minutes then and is ACTIVE's 5 now, so a node
+// back from a long outage confirms its role within 5 minutes (the failover watchdog only picks a STANDBY whose last probe said not-held).
+export const ROLE_PROBE_UNCERTAIN_BACKOFF_MS = Object.freeze([60_000, 120_000, 240_000, 5 * 60_000]);
 export const ROLE_PROBE_CODES = Object.freeze({ held: 'ROLE_PROBE_HELD', 'not-held': 'ROLE_PROBE_NOT_HELD',
   uncertain: 'ROLE_PROBE_UNCERTAIN', connection: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', watchedHead: 'ROLE_PROBE_HELD_WATCHED_HEAD' });
 export const ROLE_PROBE_FACT_FIELDS = Object.freeze(['result', 'code']);
@@ -49,11 +55,11 @@ export class RoleProbe {
     check(v.last !== null || v.failures === 0, 'ROLE_PROBE_BOOK_REFUSED');
     Object.assign(this, structuredClone(v));
   }
-  // mode: the node mode, ACTIVE, STANDBY or UNCERTAIN. UNCERTAIN is STANDBY, except that a run of uncertain answers backs off from
-  // one minute (failures > 0 only after an uncertain answer, restore() checks it).
+  // mode: the node mode, ACTIVE, STANDBY or UNCERTAIN (UNCERTAIN is STANDBY). A run of uncertain answers backs off (failures > 0
+  // only after an uncertain answer, restore() checks it), never below the mode's own interval.
   interval(mode) {
-    if (mode !== 'UNCERTAIN') return ROLE_PROBE_INTERVAL_MS[mode];
-    return this.failures > 0 ? ROLE_PROBE_UNCERTAIN_BACKOFF_MS[Math.min(this.failures, ROLE_PROBE_UNCERTAIN_BACKOFF_MS.length) - 1] : ROLE_PROBE_INTERVAL_MS.STANDBY;
+    const base = ROLE_PROBE_INTERVAL_MS[mode === 'UNCERTAIN' ? 'STANDBY' : mode];
+    return this.failures > 0 ? Math.max(base, ROLE_PROBE_UNCERTAIN_BACKOFF_MS[Math.min(this.failures, ROLE_PROBE_UNCERTAIN_BACKOFF_MS.length) - 1]) : base;
   }
   due({ now, mode, idle }) {
     return idle === true && Number.isSafeInteger(now) && now > 0 && (mode === 'UNCERTAIN' || Object.hasOwn(ROLE_PROBE_INTERVAL_MS, mode))

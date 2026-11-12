@@ -516,11 +516,19 @@ export function printSummary(report, write = (line) => console.log(line)) {
   if (report.repository_only) write(`repository-only columns and functions (tests see them, production does not): ${report.repository_only.length}`);
 }
 
+// embedded-postgres registers async-exit-hook, which ends the process with process.exit(0) on 'beforeExit'
+// and so dropped a failing exitCode: a check that printed FAIL exited 0 and migration-verify stayed green.
+// The status is set again on 'exit', which runs after that exit(0) and before the process ends.
+export function settleExitCode(code) {
+  process.exitCode = code;
+  process.on('exit', () => { process.exitCode = code; });
+}
+
 if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   try {
-    process.exitCode = await main(process.argv.slice(2));
+    settleExitCode(await main(process.argv.slice(2)));
   } catch (error) {
     console.error(`production-schema: ${error.message}`);
-    process.exitCode = 1;
+    settleExitCode(1);
   }
 }

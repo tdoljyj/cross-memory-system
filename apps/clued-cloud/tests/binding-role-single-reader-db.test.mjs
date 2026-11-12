@@ -11,7 +11,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Whether a Binding's role is in force is read in one place,
-// clued_private.binding_role_in_force_v1 (migration 20261112120000). A role row
+// clued_private.binding_role_in_force_v1 (migration 20261113100000). A role row
 // that has not started yet (a hand change's delay) is not in force anywhere.
 // ci-admission-handover-db.test.mjs holds the list of functions that may read
 // binding_roles_v1 and checks that only that reader compares a start with the clock.

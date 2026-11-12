@@ -250,6 +250,17 @@ test('a failing command against the same command on main: new, already failing t
   assert.equal(detail, 'passes on main: tests/a.test.mjs :: t');
 });
 
+test('a missing dependency is "cannot verify", never "fails on main too"', () => {
+  // 2026-11-12: an empty dependency store failed both sides alike and the run passed.
+  const gone = (name) => ({ ...fail(name, 'd'.repeat(16)), missing_dependency: 'ERR_MODULE_NOT_FOUND' });
+  const both = verdict(command(1, report(gone('t'), summary)), command(1, report(gone('t'), summary)));
+  assert.equal(both, 'unknown');
+  assert.equal(verdict(command(1, report(fail('t'), summary)), command(1, report(gone('t'), summary))), 'unknown', 'main could not load it either');
+  assert.match(compareCommand(command(1, report(gone('t'), summary)), command(1, report(gone('t'), summary)), { selector: selection }).detail,
+    /a dependency is missing \(ERR_MODULE_NOT_FOUND in tests\/a\.test\.mjs\): cannot verify/);
+  assert.equal(verdict(command(0, report(pass('t'), summary)), command(1, report(gone('t'), summary))), 'pass', 'a passing change still passes');
+});
+
 test('a suite is its worst command, every command compared', () => {
   const same = command(1, report(fail('old'), summary));
   assert.deepEqual(compareSuite([command(0), same], [command(0), same], { selector: selection }),
@@ -706,17 +717,17 @@ const forCheck = (picked, check) => picked.selections.find((entry) => entry.chec
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
   // The literal list of eight below is the regression lock: it is what the real run
-  // selected for #1015, so a change to the selection that alters it is to be looked at.
+  // selected for #1015 (plus ci-deps-entry, added since), so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));

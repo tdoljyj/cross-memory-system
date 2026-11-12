@@ -146,10 +146,6 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.binding_role_holders_v1(uuid,text,uuid[])', 'clued_private.binding_role_resident_held_v1(uuid,uuid[])',
       'clued_private.headless_binding_view_before_sources_v2(uuid,jsonb)',
       'clued_private.work_claim_verify_before_execution_v1(text,jsonb)',
-      // 20261102151506 (scan start keys): the server-principal clone of the core above, read for the same other
-      // roles; its ci-admission read is routed like the original's (the clone of verify and ci_scan_start_begin_v1
-      // no longer read the table after 20261105160000). Missing from this list on main 4eb9064b.
-      'clued_private.ci_scan_start_verify_core_principal_v1(uuid,jsonb)',
       // 20261105160000 (unified scheduling 2A): the command door, the independent publication commands, verify, the
       // Owner Grant admission door, admission validity and the Stage 1 publisher check no longer read the table
       // themselves; they ask ci_duty_admits_v1, which asks binding_role_in_force_v1 (checked below).
@@ -157,15 +153,19 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.ci_phase_3_to_4_v1(uuid,uuid,integer,jsonb)', 'clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
       // 20261031090000 (merge train 2b): the one-click handover now calls this core.
       'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
-      // 20261112120000: the one reader of whether a row has started. The resident-upgrade door, PR discovery
+      // 20261112130500 (resident ADR 0026): ci_duty_admits_v1 only takes FOR SHARE on the Binding's live rows (started or
+      // not) before asking its decision, ci_duty_admits_decide_v1; the handover core takes FOR UPDATE on the old
+      // holder's live rows: locks, not decisions.
+      'clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)',
+      // 20261113100000: the one reader of whether a row has started. The resident-upgrade door, PR discovery
       // (work_claim_resolve_pr_v1) and the mechanical proof gate ask it (through ci_duty_admits_v1 for CI duty)
-      // and no longer read the table, nor does ci_duty_admits_v1.
+      // and no longer read the table, nor does ci_duty_admits_decide_v1.
       'clued_private.binding_role_in_force_v1(uuid,uuid,text)',
     ].sort(),'a new reader of binding_roles_v1 asks clued_private.binding_role_in_force_v1 instead');
     // Only that reader compares a row's start with the clock; every other judge calls it.
     assert.deepEqual(readers.filter((r) => /effective_at\s*<=\s*clock_timestamp\(\)/.test(r.prosrc)).map((r) => r.sig),
       ['clued_private.binding_role_in_force_v1(uuid,uuid,text)'], 'only binding_role_in_force_v1 decides whether a role row has started');
-    for (const sig of ['clued_private.binding_role_admits_v1(clued_agent_bindings,text)', 'clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)',
+    for (const sig of ['clued_private.binding_role_admits_v1(clued_agent_bindings,text)', 'clued_private.ci_duty_admits_decide_v1(uuid,uuid,text,uuid)',
       'clued_private.ci_duty_holder_v1(uuid,uuid)', 'clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)']) {
       const body = (await admin.query('select prosrc from pg_proc where oid=$1::regprocedure', [sig])).rows[0].prosrc;
       assert.match(body, /clued_private\.binding_role_in_force_v1\(/, sig);

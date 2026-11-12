@@ -60,6 +60,10 @@ export function generatedFilePatterns(file = fileURLToPath(new URL('../../config
 // copy and fail on any written file the list does not declare.
 const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFilePatterns()])];
 
+// The scan start (both providers) on the database every migration builds, end to end. Database tests run in no other
+// required check; a verifier rewrite (20261108161615) once left every scan start refused in production.
+const SCAN_START_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs'];
+
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
@@ -84,6 +88,8 @@ export const SUITES = {
     'pinned-registries': PINNED_REGISTRY_PATHS,
     'mechanical-outputs': GENERATED_OUTPUTS,
     'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
+    // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
+    'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json'],
   },
@@ -96,7 +102,7 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
-      'apps/clued-cloud/tests/production-schema-drift.test.mjs', 'apps/clued-cloud/package.json',
+      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...SCAN_START_DB_TESTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json'],
   },
 };
@@ -145,14 +151,17 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
-  // The reconcile generator parses YAML, so the throwaway integration needs the locked packages.
+  // Integrates a throwaway worktree. It never installs into the checkout: there
+  // node_modules may be a link to a shared store (local-verify), which npm ci would empty.
+  // It installs the worktree through ci-deps.mjs (offline from the runner's store).
   'mechanical-outputs': [
-    { cwd: 'apps/clued-cloud', argv: ['npm', 'ci', '--ignore-scripts', '--prefer-offline', '--fetch-retries=2', '--fetch-timeout=30000'], quiet: true },
     { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.py', '--audit', '--base', '{base}'] },
   ],
   // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
   'powershell-count': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-powershell-count.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-powershell-count.mjs'] }],
+  'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
+    { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
@@ -164,6 +173,8 @@ export const SUITE_COMMANDS = {
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '--test-concurrency=1',
+      ...SCAN_START_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
 

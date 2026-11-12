@@ -213,5 +213,23 @@ $receipt | ConvertTo-Json -Depth 6 -Compress
             self.assertEqual(json.loads((target / 'install' / 'uninstall-receipt.json').read_bytes()), receipt)
 
 
+    def test_a_cut_off_launch_receipt_names_the_dry_run_it_was_proven_by(self):
+        with tempfile.TemporaryDirectory(prefix='clued-finish-cut-') as directory:
+            parent = Path(directory); root = parent / 'resident'; (root / 'install').mkdir(parents=True)
+            target = parent / 'resident-uninstalled-20261102T000000Z-0123456789ab'
+            script = parent / 'probe.ps1'
+            script.write_text(r'''
+param([string]$Library, [string]$Root, [string]$Target)
+$ErrorActionPreference = 'Stop'
+. $Library
+Complete-PartialUninstallRename $Root $Target ('a' * 64) ('d' * 64) 'priorDryRunSha256' | ConvertTo-Json -Depth 6 -Compress
+''', encoding='utf-8')
+            result = subprocess.run([str(PS), '-NoProfile', '-NonInteractive', '-File', str(script), str(HERE / 'finish-uninstall.ps1'), str(root), str(target)],
+                                    capture_output=True, text=True, encoding='utf-8', timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['continuation'], {'contract': 'clued.independent-ci.resume-uninstall-evidence/1', 'priorDryRunSha256': 'd' * 64})
+        body = (HERE / 'finish-uninstall.ps1').read_text(encoding='utf-8')
+        self.assertIn("if ($prior.Contains('terminal.json')) {", body)   # resume.py's own launches: the terminal, exactly as before
+
 if __name__ == '__main__':
     unittest.main()

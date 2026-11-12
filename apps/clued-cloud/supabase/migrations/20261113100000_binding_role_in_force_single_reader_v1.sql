@@ -12,12 +12,16 @@
 --    reads whether a row has started. A parking row never starts
 --    (binding_roles_v1_parking_check: parking <=> effective_at = infinity), so
 --    "in force" already excludes parking.
--- 2. Every judge goes through it: binding_role_admits_v1, ci_duty_admits_v1
---    (its role and publisher branches), ci_duty_holder_v1, the
---    resident-upgrade door and the Owner's role list.
+-- 2. Every judge goes through it: binding_role_admits_v1, the CI duty decision
+--    (its role and publisher branches; 20261112130500 moved it unchanged from
+--    ci_duty_admits_v1 into ci_duty_admits_decide_v1, so it is changed there),
+--    ci_duty_holder_v1, the resident-upgrade door and the Owner's role list.
 -- 3. The two PR doors ask ci_duty_admits_v1(...,'issuer_role'), the same
 --    question the verify path asks before it issues an admission (and, from
 --    phase 4, the node-based answer instead of the role row).
+--
+-- Ordered after 20261112130500 (failover fast) and 20261113090000 (scan start):
+-- it rewrites their current bodies, so it must run after both in production too.
 --
 -- tests/ci-admission-handover-db.test.mjs fails on any later function that
 -- reads binding_roles_v1 outside its list of role-row owners, or that compares
@@ -31,7 +35,7 @@ returns boolean language sql stable security definer set search_path='' as $$
     where r.user_id=p_user and r.binding_id=p_binding and r.role=p_role
       and r.revoked_at is null and r.effective_at<=clock_timestamp())
 $$;
-revoke all on function clued_private.binding_role_in_force_v1(uuid,uuid,text) from public,anon,authenticated,service_role;
+revoke all on function clued_private.binding_role_in_force_v1(uuid,uuid,text) from public,anon,authenticated,service_role,clued_worker_gateway;
 
 create or replace function clued_private.binding_role_admits_v1(p_binding public.clued_agent_bindings,p_role text)
 returns boolean language sql stable security definer set search_path='' as $$
@@ -65,7 +69,7 @@ $a$  if not exists(select 1 from clued_private.binding_roles_v1 r
         and r.role='ci-admission' and r.revoked_at is null) then$a$,
 $r$  if not clued_private.ci_duty_admits_v1(p_binding.user_id,p_binding.id,'issuer_role') then$r$);
 
-select clued_private.binding_role_reader_patch_v1('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)',
+select clued_private.binding_role_reader_patch_v1('clued_private.ci_duty_admits_decide_v1(uuid,uuid,text,uuid)',
 $a$  if p_mode in ('duty_role','issuer_role','admission_role') then
     return exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=u and r.binding_id=p_binding
       and r.role='ci-admission' and r.revoked_at is null and r.effective_at<=clock_timestamp());

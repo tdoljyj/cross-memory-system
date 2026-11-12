@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { CompanionHeartbeat, HANDOVER_MARKER, HEARTBEAT_RPC, NODE_HEARTBEAT_EVERY_MS, WATCHDOG_STALE_MS, handoverComment, heartbeatPayload, parseHeartbeatReply,
+import { CompanionHeartbeat, FAILOVER_SILENCE_MINUTES, HANDOVER_MARKER, HEARTBEAT_RPC, NODE_HEARTBEAT_EVERY_MS, WATCHDOG_STALE_MS, handoverComment, heartbeatPayload, parseHeartbeatReply,
   readHeartbeatToken, serviceRunningFrom, supabaseHeartbeatTransport } from '../src/companion-heartbeat.mjs';
 import { companionHeartbeat } from '../src/companion-main.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -85,18 +85,19 @@ function beat(o = {}) {
   return { hb, sent, notes, comments, memo, advance: ms => { now += ms; }, setStatus: s => { st = s; }, setReplies: r => { replies = r; } };
 }
 
-test('no token installed: nothing runs; with one: every 10 minutes, at once on a change, the token as the transport\'s credential', async () => {
+test('no token installed: nothing runs; with one: every minute (ADR 0026), at once on a change, the token as the transport\'s credential', async () => {
+  assert.equal(NODE_HEARTBEAT_EVERY_MS, MIN);
   const none = beat({ token: null });
   assert.deepEqual(await none.hb.step(), { skipped: 'NO_TOKEN' });
   assert.equal(none.sent.length, 0);
   const t = beat();
   assert.equal((await t.hb.step()).sent, true);
   assert.deepEqual([t.sent[0].auth.token, t.sent[0].msg.payload.node_name, t.sent[0].msg.payload.state, t.sent[0].msg.payload.scope], [TOKEN, 'desk-w-591', 'NORMAL', 'global']);
-  t.advance(MIN);
+  t.advance(MIN / 2);
   assert.deepEqual(await t.hb.step(), { skipped: 'NOT_DUE' });
   t.setStatus(status({ halt: { code: 'X_Y', at: NOW } }));
   assert.equal((await t.hb.step()).payload.state, 'HALTED', 'a change goes at once');
-  t.advance(MIN);
+  t.advance(MIN / 2);
   assert.deepEqual(await t.hb.step(), { skipped: 'NOT_DUE' }, 'the snapshot age alone is no change');
   t.advance(NODE_HEARTBEAT_EVERY_MS);
   assert.equal((await t.hb.step()).sent, true);
@@ -129,6 +130,43 @@ test('three failures in a row, or a refused token, notify once per spell; a stal
   assert.equal(unreg.hb.failures, 0);
 });
 
+test('ADR 0026: a failed beat is tried again at the next lane pass (30 s), not a whole interval later; a good one waits the minute', async () => {
+  const fail = { ok: false, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null };
+  const good = { ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: NOW, watchdogStale: false };
+  const t = beat({ replies: [fail] });
+  assert.equal((await t.hb.step()).sent, false);
+  t.advance(MIN / 2);
+  assert.equal((await t.hb.step()).sent, false, 'tried again after 30 s');
+  t.setReplies([good]);
+  t.advance(MIN / 2);
+  assert.equal((await t.hb.step()).sent, true);
+  assert.equal(t.sent.length, 3);
+  t.advance(MIN / 2);
+  assert.deepEqual(await t.hb.step(), { skipped: 'NOT_DUE' });
+  // A clock that went back is due at once: the server stamps the beats, so waiting for the clock to catch up would be silence.
+  t.advance(-10 * MIN);
+  assert.equal((await t.hb.step()).sent, true);
+  // One lost request leaves at most about 90 s between beats the server hears, well inside its 5 minutes of silence.
+  assert.ok(FAILOVER_SILENCE_MINUTES * MIN >= 2 * NODE_HEARTBEAT_EVERY_MS + MIN);
+});
+
+test('ADR 0026: the last automatic take-over to this node is kept (its server time), for the take-over check', async () => {
+  const at = iso => ({ receiptId: RECEIPT, from: null, to: null, at: null, trigger: 'silence', createdAt: iso });
+  const reply = list => ({ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: list, watchdogTickAt: NOW, watchdogStale: false });
+  const t = beat({ replies: [reply([])] });
+  await t.hb.step();
+  assert.equal(t.hb.autoHandoverSince, null);
+  t.setReplies([reply([at('2026-11-01T10:00:00.000Z'), { ...at('2026-11-01T09:00:00.000Z'), receiptId: '0a1b2c3d-0000-4000-8000-0000000000cc' },
+    { ...at(null), receiptId: '0a1b2c3d-0000-4000-8000-0000000000dd' }])]);
+  t.advance(MIN);
+  await t.hb.step();
+  assert.equal(t.hb.autoHandoverSince, Date.parse('2026-11-01T10:00:00Z'), 'the newest; one without a time is skipped');
+  t.setReplies([reply([])]);
+  t.advance(MIN);
+  await t.hb.step();
+  assert.equal(t.hb.autoHandoverSince, Date.parse('2026-11-01T10:00:00Z'), 'an empty list (older than a day) keeps it');
+});
+
 test('an automatic take-over to this node: one marked @Owner comment on the compute panel issue per receipt', async () => {
   const FROM = '0a1b2c3d-0000-4000-8000-0000000000aa';
   const h = { receiptId: RECEIPT, from: FROM, to: null, at: new Date(NOW).toISOString(), trigger: 'silent' };
@@ -157,7 +195,8 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     auto_handovers: [{ receipt_id: RECEIPT.toUpperCase(), from_binding_id: '0A1B2C3D-0000-4000-8000-0000000000AA', to_binding_id: '0a1b2c3d-0000-4000-8000-0000000000ee',
       effective_at: '2026-11-01T10:05:00+00:00', trigger: 'silent', created_at: '2026-11-01T10:00:00+00:00' }, { receipt_id: 'x' }, 'junk'] };
   assert.deepEqual(parseHeartbeatReply(ok), { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, watchdogTickAt: Date.parse('2026-11-01T09:59:00Z'), watchdogStale: false,
-    nodeBindingId: null, viaLink: null, autoHandovers: [{ receiptId: RECEIPT, from: '0a1b2c3d-0000-4000-8000-0000000000aa', to: '0a1b2c3d-0000-4000-8000-0000000000ee', at: '2026-11-01T10:05:00.000Z', trigger: 'silent' }] });
+    nodeBindingId: null, viaLink: null, autoHandovers: [{ receiptId: RECEIPT, from: '0a1b2c3d-0000-4000-8000-0000000000aa', to: '0a1b2c3d-0000-4000-8000-0000000000ee', at: '2026-11-01T10:05:00.000Z', trigger: 'silent',
+      createdAt: '2026-11-01T10:00:00.000Z' }] });
   // missing or odd optional parts never fail the beat
   for (const v of [{ status: 'ok' }, { status: 'ok', watchdog: 'x', auto_handovers: {} }, { status: 'ok', watchdog: { last_tick_at: null, stale: 'yes' }, auto_handovers: null }]) {
     const r = parseHeartbeatReply(v);

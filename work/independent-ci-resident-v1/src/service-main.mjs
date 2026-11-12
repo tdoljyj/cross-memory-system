@@ -12,7 +12,7 @@ import { Ledger } from './ledger.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { Inbox, OwnerInbox } from './inbox.mjs';
 import { Mailbox } from './mailbox.mjs';
-import { ResidentExecutor } from './executor.mjs';
+import { ResidentExecutor, lockHeldInEarlierBoot } from './executor.mjs';
 import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine, installedTrainMode } from './engine-windows.mjs';
@@ -58,6 +58,8 @@ export async function main(argv = process.argv.slice(2)) {
   const policy = validatePolicy(parseBoundedJson(policyBytes, 65536, 'SERVICE_POLICY_REFUSED'));
   const clock = Date.now;
   const state = path.join(root, 'state');
+  // DESIGN §71: read before the lock is taken over (the takeover renames it away).
+  const lockFromEarlierBoot = await lockHeldInEarlierBoot(state);
   const lock = await acquireInstanceLock(state, { alive: processAlive, clock });
   const ledger = await Ledger.open(state, clock);
   // DESIGN §41.7: the start closes the months before the current one (receipts.mjs); it then reads only the seals and this month.
@@ -117,6 +119,8 @@ export async function main(argv = process.argv.slice(2)) {
   presenceTimer.unref?.();
   const exec = new ResidentExecutor({
     policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue, versions, companionPresence,
+    // DESIGN §71: a batch an earlier boot left open may be closed clean (and run again) only when this start knows it took over from that boot.
+    lockFromEarlierBoot,
     // Generation 10 (DESIGN 53.5): the executor writes status.json at once when a batch is claimed and when a breaker trial starts.
     statusFlush: () => statusTimer.flush(),
     // Node governance v1: the node's status file is the only disk rule (red on the resident WSL disk's drive holds new batches).

@@ -348,6 +348,26 @@ function New-CompanionBuild([string]$root, [string]$dacl = $CompanionBuildSddl) 
     if ((Get-CompanionSha256 $bytes) -cne [string]$pin[0].sha256) { throw 'COMPANION_BUILD_SOURCE_NOT_THE_GENERATION' }
     $sources[$name] = $bytes
   }
+  New-CompanionBuildFromBytes $root $gen $sources $dacl
+}
+# A reinstall's Linux steps run before the uninstall, as the companion account, through the registrar's root-run mode, which the
+# INSTALLED generation's registrar may not have: the registrar is then built from the NEW package's source. sourceFile: the caller's
+# copy of that package's windows/CompanionTaskRegistrar.cs (the launcher's admin-only staged copy); sourceSha256: the package manifest's
+# pin for it. The file is read once, its bytes must have the pinned hash, and exactly those bytes are compiled, in the same directory,
+# with the same recipe and the same result shape as New-CompanionBuild (generation: the package's resident manifest hash, as given).
+function New-CompanionBuildFromPackage([string]$root, [string]$sourceFile, [string]$sourceSha256, [string]$generation, [string]$dacl = $CompanionBuildSddl) {
+  if ($sourceSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $generation -cnotmatch '^[0-9a-f]{64}\z') { throw 'COMPANION_BUILD_PACKAGE_PIN_REFUSED' }
+  if (@($CompanionBuildPrograms.Keys).Count -ne 1) { throw 'COMPANION_BUILD_PACKAGE_PIN_REFUSED' }
+  # A switch that is running owns install\companion-build-*: never clear its directory from here (the registrar's root-run refuses a
+  # running switch too, later; this is before anything is deleted or written).
+  if (Test-Path -LiteralPath (Join-Path $root 'install\companion-headless-pending.json')) { throw 'COMPANION_BUILD_SWITCH_IN_PROGRESS' }
+  $bytes = try { [IO.File]::ReadAllBytes($sourceFile) } catch { throw 'COMPANION_BUILD_PACKAGE_SOURCE_UNREADABLE' }
+  if ((Get-CompanionSha256 $bytes) -cne $sourceSha256) { throw 'COMPANION_BUILD_SOURCE_NOT_THE_PACKAGE' }
+  $sources = [ordered]@{}
+  $sources[@($CompanionBuildPrograms.Keys)[0]] = $bytes
+  New-CompanionBuildFromBytes $root $generation $sources $dacl
+}
+function New-CompanionBuildFromBytes([string]$root, [string]$gen, $sources, [string]$dacl) {
   # Never two switches at once (the marker), so any build directory still here is a cut-off switch's.
   foreach ($d in @(Get-ChildItem -LiteralPath (Join-Path $root 'install') -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -and $_.Name -cmatch '^companion-build-[0-9a-f]{32}\z' })) { Remove-CompanionBuild $d.FullName }
   $dir = Join-Path $root ('install\companion-build-' + [guid]::NewGuid().ToString('N'))

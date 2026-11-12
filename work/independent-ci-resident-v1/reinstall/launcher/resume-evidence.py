@@ -13,7 +13,9 @@ def require(condition, code):
         raise ValueError(code)
 
 
-def validate_terminal(raw, expected_sha, source_sha, package_head):
+def validate_terminal(raw, expected_sha, source_sha, package_head, required=None):
+    """required: the exact completed steps before the uninstall; None is this module's per-node launcher. continue.py passes the generic
+    node package's (its Linux steps come before the uninstall preflight); every other rule is the same."""
     require(isinstance(raw, bytes) and 0 < len(raw) <= 16 * 1024 * 1024, 'PRIOR_TERMINAL_SIZE')
     require(re.fullmatch(r'[0-9a-f]{64}', expected_sha or '') is not None
             and hashlib.sha256(raw).hexdigest() == expected_sha, 'PRIOR_TERMINAL_CHANGED')
@@ -27,7 +29,8 @@ def validate_terminal(raw, expected_sha, source_sha, package_head):
             and document.get('sourceSha') == source_sha and document.get('packageHead') == package_head,
             'PRIOR_TERMINAL_NOT_THE_FAILED_UNINSTALL')
     done = document.get('completed')
-    required = ['output', 'package', 'stage', 'uninstall-preflight', 'parent-acl-checked', 'quiesce']
+    if required is None:
+        required = ['output', 'package', 'stage', 'uninstall-preflight', 'parent-acl-checked', 'quiesce']
     require(isinstance(done, list) and all(isinstance(x, str) for x in done)
             and len(set(done)) == len(done) and done == required, 'PRIOR_UNINSTALL_STEP_BOUNDARY')
     detail = document.get('detail')

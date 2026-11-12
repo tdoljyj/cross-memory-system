@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.6",
+      "version": "0.9.7",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "c337dbb7680e7f9316aed450042d79d3049ee3900ea31b80ae41ced5e71f7dcf"
+      "content_sha256": "065969bdb73683388fbf798ba8f776738a9f1607c46a3a626d92d12e3d0118a2"
     },
     {
       "id": "hook.runner-job-started",
@@ -164,7 +164,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.9",
+      "version": "1.0.11",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "ac853b0d3845cdde8d324fe2798bec40e9810e36054a411ffea26e007637e1ca",
+      "content_sha256": "2999e76bb47ded8fc23aa1b24999ca42c5fd9bd94692b5cd728e8dcbcad40648",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.48",
+      "version": "1.1.52",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "dd1a15e4f658b5211e62b39e504eac4287e342ca963fcbca49aed93d90ef60c2"
+      "content_sha256": "5b34125a3cee325044554563dae35f8424e6e8f563d6ae573d844b3a6271625c"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b629db2edf5340745873e0560ef3907ddd4292fa8ba33446bfffabb4e00a3332"
+      "content_sha256": "ed570e6ddbb2a8bb88806f82f0b1741418fb1d8a9d456e0b5a48390c04af330a"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2e8266c0c5fbe01d7b87cbd2b8585551912e139178f928a64c47a968661e7d9a"
+      "content_sha256": "32e876e974f8fb7bcf6342604aa9485c0018465e1e2fec96c19fd3bf81f8ee7c"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -907,7 +907,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.3",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,12 +923,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "bd79eaf920e510545501106a8d80167a1827846cd393b9b7fad7c6354f00955d"
+      "content_sha256": "1206f804bdd85469f7e77791686dd1c919810d7d9df99b93ef07198926d674ea"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.25",
+      "version": "1.0.26",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b4c4171d80ce26df6270a045ab8e2009c7d8978ce6e6531b19581f36a1257ac2"
+      "content_sha256": "fe5dcb0acba5801be060a5fba8f668fdce0560344fa2f7ef5ecb2a093d0bed58"
     }
   ]
 }

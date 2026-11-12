@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
+import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, missingDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
   refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -550,12 +550,15 @@ test('a new dependency store is rebuilt before it is complete and then only read
   const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
   const calls = [];
   const npm = (args, cwd) => {
-    calls.push([args[0], cwd]);
+    calls.push([args[0], cwd, args.includes('--offline')]);
     if (args[0] === 'ci') fs.mkdirSync(path.join(cwd, 'node_modules', platformPackage), { recursive: true });
+    return { status: 0, output: '' };
   };
   const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   const ready = path.join(home, 'node_modules', key);
-  assert.deepEqual(calls.map(([what]) => what), ['ci', 'rebuild'], 'installed and rebuilt, for every suite');
+  // ci-deps.mjs: installed offline from the npm cache (which holds the packages here, so nothing is prepared)
+  assert.deepEqual(calls.map(([what, , offline]) => `${what}${offline ? ' offline' : ''}`), ['ci offline', 'rebuild'],
+    'installed and rebuilt, for every suite');
   assert.equal(calls[0][1], calls[1][1], 'in the same temporary directory');
   assert.notEqual(calls[1][1], ready, 'not in the store other runs read');
   assert.ok(fs.existsSync(path.join(ready, 'complete')) && fs.existsSync(path.join(ready, 'rebuilt')));
@@ -568,9 +571,44 @@ test('a new dependency store is rebuilt before it is complete and then only read
   ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   assert.deepEqual(calls, [], 'a suite that does not need the rebuild leaves it alone');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
-  assert.deepEqual(calls, [['rebuild', ready]], 'rebuilt in place once');
+  assert.deepEqual(calls, [['rebuild', ready, false]], 'rebuilt in place once');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
   assert.equal(calls.length, 1, 'and marked');
+});
+
+test('a store marked complete but lacking packages is installed again; an install that still lacks them refuses', (t) => {
+  const home = tempHome(t);
+  const dir = tempHome(t, 'lv-conc-wt');
+  const app = path.join(dir, 'apps', 'clued-cloud');
+  fs.mkdirSync(app, { recursive: true });
+  fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'a', dependencies: { b: '1.0.0' } }));
+  fs.writeFileSync(path.join(app, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { '': {},
+    'node_modules/b': { version: '1.0.0' }, 'node_modules/only-elsewhere': { version: '1.0.0', optional: true } } }));
+  const installs = [];
+  let installs_b = true;
+  const npm = (args, cwd) => {
+    if (args[0] !== 'ci') return { status: 0, output: '' };
+    installs.push(cwd);
+    fs.mkdirSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c', 'package.json'), '{}');
+    return { status: 0, output: '' };
+  };
+  const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
+  const ready = path.join(home, 'node_modules', key);
+  assert.equal(installs.length, 1);
+  assert.deepEqual(missingDependencies(ready), [], 'an optional package of another platform is not required');
+  // emptied through a link, the mark left behind (2026-11-12 03:56Z)
+  fs.rmSync(path.join(ready, 'node_modules', 'b'), { recursive: true });
+  assert.deepEqual(missingDependencies(ready), ['node_modules/b']);
+  const said = [];
+  ensureAppDependencies(dir, home, { rebuild: false, npm, log: (line) => said.push(line) });
+  assert.equal(installs.length, 2, 'installed again instead of trusting the mark');
+  assert.match(said.join('\n'), /marked complete but lacks node_modules\/b/);
+  assert.deepEqual(missingDependencies(ready), []);
+  fs.rmSync(path.join(ready, 'node_modules', 'b'), { recursive: true });
+  installs_b = false;
+  assert.throws(() => ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} }), /left out node_modules\/b: cannot verify/);
+  assert.equal(fs.existsSync(path.join(ready, 'complete')), false, 'nothing incomplete is marked complete');
 });
 
 test('housekeeping: the temporary directory of a dead run goes, a garbled record goes after a while, a fresh unreadable one only makes pruning wait', (t) => {

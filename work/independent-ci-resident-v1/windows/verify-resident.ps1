@@ -1,6 +1,9 @@
 <#
 .SYNOPSIS
-  Read-only verification of an installed resident executor (DRAFT). Writes nothing.
+  Verification of an installed resident executor (DRAFT). Writes nothing, with one exception: run as SYSTEM (the upgrade channel's
+  VERIFY step), on a node whose companion runs as its own account, it first appends the companion's relay-parent ACE if it is missing
+  (Invoke-CompanionRelayParentsEnsure, install-resident.ps1's own rule, hash-pinned by this generation's resident manifest).
+  Run by hand, elevated or not, it never writes.
 
 .DESCRIPTION
   Run the INSTALLED copy (C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\).
@@ -407,6 +410,53 @@ function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRang
   }finally{$stream.Dispose()}
 }
 function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [ordered]@{ ok = $ok; detail = $detail } }
+# M5-b relay parents (6c536c8c) in the generic install AND the generic in-place upgrade. install-resident.ps1's step
+# 'companion-relay-parent-acl' adds (A;;0x120080;;;<companion SID>) to <CiRoot> and <CiRoot>\formal-spool on a fresh install only; a
+# node installed before it, upgraded in place, never got it. So this verify, run as SYSTEM by the upgrade channel's VERIFY (and only
+# then), ensures it first. The rule is not written here: the functions are install-resident.ps1's own (this generation's copy next to
+# this file, its sha256 the one the resident manifest pins), loaded by exact name into a child scope and run as they are.
+# Present: nothing written. Missing: only that ACE (owner, group, SACL and every other ACE kept; DACL compared with the plan before the
+# write, read back after). A link on the way, an unprotected DACL or any other entry of the account: refused (thrown).
+# Returns how many parents it wrote (0 or more).
+# $installerSha256: the pinned hash; the bytes are read once, hashed, and parsed from that same read (never re-opened).
+function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string]$installer, [string]$installerSha256) {
+  & {
+    param([string]$root, [string]$sid, [string]$installer, [string]$installerSha256)
+    Set-StrictMode -Version 2.0
+    $ErrorActionPreference = 'Stop'
+    if ($sid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z') { throw 'RELAY_PARENT_SID_REFUSED' }
+    if ($installerSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'RELAY_PARENT_RULE_NOT_PINNED' }
+    $bytes = [IO.File]::ReadAllBytes($installer)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+    if ($actual -cne $installerSha256) { throw 'RELAY_PARENT_RULE_HASH_MISMATCH' }
+    $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -ne 0) { throw 'RELAY_PARENT_RULE_UNPARSEABLE' }
+    foreach ($name in @('Get-DaclPart', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence',
+        'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
+      $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
+      if ($found.Count -ne 1) { throw ('RELAY_PARENT_RULE_MISSING:' + $name) }
+      . ([scriptblock]::Create($found[0].Extent.Text))
+    }
+    # the installer's own names, read by Get-CompanionRelayParentsPlan
+    $OwnerSid = $sid
+    $CiRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($root).TrimEnd('\'))
+    $assertNoLink = { param([string]$path) for ($p = $path; $p; $p = [IO.Path]::GetDirectoryName($p)) {
+        $item = Get-Item -LiteralPath $p -Force
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('RELAY_PARENT_LINK_OR_NOT_A_DIRECTORY:' + $p) } } }
+    foreach ($p in @($CiRoot, (Join-Path $CiRoot 'formal-spool'))) { & $assertNoLink $p }
+    # The resident service's own CiRoot entry is not this step's business: present = no projection (the plan's 'before' is the live DACL).
+    $written = 0
+    foreach ($plan in (Get-CompanionRelayParentsPlan ([ordered]@{ present = $true }))) {
+      & $assertNoLink $plan.path
+      if (Add-CompanionRelayParentAce $plan) { $written++ }
+    }
+    $written
+  } $root $sid $installer $installerSha256
+}
 # The verdict (Task 018da927 b). Only a check whose ok is the STRING 'unreadable' asks for an elevated run: with -eq, a
 # boolean on the left converts 'unreadable' to $true, so every passing check counted as unreadable and any failure was
 # reported as RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED (exit 2) instead of RESIDENT_VERIFICATION_FAILED (exit 1).
@@ -724,8 +774,23 @@ $companionAccountRecord = try { Read-CompanionAccountRecord $Root $Node } catch 
 if ($companionAccountRecord -is [string]) { Record 'companion-account' $false $companionAccountRecord }
 elseif ($null -ne $companionAccountRecord) {
   $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord ([bool]$verifyCanFix); Record 'companion-account' ($null -eq $accountProblem) $accountProblem
+  # SYSTEM only (the upgrade channel's VERIFY): first make the two parents carry the account's entry, with install-resident.ps1's own
+  # rule (Invoke-CompanionRelayParentsEnsure), then check them as before. By hand (elevated or not): check only, never write.
+  # The rule's bytes: this generation's install-resident.ps1, whose sha256 is the one this generation's resident manifest pins
+  # (config\resident-installed-manifest.json, whose own hash is the receipt's residentManifestSha256 and this folder's name).
+  $relayAdded = $null
+  if ($verifyIdentity.User.Value -ceq 'S-1-5-18') {
+    $relayAdded = try {
+      $residentManifest = Join-Path $Root 'config\resident-installed-manifest.json'
+      $residentManifestSha = Sha256File $residentManifest
+      if ($residentManifestSha -cne [string]$receipt.residentManifestSha256 -or (Split-Path -Leaf (Split-Path -Parent $PSScriptRoot)) -cne $residentManifestSha) { throw 'RELAY_PARENT_RULE_NOT_THIS_GENERATION' }
+      $rulePin = @(@((Get-Content -LiteralPath $residentManifest -Raw | ConvertFrom-Json).files) | Where-Object { [string]$_.path -ceq 'windows/install-resident.ps1' })
+      if ($rulePin.Count -ne 1 -or [string]$rulePin[0].sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'RELAY_PARENT_RULE_NOT_PINNED' }
+      Invoke-CompanionRelayParentsEnsure $Root ([string]$Node.ownerSid) (Join-Path $PSScriptRoot 'install-resident.ps1') ([string]$rulePin[0].sha256)
+    } catch { 'COMPANION_RELAY_PARENT_ENSURE_REFUSED:' + $_.Exception.Message }
+  }
   $parentProblem = Get-CompanionRelayParentsProblem ([string]$Node.ownerSid)
-  Record 'companion-relay-parents' ($null -eq $parentProblem) $parentProblem
+  Record 'companion-relay-parents' ($null -eq $parentProblem -and $relayAdded -isnot [string]) $(if ($relayAdded -is [string]) { $relayAdded } elseif ($parentProblem) { $parentProblem } elseif ($relayAdded) { 'ADDED:' + $relayAdded } else { $null })
 }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'

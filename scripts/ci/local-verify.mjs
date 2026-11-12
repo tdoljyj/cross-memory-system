@@ -99,6 +99,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -108,7 +109,8 @@ const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
-const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema']);
+// mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
+const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
 // GitHub's branches and tags, fetched under these prefixes (the repository's
 // own branches and tags stay as they are).
 const GITHUB_BRANCHES = 'refs/local-verify/github/';
@@ -121,7 +123,6 @@ const RESULT_MARK = 'LOCAL_VERIFY_RESULT ';
 const KEEP_WORKTREES = 8;
 const KEEP_DEPENDENCY_STORES = 3;
 const COMMAND_TIMEOUT_MS = 45 * 60_000; // the workflow's longest job limit
-const INSTALL_TIMEOUT_MS = 15 * 60_000;
 const LINUX_TIMEOUT_MS = 180 * 60_000;
 // A lock older than any run is stale even if its process number is in use again.
 const LOCK_MAX_AGE_MS = 6 * 60 * 60_000;
@@ -293,15 +294,8 @@ export function windowsPathOf(file) {
   return file.startsWith('/') ? `\\\\wsl.localhost\\${DISTRIBUTION}${file.replace(/\//g, '\\')}` : file;
 }
 
-// On Windows `npm` is npm.cmd, which Node does not start without a shell
-// (the ENOENT the selection's runSuite reports there); npm's own CLI next to
-// node.exe starts directly.
-export function npmCommand({ platform = process.platform, execPath = process.execPath, exists = fs.existsSync } = {}) {
-  if (platform !== 'win32') return ['npm'];
-  const cli = path.win32.join(path.win32.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!exists(cli)) throw new Error(`npm's CLI is not next to ${execPath}`);
-  return [execPath, cli];
-}
+// npm as Windows starts it (npm.cmd needs a shell; npm's own CLI next to node.exe does not): ci-deps.mjs.
+export { npmCommand };
 
 // The failure report of a Node test command. A command with known failures
 // gets the reporter as runSuite adds it (after --test, wherever it is); a plain
@@ -1148,17 +1142,26 @@ function renameRetrying(from, to) {
   }
 }
 
-function npmSync(args, cwd, label, log) {
-  const [npm, ...prefix] = npmCommand();
-  // The network may drop connections (Owner: assume a flaky network); each
-  // attempt reuses what the npm cache already holds.
-  let status = 1;
-  for (let attempt = 1; attempt <= 5 && status !== 0; attempt += 1) {
-    log(`local-verify: ${label} (attempt ${attempt})`);
-    status = spawnSync(npm, [...prefix, ...args], { cwd, stdio: 'inherit', windowsHide: true, timeout: INSTALL_TIMEOUT_MS }).status;
-    if (status !== 0 && attempt < 5) sleep(10_000 * attempt);
+function rebuildPackage(npm, name, cwd, log) {
+  log(`local-verify: rebuilding ${name}`);
+  if (npm(['rebuild', name], cwd).status !== 0) throw new Error(`rebuilding ${name} failed`);
+}
+
+// What a dependency store lacks: every package its lockfile installs on every
+// platform (not optional, not a link) needs its package.json. The complete
+// mark alone proves nothing (2026-11-12 03:56Z: a store marked complete was
+// empty after a suite ran npm ci through the worktree's link to it).
+export function missingDependencies(ready, { limit = 5 } = {}) {
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(path.join(ready, 'package-lock.json'), 'utf8')); } catch { return ['package-lock.json']; }
+  if (!fs.existsSync(path.join(ready, 'node_modules'))) return ['node_modules'];
+  const missing = [];
+  for (const [name, entry] of Object.entries(lock?.packages ?? {})) {
+    if (!name.startsWith('node_modules/') || entry?.optional || entry?.link) continue;
+    if (!fs.existsSync(path.join(ready, name, 'package.json'))) missing.push(name);
+    if (missing.length >= limit) break;
   }
-  if (status !== 0) throw new Error(`${label} failed`);
+  return missing;
 }
 
 // The application's node_modules for this lockfile, installed once (npm ci
@@ -1168,7 +1171,7 @@ function npmSync(args, cwd, label, log) {
 // (the store is then only read), runs that need another install at the same time.
 // A store a live run uses is never removed (the run's record names it, written
 // while the key's lock is still held).
-export function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null, npm = npmSync }) {
+export function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null, npm = runNpm }) {
   const app = path.join(dir, APP);
   const read = (file) => (fs.existsSync(path.join(app, file)) ? fs.readFileSync(path.join(app, file)) : null);
   if (!read('package.json') || !read('package-lock.json')) throw new Error(`${APP} has no package.json or package-lock.json`);
@@ -1182,20 +1185,30 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
       // what a run that stopped mid-install or mid-delete left of this key (nobody else installs it now)
       if ((name.startsWith(`${key}-`) && /^[0-9a-f]{16}-.{6}$/.test(name)) || name === `${key}.deleting`) fs.rmSync(path.join(store, name), { recursive: true, force: true });
     }
+    const lacking = fs.existsSync(path.join(ready, 'complete')) ? missingDependencies(ready) : [];
+    if (lacking.length) {
+      // marked complete but not: set aside like a pruned store, then installed again
+      log(`local-verify: the ${APP} dependency store ${key} is marked complete but lacks ${lacking.join(', ')}; installing it again`);
+      renameRetrying(ready, `${ready}.deleting`);
+      fs.rmSync(`${ready}.deleting`, { recursive: true, force: true });
+    }
     if (!fs.existsSync(path.join(ready, 'complete'))) {
       const temporary = fs.mkdtempSync(path.join(store, `${key}-`));
       for (const file of ['package.json', 'package-lock.json', '.npmrc']) {
         if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
       }
       try {
-        npm(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
-          '--fetch-timeout=60000', '--no-audit', '--no-fund'], temporary, `installing ${APP} dependencies (${key})`, log);
+        // as CI does (ci-deps.mjs): offline from the npm cache, which is prepared (the only networked step) when it lacks a package
+        log(`local-verify: installing ${APP} dependencies (${key})`);
+        installDeps(temporary, { cache: path.join(home, 'npm-cache'), run: npm, log });
         // the embedded PostgreSQL package is rebuilt before the store is complete: once complete it is only read
         // (a rebuild in place would replace binaries that another run's tests are running)
         if (fs.existsSync(path.join(temporary, 'node_modules', platformPackage))) {
-          npm(['rebuild', platformPackage], temporary, `rebuilding ${platformPackage}`, log);
+          rebuildPackage(npm, platformPackage, temporary, log);
           fs.writeFileSync(path.join(temporary, 'rebuilt'), '');
         }
+        const absent = missingDependencies(temporary);
+        if (absent.length) throw new Error(`installing ${APP} dependencies (${key}) left out ${absent.join(', ')}: cannot verify`);
         fs.writeFileSync(path.join(temporary, 'complete'), '');
         renameRetrying(temporary, ready);
       } finally {
@@ -1204,7 +1217,7 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
     }
     // a store an earlier version of this tool installed has not been rebuilt: that one is rebuilt in place, once
     if (rebuild && !fs.existsSync(path.join(ready, 'rebuilt')) && fs.existsSync(path.join(ready, 'node_modules', platformPackage))) {
-      npm(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
+      rebuildPackage(npm, platformPackage, ready, log);
       fs.writeFileSync(path.join(ready, 'rebuilt'), '');
     }
     fs.utimesSync(ready, new Date(), new Date());
@@ -1360,6 +1373,11 @@ export function compareCommand(head, base, { selector, known = [] }) {
   // (defects 2102f7e1, d7e9d4b4) instead of "did not finish" or a pass
   if (head.tests === 0 && head.status === 0) return { verdict: 'new', detail: 'ran no tests (a command that runs no test is not a pass)' };
   if (passed(head)) return { verdict: 'pass' };
+  // A module that cannot be loaded (on either side) says nothing about the
+  // change: never "fails on main too", always "cannot verify".
+  const missing = [head, base].flatMap((result) => (result?.report?.events ?? []).filter((event) => event.type === 'fail' && event.missing_dependency))
+    .map((event) => `${event.missing_dependency} in ${event.file ?? '<run>'}`);
+  if (missing.length) return { verdict: 'unknown', detail: `a dependency is missing (${[...new Set(missing)].slice(0, 3).join('; ')}): cannot verify` };
   const failing = () => {
     const names = head.report ? failEntries(head.report).map(label) : [];
     return names.length ? `: ${names.join('; ')}` : '';
