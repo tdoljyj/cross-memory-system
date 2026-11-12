@@ -196,7 +196,7 @@
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "2414d08e4bd131d29a07047679e3c64108f69f2eb8d4321058d1ed296015bc39",
     "scripts/ci/clued-independent-publication-identity.mjs": "354d8997d96a3ccc804fa23d4a4543d3910f81e3584d5a59b1efb2ebb9367b1f",
     "scripts/ci/clued-independent-publication-identity.test.mjs": "0c2c540737f2d6375e8903c7ab26cf03eb3f4ad8918035de6617f56cc553369c",
-    "scripts/ci/clued-independent-publication-port.mjs": "5900cbbb21c618895dc9fd8b17769e0930c933e201cb3964fb4ad9657351c6d8",
+    "scripts/ci/clued-independent-publication-port.mjs": "0630c169d3259e893a09c7c72ae5e8784ee6db7914d75a316a5ad77b98c12757",
     "scripts/ci/clued-independent-publication-port.test.mjs": "1d319cce907478765d3aa7aeef849d4f53d6d75dcc1da8b1553fd56a6bf2de8e",
     "scripts/ci/clued-independent-publication-runtime.mjs": "fb1dd769b0e41b52f45a68b26b5a044ea817691eeb0bb9a9ede41c41916d3cff",
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "4ced446e444c99b55fc1bf98cced0786e584f862c9766ec0bd909718d59344ef",

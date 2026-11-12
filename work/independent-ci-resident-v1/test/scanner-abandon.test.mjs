@@ -128,8 +128,8 @@ test('stages 4 and 6: two runs again in the batch (DESIGN 54), then FAILED_CLEAN
   }
   assert.deepEqual(attempt2Decision({ policy: { automaticAttempt2: { enabled: true } }, subject: { attempt: 1 }, outcome: 'FAILED_CLEAN', failure: { code: BRIDGE_ABANDONED_UNPUBLISHED, stageNumber: 4, relayedRoles: 0 } }),
     { eligible: false, reason: 'ATTEMPT2_ROLE_MAY_BE_PUBLISHED' });
-  // DESIGN §32 adds the memory gate's stage-2 refusal to the same list, at stage 2 only
-  assert.deepEqual({ ...ATTEMPT2_RESIDENT_CODES }, { [BRIDGE_ABANDONED_UNPUBLISHED]: [2], LINUX_MEMORY_NOT_READY: [2] });
+  // DESIGN §32 adds the memory gate's stage-2 refusal to the same list, at stage 2 only; DESIGN §71 the reboot's clean end, at stages 1 and 2
+  assert.deepEqual({ ...ATTEMPT2_RESIDENT_CODES }, { [BRIDGE_ABANDONED_UNPUBLISHED]: [2], LINUX_MEMORY_NOT_READY: [2], EXECUTOR_RESTARTED_UNPUBLISHED: [1, 2] });
   assert.deepEqual([failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 2 }).retry, failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 6 }).retry], ['attempt2', 'new-commit']);
 });
 

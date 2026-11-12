@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "f9ce4ff2a19a833903b991451e2029f169f8d9fb445f0208e521d7b61b103c6c"
+      "content_sha256": "19eafeb7ebe377bbfa66ff183ef0b83f381b217c96db2ac4bc66f09949c505e5"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.48",
+      "version": "1.1.49",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "dd1a15e4f658b5211e62b39e504eac4287e342ca963fcbca49aed93d90ef60c2"
+      "content_sha256": "b6927fd232c33e4cf7768d183a5bbada6c118ca6440a9dc5b17db3c625e5cdf8"
     },
     {
       "id": "script.resource-maintenance",
@@ -907,7 +907,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,7 +923,7 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "bd79eaf920e510545501106a8d80167a1827846cd393b9b7fad7c6354f00955d"
+      "content_sha256": "366b48bf0e1e99b5659a8f056bdae35ee3ccc5e21e9354b1925213e8b530d5e6"
     },
     {
       "id": "script.merge-reconciliation",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b4c4171d80ce26df6270a045ab8e2009c7d8978ce6e6531b19581f36a1257ac2"
+      "content_sha256": "0dbde5af96d41db8e7359f0fef18db6b5bff5a7631ef72eea365d19c0c173e36"
     }
   ]
 }
