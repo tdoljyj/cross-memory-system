@@ -550,14 +550,19 @@ test('a new dependency store is rebuilt before it is complete and then only read
   const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
   const calls = [];
   const npm = (args, cwd) => {
-    calls.push([args[0], cwd]);
+    calls.push([args[0], cwd, args.includes('--offline')]);
     if (args[0] === 'ci') fs.mkdirSync(path.join(cwd, 'node_modules', platformPackage), { recursive: true });
+    return { status: 0, output: '' };
   };
   const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   const ready = path.join(home, 'node_modules', key);
-  assert.deepEqual(calls.map(([what]) => what), ['ci', 'rebuild'], 'installed and rebuilt, for every suite');
-  assert.equal(calls[0][1], calls[1][1], 'in the same temporary directory');
-  assert.notEqual(calls[1][1], ready, 'not in the store other runs read');
+  // ci-deps.mjs: the npm cache is filled and proved offline in a scratch copy, then the store is installed offline
+  assert.deepEqual(calls.map(([what, , offline]) => `${what}${offline ? ' offline' : ''}`), ['ci', 'ci offline', 'ci offline', 'rebuild'],
+    'installed and rebuilt, for every suite');
+  assert.equal(calls[2][1], calls[3][1], 'in the same temporary directory');
+  assert.notEqual(calls[3][1], ready, 'not in the store other runs read');
+  assert.equal(calls[0][1], calls[1][1], 'the cache is proved in its own scratch copy');
+  assert.notEqual(calls[0][1], calls[2][1]);
   assert.ok(fs.existsSync(path.join(ready, 'complete')) && fs.existsSync(path.join(ready, 'rebuilt')));
   assert.equal(fs.realpathSync(path.join(app, 'node_modules')), fs.realpathSync(path.join(ready, 'node_modules')), 'linked into the worktree');
   calls.length = 0;
@@ -568,7 +573,7 @@ test('a new dependency store is rebuilt before it is complete and then only read
   ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   assert.deepEqual(calls, [], 'a suite that does not need the rebuild leaves it alone');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
-  assert.deepEqual(calls, [['rebuild', ready]], 'rebuilt in place once');
+  assert.deepEqual(calls, [['rebuild', ready, false]], 'rebuilt in place once');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
   assert.equal(calls.length, 1, 'and marked');
 });
@@ -584,10 +589,11 @@ test('a store marked complete but lacking packages is installed again; an instal
   const installs = [];
   let installs_b = true;
   const npm = (args, cwd) => {
-    if (args[0] !== 'ci') return;
+    if (args[0] !== 'ci' || !args.includes('--offline') || path.basename(cwd).startsWith('ci-deps-')) return { status: 0, output: '' };
     installs.push(cwd);
     fs.mkdirSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c'), { recursive: true });
     fs.writeFileSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c', 'package.json'), '{}');
+    return { status: 0, output: '' };
   };
   const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   const ready = path.join(home, 'node_modules', key);

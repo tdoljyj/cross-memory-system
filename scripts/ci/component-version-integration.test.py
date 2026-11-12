@@ -178,20 +178,26 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertIn("mechanical-outputs-", str(installed[0]), "installed into the throwaway worktree only")
         self.assertFalse((app / "node_modules").exists())
 
-    def test_npm_ci_installs_from_the_runners_persistent_npm_cache(self):
-        # The .npmrc's relative cache is empty in a throwaway worktree; ~/.npm is what the other CI installs keep warm.
+    def test_npm_ci_goes_through_the_ci_deps_entry_prepare_then_offline_install(self):
+        # The one CI entry: prepare (networked, a no-op once the store holds the lockfile), then install offline.
         calls = []
+        statuses = [0, 0]
         real_run, real_which = integration.subprocess.run, integration.shutil.which
-        integration.subprocess.run = lambda argv, **kw: calls.append((argv, kw)) or subprocess.CompletedProcess(argv, 0, "", "")
-        integration.shutil.which = lambda name: "npm"
+        integration.subprocess.run = lambda argv, **kw: (calls.append(argv) or
+                                                         subprocess.CompletedProcess(argv, statuses[len(calls) - 1], "", "依赖库缺失"))
+        integration.shutil.which = lambda name: "node"
+        app = Path("tree") / "apps" / "clued-cloud"
         try:
-            integration._npm_ci(Path("app"))
+            integration._npm_ci(app)
+            self.assertEqual([argv[2] for argv in calls], ["prepare", "install"])
+            self.assertEqual(calls[0][1], str(Path("tree") / "scripts" / "ci" / "ci-deps.mjs"), "the worktree's own entry")
+            self.assertEqual(calls[0][3], str(app))
+            calls.clear()
+            statuses[1] = 78
+            with self.assertRaisesRegex(ValueError, "(?s)ci-deps install failed \\(exit 78\\).*依赖库缺失"):
+                integration._npm_ci(app)
         finally:
             integration.subprocess.run, integration.shutil.which = real_run, real_which
-        argv = calls[0][0]
-        self.assertEqual(argv[:2], ["npm", "ci"])
-        self.assertEqual(argv[argv.index("--cache") + 1], str(Path.home() / ".npm"))
-        self.assertIn("--prefer-offline", argv)
 
     def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):
         self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")

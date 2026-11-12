@@ -144,18 +144,19 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
 
 
 def _npm_ci(app: Path) -> None:
-    """Install from the runner's persistent ~/.npm, the one cache clued-cloud-tests and migration-verify
-    install from (clued-required-tests.yml). apps/clued-cloud/.npmrc names a relative cache, which in this
-    throwaway worktree is always empty: every run downloaded all ~1350 packages and an ECONNRESET failed
-    ci-suites (#1078, 2026-11-12)."""
-    npm = shutil.which("npm")
-    if not npm:
-        raise ValueError("mechanical-outputs: npm is not installed; cannot verify")
-    done = subprocess.run([npm, "ci", "--ignore-scripts", "--cache", str(Path.home() / ".npm"), "--prefer-offline",
-                           "--fetch-retries=2", "--fetch-timeout=30000", "--no-audit", "--no-fund"],
-                          cwd=app, capture_output=True, text=True)
-    if done.returncode:
-        raise ValueError("mechanical-outputs: npm ci in the throwaway worktree failed; cannot verify\n" + done.stderr[-2000:])
+    """Install through scripts/ci/ci-deps.mjs, the one CI entry: prepare (the only networked step, a no-op once
+    the runner's ~/.npm store holds this lockfile), then install offline from that store. apps/clued-cloud/.npmrc
+    names a relative cache, empty in this throwaway worktree: downloading every package here failed ci-suites on
+    an ECONNRESET (#1078, 2026-11-12)."""
+    node = shutil.which("node")
+    if not node:
+        raise ValueError("mechanical-outputs: node is not installed; cannot verify")
+    entry = app.parents[1] / "scripts" / "ci" / "ci-deps.mjs"
+    for step in ("prepare", "install"):
+        done = subprocess.run([node, str(entry), step, str(app)], capture_output=True, text=True)
+        if done.returncode:
+            raise ValueError(f"mechanical-outputs: ci-deps {step} failed (exit {done.returncode}); cannot verify\n"
+                             + (done.stdout + done.stderr)[-2000:])
 
 
 def _is_link(path: Path) -> bool:
