@@ -5,11 +5,14 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,CONTROL_SOURCE_MECHANICAL_FILES} from './clued-control-source-pins.mjs';
+import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,controlSourceMechanicalFiles} from './clued-control-source-pins.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const BASE='93940d4f6c06179e319c81173269d48cdc8e6420';
 const OPTIONS={base:BASE};
+const baseText=name=>execFileSync('git',['show',`${BASE}:${name}`],{cwd:ROOT}).toString('utf8');
+const baseBlobs=(()=>{const t=baseText(CONTROL_SOURCE_MODULE),e='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(',a=t.indexOf(e)+e.length;return JSON.parse(t.slice(a,t.indexOf('\n});',a)+2)).implementation_blobs;})();
+const CONTROL_SOURCE_MECHANICAL_FILES=controlSourceMechanicalFiles(JSON.parse(baseText('config/clued-mechanical-files.json')),baseBlobs);
 const files=[CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-components.json',...CONTROL_SOURCE_MECHANICAL_FILES,'scripts/ci/clued-workflow-profile.mjs','scripts/ci/component-version-integration-policy.mjs'];
 function fixture(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'control-source-pins-'));
@@ -103,9 +106,9 @@ test('an unavailable historical object is a refusal and never a new baseline',as
   const base=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before=pair(root);
   await assert.rejects(writeControlSourcePins(root,{base}));assert.deepEqual(pair(root),before);
 });
-test('candidate comparison-policy substitution is refused without evaluating it',async t=>{
+test('a candidate comparison policy is never evaluated',async t=>{
   const root=fixture(t);edit(root,'scripts/ci/component-version-integration-policy.mjs',()=>"throw new Error('CANDIDATE_POLICY_EXECUTED');\n");
-  await refusesWithoutWrites(root,/comparison policy differs from trusted base/);
+  assert.equal((await writeControlSourcePins(root,OPTIONS)).changed,true);
 });
 test('historical metadata uses the trusted-base compiler without evaluating a candidate successor',async t=>{
   const root=fixture(t),expected=await planControlSourcePins(root,OPTIONS);
@@ -124,4 +127,14 @@ test('a compiler successor must still occupy a plain file path',async t=>{
 test('a Git executable-mode substitution is refused even when all bytes are unchanged',async t=>{
   const root=fixture(t);execFileSync('git',['update-index','--chmod=+x','--',CONTROL_SOURCE_MECHANICAL_FILES[0]],{cwd:root,stdio:'pipe'});
   await refusesWithoutWrites(root,/file mode differs from trusted base/);
+});
+test('refreshable pins come only from the single mechanical-file policy',()=>{
+  const policy=JSON.parse(fs.readFileSync(path.join(ROOT,'config/clued-mechanical-files.json'),'utf8'));
+  const derived=controlSourceMechanicalFiles(policy,baseBlobs);
+  // Only declared, descriptor-pinned version modules; a declared generated registry keeps its historical pin.
+  assert.ok(derived.length&&derived.every(n=>n.endsWith('.mjs')&&[...policy.mechanical_paths,...(policy.marker_paths??[])].includes(n)&&Object.hasOwn(baseBlobs,n)));
+  const extra=Object.keys(baseBlobs).find(n=>n.endsWith('.mjs')&&!derived.includes(n));
+  assert.deepEqual(controlSourceMechanicalFiles({...policy,marker_paths:[...(policy.marker_paths??[]),extra]},baseBlobs),[...derived,extra].sort());
+  for(const bad of [null,{...policy,schema:2},{...policy,mechanical_paths:'x'},{...policy,mechanical_paths:['config/other.json'],marker_paths:[]}])
+    assert.throws(()=>controlSourceMechanicalFiles(bad,baseBlobs),/mechanical/);
 });

@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.4",
+      "version": "0.9.5",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "64017462d1d027c75aaa91ae2032673dbcfd97a2ba9fb8d7910392204d77ecf1"
+      "content_sha256": "f9ce4ff2a19a833903b991451e2029f169f8d9fb445f0208e521d7b61b103c6c"
     },
     {
       "id": "hook.runner-job-started",
@@ -92,14 +92,14 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.12",
+      "version": "1.1.13",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py",
         "clued_work_write_set.py"
       ],
-      "content_sha256": "c9500af87479aab78ccc9f20e4eb6fab23501a3571cd0fc6e3b0c6dd83874d50",
+      "content_sha256": "2ab347ce6399970d55a493e575600d423dc0b7c4e7fcaa5cc2f5c680f2c89f62",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -164,7 +164,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.8",
+      "version": "1.0.9",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "75fcf4619388ef1db47b70bed5a2e218ef15571a98a91e84fa4b0620d417f756",
+      "content_sha256": "ac853b0d3845cdde8d324fe2798bec40e9810e36054a411ffea26e007637e1ca",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.47",
+      "version": "1.1.48",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "d9dfd599dbbcdb0cfdf3771c369caed4e2c9bfb461f5ffc5c91f6e516c3b5b0a"
+      "content_sha256": "dd1a15e4f658b5211e62b39e504eac4287e342ca963fcbca49aed93d90ef60c2"
     },
     {
       "id": "script.resource-maintenance",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.18",
+      "version": "1.0.19",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "996255dcc5d3048e0174ff6852d9bbded8ee140d1cd77515fdffd999a2be7ebd"
+      "content_sha256": "b629db2edf5340745873e0560ef3907ddd4292fa8ba33446bfffabb4e00a3332"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "69af36ec0af719f2b5945be4e676c0f8e5c3c251835fe59a47ad6a8ece9e88f9"
+      "content_sha256": "2e8266c0c5fbe01d7b87cbd2b8585551912e139178f928a64c47a968661e7d9a"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "1e8d5ce2e32c8524705e6ddc7b08a78d78a2801a58089866569bfad412d83589"
+      "content_sha256": "b4c4171d80ce26df6270a045ab8e2009c7d8978ce6e6531b19581f36a1257ac2"
     }
   ]
 }

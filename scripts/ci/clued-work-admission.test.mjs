@@ -333,6 +333,8 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.deepEqual(call.body, {
     p_token_hash: sha256Hex("clued_bnd_test"),
     p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/worker/index.ts", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452", target_branch: "main",
+      // The trusted list goes to Native with every main verification; Native reads only it.
+      mechanical_paths_proven: [], mechanical_policy: admissionModule.trustedMechanicalPolicy(),
       // Merge Admission v0.1 §10 (step 3): the mode goes into the Receipts.
       admission_mode: { state: "normal", layer: "code", reruns_per_head: outcome.admission_mode.rules.reruns_per_head } },
   });

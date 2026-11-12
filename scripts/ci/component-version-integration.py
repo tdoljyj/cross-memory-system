@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import clued_components as components
@@ -39,6 +40,39 @@ def _state(root: Path) -> str:
         if name:
             extra.append([name, hashlib.sha256(components._checked_file(root, name).read_bytes()).hexdigest()])
     return hashlib.sha256(diff + json.dumps(extra, sort_keys=True).encode()).hexdigest()
+
+
+REGISTER_HINT = ("新生成文件 {name} 未登记到 config/clued-mechanical-files.json "
+                 "(generated file not registered): add it to mechanical_paths if wholly generated, "
+                 "to marker_paths if only its generated lines change; otherwise commit the change in the PR itself")
+
+
+def unregistered_outputs(root: Path, names, old_bytes) -> list[str]:
+    """Integration may write only what config/clued-mechanical-files.json declares.
+
+    names are the files integration wrote (or may write). A mechanical_paths file
+    may change freely, a marker_paths file only in its generated lines.
+    """
+    policy = components.mechanical_policy(root)
+    markers = components._marker_map(components.load_manifest(root))
+    marked = set(policy["marker_paths"])
+    bad = []
+    for name in sorted(set(names)):
+        if any(components._glob_matches(name, pattern) for pattern in policy["mechanical_paths"]):
+            continue
+        if name in marked:
+            path = components._checked_file(root, name)
+            now = path.read_bytes() if path.is_file() else None
+            before = old_bytes(name)
+            if now == before or components.generated_only(name, before, now, markers):
+                continue
+        bad.append(name)
+    return bad
+
+
+def _mtimes(root: Path) -> dict[str, int]:
+    names = str(components._git_output(root, ["ls-files", "-z"])).split("\0")
+    return {name: (root / name).stat().st_mtime_ns for name in names if name and (root / name).is_file()}
 
 
 def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False) -> dict:
@@ -65,6 +99,9 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
     ]
     # Only fixed, existing deterministic generators are permitted. Their own
     # acceptance/Source/host checks are neither regenerated nor bypassed here.
+    # Every file a generator writes counts, even when it rewrites identical
+    # bytes, so a new output is caught on its first run, not its first change.
+    before = _mtimes(root)
     for _ in range(3):
         previous = _state(root)
         components.apply_integration(components.integration_plan(base, root, expected_head=head), root)
@@ -79,6 +116,17 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
             break
     else:
         raise ValueError("automatic component metadata did not converge in three passes")
+    written = set(str(components._git_output(root, ["diff", "--no-renames", "--name-only", "-z", "HEAD", "--"])).split("\0"))
+    written.update(str(components._git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"))
+    written.update(name for name, mtime in _mtimes(root).items() if before.get(name) != mtime)
+    # apply_integration may rewrite any declared version marker on a later bump.
+    written.update(components._marker_map(components.load_manifest(root)))
+    written.discard("")
+    tracked = set(str(components._git_output(root, ["ls-tree", "-r", "--name-only", "-z", "HEAD"])).split("\0"))
+    bad = unregistered_outputs(root, written, lambda name: components._git_output(
+        root, ["show", f"HEAD:{name}"], binary=True) if name in tracked else None)
+    if bad:
+        raise ValueError("; ".join(REGISTER_HINT.format(name=name) for name in bad))
     problems = components.check(root, base)
     if problems:
         raise ValueError("integrated component verification failed: " + "; ".join(problems))
@@ -94,14 +142,48 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
             "output_sha256": outputs}
 
 
+def audit(root: Path, base: str) -> dict:
+    """CI check mechanical-outputs: integrate a throwaway worktree of HEAD and
+    fail on any generator output that config/clued-mechanical-files.json lacks."""
+    root = root.resolve()
+    head = str(components._git_output(root, ["rev-parse", "HEAD"])).strip()
+    with tempfile.TemporaryDirectory(prefix="mechanical-outputs-") as temp:
+        tree = Path(temp) / "candidate"
+        components._git_output(root, ["worktree", "add", "--detach", "--quiet", str(tree), head])
+        try:
+            modules = root / "apps/clued-cloud/node_modules"
+            if modules.is_dir():  # generators that parse YAML use the candidate's installed packages
+                target = tree / "apps/clued-cloud/node_modules"
+                if os.name == "nt":
+                    subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(modules)], check=True, capture_output=True)
+                else:
+                    target.symlink_to(modules, target_is_directory=True)
+            report = integrate_candidate(tree, base, head, write=True)
+            return {"check": "mechanical-outputs", "status": "ok", "base_commit": base, "head_commit": head,
+                    "outputs": sorted(report["output_sha256"])}
+        finally:
+            junction = tree / "apps/clued-cloud/node_modules"
+            if junction.is_symlink() or (os.name == "nt" and junction.exists()):
+                os.rmdir(junction) if os.name == "nt" else junction.unlink()
+            subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=root, capture_output=True)
+
+
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # the registration hint is Chinese on every host
+        stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=components.ROOT)
     parser.add_argument("--base", required=True)
-    parser.add_argument("--expect-head", required=True)
+    parser.add_argument("--expect-head")
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--audit", action="store_true", help="integrate a throwaway worktree of HEAD (CI)")
     args = parser.parse_args(argv)
     try:
+        if args.audit:
+            print(json.dumps(audit(args.root, args.base), indent=2, ensure_ascii=False))
+            return 0
+        if not args.expect_head:
+            parser.error("--expect-head is required unless --audit")
         print(json.dumps(integrate_candidate(args.root, args.base, args.expect_head, write=args.write),
                          indent=2, ensure_ascii=False))
         return 0

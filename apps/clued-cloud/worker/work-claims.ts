@@ -107,6 +107,14 @@ const verifyNormalProperties = {
     description: "CI-admission Binding only: declared mechanical literal paths independently verified against the exact PR base/head bytes; every entry must occur in changed_paths. Other callers cannot assert this proof. Without it full write-set coverage applies.",
     items: { type: "string", minLength: 1, maxLength: 400 },
   },
+  mechanical_policy: {
+    type: "object", additionalProperties: false, required: ["text", "sha256", "base_sha", "base_committed_at"],
+    description: "CI-admission Binding only: the exact bytes of config/clued-mechanical-files.json at the trusted main commit the gate runs from. Native keeps the newest commit's list and reads only it; other callers cannot publish.",
+    properties: {
+      text: { type: "string", maxLength: 65536 }, sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      base_sha: { type: "string", pattern: "^[0-9a-f]{40}$" }, base_committed_at: { type: "string", minLength: 20, maxLength: 40, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" },
+    },
+  },
   head_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" },
   pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
 } as const;

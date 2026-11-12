@@ -166,6 +166,11 @@ test('verify schema keeps complete Host properties and closed normal/resolve/edi
   assert.equal(normal.properties.scope.default,'global','legacy normal verification keeps its original context semantics');
   assert.equal(resolve.properties.claim_id,undefined);assert.equal(resolve.properties.changed_paths,undefined);
   assert.equal(resolve.properties.mechanical_paths_proven,undefined);
+  assert.equal(resolve.properties.mechanical_policy,undefined);
+  const published={text:'{}',sha256:'a'.repeat(64),base_sha:'b'.repeat(40),base_committed_at:'2026-11-12T00:00:00Z'};
+  assert.equal(validate({...normalInput,mechanical_policy:published}),true,'CI admission publishes the trusted list on normal verification');
+  assert.equal(validate({...normalInput,mechanical_policy:{...published,extra:true}}),false);
+  assert.equal(validate({...lookup,mechanical_policy:published}),false);
   assert.equal(schema.properties.head_sha.pattern,'^[0-9a-f]{7,64}$');
   assert.equal(resolve.properties.head_sha.pattern,'^[0-9a-f]{40}$');
   assert.equal(resolve.properties.base_sha.pattern,'^[0-9a-f]{40}$');

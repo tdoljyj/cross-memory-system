@@ -11,12 +11,10 @@ import {isDeepStrictEqual} from 'node:util';
 
 export const CONTROL_SOURCE_MODULE='scripts/ci/clued-control-workflow-source.mjs';
 export const CONTROL_SOURCE_REGISTRY='scripts/ci/clued-control-workflow-sources.json';
-export const CONTROL_SOURCE_MECHANICAL_FILES=Object.freeze([
-  'scripts/ci/clued-independent-publication-port.mjs', 'scripts/ci/clued-merge-reconcile.mjs']);
+export const MECHANICAL_POLICY='config/clued-mechanical-files.json';
 export const CONTROL_SOURCE_PIN_FIX='node scripts/ci/clued-control-source-pins.mjs --root <checkout> --base <trusted main commit> --write';
 const EXPORT='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(';
 const PROFILE='scripts/ci/clued-workflow-profile.mjs';
-const COMPARISON_POLICY='scripts/ci/component-version-integration-policy.mjs';
 const DEFAULT_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const refuse=m=>{throw new Error(`control Source pins: ${m}`);};
 const git=(root,args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe']});
@@ -55,9 +53,22 @@ function withoutVersion(text){version(text);return text.replace(/^(export const 
 // Same narrow normalisation as the base policy, without executing a mutable
 // candidate policy module. Exactly one marker is mandatory in both texts.
 function mechanicalVersionOnly(before,after){return withoutVersion(before)===withoutVersion(after);}
-function projectedDescriptor(value){
+// The refreshable pins are exactly the descriptor's pinned version-bearing
+// modules that the trusted base's single mechanical-file policy declares; no
+// second list. Pinned generated registries (.json) keep their historical pin.
+export function controlSourceMechanicalFiles(policy,implementationBlobs){
+  if(policy?.schema!==1||policy.repository!=='tdoljyj/cross-memory-system'||!Array.isArray(policy.mechanical_paths)
+    ||policy.mechanical_paths.some(p=>typeof p!=='string'))refuse('trusted mechanical policy invalid');
+  // Both sections of the one list; a policy from before marker_paths existed lists them as mechanical.
+  const listed=[...policy.mechanical_paths,...(Array.isArray(policy.marker_paths)?policy.marker_paths:[])];
+  const declared=name=>listed.some(p=>name===p||(typeof p==='string'&&p.endsWith('/**')&&name.startsWith(p.slice(0,-2))));
+  const names=Object.keys(implementationBlobs??{}).filter(n=>n.endsWith('.mjs')&&declared(n)).sort();
+  if(!names.length)refuse('no mechanical pin declared by trusted policy');
+  return names;
+}
+function projectedDescriptor(value,names){
   const result=structuredClone(value);
-  for(const name of CONTROL_SOURCE_MECHANICAL_FILES){if(!/^[a-f0-9]{40}$/.test(result.implementation_blobs[name]??''))refuse(`missing mechanical pin: ${name}`);result.implementation_blobs[name]='<mechanical-version-blob>';}
+  for(const name of names){if(!/^[a-f0-9]{40}$/.test(result.implementation_blobs[name]??''))refuse(`missing mechanical pin: ${name}`);result.implementation_blobs[name]='<mechanical-version-blob>';}
   return result;
 }
 function initialEntry(registry,file){
@@ -65,7 +76,7 @@ function initialEntry(registry,file){
   if(!Array.isArray(rows)||rows.length!==1||rows[0]?.source_kind!=='merge_reconcile_initial')refuse('one initial reconciliation registration required');
   return rows[0];
 }
-function projectedRegistry(value,file){const result=structuredClone(value),entry=initialEntry(result,file);entry.implementation_blobs=projectedDescriptor({implementation_blobs:entry.implementation_blobs}).implementation_blobs;return result;}
+function projectedRegistry(value,file,names){const result=structuredClone(value),entry=initialEntry(result,file);entry.implementation_blobs=projectedDescriptor({implementation_blobs:entry.implementation_blobs},names).implementation_blobs;return result;}
 function ensureVersionManifest(manifest,file,text){
   const rows=manifest.components?.filter(c=>c.version_marker?.file===file);
   if(rows?.length!==1||rows[0].version!==version(text))refuse(`version/manifest mismatch: ${file}`);
@@ -75,25 +86,24 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   root=path.resolve(root);
   if(!/^[a-f0-9]{40}$/.test(base??''))refuse('exact trusted base commit required');
   git(root,['rev-parse','--verify',`${base}^{commit}`]);
-  for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,PROFILE,COMPARISON_POLICY,...CONTROL_SOURCE_MECHANICAL_FILES])assertBaseMode(root,base,name);
-  const source=readPlain(root,CONTROL_SOURCE_MODULE),registered=readPlain(root,CONTROL_SOURCE_REGISTRY);
   const before=lf(git(root,['show',`${base}:${CONTROL_SOURCE_MODULE}`]));
   const beforeRegistry=JSON.parse(git(root,['show',`${base}:${CONTROL_SOURCE_REGISTRY}`]));
-  const d=descriptor(source),old=descriptor(before),registry=JSON.parse(registered);
-  if(!isDeepStrictEqual(projectedDescriptor(d.value),projectedDescriptor(old.value)))refuse('frozen descriptor changed beyond mechanical pins');
+  const old=descriptor(before);
+  let policy;try{policy=JSON.parse(git(root,['show',`${base}:${MECHANICAL_POLICY}`]));}catch{refuse('trusted mechanical policy invalid');}
+  const mechanical=controlSourceMechanicalFiles(policy,old.value.implementation_blobs);
+  for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,PROFILE,...mechanical])assertBaseMode(root,base,name);
+  const source=readPlain(root,CONTROL_SOURCE_MODULE),registered=readPlain(root,CONTROL_SOURCE_REGISTRY);
+  const d=descriptor(source),registry=JSON.parse(registered);
+  if(!isDeepStrictEqual(projectedDescriptor(d.value,mechanical),projectedDescriptor(old.value,mechanical)))refuse('frozen descriptor changed beyond mechanical pins');
   const moduleShape=(text,part)=>withoutVersion(text.slice(0,part.a)+'<registered-descriptor>'+text.slice(part.b));
   if(moduleShape(source,d)!==moduleShape(before,old))refuse('Source implementation changed beyond its version marker');
-  if(!isDeepStrictEqual(projectedRegistry(registry,d.value.file),projectedRegistry(beforeRegistry,old.value.file)))refuse('frozen catalogue/Role/workflow/authority changed');
+  if(!isDeepStrictEqual(projectedRegistry(registry,d.value.file,mechanical),projectedRegistry(beforeRegistry,old.value.file,mechanical)))refuse('frozen catalogue/Role/workflow/authority changed');
   const entry=initialEntry(registry,d.value.file);
   if(!isDeepStrictEqual(entry.implementation_blobs,d.value.implementation_blobs))refuse('descriptor/catalogue pins disagree');
   const manifest=JSON.parse(readPlain(root,'config/clued-components.json'));
   ensureVersionManifest(manifest,CONTROL_SOURCE_MODULE,source);
-  if(readPlain(root,COMPARISON_POLICY)!==lf(git(root,['show',`${base}:${COMPARISON_POLICY}`])))refuse('comparison policy differs from trusted base');
-  const policy=JSON.parse(git(root,['show',`${base}:config/clued-mechanical-files.json`]));
-  if(policy.schema!==1||policy.repository!=='tdoljyj/cross-memory-system'||!Array.isArray(policy.mechanical_paths))refuse('trusted mechanical policy invalid');
   const next=structuredClone(d.value),changes=[];
-  for(const name of CONTROL_SOURCE_MECHANICAL_FILES){
-    if(!policy.mechanical_paths.includes(name))refuse(`not in trusted mechanical policy: ${name}`);
+  for(const name of mechanical){
     const expected=old.value.implementation_blobs[name],current=readPlain(root,name),actual=blob(current);
     ensureVersionManifest(manifest,name,current);
     // The old content comes from an authenticated Git object, never a caller-

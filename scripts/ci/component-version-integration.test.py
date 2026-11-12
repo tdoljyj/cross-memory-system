@@ -17,6 +17,10 @@ integration = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(integration)
 
 
+REAL_POLICY = json.loads((ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
+GENERATOR = "scripts/ci/clued-control-source-pins.mjs"  # any fixed generator slot the integrator runs
+
+
 class CandidateIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.repo = Fixture()
@@ -24,6 +28,9 @@ class CandidateIntegrationTest(unittest.TestCase):
         self.repo.git("init", "-q")
         write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs",
               'console.log("fixture pinned verification executed");\n')
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            REAL_POLICY, mechanical_paths=["control-source-observed.json"],
+            marker_paths=["config/clued-components.json", "pkg/SKILL.md"])))
         self.commit("base")
         self.base = self.head()
         write(self.repo.dir / "tool.py", "print(2)\n")
@@ -91,6 +98,65 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertTrue(report["applied"])
         observed = json.loads((self.repo.dir / "control-source-observed.json").read_text())
         self.assertEqual(observed, {"base": self.base, "version": "3"})
+
+    def generator(self, body):
+        write(self.repo.dir / GENERATOR, "import fs from 'node:fs';\n" + body)
+        self.commit("generator fixture")
+
+    def test_unregistered_generated_file_fails_with_the_registration_hint(self):
+        self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")
+        with self.assertRaisesRegex(ValueError, "scripts/ci/new-registry.json 未登记到 config/clued-mechanical-files.json"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_registered_directory_output_is_accepted(self):
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            REAL_POLICY, mechanical_paths=["gen/**"], marker_paths=["config/clued-components.json", "pkg/SKILL.md"])))
+        self.generator("fs.mkdirSync('gen/a',{recursive:true});fs.writeFileSync('gen/a/out.ts','x\\n');\n")
+        report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+        self.assertIn("gen/a/out.ts", report["output_sha256"])
+
+    def test_generator_body_edit_of_a_version_marker_file_is_not_mechanical(self):
+        # pkg/SKILL.md is a declared version-marker file: integration may render
+        # its marker line, any other edit belongs in the PR itself.
+        self.generator("const t=fs.readFileSync('pkg/SKILL.md','utf8');\n"
+                       "if(!t.includes('generated tail'))fs.writeFileSync('pkg/SKILL.md',t+'generated tail\\n');\n")
+        with self.assertRaisesRegex(ValueError, "pkg/SKILL.md 未登记"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_registered_marker_file_may_change_only_its_version_line(self):
+        write(self.repo.dir / "pkg/references/a.md", "b\n")
+        self.commit("skill change")
+        report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+        self.assertIn("pkg/SKILL.md", report["output_sha256"])
+
+    def test_declared_version_marker_missing_from_marker_paths_fails(self):
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            REAL_POLICY, mechanical_paths=["control-source-observed.json"], marker_paths=["config/clued-components.json"])))
+        self.commit("marker file not registered")
+        with self.assertRaisesRegex(ValueError, "pkg/SKILL.md 未登记"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_rewriting_identical_bytes_still_needs_registration(self):
+        self.generator("fs.writeFileSync('service.js',fs.readFileSync('service.js'));\n")
+        with self.assertRaisesRegex(ValueError, "service.js 未登记"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_hand_written_manifest_structure_is_not_generated(self):
+        # The manifest's component entries are hand-written: integration may
+        # recompute version/content_sha256 only, never drop or add a component.
+        self.generator("const m=JSON.parse(fs.readFileSync('config/clued-components.json','utf8'));\n"
+                       "m.components=m.components.filter(c=>c.id!=='svc');\n"
+                       "fs.writeFileSync('config/clued-components.json',JSON.stringify(m));\n")
+        with self.assertRaises(ValueError):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_audit_integrates_a_throwaway_worktree_without_touching_the_checkout(self):
+        self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")
+        before = self.head()
+        with self.assertRaisesRegex(ValueError, "scripts/ci/new-registry.json 未登记"):
+            integration.audit(self.repo.dir, self.base)
+        self.assertEqual(self.head(), before)
+        self.assertFalse((self.repo.dir / "scripts/ci/new-registry.json").exists())
 
 
 if __name__ == "__main__":

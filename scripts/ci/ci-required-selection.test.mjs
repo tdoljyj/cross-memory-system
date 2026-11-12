@@ -133,7 +133,17 @@ test('every Node suite runs when any file its tests reach through imports change
 });
 
 test('any workflow change runs the runner budget policy, the admission self-tests and the pinned-registry check', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries']);
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs']);
+});
+
+test('a generator, the generated-file list or any file it names runs the mechanical-outputs audit', () => {
+  const policy = JSON.parse(readFileSync(new URL('../../config/clued-mechanical-files.json', import.meta.url), 'utf8'));
+  for (const file of ['config/clued-mechanical-files.json', 'scripts/ci/clued-merge-reconcile-source-build.mjs',
+    'apps/clued-cloud/scripts/generate-agent-contract.mjs', ...policy.marker_paths, ...policy.mechanical_paths.map(p => p.replace(/\*\*$/, 'x.ts'))]) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('mechanical-outputs'), file);
+  }
+  assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('mechanical-outputs'), false);
+  assert.deepEqual(SUITE_COMMANDS['mechanical-outputs'].at(-1).argv.slice(1), ['scripts/ci/component-version-integration.py', '--audit', '--base', '{base}']);
 });
 
 test('a change to a file a pinned registry holds runs the pinned-registry check', () => {
