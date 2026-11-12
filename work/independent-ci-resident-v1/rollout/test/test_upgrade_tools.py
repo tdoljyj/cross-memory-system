@@ -2,7 +2,7 @@
 hashes with the frozen Linux tool's own code. No host access, no WSL, no root, no key.
   python -I -m unittest discover -s test -p "test_*.py"     (from rollout/)
 """
-import base64, datetime, hashlib, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
+import base64, datetime, hashlib, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RO = os.path.dirname(HERE)
@@ -378,14 +378,18 @@ class SourceOnGithub(unittest.TestCase):
         self.assertEqual(r.returncode, 124)
         self.assertLess((datetime.datetime.now() - started).total_seconds(), 60)
         pid = int(open(pidfile).read())
-        if os.name == 'nt':
-            alive = str(pid) in subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'], capture_output=True, text=True).stdout
-        else:
-            try:
-                os.kill(pid, 0); alive = True
+        def alive():
+            if os.name == 'nt':
+                return str(pid) in subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'], capture_output=True, text=True).stdout
+            try:  # a killed child awaiting reaping is a zombie (state Z): it is already ended
+                with open(f'/proc/{pid}/stat') as f:
+                    return f.read().rsplit(')', 1)[1].split()[0] != 'Z'
             except OSError:
-                alive = False
-        self.assertFalse(alive, 'the child of the hanging git was ended too')
+                return False
+        deadline = time.monotonic() + 10
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(alive(), 'the child of the hanging git was ended too')
 
     def test_an_unreachable_remote_and_bad_arguments(self):
         code, out, _ = run('source-on-github.py', 'file://' + os.path.join(self.d, 'missing').replace(os.sep, '/'), self.main)
