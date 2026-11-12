@@ -6,7 +6,7 @@ Regression cases (README.md section 5): the three refusals of the r7 TURING rein
   3. the launcher accepted only uninstall plan /2 while the installed uninstall writes /3 (UNINSTALL_PLAN_REFUSED, launcher f3).
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
-import datetime, hashlib, importlib.util, json, os, shutil, subprocess, tempfile, unittest
+import base64, datetime, hashlib, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -433,6 +433,29 @@ class Rehearsal(unittest.TestCase):
     def test_roles_not_rehearsed_is_a_finding(self):
         self.assertIn('ROLE_DERIVATION_NOT_REHEARSED', codes(self.run_with(FakeHost(self.fx), skip_roles=True)))
 
+    def test_the_package_run_leaves_the_installed_linux_manifest_to_phase_a(self):
+        open(self.fx.installed_manifest, 'ab').write(b' ')   # the configuration's file is not a copy of the installed manifest
+        self.assertIn('INSTALLED_LINUX_MANIFEST_COPY_STALE', codes(self.run_with(FakeHost(self.fx))))
+        os.remove(self.fx.installed_manifest)   # the package run names a file that is not there, on purpose
+        with self.assertRaises(OSError):
+            self.run_with(FakeHost(self.fx))    # without --fleet a missing copy is never a clean result
+        r = self.run_with(FakeHost(self.fx), installed_linux_in_phase_a=True)
+        self.assertEqual((r['status'], r['findings']), ('REHEARSAL_PASS', []))
+        self.assertEqual(r['checks']['linux']['installedManifestCopy'], {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_MANIFEST_BYTES_NOT_ON_WINDOWS', 'expectedSha256': self.fx.facts['manifestSha256']})
+        self.assertNotIn('installedManifestCopySha256', r['checks']['linux'])
+        self.assertEqual((r['checks']['pins']['notTheNewSource'], r['checks']['pins']['installedShape']['deferredTo']), ([], 'linux-phase-a'))
+        self.assertGreaterEqual(r['checks']['pins']['externalPins'], 1)
+        with self.assertRaises(AssertionError) as usage:
+            rehearse.main(['no-config-is-read', '--commit', COMMIT, '--package', self.fx.pkg, '--fleet'])
+        self.assertIn('--fleet goes with --file-locks-in-launcher', str(usage.exception))
+        # an external pin that is not the new commit's file is still found here
+        fx = Fixture(package_pins_follow_new=False); self.addCleanup(fx.close)
+        os.remove(fx.installed_manifest)
+        self.assertIn('LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE', codes(rehearse.rehearse(fx.cfg, COMMIT, fx.pkg, FakeHost(fx), skip_roles=True, installed_linux_in_phase_a=True)))
+        # everything else about the installed Linux is still checked here
+        open(os.path.join(self.fx.cfg['linux']['installedRoles'], 'trivy.json'), 'wb').write(b'older policy')
+        self.assertIn('INSTALLED_ROLES_COPY_STALE', codes(self.run_with(FakeHost(self.fx), installed_linux_in_phase_a=True)))
+
     def test_stale_installed_copies(self):
         open(os.path.join(self.fx.cfg['linux']['installedRoles'], 'trivy.json'), 'wb').write(b'older policy')
         open(self.fx.installed_manifest, 'ab').write(b' ')
@@ -513,6 +536,256 @@ class Rehearsal(unittest.TestCase):
     def test_role_derivation_as_root_is_refused(self):
         r = self.run_with(FakeHost(self.fx, derive={'status': 'REFUSED', 'code': 'REHEARSAL_DEFAULT_USER_IS_ROOT'}))
         self.assertEqual([f.get('refusal') for f in r['findings'] if f['code'] == 'ROLE_DERIVATION_REFUSED'], ['REHEARSAL_DEFAULT_USER_IS_ROOT'])
+
+
+OPERATOR = 'S-1-5-21-1-2-3-1000'   # the Owner who runs the rehearsal; PROFILE['ownerSid'] is the companion account (M5-b)
+ACCOUNT_KEY, WSL_KEY = ('install', 'companion-account.json'), ('install', 'companion-wsl.json')
+ROLES_PUBLIC_KEY = ('upgrade', 'mailbox', 'responses', 'roles-public.json')
+
+
+class CompanionHost(FakeHost):
+    """A node whose resident distribution is registered to the companion account: the Owner's WSL cannot see it, so any wsl call fails
+    the test. The role derivation runs through windows_python."""
+    def __init__(self, fx, **kw):
+        super().__init__(fx, **kw)
+        self.json[ACCOUNT_KEY] = {'contract': 'clued.independent-ci.companion-account/1', 'companionSid': PROFILE['ownerSid'], 'operatorSid': OPERATOR}
+        self.json[WSL_KEY] = {'contract': 'clued.independent-ci.companion-wsl/1', 'distro': fx.cfg['linux']['distribution'], 'target': 'D:\\w\\ext4.vhdx',
+                              'companionSid': PROFILE['ownerSid'], 'stage': 'qualified', 'imported': True, 'qualifiedAt': '2026-11-10T10:30:00Z'}
+        self.json[ROLES_PUBLIC_KEY] = self.roles_public()
+        self.windows_argv = self.windows_installed = None
+
+    def roles_public(self, generation=1, files=None):
+        files = files or {name: (b'q ' if name.endswith('.qualification.json') else b'policy ') + name.split('.')[0].encode() for name in rehearse.ROLES_PUBLIC_NAMES}
+        return {'contract': 'clued.independent-ci.linux-roles-public/1', 'generation': generation, 'factsObservedAt': self.fx.facts['observedAt'],
+                'observedAt': '2026-11-12T12:00:00.123Z', 'files': {n: {'sha256': sha(b), 'base64': base64.b64encode(b).decode()} for n, b in files.items()}}
+
+    def read_bounded(self, p, limit):
+        if p not in self.json:
+            raise FileNotFoundError()
+        v = self.json[p]
+        return v if isinstance(v, bytes) else json.dumps(v).encode('utf-8')
+
+    def wsl_python(self, distribution, argv, user=None):
+        raise AssertionError('wsl called on a companion node')
+
+    def live_version_facts(self, distribution):
+        raise AssertionError('wsl called on a companion node')
+
+    def windows_python(self, argv):
+        self.windows_argv = argv
+        installed = argv[argv.index('--installed') + 1]
+        self.windows_installed = (installed, {n: open(os.path.join(installed, n), 'rb').read() for n in os.listdir(installed)})
+        return (0 if self.derive.get('status') == 'ROLE_POLICIES_V3_AND_UNSIGNED_PAYLOADS_WRITTEN' else 1), json.dumps(self.derive), ''
+
+
+class CompanionNode(unittest.TestCase):
+    def setUp(self):
+        self.fx = Fixture()
+        self.addCleanup(self.fx.close)
+        os.makedirs(os.path.join(self.fx.w, 'rehearsal', 'src-' + COMMIT[:8] + '.git'))
+        self.fx.cfg['operatorSid'] = OPERATOR
+        self.fx.cfg['companionAccount'] = {'wslVhdxDirectory': 'D:\\w'}
+        which = mock.patch.object(rehearse.shutil, 'which', return_value='C:\\Program Files\\Git\\cmd\\git.exe')
+        which.start(); self.addCleanup(which.stop)
+
+    def run_with(self, host, **kw):
+        return rehearse.rehearse(self.fx.cfg, COMMIT, self.fx.pkg, host, **kw)
+
+    def test_happy_path_calls_no_wsl_and_derives_on_windows(self):
+        host = CompanionHost(self.fx)
+        r = self.run_with(host)
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
+        self.assertEqual(r['checks']['linuxHost'], {'deferredTo': 'launch-phase-A', 'reason': 'COMPANION_ACCOUNT_DISTRIBUTION'})
+        self.assertEqual(r['checks']['companionAccount'], {'records': True, 'companionSid': PROFILE['ownerSid'], 'operatorSid': OPERATOR, 'wslStage': 'qualified'})
+        self.assertEqual(r['checks']['linux']['rolesCopySource'], 'companion-roles-public')
+        self.assertEqual(r['checks']['linux']['rolesCopy'], self.fx.facts_roles)
+        self.assertEqual(r['checks']['roles']['runAsUser'], 'windows-non-elevated-operator')
+        self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
+        argv = host.windows_argv
+        self.assertEqual(argv[:4], ['-c', rehearse.WINDOWS_ROLE_RUNNER, os.path.join(RE, 'linux', 'tools', 'derive-roles.py'), 'C:\\Program Files\\Git\\cmd\\git.exe'])
+        self.assertEqual(argv[argv.index('--old-manifest-file') + 1], os.path.join(self.fx.cfg['linux']['installedRoles'], 'formal-source-manifest-v2.json'))
+        self.assertEqual(argv[argv.index('--commit') + 1], COMMIT)
+        installed, files = host.windows_installed
+        self.assertEqual(files, {n: open(os.path.join(self.fx.cfg['linux']['installedRoles'], n), 'rb').read() for n in rehearse.ROLES_PUBLIC_NAMES})   # = the copy
+        self.assertFalse(os.path.exists(os.path.dirname(installed)))   # the private temporary directory is gone
+        self.assertIsNone(host.probe_argv)
+
+    def test_config_copy_may_be_absent_but_never_different(self):
+        rd = self.fx.cfg['linux']['installedRoles']
+        for name in rehearse.ROLES_PUBLIC_NAMES:
+            os.remove(os.path.join(rd, name))
+        r = self.run_with(CompanionHost(self.fx))
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
+        open(os.path.join(rd, 'trivy.json'), 'wb').write(b'older policy')
+        self.assertEqual([(f['code'], f.get('file')) for f in self.run_with(CompanionHost(self.fx))['findings']],
+                         [('INSTALLED_ROLES_COPY_NOT_THE_COMPANION_COPY', 'trivy.json')])
+
+    def test_roles_public_that_does_not_check_out_is_a_finding(self):
+        def changed(host, edit):
+            doc = host.roles_public(); edit(doc); return doc
+        other = {n: b'other ' + n.encode() for n in rehearse.ROLES_PUBLIC_NAMES}
+        cases = (
+            (lambda h: changed(h, lambda d: d['files']['trivy.json'].update(sha256='0' * 64)), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: changed(h, lambda d: d['files']['trivy.json'].update(base64=d['files']['trivy.json']['base64'] + '\n')), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: changed(h, lambda d: d['files'].pop('trivy.json')), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: changed(h, lambda d: d.update(extra=1)), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: changed(h, lambda d: d.update(contract='x')), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: changed(h, lambda d: d.update(observedAt='yesterday')), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: json.dumps(h.roles_public()).replace('"generation"', '"generation": 1, "generation"', 1).encode(), 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: b'\xff', 'ROLES_PUBLIC_COPY_INVALID'),
+            (lambda h: h.roles_public(generation=2), 'ROLES_PUBLIC_COPY_OTHER_GENERATION'),
+            (lambda h: h.roles_public(files=other), 'ROLES_PUBLIC_COPY_NOT_THE_FACTS'),
+            (lambda h: None, 'ROLES_PUBLIC_COPY_MISSING'),
+        )
+        for make, code in cases:
+            with self.subTest(code=code):
+                host = CompanionHost(self.fx)
+                value = make(host)
+                if value is None:
+                    del host.json[ROLES_PUBLIC_KEY]
+                else:
+                    host.json[ROLES_PUBLIC_KEY] = value
+                r = self.run_with(host)
+                self.assertEqual(codes(r), [code, 'ROLE_DERIVATION_NOT_REHEARSED'])
+                self.assertIsNone(host.windows_argv)
+        host = CompanionHost(self.fx)
+        host.read_bounded = lambda p, limit: (_ for _ in ()).throw(PermissionError()) if p == ROLES_PUBLIC_KEY else CompanionHost.read_bounded(host, p, limit)
+        self.assertEqual(codes(self.run_with(host)), ['ROLES_PUBLIC_COPY_UNREADABLE', 'ROLE_DERIVATION_NOT_REHEARSED'])
+
+    def test_derivation_refusal_keeps_its_semantics(self):
+        refusal = {'status': 'REFUSED', 'code': 'PINNED_FILE_CHANGED_IN_NEW_COMMIT_REPIN_NEEDED', 'role': 'gitleaks', 'key': 'entrySha256'}
+        r = self.run_with(CompanionHost(self.fx, derive=refusal))
+        self.assertEqual(r['findings'], [{'code': 'ROLE_DERIVATION_REFUSED', 'refusal': refusal['code'], 'role': 'gitleaks', 'key': 'entrySha256'}])
+        with mock.patch.object(rehearse.shutil, 'which', return_value=None):
+            host = CompanionHost(self.fx)
+            r = self.run_with(host)
+        self.assertEqual([f.get('refusal') for f in r['findings']], ['WINDOWS_GIT_NOT_FOUND'])
+        self.assertIsNone(host.windows_argv)
+
+    def test_malformed_or_inconsistent_companion_records_fail_closed(self):
+        account = CompanionHost(self.fx).json[ACCOUNT_KEY]
+        wsl = CompanionHost(self.fx).json[WSL_KEY]
+        cases = (
+            ({ACCOUNT_KEY: None}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'MISSING'),
+            ({ACCOUNT_KEY: dict(account, extra=1)}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: dict(account, operatorSid=PROFILE['ownerSid'])}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: dict(account, operatorSid='S-1-5-18')}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: dict(account, contract='clued.independent-ci.companion-account/2')}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: json.dumps(account).replace('"operatorSid"', '"operatorSid": "%s", "operatorSid"' % OPERATOR, 1).encode()}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: b'{'}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'SHAPE'),
+            ({ACCOUNT_KEY: dict(account, companionSid='S-1-5-21-1-2-3-1009')}, 'COMPANION_ACCOUNT_RECORD_REFUSED', 'COMPANION_NOT_THE_PROFILE_OWNER'),
+            ({WSL_KEY: None}, 'COMPANION_WSL_RECORD_REFUSED', 'MISSING'),
+            ({WSL_KEY: []}, 'COMPANION_WSL_RECORD_REFUSED', 'SHAPE'),
+            ({WSL_KEY: dict(wsl, contract='x')}, 'COMPANION_WSL_RECORD_REFUSED', 'SHAPE'),
+            ({WSL_KEY: {k: v for k, v in wsl.items() if k != 'target'}}, 'COMPANION_WSL_RECORD_REFUSED', 'SHAPE'),
+            ({WSL_KEY: dict(wsl, stage='moved')}, 'COMPANION_WSL_RECORD_REFUSED', 'NOT_QUALIFIED'),
+            ({WSL_KEY: dict(wsl, stage='restored')}, 'COMPANION_WSL_RECORD_REFUSED', 'NOT_QUALIFIED'),
+            ({WSL_KEY: dict(wsl, distro='Ubuntu')}, 'COMPANION_WSL_RECORD_REFUSED', 'NOT_THIS_DISTRIBUTION_AND_ACCOUNT'),
+            ({WSL_KEY: dict(wsl, companionSid=OPERATOR)}, 'COMPANION_WSL_RECORD_REFUSED', 'NOT_THIS_DISTRIBUTION_AND_ACCOUNT'),
+        )
+        for change, code, reason in cases:
+            with self.subTest(code=code, reason=reason, change=str(change)[:80]):
+                host = CompanionHost(self.fx)
+                for key, value in change.items():
+                    if value is None:
+                        del host.json[key]
+                    else:
+                        host.json[key] = value
+                r = self.run_with(host)   # CompanionHost fails on any wsl call
+                self.assertEqual([(f['code'], f.get('reason')) for f in r['findings']], [(code, reason)])
+                self.assertEqual(r['checks']['linuxHost'], rehearse.DEFERRED_HOST_PROBE)
+        self.fx.cfg['operatorSid'] = 'S-1-5-21-1-2-3-1002'
+        r = self.run_with(CompanionHost(self.fx))
+        self.assertEqual(r['findings'], [{'code': 'COMPANION_ACCOUNT_NOT_THE_CONFIGURED', 'installed': OPERATOR, 'configured': 'S-1-5-21-1-2-3-1002'}])
+
+    def test_explicit_snapshot_cannot_be_corroborated_without_wsl(self):
+        path = os.path.join(self.fx.dir, 'snapshot.json')
+        open(path, 'w').write(json.dumps(self.fx.facts))
+        r = self.run_with(CompanionHost(self.fx), linux_version_facts=path)
+        self.assertEqual(r['findings'], [{'code': 'LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE', 'reason': 'COMPANION_ACCOUNT_DISTRIBUTION'}])
+
+    def test_companion_processes_still_lock_as_external(self):
+        locker = {'pid': 4321, 'application': 'CluedCompanionSupervisor', 'startedFileTime': 1, 'expected': False}
+        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}))
+        self.assertEqual(r['findings'], [{'code': 'EXTERNAL_RESIDENT_BINARY_LOCK', 'processes': [locker], 'companionProcessIdentity': 'UNREADABLE_NON_ELEVATED'}])
+
+    def test_the_package_launcher_takes_over_the_lock_finding_on_a_companion_node_only(self):
+        locker = {'pid': 4321, 'application': 'CluedCompanionSupervisor', 'startedFileTime': 1, 'expected': False}
+        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True)
+        self.assertEqual((r['status'], r['findings']), ('REHEARSAL_PASS', []))
+        self.assertEqual(r['checks']['fileLocksFinding'], {'deferredTo': 'launch-elevated-file-locks', 'reason': 'COMPANION_PROCESS_IDENTITY_UNREADABLE_NON_ELEVATED', 'processes': [locker]})
+        self.assertEqual(r['checks']['fileLocks']['external'], [locker])   # what was seen stays in the report
+        # an observation that is not valid is never left to the launcher
+        bad = self.run_with(CompanionHost(self.fx, file_locks={'status': 'UNREADABLE'}), file_locks_in_launcher=True)
+        self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', [f['code'] for f in bad['findings']])
+        # a launcher template without the elevated step cannot take the finding over
+        with tempfile.TemporaryDirectory(prefix='rt') as d:
+            old = os.path.join(d, 'template.ps1')
+            with open(os.path.join(RE, 'launcher', 'template.ps1'), encoding='utf-8') as f, open(old, 'w', encoding='utf-8') as g:
+                g.write(f.read().replace('$fileLocks = Step-FileLocks', '$fileLocks = $null'))
+            r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, template_path=old)
+            self.assertEqual([f['code'] for f in r['findings']], ['LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP'])
+        # a node without a companion account can tell its lockers apart non-elevated: the finding stays
+        fx = Fixture(); self.addCleanup(fx.close)
+        r = rehearse.rehearse(fx.cfg, COMMIT, fx.pkg, FakeHost(fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, skip_roles=True)
+        self.assertIn('EXTERNAL_RESIDENT_BINARY_LOCK', [f['code'] for f in r['findings']]); self.assertNotIn('fileLocksFinding', r['checks'])
+
+    def test_a_node_without_companion_records_is_unchanged(self):
+        host = FakeHost(self.fx)
+        host.windows_python = lambda argv: self.fail('a node without a companion account derives in its WSL')
+        r = self.run_with(host)
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
+        self.assertIsNotNone(host.probe_argv)
+        self.assertIsNotNone(host.derive_argv)
+        self.assertNotIn('companionAccount', r['checks'])
+        self.assertNotIn('rolesCopySource', r['checks']['linux'])
+        self.assertNotIn('deferredTo', r['checks']['linuxHost'])
+
+
+@unittest.skipUnless(os.name == 'nt' and shutil.which('git'), 'the Windows runner needs Windows and git')
+class WindowsRoleRunner(unittest.TestCase):
+    """The real derive-roles.py through WINDOWS_ROLE_RUNNER with this Windows Python and git: the tool's POSIX-only parts are supplied."""
+    def test_derive_roles_runs_unchanged_on_windows(self):
+        import ctypes
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            self.skipTest('the runner refuses an elevated token')
+        d = tempfile.mkdtemp(prefix='derive-win-'); self.addCleanup(rehearse.remove_tree, d)
+        ci = 'work/actions-hosted-migration/independent-ci-v1/'
+        blobs = {ci + 'worker/qualification-v2.mjs': b'q', ci + 'src/worker-v2.mjs': b'w', ci + 'src/proof.mjs': b'p', ci + 'src/job-v2.mjs': b'j', 'entry/linux-worker.mjs': b'entry new\n'}
+        repo = os.path.join(d, 'repo')
+        for rel, data in blobs.items():
+            os.makedirs(os.path.dirname(os.path.join(repo, *rel.split('/'))), exist_ok=True)
+            open(os.path.join(repo, *rel.split('/')), 'wb').write(data)
+        git = lambda *a: subprocess.run(['git'] + list(a), check=True, capture_output=True, text=True).stdout.strip()
+        git('init', '-q', repo); git('-C', repo, '-c', 'core.autocrlf=false', 'add', '.')
+        git('-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'c')
+        commit = git('-C', repo, 'rev-parse', 'HEAD')
+        bare = os.path.join(d, 'src.git')
+        git('init', '-q', '--bare', '--initial-branch=accepted', bare); git('-C', bare, 'fetch', '-q', '--no-tags', repo, commit + ':refs/heads/accepted')
+        old_ref, ref, href = '2' * 8 + '-2222-4222-8222-' + '2' * 12, '1' * 8 + '-1111-4111-8111-' + '1' * 12, '3' * 8 + '-3333-4333-8333-' + '3' * 12
+        roles = ('gitleaks', 'trivy', 'contract-placement')
+        old_m = json.dumps({'roles': {r: {'controllerRelay': {'sourceAcceptanceRef': old_ref, 'hostQualificationRef': old_ref}} for r in roles}}).encode()
+        new_m = json.dumps({'sourceSha': commit, 'roles': {r: {'controllerRelay': {'sourceAcceptanceRef': ref, 'hostQualificationRef': href}} for r in roles}}).encode()
+        inst = os.path.join(d, 'installed'); os.mkdir(inst)
+        open(os.path.join(d, 'old.json'), 'wb').write(old_m); open(os.path.join(d, 'new.json'), 'wb').write(new_m)
+        pol = {'sourceManifestSha256': sha(old_m), 'sourceAcceptanceRef': old_ref, 'hostAcceptanceRef': old_ref, 'entryFile': SV2 + 'entry/linux-worker.mjs',
+               'entrySha256': sha(b'entry old\n'), 'qualificationSha256': sha(b'q'), 'workerSha256': sha(b'w'), 'proofSha256': sha(b'p'), 'jobSha256': sha(b'j')}
+        for r in roles:
+            open(os.path.join(inst, r + '.json'), 'w').write(json.dumps(pol))
+            open(os.path.join(inst, r + '.qualification.json'), 'w').write(json.dumps({'payload': dict(pol), 'signature': 's'}))
+        out = os.path.join(d, 'out')
+        code, stdout, stderr = rehearse.Host().windows_python(['-c', rehearse.WINDOWS_ROLE_RUNNER, os.path.join(RE, 'linux', 'tools', 'derive-roles.py'), shutil.which('git'),
+            '--installed', inst, '--old-manifest-file', os.path.join(d, 'old.json'), '--new-manifest-file', os.path.join(d, 'new.json'), '--src', bare,
+            '--commit', commit, '--source-acceptance-ref', ref, '--host-acceptance-ref', href, '--out', out])
+        self.assertEqual(code, 0, stdout + stderr)
+        report = json.loads(stdout)
+        self.assertEqual(report['status'], 'ROLE_POLICIES_V3_AND_UNSIGNED_PAYLOADS_WRITTEN')
+        self.assertEqual(report['roles']['trivy']['repinned'], {'entrySha256': {'old': sha(b'entry old\n'), 'new': sha(b'entry new\n')}})
+        written = open(os.path.join(out, 'trivy.json'), 'rb').read()
+        self.assertEqual(sha(written), report['roles']['trivy']['policySha256'])   # binary: no newline translation
+        self.assertFalse(written.endswith(b'\r\n'))
+        rehearse.remove_tree(out)   # the tool's 0400 (read-only) files
+        self.assertFalse(os.path.exists(out))
 
 
 class TemplateContract(unittest.TestCase):

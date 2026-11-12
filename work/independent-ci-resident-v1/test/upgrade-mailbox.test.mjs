@@ -118,6 +118,9 @@ test('consistent(current, facts): true, false on each mismatch, null when unknow
   assert.equal(consistent(current(), { ...facts(), extra: 1 }, T0), null);
   assert.throws(() => validateVersionFacts(facts({ roles: { 'Bad Role': { policySha256: H('1'), qualificationSha256: H('2') } } })), { code: 'LINUX_VERSION_FACTS_REFUSED' });
   validateVersionFacts(facts({ staged: { opId: OP, generation: 4 } }));
+  // liveMatchesCurrent: optional (a tool from before it has none), a boolean or null when present
+  for (const v of [true, false, null]) validateVersionFacts(facts({ liveMatchesCurrent: v }));
+  for (const v of ['yes', 1, {}]) assert.throws(() => validateVersionFacts(facts({ liveMatchesCurrent: v })), { code: 'LINUX_VERSION_FACTS_REFUSED' });
   assert.throws(() => validateGenerationCurrent(current({ stateCompat: { schema: 1, readableBySchemas: [] } })), { code: 'GENERATION_CURRENT_REFUSED' });
 });
 

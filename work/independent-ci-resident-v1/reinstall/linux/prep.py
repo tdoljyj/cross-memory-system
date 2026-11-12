@@ -10,6 +10,16 @@ and the generation record (resident/upgrade/current.json: the installed package)
 History (r4 .. r7 on TURING, with the reviews that shaped each check): README.md section 9.
   python -I prep.py <config.json> <commit40> <new-manifest> <decision-uuid> <package-dir> <out-suffix> <in-dir-name>
                     <installed-version-facts.json> <installed-generation.json> [<rehearsal report> (required unless out-suffix draft*)]
+
+The generic node package (rollout/fleet, one UAC per node): --in-dir and --out-dir, together, replace <in-dir-name>:
+  python -I prep.py <config.json> <commit40> <new-manifest> <decision-uuid> <package-dir> <out-suffix> --in-dir <Windows path>
+                    --out-dir <Windows path> <installed-version-facts.json> <installed-generation.json> [<rehearsal report>]
+The scripts then read only <in-dir> (assemble.py's output, wherever it is) and write their evidence, version facts and review copies only
+into <out-dir> (both as /mnt/<drive>/...; the account that runs them needs read on the first and write on the second), are named A.sh,
+B.sh and B-resume.sh, take no argument and need no R4_CLEAN_ENV: the elevated launcher runs A, then B (B-resume once after a failure),
+each as `wsl.exe --distribution <d> --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile
+--norc <script>` (as the companion account through the registrar's root-run mode, or as the elevated Owner), with nobody reading phase
+A's manifest hash in between. The Linux tools of the tree are this file's own tree (the unpacked package), not a git archive.
 """
 import datetime, hashlib, json, os, re, shlex, sys
 
@@ -22,18 +32,38 @@ def _load(name, path):
     mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
     return mod
 rconfig = _load('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
-CFG = rconfig.load(sys.argv[1])
+ARGV = sys.argv[1:]
+def _take(flag):
+    if flag not in ARGV:
+        return None
+    i = ARGV.index(flag)
+    assert i + 1 < len(ARGV) and ARGV.count(flag) == 1, ('OPTION_VALUE_REQUIRED', flag)
+    value = ARGV[i + 1]
+    del ARGV[i:i + 2]
+    return value
+IN_DIR, OUT_DIR = _take('--in-dir'), _take('--out-dir')
+FLEET = IN_DIR is not None or OUT_DIR is not None
+assert not FLEET or (IN_DIR is not None and OUT_DIR is not None), 'IN_DIR_AND_OUT_DIR_GO_TOGETHER'
+if FLEET:
+    ARGV.insert(6, None)   # no <in-dir-name>
+# A Windows path the root scripts name as /mnt/<drive>/...: letters, digits, '.', '_', '-' and '\' only, no '.' or '..' component (the
+# registrar's WslPath rule: nothing bash or cmd.exe reads as more than a path).
+def _wsl(path, code):
+    assert re.fullmatch(r'[A-Za-z]:(?:\\[A-Za-z0-9._-]+)+', path) and not any(c in ('.', '..') or c.endswith('.') for c in path[3:].split('\\')), (code, path)   # Win32 drops a trailing dot
+    return '/mnt/' + path[0].lower() + path[2:].replace('\\', '/')
+CFG = rconfig.load(ARGV[0])
 rconfig.need_installed_linux(CFG)   # the Linux reinstall kit is for a node whose Linux CI is installed
 R = CFG['workDir']
-COMMIT, NEW, REF, PKG, SUFFIX = sys.argv[2:7]
+COMMIT, NEW, REF, PKG, SUFFIX = ARGV[1:6]
 assert re.fullmatch(r'[0-9a-f]{40}', COMMIT) and re.fullmatch(r'[0-9a-f]{64}', NEW) and re.fullmatch(r'[a-z0-9-]{1,20}', SUFFIX)
-assert re.fullmatch(r'[A-Za-z0-9._-]{1,64}', sys.argv[7]) and sys.argv[7] not in ('.', '..'), 'IN_DIR_NAME_SHAPE'
+assert FLEET or (re.fullmatch(r'[A-Za-z0-9._-]{1,64}', ARGV[6]) and ARGV[6] not in ('.', '..')), 'IN_DIR_NAME_SHAPE'
 DRAFT = SUFFIX.startswith('draft')
 # review 1-4: root runs the tree's Linux scripts; the tree must be exactly the commit
-_load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], COMMIT, os.path.join(R, 'tree-' + COMMIT[:8]))
+if not FLEET:   # the generic node package: this file's own tree is the unpacked, hash-checked archive of the commit
+    _load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], COMMIT, os.path.join(R, 'tree-' + COMMIT[:8]))
 # The installed Linux state, from the node's own files (copies): the Linux version facts and the generation record.
-_facts = json.load(open(sys.argv[8], encoding='utf-8'))
-_gen = json.load(open(sys.argv[9], encoding='utf-8'))
+_facts = json.load(open(ARGV[7], encoding='utf-8'))
+_gen = json.load(open(ARGV[8], encoding='utf-8'))
 assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and 'staged' in _facts and _facts['staged'] is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
 assert _gen.get('contract') == 'clued.independent-ci.resident-generation/1' and _gen['linux'] == {'generation': _facts['generation'], 'manifestSha256': _facts['manifestSha256'], 'ciSourceManifestSha256': _facts['ciSourceManifestSha256']}, 'INSTALLED_FACTS_NOT_THE_GENERATION_RECORD'
 OLD_COMMIT = _facts['sourceCommit']
@@ -53,7 +83,10 @@ NO_V1 = V1_HEAD is None
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # reviewed 10-21, used 10-21/10-22/10-23
 SIGN_NO_V1_SHA = '7763a598600ff4b94f0633d5824f8bf0e5697759d8c359b31025ee9916202435'   # sign-qualification-no-v1.mjs (imports SIGN_SHA's canonicalJson, ROLES, FIXED)
 SIGNER = 'sign-qualification-no-v1.mjs' if NO_V1 else 'sign-qualification-v2.mjs'
-IN = os.path.join(R, 'linux', sys.argv[7])
+IN = IN_DIR if FLEET else os.path.join(R, 'linux', ARGV[6])
+WSL_IN = _wsl(IN, 'IN_DIR_PATH_SHAPE') if FLEET else None
+WSL_OUT = _wsl(OUT_DIR, 'OUT_DIR_PATH_SHAPE') if FLEET else None
+assert not FLEET or (IN.lower() != OUT_DIR.lower() and not (OUT_DIR.lower() + '\\').startswith(IN.lower() + '\\')), 'OUT_DIR_INSIDE_IN_DIR'
 REVIEW_TOOLS = os.path.join(HERE, 'tools')   # the reviewed signer and verify-source-v2 template, committed
 VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'
 
@@ -76,7 +109,7 @@ assert not (DRAFT_REFS and not DRAFT), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
 # README section 5: final scripts only after a PASS rehearsal of exactly this package, commit and configuration (10th argument), at
 # most 24 hours old (review 1-8). Draft scripts refuse to run at all (DRAFT=1 below, review 1-2), whatever their refs.
 if not DRAFT:
-    _r = json.load(open(sys.argv[10], encoding='utf-8')) if len(sys.argv) > 10 else {}
+    _r = json.load(open(ARGV[9], encoding='utf-8')) if len(ARGV) > 9 else {}
     try:
         _age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.strptime(_r.get('observedAt', ''), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
     except ValueError:
@@ -116,7 +149,7 @@ assert LINUX_RES_MANIFEST == sha(os.path.join(PKG, 'linux', 'manifest.json'))
 UPG_FILES = ['upgrade-v1/bin/clued-ci-upgrade-linux', 'upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs', 'upgrade-v1/manifest.json']
 for f in UPG_FILES:
     assert sha(os.path.join(IN, 'linux-pkg', *f.split('/'))) == sha(os.path.join(PKG, 'linux', *f.split('/'))), ('UPGRADE_FILE_NOT_THE_PACKAGES', f)
-TREE_LINUX = os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
+TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):   # r7: + uninstall
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
 # r7: the package's Linux resident files (install-resident-linux.sh FILES, in its order) and their install plan on the host as it will
@@ -165,7 +198,42 @@ for f in files:
     if f != 'linux-pkg/source-v2/source.bundle':
         assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
-W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
+W = shlex.quote(WSL_IN if FLEET else '/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
+# Where the scripts write what Windows reads back (review copies, version facts, evidence): next to $W, or the package run's out directory.
+OUT = '$O' if FLEET else '$W/..'
+O_LINE = 'O=' + shlex.quote(WSL_OUT) + '\n[ -d "$O" ] || refuse OUT_DIRECTORY_MISSING\n' if FLEET else ''
+ENV_GATE = ('# run by the elevated launcher under `/usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc` (fixed by the registrar)\n' if FLEET else
+            '# M-1: the Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`\n'
+            '[ "${R4_CLEAN_ENV:-}" = 1 ] || refuse RUN_UNDER_ENV_I_AS_IN_RUN_ORDER\n')
+_HOW = '#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-'
+HOW = (['#   run by the elevated reinstall launcher only (no argument): ' + n for n in ('A.sh', 'B.sh, after A.sh', 'B-resume.sh, once, after B.sh failed')] if FLEET else
+       [_HOW + 'A-stage.sh', _HOW + 'B-switch.sh <phaseAManifestSha256 as reviewed>', _HOW + 'B-resume.sh <phaseAManifestSha256 as reviewed>'])
+# Phase A of a package run only (the Owner-run scripts are unchanged). First thing: a phase A of an earlier launch whose launcher gave up
+# waiting may still be running (its staging has no phaseA.sha256 yet); two at once are refused. A process counts when it runs a
+# linux-run-<32hex>/script.sh and is neither this shell nor a child of it (a command substitution has this shell's command line).
+A_GUARD = r"""command -v pgrep >/dev/null || refuse PGREP_REQUIRED
+for d in /root/clued-ci-reinstall-*/stg; do
+  [ -d "$d" ] && [ "$d" != "$STG" ] && [ ! -e "$d/phaseA.sha256" ] || continue
+  for p in $(pgrep -f 'linux-run-[0-9a-f]{32}/script\.sh' || true); do
+    [ "$p" != "$$" ] || continue
+    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') || continue
+    [ "$pp" != "$$" ] || continue
+    refuse ANOTHER_PHASE_A_RUNNING
+  done
+done
+""" if FLEET else ''
+# After staging: the installed resident manifest and the new package's name the same files in the same order (the contract and the
+# path list; the pins themselves are checked just above). rehearse.py --fleet cannot see the installed manifest and leaves this to here.
+A_SHAPE = r"""$CLEAN $PY -I -c 'import json,sys
+a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); p=lambda m:[f["installedPath"] for f in m["files"]]
+ok=a.get("contract")==b.get("contract") and p(a)==p(b)
+print(json.dumps({"installedShape":ok,"installed":len(a["files"]),"package":len(b["files"])})); sys.exit(0 if ok else 1)' /opt/clued-independent-ci/resident-v1/manifest.json "$STG/linux-res-pkg/manifest.json" > "$STG/installed-shape.A.stdout.json" || { cat "$STG/installed-shape.A.stdout.json"; refuse INSTALLED_LINUX_MANIFEST_NOT_THE_PACKAGES_SHAPE; }
+""" if FLEET else ''
+# Phase B and the resume: with a person between A and B they take the phase A manifest hash that person reviewed; in the launcher's one
+# run there is nobody in between, and what remains is that every staged byte is still what phase A listed.
+WANT_A_GATE = ('[ -s "$STG/phaseA.sha256" ] || refuse PHASE_A_NOT_DONE\n' if FLEET else
+               'WANT_A="${1:?phase A manifest sha256 required}"\n')
+WANT_A_CHECK = '' if FLEET else '[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' \' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED\n'
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
@@ -191,9 +259,7 @@ docker_ready() {
 COMMON = DOCKER_READY + f"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
 refuse() {{ echo "{{\\"status\\":\\"REFUSED\\",\\"code\\":\\"$1\\"}}"; exit 1; }}
-# M-1: the Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`
-[ "${{R4_CLEAN_ENV:-}}" = 1 ] || refuse RUN_UNDER_ENV_I_AS_IN_RUN_ORDER
-for v in BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_DIR GIT_EXEC_PATH GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT WSLENV; do
+{ENV_GATE}for v in BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_DIR GIT_EXEC_PATH GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT WSLENV; do
   [ -z "${{!v+x}}" ] || refuse "ENVIRONMENT_NOT_CLEAN:$v"
 done
 export PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0
@@ -202,7 +268,7 @@ umask 077
 DRAFT={int(DRAFT)}
 [ "$DRAFT" = 0 ] || refuse DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY
 W={W}
-BASE={BASE}
+{O_LINE}BASE={BASE}
 STG=$BASE/stg
 COMMIT={COMMIT}
 NEW_MANIFEST={NEW}
@@ -301,16 +367,16 @@ reinstall_tail() {{
   bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --adopt-generation 1 "$PKG_SHA" > "$T/upgrade-adopt.stdout.json" || {{ cat "$T/upgrade-adopt.stdout.json"; refuse GENERATION_ADOPT_FAILED_SEE_RECOVERY; }}
   grep -q LINUX_GENERATION_ADOPTED "$T/upgrade-adopt.stdout.json" || refuse GENERATION_ADOPT_FAILED_SEE_RECOVERY
   # (6) the version facts for the Windows verify (-LinuxVersionFactsFile), from the installed frozen tool, read-only
-  VF="$W/../linux-version-facts.$(date -u +%Y%m%dT%H%M%SZ).json"
+  VF="{OUT}/linux-version-facts.$(date -u +%Y%m%dT%H%M%SZ).json"
   $CLEAN $PY -I "$UPG/bin/clued-ci-upgrade-linux" version-facts > "$VF" || {{ cat "$VF"; refuse VERSION_FACTS_FAILED; }}
   $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not (f.get("contract")=="clued.independent-ci.linux-version-facts/1" and f.get("generation")==1 and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True and f.get("sourceCommit")==sys.argv[4] and f.get("upgradeToolSha256")==sys.argv[5]))' "$VF" "$NEW_MANIFEST" "$LINUX_RES_MANIFEST" "$COMMIT" "$UPG_TOOL_SHA" || refuse VERSION_FACTS_NOT_THIS_PACKAGE
   # (7) verify-resident-linux, every check fatal (the resident half and the upgrade channel were just installed)
   bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/l7-verify.stdout.json" || true
   grep -q RESIDENT_LINUX_VERIFIED "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
   # (8) evidence for the Windows generator, and a public review copy in a new directory each run
-  E="$W/../linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"
+  E="{OUT}/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"
   {{ echo "source: reinstall-linux-B (root, Owner)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "command: /usr/bin/sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json"; echo "exit: 0"; echo "sha256: $(sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json | cut -d' ' -f1)"; }} > "$E"
-  RO="$W/../out-B-$SUFFIX-${{T##*/tail-}}"; [ ! -e "$RO" ] || refuse OUT_DIR_EXISTS
+  RO="{OUT}/out-B-$SUFFIX-${{T##*/tail-}}"; [ ! -e "$RO" ] || refuse OUT_DIR_EXISTS
   install -d -m 0755 "$RO" "$RO/roles-signed" "$RO/tail"; install -m 0644 "$STG"/roles-signed/* "$RO/roles-signed/"; install -m 0644 "$T"/* "$RO/tail/"
   for f in host-B0.stdout.json host-B4.stdout.json sign.stdout.json verify-signed.stdout.json package.stdout.json l4-plan.stdout.json l5-apply.stdout.json l5-verify.stdout.json; do [ ! -e "$STG/$f" ] || install -m 0644 "$STG/$f" "$RO/"; done
   install -m 0644 "$BASE/uninstall-apply.stdout.json" "$BASE/pre-uninstall-backup.tar.sha256" "$BASE/superseded-suffix.txt" "$RO/"
@@ -330,8 +396,8 @@ A = "#!/bin/bash\n" + f"""# r7 Linux phase A (root, NO private key, changes noth
 # resident pins and three plans (uninstall, resident install, upgrade tool). Decision 0b8cab03 (+ the Source acceptance {REF[:8]}), commit {COMMIT[:8]}.
 # = 10-23 stage-root.sh (b7ff5a32) + the read-only part of run-linux-p2.py, Source values changed; derive-roles-r4.py
 # replaces derive-linux-v2.mjs. Writes only under $BASE, then (after staging) a review copy of public data next to $W.
-#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-A-stage.sh
-""" + COMMON + f"""quiet_and_installed
+{HOW[0]}
+""" + COMMON + A_GUARD + f"""quiet_and_installed
 """ + ("""# no Source v1 on this node (configuration v1SourceHead null): the signer's lineage is the installed roles-v3; a node with a v1 is refused
 [ ! -e /opt/clued-independent-ci/source-first-formal-v1 ] && [ ! -e /etc/clued-independent-ci/roles ] && [ ! -e /etc/clued-independent-ci/formal-source-manifest-v1.json ] || refuse NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD
 """ if NO_V1 else "") + f"""# The installed Linux half (from the node's version facts): its resident (OLD_LINUX_RES_MANIFEST), the frozen upgrade tool and its generation are EXPECTED;
@@ -393,7 +459,7 @@ for f in m["files"]:
   elif p in own: bad+=[p] if hashlib.sha256(open(sys.argv[6]+"/"+own[p],"rb").read()).hexdigest()!=f["sha256"] else []
   else: bad.append(p)
 print(json.dumps({{"residentPinsNotTheNewSource":bad}})); sys.exit(1 if bad else 0)' "$STG/linux-res-pkg/manifest.json" "$STG/src.git" "$COMMIT" "$NODE" "$NODE_SHA" "$STG/linux-res-pkg" > "$STG/resident-pins.A.stdout.json" || {{ cat "$STG/resident-pins.A.stdout.json"; refuse RESIDENT_PINS_NOT_THE_NEW_SOURCE; }}
-# r7: three read-only plans, pinned below. (1) the uninstall, live: phase B recomputes it and applies only the same sha.
+{A_SHAPE}# r7: three read-only plans, pinned below. (1) the uninstall, live: phase B recomputes it and applies only the same sha.
 bash --noprofile --norc "$STG/tools/uninstall-resident-linux.sh" --plan > "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse UNINSTALL_PLAN_REFUSED; }}
 grep -q '"status":"DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN"' "$STG/uninstall-plan.A.stdout.txt" || refuse UNINSTALL_PLAN_REFUSED
 for l in active= opt=yes upgrade-v1=yes staging=; do grep -qx "$l" "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse "UNINSTALL_PLAN_NOT_THE_EXPECTED_HOST:$l"; }}; done
@@ -407,7 +473,7 @@ bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1
 [ "$(printf '%s' "$(plan_after_uninstall "$STG/upgrade-plan.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$UPG_PLAN" ] || {{ cat "$STG/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_NOT_AS_GENERATED; }}
 (cd "$STG" && sha256sum roles-in/* tools/* record/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/*{phase_a_bundle} linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* upgrade-plan.stdout.txt install-plan.A.stdout.txt uninstall-plan.A.stdout.txt resident-pins.A.stdout.json old-version-facts.json upgrade-history.A.json src-head.txt > "$STG/phaseA.sha256")
 # review copy (public data only), written after staging (review minor 4)
-RV="$W/../review-A-{SUFFIX}"
+RV="{OUT}/review-A-{SUFFIX}"
 [ ! -e "$RV" ] || refuse REVIEW_COPY_EXISTS
 install -d -m 0755 "$RV" "$RV/roles-in" "$RV/tools"
 install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$STG/tools/check-reinstall-history.py" "$RV/tools/"
@@ -418,11 +484,9 @@ MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 's
 B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: backup, uninstall and reinstall of the Linux resident half, the upgrade tool,
 # generation 1, the version facts and verify, each step fatal, nothing rolled back (reinstall-linux-B-resume.sh continues after a failure); STEP B1 READS THE PRIVATE KEY /etc/clued-independent-ci/verify-result-key.pem through the
 # reviewed {SIGNER}; nothing prints it). = run-linux-p2.py from the signing on, Source values changed.
-#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-B-switch.sh <phaseAManifestSha256 as reviewed>
-""" + COMMON + f"""WANT_A="${{1:?phase A manifest sha256 required}}"
-# B0: everything phase A staged is still as reviewed (minor 3): the manifest, every listed byte, the bare repo, the sign tool
-[ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
-(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+{HOW[1]}
+""" + COMMON + f"""{WANT_A_GATE}# B0: everything phase A staged is still as reviewed (minor 3): the manifest, every listed byte, the bare repo, the sign tool
+{WANT_A_CHECK}(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 $CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-live "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_CHANGED_SINCE_PHASE_A
 src_git_clean
 [ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
@@ -487,11 +551,9 @@ reinstall_tail
 # r7: resume after a failure past the Source switch (phase A as reviewed, the Source switched and verified by B, then reinstall_tail again)
 RESUME = "#!/bin/bash\n" + f"""# r7 Linux phase B resume (root, no private key): after reinstall-linux-B-switch.sh switched and verified the Source and then stopped,
 # runs the rest again; each step found done is checked, not repeated. Commit {COMMIT[:8]}.
-#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-B-resume.sh <phaseAManifestSha256 as reviewed>
-""" + COMMON + f"""WANT_A="${{1:?phase A manifest sha256 required}}"
-# everything phase A staged is still as reviewed
-[ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
-(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+{HOW[2]}
+""" + COMMON + f"""{WANT_A_GATE}# everything phase A staged is still as reviewed
+{WANT_A_CHECK}(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 src_git_clean
 # only after reinstall-linux-B-switch.sh switched the Source and verified it (otherwise run B; a failed Source switch needs the recovery)
 [ -e "$BASE/superseded-suffix.txt" ] || refuse SOURCE_NOT_SWITCHED_RUN_B
@@ -499,9 +561,15 @@ grep -q INSTALLED_READINESS_CONFIRMED_NOT_EXECUTED "$STG/l5-apply.stdout.json" &
 reinstall_tail
 """
 out = {}
-for name, text in (('reinstall-linux-A-stage.' + SUFFIX + '.sh', A), ('reinstall-linux-B-switch.' + SUFFIX + '.sh', B), ('reinstall-linux-B-resume.' + SUFFIX + '.sh', RESUME)):
+paths = {}
+NAMES = ('A.sh', 'B.sh', 'B-resume.sh') if FLEET else ('reinstall-linux-A-stage.' + SUFFIX + '.sh', 'reinstall-linux-B-switch.' + SUFFIX + '.sh', 'reinstall-linux-B-resume.' + SUFFIX + '.sh')
+if FLEET:
+    os.makedirs(os.path.join(R, 'linux'), exist_ok=True)
+    # (the out directory is not made here: the elevated launcher makes it, under the CI root, right before phase A)
+for name, text in zip(NAMES, (A, B, RESUME)):
     p = os.path.join(R, 'linux', name)
     with open(p, 'xb') as f:
         f.write(text.encode('utf-8'))
     out[name] = sha(p)
-print(json.dumps({'scripts': out, 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'packageManifestSha256': PKG_SHA, 'linuxResidentManifest': LINUX_RES_MANIFEST, 'upgradePlanSha256': UPG_PLAN, 'installPlanSha256': INSTALL_PLAN, 'oldPackage': OLD_PKG_SHA}, indent=1))
+    paths[name] = p
+print(json.dumps({'scripts': out, **({'paths': paths, 'inDir': IN, 'wslInDir': WSL_IN, 'outDir': OUT_DIR, 'wslOutDir': WSL_OUT} if FLEET else {}), 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'packageManifestSha256': PKG_SHA, 'linuxResidentManifest': LINUX_RES_MANIFEST, 'upgradePlanSha256': UPG_PLAN, 'installPlanSha256': INSTALL_PLAN, 'oldPackage': OLD_PKG_SHA}, indent=1))

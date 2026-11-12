@@ -13,7 +13,7 @@ function Assert-ResumeCurrentFactsAndRemovedConfig {
   if (@($rules | Where-Object { $_.Name -eq 'CluedCIResident-BlockOutbound' }).Count) { throw 'RESUME_OLD_FIREWALL_RULE_PRESENT' }
 }
 
-function Complete-PartialUninstallRename([string]$root, [string]$target, [string]$planSha, [string]$priorSha) {
+function Complete-PartialUninstallRename([string]$root, [string]$target, [string]$planSha, [string]$priorSha, [string]$priorKind = 'priorTerminalSha256') {
   if ($planSha -cnotmatch '^[0-9a-f]{64}$' -or $priorSha -cnotmatch '^[0-9a-f]{64}$') { throw 'RESUME_RECEIPT_PINS_REQUIRED' }
   $root = [IO.Path]::GetFullPath($root); $target = [IO.Path]::GetFullPath($target)
   if ([IO.Path]::GetFileName($root) -cne 'resident' -or [IO.Path]::GetDirectoryName($root) -cne [IO.Path]::GetDirectoryName($target) -or
@@ -24,7 +24,7 @@ function Complete-PartialUninstallRename([string]$root, [string]$target, [string
   if ([IO.Directory]::Exists($target) -or [IO.File]::Exists($target) -or [IO.File]::Exists((Join-Path $root 'install\uninstall-receipt.json'))) { throw 'RESUME_ALREADY_RENAMED_OR_RECEIPTED' }
   [IO.Directory]::Move($root, $target)
   $receipt = [ordered]@{ contract = 'clued.independent-ci.resident-uninstall-receipt/3'; planSha256 = $planSha; keptAt = $target
-    at = [DateTimeOffset]::UtcNow.ToString('o'); continuation = [ordered]@{ contract = 'clued.independent-ci.resume-uninstall-evidence/1'; priorTerminalSha256 = $priorSha } }
+    at = [DateTimeOffset]::UtcNow.ToString('o'); continuation = [ordered]@{ contract = 'clued.independent-ci.resume-uninstall-evidence/1'; $priorKind = $priorSha } }
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 6))
   $file = [IO.File]::Open((Join-Path $target 'install\uninstall-receipt.json'), 'CreateNew', 'Write', 'None')
   try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
@@ -46,11 +46,17 @@ function Step-FinishUninstall {
     if ((Sha256Bytes $bytes) -cne $ResumePriorPins[$name]) { Stop-Launch 'RESUME_PRIOR_FILE_CHANGED' $name }
     $prior[$name] = $bytes
   }
-  $terminal = Parse-Json ($Strict8.GetString($prior['terminal.json']))
-  if ((Get-Key $terminal 'contract') -cne 'clued.independent-ci.source-v2-windows-launch-terminal/1' -or
-      (Get-Key $terminal 'status') -cne 'STOPPED' -or (Get-Key $terminal 'code') -cne 'UNINSTALL_NOT_COMPLETED' -or
-      (Get-Key $terminal 'sourceSha') -cne $SourceSha -or (Get-Key $terminal 'packageHead') -cne $PackageHead) { Stop-Launch 'RESUME_PRIOR_SUBJECT_CHANGED' $null }
-  $detail = Get-Key $terminal 'detail'; $dry = Get-Key $detail 'dryRun'; $plan = Get-Key $dry 'plan'
+  if ($prior.Contains('terminal.json')) {
+    $terminal = Parse-Json ($Strict8.GetString($prior['terminal.json']))
+    if ((Get-Key $terminal 'contract') -cne 'clued.independent-ci.source-v2-windows-launch-terminal/1' -or
+        (Get-Key $terminal 'status') -cne 'STOPPED' -or (Get-Key $terminal 'code') -cne 'UNINSTALL_NOT_COMPLETED' -or
+        (Get-Key $terminal 'sourceSha') -cne $SourceSha -or (Get-Key $terminal 'packageHead') -cne $PackageHead) { Stop-Launch 'RESUME_PRIOR_SUBJECT_CHANGED' $null }
+    $detail = Get-Key $terminal 'detail'; $dry = Get-Key $detail 'dryRun'
+  } else {   # continue.py: a launch cut off inside its -Apply wrote no terminal; its installed uninstall's own dry run, kept before the -Apply
+    $dry = Parse-Json ($Strict8.GetString($prior['uninstall.dry-run.stdout.json']))
+    if ((Get-Key $dry 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN') { Stop-Launch 'RESUME_PRIOR_PLAN_CHANGED' $null }
+  }
+  $plan = Get-Key $dry 'plan'
   if ((Get-Key $dry 'planSha256') -cne $ResumeUninstallPlanSha256 -or -not (Test-UninstallPlan $plan) -or
       (Get-Key $plan 'executorAlive') -ne $false) { Stop-Launch 'RESUME_PRIOR_PLAN_CHANGED' $null }
   $before = Parse-Json ($Strict8.GetString($prior['uninstall-preflight-report.json']))
@@ -99,7 +105,8 @@ function Step-FinishUninstall {
   $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
   $hex = -join ((1..6) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
   $target = Join-Path $ParentAclPath ('resident-uninstalled-' + $stamp + '-' + $hex)
-  $receipt = Complete-PartialUninstallRename $ResidentRoot $target $ResumeUninstallPlanSha256 $ResumePriorPins['terminal.json']
+  $evidenceName = $(if ($ResumePriorPins.Contains('terminal.json')) { 'terminal.json' } else { 'uninstall.dry-run.stdout.json' })
+  $receipt = Complete-PartialUninstallRename $ResidentRoot $target $ResumeUninstallPlanSha256 $ResumePriorPins[$evidenceName] $(if ($evidenceName -ceq 'terminal.json') { 'priorTerminalSha256' } else { 'priorDryRunSha256' })
   if (-not (Test-TerminalEvidence $target) -or
       (Get-FileSha (Join-Path $target 'install\install-receipt.json')) -cne $InstalledReceiptSha256 -or
       (Get-FileSha (Join-Path $target 'state\HALT.json')) -cne $InstalledHaltSha256 -or

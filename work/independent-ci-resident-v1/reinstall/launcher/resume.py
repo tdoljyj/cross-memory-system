@@ -116,6 +116,31 @@ def parse_original(raw, expected_sha):
     return source, block, values
 
 
+def prior_evidence(prior_directory, pins, required=None):
+    """The five retained public reports of the failed uninstall, read plain; the terminal and the preflight checked against the
+    original pins. Shared with continue.py (a generic node package launcher passes its own completed steps as `required`)."""
+    literal_value = lambda name: pins[name][1:-1] if pins[name].startswith("'") else None
+    held = {name: read_plain(Path(prior_directory) / name) for name in FILES}
+    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in held.items()}
+    evidence = EVIDENCE.validate_terminal(held['terminal.json'], hashes['terminal.json'],
+                                          literal_value('SourceSha'), literal_value('PackageHead'), required)
+    before = json.loads(held['uninstall-preflight-report.json'])
+    require(isinstance(before, dict) and before.get('codes') == []
+            and before.get('installedReceiptSha256') == literal_value('InstalledReceiptSha256')
+            and before.get('installedUninstallSha256') == literal_value('InstalledUninstallSha256'),
+            'PRIOR_PREFLIGHT_NOT_THE_ORIGINAL_PINS')
+    return held, hashes, evidence
+
+
+def finish_pins(original_sha, prior_directory, hashes, plan_sha):
+    """The pins Step-FinishUninstall (finish-uninstall.ps1) reads, appended to the original pins block. Shared with continue.py."""
+    extra_pins = '\n$ResumeOriginalLauncherSha256 = ' + q(original_sha)
+    extra_pins += '\n$ResumePriorRoot = ' + q(prior_directory) + '\n$ResumePriorPins = [ordered]@{\n'
+    extra_pins += ''.join('  ' + q(name) + ' = ' + q(digest) + '\n' for name, digest in hashes.items())
+    extra_pins += '}\n$ResumeUninstallPlanSha256 = ' + q(plan_sha)
+    return extra_pins
+
+
 def build(original, original_sha, prior_directory, launch_directory):
     source, block, pins = parse_original(original, original_sha)
     prior_directory = windows_path(str(Path(prior_directory).absolute()))
@@ -124,23 +149,12 @@ def build(original, original_sha, prior_directory, launch_directory):
     literal_value = lambda name: pins[name][1:-1] if pins[name].startswith("'") else None
     output_path(launch_directory, literal_value('W'))
     require(literal_value('LaunchOutPin') == prior_directory, 'PRIOR_DIRECTORY_NOT_THE_ORIGINAL_LAUNCH')
-    held = {name: read_plain(Path(prior_directory) / name) for name in FILES}
-    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in held.items()}
-    evidence = EVIDENCE.validate_terminal(held['terminal.json'], hashes['terminal.json'],
-                                          literal_value('SourceSha'), literal_value('PackageHead'))
-    before = json.loads(held['uninstall-preflight-report.json'])
-    require(isinstance(before, dict) and before.get('codes') == []
-            and before.get('installedReceiptSha256') == literal_value('InstalledReceiptSha256')
-            and before.get('installedUninstallSha256') == literal_value('InstalledUninstallSha256'),
-            'PRIOR_PREFLIGHT_NOT_THE_ORIGINAL_PINS')
+    held, hashes, evidence = prior_evidence(prior_directory, pins)
     new_line = '$LaunchOutPin = ' + q(launch_directory) + '   # fresh continuation output, original evidence retained'
     new_block, count = re.subn(r'^\$LaunchOutPin = .*$', lambda _: new_line, block, flags=re.MULTILINE)
     require(count == 1 and source.count(OLD_STEPS) == 1 and source.count('#endregion generic') == 1,
             'ORIGINAL_CONTINUATION_BOUNDARY_CHANGED')
-    extra_pins = '\n$ResumeOriginalLauncherSha256 = ' + q(original_sha)
-    extra_pins += '\n$ResumePriorRoot = ' + q(prior_directory) + '\n$ResumePriorPins = [ordered]@{\n'
-    extra_pins += ''.join('  ' + q(name) + ' = ' + q(digest) + '\n' for name, digest in hashes.items())
-    extra_pins += '}\n$ResumeUninstallPlanSha256 = ' + q(evidence['uninstallPlanSha256'])
+    extra_pins = finish_pins(original_sha, prior_directory, hashes, evidence['uninstallPlanSha256'])
     result = source.replace(block, new_block + extra_pins, 1)
     fragment = (HERE / 'finish-uninstall.ps1').read_text(encoding='utf-8')
     result = result.replace('#endregion generic', fragment + '\n#endregion generic', 1).replace(OLD_STEPS, NEW_STEPS, 1)
