@@ -18,7 +18,6 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { validateAcceptance } from './install.mjs';
 import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
@@ -175,7 +174,7 @@ export async function main(argv) {
   return fail('USAGE');
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(r => console.log(JSON.stringify(r)), e => {
     console.log(JSON.stringify({ status: 'FLEET_RELEASE_REFUSED', code: e?.code ?? 'FLEET_RELEASE_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) }));
     process.exitCode = 1;

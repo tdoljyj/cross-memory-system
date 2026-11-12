@@ -22,7 +22,6 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CIV1, CLOSURE, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
 import { pyCanonical } from './pyjson.mjs';
@@ -203,7 +202,7 @@ export async function main(argv) {
   return buildUniversal({ repo: values.repo, commit: values.commit, version: values.version, out: values.out, stateCompat });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(r => console.log(JSON.stringify(r)), e => {
     console.log(JSON.stringify({ status: 'FLEET_UNIVERSAL_REFUSED', code: e?.code ?? 'FLEET_UNIVERSAL_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) }));
     process.exitCode = 1;

@@ -674,7 +674,7 @@ export async function main(argv, deps = {}) {
   return prepareInstall({ ...deps, artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance, workDir: values.work });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   // Every Windows PowerShell 5.1 child (rehearse, generate, the uninstall/install dry runs, Get-Acl) gets its own module path: an
   // Owner session under PowerShell 7 would otherwise pass its path down and 5.1 cannot autoload Microsoft.PowerShell.Security.
   process.env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';

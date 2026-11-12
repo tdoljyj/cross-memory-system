@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLOSURE, PREPARE_RECORD, RESIDENT, universalFilesSha256 } from './facts.mjs';
 import { RECORD_FILES, Refused, TOOL_PATH, linuxPins, linuxPinsCheck, nodeInputs, nodeProfileOf, recordInputs, rolesDerived } from './ports.mjs';
@@ -261,7 +261,7 @@ export async function main(argv) {
   return assembleUpgrade({ artifactPath: values.artifact, artifactSha256: values['artifact-sha'], target, root, installedPackageDir, workDir: values['work-dir'] });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(r => { console.log(JSON.stringify(r)); process.exitCode = r.status === 'FLEET_PACKAGE_ASSEMBLED' ? 0 : 1; }, e => {
     console.log(JSON.stringify({ contract: ASSEMBLY_CONTRACT, status: 'FLEET_ASSEMBLY_REFUSED', code: e?.code ?? 'FLEET_ASSEMBLY_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) }));
     process.exitCode = 1;
