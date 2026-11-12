@@ -27,6 +27,7 @@ import { canonical } from '../proof.mjs';
 import { normalizeTerminalAdmission } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { MAX_BAD, MAX_ADOPTED, BATCH_MAX_LIMIT } from './train-landing.mjs';
 import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, STRICT_FRONT_PROOF_CONTRACT, validateStrictProof, validateStrictRound, validateStrictFrontProof, sameStrictIdentity } from './train-strict.mjs';
+import { SCAN_CONTRACT, validateScanProgress } from './train-scan-progress.mjs';
 
 export const SWEEP_PROOF_CONTRACT = 'clued.independent-ci.train-sweep-proof/1';
 export const FULL_SWEEP_CONTRACT = 'clued.independent-ci.train-full-sweep/1';
@@ -55,7 +56,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(landing-batch|landing-state|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(scan-on|scan-shadow|scan-strict|landing-batch|landing-state|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -141,7 +142,8 @@ function validTerminalScan(s) {
 
 const KIND = { 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
   front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound],
-  'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations] };
+  'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations],
+  'scan-on': [SCAN_CONTRACT, validateScanProgress], 'scan-shadow': [SCAN_CONTRACT, validateScanProgress], 'scan-strict': [SCAN_CONTRACT, validateScanProgress] };
 
 export class TrainSweepStore {
   static async open(directory) {
@@ -190,7 +192,7 @@ export class TrainSweepStore {
       if (sameNewestStamp && newestStamp !== null && Number(parts[2]) < newestStamp) break;
       try {
         const file = path.join(this.directory, name), stat = await fs.lstat(file);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024) fail('unsafe_train_sweep_record');
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > (kind.startsWith('scan-') ? 8 * 1024 * 1024 : 256 * 1024)) fail('unsafe_train_sweep_record');
         const text = await fs.readFile(file, 'utf8'), record = KIND[kind][1](JSON.parse(text));
         if (canonical(record) !== text || Date.parse(record.writtenAt) !== Number(parts[2]) || record.runId !== parts[3]) fail('invalid_train_sweep_record');
         if (!accept(record)) continue;
@@ -204,6 +206,17 @@ export class TrainSweepStore {
     return out;
   }
   async appendProof(p) { return this.write('proof', { contract: SWEEP_PROOF_CONTRACT, ...p }); }
+  async readScanProgress(lane) {
+    if (!['on', 'shadow', 'strict'].includes(lane)) fail('invalid_train_scan_lane');
+    const kind = `scan-${lane}`, records = await this.read(kind, 1, () => true, true), p = records[0] ?? null;
+    if (p && records.some(r => this.strictMeaning(r) !== this.strictMeaning(p))) fail('TRAIN_SCAN_STATE_UNREADABLE');
+    if ([...this.tornNames.values()].some(t => t.kind === kind && (p === null || t.ms >= Date.parse(p.writtenAt)))) fail('TRAIN_SCAN_STATE_UNREADABLE');
+    return p;
+  }
+  async writeScanProgress(lane, p) {
+    if (!['on', 'shadow', 'strict'].includes(lane)) fail('invalid_train_scan_lane');
+    return this.write(`scan-${lane}`, { contract: SCAN_CONTRACT, ...p });
+  }
   async writePendingRevocations(p) { return this.write('pending-revocations', { contract: PENDING_REVOCATIONS_CONTRACT, legacyUnconfirmed: 0, legacySince: null, ...p }); }
   async readPendingRevocations() {
     const records = await this.read('pending-revocations', 1, () => true, true), p = records[0] ?? null;

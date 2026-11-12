@@ -52,7 +52,8 @@ import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore, validateLandingState, LANDING_STATE_CONTRACT } from './train-sweep-store.mjs';
-import { runStrictLane, strictIdentity, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
+import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
+import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding, normalizeTerminalAdmission, terminalProofForPull } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { readTerminalAdmission as readRecordedTerminalAdmission } from '../batch-claim-v2.mjs';
@@ -351,14 +352,22 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   } else if (job.mode === 'on' && !sinceOn(full)) {
     if (full.state === 'running' && (Date.parse(full.startedAt) < onSinceMs || started - Date.parse(full.startedAt) > job.fullSweepMaxMs))
       full = abandon(Date.parse(full.startedAt) < onSinceMs ? 'TRAIN_FULL_SWEEP_BEFORE_ON' : 'TRAIN_FULL_SWEEP_EXPIRED');
-    if (full.state !== 'running' && !(full.state === 'abandoned' && full.reason === 'TRAIN_PULL_OVER_250_COMMITS' && full.onSince === job.onSince)) full = start();
+    if (full.state !== 'running' && !(full.state === 'abandoned' && full.reason === 'TRAIN_PULL_OVER_250_COMMITS' && full.onSince === job.onSince
+      && typeof github.readPullHistoryPage !== 'function')) full = start();
   } else if (job.mode === 'shadow') {
     if (full.state === 'running' && started - Date.parse(full.startedAt) > job.fullSweepMaxMs) full = abandon('TRAIN_FULL_SWEEP_EXPIRED');
     // one shadow round per fullSweepMaxMs is enough to measure it (§41.9 item 2)
-    if (full.state === 'none' || (full.state === 'abandoned' && full.reason !== 'TRAIN_PULL_OVER_250_COMMITS')
+    if (full.state === 'none' || (full.state === 'abandoned' && (full.reason !== 'TRAIN_PULL_OVER_250_COMMITS' || typeof github.readPullHistoryPage === 'function'))
       || (full.state === 'complete' && started - Date.parse(full.completedAt) > job.fullSweepMaxMs)) full = start();
   }
   const sweeper = createSweeper({ github, appId, mainSha, inMain: history === 'same' || history === 'forward' ? before.inMain : [], clock, until: started + SWEEP_BUDGET_MS });
+  let scan = null, scanWritten = false;
+  if (typeof sweepStore?.readScanProgress === 'function') try {
+    scan = await ScanProgress.open({ store: sweepStore, lane: mode, clock, identity: { repo: job.repo, mode, mainSha,
+      sourceManifestSha256: job.sourceManifestSha256, settingsDigest: strictSettingsDigest(job), onSince: job.onSince,
+      startedAt: full.startedAt, scope: full.scope, front: frontHead, claimId: holder?.claimId ?? null, since: holder?.takenAt ?? null,
+      revokeHead: !!job.revokeHeadRequestId } });
+  } catch { stateReason ??= 'TRAIN_SCAN_STATE_UNREADABLE'; }
   const frontFastEligible = job.mode === 'on' && !sinceOn(full) && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy
     // ADR 0018: push lands the tested merge(T, H) itself, so a head behind main is no reason against the observation there (strict merges
     // only a head that contains T: that is github-merge's reason). A protected-layer head behind main is still FRONT_NEEDS_MAIN_MERGE.
@@ -439,11 +448,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const wantSegment = !historyDeferred && !frontBindSkip && full.state === 'running' && job.mode !== 'revoke-only' && !stateReason
     && !(job.mode === 'on' && job.sweep === 'off' && !AUDIT_RESTART_NOW.includes(full.scopeReason));
   let incremental = historyDeferred ? { complete: false, reason: 'TRAIN_HISTORY_DEFERRED', targets: [], progress: null, newest: null }
-    : await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock,
+    : await incrementalSweep({ sweeper, github, entries, stream, cursor, front: frontHead, own, revokeHead: !!job.revokeHeadRequestId, clock, scan,
       until: strict ? clock() + Math.max(0, started + SWEEP_BUDGET_MS - clock()) / 2
         : started + (wantSegment || frontBindSkip ? SWEEP_BUDGET_MS / 2 : SWEEP_BUDGET_MS) });
   if (incremental.complete && (stateReason || (acting && ledgerReason))) incremental = { ...incremental, complete: false, reason: stateReason ?? ledgerReason };
-  const segment = wantSegment && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope }) : null;
+  const segment = wantSegment && !sweeper.late() ? await fullSweepSegment({ sweeper, github, nextPage: full.nextPage, nextIndex: full.nextIndex, front: frontHead, own, scope: full.scope, scan }) : null;
   const byId = new Map();
   for (const t of [...incremental.targets, ...(segment?.targets ?? [])]) byId.set(t.checkRunId, t);
   let targets = [...pendingRevocations, ...[...byId.values()].sort((a, b) => a.checkRunId - b.checkRunId)
@@ -500,6 +509,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // The cursor: the newest pull seen when the pass completed; otherwise as far as every pull was judged (progress), so a
   // backlog advances run by run. Acting, only when this run's revocations are all confirmed.
   const advance = !acting || confirmed;
+  if (scan && advance && !stateReason) try { scanWritten = await scan.save(job.runId, sleep); }
+  catch { stateReason ??= 'TRAIN_SCAN_STATE_UNWRITTEN'; }
   // allPending ends with the first round of scope 'all' completed after it began (a round running when main was rewritten was
   // restarted; with no tip recorded, a round of scope 'all' from before generation 15 is the enumeration of before).
   const after = { mode, incrementalCursor: !advance ? before.incrementalCursor : incrementalOk ? (incremental.newest ?? cursor)
@@ -670,10 +681,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
   let progress = null;
   if (strict?.round && ['all', 'current'].includes(strict.round.scope) && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
-    nextPage: strict.round.nextPage, nextIndex: strict.round.nextIndex, revoked: strict.round.coverage.revoked, advanced: strict.advanced, at: isoOf(clock()) });
+    nextPage: strict.round.nextPage, nextIndex: strict.round.nextIndex, revoked: strict.round.coverage.revoked, continuation: strict.continuation,
+    advanced: strict.advanced, at: isoOf(clock()) });
   else if (['all', 'current'].includes(full.scope) && full.state === 'running' && !sinceOn(full)) progress = sweepProgress({ identity: { repo: job.repo, mainSha: full.mainSha,
     sourceManifestSha256: job.sourceManifestSha256, onSince: job.onSince }, scope: full.scope, startedAt: full.startedAt, nextPage: full.nextPage, nextIndex: full.nextIndex,
-    revoked: full.revoked, advanced: fullStateWritten && (full.nextPage !== before.full.nextPage || full.nextIndex !== before.full.nextIndex || full.revoked > before.full.revoked), at: isoOf(clock()) });
+    revoked: full.revoked, continuation: scan?.token() ?? null, advanced: fullStateWritten && (scanWritten || full.nextPage !== before.full.nextPage || full.nextIndex !== before.full.nextIndex || full.revoked > before.full.revoked), at: isoOf(clock()) });
   // A long segment can outlive the GraphQL observation's 60-second freshness. Refresh only to authorize continuation
   // after real required all/current progress, with the same protected deadline (including credential acquisition/retries).
   if (progress?.advanced === true && typeof github.readRateBudget === 'function' && clock() < until.read - 1000) {
