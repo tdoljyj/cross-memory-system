@@ -1,0 +1,22 @@
+{
+  "schema": "clued.cache-maintenance/1",
+  "version": "1.0.1",
+  "policy": {
+    "interval_seconds": 3600,
+    "stagger_seconds": 600,
+    "max_entries": 200000,
+    "max_generations": 32,
+    "max_seconds": 60,
+    "max_remove_bytes": 8589934592,
+    "drain_wait_seconds": 30,
+    "plan_ttl_seconds": 300,
+    "free_trigger_fraction": 0.12,
+    "free_target_fraction": 0.18
+  },
+  "profiles": {
+    "npm": {"producer": "npm", "idle_seconds": 86400, "pressure_idle_seconds": 600, "rotate_seconds": 21600, "keep_generations": 1, "max_bytes": 8589934592},
+    "pip": {"producer": "pip", "idle_seconds": 172800, "pressure_idle_seconds": 600, "rotate_seconds": 43200, "keep_generations": 1, "max_bytes": 8589934592},
+    "job-temp": {"producer": "job-temp", "idle_seconds": 86400, "pressure_idle_seconds": 600, "rotate_seconds": 0, "keep_generations": 0, "max_bytes": 8589934592},
+    "generic": {"producer": "generic", "idle_seconds": 172800, "pressure_idle_seconds": 600, "rotate_seconds": 21600, "keep_generations": 1, "max_bytes": 4294967296}
+  }
+}
