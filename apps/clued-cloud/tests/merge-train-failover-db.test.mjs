@@ -182,6 +182,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
           await admin.query(`update clued_private.ci_failover_settings_v1 set enabled_at=enabled_at-$2::interval,
             updated_at=updated_at-$2::interval where user_id=$1`, [user, i]);
           await admin.query('update public.clued_audit_receipts set created_at=created_at-$2::interval where user_id=$1', [user, i]);
+          await admin.query('update clued_private.ci_duty_answers_v1 set at=at-$2::interval where user_id=$1', [user, i]);
           await admin.query(`update clued_private.binding_roles_v1 set granted_at=granted_at-$2::interval,
             effective_at=effective_at-$2::interval,revoked_at=revoked_at-$2::interval where user_id=$1`, [user, i]);
         },
@@ -238,14 +239,15 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const privates = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p
         where p.pronamespace='clued_private'::regnamespace and (p.proname like 'ci_failover%' or p.proname like 'ci_admission_failover%'
           or p.proname in ('ci_node_heartbeat_v1','binding_role_handover_core_v1','work_claim_ci_command_v1','ci_sweep_watermark_v1'))`)).rows.map((r) => r.sig);
-      assert.equal(privates.length, 25, privates.join(' '));
+      // ADR 0025 added ci_failover_quiet_seconds_v1 and ci_failover_holder_quiet_v1.
+      assert.equal(privates.length, 27, privates.join(' '));
       for (const sig of privates) {
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
           assert.equal(await can(role, sig), false, `${role} ${sig}`);
         }
       }
       for (const table of ['ci_failover_settings_v1', 'ci_failover_members_v1', 'ci_failover_watchdog_v1', 'ci_node_liveness_v1',
-        'ci_sweep_watermark_v1', 'ci_node_heartbeat_link_v1']) {
+        'ci_sweep_watermark_v1', 'ci_node_heartbeat_link_v1', 'ci_duty_answers_v1']) {
         assert.equal((await admin.query(`select relrowsecurity from pg_class where oid=('clued_private.'||$1)::regclass`, [table])).rows[0].relrowsecurity, true);
         await assert.rejects(() => anon.query(`select * from clued_private.${table}`), /permission denied/);
         await assert.rejects(() => human.query(`select * from clued_private.${table}`), /permission denied/);
@@ -1099,8 +1101,110 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await r.close();
     });
 
+    // ADR 0025 (Owner 2026-11-12): the watchdog's hand-over starts the new holder at once when the server gave the old holder
+    // no positive duty answer for 210 seconds (150 s an answer can still land a check, plus 60 s); otherwise the 5 minutes stay.
+    await t.test('quiet holder: an automatic take-over starts at once only when the old holder got no answer for 210 s', async () => {
+      let n = 0;
+      const fresh = async () => {
+        const s = await account('quiet' + (++n), ['a', 'b']);
+        await s.members(['a', 'b']);
+        await s.switch(true);
+        await s.beat('b'); await s.beat('a', HOLDER);
+        return s;
+      };
+      const duty = async (s, who, client = admin) => (await client.query(
+        "select clued_private.ci_duty_admits_v1($1,$2,'duty_role') ok", [s.user, s.ids[who]])).rows[0].ok;
+      const answers = async (s, who) => (await admin.query(
+        'select count(*)::int n from clued_private.ci_duty_answers_v1 where binding_id=$1', [s.ids[who]])).rows[0].n;
+      const setAnswers = async (s, sql) => admin.query(`update clued_private.ci_duty_answers_v1 set at=${sql} where user_id=$1`, [s.user]);
+      const start = async (s) => { const r = await s.role('b'); return minutes(r.effective_at, r.granted_at); };
+      // X silent for 5 minutes, Y beat twice meanwhile: the watchdog hands over.
+      const lose = async (s, between = async () => {}) => { await s.ago(5); await between(); await s.beat('b'); await s.beat('b'); return s.tick(); };
+
+      // Only positive answers are recorded, at the server's time; no API role can write or read them.
+      let s = await fresh();
+      const before = await answers(s, 'a');
+      assert.equal(await duty(s, 'b'), false);
+      assert.equal(await answers(s, 'b'), 0);
+      assert.equal(await duty(s, 'a'), true);
+      assert.equal(await answers(s, 'a'), before + 1);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.deepEqual((await admin.query(`select has_table_privilege($1,'clued_private.ci_duty_answers_v1','INSERT') i,
+          has_table_privilege($1,'clued_private.ci_duty_answers_v1','SELECT') r`, [role])).rows[0], { i: false, r: false }, role);
+      }
+
+      // 1. The holder died: its last answer is 5 minutes old. The new holder starts at once.
+      let o = await lose(s);
+      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'b']);
+      assert.equal(await start(s), 0, 'starts at once');
+      assert.deepEqual([await s.admits('b'), await s.admits('a')], [true, false], 'the old row ended in the same transaction');
+      const meta = (await s.receipt_(o.receipt_id)).metadata;
+      assert.equal(meta.start, 'quiet_holder');
+      assert.equal(new Date(meta.effective_at).getTime(), new Date(o.at).getTime());
+      assert.ok((await s.notes()).some((x) => x.type_fields.receipt_id === o.receipt_id && x.content.includes('210 秒内没有拿到准入时立即生效')));
+      await s.close();
+
+      // 2. Its heartbeat failed but its executor still works: an answer 200 s ago keeps the 5 minutes; 211 s is quiet.
+      for (const [age, minutesToStart] of [[200, 5], [211, 0]]) {
+        s = await fresh();
+        o = await lose(s, async () => { await duty(s, 'a'); await setAnswers(s, `clock_timestamp()-interval '${age} seconds'`); });
+        assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'b']);
+        assert.equal(await start(s), minutesToStart, `last answer ${age} s ago`);
+        if (minutesToStart) assert.deepEqual([await s.admits('a'), await s.admits('b')], [false, false], 'nobody admitted for 5 minutes');
+        assert.equal(await duty(s, 'a'), false, 'the old holder is refused from the hand-over on');
+        await s.close();
+      }
+
+      // 3. No answer on record at all (a holder not seen since this migration): the 5 minutes stay.
+      s = await fresh();
+      o = await lose(s, () => admin.query('delete from clued_private.ci_duty_answers_v1 where user_id=$1', [s.user]));
+      assert.equal(o.outcome, 'handed_over');
+      assert.equal(await start(s), 5);
+      await s.close();
+
+      // 4. An answer being given while the watchdog acts: the hand-over waits for it (FOR SHARE on the old row), reads it and
+      // keeps the 5 minutes. An answer asked for while the hand-over is in flight is decided after it: refused.
+      const inflight = await connect();
+      s = await fresh();
+      await s.ago(5); await s.beat('b'); await s.beat('b');
+      await inflight.query('begin');
+      assert.equal(await duty(s, 'a', inflight), true);
+      let settled = false;
+      const ticking = s.tick().then((v) => { settled = true; return v; });
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal(settled, false, 'the hand-over waits for the answer in flight');
+      await inflight.query('commit');
+      o = await ticking;
+      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'b']);
+      assert.equal(await start(s), 5, 'the answer just given keeps the 5 minutes');
+      await s.close();
+      s = await fresh();
+      await s.ago(5); await s.beat('b'); await s.beat('b');
+      const watchdog = await connect();
+      await watchdog.query('begin');
+      assert.equal((await watchdog.query('select clued_private.ci_admission_failover_owner_v1($1) v', [s.user])).rows[0].v.outcome, 'handed_over');
+      let asked = false;
+      const asking = duty(s, 'a', inflight).then((v) => { asked = true; return v; });
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal(asked, false, 'the answer waits for the hand-over');
+      await watchdog.query('commit');
+      assert.equal(await asking, false, 'decided after the revocation: refused');
+      await s.close();
+
+      // 5. Clock skew: only the server's clock and records count (heartbeat and answer times are the server's; no node clock is
+      // read). An answer stamped ahead of the watchdog's clock (the server clock stepped back) is not quiet.
+      s = await fresh();
+      o = await lose(s, () => setAnswers(s, "clock_timestamp()+interval '10 minutes'"));
+      assert.equal(o.outcome, 'handed_over');
+      assert.equal(await start(s), 5, 'an answer the clock has not reached yet keeps the 5 minutes');
+      await s.close();
+    });
+
     await t.test('one-click handover through the shared core is unchanged', async () => {
       const s = await account('oneclick', ['a', 'b']);
+      // ADR 0025: the quiet start is the watchdog's alone; a quiet old holder changes nothing here.
+      await admin.query("insert into clued_private.ci_duty_answers_v1(binding_id,user_id,at) values($1,$2,clock_timestamp()-interval '1 hour')",
+        [s.ids.a, s.user]);
       const token = issued(await s.native('clued_binding_role_handover_confirmation_issue_v1', { from_binding_id: s.ids.a, to_binding_id: s.ids.b }));
       const result = committed(await s.native('clued_binding_role_handover_v1',
         { confirmation_token: token.confirmation_token, view_digest: token.view_digest }));
@@ -1108,6 +1212,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.deepEqual([meta.receipt_kind, meta.principal, meta.from_binding_id, meta.to_binding_id, meta.purpose, meta.token_id, meta.session_id],
         ['BINDING_ROLE_HANDED_OVER', 'native_account_session', s.ids.a, s.ids.b, 'resident-node', token.token_id, 'sess-oneclick']);
       assert.equal(new Date(result.effective_at).getTime(), (await s.role('b')).effective_at.getTime());
+      assert.equal(minutes((await s.role('b')).effective_at, (await s.role('b')).granted_at), 5);
       const replay = await s.native('clued_binding_role_handover_v1', { confirmation_token: token.confirmation_token, view_digest: token.view_digest });
       assert.deepEqual([replay.replayed, replay.receipt_id, replay.effective_at], [true, result.receipt_id, result.effective_at]);
       assert.equal((await admin.query('select consumed_at from clued_private.native_confirmation_tokens where id=$1', [token.token_id])).rows[0]

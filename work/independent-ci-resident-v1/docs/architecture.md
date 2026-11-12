@@ -626,9 +626,9 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
   - 最近一条自报不是 HALTED、PAUSED 或未到期的暂停接新；
   - 目标是有资格、5 分钟内有心跳、沉默期间至少 2 次心跳、STANDBY 且最近探测为 not-held、健康、Source 全一致的备用节点，按 Owner 定的次序取第一个；
   - 6 小时冷却。
-- 交接 5 分钟后生效，写回执 `CI_ADMISSION_AUTO_HANDOVER`。接班节点在算力面板 Issue 里 @Owner。
+- 交接 5 分钟后生效；旧持有者 210 秒内没有拿到任何肯定的当班答复时立即生效（服务端记录 `ci_duty_answers_v1`，ADR 0025）。写回执 `CI_ADMISSION_AUTO_HANDOVER`。接班节点在算力面板 Issue 里 @Owner。
 - 接班节点的 companion 从心跳回答里得知这次自动交接；接班核对不再被别的节点在交接之前写的“当班”挡住（那是已证实沉默的节点的最后一句），交接之后写的照旧上锁（`node-duty.mjs#dutyCut`）。
-- 时序：计划内（旧节点空闲）约 5–6 分钟；当班节点失联约 9–12 分钟（`test/handover-timing.test.mjs`）。
+- 时序：计划内（旧节点空闲）约 5–6 分钟；当班节点失联约 5–7 分钟（`test/handover-timing.test.mjs`）。
 
 ### 10.4 Source 一致
 

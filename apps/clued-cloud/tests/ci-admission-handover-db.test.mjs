@@ -157,12 +157,17 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.ci_phase_3_to_4_v1(uuid,uuid,integer,jsonb)', 'clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
       // 20261031090000 (merge train 2b): the one-click handover now calls this core.
       'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
+      // 20261112130500 (resident ADR 0025): the decision of ci_duty_admits_v1 moved unchanged into ci_duty_admits_decide_v1;
+      // ci_duty_admits_v1 now only takes FOR SHARE on the Binding's live rows (started or not) before asking it, and the
+      // handover core takes FOR UPDATE on the old holder's live rows: locks, not decisions.
+      'clued_private.ci_duty_admits_decide_v1(uuid,uuid,text,uuid)',
     ].sort(),'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
     const started = (sig) => readers.find((r) => r.sig === sig).prosrc.split('effective_at<=clock_timestamp()').length - 1;
     assert.equal(started('clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)'), 1);
     assert.equal(started('clued_private.binding_role_admits_v1(clued_agent_bindings,text)'), 1);
     // ci_duty_admits_v1: the started-row test and the not-parking publisher test; ci_duty_holder_v1: the single holder row.
-    assert.equal(started('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)'), 2);
+    assert.equal(started('clued_private.ci_duty_admits_decide_v1(uuid,uuid,text,uuid)'), 2);
+    assert.equal(started('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)'), 0);
     assert.equal(started('clued_private.ci_duty_holder_v1(uuid,uuid)'), 1);
     assert.match(readers.find((r) => r.sig === 'clued_headless_binding_issue_v1(jsonb)').prosrc,
       /greatest\(e\.effective_at,v_now\),e\.purpose/);

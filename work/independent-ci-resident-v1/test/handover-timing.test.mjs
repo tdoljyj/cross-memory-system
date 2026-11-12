@@ -2,7 +2,8 @@
 // (role-probe.mjs, companion-heartbeat.mjs) and the real take-over check (node-duty.mjs), over a small model of the server: the
 // ci-admission role rows (the old holder's ends at once, the new one starts 5 minutes later: binding_role_activation_delay_v1) and
 // the failover watchdog (every minute; a holder silent for FAILOVER_SILENCE_MINUTES is handed to a STANDBY that beat twice
-// meanwhile and whose last probe said not-held; migration 20261112130500_ci_failover_fast_v1.sql, tested on the database by
+// meanwhile and whose last probe said not-held; the new row starts at once when the server gave the old holder no positive
+// duty answer for QUIET_MS, else 5 minutes later: the quiet-holder start; migration 20261112130500_ci_failover_fast_v1.sql, tested on the database by
 // apps/clued-cloud/tests/merge-train-failover-db.test.mjs). Every phase of every node's probe and heartbeat is tried.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,17 +14,27 @@ import { DUTY_REFRESH_MS, NodeDuty, freshMemory, nodeContext } from '../src/node
 const MIN = 60_000;
 const ACTIVATION_MS = 5 * MIN;
 const STEP = 5_000;
+// ci_failover_quiet_seconds_v1: an answer can still land a check for about 150 s, plus 60 s.
+const QUIET_MS = 210_000;
+const LANDING_MS = 150_000;
 const T0 = Date.parse('2026-11-12T09:00:00Z');
 const HELD = { result: 'held', code: C.held }, NOT_HELD = { result: 'not-held', code: C['not-held'] };
 
 class Server {
-  constructor(holder) { this.rows = [{ node: holder, effectiveAt: 0, endedAt: Infinity, createdAt: 0 }]; this.beats = new Map(); this.handovers = []; }
+  constructor(holder) { this.rows = [{ node: holder, effectiveAt: 0, endedAt: Infinity, createdAt: 0 }]; this.beats = new Map(); this.handovers = []; this.answers = new Map(); }
   admitted(node, t) { return this.rows.some(r => r.node === node && r.effectiveAt <= t && t < r.endedAt); }
+  // A positive duty answer (a probe that said held, a live admission): the server stamps it (ci_duty_answers_v1).
+  answer(node, t) { if (this.admitted(node, t)) { this.answers.set(node, t); return true; } return false; }
   holder() { return this.rows.find(r => r.endedAt === Infinity)?.node ?? null; }
   handover(from, to, t, auto = false) {
     for (const r of this.rows) if (r.node === from && r.endedAt === Infinity) r.endedAt = t;
-    this.rows.push({ node: to, effectiveAt: t + ACTIVATION_MS, endedAt: Infinity, createdAt: t });
-    if (auto) this.handovers.push({ to, createdAt: t });
+    const last = this.answers.get(from);
+    const quiet = auto && last !== undefined && last <= t - QUIET_MS;
+    const effectiveAt = quiet ? t : t + ACTIVATION_MS;
+    // The safety rule: no answer the old holder got can still land a check once the new holder starts.
+    if (last !== undefined) assert.ok(effectiveAt - last >= LANDING_MS, `new holder at ${(effectiveAt - last) / 1000} s after the old one's last answer`);
+    this.rows.push({ node: to, effectiveAt, endedAt: Infinity, createdAt: t });
+    if (auto) this.handovers.push({ to, createdAt: t, quiet });
   }
   beat(node, t, report) { const b = this.beats.get(node); this.beats.set(node, { prev: b?.last ?? null, last: t, ...report }); }
   // The watchdog's rule (ci_admission_failover_owner_v1, ci_failover_candidates_v1), reduced to what the timing needs.
@@ -39,7 +50,7 @@ class Server {
 class Node {
   // probePhase: how long before the start its last probe was; beatPhase likewise for its heartbeat; skew: its clock minus server time.
   constructor(name, server, { mode, probePhase = 0, beatPhase = 0, skew = 0 }) {
-    Object.assign(this, { name, server, mode, skew, alive: true, activeAt: null, standbyAt: null });
+    Object.assign(this, { name, server, mode, skew, alive: true, beats: true, activeAt: null, standbyAt: null });
     this.probe = new RoleProbe();
     this.probe.observe(mode === 'ACTIVE' ? HELD : NOT_HELD, T0 + skew - probePhase);
     this.lastBeat = T0 + skew - beatPhase;
@@ -49,13 +60,13 @@ class Node {
     if (!this.alive) return;
     const local = t + this.skew;
     if (this.probe.due({ now: local, mode: this.mode, idle: true })) {
-      const held = this.server.admitted(this.name, t);
+      const held = this.server.answer(this.name, t);
       this.probe.observe(held ? HELD : NOT_HELD, local);
       const mode = held ? 'ACTIVE' : 'STANDBY';
       if (mode !== this.mode) this[mode === 'ACTIVE' ? 'activeAt' : 'standbyAt'] = t;
       this.mode = mode;
     }
-    if (this.lastBeat === null || local < this.lastBeat || local - this.lastBeat >= NODE_HEARTBEAT_EVERY_MS) {
+    if (this.beats && (this.lastBeat === null || local < this.lastBeat || local - this.lastBeat >= NODE_HEARTBEAT_EVERY_MS)) {
       this.lastBeat = local;
       this.server.beat(this.name, t, { mode: this.mode, probe: this.probe.last?.result ?? null });
     }
@@ -102,7 +113,7 @@ test('planned hand-over (one-click, old node idle): the new node is ACTIVE 5 to 
   assert.ok(worst <= 6 * MIN && best >= 5 * MIN, `${best / MIN}..${worst / MIN} min`);
 });
 
-test('the holder fails (power, network): the watchdog hands over after 5 silent minutes, the new node is ACTIVE within 12 minutes', () => {
+test('the holder fails (power, network): the watchdog hands over after 5 silent minutes, the quiet old holder lets the new node start at once: ACTIVE within 7 minutes', () => {
   let worst = 0, best = Infinity;
   for (const beatPhase of phases(NODE_HEARTBEAT_EVERY_MS, 4)) for (const tickPhase of phases(MIN, 3)) for (const yPhase of phases(MIN, 3)) {
     const server = new Server('desk');
@@ -111,12 +122,32 @@ test('the holder fails (power, network): the watchdog hands over after 5 silent 
     const dies = T0 + 10 * MIN;
     const { bothActive } = run({ server, nodes: [x, y], minutes: 30, tickPhase, event: t => { if (t === dies) x.alive = false; } });
     assert.equal(bothActive, 0);
-    assert.equal(server.handovers.length, 1);
+    assert.deepEqual(server.handovers.map(h => h.quiet), [true]);
     const took = y.activeAt - dies;
-    assert.ok(took > ACTIVATION_MS && took <= 12 * MIN, `took ${took / MIN} min`);
+    assert.ok(took >= FAILOVER_SILENCE_MINUTES * MIN - NODE_HEARTBEAT_EVERY_MS && took <= 7 * MIN, `took ${took / MIN} min`);
     worst = Math.max(worst, took); best = Math.min(best, took);
   }
-  assert.ok(best >= 8 * MIN && worst <= 12 * MIN, `${best / MIN}..${worst / MIN} min`);
+  assert.ok(best >= 4 * MIN && worst <= 7 * MIN, `${best / MIN}..${worst / MIN} min`);
+});
+
+test('the holder\'s heartbeat fails but its executor still works: the take-over keeps the 5 minutes whenever it got an answer within 210 s; never two at once', () => {
+  let kept = 0, quick = 0;
+  for (const probePhase of phases(ROLE_PROBE_INTERVAL_MS.ACTIVE, 10)) for (const tickPhase of phases(MIN, 3)) {
+    const server = new Server('desk');
+    const x = new Node('desk', server, { mode: 'ACTIVE', probePhase });
+    const y = new Node('turing', server, { mode: 'STANDBY' });
+    const breaks = T0 + 10 * MIN;
+    const { bothActive } = run({ server, nodes: [x, y], minutes: 40, tickPhase, event: t => { if (t === breaks) x.beats = false; } });
+    assert.equal(server.handovers.length, 1);
+    // The old holder keeps probing (every 5 minutes while ACTIVE): learns not-held, steps down; the new one is admitted only
+    // after any answer of the old one has expired (asserted in Server#handover); the nodes' own view never shows two ACTIVE
+    // at once beyond the old one's next probe.
+    assert.equal(x.mode, 'STANDBY');
+    assert.equal(y.mode, 'ACTIVE');
+    assert.ok(bothActive * STEP <= ROLE_PROBE_INTERVAL_MS.ACTIVE, `both ACTIVE in their own view for ${bothActive * STEP / 1000} s`);
+    if (server.handovers[0].quiet) quick += 1; else kept += 1;
+  }
+  assert.ok(kept > 0 && quick > 0, `kept ${kept}, quick ${quick}: both branches are reached`);
 });
 
 test('the dead holder\'s last 当班 does not hold the new node back after the automatic take-over (it did for up to 30 minutes before)', async () => {
@@ -126,7 +157,7 @@ test('the dead holder\'s last 当班 does not hold the new node back after the a
     const x = new Node('desk', server, { mode: 'ACTIVE' });
     const y = new Node('turing', server, { mode: 'STANDBY' });
     const dies = T0 + 20 * MIN;
-    run({ server, nodes: [x, y], minutes: 35, event: t => { if (t === dies) x.alive = false; } });
+    run({ server, nodes: [x, y], minutes: 30, event: t => { if (t === dies) x.alive = false; } });
     // desk wrote its 当班 on its queued head every DUTY_REFRESH_MS; the last one lastRefresh before it died.
     const statuses = [{ context: nodeContext('desk'), state: 'pending', description: '当班：排队第 1 位', created_at: new Date(dies - lastRefresh).toISOString(), login: OWNER }];
     const check = async cut => {
