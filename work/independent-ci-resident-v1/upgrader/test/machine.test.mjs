@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ResidentExecutor } from '../../src/executor.mjs';
 import { executorFixture, fakeEngine } from '../../test/helpers.mjs';
 import { sha256 } from '../../src/canonical.mjs';
-import { applyFailure, decide } from '../src/machine.mjs';
+import { applyFailure, decide, linuxFailure } from '../src/machine.mjs';
 import { lastFailureOf } from '../src/upgrader-main.mjs';
 import { U } from '../src/codes.mjs';
 import { RECEIPT_SLOT } from '../src/plan.mjs';
@@ -490,6 +490,29 @@ test('the companion missing before the switch defers; a refused Linux stage abor
   assert.equal(r2.terminal.code, U.LINUX_STAGE_REFUSED);
   assert.equal(env2.resident.paused, null);
   assert.deepEqual([...env2.resident.holds], []);
+});
+
+test('a Linux refusal keeps the tool\'s own code and scalar detail next to the class code (DESK 2026-11-12)', async t => {
+  const env = await makeEnv(t, { linuxOptions: { failStage: U.LINUX_STAGE_REFUSED,
+    failStageResult: { status: 'REFUSED', code: 'LIVE_NOT_THE_CURRENT_GENERATION', detail: { item: 'source-v2', path: '/opt/x y', n: 3, code: 'X' } } } });
+  const op = await openOp(env, 'n2');
+  const r = await runOp(env, op);
+  assert.deepEqual([r.terminal.outcome, r.terminal.code], ['REFUSED', U.LINUX_STAGE_REFUSED]);
+  const stage = (await loadJournal(env, op)).steps.find(s => s.step === 'stage-linux');
+  assert.deepEqual(stage.result.detail, { where: 'stage', linuxCode: U.LINUX_STAGE_REFUSED, toolCode: 'LIVE_NOT_THE_CURRENT_GENERATION', toolItem: 'source-v2',
+    toolPath: '.opt.x.y', toolN: 3 });
+});
+
+test('linuxFailure: journal-safe values only (other characters become ".", lists are joined), no objects, at most eight keys', () => {
+  assert.deepEqual(linuxFailure('stage', null), { where: 'stage', linuxCode: null, toolCode: null });
+  assert.deepEqual(linuxFailure('switch', { code: 'not a code', result: { code: 'bad code!', detail: ['a'] } }), { where: 'switch', linuxCode: null, toolCode: null });
+  assert.deepEqual(linuxFailure('verify', { code: 'UPGRADE_SWITCH_FAILED', result: { code: 'LINUX_GENERATION_NOT_VERIFIED',
+    detail: { item: 'units/clued-ci-worker@.service', failed: ['contents', 'identities'], readiness: { trivy: true }, empty: '' } } }),
+  { where: 'verify', linuxCode: 'UPGRADE_SWITCH_FAILED', toolCode: 'LINUX_GENERATION_NOT_VERIFIED', toolItem: 'units.clued-ci-worker..service', toolFailed: 'contents.identities' });
+  const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i}`, i]));
+  const r = linuxFailure('verify', { code: 'UPGRADE_LINUX_STAGE_REFUSED', result: { code: 'X_Y', detail: { ...many, 'bad key': 1, nested: { a: 1 } } } });
+  assert.equal(Object.keys(r).filter(k => k.startsWith('tool') && k !== 'toolCode').length, 8);
+  assert.equal(linuxFailure('x', { result: { detail: { long: 'a'.repeat(200) } } }).toolLong.length, 80);
 });
 
 test('retention: the fourth generation moves generation 1 into archive\\ whole, nothing is deleted', async t => {

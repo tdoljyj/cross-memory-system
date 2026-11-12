@@ -25,6 +25,14 @@ elevated Windows PowerShell 5.1 started with -NoProfile. Without -RunApprovedIns
     back to the interactive token by itself. Its result is recorded (companionHeadless); it never undoes the install.
     M5-b (ADR 0023, $CompanionWslVhdxDirectory set): -CompanionAccount instead; the resident distribution moves to the companion's
     own account and the registrar gives that account a random password nobody types or sees.
+  Generic node package (rollout/fleet, $FleetPlanSha256 set; generate.py --fleet-plan): the Linux root steps run inside this same
+    elevated run, after the staging and before anything of the Windows side: the elevated file-lock observation, Linux phase A, phase B
+    (B-resume once after a failure; before all of it the read-only Windows preflight, so that nothing the Windows side would refuse
+    is found only after B), then B's evidence and version facts are checked by rule (they cannot be pinned: they hold
+    signatures and times) and only then the uninstall preflight and everything above. On a companion-account node (M5-b) each script runs
+    as that account through the NEW package's registrar (root-run), elsewhere directly as this elevated Owner. The tokens are the
+    installed ones: copied before the uninstall into C:\ProgramData\CluedIndependentCI\reinstall-carry-<32hex> (SYSTEM and
+    Administrators only), checked against the install receipt's fingerprints, given to the installer and deleted on every way out of this run (a cut-off run's are deleted by the next run's first step).
 Every stop writes the raw values to W\launch (terminal.json detail and the *-report.json files).
 #>
 [CmdletBinding()]
@@ -53,7 +61,30 @@ $Strict8 = New-Object Text.UTF8Encoding($false, $true)
 $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
 $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $Js.MaxJsonLength = 16777216
-$Done = New-Object Collections.Generic.List[string]
+# Every completed step is on disk the moment it completes, create-only, twice: <launch>\progress\NNN-<step>.json and, written by this
+# elevated run where the Owner's session cannot write, <CI root>\reinstall-progress-<id>\NNN-<step>.json (id: SHA-256 of the launch
+# directory's path, 32 hex). A run that is cut off (no terminal.json) is known by these; continue.py reads them. A record that cannot be
+# written stops the launch (the step's own work is done; nothing later runs unrecorded).
+$Progress = @{ out = $null; elevated = $null; count = 0; pins = $null }
+$Done = New-Object Collections.ObjectModel.ObservableCollection[string]
+$Done.add_CollectionChanged({ param($sender, $e)
+    if ($e.Action -ne [Collections.Specialized.NotifyCollectionChangedAction]::Add) { return }
+    foreach ($step in @($e.NewItems)) {
+      $Progress.count++
+      if (-not $Progress.out) { continue }   # before the launch directory exists (Step-Output): nothing of this launch has changed anything yet
+      $leaf = $Progress.count.ToString('000') + '-' + ([string]$step -replace '[^A-Za-z0-9-]', '_') + '.json'
+      $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(([ordered]@{ contract = 'clued.independent-ci.reinstall-launch-progress/1'; index = $Progress.count; step = [string]$step
+            at = [DateTimeOffset]::UtcNow.ToString('o'); pid = $PID; processStart = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o'); pins = $Progress.pins } | ConvertTo-Json -Depth 4 -Compress))
+      foreach ($dir in @((Join-Path $Progress.out 'progress'), $Progress.elevated)) {
+        if (-not $dir) { continue }
+        [void][IO.Directory]::CreateDirectory($dir)
+        $f = [IO.File]::Open((Join-Path $dir $leaf), 'CreateNew', 'Write', 'None'); try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+      }
+    } }.GetNewClosure())
+$CarryParent = 'C:\ProgramData\CluedIndependentCI'   # the carried tokens' directory is made here: reinstall-carry-<32hex>
+$CarriedTokens = [ordered]@{ directory = $null; tokens = @(); removed = $null; removeError = $null }
+# The generic node package: armed while a stop would leave the node exactly as the W1 pause found it (see Restore-W1Pause).
+$W1Restore = [ordered]@{ armed = $false; result = $null }   # the generic node package: the carried-over token copies (never their content)
 $ChildEnv = [ordered]@{
   SystemRoot = 'C:\Windows'; windir = 'C:\Windows'; SystemDrive = 'C:'; ComSpec = 'C:\Windows\System32\cmd.exe'
   PATH = 'C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0'
@@ -84,8 +115,40 @@ function Parse-Json([string]$text) {
 }
 function Parse-LastLine([string]$text) { if ($null -eq $text) { return $null }; $l = @($text -split "`r?`n" | Where-Object { $_.Trim() }); if ($l.Count -eq 0) { return $null }; Parse-Json $l[$l.Count - 1] }
 function Tail([string]$t) { if ($null -eq $t) { return $null }; if ($t.Length -gt 2000) { $t.Substring($t.Length - 2000) } else { $t } }
+# A package launch that stops before it changed anything (the Windows preflight before Linux, the token carry, the file locks, the
+# registrar build, the write probe, a root-run the registrar refused before it ran anything) would leave the node paused by W1 with
+# nothing to continue. The pause is then lifted here through the installed resident's own reviewed door (rearm-resident.ps1 -Request
+# Resume -ExpectedPausedSha256, which the service verifies itself), and only when state\PAUSED.json is byte for byte the W1 pause of
+# this launch (the pinned sha256) and names the plan's W1 reason: any other pause is somebody else's and is never touched. The result
+# is in every terminal (w1Pause). Once Linux phase A has been started the launch is no longer in this state; a stop then is continued.
+function Restore-W1Pause {
+  if (-not $W1Restore.armed) { return }
+  $W1Restore.armed = $false
+  $r = [ordered]@{ restored = $false; reason = $null; pausedSha256 = $null; exit = $null }
+  try {
+    $pausedFile = Join-Path $ResidentRoot 'state\PAUSED.json'
+    $r.pausedSha256 = Get-FileSha $pausedFile
+    $pauseReason = $(if ($r.pausedSha256) { [string](Get-Key (Get-Key (Parse-Json ([IO.File]::ReadAllText($pausedFile))) 'source') 'reason') } else { $null })
+    $door = Join-Path $ResidentRoot ('resident\' + $InstalledResidentManifestSha256 + '\windows\rearm-resident.ps1')
+    if (-not $r.pausedSha256) { $r.reason = 'NOT_PAUSED' }
+    elseif ($InstalledPausedSha256 -cnotmatch '^[0-9a-f]{64}$' -or $r.pausedSha256 -cne $InstalledPausedSha256 -or -not $FleetW1PauseReason -or $pauseReason -cne $FleetW1PauseReason) { $r.reason = 'PAUSE_NOT_THIS_LAUNCHS_LEFT_AS_IT_IS' }
+    elseif ((Get-FileSha $door) -cne $FleetInstalledRearmSha256) { $r.reason = 'INSTALLED_RESUME_DOOR_NOT_AS_REVIEWED' }
+    else {
+      $c = Invoke-Child 'w1-resume' $door @('-Request', 'Resume', '-ExpectedPausedSha256', $InstalledPausedSha256)
+      $r.exit = $c.exit
+      if ($c.exit -ne 0 -or [string]$c.stdout -notmatch 'RESUME_REQUESTED_SERVICE_WILL_VERIFY') { $r.reason = 'RESUME_REQUEST_REFUSED' }
+      elseif (Wait-Until { -not [IO.File]::Exists($pausedFile) } $FleetW1ResumeWaitSeconds) { $r.restored = $true }
+      else { $r.reason = 'RESUME_REQUESTED_NOT_CONFIRMED_IN_TIME' }
+    }
+  } catch { $r.reason = 'RESTORE_FAILED:' + $_.Exception.GetType().Name }
+  $W1Restore.result = $r
+}
 function Stop-Launch([string]$code, $detail) {
-  Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = $code; detail = $detail; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; at = [DateTimeOffset]::UtcNow.ToString('o') })
+  Remove-FleetCarry   # before the terminal is written, so that it says what became of the carried token copies
+  # and whether the W1 pause was lifted again (only while armed: nothing of the node has changed). Asked for by name: the launcher
+  # always defines $W1Restore; a harness that runs this function alone need not.
+  $w1 = $null; if (Test-Path -LiteralPath 'variable:W1Restore') { Restore-W1Pause; $w1 = $W1Restore.result }
+  Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = $code; detail = $detail; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; carriedTokens = $CarriedTokens; w1Pause = $w1; at = [DateTimeOffset]::UtcNow.ToString('o') })
   throw $code
 }
 
@@ -124,6 +187,9 @@ function Step-HostHygiene {
 function Step-Output {
   if ([IO.Directory]::Exists($Out) -or [IO.File]::Exists($Out)) { throw 'EXISTING_EXECUTION_PRESERVED' }
   [void][IO.Directory]::CreateDirectory($Out)
+  $id = (Sha256Bytes ($U8.GetBytes($Out.ToLowerInvariant()))).Substring(0, 32)
+  $Progress.pins = [ordered]@{ sourceSha = $SourceSha; packageHead = $PackageHead; packageManifestSha256 = $PackageManifestSha256; planSha256 = $PlanSha256; fleetPlanSha256 = $FleetPlanSha256; installedReceiptSha256 = $InstalledReceiptSha256 }
+  $Progress.out = $Out; $Progress.elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
   Write-Json 'intent.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-intent/1'; status = 'APPROVED_SOURCE_V2_WINDOWS_INSTALL_INTENT'
     sourceSha = $SourceSha; packageHead = $PackageHead; packageManifestSha256 = $PackageManifestSha256; planSha256 = $PlanSha256; stageParent = $StageParent; archiveReason = $ArchiveReason; at = [DateTimeOffset]::UtcNow.ToString('o') })
   $Done.Add('output')
@@ -178,10 +244,17 @@ function Get-RunnerState {
   [ordered]@{ ok = (@($flags.Values | Where-Object { $_ -ne $true }).Count -eq 0); flags = $flags; sdshow = $sd; daclPart = (Get-DaclPart $sd); pinnedDacl = $RunnerSddl; qc = $qc.Trim(); queryex = $q.Trim() }
 }
 # Diagnostics only (never a decision): which top-level plan fields differ from the reviewed non-elevated dry run.
+# The reviewed non-elevated dry run (in the Owner's work directory): only its pinned bytes are ever parsed. $null: missing or changed.
+function Get-ReviewedPlan {
+  try {
+    $b = [IO.File]::ReadAllBytes($ReviewedDryRunPath)
+    if ((Sha256Bytes $b) -cne $ReviewedDryRunSha256) { return $null }
+    Get-Key (Parse-Json ($U8.GetString($b))) 'plan'
+  } catch { $null }
+}
 function Compare-ReviewedPlan($plan) {
-  $file = $ReviewedDryRunPath   # P1
-  if (-not [IO.File]::Exists($file)) { return 'REVIEWED_DRY_RUN_NOT_FOUND' }
-  $rv = Get-Key (Parse-Json ([IO.File]::ReadAllText($file))) 'plan'
+  $rv = Get-ReviewedPlan
+  if ($null -eq $rv) { return 'REVIEWED_DRY_RUN_MISSING_OR_CHANGED' }
   if ($null -eq $plan -or $null -eq $rv) { return 'PLAN_UNPARSABLE' }
   $diff = [ordered]@{}
   foreach ($k in @(@($plan.Keys) + @($rv.Keys) | Sort-Object -Unique)) {
@@ -689,6 +762,7 @@ function Test-TokenPlan([string]$noTokenStdout) {
       $null -eq $bf -or [string](Get-Key $bf 'parent') -cne $SecretWorkParent -or [string](Get-Key $bf 'sddl') -cne $SecretWorkSddl -or
       (Get-Key $bf 'removedAfterwards') -ne $true) { $r.codes += 'TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED' }
     elseif ($HeartbeatTokenFile -and -not (Test-HeartbeatPlan $a.heartbeat $b.heartbeat)) { $r['heartbeatToken'] = $b.heartbeat; $r.codes += 'HEARTBEAT_TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED' }
+    elseif ($FleetPlanSha256 -and ([string](Get-Key $bt 'fingerprint') -cne $FleetUpgradeTokenFingerprint -or ($HeartbeatTokenFile -and [string](Get-Key $b.heartbeat 'fingerprint') -cne $FleetHeartbeatTokenFingerprint))) { $r.codes += 'CARRIED_TOKEN_FINGERPRINT_MISMATCH' }
     else { $R5c.applyPlanSha256 = [string]$b.planSha256 }
   } catch { $r.codes += ('TOKEN_PLAN_CHECK_FAILED:' + $_.Exception.Message) }
   Write-Json 'upgrade-token-plan-report.json' $r
@@ -751,7 +825,7 @@ function Step-UninstallPreflight {
   $cv = Parse-Json $c.stdout; $preview = $null; if ($cv -is [Collections.Generic.IDictionary[string, object]] -and $cv.ContainsKey('carryForwardPreview')) { $preview = $cv['carryForwardPreview'] }
   $report['carryForwardPreview'] = [ordered]@{ exit = $c.exit; status = (Get-Key $cv 'status'); preview = $preview; stderr = (Tail $c.stderr) }
   # r5 S1: the plan fields the uninstall cannot change (secret targets, CI root DACL, node identity), elevated now = reviewed dry run
-  $ep = Get-Key $cv 'plan'; $rp = Get-Key (Parse-Json ([IO.File]::ReadAllText($ReviewedDryRunPath))) 'plan'; $s1 = [ordered]@{}
+  $ep = Get-Key $cv 'plan'; $rp = Get-ReviewedPlan; $s1 = [ordered]@{}; if ($null -eq $rp) { $codes.Add('REVIEWED_DRY_RUN_MISSING_OR_CHANGED') }
   foreach ($k in @('secrets', 'parentAcl', 'nodeIdentitySha256', 'roleAssumption')) { if ($null -eq $ep -or $null -eq $rp -or $Js.Serialize((Get-Key $ep $k)) -cne $Js.Serialize((Get-Key $rp $k))) { $s1[$k] = [ordered]@{ elevated = (Get-Key $ep $k); reviewed = (Get-Key $rp $k) } } }
   $report['planFieldsBeforeUninstall'] = $s1; if ($s1.Count) { $codes.Add('PLAN_FIELDS_WOULD_DIFFER_AFTER_UNINSTALL') }
   $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }   # r5 review m1
@@ -903,15 +977,576 @@ function Step-CompanionHeadless {
   $Done.Add('companion-headless')
   $r
 }
+# ---- Generic node package (rollout/fleet/BATCH1-INTERFACES.md section 4): the Linux root steps inside this one elevated run ----
+# Nothing below runs unless $FleetPlanSha256 is set (generate.py --fleet-plan). The pins are the three scripts (path and sha256), the
+# in and out directories the scripts themselves name, the distribution and what Linux must be afterwards; B's output is NOT pinned.
+#
+# B's output by rule (generate.py's rules for --linux-evidence / --linux-version-facts, applied here at run time). Returns the codes.
+function Test-FleetLinuxOutput([string]$evidenceText, [string]$factsText) {
+  $codes = @()
+  $m = [Text.RegularExpressions.RegexOptions]::Multiline
+  $sha = @([regex]::Matches([string]$evidenceText, '^sha256: ([0-9a-f]{64})$', $m) | ForEach-Object { $_.Groups[1].Value })
+  if ($sha.Count -ne 1 -or -not [regex]::IsMatch([string]$evidenceText, '^exit: 0$', $m)) { $codes += 'LINUX_EVIDENCE_UNPARSABLE' }
+  elseif ($sha[0] -cne $CiSourceManifestSha256) { $codes += 'LIVE_LINUX_SOURCE_NOT_THIS_RECORD' }
+  $pk = @([regex]::Matches([string]$evidenceText, '^package: ([0-9a-f]{64})$', $m) | ForEach-Object { $_.Groups[1].Value })
+  if ($pk.Count -ne 1 -or $pk[0] -cne $PackageManifestSha256) { $codes += 'LINUX_ADOPTED_ANOTHER_PACKAGE' }
+  $f = $null; try { $f = $Js.DeserializeObject([string]$factsText) } catch { $f = $null }
+  if ($f -isnot [Collections.Generic.IDictionary[string, object]]) { $codes += 'LINUX_VERSION_FACTS_UNREADABLE' }
+  elseif (-not ($f.ContainsKey('contract') -and $f['contract'] -is [string] -and $f['contract'] -ceq 'clued.independent-ci.linux-version-facts/1' -and
+      $f.ContainsKey('generation') -and $f['generation'] -is [int] -and $f['generation'] -eq 1 -and $f.ContainsKey('staged') -and $null -eq $f['staged'] -and
+      $f.ContainsKey('ciSourceManifestSha256') -and $f['ciSourceManifestSha256'] -is [string] -and $f['ciSourceManifestSha256'] -ceq $CiSourceManifestSha256 -and
+      $f.ContainsKey('manifestSha256') -and $f['manifestSha256'] -is [string] -and $f['manifestSha256'] -ceq $FleetLinuxManifestSha256 -and
+      $f.ContainsKey('pinsOk') -and $f['pinsOk'] -is [bool] -and $f['pinsOk'])) { $codes += 'LINUX_VERSION_FACTS_NOT_THIS_PACKAGE' }
+  , $codes
+}
+# A file B names in its last line: directly in the pinned out directory, with the name B gives it; its Windows path, else $null.
+function Get-FleetOutFile([string]$wslPath, [string]$namePattern) {
+  $prefix = $FleetWslOutDir + '/'
+  if (-not $wslPath -or -not $wslPath.StartsWith($prefix, [StringComparison]::Ordinal)) { return $null }
+  $leaf = $wslPath.Substring($prefix.Length)
+  if ($leaf -cnotmatch $namePattern) { return $null }
+  Join-Path $FleetOutDir $leaf
+}
+# The registrar's one line (root-run) as outcome EXITED (with exit) / TIMEOUT / REFUSED (with code); anything else UNREADABLE.
+function ConvertFrom-FleetRootRunLine([string]$stdout) {
+  $lines = @(([string]$stdout) -split "`r?`n" | Where-Object { $_ })
+  $r = [ordered]@{ outcome = 'UNREADABLE'; exit = $null; code = $null; captureRefused = $null }
+  # the process ran and exited, and what it wrote could not be captured (a link, a second name, too large): its exit code still stands
+  if ($lines.Count -eq 2 -and $lines[0] -cmatch '^ROOT_RUN_EXITED ([0-9]{1,10})$') {
+    $exit = [int64]$Matches[1]
+    if ($lines[1] -cmatch '^CAPTURE_REFUSED ([A-Z][A-Z0-9_]{0,79})$') { $r.outcome = 'EXITED'; $r.exit = $exit; $r.captureRefused = $Matches[1] }
+  }
+  if ($lines.Count -eq 1) {
+    if ($lines[0] -cmatch '^ROOT_RUN_EXITED ([0-9]{1,10})$') { $r.outcome = 'EXITED'; $r.exit = [int64]$Matches[1] }
+    elseif ($lines[0] -ceq 'ROOT_RUN_TIMEOUT') { $r.outcome = 'TIMEOUT' }
+    elseif ($lines[0] -cmatch '^ROOT_RUN_REFUSED ([A-Z][A-Z0-9_]{0,79})$') { $r.outcome = 'REFUSED'; $r.code = $Matches[1] }
+  }
+  $r
+}
+# A refusal of the registrar that came BEFORE it set a new password on the account or touched its task: arguments, elevation, the node
+# profile, the account, the WSL client, the script and its directories, a running switch, the installed task. Only after one of these
+# is the node certainly as it was. Everything else (a task left parked, an exit code that could not be read, anything about output)
+# came after the password change or after the process ran: not in this list, and then the W1 pause is NOT lifted automatically.
+function Test-FleetRefusedBeforeAnyChange([string]$code) {
+  [bool]($code -cmatch '^(?:REGISTRAR_ARGS_REFUSED|REGISTRAR_ELEVATION_REQUIRED|NODE_PROFILE_UNREADABLE|COMPANION_ACCOUNT_[A-Z_]+|WSL_MACHINE_CLIENT_[A-Z_]+|ROOT_RUN_SCRIPT_[A-Z0-9_]+|ROOT_RUN_DIRECTORY_[A-Z_]+|ROOT_RUN_PATH_REPARSE_REFUSED|TASK_FOLDER_MISSING|COMPANION_SWITCH_IN_PROGRESS|COMPANION_TASK_[A-Z_]+|ROOT_RUN_TASK_DEFINITION_DIFFERS)$')
+}
+# The W1 pause stays (a person looks, or the launch is continued): said in the terminal instead of nothing.
+function Set-FleetW1PauseKept([string]$why) { $W1Restore.armed = $false; $W1Restore.result = [ordered]@{ restored = $false; reason = ('NOT_LIFTED:' + $why); pausedSha256 = $null; exit = $null } }
+# Processes whose command line names a run directory (as a Windows path or as /mnt/c/...): the cmd.exe and wsl.exe of a Linux step that
+# may still be running after its launcher gave up. Read-only (CIM; elevated, so other accounts' command lines are visible). Each:
+# pid, name, ownerSid, companion (the owner is the companion account). An empty list: no such process is left. A query that fails
+# throws RUN_PROCESS_QUERY_FAILED: never read as "no process".
+function Get-FleetRunProcesses([string]$runDirectory) {
+  if ((Split-Path -Leaf $runDirectory) -cnotmatch '^linux-run-[0-9a-f]{32}(?:-probe)?$') { throw 'RUN_PROCESS_QUERY_FAILED' }
+  $needles = @($runDirectory, ('/mnt/' + $runDirectory.Substring(0, 1).ToLowerInvariant() + $runDirectory.Substring(2).Replace('\', '/')))
+  try {
+    Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1' -ErrorAction Stop
+    $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+  } catch { throw 'RUN_PROCESS_QUERY_FAILED' }
+  $found = @()
+  foreach ($q in $all) {
+    $line = [string]$q.CommandLine
+    if (-not $line -or [int]$q.ProcessId -eq $PID -or -not ($line.IndexOf($needles[0], [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $line.IndexOf($needles[1], [StringComparison]::Ordinal) -ge 0)) { continue }
+    $sid = try { [string](Invoke-CimMethod -InputObject $q -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $null }
+    $found += , ([ordered]@{ pid = [int]$q.ProcessId; name = [string]$q.Name; ownerSid = $sid; companion = ($sid -ceq $OwnerSid) })
+  }
+  , $found
+}
+# One process with a fixed environment, waited for at most $seconds and never killed: a Linux step that is still running is reported.
+function Invoke-FleetProcess([string]$file, [string]$arguments, [int]$seconds) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $file; $psi.Arguments = $arguments
+  $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.WorkingDirectory = 'C:\Windows\System32'
+  $psi.EnvironmentVariables.Clear()
+  foreach ($k in @('SystemRoot', 'windir', 'SystemDrive', 'ComSpec', 'PATH', 'PATHEXT', 'ProgramData', 'ProgramFiles', 'USERNAME', 'USERDOMAIN', 'USERPROFILE', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA')) { $psi.EnvironmentVariables[$k] = $ChildEnv[$k] }
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if (-not $p.WaitForExit([int]([Math]::Min([int64]$seconds * 1000, [int]::MaxValue)))) { return [ordered]@{ timedOut = $true; exit = $null; stdout = $null; stderr = $null; pid = $p.Id } }
+  $p.WaitForExit()
+  [ordered]@{ timedOut = $false; exit = $p.ExitCode; stdout = $o.Result; stderr = $e.Result; pid = $p.Id }
+}
+function Get-FleetScriptPin([string]$name) {
+  switch ($name) { 'A' { , @($FleetScriptA, $FleetScriptASha256, $FleetTimeoutA) } 'B' { , @($FleetScriptB, $FleetScriptBSha256, $FleetTimeoutB) } 'BResume' { , @($FleetScriptBResume, $FleetScriptBResumeSha256, $FleetTimeoutB) } default { Stop-Launch 'LINUX_SCRIPT_NAME_REFUSED' $name } }
+}
+# <root>\install\linux-run-<32hex>\ (new, SYSTEM and Administrators only; the companion account may read it) with script.sh (the
+# pinned bytes copied in and read back), out\ and captured\. out\ holds the two files the redirection writes: made here, each with its
+# own protected ACL (the account may write and append; it cannot delete, replace or re-ACL them, nor make anything else in out\).
+# captured\ is SYSTEM and Administrators only: the registrar copies the two files into it once the process has exited, opening each
+# without following a link and refusing a link or a second name, and this launcher reads ONLY captured\ on a companion node. -Probe:
+# the same directory under the name linux-run-<32hex>-probe, without a script (Step-LinuxOutAclProbe): one code path, one layout.
+# A capture directory in a run directory: SYSTEM and Administrators only (owner Administrators, protected, inherited by what the
+# registrar writes into it), read back. The one a run starts with is captured\; a later capture of the same run (a continuation, after
+# a timeout or a refused capture) gets a new captured-<32hex>\, which is the default. One function for both: never a second layout.
+function New-FleetCaptureDirectory([string]$runDirectory, [string]$leaf = ('captured-' + [Guid]::NewGuid().ToString('N'))) {
+  if ((Split-Path -Leaf $runDirectory) -cnotmatch '^linux-run-[0-9a-f]{32}(?:-probe)?$' -or $leaf -cnotmatch '^captured(?:-[0-9a-f]{32})?$') { Stop-Launch 'LINUX_RUN_CAPTURED_DIRECTORY_REFUSED' $leaf }
+  if (-not [IO.Directory]::Exists($runDirectory) -or ([IO.File]::GetAttributes($runDirectory) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-Launch 'LINUX_RUN_CAPTURED_DIRECTORY_REFUSED' $runDirectory }
+  $captured = Join-Path $runDirectory $leaf
+  if ([IO.Directory]::Exists($captured) -or [IO.File]::Exists($captured)) { Stop-Launch 'LINUX_RUN_CAPTURED_DIRECTORY_EXISTS' $captured }
+  $cs = New-Object Security.AccessControl.DirectorySecurity; $cs.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+  [void][IO.Directory]::CreateDirectory($captured, $cs)
+  $back = [IO.Directory]::GetAccessControl($captured)
+  if ($back.GetSecurityDescriptorSddlForm('Access') -cne $cs.GetSecurityDescriptorSddlForm('Access') -or -not $back.AreAccessRulesProtected -or $back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544') { Stop-Launch 'LINUX_RUN_CAPTURED_DIRECTORY_ACL_UNCONFIRMED' $captured }
+  $captured
+}
+function New-FleetRunDirectory([string]$name, [switch]$Probe) {
+  $pin = $null; $bytes = $null
+  if (-not $Probe) {
+    $pin = Get-FleetScriptPin $name
+    $bytes = [IO.File]::ReadAllBytes($pin[0])
+    if ((Sha256Bytes $bytes) -cne $pin[1]) { Stop-Launch 'LINUX_SCRIPT_CHANGED' $name }
+  }
+  $base = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+  $dir = Join-Path $ResidentRoot ('install\linux-run-' + [Guid]::NewGuid().ToString('N') + $(if ($Probe) { '-probe' } else { '' }))
+  if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) { Stop-Launch 'LINUX_RUN_DIRECTORY_EXISTS' $dir }
+  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($base + $(if ($FleetCompanionAccount) { '(A;OICI;0x1200a9;;;' + $OwnerSid + ')' } else { '' }))
+  [void][IO.Directory]::CreateDirectory($dir, $ds)
+  $os = New-Object Security.AccessControl.DirectorySecurity; $os.SetSecurityDescriptorSddlForm($base + $(if ($FleetCompanionAccount) { '(A;;0x1200a9;;;' + $OwnerSid + ')' } else { '' }))
+  $outDir = Join-Path $dir 'out'; [void][IO.Directory]::CreateDirectory($outDir, $os)
+  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)' + $(if ($FleetCompanionAccount) { '(A;;0x120116;;;' + $OwnerSid + ')' } else { '' }))
+  foreach ($leaf in @('stdout.txt', 'stderr.txt')) {
+    $made = [IO.File]::Create((Join-Path $outDir $leaf), 1, [IO.FileOptions]::None, $fs); $made.Dispose()
+    if ([IO.File]::GetAccessControl((Join-Path $outDir $leaf)).GetSecurityDescriptorSddlForm('Access') -cne $fs.GetSecurityDescriptorSddlForm('Access')) { Stop-Launch 'LINUX_RUN_OUTPUT_FILE_ACL_UNCONFIRMED' $leaf }
+  }
+  $captured = New-FleetCaptureDirectory $dir 'captured'
+  $script = $null
+  if (-not $Probe) {
+    $script = Join-Path $dir 'script.sh'; Write-New $script $bytes
+    if ((Sha256Bytes ([IO.File]::ReadAllBytes($script))) -cne $pin[1]) { Stop-Launch 'LINUX_SCRIPT_COPY_CHANGED' $name }
+  }
+  [ordered]@{ directory = $dir; script = $script; out = $outDir; captured = $captured; sha256 = $(if ($pin) { $pin[1] } else { $null }); timeoutSeconds = $(if ($pin) { [int]$pin[2] } else { $null }) }
+}
+# What a run wrote, as this launcher may read it. On a companion node only the registrar's capture (captured\, which the account cannot
+# reach); elsewhere out\ itself, which then only SYSTEM and Administrators can write. Never anything the account can still change.
+function Get-FleetRunOutputDirectory($run) { if ($FleetCompanionAccount) { $run.captured } else { $run.out } }
+# One file of the out directory (B's evidence or version facts). On a companion node the account can write there, so the registrar
+# captures it first (capture-file: no link followed, one name, at most 4 MiB) into the run's captured\ and that copy is read; elsewhere
+# the out directory is SYSTEM and Administrators only and is read as it is. $null: not a plain file, missing, or too large.
+function Read-FleetOutFile([string]$leaf, $run, [string]$registrar, [int]$max) {
+  if (-not $FleetCompanionAccount) { return , (Read-FleetFileChecked $FleetOutDir $leaf $max) }
+  if ($leaf -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,118}[A-Za-z0-9]$') { return $null }
+  $c = Invoke-FleetProcess $registrar ('capture-file ' + (Join-Path $FleetOutDir $leaf) + ' ' + (Join-Path $run.captured $leaf)) 120
+  if ($c.timedOut -or $c.exit -ne 0 -or [string]$c.stdout -notmatch '"code":"FILE_CAPTURED"') { return $null }
+  , (Read-FleetFileChecked $run.captured $leaf $max)
+}
+# Before anything changes on a companion node: proof, on this node and as the real account, that the two pre-made output files can be
+# written by the account exactly as a Linux step will write them, and that the registrar's capture returns what was written. A probe
+# directory laid out by the same function as a real run; the registrar's write-probe (root-run's checks and password change, then, as
+# the account, cmd.exe /d /c "echo x> out\stdout.txt 2> out\stderr.txt", then the capture). Passed when: exit 0, the captured stdout
+# is exactly x, the captured stderr is empty, and the owner and DACL of out\ and of both files are what they were. The directory is
+# removed either way; the record stays (linux-out-acl-probe-report.json). A failure stops before anything changed.
+function Step-LinuxOutAclProbe([string]$registrar) {
+  $run = New-FleetRunDirectory 'probe' -Probe
+  $sd = { param($p) $(if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }).GetSecurityDescriptorSddlForm('All') }
+  $watched = @($run.out, (Join-Path $run.out 'stdout.txt'), (Join-Path $run.out 'stderr.txt'))
+  $before = @($watched | ForEach-Object { & $sd $_ })
+  $report = [ordered]@{ directory = $run.directory; outcome = $null; exit = $null; code = $null; stdoutIsX = $false; stderrEmpty = $false; aclUnchanged = $false; failed = @(); removed = $false; registrarStderr = $null }
+  try {
+    $c = Invoke-FleetProcess $registrar ('write-probe ' + $ResidentRoot + ' ' + $run.directory + ' 120') 420
+    if ($c.timedOut) { $report.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $report.outcome = $line.outcome; $report.exit = $line.exit; $report.code = $line.code; $report.registrarStderr = (Tail $c.stderr) }
+    $so = Read-FleetFileChecked $run.captured 'stdout.txt' 4096; $se = Read-FleetFileChecked $run.captured 'stderr.txt' 4096
+    $report.stdoutIsX = ($null -ne $so -and $U8.GetString($so).Trim() -ceq 'x')
+    $report.stderrEmpty = ($null -ne $se -and $se.Length -eq 0)
+    $after = @($watched | ForEach-Object { & $sd $_ })
+    $report.aclUnchanged = (($before -join "`n") -ceq ($after -join "`n"))
+  } catch { $report.code = 'PROBE_EXCEPTION:' + $_.Exception.GetType().Name }
+  if (-not ($report.outcome -ceq 'EXITED' -and $report.exit -eq 0)) { $report.failed += 'exit' }
+  if (-not $report.stdoutIsX) { $report.failed += 'stdout' }
+  if (-not $report.stderrEmpty) { $report.failed += 'stderr' }
+  if (-not $report.aclUnchanged) { $report.failed += 'acl' }
+  try { if ((Split-Path -Leaf $run.directory) -cmatch '^linux-run-[0-9a-f]{32}-probe$') { [IO.Directory]::Delete($run.directory, $true) }; $report.removed = -not [IO.Directory]::Exists($run.directory) } catch { $report.removed = $false }
+  Write-Json 'linux-out-acl-probe-report.json' $report
+  if ($report.failed.Count) {
+    # The node is as it was when the registrar refused before any change, and also when the probe process ran (the password change and
+    # the task registration completed and were read back before it started). Anything else (a parked task, an unreadable exit, a
+    # timeout, no answer): the companion task's state is not known to be the reviewed one; the pause stays and the terminal says why.
+    if (-not ($report.outcome -ceq 'EXITED' -or ($report.outcome -ceq 'REFUSED' -and (Test-FleetRefusedBeforeAnyChange $report.code)))) { Set-FleetW1PauseKept ('WRITE_PROBE_' + $(if ($report.code) { $report.code } else { [string]$report.outcome })) }
+    Stop-Launch 'LINUX_OUT_ACL_PROBE_FAILED' $report
+  }
+  $Done.Add('linux-out-acl-probe')
+  $report
+}
+# One Linux script, as root in the node's distribution: through the registrar's root-run as the companion account, or directly as this
+# elevated Owner (the same command line and environment either way). Returns outcome, exit, code, the script's stdout and the directory.
+function Invoke-FleetLinuxScript([string]$name, [string]$registrar) {
+  $run = New-FleetRunDirectory $name
+  $r = [ordered]@{ name = $name; directory = $run.directory; captured = $run.captured; outcome = 'UNREADABLE'; exit = $null; code = $null; captureRefused = $null; stdout = $null; stderrTail = $null; registrarStderr = $null; seconds = $null }
+  $t0 = [DateTime]::UtcNow
+  if ($FleetCompanionAccount) {
+    $c = Invoke-FleetProcess $registrar ('root-run ' + $ResidentRoot + ' ' + $run.script + ' ' + $run.sha256 + ' ' + $run.out + ' ' + $run.timeoutSeconds) ($run.timeoutSeconds + 300)
+    if ($c.timedOut) { $r.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $r.outcome = $line.outcome; $r.exit = $line.exit; $r.code = $line.code; $r.captureRefused = $line.captureRefused; $r.registrarStderr = (Tail $c.stderr) }
+  } else {
+    $wsl = '/mnt/c/' + $run.script.Substring(3).Replace('\', '/')
+    $c = Invoke-FleetProcess 'C:\Windows\System32\cmd.exe' ('/d /c ""C:\Program Files\WSL\wsl.exe" --distribution ' + $FleetDistribution + ' --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc ' + $wsl + ' > ' + $run.out + '\stdout.txt 2> ' + $run.out + '\stderr.txt"') $run.timeoutSeconds
+    if ($c.timedOut) { $r.outcome = 'TIMEOUT' } else { $r.outcome = 'EXITED'; $r.exit = [int64]$c.exit }
+  }
+  $r.seconds = [int]([DateTime]::UtcNow - $t0).TotalSeconds
+  foreach ($k in @('stdout', 'stderr')) {
+    $raw = $(if ($r.outcome -ceq 'EXITED' -and -not $r.captureRefused) { Read-FleetFileChecked (Get-FleetRunOutputDirectory $run) ($k + '.txt') 4194304 } else { $null })   # nothing is read of a run that has not ended
+    $text = $(if ($null -eq $raw) { $null } else { $U8.GetString($raw) })
+    if ($k -ceq 'stdout') { $r.stdout = $text } else { $r.stderrTail = (Tail $text) }
+    if ($null -ne $text) { Write-New (Join-Path $Out ('linux-' + $name + '.' + $k + '.txt')) ($U8.GetBytes($text)) }
+  }
+  $r
+}
+function Test-FleetRun($run, [string]$status) { $run.outcome -ceq 'EXITED' -and $run.exit -eq 0 -and (Get-Key (Parse-LastLine $run.stdout) 'status') -ceq $status }
+function Get-FleetRunReport($run) { [ordered]@{ name = $run.name; directory = $run.directory; outcome = $run.outcome; exit = $run.exit; code = $run.code; captureRefused = $run.captureRefused; seconds = $run.seconds; stdoutTail = (Tail $run.stdout); stderrTail = $run.stderrTail; registrarStderr = $run.registrarStderr } }
+# The scripts read the in directory and write the out directory (prep.py --in-dir / --out-dir; both pinned from the scripts' own text).
+# In: the Owner's, its bytes pinned by the scripts themselves; the account is given read. Out: made here (below).
+function Set-FleetLinuxDirectories {
+  if (-not [IO.Directory]::Exists($FleetInDir)) { Stop-Launch 'LINUX_DIRECTORY_MISSING' $FleetInDir }
+  if (([IO.File]::GetAttributes($FleetInDir) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-Launch 'LINUX_DIRECTORY_REPARSE_REFUSED' $FleetInDir }
+  # Out: <CI root>\reinstall-linux-out-<32hex>, made HERE (it must not exist): no part of its path is the Owner's, so nothing of the
+  # Owner's session can replace it or anything in it. SYSTEM and Administrators; on a companion node the account may write in it.
+  if ((Split-Path -Parent $FleetOutDir) -cne $CarryParent -or (Split-Path -Leaf $FleetOutDir) -cnotmatch '^reinstall-linux-out-[0-9a-f]{32}$') { Stop-Launch 'LINUX_OUT_DIRECTORY_NOT_UNDER_THE_CI_ROOT' $FleetOutDir }
+  if ([IO.Directory]::Exists($FleetOutDir) -or [IO.File]::Exists($FleetOutDir)) { Stop-Launch 'LINUX_OUT_DIRECTORY_EXISTS' $FleetOutDir }
+  $ds = New-Object Security.AccessControl.DirectorySecurity
+  $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' + $(if ($FleetCompanionAccount) { '(A;OICI;0x1301bf;;;' + $OwnerSid + ')' } else { '' }))
+  [void][IO.Directory]::CreateDirectory($FleetOutDir, $ds)
+  $back = [IO.Directory]::GetAccessControl($FleetOutDir)
+  if ($back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544' -or -not $back.AreAccessRulesProtected -or $back.GetSecurityDescriptorSddlForm('Access') -cne $ds.GetSecurityDescriptorSddlForm('Access')) { Stop-Launch 'LINUX_OUT_DIRECTORY_ACL_UNCONFIRMED' $back.GetSecurityDescriptorSddlForm('All') }
+  if ($FleetCompanionAccount) {
+    $acl = [IO.Directory]::GetAccessControl($FleetInDir)
+    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($OwnerSid)), [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+      ([Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'), [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    [IO.Directory]::SetAccessControl($FleetInDir, $acl)
+  }
+}
+# One file a Linux step wrote, read without following anything: its directory and the file itself must be plain (no reparse point, the
+# file no directory), at most $max bytes; else $null and nothing of it is read. Every directory above is this run's own, SYSTEM and
+# Administrators only, so no path component can be a link; in the directory itself the account can at most write files (it cannot make
+# a file a link: that needs a privilege a standard account does not hold, and a junction is a directory, refused here). No native call
+# is compiled for a handle's final path: compiling in an elevated session would write into the Owner's temporary directory.
+function Read-FleetFileChecked([string]$directory, [string]$leaf, [int]$max) {
+  try {
+    if ($leaf -cnotmatch '^[A-Za-z0-9._-]{1,120}$' -or -not [IO.Directory]::Exists($directory) -or ([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $null }
+    $f = Join-Path $directory $leaf
+    if (-not [IO.File]::Exists($f)) { return $null }
+    $a = [IO.File]::GetAttributes($f)
+    if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($a -band [IO.FileAttributes]::Directory) -ne 0) { return $null }
+    $h = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite')
+    try {
+      if ($h.Length -gt $max -or ([IO.File]::GetAttributes($f) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $null }
+      $b = New-Object byte[] ([int]$h.Length); $at = 0
+      while ($at -lt $b.Length) { $n = $h.Read($b, $at, $b.Length - $at); if ($n -lt 1) { return $null }; $at += $n }
+      return , $b
+    } finally { $h.Dispose() }
+  } catch { return $null }
+}
+# The registrar with root-run, built from THIS package's source: New-CompanionBuildFromPackage of the package's own
+# companion-headless.ps1 (both files read from the pinned package and checked against its manifest and the generator's pins; only
+# the build functions are taken from the script, as Test-SecretsAsVerify takes verify's helpers).
+function New-FleetRegistrar {
+  $pkg = $Js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))))
+  $files = [ordered]@{}
+  foreach ($x in @(@('companion-headless.ps1', $FleetHeadlessSha256), @('CompanionTaskRegistrar.cs', $FleetRegistrarSha256))) {
+    $rel = 'resident/windows/' + $x[0]
+    $entry = @(Get-Key $pkg 'files' | Where-Object { (Get-Key $_ 'path') -ceq $rel })
+    if ($entry.Count -ne 1 -or (Get-Key $entry[0] 'sha256') -cne $x[1]) { throw ('PACKAGE_PIN_MISMATCH:' + $x[0]) }
+    $b = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $rel.Replace('/', '\')))
+    if ((Sha256Bytes $b) -cne $x[1]) { throw ('PACKAGE_FILE_CHANGED:' + $x[0]) }
+    $staged = Join-Path $Stage ('fleet-' + $x[0]); Write-New $staged $b
+    if ((Get-FileSha $staged) -cne $x[1]) { throw ('STAGED_COPY_CHANGED:' + $x[0]) }
+    $files[$x[0]] = $staged
+  }
+  $tk = $null; $er = $null; $ast = [Management.Automation.Language.Parser]::ParseInput($U8.GetString([IO.File]::ReadAllBytes($files['companion-headless.ps1'])), [ref]$tk, [ref]$er)
+  if ($er.Count) { throw 'COMPANION_HEADLESS_PARSE_ERRORS' }
+  $want = @('Get-CompanionSha256', 'Invoke-CompanionBinaryCompile', 'Remove-CompanionBuild', 'New-CompanionBuildFromBytes', 'New-CompanionBuildFromPackage')
+  $vars = @('$CompanionBuildPrograms', '$CompanionBuildSddl', '$CompanionFramework', '$CompanionCsc')
+  $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $false))
+  $asg = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $vars -ccontains $n.Left.Extent.Text }, $false))
+  if ($defs.Count -ne $want.Count -or $asg.Count -ne $vars.Count) { throw 'COMPANION_BUILD_FUNCTIONS_NOT_FOUND' }
+  foreach ($n in @($asg) + @($defs)) { . ([scriptblock]::Create($n.Extent.Text)) }
+  $build = New-CompanionBuildFromPackage $ResidentRoot $files['CompanionTaskRegistrar.cs'] $FleetRegistrarSha256 $ResidentManifestSha256
+  [ordered]@{ directory = [string]$build.directory; exe = [string]$build.registrar.exe; sha256 = [string]$build.registrar.sha256 }
+}
+function Remove-FleetRegistrar($build) {
+  if ($null -eq $build -or (Split-Path -Leaf $build.directory) -cnotmatch '^companion-build-[0-9a-f]{32}$' -or -not [IO.Directory]::Exists($build.directory)) { return }
+  if (([IO.File]::GetAttributes($build.directory) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($build.directory, $false); return }
+  Remove-Item -LiteralPath $build.directory -Recurse -Force -ErrorAction SilentlyContinue
+}
+# Linux phase B cannot be undone, and the Windows side's own preflight (Step-UninstallPreflight) runs only after it. So the read-only
+# checks of that preflight that do not depend on Linux run here first, before phase A: the installed receipt, uninstall script, HALT
+# and terminal evidence are the pinned ones, the runner and the CI root's DACL are as reviewed, the INSTALLED uninstall's dry run accepts
+# the state, the NEW install's carry-forward preview passes and its plan fields the uninstall cannot change equal the reviewed ones,
+# the controller may log on as a service, the two secrets are as verify expects, the old root is paused between batches and its state
+# can be carried. Nothing is written but this run's own reports (their own names: Step-UninstallPreflight runs in full afterwards).
+function Step-WindowsPreflightBeforeLinux {
+  $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
+  $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
+  if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
+  $report['terminalEvidenceMatches'] = Test-TerminalEvidence $ResidentRoot
+  if (-not $report['terminalEvidenceMatches']) { $codes.Add('TERMINAL_EVIDENCE_CHANGED_BEFORE_QUIESCE') }
+  $report['installedUninstallSha256'] = Get-FileSha $InstalledUninstall
+  if ($report['installedUninstallSha256'] -cne $InstalledUninstallSha256) { $codes.Add('INSTALLED_UNINSTALL_NOT_AS_REVIEWED') }
+  $report['haltSha256'] = Get-FileSha (Join-Path $ResidentRoot 'state\HALT.json')
+  if ($report['haltSha256'] -cne $InstalledHaltSha256) { $codes.Add('INSTALLED_HALT_NOT_AS_REVIEWED') }
+  $runner = Get-RunnerState; $report['runner'] = $runner
+  if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
+  $report['parentAcl'] = try { (Get-Acl -LiteralPath $ParentAclPath).Sddl } catch { $null }
+  if ($report['parentAcl'] -cne $ParentSddlBefore) { $codes.Add('PARENT_ACL_NOT_AS_REVIEWED') }
+  if ($codes.Count -eq 0) {   # the two dry runs only against the reviewed scripts
+    $u = Invoke-Child 'uninstall.dry-run.before-linux' $InstalledUninstall @()
+    $uv = Parse-Json $u.stdout; $up = Get-Key $uv 'plan'
+    $report['uninstallDryRun'] = [ordered]@{ exit = $u.exit; status = (Get-Key $uv 'status'); planSha256 = (Get-Key $uv 'planSha256'); plan = $up; stderr = (Tail $u.stderr) }
+    if ($u.exit -ne 0 -or (Get-Key $uv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or -not (Test-UninstallPlan $up)) { $codes.Add('UNINSTALL_PLAN_REFUSED') }
+    $c = Invoke-Child 'install.dry-run.carry-preview.before-linux' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -NoHeartbeat -NoToken)   # before the tokens are carried over
+    $cv = Parse-Json $c.stdout; $preview = $null; if ($cv -is [Collections.Generic.IDictionary[string, object]] -and $cv.ContainsKey('carryForwardPreview')) { $preview = $cv['carryForwardPreview'] }
+    $report['carryForwardPreview'] = [ordered]@{ exit = $c.exit; status = (Get-Key $cv 'status'); preview = $preview; stderr = (Tail $c.stderr) }
+    $ep = Get-Key $cv 'plan'; $rp = Get-ReviewedPlan; $s1 = [ordered]@{}; if ($null -eq $rp) { $codes.Add('REVIEWED_DRY_RUN_MISSING_OR_CHANGED') }
+    foreach ($k in @('secrets', 'parentAcl', 'nodeIdentitySha256', 'roleAssumption')) { if ($null -eq $ep -or $null -eq $rp -or $Js.Serialize((Get-Key $ep $k)) -cne $Js.Serialize((Get-Key $rp $k))) { $s1[$k] = [ordered]@{ elevated = (Get-Key $ep $k); reviewed = (Get-Key $rp $k) } } }
+    $report['planFieldsBeforeUninstall'] = $s1; if ($s1.Count) { $codes.Add('PLAN_FIELDS_WOULD_DIFFER_AFTER_UNINSTALL') }
+    if ($c.exit -ne 0 -or (Get-Key $cv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or $null -eq $preview -or $preview -is [string]) { $codes.Add('CARRY_FORWARD_PREVIEW_REFUSED') }
+    elseif (@($preview).Count + 1 -gt 256) { $codes.Add('CARRY_FORWARD_TOO_MANY_STATES_AFTER_UNINSTALL') }
+    $pf = Get-Key $cv 'preflight'; $logonOk = Get-Key $pf 'controllerServiceLogonRight'; $report['controllerServiceLogonRight'] = $logonOk
+    if ($null -ne $pf -and -not ($logonOk -is [bool] -and $logonOk)) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
+  }
+  $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }
+  $quiet = Test-OldRootQuiet; $report['oldRootQuiet'] = $quiet; foreach ($q in @($quiet.codes)) { $codes.Add($q) }
+  $carryNow = Test-CurrentRootCarryShape; $report['currentRootCarryShape'] = $carryNow; foreach ($q in @($carryNow.codes)) { $codes.Add($q) }
+  $report['codes'] = @($codes)
+  Write-Json 'windows-preflight-before-linux-report.json' $report
+  if ($codes.Count) { Stop-Launch $codes[0] $report }
+  $Done.Add('windows-preflight-before-linux')
+}
+# The tokens of the reinstalled node are the INSTALLED ones (no token file of the Owner's is named anywhere): before the uninstall retires
+# the root, each is copied into a new directory only SYSTEM and Administrators can enter, and the copy must have the fingerprint the
+# install receipt recorded (pinned). The fingerprint is secret-fingerprint.mjs's formula, the one install-resident.ps1 applies to the file
+# it is given: SHA-256 of the kind's domain and the trimmed token, which must have the kind's shape. The installer then reads the copies
+# (-UpgradeTokenFile / -HeartbeatTokenFile) and fingerprints them itself; Test-TokenPlan requires those to be the pinned ones too. A
+# token's bytes exist here only in memory and in that directory: never in a report, a log, the plan or the output.
+function Get-FleetTokenFingerprint([byte[]]$bytes, [string]$kind) {
+  $spec = switch ($kind) { 'ci-token' { , @("clued.independent-ci.ci-binding-pin/1`0", '^clued_bnd_[A-Za-z0-9_-]{8,480}\z') } 'heartbeat-token' { , @("clued.independent-ci.heartbeat-token-pin/1`0", '^clued_hbt_[A-Za-z0-9_-]{43}\z') } default { $null } }
+  if ($null -eq $spec -or $null -eq $bytes -or $bytes.Length -lt 1 -or $bytes.Length -gt 4096) { return $null }
+  $token = try { $Strict8.GetString($bytes).Trim() } catch { return $null }
+  if ($token -cnotmatch $spec[1]) { return $null }
+  Sha256Bytes ($U8.GetBytes($spec[0] + $token))
+}
+# The copies never outlive the run that made them: this is called when the installer has run, by Stop-Launch, by the main catch and by
+# the main finally (so on success, on a stop and on any exception), each time before the terminal is written, which records removed
+# (and, when it failed, the exception's type: never a message, never content). Nothing is lost by deleting them: before the uninstall
+# the installed tokens are still in place, and after it they are in the kept root (resident-uninstalled-*\secrets\), which the uninstall
+# renames and never deletes. A run that was cut off (power loss) is cleaned up by the next run's Step-SweepCarry. Idempotent.
+function Remove-FleetCarry {
+  $d = [string]$CarriedTokens.directory
+  if (-not $d -or $CarriedTokens.removed -eq $true -or (Split-Path -Parent $d) -cne $CarryParent -or (Split-Path -Leaf $d) -cnotmatch '^reinstall-carry-[0-9a-f]{32}$') { return }
+  try {
+    if ([IO.Directory]::Exists($d)) { if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($d, $false) } else { [IO.Directory]::Delete($d, $true) } }
+    $CarriedTokens.removed = -not [IO.Directory]::Exists($d); $CarriedTokens.removeError = $(if ($CarriedTokens.removed) { $null } else { 'STILL_THERE' })
+  } catch { $CarriedTokens.removed = $false; $CarriedTokens.removeError = $_.Exception.GetType().Name }
+}
+# The first thing every run does once it is known to be the elevated Owner on this node, before its output directory: a reinstall-carry-<32hex> directory still there is a cut-off
+# run's (its finally never ran). Each is looked at, deleted whatever was found, and one record per directory is kept: its name, how many
+# entries, whether its ACL was still SYSTEM and Administrators only, whether every file had a token's shape, and whether it is gone. A
+# file's bytes are read into memory only to test the shape and are cleared; nothing of them is written anywhere. Never stops the launch.
+function Step-SweepCarry {
+  $found = @()
+  if (-not [IO.Directory]::Exists($CarryParent)) { return , $found }
+  foreach ($d in @([IO.Directory]::GetDirectories($CarryParent, 'reinstall-carry-*') | Sort-Object)) {
+    $r = [ordered]@{ name = [IO.Path]::GetFileName($d); ours = $false; reparse = $null; entries = $null; aclSystemAndAdministratorsOnly = $null; filesTokenShaped = $null; removed = $false; error = $null }
+    try {
+      $r.ours = ($r.name -cmatch '^reinstall-carry-[0-9a-f]{32}$')
+      if (-not $r.ours) { $found += , $r; continue }   # another name: not made by a launcher, left alone and reported
+      $r.reparse = (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+      if ($r.reparse) { [IO.Directory]::Delete($d, $false) }
+      else {
+        $acl = [IO.Directory]::GetAccessControl($d)
+        $sids = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+        $r.aclSystemAndAdministratorsOnly = ($acl.AreAccessRulesProtected -and $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq 'S-1-5-32-544' -and $sids.Count -gt 0 -and
+          @($sids | Where-Object { $_ -cnotin @('S-1-5-18', 'S-1-5-32-544') }).Count -eq 0)
+        $entries = @([IO.Directory]::GetFileSystemEntries($d)); $r.entries = $entries.Count; $shaped = $true
+        foreach ($f in $entries) {
+          $b = $null
+          try {
+            if ([IO.Directory]::Exists($f) -or (New-Object IO.FileInfo($f)).Length -gt 4096) { $shaped = $false; continue }
+            $b = [IO.File]::ReadAllBytes($f)
+            if ($null -eq (Get-FleetTokenFingerprint $b 'ci-token') -and $null -eq (Get-FleetTokenFingerprint $b 'heartbeat-token')) { $shaped = $false }
+          } catch { $shaped = $false } finally { if ($null -ne $b) { [Array]::Clear($b, 0, $b.Length) } }
+        }
+        $r.filesTokenShaped = $shaped
+        [IO.Directory]::Delete($d, $true)
+      }
+      $r.removed = -not [IO.Directory]::Exists($d)
+    } catch { $r.error = $_.Exception.GetType().Name; $r.removed = -not [IO.Directory]::Exists($d) }
+    $found += , $r
+  }
+  # Out directories of earlier launches (reinstall-linux-out-<32hex>: B's public evidence, review copies): removed too, each recorded by
+  # name and entry count. Never this launcher's own pinned one: a continuation after B's timeout reads B's output from it.
+  foreach ($d in @([IO.Directory]::GetDirectories($CarryParent, 'reinstall-linux-out-*') | Sort-Object)) {
+    $r = [ordered]@{ name = [IO.Path]::GetFileName($d); kind = 'linux-out'; ours = $false; reparse = $null; entries = $null; removed = $false; error = $null }
+    try {
+      $r.ours = ($r.name -cmatch '^reinstall-linux-out-[0-9a-f]{32}$')
+      if (-not $r.ours -or ($FleetOutDir -and $d -ceq $FleetOutDir)) { if ($r.ours) { continue }; $found += , $r; continue }
+      $r.reparse = (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+      if ($r.reparse) { [IO.Directory]::Delete($d, $false) } else { $r.entries = @([IO.Directory]::GetFileSystemEntries($d)).Count; [IO.Directory]::Delete($d, $true) }
+      $r.removed = -not [IO.Directory]::Exists($d)
+    } catch { $r.error = $_.Exception.GetType().Name; $r.removed = -not [IO.Directory]::Exists($d) }
+    $found += , $r
+  }
+  # Progress records of earlier launches (reinstall-progress-<32hex>: step names and pins, nothing else): a launch that completed needs
+  # them no more, and one that did not is superseded by this run, which could only be prepared or generated because the node's state
+  # allowed it. One exception, never removed: the records of the launch THIS launcher continues (a continuation proves its prior from them).
+  $priorId = $null; $priorRoot = Get-Variable -Name 'ContinuePriorRoot' -ValueOnly -ErrorAction SilentlyContinue
+  if ($priorRoot) { $priorId = (Sha256Bytes ($U8.GetBytes(([string]$priorRoot).ToLowerInvariant()))).Substring(0, 32) }
+  # nor this launcher's own (it is there only when this launcher was started a second time, which Step-Output then refuses: the first
+  # launch's records must survive that mistake)
+  $ownId = (Sha256Bytes ($U8.GetBytes(([string]$Out).ToLowerInvariant()))).Substring(0, 32)
+  foreach ($d in @([IO.Directory]::GetDirectories($CarryParent, 'reinstall-progress-*') | Sort-Object)) {
+    $r = [ordered]@{ name = [IO.Path]::GetFileName($d); kind = 'progress'; ours = $false; reparse = $null; entries = $null; completed = $null; removed = $false; error = $null }
+    try {
+      $r.ours = ($r.name -cmatch '^reinstall-progress-[0-9a-f]{32}$')
+      if ($r.ours -and (($priorId -and $r.name -ceq ('reinstall-progress-' + $priorId)) -or $r.name -ceq ('reinstall-progress-' + $ownId))) { continue }
+      if (-not $r.ours) { $found += , $r; continue }
+      $r.reparse = (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+      if ($r.reparse) { [IO.Directory]::Delete($d, $false) }
+      else {
+        $names = @([IO.Directory]::GetFiles($d) | ForEach-Object { [IO.Path]::GetFileName($_) })
+        $r.entries = $names.Count; $r.completed = (@($names | Where-Object { $_ -cmatch '^[0-9]{3}-companion-headless\.json$' }).Count -gt 0)
+        [IO.Directory]::Delete($d, $true)
+      }
+      $r.removed = -not [IO.Directory]::Exists($d)
+    } catch { $r.error = $_.Exception.GetType().Name; $r.removed = -not [IO.Directory]::Exists($d) }
+    $found += , $r
+  }
+  if ($found.Count) {
+    # its own record, beside what was swept (written elevated; the launch directory does not exist yet and is the Owner's)
+    $record = Join-Path $CarryParent ('reinstall-carry-sweep-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+    Write-New $record ($U8.GetBytes(([ordered]@{ contract = 'clued.independent-ci.reinstall-carry-sweep/1'; parent = $CarryParent; directories = $found; at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 6)))
+    $Done.Add('carry-swept')
+  }
+  , $found
+}
+# Returns the copies' paths. A token that is not there, not a plain file or not the pinned one stops the launch before anything changes,
+# and nothing is left behind then.
+function Step-CarryTokens {
+  $want = @(, @('upgradeToken', $UpgradeTokenTarget, 'ci-token', $FleetUpgradeTokenFingerprint, 'resident-upgrade.token'))
+  if ($FleetHeartbeatTokenFingerprint) { $want += , @('heartbeatToken', $HeartbeatTokenTarget, 'heartbeat-token', $FleetHeartbeatTokenFingerprint, 'ci-node-heartbeat.token') }
+  $dir = Join-Path $CarryParent ('reinstall-carry-' + [Guid]::NewGuid().ToString('N'))
+  if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) { Stop-Launch 'CARRY_DIRECTORY_EXISTS' $null }
+  $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($StageSddl)
+  [void][IO.Directory]::CreateDirectory($dir, $ds)
+  $CarriedTokens.directory = $dir
+  $copies = [ordered]@{}; $problem = $null   # (never $out: Stop-Launch, called below, reads the launch directory $Out through this scope)
+  try {
+    $back = [IO.Directory]::GetAccessControl($dir)
+    if ($back.GetSecurityDescriptorSddlForm('Access') -cne $ds.GetSecurityDescriptorSddlForm('Access') -or -not $back.AreAccessRulesProtected -or
+        ($StageSddl.StartsWith('O:BA', [StringComparison]::Ordinal) -and $back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544') -or
+        ([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'CARRY_DIRECTORY_ACL_READBACK_MISMATCH' }
+    foreach ($w in $want) {
+      $bytes = $null
+      try {
+        $src = [string]$w[1]
+        if (-not $src -or -not [IO.File]::Exists($src) -or ([IO.File]::GetAttributes($src) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or (New-Object IO.FileInfo($src)).Length -gt 4096) { throw ('INSTALLED_TOKEN_NOT_A_PLAIN_FILE:' + $w[0]) }
+        $bytes = [IO.File]::ReadAllBytes($src)
+        if ((Get-FleetTokenFingerprint $bytes $w[2]) -cne $w[3]) { throw ('CARRIED_TOKEN_FINGERPRINT_MISMATCH:' + $w[0]) }
+        $copy = Join-Path $dir $w[4]; Write-New $copy $bytes
+        $again = [IO.File]::ReadAllBytes($copy)
+        try { if ((Get-FleetTokenFingerprint $again $w[2]) -cne $w[3]) { throw ('CARRIED_TOKEN_FINGERPRINT_MISMATCH:' + $w[0]) } } finally { [Array]::Clear($again, 0, $again.Length) }
+        $copies[$w[0]] = $copy
+      } finally { if ($null -ne $bytes) { [Array]::Clear($bytes, 0, $bytes.Length) } }
+    }
+  } catch { $problem = [string]$_.Exception.Message }
+  if ($problem) {
+    Remove-FleetCarry   # nothing has changed yet: the installed tokens are still where they were
+    $known = [regex]::Match($problem, '^(CARRIED_TOKEN_FINGERPRINT_MISMATCH|INSTALLED_TOKEN_NOT_A_PLAIN_FILE|CARRY_DIRECTORY_ACL_READBACK_MISMATCH)(?::([A-Za-z]+))?$')
+    Stop-Launch $(if ($known.Success) { $known.Groups[1].Value } else { 'CARRIED_TOKEN_COPY_FAILED' }) ([ordered]@{ token = $(if ($known.Success -and $known.Groups[2].Success) { $known.Groups[2].Value } else { $null }); carryRemoved = $CarriedTokens.removed })
+  }
+  $CarriedTokens.tokens = @($copies.Keys)
+  $Done.Add('tokens-carried')
+  $copies
+}
+# The installed public binaries' locks, observed ELEVATED (reinstall/tools/file-locks.ps1, pinned): the companion account's processes
+# and its task are readable only from here, so the rehearsal leaves this check to the launcher on a companion node. Read-only.
+function Step-FileLocks {
+  $b = [IO.File]::ReadAllBytes($FleetFileLocks)
+  if ((Sha256Bytes $b) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_CHANGED' $null }
+  $tool = Join-Path $Stage 'file-locks.ps1'; Write-New $tool $b
+  if ((Get-FileSha $tool) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_STAGED_COPY_CHANGED' $null }
+  $c = Invoke-Child 'file-locks' $tool @('-Root', $ResidentRoot)
+  $v = $null; try { $v = $Js.DeserializeObject(([string]$c.stdout).Trim()) } catch { $v = $null }
+  $report = [ordered]@{ exit = $c.exit; observation = $v; stderr = (Tail $c.stderr) }
+  $ok = $c.exit -eq 0 -and $v -is [Collections.Generic.IDictionary[string, object]] -and $v.ContainsKey('contract') -and $v['contract'] -ceq 'clued.independent-ci.rehearsal-file-locks/1' -and
+    $v.ContainsKey('status') -and $v['status'] -ceq 'OBSERVED' -and $v.ContainsKey('fileCount') -and $v['fileCount'] -is [int] -and $v['fileCount'] -ge 1 -and $v.ContainsKey('external') -and $v['external'] -is [Array]
+  Write-Json 'file-locks-report.json' $report
+  if (-not $ok) { Stop-Launch 'RESIDENT_FILE_LOCK_OBSERVATION_INVALID' $report }
+  if ($v['external'].Count -ne 0) { Stop-Launch 'EXTERNAL_RESIDENT_BINARY_LOCK' $report }
+  $Done.Add('file-locks')
+  [ordered]@{ fileCount = $v['fileCount']; external = 0 }
+}
+# Linux A, then B (B-resume once after a failed B), then B's output by rule. A timeout stops the launch and kills nothing. Returns the
+# staged copy of the version facts (and its hash) for verify -LinuxVersionFactsFile.
+function Step-LinuxRoot {
+  $report = [ordered]@{ companionAccount = [bool]$FleetCompanionAccount; distribution = $FleetDistribution; planSha256 = $FleetPlanSha256; registrar = $null; runs = @(); evidence = $null; versionFacts = $null; codes = @() }
+  $stop = { param([string]$code) $report.codes = @($code); Write-Json 'linux-report.json' $report; Stop-Launch $code $report }
+  if (Get-Variable -Name 'ResumeOriginalLauncherSha256' -ErrorAction SilentlyContinue) { & $stop 'FLEET_LAUNCH_RESUME_NOT_SUPPORTED' }
+  Set-FleetLinuxDirectories
+  $build = $null
+  try {
+    if ($FleetCompanionAccount) { try { $build = New-FleetRegistrar } catch { $report.registrar = [string]$_.Exception.Message; & $stop 'LINUX_REGISTRAR_BUILD_FAILED' }; $report.registrar = [ordered]@{ sha256 = $build.sha256 } }
+    $exe = $(if ($build) { $build.exe } else { $null })
+    if ($FleetCompanionAccount) { $report['outAclProbe'] = Step-LinuxOutAclProbe $exe }   # stops here, with nothing changed, when the account cannot write as planned
+    $W1Restore.armed = $false   # from here phase A may have written: a stop is continued, the pause stays
+    $a = Invoke-FleetLinuxScript 'A' $exe; $report.runs += ,(Get-FleetRunReport $a)
+    # Lifted again only after a refusal that came before any change (Test-FleetRefusedBeforeAnyChange); any other refusal keeps the pause.
+    if ($a.outcome -ceq 'REFUSED') { if (Test-FleetRefusedBeforeAnyChange $a.code) { $W1Restore.armed = $true } else { Set-FleetW1PauseKept ('PHASE_A_' + $a.code) } }
+    if ($a.captureRefused) { & $stop 'LINUX_PHASE_A_OUTPUT_NOT_CAPTURED' }   # A ran and exited; what it printed is not readable yet (a continuation captures it)
+    if ($a.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
+    if (-not (Test-FleetRun $a 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED')) { & $stop 'LINUX_PHASE_A_NOT_COMPLETED' }
+    $Done.Add('linux-A')
+    $b = Invoke-FleetLinuxScript 'B' $exe; $report.runs += ,(Get-FleetRunReport $b)
+    if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
+    # B ran and exited, and its output could not be captured: whether it completed is not known here. Not "B did not complete" (no
+    # resume is run over it): stopped like a timeout, and the continuation captures and checks the output (capture-file).
+    if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
+    if (-not (Test-FleetRun $b 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1')) {
+      # The resume only after a B that ran and exited non-zero. A refusal or an unreadable result (B may never have started, or its
+      # state is unknown) and an exit 0 without the final status are not a failed B: nothing more is run. B and B-resume both failing
+      # stops here as well, with the node still paused and its Windows side untouched: an alarm for a person, on purpose.
+      if (-not ($b.outcome -ceq 'EXITED' -and $b.exit -ne 0)) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
+      $b = Invoke-FleetLinuxScript 'BResume' $exe; $report.runs += ,(Get-FleetRunReport $b)
+      if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
+      if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
+      if (-not (Test-FleetRun $b 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1')) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
+    }
+    $Done.Add('linux-B')
+    $last = Parse-LastLine $b.stdout
+    $ef = Get-FleetOutFile ([string](Get-Key $last 'evidence')) '^linux-live-manifest\.[0-9]{8}T[0-9]{6}Z\.txt$'
+    $ff = Get-FleetOutFile ([string](Get-Key $last 'versionFacts')) '^linux-version-facts\.[0-9]{8}T[0-9]{6}Z\.json$'
+    $report.evidence = $ef; $report.versionFacts = $ff
+    if (-not $ef -or -not $ff) { & $stop 'LINUX_OUTPUT_PATHS_NOT_IN_THE_OUT_DIRECTORY' }
+    $eb = Read-FleetOutFile ([IO.Path]::GetFileName($ef)) $b $exe 1048576; $fb = Read-FleetOutFile ([IO.Path]::GetFileName($ff)) $b $exe 1048576
+    if ($null -eq $eb -or $null -eq $fb) { & $stop 'LINUX_OUTPUT_UNREADABLE' }   # missing, a link, a second name, not a plain file, or too large: nothing of it was read
+  } finally { Remove-FleetRegistrar $build }
+  $codes = Test-FleetLinuxOutput ($Strict8.GetString($eb)) ($Strict8.GetString($fb))
+  if ($codes.Count) { $report.codes = @($codes); Write-Json 'linux-report.json' $report; Stop-Launch $codes[0] $report }
+  # exactly the bytes that passed the rules, kept in this run's admin-only staging for verify
+  $staged = Join-Path $Stage 'linux-version-facts.phase-B.json'; Write-New $staged $fb
+  Write-New (Join-Path $Out 'linux-live-manifest.txt') $eb; Write-New (Join-Path $Out 'linux-version-facts.json') $fb
+  $report['evidenceSha256'] = Sha256Bytes $eb; $report['versionFactsSha256'] = Sha256Bytes $fb
+  Write-Json 'linux-report.json' $report
+  $Done.Add('linux-output-checked')
+  [ordered]@{ factsSource = $staged; factsSha256 = (Sha256Bytes $fb); evidenceSha256 = (Sha256Bytes $eb); runs = $report.runs }
+}
 #endregion generic
 
 #region main
 Step-Identity
 Step-HostHygiene
+$null = Step-SweepCarry   # token copies a cut-off earlier run left behind: looked at, deleted, recorded (never their content)
 Step-Output
 try {
   $buffers = Step-Package
   $Stage = Step-Stage $buffers $StageSddl
+  $fileLocks = $null; $linux = $null
+  if ($FleetPlanSha256) {   # the generic node package: Linux A and B inside this run, before anything of the Windows side
+    $W1Restore.armed = $true   # until Linux phase A is started, a stop lifts the W1 pause again (Restore-W1Pause)
+    Step-WindowsPreflightBeforeLinux   # read-only: what the Windows side would refuse is refused before Linux B, which cannot be undone
+    $carried = Step-CarryTokens   # the installed tokens, copied and fingerprint-checked while the old root is still there
+    $UpgradeTokenFile = $carried['upgradeToken']; $HeartbeatTokenFile = $(if ($carried.Contains('heartbeatToken')) { $carried['heartbeatToken'] } else { $null })
+    $fileLocks = Step-FileLocks
+    $linux = Step-LinuxRoot
+    $LinuxVersionFactsSource = $linux.factsSource; $LinuxVersionFactsSha256 = $linux.factsSha256   # what verify gets (not pinned at generation)
+  }
   Step-UninstallPreflight
   $parentAcl = Step-ParentAcl   # r4.1 C2
   $quiesce = Step-Quiesce
@@ -919,6 +1554,7 @@ try {
   $archiveNeeded = Step-Preflight
   $archive = if ($archiveNeeded) { Stop-Launch 'V1_LEFTOVERS_PRESENT_NOT_ARCHIVED_BY_R4' $null } else { [ordered]@{ directory = $null; moved = 0; receiptSha256 = $null } }
   $install = Step-Install
+  if ($FleetPlanSha256) { Remove-FleetCarry }   # the installer has placed the tokens
   $train = Step-WaitFirstTrain   # r4 Q2 (review M1)
   $verify = if ($train.runnerQuiet) { Step-Verify $install.receiptSha256 } else { [ordered]@{ exit = $null; status = 'NOT_RUN_RUNNER_NOT_QUIET'; notOk = @() } }
   $pause = Step-PauseAfterInstall ($verify.status -ceq 'RESIDENT_VERIFIED')   # R5
@@ -929,13 +1565,20 @@ try {
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
   $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
-  if (-not [IO.File]::Exists((Join-Path $Out 'terminal.json'))) { Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = 'LAUNCHER_EXCEPTION'; detail = $_.Exception.Message; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; at = [DateTimeOffset]::UtcNow.ToString('o') }) }
+  Remove-FleetCarry
+  Restore-W1Pause
+  if (-not [IO.File]::Exists((Join-Path $Out 'terminal.json'))) { Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = 'LAUNCHER_EXCEPTION'; detail = $_.Exception.Message; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; carriedTokens = $CarriedTokens; w1Pause = $W1Restore.result; at = [DateTimeOffset]::UtcNow.ToString('o') }) }
   Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw
   throw
+} finally {
+  # Whatever happened above (success, a stop, any exception): no copy of a token outlives this run, and what became of the directory is
+  # on record even when the terminal was written before this point.
+  Remove-FleetCarry
+  if ($CarriedTokens.directory -and -not [IO.File]::Exists((Join-Path $Out 'carried-tokens-report.json'))) { try { Write-Json 'carried-tokens-report.json' $CarriedTokens } catch { } }
 }
 $terminal = [ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'
   status = $(if ($verify.status -cne 'RESIDENT_VERIFIED') { 'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED' } elseif (-not $pause.confirmed) { 'PAUSE_NOT_CONFIRMED' } else { 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })
-  sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm; companionHeadless = $companionHeadless
+  sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm; companionHeadless = $companionHeadless; fileLocks = $fileLocks; linux = $linux; carriedTokens = $CarriedTokens
   completed = @($Done); at = [DateTimeOffset]::UtcNow.ToString('o') }
 Write-Json 'terminal.json' $terminal
 $terminal | ConvertTo-Json -Depth 6

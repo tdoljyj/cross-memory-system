@@ -17,6 +17,10 @@ param([Parameter(Mandatory)][ValidateSet('current', 'post-uninstall')][string]$V
       [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid)   # M5-b (ADR 0023): the Owner when ownerSid is the companion's account
 if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
 $ErrorActionPreference = 'Stop'
+# The installer's JSON can carry the system's own (localized) text, e.g. an access-denied message in carryForwardPreview. Without this,
+# Windows PowerShell 5.1 writes a redirected stdout in the console's code page (936 on a Chinese system), which the generator, reading
+# UTF-8, cannot decode (DESK 2026-11-12). UTF-8 without a byte order mark, set before anything is written.
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $root = 'C:\ProgramData\CluedIndependentCI\resident'
 $global:R5Secret = @{
   'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem' = ($AppKeyTargetExists -ceq 'true')
