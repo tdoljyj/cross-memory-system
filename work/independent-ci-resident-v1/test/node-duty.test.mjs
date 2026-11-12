@@ -713,7 +713,7 @@ test('review round 29: ACTIVE -> UNCERTAIN -> ACTIVE, or an executor started aga
   assert.equal((await d.prepare({ status: st(c.t, 'ACTIVE', c.t), pulls, now: c.t })).lock, null);
 });
 
-// ADR 0025: the failover watchdog hands ci-admission over only after the holder was silent for 3 minutes. What that holder wrote
+// ADR 0025: the failover watchdog hands ci-admission over only after the holder was silent for 5 minutes. What that holder wrote
 // before the hand-over is a silent node's last word; it no longer keeps the new node out for up to DUTY_WINDOW_MS.
 test('ADR 0025: after an automatic take-over a silent holder\'s earlier 当班 locks nothing; one written after it still does', async () => {
   const handoverAt = NOW - 6 * MIN; // server time of the watchdog's hand-over (its created_at)

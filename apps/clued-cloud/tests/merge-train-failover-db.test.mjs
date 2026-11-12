@@ -392,9 +392,9 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const s = await account('owner', ['a', 'b', 'c']);
       const empty = await s.view();
       assert.deepEqual([empty.setting.enabled, empty.setting.version, empty.members], [false, 0, []]);
-      // ADR 0025 (migration 20261112130500): 3 minutes, the heartbeat comes every minute.
+      // ADR 0025 (migration 20261112130500): 5 minutes (Owner, Decision b2e25a57 v3), the heartbeat comes every minute.
       assert.deepEqual([empty.rules.silence_minutes, empty.rules.unhealthy_minutes, empty.rules.snapshot_stale_minutes, empty.rules.target_heartbeat_minutes],
-        [3, 3, 3, 3]);
+        [5, 5, 5, 5]);
       assert.deepEqual(empty.connections.map((c) => c.agent_name).sort(), ['a', 'b', 'c', 'env', 'park', 'reader']);
       const err = async (p) => (await p).error_code;
       assert.equal(await err(s.issueMembers(['a', 'writer'])), 'resident_failover_scope_missing');
@@ -488,7 +488,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         [{ state: 'INTAKE_PAUSED', intake_paused_until: '2099-01-01T00:00:00Z' }, 'state_intake_paused'],
         [{ state: 'UNKNOWN', mode: undefined, probe: undefined }, 'state_unknown'], [{ mode: 'ACTIVE' }, 'not_standby'],
         [{ mode: 'UNCERTAIN' }, 'not_standby'], [{ probe: 'held' }, 'probe_not_clear'], [{ probe: undefined }, 'probe_not_clear'],
-        [{ service_running: false }, 'service_not_running'], [{ snapshot_age_seconds: 181 }, 'service_not_running'],
+        [{ service_running: false }, 'service_not_running'], [{ snapshot_age_seconds: 301 }, 'service_not_running'],
       ];
       for (const [report, reason] of cases) {
         await s.beat('b', report);
@@ -498,9 +498,9 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         await s.beat('b');
         assert.equal(target(await s.tick(), s), 'b', 'only the latest report counts: ' + reason);
       }
-      // A heartbeat older than 3 minutes (ADR 0025; it was 20).
-      await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '181 seconds',
-        heartbeat_previous_at=heartbeat_previous_at-interval '181 seconds' where node_id=$1`, [s.nodes.b]);
+      // A heartbeat older than 5 minutes (ADR 0025; it was 20).
+      await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '301 seconds',
+        heartbeat_previous_at=heartbeat_previous_at-interval '301 seconds' where node_id=$1`, [s.nodes.b]);
       o = await s.tick();
       assert.equal(target(o, s), 'c');
       // Same Source as X and as every node heard in 24 hours (marked or not):
@@ -538,19 +538,19 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close();
     });
 
-    await t.test('silence: 2 minutes no, 3 yes (ADR 0025); receiver alive needs 2 heartbeats; handover, 5-minute start, one holder, receipts', async () => {
+    await t.test('silence: 4.9 minutes no, 5 yes (ADR 0025); receiver alive needs 2 heartbeats; handover, 5-minute start, one holder, receipts', async () => {
       const s = await account('silence', ['a', 'b']);
       await s.members(['a', 'b']);
       await s.switch(true);
       // X after the switch: a heartbeat before the switch does not count.
       await s.beat('b'); await s.beat('a', HOLDER);
-      await s.ago(2);
+      await s.ago(4);
       assert.equal((await s.tick()).outcome, 'holder_alive');
       await s.ago(0.9);
-      assert.equal((await s.tick()).outcome, 'holder_alive', '2.9 minutes');
+      assert.equal((await s.tick()).outcome, 'holder_alive', '4.9 minutes');
       await s.ago(0.1);
       let o = await s.tick();
-      // b heard 3 minutes ago too: no target (0 heartbeats during the silence), alert only.
+      // b heard 5 minutes ago too: no target (0 heartbeats during the silence), alert only.
       assert.equal(o.outcome, 'no_target');
       assert.deepEqual(reasons(o, 'b', s), ['heartbeat_stale']);
       const first = o.alert_receipt_id;
@@ -637,23 +637,23 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close();
     });
 
-    await t.test('service not running or stale snapshot: 2.9 minutes no, 3 yes (ADR 0025), a healthy report restarts, no receiver rule', async () => {
+    await t.test('service not running or stale snapshot: 4.9 minutes no, 5 yes (ADR 0025), a healthy report restarts, no receiver rule', async () => {
       const s = await account('stuck', ['a', 'b']);
       await s.members(['a', 'b']);
       await s.switch(true);
       const down = { state: 'UNKNOWN', mode: undefined, probe: undefined, service_running: false, snapshot_age_seconds: undefined };
       await s.beat('b'); await s.beat('a', down);
-      await s.ago(2); await s.beat('b'); await s.beat('a', down);
+      await s.ago(4); await s.beat('b'); await s.beat('a', down);
       await s.ago(0.9);
-      assert.equal((await s.tick()).outcome, 'holder_alive', 'a single run of 2.9 minutes, and UNKNOWN alone, do not trigger');
+      assert.equal((await s.tick()).outcome, 'holder_alive', 'a single run of 4.9 minutes, and UNKNOWN alone, do not trigger');
       // One report with the service running and a fresh snapshot restarts the count.
       await s.beat('a', HOLDER);
       await s.ago(0.1);
       assert.equal((await s.tick()).outcome, 'holder_alive');
-      // A stale snapshot (3.1 minutes) starts a run; a report without a snapshot age neither starts nor ends it.
-      await s.beat('a', { ...HOLDER, snapshot_age_seconds: 186 });
+      // A stale snapshot (5.1 minutes) starts a run; a report without a snapshot age neither starts nor ends it.
+      await s.beat('a', { ...HOLDER, snapshot_age_seconds: 306 });
       await s.beat('b');
-      await s.ago(2.5);
+      await s.ago(4.5);
       await s.beat('a', { ...HOLDER, state: 'UNKNOWN', snapshot_age_seconds: undefined });
       await s.beat('b');
       await s.ago(0.4);
@@ -1000,7 +1000,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close(); await other.close();
     });
 
-    await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 3 minutes of silence (ADR 0025)', async () => {
+    await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 5 minutes of silence (ADR 0025)', async () => {
       const s = await account('revoked', ['a', 'b'], { heartbeat: ['hbA', 'hbB'] });
       const base = async () => (await s.view()).setting.version;
       const link = async (hb, node) => committed(await s.apply(issued(await s.native('clued_resident_failover_confirmation_issue_v1',
@@ -1014,11 +1014,11 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [s.ids.a]);
       assert.equal((await s.door('hbA', { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'ACTIVE', service_running: true })).error_code,
         'ci_node_not_registered');
-      // Before 3 minutes of silence nothing happens, however many heartbeats b sends.
+      // Before 5 minutes of silence nothing happens, however many heartbeats b sends.
       await s.beat('hbB'); await s.beat('hbB');
       assert.equal((await s.tick()).outcome, 'holder_alive');
-      await s.ago(2.9); await s.beat('hbB'); await s.beat('hbB');
-      assert.equal((await s.tick()).outcome, 'holder_alive', '2.9 minutes');
+      await s.ago(4.9); await s.beat('hbB'); await s.beat('hbB');
+      assert.equal((await s.tick()).outcome, 'holder_alive', '4.9 minutes');
       assert.equal((await s.door('hbA', { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'ACTIVE', service_running: true })).error_code,
         'ci_node_not_registered', 'still refused');
       await s.ago(0.1);
@@ -1027,7 +1027,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const receipt = (await s.receipt_(o.receipt_id)).metadata;
       assert.equal(receipt.holder_connection_live, false);
       const note = (await s.notes()).find((n) => n.type_fields.receipt_id === o.receipt_id);
-      assert.ok(note.content.includes('失联 3 分钟（它的 CI 连接已失效）'), note.content);
+      assert.ok(note.content.includes('失联 5 分钟（它的 CI 连接已失效）'), note.content);
       await s.close();
     });
 

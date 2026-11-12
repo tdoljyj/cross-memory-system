@@ -146,7 +146,7 @@ test('ADR 0025: a failed beat is tried again at the next lane pass (30 s), not a
   // A clock that went back is due at once: the server stamps the beats, so waiting for the clock to catch up would be silence.
   t.advance(-10 * MIN);
   assert.equal((await t.hb.step()).sent, true);
-  // One lost request leaves at most about 90 s between beats the server hears, well inside its 3 minutes of silence.
+  // One lost request leaves at most about 90 s between beats the server hears, well inside its 5 minutes of silence.
   assert.ok(FAILOVER_SILENCE_MINUTES * MIN >= 2 * NODE_HEARTBEAT_EVERY_MS + MIN);
 });
 

@@ -81,7 +81,7 @@ const phases = (every, n) => Array.from({ length: n }, (_, i) => Math.floor((eve
 test('the intervals ADR 0025 rests on', () => {
   assert.deepEqual(ROLE_PROBE_INTERVAL_MS, { STANDBY: MIN, ACTIVE: 5 * MIN });
   assert.equal(NODE_HEARTBEAT_EVERY_MS, MIN);
-  assert.equal(FAILOVER_SILENCE_MINUTES, 3);
+  assert.equal(FAILOVER_SILENCE_MINUTES, 5);
   assert.ok(ROLE_PROBE_INTERVAL_MS.ACTIVE <= ACTIVATION_MS, 'an idle old holder steps down within the activation delay');
 });
 
@@ -102,7 +102,7 @@ test('planned hand-over (one-click, old node idle): the new node is ACTIVE 5 to 
   assert.ok(worst <= 6 * MIN && best >= 5 * MIN, `${best / MIN}..${worst / MIN} min`);
 });
 
-test('the holder fails (power, network): the watchdog hands over after 3 silent minutes, the new node is ACTIVE within 10 minutes', () => {
+test('the holder fails (power, network): the watchdog hands over after 5 silent minutes, the new node is ACTIVE within 12 minutes', () => {
   let worst = 0, best = Infinity;
   for (const beatPhase of phases(NODE_HEARTBEAT_EVERY_MS, 4)) for (const tickPhase of phases(MIN, 3)) for (const yPhase of phases(MIN, 3)) {
     const server = new Server('desk');
@@ -113,10 +113,10 @@ test('the holder fails (power, network): the watchdog hands over after 3 silent 
     assert.equal(bothActive, 0);
     assert.equal(server.handovers.length, 1);
     const took = y.activeAt - dies;
-    assert.ok(took > ACTIVATION_MS && took <= 10 * MIN, `took ${took / MIN} min`);
+    assert.ok(took > ACTIVATION_MS && took <= 12 * MIN, `took ${took / MIN} min`);
     worst = Math.max(worst, took); best = Math.min(best, took);
   }
-  assert.ok(best >= 6 * MIN && worst <= 10 * MIN, `${best / MIN}..${worst / MIN} min`);
+  assert.ok(best >= 8 * MIN && worst <= 12 * MIN, `${best / MIN}..${worst / MIN} min`);
 });
 
 test('the dead holder\'s last 当班 does not hold the new node back after the automatic take-over (it did for up to 30 minutes before)', async () => {

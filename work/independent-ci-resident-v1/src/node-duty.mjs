@@ -320,7 +320,7 @@ export class NodeDuty {
   }
 
   // ADR 0025: duty statements written at or before this (ms, server time) do not hold this node back, or null. The failover watchdog
-  // hands ci-admission over only after the holder has been silent for its silence rule (3 minutes): what that holder wrote before is
+  // hands ci-admission over only after the holder has been silent for its silence rule (5 minutes): what that holder wrote before is
   // a dead node's last word, which used to keep the new node out for up to DUTY_WINDOW_MS. A statement written after it still counts
   // (the old node came back still thinking it is on duty, or a second holder: the lock as before). A hand-over by the Owner gives no
   // cut: the old node is alive then and hands over itself within its next probe.

@@ -44,7 +44,7 @@ export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', '
 // whole interval, so one lost request never looks like silence.
 export const NODE_HEARTBEAT_EVERY_MS = 60_000;
 // The watchdog's own rule (migration 20261112130500_ci_failover_fast_v1.sql, ci_failover_rules_v1 silence_minutes); only for the texts.
-export const FAILOVER_SILENCE_MINUTES = 3;
+export const FAILOVER_SILENCE_MINUTES = 5;
 export const HEARTBEAT_FAILURES_NOTIFY = 3;
 export const WATCHDOG_STALE_MS = 5 * 60_000;
 // The executor's own staleness rule (status.mjs STATUS_STALE_MS): an older snapshot reports UNKNOWN.
@@ -211,7 +211,7 @@ export class CompanionHeartbeat {
     const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now });
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
-    // clock stamps every beat (ADR 0025; with a 3-minute silence rule a 10-minute jump back would hand the role away).
+    // clock stamps every beat (ADR 0025; with a 5-minute silence rule a 10-minute jump back would hand the role away).
     if (this.lastSentAt !== null && this.failures === 0 && now >= this.lastSentAt && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }
