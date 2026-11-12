@@ -294,8 +294,8 @@ export class FakeWindows {
 // The Linux half (B3's tool behind the companion), as a JSON file in the temporary root. The companion refreshes the
 // facts every 5 minutes and right after a switch or rollback.
 export class FakeLinux {
-  constructor(root, clock, { failStage = null, failSwitch = null, failRollback = false, failVerify = () => false, unavailable = () => false } = {}) {
-    Object.assign(this, { root, clock, failStage, failSwitch, failRollback, failVerify, unavailable });
+  constructor(root, clock, { failStage = null, failStageResult = null, failSwitch = null, failRollback = false, failVerify = () => false, unavailable = () => false } = {}) {
+    Object.assign(this, { root, clock, failStage, failStageResult, failSwitch, failRollback, failVerify, unavailable });
     this.retained = [];
     this.file = path.join(root, 'fake-linux.json');
   }
@@ -303,7 +303,7 @@ export class FakeLinux {
   async save(s) { await fs.writeFile(this.file, json(s)); }
   async stage({ packageManifestSha256, generation }) {
     if (this.unavailable('stage')) return { ok: false, code: U.COMPANION_UNAVAILABLE };
-    if (this.failStage) return { ok: false, code: this.failStage };
+    if (this.failStage) return { ok: false, code: this.failStage, result: this.failStageResult };
     const pkg = JSON.parse(await fs.readFile(path.join(this.root, 'upgrade', 'staged', packageManifestSha256, 'package-manifest.json'), 'utf8'));
     const s = await this.state();
     s.history[generation] = { manifestSha256: pkg.linux.manifestSha256, ciSourceManifestSha256: pkg.ciSourceManifestSha256 };

@@ -259,6 +259,21 @@ test('precheck: identity, compatibility, acceptance and the same package are the
   await assert.rejects(precheck({ root, pkgDir: base.dir, pkgSha: 'a'.repeat(64), acceptance: DECISION, installedPkgDir: base.dir, clock: () => T }), { code: 'PRECHECK_PACKAGE_CHANGED' });
 });
 
+test('precheck: Linux facts that say the live tree is not the current generation are refused before the Grant (reinstall)', async t => {
+  const { run, root } = await world(t);
+  await writeFacts(root, { liveMatchesCurrent: false });
+  const r = await run();
+  assert.deepEqual([r.status, r.code], ['PRECHECK_REFUSED', 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION'], JSON.stringify(r));
+  assert.ok(r.advice.includes('此节点需用通用安装包重装'));
+  for (const ok of [true, null]) {
+    await writeFacts(root, { liveMatchesCurrent: ok });
+    assert.notEqual((await run()).code, 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION');
+  }
+  // not at rest (a staged generation): the upgrader's to finish or roll back, never "reinstall"
+  await writeFacts(root, { liveMatchesCurrent: false, staged: { opId: '33333333-3333-4333-8333-333333333333', generation: 2 } });
+  assert.notEqual((await run()).code, 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION');
+});
+
 test('precheck: the frozen Linux upgrade tool, signer and tool manifest must be the installed package\'s and the node\'s', async t => {
   for (const changed of [TOOL, SIGNER, TOOL_MANIFEST]) {
     const { run } = await world(t, { linux: { [changed]: FROZEN_LINUX[changed] + '# changed\n' } });

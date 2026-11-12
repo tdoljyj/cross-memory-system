@@ -289,6 +289,16 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
     if (facts.staged !== null) result.warnings.push('LINUX_HAS_A_STAGED_GENERATION');
     if (facts.pinsOk !== true) result.warnings.push('LINUX_PINS_NOT_OK');
     if (facts.generation !== generation.linux?.generation) result.warnings.push('LINUX_GENERATION_NOT_CURRENT');
+    // The Linux tool's own stage check, reported read-only in its facts: the live tree is not the current generation as recorded,
+    // so the stage would refuse after the Grant (LIVE_NOT_THE_CURRENT_GENERATION). No in-place upgrade can mend that.
+    // Only at rest: a staged generation or an upgrade op still moving (an interrupted switch the upgrader resumes or rolls back)
+    // also shows a live tree that is not the current record, and that one is the upgrader's to finish, not a reinstall.
+    let opMoving = false;
+    try { opMoving = OP_MOVING.includes(JSON.parse((await fs.readFile(path.join(root, 'upgrade', 'status.json'))).toString('utf8'))?.op?.state); } catch { opMoving = false; }
+    if (facts.liveMatchesCurrent === false && facts.staged === null && !opMoving) {
+      return done('PRECHECK_REFUSED', { code: 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION', detail: { generation: facts.generation },
+        advice: 'Linux 侧现装条目与当前代的记录不一致，原地升级会在 stage-linux 被拒。此节点需用通用安装包重装。' });
+    }
   }
   // What will make the upgrader wait or refuse later (they change, so they only warn here).
   try {
