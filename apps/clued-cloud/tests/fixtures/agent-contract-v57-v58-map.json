@@ -1,0 +1,29 @@
+{
+  "schema": "clued.agent-contract-lease-pin-successor/1",
+  "source_version": 57,
+  "target_version": 58,
+  "source_document_normalized_sha256": "ddb5f48f4d83b2e41cf02b729f6e8d35b4f3f45db0e9f696fc0cf9bb9f775c90",
+  "target_document_normalized_sha256": "07eec7f0d9f21a53e5ea04f465c216525a07ac4d3f33a01d7d0a4928cf88427b",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 57",
+      "after": "Contract version: 58"
+    },
+    {
+      "id": "authorize-pins-lease",
+      "before": "This neither renews the lease nor grants CI, merge, production or storage permission.",
+      "after": "It is not a renewal and grants no CI, merge, production or storage permission, but a successful authorization for a pull-request target (not a dispatch workflow) pins the claim's `expires_at` to its unchanged `hard_deadline_at`, so the claim does not lapse while the PR waits for acceptance, a queue or a merge slot, and nobody needs to extend it. When the Task's last active PR is merged or closed, the lease returns to 2 hours from then. The cost: a claim you authorize and then abandon keeps its resources for up to the 24-hour hard deadline, so release it as soon as you stop."
+    },
+    {
+      "id": "ci-extension-pinned",
+      "before": "and extend the claim's lease while its CI runs, never past the hard deadline.",
+      "after": "and extend the claim's lease while its CI runs, never past the hard deadline; for a claim already pinned by `authorize_head` that extension changes nothing."
+    },
+    {
+      "id": "renew-at-deadline",
+      "before": "When a CI extension has already brought the lease to the hard deadline, a renewal is still accepted:",
+      "after": "When a CI extension or a pull-request `authorize_head` has already brought the lease to the hard deadline, a renewal is still accepted:"
+    }
+  ]
+}
