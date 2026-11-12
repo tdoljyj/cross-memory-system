@@ -1,15 +1,21 @@
 {
   "contract": "clued.independent-ci.retention-cases/1",
-  "comment": "DESIGN §35. One rule, two implementations: src/retention.mjs#planRetention and clued-ci-resident-linux#plan_retention are both held to these cases (test/retention.test.mjs, test/test_linux_tool.py). Entries default to isDir true, links 0, complete true. rule: classBudgetBytes 100, minKeepPerClass 2, maxDeletesPerPass 16 unless a case says otherwise.",
-  "rule": { "classBudgetBytes": 100, "minKeepPerClass": 2, "maxDeletesPerPass": 16 },
+  "comment": "DESIGN §35; node governance v1 (archive_success 14 days, archive_failure 30 days). now defaults to 0 (no age deletes). One rule, two implementations: src/retention.mjs#planRetention and clued-ci-resident-linux#plan_retention are both held to these cases (test/retention.test.mjs, test/test_linux_tool.py). Entries default to isDir true, links 0, complete true. rule: classBudgetBytes 100, minKeepPerClass 2, maxDeletesPerPass 16 unless a case says otherwise.",
+  "rule": { "classBudgetBytes": 100, "minKeepPerClass": 2, "maxDeletesPerPass": 16, "maxAgeDays": { "success": 14, "failure": 30 } },
   "cases": [
     {
-      "name": "Owner class budgets retain independent minima and keep list wins",
-      "rule": { "classBudgetBytes": 100, "minKeepPerClass": 10, "maxDeletesPerPass": 16,
-        "classRules": { "success": { "classBudgetBytes": 0, "minKeepPerClass": 1 }, "failure": { "classBudgetBytes": 0, "minKeepPerClass": 2 } } },
-      "entries": [["archive-a", 1, 50], ["archive-b", 2, 50], ["archive-keep", 0, 500], ["failed-a", 1, 50], ["failed-b", 2, 50], ["failed-c", 3, 50]],
-      "keep": ["archive-keep"],
-      "deletes": ["archive-a", "failed-a"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 1
+      "name": "node governance v1: success older than 14 days and failure older than 30 days go, the newest two of each class stay",
+      "now": 3456000000,
+      "entries": [["archive-a-1", 1, 1], ["archive-a-2", 2, 1], ["completed-a-3", 864000000, 1], ["archive-a-4", 1728000000, 1], ["archive-a-5", 2592000000, 1],
+        ["failed-a-1", 1, 1], ["failed-a-2", 432000000, 1], ["failed-a-3", 1728000000, 1], ["failed-a-4", 3024000000, 1]],
+      "deletes": ["archive-a-1", "failed-a-1", "archive-a-2", "failed-a-2", "completed-a-3"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "node governance v1: age never goes below the minimum; kept archives stay whatever their age",
+      "now": 3456000000,
+      "entries": [["archive-a-1", 1, 1], ["archive-a-2", 2, 1], ["archive-a-3", 3, 1], ["failed-old", 1, 1], ["failed-k", 1, 1]],
+      "keep": ["failed-k"],
+      "deletes": ["archive-a-1"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 1
     },
     {
       "name": "under budget deletes nothing",
@@ -54,7 +60,7 @@
     },
     {
       "name": "ties in time are broken by name and the pass is capped",
-      "rule": { "classBudgetBytes": 0, "minKeepPerClass": 1, "maxDeletesPerPass": 2 },
+      "rule": { "classBudgetBytes": 0, "minKeepPerClass": 1, "maxDeletesPerPass": 2, "maxAgeDays": { "success": 14, "failure": 30 } },
       "entries": [["failed-c", 5, 1], ["failed-a", 5, 1], ["failed-b", 5, 1], ["failed-d", 6, 1]],
       "deletes": ["failed-a", "failed-b"], "refused": { "success": null, "failure": null }, "deferred": 1, "protected": 0
     }

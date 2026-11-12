@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
@@ -203,7 +203,7 @@ def base_manifest(ref: str, root: Path = ROOT) -> dict | None:
     return data
 
 
-def against_base(data: dict, base: dict, semantic_changes: dict[str, bool] | None = None) -> list[str]:
+def against_base(data: dict, base: dict, semantic_changes: dict[str, bool] | None = None, root: Path | None = None) -> list[str]:
     problems = []
     old = by_id(base)
     for component in data["components"]:
@@ -221,6 +221,9 @@ def against_base(data: dict, base: dict, semantic_changes: dict[str, bool] | Non
             problems.append(f"{component['id']}: files changed but the version is still {component['version']}; "
                             f"bump it (clued_components.py bump {component['id']} <version>)")
     for removed in sorted(set(old) - set(by_id(data))):
+        # Retired: allowed only together with every file it covered.
+        if root is not None and not component_files(root / old[removed].get("root", "."), old[removed].get("files", [])):
+            continue
         problems.append(f"{removed}: removed from the manifest")
     return problems
 
@@ -264,7 +267,7 @@ def check(root: Path = ROOT, base_ref: str | None = None) -> list[str]:
                 except (ValueError, BaseRefError) as error:
                     problems.append(str(error))
                 else:
-                    problems += against_base(data, base, semantic)
+                    problems += against_base(data, base, semantic, root)
     return problems
 
 
@@ -438,8 +441,12 @@ def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | N
         if not component_files(root / component["root"], component["files"]):
             raise ValueError(f"{component['id']}: service source coverage matches no files")
     old, current = by_id(before), by_id(data)
-    if len(current) != len(data["components"]) or set(old) - set(current):
-        raise ValueError("component integration refuses duplicate or removed components")
+    if len(current) != len(data["components"]):
+        raise ValueError("component integration refuses duplicate components")
+    # A component retires only together with every file it covered (nothing it shipped is left unversioned).
+    for cid in sorted(set(old) - set(current)):
+        if component_files(root / old[cid].get("root", "."), old[cid].get("files", [])):
+            raise ValueError(f"{cid}: a component is removed only together with all its files")
     markers = _marker_map(before, data)
     ignored = mechanical_paths(root)
     changed = set(str(_git_output(root, ["diff", "--no-renames", "--name-only", "-z", base, "--"])).split("\0"))

@@ -54,7 +54,8 @@ jobs:
           $files = @(
             'scripts/ci/self-hosted/bootstrap-windows-runner.ps1',
             'scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1',
-            'scripts/ci/self-hosted/render-host-watchdog.ps1'
+            'scripts/ci/self-hosted/node-governance/render.ps1',
+            'scripts/ci/self-hosted/node-governance/install.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null

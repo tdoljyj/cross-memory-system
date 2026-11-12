@@ -238,37 +238,23 @@ export function freeGb(dir, statfs = fs.statfsSync) {
   return (Number(stats.bavail) * Number(stats.bsize)) / 1024 ** 3;
 }
 
-// The levels of free space on the system drive (GB) at which the CI host's
-// watchdog raises its C: alert (suspend) and clears it (resume). Since Owner
-// decision 241824b2 the runners stop only for the drive of their own
-// distribution's virtual disk; C: holds the resident CI's, so it stays guarded.
-// Only a machine that is a CI host has any: its entry in
-// scripts/ci/self-hosted/node-profiles.json (by host name) gives the capacity
-// profile's levels, and the watchdog script installed there (its path is in the
-// entry) wins, being what actually runs (it may be older than the profile).
-// CLUED_CI_RESUME_FREE_GB sets the resume level (0: none). Null for any other
-// machine: nothing is guarded there.
+// The levels of free space on the system drive (GB) at which the node's governance task (node governance v1) turns a
+// drive red (suspend) and back (resume): the standard's absolute levels (config/node-governance-standard.json red_gb /
+// recover_gb; the share levels only make them stricter on large drives). Only a machine that is a CI host (its entry in
+// scripts/ci/self-hosted/node-profiles.json, by host name) has any. CLUED_CI_RESUME_FREE_GB sets the resume level (0: none).
+// Null for any other machine: nothing is guarded there.
 export function watchdogLevels({ hostname = os.hostname(), env = process.env, readText = (file) => fs.readFileSync(file, 'utf8'),
-  profilesFile = fileURLToPath(new URL('./self-hosted/node-profiles.json', import.meta.url)) } = {}) {
-  let host = null;
+  profilesFile = fileURLToPath(new URL('./self-hosted/node-profiles.json', import.meta.url)),
+  standardFile = fileURLToPath(new URL('../../config/node-governance-standard.json', import.meta.url)) } = {}) {
   let levels = null;
   try {
     const profiles = JSON.parse(readText(profilesFile));
-    host = profiles.hosts.find((entry) => String(entry.hostname).toLowerCase() === String(hostname).toLowerCase()) ?? null;
-    const capacity = host ? profiles.capacity_profiles[host.capacity_profile] : null;
-    if (capacity) levels = { suspend: capacity.suspend_c_free_gb, resume: capacity.resume_c_free_gb };
+    const host = profiles.hosts.find((entry) => String(entry.hostname).toLowerCase() === String(hostname).toLowerCase()) ?? null;
+    if (host) {
+      const disk = JSON.parse(readText(standardFile)).disk;
+      levels = { suspend: disk.red_gb, resume: disk.recover_gb };
+    }
   } catch { /* not in a checkout of this repository */ }
-  if (host?.watchdog_path) {
-    try {
-      const installed = readText(host.watchdog_path);
-      // a watchdog rendered since Task 5282d4ae lists its watched drives (@{Drive='C';Suspend=15;Resume=20;...});
-      // an older one has $suspendDisk/$resumeDisk
-      const drive = /Drive='C';\s*Suspend=(\d+(?:\.\d+)?);\s*Resume=(\d+(?:\.\d+)?)/i.exec(installed);
-      const suspend = drive ? [null, drive[1]] : /\$SuspendDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
-      const resume = drive ? [null, drive[2]] : /\$ResumeDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
-      if (suspend && resume) levels = { suspend: Number(suspend[1]), resume: Number(resume[1]) };
-    } catch { /* not installed here: the profile's levels */ }
-  }
   if (env.CLUED_CI_RESUME_FREE_GB !== undefined && Number.isFinite(Number(env.CLUED_CI_RESUME_FREE_GB))) {
     levels = { suspend: levels?.suspend ?? null, resume: Number(env.CLUED_CI_RESUME_FREE_GB) };
   }

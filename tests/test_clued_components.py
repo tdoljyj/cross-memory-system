@@ -417,6 +417,21 @@ class AutomaticIntegrationTest(unittest.TestCase):
         self.assertEqual({row["id"]: row["target_version"] for row in plan["changes"]},
                          {"tool": "3", "svc": "0.1.1"})
 
+    def test_component_retires_only_together_with_all_its_files(self):
+        data = cc.load_manifest(self.repo.dir)
+        data["components"] = [c for c in data["components"] if c["id"] != "tool"]
+        cc.save_manifest(data, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "tool: a component is removed only together with all its files"):
+            cc.integration_plan(self.base, self.repo.dir)
+        (self.repo.dir / "tool.py").unlink()
+        self.commit("retire tool with its files")
+        self.assertNotIn("tool", {x["id"] for x in cc.integration_plan(self.base, self.repo.dir)["changes"]})
+        self.assertEqual(cc.check(self.repo.dir, self.base), [])
+        data["components"].append(dict(data["components"][0]))
+        cc.save_manifest(data, self.repo.dir)
+        with self.assertRaisesRegex(ValueError, "refuses duplicate components"):
+            cc.integration_plan(self.base, self.repo.dir)
+
     def test_service_without_explicit_source_coverage_is_not_silently_skipped(self):
         data = cc.load_manifest(self.repo.dir)
         service = cc.by_id(data)["svc"]
