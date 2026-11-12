@@ -144,19 +144,19 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
 
 
 def _npm_ci(app: Path) -> None:
-    """Install through scripts/ci/ci-deps.mjs, the one CI entry: prepare (the only networked step, a no-op once
-    the runner's ~/.npm store holds this lockfile), then install offline from that store. apps/clued-cloud/.npmrc
-    names a relative cache, empty in this throwaway worktree: downloading every package here failed ci-suites on
-    an ECONNRESET (#1078, 2026-11-12)."""
+    """Install through scripts/ci/ci-deps.mjs, the one CI entry: offline from the runner's ~/.npm dependency
+    store, which it prepares (the only networked step) only when the store lacks this lockfile's packages.
+    apps/clued-cloud/.npmrc names a relative cache, empty in this throwaway worktree: downloading every package
+    here failed ci-suites on an ECONNRESET (#1078, 2026-11-12). Its output goes to stderr as it comes."""
     node = shutil.which("node")
     if not node:
         raise ValueError("mechanical-outputs: node is not installed; cannot verify")
     entry = app.parents[1] / "scripts" / "ci" / "ci-deps.mjs"
-    for step in ("prepare", "install"):
-        done = subprocess.run([node, str(entry), step, str(app)], capture_output=True, text=True)
-        if done.returncode:
-            raise ValueError(f"mechanical-outputs: ci-deps {step} failed (exit {done.returncode}); cannot verify\n"
-                             + (done.stdout + done.stderr)[-2000:])
+    done = subprocess.run([node, str(entry), "install", str(app)], stdout=sys.stderr, stderr=sys.stderr)
+    if done.returncode:
+        what = {75: "dependency store could not be prepared (network), not a test failure",
+                78: "依赖库缺失 (dependency store incomplete)"}.get(done.returncode, "install failed")
+        raise ValueError(f"mechanical-outputs: ci-deps install exited {done.returncode}: {what}; cannot verify")
 
 
 def _is_link(path: Path) -> bool:

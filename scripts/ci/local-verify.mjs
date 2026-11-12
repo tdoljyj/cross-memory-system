@@ -99,7 +99,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { install as installDeps, npmCommand, prepare as prepareDeps, runNpm } from './ci-deps.mjs';
+import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -109,7 +109,8 @@ const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
-const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema']);
+// mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
+const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
 // GitHub's branches and tags, fetched under these prefixes (the repository's
 // own branches and tags stay as they are).
 const GITHUB_BRANCHES = 'refs/local-verify/github/';
@@ -1197,9 +1198,8 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
         if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
       }
       try {
-        // as CI does (ci-deps.mjs): the npm cache is filled once per lockfile, the only networked step, then installed offline
+        // as CI does (ci-deps.mjs): offline from the npm cache, which is prepared (the only networked step) when it lacks a package
         log(`local-verify: installing ${APP} dependencies (${key})`);
-        prepareDeps(temporary, { cache: path.join(home, 'npm-cache'), run: npm, log });
         installDeps(temporary, { cache: path.join(home, 'npm-cache'), run: npm, log });
         // the embedded PostgreSQL package is rebuilt before the store is complete: once complete it is only read
         // (a rebuild in place would replace binaries that another run's tests are running)
