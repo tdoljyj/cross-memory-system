@@ -134,6 +134,7 @@ import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABA
 import { RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
+import { ALERT_RECEIPT, DISK_RECEIPT, HOST_DISK_DEFER_BYTES, HOST_DISK_RESUME_BYTES } from './retention.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
@@ -432,6 +433,9 @@ export class ResidentExecutor {
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
     this.statusFlush ??= null;
+    this.hostDiskFree ??= null; // optional C: gate port (hostDiskGate)
+    this.hostDiskLow = false;
+    this.hostDiskNotice = null;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
     this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
@@ -1592,6 +1596,33 @@ export class ResidentExecutor {
 
   // null: a new batch may start. Otherwise the deferral: a hold in force, or a state that cannot be read now (fail safe,
   // bounded by intakeTrouble's HALT).
+  // The C: gate. Optional port hostDiskFree() -> { ok, freeBytes, drive? } (none: no gate). Below HOST_DISK_DEFER_BYTES it holds new batches until
+  // HOST_DISK_RESUME_BYTES is seen again (hysteresis). A blocking disk-space-reminder receipt per UTC day feeds the retention notice channel;
+  // an unreadable disk lets the batch run but raises the same channel's alert (once per day). Never HALT.
+  async hostDiskGate(now) {
+    if (typeof this.hostDiskFree !== 'function') return null;
+    let d = null;
+    try { d = await this.hostDiskFree(); } catch { d = null; }
+    const day = dayKey(now);
+    if (!d?.ok || !Number.isSafeInteger(d.freeBytes) || d.freeBytes < 0) {
+      if (this.hostDiskNotice?.unreadable !== day) {
+        this.hostDiskNotice = { ...this.hostDiskNotice, unreadable: day };
+        try { await this.receipts.append(ALERT_RECEIPT, { spool: 'disk', code: 'HOST_DISK_UNREADABLE', action: 'owner-review-retention', deletesAnything: false }); } catch { /* a notice only */ }
+      }
+      return null;
+    }
+    if (d.freeBytes < HOST_DISK_DEFER_BYTES) this.hostDiskLow = true;
+    else if (d.freeBytes >= HOST_DISK_RESUME_BYTES) this.hostDiskLow = false;
+    if (!this.hostDiskLow) return null;
+    if (this.hostDiskNotice?.low !== day) {
+      this.hostDiskNotice = { ...this.hostDiskNotice, low: day };
+      const drive = /^[A-Z]:$/.test(d.drive ?? '') ? d.drive : 'C:';
+      try { await this.receipts.append(DISK_RECEIPT, { drive, freeBytes: d.freeBytes, thresholdBytes: HOST_DISK_DEFER_BYTES, action: 'owner-free-disk-space', blocksAnything: true }); }
+      catch { this.hostDiskNotice = { ...this.hostDiskNotice, low: null }; }
+    }
+    return { state: 'DEFERRED', reason: 'HOST_DISK_LOW' };
+  }
+
   async intakeGate() {
     let view = null;
     try { view = await this.intakeRefresh(); } catch { /* a spell of trouble: below */ }
@@ -3009,6 +3040,9 @@ export class ResidentExecutor {
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
     if (held) { await this.persistQueue(); return held; }
+    // The C: gate: no new batch while the drive of the resident WSL disk is nearly full (DEFERRED, never HALT; a batch in flight goes on).
+    const diskHeld = await this.hostDiskGate(now);
+    if (diskHeld) { await this.persistQueue(); return diskHeld; }
     // No new batch while park.maxParked batches rest at A or in the queue's first two places at B: a new one could not
     // park (design v0.5 §4.7). A due attempt 2 is a batch too.
     // Nor while the bound outside those places is full: a new batch would run its whole zone and end PARKED_OVER_CAPACITY

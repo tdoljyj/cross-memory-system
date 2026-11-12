@@ -4,6 +4,14 @@
   "rule": { "classBudgetBytes": 100, "minKeepPerClass": 2, "maxDeletesPerPass": 16 },
   "cases": [
     {
+      "name": "Owner class budgets retain independent minima and keep list wins",
+      "rule": { "classBudgetBytes": 100, "minKeepPerClass": 10, "maxDeletesPerPass": 16,
+        "classRules": { "success": { "classBudgetBytes": 0, "minKeepPerClass": 1 }, "failure": { "classBudgetBytes": 0, "minKeepPerClass": 2 } } },
+      "entries": [["archive-a", 1, 50], ["archive-b", 2, 50], ["archive-keep", 0, 500], ["failed-a", 1, 50], ["failed-b", 2, 50], ["failed-c", 3, 50]],
+      "keep": ["archive-keep"],
+      "deletes": ["archive-a", "failed-a"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 1
+    },
+    {
       "name": "under budget deletes nothing",
       "entries": [["archive-aaaaaaaaaaaa-success-close-000000000001", 1, 40], ["archive-aaaaaaaaaaaa-success-close-000000000002", 2, 50], ["failed-aaaaaaaaaaaa-x-000000000003", 3, 100]],
       "deletes": [], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
