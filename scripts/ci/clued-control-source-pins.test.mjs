@@ -5,11 +5,14 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,CONTROL_SOURCE_MECHANICAL_FILES} from './clued-control-source-pins.mjs';
+import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,controlSourceMechanicalFiles} from './clued-control-source-pins.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const BASE='93940d4f6c06179e319c81173269d48cdc8e6420';
 const OPTIONS={base:BASE};
+const baseText=name=>execFileSync('git',['show',`${BASE}:${name}`],{cwd:ROOT}).toString('utf8');
+const baseBlobs=(()=>{const t=baseText(CONTROL_SOURCE_MODULE),e='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(',a=t.indexOf(e)+e.length;return JSON.parse(t.slice(a,t.indexOf('\n});',a)+2)).implementation_blobs;})();
+const CONTROL_SOURCE_MECHANICAL_FILES=controlSourceMechanicalFiles(JSON.parse(baseText('config/clued-mechanical-files.json')),baseBlobs);
 const files=[CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-components.json',...CONTROL_SOURCE_MECHANICAL_FILES,'scripts/ci/clued-workflow-profile.mjs','scripts/ci/component-version-integration-policy.mjs'];
 function fixture(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'control-source-pins-'));
@@ -124,4 +127,14 @@ test('a compiler successor must still occupy a plain file path',async t=>{
 test('a Git executable-mode substitution is refused even when all bytes are unchanged',async t=>{
   const root=fixture(t);execFileSync('git',['update-index','--chmod=+x','--',CONTROL_SOURCE_MECHANICAL_FILES[0]],{cwd:root,stdio:'pipe'});
   await refusesWithoutWrites(root,/file mode differs from trusted base/);
+});
+test('refreshable pins come only from the single mechanical-file policy',()=>{
+  assert.deepEqual(CONTROL_SOURCE_MECHANICAL_FILES,['scripts/ci/clued-independent-publication-port.mjs','scripts/ci/clued-merge-reconcile.mjs']);
+  const policy=JSON.parse(fs.readFileSync(path.join(ROOT,'config/clued-mechanical-files.json'),'utf8'));
+  // A declared generated registry that the descriptor also pins keeps its historical pin.
+  assert.deepEqual(controlSourceMechanicalFiles(policy,baseBlobs),CONTROL_SOURCE_MECHANICAL_FILES);
+  assert.deepEqual(controlSourceMechanicalFiles({...policy,mechanical_paths:[...policy.mechanical_paths,'scripts/ci/clued-scan-start.mjs']},baseBlobs),
+    ['scripts/ci/clued-independent-publication-port.mjs','scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-scan-start.mjs']);
+  for(const bad of [null,{...policy,schema:2},{...policy,mechanical_paths:'x'},{...policy,mechanical_paths:['config/other.json']}])
+    assert.throws(()=>controlSourceMechanicalFiles(bad,baseBlobs),/mechanical/);
 });

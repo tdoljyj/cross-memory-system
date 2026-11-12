@@ -41,6 +41,32 @@ def _state(root: Path) -> str:
     return hashlib.sha256(diff + json.dumps(extra, sort_keys=True).encode()).hexdigest()
 
 
+REGISTER_HINT = ("新生成文件 {name} 未登记到 config/clued-mechanical-files.json "
+                 "(generated file not registered): register a wholly generated output there, "
+                 "otherwise commit this change in the PR itself")
+
+
+def unregistered_outputs(root: Path, names, old_bytes) -> list[str]:
+    """Integration may write only what the single mechanical-file policy declares.
+
+    A declared version-marker file of config/clued-components.json may differ
+    in its marker line only; any other integration-written byte is refused.
+    """
+    declared = components.mechanical_paths(root)
+    markers = components._marker_map(components.load_manifest(root))
+    bad = []
+    for name in sorted(set(names)):
+        if any(components._glob_matches(name, pattern) for pattern in declared):
+            continue
+        path = components._checked_file(root, name)
+        now = path.read_bytes() if path.is_file() else None
+        if name in markers and components._without_versions(name, now, markers) == components._without_versions(
+                name, old_bytes(name), markers):
+            continue
+        bad.append(name)
+    return bad
+
+
 def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False) -> dict:
     root = root.resolve()
     if not re.fullmatch(r"[a-f0-9]{40}", base) or not re.fullmatch(r"[a-f0-9]{40}", head):
@@ -79,6 +105,14 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
             break
     else:
         raise ValueError("automatic component metadata did not converge in three passes")
+    written = set(str(components._git_output(root, ["diff", "--no-renames", "--name-only", "-z", "HEAD", "--"])).split("\0"))
+    written.update(str(components._git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"))
+    written.discard("")
+    tracked = set(str(components._git_output(root, ["ls-tree", "-r", "--name-only", "-z", "HEAD"])).split("\0"))
+    bad = unregistered_outputs(root, written, lambda name: components._git_output(
+        root, ["show", f"HEAD:{name}"], binary=True) if name in tracked else None)
+    if bad:
+        raise ValueError("; ".join(REGISTER_HINT.format(name=name) for name in bad))
     problems = components.check(root, base)
     if problems:
         raise ValueError("integrated component verification failed: " + "; ".join(problems))

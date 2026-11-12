@@ -7,6 +7,13 @@
     "apps/clued-cloud/worker/generated/**",
     "scripts/ci/clued-merge-reconcile.mjs",
     "scripts/ci/clued-merge-reconcile-source.json",
-    "scripts/ci/clued-independent-publication-port.mjs"
+    "scripts/ci/clued-independent-publication-port.mjs",
+    "scripts/ci/clued-control-workflow-source.mjs",
+    "scripts/ci/clued-control-workflow-sources.json",
+    "scripts/ci/merge-admission-r9-source.json",
+    "integrations/claude-code/clued/skills/clued/**",
+    "integrations/claude-code/clued/hooks/run_python.sh",
+    "integrations/claude-code/clued/hooks/clued_capture_guard.py",
+    "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json"
   ]
 }

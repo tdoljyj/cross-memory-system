@@ -17,6 +17,10 @@ integration = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(integration)
 
 
+REAL_POLICY = json.loads((ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
+GENERATOR = "scripts/ci/clued-control-source-pins.mjs"  # any fixed generator slot the integrator runs
+
+
 class CandidateIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.repo = Fixture()
@@ -24,6 +28,8 @@ class CandidateIntegrationTest(unittest.TestCase):
         self.repo.git("init", "-q")
         write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs",
               'console.log("fixture pinned verification executed");\n')
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            REAL_POLICY, mechanical_paths=["config/clued-components.json", "control-source-observed.json"])))
         self.commit("base")
         self.base = self.head()
         write(self.repo.dir / "tool.py", "print(2)\n")
@@ -91,6 +97,52 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         self.assertTrue(report["applied"])
         observed = json.loads((self.repo.dir / "control-source-observed.json").read_text())
         self.assertEqual(observed, {"base": self.base, "version": "3"})
+
+    def generator(self, body):
+        write(self.repo.dir / GENERATOR, "import fs from 'node:fs';\n" + body)
+        self.commit("generator fixture")
+
+    def test_unregistered_generated_file_fails_with_the_registration_hint(self):
+        self.generator("fs.writeFileSync('scripts/ci/new-registry.json','{}\\n');\n")
+        with self.assertRaisesRegex(ValueError, "scripts/ci/new-registry.json 未登记到 config/clued-mechanical-files.json"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_registered_directory_output_is_accepted(self):
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            REAL_POLICY, mechanical_paths=["config/clued-components.json", "gen/**"])))
+        self.generator("fs.mkdirSync('gen/a',{recursive:true});fs.writeFileSync('gen/a/out.ts','x\\n');\n")
+        report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+        self.assertIn("gen/a/out.ts", report["output_sha256"])
+
+    def test_generator_body_edit_of_a_version_marker_file_is_not_mechanical(self):
+        # pkg/SKILL.md is a declared version-marker file: integration may render
+        # its marker line, any other edit belongs in the PR itself.
+        self.generator("const t=fs.readFileSync('pkg/SKILL.md','utf8');\n"
+                       "if(!t.includes('generated tail'))fs.writeFileSync('pkg/SKILL.md',t+'generated tail\\n');\n")
+        with self.assertRaisesRegex(ValueError, "pkg/SKILL.md 未登记"):
+            integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+
+    def test_marker_only_version_rendering_needs_no_registration(self):
+        write(self.repo.dir / "pkg/references/a.md", "b\n")
+        self.commit("skill change")
+        report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
+        self.assertIn("pkg/SKILL.md", report["output_sha256"])
+
+
+class RepositoryMechanicalPolicyTest(unittest.TestCase):
+    def test_every_known_generator_output_is_registered(self):
+        spec = importlib.util.spec_from_file_location("plugin_build", ROOT / "scripts/build_claude_code_plugin.py")
+        plugin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin)
+        outputs = ["config/clued-components.json", "apps/clued-cloud/worker/generated/components.ts",
+                   "apps/clued-cloud/worker/generated/agent-contract.ts", "scripts/ci/merge-admission-r9-source.json",
+                   "scripts/ci/clued-control-workflow-source.mjs", "scripts/ci/clued-control-workflow-sources.json",
+                   "scripts/ci/clued-merge-reconcile-source.json",
+                   "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json"]
+        outputs += [(plugin.PLUGIN / copy).relative_to(ROOT).as_posix() + ("/SKILL.md" if (ROOT / source).is_dir() else "")
+                    for source, copy in plugin.COPIES]
+        # A body edit (not only a marker line) of each file, so only registration can accept it.
+        self.assertEqual(integration.unregistered_outputs(ROOT, outputs, lambda name: None), [])
 
 
 if __name__ == "__main__":
