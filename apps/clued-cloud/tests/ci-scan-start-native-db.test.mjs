@@ -16,29 +16,10 @@ const uuid=()=>crypto.randomUUID();
 const digest=(s='fixture')=>crypto.createHash('sha256').update(s).digest('hex');
 const sha=(s='fixture')=>crypto.createHash('sha1').update(s).digest('hex');
 const migration='20261102151506_ci_scan_start_keys_v1.sql';
-// 20261105160000 (unified scheduling 2A) later routes the role reads of these bodies through ci_duty_admits_v1,
-// in the originals and in the principal clones alike. Undo exactly those rewrites before comparing bytes.
-const DUTY_2A=[
-  [`not clued_private.ci_duty_admits_v1(b.user_id,b.id,'duty_role')`,`not exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=b.user_id
-      and r.binding_id=b.id and r.role='ci-admission' and r.revoked_at is null
-      and r.effective_at<=clock_timestamp())`],
-  [`not clued_private.ci_duty_admits_v1(b.user_id,b.id,'issuer_role')`,`not exists(select 1 from clued_private.binding_roles_v1 where binding_id=b.id
-        and user_id=b.user_id and role='ci-admission' and revoked_at is null
-        and effective_at<=clock_timestamp())`],
-  [`clued_private.ci_duty_admits_v1(b.user_id,b.id,'issuer_role')`,`exists(select 1 from clued_private.binding_roles_v1 where user_id=b.user_id and binding_id=b.id
-      and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp())`],
-  [`not clued_private.ci_duty_admits_v1(v_binding.user_id,v_binding.id,'issuer_admits')`,`not clued_private.binding_role_admits_v1(v_binding,'ci-admission')`],
-  [`  if op='publication_begin' then
-    if clued_private.ci_duty_account_phase_v1(b.user_id)>=4 then
-      return jsonb_build_object('status','rejected','error_code','phase_requires_reservation'); end if;
-`,`  if op='publication_begin' then
-`],
-];
-// expected: how many 2A rewrites the body carries (the door 2, verify 2, its core 1), so that an undo that matched
-// nothing cannot pass.
-const undoDuty2A=(text,expected)=>{let total=0;for(const [now,before] of DUTY_2A){const n=text.split(now).length-1;assert.ok(n<=1,'one 2A rewrite at most: '+now);total+=n;text=text.split(now).join(before);}
-  assert.equal(total,expected,'2A rewrites undone');return text;};
-
+// 20261113090000 later removes the two principal clones and their source guard: the hosted path then calls the live
+// Native verifier. What 20261102151506 itself did is therefore checked on the state right after it.
+const cloneOf={'public.clued_work_verify_v1':'clued_private.ci_scan_start_verify_principal_v1',
+  'clued_private.work_claim_verify_before_execution_v1':'clued_private.ci_scan_start_verify_core_principal_v1'};
 const newGateway=['clued_ci_scan_start_hosted_v1(jsonb)','clued_ci_scan_start_policy_v1(jsonb)'];
 async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
@@ -62,7 +43,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    let beforeCommands;const beforeNative={};
+    let beforeCommands,afterCommands;const beforeNative={},afterNative={},afterClone={};
     for(const name of (await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
       if(name===migration){
         beforeCommands=await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v");
@@ -71,6 +52,13 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       }
       try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}
       catch(e){throw new Error(`Migration ${name}: ${e.message}`,{cause:e});}
+      if(name===migration){
+        afterCommands=await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v");
+        for(const n of Object.keys(beforeNative)){
+          afterNative[n]=await json(admin,'select pg_get_functiondef($1::regprocedure) v',[n+'(text,jsonb)']);
+          afterClone[n]=await json(admin,'select pg_get_functiondef($1::regprocedure) v',[cloneOf[n]+'(uuid,jsonb)']);
+        }
+      }
     }
     await allowRawTestBindings(admin);
     const gateway=await connect();await setWorkerGatewayCaller(gateway);
@@ -118,7 +106,11 @@ test('physical scan-start Native K: real transactions, exact existing authority 
     const authorize=async head=>{
       const r=await call('clued_work_renew_v1',{scope,action:'authorize_head',claim_id:claim.claim_id,fence:Number(claim.fence),lease_version:Number(claim.lease_version),
         lease_key:leaseKey,repository,head_sha:head,target_branch:'main',pr_ref:repository+'#7',idempotency_key:uuid()});
-      assert.equal(r.status,'committed',JSON.stringify(r));return r;
+      assert.equal(r.status,'committed',JSON.stringify(r));
+      // 20261108161615: the CI's discovery binds the PR to this Task before the Native verifier admits it.
+      const resolved=await json(ci,'select public.clued_work_verify_v1($1,$2::jsonb) v',[ciToken,
+        {action:'resolve_pr_claim',scope,pr_ref:repository+'#7',head_sha:head,base_sha:sha('base'),target_branch:'main'}]);
+      assert.equal(resolved.binding_status,'bound',JSON.stringify(resolved));return r;
     };
     const input=(head=sha(uuid()),extra={})=>({execution_id:uuid(),claim_id:claim.claim_id,fence:Number(claim.fence),epoch,pr:7,head_sha:head,
       base_sha:sha('base'),changed_paths:['fixture/file'],source_manifest_sha256:source,registry_sha256:registry,...extra});
@@ -137,25 +129,18 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
       assert.deepEqual(anon,CI_SIGNATURES);
-      const after=undoDuty2A(await json(admin,"select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) v"),2);
-      // 20261105120000 later adds exactly the resident CI's two queue actions after the keepalive.
-      const queueAssist="  if op='merge_queue_join' then\n    return clued_private.work_claim_ci_queue_join_v1(b,p_input);\n  end if;\n"+
-        "  if op='lease_extend' then\n    return clued_private.work_claim_ci_lease_extend_v1(b,p_input);\n  end if;\n";
-      assert.equal(after.split(queueAssist).length-1,1,'the queue assist actions appear once');
-      assert.equal(after.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",'')
-        .replace(queueAssist,''),beforeCommands);
-      for(const [original,copy] of [
-        ['public.clued_work_verify_v1','clued_private.ci_scan_start_verify_principal_v1'],
-        ['clued_private.work_claim_verify_before_execution_v1','clued_private.ci_scan_start_verify_core_principal_v1']]){
-        const rewrites=original==='public.clued_work_verify_v1'?2:1;
-        let restored=undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[copy+'(uuid,jsonb)']),rewrites);
-        restored=restored.replace('FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)','FUNCTION '+original+'(p_token_hash text, p_input jsonb)')
+      assert.equal(afterCommands.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",''),
+        beforeCommands);
+      for(const [original,copy] of Object.entries(cloneOf)){
+        const restored=afterClone[original].replace('FUNCTION '+copy+'(p_binding_id uuid, p_input jsonb)','FUNCTION '+original+'(p_token_hash text, p_input jsonb)')
           .replaceAll('clued_private.ci_scan_start_resolve_principal_v1(p_binding_id,','clued_private.resolve_binding(p_token_hash,')
           .replaceAll('clued_private.ci_scan_start_verify_core_principal_v1(p_binding_id,p_input)','clued_private.work_claim_verify_before_execution_v1(p_token_hash,p_input)')
           .replaceAll('p_binding_id','p_token_hash');
         assert.equal(restored,beforeNative[original],'only exact credential resolution and delegated core entry differ');
-        assert.equal(undoDuty2A(await json(admin,'select pg_get_functiondef($1::regprocedure) v',[original+'(text,jsonb)']),rewrites),beforeNative[original],'old Native full-verifier remains byte identical apart from the 2A routing');
+        assert.equal(afterNative[original],beforeNative[original],'old Native full-verifier remains byte identical');
+        assert.equal((await admin.query('select to_regprocedure($1) p',[copy+'(uuid,jsonb)'])).rows[0].p,null,'20261113090000 removed '+copy);
       }
+      assert.equal((await admin.query("select to_regprocedure('clued_private.ci_scan_start_native_source_current_v1()') p")).rows[0].p,null);
       for(const role of ['anon','authenticated','service_role'])for(const name of newGateway)
         assert.equal((await admin.query('select has_function_privilege($1,$2,\'EXECUTE\') b',[role,'public.'+name])).rows[0].b,false);
       for(const table of ['ci_scan_start_keys_v1','ci_scan_start_policies_v1']){
@@ -278,19 +263,17 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       const result=await pending;assert.equal(result.launch_allowed,false);assert.equal(result.error_code,'ci_scan_start_verification_expired');
       assert.equal(await count(),1);
     });
-    await t.test('a later Native full-verifier Source change cannot leave the private sibling silently current',async()=>{
-      const d=input();await authorize(d.head_sha);
-      assert.equal(await json(admin,'select clued_private.ci_scan_start_native_source_current_v1() v'),true);
-      for(const original of Object.keys(beforeNative)){
-        await admin.query('begin');
-        try{
-          assert.ok(beforeNative[original].includes('AS $function$'));
-          await admin.query(beforeNative[original].replace('AS $function$','AS $function$\n-- isolated-test Native successor Source marker\n'));
-          assert.equal(await json(admin,'select clued_private.ci_scan_start_native_source_current_v1() v'),false);
-          const result=await hosted(verified(d),admin);assert.equal(result.launch_allowed,false);assert.equal(result.error_code,'ci_scan_start_native_source_changed');
-        }finally{await admin.query('rollback');}
-      }
-      assert.equal(await json(admin,'select clued_private.ci_scan_start_native_source_current_v1() v'),true);assert.equal(await count(),1);
+    await t.test('the hosted principal runs the live Native verifier: a later verifier change reaches it with nothing to re-derive',async()=>{
+      const d=input();await authorize(d.head_sha);const before=await count();
+      await admin.query('begin');
+      try{
+        // A stricter successor of the Native verifier (here: one that refuses everything), in this transaction only.
+        await admin.query(`alter function public.clued_work_verify_v1(text,jsonb) rename to clued_work_verify_v1_isolated_saved;
+          create function public.clued_work_verify_v1(p_token_hash text,p_input jsonb) returns jsonb language sql as
+            $$select jsonb_build_object('status','ok','verdict','REJECTED','execution_authorized',false)$$;`);
+        const result=await hosted(verified(d),admin);assert.equal(result.launch_allowed,false);assert.equal(result.error_code,'ci_scan_start_native_refused');
+      }finally{await admin.query('rollback');}
+      assert.equal(await count(),before,'the refused request burned nothing');
     });
     await t.test('the K itself is immutable and globally unique; there is no finish/reset/transfer door',async()=>{
       const key=(await admin.query(`select pg_get_constraintdef(oid) d from pg_constraint where conrelid='clued_private.ci_scan_start_keys_v1'::regclass and contype='p'`)).rows[0].d;

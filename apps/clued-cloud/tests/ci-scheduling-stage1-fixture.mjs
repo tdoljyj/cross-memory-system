@@ -16,7 +16,9 @@ export const sha=(value='fixture')=>crypto.createHash('sha1').update(value).dige
 export const limits=(cap=100)=>Object.fromEntries(['execution_start','evaluation','PR_batch','head_release','stage8_retry','head_distinct_combination_24h'].map(k=>[k,cap]));
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
-export async function schedulingFixture(){
+// through: the last migration file to apply (a test of an earlier migration's repair that a later one supersedes);
+// every migration by default.
+export async function schedulingFixture({through}={}){
   const parent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(parent,'clued-ci-stage1-'));
   const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,
@@ -39,7 +41,8 @@ export async function schedulingFixture(){
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort();
+    const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(through===undefined||n<=through)).sort();
+    if(through!==undefined)assert.equal(names.at(-1),through,'the named migration exists');
     for(const name of names){try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}
       catch(error){throw new Error(`Migration ${name}: ${error.message}`,{cause:error});}}
     await allowRawTestBindings(admin);await assertGatewayCloseoutBoundary(admin);

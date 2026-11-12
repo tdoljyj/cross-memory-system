@@ -235,10 +235,17 @@ end $mechanical_coverage$;
 -- Validate the optional CI proof before first PR binding, CI metering or
 -- execution admission. All pre-existing role/key/head/epoch checks remain in
 -- their original order after this additional restrictive gate.
+-- Production applied 20261108161615 (as 20261110052210) before this file: there
+-- the verifier body this gate belongs in is already its copy
+-- work_claim_verify_before_pr_task_v1 behind the PR-Task wrapper, which runs the
+-- same gate itself once this file's proof function exists. In file-name order
+-- 20261108161615 copies the gated body there, so both orders end the same.
 do $mechanical_proof_gate$
 declare body text; anchor text; replacement text;
 begin
-  body:=pg_catalog.pg_get_functiondef('public.clued_work_verify_v1(text,jsonb)'::regprocedure);
+  body:=pg_catalog.pg_get_functiondef(coalesce(
+    pg_catalog.to_regprocedure('clued_private.work_claim_verify_before_pr_task_v1(text,jsonb)'),
+    'public.clued_work_verify_v1(text,jsonb)'::regprocedure));
   anchor:='result jsonb; executing boolean;';
   if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then
     raise exception 'work_claim_mechanical_proof_declaration_unexpected'; end if;

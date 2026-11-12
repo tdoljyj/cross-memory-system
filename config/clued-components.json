@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.6",
+      "version": "0.9.7",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "efed1952cf2d5ddd372ac4dff6a71974a0e75fb19c544cc9c726932d63af0f31"
+      "content_sha256": "065969bdb73683388fbf798ba8f776738a9f1607c46a3a626d92d12e3d0118a2"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.51",
+      "version": "1.1.52",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "fbc424d007ea812216687fa8ee924197707fdd2e531b4d32871376d608426435"
+      "content_sha256": "5b34125a3cee325044554563dae35f8424e6e8f563d6ae573d844b3a6271625c"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "90fb4051d1c51f5579fac1822306a06834cb24e39d93d01eee2134ccd3eeeacd"
+      "content_sha256": "ed570e6ddbb2a8bb88806f82f0b1741418fb1d8a9d456e0b5a48390c04af330a"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2188f232337ee9227e6ec623a0981afd1028fa3ab43a8588108bd8b994ee1397"
+      "content_sha256": "32e876e974f8fb7bcf6342604aa9485c0018465e1e2fec96c19fd3bf81f8ee7c"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b7826163ccc9b42cd3b6c4af091e8ddc175e1978a8067e7ed0059f8be0defe93"
+      "content_sha256": "fe5dcb0acba5801be060a5fba8f668fdce0560344fa2f7ef5ecb2a093d0bed58"
     }
   ]
 }
