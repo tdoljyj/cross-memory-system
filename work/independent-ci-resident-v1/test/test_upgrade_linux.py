@@ -435,6 +435,92 @@ class StageTests(World):
         self.refused('GENERATION_NOT_NEXT', tool.stage, self.P, self.host, OP1, pkg, 3, lm)
 
 
+class IdentityTests(World):
+    """DESK 2026-11-12: the same ext4.vhdx attached by another WSL2 VM got another st_dev; every item looked replaced and every
+    stage refused (LIVE_NOT_THE_CURRENT_GENERATION, source-v2). Identity is (kind, ino) on the file system fsid now."""
+
+    def rewrite_g1(self, change):
+        p = tool.gen_record_path(self.P, 1)
+        rec = json.loads(pathlib.Path(p).read_bytes())
+        change(rec)
+        os.chmod(p, 0o644)
+        pathlib.Path(p).write_bytes(tool.canonical_bytes(rec))
+
+    def test_same_compares_kind_inode_and_fsid_never_the_device_number(self):
+        rec = {'kind': 'dir', 'dev': 2097, 'ino': 77, 'fsid': 'abc', 'sha256': None}
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': 'abc'}, rec), 'device number changed, inode the same')
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': None}, rec), 'a host without statfs: inode on the one file system')
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': 'abc'}, {'kind': 'dir', 'dev': 2097, 'ino': 77}), 'a record from before fsid')
+        self.assertFalse(tool.same({'kind': 'dir', 'dev': 2097, 'ino': 78, 'fsid': 'abc'}, rec), 'another inode, same device')
+        self.assertFalse(tool.same({'kind': 'dir', 'dev': 2097, 'ino': 77, 'fsid': 'def'}, rec), 'the same number on another file system')
+        self.assertFalse(tool.same({'kind': 'file', 'dev': 2097, 'ino': 77, 'fsid': 'abc'}, rec), 'another kind')
+        self.assertFalse(tool.same(None, rec))
+        self.assertFalse(tool.same({'kind': 'dir', 'ino': 77}, None))
+        # an inode number handed out again after an outside delete: another i_generation
+        gen = {'kind': 'file', 'dev': 1, 'ino': 9, 'fsid': 'abc', 'igen': 1234}
+        self.assertTrue(tool.same({**gen, 'dev': 2}, gen))
+        self.assertFalse(tool.same({**gen, 'igen': 1235}, gen), 'same number, new inode generation: a replacement')
+        self.assertTrue(tool.same({**gen, 'igen': None}, gen), 'no FS_IOC_GETVERSION on this side')
+
+    def test_a_record_from_before_fsid_and_igen_stages_switches_and_rolls_back(self):
+        self.rewrite_g1(lambda rec: [(i.pop('fsid', None), i.pop('igen', None), i.update(dev=i['dev'] + 7)) for i in rec['items'].values()])
+        r, _pkg, lm = self.staged()
+        self.assertEqual(r['status'], 'LINUX_STAGED')
+        self.assertEqual(tool.switch(self.P, self.host, OP2, 1, 2, lm)['status'], 'LINUX_SWITCHED')
+        self.assertEqual(tool.rollback(self.P, self.host, OP2, 2, 1)['status'], 'LINUX_ROLLED_BACK')
+        self.assertEqual(tool.read_current(self.P)['generation'], 1)
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], True)
+
+    def test_a_damaged_generation_record_leaves_the_facts_readable(self):
+        self.rewrite_g1(lambda rec: rec['items'].update({'resident-v1': 'not an object'}))
+        self.assertIsNone(tool.version_facts(self.P, self.host)['liveMatchesCurrent'])
+
+    def test_another_device_number_with_the_same_inodes_stages(self):
+        self.rewrite_g1(lambda rec: [i.update(dev=i['dev'] + 1000) for i in rec['items'].values()])
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], True)
+        r, _pkg, _lm = self.staged()
+        self.assertEqual(r['status'], 'LINUX_STAGED')
+        rec2 = tool.read_gen(self.P, 2)
+        for n, _, _ in tool.ITEMS:
+            self.assertTrue(rec2['items'][n]['switched'] or tool.same(tool.ident(tool.live_item(self.P, n)), rec2['items'][n]), n)
+
+    def test_a_replaced_item_with_the_same_content_is_refused(self):
+        live = tool.live_item(self.P, 'resident-v1')
+        aside = live + '.aside'
+        os.rename(live, aside)
+        shutil.copytree(aside, live)                       # same bytes, another inode: a replacement, not the original
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], False)
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], 'resident-v1')
+        self.assertFalse(os.path.lexists(tool.gen_record_path(self.P, 2)))
+
+    def test_changed_content_under_the_same_inode_is_refused(self):
+        unit = tool.live_item(self.P, f'units/{UNITS[0]}')
+        with open(unit, 'ab') as f:                         # same inode, other bytes
+            f.write(b'\n# changed\n')
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], f'units/{UNITS[0]}')
+
+    def test_the_same_inode_number_on_another_file_system_is_refused(self):
+        self.rewrite_g1(lambda rec: [i.update(fsid='0001') for i in rec['items'].values()])
+        real = tool.fs_id
+        tool.fs_id = lambda _p: '0002'
+        try:
+            pkg, lm = self.package()
+            self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+            self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], False)
+        finally:
+            tool.fs_id = real
+
+    def test_another_checked_out_source_commit_is_refused(self):
+        self.rewrite_g1(lambda rec: rec.update(sourceCommit='0' * 40))
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], 'source-v2')
+
+
 class SwitchTests(World):
     def switched(self):
         r, pkg, lm = self.staged()
@@ -470,7 +556,8 @@ class SwitchTests(World):
         self.assertTrue(all(v['checks'].values()))
         f = tool.version_facts(self.P, self.host)
         self.assertEqual(sorted(f), sorted(['contract', 'generation', 'ciSourceManifestSha256', 'sourceCommit', 'manifestSha256', 'roles', 'pinsOk', 'staged',
-                                            'upgradeToolSha256', 'observedAt']))
+                                            'upgradeToolSha256', 'observedAt', 'liveMatchesCurrent']))
+        self.assertIs(f['liveMatchesCurrent'], True)
         self.assertEqual((f['generation'], f['sourceCommit'], f['ciSourceManifestSha256'], f['manifestSha256'], f['pinsOk'], f['staged']),
                          (2, self.commit['B'], sha(self.manifest['B']), lm, True, None))
         self.assertEqual(f['upgradeToolSha256'], sha(TOOL.read_bytes()))
