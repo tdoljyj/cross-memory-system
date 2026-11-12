@@ -18,14 +18,17 @@ import { createHash } from 'node:crypto';
 const ASYNC_AFTER_END = /generated asynchronous activity after the test ended|triggered an? (?:uncaughtException|unhandledRejection) event/;
 
 // The failure's message with what varies between runs and machines removed:
-// absolute paths and file URLs, line:column positions, hex digests, durations,
-// timestamps and long numbers (ids, ports, times). Small numbers stay, so
+// absolute paths and file URLs (also escaped ones, with doubled separators),
+// random temporary-directory suffixes (mkdtemp's six characters), line:column
+// positions, hex digests, durations, timestamps and long numbers (ids, ports,
+// times). Small numbers stay, so
 // "expected 23, got 22" and "expected 24, got 22" are different failures.
 export function normalizeFailure(message) {
   return String(message ?? '')
     .replace(/\r\n?/g, '\n')
     .replace(/file:\/\/\/?[^\s'"`)\]]+/g, '<path>')
-    .replace(/(?:[A-Za-z]:)?(?:[\\/][^\s'"`)\]\\/:]+){2,}[\\/]?/g, '<path>')
+    .replace(/(?:[A-Za-z]:)?(?:[\\/]+[^\s'"`)\]\\/:]+){2,}[\\/]*/g, '<path>')
+    .replace(/-(?=[A-Za-z0-9]{6}\b)(?=[a-z]*[A-Z0-9])[A-Za-z0-9]{6}\b/g, '-<tmp>')
     .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?/g, '<time>')
     .replace(/\b[0-9a-f]{8,}\b/gi, '<hex>')
     .replace(/:\d+:\d+\b/g, ':<line>')
@@ -36,6 +39,9 @@ export function normalizeFailure(message) {
     .trim()
     .slice(0, 4000);
 }
+
+// A package or module that cannot be loaded: the run proves nothing about the change.
+export const MISSING_DEPENDENCY = new Set(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND']);
 
 export function failureFingerprint(error) {
   const cause = error?.cause ?? error;
@@ -59,8 +65,9 @@ export default async function* reporter(source) {
     } else if (event.type === 'test:fail') {
       const error = data.details?.error;
       if (error?.failureType === 'subtestsFailed' || (data.todo !== undefined && data.todo !== false)) continue;
+      const code = (error?.cause ?? error)?.code;
       yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: pathOf(data), failure_type: error?.failureType ?? null,
-        fingerprint: failureFingerprint(error) })}\n`;
+        fingerprint: failureFingerprint(error), ...(MISSING_DEPENDENCY.has(code) ? { missing_dependency: code } : {}) })}\n`;
     } else if (event.type === 'test:diagnostic' && ASYNC_AFTER_END.test(String(data.message ?? ''))) {
       // Without process isolation the diagnostic names no file; it is still a
       // failure, recorded under <run> so it never matches a known entry.

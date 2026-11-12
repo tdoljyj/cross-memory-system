@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
+import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, missingDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
   refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -571,6 +571,40 @@ test('a new dependency store is rebuilt before it is complete and then only read
   assert.deepEqual(calls, [['rebuild', ready]], 'rebuilt in place once');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
   assert.equal(calls.length, 1, 'and marked');
+});
+
+test('a store marked complete but lacking packages is installed again; an install that still lacks them refuses', (t) => {
+  const home = tempHome(t);
+  const dir = tempHome(t, 'lv-conc-wt');
+  const app = path.join(dir, 'apps', 'clued-cloud');
+  fs.mkdirSync(app, { recursive: true });
+  fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'a', dependencies: { b: '1.0.0' } }));
+  fs.writeFileSync(path.join(app, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { '': {},
+    'node_modules/b': { version: '1.0.0' }, 'node_modules/only-elsewhere': { version: '1.0.0', optional: true } } }));
+  const installs = [];
+  let installs_b = true;
+  const npm = (args, cwd) => {
+    if (args[0] !== 'ci') return;
+    installs.push(cwd);
+    fs.mkdirSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c', 'package.json'), '{}');
+  };
+  const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
+  const ready = path.join(home, 'node_modules', key);
+  assert.equal(installs.length, 1);
+  assert.deepEqual(missingDependencies(ready), [], 'an optional package of another platform is not required');
+  // emptied through a link, the mark left behind (2026-11-12 03:56Z)
+  fs.rmSync(path.join(ready, 'node_modules', 'b'), { recursive: true });
+  assert.deepEqual(missingDependencies(ready), ['node_modules/b']);
+  const said = [];
+  ensureAppDependencies(dir, home, { rebuild: false, npm, log: (line) => said.push(line) });
+  assert.equal(installs.length, 2, 'installed again instead of trusting the mark');
+  assert.match(said.join('\n'), /marked complete but lacks node_modules\/b/);
+  assert.deepEqual(missingDependencies(ready), []);
+  fs.rmSync(path.join(ready, 'node_modules', 'b'), { recursive: true });
+  installs_b = false;
+  assert.throws(() => ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} }), /left out node_modules\/b: cannot verify/);
+  assert.equal(fs.existsSync(path.join(ready, 'complete')), false, 'nothing incomplete is marked complete');
 });
 
 test('housekeeping: the temporary directory of a dead run goes, a garbled record goes after a while, a fresh unreadable one only makes pruning wait', (t) => {

@@ -84,8 +84,12 @@ public static class Receiver {
     await fs.writeFile(programPath, generated.program);
     await fs.writeFile(input, JSON.stringify({ programPath, receiver, scratch }));
     const harness = path.join(scratch, 'run.ps1');
+    // Windows PowerShell writes its stdout in the console code page (936 on a
+    // Chinese-locale host, 437 on an English one), which mangles the non-ASCII
+    // stderr this test checks; the result is read as UTF-8, so write UTF-8.
     await fs.writeFile(harness, String.raw`
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = [IO.File]::ReadAllText($args[0]) | ConvertFrom-Json
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($c.programPath,[ref]$tokens,[ref]$errors)

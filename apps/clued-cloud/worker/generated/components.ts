@@ -13,7 +13,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.run-python": "1.0.3",
   "hook.settings": "1.1.2",
   "script.runner-handover-qualifier": "1.0.0",
-  "script.components": "1.0.9",
+  "script.components": "1.0.10",
   "script.update-clued-skills": "1.0.2",
   "script.memory-sync": "1.0.1",
   "script.gated-proof-runtime": "1.0.6",

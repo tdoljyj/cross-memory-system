@@ -296,3 +296,12 @@ test('changing the selector without re-pinning it in the applicability module is
     r = cli(dir, '--base', 'HEAD', '--only', 'selector-pin'); assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
 });
+
+// Regression (main 4b1cc800): a pins change passed against the old main but
+// failed as soon as it became the base. A committed checkout is checked as its own base too.
+test('control-source-pins also checks the committed checkout as its own trusted base', async () => {
+  const head = git(repo, 'rev-parse', 'HEAD');
+  const report = await checkAll({ root: repo, base: head, only: ['control-source-pins'], knownMainRefs: () => [] });
+  const clean = git(repo, 'status', '--porcelain', '--untracked-files=no') === '';
+  if (clean) assert.equal(report.results[0].status, 'ok', render(report));
+});
