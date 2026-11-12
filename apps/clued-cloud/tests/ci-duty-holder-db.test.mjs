@@ -54,7 +54,8 @@ async function anchorPairs(){
 const ALLOWED={
   admits:['clued_private.ci_duty_admits_v1'],
   roleRead:['clued_private.binding_role_handover_check_v1','clued_private.binding_role_handover_core_v1','clued_private.binding_role_handover_view_v1',
-    'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_admits_v1','clued_private.ci_duty_holder_v1',
+    // ci_duty_admits_v1 asks clued_private.binding_role_in_force_v1 since 20261112120000 instead of reading the rows itself.
+    'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_holder_v1',
     'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
   holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1'],
