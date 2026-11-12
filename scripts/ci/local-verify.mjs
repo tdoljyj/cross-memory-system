@@ -99,6 +99,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -108,7 +109,8 @@ const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
-const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema']);
+// mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
+const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
 // GitHub's branches and tags, fetched under these prefixes (the repository's
 // own branches and tags stay as they are).
 const GITHUB_BRANCHES = 'refs/local-verify/github/';
@@ -121,7 +123,6 @@ const RESULT_MARK = 'LOCAL_VERIFY_RESULT ';
 const KEEP_WORKTREES = 8;
 const KEEP_DEPENDENCY_STORES = 3;
 const COMMAND_TIMEOUT_MS = 45 * 60_000; // the workflow's longest job limit
-const INSTALL_TIMEOUT_MS = 15 * 60_000;
 const LINUX_TIMEOUT_MS = 180 * 60_000;
 // A lock older than any run is stale even if its process number is in use again.
 const LOCK_MAX_AGE_MS = 6 * 60 * 60_000;
@@ -293,15 +294,8 @@ export function windowsPathOf(file) {
   return file.startsWith('/') ? `\\\\wsl.localhost\\${DISTRIBUTION}${file.replace(/\//g, '\\')}` : file;
 }
 
-// On Windows `npm` is npm.cmd, which Node does not start without a shell
-// (the ENOENT the selection's runSuite reports there); npm's own CLI next to
-// node.exe starts directly.
-export function npmCommand({ platform = process.platform, execPath = process.execPath, exists = fs.existsSync } = {}) {
-  if (platform !== 'win32') return ['npm'];
-  const cli = path.win32.join(path.win32.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!exists(cli)) throw new Error(`npm's CLI is not next to ${execPath}`);
-  return [execPath, cli];
-}
+// npm as Windows starts it (npm.cmd needs a shell; npm's own CLI next to node.exe does not): ci-deps.mjs.
+export { npmCommand };
 
 // The failure report of a Node test command. A command with known failures
 // gets the reporter as runSuite adds it (after --test, wherever it is); a plain
@@ -1148,17 +1142,9 @@ function renameRetrying(from, to) {
   }
 }
 
-function npmSync(args, cwd, label, log) {
-  const [npm, ...prefix] = npmCommand();
-  // The network may drop connections (Owner: assume a flaky network); each
-  // attempt reuses what the npm cache already holds.
-  let status = 1;
-  for (let attempt = 1; attempt <= 5 && status !== 0; attempt += 1) {
-    log(`local-verify: ${label} (attempt ${attempt})`);
-    status = spawnSync(npm, [...prefix, ...args], { cwd, stdio: 'inherit', windowsHide: true, timeout: INSTALL_TIMEOUT_MS }).status;
-    if (status !== 0 && attempt < 5) sleep(10_000 * attempt);
-  }
-  if (status !== 0) throw new Error(`${label} failed`);
+function rebuildPackage(npm, name, cwd, log) {
+  log(`local-verify: rebuilding ${name}`);
+  if (npm(['rebuild', name], cwd).status !== 0) throw new Error(`rebuilding ${name} failed`);
 }
 
 // What a dependency store lacks: every package its lockfile installs on every
@@ -1185,7 +1171,7 @@ export function missingDependencies(ready, { limit = 5 } = {}) {
 // (the store is then only read), runs that need another install at the same time.
 // A store a live run uses is never removed (the run's record names it, written
 // while the key's lock is still held).
-export function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null, npm = npmSync }) {
+export function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null, npm = runNpm }) {
   const app = path.join(dir, APP);
   const read = (file) => (fs.existsSync(path.join(app, file)) ? fs.readFileSync(path.join(app, file)) : null);
   if (!read('package.json') || !read('package-lock.json')) throw new Error(`${APP} has no package.json or package-lock.json`);
@@ -1212,12 +1198,13 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
         if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
       }
       try {
-        npm(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
-          '--fetch-timeout=60000', '--no-audit', '--no-fund'], temporary, `installing ${APP} dependencies (${key})`, log);
+        // as CI does (ci-deps.mjs): offline from the npm cache, which is prepared (the only networked step) when it lacks a package
+        log(`local-verify: installing ${APP} dependencies (${key})`);
+        installDeps(temporary, { cache: path.join(home, 'npm-cache'), run: npm, log });
         // the embedded PostgreSQL package is rebuilt before the store is complete: once complete it is only read
         // (a rebuild in place would replace binaries that another run's tests are running)
         if (fs.existsSync(path.join(temporary, 'node_modules', platformPackage))) {
-          npm(['rebuild', platformPackage], temporary, `rebuilding ${platformPackage}`, log);
+          rebuildPackage(npm, platformPackage, temporary, log);
           fs.writeFileSync(path.join(temporary, 'rebuilt'), '');
         }
         const absent = missingDependencies(temporary);
@@ -1230,7 +1217,7 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
     }
     // a store an earlier version of this tool installed has not been rebuilt: that one is rebuilt in place, once
     if (rebuild && !fs.existsSync(path.join(ready, 'rebuilt')) && fs.existsSync(path.join(ready, 'node_modules', platformPackage))) {
-      npm(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
+      rebuildPackage(npm, platformPackage, ready, log);
       fs.writeFileSync(path.join(ready, 'rebuilt'), '');
     }
     fs.utimesSync(ready, new Date(), new Date());

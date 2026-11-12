@@ -399,7 +399,7 @@ $tool = "<res>\tools\rearm-tool.mjs"
 | `RESIDENT_SOURCE_DRIFT` | 已装字节被改。先按安装清单恢复文件，再复位 |
 | `ROLE_PROBE_INTERRUPTED`、`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED` | 角色探测出问题。后者常见原因是 controller 账户缺"作为服务登录"权限 |
 | `TRAIN_STAGE_INTERRUPTED` | 第 10 段被打断 |
-| `EXECUTOR_RESTARTED_WITH_OPEN_BATCH` | 重启时有未终结的批次 |
+| `EXECUTOR_RESTARTED_WITH_OPEN_BATCH` | 重启时有未终结的批次，且不能证明安全：同一次开机里执行器崩溃、发布段已开始、或两端 15 分钟内没静止（DESIGN §71）。能证明的会自动以 `EXECUTOR_RESTARTED_UNPUBLISHED` 干净关闭并重跑一次，不 HALT |
 
 ### 5.6 PAUSE
 

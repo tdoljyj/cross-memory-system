@@ -550,12 +550,15 @@ test('a new dependency store is rebuilt before it is complete and then only read
   const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
   const calls = [];
   const npm = (args, cwd) => {
-    calls.push([args[0], cwd]);
+    calls.push([args[0], cwd, args.includes('--offline')]);
     if (args[0] === 'ci') fs.mkdirSync(path.join(cwd, 'node_modules', platformPackage), { recursive: true });
+    return { status: 0, output: '' };
   };
   const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   const ready = path.join(home, 'node_modules', key);
-  assert.deepEqual(calls.map(([what]) => what), ['ci', 'rebuild'], 'installed and rebuilt, for every suite');
+  // ci-deps.mjs: installed offline from the npm cache (which holds the packages here, so nothing is prepared)
+  assert.deepEqual(calls.map(([what, , offline]) => `${what}${offline ? ' offline' : ''}`), ['ci offline', 'rebuild'],
+    'installed and rebuilt, for every suite');
   assert.equal(calls[0][1], calls[1][1], 'in the same temporary directory');
   assert.notEqual(calls[1][1], ready, 'not in the store other runs read');
   assert.ok(fs.existsSync(path.join(ready, 'complete')) && fs.existsSync(path.join(ready, 'rebuilt')));
@@ -568,7 +571,7 @@ test('a new dependency store is rebuilt before it is complete and then only read
   ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   assert.deepEqual(calls, [], 'a suite that does not need the rebuild leaves it alone');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
-  assert.deepEqual(calls, [['rebuild', ready]], 'rebuilt in place once');
+  assert.deepEqual(calls, [['rebuild', ready, false]], 'rebuilt in place once');
   ensureAppDependencies(dir, home, { rebuild: true, npm, log: () => {} });
   assert.equal(calls.length, 1, 'and marked');
 });
@@ -584,10 +587,11 @@ test('a store marked complete but lacking packages is installed again; an instal
   const installs = [];
   let installs_b = true;
   const npm = (args, cwd) => {
-    if (args[0] !== 'ci') return;
+    if (args[0] !== 'ci') return { status: 0, output: '' };
     installs.push(cwd);
     fs.mkdirSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c'), { recursive: true });
     fs.writeFileSync(path.join(cwd, 'node_modules', installs_b ? 'b' : 'c', 'package.json'), '{}');
+    return { status: 0, output: '' };
   };
   const key = ensureAppDependencies(dir, home, { rebuild: false, npm, log: () => {} });
   const ready = path.join(home, 'node_modules', key);
