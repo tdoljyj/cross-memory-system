@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.5",
+      "version": "0.9.6",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "0a0e53ddc2704f9b293fc32ed1e72b9fc1c644ea19c70389685ee1113d0d1168"
+      "content_sha256": "f8de9cf437bcbdb4dcccb35176bfeb987464f991f67c0b27bf78d15225333979"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.48",
+      "version": "1.1.49",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "dd1a15e4f658b5211e62b39e504eac4287e342ca963fcbca49aed93d90ef60c2"
+      "content_sha256": "32c73e082ad3863d2d951da26278d7f2207c824459e004b34078d32ecf9f8309"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b629db2edf5340745873e0560ef3907ddd4292fa8ba33446bfffabb4e00a3332"
+      "content_sha256": "be5451db4c0527d2481bd7e5cc7735c5d9be6ac39ae73ee2da007fa241825edd"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2582947e43eb589b4a1e46938a6089c04e4afaae94efc141b4f0d0a0aa6d8022"
+      "content_sha256": "5fc5a588772e6a0c3869a6053a167debf382a12417b2eff2f7dad015d63be901"
     }
   ]
 }
