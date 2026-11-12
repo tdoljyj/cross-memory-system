@@ -11,6 +11,28 @@ configuration (rehearse.py: the installed tools' real read-only dry runs and the
          --rebuild-linux-external-pins <file> [--accept-halt-sha256 <64hex>] [--launch-dir <dir>]
          [--final --linux-evidence <file> --linux-version-facts <file> --rehearsal <rehearsal report> [--linux-adopted-package <dir>]]
 
+The generic node package (rollout/fleet/BATCH1-INTERFACES.md sections 3 and 4; one UAC per node, no per-node configuration file):
+
+  python -I generate.py --fleet-plan <install-plan.json> --out <launcher.ps1>
+  python -I generate.py --fleet-plan <install-plan.json> --check
+
+--check: every check of the generation that does not need the W1 pause, before W1 (the plan's `w1Paused` is still null); writes no
+launcher and prints FLEET_PLAN_CHECK_PASSED or the refusals. Without it the node must be paused by exactly the plan's W1 pause:
+state/PAUSED.json there, its sha256 the plan's `w1Paused.sha256`, its reason the plan's `reasons.w1Pause`.
+
+Always FINAL. The plan (clued.independent-ci.fleet-node-install-plan/1) names the node's /4 package and the three Linux scripts; this
+file is run from the unpacked package tree, so nothing is rebuilt or read from a repository here. Pinned: the package, the scripts'
+paths and hashes, the in and out directories the scripts themselves name, the plan's own hash (as it was when this ran: the caller adds
+its `launcher` entry afterwards, so the launcher never reads the plan again) and what is installed now. NOT pinned: phase B's evidence
+and version facts; the launcher runs A and B itself and checks B's output by the rules below (Q5b) at run time. The node's own values
+come from the node: the package's record (node profile), install/companion-account.json and install/companion-wsl.json (operator and
+VHDX directory, exactly when the plan says companionAccount), the runner service's DACL as it is now and the installer's own original
+binary. The tokens are the INSTALLED ones (plan `secrets`, source "installed": the install receipt's targets and fingerprints, and the
+heartbeat binding id): no token file is named or read here; the launcher, elevated and before the uninstall, copies them into a new
+SYSTEM-and-Administrators-only directory, checks each copy against its pinned fingerprint and hands the copies to the installer. The
+pause / rearm / W1 reasons are the plan's (`reasons`), and so is the out directory (`linux.outDir`, which must be the one the scripts
+name).
+
 What the launcher does, and why each step is there (Q1..Q5, r4.1 C1..C3, r5 S1..S3, r5c, r7): README.md section 4 and the comments in
 template.ps1.
 """
@@ -23,11 +45,46 @@ BS = chr(92)
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
 rconfig = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(rconfig)
-CFG = rconfig.load(sys.argv[1])
-rconfig.need_installed_linux(CFG)   # the reinstall launcher is for a node whose CI is installed
-A = sys.argv[2:]
+if '--fleet-continue' in sys.argv[1:]:
+    # A package launch that completed the uninstall and stopped before the install completed: continue.py (its own file: its pins are not
+    # pins of every launcher). python -I generate.py --fleet-continue <the prior launcher.ps1> --out <new launcher.ps1>
+    _cspec = importlib.util.spec_from_file_location('fleet_continue', os.path.join(HERE, 'continue.py'))
+    _continue = importlib.util.module_from_spec(_cspec); _cspec.loader.exec_module(_continue)
+    sys.exit(_continue.main(sys.argv[1:]))
+FLEET_PLAN = os.path.abspath(sys.argv[sys.argv.index('--fleet-plan') + 1]) if '--fleet-plan' in sys.argv[1:-1] else None
+PLAN = None
+if FLEET_PLAN:
+    with open(FLEET_PLAN, 'rb') as _stream:
+        _plan_raw = _stream.read()
+    PLAN = json.loads(_plan_raw.decode('utf-8'))
+    assert isinstance(PLAN, dict) and PLAN.get('contract') == 'clued.independent-ci.fleet-node-install-plan/1', 'FLEET_PLAN_CONTRACT'
+    CHECK = '--check' in sys.argv[1:]
+    assert (CHECK != ('--out' in sys.argv[1:-1])) and not any(x in sys.argv for x in ('--final', '--commit', '--package', '--package-sha', '--linux-evidence', '--linux-version-facts', '--launch-dir')), 'FLEET_PLAN_USAGE'
+    A = ['--final', '--commit', PLAN['commit'], '--package', PLAN['packageDir'], '--package-sha', PLAN['packageManifestSha256']] + sys.argv[1:]
+else:
+    CFG = rconfig.load(sys.argv[1])
+    rconfig.need_installed_linux(CFG)   # the reinstall launcher is for a node whose CI is installed
+    A = sys.argv[2:]
 def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
+if FLEET_PLAN:
+    # The values a configuration file gave, from the plan and the node (the rest follows below, once the package is read).
+    _S, _RS = PLAN.get('secrets'), PLAN.get('reasons')
+    _fp = lambda v, keys: isinstance(v, dict) and set(v) == keys and isinstance(v['target'], str) and isinstance(v['fingerprint'], str) and re.fullmatch(r'[0-9a-f]{64}', v['fingerprint'])
+    _UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    assert (isinstance(_S, dict) and set(_S) == {'source', 'upgradeToken', 'heartbeatToken'} and _S['source'] == 'installed' and _fp(_S['upgradeToken'], {'target', 'fingerprint'})
+            and (_S['heartbeatToken'] is None or (_fp(_S['heartbeatToken'], {'target', 'fingerprint', 'bindingId'}) and _S['heartbeatToken']['fingerprint'] != _S['upgradeToken']['fingerprint']
+                                                 and (_S['heartbeatToken']['bindingId'] is None or (isinstance(_S['heartbeatToken']['bindingId'], str) and re.fullmatch(_UUID, _S['heartbeatToken']['bindingId'])))))), 'FLEET_PLAN_SECRETS'
+    assert isinstance(_RS, dict) and set(_RS) == {'pause', 'rearm', 'w1Pause'} and all(isinstance(v, str) and rconfig.REASON.match(v) for v in _RS.values()), 'FLEET_PLAN_REASONS'
+    assert isinstance(PLAN.get('linux'), dict) and isinstance(PLAN['linux'].get('outDir'), str), 'FLEET_PLAN_OUT_DIR_REQUIRED'
+    assert PLAN.get('launcher') is None, 'FLEET_PLAN_LAUNCHER_ALREADY_SET'   # the caller writes it after this returns
+    _W1 = PLAN.get('w1Paused')
+    assert (_W1 is None) if CHECK else (isinstance(_W1, dict) and set(_W1) == {'sha256', 'reason'} and isinstance(_W1['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', _W1['sha256'])
+                                         and _W1['reason'] == _RS['w1Pause']), 'FLEET_PLAN_W1_PAUSED'   # --check runs before W1; the launcher is generated after it
+    CFG = {'workDir': os.path.dirname(FLEET_PLAN), 'upgradeTokenFile': None,   # no file: the launcher carries the installed tokens over
+           'heartbeat': {'tokenFile': None, 'bindingId': _S['heartbeatToken']['bindingId']} if _S['heartbeatToken'] else None,
+           'launcher': {'pauseReason': _RS['pause'], 'rearmReason': _RS['rearm'], 'w1PauseReason': _RS['w1Pause']}, 'secretTargetsExist': [True, True],
+           '_sha256': hashlib.sha256(_plan_raw).hexdigest()}
 FINAL = '--final' in A
 MAINTENANCE_HOST_DROP = opt('--maintenance-host-drop')
 if MAINTENANCE_HOST_DROP:
@@ -38,7 +95,8 @@ assert PKG_SHA and re.fullmatch(r'[0-9a-f]{64}', PKG_SHA), 'PACKAGE_SHA_REQUIRED
 # review 1-4: the rebuild and the pins read the extracted tree; it must be exactly the commit
 _tspec = importlib.util.spec_from_file_location('tree', os.path.join(HERE, '..', 'tools', 'tree.py'))
 _tree = importlib.util.module_from_spec(_tspec); _tspec.loader.exec_module(_tree)
-_tree.verify(CFG['repo'], COMMIT, os.path.join(CFG['workDir'], 'tree-' + COMMIT[:8]))
+if not FLEET_PLAN:   # the generic node package: this file's own tree is the unpacked, hash-checked archive
+    _tree.verify(CFG['repo'], COMMIT, os.path.join(CFG['workDir'], 'tree-' + COMMIT[:8]))
 LINUX_EVIDENCE = opt('--linux-evidence')
 TOKEN_FILE = CFG['upgradeTokenFile']   # path only: its content is never opened here
 REHEARSAL = opt('--rehearsal')
@@ -51,7 +109,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'bbbec7419020af507454a67b5539101054c6e143e9f7d6692fa9e8ba1b9a6bba'   # Reviewed first-train applicability; runner-quiet and verify gates retained
+TEMPLATE_SHA = '4d53ede1e30f48f5c2caaa749b75041e80a221ea987955824d747be4ad5b34b2'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -98,17 +156,18 @@ assert pkg_sha == PKG_SHA, ('PACKAGE_NOT_THE_NAMED_ONE', pkg_sha)
 pkg = json.load(open(pkg_path, encoding='utf8'))
 # ---- r7: the package's Linux resident manifest has the installed one's shape; its own files may differ, the source-v2 pins are this
 # commit's files (its tree under r4-work), every other external pin is the installed value (make-linux-pins-r7.py check, review BLOCKER-1) ----
-INSTALLED_LINUX_MANIFEST = CFG['linux']['installedManifest']
-assert INSTALLED_LINUX_MANIFEST, 'INSTALLED_LINUX_MANIFEST_REQUIRED'
-with open(INSTALLED_LINUX_MANIFEST, 'rb') as f:
-    installed_linux_manifest = f.read()
+# (the generic node package: the node's own assembly made this manifest from the installed one and checked it, rollout/fleet linuxPinsCheck)
+INSTALLED_LINUX_MANIFEST = None if FLEET_PLAN else CFG['linux']['installedManifest']
+assert FLEET_PLAN or INSTALLED_LINUX_MANIFEST, 'INSTALLED_LINUX_MANIFEST_REQUIRED'
 with open(os.path.join(PKG, 'linux', 'manifest.json'), 'rb') as f:
     package_linux_manifest = f.read()
+with open(INSTALLED_LINUX_MANIFEST or os.path.join(PKG, 'linux', 'manifest.json'), 'rb') as f:
+    installed_linux_manifest = f.read()
 assert pkg['linux']['manifestSha256'] == hashlib.sha256(package_linux_manifest).hexdigest()
 _a, _b = json.loads(package_linux_manifest), json.loads(installed_linux_manifest)
-assert (_a['contract'] == _b['contract'] and len(_a['files']) == len(_b['files']) and [f['installedPath'] for f in _a['files']] == [f['installedPath'] for f in _b['files']]), 'PACKAGE_LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE'
+assert FLEET_PLAN or (_a['contract'] == _b['contract'] and len(_a['files']) == len(_b['files']) and [f['installedPath'] for f in _a['files']] == [f['installedPath'] for f in _b['files']]), 'PACKAGE_LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE'
 _SV2, _TREE = '/opt/clued-independent-ci/source-v2/', os.path.join(R4, 'tree-' + COMMIT[:8])
-for _f, _g in zip(_a['files'][4:], _b['files'][4:]):
+for _f, _g in ([] if FLEET_PLAN else zip(_a['files'][4:], _b['files'][4:])):
     if _f['installedPath'].startswith(_SV2):
         _rel = _f['installedPath'][len(_SV2):]
         assert '..' not in _rel.split('/') and _f['sha256'] == hashlib.sha256(open(os.path.join(_TREE, *_rel.split('/')), 'rb').read()).hexdigest(), ('PACKAGE_LINUX_PIN_NOT_THE_NEW_SOURCE', _f)
@@ -128,14 +187,93 @@ assert source_sha == COMMIT, ('PACKAGE_NOT_THIS_COMMIT', source_sha)
 acceptance = json.load(open(os.path.join(PKG, 'record', 'acceptance.json'), encoding='utf8'))
 node = acceptance['node']
 TREE = os.path.join(R4, 'tree-' + COMMIT[:8])
-profile, _profile_sha = rconfig.node_profile(CFG, TREE)
-assert node == profile, ('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', node.get('nodeName'))
+if not FLEET_PLAN:
+    profile, _profile_sha = rconfig.node_profile(CFG, TREE)
+    assert node == profile, ('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', node.get('nodeName'))
 OWNER, CONTROLLER = node['ownerSid'], node['controllerSid']
-# M5-b (ADR 0023): with a companion account the node profile's ownerSid is that account; the Owner who runs the launcher is operatorSid.
-OPERATOR = CFG.get('operatorSid') or OWNER
-VHDX_DIR = (CFG.get('companionAccount') or {}).get('wslVhdxDirectory')
+FLEET = None
+if FLEET_PLAN:
+    # ---- the generic node package: the plan is this package's, the scripts are the planned bytes, the node's values come from the node ----
+    _L, _X, _HEX = PLAN['linux'], PLAN['expectedLinux'], r'[0-9a-f]{64}'
+    _WIN = re.compile(r'[A-Za-z]:(?:\\[A-Za-z0-9._-]+)+')
+    _MNT = r'/mnt/[a-z](?:/[A-Za-z0-9._-]+)+'
+    assert PLAN['node'] == node['nodeName'] and _L['distribution'] == node['wslDistribution'] and rconfig.USER_SID.fullmatch(OWNER) and rconfig.USER_SID.fullmatch(CONTROLLER), 'FLEET_PLAN_NOT_THIS_PACKAGE_NODE'
+    assert (PLAN['commit'] == COMMIT and PLAN['ciSourceManifestSha256'] == pkg['ciSourceManifestSha256'] and PLAN['linuxManifestSha256'] == pkg['linux']['manifestSha256']
+            and os.path.abspath(PLAN['packageDir']) == PKG), 'FLEET_PLAN_NOT_THIS_PACKAGE'
+    assert _X == {'generation': 1, 'ciSourceManifestSha256': pkg['ciSourceManifestSha256'], 'manifestSha256': pkg['linux']['manifestSha256'], 'packageManifestSha256': pkg_sha}, 'FLEET_PLAN_EXPECTED_LINUX_NOT_THIS_PACKAGE'
+    assert type(PLAN['companionAccount']) is bool and set(_L['scripts']) == {'A', 'B', 'BResume'}, 'FLEET_PLAN_SHAPE'
+    _seen = set()
+    for _k in ('A', 'B', 'BResume'):
+        _e = _L['scripts'][_k]
+        assert _WIN.fullmatch(_e['path']) and re.fullmatch(_HEX, _e['sha256']) and sha(_e['path']) == _e['sha256'], ('FLEET_SCRIPT_NOT_AS_PLANNED', _k)
+        with open(_e['path'], 'rb') as _stream:
+            _text = _stream.read().decode('utf-8')
+        _w, _o = re.findall('(?m)^W=(' + _MNT + ')$', _text), re.findall('(?m)^O=(' + _MNT + ')$', _text)
+        # prep.py --in-dir/--out-dir scripts only: not a draft, no argument, one in directory and one out directory
+        assert len(_w) == 1 and len(_o) == 1 and '\nDRAFT=0\n' in _text and 'R4_CLEAN_ENV' not in _text and '${1' not in _text, ('FLEET_SCRIPT_NOT_A_PACKAGE_RUN_SCRIPT', _k)
+        _seen.add((_w[0], _o[0]))
+    assert len(_seen) == 1, 'FLEET_SCRIPTS_NAME_DIFFERENT_DIRECTORIES'
+    # Linux A itself refuses, as root and before it stages anything, a node whose installed resident manifest, Source or generation is not
+    # what the scripts were generated for; those values must be the plan's expectedInstalledLinux (current.json and the version facts).
+    _XI = PLAN.get('expectedInstalledLinux')
+    with open(_L['scripts']['A']['path'], 'rb') as _stream:
+        _a_text = _stream.read().decode('utf-8')
+    _old = {k: re.findall('(?m)^' + k + '=([0-9a-f]{64}|[0-9]+)$', _a_text) for k in ('OLD_LINUX_RES_MANIFEST', 'OLD_MANIFEST', 'OLD_GENERATION')}
+    assert (isinstance(_XI, dict) and set(_XI) == {'generation', 'manifestSha256', 'ciSourceManifestSha256'} and type(_XI['generation']) is int
+            and _old == {'OLD_LINUX_RES_MANIFEST': [_XI['manifestSha256']], 'OLD_MANIFEST': [_XI['ciSourceManifestSha256']], 'OLD_GENERATION': [str(_XI['generation'])]}
+            and 'refuse LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2' in _a_text and 'refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION' in _a_text
+            and 'refuse INSTALLED_MANIFEST_NOT_SOURCE34' in _a_text), 'FLEET_SCRIPTS_NOT_FOR_THE_PLANS_INSTALLED_LINUX'
+    (_wsl_in, _wsl_out), = _seen
+    _to_win = lambda x: x[5].upper() + ':' + x[6:].replace('/', BS)
+    assert _WIN.fullmatch(_L['inDir']) and _L['inDir'].lower() == _to_win(_wsl_in).lower() and _L['wslInDir'] == _wsl_in, ('FLEET_PLAN_IN_DIR_NOT_THE_SCRIPTS', _wsl_in)
+    assert _WIN.fullmatch(_L['outDir']) and _L['outDir'].lower() == _to_win(_wsl_out).lower(), ('FLEET_PLAN_OUT_DIR_NOT_THE_SCRIPTS', _wsl_out)
+    # the launcher makes it, elevated, under the CI root: no part of its path is the Owner's
+    assert re.fullmatch(r'C:\\ProgramData\\CluedIndependentCI\\reinstall-linux-out-[0-9a-f]{32}', _to_win(_wsl_out)) and _L['outDir'] == _to_win(_wsl_out) and not os.path.lexists(_L['outDir']), ('FLEET_PLAN_OUT_DIR_NOT_A_NEW_ONE_UNDER_THE_CI_ROOT', _L['outDir'])
+    _T = _L['timeoutSeconds']
+    assert all(type(_T[_k]) is int and 1 <= _T[_k] <= 86400 for _k in ('A', 'B')), 'FLEET_PLAN_TIMEOUTS'
+    _account_file, _wsl_file = os.path.join(LIVE_ROOT, 'install', 'companion-account.json'), os.path.join(LIVE_ROOT, 'install', 'companion-wsl.json')
+    assert PLAN['companionAccount'] == (os.path.exists(_account_file) or os.path.exists(_wsl_file)), 'FLEET_PLAN_COMPANION_ACCOUNT_NOT_AS_INSTALLED'
+    OPERATOR, VHDX_DIR = OWNER, None
+    if PLAN['companionAccount']:
+        with open(_account_file, encoding='utf-8-sig') as _stream:
+            _acct = json.load(_stream)
+        with open(_wsl_file, encoding='utf-8-sig') as _stream:
+            _wslr = json.load(_stream)
+        assert (isinstance(_acct, dict) and set(_acct) == {'contract', 'companionSid', 'operatorSid'} and _acct['contract'] == 'clued.independent-ci.companion-account/1' and _acct['companionSid'] == OWNER
+                and isinstance(_acct['operatorSid'], str) and rconfig.USER_SID.fullmatch(_acct['operatorSid']) and _acct['operatorSid'] != OWNER), 'COMPANION_ACCOUNT_RECORD_REFUSED'
+        assert (isinstance(_wslr, dict) and _wslr.get('contract') == 'clued.independent-ci.companion-wsl/1' and _wslr.get('stage') == 'qualified' and _wslr.get('distro') == node['wslDistribution']
+                and _wslr.get('companionSid') == OWNER and isinstance(_wslr.get('target'), str) and _wslr['target'].endswith(BS + 'ext4.vhdx')
+                and rconfig.VHDX_DIR.fullmatch(_wslr['target'][:-len(BS + 'ext4.vhdx')])), 'COMPANION_WSL_RECORD_REFUSED'
+        OPERATOR, VHDX_DIR = _acct['operatorSid'], _wslr['target'][:-len(BS + 'ext4.vhdx')]
+    _locks = os.path.abspath(os.path.join(HERE, '..', 'tools', 'file-locks.ps1'))
+    FLEET = {'planSha256': CFG['_sha256'], 'companionAccount': PLAN['companionAccount'], 'distribution': _L['distribution'], 'inDir': _to_win(_wsl_in), 'outDir': _to_win(_wsl_out),
+             'wslOutDir': _wsl_out, 'scripts': {_k: (_L['scripts'][_k]['path'], _L['scripts'][_k]['sha256']) for _k in ('A', 'B', 'BResume')}, 'timeouts': {'A': _T['A'], 'B': _T['B']},
+             'fileLocks': (_locks, sha(_locks)), 'headlessSha256': None, 'registrarSha256': None}
+    if PLAN['companionAccount']:
+        # the package's own registrar must have the root-run mode, and its companion-headless.ps1 the build from the package
+        for _name, _needle, _slot in (('companion-headless.ps1', 'function New-CompanionBuildFromPackage(', 'headlessSha256'), ('CompanionTaskRegistrar.cs', 'ParseRootRun(', 'registrarSha256')):
+            _entry = by_path['resident/windows/' + _name]
+            with open(os.path.join(PKG, 'resident', 'windows', _name), 'rb') as _stream:
+                _bytes = _stream.read()
+            assert hashlib.sha256(_bytes).hexdigest() == _entry['sha256'] and _needle.encode('ascii') in _bytes, ('PACKAGE_HAS_NO_ROOT_RUN_REGISTRAR', _name)
+            FLEET[_slot] = _entry['sha256']
+else:
+    # M5-b (ADR 0023): with a companion account the node profile's ownerSid is that account; the Owner who runs the launcher is operatorSid.
+    OPERATOR = CFG.get('operatorSid') or OWNER
+    VHDX_DIR = (CFG.get('companionAccount') or {}).get('wslVhdxDirectory')
 assert OPERATOR != CONTROLLER and (OPERATOR == OWNER) == (VHDX_DIR is None), ('CONFIG_OPERATOR_NOT_AS_PROFILE', OPERATOR == OWNER, VHDX_DIR)
-RUNNER = {'service': node['runnerService'], 'binary': CFG['runner']['binary'], 'sddl': CFG['runner']['sddl']}
+if FLEET_PLAN:
+    # the runner's original binary is the installer's own constant; its DACL is the service's as it is now (read-only)
+    with open(os.path.join(PKG, 'resident', 'windows', 'install-resident.ps1'), encoding='utf8') as _stream:
+        _ob = re.findall(r"(?m)^\$OriginalBinary = '([^']+)'", _stream.read())
+    _sd = subprocess.run([BS.join(['C:', 'Windows', 'System32', 'sc.exe']), 'sdshow', node['runnerService']], capture_output=True, text=True)
+    _dacl = _sd.stdout.strip()
+    _dacl = _dacl[_dacl.index('D:'):] if 'D:' in _dacl else ''
+    _dacl = _dacl[:_dacl.index('S:')] if 'S:' in _dacl else _dacl
+    assert len(_ob) == 1 and rconfig.RUNNER_BINARY.match(_ob[0]) and _sd.returncode == 0 and rconfig.SDDL.match(_dacl), ('RUNNER_SERVICE_FACTS_UNREADABLE', _ob, _sd.returncode)
+    RUNNER = {'service': node['runnerService'], 'binary': _ob[0], 'sddl': _dacl}
+else:
+    RUNNER = {'service': node['runnerService'], 'binary': CFG['runner']['binary'], 'sddl': CFG['runner']['sddl']}
 policy = json.load(open(os.path.join(PKG, 'config', 'policy.json'), encoding='utf8'))
 assert policy['residentManifestSha256'] == pkg['residentManifestSha256'] and policy['ciSourceManifestSha256'] == pkg['ciSourceManifestSha256']
 installer = open(os.path.join(PKG, 'resident', 'windows', 'install-resident.ps1'), encoding='utf8').read()
@@ -172,8 +310,9 @@ UCFG_WANT = {'contract': 'clued.independent-ci.resident-upgrader-config/1', 'nod
              'timeouts': {'drainMaxMinutes': 120, 'drainRetryMinutes': 60, 'deferMaxHours': 24, 'pauseConfirmMs': 600000, 'verifyMaxMs': 2700000, 'grantPollMs': [30000, 120000]},
              'keepGenerations': 3}
 assert ucfg == UCFG_WANT, ('UPGRADER_CONFIG_NOT_AS_GENERATED', ucfg)
-assert re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', TOKEN_FILE), ('UPGRADE_TOKEN_FILE_PATH_SHAPE', TOKEN_FILE)   # Invoke-Child refuses blanks and quotes
-token_file_present = os.path.isfile(TOKEN_FILE)   # stat only: the token's content is never opened here
+assert FLEET_PLAN or re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', TOKEN_FILE), ('UPGRADE_TOKEN_FILE_PATH_SHAPE', TOKEN_FILE)   # Invoke-Child refuses blanks and quotes
+token_file_present = True if FLEET_PLAN else os.path.isfile(TOKEN_FILE)   # stat only: the token's content is never opened here
+assert not FLEET_PLAN or PLAN['secrets']['upgradeToken']['target'] == TOKEN_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'upgradeToken')
 # DESIGN section 41.6a: the optional node heartbeat token (path only, never opened here) and its optional binding id, passed to this
 # package's installer as -HeartbeatTokenFile [-HeartbeatBindingId]; the launcher's elevated with-token plan must add exactly that entry.
 HB = CFG['heartbeat']
@@ -183,27 +322,30 @@ if HB:
     assert len(_hd) == 1 and re.search(r"(?m)^\$HeartbeatTokenTarget = \$HeartbeatTokenDirectory \+ '\\ci-node-heartbeat\.token'$", installer) and '[string]$HeartbeatTokenFile' in installer, 'PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_TOKEN'
     HB_TARGET = _hd[0] + BS + 'ci-node-heartbeat.token'
     assert HB_TARGET == LIVE_ROOT + BS + 'secrets' + BS + 'heartbeat' + BS + 'ci-node-heartbeat.token', HB_TARGET
-    assert re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', HB['tokenFile']), ('HEARTBEAT_TOKEN_FILE_PATH_SHAPE', HB['tokenFile'])   # Invoke-Child refuses blanks and quotes
+    assert FLEET_PLAN or re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', HB['tokenFile']), ('HEARTBEAT_TOKEN_FILE_PATH_SHAPE', HB['tokenFile'])   # Invoke-Child refuses blanks and quotes
+    assert not FLEET_PLAN or PLAN['secrets']['heartbeatToken']['target'] == HB_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'heartbeatToken')
     assert HB['bindingId'] is None or '$HeartbeatBindingId' in installer, 'PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_BINDING_ID'
     assert HB['bindingId'] is None or HB['bindingId'] != PKG_INST.get('ciPrincipalBindingId'), 'HEARTBEAT_BINDING_IS_THE_CI_BINDING'
-    hb_file_present = os.path.isfile(HB['tokenFile'])
+    hb_file_present = True if FLEET_PLAN else os.path.isfile(HB['tokenFile'])
 upgrader_service_present = subprocess.run([BS.join(['C:', 'Windows', 'System32', 'sc.exe']), 'query', 'CluedCIUpgrader'], capture_output=True).returncode != 1060
 # review m7: never trust --package-sha alone. Every package file must match its manifest, and the package is rebuilt here from the
 # named inputs (build-package.mjs of this commit's tree, into a NEW directory) and must give the same manifest sha.
 for f in pkg['files']:
     assert sha(os.path.join(PKG, *f['path'].split('/'))) == f['sha256'], ('PACKAGE_FILE_NOT_ITS_MANIFEST', f['path'])
-REB = {k: opt('--rebuild-' + k) for k in ('record', 'policy', 'source-files', 'upgrader-config', 'linux-external-pins')}
-REB['companion'] = opt('--rebuild-companion') or CFG['companionInput']   # build.ps1 passes the node's derived companion input
-assert all(REB.values()), 'REBUILD_INPUTS_REQUIRED'
-rebuild_dir = os.path.join(R4, 'rebuild-' + COMMIT[:8] + '-' + GEN_UTC)
-source_v2_input = opt('--rebuild-source-v2')
-source_v2_args = ['--source-v2', source_v2_input] if source_v2_input else []
-rb_out = subprocess.run(['node', 'tools/build-package.mjs', '--out', rebuild_dir, '--policy', REB['policy'], '--companion', REB['companion'],
-                         '--node', CFG['nodeExe'], '--record', REB['record'], '--source-root', TREE,
-                         '--source-files', REB['source-files'], '--fresh-install', '--upgrader-config', REB['upgrader-config'], '--linux-external-pins', REB['linux-external-pins'], *source_v2_args], cwd=os.path.join(TREE, 'work', 'independent-ci-resident-v1'), capture_output=True, text=True)
-assert rb_out.returncode == 0, ('REBUILD_FAILED', rb_out.stderr[-600:])
-rebuilt = json.loads(rb_out.stdout)
-assert rebuilt['packageManifestSha256'] == pkg_sha == sha(os.path.join(rebuild_dir, 'package-manifest.json')), ('REBUILD_DIFFERS', rebuilt['packageManifestSha256'], pkg_sha)
+rebuild_dir, rebuilt = None, {'packageManifestSha256': None}
+if not FLEET_PLAN:   # the generic node package: the node's assembly built this package twice with one result (rollout/fleet)
+    REB = {k: opt('--rebuild-' + k) for k in ('record', 'policy', 'source-files', 'upgrader-config', 'linux-external-pins')}
+    REB['companion'] = opt('--rebuild-companion') or CFG['companionInput']   # build.ps1 passes the node's derived companion input
+    assert all(REB.values()), 'REBUILD_INPUTS_REQUIRED'
+    rebuild_dir = os.path.join(R4, 'rebuild-' + COMMIT[:8] + '-' + GEN_UTC)
+    source_v2_input = opt('--rebuild-source-v2')
+    source_v2_args = ['--source-v2', source_v2_input] if source_v2_input else []
+    rb_out = subprocess.run(['node', 'tools/build-package.mjs', '--out', rebuild_dir, '--policy', REB['policy'], '--companion', REB['companion'],
+                             '--node', CFG['nodeExe'], '--record', REB['record'], '--source-root', TREE,
+                             '--source-files', REB['source-files'], '--fresh-install', '--upgrader-config', REB['upgrader-config'], '--linux-external-pins', REB['linux-external-pins'], *source_v2_args], cwd=os.path.join(TREE, 'work', 'independent-ci-resident-v1'), capture_output=True, text=True)
+    assert rb_out.returncode == 0, ('REBUILD_FAILED', rb_out.stderr[-600:])
+    rebuilt = json.loads(rb_out.stdout)
+    assert rebuilt['packageManifestSha256'] == pkg_sha == sha(os.path.join(rebuild_dir, 'package-manifest.json')), ('REBUILD_DIFFERS', rebuilt['packageManifestSha256'], pkg_sha)
 
 # ---- r4.1 C1: every *Script path of the built companion config is a file of this package's installed Source ----
 comp = json.load(open(os.path.join(PKG, 'config', 'companion.json'), encoding='utf8'))
@@ -268,7 +410,12 @@ p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', EXPECT
                    capture_output=True, check=False)
 write_new(dry_file, p.stdout)
 assert p.returncode == 0, ('EXPECTED_PLAN_FAILED', p.stderr.decode('utf8', 'replace')[-800:])
-dry = json.loads(p.stdout.decode('utf-8-sig'))
+# expected-plan.ps1 writes UTF-8 whatever the system's code page is. Only `plan` and `planSha256` are used and pinned below; they hold
+# no system message (carryForwardPreview, which can hold a localized one, is outside the plan and its hash and is never read here).
+try:
+    dry = json.loads(p.stdout.decode('utf-8-sig'))
+except (UnicodeDecodeError, ValueError) as _error:
+    sys.exit('EXPECTED_PLAN_OUTPUT_NOT_UTF8_JSON ' + type(_error).__name__)
 assert dry['status'] == 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'
 plan = dry['plan']
 assert plan['packageManifestSha256'] == pkg_sha and plan['installScriptSha256'] == staged[0][2] and plan['startAfterInstall'] is True
@@ -371,13 +518,16 @@ if halt_present and not halt_accepted: refusals.append('HALT_PRESENT_NOT_ACCEPTE
 if halt_accepted and (status.get('halt') or {}).get('code') != halt_doc.get('code'): refusals.append('STATUS_HALT_NOT_THE_PINNED_ONE')
 if current: refusals.append('OLD_RESIDENT_BATCH_CURRENT')
 if open_entries: refusals.append('OPEN_BATCH')
-if not paused_present and not halt_accepted: refusals.append('OLD_RESIDENT_NOT_PAUSED')
+# (the generic node package: --check runs before W1 and does not need the pause; the launcher is generated only for a node paused by
+# exactly the plan's W1 pause, byte for byte, and pins it: the launcher lifts that pause again, and only that one, when it stops early)
+if not (FLEET_PLAN and CHECK) and not paused_present and not halt_accepted: refusals.append('OLD_RESIDENT_NOT_PAUSED')
+if FLEET_PLAN and not CHECK and paused_present and paused_sha != PLAN['w1Paused']['sha256']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_PLANS')
 if paused_present and not halt_accepted and json.load(open(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'), encoding='utf-8-sig')).get('source', {}).get('reason') != CFG['launcher']['w1PauseReason']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE')
 if not runner_usable: refusals.append('DRY_RUN_RUNNER_NOT_ORIGINAL_STOPPED')
-if not linux_live: refusals.append('FINAL_NEEDS_LINUX_EVIDENCE')
+if not FLEET_PLAN and not linux_live: refusals.append('FINAL_NEEDS_LINUX_EVIDENCE')   # the generic node package: checked by rule at run time
 if not token_file_present: refusals.append('UPGRADE_TOKEN_FILE_MISSING')
 if HB and not hb_file_present: refusals.append('HEARTBEAT_TOKEN_FILE_MISSING')
-if not facts_sha: refusals.append('FINAL_NEEDS_LINUX_VERSION_FACTS')
+if not FLEET_PLAN and not facts_sha: refusals.append('FINAL_NEEDS_LINUX_VERSION_FACTS')
 # r7: CluedCIUpgrader is expected here (the r5c2 install); uninstall-resident.ps1 stops and deletes it, the after-uninstall check stays
 R5C_REPORT = {'packageContract': pkg['contract'], 'upgraderManifestSha256': UPG_SECTION['manifestSha256'], 'upgraderTargets': len(upg_targets), 'upgraderConfig': ucfg,
               'upgraderConfigSha256': ucfg_entry[0]['sha256'], 'tokenFile': TOKEN_FILE, 'tokenFilePresent': token_file_present, 'tokenTarget': TOKEN_TARGET,
@@ -393,7 +543,8 @@ if any(re.match(r'^(d{8}|e{8})-', str(acceptance.get(k, ''))) for k in ('sourceA
 # README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration. Its 24-hour bound (review 1-8) is checked
 # by prep.py, before the node changes; here, after W1 and Linux B, a node half reinstalled could never rehearse again (review 2).
 rehearsal_doc = json.load(open(REHEARSAL, encoding='utf-8')) if REHEARSAL else None
-if not _ledger_evidence.rehearsal_matches(rehearsal_doc, pkg_sha, COMMIT, CFG['_sha256'], adopted_pkg_sha if adopted_proven else None):
+# (the generic node package: the rehearsal is the node preparation's own gate, before it writes the plan this was generated from)
+if not FLEET_PLAN and not _ledger_evidence.rehearsal_matches(rehearsal_doc, pkg_sha, COMMIT, CFG['_sha256'], adopted_pkg_sha if adopted_proven else None):
     refusals.append('FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE')
 if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))
@@ -413,13 +564,14 @@ assert parent_before.startswith('O:BAG:') and parent_after == parent_before + ac
 pause_dacl = 'D:P(A;;FR;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + OWNER + ')(A;;0x1301bf;;;' + plan['residentSid'] + ')' + ('(A;;FR;;;' + OPERATOR + ')' if OPERATOR != OWNER else '')
 
 lines = [
-    '# Generated by reinstall/launcher/generate.py at ' + GEN_UTC + ' for node ' + node['nodeName'] + ' (configuration sha256 ' + CFG['_sha256'] + '); every value comes from a file.',
+    '# Generated by reinstall/launcher/generate.py at ' + GEN_UTC + ' for node ' + node['nodeName'] + ' (' + ('install plan' if FLEET_PLAN else 'configuration') + ' sha256 ' + CFG['_sha256'] + '); every value comes from a file.',
     '$DraftOnly = ' + ('$false' if FINAL else '$true') + '   # P2: a draft refuses to run',
     '$SourceSha = ' + q(source_sha) + '   # record/source-manifest.json sourceSha',
     '$PackageHead = ' + q(COMMIT) + '   # Q4: the commit this launcher was generated for',
     '$W = ' + q(R4),
     '$PackageRootPin = ' + q(PKG.replace('/', BS)),
     '$ReviewedDryRunPath = ' + q(dry_file.replace('/', BS)),
+    '$ReviewedDryRunSha256 = ' + q(sha(dry_file)) + '   # only these bytes are parsed (the file is in the work directory)',
     '$StageParent = ' + q('C:' + BS + 'ProgramData' + BS + 'CluedIndependentCI' + BS + 'resident-launch-' + COMMIT[:8]),
     '$NodeHostname = ' + q(node['hostname']) + '   # the node profile: Step-Identity, the child COMPUTERNAME, the runner account',
     '$NodeName = ' + q(node['nodeName']) + '   # exact node identity for advisory first-train applicability',
@@ -468,11 +620,11 @@ lines = [
     '$MaintenanceHelperSha256 = ' + (q(maintenance['sha256']) if maintenance else '$null'),
     '$MaintenanceWslDistribution = ' + q(node['wslDistribution']),
     '$RearmReason = ' + q(REARM_REASON),
-    '$UpgradeTokenFile = ' + q(TOKEN_FILE) + '   # r5c: the resident-upgrade token placed by the Owner (path only; read by install-resident.ps1, never here)',
+    '$UpgradeTokenFile = ' + ('$null' if FLEET_PLAN else q(TOKEN_FILE)) + '   # r5c: the resident-upgrade token placed by the Owner (path only; read by install-resident.ps1, never here)',
     '$UpgradeTokenTarget = ' + q(TOKEN_TARGET) + '   # install-resident.ps1 of this package',
     '$SecretWorkParent = ' + q(SECRET_WORK_PARENT) + '   # install-resident.ps1 of this package (the fingerprint directory the token adds to the plan)',
     '$SecretWorkSddl = ' + q(SECRET_WORK_SDDL),
-    '$HeartbeatTokenFile = ' + (q(HB['tokenFile']) if HB else '$null') + '   # DESIGN 41.6a: the node heartbeat token (path only; read by install-resident.ps1, never here)',
+    '$HeartbeatTokenFile = ' + (q(HB['tokenFile']) if HB and not FLEET_PLAN else '$null') + '   # DESIGN 41.6a: the node heartbeat token (path only; read by install-resident.ps1, never here)',
     '$HeartbeatTokenTarget = ' + (q(HB_TARGET) if HB else '$null') + '   # install-resident.ps1 of this package',
     '$HeartbeatBindingId = ' + (q(HB['bindingId']) if HB and HB['bindingId'] else '$null') + '   # informational, passed only when configured',
     '$LinuxVersionFactsSource = ' + (q(FACTS) if FACTS else '$null') + '   # r5c: Linux phase B version facts (verify -LinuxVersionFactsFile)',
@@ -480,19 +632,66 @@ lines = [
     '$UpgraderManifestSha256 = ' + q(UPG_SECTION['manifestSha256']),
     '$R5c = @{ applyPlanSha256 = $null; factsStaged = $null }   # r5c: set by Test-TokenPlan / Get-VerifyFactsArgs',
 ]
+# The generic node package (--fleet-plan): all null otherwise, and the launcher then runs no Linux step.
+_fq = lambda v: q(v) if FLEET and v is not None else '$null'
+_fs = lambda k, i: q(FLEET['scripts'][k][i]) if FLEET else '$null'
+lines += [
+    '$FleetPlanSha256 = ' + _fq(FLEET and FLEET['planSha256']) + '   # the install plan as it was at generation; set, the launcher runs Linux A and B itself',
+    '$FleetCompanionAccount = ' + (('$true' if FLEET['companionAccount'] else '$false') if FLEET else '$null') + '   # the Linux scripts run as the companion account (registrar root-run)',
+    '$FleetDistribution = ' + _fq(FLEET and FLEET['distribution']),
+    '$FleetInDir = ' + _fq(FLEET and FLEET['inDir']) + '   # the scripts read it ($W)',
+    '$FleetOutDir = ' + _fq(FLEET and FLEET['outDir']) + '   # the scripts write it ($O)',
+    '$FleetWslOutDir = ' + _fq(FLEET and FLEET['wslOutDir']),
+    '$FleetScriptA = ' + _fs('A', 0),
+    '$FleetScriptASha256 = ' + _fs('A', 1),
+    '$FleetScriptB = ' + _fs('B', 0),
+    '$FleetScriptBSha256 = ' + _fs('B', 1),
+    '$FleetScriptBResume = ' + _fs('BResume', 0),
+    '$FleetScriptBResumeSha256 = ' + _fs('BResume', 1),
+    '$FleetTimeoutA = ' + (str(FLEET['timeouts']['A']) if FLEET else '$null') + '   # seconds; a timeout stops the launch and kills nothing',
+    '$FleetTimeoutB = ' + (str(FLEET['timeouts']['B']) if FLEET else '$null') + '   # also B-resume',
+    '$FleetLinuxManifestSha256 = ' + _fq(FLEET and pkg['linux']['manifestSha256']) + '   # the version facts B writes must name it (and $CiSourceManifestSha256, generation 1)',
+    '$FleetFileLocks = ' + _fq(FLEET and FLEET['fileLocks'][0]) + '   # reinstall/tools/file-locks.ps1 of the unpacked package, run elevated',
+    '$FleetFileLocksSha256 = ' + _fq(FLEET and FLEET['fileLocks'][1]),
+    '$FleetUpgradeTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['upgradeToken']['fingerprint']) + '   # the installed resident-upgrade token (install receipt): carried over by the launcher ($UpgradeTokenFile is set at run time)',
+    '$FleetHeartbeatTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['heartbeatToken'] and PLAN['secrets']['heartbeatToken']['fingerprint']) + '   # the installed heartbeat token, when there is one ($HeartbeatTokenFile is set at run time)',
+    '$FleetW1PauseReason = ' + _fq(FLEET and CFG['launcher']['w1PauseReason']) + '   # with $InstalledPausedSha256: the W1 pause of this launch, lifted again by a stop before anything changed',
+    '$FleetInstalledRearmSha256 = ' + _fq(FLEET and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1'))) + '   # the Resume door of the installed resident (rearm-resident.ps1)',
+    '$FleetW1ResumeWaitSeconds = ' + ('420' if FLEET else '$null') + '   # as $PauseWaitSeconds: the service acknowledges an owner request within it',
+    '$FleetHeadlessSha256 = ' + _fq(FLEET and FLEET['headlessSha256']) + '   # the package companion-headless.ps1 (New-CompanionBuildFromPackage)',
+    '$FleetRegistrarSha256 = ' + _fq(FLEET and FLEET['registrarSha256']) + '   # the package CompanionTaskRegistrar.cs (root-run)',
+]
 assert template.count('#PINS#') == 1
 text = template.replace('#PINS#', '\n'.join(lines))
 data = text.encode('utf-8')
 assert not data.startswith(b'\xef\xbb\xbf') and b'\r' not in data
-os.makedirs(OUTDIR, exist_ok=True)
 kind = 'final' if FINAL else 'DRAFT'
-out = os.path.join(OUTDIR, 'run-reinstall.' + node['nodeName'] + '.' + COMMIT[:8] + '.' + kind + '.' + GEN_UTC + '.ps1')
+if FLEET_PLAN and CHECK:
+    # everything above passed and nothing refuses: the launcher can be generated once W1 has paused the node. Nothing was written but the dry run.
+    print(json.dumps({'status': 'FLEET_PLAN_CHECK_PASSED', 'node': node['nodeName'], 'version': PLAN['version'], 'commit': COMMIT, 'installPlan': FLEET_PLAN, 'installPlanSha256': CFG['_sha256'],
+                      'templateSha256': TEMPLATE_SHA, 'companionAccount': FLEET['companionAccount'], 'operatorSid': OPERATOR, 'packageManifestSha256': pkg_sha, 'planSha256': dry['planSha256'], 'dryRun': dry_file,
+                      'pausedNow': paused_present, 'runnerBefore': rb}, default=str))
+    sys.exit(0)
+if FLEET_PLAN:
+    out = os.path.abspath(opt('--out')).replace('/', BS)
+else:
+    os.makedirs(OUTDIR, exist_ok=True)
+    out = os.path.join(OUTDIR, 'run-reinstall.' + node['nodeName'] + '.' + COMMIT[:8] + '.' + kind + '.' + GEN_UTC + '.ps1')
 write_new(out, data)
 launcher_sha = hashlib.sha256(data).hexdigest()
 # The elevated command: hash-checked bytes, run from memory, with -RunApprovedInstall (same form as r3).
 cmd = ("$env:PSModulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'; $b=[IO.File]::ReadAllBytes(" + q(out) + "); "
        "$h=-join ([Security.Cryptography.SHA256]::Create().ComputeHash($b) | ForEach-Object { $_.ToString('x2') }); "
        "if ($h -cne '" + launcher_sha + "') { throw ('LAUNCHER_CHANGED ' + $h) }; & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b))) -RunApprovedInstall\n")
+if FLEET_PLAN:
+    # One line of JSON for rollout/fleet/install.mjs prepare, which puts path and sha256 into the plan's `launcher` and builds its runCommand
+    # around elevatedCommand (hash-checked bytes, run from memory, in an elevated Windows PowerShell 5.1 started with -NoProfile).
+    print(json.dumps({'status': 'FLEET_LAUNCHER_GENERATED', 'launcher': {'path': out, 'sha256': launcher_sha}, 'bytes': len(data), 'node': node['nodeName'], 'version': PLAN['version'], 'commit': COMMIT,
+                      'installPlan': FLEET_PLAN, 'installPlanSha256': CFG['_sha256'], 'templateSha256': TEMPLATE_SHA, 'elevatedCommand': cmd.strip(), 'launchDir': LAUNCH_DIR,
+                      'companionAccount': FLEET['companionAccount'], 'operatorSid': OPERATOR, 'linux': {'inDir': FLEET['inDir'], 'outDir': FLEET['outDir'], 'wslOutDir': FLEET['wslOutDir'], 'timeoutSeconds': FLEET['timeouts']},
+                      'packageManifestSha256': pkg_sha, 'ciSourceManifestSha256': pkg['ciSourceManifestSha256'], 'planSha256': dry['planSha256'], 'dryRun': dry_file,
+                      'carriesInstalledTokens': ['upgradeToken'] + (['heartbeatToken'] if HB else []), 'installedPausedSha256': paused_sha, 'runnerBefore': rb}, default=str))
+    sys.exit(0)
 cmd_path = os.path.join(OUTDIR, 'elevated-command.' + node['nodeName'] + '.' + COMMIT[:8] + '.' + kind + '.' + GEN_UTC + '.txt')
 write_new(cmd_path, cmd.encode('utf-8'))
 print(json.dumps({'launcher': out, 'sha256': launcher_sha, 'bytes': len(data), 'draft': not FINAL, 'commit': COMMIT,

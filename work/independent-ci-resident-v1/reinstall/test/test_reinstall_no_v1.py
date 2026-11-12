@@ -448,3 +448,100 @@ class PrepNoV1(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(os.name == 'nt', 'the in/out directories are real Windows paths')
+class PrepFleet(unittest.TestCase):
+    """The generic node package's form: --in-dir / --out-dir instead of <in-dir-name> (README section 6)."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='rf'); self.d = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fleet(self, v1_head='f' * 40, out_name='linux-out'):
+        argv, w = build_prep(self.d, v1_head)
+        legacy = run_prep(argv)
+        self.assertEqual(legacy.returncode, 0, legacy.stderr[-1500:])
+        # the same inputs, the in-dir moved out of the work directory; prep.py runs from an unpacked package tree (its own
+        # ..\..\linux holds the Linux tools), with no extracted git archive and no repository left to read
+        ind = os.path.join(self.d, 'in'); os.rename(os.path.join(w, 'linux', 'in-t'), ind)
+        unpacked = os.path.join(self.d, 'x', 'R')
+        shutil.copytree(RE, os.path.join(unpacked, 'reinstall'), ignore=shutil.ignore_patterns('test', '__pycache__'))
+        shutil.copytree(os.path.join(w, 'tree-' + argv[1][:8], 'work', 'independent-ci-resident-v1', 'linux'), os.path.join(unpacked, 'linux'))
+        self.prep = os.path.join(unpacked, 'reinstall', 'linux', 'prep.py')
+        shutil.rmtree(os.path.join(w, 'tree-' + argv[1][:8])); shutil.rmtree(os.path.join(self.d, 'repo'), onerror=lambda f, p, e: (os.chmod(p, 0o700), f(p)))
+        out = os.path.join(self.d, out_name)
+        fleet_argv = argv[:6] + ['--in-dir', ind, '--out-dir', out] + argv[7:]
+        return argv, w, ind, out, fleet_argv, json.loads(legacy.stdout)
+
+    def test_scripts_read_the_in_dir_and_write_only_the_out_dir(self):
+        argv, w, ind, out, fleet_argv, legacy = self.fleet()
+        p = run_prep(fleet_argv, prep=self.prep)
+        self.assertEqual(p.returncode, 0, p.stderr[-1500:])
+        r = json.loads(p.stdout)
+        self.assertEqual(sorted(r['scripts']), ['A.sh', 'B-resume.sh', 'B.sh'])
+        wsl = lambda x: '/mnt/' + x[0].lower() + x[2:].replace(chr(92), '/')
+        self.assertEqual((r['inDir'], r['outDir'], r['wslInDir'], r['wslOutDir'], r['W']), (ind, out, wsl(ind), wsl(out), wsl(ind)))
+        self.assertFalse(os.path.exists(out))   # the elevated launcher makes the out directory, not this tool
+        texts = {}
+        for n in r['scripts']:
+            self.assertEqual(r['paths'][n], os.path.join(w, 'linux', n))
+            data = rd(w, 'linux', n)
+            self.assertEqual(sha(data), r['scripts'][n]); self.assertNotIn(b'\r', data)
+            texts[n] = data.decode('utf-8')
+        for n, t in texts.items():
+            self.assertIn('\nW=' + wsl(ind) + '\nO=' + wsl(out) + '\n[ -d "$O" ] || refuse OUT_DIRECTORY_MISSING\nBASE=', t, n)
+            self.assertNotIn('$W/..', t, n)                 # nothing is written next to the in-dir
+            self.assertNotIn('R4_CLEAN_ENV', t, n)          # the registrar's fixed environment has no such variable
+            self.assertNotIn('WANT_A', t, n); self.assertNotIn('${1', t, n)   # no argument: root-run passes none
+            self.assertIn('for v in BASH_ENV ENV NODE_OPTIONS', t, n)        # the environment is still checked clean
+            self.assertIn('export PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C', t, n)
+        a, b, resume = texts['A.sh'], texts['B.sh'], texts['B-resume.sh']
+        self.assertIn('RV="$O/review-A-draft-t"', a)
+        # phase A refuses, as root and before it stages anything, an installed Linux that is not the one these scripts were generated for
+        # (the facts and generation record prep.py was given: the plan's expectedInstalledLinux; generate.py --fleet-plan cross-checks them)
+        for line in ('OLD_LINUX_RES_MANIFEST=' + 'b' * 64 + '\n', 'OLD_MANIFEST=' + 'a' * 64 + '\n', 'OLD_GENERATION=1\n'):
+            self.assertIn('\n' + line, a)
+        for refusal in ('refuse INSTALLED_MANIFEST_NOT_SOURCE34', '= "$OLD_LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2', 'refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION'):
+            self.assertLess(a.index(refusal), a.index('install -d -o root -g root -m 0700 "$BASE"'), refusal)
+        for s in ('VF="$O/linux-version-facts.', 'E="$O/linux-live-manifest.', 'RO="$O/out-B-$SUFFIX-'):
+            self.assertIn(s, b); self.assertIn(s, resume)
+        for t in (b, resume):
+            self.assertIn('[ -s "$STG/phaseA.sha256" ] || refuse PHASE_A_NOT_DONE\n', t)
+            self.assertIn('(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A', t)
+            self.assertLess(t.index('refuse PHASE_A_NOT_DONE'), t.index('refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A'))
+        # everything else is the Owner-run scripts' text: only the gates above and the four output paths differ
+        import re as _re
+        # what only phase A of a package run has: the guard against a second phase A, and the installed manifest's shape
+        guard = _re.search(r"(?s)command -v pgrep >/dev/null \|\| refuse PGREP_REQUIRED\n.*?refuse ANOTHER_PHASE_A_RUNNING\n  done\ndone\n", a)
+        shape = _re.search(r"(?s)\$CLEAN \$PY -I -c 'import json,sys\na=json\.load\(open\(sys\.argv\[1\]\)\); b=.*?refuse INSTALLED_LINUX_MANIFEST_NOT_THE_PACKAGES_SHAPE; \}\n", a)
+        self.assertTrue(guard and shape)
+        self.assertLess(guard.start(), a.index('\nquiet_and_installed\n')); self.assertLess(a.index('refuse RESIDENT_PINS_NOT_THE_NEW_SOURCE'), shape.start()); self.assertLess(shape.start(), a.index('# r7: three read-only plans'))
+        self.assertIn('[ -d "$d" ] && [ "$d" != "$STG" ] && [ ! -e "$d/phaseA.sha256" ] || continue', guard.group(0)); self.assertIn("pgrep -f 'linux-run-[0-9a-f]{32}/script\\.sh'", guard.group(0))
+        self.assertIn('[ "$pp" != "$$" ] || continue', guard.group(0))   # a command substitution of this shell is not another phase A
+        self.assertIn('/opt/clued-independent-ci/resident-v1/manifest.json "$STG/linux-res-pkg/manifest.json"', shape.group(0)); self.assertIn('a.get("contract")==b.get("contract") and p(a)==p(b)', shape.group(0))
+        for other in (b, resume):
+            self.assertNotIn('ANOTHER_PHASE_A_RUNNING', other); self.assertNotIn('INSTALLED_LINUX_MANIFEST_NOT_THE_PACKAGES_SHAPE', other)
+        texts['A.sh'] = a.replace(guard.group(0), '').replace(shape.group(0), '')
+        def norm(t):
+            return [l for l in t.split('\n') if 'R4_CLEAN_ENV' not in l and 'WANT_A' not in l and 'PHASE_A_NOT_DONE' not in l and not l.startswith('O=')
+                    and 'OUT_DIRECTORY_MISSING' not in l and not l.startswith('W=') and '# run by the elevated launcher' not in l and not l.startswith('#   ')]
+        for mine, theirs in (('A.sh', 'reinstall-linux-A-stage.draft-t.sh'), ('B.sh', 'reinstall-linux-B-switch.draft-t.sh'), ('B-resume.sh', 'reinstall-linux-B-resume.draft-t.sh')):
+            self.assertEqual(norm(texts[mine].replace('$O/', '$W/../')), norm(rd(w, 'linux', theirs).decode('utf-8')), mine)
+
+    def test_the_two_directories_go_together_and_are_plain_paths(self):
+        argv, w, ind, out, fleet_argv, _ = self.fleet()
+        for bad, code in ((argv[:6] + ['--in-dir', ind] + argv[7:], 'IN_DIR_AND_OUT_DIR_GO_TOGETHER'), (argv[:6] + ['--out-dir', out] + argv[7:], 'IN_DIR_AND_OUT_DIR_GO_TOGETHER'),
+                          (argv[:6] + ['--in-dir', ind, '--out-dir', out + ' x'] + argv[7:], 'OUT_DIR_PATH_SHAPE'), (argv[:6] + ['--in-dir', ind, '--out-dir', out + '.'] + argv[7:], 'OUT_DIR_PATH_SHAPE'), (argv[:6] + ['--in-dir', ind, '--out-dir', out + "';id;'"] + argv[7:], 'OUT_DIR_PATH_SHAPE'),
+                          (argv[:6] + ['--in-dir', ind + chr(92) + '..' + chr(92) + 'in', '--out-dir', out] + argv[7:], 'IN_DIR_PATH_SHAPE'), (argv[:6] + ['--in-dir', chr(92) * 2 + 'server' + chr(92) + 'share' + chr(92) + 'in', '--out-dir', out] + argv[7:], 'IN_DIR_PATH_SHAPE'),
+                          (argv[:6] + ['--in-dir', ind, '--out-dir', os.path.join(ind, 'out')] + argv[7:], 'OUT_DIR_INSIDE_IN_DIR'), (argv[:6] + ['--in-dir', ind, '--out-dir', ind] + argv[7:], 'OUT_DIR_INSIDE_IN_DIR')):
+            p = run_prep(bad, prep=self.prep)
+            self.assertNotEqual(p.returncode, 0, code); self.assertIn(code, p.stderr, code)
+            self.assertFalse(os.path.exists(os.path.join(w, 'linux', 'A.sh')), code)
+
+    def test_scripts_are_never_overwritten(self):
+        argv, w, ind, out, fleet_argv, _ = self.fleet()
+        self.assertEqual(run_prep(fleet_argv, prep=self.prep).returncode, 0)
+        again = run_prep(fleet_argv, prep=self.prep)
+        self.assertNotEqual(again.returncode, 0); self.assertIn('FileExistsError', again.stderr)

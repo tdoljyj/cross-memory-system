@@ -190,14 +190,22 @@ def counting(limit=None, log=None):
     return rename
 
 
+# The identity numbers tool.ident records are the world's own (two worlds, two sets of inodes; on Linux the inode generation
+# differs even for the same content): a crash-resumed world and an uninterrupted one are compared without them.
+# test_ident_fields_are_known fails when the tool records a new field, so a new world-specific number cannot slip into the
+# snapshot comparison unnoticed (it did: fsid/igen, compared on Linux only, where they are real).
+WORLD_IDENTITY_KEYS = ('dev', 'ino', 'fsid', 'igen')
+IDENT_CONTENT_KEYS = ('kind', 'sha256')
+
+
 def snapshot(root):
-    """Everything under the fake '/', comparable across two worlds: file bytes (state JSON without dev/ino), directory
-    names; .git internals only by presence (their config names the absolute bundle path)."""
+    """Everything under the fake '/', comparable across two worlds: file bytes (state JSON without the world's identity
+    numbers, WORLD_IDENTITY_KEYS), directory names; .git internals only by presence (their config names the absolute bundle path)."""
     out = {}
 
     def strip(v):
         if isinstance(v, dict):
-            return {k: strip(x) for k, x in v.items() if k not in ('dev', 'ino')}
+            return {k: strip(x) for k, x in v.items() if k not in WORLD_IDENTITY_KEYS}
         if isinstance(v, list):
             return [strip(x) for x in v]
         return v
@@ -435,6 +443,123 @@ class StageTests(World):
         self.refused('GENERATION_NOT_NEXT', tool.stage, self.P, self.host, OP1, pkg, 3, lm)
 
 
+class IdentityTests(World):
+    """DESK 2026-11-12: the same ext4.vhdx attached by another WSL2 VM got another st_dev; every item looked replaced and every
+    stage refused (LIVE_NOT_THE_CURRENT_GENERATION, source-v2). Identity is (kind, ino) on the file system fsid now."""
+
+    def rewrite_g1(self, change):
+        p = tool.gen_record_path(self.P, 1)
+        rec = json.loads(pathlib.Path(p).read_bytes())
+        change(rec)
+        os.chmod(p, 0o644)
+        pathlib.Path(p).write_bytes(tool.canonical_bytes(rec))
+
+    def test_same_compares_kind_inode_and_fsid_never_the_device_number(self):
+        rec = {'kind': 'dir', 'dev': 2097, 'ino': 77, 'fsid': 'abc', 'sha256': None}
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': 'abc'}, rec), 'device number changed, inode the same')
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': None}, rec), 'a host without statfs: inode on the one file system')
+        self.assertTrue(tool.same({'kind': 'dir', 'dev': 2129, 'ino': 77, 'fsid': 'abc'}, {'kind': 'dir', 'dev': 2097, 'ino': 77}), 'a record from before fsid')
+        self.assertFalse(tool.same({'kind': 'dir', 'dev': 2097, 'ino': 78, 'fsid': 'abc'}, rec), 'another inode, same device')
+        self.assertFalse(tool.same({'kind': 'dir', 'dev': 2097, 'ino': 77, 'fsid': 'def'}, rec), 'the same number on another file system')
+        self.assertFalse(tool.same({'kind': 'file', 'dev': 2097, 'ino': 77, 'fsid': 'abc'}, rec), 'another kind')
+        self.assertFalse(tool.same(None, rec))
+        self.assertFalse(tool.same({'kind': 'dir', 'ino': 77}, None))
+        # an inode number handed out again after an outside delete: another i_generation
+        gen = {'kind': 'file', 'dev': 1, 'ino': 9, 'fsid': 'abc', 'igen': 1234}
+        self.assertTrue(tool.same({**gen, 'dev': 2}, gen))
+        self.assertFalse(tool.same({**gen, 'igen': 1235}, gen), 'same number, new inode generation: a replacement')
+        self.assertTrue(tool.same({**gen, 'igen': None}, gen), 'no FS_IOC_GETVERSION on this side')
+
+    def test_a_record_from_before_fsid_and_igen_stages_switches_and_rolls_back(self):
+        self.rewrite_g1(lambda rec: [(i.pop('fsid', None), i.pop('igen', None), i.update(dev=i['dev'] + 7)) for i in rec['items'].values()])
+        r, _pkg, lm = self.staged()
+        self.assertEqual(r['status'], 'LINUX_STAGED')
+        self.assertEqual(tool.switch(self.P, self.host, OP2, 1, 2, lm)['status'], 'LINUX_SWITCHED')
+        self.assertEqual(tool.rollback(self.P, self.host, OP2, 2, 1)['status'], 'LINUX_ROLLED_BACK')
+        self.assertEqual(tool.read_current(self.P)['generation'], 1)
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], True)
+
+    def test_a_damaged_generation_record_leaves_the_facts_readable(self):
+        self.rewrite_g1(lambda rec: rec['items'].update({'resident-v1': 'not an object'}))
+        self.assertIsNone(tool.version_facts(self.P, self.host)['liveMatchesCurrent'])
+
+    def test_another_device_number_with_the_same_inodes_stages(self):
+        self.rewrite_g1(lambda rec: [i.update(dev=i['dev'] + 1000) for i in rec['items'].values()])
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], True)
+        r, _pkg, _lm = self.staged()
+        self.assertEqual(r['status'], 'LINUX_STAGED')
+        rec2 = tool.read_gen(self.P, 2)
+        for n, _, _ in tool.ITEMS:
+            self.assertTrue(rec2['items'][n]['switched'] or tool.same(tool.ident(tool.live_item(self.P, n)), rec2['items'][n]), n)
+
+    def test_a_replaced_item_with_the_same_content_is_refused(self):
+        live = tool.live_item(self.P, 'resident-v1')
+        aside = live + '.aside'
+        os.rename(live, aside)
+        shutil.copytree(aside, live)                       # same bytes, another inode: a replacement, not the original
+        self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], False)
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], 'resident-v1')
+        self.assertFalse(os.path.lexists(tool.gen_record_path(self.P, 2)))
+
+    def test_changed_content_under_the_same_inode_is_refused(self):
+        unit = tool.live_item(self.P, f'units/{UNITS[0]}')
+        with open(unit, 'ab') as f:                         # same inode, other bytes
+            f.write(b'\n# changed\n')
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], f'units/{UNITS[0]}')
+
+    def test_the_same_inode_number_on_another_file_system_is_refused(self):
+        self.rewrite_g1(lambda rec: [i.update(fsid='0001') for i in rec['items'].values()])
+        real = tool.fs_id
+        tool.fs_id = lambda _p: '0002'
+        try:
+            pkg, lm = self.package()
+            self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+            self.assertIs(tool.version_facts(self.P, self.host)['liveMatchesCurrent'], False)
+        finally:
+            tool.fs_id = real
+
+    def test_a_file_system_mounted_on_any_one_item_is_refused(self):
+        """Identity no longer compares st_dev, so same_device must look at every live item ITSELF, not only at its parent: another
+        file system mounted on one item keeps the parent's device. A stand-in os.lstat answers another st_dev for exactly one item at a
+        time (nothing can be mounted in a test); the tool's own code is unchanged."""
+        real = os.lstat
+        tool.same_device(self.P)                            # the template world is one file system
+        pkg, lm = self.package()
+        checked = []
+        for name, _, _ in tool.ITEMS:
+            target = tool.live_item(self.P, name)
+            if not os.path.lexists(target):
+                continue
+
+            def lstat(path, *args, _target=target, **kwargs):
+                st = real(path, *args, **kwargs)
+                if os.path.normcase(os.fspath(path)) != os.path.normcase(_target):
+                    return st
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev + 1, st.st_nlink, st.st_uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+            os.lstat = lstat
+            try:
+                with self.subTest(item=name):
+                    self.assertNotEqual(os.lstat(target).st_dev, os.lstat(os.path.dirname(target)).st_dev)   # the stand-in answers
+                    self.refused('CROSS_DEVICE_LAYOUT', tool.same_device, self.P)
+                    self.refused('CROSS_DEVICE_LAYOUT', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+                    checked.append(name)
+            finally:
+                os.lstat = real
+        self.assertEqual(checked, [name for name, _, _ in tool.ITEMS])   # every item of the live set was there and each one alone refuses
+        tool.same_device(self.P)                            # and nothing was changed by the refusals
+        self.assertEqual(tool.stage(self.P, self.host, OP2, pkg, 2, lm)['status'], 'LINUX_STAGED')
+
+    def test_another_checked_out_source_commit_is_refused(self):
+        self.rewrite_g1(lambda rec: rec.update(sourceCommit='0' * 40))
+        pkg, lm = self.package()
+        e = self.refused('LIVE_NOT_THE_CURRENT_GENERATION', tool.stage, self.P, self.host, OP2, pkg, 2, lm)
+        self.assertEqual(e.detail['item'], 'source-v2')
+
+
 class SwitchTests(World):
     def switched(self):
         r, pkg, lm = self.staged()
@@ -470,7 +595,8 @@ class SwitchTests(World):
         self.assertTrue(all(v['checks'].values()))
         f = tool.version_facts(self.P, self.host)
         self.assertEqual(sorted(f), sorted(['contract', 'generation', 'ciSourceManifestSha256', 'sourceCommit', 'manifestSha256', 'roles', 'pinsOk', 'staged',
-                                            'upgradeToolSha256', 'observedAt']))
+                                            'upgradeToolSha256', 'observedAt', 'liveMatchesCurrent']))
+        self.assertIs(f['liveMatchesCurrent'], True)
         self.assertEqual((f['generation'], f['sourceCommit'], f['ciSourceManifestSha256'], f['manifestSha256'], f['pinsOk'], f['staged']),
                          (2, self.commit['B'], sha(self.manifest['B']), lm, True, None))
         self.assertEqual(f['upgradeToolSha256'], sha(TOOL.read_bytes()))
@@ -501,6 +627,12 @@ class SwitchTests(World):
         e = self.refused('JOURNAL_INCONSISTENT', tool.switch, self.P, self.host, OP2, 1, 2, lm)
         self.assertEqual(e.detail['items'], [f'units/{UNITS[1]}'])
         self.assertEqual(snapshot(self.root), before)
+
+    def test_ident_fields_are_known(self):
+        # Every field tool.ident records is either content or a world identity number the snapshot leaves out.
+        for path in (self.root, os.path.join(self.root, 'etc')):
+            rec = tool.ident(path, with_content=True)
+            self.assertEqual(set(rec) - set(IDENT_CONTENT_KEYS) - set(WORLD_IDENTITY_KEYS), set(), rec)
 
     def test_a_crash_at_every_rename_resumes_to_the_uninterrupted_result(self):
         reference = None

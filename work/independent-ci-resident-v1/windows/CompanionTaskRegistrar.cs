@@ -24,6 +24,32 @@
 //   CluedCompanionTaskRegistrar.exe root-shell "C:\ProgramData\CluedIndependentCI\resident"
 //       A new random password for the account and its existing password task, then wsl.exe --distribution <D> --user root in a new
 //       console as the account: the Owner's way into the resident distribution's root.
+//   CluedCompanionTaskRegistrar.exe root-run "C:\ProgramData\CluedIndependentCI\resident" <scriptPath> <sha256hex> <outDir> <timeoutSeconds>
+//       One pinned root script in the resident distribution as the companion account (a reinstall's Linux steps; no console). The
+//       script is <root>\install\linux-run-<32hex>\script.sh and outDir is that directory's out\ (both made by the elevated caller: the
+//       directory admin-only, out\ writable by the account). root-shell's checks, then the script's SHA-256, then a new random password
+//       for the account and its task, then cmd.exe /d /c ""wsl.exe" --distribution <the profile's> --user root --exec /usr/bin/env -i
+//       PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc <the script's /mnt path> > out\stdout.txt 2> out\stderr.txt"
+//       (LOGON_WITH_PROFILE, CREATE_NO_WINDOW). Stdout is exactly one line: ROOT_RUN_EXITED <code>, ROOT_RUN_TIMEOUT (the process is
+//       left running, never killed) or ROOT_RUN_REFUSED <CODE>; stderr repeats a refusal as the usual JSON with its detail.
+//       When the script has exited, its two output files are captured for the caller: each is opened WITHOUT following a link
+//       (FILE_FLAG_OPEN_REPARSE_POINT), must be a plain file with one name (no reparse point, no directory, link count 1) of at most
+//       4 MiB, and those bytes are written, create-only, into <directory>\captured\ (SYSTEM and Administrators only, made by the caller).
+//       The caller reads captured\ and never out\, which the account can write.
+//   CluedCompanionTaskRegistrar.exe write-probe "C:\ProgramData\CluedIndependentCI\resident" <probeDir> <timeoutSeconds>
+//       The same path with no Linux in it, before a reinstall changes anything: <probeDir> is <root>\install\linux-run-<32hex>-probe,
+//       laid out and protected exactly as a real run directory; root-run's checks and password change, then, as the account,
+//       cmd.exe /d /c "echo x> out\stdout.txt 2> out\stderr.txt", the same wait and the same capture. Proves on this node that the
+//       account can write the two files the caller made for it. The same one stdout line.
+//       A capture that is refused does not hide the exit code: stdout is then two lines, ROOT_RUN_EXITED <code> and
+//       CAPTURE_REFUSED <CODE> (the caller reads nothing and may capture again later with capture-file).
+//   CluedCompanionTaskRegistrar.exe capture-file <source> <destination>
+//       One file the account could write, captured the same way (no link followed, one name, at most 4 MiB), create-only, under the same
+//       leaf name. Source: C:\ProgramData\CluedIndependentCI\reinstall-linux-out-<32hex>\<leaf> (a Linux step's output), or
+//       <root>\install\linux-run-<32hex>\out\stdout.txt | stderr.txt (a run's own output, e.g. of a run that outlived its launcher).
+//       Destination: <root>\install\linux-run-<32hex>\captured\<leaf> or ...\captured-<32hex>\<leaf> (a new capture directory the
+//       elevated caller made); for a run's own output, in that same run directory. The destination directory must be there, plain,
+//       owned by Administrators with a protected DACL of SYSTEM and Administrators only.
 //   CluedCompanionTaskRegistrar.exe account-facts <sid>
 //       Read-only facts of the account: local, enabled, administrator, rights held directly, profile directory.
 //   CluedCompanionTaskRegistrar.exe vtable-selftest
@@ -478,6 +504,116 @@ exit $code
     if (!hidden) o.Add("NOT_HIDDEN");
     return o;
   }
+  // ---- root-run: one pinned root script as the companion account ----
+  // The arguments: "root-run"; the fixed root; <root>\install\linux-run-<32hex>\script.sh; its SHA-256 (lower-case hex); that
+  // directory's out\; a timeout of 1..86400 seconds in plain digits. Paths are compared as written (ordinal): no other spelling, no
+  // "..", no blank or quote can reach the command line. null: refused.
+  public const int RootRunMaxSeconds = 86400;
+  static readonly Regex RootRunScript = new Regex(@"\A\\install\\linux-run-[0-9a-f]{32}\\script\.sh\z");
+  static readonly Regex Sha256Hex = new Regex(@"\A[0-9a-f]{64}\z");
+  public static RootRunRequest ParseRootRun(string[] args) {
+    if (args == null || args.Length != 6) return null;
+    foreach (string a in args) if (a == null) return null;
+    if (args[0] != "root-run" || !string.Equals(args[1], FixedRoot, StringComparison.OrdinalIgnoreCase)) return null;
+    string script = args[2], outDir = args[4];
+    if (!script.StartsWith(FixedRoot, StringComparison.Ordinal) || !RootRunScript.IsMatch(script.Substring(FixedRoot.Length))) return null;
+    string dir = script.Substring(0, script.Length - @"\script.sh".Length);
+    if (!string.Equals(outDir, dir + @"\out", StringComparison.Ordinal)) return null;
+    if (!Sha256Hex.IsMatch(args[3])) return null;
+    if (!Regex.IsMatch(args[5], @"\A[1-9][0-9]{0,4}\z")) return null;
+    int seconds = int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture);
+    if (seconds > RootRunMaxSeconds) return null;
+    string wsl = WslPath(script);
+    if (wsl == null) return null;
+    return new RootRunRequest(script, args[3], dir, outDir, seconds, wsl, false);
+  }
+  // write-probe <root> <root>\install\linux-run-<32hex>-probe <1..600 seconds>: a run directory in everything but its name, no script.
+  static readonly Regex ProbeDirectory = new Regex(@"\A\\install\\linux-run-[0-9a-f]{32}-probe\z");
+  public static RootRunRequest ParseWriteProbe(string[] args) {
+    if (args == null || args.Length != 4) return null;
+    foreach (string a in args) if (a == null) return null;
+    if (args[0] != "write-probe" || !string.Equals(args[1], FixedRoot, StringComparison.OrdinalIgnoreCase)) return null;
+    if (!args[2].StartsWith(FixedRoot, StringComparison.Ordinal) || !ProbeDirectory.IsMatch(args[2].Substring(FixedRoot.Length))) return null;
+    if (!Regex.IsMatch(args[3], @"\A[1-9][0-9]{0,2}\z") || int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) > 600) return null;
+    return new RootRunRequest(null, null, args[2], args[2] + @"\out", int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture), null, true);
+  }
+  // The probe's command: one fixed byte to the same two files, by the same redirection as a real run; no WSL.
+  public static string ProbeCommandLine(RootRunRequest run) {
+    if (run == null || !run.Probe) throw new ArgumentException("ROOT_RUN_ARGUMENTS_INVALID");
+    return "cmd.exe /d /c \"echo x> " + run.OutDirectory + @"\stdout.txt 2> " + run.OutDirectory + @"\stderr.txt" + "\"";
+  }
+  // What a captured output file must be, from its handle (opened without following a link): a plain file with exactly one name, at
+  // most max bytes. null: capturable; else the code. (FILE_ATTRIBUTE_DIRECTORY 0x10, FILE_ATTRIBUTE_REPARSE_POINT 0x400.)
+  public const long CaptureMaxBytes = 4L << 20;
+  public static string CaptureRefusal(uint attributes, uint links, ulong size, long max) {
+    if ((attributes & 0x400) != 0) return "ROOT_RUN_OUTPUT_IS_A_LINK";
+    if ((attributes & 0x10) != 0) return "ROOT_RUN_OUTPUT_IS_A_DIRECTORY";
+    if (links != 1) return "ROOT_RUN_OUTPUT_HAS_ANOTHER_NAME";
+    if (max < 0 || size > (ulong)max) return "ROOT_RUN_OUTPUT_TOO_LARGE";
+    return null;
+  }
+  // capture-file <source> <destination>: <CI root>\reinstall-linux-out-<32hex>\<leaf> into <root>\install\linux-run-<32hex>\captured\<leaf>,
+  // the same plain leaf name on both sides. null: refused; else { source, destination }.
+  public const string CiRoot = @"C:\ProgramData\CluedIndependentCI";
+  static readonly Regex CaptureSource = new Regex(@"\A\\reinstall-linux-out-[0-9a-f]{32}\\([A-Za-z0-9][A-Za-z0-9._-]{0,118}[A-Za-z0-9])\z");
+  static readonly Regex CaptureRunSource = new Regex(@"\A\\install\\linux-run-([0-9a-f]{32})\\out\\(stdout\.txt|stderr\.txt)\z");
+  static readonly Regex CaptureDestination = new Regex(@"\A\\install\\linux-run-([0-9a-f]{32})\\captured(?:-[0-9a-f]{32})?\\([A-Za-z0-9][A-Za-z0-9._-]{0,118}[A-Za-z0-9])\z");
+  // The second source: a run's own stdout.txt / stderr.txt (the run may have outlived the launcher that started it), into a capture
+  // directory of that same run directory. null: refused; else { source, destination }.
+  public static string[] ParseCaptureFile(string[] args) {
+    if (args == null || args.Length != 3 || args[0] != "capture-file" || args[1] == null || args[2] == null) return null;
+    if (!args[2].StartsWith(FixedRoot, StringComparison.Ordinal)) return null;
+    Match d = CaptureDestination.Match(args[2].Substring(FixedRoot.Length));
+    if (!d.Success || d.Groups[2].Value.Contains("..")) return null;
+    if (args[1].StartsWith(FixedRoot, StringComparison.Ordinal)) {
+      Match r = CaptureRunSource.Match(args[1].Substring(FixedRoot.Length));
+      if (!r.Success || r.Groups[1].Value != d.Groups[1].Value || r.Groups[2].Value != d.Groups[2].Value) return null;
+      return new[] { args[1], args[2] };
+    }
+    if (!args[1].StartsWith(CiRoot, StringComparison.Ordinal)) return null;
+    Match s = CaptureSource.Match(args[1].Substring(CiRoot.Length));
+    if (!s.Success || s.Groups[1].Value != d.Groups[2].Value) return null;
+    return new[] { args[1], args[2] };
+  }
+  // Where a capture is written: owned by Administrators, a protected DACL, and nobody in it but SYSTEM and Administrators (allow
+  // entries only). null: as required; else the code.
+  public static string CaptureDirectoryRefusal(string ownerSid, bool daclProtected, IEnumerable<string> allowSids, int denyEntries) {
+    int n = 0;
+    foreach (string sid in allowSids ?? new string[0]) { n++; if (sid != "S-1-5-18" && sid != "S-1-5-32-544") return "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY"; }
+    return ownerSid == "S-1-5-32-544" && daclProtected && n > 0 && denyEntries == 0 ? null : "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY";
+  }
+  // root-run / write-probe: the second stdout line when the output could not be captured (the first is still ROOT_RUN_EXITED <code>).
+  public static string RootRunCaptureRefused(string code) { return "CAPTURE_REFUSED " + (code != null && Regex.IsMatch(code, @"\A[A-Z][A-Z0-9_]{0,79}\z") ? code : "REGISTRAR_UNEXPECTED"); }
+  // root-run / write-probe only over a companion task whose action is the one this program registers: one action, the supervisor of
+  // this root with the fixed argument. Anything else is another definition than the reviewed one: nothing is changed. null: as expected.
+  public static string RootRunActionRefusal(int actions, string path, string arguments, string root) {
+    return actions == 1 && string.Equals(path, SupervisorPath(root), StringComparison.Ordinal) && arguments == SupervisorArguments(root) ? null : "ROOT_RUN_TASK_DEFINITION_DIFFERS";
+  }
+  // C:\a\b -> /mnt/c/a/b, for a path of letters, digits, '.', '_', '-' and '\' only (nothing a shell or cmd.exe reads as more).
+  public static string WslPath(string windowsPath) {
+    if (windowsPath == null || !Regex.IsMatch(windowsPath, @"\A[A-Za-z]:(?:\\[A-Za-z0-9._-]+)+\z")) return null;
+    // no "." or ".." component, and none ending in '.' (Win32 drops a trailing dot or blank: "a." would be another name than the one checked)
+    foreach (string part in windowsPath.Substring(3).Split('\\')) if (part == "." || part == ".." || part.EndsWith(".", StringComparison.Ordinal)) return null;
+    return "/mnt/" + char.ToLowerInvariant(windowsPath[0]) + windowsPath.Substring(2).Replace('\\', '/');
+  }
+  public const string CmdExe = @"C:\Windows\System32\cmd.exe";
+  // The command line CreateProcessWithLogonW gets (application: CmdExe). Every token is fixed or passed ParseRootRun / ValidDistro.
+  public static string RootRunCommandLine(string distro, RootRunRequest run) {
+    if (!ValidDistro(distro) || run == null) throw new ArgumentException("ROOT_RUN_ARGUMENTS_INVALID");
+    return "cmd.exe /d /c \"\"" + WslExe + "\" --distribution " + distro + " --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc "
+      + run.WslScript + " > " + run.OutDirectory + @"\stdout.txt 2> " + run.OutDirectory + @"\stderr.txt" + "\"";
+  }
+  // The companion task a process may be started over. root-shell: only this account's password definition. root-run also accepts this
+  // account's parked definition (interactive token): an earlier root-run whose registration failed leaves exactly that (RegistrarFlow
+  // parks at once), and the next root-run then sets a new password and registers the password definition again, so it heals itself.
+  // null: usable; else the code.
+  public static string AccountTaskRefusal(int logonType, bool sameAccount, bool rootRun) {
+    return sameAccount && (logonType == 1 || (rootRun && logonType == 3)) ? null : "COMPANION_TASK_NOT_PASSWORD";
+  }
+  // root-run's one stdout line. A refusal carries a code of capitals, digits and '_' only (anything else becomes REGISTRAR_UNEXPECTED).
+  public static string RootRunExited(uint code) { return "ROOT_RUN_EXITED " + code.ToString(System.Globalization.CultureInfo.InvariantCulture); }
+  public const string RootRunTimeout = "ROOT_RUN_TIMEOUT";
+  public static string RootRunRefused(string code) { return "ROOT_RUN_REFUSED " + (code != null && Regex.IsMatch(code, @"\A[A-Z][A-Z0-9_]{0,79}\z") ? code : "REGISTRAR_UNEXPECTED"); }
   // The node profile's WSL distribution from record\acceptance.json.
   public static string DistroFromAcceptance(string json) {
     Dictionary<string, object> d = new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string, object>;
@@ -508,6 +644,16 @@ public static class RegistrarFlow {
       if (hr2 != 0) { bool parked = park(); detail = "0x" + hr2.ToString("X8") + (parked ? ":parked" : ":park-failed"); return "IMPORT_" + RegistrarCore.RegisterCode(hr2); }
     }
     detail = null; return "REGISTERED";
+  }
+}
+
+// root-run's checked arguments (RegistrarCore.ParseRootRun).
+public sealed class RootRunRequest {
+  public readonly string ScriptPath, Sha256, Directory, OutDirectory, CapturedDirectory, WslScript;
+  public readonly int TimeoutSeconds;
+  public readonly bool Probe;   // write-probe: no script, no WSL
+  public RootRunRequest(string scriptPath, string sha256, string directory, string outDirectory, int timeoutSeconds, string wslScript, bool probe) {
+    ScriptPath = scriptPath; Sha256 = sha256; Directory = directory; OutDirectory = outDirectory; CapturedDirectory = directory + @"\captured"; TimeoutSeconds = timeoutSeconds; WslScript = wslScript; Probe = probe;
   }
 }
 
@@ -580,6 +726,12 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr policy, byte[] sid, [MarshalAs(UnmanagedType.U1)] bool all, LSA_UNICODE_STRING[] rights, int count);   // BOOLEAN: one byte (review r2 n6)
   [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetUserDel(string server, string user);
   [DllImport("userenv.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool DeleteProfileW(string sid, string path, string machine);
+  // root-run: wait for the script's cmd.exe and read its exit code.
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+  // the capture: a file's attributes, size and link count from its handle
+  [StructLayout(LayoutKind.Sequential)] struct BY_HANDLE_FILE_INFORMATION { public uint FileAttributes; public long CreationTime, LastAccessTime, LastWriteTime; public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow; }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr file, out BY_HANDLE_FILE_INFORMATION info);
 
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetPathFn(IntPtr self, out IntPtr bstr);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetTaskFn(IntPtr self, IntPtr bstrPath, out IntPtr task);
@@ -603,7 +755,12 @@ public static class CluedCompanionTaskRegistrar {
     return itf;
   }
 
-  static void Print(string code, string detail) { Console.Out.WriteLine(RegistrarCore.Output(code, detail)); }
+  // root-run prints exactly one stdout line in its own form; a refusal's usual JSON (with its detail) goes to stderr.
+  static bool rootRunOutput = false;
+  static void Print(string code, string detail) {
+    if (rootRunOutput) { Console.Out.WriteLine(RegistrarCore.RootRunRefused(code)); try { Console.Error.WriteLine(RegistrarCore.Output(code, detail)); } catch { } return; }
+    Console.Out.WriteLine(RegistrarCore.Output(code, detail));
+  }
 
   [STAThread]
   static int Main(string[] args) {
@@ -611,18 +768,31 @@ public static class CluedCompanionTaskRegistrar {
     try {
       if (args.Length == 1 && args[0] == "vtable-selftest") return VtableSelfTest();
       if (args.Length == 2 && args[0] == "file-sha256" && Regex.IsMatch(args[1], @"\A[A-Za-z]:\\")) return FileSha256Unbuffered(args[1]);
+      if (args.Length >= 1 && (args[0] == "root-run" || args[0] == "write-probe")) rootRunOutput = true;   // from here on stdout is one ROOT_RUN_* line
       if (!Elevated()) { Print("REGISTRAR_ELEVATION_REQUIRED", null); return 2; }
+      if (rootRunOutput) {
+        RootRunRequest run = args[0] == "write-probe" ? RegistrarCore.ParseWriteProbe(args) : RegistrarCore.ParseRootRun(args);
+        if (run == null) { Print("REGISTRAR_ARGS_REFUSED", null); return 2; }
+        return RegisterAccount(RegistrarCore.FixedRoot, null, null, -1, false, run);
+      }
       if (args.Length == 2 && args[0] == "register-password" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterPassword(RegistrarCore.FixedRoot);
       int pid;
       if (args.Length == 2 && args[0] == "token-facts" && int.TryParse(args[1], out pid) && pid > 0) return TokenFacts(pid);
       // M5-b (ADR 0023).
       long uidArg = -1;
       if ((args.Length == 2 || (args.Length == 5 && long.TryParse(args[4], out uidArg) && uidArg >= 0 && uidArg <= 4294967295L)) && args[0] == "register-account" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase))
-        return RegisterAccount(RegistrarCore.FixedRoot, args.Length == 5 ? args[2] : null, args.Length == 5 ? args[3] : null, uidArg, false);
-      if (args.Length == 2 && args[0] == "root-shell" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterAccount(RegistrarCore.FixedRoot, null, null, -1, true);
+        return RegisterAccount(RegistrarCore.FixedRoot, args.Length == 5 ? args[2] : null, args.Length == 5 ? args[3] : null, uidArg, false, null);
+      if (args.Length == 2 && args[0] == "root-shell" && string.Equals(args[1], RegistrarCore.FixedRoot, StringComparison.OrdinalIgnoreCase)) return RegisterAccount(RegistrarCore.FixedRoot, null, null, -1, true, null);
       if (args.Length == 2 && args[0] == "remove-account" && RegistrarCore.ValidAccountName(args[1])) return RemoveAccount(args[1]);
       if (args.Length == 2 && args[0] == "prepare-account" && RegistrarCore.ValidAccountName(args[1])) return PrepareAccount(args[1]);
       if (args.Length == 2 && args[0] == "account-facts" && RegistrarCore.ValidSid(args[1])) return AccountFacts(args[1]);
+      if (args.Length == 3 && args[0] == "capture-file") {
+        string[] pair = RegistrarCore.ParseCaptureFile(args);
+        if (pair == null) { Print("REGISTRAR_ARGS_REFUSED", null); return 2; }
+        string captureWhy = CaptureOne(pair[0], pair[1]);
+        if (captureWhy != null) { Print(captureWhy, null); return 1; }
+        Print("FILE_CAPTURED", null); return 0;
+      }
       Print("REGISTRAR_ARGS_REFUSED", null); return 2;
     } catch (Exception e) { Print("REGISTRAR_UNEXPECTED", RegistrarCore.UnexpectedDetail(e)); return 1; }
   }
@@ -872,12 +1042,68 @@ public static class CluedCompanionTaskRegistrar {
   // random password set on that account first; with distro and vhdx also the one-shot import task (same password). root-shell <root>:
   // a new random password for the account and the existing password task, then wsl.exe --distribution <the profile's> --user root in a
   // new console as that account (the Owner's way into root after M5-b; nobody knows the password, so there is no runas).
-  // Steps: acceptance, account, service, folder, definition, pending, random, setpassword, register, import, shell, readback.
-  static int RegisterAccount(string root, string distro, string vhdx, long defaultUid, bool rootShell) {
+  // root-run <root> <script> <sha256> <outDir> <timeout>: root-shell's checks and password change, then the pinned script instead of a
+  // console (run != null): its SHA-256 is checked before anything changes; the wait never kills.
+  // Steps: acceptance, account, wslclient, script, service, folder, definition, pending, random, setpassword, register, import, shell, run, readback.
+  static int RegisterAccount(string root, string distro, string vhdx, long defaultUid, bool rootShell, RootRunRequest run) {
     string step = "acceptance";
-    try { return RegisterAccountSteps(root, distro, vhdx, defaultUid, rootShell, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
+    try { return RegisterAccountSteps(root, distro, vhdx, defaultUid, rootShell, run, ref step); } catch (Exception e) { throw new RegistrarStepException(step, e); }
   }
-  static int RegisterAccountSteps(string root, string distro, string vhdx, long defaultUid, bool rootShell, ref string step) {
+  // The script as the caller reads it now: a plain file in a plain directory with a plain out\ beside it, and the pinned bytes. null: as
+  // pinned; else the code.
+  // One file, opened without following a link, checked from its handle (RegistrarCore.CaptureRefusal) and copied, create-only, to the
+  // destination (a directory only SYSTEM and Administrators can write). null: captured; else the code. Nothing of a refused file is read.
+  static string CaptureOne(string source, string destination) {
+    try {
+      string directory = System.IO.Path.GetDirectoryName(destination);
+      if (!System.IO.Directory.Exists(directory) || (System.IO.File.GetAttributes(directory) & System.IO.FileAttributes.ReparsePoint) != 0) return "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY";
+      System.Security.AccessControl.DirectorySecurity sd = System.IO.Directory.GetAccessControl(directory);
+      List<string> allow = new List<string>(); int deny = 0;
+      foreach (System.Security.AccessControl.FileSystemAccessRule rule in sd.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
+        if (rule.AccessControlType == System.Security.AccessControl.AccessControlType.Allow) allow.Add(rule.IdentityReference.Value); else deny++;
+      }
+      string directoryWhy = RegistrarCore.CaptureDirectoryRefusal(sd.GetOwner(typeof(SecurityIdentifier)).Value, sd.AreAccessRulesProtected, allow, deny);
+      if (directoryWhy != null) return directoryWhy;
+    } catch (System.IO.IOException) { return "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY"; } catch (UnauthorizedAccessException) { return "ROOT_RUN_CAPTURE_DIRECTORY_NOT_ADMIN_ONLY"; }
+    const uint GenericRead = 0x80000000, ShareAll = 0x7, OpenExisting = 3, OpenReparsePoint = 0x00200000, BackupSemantics = 0x02000000;
+    IntPtr h = CreateFileW(source, GenericRead, ShareAll, IntPtr.Zero, OpenExisting, OpenReparsePoint | BackupSemantics, IntPtr.Zero);
+    if (h == new IntPtr(-1)) return "ROOT_RUN_OUTPUT_UNREADABLE";
+    try {
+      BY_HANDLE_FILE_INFORMATION info;
+      if (!GetFileInformationByHandle(h, out info)) return "ROOT_RUN_OUTPUT_UNREADABLE";
+      string why = RegistrarCore.CaptureRefusal(info.FileAttributes, info.NumberOfLinks, ((ulong)info.FileSizeHigh << 32) | info.FileSizeLow, RegistrarCore.CaptureMaxBytes);
+      if (why != null) return why;
+      using (Microsoft.Win32.SafeHandles.SafeFileHandle safe = new Microsoft.Win32.SafeHandles.SafeFileHandle(h, false))
+      using (System.IO.FileStream input = new System.IO.FileStream(safe, System.IO.FileAccess.Read))
+      using (System.IO.MemoryStream held = new System.IO.MemoryStream()) {
+        byte[] buffer = new byte[65536]; int n;
+        while ((n = input.Read(buffer, 0, buffer.Length)) > 0) { held.Write(buffer, 0, n); if (held.Length > RegistrarCore.CaptureMaxBytes) return "ROOT_RUN_OUTPUT_TOO_LARGE"; }
+        try {
+          using (System.IO.FileStream output = new System.IO.FileStream(destination, System.IO.FileMode.CreateNew, System.IO.FileAccess.Write, System.IO.FileShare.None)) { held.WriteTo(output); output.Flush(true); }
+        } catch (System.IO.IOException) { return "ROOT_RUN_CAPTURE_NOT_WRITTEN"; } catch (UnauthorizedAccessException) { return "ROOT_RUN_CAPTURE_NOT_WRITTEN"; }
+      }
+      return null;
+    } catch (System.IO.IOException) { return "ROOT_RUN_OUTPUT_UNREADABLE"; } catch (UnauthorizedAccessException) { return "ROOT_RUN_OUTPUT_UNREADABLE"; }
+    finally { CloseHandle(h); }
+  }
+  static string RootRunScriptRefusal(RootRunRequest run) {
+    try {
+      foreach (string p in new[] { run.Directory, run.OutDirectory, run.CapturedDirectory }) {
+        if (!System.IO.Directory.Exists(p)) return "ROOT_RUN_DIRECTORY_MISSING";
+        if ((System.IO.File.GetAttributes(p) & System.IO.FileAttributes.ReparsePoint) != 0) return "ROOT_RUN_PATH_REPARSE_REFUSED";
+      }
+      if (run.Probe) return null;   // no script: the command is fixed
+      if (!System.IO.File.Exists(run.ScriptPath)) return "ROOT_RUN_SCRIPT_MISSING";
+      if ((System.IO.File.GetAttributes(run.ScriptPath) & System.IO.FileAttributes.ReparsePoint) != 0) return "ROOT_RUN_PATH_REPARSE_REFUSED";
+      byte[] bytes = System.IO.File.ReadAllBytes(run.ScriptPath);
+      using (SHA256 h = SHA256.Create()) {
+        if (BitConverter.ToString(h.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant() != run.Sha256) return "ROOT_RUN_SCRIPT_SHA256_MISMATCH";
+      }
+      return null;
+    } catch (System.IO.IOException) { return "ROOT_RUN_SCRIPT_UNREADABLE"; } catch (UnauthorizedAccessException) { return "ROOT_RUN_SCRIPT_UNREADABLE"; }
+  }
+  static int RegisterAccountSteps(string root, string distro, string vhdx, long defaultUid, bool rootShell, RootRunRequest run, ref string step) {
+    bool asAccount = rootShell || run != null;   // both start a process as the account over its existing password task
     step = "acceptance";
     string acceptance = System.IO.File.ReadAllText(root + @"\record\acceptance.json", new UTF8Encoding(false, true));
     string sid = RegistrarCore.OwnerSidFromAcceptance(acceptance), nodeDistro = RegistrarCore.DistroFromAcceptance(acceptance);
@@ -888,10 +1114,15 @@ public static class CluedCompanionTaskRegistrar {
     if (why != null) { Print(why, null); return 2; }
     string[] acct = SplitAccount(sid);
     string account = acct[0] + "\\" + acct[1];
-    if (rootShell || distro != null) {
+    if (asAccount || distro != null) {
       step = "wslclient";
       string clientWhy = RegistrarCore.MachineWslClientRefusal();
       if (clientWhy != null) { Print(clientWhy, null); return 2; }
+    }
+    if (run != null) {
+      step = "script";
+      string scriptWhy = RootRunScriptRefusal(run);
+      if (scriptWhy != null) { Print(scriptWhy, null); return 2; }
     }
     step = "service";
     object svc = Service();
@@ -899,20 +1130,27 @@ public static class CluedCompanionTaskRegistrar {
     object folder;
     try { folder = Call(svc, "GetFolder", RegistrarCore.TaskFolder); } catch { Print("TASK_FOLDER_MISSING", null); return 2; }
     step = "definition";
-    if (rootShell) {
+    if (asAccount) {
       // Only over this account's password task that is already there (a switch qualified it), never while a switch runs.
       if (System.IO.File.Exists(root + @"\install\companion-headless-pending.json")) { Print("COMPANION_SWITCH_IN_PROGRESS", null); return 2; }
       object t0;
       try { t0 = Call(folder, "GetTask", RegistrarCore.TaskName); } catch { Print("COMPANION_TASK_MISSING", null); return 2; }
       object p0 = Get(Get(t0, "Definition"), "Principal");
       string u0 = (string)Get(p0, "UserId"); string u0Sid = u0 != null && u0.StartsWith("S-1-") ? u0 : SidOf(u0);
-      if ((int)Get(p0, "LogonType") != 1 || u0Sid != sid) { Print("COMPANION_TASK_NOT_PASSWORD", null); return 2; }
+      string taskWhy = RegistrarCore.AccountTaskRefusal((int)Get(p0, "LogonType"), u0Sid == sid, run != null);
+      if (taskWhy != null) { Print(taskWhy, null); return 2; }
+      if (run != null) {
+        // the installed task's action must be the one this program registers, before the password or the definition is touched
+        object a0s = Get(Get(t0, "Definition"), "Actions"); int a0n = (int)Get(a0s, "Count"); object a0 = a0n == 1 ? Get(a0s, "Item", 1) : null;
+        string actionWhy = RegistrarCore.RootRunActionRefusal(a0n, a0 == null ? null : (string)Get(a0, "Path"), a0 == null ? null : (string)Get(a0, "Arguments"), root);
+        if (actionWhy != null) { Print(actionWhy, null); return 2; }
+      }
     }
     object def = Call(svc, "NewTask", 0);
     Set(def, "XmlText", RegistrarCore.PasswordTaskXml(root, sid));
     object importDef = null;
     if (distro != null) { importDef = Call(svc, "NewTask", 0); Set(importDef, "XmlText", RegistrarCore.ImportTaskXml(sid, distro, vhdx, defaultUid)); }
-    if (!rootShell) {
+    if (!asAccount) {
       // As register-password: only while the switch that started this program still holds its marker.
       step = "pending";
       string pendingWhy = CurrentPendingRefusal(root);
@@ -937,8 +1175,45 @@ public static class CluedCompanionTaskRegistrar {
       ZeroMemory(bstr, new UIntPtr((uint)(chars * 2))); SysFreeString(bstr); bstr = IntPtr.Zero;
       if (code != "REGISTERED") {
         // root-shell: the companion task is no longer on the stored password; say so plainly.
-        if (rootShell && code != "ACCOUNT_PASSWORD_NOT_SET") code = detail != null && detail.EndsWith(":parked") ? "ROOT_SHELL_TASK_NOT_UPDATED_PARKED" : "ROOT_SHELL_TASK_NOT_UPDATED_PARK_FAILED";
+        if (asAccount && code != "ACCOUNT_PASSWORD_NOT_SET") code = (run != null ? "ROOT_RUN" : "ROOT_SHELL") + (detail != null && detail.EndsWith(":parked") ? "_TASK_NOT_UPDATED_PARKED" : "_TASK_NOT_UPDATED_PARK_FAILED");
         Print(code, detail); return 1;
+      }
+      if (run != null) {
+        // The task just registered, read back before anything runs: this account's password logon, not elevated, the one fixed action.
+        step = "readback";
+        object rt = Call(folder, "GetTask", RegistrarCore.TaskName);
+        object rd = Get(rt, "Definition"), rp = Get(rd, "Principal"), ra = Get(rd, "Actions");
+        object r1 = (int)Get(ra, "Count") == 1 ? Get(ra, "Item", 1) : null;
+        string ru = (string)Get(rp, "UserId");
+        string ruSid = ru != null && ru.StartsWith("S-1-") ? ru : SidOf(ru);
+        if ((int)Get(rp, "LogonType") != 1 || (int)Get(rp, "RunLevel") != 0 || ruSid != sid || r1 == null
+          || !string.Equals((string)Get(r1, "Path"), RegistrarCore.SupervisorPath(root), StringComparison.Ordinal) || (string)Get(r1, "Arguments") != RegistrarCore.SupervisorArguments(root)) {
+          Print("ROOT_RUN_READBACK_MISMATCH", null); return 1;
+        }
+        step = "run";
+        STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+        PROCESS_INFORMATION pi;
+        StringBuilder cmd = new StringBuilder(run.Probe ? RegistrarCore.ProbeCommandLine(run) : RegistrarCore.RootRunCommandLine(nodeDistro, run));
+        bool ok = CreateProcessWithLogonW(acct[1], acct[0], pw, 1, RegistrarCore.CmdExe, cmd, 0x08000000, IntPtr.Zero, @"C:\Windows\System32", ref si, out pi);   // LOGON_WITH_PROFILE, CREATE_NO_WINDOW
+        int err = ok ? 0 : Marshal.GetLastWin32Error();
+        // The wait can be long: the password leaves this process now, not at the end.
+        ZeroMemory(pw, new UIntPtr((uint)((chars + 1) * 2)));
+        if (!ok) { Print("ROOT_RUN_NOT_STARTED", err.ToString()); return 1; }
+        try {
+          CloseHandle(pi.hThread);
+          uint waited = WaitForSingleObject(pi.hProcess, (uint)run.TimeoutSeconds * 1000u);
+          // A timeout is reported and nothing else: the script may be past a step that must finish; the caller stops and a person looks.
+          if (waited == 0x102) { Console.Out.WriteLine(RegistrarCore.RootRunTimeout); return 3; }
+          uint exit;
+          if (waited != 0 || !GetExitCodeProcess(pi.hProcess, out exit)) { Print("ROOT_RUN_EXIT_UNREADABLE", Marshal.GetLastWin32Error().ToString()); return 1; }
+          // What the process wrote, for the caller: never by following a link, never a file with another name, into captured\ only.
+          foreach (string leaf in new[] { "stdout.txt", "stderr.txt" }) {
+            string captureWhy = CaptureOne(run.OutDirectory + "\\" + leaf, run.CapturedDirectory + "\\" + leaf);
+            // The exit code is still the answer to "did it run"; the caller is told that the output is not there to read.
+            if (captureWhy != null) { Console.Out.WriteLine(RegistrarCore.RootRunExited(exit)); Console.Out.WriteLine(RegistrarCore.RootRunCaptureRefused(captureWhy)); return 0; }
+          }
+          Console.Out.WriteLine(RegistrarCore.RootRunExited(exit)); return 0;
+        } finally { CloseHandle(pi.hProcess); }
       }
       if (rootShell) {
         step = "shell";

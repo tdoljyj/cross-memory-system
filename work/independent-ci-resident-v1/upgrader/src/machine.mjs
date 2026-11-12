@@ -164,6 +164,35 @@ const failed = (code, detail = null) => (detail ? { ok: false, code, detail } : 
 const APPLY_CODE = /^[A-Z][A-Z0-9_]{2,79}$/;
 export const applyFailure = (where, r = null) => ({ where, applyCode: typeof r?.code === 'string' && APPLY_CODE.test(r.code) ? r.code : null,
   applyAt: typeof r?.at === 'string' && r.at.length > 0 ? r.at.replace(/[^A-Za-z0-9_.:-]/g, '.').slice(0, 80) : null });
+// What the Linux tool itself said, kept next to this channel's code: the class code stays what the machine acts on, the tool's own
+// code and its scalar detail are no longer dropped (DESK 2026-11-12: UPGRADE_LINUX_STAGE_REFUSED with an empty detail hid
+// LIVE_NOT_THE_CURRENT_GENERATION / item source-v2, readable only in the companion's mailbox response). The journal admits only ids,
+// codes, digests, numbers and flags (journal.mjs checkDetail): a string (or a list of strings, joined with '.') is kept with every
+// other character turned into '.' and cut to 80, as applyFailure does with applyAt; objects are left out.
+const TOOL_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
+const TOOL_KEY = /^[a-zA-Z][a-zA-Z0-9]{0,30}$/;
+const TOOL_DETAIL_KEYS_MAX = 8;
+const toolValue = v => {
+  if (v === null || typeof v === 'boolean' || Number.isSafeInteger(v)) return { ok: true, v };
+  const text = typeof v === 'string' ? v : Array.isArray(v) && v.every(x => typeof x === 'string' || Number.isSafeInteger(x)) ? v.join('.') : null;
+  if (text === null || text.length === 0) return { ok: false };
+  return { ok: true, v: text.replace(/[^A-Za-z0-9_.:-]/g, '.').slice(0, 80) };
+};
+export const linuxFailure = (where, r = null) => {
+  const result = r && typeof r === 'object' && r.result && typeof r.result === 'object' ? r.result : null;
+  const out = { where, linuxCode: typeof r?.code === 'string' && TOOL_CODE.test(r.code) ? r.code : null,
+    toolCode: typeof result?.code === 'string' && TOOL_CODE.test(result.code) ? result.code : null };
+  const d = result?.detail;
+  if (d && typeof d === 'object' && !Array.isArray(d)) {
+    let n = 0;
+    for (const [k, v] of Object.entries(d)) {
+      if (n >= TOOL_DETAIL_KEYS_MAX || !TOOL_KEY.test(k) || k === 'code') continue;
+      const t = toolValue(v);
+      if (t.ok) { out['tool' + k[0].toUpperCase() + k.slice(1)] = t.v; n += 1; }
+    }
+  }
+  return out;
+};
 const okd = (detail = {}) => ({ ok: true, detail });
 const waitFor = (ms, view = {}) => ({ wait: ms, view });
 const iso = ms => new Date(ms).toISOString();
@@ -374,7 +403,7 @@ export class Machine {
       }
       const l = await this.linux.verify({ opId: this.opId, generation }, intent.seq);
       if (!l.ok && l.code === U.COMPANION_UNAVAILABLE && codes.companion && now < Date.parse(intent.at) + companionWaitMs) return waitFor(POLL.transient, { code: codes.companion, waiting: 'linux-verify' });
-      if (!l.ok) return { ok: false, code: codes.fail, detail: { cause: 'linux', linuxCode: l.code ?? null } };
+      if (!l.ok) return { ok: false, code: codes.fail, detail: { cause: 'linux', ...linuxFailure('verify', l), linuxCode: l.code ?? null } };
       return okd({ generation });
     }
     // Waiting only for the companion (its heartbeat, its version facts): a rollback waits up to companionWaitMs for it.
@@ -598,7 +627,7 @@ const STEPS = {
       if (r.code === U.COMPANION_UNAVAILABLE) { await m.cleanup(j, {}); return failed(U.COMPANION_UNAVAILABLE); }
       const code = LINUX_STAGE_CODES.has(r.code) ? r.code : U.LINUX_STAGE_REFUSED;
       await m.cleanup(j, { withdrawStaged: true });
-      return failed(code);
+      return failed(code, linuxFailure('stage', r));
     },
   },
 
@@ -615,7 +644,7 @@ const STEPS = {
       const plan = m.planOf(j);
       const r = await m.linux.switch({ opId: m.opId, fromGeneration: plan.fromGeneration, toGeneration: plan.toGeneration, linuxManifestSha256: plan.target.linux.manifestSha256 }, intent.seq);
       if (r.ok) return okd();
-      return failed(ABORT_AT_SWITCH.has(r.code) ? r.code : U.SWITCH_FAILED);
+      return failed(ABORT_AT_SWITCH.has(r.code) ? r.code : U.SWITCH_FAILED, linuxFailure('switch', r));
     },
   },
 
@@ -764,7 +793,7 @@ const STEPS = {
       const r = await m.linux.rollback({ opId: m.opId, fromGeneration: plan.toGeneration, toGeneration: plan.fromGeneration }, intent.seq);
       if (r.ok) return okd();
       if (r.code === U.COMPANION_UNAVAILABLE) return m.rollbackWait(intent);
-      return failed(U.ROLLBACK_FAILED);
+      return failed(U.ROLLBACK_FAILED, linuxFailure('rollback', r));
     },
   },
 
