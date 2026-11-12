@@ -53,9 +53,11 @@ function withoutVersion(text){version(text);return text.replace(/^(export const 
 // Same narrow normalisation as the base policy, without executing a mutable
 // candidate policy module. Exactly one marker is mandatory in both texts.
 function mechanicalVersionOnly(before,after){return withoutVersion(before)===withoutVersion(after);}
-// The refreshable pins are exactly the descriptor's pinned version-bearing
-// modules that the trusted base's single mechanical-file policy declares; no
-// second list. Pinned generated registries (.json) keep their historical pin.
+// Candidates for a refresh: the descriptor's pinned version-bearing modules that
+// the trusted base's one generated-file list declares (no second list). Only a
+// pin that still tracks its file at the trusted base follows a version-only
+// change; every other pin is historical and stays as it is (see the plan).
+// Pinned generated registries (.json) keep their historical pin.
 export function controlSourceMechanicalFiles(policy,implementationBlobs){
   if(policy?.schema!==1||policy.repository!=='tdoljyj/cross-memory-system'||!Array.isArray(policy.mechanical_paths)
     ||policy.mechanical_paths.some(p=>typeof p!=='string'))refuse('trusted mechanical policy invalid');
@@ -105,15 +107,24 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   const next=structuredClone(d.value),changes=[];
   for(const name of mechanical){
     const expected=old.value.implementation_blobs[name],current=readPlain(root,name),actual=blob(current);
-    ensureVersionManifest(manifest,name,current);
-    // The old content comes from an authenticated Git object, never a caller-
-    // supplied old string or the mutable candidate's self-reported digest.
-    const historical=lf(git(root,['cat-file','blob',expected]));
-    if(blob(historical)!==expected)refuse(`historical object mismatch: ${name}`);
-    if(actual!==expected&&!mechanicalVersionOnly(historical,current))refuse(`non-mechanical implementation change: ${name}`);
-    if(d.value.implementation_blobs[name]!==expected&&d.value.implementation_blobs[name]!==actual)refuse(`candidate pin is neither trusted nor derived: ${name}`);
-    next.implementation_blobs[name]=actual;
-    if(d.value.implementation_blobs[name]!==actual)changes.push({file:name,before:d.value.implementation_blobs[name],after:actual});
+    const candidate=d.value.implementation_blobs[name];
+    let derived=expected;
+    // A pin equal to the file's blob at the trusted base tracks that file; any
+    // other pin is a historical snapshot and never moves. A tracking pin moves
+    // only with a version-marker change; any other edit leaves it as it was, so
+    // implementation logic is never converted into registry metadata.
+    const tracking=git(root,['rev-parse',`${base}:${name}`]).trim()===expected;
+    if(tracking&&actual!==expected){
+      ensureVersionManifest(manifest,name,current);
+      // The old content comes from an authenticated Git object, never a caller-
+      // supplied old string or the mutable candidate's self-reported digest.
+      const historical=lf(git(root,['cat-file','blob',expected]));
+      if(blob(historical)!==expected)refuse(`historical object mismatch: ${name}`);
+      if(mechanicalVersionOnly(historical,current))derived=actual;
+    }
+    if(candidate!==expected&&candidate!==derived)refuse(`candidate pin is neither trusted nor derived: ${name}`);
+    next.implementation_blobs[name]=derived;
+    if(candidate!==derived)changes.push({file:name,before:candidate,after:derived});
   }
   // Historical descriptors use the compiler from the trusted base, even when
   // the candidate contains a compiler successor. Keep the candidate path
