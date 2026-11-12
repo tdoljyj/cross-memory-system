@@ -1161,6 +1161,23 @@ function npmSync(args, cwd, label, log) {
   if (status !== 0) throw new Error(`${label} failed`);
 }
 
+// What a dependency store lacks: every package its lockfile installs on every
+// platform (not optional, not a link) needs its package.json. The complete
+// mark alone proves nothing (2026-11-12 03:56Z: a store marked complete was
+// empty after a suite ran npm ci through the worktree's link to it).
+export function missingDependencies(ready, { limit = 5 } = {}) {
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(path.join(ready, 'package-lock.json'), 'utf8')); } catch { return ['package-lock.json']; }
+  if (!fs.existsSync(path.join(ready, 'node_modules'))) return ['node_modules'];
+  const missing = [];
+  for (const [name, entry] of Object.entries(lock?.packages ?? {})) {
+    if (!name.startsWith('node_modules/') || entry?.optional || entry?.link) continue;
+    if (!fs.existsSync(path.join(ready, name, 'package.json'))) missing.push(name);
+    if (missing.length >= limit) break;
+  }
+  return missing;
+}
+
 // The application's node_modules for this lockfile, installed once (npm ci
 // --ignore-scripts, as the workflow does; the embedded PostgreSQL package is
 // rebuilt as migration-verify does) and linked into the worktree. One lock per
@@ -1182,6 +1199,13 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
       // what a run that stopped mid-install or mid-delete left of this key (nobody else installs it now)
       if ((name.startsWith(`${key}-`) && /^[0-9a-f]{16}-.{6}$/.test(name)) || name === `${key}.deleting`) fs.rmSync(path.join(store, name), { recursive: true, force: true });
     }
+    const lacking = fs.existsSync(path.join(ready, 'complete')) ? missingDependencies(ready) : [];
+    if (lacking.length) {
+      // marked complete but not: set aside like a pruned store, then installed again
+      log(`local-verify: the ${APP} dependency store ${key} is marked complete but lacks ${lacking.join(', ')}; installing it again`);
+      renameRetrying(ready, `${ready}.deleting`);
+      fs.rmSync(`${ready}.deleting`, { recursive: true, force: true });
+    }
     if (!fs.existsSync(path.join(ready, 'complete'))) {
       const temporary = fs.mkdtempSync(path.join(store, `${key}-`));
       for (const file of ['package.json', 'package-lock.json', '.npmrc']) {
@@ -1196,6 +1220,8 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
           npm(['rebuild', platformPackage], temporary, `rebuilding ${platformPackage}`, log);
           fs.writeFileSync(path.join(temporary, 'rebuilt'), '');
         }
+        const absent = missingDependencies(temporary);
+        if (absent.length) throw new Error(`installing ${APP} dependencies (${key}) left out ${absent.join(', ')}: cannot verify`);
         fs.writeFileSync(path.join(temporary, 'complete'), '');
         renameRetrying(temporary, ready);
       } finally {
@@ -1360,6 +1386,11 @@ export function compareCommand(head, base, { selector, known = [] }) {
   // (defects 2102f7e1, d7e9d4b4) instead of "did not finish" or a pass
   if (head.tests === 0 && head.status === 0) return { verdict: 'new', detail: 'ran no tests (a command that runs no test is not a pass)' };
   if (passed(head)) return { verdict: 'pass' };
+  // A module that cannot be loaded (on either side) says nothing about the
+  // change: never "fails on main too", always "cannot verify".
+  const missing = [head, base].flatMap((result) => (result?.report?.events ?? []).filter((event) => event.type === 'fail' && event.missing_dependency))
+    .map((event) => `${event.missing_dependency} in ${event.file ?? '<run>'}`);
+  if (missing.length) return { verdict: 'unknown', detail: `a dependency is missing (${[...new Set(missing)].slice(0, 3).join('; ')}): cannot verify` };
   const failing = () => {
     const names = head.report ? failEntries(head.report).map(label) : [];
     return names.length ? `: ${names.join('; ')}` : '';

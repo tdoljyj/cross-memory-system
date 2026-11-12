@@ -144,6 +144,7 @@ test('a generator, the generated-file list or any file it names runs the mechani
   }
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('mechanical-outputs'), false);
   assert.deepEqual(SUITE_COMMANDS['mechanical-outputs'].at(-1).argv.slice(1), ['scripts/ci/component-version-integration.py', '--audit', '--base', '{base}']);
+  assert.ok(SUITE_COMMANDS['mechanical-outputs'].every(c => !c.argv.includes('npm')), 'never installs into the checkout (its node_modules may be a shared store)');
 });
 
 test('a change to a file a pinned registry holds runs the pinned-registry check', () => {
@@ -387,6 +388,15 @@ test('the reporter normalizes paths, digests, positions, durations and long numb
   assert.equal(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('x at /home/runner/9/b') }));
   assert.notEqual(a, failureFingerprint({ failureType: 'hookFailed', cause: new Error('x at /tmp/1/a') }));
   assert.notEqual(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('y at /tmp/1/a') }));
+});
+
+test('the same failure in another run directory has the same fingerprint (escaped paths, mkdtemp suffixes)', () => {
+  // local-verify 2026-11-12: tar printed the run's temporary path escaped; the random parts differed per run.
+  const a = String.raw`tar: D\:\\clued-dev\\cache\\clued-local-verify\t(936-5fddb5\\clued-test-run-Igplk1\\pinned-registries-XnxP57: Cannot open: No such file or directory`;
+  const b = String.raw`tar: D\:\\clued-dev\\cache\\clued-local-verify\t(328-91a698\\clued-test-run-Qw3rty\\pinned-registries-ab12CD: Cannot open: No such file or directory`;
+  assert.equal(normalizeFailure(a), normalizeFailure(b));
+  assert.equal(normalizeFailure('mkdtemp gave clued-m5b-argv-a1B2c3 then failed'), normalizeFailure('mkdtemp gave clued-m5b-argv-Zz9yX8 then failed'));
+  assert.notEqual(normalizeFailure('admission-status is wrong'), normalizeFailure('admission-states is wrong'), 'an ordinary word stays');
 });
 
 test('an error after a test ended is a new failure even when its file has a known failure (round 3)', () => {
