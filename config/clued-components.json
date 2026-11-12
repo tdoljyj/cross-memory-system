@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "fcfbfaadff8a29bbf74f31160d858379d394c03c0ec480f408c3e8de142e46b3"
+      "content_sha256": "732893142acb707354d61b4898a9ff4d0d24e12c0de20e06b782c133773cca0c"
     },
     {
       "id": "hook.runner-job-started",
@@ -164,7 +164,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "fd0ac81d8e491b416546088e0068dc9e505356c506b54d12b1fcf742be8480c0",
+      "content_sha256": "cbae1f4f827a62d085140103a2ee7b75f6a1e33654675dfb377ce88e402d1de3",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "358719b0c41b7b2921b916449bc57121703697b3eff5b978941fbc9702ab987d"
+      "content_sha256": "6a4b6e1a48b0561fb5cba2ee2289a3036ce2e7d7f67e50c9347e4f35627fdae6"
     }
   ]
 }
