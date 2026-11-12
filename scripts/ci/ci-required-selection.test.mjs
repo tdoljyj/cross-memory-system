@@ -183,13 +183,13 @@ test('a migration selects the production-schema check; ordinary documentation se
     ['production-schema']);
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/ledger/production-history.json']).suites,
     ['production-schema']);
-  // The scan start end to end on the migrated database: run with every migration change and with its own tests.
+  // Invariant DB tests on the migrated database: run with every migration change and with their own tests.
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs']).suites,
     ['production-schema']);
   const scanStart = SUITE_COMMANDS['production-schema'].at(-1);
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
-    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs']);
+    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);

@@ -60,9 +60,11 @@ export function generatedFilePatterns(file = fileURLToPath(new URL('../../config
 // copy and fail on any written file the list does not declare.
 const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFilePatterns()])];
 
-// The scan start (both providers) on the database every migration builds, end to end. Database tests run in no other
-// required check; a verifier rewrite (20261108161615) once left every scan start refused in production.
-const SCAN_START_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs'];
+// Database tests of invariants every later migration must keep, on the database every migration builds. Database
+// tests run in no other required check; a verifier rewrite (20261108161615) once left every scan start refused in
+// production. The scan start (both providers) end to end; one reader of whether a role row has started.
+const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
+  'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -102,7 +104,7 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
-      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...SCAN_START_DB_TESTS, 'apps/clued-cloud/package.json',
+      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json'],
   },
 };
@@ -174,7 +176,7 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '--test-concurrency=1',
-      ...SCAN_START_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
+      ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
 

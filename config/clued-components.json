@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.7",
+      "version": "0.9.8",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "065969bdb73683388fbf798ba8f776738a9f1607c46a3a626d92d12e3d0118a2"
+      "content_sha256": "eaa00771f9eb59cc4e553f4e0bf52b87b2e088ff682f74af4cf1bf298f31a3ba"
     },
     {
       "id": "hook.runner-job-started",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "32e876e974f8fb7bcf6342604aa9485c0018465e1e2fec96c19fd3bf81f8ee7c"
+      "content_sha256": "50408a5558d6046ddf878a63901af079a8ac17049af50cf04f2e2be06a770aba"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "fe5dcb0acba5801be060a5fba8f668fdce0560344fa2f7ef5ecb2a093d0bed58"
+      "content_sha256": "c06993d8c112ebb04e6ef32507c01fe5179bfad675b973d6bd17c8b3d2245ff9"
     }
   ]
 }

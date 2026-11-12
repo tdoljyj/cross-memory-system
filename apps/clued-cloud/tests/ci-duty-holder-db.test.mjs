@@ -52,14 +52,21 @@ async function anchorPairs(){
 // Functions allowed to contain each kind of direct ci-admission determination, by exact name (DESIGN 5.1
 // class A role management, class E failover watchdog, and the duty/phase functions themselves).
 const ALLOWED={
-  admits:['clued_private.ci_duty_admits_v1'],
+  // 20261112130500 moved the duty decision unchanged from ci_duty_admits_v1 into ci_duty_admits_decide_v1;
+  // ci_duty_admits_v1 keeps only a FOR SHARE lock on the Binding's live ci-admission rows before asking it.
+  admits:['clued_private.ci_duty_admits_decide_v1'],
   roleRead:['clued_private.binding_role_handover_check_v1','clued_private.binding_role_handover_core_v1','clued_private.binding_role_handover_view_v1',
+    // the decision asks clued_private.binding_role_in_force_v1 since 20261113100000 instead of reading the rows itself.
     'clued_private.binding_role_resident_held_v1','clued_private.binding_role_view_v2','clued_private.ci_duty_admits_v1','clued_private.ci_duty_holder_v1',
     'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
-  holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_v1',
+  holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_decide_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1'],
-  mergeSlot:['clued_private.work_claim_ci_lease_extend_v1','clued_private.work_claim_ci_queue_join_v1','public.clued_work_claim_adopt_v1',
-    'public.clued_work_merge_slot_return_v1','public.clued_work_merge_slot_touch_v1'],
+  // 20261108161615 and 20261108204157 renamed the adopt/return bodies (with their merge-slot check) to the *_before_pr_task
+  // and *_before_terminal predecessors their new public wrappers call; the terminal admission (verify) and its apply ask it too.
+  mergeSlot:['clued_private.clued_work_claim_adopt_v1_before_pr_task','clued_private.clued_work_claim_adopt_v1_before_terminal',
+    'clued_private.clued_work_merge_slot_return_v1_before_pr_task','clued_private.work_claim_ci_lease_extend_v1',
+    'clued_private.work_claim_ci_queue_join_v1','clued_private.work_claim_pr_terminal_apply_v1','public.clued_work_merge_slot_touch_v1',
+    'public.clued_work_verify_v1'],
 };
 
 test('unified scheduling 2A: duty holder, equivalence of every routed entry point, phase moves',{timeout:1200000},async t=>{
