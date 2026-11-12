@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DISK_RECEIPT, DISK_REMINDER_BYTES, KEEP_CONTRACT, PRUNE_RECEIPT, REMINDER_RECEIPT, RetentionWatch, archiveClass, parseKeepList, planRetention,
+import { KEEP_CONTRACT, PRUNE_RECEIPT, RETENTION_RULE, RetentionWatch, archiveClass, parseKeepList, planRetention,
   pruneSpool, readKeepList, removeTree } from '../src/retention.mjs';
 import { Mailbox, validatePrune } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
@@ -21,7 +21,7 @@ const entry = ([name, mtimeMs, bytes, extra = {}]) => ({ name, mtimeMs, bytes, c
 test('the plan: every shared case (the Linux tool is held to the same file)', () => {
   assert.equal(CASES.contract, 'clued.independent-ci.retention-cases/1');
   for (const c of CASES.cases) {
-    const p = planRetention({ entries: c.entries.map(entry), keep: new Set(c.keep ?? []), rule: c.rule ?? CASES.rule });
+    const p = planRetention({ entries: c.entries.map(entry), keep: new Set(c.keep ?? []), rule: c.rule ?? CASES.rule, now: c.now ?? 0 });
     assert.deepEqual(p.deletes.map(d => d.name), c.deletes, c.name);
     assert.deepEqual({ success: p.classes.success.refused, failure: p.classes.failure.refused }, c.refused, c.name);
     assert.equal(p.deferred, c.deferred, c.name);
@@ -30,13 +30,13 @@ test('the plan: every shared case (the Linux tool is held to the same file)', ()
   assert.deepEqual(['archive-a', 'completed-a', 'failed-a', 'incoming', 'archive-', 'failed'].map(archiveClass), ['success', 'success', 'failure', null, null, null]);
 });
 
-test('the keep list: exact contract, else refused; a missing file refuses too (review M2), an empty keep list allows', async t => {
+test('the keep list: exact contract, else refused; a missing file is an empty list (Owner decision: no extra protection), so is an empty one', async t => {
   const root = await tempRoot(t);
   const owner = path.join(root, 'owner');
   await fs.mkdir(owner);
   const file = path.join(owner, 'retention-keep.json');
-  assert.deepEqual(await readKeepList(file, 'windows'), { ok: false, code: 'RETENTION_KEEP_LIST_MISSING' });
-  assert.deepEqual(await readKeepList(path.join(root, 'absent', 'retention-keep.json'), 'windows'), { ok: false, code: 'RETENTION_KEEP_LIST_MISSING' });
+  assert.deepEqual(await readKeepList(file, 'windows'), { ok: true, names: new Set(), entries: 0 });
+  assert.deepEqual(await readKeepList(path.join(root, 'absent', 'retention-keep.json'), 'windows'), { ok: true, names: new Set(), entries: 0 });
   await fs.writeFile(file, JSON.stringify({ contract: KEEP_CONTRACT, keep: [] }));
   assert.deepEqual(await readKeepList(file, 'windows'), { ok: true, names: new Set(), entries: 0 });
   await fs.rm(file);
@@ -155,24 +155,11 @@ test('deletion runs only when idle; a pass with deletions writes its receipt eac
   assert.deepEqual(prunes[0].body.deleted, deleted);
 });
 
-test('the default C: reminder: below 30 GiB once a day; unreadable drive cannot report a free-byte value', async t => {
-  const root = await tempRoot(t);
-  const now = { t: T0 };
-  const receipts = await ReceiptChain.open(path.join(root, 'receipts'), () => now.t);
-  let free = DISK_REMINDER_BYTES - 1;
-  const watch = watchWith(receipts, now, { companionReady: async () => false, measureLinux: async () => ({ ok: false }), diskFree: async () => (free === null ? { ok: false } : { ok: true, freeBytes: free }) });
-  assert.equal((await watch.maybeCheck()).disk.reminded, true);
-  now.t += 3_600_000;
-  assert.equal((await watch.maybeCheck()).disk.reminded, false, 'once per day');
-  now.t += 86_400_000; free = null;
-  assert.deepEqual((await watch.maybeCheck()).disk, { ok: false, reminded: false });
-  now.t += 86_400_000; free = DISK_REMINDER_BYTES;
-  assert.equal((await watch.maybeCheck()).disk.reminded, false);
-  const bodies = await Promise.all((await fs.readdir(path.join(root, 'receipts'))).sort().map(async n => JSON.parse(await fs.readFile(path.join(root, 'receipts', n), 'utf8'))));
-  const disk = bodies.filter(b => b.type === DISK_RECEIPT);
-  assert.equal(disk.length, 1);
-  assert.deepEqual(disk[0].body, { drive: 'C:', freeBytes: DISK_REMINDER_BYTES - 1, thresholdBytes: DISK_REMINDER_BYTES, action: 'owner-free-disk-space', blocksAnything: false });
-  assert.equal(bodies.filter(b => b.type === REMINDER_RECEIPT).length, 0);
+test('the rule is the node governance standard (config/node-governance-standard.json, archive_success/archive_failure)', async () => {
+  const std = JSON.parse(await fs.readFile(new URL('../../../config/node-governance-standard.json', import.meta.url), 'utf8')).classes;
+  assert.deepEqual(RETENTION_RULE, { classBudgetBytes: std.archive_success.max_gib * 1024 ** 3, minKeepPerClass: std.archive_success.min_keep, maxDeletesPerPass: 16,
+    maxAgeDays: { success: std.archive_success.days, failure: std.archive_failure.days } });
+  assert.equal(std.archive_failure.max_gib, std.archive_success.max_gib); assert.equal(std.archive_failure.min_keep, std.archive_success.min_keep);
 });
 
 const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe',
@@ -205,10 +192,10 @@ test('archive-prune: one fixed root command; its facts travel through the mailbo
   assert.throws(() => validatePrune({ ...prune, deleted: Array.from({ length: 17 }, () => prune.deleted[0]), deletedBytes: 68 }), { code: 'MAILBOX_RESPONSE_PRUNE_REFUSED' });
 });
 
-test('service-main wires the heartbeat gate, the idle check, both prunes and the C: reminder', async () => {
+test('service-main wires the heartbeat gate, the idle check, both prunes and the node status gate', async () => {
   const text = await fs.readFile(new URL('../src/service-main.mjs', import.meta.url), 'utf8');
   for (const s of ['companionReady:', 'clock() - beat.at <= policy.companion.heartbeatMaxAgeMs', "reason: 'BATCH_OPEN'", "reason: 'HALTED'", "reason: 'SCENE_UNARCHIVED'",
-    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', 'diskFreeBytes(drive)']) {
+    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', 'nodeStatus: () => readNodeStatus(NODE_STATUS_FILE)']) {
     assert.ok(text.includes(s), s);
   }
 });

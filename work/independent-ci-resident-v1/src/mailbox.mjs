@@ -115,15 +115,13 @@ const codeOrNull = c => c === null || (typeof c === 'string' && CODE.test(c));
 export function validatePrune(p) {
   const code = 'MAILBOX_RESPONSE_PRUNE_REFUSED';
   exactKeys(p, ['rule', 'refused', 'classes', 'protected', 'deferred', 'deleted', 'deletedBytes', 'stopped', ...(p.warnings === undefined ? [] : ['warnings'])], code);
-  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass', ...(p.rule.classRules === undefined ? [] : ['classRules'])], code);
+  // maxAgeDays: node governance v1 (success 14, failure 30 days); an older Linux tool sends none.
+  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass', ...(p.rule.maxAgeDays === undefined ? [] : ['maxAgeDays'])], code);
   check(['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass'].every(k => count(p.rule[k])) && p.rule.maxDeletesPerPass <= 16
     && codeOrNull(p.refused) && count(p.deferred) && count(p.deletedBytes), code);
-  if (p.rule.classRules !== undefined) {
-    exactKeys(p.rule.classRules, ['success', 'failure'], code);
-    for (const r of Object.values(p.rule.classRules)) {
-      exactKeys(r, ['classBudgetBytes', 'minKeepPerClass'], code);
-      check(count(r.classBudgetBytes) && count(r.minKeepPerClass) && r.minKeepPerClass >= 1, code);
-    }
+  if (p.rule.maxAgeDays !== undefined) {
+    exactKeys(p.rule.maxAgeDays, ['success', 'failure'], code);
+    check(Object.values(p.rule.maxAgeDays).every(d => count(d) && d >= 1), code);
   }
   if (p.warnings !== undefined) check(Array.isArray(p.warnings) && p.warnings.length <= 4 && p.warnings.every(c => typeof c === 'string' && CODE.test(c)), code);
   check(Array.isArray(p.deleted) && p.deleted.length <= 16, code);

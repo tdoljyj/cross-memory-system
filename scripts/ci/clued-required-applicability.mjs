@@ -4,11 +4,11 @@ import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.5';
+export const COMPONENT_VERSION='1.0.6';
 export const REQUIRED_SELECTOR_SOURCE=Object.freeze({
   path:'scripts/ci/ci-required-selection.mjs',
-  blob:'5e349bc561a08ed466cab73d3e1ea04bd4b9f1d5',
-  sha256:'bc00c8534e87cebf2886a416fda6751df6cb24ad1f27e2057593b397c7b99b6c',
+  blob:'522f620757a8dbd239af54ca4d73860d4a5b62ee',
+  sha256:'b734c263ef433ccda28d3f5bd72e765764a26662457ab5ae2b0737bfb87c4c95',
 });
 export const REQUIRED_MIGRATION_PATHS=Object.freeze([
   'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',

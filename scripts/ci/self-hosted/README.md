@@ -30,7 +30,7 @@ Normal workflows target capabilities, never a physical computer name.
 | `bootstrap-windows-runner.ps1` | Windows x64 onboarding |
 | `bootstrap-linux-runner.sh` | WSL2/Linux x64 + native Docker onboarding |
 | `apply-wsl-capacity-profile.ps1` | Applies only WSL memory/CPU/swap limits while preserving unrelated `.wslconfig` settings |
-| `render-host-watchdog.ps1` | Renders the standardized host watchdog from the inventory and capacity profile |
+| `node-governance/` | Node Resource Governance v1: `render.ps1` renders the node's one governance task from `config/node-governance-standard.json` and the host's `governance` block; `linux-sweep.sh` is its in-distribution sweep; `install.ps1` installs it (one UAC) and retires the old watchdog and cache worker |
 
 ## Current active hosts
 
@@ -75,7 +75,7 @@ Each slow start records the runner that finally took it and a `wait_cause`, deri
 - `runner_idle_while_work_queued`: no collected job covers a long wait while other compatible jobs (their labels are a subset of its required labels) also queued. This is missing occupation evidence, not verified online/idleness. At least two such jobs raise `RUNNER_IDLE_WHILE_WORK_QUEUED` for investigation, without asserting offline, suspension or a pool outage.
 - `unassigned`: the job is still queued. `unexplained`: neither pattern applies, or the runner is not in the inventory.
 
-Jobs from runs outside the collected window are invisible, so causes are best-effort evidence, not proof. They are carried forward with the slow start. For a Linux runner flagged `runner_idle_while_work_queued`, read the host watchdog log (`C:\clued-ci\logs\watchdog-<host_id>.log`) for `Capacity suspend` / `Capacity resume` lines in that interval before looking elsewhere: the watchdog deliberately stops an idle Linux runner when host memory or disk crosses the profile's danger threshold.
+Jobs from runs outside the collected window are invisible, so causes are best-effort evidence, not proof. They are carried forward with the slow start. For a Linux runner flagged `runner_idle_while_work_queued`, read the node governance log (`C:\ProgramData\Clued\node-governance\logs\governance-<host_id>.log`) for `Capacity suspend` / `Capacity resume` lines in that interval before looking elsewhere: the watchdog deliberately stops an idle Linux runner when host memory or disk crosses the profile's danger threshold.
 
 The existing 300-second / two-occurrence / 24-hour gate is unchanged. Repeated waits fully explained by occupation are `classification=capacity_pressure`, `severity=info`; any unexplained or unassigned wait keeps `classification=startup_delay_needs_investigation`, `severity=warning`. Both retain evidence and transport notification. The classification participates in the anomaly key/fingerprint so a change from capacity pressure to unknown waiting is not lost to deduplication. Timestamps and individual delay fluctuations still do not churn the fingerprint. `idle_seconds` measures time not covered by sampled jobs; it must never be presented as proof that a runner was online and idle.
 
@@ -147,16 +147,9 @@ For approximately 16 GB personal hosts:
 WSL memory      6 GB
 WSL processors  3
 WSL swap        2 GB
-capacity suspend: host free memory < 1.5 GB or runner disk free < 40 GB (after a cleanup first)
-capacity resume:  host free memory >= 2.5 GB and runner disk free >= 55 GB
-C: alert only:    C: free < 15 GB, cleared at >= 20 GB
-watchdog interval 30 s
+capacity suspend: host free memory < 1.5 GB (disk: the governance standard)
+capacity resume:  host free memory >= 2.5 GB
 ```
-
-One renderer serves every host (Task 5282d4ae); what its watchdog does comes from the host's entry, never from a special case for a kind of host:
-
-- `watchdog_drives`: the drives it watches, e.g. `[{"drive": "C"}]` (TURING) or `[{"drive": "C", "clean": false}]` (DESK-W-591); optional `suspend_free_gb`/`resume_free_gb` per drive, default the profile's `suspend_c_free_gb`/`resume_c_free_gb`; `clean` defaults to true; no entry means one C: entry. Below its level a drive with `clean` gets a host cleanup (files older than a day in the running account's `%TEMP%`, `%SystemRoot%\Temp` as far as that account may delete, the npm, pip and NuGet HTTP caches, never through a link and never under `C:\ProgramData\CluedIndependentCI`, `C:\clued-resident`, `C:\clued-ci`, `C:\w` or `D:\w`; at most once an hour; the recycle bin is user data and is never emptied); still below, it alerts (`ALERT <drive>:` and a notification, every 30 minutes), cleared at the resume level.
-- the executors are the runner entries whose effective state is active, each kind with its own part: `linux_runner` (and `additional_linux_runners`) clean their distribution and stop/start their units for their own disk and for memory, as above; `windows_runner` is only reported (the watchdog never starts it). A retired runner is not there; a host may have none.
 
 ### workstation-v1
 
@@ -166,13 +159,9 @@ For 64 GB-class workstations:
 WSL memory      28 GB
 WSL processors  16
 WSL swap        8 GB
-capacity suspend: host free memory < 6 GB or runner disk free < 15 GB (after a cleanup first)
-capacity resume:  host free memory >= 10 GB and runner disk free >= 20 GB
-C: alert only:    C: free < 15 GB, cleared at >= 20 GB
-watchdog interval 60 s
+capacity suspend: host free memory < 6 GB (disk: the governance standard)
+capacity resume:  host free memory >= 10 GB
 ```
-
-The runner disk is the drive that holds the runner distribution's virtual disk (`suspend_runner_disk_free_gb`/`resume_runner_disk_free_gb`); the watchdog finds it at run time from the distribution's WSL registration (`HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, `BasePath`), D: for `CluedCI-Linux` on DESK-W-591. C: (`suspend_c_free_gb`/`resume_c_free_gb`) only raises an alert: what fills it there (the resident CI's distribution, Docker Desktop) is not the watchdog's to stop or clean, and stopping runners whose disk is elsewhere frees nothing on C:. Owner decision 241824b2 (2026-11-08).
 
 Capacity suspension attempts to detect idle Linux runners, but its sampling is not atomic with dispatch or service stop. A newly assigned job can be terminated by `KillMode=control-group`; unreadable listener logs do not prevent suspension. Follow the runbook's restrictions on new deployment and safe draining; do not treat this mechanism as a guarantee that active jobs survive.
 
@@ -259,9 +248,9 @@ Before activation, prove the advertised capabilities:
 After capability validation and the authorized activation change, render a watchdog preview for the Linux entries whose effective state is `active`, without installing or starting supervision:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\render-host-watchdog.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\node-governance\render.ps1 `
   -HostId company-primary `
-  -OutputPath "$env:TEMP\watchdog-company-primary.preview.ps1"
+  -OutputPath "$env:TEMP\node-governance-company-primary.preview.ps1"
 ```
 
 For each primary or additional Linux entry, the renderer uses its explicit `state`; only a missing `state` property inherits `host.state`. It selects entries whose effective state is `active` and refuses the host only when none are selected. Thus `host.state: validated` with an explicit `linux_runner.state: active` permits that entry in a preview; an entry inheriting `validated` remains excluded. This selection rule does not grant activation or deployment authority. Home-primary has had no active Linux runner since `clued-ci-home-linux-01` was retired, and its watchdog must stay stopped. On 2026-10-21 its scheduled task read Disabled, no watchdog process was running, and its Startup launcher had been renamed to `.task-backup` (the HKCU Run entry remains but points at the missing file).
@@ -309,20 +298,17 @@ Retirement is deliberate:
 
 Do not reuse a retired runner name for a different physical host.
 
-## Watchdog behavior
+## Node governance
 
-The rendered watchdog has the following behavior and limitations:
+One mechanism per node (Node Resource Governance v1; standard in `config/node-governance-standard.json`, one file for every node):
 
-- supervises only the host's Linux runners whose effective state is `active`, the primary included: an explicit runner `state` takes precedence, and only a missing property inherits `host.state`. It is not rendered for a host with none. The unit list is fixed at render time: a watchdog already deployed keeps restarting the units it was rendered with, so after a state change re-render and redeploy it, or stop it (runbook section 7.1);
-- keeps the declared WSL distro alive;
-- restores native Docker and the Linux systemd runner;
-- logs when the Windows runner service is not running, but never starts the Windows runner: it runs as a Windows service under the dedicated standard account `clued-runner`, and starting it from the login session would run jobs as the login account;
-- attempts to suspend Linux CI when host memory or the runner disk crosses the profile's danger threshold and idle sampling passes. When the runner disk is the reason, it first cleans inside the runner distribution (Owner decision 241824b2): `docker image prune --all --force` and `docker builder prune --all --force` as the runner account (images no container uses, dangling layers, build cache; never containers or volumes), the `_work/_temp` of every active runner root (only while no `Runner.Worker` runs anywhere in the distribution, without following a linked `_work` or `_temp`), then `fstrim -v /` as root, so the freed blocks can go back to the drive when the virtual disk is sparse (on a non-sparse VHDX the drive's free space does not grow until it is compacted). It stops the runners only when that left the disk below the level; a cleanup in the last 15 minutes counts as tried. Low memory stops them without a cleanup;
-- persists its intent (`C:\clued-ci\state\watchdog-<host>.state.json`), so a restart while held back keeps the runners stopped, and stops runner units systemd started again while held back; creating `C:\clued-ci\state\force-resume` clears the intent. `-DryRun` (own log, state, marker and mutex; every stop, start and cleanup only logged as "would ...") and `-MaxIterations N` are for checking a rendered script before it replaces the installed one;
-- raises a C: alert (an `ALERT C:` line and a desktop notification, again every 30 minutes while it lasts, cleared once) when C: is below its level; it never stops or cleans anything for C:; A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. Missing/unreadable listener logs and journal failure do not reliably block suspension; Worker-query failure defers it. Sampling and stopping have a dispatch race, so this is not a safe-draining guarantee. Shared Docker stop affects every container in that distro; see runbook sections 2.2 and 12;
-- resumes Linux CI after the profile's recovery threshold is satisfied;
-- alerts on every capacity suspend (defect 2102f7e1: the runners once stood still for 86 minutes with only the log to say why): an `ALERT` line in the watchdog log, the marker file `C:\clued-ci\state\capacity-alert.json` (`state`, `since`, `detail`; UTF-8 without a byte order mark; present exactly while the runners are held back, for panels and scripts; a watchdog that starts with the runners running removes a marker an earlier one left) and a desktop notification (registered as the application id "Clued CI watchdog"), repeated every 30 minutes while the hold lasts; the resume removes the marker and notifies once. Setting `CLUED_WATCHDOG_NO_TOAST` leaves out the notification only. A watchdog that is already installed keeps what it was rendered or written with: it has this behaviour only after it is rendered again and restarted. The renderer now carries what the hand-edited script on DESK-W-591 added (persisted intent, re-assert, force-resume, `-DryRun`, `-MaxIterations`), so that host is redeployed by rendering too; its hourly telemetry CSV is not carried over;
-- never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
+- **Declaration**: the host's `governance` block: `drives` (letters), `resident_distro`, `worktrees` (development roots, checked only), `overrides` (numbers of the standard only: `disk`, `budget`, `classes.<class>.<number>`; a node can neither add nor drop a rule). Memory levels stay in the capacity profile.
+- **Task**: `Clued-Node-Governance`, one per node, for the Owner, Limited (it never elevates), at logon and daily 04:00, single instance, from `C:\ProgramData\Clued\node-governance\node-governance.ps1` (rendered by `node-governance/render.ps1 -HostId <host>`; render again after a change of the declaration or the standard and restart the task). Install or migrate with `node-governance/install.ps1 -HostId <host>` (one UAC: folder and ACL, render, register, one read-only round `-DryRun -MaxIterations 1`, and only then retire the old host watchdog and cache maintenance worker and start). `-WhatIf` prints the plan.
+- **Levels** (every 60 s, per drive): green; yellow below 20 % or 30 GB; red below 10 % or 15 GB, held until 15 % and 20 GB. Yellow or red runs a pressure sweep (at most hourly) of what lives on that drive; red on the drive of the resident CI's WSL disk holds new resident batches; red on the runner disk stops the Linux runners after a pressure sweep (as the watchdog did); C: otherwise only alerts. Low memory stops the Linux runners without a sweep.
+- **Sweeps** (only while the executors are idle: no `Runner.Worker`, sampled twice; the resident's status view agreeing on every signal): hourly the runners' `_work/_temp` and dangling Docker objects (leftover `supabase_*` containers and unreferenced volumes older than 24 h); daily after 04:00 the old checkouts and tool versions, unused images, build cache, package caches above their limits, old temporary files, the scan cache and `fstrim`; on Windows this account's `%TEMP%`, npm/pip/NuGet caches and logs past their days. At most 16 objects and 60 s per call; the rest is debt (alerted after 3 rounds). Never through a link, never off its file system, never under a protected folder. Archives (classes 10-12) are the resident executor's own, between batches.
+- **Checks** (daily): a WSL virtual disk swollen past max(20 GB, 25 %) of its file (compaction or, better, a sparse disk: to be measured on CluedDev-Linux first) and development worktrees untouched for 7 days are alerted, not changed.
+- **Status**: `C:\ProgramData\Clued\node-governance\status.json` (contract `clued.node-governance-status/1`: level, `intake` = the resident disk's drive and level, drives, `linuxRunners` hold, virtual disks, debt, last actions), rewritten whole every probe; the executor, the PR page line and the compute panel read it. Alerts: one `ALERT` line and one notification per key (red every 30 minutes, others once a day, recovery once). `state\force-resume` clears a held Linux runner intent. `-DryRun` has its own log, state, status file (`status.dryrun.json`) and mutex.
+- Busy sampling and stopping keep the watchdog's dispatch race: this is not a safe-draining guarantee (runbook sections 2.2 and 12). It never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 
 ## Add a Linux slot on an existing host
 
@@ -332,7 +318,7 @@ Both public MCP workflows allocate dynamic loopback MCP ports. The self-hosted b
 
 Enroll through runbook section 4.2 with a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner, the assigned independent root and exact route label. The base Linux script requires sudo and starts a listener; do not grant the existing no-sudo `runner` account sudo or expose an unhardened slot to production routes. Registration and service installation must preserve the dedicated job identity.
 
-Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the host watchdog with `render-host-watchdog.ps1 -HostId <host>` so it also supervises the new service.
+Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the node governance task with `node-governance/render.ps1 -HostId <host>` so it also supervises the new service.
 
 ## Add a third or fourth device
 

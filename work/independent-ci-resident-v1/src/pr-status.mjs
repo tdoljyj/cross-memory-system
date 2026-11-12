@@ -162,7 +162,7 @@ export function withRerunLine(want, rerun) {
   if (!want || want.weak || rerun !== true) return want;
   return { ...want, description: clip(`已自动补跑一次必需测试；${want.description}`) };
 }
-// The lines kept at the end of a text, never clipped away: the host capacity line (host-capacity.mjs, Owner decision 241824b2), then
+// The lines kept at the end of a text, never clipped away: the node resource line (host-capacity.mjs, node governance v1), then
 // the watchdog warning. Each is added at most once; adding one keeps the other (the text before them is clipped instead).
 const CAPACITY_TAIL = new RegExp(`；${CAPACITY_ALERT_TEXT}(?:（[^；（）]*）)?$`, 'u');
 function splitTails(d) {
@@ -181,7 +181,7 @@ export function withWatchdogLine(want, stale, max = DESCRIPTION_MAX) {
   if (!want || stale !== true || want.description.endsWith(WATCHDOG_STALE_TEXT)) return want;
   return joinTails(want, { ...splitTails(want.description), watchdog: true }, max);
 }
-// line: host-capacity.mjs#readCapacityAlert's text while the host watchdog holds the Linux runners back, else null.
+// line: host-capacity.mjs#readCapacityAlert's text while the node status names a red line, else null.
 export function withCapacityLine(want, line, max = DESCRIPTION_MAX) {
   if (!want || typeof line !== 'string' || !line.startsWith(CAPACITY_ALERT_TEXT)) return want;
   const parts = splitTails(want.description);
@@ -508,7 +508,7 @@ export class PrStatusReporter {
   //   node (this node's name, required: there is no default; status.json's own name wins when it names one), writeRequest(value)
   //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
   //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), hostCapacity() (optional:
-  //   host-capacity.mjs#readCapacityAlert, the host watchdog's capacity marker, Owner decision 241824b2), notify(key, title, body)
+  //   host-capacity.mjs#readCapacityAlert, the node governance status, node governance v1), notify(key, title, body)
   //   (optional, M5: the notification queue instead of a toast) }
   constructor(ports) {
     Object.assign(this, ports);

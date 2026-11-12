@@ -62,13 +62,8 @@
       "wsl_memory_gb": 6,
       "wsl_processors": 3,
       "wsl_swap_gb": 2,
-      "watchdog_interval_seconds": 30,
       "suspend_free_memory_gb": 1.5,
-      "resume_free_memory_gb": 2.5,
-      "suspend_c_free_gb": 15,
-      "resume_c_free_gb": 20,
-      "suspend_runner_disk_free_gb": 40,
-      "resume_runner_disk_free_gb": 55
+      "resume_free_memory_gb": 2.5
     },
     "workstation-v1": {
       "description": "64 GB-class workstation; allow heavier parallel CI while preserving host headroom.",
@@ -76,13 +71,8 @@
       "wsl_memory_gb": 28,
       "wsl_processors": 16,
       "wsl_swap_gb": 8,
-      "watchdog_interval_seconds": 60,
       "suspend_free_memory_gb": 6.0,
-      "resume_free_memory_gb": 10.0,
-      "suspend_c_free_gb": 15,
-      "resume_c_free_gb": 20,
-      "suspend_runner_disk_free_gb": 15,
-      "resume_runner_disk_free_gb": 20
+      "resume_free_memory_gb": 10.0
     }
   },
   "lifecycle_states": [
@@ -101,8 +91,7 @@
       "site": "company",
       "state": "active",
       "capacity_profile": "workstation-v1",
-      "watchdog_path": "C:\\clued-ci\\watchdog-clued-ci.ps1",
-      "watchdog_drives": [{"drive": "C", "clean": false}],
+      "governance": {"drives": ["C", "D"], "resident_distro": "CluedResident-Linux", "worktrees": ["C:\\w\\tmp", "D:\\w\\tmp"], "overrides": {}},
       "windows_runner": {
         "profile": "windows-general-v1",
         "name": "clued-ci-company-win-01",
@@ -178,8 +167,7 @@
       "site": "home",
       "state": "active",
       "capacity_profile": "compact-v1",
-      "watchdog_path": "C:\\clued-ci\\watchdog-home-runner.ps1",
-      "watchdog_drives": [{"drive": "C"}],
+      "governance": {"drives": ["C", "D"], "resident_distro": "Ubuntu-24.04", "worktrees": [], "overrides": {}},
       "windows_runner": {
         "profile": "windows-general-v1",
         "name": "clued-ci-home-win-01",

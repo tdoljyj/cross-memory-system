@@ -6,17 +6,20 @@
 //    (clued-ci-resident-linux archive-usage). An unreadable entry makes the measurement incomplete; an incomplete
 //    measurement can still remind (never the other way round), and says so.
 //
-// 2. The retention rule (§35): per spool (Windows here, Linux in clued-ci-resident-linux archive-prune, the same rule), the
-//    success class (archive-*, completed-*) and the failure class (failed-*: failures, HALTs, Owner aborts) each keep their
-//    newest 20 GiB, never fewer than their newest 10 directories; beyond that the oldest are deleted. Archives the Owner
-//    lists in the keep list (resident\owner\retention-keep.json: the archives an open Task, Bug or Evidence refers to, or
-//    that the Owner marked) are never deleted and are counted on their own. Deletion is planned first and then applied,
+// 2. The retention rule (§35; Node Resource Governance Standard v1, config/node-governance-standard.json archive_success /
+//    archive_failure): per spool (Windows here, Linux in clued-ci-resident-linux archive-prune, the same rule), the
+//    success class (archive-*, completed-*) keeps 14 days and the failure class (failed-*: failures, HALTs, Owner aborts)
+//    30 days, each at most its newest 20 GiB, never fewer than its newest 10 directories; beyond that the oldest are
+//    deleted. Archives the Owner lists in the keep list (resident\owner\retention-keep.json: the archives an open Task, Bug
+//    or Evidence refers to, or that the Owner marked) are never deleted and are counted on their own; no keep list, or an
+//    empty one, is no extra protection (Owner decision), never "delete everything". Deletion is planned first and then applied,
 //    only between batches with no open batch (the caller's `idle` port), only directly below the spool root, only for
 //    names of the three known kinds, and fails closed: a size that cannot be read, a link or junction anywhere in a class,
 //    a keep list that cannot be read, a redirected spool, a permission error or a directory that changed after planning
 //    deletes nothing more and is written into the receipt.
 //
-// 3. Disk reminder: C: / 30 GiB by default; optional Owner settings choose drives/threshold. Receipts feed the companion's normal notification queue.
+// Free disk space is not this module's: the node's governance task judges it and the executor reads its status file
+// (host-capacity.mjs#readNodeStatus).
 //
 // No Linux measurement and no Linux prune without a fresh companion heartbeat (Task 018da927 c): the request would wait
 // for its whole timeout (archive-usage: 3 minutes) and the service loop with it.
@@ -31,28 +34,13 @@ import { CODE, check, fail } from './canonical.mjs';
 
 export const REMINDER_RECEIPT = 'archive-retention-reminder';
 export const PRUNE_RECEIPT = 'archive-retention-prune';
-export const DISK_RECEIPT = 'disk-space-reminder';
 export const ALERT_RECEIPT = 'archive-retention-alert';
 export const KEEP_CONTRACT = 'clued.independent-ci.archive-retention-keep/1';
 export const KEEP_FILE = 'retention-keep.json';
 const DAY = 86_400_000;
 const GIB = 1024 ** 3;
-// Legacy defaults (Task 4aedda54); optional Owner settings do not change the installed policy contract.
-export const RETENTION_RULE = Object.freeze({ classBudgetBytes: 20 * GIB, minKeepPerClass: 10, maxDeletesPerPass: 16 });
-export const DISK_REMINDER_BYTES = 30 * GIB;
-// The C: gate of the executor (executor.mjs hostDiskGate): no new batch below 10 GiB, released again at 15 GiB (hysteresis).
-export const HOST_DISK_DEFER_BYTES = 10 * GIB;
-export const HOST_DISK_RESUME_BYTES = 15 * GIB;
-// The drive the resident WSL disk really sits on: the `target` (…\ext4.vhdx) of install\companion-wsl.json (written by companion-headless.ps1,
-// contract clued.independent-ci.companion-wsl/1). Anything missing or malformed gives C:, the default.
-export const COMPANION_WSL_FILE = 'companion-wsl.json';
-export function wslDriveFromRecord(text) {
-  try {
-    const r = JSON.parse(text);
-    const m = r?.contract === 'clued.independent-ci.companion-wsl/1' && typeof r.target === 'string' ? /^([A-Za-z]):\\/.exec(r.target) : null;
-    return m ? `${m[1].toUpperCase()}:` : 'C:';
-  } catch { return 'C:'; }
-}
+// The standard's numbers (held equal to config/node-governance-standard.json by test/retention.test.mjs).
+export const RETENTION_RULE = Object.freeze({ classBudgetBytes: 20 * GIB, minKeepPerClass: 10, maxDeletesPerPass: 16, maxAgeDays: Object.freeze({ success: 14, failure: 30 }) });
 // The archive kinds the archive tools create (src/archive.mjs, resident-v2/archive-windows-spool.ps1, clued-ci-resident-linux);
 // any other name below the spool root is never considered for deletion. The length bound keeps a pass's answer within the
 // mailbox's 4 KB.
@@ -110,15 +98,13 @@ export function parseKeepList(bytes) {
   return v.keep;
 }
 
-// The names kept on one spool. A missing file refuses like an unreadable one (RETENTION_KEEP_LIST_MISSING): an unknown list
-// is never an empty one (independent review M2), so nothing is deleted until the Owner has written the file, even as
-// {"contract":…,"keep":[]}, which is what allows deletion. A file that is not a plain file, too large, or not exactly the
-// contract refuses too.
+// The names kept on one spool. No file is an empty list (Owner decision, node governance v1: the rule's own minimum and ages
+// protect without a list). A file that cannot be read, is not a plain file, too large, or not exactly the contract refuses.
 export async function readKeepList(file, spool) {
   try {
     let st;
     try { st = await fs.lstat(file); } catch (error) {
-      return { ok: false, code: error.code === 'ENOENT' ? 'RETENTION_KEEP_LIST_MISSING' : 'RETENTION_KEEP_LIST_UNREADABLE' };
+      return error.code === 'ENOENT' ? { ok: true, names: new Set(), entries: 0 } : { ok: false, code: 'RETENTION_KEEP_LIST_UNREADABLE' };
     }
     if (!st.isFile() || st.isSymbolicLink() || st.size > KEEP_MAX_BYTES) return { ok: false, code: 'RETENTION_KEEP_LIST_INVALID' };
     const keep = parseKeepList(await fs.readFile(file));
@@ -131,8 +117,8 @@ export async function readKeepList(file, spool) {
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 // Pure plan (the Linux tool's plan_retention is the same rule, held to the same cases: test/fixtures/retention-cases.json).
-// entries: [{ name, mtimeMs, bytes (null = unreadable), complete, isDir, links }] of the spool root; keep: Set of names.
-export function planRetention({ entries, keep = new Set(), rule = RETENTION_RULE }) {
+// entries: [{ name, mtimeMs, bytes (null = unreadable), complete, isDir, links }] of the spool root; keep: Set of names; now: ms.
+export function planRetention({ entries, keep = new Set(), rule = RETENTION_RULE, now }) {
   const classes = { success: [], failure: [] };
   const protectedArchives = { directories: 0, bytes: 0, complete: true, names: [] };
   for (const e of entries) {
@@ -155,11 +141,13 @@ export function planRetention({ entries, keep = new Set(), rule = RETENTION_RULE
     const summary = { directories: list.length, bytes, deleteDirectories: 0, deleteBytes: 0, refused };
     out.classes[cls] = summary;
     if (refused) continue;
-    // Newest first (modification time, then name); delete from the oldest end while over budget and above the minimum.
+    // Newest first (modification time, then name); delete from the oldest end while over budget or past the class's age,
+    // and above the minimum.
     const sorted = [...list].sort((a, b) => (b.mtimeMs - a.mtimeMs) || byName(b, a));
     let total = bytes, remaining = sorted.length;
-    const classRule = rule.classRules?.[cls] ?? rule;
-    for (let i = sorted.length - 1; i >= 0 && total > classRule.classBudgetBytes && remaining > classRule.minKeepPerClass; i -= 1) {
+    const maxAgeMs = rule.maxAgeDays && Number.isFinite(now) ? rule.maxAgeDays[cls] * DAY : Infinity;
+    const due = e => total > rule.classBudgetBytes || now - e.mtimeMs > maxAgeMs;
+    for (let i = sorted.length - 1; i >= 0 && due(sorted[i]) && remaining > rule.minKeepPerClass; i -= 1) {
       deletes.push({ name: sorted[i].name, class: cls, bytes: sorted[i].bytes, mtimeMs: sorted[i].mtimeMs });
       total -= sorted[i].bytes; remaining -= 1; summary.deleteDirectories += 1; summary.deleteBytes += sorted[i].bytes;
     }
@@ -224,16 +212,16 @@ async function realSpool(spool) {
 const refusedPass = (base, code) => ({ ...base, refused: code, classes: null, protected: null, deferred: 0, deleted: [], deletedBytes: 0, stopped: null });
 
 // One pass over one spool: inventory, plan, apply. Returns the facts the receipt carries; deletes nothing when refused.
-export async function pruneSpool({ spool, keep, rule = RETENTION_RULE, authorizeDelete = async () => true }) {
+export async function pruneSpool({ spool, keep, rule = RETENTION_RULE, now = Date.now(), authorizeDelete = async () => true }) {
   const base = { rule: { classBudgetBytes: rule.classBudgetBytes, minKeepPerClass: rule.minKeepPerClass, maxDeletesPerPass: rule.maxDeletesPerPass,
-    ...(rule.classRules ? { classRules: rule.classRules } : {}) } };
+    ...(rule.maxAgeDays ? { maxAgeDays: { ...rule.maxAgeDays } } : {}) } };
   if (!keep?.ok) return refusedPass(base, keep?.code ?? 'RETENTION_KEEP_LIST_UNREADABLE');
   const entries = [];
   try {
     if (!(await realSpool(spool))) return refusedPass(base, 'RETENTION_SPOOL_REDIRECTED');
     for (const e of await fs.readdir(spool, { withFileTypes: true })) if (archiveClass(e.name)) entries.push(await entryFacts(spool, e.name));
   } catch { return refusedPass(base, 'RETENTION_SPOOL_UNREADABLE'); }
-  const plan = planRetention({ entries, keep: keep.names, rule });
+  const plan = planRetention({ entries, keep: keep.names, rule, now });
   const deleted = [];
   let stopped = null;
   for (const d of plan.deletes) {
@@ -254,10 +242,10 @@ export class RetentionWatch {
   //   companionReady() -> bool (a fresh companion heartbeat; without it nothing is asked of the companion),
   //   idle() -> { ok, reason } (no open batch, no HALT; deletion runs only then),
   //   pruneWindows() -> pruneSpool facts, pruneLinux() -> { ok, prune, usage } | { ok: false, code },
-  //   diskFree(driveRoot) -> { ok, freeBytes }, readSettings() -> {ok, settings|code} }. Without idle() nothing is deleted.
+  //   readSettings() -> {ok, settings|code} }. Without idle() nothing is deleted.
   constructor(ports) {
     Object.assign(this, ports);
-    this.lastCheck = -Infinity; this.lastReminder = -Infinity; this.lastDisk = -Infinity; this.lastRefusal = new Map(); this.lastAlert = new Map();
+    this.lastCheck = -Infinity; this.lastReminder = -Infinity; this.lastRefusal = new Map(); this.lastAlert = new Map();
   }
 
   async alert(spool, code, now) {
@@ -321,39 +309,10 @@ export class RetentionWatch {
     const total = w.bytes + (l.ok ? l.bytes : 0);
     const facts = { totalBytes: total, thresholdBytes: this.policy.retention.reminderBytes, windows: { bytes: w.bytes, directories: w.directories, complete: w.complete },
       linux: l.ok ? { bytes: l.bytes, directories: l.directories, complete: true } : { bytes: null, directories: null, complete: false, ...(l.skipped ? { skipped: l.skipped } : {}) } };
-    const extra = { prune: { skipped: prune.skipped, windows: prune.windows?.deleted.length ?? null, linux: prune.linux?.deleted.length ?? null }, disk: await this.checkDisk(now) };
+    const extra = { prune: { skipped: prune.skipped, windows: prune.windows?.deleted.length ?? null, linux: prune.linux?.deleted.length ?? null } };
     if (total < this.policy.retention.reminderBytes || now - this.lastReminder < DAY) return { reminded: false, ...facts, ...extra };
     this.lastReminder = now;
     await this.receipts.append(REMINDER_RECEIPT, { ...facts, action: 'owner-review-archives', deletesAnything: false });
     return { reminded: true, ...facts, ...extra };
   }
-
-  // Defaults to C: below 30 GiB; optional Owner drive list, daily reminders, unreadable disks also alert. Never blocks a batch.
-  async checkDisk(now) {
-    if (typeof this.diskFree !== 'function') return null;
-    const config = this.activeSettings?.disk ?? { drives: ['C:'], thresholdBytes: DISK_REMINDER_BYTES };
-    const results = [];
-    this.lastDrives ??= new Map();
-    for (const drive of config.drives) {
-      const d = await this.diskFree(drive + '\\').catch(() => ({ ok: false }));
-      if (!d?.ok || !Number.isSafeInteger(d.freeBytes) || d.freeBytes < 0) {
-        await this.alert('disk', 'RETENTION_DISK_UNREADABLE', now);
-        results.push({ ok: false, reminded: false }); continue;
-      }
-      const reminded = d.freeBytes < config.thresholdBytes && now - (this.lastDrives.get(drive) ?? -Infinity) >= DAY;
-      if (reminded) {
-        await this.receipts.append(DISK_RECEIPT, { drive, freeBytes: d.freeBytes, thresholdBytes: config.thresholdBytes, action: 'owner-free-disk-space', blocksAnything: false });
-        this.lastDrives.set(drive, now);
-      }
-      results.push({ ok: true, freeBytes: d.freeBytes, reminded });
-    }
-    return results.length === 1 ? results[0] : { drives: results };
-  }
-}
-
-// Free bytes of a drive for this account (fs.statfs).
-export async function diskFreeBytes(root = 'C:\\') {
-  const s = await fs.statfs(root);
-  const free = s.bavail * s.bsize;
-  return Number.isSafeInteger(free) ? { ok: true, freeBytes: free } : { ok: false };
 }

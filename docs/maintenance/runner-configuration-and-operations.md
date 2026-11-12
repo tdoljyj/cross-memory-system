@@ -9,7 +9,7 @@
 | 内容 | 查阅入口 |
 | --- | --- |
 | 期望身份、路径、能力、生命周期、容量与安装包散列 | [node-profiles.json](../../scripts/ci/self-hosted/node-profiles.json) |
-| 静态校验、基础安装与看门狗生成 | [self-hosted 目录](../../scripts/ci/self-hosted/)；[validator](../../scripts/ci/self-hosted/validate_node_profiles.py)；[renderer](../../scripts/ci/self-hosted/render-host-watchdog.ps1) |
+| 静态校验、基础安装与看门狗生成 | [self-hosted 目录](../../scripts/ci/self-hosted/)；[validator](../../scripts/ci/self-hosted/validate_node_profiles.py)；[节点治理 renderer](../../scripts/ci/self-hosted/node-governance/render.ps1) |
 | 作业启动钩子、安装与安全边界 | [runner README](../../scripts/runner/README.md)及同目录包装器 |
 | 在线、标签、忙闲、实际执行结果 | GitHub Settings → Actions → Runners，以及 workflow/job 日志 |
 | 机器实际账号、服务、PATH、ACL、看门狗 | 目标电脑上的只读检查 |
@@ -57,123 +57,26 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 | 设置 | 家里 compact-v1 | 公司 workstation-v1 |
 | --- | ---: | ---: |
 | WSL 内存 / CPU / swap | 6 GB / 3 / 2 GB | 28 GB / 16 / 8 GB |
-| 暂停条件 | 空闲内存 < 1.5 GiB **或** runner 盘空闲 < 40 GiB（先清理） | < 6 GiB **或** runner 盘 < 15 GiB（先清理） |
-| 恢复条件 | 空闲内存 ≥ 2.5 GiB **且** runner 盘空闲 ≥ 55 GiB | ≥ 10 GiB **且** runner 盘 ≥ 20 GiB |
-| C 盘（不停 runner） | < 15 GiB 先清缓存仍低则告警，≥ 20 GiB 解除 | < 15 GiB 告警，≥ 20 GiB 解除 |
-| 看门狗采样 | 30 秒 | 60 秒 |
+| 暂停条件 | 空闲内存 < 1.5 GiB **或** runner 盘红线 | < 6 GiB **或** runner 盘红线 |
+| 恢复条件 | 空闲内存 ≥ 2.5 GiB **且** runner 盘恢复 | ≥ 10 GiB **且** runner 盘恢复 |
 
-runner 盘指 runner 发行版虚拟磁盘所在的盘，看门狗运行时从该发行版的 WSL 注册（`HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss` 的 `BasePath`）取得；DESK-W-591 上 `CluedCI-Linux` 在 D:。runner 盘低于暂停线时先在该发行版内清理（`docker image prune --all --force`、`docker builder prune --all --force`、各活跃 runner 的 `_work/_temp`（仅当发行版内没有任何 `Runner.Worker`）、`fstrim -v /`），清理后仍低于暂停线才停；15 分钟内清理过则直接停。不删容器和卷。C 盘装的是常驻 CI 发行版和 Docker Desktop 的虚拟磁盘，不归看门狗停或清，只写 `ALERT C:` 日志并弹桌面通知。Owner 决定 241824b2（2026-11-08）。
-
-WSL 预算属于该 Windows 用户的 WSL2 虚拟机，不是每个 runner 独占的额度；加四个槽位不代表四份内存预算。代码由 Windows 空闲物理内存/磁盘字节换算 GiB；不能拿标称容量百分比替代实际门槛。
-
-规范目标是容量停止服务前先阻断新派单并排空共享负载。**当前 renderer 只有尽力检测，未达到完整排空或不误伤忙作业的保证**：它两次查 `Runner.Worker`，仅 Worker 查询异常时延期；listener 日志缺失/不可读或 journalctl 失败不会阻止暂停。检查结束后 listener 仍能接单，检查与停止之间的竞态可能让刚开始的作业被 control-group 停止。未闭合经审的调度隔离/安全停机实现前，新部署或新增槽位不得启用、扩大这种自动停服务模式；先保持路由隔离，并取得可实施的安全方案。现有部署的风险处置另需明确授权，本次文档不自动改变其模式。共享 Docker 停止还会影响该 distro 的所有容器，不能据这些查询证明其他业务负载已排空。[路由依据](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
-
-同一 WSL 下的多个 runner 共享 OS、用户及 Docker；独立目录不等于安全隔离。当前 protocol 与 behavior 各自分配动态 loopback MCP 端口，不能再假定所有作业固定使用 8787。behavior 的自托管流程仍因共享本地 Supabase 固定端口使用 [host-port-lock.sh](../../scripts/ci/self-hosted/host-port-lock.sh) 的 `public-mcp-ports` 锁，并在 `if: always()` 中释放；protocol 没有该锁，使用其独立动态端口。其他固定端口消费者须加入准确锁域；动态 MCP 端口不能消除共享数据库/Docker负载争用。进程退出必须按本作业记录的进程身份和归属清理，不能按端口占用或进程名称全机杀进程。
-
-### 2.3 加固、更新与秘密
-
-上线前必须按 [钩子加固要求](../../scripts/runner/README.md)逐项验收：钩子与包装器位于作业账号不可写的目录；Linux 环境来自 root-owned systemd drop-in，Windows 来自服务的管理员受控 Environment；runner 配置、凭据文件、bin/externals 不得由作业修改，`_work/_diag` 保持所需的可写权限。不得为解决 EACCES 对整棵 runner 目录授予 Everyone/Users 完全控制或 chmod 777。
-
-受保护持久 runner 使用 `--disableupdate` 并由管理员排空后升级。清单中的历史 `auto_update_after_registration=true` 与基础脚本默认自更新不能覆盖这一加固要求；该差异见第 12 节。GitHub 要求关闭自动更新的 runner 在新版本发布后 30 天内更新，关键安全更新可立即阻止派单，应关注官方发布通知并安排维护。[官方更新要求](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#runner-software-updates-on-self-hosted-runners)
-
-钩子只读 token 限本仓库 Actions/Contents 读取；注册/移除 token 临时使用。由授权操作者在目标终端隐藏输入，不写入聊天、文档、日志、截图、命令历史或 Git。安装包与脚本备份不包含可传播的凭据。不得让 job 使用 Owner 的 gh、.ssh、.codex 登录。
-
-持久 Windows runner、Docker 组成员及共享 WSL 仍有进程残留/跨作业访问或 root 等效风险；钩子不是完整沙箱。`trust-internal` 标签不是身份认证。不得把不可信 fork 的代码直接路由到此池；更高隔离需求应使用独立、单作业后重置的环境，需另行设计和授权。
-
-### 2.4 现有与未来任务的费用原则、迁移与防回流
-
-依据 Owner 决定 `9eb313f8-9dd0-41dd-9e61-60d869e87f83`：能不花钱就不花钱；本仓库研发、CI、检查、合并、发布及运维链路适用同一长期原则，覆盖现有任务及未来新增、修改和扩容。选择顺序为已合格自有资源、自建替代、经核实不会新增官方费用的免费服务。不得为省实现工作默认购买官方能力。
-
-- **执行机器**：新增作业必须使用已合格自托管资源；构建、测试、发布、准入和合并控制、巡检等不能因任务轻量而自动例外。排队、故障、超时或容量不足时，应排队、明确失败或修复自有环境，不得静默回退 GitHub 托管机或其他官方付费执行。未知动态路由须拒绝。
-- **收费能力**：计算、Artifact/Release 产物、缓存、Packages/镜像、LFS、存储、流量与超额等凡可能新增官方费用的依赖，必须先评估自有资源或不增费替代；新引入或扩大使用前，在 PR 列出承接方式、费用依据和验收方法。不能只把算力自托管，却默认继续增加官方存储或其他收费。
-- **免费边界**：不增费的仓库、PR、API、Actions 调度等协作能力可以保留。依赖免费额度时必须核对额度、保留期和超额处理，防止自动转收费；只开预算告警不能当作费用上限。固定订阅与按量产品分项核对，不能由 Actions 部分迁移推断整个账号账单已为零。
-- **旧路径退出**：现存官方收费路径是必须逐项退出的迁移债务，不是永久豁免。`scripts/ci/validate_runner_budget_policy.py` 按 job 冻结现存托管作业及触发、权限、并发控制；迁出或删除时同步撤掉对应债务条目，防止同名回流。旧 hosted-only allowlist 和历史方案中的托管部署建议不能作为新增、扩费或回退授权；不得靠整体重生成基线掩盖费用增长。确有必要的冻结条目修复须在受保护审查中说明准确变化及理由。配置数量不等于实际运行或账单用量。
-- **开发连续性**：先建立可靠替代并验证检查、合并、发布、重跑、撤销和故障恢复，再停用旧路径或考虑零预算。保留准入、精确 Source/Role、秘密隔离、证据与保留期；不可信候选使用自有一次性隔离环境，生产/准入秘密不得进入普通持久测试池。精确源码绑定的消费者须先登记可信来源再切换，不能用候选证明自身已被主线接受。不得通过停任务、删门禁或删证据省钱。
-- **确实无法替代的付费项**：先说明无法免费或自建替代的具体理由、预计及上限费用、对开发/发布的影响和退出方案，取得 Owner 对该项的明确事前授权后才使用；授权不得扩张为其他任务或后续版本的默认付费许可。
-
-本节取代旧方案关于必须或优先使用官方收费资源的选型建议；[WorkClaimAdmission](../../development/contracts/execution-admission/WorkClaimAdmission.v0.1.md) 和 [MergeAdmission](../../development/contracts/execution-admission/MergeAdmission.v0.1.md) 中的历史部署描述及精确接受证据保留。要求运行于 Actions 不等于要求运行于 GitHub 的机器；安全、准入及资格边界仍须通过各自的受审后继履行。
-
-实现与规则分开验收：当前自动检查覆盖执行路由和合并检查，其他收费服务仍须逐项核查并补齐约束；它不是所有收费产品的运行前硬开关。规范合入、局部测试或首批迁移均不能代替完整运行验收，也不自动授权关预算、套餐或现有生产服务。
-
-## 3. 操作开始前的记录
-
-每次增加、减少、升级、迁移、阈值变更或故障处理至少记录：
-
-| 项目 | 要求 |
-| --- | --- |
-| 范围 | Task、操作者、主机、distro、runner 名称/服务/根目录 |
-| 版本 | 当前 main、配置 PR、脚本提交及 SHA-256；不复制秘密 |
-| 影响 | 目标节点、共享 Docker/WSL/磁盘、其他正在运行的任务 |
-| 排空 | 阻止新派单的方法、API labels/busy 与本地 Worker 两次采样 |
-| 回退 | 原标签、配置、服务属性、ACL；可恢复的包与非秘密备份 |
-| 完成 | 实际 run/job ID、运行节点、正/负钩子结果、验收回执 |
-
-未知机器归属、审批不足、服务账号不符、路径重用、散列不符、排空无法确认或出现 STOP HERE 时停止受影响步骤，保留原输出。不得把失败写为成功。
-
-## 4. 增加 runner
-
-### 4.1 设计并登记
-
-1. 说明增加的能力/排队瓶颈，并确认宿主资源有余量；优先评估同机争用与固定端口锁，不能只看“还能注册几个”。
-2. 在配置 PR 中加入 planned/enrolling 条目；为额外 Linux 分配独立 name/root/service/route_label，与 primary 保持同一 distro/user，只有 primary 管理 Docker。
-3. 规划心跳的精确路由覆盖；新增节点未在 matrix 出现时，静态清单通过不能证明心跳覆盖完整。
-4. 运行 `python scripts/ci/self-hosted/validate_node_profiles.py`；检查 diff 和现有 workflow 标签。validator 的数量是清单条目数，不是实时 online 数量。
-5. 取得实际受保护变更批准和实施范围。配置 PR 中标记 planned/enrolling 不会让 GitHub 自动阻止派单。
-
-### 4.2 基础安装与隔离
-
-只能在目标机器、明确的独立根目录和排空/隔离条件下操作。[Windows bootstrap](../../scripts/ci/self-hosted/bootstrap-windows-runner.ps1)与 [Linux bootstrap](../../scripts/ci/self-hosted/bootstrap-linux-runner.sh)是基础安装器，不能直接作为“专用账号 + 加固 + 可上线”的完整自动入口：
-
-- Linux bootstrap 要求调用用户有 sudo，并以该用户安装服务，且不添加 `--disableupdate`。最终作业账号必须无 sudo，不能为了运行 bootstrap 给现有 runner 永久 sudo。
-- Windows bootstrap 的 `-RunAsService` 不固定专用标准账号，也不添加 `--disableupdate`；不带该选项会生成登录账号 launcher。当前标准禁止将这个登录模式节点激活。
-- 它们会启动监听器。在受控新安装窗口可用于获取校验过的包；尚未加固时不得让节点拥有可匹配生产作业的标签。若无法保证隔离，停止并准备经审核的人工安装方案。
-
-管理员方案必须包含：从当前清单取安装包版本与 OS 散列、下载核验再解包；以最终服务身份完成注册；明确禁用自动更新；安装服务；设置受控钩子、ACL、原生运行时与唯一根目录；最后才恢复调度标签。不得使用 `--replace` 意外覆盖同名活节点。人工步骤以 [GitHub 服务配置](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/configure-the-application)及已审核脚本为准，凭据在交互终端输入。
-
-Linux 服务的必要设置由管理员写入受控 drop-in 并验收，包括 `User=runner`、`KillMode=control-group`、原生 Linux PATH 与五项钩子环境。安装 `svc.sh` 时明确指定账号；不得只凭安装命令成功推定已用 runner 身份。用服务身份验证 `command -v node npm npx python3`、`node --version`、`docker info`，不能让 npm/npx 落到 `/mnt/c/` 或 CMD/UNC 路径。
-
-Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。Python 3.12 必须可由服务访问；只有清单声明 `cap-node24` 时，才必须以服务身份验证 Node 24。日常账号的 WindowsApps 别名或私有工具路径不算服务能力。
-
-### 4.3 验收后激活
-
-1. 保持生产路由隔离，先验本地服务、账号、权限、PATH、Docker、`--disableupdate` 和钩子 enforce=true。
-2. 使用授权的隔离验收 workflow/标签，记录实际分配节点。已有健康节点的成功不能代替新增节点验收。
-3. 真实跑通 checkout、依赖安装、能力负载和 cleanup；Linux Docker 节点还要验证临时资源创建/清理。钩子必须有实际 ALLOW 和拒绝用例，不能仅看到文件存在。
-4. 对同机并发，验证目录不交叉、固定端口不冲突、负载下宿主可用及既有节点未被重启。
-5. 将条目推进到 validated/active；Linux 条目的有效状态为 active 后再渲染看门狗。每个 primary 或 additional Linux 条目显式声明的 `state` 优先，仅字段缺省时才继承 `host.state`；没有有效 active 条目时 renderer 拒绝渲染。核对 active units 已纳入，最后恢复生产标签并核对路由/心跳。激活是配置、主机部署和调度状态三处一致，不能只改 JSON。
-6. 完成配置 PR、机器验收与 KooYomi 回执。不写 online/busy 进清单。
+盘的绿/黄/红与恢复线全网一份：`config/node-governance-standard.json`（黄：剩余 < 20 % 或 < 30 GB；红：< 10 % 或 < 15 GB；恢复：≥ 15 % 且 ≥ 20 GB）。runner 盘指 runner 发行版虚拟磁盘所在的盘（从 WSL 注册取得，DESK-W-591 上 `CluedCI-Linux` 在 D:）：红线时先在该发行版内做一轮压力回收，仍红才停 runner。常驻 CI 虚拟磁盘所在盘红线时暂停接新批；其余情况 C: 只告警。详见 [self-hosted README 的 Node governance 节](../../scripts/ci/self-hosted/README.md#node-governance)。
 
 若验收 workflow 涉及新 workflow、手动 dispatch 或重任务，按当时准入合同执行；不临时移除门禁。作业此前 skipped 时要让适用作业实际执行。本基线常规 PR/分支工作流禁止直接重跑；需要重试时用实际修复提交，或按精确范围的 Owner 例外与实际钩子能力处理。
 
-## 5. 看门狗标准与部署
+## 5. 节点资源治理（取代看门狗与缓存维护 worker）
 
-看门狗由清单和 renderer 生成；不直接编辑生成文件来制造另一个配置来源。用最新受审配置在日常 WSL 所属 Windows 账号下生成到临时输出，解析并核对阈值、units、Windows report-only，然后在批准的主机部署窗口安装到 `watchdog_path`。
-
-renderer 按每个 Linux 条目的有效 `state` 选择 unit：显式 `linux_runner.state` 或额外槽位的 `state` 优先，仅未声明该字段时才取 `host.state`。例如主机为 `validated`、primary Linux 条目显式为 `active` 时，该条目可纳入预览；继承 `validated` 的条目仍不纳入。有效 active Linux 条目为空时不生成 Linux 部分，只生成被盯盘与其他执行器部分（见下），这一选择规则不代替前述资格、激活或部署授权。
+每台节点只有一个计划任务 `Clued-Node-Governance`，脚本由 `scripts/ci/self-hosted/node-governance/render.ps1` 从标准 `config/node-governance-standard.json` 与清单中该主机的 `governance` 块生成，不直接编辑生成文件。安装/迁移一次 UAC：
 
 ```powershell
-# 从仓库根目录执行；只生成预览，不安装启动项、不启动进程
-$HostId = 'company-primary' # 目标电脑实际 HostId
-$preview = Join-Path $env:TEMP "watchdog-$HostId.preview.ps1"
-powershell.exe -NoProfile -File .\scripts\ci\self-hosted\render-host-watchdog.ps1 -HostId $HostId -OutputPath $preview
-$tokens = $null; $parseErrors = $null
-[void][Management.Automation.Language.Parser]::ParseFile($preview, [ref]$tokens, [ref]$parseErrors)
-if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+# 从仓库根目录、以节点 Owner 身份执行；先 -WhatIf 看计划，不改任何东西
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\node-governance\install.ps1 -HostId home-primary -WhatIf
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\node-governance\install.ps1 -HostId home-primary
 ```
 
-现有 renderer 的 `-InstallStartup` 只写 Startup 和 HKCU Run，不能保证退出后自动恢复；`-StartNow` 只请求一次启动。新部署必须单独安装受审的调度定义，并验证退出恢复。不得在带现有 runner 的机器上直接执行文档中的安装操作。
+安装脚本：建 `C:\ProgramData\Clued\node-governance`（SYSTEM/Administrators 完全、Owner 修改、Users 只读）→ 生成脚本 → 注册任务（Owner、Interactive/Limited、登录触发每分钟重复＋每日 04:00、IgnoreNew、无限时长、失败一分钟重启三次、`conhost --headless` 无窗口）→ 以 Owner 身份跑一轮只读（`-DryRun -MaxIterations 1`）→ 只读轮写出状态后才删除旧看门狗与缓存 worker 的任务、进程（按命令行，不按进程名）、启动项、脚本与目录，并沿用旧看门狗的暂停意图 → 启用并启动。只读轮失败则旧机制原样保留。结果写到 `%TEMP%\clued-node-governance-install.json`。
 
-调度定义最低要求：WSL 所属日常账号，Interactive/Limited；登录触发 + 每分钟无限重复；IgnoreNew；ExecutionTimeLimit=0；失败后间隔一分钟重启三次；电池供电不停。沿用脚本的 mutex；不能让不同启动入口竞争管理同一主机。不得改成 SYSTEM 来“保证开机”，SYSTEM 看不到同一用户的 WSL 发行版。
-
-已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。home-linux-01 退役后家里没有 active Linux runner。renderer 对所有主机通用（Task 5282d4ae）：按主机条目的 `watchdog_drives`（盘符、可选阈值，默认取容量档 C: 阈值 15/20 GiB，`clean` 默认 true）与有效 active 的 runner 条目组合生成，不为某类主机写特例。被盯的盘低于阈值且 `clean` 时删除运行账号 `%TEMP%`、`%SystemRoot%\Temp`（该账号可删的部分）、npm/pip/NuGet HTTP 缓存中超过 1 天的文件（不跟随链接，不进 `C:\ProgramData\CluedIndependentCI`、`C:\clued-resident`、`C:\clued-ci`、`C:\w`、`D:\w`），至多每小时一次（回收站是用户数据，不清）；仍低则 `ALERT <盘>:` 并弹通知，达到恢复阈值解除。Linux runner 部分照旧在其发行版内清理、仍不够再停；Windows runner 只报告服务状态。家里配置为 C:（清理），公司为 C:（`clean: false`，只告警）。部署前家里看门狗仍保持停用。2026-10-21 复读：计划任务为 Disabled，无看门狗进程，Startup 启动文件已改名为 `.task-backup`（HKCU Run 项仍在，所指文件不存在）。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
-
-无窗口要求不能只靠 `/min` 或 `PowerShell -WindowStyle Hidden`。监督应使用不分配控制台的启动器，关闭标准输入并落盘 stdout/stderr、启动/退出结果。停维护前核对整条启动器→PowerShell→WSL keepalive 链；计划任务结束或启动器退出不证明所有后代已退出。只按已复读 PID、创建时间、完整启动命令和目标主机确认对应进程，不全机结束 PowerShell、pythonw 或 WSL 进程。
-
-安装/替换时：保存已有任务定义和启动项；核对已有路径与当前账号；启动新任务、确认唯一进程和新日志；再可逆停用重复 Startup/Run 入口。renderer 实际注册的 HKCU 属性名是 `CluedCIWatchdog-<HostId>`，与计划任务 `Clued-CI-Watchdog-<HostId>` 不同，必须按真实值核对，不能仅删除一个看起来相似的名称。
-
-部署验收必须包含：Task=Running、准确进程命令与单实例、日志新增 started、阈值/单位列表正确、Windows 服务账号未变，以及受控结束**看门狗自身**后在 90 秒内自动恢复。应先确认资源稳定且停止看门狗不会影响正在依赖其保护的任务；不杀 runner/Docker/WSL。失败立即恢复原受审入口并排查，不能留下看门狗停止。
-
-维护停机时先暂停计划任务和所有旧入口并结束看门狗，确认无监督进程；仅 Disable-ScheduledTask 不会停止已运行实例。否则手动 stop Linux 服务后，看门狗会立即拉回。
+验收：任务 Running、唯一进程、`logs\governance-<host>.log` 有 started、`status.json` 每分钟更新、阈值与单元列表正确、Windows runner 服务账号未变；受控结束治理进程后 90 秒内由每分钟重复触发拉起。维护停机时先 Disable 任务并结束其进程。
 
 ## 6. 日常巡检与故障排查
 

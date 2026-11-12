@@ -5,7 +5,8 @@ Runs every five minutes on a pool-general runner with the workflow's own
 GITHUB_TOKEN and no other credential. It reads:
 
 - the route probes of clued-compute-panel.yml (one job per pool runner) for
-  online/offline and the disk/memory line each probe prints;
+  online/offline, the disk/memory line each probe prints and the node
+  governance level it reads from the node's governance status file;
 - the in-progress jobs of every workflow for busy/idle and the current job;
 - the resident executors' info-only PR statuses (resident-queue/<node>) for
   their latest state, HALT and the batch metrics Task 7f205c71 triggers on.
@@ -24,7 +25,6 @@ import base64
 import hashlib
 import http.client
 import json
-import math
 import os
 import re
 import statistics
@@ -41,7 +41,10 @@ SCHEMA = "clued.compute-panel/v1"
 WORKFLOW = "clued-compute-panel.yml"
 PROBE_PREFIX = "compute-probe / "
 PROBE_LINE = re.compile(r"COMPUTE_PANEL_PROBE (\{.*\})")
-MAINTENANCE_LINE = re.compile(r"CACHE_MAINTENANCE_PROBE ([^\r\n]{1,2048})")
+GOVERNANCE_LINE = re.compile(r"COMPUTE_PANEL_GOVERNANCE ([^\r\n]{1,512})")
+GOVERNANCE_LEVELS = ("green", "yellow", "red")
+GOVERNANCE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})")
+GOVERNANCE_TEXT = {"green": "绿", "yellow": "黄", "red": "红", "unknown": "未知"}
 MARKER = "<!-- clued-compute-panel:v1 -->"
 STATE_RE = re.compile(r"<!-- clued-compute-panel-state:([A-Za-z0-9+/=]+) -->")
 ISSUE_TITLE = "算力面板（自动更新）"
@@ -237,38 +240,22 @@ def parse_probe(log: str) -> dict | None:
     return None
 
 
-def parse_maintenance(log: str, now: datetime) -> dict:
-    matches = MAINTENANCE_LINE.findall(log)
+def parse_governance(log: str) -> dict:
+    """The node governance level the probe read from its status file; anything unreadable is unknown."""
+    unknown = {"level": "unknown", "writtenAt": None}
+    matches = GOVERNANCE_LINE.findall(log)
     if not matches:
-        return {"status": "not-reported"}
+        return unknown
     try:
         row = json.loads(matches[-1])
-        if not isinstance(row, dict) or row.get("status") not in {
-            "ok", "deferred", "partial", "capacity-low", "stale", "never-ran", "invalid", "not-registered"
-        }:
-            raise ValueError("maintenance schema")
-        result = {"status": row["status"]}
-        if row.get("node_id") is not None:
-            if not isinstance(row["node_id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", row["node_id"]):
-                raise ValueError("node identity")
-            result["node_id"] = row["node_id"]
-        for key in ("at", "removed_bytes", "deferred_count", "stale_after_seconds"):
-            if key in row:
-                value = row[key]
-                if type(value) not in (int, float) or not 0 <= value <= (1 << 60) or not math.isfinite(value):
-                    raise ValueError("maintenance metric")
-                result[key] = value
-        if "stale_after_seconds" in result and not 60 <= result["stale_after_seconds"] <= 176700:
-            raise ValueError("stale budget")
-        if "at" in result and result["at"] > now.timestamp() + 300:
-            raise ValueError("future report")
-        if result["status"] in {"ok", "deferred", "partial", "capacity-low", "stale"} and not {
-            "node_id", "at", "removed_bytes", "stale_after_seconds"
-        }.issubset(result):
-            raise ValueError("incomplete report")
-        return result
-    except (ValueError, TypeError):
-        return {"status": "invalid"}
+    except json.JSONDecodeError:
+        return unknown
+    if not isinstance(row, dict) or row.get("level") not in GOVERNANCE_LEVELS:
+        return unknown
+    written = row.get("writtenAt")
+    if written is not None and not (isinstance(written, str) and GOVERNANCE_TIME.fullmatch(written)):
+        return unknown
+    return {"level": row["level"], "writtenAt": written}
 
 
 def unpicked(job: dict, now: datetime) -> bool:
@@ -376,14 +363,13 @@ def latest_health(client: GitHub, jobs: list[dict], cache: dict, now: datetime) 
         cache[name] = {key: values[key] for key in ("disk_free_gb", "mem_available_gb")
                        if isinstance(values.get(key), (int, float))}
         cache[name]["fetched_at"] = iso(now)
-        cache[name]["maintenance"] = parse_maintenance(log, now)
+        cache[name]["governance"] = parse_governance(log)
+    for row in cache.values():
+        row.pop("maintenance", None)  # retired cache-maintenance telemetry (Task 0c51fb42)
     result = {name: {k: v for k, v in row.items() if k != "fetched_at"} for name, row in cache.items()
               if name in {node["name"] for node in POOL}}
     for row in result.values():
-        maintenance = dict(row.get("maintenance") or {"status": "not-reported"})
-        if maintenance.get("at") is not None and now.timestamp() - maintenance["at"] > maintenance.get("stale_after_seconds", 86400):
-            maintenance["status"] = "stale"
-        row["maintenance"] = maintenance
+        row["governance"] = dict(row.get("governance") or {"level": "unknown", "writtenAt": None})
     return result
 
 
@@ -395,9 +381,8 @@ def health_flags(health: dict) -> list[str]:
         flags.append("disk")
     if isinstance(memory, (int, float)) and memory < LOW_MEMORY_GB:
         flags.append("memory")
-    maintenance = health.get("maintenance") or {}
-    if maintenance.get("status") in {"deferred", "partial", "capacity-low", "stale", "never-ran", "invalid"}:
-        flags.append("maintenance")
+    if (health.get("governance") or {}).get("level") == "red":
+        flags.append("governance")
     return flags
 
 
@@ -862,8 +847,9 @@ def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, s
         if node["status"] == "offline":
             alerts[f"offline:{name}"] = f"{name} 离线（最近一次探测成功：{node['last_probe'] or '无'}）"
         for flag in node.get("flags", []):
-            alerts[f"{flag}:{name}"] = (f"{name} 缓存维护异常：{node.get('health', {}).get('maintenance', {}).get('status', 'unknown')}"
-                if flag == "maintenance" else f"{name} {'磁盘' if flag == 'disk' else '内存'}不足")
+            written = node.get("health", {}).get("governance", {}).get("writtenAt") or "未知"
+            alerts[f"{flag}:{name}"] = (f"{name} 节点治理红色（状态写于 {cell(written)}）"
+                if flag == "governance" else f"{name} {'磁盘' if flag == 'disk' else '内存'}不足")
     for node, row in residents.items():
         if row["halted"]:
             alerts[f"halt:{node}"] = f"常驻执行器 {node} 停机或未更新：{cell(row.get('description'))}（PR #{row.get('pr')}）"
@@ -901,34 +887,24 @@ def render(report: dict, state: dict) -> str:
         "",
         "以下按执行实例列出；同机实例共享磁盘与内存，资源数值不能累加。",
         "",
-        "| 通用 runner | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 24 小时利用率 | 最近探测 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| 通用 runner | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 治理等级 | 24 小时利用率 | 最近探测 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, node in pool.items():
         job = node.get("current_job")
         health = node.get("health", {})
         util = report["utilization"].get(name)
-        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
             name, STATUS_TEXT[node["status"]],
             ("忙" if node["busy"] else "闲") if node["status"] == "online" else "—",
             cell(f"{job['workflow']} / {job['job']}") if job else "—",
             "、".join(node["can_run"]),
             f"{health['disk_free_gb']} GB" if "disk_free_gb" in health else "—",
             f"{health['mem_available_gb']} GB" if "mem_available_gb" in health else "—",
+            GOVERNANCE_TEXT.get((health.get("governance") or {}).get("level"), "—"),
             f"{util}%" if util is not None else "—",
             node["last_probe"] or "—",
         ))
-    lines += ["", "### 自动缓存维护", "", "同一节点的共享磁盘回收量只计一次；未登记不表示清理成功。",
-              "", "| 节点或探测实例 | 维护状态 | 最近回收 | 延后项 |", "|---|---|---|---|"]
-    maintenance_rows = {}
-    for name, node in pool.items():
-        row = node.get("health", {}).get("maintenance") or {"status": "not-reported"}
-        key = row.get("node_id") or name
-        old = maintenance_rows.get(key)
-        if old is None or row.get("at", 0) > old.get("at", 0):
-            maintenance_rows[key] = row
-    for name, row in maintenance_rows.items():
-        lines.append(f"| {cell(name)} | {cell(row['status'])} | {row.get('removed_bytes', '—')} bytes | {row.get('deferred_count', '—')} |")
     lines += ["", "控制器 company-win-02、home-win-02 均在正常使用，按阶段启停；"
               "GitHub 显示离线或长期离线后自动移除注册，不代表控制器故障或退役。"
               "实际状态以本机服务和阶段执行结果为准。", "",

@@ -22,7 +22,7 @@ import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
-import { CAPACITY_ALERT_FILE, readCapacityAlert } from './host-capacity.mjs';
+import { NODE_STATUS_FILE, readCapacityAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
 import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
@@ -313,9 +313,9 @@ export async function main(args = process.argv.slice(2)) {
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
-  // Owner decision 241824b2: while the host watchdog holds the Linux runners back for low capacity, the PR page status says so too
+  // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).
-  reporter.hostCapacity = () => readCapacityAlert(CAPACITY_ALERT_FILE);
+  reporter.hostCapacity = () => readCapacityAlert(NODE_STATUS_FILE);
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
   // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
   const panelRunner = new Runner({ env: { ...process.env }, jobHost });

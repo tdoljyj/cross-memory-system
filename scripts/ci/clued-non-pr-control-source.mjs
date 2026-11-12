@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.3';
+export const COMPONENT_VERSION='1.0.4';
 export const NON_PR_CONTROL_SOURCE_PATH='scripts/ci/clued-non-pr-control-sources.json';
 export const NON_PR_CONTROL_SOURCE_SCHEMA='clued.non-pr-control-sources/1';
 export const NON_PR_CONTROL_MAX_BYTES=524288;
@@ -13,21 +13,21 @@ const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).for
 export const NON_PR_CONTROL_FILES=freeze({
   ".github/workflows/clued-compute-panel.yml": {
     "family": "compute_panel",
-    "workflow_blob": "7d263683953b140897c30681828924d6a183b26c",
-    "source_sha256": "35e0e05e323d608e873b3375f8ca5ac03601a6a767ed831cbba4df5dfa91adf5",
-    "workflow_definition_sha256": "e35d99eadf18acc62d66b8bac23507d55acda0214d1b7488e8ef8242caf90fc5",
+    "workflow_blob": "baa297ef49804984999afd5b05d51386aa84cac4",
+    "source_sha256": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
+    "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d",
     "triggers": [
       "schedule",
       "workflow_dispatch"
     ],
     "roles": {
       "admission-gate": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
-      "probe-company-linux-01": "4cb8a59fce36545141fe1555a6e1e2ffdc19980165b643cceb41c80f4e20f288",
-      "probe-company-linux-02": "5a1b2310bea18536ded0d193b75b2107759282f4e4a254dd5a7c7e516e141a17",
-      "probe-company-linux-03": "f70917829cb770a0e3e9c6f54a2b5e78873ddb132379f5fe87106bdd13714dbc",
-      "probe-company-linux-04": "02c1274d680d2611206fd170d903ad8329638fda9dea9754b8e7f162bc9f517c",
-      "probe-company-win-01": "4cc4f1e6c8c9a114cd81c11e1591ed3fa3312131d4a602b4bf39439eadbbf187",
-      "probe-home-win-01": "4453ef9a9af1b2e3f705af656e5bbd8a84f789c4b571d369c015c175723c696b",
+      "probe-company-linux-01": "96794dc2c7b6e48f7fa7d7f62ff84b2c6f74dd3a8bed39c412f8ef2600de4c09",
+      "probe-company-linux-02": "561b704bbd0b8066d54d0fa13d089ec105e45f320157289fea31d8a8c88b9769",
+      "probe-company-linux-03": "52f75abb45e4a2cee0364ead371ec8955beb43278341c5fabdf4da8177ece149",
+      "probe-company-linux-04": "50f64197a6c55061e23063a21f2f0f4d92ad7d3af8beecda76bd76167cc5db7c",
+      "probe-company-win-01": "e9d3a88481e33b2fa7ab26fb4ccce67c87a95e70e47d4520eee3aab870e4c190",
+      "probe-home-win-01": "1c8e63c417f3c139435bbbdc9eff3007d74b162c745f5cd0c6d88a00f50c6f8c",
       "panel": "f6dab50b88823d3dc0e6a7901024d73956582a7a422525084348f52d258b1150"
     }
   },

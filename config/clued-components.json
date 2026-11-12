@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "74a1cd69f127ae2ff183ff25e536f0eacd1aeb1befce67edf96b06e97db2649c"
+      "content_sha256": "d0ef05ea8d3be094964c639396c2e8fb7895a65b9dac572ab83fce6e6bf1f378"
     },
     {
       "id": "hook.runner-job-started",
@@ -164,7 +164,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -172,7 +172,7 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "bc49b6cea114ba6af20323ef7034ffc3074fb1b44da639ab3624f5323feabfc6",
+      "content_sha256": "75fcf4619388ef1db47b70bed5a2e218ef15571a98a91e84fa4b0620d417f756",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.44",
+      "version": "1.1.45",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,29 +642,12 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "d59272388d2e8ecd3595ec19ba7a05bb30840664722b281b3259b72ae78f1d29"
-    },
-    {
-      "id": "script.resource-maintenance",
-      "kind": "script",
-      "version": "1.0.1",
-      "description": "Registered node-local leased cache maintenance, scheduler definitions and bounded public probe.",
-      "root": ".",
-      "files": [
-        "scripts/ci/self-hosted/resource-maintenance/*.py",
-        "scripts/ci/self-hosted/resource-maintenance/README.md",
-        "config/ci-resource-maintenance.json"
-      ],
-      "content_sha256": "cee184416d253fbdd42b47b6d21b1629c3703beacd4d918f75ae531926ae8a8a",
-      "version_marker": {
-        "file": "scripts/ci/self-hosted/resource-maintenance/maintenance.py",
-        "pattern": "VERSION = \"{version}\""
-      }
+      "content_sha256": "844cf52fef23f8968647d3e2df0c19dd7a48f6e90f3ed5b05d9811f268ccc2e3"
     },
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -676,7 +659,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "f7c6df82b4c79d29521a71ea88ad08f2b768c517676d53fe0fc3a0bedf370f3d"
+      "content_sha256": "c080bd5c8ecb013b30a9b97c45c7d78ce8155c99655275b90b5ea0112d6d9720"
     },
     {
       "id": "script.source-only-workflow",
@@ -697,7 +680,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,12 +697,12 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "f8b1f40703857dea5591e0d3940e8d0ce7be2cda979622b1e4750194b21beb22"
+      "content_sha256": "541aa15ea582244658294bb244732e630ff04278fc9bb1fe46789622313eba7e"
     },
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -730,7 +713,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5f63eb5eefe2bd1cd4e98a8e4d35c5404e93b466c851028108594ed44e8631b2"
+      "content_sha256": "69af36ec0af719f2b5945be4e676c0f8e5c3c251835fe59a47ad6a8ece9e88f9"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -907,8 +890,8 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
+      "version": "1.1.0",
+      "description": "Archive retention by the node governance standard (14/30 days, 20 GiB, newest 10; empty keep list is no extra protection), normal notifications and archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
         "work/independent-ci-resident-v1/src/retention*.mjs",
@@ -923,12 +906,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "5bcc198de81869fbd27ed1dab29e3a4c1c5c3d42ebc8d6a0cc14714c40c7b8d9"
+      "content_sha256": "bd79eaf920e510545501106a8d80167a1827846cd393b9b7fad7c6354f00955d"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.24",
+      "version": "1.0.25",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +929,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ce018bfa0a3f2ec348628b9bcaac509223f754ef8fb0eff3c78ac368dc62f189"
+      "content_sha256": "97041c3328da74e1cb446615f50e71620e42d42e52c07e4ded86ef48c00e6155"
     }
   ]
 }
