@@ -14,7 +14,9 @@ import "../../confirm/owner.css";
 // Native two-step confirmation: Clued renders the change and issues a
 // single-use token; "确认" commits exactly that. The page also shows each
 // node's latest heartbeat and self-report, the watchdog's last run, and the
-// recent alerts and automatic handovers.
+// recent alerts and automatic handovers. The thresholds come from the server's
+// rules (ci_failover_rules_v1; 5 minutes since migration 20261112130500, resident
+// ADR 0026), never from this page, so the page and the watchdog cannot disagree.
 type Json = Record<string, unknown>;
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -44,7 +46,7 @@ const MESSAGES: Record<string, string> = {
 const REASONS: Record<string, string> = {
   connection_unavailable: "连接已失效",
   holds_role: "已经持有 CI 准入",
-  heartbeat_stale: "20 分钟内没有心跳",
+  heartbeat_stale: "最近没有心跳",
   not_standby: "不是备用状态",
   probe_not_clear: "最近一次探测没有确认自己不持有",
   state_halted: "已停机（HALT）",
@@ -101,6 +103,9 @@ export default function ResidentFailoverPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Json | null>(null);
+  const rules = object(data?.rules) ? data.rules : null;
+  const minutes = (key: string) => typeof rules?.[key] === "number" ? String(rules[key]) + " 分钟" : "";
+  const silence = minutes("silence_minutes"), unhealthy = minutes("unhealthy_minutes");
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -184,7 +189,7 @@ export default function ResidentFailoverPage() {
       if (epoch.current !== generation) return;
       setPending(null);
       if (target.view.change === "switch") setNotice(result.enabled === true
-        ? "已打开自动接班总开关。持有者失联 30 分钟后，看门狗会按次序把 CI 准入交给第一个健康的节点。"
+        ? "已打开自动接班总开关。持有者失联" + (silence ? " " + silence : "") + "后，看门狗会按次序把 CI 准入交给第一个健康的节点。"
         : "已关闭自动接班总开关。看门狗照常检查和提醒，但不会交接。");
       else if (target.view.change === "heartbeat_link") setNotice("已挂靠：" + label(object(target.view.heartbeat) ? target.view.heartbeat : null)
         + " 发的心跳记到节点 " + label(object(target.view.node) ? target.view.node : null) + "。")
@@ -227,7 +232,7 @@ export default function ResidentFailoverPage() {
   const busy = working || !!pending;
   const describeAlert = (alert: Json) => {
     if (alert.receipt_kind === "CI_ADMISSION_AUTO_HANDOVER") return "已自动把 CI 准入从 " + nameOf(alert.from_binding_id) + " 移交给 "
-      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务连续 30 分钟没在运行" : "失联 30 分钟")
+      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务持续没在运行" : "失联")
       + "），" + clock(alert.effective_at) + " 起生效。";
     if (alert.receipt_kind === "CI_ADMISSION_FAILOVER_NO_TARGET") return "当前持有者 " + nameOf(alert.holder)
       + " 失联，但没有可以接班的节点，没有交接，请你处理。";
@@ -238,7 +243,7 @@ export default function ResidentFailoverPage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">BeamingFace</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>CI 准入自动接班</h1>
-    <p className="context-muted">持有 CI 准入的常驻节点失联 30 分钟（或连续 30 分钟报“服务没在运行”）时，服务端的看门狗按你排的次序，把 CI 准入交给第一个健康的备用节点，交接 5 分钟后生效。只有你在这里列出的连接才会被选中；总开关关着时只提醒、不交接。停机、暂停或暂停接新的持有者永远不会被自动交出。</p>
+    <p className="context-muted">持有 CI 准入的常驻节点失联{silence && " " + silence}（或{unhealthy ? "连续 " + unhealthy : "持续"}报“服务没在运行”）时，服务端的看门狗按你排的次序，把 CI 准入交给第一个健康的备用节点，交接 5 分钟后生效。只有你在这里列出的连接才会被选中；总开关关着时只提醒、不交接。停机、暂停或暂停接新的持有者永远不会被自动交出。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理自动接班。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {view && <section aria-label="确认更改" className="owner-note"><h2>确认更改</h2>
