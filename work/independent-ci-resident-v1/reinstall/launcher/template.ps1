@@ -1140,10 +1140,10 @@ function Step-LinuxOutAclProbe([string]$registrar) {
   $sd = { param($p) $(if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }).GetSecurityDescriptorSddlForm('All') }
   $watched = @($run.out, (Join-Path $run.out 'stdout.txt'), (Join-Path $run.out 'stderr.txt'))
   $before = @($watched | ForEach-Object { & $sd $_ })
-  $report = [ordered]@{ directory = $run.directory; outcome = $null; exit = $null; code = $null; stdoutIsX = $false; stderrEmpty = $false; aclUnchanged = $false; failed = @(); removed = $false; registrarStderr = $null }
+  $report = [ordered]@{ directory = $run.directory; outcome = $null; exit = $null; code = $null; captureRefused = $null; stdoutIsX = $false; stderrEmpty = $false; aclUnchanged = $false; failed = @(); removed = $false; registrarStderr = $null }
   try {
     $c = Invoke-FleetProcess $registrar ('write-probe ' + $ResidentRoot + ' ' + $run.directory + ' 120') 420
-    if ($c.timedOut) { $report.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $report.outcome = $line.outcome; $report.exit = $line.exit; $report.code = $line.code; $report.registrarStderr = (Tail $c.stderr) }
+    if ($c.timedOut) { $report.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $report.outcome = $line.outcome; $report.exit = $line.exit; $report.code = $line.code; $report.captureRefused = $line.captureRefused; $report.registrarStderr = (Tail $c.stderr) }
     $so = Read-FleetFileChecked $run.captured 'stdout.txt' 4096; $se = Read-FleetFileChecked $run.captured 'stderr.txt' 4096
     $report.stdoutIsX = ($null -ne $so -and $U8.GetString($so).Trim() -ceq 'x')
     $report.stderrEmpty = ($null -ne $se -and $se.Length -eq 0)
@@ -1151,6 +1151,7 @@ function Step-LinuxOutAclProbe([string]$registrar) {
     $report.aclUnchanged = (($before -join "`n") -ceq ($after -join "`n"))
   } catch { $report.code = 'PROBE_EXCEPTION:' + $_.Exception.GetType().Name }
   if (-not ($report.outcome -ceq 'EXITED' -and $report.exit -eq 0)) { $report.failed += 'exit' }
+  if ($report.captureRefused) { $report.failed += ('capture:' + $report.captureRefused) }   # the registrar's own reason: a probe failure names its cause
   if (-not $report.stdoutIsX) { $report.failed += 'stdout' }
   if (-not $report.stderrEmpty) { $report.failed += 'stderr' }
   if (-not $report.aclUnchanged) { $report.failed += 'acl' }

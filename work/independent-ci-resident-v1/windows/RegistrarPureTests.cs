@@ -15,6 +15,10 @@ public static class RegistrarPureTests {
   const string Owner = "S-1-5-21-1173730660-3877291096-655431861-1001";
 
   public static int Main(string[] args) {
+    // the capture's BY_HANDLE_FILE_INFORMATION must match the native layout (52 bytes; links at 40), else the link count is another field
+    Type fi = typeof(CluedCompanionTaskRegistrar).GetNestedType("BY_HANDLE_FILE_INFORMATION", BindingFlags.NonPublic);
+    Ok(fi != null && Marshal.SizeOf(fi) == 52 && (int)Marshal.OffsetOf(fi, "VolumeSerialNumber") == 28 && (int)Marshal.OffsetOf(fi, "FileSizeLow") == 36
+      && (int)Marshal.OffsetOf(fi, "NumberOfLinks") == 40 && (int)Marshal.OffsetOf(fi, "FileIndexLow") == 48, "file-information-native-layout");
     // the definition: password logon, LUA, boot + every 15 minutes, no log-on trigger, no restart on failure, IgnoreNew, fixed action
     XmlDocument x = new XmlDocument();
     x.LoadXml(RegistrarCore.PasswordTaskXml(Root, Owner));

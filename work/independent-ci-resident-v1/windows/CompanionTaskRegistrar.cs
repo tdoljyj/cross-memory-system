@@ -730,7 +730,9 @@ public static class CluedCompanionTaskRegistrar {
   [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
   // the capture: a file's attributes, size and link count from its handle
-  [StructLayout(LayoutKind.Sequential)] struct BY_HANDLE_FILE_INFORMATION { public uint FileAttributes; public long CreationTime, LastAccessTime, LastWriteTime; public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow; }
+  // Pack = 4: the native struct has no padding after FileAttributes (FILETIME is two DWORDs, 4-aligned); without it the CLR aligns the
+  // longs to 8 and every later field reads 4 bytes off (NumberOfLinks read FileIndexHigh: every capture refused as another name).
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] struct BY_HANDLE_FILE_INFORMATION { public uint FileAttributes; public long CreationTime, LastAccessTime, LastWriteTime; public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow; }
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr file, out BY_HANDLE_FILE_INFORMATION info);
 
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetPathFn(IntPtr self, out IntPtr bstr);
