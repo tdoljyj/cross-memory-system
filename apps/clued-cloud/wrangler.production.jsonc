@@ -4,9 +4,7 @@
   "routes": [
     { "pattern": "clued.pixelgrav.com", "custom_domain": true },
     { "pattern": "kooyumi.pixelgrav.com", "custom_domain": true },
-    { "pattern": "kooyomi.com", "custom_domain": true },
-    { "pattern": "beamingface.com", "custom_domain": true },
-    { "pattern": "dev.beamingface.com", "custom_domain": true }
+    { "pattern": "kooyomi.com", "custom_domain": true }
   ],
   "vars": {
     "KOOYUMI_OAUTH_ORIGIN": "https://kooyumi.pixelgrav.com",
