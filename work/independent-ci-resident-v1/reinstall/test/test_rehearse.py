@@ -214,6 +214,15 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
 
+    def test_version_facts_accept_the_optional_live_matches_current(self):
+        # the Linux tool writes liveMatchesCurrent (DESK 2026-11-13: a strict key set refused the node's own facts)
+        for v in (True, False, None):
+            self.assertEqual(rehearse.version_facts(json.dumps({**self.fx.facts, 'liveMatchesCurrent': v}).encode())['generation'], 1)
+        with self.assertRaisesRegex(ValueError, 'LINUX_FACTS_INVALID'):
+            rehearse.version_facts(json.dumps({**self.fx.facts, 'liveMatchesCurrent': 'yes'}).encode())
+        with self.assertRaisesRegex(ValueError, 'LINUX_FACTS_INVALID'):
+            rehearse.version_facts(json.dumps({**self.fx.facts, 'other': 1}).encode())
+
     def snapshot(self, facts=None, raw=None):
         path = os.path.join(self.fx.dir, 'snapshot.json')
         with open(path, 'wb') as f:

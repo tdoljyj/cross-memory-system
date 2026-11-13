@@ -187,7 +187,11 @@ def version_facts(raw):
     required = {'contract', 'generation', 'staged', 'pinsOk', 'sourceCommit', 'ciSourceManifestSha256',
                 'manifestSha256', 'roles', 'upgradeToolSha256', 'observedAt'}
     digest = lambda value: isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+    # liveMatchesCurrent: optional, a bool or null (a tool from before it has none), as src/upgrade-mailbox.mjs#validateVersionFacts
+    if isinstance(f, dict) and 'liveMatchesCurrent' in f:
+        required = required | {'liveMatchesCurrent'}
     if (not isinstance(f, dict) or set(f) != required or f.get('contract') != FACTS_CONTRACT
+            or f.get('liveMatchesCurrent') not in (None, True, False)
             or type(f.get('generation')) is not int or not 1 <= f['generation'] <= 999999999
             or type(f.get('pinsOk')) is not bool
             or not isinstance(f.get('sourceCommit'), str) or re.fullmatch(r'[0-9a-f]{40}', f['sourceCommit']) is None
