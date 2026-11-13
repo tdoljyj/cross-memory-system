@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { makeJobV2 } from '../src/job-v2.mjs';
+import { makeJobV2, batchJobsV2 } from '../src/job-v2.mjs';
+import { digest } from '../src/proof.mjs';
+import { EffectJournal } from '../src/effect-journal.mjs';
+import * as store from '../src/batch-claim-v2.mjs';
+import { createProductionWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createIndependentScanStartPort } from '../src/scan-start-v1/native-port.mjs';
-import { admittedFacts, HEAD, BASE } from './resident-v2-fixtures.mjs';
+import { admittedFacts, HEAD, BASE, tempDir } from './resident-v2-fixtures.mjs';
 import { scanStartSubjectLine, SCAN_START_SUBJECT_MARKER } from '../src/scan-start-v1/subject.mjs';
 
 function fixture(options = {}) {
@@ -96,4 +101,41 @@ test('public metadata accepts the real first Stage1 production facts with no pri
   assert.equal(JSON.stringify(original), before);
   assert.throws(() => scanStartSubjectLine(f.job, { ...original, domain: 'fixture' }, '9'.repeat(64)));
   assert.throws(() => scanStartSubjectLine(f.job, original, 'invalid'));
+});
+
+// Field 2026-11-13: after the 06:01Z server migration Native names the claim's terminal admission Receipt, so the production
+// stage-1 facts carry terminalAdmission. The subject line counted the fields itself and refused those facts
+// (SCAN_START_SUBJECT_ADMISSION_REQUIRED); it now asks only the shared admittedFactsMatchJobV2, which accepts them.
+test('production stage 1 writes the scan-start subject for facts that carry Native\'s terminal admission', async t => {
+  const REPO = 'tdoljyj/cross-memory-system', iso = ms => new Date(ms).toISOString();
+  const job = batchJobsV2({ repo: REPO, pr: 1086, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64),
+    createdAt: iso(Date.now() - 60_000), attempt: 1 })['work-admission'];
+  const c = { claimId: randomUUID(), fence: 7, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
+  const terminalAdmission = { receipt_id: randomUUID(), claim_id: c.claimId, fence: c.fence, execution_epoch: c.epoch,
+    lease_version: 5, head_authorization_id: randomUUID() };
+  const admission = { async evaluatePr(j, packet, options) {
+    const { observationSha256, ...body } = admittedFacts(j, c, packet, { batchClaim: options?.batchClaim ?? null });
+    const facts = { ...body, terminalAdmission };
+    return { ...facts, observationSha256: digest(facts) };
+  } };
+  const dir = await tempDir(t), checks = [];
+  const batchClaims = {
+    read: async j => { try { return await store.readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
+    record: (j, x, at, terminal) => store.recordBatchClaim(dir, j, x, at, terminal),
+    rewrite: (...args) => store.rewriteUnpublishedBatchClaim(dir, ...args),
+    withPublication: (...args) => store.withBatchClaimPublication(dir, ...args) };
+  const github = {
+    async readChangedPaths(j) { return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: ['a.txt'] }; },
+    async readChecks() { return { complete: true, checks: structuredClone(checks) }; },
+    async readPullRequest() { return {}; },
+    async createCheck(payload) { const x = { id: checks.length + 100, app: { id: 5368905 }, ...structuredClone(payload) }; checks.push(x); return structuredClone(x); },
+    async revokeCheck(id, body) { const x = checks.find(y => y.id === id); Object.assign(x, body); return structuredClone(x); } };
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const pub = createProductionWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims,
+    scanStartRegistrySha256: '9'.repeat(64) });
+  const result = await pub.publish(job);
+  assert.equal(result.status, 'SETTLED', JSON.stringify(result));
+  const line = checks[0].output.summary.split('\n').find(l => l.startsWith(SCAN_START_SUBJECT_MARKER));
+  assert.deepEqual(JSON.parse(line.slice(SCAN_START_SUBJECT_MARKER.length)), { claim_id: c.claimId, fence: 7, epoch: 1,
+    source_manifest_sha256: job.sourceManifestSha256, registry_sha256: '9'.repeat(64) });
 });

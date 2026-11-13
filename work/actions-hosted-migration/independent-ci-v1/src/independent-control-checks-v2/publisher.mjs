@@ -67,7 +67,7 @@ import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admissi
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
   trainHeadDecision, strictFrontHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
-  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES } from './train-rules.mjs';
+  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, projectedHolderForJob } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
@@ -295,8 +295,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   async function touchGreen(job, proof) {
     let out;
     try {
-      const h = await slotNative.holders(), one = h?.onDuty === true && h.holders.length === 1 ? h.holders[0] : null;
-      out = one?.claimId === batchClaim?.claimId && one.pr === job.pr
+      // The same projection as the green (train-rules.mjs): a Task with several bound PRs has no scalar pr (field 2026-11-13).
+      const h = await slotNative.holders(), one = h?.onDuty === true && h.holders.length === 1 ? projectedHolderForJob(h.holders[0], job, batchClaim?.claimId) : null;
+      out = one
         ? await slotNative.touch({ pr: job.pr, headSha: job.headSha, ciState: 'green', hardCapMinutes: proof.slotHardCapMinutes }) : { onDuty: h?.onDuty ?? null, touched: false, code: 'TRAIN_TOUCH_NOT_FRONT' };
     } catch (e) { out = { onDuty: null, touched: false, code: safe(e) }; }
     const result = { ciState: 'green', onDuty: out.onDuty, touched: out.touched === true, code: out.code ?? (out.onDuty === false ? 'NODE_ROLE_NOT_HELD' : null) };

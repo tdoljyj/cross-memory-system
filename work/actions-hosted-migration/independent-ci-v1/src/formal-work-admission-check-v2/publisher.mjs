@@ -42,7 +42,7 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
-import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal } from '../independent-control-checks-v2/train-rules.mjs';
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
@@ -155,8 +155,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     let out;
     try {
       const claimed = await batchClaims.read(job), h = await slotNative.holders(), proof = await sweepStore.latestProof();
-      const one = h?.onDuty === true && h.holders.length === 1 ? h.holders[0] : null;
-      out = claimed && one?.claimId === claimed.claimId && one.pr === job.pr && one.boundPr === `${job.repo}#${job.pr}` && proof?.pr === job.pr && proof.headSha === job.headSha
+      // The same projection as stage 8 (train-rules.mjs): a Task with several bound PRs has no scalar pr (field 2026-11-13).
+      const one = claimed && h?.onDuty === true && h.holders.length === 1 ? projectedHolderForJob(h.holders[0], job, claimed.claimId) : null;
+      out = one && proof?.pr === job.pr && proof.headSha === job.headSha
         && proof.claimId === claimed.claimId && Number.isSafeInteger(proof.slotHardCapMinutes)
         ? await slotNative.touch({ pr: job.pr, headSha: job.headSha, ciState: 'running', hardCapMinutes: proof.slotHardCapMinutes })
         : { onDuty: h?.onDuty ?? null, touched: false, code: h?.onDuty === false ? 'NODE_ROLE_NOT_HELD' : 'TRAIN_TOUCH_NOT_FRONT' };

@@ -43,7 +43,7 @@ export const trainFrontRefusal = trainModeUnreadable => (trainModeUnreadable ===
 const SHA = /^[a-f0-9]{40}$/;
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const TASK_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-function projectedHolderForJob(h, job, claimId) {
+export function projectedHolderForJob(h, job, claimId) {
   if (!plain(h) || h.claimId !== claimId || !TASK_UUID.test(h.taskId ?? '') || !Array.isArray(h.boundPrs)
     || h.boundPrs.length > 50 || new Set(h.boundPrs).size !== h.boundPrs.length
     || h.boundPrs.some(ref => typeof ref !== 'string' || !ref.startsWith(`${job.repo}#`)

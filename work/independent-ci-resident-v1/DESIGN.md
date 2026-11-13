@@ -3378,10 +3378,11 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **硬上限**：报 running 之前，位子按续期时钟到 `greatest(merge_slot_at, since) + 2700 秒`（`20261009080000`:60-69 的 `until_from`），所以一个已等了 40 分钟的车头，批次第 1 段还没跑完位子就会过期。因此开车头批次的那一次第 10 段（它持有令牌）在清扫确认之后，先按“假如现在报 running”算剩余：`least(now + 90 分钟, since + slotHardCapMinutes, 保活后的 expires_at) − now`，`since` 是这个认领成为车头的时刻。剩余至少是 `train.frontBatchBudgetMs` 加一次第 8 段尝试（90 秒加助手余量）时，才报 `touch running`、再读一次 holders 确认 `until` 已按 running 时钟后移，然后给出 `OPEN_FRONT_BATCH`；不够就不报、不开，PR 页面请持有者让位子过期后重新入队（合同草稿 Change 3）。每个 head 最多两次车头批次（含 attempt 2 和上面两种重开）；车头批次计入每日额度（§36）。
 - **谁调用、用哪个令牌**：都由通用助手以 clued-control 运行 Source B 的入口，用节点自己的 CI Binding 令牌（`controllerPrincipal`）；每次调用之前，同一次运行里先读 holders，要求不是 `admission_binding_required`，并且（保活以外）这个认领是位置 1、`bound_pr` 是这个 PR：
   - `touch running`：两次。第一次在开车头批次的那一次第 10 段（上一条“硬上限”）；第二次在车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后，刷新 running 时钟；`hard_cap_minutes` 都取 `train.slotHardCapMinutes`（60–180）。第 2–7 段没有令牌，不再刷新：批次从第 1 段起超过 90 分钟时（第 2–7 段上限合计 130 分钟，`layout.mjs:83-88`），位子在第 8 段之前过期，这一批以没就绪结束、不发绿。实际批次约 20 分钟（v0.2 §5），接受这个残余。
-  - `touch green`：第 8 段 settled 之后（41.2）。
+  - `touch green`：第 8 段 settled 之后（41.2）。两次 touch running 的第二次和 touch green 认持有者与第 8 段的绿同一个投影（`train-rules.mjs#projectedHolderForJob`）：一个 Task 绑了多个 PR 时 holders 没有单一 `pr`，按 CI head 认这个 PR（ADR 0028 §6）。
   - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
   - adopt：第 10 段看到车头 PR 已合入、合并提交恰好 [T, H]、树等于 S 的树，调 `clued_work_claim_adopt_v1`（`pr_ref`、`merge_sha`）。树不同：`TRAIN_LANDED_TREE_MISMATCH`，写 PAUSE 请求、通知 Owner、不 adopt（v0.2 §3.3 第 2 条）。
   - return：第 10 段看到车头 PR 关闭未合入，调 `clued_work_merge_slot_return_v1`。车头换了 head 不 return：新 head 原位当车头，旧绿撤销。
+  - 结束已关闭的绑定（ADR 0028 §6）：持有者绑了多个 PR 时，第 10 段逐个读这些 PR 选车头；其中 GitHub 已合入的调 adopt（`merge_sha` 取 GitHub 的合并提交），已关闭未合入的调 return，本轮落地刚答过的不再问。Native 只在 adopt、return 时把 PR→Task 绑定结束，持有者自己合入就释放认领，没有这一步绑定会一直“进行中”；Task 还有别的打开的 PR 时服务端不还位（`20261108161615`:283）。选车头：CI head 所在的 PR；没有 PR 在这个 head（作者推了新提交）就取最小 PR 号，与没有 CI head 时一样；多于一个才不选。
   - 保活：第 10 段每次运行一次（下一条）。
   - 只有 ACTIVE 节点（41.6）。写端口加进 `merge-slot-native.mjs`（Source B）和 Native 端口（Source A）。
 - **服务端（一次迁移）**：

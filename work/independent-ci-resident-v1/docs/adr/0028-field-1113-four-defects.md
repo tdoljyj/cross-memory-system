@@ -1,11 +1,11 @@
-# ADR 0028：11-13 真机四个缺陷：恢复立即上状态、删备班提醒、staged 下移交认领可用、恢复后先跑第 10 段
+# ADR 0028：11-13 真机缺陷：恢复立即上状态、删备班提醒、staged 下移交认领可用、恢复后先跑第 10 段；整链体检三处
 
 - 状态：已实现（分支 `claude/resident-four-defects`，未安装）；缺陷 2 未修，见末节
 - 日期：2026-11-13
 - Owner Decision：统领原则（`42d5bf8d`：最终系统极简、低耗、高效，错误从机制上堵死）
 - 证据：DESK 回执链 2026-11-13 03:28–05:09Z（`state/receipts` 00000001–00000120）；生产库只读查询 `clued_private.work_claim_execution_policy_v1.activated_at` 为空（执行策略仍是 staged）
 - 代码：`src/executor.mjs`（`reportLedgerLatches`、tick 中欠下的第 10 段）、`src/node-duty.mjs`、`src/pr-status.mjs`；CI Source `src/admission-facts-v2.mjs#effectiveGuard`、`src/full-admission-v2.mjs`、`runtime/one-shot-v2.mjs`、`src/resident-v2/entry-runtime.mjs`
-- 测试（修复前都失败）：`test/owner.test.mjs` “a resume reaches the status before the batch it lets run”；`test/pr-status.test.mjs` “ADR 0028: a STANDBY writes no reminder …”；`test/node-duty.test.mjs` “ADR 0028: a STANDBY reminds of nothing …”；`test/train-takeover-front.test.mjs` “field 2026-11-13 (PR #1085): after a resume the scans of the queue head run once …”；CI `test/resident-v2-admission.test.mjs` “… a handed-over claim runs while staged …”、`test/resident-v2-publishers.test.mjs` “one-shot v2: the protected observation …”
+- 测试（修复前都失败）：§6 见该节；`test/owner.test.mjs` “a resume reaches the status before the batch it lets run”；`test/pr-status.test.mjs` “ADR 0028: a STANDBY writes no reminder …”；`test/node-duty.test.mjs` “ADR 0028: a STANDBY reminds of nothing …”；`test/train-takeover-front.test.mjs` “field 2026-11-13 (PR #1085): after a resume the scans of the queue head run once …”；CI `test/resident-v2-admission.test.mjs` “… a handed-over claim runs while staged …”、`test/resident-v2-publishers.test.mjs` “one-shot v2: the protected observation …”
 
 ## 1. 解除暂停后 PR 页面仍报“停摆（PAUSED）”
 
@@ -52,3 +52,12 @@
 `TRAIN_FRONT_BUDGET_SHORT` 的上限不是客户端决定的：服务端 `work_claim_merge_slot_until_from_v1` 把位子截在 `since + merge_slot_hard_cap_seconds`（`since` = 成为车头的时刻），触碰（touch running）和持有者续租都推不过它，Agent 合同也写明“the slot ends merge_slot_hard_cap_minutes after you became head”。所以“等节点期间不计入”或“系统自动重新入队”都要改服务端迁移（例如上限从车头批次第一次报 running 起算，或给 CI 一个重新入队动作）并改 Agent 合同，需要 Owner 决定和发布授权。
 
 11-13 那次是第 4 条触发的：如果恢复时先跑第 10 段，03:32 还剩 76 分钟，够开车头批次（需要 64.5 分钟），不会 BUDGET_SHORT。第 4 条修好后，只有 CI 停摆超过约 55 分钟才会再遇到。
+
+## 6. 整链体检三处（06:01Z 服务端迁移之后）
+
+行号以 main `b52be654` 为准。
+
+1. **扫描启动 subject 自己数字段。** `src/scan-start-v1/subject.mjs:8-12` 用 `ADMISSION_FIELDS_V2/V3` 再数一遍；迁移后 Native 带回终局准入回执，生产事实多了 `terminalAdmission`，共用校验 `admittedFactsMatchJobV2`（`admission-facts-v2.mjs:105-106`）接受、这里拒收，第 1 段报 `SCAN_START_SUBJECT_ADMISSION_REQUIRED`。修法：删掉自己的名单和计数，只留 `domain === 'production'` 和共用校验；字段名单不再导出，别处没法再数一遍。测试：`test/scan-start-native-port.test.mjs` “production stage 1 writes the scan-start subject for facts that carry Native's terminal admission”。
+2. **已合入的 PR 一直“进行中”。** Native 只在 adopt、return 时把 PR→Task 绑定结束，adopt 又要认领还占着位；持有者一合入就释放认领，所以从来不发生（生产 25 条残留 07:06Z 一次性清掉）。修法（`train-maintenance.mjs` 第 10 段）：选车头时读到的已绑定 PR 若 GitHub 已合入就 adopt、已关闭就 return，本轮落地刚答过的不再问；Task 还有打开的 PR 时服务端不还位（迁移 `20261108161615`:283）。同处（`:736`）：没有 PR 在持有者的 CI head 上（#1087 换 head 后 `FRONT_NOT_BOUND`）就取最小 PR 号，只有多于一个才不选。测试：`test/train-landing-e2e.test.mjs` 两条 “field 2026-11-13: …”。
+3. **touch 不走投影。** 第 8 段 `independent-control-checks-v2/publisher.mjs:298-300` 直接比 `one.pr === job.pr`，多绑定时 `pr` 为 null，绿发了但 touch green 永远不发；第 1 段的第二次 touch running（`formal-work-admission-check-v2/publisher.mjs` `touchRunning`）同样。修法：两处都用 `projectedHolderForJob`，与第 8 段的绿同一个投影。测试：`test/train-single-green.test.mjs` “stage 8, train on: a Task with several bound PRs gets its touch green …”、“stage 1, train on: the front batch reports running again …”的多绑定两句。
+

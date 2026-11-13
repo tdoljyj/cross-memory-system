@@ -228,8 +228,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     rules = rulesetFacts(reply.rules, appId);
   } catch { rulesReason = RULESET_UNREADABLE; }
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
+  const endedBound = [];
   if (holder?.boundPrs?.length > 1) {
-    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock });
+    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, ended: endedBound });
     holder = selected ?? { ...holder, pr: null, boundPr: null };
     duty = { ...duty, holders: [holder] };
   }
@@ -584,7 +585,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       }
     } catch { /* keepalive is best effort: the lease clocks still run */ }
     let frontLanded = false;
-    let terminalHandled = new Set();
+    let terminalHandled = new Set(), landedNow = new Set();
     let terminalBudgetExhausted = false;
     if (!takeoverPending && !lostDuty) {
       const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx, includeLanding: push, until: until.read });
@@ -593,9 +594,21 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       if (l.adopted.length) actions.adopted = true;
       if (l.returned.length) actions.returned = true;
       terminalHandled = l.handled;
+      landedNow = new Set([...l.adopted, ...l.returned]);
       terminalBudgetExhausted = l.nativeAttempts >= 20;
       frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
       landingState = l.state;
+    }
+    // Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and a holder that merges or closes a PR itself
+    // releases its claim first, so nothing else ends that binding. A bound PR GitHub has closed is ended here, merged with its merge
+    // commit, otherwise returned; Native keeps the slot while the Task has another active PR (migration 20261108161615). A PR the
+    // landing above has just answered is not asked again.
+    for (const p of lostDuty ? [] : endedBound.filter(p => !landedNow.has(p.number) && !terminalHandled.has(`${p.number}:${p.head?.sha}`))) {
+      try {
+        fx.n++;
+        const a = p.merged === true ? await native.adopt({ pr: p.number, mergeSha: p.merge_commit_sha }) : await native.returnSlot({ pr: p.number });
+        if (!a.onDuty) { lostDuty = true; fx.n--; break; }
+      } catch { /* unreadable reply: counted; the next round reads the PR again */ }
     }
     if (!takeoverPending && !lostDuty && !terminalBudgetExhausted && holder?.pr && front && !frontLanded && !terminalHandled.has(`${holder.pr}:${front.headSha}`)) {
       try {
@@ -713,12 +726,14 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // Task/current generation. Several PRs of that Task are normal scheduling choices;
 // contradictory Task/generation projections, unreadable data and deadline fail closed.
 async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
-  preferredHead = null, maxReads = FRONT_BIND_MAX_READS }) {
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null }) {
   const matches = [], observed = [];
   for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
     let pull;
     try { pull = await github.readPullRequest(row.number, { until }); } catch { return null; }
+    if (ended && pull?.number === row.number && pull.state === 'closed' && pull.base?.ref === 'main'
+      && (pull.merged !== true || SHA.test(pull.merge_commit_sha ?? ''))) ended.push(pull);
     if (!eligibleBindingPull(pull, job.repo)) continue;
     let binding;
     try { binding = await projectPull({ native, fx, pull, job, claimScope, readOnly, until, clock }); } catch { return null; }
@@ -732,8 +747,10 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
   const first = matches[0].binding;
   if (observed.some(b => b.task_id === first.task_id && (!b.claim || b.binding_status === 'handover_pending'
     || b.claim.claim_id !== first.claim.claim_id || b.claim.fence !== first.claim.fence || b.claim.execution_epoch !== first.claim.execution_epoch))) return null;
-  const eligible = preferredHead === null ? matches : matches.filter(m => m.pull.head.sha === preferredHead);
-  if (preferredHead !== null && eligible.length !== 1) return null;
+  // The PR at the holder's CI head; none there (field 2026-11-13, #1087: its author pushed) -> the lowest PR, as with no CI head.
+  const atHead = preferredHead === null ? [] : matches.filter(m => m.pull.head.sha === preferredHead);
+  if (atHead.length > 1) return null;
+  const eligible = atHead.length ? atHead : matches;
   const p = eligible.sort((a,b) => a.pull.number - b.pull.number)[0]?.pull ?? null;
   if (!p || !Number.isSafeInteger(p.number) || p.state !== 'open' || p.draft !== false || p.base?.ref !== 'main' || p.head?.repo?.full_name !== job.repo
     || !SHA.test(p.head?.sha ?? '')) return null;

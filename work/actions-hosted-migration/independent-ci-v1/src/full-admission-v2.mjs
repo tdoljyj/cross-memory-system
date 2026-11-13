@@ -261,4 +261,4 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   }
 }
 
-export { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, ADMISSION_FIELDS_V2, ADMISSION_FIELDS_V3, supportedNativeExecution, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';
+export { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, supportedNativeExecution, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';
