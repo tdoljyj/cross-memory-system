@@ -1,6 +1,6 @@
 // The universal values of one accepted Source (Decisions ddb4300f, b5d041d2 v2), computed from the commit's tree alone, with the
 // commit's own code where it exports it (build-package.mjs upgraderCopy). They are the values every node's assembled /4 package
-// carries, and the ones the server's accepted-Source record holds:
+// carries, and the ones release.json states:
 //   residentManifestSha256   build-package.mjs: src/, tools/, windows/ of the resident tree (per-directory sorted walk, no __pycache__)
 //   sourceManifestSha256     build-package.mjs: the CI Source closure in its listed order, plus the generated bridge v4 manifest
 //   upgraderManifestSha256   build-package.mjs upgraderCopy

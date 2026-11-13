@@ -5736,3 +5736,16 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - `reinstall/test/test_fleet_continue.py`：停在 `RUNNER_SERVICE_NOT_AS_REVIEWED`、暂停被解除后续行：用真的 `pause-old-resident.py` 重新请求，续行钉新的暂停；模板自己的 `Test-OldRootQuiet` 对原启动器报 `OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE`、对续行通过；暂停仍在时不请求；别人的暂停拒绝。
 - `reinstall/test/test_reinstall_history.py`：Windows 记录里的 Linux 代与 Linux 自己的历史不同，A 的 `capture` 与 B 的 `verify-live` 照常通过；Windows 升级器有操作在途仍拒绝。
 - `reinstall/test/test_launcher_service_state.py`：模板的 `Get-RunnerState` + `Wait-RunnerState` 对现场那次读数（controller、RUNNING）等到换回原样后通过；一直不对到时仍拒绝；两处预检都用它。
+
+## 74. 通用升级：同一个通用包原地升级已装节点（分支 `claude/fleet-generic-upgrade`，[ADR 0030](docs/adr/0030-fleet-generic-upgrade.md)）
+
+节点只有两条路，用同一个通用包和同一份接受文件：通用升级（本节），升不了就通用重装（§73、`rollout/fleet/README.md`）。链路、批准、失败后的状态见 ADR 0030；这里只记规则。
+
+1. **入口只有一条命令，每台相同。** `rollout/fleet/upgrade.mjs --artifact --artifact-sha --acceptance --work`：只读本机、非提权、零 UAC；组装本节点的 `/4` 升级包，用包内 `precheck.mjs` 跑一遍已装升级代理的 ACCEPT，通过后由**已装的** `request-upgrade.ps1` 投一个请求。之后是 §42 的升级代理：Grant、排空、暂停、两侧切换、核验、回滚。
+2. **节点值只从本机读，不要已装包目录，也不要服务端记录。** 与重装同一个 `install.mjs#readNode`；Linux 外部钉值与重装同一个 `linuxExternalPins`；角色哈希用冻结 Linux 工具的 `derive_role`（`ports.rolesDerived`）。`precheck.mjs` 的 `--installed-package` 可选：不给时升级代理按回执的清单哈希比，Linux 工具按版本事实比。
+3. **record 的引用不变。** 节点身份钉住 7 个资格引用与 Owner 决定、回执（`src/node-identity.mjs`），升级代理拒绝身份变了的包（`plan.mjs`）。所以升级得到的 Source 由现装的 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 决定，接受文件的 `fleetRefs` 必须沿用这三项；这次的 Decision 与回执只进 policy 的 `ownerAcceptance`、包的 `acceptance.decisionRef`、请求和 Grant。
+4. **升不了的在请求之前就说。** 升级代理清单、Linux 升级工具、上面三项引用、两侧是否同一个 Source，任何一项不对：`FLEET_NODE_UPGRADE_NEEDS_REINSTALL`，什么都不投。同一份接受文件走重装得到同一个 Source，舰队不分叉。
+5. **可重复运行。** 操作在途：`FLEET_NODE_UPGRADE_IN_PROGRESS`；两侧已是这个包：`FLEET_NODE_ALREADY_AT_THIS_PACKAGE`。当班节点默认不投请求（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`），Owner 接受 CI 暂停时加 `--allow-active-upgrade`。
+6. **批准。** Owner 对一个版本决定一次（接受文件）；每台的 Grant 由现有自动审批规则放行（迁移 `20261107090000`），没开时每台在页面点一次。没有新增服务端对象。
+
+测试：`rollout/test/fleet-upgrade.test.mjs`（在 CI 的 `resident-node` 套件里）；`rollout/test/precheck.test.mjs` 的“without the installed package”。

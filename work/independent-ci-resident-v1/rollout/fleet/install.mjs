@@ -233,7 +233,8 @@ export async function readNode({ root, now = Date.now() }) {
 
 // ---------------------------------------------------------------- stage 3: inputs from the node's values and the fleet's
 // resident-record-inputs/2 (reinstall/tools/record-inputs.py with -Final refs): the node's own values from its installed record, the
-// references and the formal role material from fleetRefs. The signers are the node's, bound to the new references.
+// references and the formal role material from fleetRefs. The signers are the node's, bound to the new references. (An upgrade passes
+// the installed record back in, upgrade.mjs carriedRecord: validUntil is then the installed one; an acceptance file has none.)
 export function recordInputsFor(node, acceptance) {
   const f = acceptance.fleetRefs, { acc, inst } = node;
   need(inst.ciPrincipalQualificationRef === acc.ciPrincipalQualificationRef && UUID.test(acc.ciPrincipalQualificationRef ?? ''), 'NODE_CI_PRINCIPAL_QUALIFICATION_REF_REFUSED');
@@ -252,11 +253,11 @@ export function recordInputsFor(node, acceptance) {
     appKeyId: inst.appKeyId, ciPrincipalBindingId: inst.ciPrincipalBindingId, ciPrincipalRoleRef: inst.ciPrincipalRoleRef, ciTokenPinSha256: inst.ciTokenPinSha256,
     appPublicKeySha256Base64: inst.appPublicKeySha256Base64, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey,
     controllerNodeSha256: inst.controllerNodeSha256, references,
-    owner: { ownerDecisionRef: f.ownerDecisionRef, ownerReceiptRef: f.ownerReceiptRef, acceptedAt: acceptance.acceptedAt, validUntil: null },
+    owner: { ownerDecisionRef: f.ownerDecisionRef, ownerReceiptRef: f.ownerReceiptRef, acceptedAt: acceptance.acceptedAt, validUntil: acceptance.validUntil ?? null },
     formalRoles: f.formalRoles, signers };
 }
 
-// The installed policy and companion configuration back to build-package inputs (rollout/fleet/assemble.mjs step 4): the installed CI
+// The installed policy and companion configuration back to build-package inputs (a reinstall and an upgrade alike): the installed CI
 // Source hash in relayScript/bundleScript returns to the placeholder, the generated bridgeManifestSha256 is dropped; build-package
 // rewrites the three manifest fields. ports.nodeInputs adds ownerAcceptance (the fleet's decision and receipt); the node is unchanged.
 export function configInputsFor(node, acceptance) {
@@ -532,7 +533,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
       '--node', node.nodeExe, '--record', record, '--source-root', tree, '--source-files', path.join(inputs, 'source-files.txt'), '--fresh-install',
       '--upgrader-config', path.join(inputs, 'upgrader.input.json'), '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'),
       '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R });
-    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', r.stderr);
+    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', { exit: r.status, stderr: r.stderr.slice(-400), stdout: r.stdout.trim().slice(-400) });
     return parsed(r.last);
   };
   const packageDir = path.join(work, 'package');

@@ -9,8 +9,8 @@
 //   tree/<path>                 the commit's files a node needs to reinstall or upgrade (selectTree): the resident tree's src/, tools/,
 //                               windows/ (install, verify, uninstall, CompanionTaskRegistrar.cs ...), linux/, upgrader/src/, config/,
 //                               reinstall/launcher/, reinstall/linux/, reinstall/tools/ and reinstall/rehearse.py (never reinstall/test/
-//                               or reinstall/config/: no node's configuration), rollout/precheck.mjs, rollout/fleet/ (install.mjs, the
-//                               assembler; without their tests), the CI Source closure (source-closure.json) with the closure file
+//                               or reinstall/config/: no node's configuration), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
+//                               upgrade.mjs; without their tests), the CI Source closure (source-closure.json) with the closure file
 //                               itself, prepare-record.mjs and record.mjs, and every file these .mjs reach by relative import;
 //   bundle/accepted.bundle      the git bundle whose only ref is refs/heads/accepted = the commit (full history, as build-upgrade.ps1),
 //                               packed deterministically (single-threaded full repack, no user or system git configuration);
@@ -38,7 +38,7 @@ export const TREE_PREFIXES = Object.freeze(['src/', 'tools/', 'windows/', 'linux
 export const TREE_EXCLUDED = Object.freeze([`${RESIDENT}/rollout/fleet/test/`]);
 // Below reinstall/ no test directory or Python byte-code (never under src/, tools/, windows/: those are the resident manifest's, whole).
 const EXCLUDED_PART = /^reinstall\/(?:.*\/)?(?:test|tests|__pycache__)\//;
-export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${RESIDENT}/rollout/fleet/assemble.mjs`, `${RESIDENT}/rollout/fleet/install.mjs`,
+export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${RESIDENT}/rollout/fleet/upgrade.mjs`, `${RESIDENT}/rollout/fleet/install.mjs`,
   `${RESIDENT}/reinstall/tools/check-record.mjs`, `${RESIDENT}/reinstall/rehearse.py`, `${RESIDENT}/windows/install-resident.ps1`, `${RESIDENT}/windows/verify-resident.ps1`,
   `${RESIDENT}/windows/uninstall-resident.ps1`, `${RESIDENT}/windows/CompanionTaskRegistrar.cs`, `${RESIDENT}/reinstall/linux/prep.py`, `${RESIDENT}/reinstall/launcher/generate.py`,
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,

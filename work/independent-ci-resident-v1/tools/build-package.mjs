@@ -32,7 +32,7 @@
 // (--upgrader-config, clued.independent-ci.resident-upgrader-config/1).
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX40, HEX64, UUID, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
@@ -279,7 +279,9 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
     freshInstall: freshInstall === true };
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+// Run as a program, on any platform. (The earlier test built a file:/// URL by hand, which no POSIX path ever equals: on Linux the
+// command line did nothing, printed nothing and exited 0.)
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const { values } = parseArgs({ options: { out: { type: 'string' }, policy: { type: 'string' }, companion: { type: 'string' }, node: { type: 'string' }, record: { type: 'string' }, 'source-root': { type: 'string' }, 'source-files': { type: 'string' }, 'linux-external-pins': { type: 'string' },
     'state-compat': { type: 'string' }, 'source-v2': { type: 'string' }, 'fresh-install': { type: 'boolean' }, 'upgrader-config': { type: 'string' } } });
   const sourceFiles = values['source-files'] ? (await fs.readFile(values['source-files'], 'utf8')).split(/\r?\n/).filter(Boolean) : [];

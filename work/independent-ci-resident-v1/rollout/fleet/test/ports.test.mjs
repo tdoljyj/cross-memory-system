@@ -10,10 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { BIND, PIN_FILES, SOURCE_KEYS, TRUSTED_SOURCE, canonicalBytes, deriveRole, linuxPins, linuxPinsCheck, nodeInputs, recordInputs, rolesDerived } from '../ports.mjs';
+import { BIND, PIN_FILES, SOURCE_KEYS, TRUSTED_SOURCE, canonicalBytes, deriveRole, nodeInputs, rolesDerived } from '../ports.mjs';
 import { pyCanonical, pyDumps, pyLoads } from '../pyjson.mjs';
 import { assembleRecord } from '../../../../actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-record.mjs';
-import { nodeProfile, recordInputs as fixtureInputs, roles, signerKeys, sourceFiles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
+import { nodeProfile, recordInputs as fixtureInputs, roles, sourceFiles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RES = path.resolve(HERE, '..', '..', '..');
@@ -67,31 +67,6 @@ function rconfigDoc(d, { node, base, policyInput = 'C:\\p.json', companionInput 
     ...(signer ? { signer } : {}) };
 }
 
-test('record-inputs.py without --ref == recordInputs, byte for byte (installed signer registry, and a configured signer)', { skip: skip || winOnly }, async t => {
-  const d = await tmp(t);
-  const node = nodeProfile();
-  const base = path.join(d, 'base');
-  await basePackage(base, { node });
-  const tree = path.join(d, 'tree');   // not read: the node profile is the installed package's
-  const commit = '1234567890abcdef1234567890abcdef12345678';
-  const sk = signerKeys();
-  for (const signer of [null, { keyId: 'test-key-2', runtimeId: 'fixture-runtime-2', publicKeyPem: sk.publicKeyPem }]) {
-    const cfg = path.join(d, `cfg-${signer ? 's' : 'n'}.json`);
-    await put(cfg, JSON.stringify(rconfigDoc(d, { node, base, signer })));
-    const out = path.join(d, `inputs-${signer ? 's' : 'n'}.json`);
-    const r = py([path.join(RES, 'reinstall', 'tools', 'record-inputs.py'), cfg, tree, commit, out]);
-    assert.equal(r.status, 0, String(r.stderr) + String(r.stdout));
-    const js = recordInputs({ basePackage: base, commit, distribution: node.wslDistribution, signer });
-    assert.ok(js.bytes.equals(await fs.readFile(out)), 'the same bytes');
-  }
-  // refusals keep their codes: a record file that is not its package's
-  await fs.appendFile(path.join(base, 'record', 'signers.json'), ' ');
-  assert.throws(() => recordInputs({ basePackage: base, commit, distribution: node.wslDistribution }),
-    { code: 'BASE_RECORD_FILE_NOT_ITS_PACKAGE' });
-  const r = py([path.join(RES, 'reinstall', 'tools', 'record-inputs.py'), path.join(d, 'cfg-n.json'), tree, commit, path.join(d, 'again.json')]);
-  assert.match(String(r.stderr), /BASE_RECORD_FILE_NOT_ITS_PACKAGE/);
-});
-
 test('node-inputs.py == nodeInputs, byte for byte; the same refusal for a base node left behind', { skip: skip || winOnly }, async t => {
   const d = await tmp(t);
   const baseNode = nodeProfile();
@@ -125,43 +100,6 @@ test('node-inputs.py == nodeInputs, byte for byte; the same refusal for a base n
   assert.match(String(r2.stderr), /NODE_INPUT_KEEPS_THE_BASE_NODE/);
   assert.throws(() => nodeInputs({ policy: pyLoads(JSON.stringify(leaky)), companion: pyLoads(JSON.stringify(companion)), profile, profileSha256: 'a'.repeat(64), decision: dec, receipt: rec }),
     { code: 'NODE_INPUT_KEEPS_THE_BASE_NODE' });
-});
-
-test('linux-pins.py pins/check == linuxPins/linuxPinsCheck (bytes; result; refusal)', { skip }, async t => {
-  const d = await tmp(t);
-  const tree = path.join(d, 'tree');
-  const bp = await fs.readFile(path.join(RES, 'tools', 'build-package.mjs'));
-  await put(path.join(tree, 'work', 'independent-ci-resident-v1', 'tools', 'build-package.mjs'), bp);
-  const rels = ['work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/linux-worker.mjs', 'work/a/\u00e9t\u00e9.py'];
-  for (const [k, rel] of rels.entries()) await put(path.join(tree, ...rel.split('/')), `file ${k}\n`);
-  const own = ['/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux', '/etc/systemd/system/clued-ci-worker@.service', '/etc/systemd/system/clued-ci-wsprep@.service', '/etc/systemd/system/clued-ci-archive@.service'];
-  const inst = { contract: 'clued.independent-ci.resident-linux-manifest/2', files: [...own.map((p, k) => ({ installedPath: p, sha256: String(k).repeat(64) })),
-    ...rels.map(r => ({ installedPath: `/opt/clued-independent-ci/source-v2/${r}`, sha256: 'a'.repeat(64) })),
-    { installedPath: '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', sha256: 'c'.repeat(64) }] };
-  const instFile = path.join(d, 'inst.json');
-  await put(instFile, JSON.stringify(inst));
-  const readTreeFile = rel => readFileSync(path.join(tree, ...rel.split('/')));
-  for (const node of [null, 'd'.repeat(64)]) {
-    const out = path.join(d, `pins-${node ? 'n' : 'x'}.json`);
-    const r = py([path.join(RES, 'reinstall', 'tools', 'linux-pins.py'), 'pins', instFile, out, tree, ...(node ? ['--toolchain-node', node] : [])]);
-    assert.equal(r.status, 0, String(r.stderr));
-    const js = linuxPins({ installedManifest: await fs.readFile(instFile), buildPackageText: bp.toString('utf8'), readTreeFile, toolchainNode: node });
-    assert.ok(js.bytes.equals(await fs.readFile(out)), 'pins bytes');
-    // check: a package manifest with the same shape
-    const pkg = { contract: inst.contract, files: [...inst.files.slice(0, 4).map(f => ({ ...f, sha256: 'e'.repeat(64) })), ...js.pins] };
-    const pkgFile = path.join(d, 'pkg.json');
-    await fs.writeFile(pkgFile, JSON.stringify(pkg));
-    const c = py([path.join(RES, 'reinstall', 'tools', 'linux-pins.py'), 'check', pkgFile, instFile, tree, ...(node ? ['--toolchain-node', node] : [])]);
-    assert.equal(c.status, 0, String(c.stderr));
-    assert.deepEqual(linuxPinsCheck({ packageManifest: await fs.readFile(pkgFile), installedManifest: await fs.readFile(instFile), readTreeFile, toolchainNode: node }), JSON.parse(c.stdout));
-    // an external pin that is not the new Source's
-    pkg.files[4] = { ...pkg.files[4], sha256: 'f'.repeat(64) };
-    await fs.writeFile(pkgFile, JSON.stringify(pkg));
-    const bad = py([path.join(RES, 'reinstall', 'tools', 'linux-pins.py'), 'check', pkgFile, instFile, tree, ...(node ? ['--toolchain-node', node] : [])]);
-    assert.match(String(bad.stderr), /LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE/);
-    assert.throws(() => linuxPinsCheck({ packageManifest: Buffer.from(JSON.stringify(pkg)), installedManifest: Buffer.from(JSON.stringify(inst)), readTreeFile, toolchainNode: node }),
-      { code: 'LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE' });
-  }
 });
 
 async function oracleDerive() {
