@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, runSuite, selectSuites,
+  PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
@@ -450,4 +451,114 @@ test('a PowerShell script anywhere selects the bare-pipeline .Count scan, and ot
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('powershell-count'), file);
   }
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('powershell-count'), false);
+});
+
+// Both platforms (resident ADR 0032): the same selection runs once on Linux and once on Windows.
+test('the platform table names real suites with a reason, every suite runs somewhere, and an unnamed suite runs on both', () => {
+  const ids = Object.values(SUITES).flatMap((suites) => Object.keys(suites));
+  for (const [id, entry] of Object.entries(SUITE_PLATFORMS)) {
+    assert.ok(ids.includes(id), `${id} is a suite`);
+    assert.ok(entry.platforms.length > 0 && entry.platforms.length < PLATFORMS.length && entry.platforms.every((p) => PLATFORMS.includes(p)),
+      `${id}: an entry narrows a suite to some platform (a suite on both has no entry)`);
+    assert.ok(typeof entry.reason === 'string' && entry.reason.trim().length > 10, `${id}: says why`);
+  }
+  for (const id of ids) assert.ok(suitePlatforms(id).length > 0, id);
+  assert.deepEqual(suitePlatforms('resident-node'), PLATFORMS);
+  assert.equal(hostPlatform('win32'), 'win32');
+  assert.equal(hostPlatform('linux'), 'linux');
+  assert.equal(hostPlatform('darwin'), 'linux', 'a developer machine that is not Windows selects as the Linux pool does');
+});
+
+test('each platform is selected only the suites declared for it, by changed paths, when all are selected and when the files are unknown', () => {
+  const windowsCode = ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python'];
+  for (const files of [['work/independent-ci-resident-v1/src/executor.mjs'], ['scripts/ci/ci-required-selection.mjs'], null]) {
+    const all = selectSuites('ci-suites', files).suites;
+    const linux = selectSuites('ci-suites', files, 'linux').suites;
+    const windows = selectSuites('ci-suites', files, 'win32').suites;
+    assert.deepEqual(linux, all.filter((id) => suitePlatforms(id).includes('linux')));
+    assert.deepEqual(windows, all.filter((id) => suitePlatforms(id).includes('win32')));
+    assert.deepEqual([...new Set([...linux, ...windows])].sort(), [...all].sort(), 'no selected suite is dropped by both');
+    // The code that runs on Windows in production is tested on Windows and on Linux.
+    for (const id of windowsCode) assert.ok(windows.includes(id) && linux.includes(id), `${id} on both`);
+  }
+  // A suite of one platform only: the other side selects nothing and runs nothing.
+  assert.deepEqual(selectSuites('clued-cloud-tests', ['docs/README.md'], 'linux').suites, ['clued-cloud']);
+  assert.deepEqual(selectSuites('clued-cloud-tests', ['docs/README.md'], 'win32').suites, []);
+  assert.deepEqual(selectSuites('migration-verify', null, 'win32').suites, []);
+  assert.match(selectSuites('clued-cloud-tests', ['docs/README.md'], 'win32').reason, /no file this check covers changed/);
+  assert.throws(() => selectSuites('ci-suites', null, 'darwin'), /unknown platform/);
+});
+
+test('a platform step runs every selected suite, names each result, fails when any suite fails and passes when nothing is selected', () => {
+  const ran = [];
+  const lines = [];
+  const run = (id) => { ran.push(id); return id === 'offline-drill' ? 3 : 0; };
+  assert.equal(runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
+  assert.deepEqual(ran, ['resident-node', 'offline-drill', 'selection'], 'a failure does not hide the suites after it');
+  assert.deepEqual(lines, ['- `resident-node`: passed\n', '- `offline-drill`: **failed**\n', '- `selection`: passed\n']);
+  assert.equal(runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
+  assert.equal(runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
+});
+
+// End to end (defect board row 14; #1092 was the mirror case, green on Windows and broken on Linux): a change that
+// is wrong on Windows only. The checkout below is the candidate; the selection and the commands are this (trusted)
+// file's, as in the job. The tool splits its own path on "/" to find its name, which a Windows path never contains.
+test('a change that breaks only on Windows fails the Windows side and passes the Linux side, through the same selection and commands', (t) => {
+  const candidate = mkdtempSync(path.join(os.tmpdir(), 'ci-both-platforms-'));
+  t.after(() => rmSync(candidate, { recursive: true, force: true }));
+  mkdirSync(path.join(candidate, 'scripts', 'ci'), { recursive: true });
+  mkdirSync(path.join(candidate, 'tools'));
+  writeFileSync(path.join(candidate, 'tools', 'setup.ps1'), 'Write-Output "changed"\n');
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
+    "const name = process.argv[1].split('/').pop();\nif (name === 'check-powershell-count.mjs') console.log('scanned');\n");
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.test.mjs'), [
+    "import assert from 'node:assert/strict';",
+    "import { spawnSync } from 'node:child_process';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "import { fileURLToPath } from 'node:url';",
+    "test('the scan runs and says so', () => {",
+    "  const tool = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-powershell-count.mjs');",
+    "  const result = spawnSync(process.execPath, [tool], { encoding: 'utf8' });",
+    '  assert.equal(result.status, 0);',
+    "  assert.equal(result.stdout.trim(), 'scanned', 'the tool did nothing and exited 0');",
+    '});',
+    ''].join('\n'));
+  // What the pull request changes selects the same suite on both platforms.
+  const files = ['tools/setup.ps1'];
+  for (const platform of PLATFORMS) assert.deepEqual(selectSuites('ci-suites', files, platform).suites, ['powershell-count'], platform);
+  // The step of the job on this host: the real commands, in the candidate checkout.
+  const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
+  const lines = [];
+  const status = runSelected(selectSuites('ci-suites', files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+    run: (id, options) => runSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
+  if (process.platform === 'win32') {
+    assert.equal(status, 1, 'the Windows side fails: this is the failure a Linux-only CI never saw');
+    assert.deepEqual(lines, ['- `powershell-count`: **failed**\n']);
+  } else {
+    assert.equal(status, 0, 'the same change is green on Linux');
+    assert.deepEqual(lines, ['- `powershell-count`: passed\n']);
+  }
+});
+
+// The Windows job is the selection's own entry point and nothing else, on a self-hosted Windows runner, behind the
+// same gate job as clued-required-tests.yml, and its name is the check's name only when it runs.
+test('the Windows job of the candidate workflow selects and runs with the trusted selection on a self-hosted Windows runner', () => {
+  const live = readFileSync(path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml'), 'utf8');
+  const file = ['.github/workflows/clued-required-tests-windows.yml', 'work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml']
+    .map((name) => path.join(ROOT, name)).find((name) => existsSync(name));
+  assert.ok(file, 'the Windows workflow, or its candidate before step 2 of ADR 0032');
+  const text = readFileSync(file, 'utf8');
+  const between = (source, from, to) => source.slice(source.indexOf(from), source.indexOf(to));
+  assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'), between(live, 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
+    'the triggers, permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');
+  const job = text.slice(text.indexOf('  ci-suites-windows:\n'));
+  assert.match(job, /&& 'ci-suites-windows' \|\| 'ci-suites-windows-skipped' \}\}\n {4}needs: admission-gate\n/);
+  const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
+  for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
+  assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
+  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
+  assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
+  assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
