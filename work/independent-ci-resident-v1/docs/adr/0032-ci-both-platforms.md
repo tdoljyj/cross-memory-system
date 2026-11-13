@@ -76,7 +76,7 @@
   - 环境失败之二，作业在检出或准入钩子处失败：结论同样是 `failure`，从失败的步骤能看出不是测试。处理办法和 Linux 侧今天一样（推一个空提交再跑）。
   - 两种都不计入常驻的熔断和发布上限：那两个只数常驻自己各段的环境类、网络类失败（`queue.mjs`、`classify.mjs`），Actions 检查不是常驻的段。
 - **推送成本。** 每个 head 多一个 Windows 作业；head 配额（每 Task 24 小时 40 个）不变。Windows 侧选中的套件是 Linux 侧 `ci-suites` 的子集；实际用时在第 3 步观察时记下。
-- **新检查怎么接进合入门和 Owner 规则。** 只有一处：Owner 在规则集 `24182890` 里加必需检查 `ci-suites-windows`，integration 钉 App `15368`。合并位报告器、第 8 段、列车落地条件读的都是实际规则集，不写死检查名，不用改代码。门禁守卫要把 `ci-suites-windows` 加进“只有这个工作流能用的作业名”里（第 2 步一并做）。
+- **新检查怎么接进合入门和 Owner 规则。** 只有一处：Owner 在规则集 `24182890` 里加必需检查 `ci-suites-windows`，integration 钉 App `15368`。合并位报告器、第 8 段、列车落地条件读的都是实际规则集，不写死检查名，不用改代码。“别的工作流不许用这些作业名”的门禁守卫今天还没有（`work/ci-required-tests-v1/DESIGN.md` §9 的后续项）；做它的时候把 `ci-suites-windows` 一并算上。
 
 ## 7. 上线顺序（不让 main 卡死）
 
@@ -86,6 +86,7 @@
    - `clued-merge-slot-ci.yml` 的 `workflow_run.workflows` 加 `clued-required-tests-windows`，连同它的 control Source 后继登记（`clued-control-workflow-sources.json`）和 `clued-merge-slot-ci.mjs` 的 `WORKFLOWS`；
    - `clued-work-admission.test.mjs` 里“用独立 Linux 准入门的工作流”名单加这个文件（门作业的摘要 `9c582144…` 已登记，不变）；
    - 重新生成 reconcile 登记（`clued-merge-reconcile-source-build.mjs`）；
+   - 这份清单是实测得到的：在本分支上把候选文件放进 `.github/workflows`，`scripts/ci` 里与工作流登记有关的测试失败的就是这几处（另有 `check-workflows.mjs` 的分类检查）。PR-B 以当时的测试结果为准。
    - 这些都是受保护路径，需要 Owner 的 `repo.protected_change` Grant 和 Source 接受。
    - 检查此时**不是必需的**：红了不挡任何人。
 3. **观察。** 在两台宿主机的 Windows runner 上各看到至少一次全绿（一个碰常驻代码的普通 PR 即可），并且 main 的 push 运行也绿。有 Windows 上的既有失败就修，或在 `SUITE_PLATFORMS` 里写明理由暂时移出；`admission-self-tests` 的已知失败清单是按 Linux 写的，Windows 上不同就用 `--write-known` 补。
