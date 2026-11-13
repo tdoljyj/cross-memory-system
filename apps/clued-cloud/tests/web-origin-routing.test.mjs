@@ -14,7 +14,7 @@ test("the primary domain serves Native requests while existing issuers and callb
   const primary = "https://kooyomi.com";
   const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy,
     CLUED_STORAGE_GOOGLE_REDIRECT_URI: web + "/storage/google/callback" };
-  for (const host of ["clued.pixelgrav.com", "kooyumi.pixelgrav.com", "kooyomi.com", "beamingface.com", "dev.beamingface.com"]) {
+  for (const host of ["clued.pixelgrav.com", "kooyumi.pixelgrav.com", "kooyomi.com"]) {
     assert.ok(config.routes.some(route => route.pattern === host && route.custom_domain === true));
   }
   assert.equal(production.KOOYUMI_OAUTH_ORIGIN, web);
@@ -138,8 +138,8 @@ test("look-alike hosts of the beamingface.com aliases are not admitted", async (
   const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy };
   assert.deepEqual(production.CLUED_WEB_ORIGINS.split(",").sort(), ["https://beamingface.com", "https://dev.beamingface.com",
     "https://kooyomi.com", "https://kooyumi.pixelgrav.com"]);
-  assert.deepEqual(config.routes.map(route => route.pattern).sort(), ["beamingface.com", "clued.pixelgrav.com",
-    "dev.beamingface.com", "kooyomi.com", "kooyumi.pixelgrav.com"]);
+  // The beamingface.com routes wait until the deploy token can manage that zone; the origins stay admitted.
+  assert.deepEqual(config.routes.map(route => route.pattern).sort(), ["clued.pixelgrav.com", "kooyomi.com", "kooyumi.pixelgrav.com"]);
   assert.ok(!config.routes.some(route => route.pattern === "www.beamingface.com"));
   for (const origin of ["https://www.beamingface.com", "https://beamingface.com.evil.test", "https://evilbeamingface.com",
     "https://prod.beamingface.com", "http://beamingface.com", "http://dev.beamingface.com", "https://beamingface.com:8443",
