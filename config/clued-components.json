@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "59",
+      "version": "58",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "f1b8c9951940379a8bf612a5ff791ea7a5ae94cadb21a755c110f5fcc8b8ee0c",
+      "content_sha256": "a50b864ceb2dfde7c6faa5ccf7ef4cef51b6dd2544d9a6ceddcedb0dc03bcd39",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.11",
+      "version": "0.9.10",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "fd2c6525a983be42cf0f9404e08b86ae5dde3beb6a7cdb8443b42454e4bc5a3f"
+      "content_sha256": "6e1a8d750a48b1b6a0b653d05ae0be8e07b79ba885995368f163caa9c6d2cbaa"
     },
     {
       "id": "hook.runner-job-started",
@@ -92,14 +92,14 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.14",
+      "version": "1.1.13",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py",
         "clued_work_write_set.py"
       ],
-      "content_sha256": "ea229ff3994e458f042cb116f29db50d57e51ecef1d7bb309e42ebd0f81bcf9d",
+      "content_sha256": "2ab347ce6399970d55a493e575600d423dc0b7c4e7fcaa5cc2f5c680f2c89f62",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.57",
+      "version": "1.1.56",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -432,13 +432,12 @@
         "apps/clued-cloud/supabase/migrations/20261108144312_work_claim_mechanical_files_v1.sql",
         "apps/clued-cloud/supabase/migrations/20261108161615_work_claim_pr_task_binding_v1.sql",
         "apps/clued-cloud/supabase/migrations/20261108204157_work_claim_pr_terminal_release_v1.sql",
-        "apps/clued-cloud/supabase/migrations/20261113151000_work_claim_terminal_admission_removed_v1.sql",
         "apps/clued-cloud/tests/bootstrap-ordinary-gitleaks-successor.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs",
         "apps/clued-cloud/tests/ci-scan-start-worker.test.mjs",
         "apps/clued-cloud/tests/work-claims-generated-files-db.test.mjs",
-        "apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs",
         "apps/clued-cloud/tests/work-claims-pr-task-binding-db.test.mjs",
+        "apps/clued-cloud/tests/work-claims-pr-terminal-release-db.test.mjs",
         "apps/clued-cloud/tests/work-claims-transport.test.mjs",
         "apps/clued-cloud/worker/ci-scan-start-v1.ts",
         "apps/clued-cloud/worker/work-claims.ts",
@@ -643,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "5a112e74913b5cb4e7a0141dd83eeaec80e3230c78f810f141d944b0e35c494b"
+      "content_sha256": "bad5240a57e5907c41bc25de4daa1470d59850f378c4f3dd03feb42eafa5e741"
     },
     {
       "id": "script.resource-maintenance",
@@ -715,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "43164f2e7d2c581eac74ed7c49fa41647c84f897f07860f31f7a889ca8dd3bbf"
+      "content_sha256": "5ff3dee22ba5cccbea5cb8090debfae8bf09d6296038636435154971c6f062d8"
     },
     {
       "id": "script.required-applicability",
@@ -929,7 +928,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.27",
+      "version": "1.0.28",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -947,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "aecad11bb5c4af1b934923a7642453d5c5f83b479149518dd931e50d05bc80e0"
+      "content_sha256": "df82c4e5d550e52db95ecf101b8b2257b9af25dc87444dc403514c1fae9364e8"
     }
   ]
 }

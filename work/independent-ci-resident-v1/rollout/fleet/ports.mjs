@@ -1,16 +1,13 @@
-// JavaScript ports of the Python steps of rollout/build-upgrade.ps1 that the node-side assembler needs (Decision b5d041d2 v2: the
-// node's companion account has no Python). Each one keeps the original's inputs, checks, refusal codes and output bytes; the
-// differential tests (test/ports.test.mjs) run the original next to the port on the same fixtures and compare byte for byte.
-//   recordInputs        reinstall/tools/record-inputs.py without --ref (Decision b1dd8a84: the installed references are carried)
+// JavaScript ports of the Python steps of the upgrade build that the node side needs (Decision b5d041d2 v2: a node's companion
+// account has no Python). Each one keeps the original's inputs, checks, refusal codes and output bytes; the differential tests
+// (test/ports.test.mjs) run the original next to the port on the same fixtures and compare byte for byte.
 //   nodeInputs          reinstall/tools/node-inputs.py#derive and its output bytes
-//   linuxPins           reinstall/tools/linux-pins.py pins            linuxPinsCheck   linux-pins.py check
 //   deriveRole          linux/bin/clued-ci-upgrade-linux#derive_role (frozen; the Linux stage recomputes it: ROLES_DERIVED_MISMATCH)
 //   canonicalBytes      the same tool's canonical_bytes
 //   rolesDerived        rollout/tools/roles-derived.py with the companion's roles-public.json copy (no configured-directory fallback:
 //                       a node has no root export; a missing or other-generation copy is refused with the notice's code)
+// The record inputs and the Linux external pins are install.mjs's (recordInputsFor, linuxExternalPins): one rule for both of a node's ways.
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { PyFloat, pyCanonical, pyCopy, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 
 const sha = b => createHash('sha256').update(b).digest('hex');
@@ -23,70 +20,8 @@ const get = (d, k, dflt = null) => (isDict(d) && Object.hasOwn(d, k) ? d[k] : df
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
-// ---------------------------------------------------------------- record-inputs.py
-export const RECORD_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef',
-  'ownerPackageAcceptanceRef', 'installationReceiptRef']);
 export const RECORD_FILES = Object.freeze(['record-manifest.json', 'installation.json', 'acceptance.json', 'source-manifest.json', 'signers.json']);
 const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
-const BASE_VALUE_KEYS = Object.freeze(['appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'controllerNodeSha256']);
-
-// The node profile: always the installed one, the installed (base) package's verified record (readBaseRecord). No caller names a node or
-// a profile file: the repository carries none (rconfig.node_profile is the same rule).
-export function installedNodeProfile(base, distribution) {
-  const prof = base.acc.node;
-  need(get(prof, 'contract') === 'clued.independent-ci.node-profile/1', 'INSTALLED_NODE_PROFILE_MISSING');
-  need(get(prof, 'wslDistribution') === distribution, 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES', { wslDistribution: get(prof, 'wslDistribution') });
-  return { profile: prof, profileSha256: sha(Buffer.from(pyCanonical(prof), 'utf8')) };
-}
-
-// The installed (base) package's record, every file checked against the package manifest and the record manifest.
-export function readBaseRecord(basePackage) {
-  const pkgRaw = fs.readFileSync(path.join(basePackage, 'package-manifest.json'));
-  const pins = new Map(pyLoads(pkgRaw.toString('utf8')).files.map(f => [f.target, f.sha256]));
-  const raw = Object.fromEntries(RECORD_FILES.map(n => [n, fs.readFileSync(path.join(basePackage, 'record', n))]));
-  for (const n of RECORD_FILES) need(sha(raw[n]) === pins.get('record\\' + n), 'BASE_RECORD_FILE_NOT_ITS_PACKAGE', { file: n });
-  const rm = pyLoads(raw['record-manifest.json'].toString('utf8'));
-  for (const [n, e] of Object.entries(rm.files)) need(Object.hasOwn(raw, n) && sha(raw[n]) === get(e, 'sha256'), 'BASE_RECORD_FILE_CHANGED', { file: n });
-  const [inst, acc, man, signers] = ['installation.json', 'acceptance.json', 'source-manifest.json', 'signers.json'].map(n => pyLoads(raw[n].toString('utf8')));
-  need(signers.signers.every(s => !Object.hasOwn(s, 'privateKey') && s.publicKeyPem.includes('BEGIN PUBLIC KEY') && !s.publicKeyPem.includes('PRIVATE')), 'SIGNERS_NOT_PUBLIC');
-  return { pkgRaw, raw, recordManifest: rm, inst, acc, man, signers };
-}
-
-// The fleet-wide part of a record (what record-inputs takes from the base record into the CI Source manifest): the formal role
-// material and the two references every role's controllerRelay names.
-export function fleetRecordOf(base) {
-  const formalRoles = Object.fromEntries(FORMAL_ROLES.map(r => [r, Object.fromEntries(Object.entries(base.man.roles[r]).filter(([k]) => k !== 'sourceFiles' && k !== 'controllerRelay'))]));
-  return { sourceAcceptanceRef: base.acc.sourceAcceptanceRef, hostQualificationRef: base.acc.hostQualificationRef, formalRoles };
-}
-
-export function recordInputs({ basePackage, commit, distribution, nodeRecord = {}, signer = null }) {
-  need(/^[0-9a-f]{40}$/.test(commit ?? ''), 'COMMIT_MUST_BE_40_HEX');
-  const base = readBaseRecord(basePackage);
-  const { inst, acc } = base;
-  const signers = pyCopy(base.signers);
-  const { profile, profileSha256 } = installedNodeProfile(base, distribution);
-  const roles = fleetRecordOf(base).formalRoles;
-  const refs = Object.fromEntries(RECORD_REFS.map(k => [k, acc[k]]));
-  const owner = { ownerDecisionRef: acc.ownerDecisionRef, ownerReceiptRef: acc.ownerReceiptRef, acceptedAt: acc.acceptedAt, validUntil: acc.validUntil };
-  for (const s of signers.signers) {
-    need(s.sourceAcceptanceRef === acc.sourceAcceptanceRef && s.qualificationRef === acc.hostQualificationRef, 'BASE_SIGNER_NOT_BOUND_TO_BASE_RECORD');
-    s.sourceAcceptanceRef = refs.sourceAcceptanceRef;
-    s.qualificationRef = refs.hostQualificationRef;
-  }
-  if (signer) signers.signers = [{ domain: 'production', keyId: signer.keyId, publicKeyPem: signer.publicKeyPem, qualificationRef: refs.hostQualificationRef,
-    runtimeId: signer.runtimeId, sourceAcceptanceRef: refs.sourceAcceptanceRef }];
-  const baseValues = Object.fromEntries(BASE_VALUE_KEYS.map(k => [k, inst[k]]));
-  const v = { ...baseValues, ...nodeRecord };
-  const inputs = {
-    contract: 'clued.independent-ci.resident-record-inputs/2', repository: inst.repository, sourceCommit: commit, scope: inst.scope,
-    node: profile, controllerAccount: acc.controllerAccount,
-    appId: inst.appId, installationId: inst.installationId, repositoryId: inst.repositoryId, appKeyId: v.appKeyId,
-    ciPrincipalBindingId: v.ciPrincipalBindingId, ciPrincipalRoleRef: v.ciPrincipalRoleRef, ciTokenPinSha256: v.ciTokenPinSha256,
-    appPublicKeySha256Base64: v.appPublicKeySha256Base64, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey,
-    controllerNodeSha256: v.controllerNodeSha256, references: refs, owner, formalRoles: roles, signers,
-  };
-  return { inputs, bytes: Buffer.from(pyCanonical(inputs) + '\n', 'utf8'), profile, profileSha256, base };
-}
 
 // ---------------------------------------------------------------- node-inputs.py
 const PROFILE_TEXT = Object.freeze(['hostname', 'nodeName', 'ownerSid', 'controllerSid', 'ownerProfileDirectory', 'runnerService', 'mutationMutex', 'wslDistribution']);
@@ -112,50 +47,6 @@ export function nodeInputs({ policy, companion, profile, profileSha256, decision
   }
   const out = d => Buffer.from(pyDumps(d, { sortKeys: true, separators: [',', ':'] }), 'utf8');
   return { policy: p, companion: c, policyBytes: out(p), companionBytes: out(c) };
-}
-
-// ---------------------------------------------------------------- linux-pins.py
-const SV2 = '/opt/clued-independent-ci/source-v2/';
-const TOOLCHAIN_NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node';
-
-function loadLinuxManifest(bytes) {
-  const m = pyLoads(bytes.toString('utf8'));
-  need(get(m, 'contract') === 'clued.independent-ci.resident-linux-manifest/2' && Object.keys(m).sort().join('|') === 'contract|files', 'MANIFEST_SHAPE');
-  need(m.files.every(f => isDict(f) && Object.keys(f).sort().join('|') === 'installedPath|sha256' && typeof f.sha256 === 'string' && HEX64.test(f.sha256)), 'ENTRY_SHAPE');
-  return m;
-}
-
-function treeSha(readTreeFile, installedPath) {
-  const rel = installedPath.slice(SV2.length);
-  need(rel && !rel.split('/').includes('..') && !rel.startsWith('/'), 'SOURCE_V2_PATH', { installedPath });
-  return sha(readTreeFile(rel));
-}
-
-function expectedPins(inst, readTreeFile, node) {
-  const pin = f => (f.installedPath.startsWith(SV2) ? treeSha(readTreeFile, f.installedPath) : node && f.installedPath === TOOLCHAIN_NODE ? node : f.sha256);
-  return inst.files.slice(4).map(f => ({ installedPath: f.installedPath, sha256: pin(f) }));
-}
-
-// readTreeFile(rel) -> Buffer of the commit's file (throws when missing, as Python's open does).
-export function linuxPins({ installedManifest, buildPackageText, readTreeFile, toolchainNode = null }) {
-  const inst = loadLinuxManifest(installedManifest);
-  const block = buildPackageText.split('const LINUX_FILES = [')[1]?.split('];')[0] ?? '';
-  const own = [...block.matchAll(/\['(?:bin|systemd)\/[^']+', '(\/[^']+)'\]/g)].map(m => m[1]);
-  need(own.length === 4 && inst.files.slice(0, 4).map(f => f.installedPath).join('\n') === own.join('\n'), 'INSTALLED_ORDER_IS_NOT_PACKAGE_FILES_FIRST', { own });
-  need(toolchainNode === null || /^[0-9a-f]{64}$/.test(toolchainNode), 'TOOLCHAIN_NODE_ARGUMENT');
-  need(toolchainNode === null || inst.files.slice(4).some(f => f.installedPath === TOOLCHAIN_NODE), 'TOOLCHAIN_NODE_NOT_IN_INSTALLED_MANIFEST');
-  const pins = expectedPins(inst, readTreeFile, toolchainNode);
-  need(pins.every(p => p.installedPath.startsWith('/') && !p.installedPath.split('/').includes('..')), 'PIN_PATH');
-  return { pins, bytes: Buffer.from(pyDumps(pins, { indent: 2 }) + '\n', 'utf8'),
-    changedFromInstalled: pins.filter((p, k) => p.sha256 !== inst.files[4 + k].sha256).map(p => p.installedPath) };
-}
-
-export function linuxPinsCheck({ packageManifest, installedManifest, readTreeFile, toolchainNode = null }) {
-  const a = loadLinuxManifest(packageManifest), b = loadLinuxManifest(installedManifest);
-  need(a.files.length === b.files.length && a.files.every((f, k) => f.installedPath === b.files[k].installedPath), 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE');
-  need(pyEqual(a.files.slice(4), expectedPins(b, readTreeFile, toolchainNode)), 'LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE');
-  return { linuxOwnFilesChanged: a.files.slice(0, 4).filter((f, k) => f.sha256 !== b.files[k].sha256).map(f => f.installedPath),
-    externalPinsChanged: a.files.slice(4).filter((f, k) => f.sha256 !== b.files[4 + k].sha256).map(f => f.installedPath), externalPins: a.files.length - 4 };
 }
 
 // ---------------------------------------------------------------- clued-ci-upgrade-linux (frozen) and roles-derived.py

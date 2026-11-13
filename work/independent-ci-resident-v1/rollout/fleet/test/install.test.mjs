@@ -130,7 +130,7 @@ test('universal: two builds of one commit, the same tar; the reinstall subset, n
   const w = await getWorld();
   assert.equal(sha(await fs.readFile(w.r1.tar)), sha(await fs.readFile(w.r2.tar)));
   const names = new Set(readTar(await fs.readFile(w.tar)).map(e => e.path));
-  for (const p of ['rollout/fleet/install.mjs', 'rollout/fleet/assemble.mjs', 'rollout/precheck.mjs', 'windows/install-resident.ps1', 'windows/verify-resident.ps1',
+  for (const p of ['rollout/fleet/install.mjs', 'rollout/fleet/upgrade.mjs', 'rollout/precheck.mjs', 'windows/install-resident.ps1', 'windows/verify-resident.ps1',
     'windows/uninstall-resident.ps1', 'windows/CompanionTaskRegistrar.cs', 'reinstall/launcher/generate.py', 'reinstall/launcher/template.ps1', 'reinstall/linux/prep.py',
     'reinstall/launcher/expected-plan.ps1', 'reinstall/launcher/continue.py', 'reinstall/launcher/continue-install.ps1', 'reinstall/tools/file-locks.ps1',
     'reinstall/tools/ledger-evidence.py',
@@ -214,7 +214,7 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       assert.deepEqual(py.calls[4].plan, { ...plan, launcher: null }, 'generate.py reads the whole plan, launcher not yet set');
       // the synthesized configuration: rconfig.py loads it; the node's values; the copies it names are the installed bytes
       const cfg = readJson(config);
-      assert.deepEqual([cfg.node, cfg.workDir, cfg.basePackage, cfg.nodeExe, cfg.upgradeTokenFile], [n.profile.nodeName, work, plan.packageDir, path.join(n.root, 'runtime', 'node.exe'), receipt.upgradeToken.target]);
+      assert.deepEqual([cfg.workDir, cfg.basePackage, cfg.nodeExe, cfg.upgradeTokenFile], [work, plan.packageDir, path.join(n.root, 'runtime', 'node.exe'), receipt.upgradeToken.target]);
       assert.deepEqual(cfg.linux.host, { toolchainNodeSha256: n.toolchainSha, resultPublicKeySha256: n.resultPublicKeySha256 });
       assert.deepEqual(cfg.launcher, { pauseReason: plan.reasons.pause, rearmReason: plan.reasons.rearm, w1PauseReason: plan.reasons.w1Pause });
       await assert.rejects(fs.access(cfg.linux.installedManifest), 'the installed Linux manifest is not on the Windows side (section 8.2)');

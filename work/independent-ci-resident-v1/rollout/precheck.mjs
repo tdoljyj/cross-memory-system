@@ -1,7 +1,7 @@
 // The ACCEPT step of an in-place upgrade, run beforehand, read-only and NON-elevated (DESIGN §42.3.2, Task 018da927).
 //
 //   node rollout/precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --package <dir> --package-sha <hex> --acceptance <uuid>
-//        --installed-package <dir>
+//        [--installed-package <dir>]
 //
 // It decides with the code the node will decide with. Every package carries the upgrader copy it was built with (package
 // upgrader/, manifest `upgrader`), and the node's upgrader refuses a package whose copy is not its own frozen one. So:
@@ -19,6 +19,10 @@
 // package's bytes, and the tool the one the node's version facts name; else the Linux stage refuses with the same code after the Grant.
 // The node values the upgrader reads from its admin-only upgrader.json are taken from the installed policy, which is written from the
 // same node profile (residual: if the two ever diverged, the node could answer differently; plan.mjs policy-node).
+// --installed-package (the current generation's package) is optional (ADR 0030: a node a universal reinstall installed has no copy of
+// it). Without it the upgrader copy is still decided exactly (the receipt's manifest hash covers every file; only the file-by-file
+// list of what changed is missing) and the Linux tool is compared with the version facts; the signer and the tool manifest have no
+// installed bytes to compare with here, and a change of those alone is refused by the Linux stage after the Grant (nothing moved).
 // Nothing is written; the result is one JSON line (clued.independent-ci.upgrade-precheck/1).
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -198,7 +202,7 @@ export function fleetSourceCheck({ view, target, selfNames = [], now, onDuty = f
 // that node's heartbeat is 24 hours old or it runs the target Source; the result says so (FLEET_SOURCE_MISMATCH_ALLOWED).
 export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgDir, clock = Date.now, readSlot = file => fs.readFile(file),
   allowFleetSourceMismatch = false, readParentSddl = readSddl }) {
-  need(HEX64.test(pkgSha ?? '') && UUID.test(acceptance ?? '') && typeof installedPkgDir === 'string', 'USAGE');
+  need(HEX64.test(pkgSha ?? '') && UUID.test(acceptance ?? '') && (installedPkgDir == null || typeof installedPkgDir === 'string'), 'USAGE');
   const result = { contract: PRECHECK_CONTRACT, packageManifestSha256: pkgSha, checkedAt: new Date(clock()).toISOString(), warnings: [], unreadableSlots: [] };
   const done = (status, extra = {}) => ({ ...result, status, ...extra });
   // The manifest, read once; its hash is the one the Owner will grant.
@@ -209,21 +213,27 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
   const installedUpgrader = receipt?.upgrader?.manifestSha256 ?? null;
   result.upgrader = { installed: installedUpgrader, package: manifest?.upgrader?.manifestSha256 ?? null };
   if (!HEX64.test(installedUpgrader ?? '')) return done('PRECHECK_REFUSED', { code: 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', detail: 'no-upgrader-installed' });
-  // The installed package (build-upgrade.ps1 checked it is the current generation): its upgrader copy and frozen Linux files are the node's.
-  const instBytes = await fs.readFile(path.join(installedPkgDir, 'package-manifest.json'));
-  const inst = JSON.parse(instBytes.toString('utf8'));
-  // the current generation's package (also when run on its own): an older package with the same upgrader may hold older Linux files
-  const current = JSON.parse((await fs.readFile(path.join(root, 'upgrade', 'current.json'))).toString('utf8'));
-  need(sha(instBytes) === current?.packageManifestSha256, 'PRECHECK_INSTALLED_PACKAGE_IS_NOT_THE_CURRENT_GENERATION');
-  need(inst?.upgrader?.manifestSha256 === installedUpgrader, 'PRECHECK_INSTALLED_PACKAGE_IS_NOT_THE_INSTALLED_UPGRADER');
+  // The installed package, when the caller has it (build-upgrade.ps1 checked it is the current generation): its upgrader copy and
+  // frozen Linux files are the node's, so what changed is listed file by file.
+  let inst = null;
+  if (installedPkgDir != null) {
+    const instBytes = await fs.readFile(path.join(installedPkgDir, 'package-manifest.json'));
+    inst = JSON.parse(instBytes.toString('utf8'));
+    // the current generation's package (also when run on its own): an older package with the same upgrader may hold older Linux files
+    const current = JSON.parse((await fs.readFile(path.join(root, 'upgrade', 'current.json'))).toString('utf8'));
+    need(sha(instBytes) === current?.packageManifestSha256, 'PRECHECK_INSTALLED_PACKAGE_IS_NOT_THE_CURRENT_GENERATION');
+    need(inst?.upgrader?.manifestSha256 === installedUpgrader, 'PRECHECK_INSTALLED_PACKAGE_IS_NOT_THE_INSTALLED_UPGRADER');
+  }
   if (result.upgrader.package !== installedUpgrader) {
     return done('PRECHECK_REFUSED', { code: 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', detail: 'upgrader',
-      changedFrozenFiles: diffFiles(inst.upgrader.files ?? [], manifest?.upgrader?.files ?? []) });
+      ...(inst ? { changedFrozenFiles: diffFiles(inst.upgrader.files ?? [], manifest?.upgrader?.files ?? []) } : {}) });
   }
-  const linuxOf = m => new Map((m?.linux?.files ?? []).map(f => [f.path, f.sha256]));
-  const [instLinux, pkgLinux] = [linuxOf(inst), linuxOf(manifest)];
-  const changedLinux = LINUX_FROZEN.filter(p => instLinux.get(p) !== pkgLinux.get(p)).map(p => ({ path: p, installed: instLinux.get(p) ?? null, package: pkgLinux.get(p) ?? null }));
-  if (changedLinux.length) return done('PRECHECK_REFUSED', { code: 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', detail: 'linux-upgrade-tool', changedFrozenFiles: changedLinux });
+  if (inst) {
+    const linuxOf = m => new Map((m?.linux?.files ?? []).map(f => [f.path, f.sha256]));
+    const [instLinux, pkgLinux] = [linuxOf(inst), linuxOf(manifest)];
+    const changedLinux = LINUX_FROZEN.filter(p => instLinux.get(p) !== pkgLinux.get(p)).map(p => ({ path: p, installed: instLinux.get(p) ?? null, package: pkgLinux.get(p) ?? null }));
+    if (changedLinux.length) return done('PRECHECK_REFUSED', { code: 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', detail: 'linux-upgrade-tool', changedFrozenFiles: changedLinux });
+  }
   const copy = await verifyUpgraderCopy(pkgDir, manifest.upgrader);
   // The copy's hash, computed with THIS checkout's canonical form before any of the package's code runs (an import executes it):
   // only a copy whose every byte is the installed upgrader's is imported below.
@@ -369,8 +379,8 @@ export async function precheck({ root, pkgDir, pkgSha, acceptance, installedPkgD
 export async function main(argv, { log = s => process.stdout.write(s + '\n') } = {}) {
   const { values } = parseArgs({ args: argv, options: { root: { type: 'string' }, package: { type: 'string' }, 'package-sha': { type: 'string' }, acceptance: { type: 'string' },
     'installed-package': { type: 'string' }, 'allow-fleet-source-mismatch': { type: 'boolean' } } });
-  need(values.root && values.package && values['installed-package'], 'USAGE');
-  const r = await precheck({ root: values.root, pkgDir: values.package, pkgSha: values['package-sha'], acceptance: values.acceptance, installedPkgDir: values['installed-package'],
+  need(values.root && values.package, 'USAGE');
+  const r = await precheck({ root: values.root, pkgDir: values.package, pkgSha: values['package-sha'], acceptance: values.acceptance, installedPkgDir: values['installed-package'] ?? null,
     allowFleetSourceMismatch: values['allow-fleet-source-mismatch'] === true });
   log(JSON.stringify(r));
   return r.status.startsWith('PRECHECK_PASS') ? 0 : 1;
