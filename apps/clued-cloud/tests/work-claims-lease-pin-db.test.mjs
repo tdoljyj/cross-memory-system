@@ -93,8 +93,8 @@ test('a PR-authorized claim lives as long as its PR, never past the hard deadlin
     const row = async r => (await admin.query('select status,lease_version,execution_epoch,lease_key_hash from clued_private.work_claims_v1 where claim_id=$1',[r.claim.claim_id])).rows[0];
     const verify = (who,r,n,head,extra={})=>call(who,'clued_work_verify_v1',{scope:r.claim.context_key,claim_id:r.claim.claim_id,
       pr_ref:repo+'#'+n,head_sha:head,base_sha:'b'.repeat(40),target_branch:'main',changed_paths:['fixture/'+r.claim.task_id+'/main.mjs'],...extra});
-    const admitted=async(r,n,head,{ready=false,repository=repo,paths}={})=>{
-      committed(await authorize(r,head,n,{repository,...(ready?{terminal_release_ready:true}:{})}));
+    const admitted=async(r,n,head,{repository=repo,paths}={})=>{
+      committed(await authorize(r,head,n,{repository}));
       assert.equal((await resolve('ci',n,head,{pr_ref:repository+'#'+n})).binding_status,'bound');
       const result=await verify('ci',r,n,head,{pr_ref:repository+'#'+n,...(paths?{changed_paths:paths}:{})});
       assert.equal(result.verdict,'ADMITTED',JSON.stringify(result));return result;

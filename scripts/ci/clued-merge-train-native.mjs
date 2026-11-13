@@ -16,7 +16,6 @@
 // watermark entry is dropped and counted). No body, token or holder data is ever logged.
 // Only one answer means "not on duty": Native's admission_binding_required (no ci-admission role on this Binding).
 import { createHash } from 'node:crypto';
-import { normalizeTerminalProof } from './clued-pr-task-binding.mjs';
 
 export const TOUCH_RPC = 'clued_work_merge_slot_touch_v1';
 export const ADOPT_RPC = 'clued_work_claim_adopt_v1';
@@ -53,22 +52,6 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const isoOrNull = v => (v === null || v === undefined ? null : iso(v) ? v : undefined);
 const refused22023 = r => r.status === 400 && plain(r.body) && r.body.code === '22023' && r.body.message === 'work_claim_ci_command_invalid';
 const unknownRpc = r => r.status === 404 && plain(r.body) && r.body.code === 'PGRST202';
-function autoRelease(body) {
-  check(body.terminal_replayed === undefined || typeof body.terminal_replayed === 'boolean', MERGE_TRAIN_NATIVE_UNREADABLE);
-  if (body.auto_release === undefined) {
-    check(body.terminal_replayed !== true, MERGE_TRAIN_NATIVE_UNREADABLE);
-    return {};
-  }
-  const r = body.auto_release, keys = ['status','released','reason','receipt_id','retryable'];
-  check(plain(r) && Object.keys(r).length === keys.length && keys.every(k => Object.hasOwn(r,k))
-    && ['released','retained','pending'].includes(r.status) && r.released === (r.status === 'released')
-    && r.retryable === (r.status === 'pending') && typeof r.reason === 'string' && /^[a-z][a-z0-9_]{0,119}$/.test(r.reason)
-    && UUID.test(r.receipt_id ?? ''), MERGE_TRAIN_NATIVE_UNREADABLE);
-  check(body.terminal_replayed !== true || r.status === 'released', MERGE_TRAIN_NATIVE_UNREADABLE);
-  return { autoRelease: Object.freeze({ ...r }),
-    ...(body.terminal_replayed === undefined ? {} : { terminalReplayed: body.terminal_replayed }) };
-}
-
 // One entry of ci_failover_nodes_v1 -> the port's shape, or null (malformed: dropped and counted). `node` null: a marked
 // connection with no live stage-1 node; its fields null: a node that never sent a heartbeat (§41.6 "no record").
 function statusNode(x) {
@@ -142,29 +125,24 @@ export function createMergeTrainNativeWriter({ supabaseUrl, publishableKey, scop
         && (b.touched ? iso(b.merge_slot_until) : b.merge_slot_until === null && b.reason === 'no_live_slot_for_pr'), MERGE_TRAIN_NATIVE_UNREADABLE);
       return { onDuty: true, touched: b.touched, until: b.touched ? b.merge_slot_until : null, claims: [...b.claims], returned: null };
     },
-    async adopt({ pr: n, mergeSha, terminalProof } = {}) {
+    async adopt({ pr: n, mergeSha } = {}) {
       check(pr(n) && SHA.test(mergeSha ?? ''), MERGE_TRAIN_NATIVE_INPUT_REFUSED);
-      const proof = terminalProof === undefined ? null : normalizeTerminalProof(terminalProof,
-        { repository, prNumber: n, merged: true, mergeSha });
-      const b = ok(await call(ADOPT_RPC, { scope, pr_ref: prRef(n), merge_sha: mergeSha,
-        ...(proof ? { terminal_proof: proof } : {}) }));
+      const b = ok(await call(ADOPT_RPC, { scope, pr_ref: prRef(n), merge_sha: mergeSha }));
       if (b.status === 'ok' && b.reason === NOT_ON_DUTY) { check(b.adopted === false, MERGE_TRAIN_NATIVE_UNREADABLE); return { onDuty: false, adopted: false, returned: [] }; }
       // Native's own refusal of a copy that is out (copy_not_adopted) is an answer: not adopted.
       // Every answer past the role check echoes the PR (migration 20261031060000 appends pr_ref); an adoption names its claim.
       check(((b.status === 'ok' && typeof b.adopted === 'boolean') || (b.status === 'rejected' && b.error_code === 'copy_not_adopted')) && b.pr_ref === prRef(n)
         && (!(b.status === 'ok' && b.adopted) || UUID.test(b.claim_id ?? '')), MERGE_TRAIN_NATIVE_UNREADABLE);
       check(b.merge_slot_returned === undefined || uuids(b.merge_slot_returned), MERGE_TRAIN_NATIVE_UNREADABLE);
-      return { onDuty: true, adopted: b.status === 'ok' && b.adopted, returned: [...(b.merge_slot_returned ?? [])], ...autoRelease(b) };
+      return { onDuty: true, adopted: b.status === 'ok' && b.adopted, returned: [...(b.merge_slot_returned ?? [])] };
     },
-    async returnSlot({ pr: n, terminalProof } = {}) {
+    async returnSlot({ pr: n } = {}) {
       check(pr(n), MERGE_TRAIN_NATIVE_INPUT_REFUSED);
-      const proof = terminalProof === undefined ? null : normalizeTerminalProof(terminalProof,
-        { repository, prNumber: n, merged: false });
-      const b = ok(await call(RETURN_RPC, { scope, pr_ref: prRef(n), ...(proof ? { terminal_proof: proof } : {}) }));
+      const b = ok(await call(RETURN_RPC, { scope, pr_ref: prRef(n) }));
       check(b.status === 'ok' && typeof b.returned === 'boolean', MERGE_TRAIN_NATIVE_UNREADABLE);
       if (b.reason === NOT_ON_DUTY) { check(b.returned === false, MERGE_TRAIN_NATIVE_UNREADABLE); return { onDuty: false, returned: false, claims: [] }; }
       check(b.pr_ref === prRef(n) && uuids(b.merge_slot_returned) && b.returned === b.merge_slot_returned.length > 0, MERGE_TRAIN_NATIVE_UNREADABLE);
-      return { onDuty: true, returned: b.returned, claims: [...b.merge_slot_returned], ...autoRelease(b) };
+      return { onDuty: true, returned: b.returned, claims: [...b.merge_slot_returned] };
     },
     // prs: the repository's pull requests the caller has just read as open (at most 50, distinct).
     async keepalive({ prs } = {}) {

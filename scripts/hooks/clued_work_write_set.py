@@ -117,7 +117,7 @@ def required_write_set(current, targets):
     return tuple(sorted(existing | additions))
 
 
-def _claim(value, session_ref, *, ready_required):
+def _claim(value, session_ref):
     _require(isinstance(value, dict), 'claim_response_invalid')
     for field in ('claim_id', 'task_id', 'context_key'):
         _require(isinstance(value.get(field), str) and value[field], 'claim_identity_invalid')
@@ -126,8 +126,6 @@ def _claim(value, session_ref, *, ready_required):
     _require(value.get('status') == 'ACTIVE' and value.get('execution_handover_pending') is False, 'claim_not_editable')
     _require(value.get('holder_session_ref') == session_ref, 'claim_session_mismatch')
     _require(isinstance(value.get('write_set'), list) and bool(value['write_set']), 'claim_write_set_invalid')
-    if ready_required:
-        _require(type(value.get('terminal_release_ready')) is bool, 'claim_readiness_unknown')
     return value
 
 
@@ -155,7 +153,7 @@ def _verified(callback, expected, targets, session_ref, lease_key):
                              'lease_key': lease_key, 'changed_paths': list(targets)}, 'claim_verify_failed')
     _require(reply.get('status') == 'ok' and reply.get('verdict') == 'ADMITTED'
              and reply.get('holder_edit_authorized') is True, 'claim_verify_rejected')
-    fresh = _claim(reply.get('claim'), session_ref, ready_required=True)
+    fresh = _claim(reply.get('claim'), session_ref)
     _same(expected, fresh)
     _require(set(fresh['write_set']) == set(expected['write_set']), 'claim_write_set_changed')
     return fresh
@@ -205,18 +203,16 @@ def execute_claimed_edit(*, tool_name, tool_input, root, claim, session_ref,
 
     Transports are the original holder session's authenticated calls. The key
     is used only in that original renewal and never returned or persisted.
-    A current conditional-release readiness Receipt is invalidated by an
-    ordinary CAS renewal before editing; it is never treated as idle proof.
     """
     root = Path(root).resolve()
     targets = derive_edit_targets(tool_name, tool_input, root=root)
     identities = _identities(root, targets)
-    expected = copy.deepcopy(_claim(claim, session_ref, ready_required=False))
+    expected = copy.deepcopy(_claim(claim, session_ref))
     _require(isinstance(lease_key, str) and bool(lease_key), 'holder_key_required')
     desired = required_write_set(expected['write_set'], targets)
     expanding = set(desired) != set(expected['write_set'])
     current = _verified(verify, expected, () if expanding else targets, session_ref, lease_key)
-    if expanding or current['terminal_release_ready']:
+    if expanding:
         _require(isinstance(lease_key, str) and bool(lease_key), 'holder_key_required')
         _require(isinstance(progress_ref, str) and 0 < len(progress_ref) <= 200, 'fresh_progress_required')
         args = {'scope': current['context_key'], 'claim_id': current['claim_id'],
@@ -224,18 +220,17 @@ def execute_claimed_edit(*, tool_name, tool_input, root, claim, session_ref,
                 'lease_key': lease_key, 'progress_ref': progress_ref, 'write_set': list(desired)}
         reply = _call(renew, args, 'claim_renew_failed')
         _require(reply.get('status') == 'committed', 'claim_renew_rejected')
-        renewed = _claim(reply.get('claim'), session_ref, ready_required=False)
+        renewed = _claim(reply.get('claim'), session_ref)
         _same(current, renewed, renewed=True)
         _require(set(renewed['write_set']) == set(desired), 'claim_write_set_changed')
         current = _verified(verify, renewed, targets, session_ref, lease_key)
-    _require(current['terminal_release_ready'] is False, 'claim_readiness_not_revoked')
     _require(all(any(_covers(pattern, target) for pattern in current['write_set']) for target in targets), 'claim_paths_uncovered')
     _require(derive_edit_targets(tool_name, tool_input, root=root) == targets
              and _identities(root, targets) == identities, 'edit_target_changed')
     payload = _canonical_input(tool_name, tool_input, root)
     public = {key: copy.deepcopy(current[key]) for key in (
         'claim_id', 'task_id', 'context_key', 'fence', 'execution_epoch', 'lease_version',
-        'status', 'holder_session_ref', 'execution_handover_pending', 'terminal_release_ready', 'write_set')}
+        'status', 'holder_session_ref', 'execution_handover_pending', 'write_set')}
     try:
         result = perform(payload, public)
     except Exception:

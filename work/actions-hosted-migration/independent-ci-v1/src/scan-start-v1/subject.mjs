@@ -5,7 +5,7 @@ export function scanStartSubjectLine(job, facts, registrySha256, now = Date.now(
   // First Stage1 admission intentionally has batchClaimBound=null. Only the
   // subsequent scanner boundary requires a pre-existing sticky generation;
   // never forge a replacement facts object to make that scanner check pass.
-  // The shared check alone decides which fields complete facts have (field 2026-11-13: terminalAdmission).
+  // The shared check alone decides which fields complete facts have.
   if (facts?.domain !== 'production' || !admittedFactsMatchJobV2(facts, job, now))
     throw Object.assign(new Error('SCAN_START_SUBJECT_ADMISSION_REQUIRED'), { code: 'SCAN_START_SUBJECT_ADMISSION_REQUIRED' });
   if (!/^[a-f0-9]{64}$/.test(registrySha256)) throw Object.assign(new Error('SCAN_START_SUBJECT_PIN_REQUIRED'), { code: 'SCAN_START_SUBJECT_PIN_REQUIRED' });

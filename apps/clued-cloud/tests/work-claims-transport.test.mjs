@@ -89,8 +89,7 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   for(const branch of alternatives) {
     assert.equal(branch.type,'object');assert.equal(branch.additionalProperties,false);
     for(const [name,definition] of Object.entries(byName.clued_work_renew.inputSchema.properties))
-      if(name!=='action'&&name!=='terminal_release_ready') assert.deepEqual(branch.properties[name],definition,'complete branch preserves '+name);
-    assert.equal(Object.hasOwn(branch.properties,'terminal_release_ready'),branch.properties.action?.const==='authorize_head');
+      if(name!=='action') assert.deepEqual(branch.properties[name],definition,'complete branch preserves '+name);
   }
   assert.deepEqual(commands.prepare_handover,['action','claim_id','fence','holder_label','idempotency_key']);
   assert.deepEqual(commands.offer_handover,['action','request_id','lease_key']);
@@ -197,35 +196,26 @@ test('verify schema keeps complete Host properties and closed normal/resolve/edi
   if(hasMechanical) assert.deepEqual(schema.properties.mechanical_paths_proven,normal.properties.mechanical_paths_proven);
 });
 
-test('only authorize_head can declare holder terminal readiness through complete advertised Host schemas',async()=>{
+test('terminal admission removed: no renew command advertises or accepts terminal_release_ready',async()=>{
   const worker=await loadContinuityWorker();
   const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
   const schema=tools.find(tool=>tool.name==='clued_work_renew').inputSchema;
   const Ajv=require('ajv'),ajv=new Ajv({allErrors:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
-  const validate=ajv.compile(schema),auth=schema.anyOf.find(branch=>branch.properties.action.const==='authorize_head');
+  const validate=ajv.compile(schema);
   const input={action:'authorize_head',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,lease_version:1,
     lease_key:'clued_lk_'+'e'.repeat(64),repository:'owner/repository',head_sha:'f'.repeat(40),target_branch:'main',
-    idempotency_key:'terminal-ready-fixture',terminal_release_ready:true};
-  for(const ready of [true,false]){
-    const business={...input,terminal_release_ready:ready};assert.equal(validate(business),true,JSON.stringify(validate.errors));
-    for(const props of [schema.properties,auth.properties])
-      assert.deepEqual(Object.fromEntries(Object.entries(business).filter(([key])=>Object.hasOwn(props,key))),business);
-  }
-  assert.equal(validate({...input,terminal_release_ready:'true'}),false);
-  for(const branch of schema.anyOf.filter(branch=>branch!==auth)){
-    assert.equal(branch.properties.terminal_release_ready,undefined,'other commands cannot declare or clear readiness');
-    const action=branch.properties.action?.const;
-    const invalid={...input,...(action?{action}:{progress_ref:'new-progress'})};if(!action)delete invalid.action;
-    assert.equal(validate(invalid),false);
-  }
+    idempotency_key:'authorize-fixture'};
+  assert.equal(validate(input),true,JSON.stringify(validate.errors));
+  for(const ready of [true,false]) assert.equal(validate({...input,terminal_release_ready:ready}),false);
+  assert.equal(JSON.stringify(tools).includes('terminal_release_ready'),false);
 });
 
-test('real Worker Binding and OAuth preserve holder edit and readiness business fields but never use Host metadata as proof',async()=>{
+test('real Worker Binding and OAuth preserve holder edit and authorize business fields but never use Host metadata as proof',async()=>{
   const worker=await loadContinuityWorker();
   const editing={action:'verify_edit',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,execution_epoch:2,
     lease_version:3,lease_key:'clued_lk_'+'e'.repeat(64),changed_paths:['source/file.mjs']};
   const authorizing={action:'authorize_head',scope:'global',claim_id:editing.claim_id,fence:1,lease_version:3,lease_key:editing.lease_key,
-    repository:'owner/repository',head_sha:'f'.repeat(40),target_branch:'main',idempotency_key:'worker-ready-fixture',terminal_release_ready:true};
+    repository:'owner/repository',head_sha:'f'.repeat(40),target_branch:'main',idempotency_key:'worker-authorize-fixture'};
   const {calls,restore}=mockFetch(({body})=>{
     assert.equal(Object.hasOwn(body.p_input,'_meta'),false);
     return Response.json(body.p_input.lease_key?{status:'ok',verdict:'ADMITTED',holder_edit_authorized:true}
@@ -233,7 +223,7 @@ test('real Worker Binding and OAuth preserve holder edit and readiness business 
   });
   try{
     for(const token of [bindingToken,oauthToken])for(const [tool,business] of [['clued_work_verify',editing],['clued_work_renew',authorizing]]){
-      const annotated={...business,_meta:{lease_key:'clued_lk_'+'a'.repeat(64),execution_epoch:99,terminal_release_ready:false}};
+      const annotated={...business,_meta:{lease_key:'clued_lk_'+'a'.repeat(64),execution_epoch:99}};
       const response=(await (await worker.fetch(mcp(token,tool,annotated),enabled,ctx)).json()).result;
       assert.equal(response.isError,false);assert.deepEqual(calls.at(-1).body.p_input,business);
       if(token===bindingToken)assert.equal(calls.at(-1).rpc,tool+'_v1');

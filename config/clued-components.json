@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "58",
+      "version": "59",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "a50b864ceb2dfde7c6faa5ccf7ef4cef51b6dd2544d9a6ceddcedb0dc03bcd39",
+      "content_sha256": "f1b8c9951940379a8bf612a5ff791ea7a5ae94cadb21a755c110f5fcc8b8ee0c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.10",
+      "version": "0.9.11",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "fcc177529d3d68e99a93f3eacaa8bece6bb0593a04519885792898e514e5d213"
+      "content_sha256": "147e110e52814a449216baa44212defc034d695e913232033d04444b324e33f0"
     },
     {
       "id": "hook.runner-job-started",
@@ -92,14 +92,14 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.13",
+      "version": "1.1.14",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py",
         "clued_work_write_set.py"
       ],
-      "content_sha256": "2ab347ce6399970d55a493e575600d423dc0b7c4e7fcaa5cc2f5c680f2c89f62",
+      "content_sha256": "ea229ff3994e458f042cb116f29db50d57e51ecef1d7bb309e42ebd0f81bcf9d",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "4993e43c4266ef4cd242d0738b1f5de575f6d22d87e9092586bee4609cb498e9"
+      "content_sha256": "537da83dbac0b84394bbaa92a709c2efe8cbae1b10ce700ff00ad1b717a402b0"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "9cc037cbcfea743b37eb853eff7138bfa1566da62a85421f704cafa02b02da95"
+      "content_sha256": "ef5f0e62bf3600aabdd823f98ce58d722ed44c880fc020ce9df3f4cefd082165"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "46826056bbe8863fa15ed463426859107d68bec588001f531525e28eed984491"
+      "content_sha256": "a769f5015c29a0e2271a1f47fe52405734fdcdbde5098c547b342c3b14c846a1"
     }
   ]
 }
