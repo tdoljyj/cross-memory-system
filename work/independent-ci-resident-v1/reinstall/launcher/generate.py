@@ -109,7 +109,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '4d53ede1e30f48f5c2caaa749b75041e80a221ea987955824d747be4ad5b34b2'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES
+TEMPLATE_SHA = 'b9de6146104eaea59f5cdaff33ba025e4afbcbc85b3d987d38cf48deceeea026'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
