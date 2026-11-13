@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "9d8075631ce5573dfb9d4b6be6e6ee89cf080fde4278858123e6887cb67b722e"
+      "content_sha256": "945738970edc13cb9b73c2f9fd701f6e727828d3d474ec52bb7e6ecdf2d82059"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.53",
+      "version": "1.1.54",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "fe97941e5377fed55af9215aca5c20ea58f2d033806b4d7af24469f337d801dc"
+      "content_sha256": "28fad28e0a244f23c3ab87d5de0447594febe9ea06445bafd7161cdf1fdd31bf"
     },
     {
       "id": "script.resource-maintenance",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "cb9493c02dcbc035844057d114537430b44632553a806e31c7cdd718ac8f92c9"
+      "content_sha256": "e40029b8d88c45fbc3aff2c882c2d950b607170bc31e2dd5ecd73713347b81b4"
     }
   ]
 }
