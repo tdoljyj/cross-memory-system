@@ -257,7 +257,7 @@ export function recordInputsFor(node, acceptance) {
     formalRoles: f.formalRoles, signers };
 }
 
-// The installed policy and companion configuration back to build-package inputs (rollout/fleet/assemble.mjs step 4): the installed CI
+// The installed policy and companion configuration back to build-package inputs (a reinstall and an upgrade alike): the installed CI
 // Source hash in relayScript/bundleScript returns to the placeholder, the generated bridgeManifestSha256 is dropped; build-package
 // rewrites the three manifest fields. ports.nodeInputs adds ownerAcceptance (the fleet's decision and receipt); the node is unchanged.
 export function configInputsFor(node, acceptance) {

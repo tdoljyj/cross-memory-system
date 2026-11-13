@@ -102,6 +102,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 3. 改了什么（删多于加）
 
 - 新 `rollout/fleet/upgrade.mjs`；删 `rollout/fleet/assemble.mjs` 及其测试（它的两个输入不存在，没有任何调用方）。通用包构建的可重复性仍由 `rollout/fleet/test/install.test.mjs` 覆盖。
+- `rollout/fleet/ports.mjs`：删掉只有旧组装器用的四个移植（`recordInputs`、`readBaseRecord`、`linuxPins`、`linuxPinsCheck` 等）及其差分测试。升级与重装现在用同一份 `install.mjs#recordInputsFor`、`linuxExternalPins`，一处规则。
 - `rollout/precheck.mjs`：`--installed-package` 可选。不给时：升级代理按回执比（哈希覆盖每个文件，结论相同，只是不列出逐文件差异）；Linux 签名器与工具清单没有已装字节可比，由 Linux stage 在 Grant 之后拒绝（干净拒绝，节点不动）。
 - `rollout/fleet/install.mjs`：`recordInputsFor` 把 `validUntil` 原样带出（重装仍是 `null`）。
 - `rollout/fleet/universal.mjs`：`TREE_FILES` 里的 `assemble.mjs` 换成 `upgrade.mjs`。
@@ -122,4 +123,5 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 - **节点自己拉包、自己发起**（fleet 驱动）。现在每台节点仍要有一个 Owner 会话里的进程跑那条命令。要做成完全无人值守，需要：companion 账户对 `upgrade\inbox` 的 create-only 权限（装机布局，随下一次重装）和节点读取“当前接受的版本”的来源。两台时不值得；节点数上来再做。
 - 第 1 代节点上 Linux 签名器单独变更的提前发现（见第 3 节）。升级过一次之后节点自己留有上一个包，就能提前比。
 - 真机：本分支未在 DESK、TURING 上运行升级；只在本机以 `--no-request` 对 DESK 现装状态做了只读演练（结果见交付说明）。
-- `rollout/build-upgrade.ps1`（按台、按配置文件构建升级包的旧入口）仍在：它的 Python 工具是 ports 差分测试的原件。不再是上线路径。
+- `rollout/build-upgrade.ps1`（按台、按配置文件构建升级包的旧入口）仍在：它的 Python 工具（`node-inputs.py`、`roles-derived.py`）是 ports 差分测试的原件。它不再是上线路径；删它连同 `rollout/tools/` 是下一步的清理，本次没做。
+- `rollout/fleet/test/` 不在 CI 的套件选择里（`{tests:rollout/test}` 不递归），所以其中一条断言已经在 main 上坏了（`cfg.node`，本次顺手修掉）。把它接进 CI 要先确认这些测试在 Linux 执行机上能跑（它们用 Windows 路径和 Python 工具），本次没做。
