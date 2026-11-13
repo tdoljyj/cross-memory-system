@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-11-10T05:25:50.885Z",
-  "history_through": "20261110052210",
-  "row_count": 307,
+  "exported_at": "2026-11-13T07:28:49.419Z",
+  "history_through": "20261113070640",
+  "row_count": 319,
   "rows": [
     {
       "version": "20260823154017",
@@ -2460,6 +2460,102 @@
       "statements_length": 38552,
       "source": "migrations/20261108161615_work_claim_pr_task_binding_v1.sql",
       "transform": "identical"
+    },
+    {
+      "version": "20261113060122",
+      "name": "ci_scan_start_batch_key_v1",
+      "statements_md5": "fb66e874d17f9543befd92f0253f66d3",
+      "statements_length": 12503,
+      "source": "migrations/20261108090000_ci_scan_start_batch_key_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060128",
+      "name": "work_claim_mechanical_files_v1",
+      "statements_md5": "2541e4040072fecd8a3c3438ec1a7da5",
+      "statements_length": 16560,
+      "source": "migrations/20261108144312_work_claim_mechanical_files_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060133",
+      "name": "work_claim_pr_terminal_release_v1",
+      "statements_md5": "f4bc2ae45845fb44d9f771cd61910b28",
+      "statements_length": 32066,
+      "source": "migrations/20261108204157_work_claim_pr_terminal_release_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060138",
+      "name": "ci_database_lint_type_fixes_v1",
+      "statements_md5": "5aef8aa85fc45206961b3fdc5f299ebc",
+      "statements_length": 1623,
+      "source": "migrations/20261111064000_ci_database_lint_type_fixes_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060143",
+      "name": "work_claim_lease_pinned_by_head_v1",
+      "statements_md5": "aa2174a8db46370b5a83f384f3173cbd",
+      "statements_length": 6891,
+      "source": "migrations/20261112090000_work_claim_lease_pinned_by_head_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060148",
+      "name": "ci_failover_fast_v1",
+      "statements_md5": "8720d333c62f9aea6f35c6330f1d97b5",
+      "statements_length": 11632,
+      "source": "migrations/20261112130500_ci_failover_fast_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060153",
+      "name": "ci_scan_start_native_direct_v1",
+      "statements_md5": "8b72052308e5a04ec81e5e3c3aba3cac",
+      "statements_length": 4164,
+      "source": "migrations/20261113090000_ci_scan_start_native_direct_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113060159",
+      "name": "binding_role_in_force_single_reader_v1",
+      "statements_md5": "633f266500a11c476c5f23aa38275e89",
+      "statements_length": 7189,
+      "source": "migrations/20261113100000_binding_role_in_force_single_reader_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261113062334",
+      "name": "audit_receipts_work_claim_terminal_idx_v1",
+      "statements_md5": "ea3f5fab223d47650ef16485147d0bfa",
+      "statements_length": 471,
+      "source": "migrations/20261113142000_audit_receipts_work_claim_terminal_idx_v1.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20261113063921",
+      "name": "work_verify_terminal_head_authorization_v1",
+      "statements_md5": "ebb03a27192802ee6fcbc590cb7ba287",
+      "statements_length": 744,
+      "source": "migrations/20261113143000_work_verify_terminal_head_authorization_v1.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20261113065005",
+      "name": "work_verify_terminal_admission_pause_v1",
+      "statements_md5": "89478c6367c8fdefe5629341781750c9",
+      "statements_length": 730,
+      "source": "migrations/20261113144500_work_verify_terminal_admission_pause_v1.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20261113070640",
+      "name": "work_claim_pr_task_bindings_landed_cleanup_v1",
+      "statements_md5": "c4ed4e428e151e3f8423b2a4fa0fc674",
+      "statements_length": 738,
+      "source": "migrations/20261113150000_work_claim_pr_task_bindings_landed_cleanup_v1.sql",
+      "transform": "strip_final_newline"
     }
   ],
   "repository_only": [
