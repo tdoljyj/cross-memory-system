@@ -176,7 +176,9 @@ export async function readNode({ root, now = Date.now() }) {
     let cwBytes = await readOrNull(at('install', 'companion-wsl.json'));
     if (cwBytes === null) {
       const parent = path.dirname(root);
-      const kept = (await fs.readdir(parent).catch(() => [])).filter(n => /^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$/.test(n)).sort().reverse();
+      // the kept roots: the parent's listing where this (non-elevated) process may list it, and those the installed backfill manifest names
+      const named = ((await readOrNull(at('install', 'backfill-manifest.json')))?.toString('utf8').match(/resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+/g)) ?? [];
+      const kept = [...new Set([...(await fs.readdir(parent).catch(() => [])), ...named])].filter(n => /^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$/.test(n)).sort().reverse();
       for (const n of kept) { cwBytes = await readOrNull(path.join(parent, n, 'install', 'companion-wsl.json')); if (cwBytes !== null) break; }
     }
     need(cwBytes !== null, 'NODE_COMPANION_WSL_RECORD_REFUSED', 'no install\companion-wsl.json, live or kept');
