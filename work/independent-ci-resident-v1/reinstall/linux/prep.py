@@ -72,8 +72,7 @@ OLD_COMMIT = _facts['sourceCommit']
 OLD_MANIFEST = _facts['ciSourceManifestSha256']
 OLD_LINUX_RES_MANIFEST = _facts['manifestSha256']
 OLD_GENERATION = _facts['generation']
-OLD_PKG_SHA = _gen['packageManifestSha256']
-assert re.fullmatch(r'[0-9a-f]{40}', OLD_COMMIT) and all(re.fullmatch(r'[0-9a-f]{64}', x) for x in (OLD_MANIFEST, OLD_LINUX_RES_MANIFEST, OLD_PKG_SHA)) and type(OLD_GENERATION) is int and OLD_GENERATION >= 1
+assert re.fullmatch(r'[0-9a-f]{40}', OLD_COMMIT) and all(re.fullmatch(r'[0-9a-f]{64}', x) for x in (OLD_MANIFEST, OLD_LINUX_RES_MANIFEST)) and type(OLD_GENERATION) is int and OLD_GENERATION >= 1
 # review 1-1: the node's own host facts (configuration linux.host), not TURING's
 NODE_SHA = CFG['linux']['host']['toolchainNodeSha256']
 PUB_SHA = CFG['linux']['host']['resultPublicKeySha256']
@@ -278,7 +277,6 @@ UPG_PLAN={UPG_PLAN}
 INSTALL_PLAN={INSTALL_PLAN}
 UPG_TOOL_SHA={UPG_TOOL_SHA}
 OLD_LINUX_RES_MANIFEST={OLD_LINUX_RES_MANIFEST}
-OLD_PKG_SHA={OLD_PKG_SHA}
 OLD_GENERATION={OLD_GENERATION}
 SUFFIX={SUFFIX}
 BACKUP_PATHS='/var/lib/clued-independent-ci/resident /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 /etc/systemd/system/clued-ci-worker@.service /etc/systemd/system/clued-ci-wsprep@.service /etc/systemd/system/clued-ci-archive@.service'
@@ -574,4 +572,4 @@ for name, text in zip(NAMES, (A, B, RESUME)):
         f.write(text.encode('utf-8'))
     out[name] = sha(p)
     paths[name] = p
-print(json.dumps({'scripts': out, **({'paths': paths, 'inDir': IN, 'wslInDir': WSL_IN, 'outDir': OUT_DIR, 'wslOutDir': WSL_OUT} if FLEET else {}), 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'packageManifestSha256': PKG_SHA, 'linuxResidentManifest': LINUX_RES_MANIFEST, 'upgradePlanSha256': UPG_PLAN, 'installPlanSha256': INSTALL_PLAN, 'oldPackage': OLD_PKG_SHA}, indent=1))
+print(json.dumps({'scripts': out, **({'paths': paths, 'inDir': IN, 'wslInDir': WSL_IN, 'outDir': OUT_DIR, 'wslOutDir': WSL_OUT} if FLEET else {}), 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'packageManifestSha256': PKG_SHA, 'linuxResidentManifest': LINUX_RES_MANIFEST, 'upgradePlanSha256': UPG_PLAN, 'installPlanSha256': INSTALL_PLAN}, indent=1))
