@@ -331,7 +331,7 @@ test('stage 1, train on: the front batch reports running again after its check s
   assert.equal(x.r.trainTouch.touched, true);
   assert.ok(x.logs.some(([k, d]) => k === 'native_train_touch' && d.ciState === 'running'));
   for (const [name, edit] of Object.entries({
-    'another PR holds the slot': w => { w.holders.holders[0].pr = 889; w.holders.holders[0].boundPr = `${REPO}#889`; },
+    'another PR holds the slot': w => { Object.assign(w.holders.holders[0], { pr: 889, boundPr: `${REPO}#889`, prs: [889], boundPrs: [`${REPO}#889`] }); },
     'another claim holds the slot': w => { w.holders.holders[0].claimId = randomUUID(); },
     'not on duty': w => { w.holders = { onDuty: false, holders: [] }; },
     'no proof of this head (no cap)': w => { w.proof = null; } })) {
@@ -343,6 +343,10 @@ test('stage 1, train on: the front batch reports running again after its check s
   assert.deepEqual([f.r.status, f.r.trainTouch.code, f.github.checks[0].conclusion], ['SETTLED', 'MERGE_TRAIN_NATIVE_UNREADABLE', 'success']);
   // a batch that tests the head never touches
   assert.equal((await stage1(t, { testSha: HEAD })).touches.length, 0);
+  // field 2026-11-13: a Task with several bound PRs (no scalar pr) is touched through the projection, at its running CI head only
+  const several = w => Object.assign(w.holders.holders[0], { prs: [PR, 889], boundPrs: [`${REPO}#${PR}`, `${REPO}#889`], pr: null, boundPr: null });
+  assert.deepEqual((await stage1(t, { edit: several })).touches, [{ pr: PR, headSha: HEAD, ciState: 'running', hardCapMinutes: 120 }]);
+  assert.equal((await stage1(t, { edit: w => { several(w); w.holders.holders[0].ciHeadSha = OTHER; } })).touches.length, 0);
 });
 
 test('stage 1 binding (§41.8): a renewal between the observations no longer voids; main tip moving still does', async t => {
@@ -478,4 +482,14 @@ test('front identity, stage 8: the non-front control pair on H does not stop the
   const o = fakeGithub(); o.checks.push(...nonFrontChecks(), checkRun(9, 'kooyumi-merge-slot', admissionExternalIdV2('independent-ci:control:control-merge-slot', jobsFor()['control-merge-slot'], otherClaim)));
   const y = await stage8(t, { github: o });
   assert.deepEqual([y.r.status, y.r.reason, y.r.sideEffects, y.github.checks.length], ['BLOCKED', 'ROLE_ALREADY_ON_GITHUB', 0, 6]);
+});
+
+// Field 2026-11-13: a Task with several bound PRs has no scalar pr (null). Stage 8's green already decided through the projection
+// (trainHeadDecision), but touch green compared one.pr === job.pr and never touched; it now asks the same projection.
+test('stage 8, train on: a Task with several bound PRs gets its touch green through the same projection as its green', async t => {
+  const x = await stage8(t, { edit: w => { const h = w.holders.holders[0];
+    h.boundPrs = [`${REPO}#${PR}`, `${REPO}#889`]; h.prs = [PR, 889]; h.pr = null; h.boundPr = null; } });
+  assert.equal(x.r.status, 'SETTLED', JSON.stringify(x.r));
+  assert.deepEqual(x.touches, [{ pr: PR, headSha: HEAD, ciState: 'green', hardCapMinutes: 120 }]);
+  assert.deepEqual(x.r.trainTouch, { ciState: 'green', onDuty: true, touched: true, code: null });
 });

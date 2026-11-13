@@ -348,6 +348,33 @@ test('steady state (DESIGN §62.6): the queue head\'s ordinary batch gives way a
   assert.ok(!(await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), JSON.stringify(await terminals()));
 });
 
+// Field 2026-11-13 (DESK, PR #1085, head 734cd84): the node came back paused (stage 10 ran revoke-only), the Owner resumed at 03:32:14Z and
+// the same tick reserved the queue head's ordinary batch at once: the §62.6 yield read the revoke-only run and did not apply, so gitleaks,
+// trivy and contract-placement ran on H (03:34-03:46), and the front batch on S, with the same tree on the same main, ran them all again
+// (04:09-04:18). The stage-10 run a lifted pause owes now comes before any batch work: each scan stage of the head runs once.
+test('field 2026-11-13 (PR #1085): after a resume the scans of the queue head run once, on the front batch only', async t => {
+  const { e, f, engine } = await steadyState(t);
+  // what steadyState queued is held behind a PAUSE first: stage 10 runs revoke-only, nothing is scheduled
+  await f.ledger.pause({ reason: 'fleet-node-reinstall-hold-after-install' });
+  for (let i = 0; i < 20 && f.exec.trainLast?.mode !== 'revoke-only'; i++) { assert.equal((await f.exec.tick()).state, 'PAUSED'); f.advance(MIN); }
+  assert.equal(f.exec.trainLast?.mode, 'revoke-only', 'the run under the pause');
+  assert.deepEqual(engine.stages, []);
+  const { resumeRequest, writeOwnerRequest } = await import('../tools/rearm-tool.mjs');
+  const p = await f.ledger.paused();
+  await writeOwnerRequest(path.join(f.root, 'owner'), resumeRequest({ expectedPausedSha256: p.sha256, by: 'S-1-5-21-1-2-3-1001' }, f.clock), f.clock);
+  let green = null;
+  for (let i = 0; i < 60 && !green; i++) {
+    await f.exec.tick();
+    green = slotGreen(e, H);
+    if (!green) f.advance(MIN);
+  }
+  assert.ok(green, `no kooyumi-merge-slot success; stages ${JSON.stringify(engine.stages)}`);
+  for (const stage of [2, 3, 4, 5, 6, 7]) {
+    assert.equal(engine.stages.filter(s => s.pr === 910 && s.stage === stage).length, 1, `stage ${stage} ran more than once: ${JSON.stringify(engine.stages)}`);
+  }
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
 // Guard: a PR whose claim is not first in the merge queue runs its ordinary batch through stages 1-7 (and stage 8) as before.
 test('steady state (DESIGN §62.6): an ordinary batch whose claim is not the queue head runs on past stage 1', async t => {
   const { f, engine } = await steadyState(t, { pr: 911, claim: OTHER_CLAIM, head: sha(0x7777) });

@@ -18,7 +18,7 @@ import { EffectJournal, rolePublicationKey } from '../src/effect-journal.mjs';
 import { readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../src/resident-v2/entry-runtime.mjs';
-import { supportedNativeExecution } from '../src/admission-facts-v2.mjs';
+import { effectiveGuard, supportedNativeExecution } from '../src/admission-facts-v2.mjs';
 import { serverAnswerCurrent, retainServerAnswerForFacts } from '../src/clock-skew.mjs';
 import { STATE_V2 } from '../src/resident-v2/layout.mjs';
 
@@ -30,7 +30,7 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
   const claim = body?.claim;
   const failed = [];
   for (const [name, ok] of [['reply', status === 200 && body?.status === 'ok'], ['verdict', body?.verdict === 'ADMITTED'],
-    ['execution_policy', supportedNativeExecution(body?.execution_policy, claim?.lease_key_required)],
+    ['execution_policy', supportedNativeExecution(body?.execution_policy, effectiveGuard(body?.execution_policy, claim?.lease_key_required))],
     ['handover_pending', claim?.execution_handover_pending === false], ['claim_status', claim?.status === 'ACTIVE'],
     ['claim_identity', claim?.claim_id === batchClaim.claimId && claim?.fence === batchClaim.fence && claim?.execution_epoch === batchClaim.epoch],
     ['context_key', claim?.context_key === config.scope],
@@ -42,7 +42,7 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
   if (failed.length) throw Object.assign(new Error('native_claim_observation_refused'), { code: 'native_claim_observation_refused', checks: failed });
   return { ...subjectOfV2(job), ...Object.fromEntries(REFS.map(r => [r, accepted[r]])), ciPrincipalBindingId: config.ciPrincipalBindingId,
     sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true, observedAt: body.verified_at, claimExpiresAt: claim.expires_at,
-    claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }, executionPolicy: body.execution_policy, guarded: claim.lease_key_required };
+    claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }, executionPolicy: body.execution_policy, guarded: effectiveGuard(body.execution_policy, claim.lease_key_required) };
 }
 
 // Bounded retry of the verify request (KooYomi Task a3ad42a9; the issuer's RETRY_WAITS_MS, resident DESIGN §7.8). A

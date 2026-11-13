@@ -572,3 +572,39 @@ test('push: a member that moved to a new head after its batch landed is not adop
   await stage10(e);
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 911]);
 });
+
+// Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and the holder releases its claim as soon as it
+// merges, so a PR the holder merged (or closed) itself was never adopted and its binding stayed active for good (25 such rows were
+// cleared by hand at 07:06Z). Stage 10 reads every bound PR of the holder; one GitHub has closed is ended with adopt or return.
+test('field 2026-11-13: bound PRs merged or closed outside the train are adopted or returned by stage 10, the open one stays front', async t => {
+  const e = await world(t, { prs: [910, 911, 912], sharedClaim: true });
+  const returned = [];
+  e.native.port.returnSlot = async i => { returned.push(i.pr); e.queue.splice(e.queue.indexOf(i.pr), 1); return { onDuty: true, returned: false, claims: [] }; };
+  const W = e.W, M = W.merge(e.main(), e.head(910), ':holder');
+  W.refs.set('heads/main', M);
+  Object.assign(W.pulls.get(910), { state: 'closed', merged: true, mergeSha: M });
+  Object.assign(W.pulls.get(912), { state: 'closed', merged: false });
+  let batch = null;
+  for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
+  assert.deepEqual(e.adopted, [[910, M]]);
+  assert.deepEqual(returned, [912]);
+  assert.deepEqual(e.queue, [911]);
+  assert.equal(batch?.pr, 911);
+});
+
+// Field 2026-11-13 (#1087): the holder's CI head is a head its PR no longer has (the author pushed). No bound PR matches it, which
+// left no front at all (FRONT_NOT_BOUND) for good; the front is then the lowest bound PR, as when there is no CI head.
+test('field 2026-11-13: a Task whose CI head was replaced by a push still gets its front, the lowest bound PR', async t => {
+  const e = await world(t, { prs: [910, 911], sharedClaim: true });
+  let first = null;
+  for (let i = 0; i < 6 && !first; i++) first = (await stage10(e)).facts.openFrontBatch;
+  assert.equal(first?.pr, 910);
+  const W = e.W, pushed = W.merge(e.head(910), e.main(), ':push');
+  W.pulls.get(910).head = pushed;
+  for (const [app, name] of [[ACTIONS, 'ci-suites'], [APP, 'kooyumi-work-admission']]) {
+    const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: pushed, status: 'completed', conclusion: 'success' });
+  }
+  let next = null, decisions = [];
+  for (let i = 0; i < 6 && !next; i++) { const r = await stage10(e); decisions.push(r.facts.decision); next = r.facts.openFrontBatch; }
+  assert.deepEqual([next?.pr, next?.headSha], [910, pushed], JSON.stringify(decisions));
+});

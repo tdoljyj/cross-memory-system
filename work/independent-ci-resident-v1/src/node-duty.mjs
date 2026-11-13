@@ -13,9 +13,10 @@
 //     last DUTY_WINDOW_MS; a result written there since stays readable after the word (已交班：<result>);
 //   - anything else is a result text (已完成, 失败, 未准入, ...) and never counts as on duty.
 // The duty statuses are written again every DUTY_REFRESH_MS even when unchanged, so "written within DUTY_WINDOW_MS"
-// means "still alive" to the other node. A STANDBY node writes nothing under its queue context except 已交班; it may
-// write one reminder per (PR, commit, reason) under its own standbyContext(<node>) when the node on duty does not pick a PR
-// up (§5.3).
+// means "still alive" to the other node. A STANDBY node writes nothing under its queue context except 已交班. ADR 0028: a STANDBY no
+// longer reminds the Owner that the node on duty did not pick a PR up (§5.3, deleted): the node on duty's own page text and
+// notifications, and the server's failover watchdog (ADR 0026: a silent holder is handed over in about 5 minutes, or an alert when the
+// switch is off), already say all of it; it only ends a reminder written before (STANDBY_DONE_TEXT).
 // What another node wrote counts by its LATEST status on a commit, whatever that says: a result after 当班 is no duty.
 //
 // The node's name and mode come from status.json `node` (C1/C3 fill it; `source` is for the people who read it). Absent (null): one node, ACTIVE, named by
@@ -54,9 +55,6 @@ export const DUTY_WINDOW_MS = 30 * MIN;
 export const DUTY_REFRESH_MS = 14 * MIN;
 // GitHub keeps at most 1000 statuses per context and commit: a long wait stops being refreshed before that (review m8).
 export const REFRESH_MAX_POSTS = 900;
-// §5.3: a head no node picked up within this long, or a node on duty stalled for this long, is reported by a STANDBY.
-export const UNCLAIMED_MS = 30 * MIN;
-export const STALL_NOTICE_MS = 10 * MIN;
 // The dual-active hold (C6): renewed when less than this is left; never written more often than HOLD_WRITE_MS, or
 // HOLD_STALE_WRITE_MS while the executor's status is stale (nobody would read the requests).
 export const HOLDER_DUAL = 'dual-active';
@@ -68,7 +66,7 @@ export const HOLD_STALE_WRITE_MS = 60 * MIN;
 export const RESET_CONFIRM_MS = MIN;
 // Holders the executor shows when it cannot read its own intake state: then a missing hold is no Owner reset.
 const UNSURE_HOLDERS = ['unconfirmed', 'unreadable'];
-// A lock's partner statuses are read again at most this often; a STANDBY reads a head at most this often.
+// A lock's partner statuses are read again at most this often.
 export const RELEASE_READ_MS = 5 * MIN;
 // The take-over check reads at most this many heads a pass (review M4), and after a failed read waits this long.
 export const TAKEOVER_READS_PER_PASS = 10;
@@ -82,8 +80,6 @@ export const READ_RETRY_MS = 5 * MIN;
 // A head the take-over check cannot read this many times in a row is passed over (counted as nobody on duty there), so
 // one unreadable head never keeps the check from ending (re-review of C5).
 export const READ_GIVE_UP = 3;
-export const ADMISSION_APP_ID = 5368905;
-export const ADMISSION_CHECK = 'kooyumi-work-admission';
 export const WORD = Object.freeze({ ON: '当班', DUAL: '双活停机', STALLED: '停摆', HANDED: '已交班' });
 const MODES = ['ACTIVE', 'STANDBY', 'UNCERTAIN'];
 const LOCK_REASONS = ['dual-active', 'takeover-refused'];
@@ -165,25 +161,16 @@ export function parseDutyStatus(s, ownerLogin) {
 }
 
 // A head's statuses (newest first, as GitHub lists them) -> every other node's LATEST status there, whatever it says
-// (review M1), with the start of its latest run of 停摆 (for §5.3 rule 2).
+// (review M1).
 export function othersOnHead(list, ownName, ownerLogin) {
   const out = new Map();
   for (const s of Array.isArray(list) ? list : []) {
     const d = parseDutyStatus(s, ownerLogin);
-    if (!d || d.node === ownName) continue;
-    const seen = out.get(d.node);
-    if (!seen) { out.set(d.node, { ...d, stalledSince: d.word === WORD.STALLED ? d.at : null, open: d.word === WORD.STALLED }); continue; }
-    // Older entries of the same node: extend the latest run of 停摆 back while it lasts; anything else ends it.
-    if (seen.open && d.word === WORD.STALLED) seen.stalledSince = d.at; else seen.open = false;
+    if (d && d.node !== ownName && !out.has(d.node)) out.set(d.node, d);
   }
-  for (const v of out.values()) delete v.open;
   return out;
 }
 
-// Another node on duty on this head now (its latest status is 当班 or 双活停机 and was written within DUTY_WINDOW_MS).
-export function onDutyElsewhere(others, now) {
-  return allOnDutyElsewhere(others, now)[0] ?? null;
-}
 // Every other node on duty on this head now (review R3 M4: with three or more nodes two others may be on duty on one head).
 // since (ADR 0026): a statement written at or before it does not count; the take-over check and the lock's release pass the time the
 // failover watchdog last handed ci-admission to this node (dutyCut). Both times are server clocks (GitHub's created_at, the
@@ -194,49 +181,14 @@ export function allOnDutyElsewhere(others, now, since = null) {
   return [...others.values()].filter(d => dutyNow(d, now, since));
 }
 
-// §5.3, for a STANDBY node: why a head should be picked up and is not, or null. firstSeenAt: when this companion first saw
-// the head open; admitted: whether App 5368905 published kooyumi-work-admission on it (null: unknown).
-//   - stalled: the node on duty wrote 停摆 there for STALL_NOTICE_MS;
-//   - stale: its latest word there is 当班 or 双活停机, older than DUTY_WINDOW_MS (it stopped refreshing: a node that died
-//     mid-batch, after its admission check; review m9);
-//   - unclaimed: no admission check and nobody on duty there for UNCLAIMED_MS since this companion saw the head.
-export function unclaimedReason({ others, firstSeenAt, admitted, now }) {
-  for (const d of others.values()) {
-    if (d.word === WORD.STALLED && d.stalledSince !== null && now - d.stalledSince >= STALL_NOTICE_MS && now - d.at <= DUTY_WINDOW_MS) return { reason: 'stalled', node: d.node, since: d.stalledSince, code: d.code };
-    if ((d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at > DUTY_WINDOW_MS) return { reason: 'stale', node: d.node, since: d.at, code: null };
-  }
-  if (admitted !== false || !Number.isFinite(firstSeenAt) || now - firstSeenAt < UNCLAIMED_MS) return null;
-  if (onDutyElsewhere(others, now)) return null;
-  return { reason: 'unclaimed', node: null, since: firstSeenAt, code: null };
-}
-
-export function standbyText(u, ownName, now) {
-  const who = u.node ? `当班节点 ${u.node} ` : '当班节点';
-  const minutes = Math.max(1, Math.round((now - u.since) / MIN));
-  const why = u.reason === 'stalled' ? `已停摆 ${minutes} 分钟（${u.code ?? '?'}）` : u.reason === 'stale' ? `的状态已 ${minutes} 分钟没刷新` : `已 ${minutes} 分钟没接手`;
-  return { state: 'pending', description: clip(`${who}${why}；需要切换请在 KooYomi 把 ci-admission 移交给 ${ownName}`) };
-}
-// Task 63c3c879 (DESIGN §23.3): the end of a reminder this node left pending under its standbyContext. GitHub counts a pending status, even
-// one no rule requires, as an unfinished check (mergeStateStatus UNSTABLE, PR #1027), so once the reminder is moot it ends as success:
-//   handled: the node on duty took the head up (its 当班/双活停机 there, or App 5368905's admission check on it);
-//   active: this node holds ci-admission now (it runs the PR itself);
-//   ineligible: no resident runs this PR (a draft, another base, a fork).
-export function standbyDoneText(why, ownName) {
-  if (why === 'active') return { state: 'success', description: clip(`${ownName} 已接班，备用提醒结束`) };
-  return { state: 'success', description: clip(`备用节点 ${ownName}，不参与本 PR${why === 'handled' ? '：当班节点已接手' : ''}`) };
-}
-// Review N2: the take-over time, idle and busy apart (never "45 minutes at most"); shown in the reminder's notification. ADR 0026: a
-// STANDBY asks every minute, the new role starts 5 minutes after the hand-over.
-export const TAKEOVER_TIME_TEXT = '移交后：对方空闲或停摆时，新角色 5 分钟后生效，本节点约 1 分钟内（下一次角色探测）就接班；对方还在跑批时，要等它发现没有角色、写“已交班”之后。';
+// Task 63c3c879, ADR 0028: a reminder a STANDBY left pending under its standbyContext before ADR 0028 ends as success (GitHub counts a
+// pending status, even one no rule requires, as an unfinished check: mergeStateStatus UNSTABLE, PR #1027).
+export const STANDBY_DONE_TEXT = Object.freeze({ state: 'success', description: '备用提醒已取消（ADR 0028）' });
 
 // The read helpers' argv (fixed; every variable part matched first).
 export function statusesArgv(ghExe, repo, headSha) {
   if (!HEX40.test(headSha ?? '')) throw new Error('head');
   return [ghExe, 'api', '--method', 'GET', `repos/${repo}/commits/${headSha}/statuses?per_page=100`, '--jq', '[.[] | {context, state, description, created_at, login: .creator.login}]'];
-}
-export function admissionArgv(ghExe, repo, headSha) {
-  if (!HEX40.test(headSha ?? '')) throw new Error('head');
-  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/commits/${headSha}/check-runs?app_id=${ADMISSION_APP_ID}&check_name=${ADMISSION_CHECK}&filter=all&per_page=1`, '--jq', '.total_count'];
 }
 export const loginArgv = ghExe => [ghExe, 'api', '--method', 'GET', 'user', '--jq', '.login'];
 
@@ -246,10 +198,9 @@ export const loginArgv = ghExe => [ghExe, 'api', '--method', 'GET', 'user', '--j
 //   mode: the last definite mode seen (ACTIVE or STANDBY); probeAt: the probe whose take-over check ran; lock: null or
 //   { since, reason, other (the first node seen), others: [{ node, heads, cleared }] (every node seen on duty, the commits
 //   it was seen on, whether it handed over or aged out), heads (all of them), holdAt (last hold request written), holdUntil
-//   (the hold's end as status.json last showed it), releaseReadAt, resetSeenAt }; handover: { head: since } heads owed an 已交班; seen: { 'pr:head': first
-//   seen open }; reminded: { key: at }; toasts: { key: { title, body, at } } notifications still to show; standby: { head: { pr, at } } the
-//   reminders written under standbyContext and not ended yet (Task 63c3c879).
-export const freshMemory = () => ({ mode: null, probeAt: null, lock: null, handover: {}, seen: {}, reminded: {}, toasts: {}, standby: {} });
+//   (the hold's end as status.json last showed it), releaseReadAt, resetSeenAt }; handover: { head: since } heads owed an 已交班; standby: { head:
+//   { pr, at } } the reminders written under standbyContext before ADR 0028 and not ended yet.
+export const freshMemory = () => ({ mode: null, probeAt: null, lock: null, handover: {}, standby: {} });
 const KEPT_MS = 86_400_000;
 const num = v => (Number.isSafeInteger(v) ? v : null);
 const bag = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -261,14 +212,7 @@ export function validMemory(raw, now) {
   if (!raw || typeof raw !== 'object') return m;
   if (['ACTIVE', 'STANDBY'].includes(raw.mode)) m.mode = raw.mode;
   m.probeAt = num(raw.probeAt);
-  for (const k of ['handover', 'seen', 'reminded', 'toasts', 'standby']) m[k] = bag(raw[k]);
-  // A memory of before Task 63c3c879 has no standby bag: the reminders it still remembers (reminded, kept a day) are taken as not ended.
-  if (raw.standby === undefined) {
-    for (const [k, at] of Object.entries(m.reminded)) {
-      const r = /^standby:([1-9][0-9]*):([0-9a-f]{40}):[a-z]+$/.exec(k);
-      if (r && Number.isSafeInteger(Number(r[1]))) m.standby[r[2]] = { pr: Number(r[1]), at };
-    }
-  }
+  for (const k of ['handover', 'standby']) m[k] = bag(raw[k]);
   if (raw.lock && typeof raw.lock === 'object') {
     const l = raw.lock;
     const other = NODE_NAME.test(l.other ?? '') ? l.other : 'unknown';
@@ -297,9 +241,7 @@ export function lockOthers(found) {
 }
 const pending = lock => lock.others.filter(o => !o.cleared).map(o => o.node);
 export function pruneMemory(m, now) {
-  for (const b of [m.seen, m.reminded]) for (const [k, v] of Object.entries(b)) if (!(now - Date.parse(v) < KEPT_MS)) delete b[k];
   for (const [k, v] of Object.entries(m.standby ?? {})) if (!(now - Date.parse(v?.at) < KEPT_MS)) delete m.standby[k];
-  for (const [k, v] of Object.entries(m.toasts)) if (!(now - Date.parse(v?.at) < KEPT_MS)) delete m.toasts[k];
   for (const [k, v] of Object.entries(m.handover)) if (!(now - Date.parse(v) < KEPT_MS)) delete m.handover[k];
 }
 
@@ -316,7 +258,6 @@ export class NodeDuty {
     this.checkStartedAt = null; // when the last check that may still count for TAKEOVER_RECHECK_MS started (generation 12)
     this.executorPid = null; // the executor's pid in the last status seen: another one starts the spacing over
     this.restartOwed = null; // the heads owed 停摆（NODE_RESTARTED）, fixed at the first pass after the start
-    this.readAt = new Map(); // head -> { at, others, admitted }: a STANDBY reads a head at most every RELEASE_READ_MS
   }
 
   // ADR 0026: duty statements written at or before this (ms, server time) do not hold this node back, or null. The failover watchdog
@@ -348,13 +289,6 @@ export class NodeDuty {
     let list;
     try { list = JSON.parse(r.stdout); } catch { return null; }
     return Array.isArray(list) ? othersOnHead(list, this.node.name, login) : null;
-  }
-
-  // Whether App 5368905 published kooyumi-work-admission on the head (null: unknown).
-  async admitted(headSha) {
-    const r = await this.run(admissionArgv(this.ghExe, this.repo, headSha), { timeoutMs: this.timeoutMs });
-    const n = r.code === 0 ? Number(String(r.stdout).trim()) : NaN;
-    return Number.isSafeInteger(n) ? n > 0 : null;
   }
 
   // One pass, after the status notifications and before the PR page texts: the node, what it owes (已交班), the lock
@@ -420,8 +354,6 @@ export class NodeDuty {
     }
     if (m.lock) await this.keepHold(status, now);
     if (definite) m.mode = node.mode;
-    // Notifications owed from earlier passes (a reminder whose toast could not be shown then; review m6).
-    for (const [key, t] of Object.entries(m.toasts)) events.push({ key, title: t.title, body: t.body });
     return { node, context: own, lock: m.lock, events };
   }
 
@@ -469,7 +401,7 @@ export class NodeDuty {
     const cut = this.dutyCut();
     // Every node is read again each time, a cleared one too: a node that aged out and then writes 当班 again on a head it was
     // seen on (its role back, or a late refresh) holds the lock again; the age-out bound is DUTY_WINDOW_MS, the window every
-    // duty status counts for (onDutyElsewhere, unclaimedReason's 'stale').
+    // duty status counts for (allOnDutyElsewhere).
     for (const o of lock.others) {
       let handed = false, seenOnDuty = false;
       for (const head of o.heads) {
@@ -531,14 +463,13 @@ export class NodeDuty {
     return null;
   }
 
-  // Writes beyond the per-head texts: [{ headSha, context, want, handover?, restart?, remind? }]. posted: the reporter's
+  // Writes beyond the per-head texts: [{ headSha, context, want, handover?, restart?, standbyDone? }]. posted: the reporter's
   // memory (head -> { context, kind, at, dutyAt }); described: the heads given a text in this pass.
   //   - 已交班 on every head owed one (prepare), until it is written;
   //   - after the companion started: an open head whose 当班 or 双活停机 of the last DUTY_WINDOW_MS was not described again
   //     gets 停摆（NODE_RESTARTED） (NIT 4); the reporter ends the restart once those are written (m4);
-  //   - STANDBY, §5.3: one reminder per (PR, head, reason) under its own standbyContext(<node>);
-  //   - Task 63c3c879: a reminder of this node still pending ends as success (standbyDoneText, standbyDone: the head) once it is moot:
-  //     this node is ACTIVE, or (STANDBY) the PR is not eligible or the node on duty took the head up. A head no longer open is forgotten.
+  //   - ADR 0028: a reminder this node left pending under its standbyContext before ends as success (STANDBY_DONE_TEXT, standbyDone: the
+  //     head); a head no longer open is forgotten.
   async extra({ posted, described, pulls, now }) {
     const node = this.node, own = nodeContext(node.name), out = [], m = this.memory;
     for (const headSha of Object.keys(m.handover)) {
@@ -556,37 +487,13 @@ export class NodeDuty {
       }
       if (this.restartOwed.size === 0) this.restarted = false;
     }
+    // ADR 0028: a reminder left pending before is ended once, while its head is still open; a closed one is forgotten.
     m.standby ??= {};
     const open = new Set(pulls.map(p => p.headSha));
-    for (const headSha of Object.keys(m.standby)) if (!open.has(headSha)) delete m.standby[headSha];
-    const done = (headSha, why) => ({ headSha, context: standbyContext(node.name), want: standbyDoneText(why, node.name), standbyDone: headSha });
-    if (node.mode === 'ACTIVE') for (const headSha of Object.keys(m.standby)) out.push(done(headSha, 'active'));
-    if (node.mode !== 'STANDBY') return out;
-    let reads = 0;
-    for (const p of pulls) {
-      if (!p.eligible) { if (m.standby[p.headSha]) out.push(done(p.headSha, 'ineligible')); continue; }
-      const seenKey = `${p.pr}:${p.headSha}`;
-      m.seen[seenKey] ??= iso(now);
-      const firstSeenAt = Date.parse(m.seen[seenKey]);
-      let r = this.readAt.get(p.headSha);
-      if (!r || now - r.at >= RELEASE_READ_MS) {
-        if (reads >= TAKEOVER_READS_PER_PASS || !this.inBudget()) break;
-        reads += 1;
-        const others = await this.others(p.headSha);
-        if (others === null) break;
-        const admitted = now - firstSeenAt >= UNCLAIMED_MS ? await this.admitted(p.headSha) : null;
-        r = { at: now, others, admitted };
-        this.readAt.set(p.headSha, r);
-      }
-      const u = unclaimedReason({ others: r.others, firstSeenAt, admitted: r.admitted, now });
-      // Ended only on a positive sign that the node on duty has it (never on an unknown read).
-      if (!u && m.standby[p.headSha] && (r.admitted === true || onDutyElsewhere(r.others, now))) { out.push(done(p.headSha, 'handled')); continue; }
-      if (!u) continue;
-      const key = `standby:${p.pr}:${p.headSha}:${u.reason}`;
-      if (m.reminded[key]) continue;
-      out.push({ headSha: p.headSha, context: standbyContext(node.name), want: standbyText(u, node.name, now), remind: { key, pr: p.pr } });
+    for (const headSha of Object.keys(m.standby)) {
+      if (!open.has(headSha)) delete m.standby[headSha];
+      else out.push({ headSha, context: standbyContext(node.name), want: STANDBY_DONE_TEXT, standbyDone: headSha });
     }
-    if (this.readAt.size > 256) for (const k of [...this.readAt.keys()].slice(0, this.readAt.size - 256)) this.readAt.delete(k);
     return out;
   }
 }

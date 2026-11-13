@@ -26,14 +26,15 @@
 // notices (a new trigger, a stopped row, the waits' budget, the daily batch limit, the breaker) become notifications.
 // Primary/standby C5 (DESIGN §23, node-duty.mjs): the context is the node's own, resident-queue/<node> (info only), written
 // only on the commits the node queued or ran, its text starting with a fixed duty word (当班, 双活停机, 停摆, 已交班) or a
-// result; duty texts are written again every DUTY_REFRESH_MS; a STANDBY writes reminders under its own resident-standby/<node> only.
+// result; duty texts are written again every DUTY_REFRESH_MS. Under resident-standby/<node> a node only ends a reminder it wrote before
+// ADR 0028 (node-duty.mjs#STANDBY_DONE_TEXT).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
-import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
+import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
 // Every node writes its own context (node-duty.mjs#nodeContext); there is no default node (Task 9cac75be A3).
 export const MAX_POSTS_PER_PASS = 20;
@@ -557,7 +558,6 @@ export class PrStatusReporter {
       : await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
     this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
-    delete this.store.data.node.toasts[e.key];
     this.dirty = true;
     if (stalledCall(r)) this.stalled = true;
     return r.code === 0;
@@ -568,7 +568,7 @@ export class PrStatusReporter {
     if (this.notifications === false) return shown;
     for (const e of list) {
       if (shown >= MAX_TOASTS_PER_PASS || !this.inBudget()) break;
-      if (this.store.data.notified[e.key]) { delete this.store.data.node.toasts[e.key]; continue; }
+      if (this.store.data.notified[e.key]) continue;
       if (await this.toast(e, now)) shown += 1;
       if (this.stalled) break;
     }
@@ -577,7 +577,7 @@ export class PrStatusReporter {
 
   // One pass: the status notifications (local, never behind a slow GitHub), the node's duty (the take-over check and the
   // dual-active lock) and its notifications, then the PR page status of every open PR head the poller looked at, then
-  // the duty's own writes (已交班, a restart, the STANDBY reminders).
+  // the duty's own writes (已交班, a restart, the end of a reminder written before ADR 0028).
   async pass({ pulls = [], status = null, statusError = false }) {
     const now = this.clock();
     this.passStartedAt = now;
@@ -644,17 +644,8 @@ export class PrStatusReporter {
           if (x.restart) this.duty.restartOwed?.delete(x.headSha);
           if (x.context === context) remember(x.headSha, x.want);
           if (x.handover) delete this.store.data.node.handover[x.headSha];
-          // Task 63c3c879: a reminder written stays owed an end (node-duty.mjs#standbyDoneText) until that is written.
+          // ADR 0028: a reminder written before stays owed its end (node-duty.mjs#STANDBY_DONE_TEXT) until that is written.
           if (x.standbyDone) delete (this.store.data.node.standby ??= {})[x.standbyDone];
-          if (!x.remind) continue;
-          (this.store.data.node.standby ??= {})[x.headSha] = { pr: x.remind.pr, at: new Date(now).toISOString() };
-          // §5.3: written once and shown once per (PR, head, reason); a toast that cannot be shown now is owed (m6).
-          this.store.data.node.reminded[x.remind.key] = new Date(now).toISOString();
-          const toast = { key: x.remind.key, title: `PR #${x.remind.pr}：当班节点没接手`, body: `${x.want.description}。${TAKEOVER_TIME_TEXT}` };
-          if (this.notifications !== false && !this.store.data.notified[toast.key]) {
-            this.store.data.node.toasts[toast.key] = { title: toast.title, body: toast.body, at: new Date(now).toISOString() };
-            toasts = await this.showAll([toast], now, toasts);
-          }
         }
         if (this.duty.restartOwed?.size === 0) this.duty.restarted = false;
       }

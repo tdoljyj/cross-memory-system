@@ -87,13 +87,20 @@ export function sanitizeAdmissionDiagnosticV2(d) {
   return diagnostic;
 }
 
-// Shared validation of admitted v2 facts for every consumer (publishers, bridge, adapters).
-export const ADMISSION_FIELDS_V2 = Object.freeze(['contract', 'status', 'admitted', 'completeAdmission', 'evaluator', 'domain', 'repository', 'scope',
+// Shared validation of admitted v2 facts for every consumer (publishers, bridge, adapters). The field lists stay private: no
+// consumer counts fields itself (field 2026-11-13: a second count refused facts this check accepts).
+const ADMISSION_FIELDS_V2 = Object.freeze(['contract', 'status', 'admitted', 'completeAdmission', 'evaluator', 'domain', 'repository', 'scope',
   'prRef', 'headSha', 'baseSha', 'jobId', 'role', 'attempt', 'claimId', 'fence', 'epoch', 'observedClaim', 'batchClaimBound', 'sourceManifestSha256',
   'executionPolicy', 'guarded', 'executionHandoverPending', 'mergeQueueHead', 'mode', 'mergeSlot', 'ownerReview', 'workflowGateFindings', 'observedAt',
   'claimExpiresAt', 'modeProofRef', 'observationRef', 'packetSha256', 'evaluationSha256', 'observationSha256']);
-export const ADMISSION_FIELDS_V3 = Object.freeze([...ADMISSION_FIELDS_V2, 'publicationRequired', 'headAuthorizationId']);
+const ADMISSION_FIELDS_V3 = Object.freeze([...ADMISSION_FIELDS_V2, 'publicationRequired', 'headAuthorizationId']);
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+// The execution guard in force (field 2026-11-13, PR #1086): a claim that requires a lease key (one handed over on the page keeps it) is
+// guarded only once Native's execution policy is active; while it is staged, Native admits it without any key or head authorization, like
+// any other claim. A value that is not a boolean stays as it is (refused by supportedNativeExecution).
+export function effectiveGuard(policy, leaseKeyRequired) {
+  return typeof leaseKeyRequired === 'boolean' ? policy === 'active' && leaseKeyRequired : leaseKeyRequired;
+}
 export function supportedNativeExecution(policy, guarded) {
   return policy === 'staged' && guarded === false || policy === 'active' && typeof guarded === 'boolean';
 }
