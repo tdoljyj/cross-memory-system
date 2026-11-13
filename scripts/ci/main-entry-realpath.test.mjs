@@ -121,8 +121,6 @@ export const buildsFileUrlByHand = (line) => /(['"`])file:\/\/+(?:\1|\$\{)/.test
 export const FILE_URL_BY_HAND_PINNED = {
   // Accepted handover evidence; its bytes are pinned by config/clued-handover-external-acceptance.json.
   'scripts/phase2-qualification/RuntimeMaterialPreparation/prepare.mjs': '44a756f6d8b44ad1465d8d6209f7d155469efa057035ac5850ab556ccc461539',
-  // Fixed on claude/fleet-generic-upgrade (#1092, commit 3e2da768), which owns this file; these are main's bytes before it.
-  'work/independent-ci-resident-v1/tools/build-package.mjs': '826c8892a57021ff25abb8aac710f51f3f22a85cba8c0774901bb616c3f3d569',
 };
 const SOURCE = /\.(?:mjs|cjs|js|jsx|ts|mts|cts|tsx)$/;
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');

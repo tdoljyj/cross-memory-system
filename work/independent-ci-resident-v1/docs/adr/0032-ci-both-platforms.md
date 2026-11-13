@@ -2,7 +2,7 @@
 
 - 状态：第 1 步已实现（分支 `claude/ci-both-platforms`，未推送）；第 2–4 步待做（见 §7）
 - 日期：2026-11-14
-- 编号：0030、0031 已被在途分支占用（`claude/fleet-generic-upgrade`、`claude/remove-terminal-admission`），所以取 0032
+- 编号：0030 是通用升级（#1092，已合入），0031 被在途分支 `claude/remove-terminal-admission` 占用，所以取 0032
 - Owner Decision：统领原则（`42d5bf8d`：最终系统极简、低耗、高效，错误从机制上堵死）；看板缺陷第 14 行（重大），Owner 已批“开做”
 - 代码：`scripts/ci/ci-required-selection.mjs`（`SUITE_PLATFORMS`、`selectSuites` 的 `platform`、`runSelected`、`--run-selected`）、`work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml`、`scripts/ci/main-entry-realpath.test.mjs`（`buildsFileUrlByHand`）、`src/service-main.mjs`、`src/companion-main.mjs`、`work/twentyfirst-forward/derive-getter-module.mjs`
 - 测试（修复前都失败）：`scripts/ci/ci-required-selection.test.mjs` “a change that breaks only on Windows fails the Windows side and passes the Linux side …”、“each platform is selected only the suites declared for it …”、“the Windows job of the candidate workflow selects and runs with the trusted selection …”；`scripts/ci/main-entry-realpath.test.mjs` “no source file builds a file: URL by hand …”、“a file: URL built by hand is recognised …”
@@ -103,9 +103,9 @@
 - 规则（`main-entry-realpath.test.mjs#buildsFileUrlByHand`）：源码里不许出现带引号的 `file://` 前缀后面直接收尾或接模板表达式（`'file://' + x`、`` `file:///${x}` ``）。URL 用 `pathToFileURL` 生成；判断入口用 `import.meta.main`，装机的旧 Node 可能不支持的地方用 `realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)`（`notifier-main.mjs` 已有的写法，链接后面也成立）。
 - 它在 `clued-cloud-tests` 里对每个改动都跑（`apps/clued-cloud/tests/local-dev-tools.test.mjs` 引入这个文件），不用另加套件。
 - 修掉的三处：`src/service-main.mjs`、`src/companion-main.mjs`（Windows 写法，Linux 上不成立）、`work/twentyfirst-forward/derive-getter-module.mjs`（POSIX 写法，Windows 上不成立）。三个文件同时从 `main-entry-legacy.json` 里删掉。
-- 两处按**确切字节**放行（`FILE_URL_BY_HAND_PINNED`：路径加 sha256）。文件只要有任何改动，放行就失效，必须连同这个写法一起改掉；这个路径上别的内容永远不被放行：
+- 一处按**确切字节**放行（`FILE_URL_BY_HAND_PINNED`：路径加 sha256）。文件只要有任何改动，放行就失效，必须连同这个写法一起改掉；这个路径上别的内容永远不被放行：
   - `scripts/phase2-qualification/RuntimeMaterialPreparation/prepare.mjs`：已接受的交接证据，字节被 `config/clued-handover-external-acceptance.json` 钉住，改它要重新走接受。
-  - `tools/build-package.mjs`：属于 #1092 的分支，已在那边修好（`3e2da768`）；这里钉的是 main 上修之前的字节。#1092 合入后这一项自然失效，可以随手删掉。
+  - （`tools/build-package.mjs` 已由 #1092 的 `3e2da768` 修好并合入 main，不需要放行。）
 
 ## 10. 残余
 
