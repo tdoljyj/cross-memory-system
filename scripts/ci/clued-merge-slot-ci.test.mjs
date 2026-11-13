@@ -364,14 +364,7 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const dir = path.join(ROOT, ".github", "workflows");
   const nameOf = (file) => /^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(dir, file), "utf8"))[1].trim();
   const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")];
-  // Resident ADR 0032: clued-required-tests-windows is not in the list yet. This file is a registered control Source: a
-  // pull request that changes it is refused unless main's catalogue already holds the change (clued-work-admission.mjs,
-  // control_Source_not_registered), so the workflow and this list cannot change in one pull request. The reporter is
-  // disabled (Decision 928e6638; the resident's stage 8 reads the checks itself), and a missed name only delays a report.
-  // The name leaves this list in the change that adds it to the workflow: a name in both fails here.
-  const notYetListed = ["clued-required-tests-windows"];
-  for (const name of notYetListed) assert.ok(!names.includes(name) && expected.includes(name), `${name}: listed now, or gone; remove it from notYetListed`);
-  assert.deepEqual([...names].sort(), [...new Set(expected)].filter((name) => !notYetListed.includes(name)).sort());
+  assert.deepEqual([...names].sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);
   assert.doesNotMatch(text, /schedule:/, "the hourly report is a step of the re-verification run");
   // Only pull request runs can be a holder's head; the event is used to skip, never to decide.

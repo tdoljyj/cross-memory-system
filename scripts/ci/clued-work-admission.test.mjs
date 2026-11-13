@@ -1229,7 +1229,7 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
 // These consumers use the independently registered Linux Native gate; their
 // current gates are covered separately from the historical permission/bootstrap templates.
-const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml", "clued-g4-database.yml"];
+const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-g4-database.yml"];
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on

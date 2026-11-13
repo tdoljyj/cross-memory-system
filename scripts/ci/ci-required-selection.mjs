@@ -98,7 +98,8 @@ export const SUITES = {
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
-      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
+      'scripts/ci/ci-known-failures.json', 'work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml',
+      '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
   // contract and CI-script tests), so every change runs it, like the disabled
