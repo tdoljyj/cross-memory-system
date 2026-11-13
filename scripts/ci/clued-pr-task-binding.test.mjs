@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizePRTaskBinding, resolvePRTaskBinding, claimReferenceFromBinding } from './clued-pr-task-binding.mjs';
+import * as terminal from './clued-pr-task-binding.mjs';
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const subject = { scope: `project:${id(1)}`, repository: 'tdoljyj/cross-memory-system', prNumber: 42,
   headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), targetBranch: 'main' };
@@ -10,6 +11,32 @@ const binding = () => ({ status: 'ok', binding_status: 'bound', reason: null,
   task_id: id(2), claim: { claim_id: id(3), task_id: id(2), context_key: subject.scope, fence: 2,
     execution_epoch: 3, lease_version: 1, expires_at: '2099-01-01T00:00:00.000Z', status: 'ACTIVE', execution_handover_pending: false },
   head_authorization_id: id(4), auto_bound: false, receipt_id: null });
+
+test('terminal release proof retains the original admitted receipt and only fresh exact closed PR facts', () => {
+  assert.equal(typeof terminal.terminalAdmissionFromVerification, 'function');
+  const verified = { verdict: 'ADMITTED', execution_authorized: true, terminal_admission_receipt_id: id(5),
+    claim: binding().claim, head_authorization_id: id(4), terminal_admission: { receipt_id: id(5), claim_id: id(3),
+      fence: 2, execution_epoch: 3, lease_version: 1, head_authorization_id: id(4) } };
+  const original = terminal.terminalAdmissionFromVerification(verified);
+  assert.deepEqual(original, { receipt_id: id(5), claim_id: id(3), fence: 2, execution_epoch: 3,
+    lease_version: 1, head_authorization_id: id(4) });
+  assert.equal(terminal.terminalAdmissionFromVerification({ ...verified, verdict: 'REJECTED' }), null);
+  assert.equal(terminal.terminalAdmissionFromVerification({ ...verified, terminal_admission_receipt_id: undefined, terminal_admission: undefined }), null);
+  assert.throws(() => terminal.terminalAdmissionFromVerification({ ...verified, terminal_admission_receipt_id: id(9) }), /terminal/);
+  const pull = { number: 42, state: 'closed', merged: false, head: { sha: subject.headSha, repo: { full_name: subject.repository } },
+    base: { sha: subject.baseSha, ref: 'main', repo: { full_name: subject.repository } } };
+  const proof = terminal.terminalProofForPull(original, pull, subject);
+  assert.deepEqual(proof.last_admission, original);
+  assert.deepEqual(proof.observation, { repository: subject.repository, pr_ref: subject.repository+'#42',
+    head_sha: subject.headSha, base_sha: subject.baseSha, target_branch: 'main', state: 'closed', merged: false });
+  for (const change of [{ state: 'open' }, { number: 43 }, { merged: undefined },
+    { head: { sha: 'c'.repeat(40), repo: { full_name: subject.repository } } }, { base: { sha: subject.baseSha, ref: 'dev' } }])
+    assert.throws(() => terminal.terminalProofForPull(original, { ...pull, ...change }, subject), /terminal/);
+  assert.throws(() => terminal.normalizeTerminalAdmission({ ...original, lease_key: 'must-not-leave-holder' }), /terminal/);
+  const merged = terminal.terminalProofForPull(original, { ...pull, merged: true, merge_commit_sha: 'd'.repeat(40) }, subject);
+  assert.equal(merged.observation.merge_sha, 'd'.repeat(40));
+  assert.throws(() => terminal.terminalProofForPull(original, { ...pull, merged: true }, subject), /terminal/);
+});
 
 test('Native identity resolves without reading a body or invoking a second head authorization', async () => {
   const calls = [];
