@@ -1,7 +1,7 @@
 // Run the process-launch function from the actual task's decoded action. The
 // receiver checks the raw Windows command line as well as CRT argv: a normal
 // .NET fake accepts quoted options, while the real WSL leading-option parser
-// treats a quoted "--version" as a Linux command (TURING R3 reproduction).
+// treats a quoted "--version" as a Linux command (NODE-B R3 reproduction).
 // No task, account, registry key, distribution or real WSL process is used.
 import test from 'node:test';
 import assert from 'node:assert/strict';

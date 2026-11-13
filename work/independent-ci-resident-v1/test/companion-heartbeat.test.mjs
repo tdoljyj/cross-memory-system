@@ -15,7 +15,7 @@ const NOW = Date.parse('2026-11-01T10:00:00Z');
 const SRC = 'c'.repeat(64), H = '4'.repeat(40), RECEIPT = '0a1b2c3d-0000-4000-8000-0000000000bb';
 const TOKEN = 'clued_hbt_FixtureHeartbeatToken0123456789abcdefghijkl';
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
-  node: { name: 'turing', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
+  node: { name: 'node-b', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
 
 // The input check of clued_private.ci_node_heartbeat_v1 (migration 20261031090000_merge_train_failover_v1.sql), mirrored: true
 // when the server would accept p_input.
@@ -38,34 +38,34 @@ function serverAccepts(p) {
 }
 
 test('the self-report is the server\'s p_input: the Source the executor runs, the mode, HALT with the batch, PAUSE, the intake pause, UNKNOWN when it cannot be told', () => {
-  const p = heartbeatPayload({ nodeName: 'turing', scope: 'global', status: status(), serviceRunning: true, now: NOW });
+  const p = heartbeatPayload({ nodeName: 'node-b', scope: 'global', status: status(), serviceRunning: true, now: NOW });
   assert.deepEqual(p, { action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode: 'ACTIVE', probe: 'held', halt: null, ci_source_manifest_sha256: SRC,
-    service_running: true, snapshot_age_seconds: 10, node_name: 'turing' });
-  const halted = heartbeatPayload({ nodeName: 'turing', status: status({ halt: { code: 'RESIDENT_SOURCE_DRIFT', at: NOW - MIN }, current: { pr: 951, headSha: H } }), serviceRunning: true, now: NOW });
+    service_running: true, snapshot_age_seconds: 10, node_name: 'node-b' });
+  const halted = heartbeatPayload({ nodeName: 'node-b', status: status({ halt: { code: 'RESIDENT_SOURCE_DRIFT', at: NOW - MIN }, current: { pr: 951, headSha: H } }), serviceRunning: true, now: NOW });
   assert.deepEqual([halted.state, halted.halt], ['HALTED', { code: 'RESIDENT_SOURCE_DRIFT', at: new Date(NOW - MIN).toISOString(), pr: 951, headSha: H }]);
-  const paused = heartbeatPayload({ nodeName: 'turing', status: status({ paused: true }), serviceRunning: true, now: NOW });
+  const paused = heartbeatPayload({ nodeName: 'node-b', status: status({ paused: true }), serviceRunning: true, now: NOW });
   assert.deepEqual([paused.state, Object.hasOwn(paused, 'intake_paused_until')], ['PAUSED', false]);
-  const intake = heartbeatPayload({ nodeName: 'turing', status: status({ intakePause: { until: NOW + 30 * MIN, holders: [] } }), serviceRunning: true, now: NOW });
+  const intake = heartbeatPayload({ nodeName: 'node-b', status: status({ intakePause: { until: NOW + 30 * MIN, holders: [] } }), serviceRunning: true, now: NOW });
   assert.deepEqual([intake.state, intake.intake_paused_until], ['INTAKE_PAUSED', new Date(NOW + 30 * MIN).toISOString()]);
-  assert.equal(heartbeatPayload({ nodeName: 'turing', status: status({ intakePause: { until: null, holders: [] } }), serviceRunning: true, now: NOW }).state, 'UNKNOWN', 'no end: not reported as one');
+  assert.equal(heartbeatPayload({ nodeName: 'node-b', status: status({ intakePause: { until: null, holders: [] } }), serviceRunning: true, now: NOW }).state, 'UNKNOWN', 'no end: not reported as one');
   const unknowns = [];
   for (const [s, running, error] of [[status(), false, false], [status({ writtenAt: NOW - 6 * MIN }), true, false], [null, true, true], [status({ writtenAt: NOW - 40 * MIN }), null, false]]) {
-    const u = heartbeatPayload({ nodeName: 'turing', status: s, statusError: error, serviceRunning: running, now: NOW });
+    const u = heartbeatPayload({ nodeName: 'node-b', status: s, statusError: error, serviceRunning: running, now: NOW });
     unknowns.push(u);
     assert.deepEqual([u.state, u.mode, u.halt, u.probe], ['UNKNOWN', null, null, null]);
   }
   assert.deepEqual(unknowns.map(u => [u.service_running, u.snapshot_age_seconds]), [[false, 10], [true, 360], [true, null], [false, 2400]], 'SCM unknown: the snapshot\'s freshness stands in');
-  assert.equal(heartbeatPayload({ nodeName: 'turing', status: status(), serviceRunning: null, now: NOW }).service_running, true);
+  assert.equal(heartbeatPayload({ nodeName: 'node-b', status: status(), serviceRunning: null, now: NOW }).service_running, true);
   // a snapshot without a node (cannot probe) reports UNCERTAIN, never no mode with a readable state
-  assert.equal(heartbeatPayload({ nodeName: 'turing', status: status({ node: null }), serviceRunning: true, now: NOW }).mode, 'UNCERTAIN');
+  assert.equal(heartbeatPayload({ nodeName: 'node-b', status: status({ node: null }), serviceRunning: true, now: NOW }).mode, 'UNCERTAIN');
   // the Source comes from the executor's status, never from the companion's own configuration
-  assert.equal(heartbeatPayload({ nodeName: 'turing', status: status({ versions: null }), serviceRunning: true, now: NOW }).ci_source_manifest_sha256, null);
+  assert.equal(heartbeatPayload({ nodeName: 'node-b', status: status({ versions: null }), serviceRunning: true, now: NOW }).ci_source_manifest_sha256, null);
   // the installed record's scope; a bad name is left out (the server ignores it anyway)
-  assert.equal(heartbeatPayload({ nodeName: 'turing', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb', status: status(), serviceRunning: true, now: NOW }).scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb');
+  assert.equal(heartbeatPayload({ nodeName: 'node-b', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb', status: status(), serviceRunning: true, now: NOW }).scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb');
   assert.equal(Object.hasOwn(heartbeatPayload({ nodeName: 'Bad Name', status: status(), serviceRunning: true, now: NOW }), 'node_name'), false);
   // every report the companion can make passes the server's own input check
   for (const x of [p, halted, paused, intake, ...unknowns, heartbeatPayload({ nodeName: null, status: status({ node: null }), serviceRunning: true, now: NOW }),
-    heartbeatPayload({ nodeName: 'turing', status: status({ node: { name: 'turing', mode: 'STANDBY', probe: { at: NOW, result: 'not-held' } } }), serviceRunning: true, now: NOW })]) assert.ok(serverAccepts(x), JSON.stringify(x));
+    heartbeatPayload({ nodeName: 'node-b', status: status({ node: { name: 'node-b', mode: 'STANDBY', probe: { at: NOW, result: 'not-held' } } }), serviceRunning: true, now: NOW })]) assert.ok(serverAccepts(x), JSON.stringify(x));
   assert.equal(serverAccepts({ ...p, contract: 'x' }), false, 'the mirror refuses an extra key');
   assert.equal(serviceRunningFrom({ code: 0, stdout: 'SERVICE_NAME: CluedCIResident\n        STATE              : 4  RUNNING ' }), true);
   assert.equal(serviceRunningFrom({ code: 0, stdout: '        STATE              : 1  STOPPED ' }), false);
@@ -76,7 +76,7 @@ function beat(o = {}) {
   const sent = [], notes = [], comments = [], memo = new Map();
   let now = NOW, replies = o.replies ?? [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: NOW, watchdogStale: false }];
   let st = o.status ?? status();
-  const hb = new CompanionHeartbeat({ nodeName: 'desk-w-591', scope: 'global', clock: () => now, readToken: async () => (o.token === undefined ? TOKEN : o.token), readStatus: async () => st,
+  const hb = new CompanionHeartbeat({ nodeName: 'node-a', scope: 'global', clock: () => now, readToken: async () => (o.token === undefined ? TOKEN : o.token), readStatus: async () => st,
     serviceRunning: async () => true,
     transport: async (msg, auth) => { sent.push({ msg, auth }); return replies.length > 1 ? replies.shift() : replies[0]; },
     notify: async (key, title, body) => { notes.push({ key, title, body }); },
@@ -92,7 +92,7 @@ test('no token installed: nothing runs; with one: every minute (ADR 0026), at on
   assert.equal(none.sent.length, 0);
   const t = beat();
   assert.equal((await t.hb.step()).sent, true);
-  assert.deepEqual([t.sent[0].auth.token, t.sent[0].msg.payload.node_name, t.sent[0].msg.payload.state, t.sent[0].msg.payload.scope], [TOKEN, 'desk-w-591', 'NORMAL', 'global']);
+  assert.deepEqual([t.sent[0].auth.token, t.sent[0].msg.payload.node_name, t.sent[0].msg.payload.state, t.sent[0].msg.payload.scope], [TOKEN, 'node-a', 'NORMAL', 'global']);
   t.advance(MIN / 2);
   assert.deepEqual(await t.hb.step(), { skipped: 'NOT_DUE' });
   t.setStatus(status({ halt: { code: 'X_Y', at: NOW } }));
@@ -176,7 +176,7 @@ test('an automatic take-over to this node: one marked @Owner comment on the comp
   await t.hb.step();
   assert.equal(t.comments.length, 1);
   assert.equal(t.comments[0].issue, 77);
-  assert.ok(t.comments[0].body.startsWith(HANDOVER_MARKER(RECEIPT)) && t.comments[0].body.includes('@tdoljyj') && t.comments[0].body.includes(FROM) && t.comments[0].body.includes('desk-w-591'));
+  assert.ok(t.comments[0].body.startsWith(HANDOVER_MARKER(RECEIPT)) && t.comments[0].body.includes('@tdoljyj') && t.comments[0].body.includes(FROM) && t.comments[0].body.includes('node-a'));
   // already on the issue (another start or machine): not again
   const seen = beat({ existing: true, replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [h], watchdogTickAt: NOW, watchdogStale: false }] });
   await seen.hb.step();
@@ -186,7 +186,7 @@ test('an automatic take-over to this node: one marked @Owner comment on the comp
   const two = beat({ replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [h, { ...h, receiptId: '0a1b2c3d-0000-4000-8000-0000000000cc' }], watchdogTickAt: NOW, watchdogStale: false }] });
   await two.hb.step();
   assert.equal(two.comments.length, 2);
-  assert.equal(handoverComment(h, 'tdoljyj', 'desk-w-591').split('\n')[0], `<!-- clued-auto-handover:${RECEIPT} -->`);
+  assert.equal(handoverComment(h, 'tdoljyj', 'node-a').split('\n')[0], `<!-- clued-auto-handover:${RECEIPT} -->`);
 });
 
 test('the reply is read tolerantly; the wire call posts the CI command door with the token hashed, never the token itself', async t => {
@@ -208,7 +208,7 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
   const calls = [];
   const fetchImpl = async (url, init) => { calls.push({ url, init }); return { status: [200, 404, 403][calls.length - 1] ?? 400, text: async () => (calls.length === 1 ? JSON.stringify(ok) : '{"code":"PGRST202"}') }; };
   const send = supabaseHeartbeatTransport({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_x1', fetchImpl });
-  const payload = heartbeatPayload({ nodeName: 'turing', scope: 'global', status: status(), serviceRunning: true, now: NOW });
+  const payload = heartbeatPayload({ nodeName: 'node-b', scope: 'global', status: status(), serviceRunning: true, now: NOW });
   assert.equal((await send({ payload }, { token: TOKEN })).ok, true);
   assert.equal(HEARTBEAT_RPC, 'clued_work_verify_v1');
   assert.equal(calls[0].url, 'https://abc123.supabase.co/rest/v1/rpc/clued_work_verify_v1');
@@ -223,11 +223,11 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
   // the token file, and the companion without one
   const root = await tempRoot(t);
   assert.equal(await readHeartbeatToken(root), null);
-  assert.equal(await companionHeartbeat({ root, nodeName: 'turing', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} } } }), null);
+  assert.equal(await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} } } }), null);
   await fs.mkdir(path.join(root, 'secrets', 'heartbeat'), { recursive: true });
   await fs.writeFile(path.join(root, 'secrets', 'heartbeat', 'ci-node-heartbeat.token'), `${TOKEN}\r\n`);
   assert.equal(await readHeartbeatToken(root), TOKEN);
-  const hb = await companionHeartbeat({ root, nodeName: 'turing', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} }, save: async () => {} },
+  const hb = await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} }, save: async () => {} },
     readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_x1', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb' }) });
   assert.ok(hb instanceof CompanionHeartbeat);
   assert.equal(hb.scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb', 'the installed record\'s scope');

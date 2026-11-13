@@ -13,9 +13,9 @@ import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT } from '../src/executed-heads
 import { RunQueue } from '../src/queue.mjs';
 import { nodeProfileSha256 } from '../src/node-profile.mjs';
 
-export const TEST_NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'fixture-node', hostname: 'TURING',
+export const TEST_NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'fixture-node', hostname: 'NODE-B',
   ownerSid: 'S-1-5-21-1-2-3-1001', ownerProfileDirectory: 'C:\\Users\\fixture-owner', controllerSid: 'S-1-5-21-1-2-3-1015',
-  runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02', mutationMutex: 'Global\\CluedControlControllerMutationV1-TURING-1015', wslDistribution: 'Ubuntu-24.04' });
+  runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-b', mutationMutex: 'Global\\CluedControlControllerMutationV1-NODE-B-1015', wslDistribution: 'Ubuntu-24.04' });
 export const TEST_NODE_SHA = nodeProfileSha256(TEST_NODE);
 export const SOURCE = 'a'.repeat(64);
 export const RESIDENT = 'b'.repeat(64);

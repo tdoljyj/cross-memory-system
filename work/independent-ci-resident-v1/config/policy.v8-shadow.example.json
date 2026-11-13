@@ -54,7 +54,7 @@
     "fullSweepMaxMs": 21600000
   },
   "companion": {
-    "userSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+    "userSid": "S-1-5-21-20-21-22-1001",
     "heartbeatMaxAgeMs": 60000
   },
   "stageRunMilliseconds": [
@@ -103,14 +103,14 @@
   },
   "node": {
     "contract": "clued.independent-ci.node-profile/1",
-    "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
-    "hostname": "TURING",
-    "mutationMutex": "Global\\CluedControlControllerMutationV1-TURING-1015",
-    "nodeName": "turing",
-    "ownerProfileDirectory": "C:\\Users\\17531",
-    "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
-    "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+    "controllerSid": "S-1-5-21-20-21-22-1015",
+    "hostname": "NODE-B",
+    "mutationMutex": "Global\\CluedControlControllerMutationV1-NODE-B-1015",
+    "nodeName": "node-b",
+    "ownerProfileDirectory": "C:\\Users\\owner-b",
+    "ownerSid": "S-1-5-21-20-21-22-1001",
+    "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-node-b",
     "wslDistribution": "Ubuntu-24.04"
   },
-  "nodeProfileSha256": "4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6"
+  "nodeProfileSha256": "b47a313e05f471de6d70de84cefc7e275f0fb79a65a8252db941bcc5f8ab54ce"
 }

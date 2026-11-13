@@ -1,4 +1,4 @@
-// The three fixes for the first HALT of the freshly reinstalled TURING resident, 2026-10-29 (DESIGN.md section 33). Offline.
+// The three fixes for the first HALT of the freshly reinstalled NODE-B resident, 2026-10-29 (DESIGN.md section 33). Offline.
 //   (a) companion.json names Source scripts that are not in the installed Source: refused at the package build, at validation and at
 //       the companion's start (the PowerShell side of the same rule, verify-resident.ps1, runs over the same cases in
 //       windows/test-resident-windows.ps1);

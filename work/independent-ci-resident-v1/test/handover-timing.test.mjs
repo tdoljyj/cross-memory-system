@@ -101,9 +101,9 @@ test('planned hand-over (one-click, old node idle): the new node is ACTIVE 5 to 
   for (const xPhase of phases(ROLE_PROBE_INTERVAL_MS.ACTIVE, 9)) for (const yPhase of phases(ROLE_PROBE_INTERVAL_MS.STANDBY, 6)) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE', probePhase: xPhase });
-    const y = new Node('turing', server, { mode: 'STANDBY', probePhase: yPhase });
+    const y = new Node('node-b', server, { mode: 'STANDBY', probePhase: yPhase });
     const at = T0 + 2 * MIN;
-    const { bothActive } = run({ server, nodes: [x, y], minutes: 15, event: t => { if (t === at) server.handover('desk', 'turing', t); } });
+    const { bothActive } = run({ server, nodes: [x, y], minutes: 15, event: t => { if (t === at) server.handover('desk', 'node-b', t); } });
     assert.equal(bothActive, 0);
     assert.ok(x.standbyAt !== null && x.standbyAt <= at + ACTIVATION_MS && x.standbyAt < y.activeAt, `old node steps down first (phase ${xPhase})`);
     const took = y.activeAt - at;
@@ -118,7 +118,7 @@ test('the holder fails (power, network): the watchdog hands over after 5 silent 
   for (const beatPhase of phases(NODE_HEARTBEAT_EVERY_MS, 4)) for (const tickPhase of phases(MIN, 3)) for (const yPhase of phases(MIN, 3)) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE', beatPhase });
-    const y = new Node('turing', server, { mode: 'STANDBY', probePhase: yPhase, beatPhase: (beatPhase + 20_000) % MIN });
+    const y = new Node('node-b', server, { mode: 'STANDBY', probePhase: yPhase, beatPhase: (beatPhase + 20_000) % MIN });
     const dies = T0 + 10 * MIN;
     const { bothActive } = run({ server, nodes: [x, y], minutes: 30, tickPhase, event: t => { if (t === dies) x.alive = false; } });
     assert.equal(bothActive, 0);
@@ -135,7 +135,7 @@ test('the holder\'s heartbeat fails but its executor still works: the take-over 
   for (const probePhase of phases(ROLE_PROBE_INTERVAL_MS.ACTIVE, 10)) for (const tickPhase of phases(MIN, 3)) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE', probePhase });
-    const y = new Node('turing', server, { mode: 'STANDBY' });
+    const y = new Node('node-b', server, { mode: 'STANDBY' });
     const breaks = T0 + 10 * MIN;
     const { bothActive } = run({ server, nodes: [x, y], minutes: 40, tickPhase, event: t => { if (t === breaks) x.beats = false; } });
     assert.equal(server.handovers.length, 1);
@@ -155,18 +155,18 @@ test('the dead holder\'s last 当班 does not hold the new node back after the a
   for (const lastRefresh of [0, 5 * MIN, DUTY_REFRESH_MS]) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE' });
-    const y = new Node('turing', server, { mode: 'STANDBY' });
+    const y = new Node('node-b', server, { mode: 'STANDBY' });
     const dies = T0 + 20 * MIN;
     run({ server, nodes: [x, y], minutes: 30, event: t => { if (t === dies) x.alive = false; } });
     // desk wrote its 当班 on its queued head every DUTY_REFRESH_MS; the last one lastRefresh before it died.
     const statuses = [{ context: nodeContext('desk'), state: 'pending', description: '当班：排队第 1 位', created_at: new Date(dies - lastRefresh).toISOString(), login: OWNER }];
     const check = async cut => {
       const memory = freshMemory(); memory.mode = 'STANDBY';
-      const d = new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'gh', clock: () => y.activeAt, memory, fallbackName: 'turing', timeoutMs: 15_000,
+      const d = new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'gh', clock: () => y.activeAt, memory, fallbackName: 'node-b', timeoutMs: 15_000,
         inBudget: () => true, staleMs: 5 * MIN, writeRequest: async () => {}, autoHandoverSince: () => cut,
         run: async argv => (argv[4] === 'user' ? { code: 0, stdout: OWNER } : { code: 0, stdout: JSON.stringify(statuses) }) });
       const status = { writtenAt: y.activeAt, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, breaker: { state: 'closed' },
-        node: { name: 'turing', mode: 'ACTIVE', probe: { at: y.activeAt, result: 'held', failures: 0 } }, current: null, pending: [], recent: [] };
+        node: { name: 'node-b', mode: 'ACTIVE', probe: { at: y.activeAt, result: 'held', failures: 0 } }, current: null, pending: [], recent: [] };
       return (await d.prepare({ status, pulls: [{ pr: 1, headSha: HEAD, eligible: true }], now: y.activeAt })).lock;
     };
     assert.ok(await check(null), 'without the cut: held back (the old behaviour)');
@@ -178,7 +178,7 @@ test('the old node comes back after the take-over: it starts UNCERTAIN, learns n
   for (const backAfter of [2 * MIN, 6 * MIN, 9 * MIN, 20 * MIN]) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE' });
-    const y = new Node('turing', server, { mode: 'STANDBY' });
+    const y = new Node('node-b', server, { mode: 'STANDBY' });
     const dies = T0 + 5 * MIN, back = dies + backAfter;
     const { bothActive } = run({ server, nodes: [x, y], minutes: 60, event: t => {
       if (t === dies) x.alive = false;
@@ -189,7 +189,7 @@ test('the old node comes back after the take-over: it starts UNCERTAIN, learns n
       // Back before the watchdog acted: it is still the holder, nothing was handed over.
       assert.deepEqual([server.handovers.length, x.mode, y.mode], [0, 'ACTIVE', 'STANDBY']);
     } else {
-      assert.deepEqual([server.handovers.length, x.mode, y.mode, server.holder()], [1, 'STANDBY', 'ACTIVE', 'turing'], `back after ${backAfter / MIN} min`);
+      assert.deepEqual([server.handovers.length, x.mode, y.mode, server.holder()], [1, 'STANDBY', 'ACTIVE', 'node-b'], `back after ${backAfter / MIN} min`);
     }
   }
 });
@@ -198,22 +198,22 @@ test('clock skew: a node clock off by minutes changes no timing (intervals are i
   for (const [xSkew, ySkew] of [[-2 * MIN, 2 * MIN], [3 * MIN, -3 * MIN], [90_000, 0]]) {
     const server = new Server('desk');
     const x = new Node('desk', server, { mode: 'ACTIVE', skew: xSkew, probePhase: 2 * MIN });
-    const y = new Node('turing', server, { mode: 'STANDBY', skew: ySkew, probePhase: 30_000 });
+    const y = new Node('node-b', server, { mode: 'STANDBY', skew: ySkew, probePhase: 30_000 });
     const at = T0 + 2 * MIN;
-    const { bothActive } = run({ server, nodes: [x, y], minutes: 15, event: t => { if (t === at) server.handover('desk', 'turing', t); } });
+    const { bothActive } = run({ server, nodes: [x, y], minutes: 15, event: t => { if (t === at) server.handover('desk', 'node-b', t); } });
     assert.equal(bothActive, 0);
     assert.ok(y.activeAt - at <= 6 * MIN && x.standbyAt < y.activeAt, `skew ${xSkew / MIN}/${ySkew / MIN} min`);
   }
   // The new holder's clock jumps back 10 minutes just before the role starts: it is ACTIVE later, but only ever from the server's answer.
   const server = new Server('desk');
   const x = new Node('desk', server, { mode: 'ACTIVE' });
-  const y = new Node('turing', server, { mode: 'STANDBY' });
+  const y = new Node('node-b', server, { mode: 'STANDBY' });
   const at = T0 + 2 * MIN;
   const { bothActive } = run({ server, nodes: [x, y], minutes: 25, event: t => {
-    if (t === at) server.handover('desk', 'turing', t);
+    if (t === at) server.handover('desk', 'node-b', t);
     if (t === at + 4 * MIN) y.skew -= 10 * MIN;
   } });
   assert.equal(bothActive, 0);
   assert.equal(server.handovers.length, 0, 'its heartbeat goes on through the jump: no false take-over');
-  assert.ok(y.activeAt > at + ACTIVATION_MS + 6 * MIN && server.admitted('turing', y.activeAt), 'delayed by the jump, and admitted when ACTIVE');
+  assert.ok(y.activeAt > at + ACTIVATION_MS + 6 * MIN && server.admitted('node-b', y.activeAt), 'delayed by the jump, and admitted when ACTIVE');
 });

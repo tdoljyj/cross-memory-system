@@ -20,7 +20,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 const [mode, arg] = process.argv.slice(2);
 const m = await import(pathToFileURL(process.env.SIGN_FIRST).href);
-const { canonicalJson } = await import(pathToFileURL(process.env.SIGN_FIRST.replace('sign-first-qualification', 'sign-qualification-v2')).href);
+const { canonicalJson } = await import(pathToFileURL(process.env.SIGN_FIRST.replace('sign-first-qualification', 'sign-qualification')).href);
 if (mode === 'keys') {
   const k = generateKeyPairSync('ed25519');
   console.log(JSON.stringify({ priv: k.privateKey.export({ type: 'pkcs8', format: 'pem' }), pub: k.publicKey.export({ type: 'spki', format: 'pem' }) }));
@@ -130,7 +130,7 @@ class FirstInstallConfig(unittest.TestCase):
     PEM = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + 'A' * 43 + '=\n-----END PUBLIC KEY-----\n'
 
     def cfg(self, **host):
-        h = {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': sha(self.PEM.encode()), 'v1SourceHead': None}; h.update(host)
+        h = {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': sha(self.PEM.encode())}; h.update(host)
         return {'linux': {'installedRoles': None, 'host': h}, 'signer': {'keyId': 'new-node-result-key', 'runtimeId': 'new-node-runtime', 'publicKeyPem': self.PEM}}
 
     def test_a_node_without_linux_ci_with_its_signer_passes(self):
@@ -138,7 +138,7 @@ class FirstInstallConfig(unittest.TestCase):
 
     def test_refusals(self):
         c = self.cfg(); c['linux']['installedRoles'] = 'C:\\x\\roles-v3'
-        for cfg, code in ((c, 'NODE_HAS_AN_INSTALLED_LINUX_CI'), (self.cfg(v1SourceHead='f' * 40), 'NODE_HAS_AN_INSTALLED_LINUX_CI'),
+        for cfg, code in ((c, 'NODE_HAS_AN_INSTALLED_LINUX_CI'),
                           (self.cfg(toolchainNodeSha256=None), 'FIRST_INSTALL_NEEDS_THE_NODES_HOST_FACTS'),
                           (self.cfg(resultPublicKeySha256='c' * 64), 'FIRST_INSTALL_SIGNER_NOT_THE_NODES_RESULT_KEY')):
             with self.assertRaises(rconfig.ConfigError) as e:
@@ -180,7 +180,7 @@ class FirstInstallConfigFromFacts(unittest.TestCase):
         self.assertEqual(r['status'], 'FIRST_INSTALL_CONFIG_WRITTEN')
         cfg = rconfig.load(out)
         self.assertEqual(cfg['signer']['publicKeyPem'], self.PEM)
-        self.assertEqual(cfg['linux']['host'], {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': sha(self.PEM.encode()), 'v1SourceHead': None})
+        self.assertEqual(cfg['linux']['host'], {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': sha(self.PEM.encode())})
 
     def test_refusals(self):
         for facts, code in ((self.facts(linuxCiPresent=['/opt/clued-independent-ci/source-v2']), 'NODE_HAS_AN_INSTALLED_LINUX_CI'),

@@ -1,13 +1,13 @@
-"""Offline tests of the reinstall path for a node WITHOUT Source v1 (first installed by Z1, README section 6): the signer
-(linux/tools/sign-qualification-no-v1.mjs, signNoV1; throwaway Ed25519 keys made by node) and the Linux kit generator (linux/prep.py) on
-fixture inputs, for a node with v1 (unchanged) and one without. Nothing runs as root, nothing touches WSL or the host.
+"""Offline tests of the one reinstall path (Source v1 is retired; README section 6): the signer (linux/tools/sign-qualification.mjs,
+signQualifications; throwaway Ed25519 keys made by node) and the Linux kit generator (linux/prep.py) on fixture inputs. Nothing runs as
+root, nothing touches WSL or the host.
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
 import datetime, hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RE = os.path.dirname(HERE)
-SIGN = os.path.join(RE, 'linux', 'tools', 'sign-qualification-no-v1.mjs')
+SIGN = os.path.join(RE, 'linux', 'tools', 'sign-qualification.mjs')
 PREP = os.path.join(RE, 'linux', 'prep.py')
 FIXTURE_PATHS = os.path.join(HERE, 'fixture_paths.py')   # the configuration names C:\fixture\... on every host
 _spec = importlib.util.spec_from_file_location('fixture_paths', FIXTURE_PATHS)
@@ -32,7 +32,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 const [mode, arg] = process.argv.slice(2);
 const m = await import(pathToFileURL(process.env.SIGN).href);
-const { canonicalJson } = await import(pathToFileURL(process.env.SIGN.replace('sign-qualification-no-v1', 'sign-qualification-v2')).href);
+const { canonicalJson } = m;
 if (mode === 'keys') {
   const k = generateKeyPairSync('ed25519');
   console.log(JSON.stringify({ priv: k.privateKey.export({ type: 'pkcs8', format: 'pem' }), pub: k.publicKey.export({ type: 'spki', format: 'pem' }) }));
@@ -42,14 +42,14 @@ if (mode === 'keys') {
 } else {
   const a = JSON.parse(fs.readFileSync(arg, 'utf8'));
   try {
-    console.log(JSON.stringify(m.signNoV1({ keyPem: a.keyPem, pubPem: a.pubPem, v1Dir: a.v1Dir, installedDir: a.installedDir, inDir: a.inDir, outDir: a.outDir,
+    console.log(JSON.stringify(m.signQualifications({ keyPem: a.keyPem, pubPem: a.pubPem, installedDir: a.installedDir, inDir: a.inDir, outDir: a.outDir,
       now: new Date('2026-10-31T00:00:00Z') })));
   } catch (e) { console.log(JSON.stringify({ status: 'REFUSED', code: e.code ?? String(e) })); }
 }
 """
 
 
-class SignNoV1(unittest.TestCase):
+class SignFromInstalled(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.d = self.tmp.name
         self.driver = os.path.join(self.d, 'driver.mjs')
@@ -105,23 +105,18 @@ class SignNoV1(unittest.TestCase):
                 f.write(json.dumps(pol))
             with open(os.path.join(ndir, role + '.qualification.payload.json'), 'w', encoding='utf-8') as f:
                 f.write(json.dumps(pay))
-        return {'keyPem': self.key['priv'], 'pubPem': self.key['pub'], 'v1Dir': os.path.join(self.d, 'roles'), 'installedDir': idir, 'inDir': ndir,
+        return {'keyPem': self.key['priv'], 'pubPem': self.key['pub'], 'installedDir': idir, 'inDir': ndir,
                 'outDir': os.path.join(self.d, 'out')}
 
     def test_signs_when_only_source_values_differ_from_the_installed_role(self):
-        r = self.node('sign-no-v1', self.build())
+        r = self.node('sign-installed', self.build())
         self.assertEqual(r['status'], 'QUALIFICATIONS_V2_SIGNED_FROM_INSTALLED_V2', r)
         self.assertFalse(r['privateKeyPrinted'])
         q = rj(self.d, 'out', 'trivy.qualification.json')
         self.assertEqual((q['payload']['workerSha256'], q['payload']['qualifiedAt']), ('7' * 64, '2026-10-31T00:00:00.000Z'))
 
-    def test_a_node_with_source_v1_is_refused(self):
-        a = self.build(); os.makedirs(a['v1Dir'])
-        self.assertEqual(self.node('sign-no-v1', a)['code'], 'NODE_HAS_A_SOURCE_V1_USE_SIGN_QUALIFICATION_V2')
-        self.assertFalse(os.path.exists(a['outDir']))
-
     def test_an_installed_qualification_not_signed_by_the_node_key_is_refused(self):
-        self.assertEqual(self.node('sign-no-v1', self.build(installed_key=self.other))['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
+        self.assertEqual(self.node('sign-installed', self.build(installed_key=self.other))['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
 
     def test_a_tampered_installed_qualification_is_refused(self):
         a = self.build()
@@ -129,28 +124,28 @@ class SignNoV1(unittest.TestCase):
         q = rj(p); q['payload']['networkDisabled'] = False
         with open(p, 'w', encoding='utf-8') as f:
             f.write(json.dumps(q))
-        self.assertEqual(self.node('sign-no-v1', a)['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
+        self.assertEqual(self.node('sign-installed', a)['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
 
     def test_no_installed_qualification_fails_closed(self):
         a = self.build(); os.remove(os.path.join(a['installedDir'], 'contract-placement.qualification.json'))
-        self.assertEqual(self.node('sign-no-v1', a)['code'], 'ENOENT')
+        self.assertEqual(self.node('sign-installed', a)['code'], 'ENOENT')
         self.assertFalse(os.path.exists(a['outDir']))
 
     def test_a_value_outside_the_source_values_is_refused(self):
         def runtime(role, pol, pay):
             pay['containerUser'] = 'root'
-        self.assertEqual(self.node('sign-no-v1', self.build(runtime))['code'], 'PAYLOAD_DIFFERS_FROM_THE_INSTALLED_OUTSIDE_SOURCE_VALUES')
+        self.assertEqual(self.node('sign-installed', self.build(runtime))['code'], 'PAYLOAD_DIFFERS_FROM_THE_INSTALLED_OUTSIDE_SOURCE_VALUES')
         def docker(role, pol, pay):
             pol['dockerExecutableSha256'] = '8' * 64
-        self.assertEqual(self.node('sign-no-v1', self.build(docker))['code'], 'POLICY_DIFFERS_FROM_THE_INSTALLED_OUTSIDE_SOURCE_VALUES')
+        self.assertEqual(self.node('sign-installed', self.build(docker))['code'], 'POLICY_DIFFERS_FROM_THE_INSTALLED_OUTSIDE_SOURCE_VALUES')
 
     def test_another_image_or_key_than_the_installed_is_refused(self):
         def image(role, pol, pay):
             pol['image'] = pay['image'] = 'img@sha256:' + '9' * 64
-        self.assertEqual(self.node('sign-no-v1', self.build(image))['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
+        self.assertEqual(self.node('sign-installed', self.build(image))['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
 
 
-def build_prep(d, v1_head):
+def build_prep(d):
     """Inputs of linux/prep.py on fixtures: a git repository and its extracted tree, a package, the assembled in-dir, the installed facts."""
     w = os.path.join(d, 'work'); repo = os.path.join(d, 'repo')
     lin = ('work', 'independent-ci-resident-v1', 'linux')
@@ -206,12 +201,12 @@ def build_prep(d, v1_head):
             json.dump(doc, f)
     cp = os.path.join(d, 'config.json')
     win = lambda p: fixture_paths.win(cp, p)
-    cfg = {'contract': 'clued.independent-ci.reinstall-config/1', 'node': 'node-a', 'nodeProfile': 'config/node-profile.node-a.json', 'workDir': win(w), 'repo': win(repo),
+    cfg = {'contract': 'clued.independent-ci.reinstall-config/1', 'workDir': win(w), 'repo': win(repo),
            'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
            'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
            'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
            'linux': {'distribution': 'D', 'installedManifest': 'C:\\m.json', 'installedRoles': 'C:\\roles-v3',
-                     'host': {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64, 'v1SourceHead': v1_head}}}
+                     'host': {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64}}}
     with open(cp, 'w', encoding='utf-8') as f:
         json.dump(cfg, f)
     return [cp, commit, new, 'dddddddd-1111-4111-8111-111111111111', pkg, 'draft-t', 'in-t', os.path.join(d, 'facts.json'), os.path.join(d, 'gen.json')], w
@@ -222,32 +217,23 @@ def run_prep(argv, prep=PREP):
     return subprocess.run([sys.executable, '-I', FIXTURE_PATHS, prep] + argv, capture_output=True, text=True)
 
 
-class PrepNoV1(unittest.TestCase):
+class Prep(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='rp'); self.d = self.tmp.name
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def scripts(self, v1_head):
-        argv, w = build_prep(self.d, v1_head)
+    def scripts(self):
+        argv, w = build_prep(self.d)
         p = run_prep(argv)
         self.assertEqual(p.returncode, 0, p.stderr[-1500:])
         out = json.loads(p.stdout)
         texts = {n.split('.')[0]: rd(w, 'linux', n).decode('utf-8') for n in out['scripts']}
         return texts, out, w
 
-    def test_a_node_with_source_v1_keeps_the_v1_lineage(self):
-        t, out, w = self.scripts('f' * 40)
-        self.assertIn('"$STG/tools/sign-qualification-v2.mjs" --in "$STG/roles-in"', t['reinstall-linux-B-switch'])
-        self.assertNotIn('sign-qualification-no-v1', ''.join(t.values()))
-        self.assertNotIn('NODE_HAS_A_SOURCE_V1', t['reinstall-linux-A-stage'])
-        self.assertIn(b'\nV1_HEAD=' + b'f' * 40 + b'\n', rd(w, 'linux', 'in-t', 'tools', 'verify-source-v2.sh'))
-        self.assertEqual(out['pinnedFiles'], 23)
-        self.assertFalse(os.path.exists(os.path.join(w, 'linux', 'in-t', 'tools', 'sign-qualification-no-v1.mjs')))
-
     def test_retry_suffix_uses_a_new_base_and_pins_history_before_switching(self):
-        argv, w = build_prep(self.d, 'f' * 40)
+        argv, w = build_prep(self.d)
         first = run_prep(argv)
         self.assertEqual(first.returncode, 0, first.stderr)
         first_base = json.loads(first.stdout)['base']
@@ -266,36 +252,46 @@ class PrepNoV1(unittest.TestCase):
         self.assertLess(b.index('verify-live'), b.index('# B1 [PRIVATE KEY]'))
         self.assertIn('verify-kept', b)
 
-    def test_a_node_without_source_v1_signs_from_its_installed_roles(self):
-        t, out, w = self.scripts(None)
+    def test_signs_from_the_installed_roles_and_moves_a_source_v1_leftover_aside(self):
+        t, out, w = self.scripts()
         a, b = t['reinstall-linux-A-stage'], t['reinstall-linux-B-switch']
-        self.assertIn('"$STG/tools/sign-qualification-no-v1.mjs" --in "$STG/roles-in"', b)
-        self.assertNotIn('"$STG/tools/sign-qualification-v2.mjs" --in', b)
-        # phase A refuses a node that has a v1 after all, before staging; the signer is staged and pinned with every other byte
-        self.assertLess(a.index('refuse NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD'), a.index('install -d -o root -g root -m 0700 "$BASE"'))
-        nov1 = rd(RE, 'linux', 'tools', 'sign-qualification-no-v1.mjs')
-        self.assertIn(sha(nov1) + '  tools/sign-qualification-no-v1.mjs\n', a)
-        self.assertRegex(a, r'check-host-r4\.py sign-qualification-v2\.mjs verify-source-v2\.sh sign-qualification-no-v1\.mjs check-reinstall-history\.py; do install')
-        self.assertEqual(rd(w, 'linux', 'in-t', 'tools', 'sign-qualification-no-v1.mjs'), nov1)
-        # verify-source-v2 then checks there is no v1 (its V1_HEAD is empty)
-        self.assertIn(b'\nV1_HEAD=\n', rd(w, 'linux', 'in-t', 'tools', 'verify-source-v2.sh'))
-        self.assertEqual(out['pinnedFiles'], 24)   # + history verifier and no-v1 signer
-        # the same checks of the installed state as for a v1 node: Source v2 head and manifest, the resident, the upgrade channel
+        self.assertIn('"$STG/tools/sign-qualification.mjs" --in "$STG/roles-in"', b)
+        self.assertNotIn('sign-qualification-v2.mjs" --in', b)
+        self.assertNotIn('V1_HEAD', a + b)
+        # phase A never refuses a Source v1 leftover: right after quiet_and_installed and before $BASE exists it moves each of the three
+        # paths whole (mv -n, never deleted) into this run's evidence directory, skips what is already gone, and reports what it moved
+        self.assertNotIn('NODE_HAS_A_SOURCE_V1', a)
+        moved = a.index('mv -n -- "$p" "$V1KEEP/')
+        self.assertLess(a.index('quiet_and_installed\n'), moved)
+        self.assertLess(moved, a.index('install -d -o root -g root -m 0700 "$BASE"'))
+        self.assertIn('V1KEEP="$BASE.v1-retired"', a)
+        for p in ('/opt/clued-independent-ci/source-first-formal-v1', '/etc/clued-independent-ci/roles', '/etc/clued-independent-ci/formal-source-manifest-v1.json'):
+            self.assertIn(p, a[a.index('for p in '):moved])
+        self.assertIn('[ -e "$p" ] || [ -L "$p" ] || continue', a)
+        self.assertIn('\\"v1Retired\\":', a)
+        # the signer is staged and pinned with every other byte
+        signer = rd(RE, 'linux', 'tools', 'sign-qualification.mjs')
+        self.assertIn(sha(signer) + '  tools/sign-qualification.mjs\n', a)
+        self.assertRegex(a, r'check-host-r4\.py sign-qualification\.mjs verify-source-v2\.sh check-reinstall-history\.py; do install')
+        self.assertEqual(rd(w, 'linux', 'in-t', 'tools', 'sign-qualification.mjs'), signer)
+        self.assertNotIn(b'V1_HEAD', rd(w, 'linux', 'in-t', 'tools', 'verify-source-v2.sh'))
+        self.assertEqual(out['pinnedFiles'], 23)   # + history verifier
+        # the checks of the installed state: Source v2 head and manifest, the resident, the upgrade channel
         for s in ('quiet_and_installed\n', 'refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION', 'refuse HOST_PINS_CHANGED', 'refuse SIGNED_SET_REFUSED'):
             self.assertIn(s, a + b, s)
 
-    def test_a_changed_no_v1_signer_is_refused(self):
-        argv, w = build_prep(self.d, None)
-        lt = os.path.join(self.d, 'rt')   # a copy of reinstall/ whose no-v1 signer differs from the pinned one
+    def test_a_changed_signer_is_refused(self):
+        argv, w = build_prep(self.d)
+        lt = os.path.join(self.d, 'rt')   # a copy of reinstall/ whose signer differs from the pinned one
         shutil.copytree(RE, lt, ignore=shutil.ignore_patterns('test', '__pycache__'))
-        with open(os.path.join(lt, 'linux', 'tools', 'sign-qualification-no-v1.mjs'), 'ab') as f:
+        with open(os.path.join(lt, 'linux', 'tools', 'sign-qualification.mjs'), 'ab') as f:
             f.write(b'// changed\n')
         p = run_prep(argv, prep=os.path.join(lt, 'linux', 'prep.py'))
         self.assertNotEqual(p.returncode, 0)
         self.assertIn('REVIEW_COPY_TOOLS_CHANGED', p.stderr)
 
     def test_a_first_install_configuration_is_still_refused(self):
-        argv, w = build_prep(self.d, None)
+        argv, w = build_prep(self.d)
         cfg = rj(argv[0]); cfg['linux']['installedRoles'] = None
         with open(argv[0], 'w', encoding='utf-8') as f:
             json.dump(cfg, f)
@@ -304,7 +300,7 @@ class PrepNoV1(unittest.TestCase):
         self.assertIn('NODE_HAS_NO_INSTALLED_LINUX_CI', p.stderr)
 
     def source_v2_inputs(self):
-        argv, w = build_prep(self.d, None)
+        argv, w = build_prep(self.d)
         bundle = b'fixture bundle\r\nwith binary bytes\x00'
         for base, rel in ((argv[4], ('linux', 'source-v2', 'source.bundle')),
                           (os.path.join(w, 'linux', 'in-t'), ('linux-pkg', 'source-v2', 'source.bundle'))):
@@ -407,7 +403,7 @@ class PrepNoV1(unittest.TestCase):
         for role, expected in manifest['linux']['sourceV2']['rolesDerivedSha256'].items():
             self.assertIn('$STG/roles-in/' + role + '.json', text)
             self.assertIn(expected + ' ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH', text)
-        self.assertEqual(out['pinnedFiles'], 25)
+        self.assertEqual(out['pinnedFiles'], 24)
 
     def test_generated_bundle_staging_actually_copies_the_pinned_bytes(self):
         bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
@@ -459,8 +455,8 @@ class PrepFleet(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def fleet(self, v1_head='f' * 40, out_name='linux-out'):
-        argv, w = build_prep(self.d, v1_head)
+    def fleet(self, out_name='linux-out'):
+        argv, w = build_prep(self.d)
         legacy = run_prep(argv)
         self.assertEqual(legacy.returncode, 0, legacy.stderr[-1500:])
         # the same inputs, the in-dir moved out of the work directory; prep.py runs from an unpacked package tree (its own

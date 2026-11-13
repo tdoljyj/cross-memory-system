@@ -1,6 +1,6 @@
 // Node profile /1 (resident active/standby design v0.4 §9 C1, Task 410a9397): the host identity an install is
 // pinned to, carried by the install record and read from there by the installers, the controller read lease and
-// the v2 entries' secret reads. TURING's profile is today's values, so nothing changes on TURING.
+// the v2 entries' secret reads. Every node's profile lives only in its own install record; the repository holds none.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,18 +17,17 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const read = rel => fs.readFileSync(path.join(REPO, ...rel.split('/')), 'utf8');
 const CI = 'work/actions-hosted-migration/independent-ci-v1/';
 const RESIDENT = 'work/independent-ci-resident-v1/';
-const TURING_FILE = `${RESIDENT}config/node-profile.turing.json`;
 
-test('node profile: the fixture and TURING profiles pass; the TURING file is exactly canonical(profile)', () => {
-  assert.equal(validateNodeProfile(nodeProfile()).nodeName, 'fixture-node');
-  const raw = read(TURING_FILE), turing = JSON.parse(raw);
-  validateNodeProfile(turing);
-  assert.equal(raw, canonical(turing));
-  assert.equal(hash(raw), hash(turing));
-  assert.deepEqual(Object.keys(turing).sort(), [...NODE_PROFILE_KEYS].sort());
-  assert.equal(turing.nodeName, 'turing');
-  assert.equal(turing.hostname, 'TURING');
-  assert.equal(turing.mutationMutex, 'Global\\CluedControlControllerMutationV1-TURING-1015');
+test('node profile: the fixture profile passes; its hash is the hash of its canonical text', () => {
+  const p = validateNodeProfile(nodeProfile());
+  assert.equal(p.nodeName, 'fixture-node');
+  assert.equal(hash(canonical(p)), hash(p));
+  assert.deepEqual(Object.keys(p).sort(), [...NODE_PROFILE_KEYS].sort());
+});
+
+test('node profile: the repository holds no node\'s profile (each node\'s is in its install record)', () => {
+  const files = execFileSync('git', ['ls-files', '--', `${RESIDENT}config`], { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
+  assert.deepEqual(files.filter(f => /\/node-profile\.[^/]+\.json$/.test(f)), []);
 });
 
 // The cases install-resident.ps1#Assert-NodeProfile is held to as well (windows/test-resident-windows.ps1, section 4c).
@@ -51,7 +50,7 @@ test('node profile: the shared cases: every field is held to its shape, the key 
 test('record inputs /2: `node` replaces `hostname`; the acceptance carries the profile whole and the manifest its hash', () => {
   assert.doesNotThrow(() => validateRecordInputs(recordInputs(), NOW));
   const { node, ...legacy } = recordInputs();
-  assert.throws(() => validateRecordInputs({ ...legacy, hostname: 'TURING' }, NOW), { code: 'EXACT_RECORD_INPUT_FIELDS_REQUIRED' });
+  assert.throws(() => validateRecordInputs({ ...legacy, hostname: 'NODE-B' }, NOW), { code: 'EXACT_RECORD_INPUT_FIELDS_REQUIRED' });
   assert.throws(() => validateRecordInputs(recordInputs({ node: nodeProfile({ hostname: 'lower' }) }), NOW), { code: 'NODE_PROFILE_INVALID' });
   const r = fixtureRecord({ node: nodeProfile({ nodeName: 'company-01', hostname: 'CO-01', mutationMutex: 'Global\\CluedControlControllerMutationV1-CO-01-1015' }) });
   const accepted = JSON.parse(r.files['acceptance.json']);
@@ -84,7 +83,7 @@ test('install record: a missing, invalid or inconsistent node profile is refused
   assert.throws(() => validateRecordV2(Object.fromEntries(Object.entries(bad.files).map(([n, t]) => [n, Buffer.from(t)])), { now: NOW }), { code: 'RECORD_NODE_PROFILE_REQUIRED' });
   // the host identity of an entry is still the record's hostname, now the profile's
   assert.doesNotThrow(() => validateRecordV2(r.docs, { now: NOW, identity: { arch: 'x64', account: 'clued-control', hostname: 'fixture-node' } }));
-  assert.throws(() => validateRecordV2(r.docs, { now: NOW, identity: { arch: 'x64', account: 'clued-control', hostname: 'TURING' } }), { code: 'RECORD_HOST_IDENTITY_REQUIRED' });
+  assert.throws(() => validateRecordV2(r.docs, { now: NOW, identity: { arch: 'x64', account: 'clued-control', hostname: 'NODE-B' } }), { code: 'RECORD_HOST_IDENTITY_REQUIRED' });
 });
 
 function heldBytes(docs, controllerSid, o = {}) {
@@ -98,7 +97,7 @@ test('held record: the lease process ran as the controller the record itself pin
   const r = fixtureRecord();
   const docs = Object.fromEntries(['installation.json', 'acceptance.json', 'source-manifest.json', 'signers.json'].map(n => [n, r.docs[n]]));
   assert.equal(decodeHeldRecord(heldBytes(docs, 'S-1-5-21-1-2-3-1015')).sourceHashes.size, 1);
-  assert.throws(() => decodeHeldRecord(heldBytes(docs, 'S-1-5-21-1173730660-3877291096-655431861-1015')), { code: 'HELD_RECORD_CONTROLLER_REFUSED' });
+  assert.throws(() => decodeHeldRecord(heldBytes(docs, 'S-1-5-21-4-5-6-1015')), { code: 'HELD_RECORD_CONTROLLER_REFUSED' });
   assert.throws(() => decodeHeldRecord(heldBytes(docs, 'S-1-5-21-1-2-3-1001')), { code: 'HELD_RECORD_CONTROLLER_REFUSED' });
   assert.throws(() => decodeHeldRecord(heldBytes(docs, 'S-1-5-18')), { code: 'HELD_RECORD_REFUSED' });
   const noNode = rebound(r.files, a => { const { node, ...rest } = a; return rest; });
@@ -107,9 +106,7 @@ test('held record: the lease process ran as the controller the record itself pin
 
 // C1b moves the current /2 provider's identity to its pinned node. The retained legacy /1
 // provider and eight transitive v2 bridge files remain separately bounded, not silently generalized.
-test('current node consumers contain no TURING authority fallback; legacy compatibility stays explicit', () => {
-  const turing=JSON.parse(read(TURING_FILE));
-  assert.equal(hash(turing),'4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6');
+test('current node consumers contain no host constant; legacy compatibility stays explicit', () => {
   const current=[`${RESIDENT}windows/install-resident.ps1`,`${RESIDENT}windows/verify-resident.ps1`,`${RESIDENT}windows/uninstall-resident.ps1`,
     `${CI}src/resident-v2/hold-record.ps1`,`${CI}src/resident-v2/held-record.mjs`,`${CI}src/resident-v2/entry-runtime.mjs`,
     `${CI}runtime/verify-install-acl.ps1`,`${CI}runtime/protected-files.mjs`,`${CI}src/resident-v2/prepare-record.mjs`,`${CI}src/resident-v2/record.mjs`,
@@ -120,15 +117,14 @@ test('current node consumers contain no TURING authority fallback; legacy compat
     `${RESIDENT}src/companion.mjs`,`${RESIDENT}src/runner.mjs`];
   for(const f of current){
     const code=read(f).split(/\r?\n/).filter(l=>!/^\s*(#|\/\/)/.test(l)).join('\n');
-    assert.doesNotMatch(code,/S-1-5-21-\d+-\d+-\d+-\d+|clued-ci-home-win-02|Ubuntu-24\.04|'TURING'|"TURING"|\(\\\.\|TURING\)/,f);
+    assert.doesNotMatch(code,/S-1-5-21-\d+-\d+-\d+-\d+|clued-ci-[a-z]+-win-\d+|Ubuntu-24\.04/,f);
   }
   assert.match(read(`${CI}worker/protected-job-bridge-v2/boundary.mjs`),/accepted-installation\/1/);
 });
 
-test('resident and Source validators use the same actual shared vectors and original canonical profile hash', async () => {
+test('resident and Source validators use the same actual shared vectors and canonical profile hash', async () => {
   const resident=await import('../../../independent-ci-resident-v1/src/node-profile.mjs');
-  const turing=JSON.parse(read(TURING_FILE));
-  for(const p of [turing,...CASES.accepted.map(c=>applyCase(CASES.base,c))]){
+  for(const p of [nodeProfile(),...CASES.accepted.map(c=>applyCase(CASES.base,c))]){
     assert.equal(resident.nodeProfileSha256(p),hash(p));
     assert.deepEqual(resident.pinnedNodeProfile(p,hash(p)),p);
   }

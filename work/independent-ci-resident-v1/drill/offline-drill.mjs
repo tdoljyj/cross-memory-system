@@ -44,9 +44,9 @@ const OWNER = 'S-1-5-21-1-2-3-1001';
 const head = n => `a${n.toString(16).padStart(39, '0')}`;
 const WINDOWS_CLEAN = { windowsTreeZero: true, serviceOriginalStopped: true };
 // The accepted node profile (policy /7) of a fixture node: its owner is the companion's user, its distribution the Linux one.
-const NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'drill-node', hostname: 'TURING', ownerSid: OWNER,
-  ownerProfileDirectory: 'C:\\Users\\drill-owner', controllerSid: 'S-1-5-21-1-2-3-1015', runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02',
-  mutationMutex: 'Global\\CluedControlControllerMutationV1-TURING-1015', wslDistribution: 'Ubuntu-24.04' });
+const NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'drill-node', hostname: 'NODE-B', ownerSid: OWNER,
+  ownerProfileDirectory: 'C:\\Users\\drill-owner', controllerSid: 'S-1-5-21-1-2-3-1015', runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-b',
+  mutationMutex: 'Global\\CluedControlControllerMutationV1-NODE-B-1015', wslDistribution: 'Ubuntu-24.04' });
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-drill-'));
 const winSpool = path.join(root, 'windows-formal-spool');

@@ -11,7 +11,7 @@ import { MergeReconcileState, MergeReconciler, RECONCILE_REPO, RECONCILE_WORKFLO
   reconcileRunsArgv, reconcileDutyOf } from '../src/merge-reconcile.mjs';
 
 const T0 = Date.parse('2026-11-07T00:00:00Z'), HOUR = 3_600_000, MIN = 60_000;
-const GH = 'C:\\Program Files\\GitHub CLI\\gh.exe', NODE = 'turing';
+const GH = 'C:\\Program Files\\GitHub CLI\\gh.exe', NODE = 'node-b';
 const SOURCE = Buffer.from('name: clued-merge-reconcile\non: workflow_dispatch\n');
 const PIN = createHash('sha256').update(SOURCE).digest('hex');
 const expected = { nodeName: NODE, repo: RECONCILE_REPO, pinnedSource: PIN };
@@ -176,7 +176,7 @@ test('recent or queued native controller run holds another wake-up, without trus
 
 test('corrupt/unknown-schema/wrong-node/wrong-pin state fails closed instead of resetting budgets', async t => {
   const h = await harness(t); await h.r.state.save(); const original = JSON.parse(await fs.readFile(h.file, 'utf8'));
-  for (const value of ['{', JSON.stringify({ ...original, contract: 'new-schema' }), JSON.stringify({ ...original, nodeName: 'desk-w-591' }),
+  for (const value of ['{', JSON.stringify({ ...original, contract: 'new-schema' }), JSON.stringify({ ...original, nodeName: 'node-a' }),
     JSON.stringify({ ...original, sourceSha256: 'f'.repeat(64) }), JSON.stringify({ ...original, dispatches: [T0] })]) {
     await fs.writeFile(h.file, value); await assert.rejects(() => h.open()); assert.equal(h.posts.length, 0);
   }

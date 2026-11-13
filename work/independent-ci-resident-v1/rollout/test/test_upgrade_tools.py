@@ -45,17 +45,17 @@ class UpgradeConfig(unittest.TestCase):
         self.refs = {k: '1' * 8 + '-1111-4111-8111-' + '1' * 12 for k in ('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef',
                                                                              'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef',
                                                                              'ownerDecisionRef', 'ownerReceiptRef')}
-        json.dump({'node': {'nodeName': 'turing'}, 'acceptedAt': '2026-10-31T10:00:00Z', **self.refs}, open(os.path.join(self.pkg, 'record', 'acceptance.json'), 'w'))
+        json.dump({'node': {'nodeName': 'node-b'}, 'acceptedAt': '2026-10-31T10:00:00Z', **self.refs}, open(os.path.join(self.pkg, 'record', 'acceptance.json'), 'w'))
         self.root = os.path.join(self.d, 'root')
         os.makedirs(os.path.join(self.root, 'upgrade'))
         self.current(sha(self.manifest))
         w = os.path.join(self.d, 'work'); os.makedirs(w)
-        doc = {'contract': rconfig.CONTRACT, 'node': 'turing', 'nodeProfile': 'config/node-profile.turing.json', 'workDir': w, 'repo': 'C:\\repo',
+        doc = {'contract': rconfig.CONTRACT, 'workDir': w, 'repo': 'C:\\repo',
                'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
                'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
                'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
                'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': 'C:\\i\\m.json', 'installedRoles': 'C:\\i\\roles-v3',
-                         'host': {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64, 'v1SourceHead': 'f' * 40}}}
+                         'host': {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64}}}
         self.cfg = os.path.join(self.d, 'config.json')
         json.dump(doc, open(self.cfg, 'w'))
         self.out = os.path.join(self.d, 'upgrade-config.json')
@@ -79,11 +79,6 @@ class UpgradeConfig(unittest.TestCase):
         code, out, _ = run('upgrade-config.py', self.cfg, self.pkg, self.root, self.out)
         self.assertEqual([code, out['code']], [1, 'INSTALLED_PACKAGE_IS_NOT_THE_CURRENT_GENERATION'])
         self.assertFalse(os.path.exists(self.out))
-
-    def test_the_package_must_be_this_nodes(self):
-        json.dump({'node': {'nodeName': 'desk-w-591'}, **self.refs}, open(os.path.join(self.pkg, 'record', 'acceptance.json'), 'w'))
-        code, out, _ = run('upgrade-config.py', self.cfg, self.pkg, self.root, self.out)
-        self.assertEqual([code, out['code']], [1, 'INSTALLED_PACKAGE_IS_FOR_ANOTHER_NODE'])
 
 
 @unittest.skipUnless(shutil.which('git'), 'git is required')

@@ -1,6 +1,6 @@
 """First install (README section 8c), Windows: the node's build configuration from its config and the facts its Owner returned
-(linux/tools/first-install-facts.py). Puts in only the node's public facts: linux.host (toolchain node and result public key SHA-256,
-no Source v1), linux.installedRoles = null and signer.publicKeyPem. The keyId and runtimeId are the config's own (signer.keyId,
+(linux/tools/first-install-facts.py). Puts in only the node's public facts: linux.host (toolchain node and result public key SHA-256),
+linux.installedRoles = null and signer.publicKeyPem. The keyId and runtimeId are the config's own (signer.keyId,
 signer.runtimeId); nothing about any node is a constant here. Refuses facts that are not a first-install-ready host. Writes the new
 configuration create-only and validates it as the reinstall tools will (rconfig.load + need_first_install_linux).
   python -I first-install-config.py <config.json, signer without publicKeyPem allowed> <facts.json> <out config.json>
@@ -33,17 +33,17 @@ def main(cfg_path, facts_path, out_path):
     need(isinstance(sg, dict) and set(sg) - {'publicKeyPem'} == {'keyId', 'runtimeId'}, 'CONFIG_SIGNER_NEEDS_KEY_ID_AND_RUNTIME_ID')
     need(sg.get('publicKeyPem') in (None, pem), 'CONFIG_SIGNER_IS_ANOTHER_KEY')
     li = cfg.get('linux')
-    need(isinstance(li, dict) and li.get('installedRoles') is None and (li.get('host') or {}).get('v1SourceHead') is None, 'NODE_HAS_AN_INSTALLED_LINUX_CI')
+    need(isinstance(li, dict) and li.get('installedRoles') is None, 'NODE_HAS_AN_INSTALLED_LINUX_CI')
     for k, v in (('toolchainNodeSha256', node['sha256']), ('resultPublicKeySha256', pub['sha256'])):
         need((li.get('host') or {}).get(k) in (None, v), 'CONFIG_HOST_FACT_DIFFERS', k)
     cfg['signer'] = {'keyId': sg['keyId'], 'runtimeId': sg['runtimeId'], 'publicKeyPem': pem}
-    li['host'] = {'toolchainNodeSha256': node['sha256'], 'resultPublicKeySha256': pub['sha256'], 'v1SourceHead': None}
+    li['host'] = {'toolchainNodeSha256': node['sha256'], 'resultPublicKeySha256': pub['sha256']}
     data = (json.dumps(cfg, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
     with open(out_path, 'xb') as o:
         o.write(data)
     out = rconfig.load(out_path)
     rconfig.need_first_install_linux(out)
-    return {'status': 'FIRST_INSTALL_CONFIG_WRITTEN', 'config': out_path, 'configSha256': out['_sha256'], 'node': out['node'],
+    return {'status': 'FIRST_INSTALL_CONFIG_WRITTEN', 'config': out_path, 'configSha256': out['_sha256'],
             'keyId': sg['keyId'], 'runtimeId': sg['runtimeId'], 'resultPublicKeySha256': pub['sha256'], 'toolchainNodeSha256': node['sha256']}
 
 

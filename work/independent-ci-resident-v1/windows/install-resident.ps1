@@ -410,8 +410,8 @@ function Get-ServiceSid([string]$name) {
 # ---- Node profile (resident active/standby design v0.4, section 9 C1) ----
 # The host this package is pinned to is the install record's node profile: record\acceptance.json `node`, read from
 # the package, hashed against the reviewed manifest and parsed from those same bytes. Every host identity this
-# script used to carry as a TURING constant (computer name, runner service, Owner and controller accounts) comes
-# from it; TURING's profile is config\node-profile.turing.json, today's values. The shape rules are those of
+# script needs (computer name, runner service, Owner and controller accounts) comes from it; the repository holds no
+# node's profile. The shape rules are those of
 # resident-v2/prepare-record.mjs#validateNodeProfile; -OwnerSid and -ControllerSid must name the same accounts.
 $NodeProfileKeys = @('contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution')
 # .NET regex differs from JS here: `$` also matches before a final newline and `\d` matches any Unicode digit, so every

@@ -13,7 +13,7 @@ import { fixtureRecord, nodeProfile } from '../../actions-hosted-migration/indep
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cases = JSON.parse(await fs.readFile(path.join(HERE, 'test', 'fixtures', 'node-identity-cases.json'), 'utf8'));
-const turingProfile = JSON.parse(await fs.readFile(path.join(HERE, 'config', 'node-profile.turing.json'), 'utf8'));
+const turingProfile = JSON.parse(await fs.readFile(path.join(HERE, 'test', 'fixtures', 'node-profile.json'), 'utf8'));
 
 function setPath(object, dotted, value) {
   const parts = dotted.split('.'); let at = object;
@@ -31,8 +31,8 @@ function applyCase(c) {
   return docs;
 }
 
-test('two different nodes, TURING and a company fixture, each derive their own identity from their own record', () => {
-  assert.deepEqual(Object.keys(cases.nodes).sort(), ['company', 'turing']);
+test('two different nodes, NODE-B and a company fixture, each derive their own identity from their own record', () => {
+  assert.deepEqual(Object.keys(cases.nodes).sort(), ['company', 'node-b']);
   for (const [name, n] of Object.entries(cases.nodes)) {
     const id = nodeIdentityOf(n.installation, n.accepted, n.acceptancePin);
     assert.deepEqual(id, n.identity, name);
@@ -41,10 +41,10 @@ test('two different nodes, TURING and a company fixture, each derive their own i
     assert.deepEqual(Object.keys(id).sort(), [...NODE_IDENTITY_KEYS].sort());
     assert.equal(id.nodeName, n.accepted.node.nodeName);
   }
-  const [t, c] = [cases.nodes.turing.identity, cases.nodes.company.identity];
+  const [t, c] = [cases.nodes['node-b'].identity, cases.nodes.company.identity];
   assert.equal(t.nodeName, turingProfile.nodeName);
   assert.equal(c.nodeName, 'company');
-  assert.notEqual(cases.nodes.turing.identitySha256, cases.nodes.company.identitySha256);
+  assert.notEqual(cases.nodes['node-b'].identitySha256, cases.nodes.company.identitySha256);
   for (const k of NODE_IDENTITY_KEYS.filter(k => k !== 'contract')) assert.notEqual(t[k], c[k], `${k} differs between the two nodes`);
 });
 
@@ -80,9 +80,9 @@ test('validateNodeIdentity refuses a changed, extended or reshaped identity', ()
 });
 
 // The real Source record assembler (test-only import; the resident never imports Source): two nodes, two records.
-test('identities derived from really assembled install records (TURING profile, company profile) match their inputs', () => {
+test('identities derived from really assembled install records (NODE-B profile, company profile) match their inputs', () => {
   const company = nodeProfile({ nodeName: 'company', hostname: 'COMPANY-PC', mutationMutex: 'Global\\CluedControlControllerMutationV1-COMPANY-PC-1015',
-    runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-company-win-02', wslDistribution: 'Ubuntu-24.04' });
+    runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-a', wslDistribution: 'Ubuntu-24.04' });
   const out = [];
   for (const profile of [turingProfile, company]) {
     const fx = fixtureRecord({ node: profile });

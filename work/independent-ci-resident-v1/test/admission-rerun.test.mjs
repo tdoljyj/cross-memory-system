@@ -285,7 +285,7 @@ test('the PR page says the required tests were re-run once, in the base text: th
   // the reporter applies it to describe's text; NodeDuty then prefixes the duty word
   const base = withRerunLine({ state: 'pending', description: '运行中：第 3 段（扫描）' }, true);
   for (const word of ['当班', '已交班', '双活停机']) {
-    const s = { login: 'owner', context: 'resident-queue/turing (info only)', created_at: '2026-11-05T12:00:00Z', description: `${word}：${base.description}` };
+    const s = { login: 'owner', context: 'resident-queue/node-b (info only)', created_at: '2026-11-05T12:00:00Z', description: `${word}：${base.description}` };
     assert.equal(parseDutyStatus(s, 'owner')?.word, word, word);
   }
 });

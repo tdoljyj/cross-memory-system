@@ -49,7 +49,7 @@ inst = json.loads(raw['installation.json']); acc = json.loads(raw['acceptance.js
 signers = json.loads(raw['signers.json'])
 assert all('privateKey' not in s and 'BEGIN PUBLIC KEY' in s['publicKeyPem'] and 'PRIVATE' not in s['publicKeyPem'] for s in signers['signers']), 'SIGNERS_NOT_PUBLIC'
 
-node, node_sha = rconfig.node_profile(cfg, TREE)
+node, node_sha = rconfig.node_profile(cfg)
 
 roles = {}
 for r in ('gitleaks', 'trivy', 'contract-placement'):
