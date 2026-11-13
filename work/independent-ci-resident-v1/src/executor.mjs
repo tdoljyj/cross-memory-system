@@ -55,11 +55,12 @@
 //   - a release goes to the tail and is retried on the row's own back-off; a wait backs off and has its own budget; a
 //     head released too often stops; every daily budget is derived from the ledger (ledger.mjs#usage);
 //   - the circuit breaker (breaker.mjs) is fed one event per batch end and asked before every start;
-//   - a batch whose PR got a newer commit is released before stage 1 (SUPERSEDED, nothing burned), and after stage 1
-//     ended at a safe point outside the Linux preparation only when a live read of the PR confirms it
-//     (SUPERSEDED_AT_SAFE_POINT: the Owner abort's quiescence and rename-only archive, the head burned, never an
-//     attempt 2). When stage 1 or the bundle proves the batch head is no longer the PR's head, one live read may restore
-//     a superseded, unburned commit as the PR's current one. A live read only ever stops or re-queues.
+//   - a batch whose PR got a newer commit is released before stage 1 (SUPERSEDED, nothing burned). After stage 1 one rule decides
+//     (DESIGN §72, ADR 0027): a batch stands only while its PR is open, the PR's head is the batch's head and this node holds
+//     ci-admission; at every safe point outside the Linux preparation, and on every tick for a batch resting at A or B (under PAUSE
+//     too), one that is known not to stand ends one way (SUPERSEDED_AT_SAFE_POINT: the Owner abort's quiescence and rename-only
+//     archive, the head burned, never an attempt 2). When stage 1 or the bundle proves the batch head is no longer the PR's head, one
+//     live read may restore a superseded, unburned commit as the PR's current one. A live read only ever stops or re-queues.
 //
 // Phase 2, step 2 (parking; design v0.5 §4.3, §4.8, §4.9; Owner decision e1e19e2e item 4; DESIGN §18):
 //   - a batch rests at parking point A (the hosted wait) or B (after the last role stage and the close archive on both
@@ -84,8 +85,9 @@
 // Owner re-arm begin UNCERTAIN with a role probe due at once; the probe (stage 11, DESIGN C2) says held -> ACTIVE, not-held ->
 // STANDBY, uncertain -> the mode stays. Stage 1's NODE_ROLE_NOT_HELD goes to STANDBY too. While the mode is not ACTIVE the
 // schedule starts nothing (no row, no attempt 2, no waiting-retry; DEFERRED NODE_STANDBY / NODE_ROLE_UNCERTAIN, a quiet
-// result so the probe still runs): triggers are still read, and a batch in flight or at a parking point goes on, its live
-// admission deciding. A failure that may mean the role is gone makes the next probe due at once (roleProbe.urgent).
+// result so the probe still runs): triggers are still read; a batch at a parking point of a STANDBY node no longer stands and ends by
+// the rule of DESIGN §72 (UNCERTAIN is no answer: it waits). A failure that may mean the role is gone makes the next probe due at once
+// (roleProbe.urgent).
 //
 // Stage 10, the merge train in shadow mode (quota redesign phase 2, step 3c-1; design v0.5 §5.5, §4.7; Owner decision
 // 2eea28a1; train.mjs, DESIGN §22.3): with train.enabled 'shadow', a tick that ran nothing (the queue idle or only
@@ -353,8 +355,8 @@ export const ROWS_PER_TICK = 16;
 // PR changed or closed, the refs moved since the bundle, or the bundle failed.
 export const FALSIFYING_CODES = Object.freeze(['PR_NOT_OPEN_OR_CHANGED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'BUNDLE_UNAVAILABLE']);
 export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files_changed']);
-// A batch that waits for hosted signals is resumed every tick: its supersession live read (and the receipt of a missing
-// answer) happens at most this often (independent review of step 1, m9).
+// The rule's live read of a batch's PR (DESIGN §72) happens at most this often per batch and named head (independent review of step
+// 1, m9): a resting batch's own cadence, and the bound on a hint that names the same head again.
 export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
 // Ticks in a row the queue could not be written before the Owner is told (re-review N2).
 export const QUEUE_SAVE_ALARM = 3;
@@ -1916,6 +1918,10 @@ export class ResidentExecutor {
     // returns PAUSED; a HALT it latches is the tick's result. Off and shadow: nothing runs, as before.
     if (await this.ledger.paused()) {
       if (this.betweenBatchesRunning) return { state: 'PAUSED' };
+      // DESIGN §72: PAUSE stops every try and every start, never the rule: a batch that no longer stands ends here too (it publishes
+      // nothing), so a paused node off duty has no open batch (the reinstall's W1 and the uninstall rely on it).
+      const ended = await this.endNotStanding();
+      if (ended) return ended;
       // The upgrader keeps its pause until VERIFY has seen a post-start role observation. Run only that
       // read-only maintenance under its exact pause; never intake, schedule or lift the pause here.
       const probed = await this.roleProbeMaintenance({ upgradePaused: true });
@@ -1926,6 +1932,9 @@ export class ResidentExecutor {
     // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
     // marked running.
     await this.intake();
+    // DESIGN §72: the rule first, with this tick's triggers: a resting batch that no longer stands ends before anything tries it.
+    const ended = await this.endNotStanding();
+    if (ended) return ended;
     // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
     // once (and continues to its end when it may), a parked one whose stage-8 try is due runs that try. They are
     // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE. Then the queue.
@@ -2317,31 +2326,19 @@ export class ResidentExecutor {
     if (ended) { try { await this.receipt('train-front-takes-over', { key: entry.key, pr: s.pr, headSha: s.headSha, testSha: front.testSha, outcome: ended.state ?? null }); } catch { /* a view */ } }
   }
 
-  // Field defect PR #1035 (2026-11-07): the PR's row still ran an older head's batch parked at B (there: the old head's front batch, its
-  // stage 8 REQUIRED_CHECK_FAILED) when stage 10, having read the new head on GitHub before the poller's trigger reached the queue, opened
-  // the new head's front batch. offerFront refused it as busy; stage 10 had counted it and touched running, so every later run said
-  // TRAIN_FRONT_BATCH_RUNNING and nothing ran until the running clock lapsed (40 minutes and more in the field). Now that parked batch ends
-  // here at its safe point as SUPERSEDED_AT_SAFE_POINT (the same ending as supersededParked: quiescence, the old head burned, a rename-only
-  // archive) once one live read of the PR confirms its head is the front's; the front batch is then offered as usual. No live answer, or
-  // the PR still at the parked head: nothing ends, offerFront decides as before.
+  // Field defect PR #1035 (2026-11-07): stage 10 read the PR's new head on GitHub before the poller's trigger reached the queue, while the
+  // row still ran the older head's batch parked at B, so offerFront refused the new head's front batch as busy. The front naming another
+  // head is a hint to the rule (DESIGN §72): the parked batch's live read is due now, and the batch ends there when its head is no longer
+  // the PR's; the front batch is then offered as usual. No live answer, or the PR still at the parked head: offerFront decides as before.
   async endSupersededForFront(front) {
     const run = this.queue.row(front.pr)?.running;
     if (!run || run.headSha === front.headSha) return;
     let entry;
     try { entry = (await this.ledger.parkedEntries()).find(e => e.key === run.key && Ledger.parkedAt(e)); } catch { return; }
-    const s = entry?.reserved?.subject, batch = entry?.parked?.batch;
+    const s = entry?.reserved?.subject;
     if (!s || s.pr !== front.pr || s.headSha === front.headSha) return;
-    const live = await this.livePull(s.pr, batch);
-    if (!live || live.state !== 'open' || live.headSha !== front.headSha) {
-      try { await this.receipt('supersede-unconfirmed', { key: entry.key, pr: s.pr, safePoint: 'parked-for-front' }); } catch { /* a view */ }
-      return;
-    }
-    this.parkNudges?.delete(entry.key);
-    this.current = { key: entry.key, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, attempt: s.attempt, since: entry.reserved.reservedAt ?? null };
-    let outcome;
-    try { outcome = await this.supersededEnd(entry.key, s, batch, { safePoint: 'parked', pos: POSITIONS[8], live, stage: 8 }); }
-    catch (error) { outcome = await this.unknown(entry.key, codeOf(error), 'executor-exception', batch, archiveFacts(error)); }
-    await this.afterBatch(s, entry.reserved.origin ?? 'queued', outcome);
+    const outcome = await this.endParkedIfNotStanding(entry, front.headSha);
+    if (!outcome) return;
     try { await this.receipt('train-front-supersedes', { key: entry.key, pr: s.pr, headSha: s.headSha, frontHeadSha: front.headSha, testSha: front.testSha, outcome: outcome?.state ?? null }); }
     catch { /* a view */ }
   }
@@ -2712,13 +2709,8 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
-    // Field defect PR #1035: a batch parked at B whose PR got a newer commit ends at its safe point whatever the train gate says (ending a
-    // superseded batch publishes nothing). Before, the take-over hold below filtered it out first: an old head's front batch is no longer
-    // the current front, so it was never ended, kept the PR's row and the new head's front batch could not run.
-    for (const e of entries.filter(x => Ledger.parkedAt(x))) {
-      const r = await this.supersededParked(e);
-      if (r) return { acted: r, waiting: null };
-    }
+    // A batch that no longer stands (its PR closed, a newer head, this node off duty) was ended by the rule before this (endNotStanding,
+    // DESIGN §72), whatever the train gate below says: field defect PR #1035 needs no step of its own here.
     if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
     if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
@@ -2727,12 +2719,6 @@ export class ResidentExecutor {
       const r = await this.resumeWaiting(e);
       if (r?.state !== 'WAITING') return { acted: r, waiting: null };
       waiting = r;
-    }
-    // A batch parked at B whose PR got a newer commit ends at its safe point once one live read confirms it (DESIGN 17.4):
-    // the newer commit never waits for the parked batch's tries.
-    for (const e of entries.filter(x => Ledger.parkedAt(x))) {
-      const r = await this.supersededParked(e);
-      if (r) return { acted: r, waiting };
     }
     const now = this.clock();
     // park.maxMs holds without a try too (while the retry budget is used up or nothing is due; review m4): the batch ends
@@ -2749,22 +2735,9 @@ export class ResidentExecutor {
     return { acted: await this.resumeParkedB(due[0]), waiting };
   }
 
-  // A batch parked at B, superseded by a newer commit of its PR (the queue's order, then one live read): ended as
-  // SUPERSEDED_AT_SAFE_POINT. Its head published stages 3, 5 and 7 (the terminal says stage 8). null: it stays parked.
-  async supersededParked(entry) {
-    const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject;
-    if (!this.newerCommitQueued(subject)) return null;
-    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
-    let outcome;
-    try {
-      outcome = await this.supersededAfterStart(key, subject, batch, 'parked', POSITIONS[8], 8);
-    } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
-    }
-    return outcome ? this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome) : null;
-  }
-
-  // A batch parked at B ends without a try (its time ran out): a Windows-only stage-8 ending, nothing ran.
+  // A batch parked at B ends without a try: its time ran out (park.maxMs, the backstop outside the rule of DESIGN §72: a batch that
+  // stands, or whose PR cannot be read, holds a parking place at most this long), or stage 10's front batch takes over its head. A
+  // Windows-only stage-8 ending, nothing ran.
   async endParkedB(entry, code) {
     const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject;
     this.parkNudges?.delete(key);
@@ -3341,29 +3314,13 @@ export class ResidentExecutor {
   }
 
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
-  // for good, kept when they only defer it. Phase 2: an attempt 2 whose PR got a newer commit is voided when one live
-  // read confirms the PR's head moved on (v0.6 §3).
+  // for good, kept when they only defer it, and when one live read shows the PR closed or its head moved on (DESIGN §72).
   async runAttempt2({ key1, key2, subject }, usage) {
     // Bound to the installed Source (PR-A review MAJOR 2): an intent from before a reinstall is closed, never run.
     if (subject.sourceManifestSha256 !== this.policy.sourceManifestSha256) {
       await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
       return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED', next: true };
-    }
-    let live = null;
-    if (this.newerCommitQueued(subject)) {
-      live = await this.livePull(subject.pr);
-      if (live && (live.state !== 'open' || live.headSha !== subject.headSha)) {
-        await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
-        await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SUPERSEDED' });
-        return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SUPERSEDED', next: true };
-      }
-      // Disproved (the PR's head is still attempt 1's): the newer commit in the queue goes back to superseded. No answer:
-      // attempt 2 runs and stage 1 decides; nothing but a confirming live read ever voids it (v0.6 §3; review M2).
-      if (live && this.queue.keepCurrent(subject.pr, subject.headSha, subject.baseSha, this.clock())) {
-        await this.persistQueue();
-        await this.receipt('supersede-disproved', { key: key2, pr: subject.pr, safePoint: 'before-attempt-2' });
-      }
     }
     const hk = headKey(subject);
     const pre = await this.precheck(key2, hk, subject, { attempt1Key: key1, usage, origin: 'attempt2' });
@@ -3375,14 +3332,24 @@ export class ResidentExecutor {
     if (pre.halt) { await this.haltWith(pre.halt, { key: key2 }); return { state: 'HALTED', key: key2, failureCode: pre.halt }; }
     // A deferred attempt 2 never blocks the rows behind it (PR-A review MINOR 9): a global deferral stops them anyway.
     if (pre.defer) { if (pre.notice) this.queue.notice(pre.notice); return { state: 'DEFERRED', key: key2, reason: pre.defer, next: true }; }
-    // A merged or closed PR never runs attempt 2 either (rule 41ab823a): one live read after the precheck, as in
-    // runRow (reusing the read above when there was one). No answer is never a fact: attempt 2 then runs as before.
-    live ??= await this.livePull(subject.pr);
+    // The rule of DESIGN §72 before attempt 2 exists (rule 41ab823a, v0.6 §3): one live read after the precheck, as in runRow. A closed PR,
+    // or one whose head is no longer attempt 1's, never runs attempt 2; a newer commit in the queue that the read disproves goes back to
+    // superseded. No answer is never a fact: attempt 2 runs and stage 1 decides.
+    const live = await this.livePull(subject.pr);
     if (live && live.state !== 'open') {
       await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_PR_CLOSED', liveState: live.state });
       if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state, before: 'attempt2' });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_PR_CLOSED' });
       return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_PR_CLOSED', next: true };
+    }
+    if (live && live.headSha !== subject.headSha) {
+      await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
+      await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SUPERSEDED' });
+      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SUPERSEDED', next: true };
+    }
+    if (live && this.newerCommitQueued(subject) && this.queue.keepCurrent(subject.pr, subject.headSha, subject.baseSha, this.clock())) {
+      await this.persistQueue();
+      await this.receipt('supersede-disproved', { key: key2, pr: subject.pr, safePoint: 'before-attempt-2' });
     }
     // Consumed create-only before the reservation: whatever attempt 2 ends with, it never runs again.
     await this.ledger.consumeAttempt2(key1, { key2 });
@@ -3659,6 +3626,8 @@ export class ResidentExecutor {
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
     await this.receipt('batch-started', { key });
+    // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72).
+    this.liveReadDue(key);
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
     await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
@@ -3711,7 +3680,7 @@ export class ResidentExecutor {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
-    if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
+    if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
     const plan = await this.relayPlan(key, subject, batch, t0);
     if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
     const relayed = plan.relayed.length;
@@ -3721,7 +3690,7 @@ export class ResidentExecutor {
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
-      if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
+      if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
       // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
       // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
       // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
@@ -4209,31 +4178,100 @@ export class ResidentExecutor {
       settle: { kind: 'released', reason: 'SUPERSEDED', code: BATCH_SUPERSEDED, klass: 'superseded', breaker: 'neutral', pos: POSITIONS.bundle } };
   }
 
-  // After stage 1, only at a safe point outside the Linux preparation (before stage R's plan, before the workspace):
-  // the order is not enough, one live read must confirm the PR's head moved on (or the PR closed). No answer: the batch
-  // goes on. The live head IS this batch's head: the newer commit in the queue is disproved and the batch goes on.
-  async supersededAfterStart(key, subject, batch, safePoint, pos, stage = 1) {
-    if (!(await this.newerCommitArrived(subject))) return null;
-    this.liveReadAt ??= new Map();
-    const throttle = `${key}:${this.queue.row(subject.pr)?.current?.headSha ?? ''}`;
-    if (this.clock() - (this.liveReadAt.get(throttle) ?? -Infinity) < SUPERSEDE_LIVE_READ_MS) return null;
-    this.liveReadAt.set(throttle, this.clock());
-    if (this.liveReadAt.size > 64) this.liveReadAt.delete(this.liveReadAt.keys().next().value);
+  // ---- the one rule of a batch's life (DESIGN §72, ADR 0027; it replaces the supersession specials of §17.4, §65.9) ----
+  //
+  // A batch stands only while all three hold: (1) its PR is open, (2) the PR's head is the batch's head, (3) this node holds ci-admission.
+  // standing() says at a safe point whether one of them is known to be false: null (the batch stands, or nothing says otherwise) or the
+  // fact that ends it, { basis: 'not-on-duty' | 'pr-closed' | 'head-moved', live }. Its inputs are the ones the resident already has:
+  //   (3) the node mode: STANDBY (the role probe, or stage 1, said not held). UNCERTAIN is no answer; an engine without the probe has no
+  //       mode (a single node: always on duty). The end proves quiescence through the companion, so only with its fresh heartbeat;
+  //   (1), (2) one live read of the PR through the companion's pr-head (DESIGN §17.5), due once every SUPERSEDE_LIVE_READ_MS per batch
+  //       and at once when the run queue (a newer commit) or stage 10 (the front) names another head of the PR (hint). Stage 1 is a read
+  //       too: markStarted counts as this batch's first one. No answer never ends a batch.
+  // Every ending goes the one way, supersededEnd(): quiescence on both hosts, the head burned, a rename-only archive, FAILED_CLEAN
+  // SUPERSEDED_AT_SAFE_POINT (neutral, never an attempt 2); anything unproven is UNKNOWN and HALTs. Nothing is published or retracted.
+  async standing(key, subject, batch, { hint = null, safePoint = null } = {}) {
+    if (this.probing() && this.nodeMode() === 'STANDBY') {
+      let beat = null;
+      try { beat = await this.companion.heartbeat?.(); } catch { beat = null; }
+      const fresh = typeof beat?.at === 'number' && this.clock() - beat.at <= this.policy.companion.heartbeatMaxAgeMs;
+      return fresh ? { basis: 'not-on-duty', live: null } : null;
+    }
+    const queued = this.queue.row(subject.pr)?.current?.headSha ?? null;
+    const newer = HEX40.test(queued ?? '') && queued !== subject.headSha ? queued : null;
+    const named = HEX40.test(hint ?? '') && hint !== subject.headSha ? hint : newer;
+    if (!this.liveReadDue(key, named)) return null;
     const live = await this.livePull(subject.pr, batch);
-    if (!live) { await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint }); return null; }
-    if (live.state === 'open' && live.headSha === subject.headSha) {
-      this.queue.keepRunning(subject.pr, subject.headSha, this.clock());
-      await this.persistQueue();
-      await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
+    if (!live) {
+      if (named) await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint });
       return null;
     }
-    return this.supersededEnd(key, subject, batch, { safePoint, pos, live, stage });
+    if (live.state === 'open' && live.headSha === subject.headSha) {
+      // The newer commit in the queue is disproved: it goes back to superseded, this batch's head is current again.
+      if (newer && this.queue.keepRunning(subject.pr, subject.headSha, this.clock())) {
+        await this.persistQueue();
+        await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
+      }
+      return null;
+    }
+    return { basis: live.state !== 'open' ? 'pr-closed' : 'head-moved', live };
   }
 
-  // The executor's own end of a batch, on the Owner abort's path (DESIGN §6.5): nothing of this batch runs at a safe
-  // point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
+  // One live read per batch and named head every SUPERSEDE_LIVE_READ_MS (named null: the batch's own cadence). true: due, and taken now.
+  liveReadDue(key, named = null) {
+    this.liveReadAt ??= new Map();
+    const id = `${key}:${named ?? ''}`, now = this.clock();
+    if (now - (this.liveReadAt.get(id) ?? -Infinity) < SUPERSEDE_LIVE_READ_MS) return false;
+    this.liveReadAt.delete(id);
+    this.liveReadAt.set(id, now);
+    if (this.liveReadAt.size > 64) this.liveReadAt.delete(this.liveReadAt.keys().next().value);
+    return true;
+  }
+
+  // A batch in flight, at a safe point outside the Linux preparation (before stage R's plan, before the workspace): the inbox is read
+  // again first, so a newer commit that arrived while it ran is a hint. null: it goes on.
+  async endIfNotStanding(key, subject, batch, safePoint, pos, stage = 1) {
+    try { await this.intake(); } catch { /* the next tick reads it */ }
+    const fact = await this.standing(key, subject, batch, { safePoint });
+    return fact ? this.supersededEnd(key, subject, batch, { safePoint, pos, stage, ...fact }) : null;
+  }
+
+  // A batch resting at parking point A ('waiting') or B ('parked'), held to the rule on every tick (endNotStanding) and when stage 10
+  // names another head of its PR (hint). null: it stays.
+  async endParkedIfNotStanding(entry, hint = null) {
+    const { key } = entry, subject = entry.reserved.subject, atB = Ledger.parkedAt(entry);
+    if (!atB && !Ledger.waitingAt(entry)) return null;
+    const batch = atB ? entry.parked.batch : entry.wait.batch, safePoint = atB ? 'parked' : 'waiting';
+    const fact = await this.standing(key, subject, batch, { hint, safePoint });
+    if (!fact) return null;
+    this.parkNudges?.delete(key);
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      outcome = await this.supersededEnd(key, subject, batch, { safePoint, pos: atB ? POSITIONS[8] : POSITIONS[1], stage: atB ? 8 : 1, ...fact });
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
+    }
+    return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
+  }
+
+  // Every tick (after recovery, HALT and the backfill; under PAUSE too, before the tick rests there): the first resting batch that no
+  // longer stands is ended. One per tick; the next tick takes the next one.
+  async endNotStanding() {
+    let entries;
+    try { entries = await this.ledger.parkedEntries(); } catch { return null; }
+    for (const e of entries) {
+      const r = await this.endParkedIfNotStanding(e);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  // The executor's own end of a batch that no longer stands (DESIGN §72), on the Owner abort's path (DESIGN §6.5): nothing of this batch
+  // runs at a safe point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
   // FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT (neutral for the breaker, never an attempt 2). Unproven: UNKNOWN, HALT.
-  async supersededEnd(key, subject, batch, { safePoint, pos, live, stage = 1 }) {
+  //   basis: which part of the rule failed ('pr-closed', 'head-moved', 'not-on-duty'); live: the PR read that showed it (null for duty).
+  async supersededEnd(key, subject, batch, { safePoint, pos, basis, live = null, stage = 1 }) {
     const context = { safePoint, stage: null };
     try {
       // Never archive from drifted bytes (re-review of step 2, m16).
@@ -4241,8 +4279,8 @@ export class ResidentExecutor {
       if (drift) return await this.unknown(key, drift, 'superseded-source-drift', batch, context);
       // First the create-only record: a crash from here on is a crash scene (SUPERSEDE_INTERRUPTED), never a wait that a
       // restart would resume on a half-archived scene (independent review of step 1, M1).
-      await this.ledger.beginSelfAbort(key, { safePoint, liveHeadSha: live.headSha, liveState: live.state });
-      await this.receipt('batch-self-abort', { key, pr: subject.pr, safePoint });
+      await this.ledger.beginSelfAbort(key, { safePoint, basis, liveHeadSha: live?.headSha ?? null, liveState: live?.state ?? null });
+      await this.receipt('batch-self-abort', { key, pr: subject.pr, safePoint, basis });
       const proof = await this.abortQuiescence(batch, {});
       if (!proofComplete(proof)) return await this.unknown(key, 'SUPERSEDE_QUIESCENCE_UNPROVEN', 'superseded-quiescence-unproven', batch, context);
       await this.ledger.burnHead(key, { failureCode: SUPERSEDED_AT_SAFE_POINT });
@@ -4251,9 +4289,9 @@ export class ResidentExecutor {
       archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
       // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
       // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
-      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage, batchId: batch?.batchId ?? null,
-        windows: windows.directory, linux: linux.directory, class: 'clean-final', retry: 'new-commit', breaker: 'neutral', liveHeadSha: live.headSha, liveState: live.state });
-      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint });
+      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis, safePoint, stage, batchId: batch?.batchId ?? null,
+        windows: windows.directory, linux: linux.directory, class: 'clean-final', retry: 'new-commit', breaker: 'neutral', liveHeadSha: live?.headSha ?? null, liveState: live?.state ?? null });
+      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint, basis });
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: SUPERSEDED_AT_SAFE_POINT, key });
       // At B only Windows was touched since the parking told the breaker about stages 1-7 (review of step 2, M2).
       return { state: 'FAILED_CLEAN', key, failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint,

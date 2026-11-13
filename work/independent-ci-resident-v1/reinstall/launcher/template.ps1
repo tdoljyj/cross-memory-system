@@ -505,7 +505,9 @@ function Test-OldRootQuiet {
   elseif ($InstalledPausedSha256 -and $r.pausedSha256 -cne $InstalledPausedSha256) { $r.codes += 'OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE' }   # review m6
   $ledger = Join-Path $ResidentRoot 'state\ledger'
   $r.openBatches = @(if ([IO.Directory]::Exists($ledger)) { [IO.Directory]::GetDirectories($ledger) | Where-Object { -not [IO.File]::Exists((Join-Path $_ '90-terminal.json')) } }).Count
-  if ($r.openBatches -ne 0) { $r.codes += 'OPEN_BATCH_REARM_FIRST' }
+  # DESIGN section 72 (ADR 0027): a node off duty keeps no open batch (the rule ends it, under W1's pause too); one here means the rule could
+  # not run (the node on duty, a HALT, no companion): look at that, there is nothing to re-arm.
+  if ($r.openBatches -ne 0) { $r.codes += 'OLD_RESIDENT_OPEN_BATCH' }
   $r
 }
 # r4.1 C2 (root cause 2): NodeProfileV2.cs:138-139 opens every parent of resident\record\acceptance.json (C:\, C:\ProgramData,
@@ -801,7 +803,7 @@ function Step-UninstallPreflight {
   $ledger = Join-Path $ResidentRoot 'state\ledger'
   $open = @(if ([IO.Directory]::Exists($ledger)) { [IO.Directory]::GetDirectories($ledger) | Where-Object { -not [IO.File]::Exists((Join-Path $_ '90-terminal.json')) } })
   $report['openBatches'] = $open.Count
-  if ($open.Count) { $codes.Add('OPEN_BATCH_REARM_FIRST') }
+  if ($open.Count) { $codes.Add('OLD_RESIDENT_OPEN_BATCH') }   # DESIGN section 72: see Test-OldRootQuiet
   $u = Invoke-Child 'uninstall.dry-run.before-quiesce' $InstalledUninstall @()
   $uv = Parse-Json $u.stdout; $up = Get-Key $uv 'plan'
   $report['uninstallDryRun'] = [ordered]@{ exit = $u.exit; status = (Get-Key $uv 'status'); planSha256 = (Get-Key $uv 'planSha256'); plan = $up; stderr = (Tail $u.stderr) }

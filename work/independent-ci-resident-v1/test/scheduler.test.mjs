@@ -230,7 +230,7 @@ test('supersession at the before-workspace safe point (after stage R) and during
   await g.drop(triggerBytes({ headSha: H(7) }));
   g.advance(60_000);
   const w = await g.exec.tick();
-  assert.deepEqual([w.state, w.failureCode, w.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'before-relay-plan']);
+  assert.deepEqual([w.state, w.failureCode, w.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'waiting'], 'the rule ends a resting batch at its tick (DESIGN §72)');
 });
 
 test('review M2: attempt 2 runs when the live read disproves the newer commit, or gives no answer; the stale commit is set aside', async t => {

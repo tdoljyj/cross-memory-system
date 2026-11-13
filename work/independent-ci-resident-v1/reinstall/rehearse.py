@@ -400,7 +400,9 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             find('UNINSTALL_PLAN_UPGRADER_NOT_THE_SERVICE', plan=plan['upgraderService'], service=upgrader_present)
         if 'upgraderService' in plan and plan['upgraderService'] is not True:   # review 1-7: Test-UninstallPlan requires $true
             find('UNINSTALL_PLAN_UPGRADER_SERVICE_NOT_TRUE', plan=plan['upgraderService'])
-        for k, v in (('openBatches', 0), ('runnerOriginalStopped', True), ('runnerSddlUnchanged', True), ('deletesEvidence', False)):
+        # openBatches is not compared (DESIGN §72, ADR 0027): an open batch is live state of this moment, not of the package or the
+        # configuration. A node off duty keeps none by the rule (PAUSE too), and W1 and the launcher assert it when they run.
+        for k, v in (('runnerOriginalStopped', True), ('runnerSddlUnchanged', True), ('deletesEvidence', False)):
             if k in plan and plan[k] != v:
                 find('UNINSTALL_PLAN_' + re.sub(r'(?<!^)(?=[A-Z])', '_', k).upper(), value=plan[k])
 

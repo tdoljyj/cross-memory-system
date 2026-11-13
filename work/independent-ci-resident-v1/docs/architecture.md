@@ -276,8 +276,13 @@ attempt 2：
 - **到达序号**：由执行器读到触发时编号，每个 tick 最多读 16 个（`inboxMaxFiles`）。
 - **新提交**：
   - 旧提交还在等 → 直接替换，不评估、不烧号；
-  - 旧提交正在跑 → 在安全点 `before-stage-1` / `before-relay-plan` / `before-workspace` 凭一次实时读确认后结束；
-  - 停在 B 的批次 → 每个 tick 实时读一次，确认 head 已变就以 `SUPERSEDED_AT_SAFE_POINT` 结束。
+  - 旧提交已预留、第 1 段之前 → 按到达顺序释放（`SUPERSEDED`，不烧号）；
+  - 第 1 段之后 → 由下面的规则决定。
+- **批次只在三者同时成立时存在**（[ADR 0027](adr/0027-batch-one-rule.md)，`executor.mjs#standing`）：PR 仍开着、PR 的 head 仍是批次的 head、本节点当班。任一已知不成立，下一拍以唯一一条路结束（`SUPERSEDED_AT_SAFE_POINT`：两端静止证明、烧号、只改名归档、中性、不 attempt 2；终态记 `basis`：`pr-closed`、`head-moved`、`not-on-duty`）。
+  - 当班看节点模式 STANDBY（且 companion 心跳新鲜）；UNCERTAIN 不算。
+  - PR 看 companion `pr-head` 的实时读：每个批次每 10 分钟一次，排队表出现更新提交或第 10 段车头指向别的 head 时立即读；读不到不结束。
+  - 判的地方：停在 A、B 的批次每个 tick（PAUSE 下也判，HALT 下不判）；在途批次在 `before-relay-plan`、`before-workspace`；attempt 2 在预检后读一次。
+  - `park.maxMs` 是规则之外的兜底：仍成立却一直不入队、或一直读不到 PR 的批次，最多占停靠名额 24 小时。
 - **读不出**：文件改名留存，换一个新的 `generation` 重建。poller 看到 generation 变了会重新提议所有 PR。
 
 ### 6.2 调度顺序与退避
@@ -311,6 +316,7 @@ B 上的第 8 段尝试：
 | 名额 | A 加上 B 中前 2 位 ≤ `park.maxParked` = 4；B 中其他 ≤ `maxParkedOutsideTop2` = 8；满了就 `DEFERRED PARKING_FULL` |
 | 第 8 段零副作用的暂时失败（`NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`） | 停在 B 最多 3 次，间隔 1 / 3 / 10 分钟，第 4 次烧号 |
 | main 移动（`RESIDENT_BASE_MOVED`）、超出上限 | 中性结束 |
+| PR 关闭、换 head、本节点不当班 | 按 §6.1 的规则在下一拍结束，不再尝试 |
 
 **排队观察**（`queueWatchMaintenance`）：空闲、当班、所有打开的批次都在停靠点时运行，用角色探测的 `watchPr` 读合并队列。停在 B 的批次一到队首就提前尝试。
 
@@ -521,10 +527,10 @@ B 上的第 8 段尝试：
 | 控制 | 谁能发 | 写到哪 | 作用 | 怎么结束 |
 |---|---|---|---|---|
 | HALT | 系统 | `state\HALT.json` | 一切停下（崩溃恢复和 Owner 请求照做） | Owner 复位（Rearm） |
-| PAUSE | 任何 Owner 会话进程；列车或兜底也会写 | `requests\` → `state\PAUSED.json` | 批次之间一切停下 | Owner 恢复（Resume），或升级代理自己的 resume |
+| PAUSE | 任何 Owner 会话进程；列车或兜底也会写 | `requests\` → `state\PAUSED.json` | 批次之间一切停下：不尝试、不开批次；只有 §6.1 的规则照常结束不再成立的停靠批次 | Owner 恢复（Resume），或升级代理自己的 resume |
 | 暂停接新 | 任何 Owner 会话进程；系统持有者 `dual-active`、`version-skew`、`unreadable` | `requests\` → `state\INTAKE-PAUSE.json` | 只是不开新批次 | 最长 2 小时自动失效；同一持有者提前恢复 |
 | 中止（Abort） | 提权 Owner | `owner\` | 在安全点结束一个批次 | — |
-| 排空（Drain） | 提权 Owner | `owner\` | 结束所有停靠批次（按中止路径） | — |
+| 排空（Drain） | 提权 Owner | `owner\` | 结束所有停靠批次（按中止路径）；只在当班节点上主动放弃仍成立的批次时用，重装不需要 | — |
 | 放行熔断 | 提权 Owner | `owner\` | 熔断试跑立即到期 | — |
 | 远程急停 | Owner | KooYomi 页面 | 撤销 ci-admission Binding，所有批次 fail closed | 换 token |
 
@@ -604,7 +610,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
   - held → ACTIVE；
   - not-held → STANDBY；
   - uncertain → 保持原模式。
-- 非 ACTIVE 时不开新批次（`NODE_STANDBY` / `NODE_ROLE_UNCERTAIN`），触发照常读进排队表，在途批次照常跑完。
+- 非 ACTIVE 时不开新批次（`NODE_STANDBY` / `NODE_ROLE_UNCERTAIN`），触发照常读进排队表。STANDBY 节点上停在 A、B 的批次不再成立，下一拍按 §6.1 的规则结束；UNCERTAIN 时不结束。
 - 探测间隔（[ADR 0026](adr/0026-smooth-handover.md)）：UNCERTAIN 和 STANDBY 每 1 分钟；空闲的 ACTIVE 每 5 分钟（不超过新持有的 5 分钟激活延迟，所以空闲的旧节点总在新节点当班之前转待命）；不确定时 1、2、4、5 分钟退避，不短于本模式间隔；批次以 `NODE_ROLE_NOT_HELD` 等结束时立即探测。
 - 每次探测是一次经交换代理的换跑（约 4 秒，写 2 条回执），不是单纯的服务端查询。
 - 真正挡住"两个节点同时发布"的是服务端的 ci-admission 角色（每批第 1 段、第 8 段实时核验）。节点模式和 PR 页面上的当班状态都只是提示。
@@ -694,7 +700,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 前提：
 
 - controller 账户有"作为服务登录"权限；
-- 没有未终结的批次（`INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`）。
+- 没有未终结的批次（`INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`；卸载 `UNINSTALL_REQUIRES_NO_OPEN_BATCH`，启动器 `OLD_RESIDENT_OPEN_BATCH`）。这由规则保证：重装只对不当班节点做，不当班节点按 §6.1 的规则不留批次（W1 的暂停下也一样），不需要 Owner 先复位、中止或排空。预演不再把未结批次当发现。
 
 校验用已装副本的 `verify-resident.ps1` 和 `verify-resident-linux.sh`。细节见 [`../reinstall/README.md`](../reinstall/README.md)。
 
