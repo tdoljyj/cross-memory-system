@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "945738970edc13cb9b73c2f9fd701f6e727828d3d474ec52bb7e6ecdf2d82059"
+      "content_sha256": "dac7da36a87edce3bb866a45d9cd4598253d179dde91551db9581086a13695b5"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.54",
+      "version": "1.1.55",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "28fad28e0a244f23c3ab87d5de0447594febe9ea06445bafd7161cdf1fdd31bf"
+      "content_sha256": "144e944eb63bb1bbe5f3ac11003df19f29612842b0687ceff532da87722e46a7"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "b62a5576a08e79ed13c9247a6dfac5a29be9345fa3cd5ac4020c4039171fc555"
+      "content_sha256": "10e03038225714af5b92ed013a14a47bbc4ba82eef34b538da49b42f5aa732ae"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "372fd5e50cc1614a1c7681c8d308f593c9976254ba8faf18b19c42179ba61cc7"
+      "content_sha256": "7bad859b46cd70d99eed1d94f83d5316ea2b36e65dd2c947cddd26a0d9ee25c2"
     }
   ]
 }
