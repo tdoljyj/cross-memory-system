@@ -1,7 +1,7 @@
 // The node mode (resident primary/standby design v0.4 §5.2, §8.2, §9 C3; Task 17b703a0; DESIGN §29): ACTIVE, STANDBY or UNCERTAIN.
 // A start and an Owner re-arm begin UNCERTAIN with the role probe due at once; a probe says held (ACTIVE), not-held (STANDBY) or
 // uncertain (the mode stays); stage 1's NODE_ROLE_NOT_HELD goes to STANDBY; while the mode is not ACTIVE nothing new starts, and a
-// batch in flight goes on; a failure that may mean the role is gone makes the next probe due at once; status.json /6 carries it.
+// resting batch of a STANDBY node ends by the rule (DESIGN §72); a failure that may mean the role is gone makes the next probe due at once; status.json /6 carries it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -497,10 +497,10 @@ test('M1: after a restart or a re-arm a batch parked at B or A does not keep the
   assert.equal(derives(g), 1);
 });
 
-// ---- STANDBY and UNCERTAIN behave alike; a batch in flight goes on ----
+// ---- STANDBY and UNCERTAIN start nothing new; a resting batch of a STANDBY node no longer stands and ends (DESIGN §72) ----
 
-test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A goes on; a new PR, a due wait and a due attempt 2 start nothing', async t => {
-  // B: PR 884 parks; PR 900 is told it has no role (STANDBY) while PR 884 rests; PR 884 finishes its stage-8 try meanwhile.
+test('STANDBY: a batch parked at B or waiting at A ends at the next tick by the rule (DESIGN §72); a new PR, a due wait and a due attempt 2 start nothing', async t => {
+  // B: PR 884 parks; PR 900 is told it has no role (STANDBY) while PR 884 rests: the next tick ends PR 884 (off duty), with no stage-8 try.
   let tries = 0;
   const engine = perPr({ 900: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE) });
   const run = engine.runStage;
@@ -515,42 +515,29 @@ test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A go
   assert.equal(f.exec.roleProbeMode, 'STANDBY');
   await f.drop(triggerBytes({ pr: 901, headSha: H(5) }));
   const before = derives(f);
+  const gone = await f.exec.tick();
+  assert.deepEqual([gone.state, gone.failureCode, gone.key], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', batchKey(subject())], 'PR 884 no longer stands: this node is off duty');
+  assert.equal((await f.ledger.state(batchKey(subject()))).terminal.facts.basis, 'not-on-duty');
+  assert.equal(stagesRun(f.engine).filter(n => n === 8).length, 1, 'no stage-8 try under STANDBY');
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY'], 'PR 901 and the released PR 900 wait');
-  assert.equal(derives(f), before);
-  f.advance(10 * MIN);
-  const done = await f.exec.tick();
-  assert.equal(done.state, 'COMPLETED', 'PR 884 is in flight: its stage-8 try runs under STANDBY');
-  assert.equal(done.key, batchKey(subject()));
   assert.equal(derives(f), before, 'nothing new started');
   f.advance(60 * MIN);
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.equal(derives(f), before);
   assert.deepEqual(['QUEUED'], [f.queue.row(901).state]);
 
-  // A: a batch waiting for hosted signals is resumed and finishes; the tick's result stays WAITING with the batch in the status.
-  // No usable hint keeps the batch waiting. Fresh success + attested Stage R
-  // lets this existing batch continue under STANDBY with only placement local.
-  let hostedDone = false;
-  const hostedEngine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const g = await nodeFx(t, { engine: hostedEngine, policy: rawPolicy({ relay: RELAY_ON }),
-    hint: (s, at) => hostedDone ? hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at }) : null, facts: [HELD, NOT_HELD] });
+  // A: a batch waiting for hosted signals ends the same way at the next tick (only stage 1 ran: nothing published).
+  const g = await nodeFx(t, { policy: rawPolicy({ relay: RELAY_ON }), hint: () => null, facts: [HELD, NOT_HELD] });
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   await g.exec.setNodeMode('STANDBY', 'test');
   await g.drop(triggerBytes({ pr: 900, headSha: H(4) }));
   g.advance(MIN);
-  const waiting = await g.exec.tick();
-  assert.equal(waiting.state, 'WAITING', 'the batch at A stays the tick\'s result under STANDBY');
-  assert.equal(g.board.content.current?.pr, 884, 'and the status\'s batch in flight');
-  assert.equal(derives(g), 1);
-  assert.deepEqual(stagesRun(g.engine), [1], 'neither local scanner starts while hosted is pending');
-  hostedDone = true;
-  g.advance(RELAY_ON.wait.signalMs);
-  const completed = await g.exec.tick();
-  assert.equal(completed.state, 'COMPLETED', 'it continues to its end; live admission decides');
-  assert.deepEqual([completed.relayed, completed.local], [['gitleaks', 'trivy'], ['contract-placement']]);
-  assert.deepEqual(stagesRun(g.engine), [1, 9, 6, 7, 8]);
+  const a = await g.exec.tick();
+  assert.deepEqual([a.state, a.failureCode, a.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'waiting']);
+  assert.deepEqual(stagesRun(g.engine), [1], 'neither the relay nor a local scanner started');
+  assert.equal(await g.executedHeads.published(subject()), false);
   assert.deepEqual(await g.ledger.pendingAttempts2(), []);
   assert.equal(derives(g), 1, 'PR 900 never started');
   assert.deepEqual(pick(await g.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);

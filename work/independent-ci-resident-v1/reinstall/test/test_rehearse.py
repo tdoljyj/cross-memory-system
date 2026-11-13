@@ -410,6 +410,12 @@ class Rehearsal(unittest.TestCase):
         h = FakeHost(self.fx); h.uninstall['plan']['upgraderService'] = False
         self.assertIn('UNINSTALL_PLAN_UPGRADER_NOT_THE_SERVICE', codes(self.run_with(h)))
 
+    # DESIGN §72, ADR 0027: an open batch at rehearsal time is live state the rule clears (a node off duty keeps none); W1 and the launcher
+    # assert it when they run, so the rehearsal no longer refuses it (it used to: UNINSTALL_PLAN_OPEN_BATCHES, then an Owner re-arm).
+    def test_an_open_batch_is_no_rehearsal_finding(self):
+        h = FakeHost(self.fx); h.uninstall['plan']['openBatches'] = 1
+        self.assertFalse([c for c in codes(self.run_with(h)) if 'OPEN_BATCH' in c])
+
     def test_a_template_that_would_kill_the_upgrader(self):
         old = os.path.join(self.fx.dir, 'template-noupg.ps1')
         text = open(os.path.join(RE, 'launcher', 'template.ps1'), encoding='utf-8').read()

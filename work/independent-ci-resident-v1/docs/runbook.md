@@ -275,7 +275,7 @@ $tool = "<res>\tools\rearm-tool.mjs"
 
 | 请求 | 命令 | 提权 | 写到哪 |
 |---|---|---|---|
-| 排空（结束所有停靠批次，重装前用） | `& $node $tool request-drain --root <root> --reason <r> --by <Owner SID>` | 是 | `owner\` |
+| 排空（结束所有停靠批次；只在当班节点上主动放弃仍成立的批次时用，重装不需要：不当班节点按 ADR 0027 不留批次） | `& $node $tool request-drain --root <root> --reason <r> --by <Owner SID>` | 是 | `owner\` |
 | 暂停接新（最长 2 小时） | `& $node $tool request-intake-pause --root <root> --reason <r> [--minutes 1-120] [--holder owner]` | 否 | `requests\` |
 | 提前结束暂停接新 | `& $node $tool request-intake-resume --root <root> --reason <r> [--holder owner\|dual-active\|unreadable]` | 否 | `requests\` |
 | 立即探测角色 | `& $node $tool request-probe --root <root> --reason <r>` | 否 | `requests\` |

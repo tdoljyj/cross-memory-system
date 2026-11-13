@@ -5622,3 +5622,86 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - `upgrader/src` 一个字节未动。
 - 同一次开机里执行器自己崩溃，仍然 HALT：遗留进程看不见，证明不了。
 - 发布段开始之后被打断，仍然 HALT：检查可能已写，不能重跑。
+
+## 72. 批次只在三者同时成立时存在：一条规则取代各条取代特例（分支 `claude/batch-one-rule`，[ADR 0027](docs/adr/0027-batch-one-rule.md)）
+
+### 72.1 现象与病根
+
+2026-11-13：备班节点上 PR #1080 的批次（ledger key `f33e12ce…021d`）自 11-12 18:03Z 停在 B（`RESIDENT_QUEUE_HEAD_NOT_REACHED`），试了 20 次；#1080 早已关闭（被 #1081 取代）。停靠批次原来只在两种情况下结束：同一 PR 有新提交（`supersededParked` / `newerCommitQueued`），或停满 `park.maxMs`（24 小时，`endParkedB`）。PR 关闭、节点失去当班都漏了。于是这个节点的通用包重装被拒三次（`UNINSTALL_PLAN_OPEN_BATCHES`、`OPEN_BATCH_REARM_FIRST`、`UNINSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`），只能 Owner 手动 rearm Abort：按台手工补丁。
+
+病根是批次的去留靠一组并列特例，各有各的触发（排队表有更新提交、第 10 段车头换 head、attempt 2 的两次读、§29.2 第 3 条“STANDBY 时在途批次照常续跑”）。补一条“PR 关闭”只会多一条并列特例。
+
+### 72.2 规则
+
+**一个批次只在三者同时成立时存在：PR 仍开着、PR 的 head 仍是批次的 head、本节点当班（持有 ci-admission）。** 任一不成立，下一拍经唯一一条终结路径结束并写回执。
+
+- **判定**：`executor.mjs#standing(key, subject, batch, { hint, safePoint })`，返回 `null`（成立，或没有事实说不成立）或 `{ basis, live }`：
+  - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
+  - `pr-closed` / `head-moved`：companion `pr-head` 的一次实时读（§17.5 的已有通道）说 PR 不是 open，或 head 不是批次的 head。
+- **什么时候读 PR**（`liveReadDue`，按“批次键 + 被点名的 head”节流，`SUPERSEDE_LIVE_READ_MS` = 10 分钟，原有常量）：每个批次每 10 分钟一次；排队表里出现这个 PR 的更新提交、或第 10 段的车头指向这个 PR 的别的 head 时立即读（提示）。第 1 段的准入本身读过 PR，`markStarted` 时记作该批次的第一次读，所以刚开始的批次不多读。
+- **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。只有被点名了别的 head 而读不到时才写回执 `supersede-unconfirmed`（与以前相同），平时的周期读不写，网络断一天也不会刷屏。
+- **读到 head 未变**：排队表里那个“更新的提交”被证伪，退回被替换（`keepRunning`，回执 `supersede-disproved`），与以前相同。
+- **结束只有一条路**：`supersededEnd`（原有，Owner 中止的路径）：先只新建 `81-self-abort`（新记 `basis`），两端静止证明（最多 5 分钟复查），烧号，两端只改名归档（原因 `superseded`），`FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`，终态记 `basis`、`safePoint`、`stage`（A 上 1，B 上 8），对熔断中性，从不 attempt 2。不新增失败码，失败表不变。
+
+### 72.3 在哪里判
+
+| 位置 | 做法 |
+|---|---|
+| 停在 A（`waiting`）或 B（`parked`）的批次 | 每个 tick 一次（`endNotStanding` → `endParkedIfNotStanding`），在崩溃恢复、Owner 请求、HALT 与未归档现场检查、回填之后。不暂停时在读完本拍触发之后、任何停靠批次被尝试或继续之前；**PAUSE 期间也判**（在 tick 停在 PAUSED 之前）。一拍结束一个 |
+| 在途批次 | 原来的两个安全点 `before-relay-plan`、`before-workspace`（`endIfNotStanding`，先读一次收件箱）。独占区（ws-prep 到最后一个 Linux 段）内照旧不判 |
+| 第 10 段车头指向别的 head（§65.9） | `endSupersededForFront` 只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
+| 第 1 段之前 | 不变：按到达顺序释放（`supersededBeforeStart`，`SUPERSEDED`，不烧号）。那是预留的撤回，什么都没跑，判错可以恢复，所以不需要实时读 |
+| attempt 2（还不是批次） | 预检之后一次实时读：PR 已关闭 → `ATTEMPT2_PR_CLOSED`（并 `closePr`）；head 已变 → `ATTEMPT2_SUPERSEDED`；head 未变且排队表有更新提交 → `keepCurrent` 退回；读不到 → 照常跑，第 1 段决定 |
+
+### 72.4 删掉的特例
+
+- `supersededParked`，以及 `resumeParked` 里调用它的两段循环（#1035 的“先于接管门判取代”由规则在 `resumeParked` 之前判自然覆盖）；
+- `supersededAfterStart`（由 `endIfNotStanding` 取代：触发不再限于“排队表有更新提交”）；
+- `runAttempt2` 预检前“有更新提交就先读一次”的分支（与预检后的读合成一次）；
+- `endSupersededForFront` 自己的实时读和“live head 必须等于车头 head”的判定；
+- §29.2 第 3 条“在途批次照常续跑：停在 A 的批次每个 tick 照常判断，停在 B 的照常尝试第 8 段，去留由实时准入决定”：停靠中的批次在 STANDBY 下按规则结束；§41.6a“旧节点上跑着的批次……下一次实时准入被拒……批次干净结束”改为下一拍按规则结束。
+
+### 72.5 保留的兜底：`park.maxMs`
+
+`park.maxMs`（24 小时，`endParkedB`，按上次没就绪的码结束）不能被规则覆盖：规则只回答“还该不该存在”，而一个仍然成立的批次（PR 开着、head 没变、本节点当班，只是作者一直不入队），或一个一直读不到 PR 的批次，不能无限占着停靠名额（`park.maxParked` 满了就 `PARKING_FULL`，不开新批次），也不能在每天的第 8 段重试额度用完后永远停着。它是资源上限，不是存在条件。`endParkedB` 的另一个用途 `TRAIN_FRONT_TAKES_OVER`（§62.5：同一 head 的车头批次接手普通批次）三者都成立，也不在规则内，不动。
+
+### 72.6 重装前置
+
+- 不当班节点按规则不留任何批次：转 STANDBY 后的下一拍结束停在 A、B 的批次；PAUSE 下也一样。重装本来只对不当班节点做（`rollout/fleet/README.md`：先待命、再移交、后原当班），所以“必须无未结批次”由规则保证，不再要 Owner 先 rearm、Abort 或排空。
+- `reinstall/rehearse.py`：不再比较卸载计划的 `openBatches`（以前的 `UNINSTALL_PLAN_OPEN_BATCHES`）。它是预演那一刻的瞬时状态，不是包或配置的性质；字段本身仍要求存在（模板要读）。
+- W1（`reinstall/tools/pause-old-resident.py`）不改：它写暂停请求后最多等 90 分钟，直到“已暂停、无当前批次、无未终结条目”。规则在暂停下照样结束残留，所以这一步就是重装的收尾阶段。
+- `reinstall/launcher/template.ps1`（`Test-OldRootQuiet`、卸载前置检查）、`generate.py`（`OPEN_BATCH`）、已装的 `windows/uninstall-resident.ps1`：检查保留，作为规则保证的断言，错的路仍然走不通；码不再指示手工动作：`OLD_RESIDENT_OPEN_BATCH`、`UNINSTALL_REQUIRES_NO_OPEN_BATCH`。真出现时说明规则没能运行（节点当班、HALT、companion 不在），按那个原因处理。模板钉值 `generate.py#TEMPLATE_SHA` 同步。`install-resident.ps1` 的 `INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST` 不在本分支改（它被另一分支要删的按台修复脚本钉住）。
+- Owner 排空（`request-drain`，§18.6）保留，是 Owner 在当班节点上主动放弃仍成立批次的工具，不再是重装的步骤。
+
+### 72.7 安全性质逐条
+
+| 性质（出处） | 怎样保持 |
+|---|---|
+| 第 1 段之后只有实时读能结束批次，排队顺序不能（§17.4、v0.6 §3） | PR 两条只凭 `pr-head` 的回答；排队表和车头只是让读提前的提示。当班一条凭节点模式 STANDBY，它来自服务端的角色回答（探测或第 1 段准入），不是排队表 |
+| 读不到不结束，只用来拦下不用来放行（§17.4、§17.5） | `standing` 读不到返回 `null`；读的结果从不开批次、不让任何段运行 |
+| 先写 `81-self-abort`，中途崩溃是现场，`SUPERSEDE_INTERRUPTED` HALT（§17.4） | 同一个 `supersededEnd`，记录只多 `basis` 字段 |
+| 两端静止证明，不成立 UNKNOWN 加 HALT，现场不动（§6.5、§17.4） | 同上；当班一条还先要 companion 心跳新鲜，避免证明必然失败的 HALT |
+| 不用漂移的字节归档（§18.6） | `supersededEnd` 先 `driftCode()`，漂移 → `RESIDENT_SOURCE_DRIFT` HALT，不归档 |
+| 不重复发布：烧号、只执行一次（ADR 0003） | 结束不跑任何段；head 烧掉；B 上终态记第 8 段，已执行记录判“已发布”，任何 Source 下都不再准入；A 上记第 1 段（未发布），与 Owner 排空 A 上批次相同 |
+| 不撤错 | 规则从不撤回任何检查；撤绿只由第 10 段的清扫做（§41.3、§41.6），不变 |
+| 从不 attempt 2，对熔断中性；B 上只算 Windows 事件（§17.4、§18.7） | 同一 `settle`（`clean-final`、`neutral`、B 上 `windowsOnly`） |
+| 独占区内不停、不插、不判（§18.1） | 在途判定仍只在 `before-relay-plan`、`before-workspace`；停靠批次 Linux 侧是空的 |
+| PAUSE 下不尝试、不开批次（§18.3、§20.2） | 规则在 PAUSE 下只结束，不跑第 8 段、不开批次、不读触发、不碰暂停记录；升级代理先排空再暂停（`machine.mjs` 的 drain → pause），它的暂停期间没有批次 |
+| HALT 下现场不动（§6.5） | 规则在 HALT 检查之后，HALT 时不运行 |
+| Owner 中止、排空优先（§6.5、§18.6） | Owner 请求在 tick 里先于规则处理 |
+| 排队观察只读、不计尝试、不比以前更快烧头（§56.2） | 不变；规则结束的批次从观察名单里自然消失（`queueWatchBook` 照旧清理） |
+| 重启打断的批次（§71） | 崩溃恢复先于规则；规则只碰 `waitingAt` / `parkedAt` 的条目（没有 abort、selfAbort）；§71 的自动重跑照旧排除带 `81-self-abort` 的条目 |
+| 实时读的频率上限（§17.4 复核 m9） | 仍是每批次每个被点名的 head 10 分钟一次；停靠名额上限 12 个，最多每小时 72 次 GitHub 读，平时 0–2 个批次 |
+
+### 72.8 测试
+
+`test/batch-one-rule.test.mjs`：
+
+- PR 关闭：停在 B 的批次在第 1 段之后第 10 分钟的读里结束（`pr-closed`，第 8 段终态，一次只改名归档，不再试第 8 段，不 attempt 2）；10 分钟之内不读。
+- PR 新提交：没有触发时按批次自己的 10 分钟读结束（`head-moved`）；有触发时下一拍就读、就结束，新提交接着跑。
+- 节点失去当班：STANDBY 下一拍结束 B 上（第 8 段终态）和 A 上（第 1 段终态，未发布）的批次，不读 PR，不再试第 8 段；`UNCERTAIN` 不结束；companion 心跳过期时不结束、不 HALT，心跳恢复后结束。
+- 读不到 PR 状态：一小时里每 10 分钟读一次，批次一直停着，不写回执、不 HALT；被触发点名别的 head 而读不到时写一次 `supersede-unconfirmed`；到 `park.maxMs` 由兜底结束。
+- 重装：已暂停的节点转 STANDBY 后，规则在暂停下结束残留，账本里没有未终结条目（卸载与 W1 数的就是这个），暂停记录字节不变，期间没有第 8 段尝试。
+- attempt 2：预检后一次读，head 已变 → `ATTEMPT2_SUPERSEDED`；读不到 → 照常跑完。
+
+随之更新：`test/node-mode.test.mjs`（STANDBY 下停在 A、B 的批次不再续跑，而是按规则结束）、`test/scheduler.test.mjs`（等托管的批次在 tick 上按规则结束，安全点名 `waiting`）、`reinstall/test/test_rehearse.py`（卸载计划里的未结批次不是预演发现）。原有的取代、停靠、#1035、排队观察、重启重跑测试照旧通过。

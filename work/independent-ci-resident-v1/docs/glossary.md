@@ -61,7 +61,7 @@
 | **暂停（PAUSE）** | 急停，批次之间生效。任何 Owner 会话进程都能发，只有提权的 Owner 能恢复（Resume）。 | `state\PAUSED.json` |
 | **暂停接新（intake pause）** | 只是不开新批次，在跑的和停靠的批次照常。最长 2 小时自动失效。按持有者（holder）区分，例如 `owner`、`dual-active`、`version-skew`。 | `intake-pause.mjs` |
 | **中止（Abort）** | Owner 在安全点结束一个批次，干净时记 `FAILED_CLEAN OWNER_ABORTED`。 | `rearm-resident.ps1 -Request Abort` |
-| **排空（Drain）** | Owner 一次结束所有停靠批次，一般在重装之前做。 | `rearm-tool.mjs request-drain` |
+| **排空（Drain）** | Owner 一次结束所有停靠批次。重装不需要它（不当班节点按 ADR 0027 不留批次），只在当班节点上主动放弃仍成立的批次时用。 | `rearm-tool.mjs request-drain` |
 | **熔断（breaker）** | 批次失败计数器：连续 3 次，或 1 小时内 4 次计入的失败，就打开，打开后不开新批次，按退避放一批试跑。 | `breaker.mjs` |
 | **ReleaseBreaker** | Owner 提前放行熔断试跑。它不关闭熔断器。 | `rearm-resident.ps1 -Request ReleaseBreaker` |
 | **安全点 P0 / P1 / P2** | 中止允许生效的时机：<br>- P0：tick 开始；<br>- P1：每一步开始前；<br>- P2：第 2/4/6 段运行中。 | `executor.mjs` |

@@ -119,7 +119,7 @@ class Generation(unittest.TestCase):
             if code:
                 self.assertEqual(refusal.detail, code)
         self.s.terminal = json.loads(json.dumps(keep))
-        self.s.extra['uninstall-preflight-report.json'] = json.dumps({'codes': ['OPEN_BATCH_REARM_FIRST'], 'installedReceiptSha256': base.RECEIPT, 'installedUninstallSha256': UNINSTALL_SHA}).encode()
+        self.s.extra['uninstall-preflight-report.json'] = json.dumps({'codes': ['OLD_RESIDENT_OPEN_BATCH'], 'installedReceiptSha256': base.RECEIPT, 'installedUninstallSha256': UNINSTALL_SHA}).encode()
         self.assertEqual(self.refused('PRIOR_UNINSTALL_NOT_RESUMES_CASE').detail, 'PRIOR_PREFLIGHT_NOT_THE_ORIGINAL_PINS')
         inside_scene(self.s)
         self.s.write()

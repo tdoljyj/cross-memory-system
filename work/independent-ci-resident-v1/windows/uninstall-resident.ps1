@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Run the INSTALLED copy. Dry run by default (prints the plan). -Apply (elevated Owner, UAC) needs:
-    * no open batch in the ledger, the runner service Stopped/Manual on its original binary, and no
+    * no open batch in the ledger (guaranteed by the rule on a node off duty, DESIGN section 72), the runner service Stopped/Manual on its original binary, and no
       executor process alive (the instance lock's holder pid is checked: stopping the service never
       kills the executor, so SCM "STOPPED" alone proves nothing);
     * -ExpectedPlanSha256 equal to the plan computed now.
@@ -86,7 +86,8 @@ if (-not $Apply) { [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; pla
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 if ($ExpectedPlanSha256 -cne $sha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
-if ($plan.openBatches -ne 0) { throw 'UNINSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST' }
+# DESIGN section 72 (ADR 0027): kept as the last guard; a node off duty has no open batch by the rule, so there is nothing to re-arm first.
+if ($plan.openBatches -ne 0) { throw 'UNINSTALL_REQUIRES_NO_OPEN_BATCH' }
 if (-not $plan.runnerOriginalStopped) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED' }
 if (-not $plan.runnerSddlUnchanged) { throw 'RUNNER_SDDL_CHANGED_OWNER_LOOK' }
 if (@('RUNNING', 'ROLLING_BACK', 'unreadable') -ccontains $plan.upgradeOpState) { throw 'UNINSTALL_REQUIRES_NO_RUNNING_UPGRADE' }
