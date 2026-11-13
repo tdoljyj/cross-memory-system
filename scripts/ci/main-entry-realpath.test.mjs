@@ -5,6 +5,7 @@
 // exited 0 when local-verify's cache was reached through a junction).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -107,4 +108,81 @@ test('a script that uses import.meta.main runs behind a link, one that compares 
   assert.equal(out(path.join(dir, 'link', 'new.mjs')), 'ran');
   assert.equal(out(path.join(dir, 'real', 'old.mjs')), 'ran');
   assert.equal(out(path.join(dir, 'link', 'old.mjs')), '', 'the comparison is defeated by the link: the script does nothing, silently');
+});
+
+// A file: URL glued together from a string is right on one platform only (defect board row 14, #1092): the Windows
+// form (three slashes, backslashes turned) never equals a POSIX module URL, and the POSIX form (the prefix plus
+// argv[1]) never equals a Windows one. A program that asks "am I the entry point" that way does nothing on the other
+// platform and exits 0. pathToFileURL makes the URL; the entry point is asked with import.meta.main or with real paths.
+// The rule is the literal itself: a quoted file:// prefix that ends at the quote or runs into a template expression.
+export const buildsFileUrlByHand = (line) => /(['"`])file:\/\/+(?:\1|\$\{)/.test(line);
+// Exact bytes only: a listed file is passed over while its content is the pinned one, so any edit to it must also
+// remove the idiom, and no other content of that path is ever excused. An entry whose file has changed excuses nothing.
+export const FILE_URL_BY_HAND_PINNED = {
+  // Accepted handover evidence; its bytes are pinned by config/clued-handover-external-acceptance.json.
+  'scripts/phase2-qualification/RuntimeMaterialPreparation/prepare.mjs': '44a756f6d8b44ad1465d8d6209f7d155469efa057035ac5850ab556ccc461539',
+  // Fixed on claude/fleet-generic-upgrade (#1092, commit 3e2da768), which owns this file; these are main's bytes before it.
+  'work/independent-ci-resident-v1/tools/build-package.mjs': '826c8892a57021ff25abb8aac710f51f3f22a85cba8c0774901bb616c3f3d569',
+};
+const SOURCE = /\.(?:mjs|cjs|js|jsx|ts|mts|cts|tsx)$/;
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+test('a file: URL built by hand is recognised, in each form the repository had, and pathToFileURL is not', () => {
+  // The three lines as they stood before the fix (resident service and companion, the handover preparation, the getter derivation).
+  const windowsForm = "if (import.meta.url === `file:///${process.argv[1]?.replace(/\\\\/g, '/')}`) {";
+  const windowsUrl = "if(process.argv[1]&&new URL('file:///'+process.argv[1].replaceAll('\\\\','/')).href===import.meta.url){";
+  const posixForm = "if (import.meta.url === 'file://' + process.argv[1]) {";
+  for (const line of [windowsForm, windowsUrl, posixForm]) assert.ok(buildsFileUrlByHand(line), line);
+  assert.ok(buildsFileUrlByHand('const self = "file://" + entry;'), 'on a line of its own too');
+  assert.ok(!buildsFileUrlByHand('if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {'));
+  assert.ok(!buildsFileUrlByHand("const isEntryPoint = () => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };"));
+  assert.ok(!buildsFileUrlByHand("assert.equal(url, 'file:///tmp/a.mjs');"), 'a whole URL written out is not built from a path');
+  assert.ok(!buildsFileUrlByHand("if (url.protocol === 'file:') {"));
+});
+
+test('no source file builds a file: URL by hand; a pinned file is passed over only while its bytes are the pinned ones', (t) => {
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  if (listed.status !== 0) return t.skip('not a git work tree');
+  const self = path.relative(ROOT, fileURLToPath(import.meta.url)).split(path.sep).join('/');
+  const found = [];
+  for (const file of listed.stdout.split('\0').filter((name) => SOURCE.test(name) && name !== self)) {
+    let bytes;
+    try {
+      bytes = fs.readFileSync(path.join(ROOT, file));
+    } catch {
+      continue; // tracked but not in this work tree
+    }
+    if (!bytes.toString('utf8').split('\n').some(buildsFileUrlByHand)) continue;
+    if (FILE_URL_BY_HAND_PINNED[file] === sha256(bytes)) continue;
+    found.push(file);
+  }
+  assert.deepEqual(found, [], 'make the URL with pathToFileURL; ask for the entry point with `if (import.meta.main)`, or, where an older '
+    + 'installed Node runs the file, with realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)');
+  for (const [file, digest] of Object.entries(FILE_URL_BY_HAND_PINNED)) assert.match(digest, /^[0-9a-f]{64}$/, file);
+});
+
+test('each hand-built form runs on one platform and silently does nothing on the other; the real-path form runs on both', (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'main-entry-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const write = (name, guard, imports = '') => {
+    fs.writeFileSync(path.join(dir, name), `${imports}if (${guard}) console.log('ran');\n`);
+    return path.join(dir, name);
+  };
+  const windowsForm = write('windows-form.mjs', "import.meta.url === `file:///${process.argv[1]?.replace(/\\\\/g, '/')}`");
+  const posixForm = write('posix-form.mjs', "import.meta.url === 'file://' + process.argv[1]");
+  const realPaths = write('real-paths.mjs', "realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url)",
+    "import { realpathSync } from 'node:fs';\nimport { fileURLToPath } from 'node:url';\n");
+  const run = (script) => spawnSync(process.execPath, [script], { encoding: 'utf8', windowsHide: true });
+  const windows = process.platform === 'win32';
+  assert.equal(run(windowsForm).stdout.trim(), windows ? 'ran' : '', 'the Windows form');
+  assert.equal(run(posixForm).stdout.trim(), windows ? '' : 'ran', 'the POSIX form');
+  assert.equal(run(windows ? posixForm : windowsForm).status, 0, 'and it exits 0: nothing says that nothing ran');
+  assert.equal(run(realPaths).stdout.trim(), 'ran');
+});
+
+test('the resident service and the companion start as programs on this platform (without arguments they refuse; they do not exit 0 in silence)', () => {
+  for (const name of ['service-main.mjs', 'companion-main.mjs']) {
+    const result = spawnSync(process.execPath, [path.join(ROOT, 'work', 'independent-ci-resident-v1', 'src', name)], { encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 4, `${name}: ${result.stdout}${result.stderr}`);
+  }
 });

@@ -56,7 +56,10 @@ export function deriveGetterModule() {
   return {before, after, diffs, at};
 }
 
-if (import.meta.url === 'file://' + process.argv[1]) {
+// The entry point on any platform, also behind a link (scripts/ci/main-entry-realpath.test.mjs). The earlier test glued
+// a file: prefix to argv[1], which a Windows path never equals: there the program did nothing and exited 0.
+const isEntryPoint = () => { try { return fs.realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntryPoint()) {
   const {before, after, diffs} = deriveGetterModule();
   const out = path.join(REPO, OUTPUT_REL);
   if (process.argv.includes('--write')) fs.writeFileSync(out, after);

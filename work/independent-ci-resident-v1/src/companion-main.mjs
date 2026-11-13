@@ -4,12 +4,13 @@
 // restarts it. Code and config live in the admin-only resident directory: the Owner can read and run them but not change them.
 //
 //   node companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 <sha>
+import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
 import { UpgradeMailbox } from './upgrade-mailbox.mjs';
 import { HostedHints, sourceHintObserver } from './hosted-hints.mjs';
@@ -411,6 +412,10 @@ export async function main(args = process.argv.slice(2)) {
   }
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+// The entry point on any platform, also behind a junction or a symlink (scripts/ci/main-entry-realpath.test.mjs): links resolved
+// on both sides. (The earlier test built a file:/// URL by hand, which no POSIX path ever equals: on Linux the program did nothing
+// and exited 0.) Not import.meta.main, which the installed runtime\node.exe may be too old for.
+const isEntryPoint = () => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntryPoint()) {
   main().catch(() => { process.exit(4); });
 }

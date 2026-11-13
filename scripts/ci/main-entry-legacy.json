@@ -104,8 +104,6 @@
     "work/independent-ci-resident-v1/reinstall/linux/tools/sign-qualification.mjs",
     "work/independent-ci-resident-v1/rollout/precheck.mjs",
     "work/independent-ci-resident-v1/rollout/rollout.mjs",
-    "work/independent-ci-resident-v1/src/companion-main.mjs",
-    "work/independent-ci-resident-v1/src/service-main.mjs",
     "work/independent-ci-resident-v1/tools/build-package.mjs",
     "work/independent-ci-resident-v1/tools/rearm-tool.mjs",
     "work/independent-ci-resident-v1/tools/receipts-unseal.mjs",
@@ -114,7 +112,6 @@
     "work/independent-ci-resident-v1/upgrader/src/upgrader-main.mjs",
     "work/original-input-capacity-stop/stop-ready-launcher.mjs",
     "work/original-input-capacity-successor-preparation/component-readback.mjs",
-    "work/twentyfirst-forward/derive-getter-module.mjs",
     "work/window12-reissue/reissue-documents-window12.mjs"
   ]
 }
