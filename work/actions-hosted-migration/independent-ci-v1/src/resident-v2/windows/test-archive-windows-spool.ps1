@@ -4,7 +4,7 @@ param([string]$Powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
 $tool=Join-Path (Split-Path -Parent $PSScriptRoot) 'archive-windows-spool.ps1'
 $utf8=New-Object Text.UTF8Encoding($false);$cases=0
-$FixtureNodeProfile=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\..\..\..\independent-ci-resident-v1\config\node-profile.turing.json'))
+$FixtureNodeProfile=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\..\..\..\independent-ci-resident-v1\test\fixtures\node-profile.json'))
 function Hash([byte[]]$b){$s=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($s.ComputeHash($b))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose()}}
 function Yes([bool]$v,[string]$what){if(-not $v){throw ('ARCHIVE_TEST_FAILED:'+$what)};$script:cases++}
 function New-Fixture{

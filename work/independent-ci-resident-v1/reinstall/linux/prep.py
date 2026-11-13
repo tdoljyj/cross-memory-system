@@ -75,20 +75,17 @@ assert re.fullmatch(r'[0-9a-f]{40}', OLD_COMMIT) and all(re.fullmatch(r'[0-9a-f]
 # review 1-1: the node's own host facts (configuration linux.host), not TURING's
 NODE_SHA = CFG['linux']['host']['toolchainNodeSha256']
 PUB_SHA = CFG['linux']['host']['resultPublicKeySha256']
-V1_HEAD = CFG['linux']['host']['v1SourceHead']
-# A node without Source v1 (first installed by Z1, README section 8c; null v1SourceHead, never a host name): the scripts require that no
-# Source v1 is there (phase A, the signer, verify-source-v2's no-v1 check) and B1 signs with sign-qualification-no-v1.mjs, whose lineage is
-# the node's installed, signed roles-v3 qualifications. Everything else is the same; a node with Source v1 gets the same scripts as before.
-NO_V1 = V1_HEAD is None
-SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # reviewed 10-21, used 10-21/10-22/10-23
-SIGN_NO_V1_SHA = '7763a598600ff4b94f0633d5824f8bf0e5697759d8c359b31025ee9916202435'   # sign-qualification-no-v1.mjs (imports SIGN_SHA's canonicalJson, ROLES, FIXED)
-SIGNER = 'sign-qualification-no-v1.mjs' if NO_V1 else 'sign-qualification-v2.mjs'
+# Source v1 is retired: one path for every node. B1 signs with sign-qualification.mjs, whose lineage is the node's installed, signed
+# roles-v3 qualifications; phase A moves any Source v1 leftover (V1_LEFTOVERS) aside into this run's evidence before it stages anything.
+SIGNER = 'sign-qualification.mjs'
+SIGN_SHA = '2158d29184e7568abb0a24fc62ea1a38c95c13f7b29810f699b1404dcf636cfa'   # sign-qualification.mjs
+V1_LEFTOVERS = ('/opt/clued-independent-ci/source-first-formal-v1', '/etc/clued-independent-ci/roles', '/etc/clued-independent-ci/formal-source-manifest-v1.json')
 IN = IN_DIR if FLEET else os.path.join(R, 'linux', ARGV[6])
 WSL_IN = _wsl(IN, 'IN_DIR_PATH_SHAPE') if FLEET else None
 WSL_OUT = _wsl(OUT_DIR, 'OUT_DIR_PATH_SHAPE') if FLEET else None
 assert not FLEET or (IN.lower() != OUT_DIR.lower() and not (OUT_DIR.lower() + '\\').startswith(IN.lower() + '\\')), 'OUT_DIR_INSIDE_IN_DIR'
 REVIEW_TOOLS = os.path.join(HERE, 'tools')   # the reviewed signer and verify-source-v2 template, committed
-VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'
+VERIFY_TEMPLATE_SHA = '4dd35484578ebd01c8296543980c095ad7a809690b2713dd4c2354f3f61dcfd9'
 
 sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
 pkg = json.load(open(os.path.join(PKG, 'package-manifest.json'), encoding='utf-8'))
@@ -120,20 +117,14 @@ if not DRAFT:
     assert _age is not None and datetime.timedelta(0) <= _age <= datetime.timedelta(hours=24), 'REHEARSAL_OLDER_THAN_24_HOURS'
 assert sha(os.path.join(IN, 'tools', 'clued-ci-install-source-v2')) == sha(os.path.join(PKG, 'linux', 'bin', 'clued-ci-install-source-v2'))
 import re as _re
-sign_src = os.path.join(REVIEW_TOOLS, 'sign-qualification-v2.mjs'); vt_src = os.path.join(REVIEW_TOOLS, 'verify-source-v2.template.sh')
+sign_src = os.path.join(REVIEW_TOOLS, SIGNER); vt_src = os.path.join(REVIEW_TOOLS, 'verify-source-v2.template.sh')
 assert sha(sign_src) == SIGN_SHA and sha(vt_src) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
 vt = open(vt_src, 'rb').read().decode('utf-8')
 v2, n1 = _re.subn(r'(?m)^COMMIT=[0-9a-f]{40}$', 'COMMIT=' + COMMIT, vt); v2, n2 = _re.subn(r'(?m)^MANIFEST_SHA=[0-9a-f]{64}$', 'MANIFEST_SHA=' + NEW, v2)
-v2, n3 = _re.subn(r'(?m)^V1_HEAD=[0-9a-f]{40}$', 'V1_HEAD=' + (V1_HEAD or ''), v2)   # empty: the template then checks there is no v1
-assert n1 == 1 and n2 == 1 and n3 == 1
-extra = []
-if NO_V1:
-    nov1_src = os.path.join(REVIEW_TOOLS, SIGNER)
-    assert sha(nov1_src) == SIGN_NO_V1_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
-    extra = [(SIGNER, open(nov1_src, 'rb').read())]
+assert n1 == 1 and n2 == 1
 history_src = os.path.join(REVIEW_TOOLS, 'check-reinstall-history.py')
-extra += [('check-reinstall-history.py', open(history_src, 'rb').read())]
-for name, data in [('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))] + extra:
+extra = [('check-reinstall-history.py', open(history_src, 'rb').read())]
+for name, data in [(SIGNER, open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))] + extra:
     p = os.path.join(IN, 'tools', name)
     if os.path.exists(p):
         assert open(p, 'rb').read() == data, ('INPUT_DIFFERS', name)
@@ -172,7 +163,7 @@ upg_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', '
                      + ['resident.exists=yes', 'upgrade-v1.exists=no', 'generation.current.exists=no'])
 UPG_PLAN = hashlib.sha256(upg_text.encode('utf-8')).hexdigest()
 files = ['tools/install-resident-linux.sh', 'tools/uninstall-resident-linux.sh'] + ['linux-pkg/' + f for f in UPG_FILES] + ['linux-res-pkg/' + f for f in RES_FILES] + ['tools/clued-ci-install-source-v2', 'tools/verify-resident-linux.sh', 'tools/derive-roles-r7.py', 'tools/verify-signed-r4.mjs', 'tools/check-host-r4.py',
-         'tools/sign-qualification-v2.mjs', 'tools/verify-source-v2.sh'] + ['tools/' + n for n, _ in extra] + \
+         'tools/' + SIGNER, 'tools/verify-source-v2.sh'] + ['tools/' + n for n, _ in extra] + \
         ['record/' + f for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json')]
 sv2 = pkg.get('linux', {}).get('sourceV2')
 role_checks = ''
@@ -398,9 +389,18 @@ A = "#!/bin/bash\n" + f"""# r7 Linux phase A (root, NO private key, changes noth
 # replaces derive-linux-v2.mjs. Writes only under $BASE, then (after staging) a review copy of public data next to $W.
 {HOW[0]}
 """ + COMMON + A_GUARD + f"""quiet_and_installed
-""" + ("""# no Source v1 on this node (configuration v1SourceHead null): the signer's lineage is the installed roles-v3; a node with a v1 is refused
-[ ! -e /opt/clued-independent-ci/source-first-formal-v1 ] && [ ! -e /etc/clued-independent-ci/roles ] && [ ! -e /etc/clued-independent-ci/formal-source-manifest-v1.json ] || refuse NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD
-""" if NO_V1 else "") + f"""# The installed Linux half (from the node's version facts): its resident (OLD_LINUX_RES_MANIFEST), the frozen upgrade tool and its generation are EXPECTED;
+# Source v1 is retired and nothing reads it: any leftover of it is moved whole (mv -n: never overwritten, never deleted) into this run's
+# evidence directory, before $BASE exists; already moved (or never there): skipped. The phase A result lists what was moved.
+V1KEEP="$BASE.v1-retired"
+V1MOVED=""
+for p in {' '.join(V1_LEFTOVERS)}; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  install -d -o root -g root -m 0700 "$V1KEEP"
+  mv -n -- "$p" "$V1KEEP/$(printf '%s' "$p" | tr / _)" || refuse "V1_LEFTOVER_NOT_MOVED:$p"
+  [ ! -e "$p" ] && [ ! -L "$p" ] || refuse "V1_LEFTOVER_NOT_MOVED:$p"
+  V1MOVED="$V1MOVED${{V1MOVED:+,}}\\"$p\\""
+done
+# The installed Linux half (from the node's version facts): its resident (OLD_LINUX_RES_MANIFEST), the frozen upgrade tool and its generation are EXPECTED;
 # the installed tool's read-only version-facts must say exactly that (generation 1 of the old Source and resident, nothing staged)
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$OLD_LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2
 [ -e "$UPG/bin/clued-ci-upgrade-linux" ] && [ -e /var/lib/clued-independent-ci/resident/upgrade/current.json ] || refuse UPGRADE_CHANNEL_NOT_THE_R5C2_ONE
@@ -421,7 +421,7 @@ install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$S
 {bundle_stage}
 for f in {' '.join(UPG_FILES)}; do install -o root -g root -m 0400 "$W/linux-pkg/$f" "$STG/linux-pkg/$f"; done   # r5c
 for f in {' '.join(RES_FILES)}; do install -o root -g root -m 0400 "$W/linux-res-pkg/$f" "$STG/linux-res-pkg/$f"; done   # r7
-for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py sign-qualification-v2.mjs verify-source-v2.sh{''.join(' ' + n for n, _ in extra)}; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
+for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py {SIGNER} verify-source-v2.sh{''.join(' ' + n for n, _ in extra)}; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
 for f in acceptance.json installation.json record-manifest.json signers.json source-manifest.json; do install -o root -g root -m 0400 "$W/record/$f" "$STG/record/$f"; done
 cp -a --no-preserve=ownership "$W/src.git" "$STG/src.git"
 chown -R root:root "$STG/src.git"
@@ -434,8 +434,8 @@ echo "$COMMIT" > "$STG/src-head.txt"
 cd "$STG"
 sha256sum --quiet -c - <<'EOF' || refuse STAGED_BYTES_NOT_THE_REVIEWED_ONES
 {sums}EOF
-# r5 L3: sign-qualification-v2.mjs (9ee06a93) and the generated verify-source-v2.sh are among the pinned files above
-[ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_NOT_THE_REVIEWED_ONE
+# r5 L3: the signer (SIGN_SHA) and the generated verify-source-v2.sh are among the pinned files above
+[ "$(sha256sum "$STG/tools/{SIGNER}" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_NOT_THE_REVIEWED_ONE
 PREV=windows-review-copy; VT=generated-on-windows-pinned
 echo "{{\\"status\\":\\"ROOT_STAGING_VERIFIED\\",\\"staging\\":\\"$STG\\",\\"sourceCommit\\":\\"$COMMIT\\",\\"files\\":{len(files)},\\"signToolFrom\\":\\"$PREV\\",\\"verifyTemplateSha256\\":\\"$VT\\",\\"verifySourceV2Sha256\\":\\"$(sha256sum "$STG/tools/verify-source-v2.sh" | cut -d' ' -f1)\\"}}"
 # derive (no key): policies v3 + unsigned payloads from the installed Source34 ones; the three Source values change (B-1)
@@ -478,7 +478,7 @@ RV="{OUT}/review-A-{SUFFIX}"
 install -d -m 0755 "$RV" "$RV/roles-in" "$RV/tools"
 install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$STG/tools/check-reinstall-history.py" "$RV/tools/"
 install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/upgrade-history.A.json" "$STG/phaseA.sha256" "$RV/"
-echo "{{\\"status\\":\\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\\",\\"phaseAManifestSha256\\":\\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\\"}}"
+echo "{{\\"status\\":\\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\\",\\"phaseAManifestSha256\\":\\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\\",\\"v1Retired\\":{{\\"to\\":\\"$V1KEEP\\",\\"moved\\":[$V1MOVED]}}}}"
 """
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: backup, uninstall and reinstall of the Linux resident half, the upgrade tool,
@@ -489,7 +489,7 @@ B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: bac
 {WANT_A_CHECK}(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 $CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-live "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_CHANGED_SINCE_PHASE_A
 src_git_clean
-[ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
+[ "$(sha256sum "$STG/tools/{SIGNER}" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
 [ ! -e "$STG/roles-signed" ] && [ ! -e "$STG/pkg" ] && [ ! -e "$STG/check" ] || refuse PHASE_B_OUTPUT_EXISTS_SEE_RECOVERY
 # r7: still the r5c2 install as phase A saw it, and no output of an earlier B run in the way (a run that got past the Source switch
 # continues with reinstall-linux-B-resume.sh)

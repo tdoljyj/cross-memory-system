@@ -99,9 +99,9 @@ printf 'READY:%s\\n' "$SECONDS"
         self.assertIn('REFUSED:DOCKER_SERVICE_NOT_ACTIVE', result.stdout); self.assertEqual(count, 2); self.assertEqual(sleeps, ['10'])
 
     def test_actual_generated_reinstall_a_b_and_resume_keep_the_same_bounded_gate(self):
-        spec = importlib.util.spec_from_file_location('docker_test_prep_fixture', HERE / 'test_reinstall_no_v1.py')
+        spec = importlib.util.spec_from_file_location('docker_test_prep_fixture', HERE / 'test_reinstall_kit.py')
         fixture = importlib.util.module_from_spec(spec); spec.loader.exec_module(fixture)
-        case = fixture.PrepNoV1(); case.setUp()
+        case = fixture.Prep(); case.setUp()
         try:
             argv, work, _ = case.source_v2_inputs()
             generated = fixture.run_prep(argv)

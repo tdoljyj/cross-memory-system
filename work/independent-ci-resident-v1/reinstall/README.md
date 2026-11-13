@@ -19,7 +19,7 @@
 
 | 键 | 含义 |
 |---|---|
-| `node` / `nodeProfile` | 节点名；节点档案在提交树中的路径（`config/node-profile.<node>.json`），两者必须对应 |
+| （无节点名、无档案路径） | 配置不点名任何节点：节点档案一律取 `basePackage`（本机已装包）record 的 `acceptance.json` `node`（`rconfig.node_profile`），仓库里没有任何节点的档案或配置 |
 | `workDir` | 输出目录（仓库外） |
 | `repo` | 用来 `git archive` 提交的本地仓库 |
 | `basePackage` | 一个审过的包，从它的 record 读取共用的公开值：仓库、App/installation id、KooYomi 公开地址和 publishable key、角色描述、公开签名者表 |
@@ -34,17 +34,15 @@
 
 路径只许 ASCII 字母、数字、空格和 `._-\`，runner 的 binPath 和 SDDL 各有严格形状：这些值会进 root shell 和提权 PowerShell。
 
-已有配置：
-- `turing.json`
-- `desk-w-591.example.json`：六项指纹和 `linux.host` 三项由现场回传后填入。
+仓库里没有任何节点的配置：配置由节点自己从已装状态生成（`rollout/fleet/install.mjs` 的 `reinstallConfigFor`）。`config/new-node.example.json` 只是字段模板。
 
 ## 3. 打包：`build.ps1`
 
 ```
-powershell -NoProfile -File build.ps1 -Config config\turing.json -Commit <40hex>                       # DRAFT（占位 ref）
+powershell -NoProfile -File build.ps1 -Config <本机生成的配置> -Commit <40hex>                       # DRAFT（占位 ref）
 powershell -NoProfile -File build.ps1 -Config ... -Commit ... -Final -DecisionRef <uuid> -ReceiptRef <uuid> -AcceptedAt <ISO Z> -Tag t
           [-Rehearsal <预演报告> -LinuxEvidence <file> -LinuxVersionFacts <file>]
-powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ... -PackageOnly           # 只出包（新节点）
+powershell -NoProfile -File build.ps1 -Config <本机生成的配置> -Commit ... -PackageOnly           # 只出包
 ```
 
 依次执行：
@@ -185,7 +183,7 @@ companion 专用账户节点（M5-b，见下文"companion 账户节点"）上，
 此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
 
 ```
-python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
+python -I rehearse.py <本机生成的配置> --commit <40hex> --package <包目录>
 ```
 
 非提权、只读。每一项都直接运行节点上的真实工具或读取真实文件，不一致的地方就记为 finding（差异清单）。linuxHost 探查以 root 运行；显式快照恢复还会以 root 调用既有冻结工具的只读 `version-facts` 命令作现场复核，两者均不签名、不切代、不修改安装状态，git 不取可选锁。
@@ -193,7 +191,7 @@ python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 当 companion 未运行、默认 `upgrade/mailbox/responses/version-facts.json` 不存在时，可使用从原冻结工具采集、未经重编码或改动的 stdout 文件：
 
 ```
-python -I rehearse.py config\desk-w-591.json --commit <40hex> --package <包目录> --linux-version-facts <原始版本事实快照文件>
+python -I rehearse.py <本机生成的配置> --commit <40hex> --package <包目录> --linux-version-facts <原始版本事实快照文件>
 ```
 
 默认文件和显式快照都按 32 KiB 上限读取，校验合同、固定三角色及全部摘要形状、正整数代数、`pinsOk=true`、无 staged、带时区的 `observedAt`（最多一小时旧、最多三十秒超前）。缺失、不可读、坏 JSON、过期或不合形状都成为明确 finding，不抛出文件缺失回溯。显式快照另经配置发行版的现装冻结工具 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux version-facts` 真实复核：以隔离环境调用 `/usr/bin/python3.12 -I`，退出非零、超时或观察无效均拒绝；除两次采集时间外，每一业务字段都必须相同。现装工具的 `pinsOk` 同时核对现装 resident 和冻结升级工具 manifest；这里比较的是快照与现装工具摘要，不要求等于新提交的工具，因为全量重装可以更换冻结工具（普通原地升级的门不同）。快照路径和文件时间本身不构成真实性证明。报告保留输入原字节 SHA-256、来源、现场复核摘要及观察时间；不把快照写回 mailbox，不改 JSON、钉值或签名。原有代记录、公开副本摘要、真实 host 探针和普通用户角色派生检查仍全部执行。超过时限应重取真实事实，不能修改时间戳。此输入只用于预演，不替代 Linux B 的事实、最终精确包验收或系统授权。
@@ -252,20 +250,19 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
   - "已装状态"不再写死，取自节点自己的 version facts 和第 1 代记录（两份文件的副本）。
   - 非 `draft*` 后缀（即 final）必须附上 24 小时内的 PASS 预演报告。`draft*` 脚本只供审阅，脚本自己一开头就拒绝运行（`DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY`）。
   - `<in>` 里的 `check-host`、`verify-signed`、`derive-roles` 副本必须与 `linux/tools/` 中提交的版本相同。
-  - toolchain node、结果公钥、v1 HEAD 取自配置的 `linux.host`，不再是 TURING 的常量。
-  - **没有 Source v1 的节点**（`v1SourceHead` 为 null，例如 Z1 首装的节点；按配置判断，从不按主机名）：
-    - 第 A 步在 `quiet_and_installed` 之后、建 `$BASE` 之前，要求 v1 的三处都不存在（`NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD`）。
-    - B1 改用 `linux/tools/sign-qualification-no-v1.mjs` 签名（sha 由 `prep.py` 钉住，和其他字节一起暂存、`sha256sum -c`、进 `phaseA.sha256`）。它和 `sign-qualification-v2.mjs` 做同样的检查，只把"已装的 v1 qualification"换成"节点已装的 roles-v3 qualification"：必须用节点公钥验签通过、是 v2、指名同一把钥，image、keyId、runtimeIdentity、隔离事实都相同；新 payload 和新 policy 与已装的相比，只许 derive-roles 改的 Source 值不同（manifest、两个 ref、五个 Source 钉值，payload 另加 qualifiedAt）。节点上有 v1 时它拒绝。
-    - `verify-source-v2.sh` 的 `V1_HEAD` 为空，于是检查 `no-v1`。
+  - toolchain node、结果公钥取自配置的 `linux.host`（节点自己的事实，没有任何节点的常量）。
+  - Source v1 已退役，只有一条路径：
+    - 第 A 步在 `quiet_and_installed` 之后、建 `$BASE` 之前，把 v1 的三处残留（`/opt/clued-independent-ci/source-first-formal-v1`、`/etc/clued-independent-ci/roles`、`/etc/clued-independent-ci/formal-source-manifest-v1.json`）各自整体 `mv -n` 进本次的保留目录 `$BASE.v1-retired`（不删除、不覆盖；已移过或不存在就跳过），第 A 步结果的 `v1Retired` 记下移走了什么。现装 Source v2 运行时不读这三处。
+    - B1 用 `linux/tools/sign-qualification.mjs` 签名（sha 由 `prep.py` 钉住，和其他字节一起暂存、`sha256sum -c`、进 `phaseA.sha256`），签名的来历是节点已装、已签的 roles-v3 资格。
+    - `verify-source-v2.sh` 检查 `no-v1`（三处已被第 A 步移走）。
     - 其余检查全部照旧：已装 Source v2 的 HEAD 和 manifest、已装常驻和升级通道、旧 version facts、check-host 的钉值、verify-signed、三份计划。
-  - 有 Source v1 的节点：生成的三个脚本与改动之前逐字节相同。
 - `prep.py --in-dir <Windows 路径> --out-dir <Windows 路径>`（通用节点包；两项必须同时给，取代 `<in>` 名）：
   - 脚本只读入目录（`W=`）、只把 review 副本、version facts、evidence 和 out-B 写进出目录（`O=`，不存在即拒绝 `OUT_DIRECTORY_MISSING`）；不再用 `$W/..`。两个路径只许字母、数字、`.`、`_`、`-` 和 `\`，出目录不能在入目录里。
   - 脚本名为 `workDir\linux\A.sh`、`B.sh`、`B-resume.sh`，不带参数、不要求 `R4_CLEAN_ENV`（registrar 的固定环境没有它；脏环境变量检查保留）。B 和 resume 不再比对"审过的第 A 步清单哈希"（一次 UAC 内 A、B 之间没有人工环节），仍逐字节核 `phaseA.sha256`。其余文本与 Owner 手动运行的脚本相同（测试逐行比对）。
   - Linux 工具取自本文件所在的树（解包后的包），不做 `git archive` 校验，不需要仓库。
   - 通用节点包的 A 另有两项（Owner 手动运行的脚本没有）：一开头，若另有 `/root/clued-ci-reinstall-*/stg` 还没有 `phaseA.sha256`、且有别的进程在跑 `linux-run-<hex>/script.sh`，拒绝 `ANOTHER_PHASE_A_RUNNING`；暂存之后，以 root 读现场已装的 Linux manifest，核对合同与路径列表（含顺序）等于新包的，不等即停 `INSTALLED_LINUX_MANIFEST_NOT_THE_PACKAGES_SHAPE`（`rehearse.py --fleet` 看不到已装 manifest，这项由 A 核）。代价：新包若增删或调换了 Linux 常驻 manifest 里的文件条目，这条路径装不了它，A 会在暂存后、任何切换之前拒绝（节点保持暂停，Windows 侧未动）；那样的包需要先改这条规则并重新审核。
 - `tools/derive-roles.py`：与冻结工具 `clued-ci-upgrade-linux` 的 `derive_role` 一样，把 5 个 Source 钉值（entry、qualification、worker、proof、job）重钉为新提交的值，其余一律不许变。
-- 其余工具与 r7 审过的相同：`sign-qualification-v2.mjs`（9ee06a93）、`verify-source-v2.template.sh`（r7 的 60c078e0 加一处：v1 HEAD 改为变量 `V1_HEAD`，现 05314df4）、`check-host.py`（两项钉值改为参数）、`verify-signed.mjs`。
+- 其余工具与 r7 审过的相同：`verify-source-v2.template.sh`（不再有 v1 分支）、`check-host.py`（两项钉值改为参数）、`verify-signed.mjs`。
 
 ## 7. 一次整套重装的顺序
 
@@ -280,10 +277,10 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 7. UAC 一次。
 8. rearm 恢复。
 
-## 8. 新节点（例如 DESK-W-591 第 5 步）
+## 8. 新节点
 
-- 节点档案 `config/node-profile.desk-w-591.json`：取自 Note `85717e8f`，已通过 `validateNodeProfile`。
-- 配置：把 `config/desk-w-591.example.json` 复制为 `desk-w-591.json`，填入以下各项：
+- 节点档案：仓库里没有任何节点的档案；重装和升级一律用本机已装包 record 里的档案（`rconfig.node_profile`、`rollout/fleet/install.mjs`）。全新节点（还没有已装包）的档案要由本机事实生成，这一步尚未实现，见第 8c 节说明。
+- 配置：把 `config/new-node.example.json` 复制一份，填入以下各项：
   - 六项节点值。其中 `controllerNodeSha256` 就是包里 Windows `runtime\node.exe`（nodeExe）的 sha256，各节点相同；`ciPrincipalRoleRef` 是 Owner 认可该连接**可以**持有 ci-admission 的 Decision。
   - `linux.host`：首装节点还没有已装的 Linux CI，三项都填 `null`，`installedRoles` 也填 `null`，不要编造值。知道该节点 toolchain node 的 sha 后，填 `toolchainNodeSha256`。
   - 然后运行：
@@ -296,10 +293,9 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
   - policy 的 `companion.userSid`（= ownerSid）；
   - 两处 distribution（= wslDistribution）。
 
-  base 节点的任何值如果还留在别的字段里，就拒绝（`NODE_INPUT_KEEPS_THE_BASE_NODE`）。同一节点时输出与原输入内容相同：用 TURING 配置和 r7 的 ref 重建 a0e15a91，仍得到 9d774173。
-- 节点档案：提交树里有就用树里的；没有（例如 a0e15a91 早于 DESK 档案）就用本工具链检出里同一路径的副本。两种情况都由该提交自己的 `prepare-record.mjs` 校验。
+  base 节点的任何值如果还留在别的字段里，就拒绝（`NODE_INPUT_KEEPS_THE_BASE_NODE`）。同一节点时输出与原输入内容相同。
 - `linux.installedManifest` 在新节点上只用作外部钉值的路径和顺序模板。toolchain node 一项取 `linux.host.toolchainNodeSha256`，为 `null` 时沿用副本的值；`source-v2` 钉值总是取新提交的文件。
-- 首装不走这里的启动器、Linux 脚本和预演：配置里 Linux 事实为 `null` 时，它们都拒绝（`NODE_HAS_NO_INSTALLED_LINUX_CI`）。首装按《DESK-W-591 主备安装操作说明》进行。
+- 首装不走这里的启动器、Linux 脚本和预演：配置里 Linux 事实为 `null` 时，它们都拒绝（`NODE_HAS_NO_INSTALLED_LINUX_CI`）。首装见第 8c 节。
 - record 的 `signers`：配置没有 `signer` 时沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。配置写了 `signer`（本节点结果钥的 keyId、runtimeId、Ed25519 公钥 PEM，只有公钥）时，record 只列这一位签名者，其 `qualificationRef` 为 `hostQualificationRef`（第 8c 节）。
 
 ## 8c. 新节点的 Linux 首装（Z1，各节点通用）
@@ -309,7 +305,7 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 新节点 = **填一份 config + 现场跑三条命令 + Windows 上跑四条命令**。不改代码，不新增审核，不跑 CI。代码里没有任何节点值：keyId、runtimeId、公钥、docker/git/node 的 sha、发行版、各个 ref，全部来自 config 和现场回传的事实文件。主机资格从一个模板节点已审、已签的 roles-v3 派生（Owner 决定：`hostQualificationRef` 指向这条 Decision）。
 
 **1. 填 config。** 把 `config/new-node.example.json` 复制为 `<node>.json`，填入：
-- `node`、`nodeProfile`（节点档案）和 `nodeRecord` 六项（见第 8 节）。
+- `nodeRecord` 六项（见第 8 节）。配置不写节点名和档案路径。
 - `linux.distribution`：该节点 CI 用的 WSL 发行版名。
 - `signer.keyId`、`signer.runtimeId`。约定写法：keyId 为 `<node>-first-run-<yyyymmdd>`，runtimeId 为 `<NODE>-cluedresident-independent-ci-v1`。
 - `basePackage`：模板节点已审的包。模板公钥就从这个包的 record `signers.json` 取。

@@ -13,7 +13,7 @@ import { tempRoot } from './helpers.mjs';
 const MIN = 60_000;
 const T0 = Date.parse('2026-11-04T10:00:00Z');
 const GH = 'C:\\Program Files\\GitHub CLI\\gh.exe', REPO = 'tdoljyj/cross-memory-system';
-const status = (o = {}, at = T0) => ({ writtenAt: at - 10_000, intakePause: null, node: { name: 'desk-w-591', mode: 'ACTIVE', probe: { at: at - 5 * MIN, result: 'held' } }, ...o });
+const status = (o = {}, at = T0) => ({ writtenAt: at - 10_000, intakePause: null, node: { name: 'node-a', mode: 'ACTIVE', probe: { at: at - 5 * MIN, result: 'held' } }, ...o });
 
 // One GitHub for any number of nodes: the workflow's run list, GitHub's clock (which may differ from the node's), the calls it saw.
 function github({ skew = 0, runs = [], failRuns = false, dispatchFails = null, dispatchMakesRun = true } = {}) {
@@ -45,7 +45,7 @@ async function node(t, g, o = {}) {
   const file = o.file ?? path.join(await tempRoot(t), 'panel.json');
   const notes = [];
   let st = o.status ?? ((now) => status({}, now));
-  const d = new PanelDispatcher({ nodeName: o.name ?? 'desk-w-591', repo: REPO, ghExe: GH, clock: () => g.now + (o.skew ?? 0), run: g.run,
+  const d = new PanelDispatcher({ nodeName: o.name ?? 'node-a', repo: REPO, ghExe: GH, clock: () => g.now + (o.skew ?? 0), run: g.run,
     readStatus: async () => (typeof st === 'function' ? st(g.now + (o.skew ?? 0)) : st), notify: async (key, title, body) => { notes.push({ key, title, body }); }, state: await PanelDispatchState.open(file) });
   d.stagger = o.stagger ?? 0; // the stagger has tests of its own; the others look at the rest without it
   return { d, notes, file, setStatus: s => { st = s; }, g };
@@ -82,18 +82,18 @@ test('the runs answer: newest first, GitHub\'s Date header as the clock, anythin
 });
 
 test('who is on duty: ACTIVE, a fresh snapshot, its own name, no dual-active hold; every other state is a named reason', () => {
-  assert.equal(dutyOf(status(), 'desk-w-591', T0), null);
-  const cases = [[null, 'STATUS_UNREADABLE'], [status({}, T0 - 6 * MIN), 'STATUS_STALE'], [status({ node: null }), 'NODE_UNKNOWN'], [status({ node: { name: 'turing', mode: 'ACTIVE' } }), 'NODE_NAME_MISMATCH'],
-    [status({ node: { name: 'desk-w-591', mode: 'STANDBY' } }), 'NOT_ACTIVE'], [status({ node: { name: 'desk-w-591', mode: 'UNCERTAIN' } }), 'NODE_ROLE_UNCERTAIN'],
+  assert.equal(dutyOf(status(), 'node-a', T0), null);
+  const cases = [[null, 'STATUS_UNREADABLE'], [status({}, T0 - 6 * MIN), 'STATUS_STALE'], [status({ node: null }), 'NODE_UNKNOWN'], [status({ node: { name: 'node-b', mode: 'ACTIVE' } }), 'NODE_NAME_MISMATCH'],
+    [status({ node: { name: 'node-a', mode: 'STANDBY' } }), 'NOT_ACTIVE'], [status({ node: { name: 'node-a', mode: 'UNCERTAIN' } }), 'NODE_ROLE_UNCERTAIN'],
     [status({ intakePause: { until: T0 + MIN, holders: [{ holder: 'dual-active', until: T0 + MIN }] } }), 'DUAL_ACTIVE_HOLD']];
-  for (const [s, why] of cases) assert.equal(dutyOf(s, 'desk-w-591', T0), why, why);
+  for (const [s, why] of cases) assert.equal(dutyOf(s, 'node-a', T0), why, why);
   // a HALT, a PAUSE or another intake pause does not stop the panel: it must keep showing exactly those outages
-  assert.equal(dutyOf(status({ halt: { code: 'X_Y' }, paused: true, intakePause: { until: T0 + MIN, holders: [{ holder: 'owner' }] } }), 'desk-w-591', T0), null);
+  assert.equal(dutyOf(status({ halt: { code: 'X_Y' }, paused: true, intakePause: { until: T0 + MIN, holders: [{ holder: 'owner' }] } }), 'node-a', T0), null);
 });
 
 test('not on duty: not one call to GitHub (standby, stale snapshot, dual-active hold, unreadable status)', async t => {
   const g = github();
-  const n = await node(t, g, { status: now => status({ node: { name: 'desk-w-591', mode: 'STANDBY' } }, now) });
+  const n = await node(t, g, { status: now => status({ node: { name: 'node-a', mode: 'STANDBY' } }, now) });
   for (let i = 0; i < 5; i += 1) { assert.deepEqual(await n.d.step(), { skipped: 'NOT_ON_DUTY', reason: 'NOT_ACTIVE' }); g.advance(DISPATCH_EVERY_MS); }
   n.setStatus(null); assert.equal((await n.d.step()).reason, 'STATUS_UNREADABLE');
   n.setStatus(() => { throw new Error('unreadable'); }); assert.equal((await n.d.step()).reason, 'STATUS_UNREADABLE');
@@ -128,7 +128,7 @@ test('a run younger than four minutes holds the slot, whoever made it: the cron,
   g.advance(3.5 * MIN); // the cron's run is now 5 minutes old
   assert.equal((await a.d.step()).dispatched, true);
   // two ACTIVE nodes (a take-over in progress): the second reads the first one's run and stays out of the slot
-  const b = await node(t, g, { name: 'turing', status: now => status({ node: { name: 'turing', mode: 'ACTIVE' } }, now) });
+  const b = await node(t, g, { name: 'node-b', status: now => status({ node: { name: 'node-b', mode: 'ACTIVE' } }, now) });
   g.advance(30_000);
   const rb = await b.d.step();
   assert.deepEqual([rb.skipped, rb.event], ['RECENT_RUN', 'workflow_dispatch']);
@@ -229,7 +229,7 @@ test('losing the duty ends the spell: the standby never alarms, and a node that 
   const n = await node(t, g);
   for (let i = 0; i < 4; i += 1) { await n.d.step(); g.advance(15 * MIN); }
   const before = n.notes.length;
-  n.setStatus(status({ node: { name: 'desk-w-591', mode: 'STANDBY' } }, g.now));
+  n.setStatus(status({ node: { name: 'node-a', mode: 'STANDBY' } }, g.now));
   for (let i = 0; i < 6; i += 1) { assert.equal((await n.d.step()).skipped, 'NOT_ON_DUTY'); g.advance(10 * MIN); }
   assert.equal(n.notes.length, before, 'a standby says nothing');
   assert.equal(n.d.failures, 0);
@@ -280,7 +280,7 @@ test('a clock set back does not park the next dispatch in the future', async t =
 
 test('the pulse: the memory file says when it last looked, whether the node is on duty and why not', async t => {
   const g = github();
-  const n = await node(t, g, { status: status({ node: { name: 'desk-w-591', mode: 'STANDBY' } }) });
+  const n = await node(t, g, { status: status({ node: { name: 'node-a', mode: 'STANDBY' } }) });
   await n.d.step();
   let saved = JSON.parse(await fs.readFile(n.file, 'utf8'));
   assert.deepEqual([saved.tickAt, saved.duty], [T0, { on: false, reason: 'NOT_ACTIVE' }]);
@@ -293,7 +293,7 @@ test('the pulse: the memory file says when it last looked, whether the node is o
 
 test('the repository is pinned: the dispatcher is built for this repository only, whatever the configuration says', async t => {
   const state = new PanelDispatchState(path.join(await tempRoot(t), 'panel.json'));
-  const build = repo => new PanelDispatcher({ nodeName: 'desk-w-591', repo, ghExe: GH, clock: () => T0, run: async () => ({ code: 0 }), readStatus: async () => null, notify: async () => {}, state });
+  const build = repo => new PanelDispatcher({ nodeName: 'node-a', repo, ghExe: GH, clock: () => T0, run: async () => ({ code: 0 }), readStatus: async () => null, notify: async () => {}, state });
   for (const repo of ['tdoljyj/other-repo', 'someone-else/cross-memory-system', 'a/b']) assert.throws(() => build(repo), /PANEL_DISPATCH_ARGS_INVALID/);
   assert.doesNotThrow(() => build(REPO));
 });
@@ -330,12 +330,12 @@ test('a clock set back: dispatches stamped in its future do not hold the ceiling
 });
 
 test('the node-specific wait: the same for a name, 0 to 57 s in 3 s steps, different for the two real nodes', () => {
-  for (const name of ['desk-w-591', 'turing', 'home-win-02', 'a']) {
+  for (const name of ['node-a', 'node-b', 'home-win-02', 'a']) {
     const w = staggerMs(name);
     assert.equal(w, staggerMs(name));
     assert.ok(w >= 0 && w < STAGGER_STEPS * STAGGER_STEP_MS && w % STAGGER_STEP_MS === 0, `${name} ${w}`);
   }
-  assert.notEqual(staggerMs('desk-w-591'), staggerMs('turing'), 'the two nodes of today do not wake up together');
+  assert.notEqual(staggerMs('node-a'), staggerMs('node-b'), 'the two nodes of today do not wake up together');
 });
 
 test('taking the duty waits the node\'s own time; so does following a run that was not its own', async t => {
@@ -347,7 +347,7 @@ test('taking the duty waits the node\'s own time; so does following a run that w
   g.advance(1_000);
   assert.equal((await a.d.step()).dispatched, true);
   // the other node follows A's run: five minutes after it, plus its own wait, never at A's second
-  const b = await node(t, g, { name: 'turing', status: now => status({ node: { name: 'turing', mode: 'ACTIVE' } }, now), stagger: 21_000 });
+  const b = await node(t, g, { name: 'node-b', status: now => status({ node: { name: 'node-b', mode: 'ACTIVE' } }, now), stagger: 21_000 });
   assert.equal((await b.d.step()).skipped, 'NOT_DUE');
   g.advance(21_000);
   const rb = await b.d.step();
@@ -378,7 +378,7 @@ test('another node\'s dispatch between the first read and the POST holds the slo
 test('the duty log: how the duty changed and why, kept across restarts, the last ten', async t => {
   const g = github();
   const ctl = { mode: 'ACTIVE', fresh: true };
-  const n = await node(t, g, { status: now => status({ node: { name: 'desk-w-591', mode: ctl.mode } }, ctl.fresh ? now : now - 10 * MIN) });
+  const n = await node(t, g, { status: now => status({ node: { name: 'node-a', mode: ctl.mode } }, ctl.fresh ? now : now - 10 * MIN) });
   await n.d.step();
   ctl.fresh = false; g.advance(MIN); await n.d.step();
   ctl.fresh = true; ctl.mode = 'STANDBY'; g.advance(MIN); await n.d.step();

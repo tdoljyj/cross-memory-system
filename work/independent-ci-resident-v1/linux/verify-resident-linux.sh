@@ -1,6 +1,6 @@
 #!/bin/bash
 # Read-only verification of the Linux half (DRAFT). Run as root in the node's WSL distribution (node profile
-# wslDistribution; TURING: Ubuntu-24.04): wsl -d <wslDistribution> -u root -- bash <this>
+# wslDistribution): wsl -d <wslDistribution> -u root -- bash <this>
 # Prints one JSON verdict; exit 0 only when every check passes. Writes nothing.
 set -uo pipefail
 export PATH=/usr/bin:/bin LANG=C LC_ALL=C

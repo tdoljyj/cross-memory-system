@@ -188,7 +188,7 @@ acceptance = json.load(open(os.path.join(PKG, 'record', 'acceptance.json'), enco
 node = acceptance['node']
 TREE = os.path.join(R4, 'tree-' + COMMIT[:8])
 if not FLEET_PLAN:
-    profile, _profile_sha = rconfig.node_profile(CFG, TREE)
+    profile, _profile_sha = rconfig.node_profile(CFG)
     assert node == profile, ('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', node.get('nodeName'))
 OWNER, CONTROLLER = node['ownerSid'], node['controllerSid']
 FLEET = None

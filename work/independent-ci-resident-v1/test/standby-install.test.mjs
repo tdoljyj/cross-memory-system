@@ -26,7 +26,7 @@ const read = file => fs.readFile(file, 'utf8');
 const codeOf = text => text.split(/\r?\n/).filter(l => !/^\s*(#|<#|\.[A-Z]|\*)/.test(l)).join('\n');
 
 const company = nodeProfile({ nodeName: 'company', hostname: 'COMPANY-PC', mutationMutex: 'Global\\CluedControlControllerMutationV1-COMPANY-PC-1015',
-  runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-company-win-02', wslDistribution: 'Ubuntu-24.04' });
+  runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-a', wslDistribution: 'Ubuntu-24.04' });
 
 async function companyInstall(t) {
   const root = await tempRoot(t);

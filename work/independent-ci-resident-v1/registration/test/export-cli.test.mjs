@@ -175,7 +175,7 @@ test('Windows facts from the PowerShell side are validated before use', () => {
   const dir = scratch();
   const keyDir = path.join(dir, 'keys');
   const keys = initLinuxKeys(keyDir, { confirm: true });
-  const facts = { os: 'windows', os_version: 'Microsoft Windows 11 Pro 10.0.26300', hostname: 'DESK-W-591', memory_mb: 65230,
+  const facts = { os: 'windows', os_version: 'Microsoft Windows 11 Pro 10.0.26300', hostname: 'NODE-A', memory_mb: 65230,
     docker_server_version: null, hyperv_enabled: true, windows_sandbox_enabled: false, tpm_present: true,
     identity_public_jwk: keys.identity.public_jwk, encryption_public_jwk: keys.encryption.public_jwk, identity_key_origin: 'tpm', encryption_key_origin: 'tpm' };
   const file = path.join(dir, 'facts.json');
@@ -189,7 +189,7 @@ test('Windows facts from the PowerShell side are validated before use', () => {
 });
 
 test('no foreach variable in the PowerShell script reuses a parameter name (variables are case-insensitive)', () => {
-  // TURING H0, 2026-10-31: `foreach ($role in $KeyNames.Keys)` wrote into the typed [string[]]$Role parameter, so $Magic[$role]
+  // NODE-B H0, 2026-10-31: `foreach ($role in $KeyNames.Keys)` wrote into the typed [string[]]$Role parameter, so $Magic[$role]
   // returned an array (init-keys refused with PUBLIC_KEY_INVALID) and export would have declared the key name as the node's role.
   const text = fs.readFileSync(SCRIPT_PS, 'utf8');
   const block = text.slice(text.indexOf('param('), text.indexOf('\n)\n') + 2);

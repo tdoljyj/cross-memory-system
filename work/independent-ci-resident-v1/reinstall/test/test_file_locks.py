@@ -155,7 +155,7 @@ IDENTITY_PROBE = r'''
 param([string]$Library)
 $ErrorActionPreference='Stop'
 . $Library -LibraryOnly
-# The actual TURING failure shape: service native query denied, WMI path empty,
+# The actual NODE-B failure shape: service native query denied, WMI path empty,
 # immutable CIM creation time available. These functions substitute only OS reads.
 function Get-LiveProcessStarted([uint32]$pidValue) { throw 'fixture native query denied' }
 function Get-LiveProcessImage([uint32]$pidValue) { throw 'fixture native query denied' }

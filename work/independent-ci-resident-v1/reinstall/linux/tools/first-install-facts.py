@@ -12,7 +12,7 @@ KEY = '/etc/clued-independent-ci/verify-result-key.pem'
 EXES = {'docker': '/usr/bin/docker', 'git': '/usr/bin/git'}
 # what a node with a Linux CI already has; a first install needs every one absent (first-install.py phase A checks it again)
 CI_PATHS = ['/opt/clued-independent-ci/source-v2', '/opt/clued-independent-ci/resident-v1', '/opt/clued-independent-ci/upgrade-v1',
-            '/opt/clued-independent-ci/source-first-formal-v1', '/etc/clued-independent-ci/roles-v3', '/etc/clued-independent-ci/roles',
+            '/etc/clued-independent-ci/roles-v3',
             '/etc/clued-independent-ci/formal-source-manifest-v2.json', '/var/lib/clued-independent-ci/resident/source-v2-install-receipt.json',
             '/var/lib/clued-independent-ci/resident/upgrade/current.json']
 

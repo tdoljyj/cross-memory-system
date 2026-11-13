@@ -338,15 +338,15 @@ test('GitHub recompute delay: from main moving under a bound front to its test m
 test('nodes: no nodes, a never-heard entry, a missing Source, a lone node and different Sources are never 满足; stale heartbeats are 不满足', () => {
   const now = T0 + 2 * H, A = 'c'.repeat(64), B = 'e'.repeat(64);
   const verdictOf = (nodes, expectNodes = 2) => { const r = review({ receipts: [], shadow: asRecords([facts(now - MIN, { nodes })]), since: T0, now, expectNodes }); return [verdicts(r).G7, verdicts(r).G8, r]; };
-  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('turing', A, now - 4 * MIN)]).slice(0, 2), [MET, MET]);
-  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('turing', B, now - 4 * MIN)]).slice(0, 2), [MET, NOT_MET]);
-  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('turing', A, now - 31 * MIN)]).slice(0, 2), [NOT_MET, MET]);
+  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('node-b', A, now - 4 * MIN)]).slice(0, 2), [MET, MET]);
+  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('node-b', B, now - 4 * MIN)]).slice(0, 2), [MET, NOT_MET]);
+  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('node-b', A, now - 31 * MIN)]).slice(0, 2), [NOT_MET, MET]);
   assert.deepEqual(verdictOf([]).slice(0, 2), [INSUFFICIENT, undefined]);
   assert.deepEqual(verdictOf([{ node: null, sourceManifestSha256: null, state: null, lastHeartbeatAt: null }]).slice(0, 1), [INSUFFICIENT]);
-  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('turing', null, now - 4 * MIN)]).slice(0, 2), [MET, INSUFFICIENT]);
+  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('node-b', null, now - 4 * MIN)]).slice(0, 2), [MET, INSUFFICIENT]);
   assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN)]).slice(0, 2), [INSUFFICIENT, INSUFFICIENT], 'one node of two expected');
   assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN)], 1).slice(0, 2), [MET, MET]);
-  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('turing', A, now - 31 * MIN)])[2].nodes.stale, ['turing']);
+  assert.deepEqual(verdictOf([node('desk', A, now - 5 * MIN), node('node-b', A, now - 31 * MIN)])[2].nodes.stale, ['node-b']);
 });
 
 test('malformed shadow facts never crash the report: wrong types are dropped, sums stay numbers', () => {
@@ -385,7 +385,7 @@ test('the verdict: every gate must be met; the second place needs data (the queu
   const receipts = await load(t, [...runs(8, fronts), ...batch(T0 + 1 * MIN, 1, 800, sha('1'), 'COMPLETED')]);
   const s1 = iso(T0 + MIN), s2 = iso(T0 + H);
   const shadow = asRecords([sweepFacts(T0 + 12 * MIN, 'complete', { startedAt: s1, completedAt: iso(T0 + 12 * MIN) }), sweepFacts(T0 + 72 * MIN, 'complete', { startedAt: s2, completedAt: iso(T0 + 72 * MIN) }),
-    facts(T0 + 75 * MIN, { nodes: [node('desk', 'c'.repeat(64), T0 + 74 * MIN), node('turing', 'c'.repeat(64), T0 + 73 * MIN)] })]);
+    facts(T0 + 75 * MIN, { nodes: [node('desk', 'c'.repeat(64), T0 + 74 * MIN), node('node-b', 'c'.repeat(64), T0 + 73 * MIN)] })]);
   const pulls = { 800: { mergedAt: iso(T0 + 40 * MIN) } };
   const markers = [{ leftQueuedAt: iso(T0 + 5 * MIN), headLeftAt: iso(T0 + 16 * MIN) }];
   const common = { receipts, pulls, markers, since: T0, now: T0 + 76 * MIN, chain: OK };

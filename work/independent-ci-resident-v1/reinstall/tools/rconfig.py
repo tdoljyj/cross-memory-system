@@ -1,16 +1,16 @@
-"""The reinstall build configuration (clued.independent-ci.reinstall-config/1, README.md section 2): one JSON file per node and run that
-names every input the tools used to carry as constants (node profile, work directory, repository, base package, runner facts,
+"""The reinstall build configuration (clued.independent-ci.reinstall-config/1, README.md section 2): one JSON file per run, written on
+the node from what it has installed (rollout/fleet/install.mjs), that names every input the tools used to carry as constants (work directory, repository, base package, runner facts,
 pause/rearm reasons, Linux installed-state copies). Public values and paths only: a secret-looking key or value is refused here, so no
 token, key or password can enter a configuration, a generated script or a report through it.
 
 Used by the reinstall tools (loaded by path; the tools run under python -I):
   cfg = load(path)            the validated configuration (dict)
-  profile = node_profile(cfg, tree)   the node profile of the commit's tree that the configuration names, checked against cfg['node']
+  profile = node_profile(cfg)   the installed node profile: the base package's record (no configuration names a node)
 """
 import hashlib, json, os, re
 
 CONTRACT = 'clued.independent-ci.reinstall-config/1'
-KEYS = {'contract', 'node', 'nodeProfile', 'workDir', 'repo', 'basePackage', 'nodeRecord', 'nodeExe', 'policyInput', 'companionInput',
+KEYS = {'contract', 'workDir', 'repo', 'basePackage', 'nodeRecord', 'nodeExe', 'policyInput', 'companionInput',
         'upgradeTokenFile', 'heartbeat', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer', 'operatorSid', 'companionAccount'}
 # M5-b (ADR 0023), optional and only together: operatorSid is the Owner who runs the launcher when the node profile's ownerSid is the
 # companion's own non-administrator account; companionAccount.wslVhdxDirectory is where the resident distribution's ext4.vhdx moves.
@@ -36,9 +36,9 @@ WIN_PATH = re.compile(r'^[A-Za-z]:\\[A-Za-z0-9 ._\\-]+$')
 RUNNER_BINARY = re.compile(r'^"[A-Za-z]:\\[A-Za-z0-9 ._\\-]+\.exe"$')
 SDDL = re.compile(r'^D:[A-Z0-9();:-]+$')
 LINUX_KEYS = {'distribution', 'installedManifest', 'installedRoles', 'host'}
-# review 1-1: the node's own Linux host facts the root tools pin (were TURING constants): the toolchain node, the verify-result public
-# key and the HEAD of the installed Source v1 checkout (the signer reads that v1's qualifications)
-LINUX_HOST_SHAPES = {'toolchainNodeSha256': r'[0-9a-f]{64}', 'resultPublicKeySha256': r'[0-9a-f]{64}', 'v1SourceHead': r'[0-9a-f]{40}'}
+# review 1-1: the node's own Linux host facts the root tools pin: the toolchain node and the verify-result public key (Source v1 is
+# retired: no configuration names one)
+LINUX_HOST_SHAPES = {'toolchainNodeSha256': r'[0-9a-f]{64}', 'resultPublicKeySha256': r'[0-9a-f]{64}'}
 REASON = re.compile(r'^[a-z0-9-]{1,200}$')
 # A configuration names files; it never holds one. These shapes are what a private key, a GitHub or Supabase secret or a token looks like.
 SECRET_KEY = re.compile(r'(?i)(password|passwd|secret|private|token(?!File)|credential|apikey)')
@@ -74,11 +74,9 @@ def load(path):
     cfg = json.loads(raw.decode('utf-8'))
     need(isinstance(cfg, dict) and cfg.get('contract') == CONTRACT, 'CONFIG_CONTRACT')
     need(set(cfg) <= KEYS, 'CONFIG_UNKNOWN_KEYS', sorted(set(cfg) - KEYS))
-    for k in ('node', 'nodeProfile', 'workDir', 'repo', 'basePackage', 'nodeExe', 'policyInput', 'companionInput', 'upgradeTokenFile', 'runner', 'launcher', 'linux'):
+    for k in ('workDir', 'repo', 'basePackage', 'nodeExe', 'policyInput', 'companionInput', 'upgradeTokenFile', 'runner', 'launcher', 'linux'):
         need(k in cfg, 'CONFIG_KEY_MISSING', k)
     no_secrets(cfg)
-    need(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?', cfg['node'] or ''), 'CONFIG_NODE_NAME')
-    need(re.fullmatch(r'config/node-profile\.[a-z0-9-]+\.json', cfg['nodeProfile'] or ''), 'CONFIG_NODE_PROFILE_PATH')
     for k in ('workDir', 'repo', 'basePackage', 'nodeExe', 'policyInput', 'companionInput', 'upgradeTokenFile'):
         need(isinstance(cfg[k], str) and WIN_PATH.match(cfg[k]) and '..' not in cfg[k].split('\\'), 'CONFIG_PATH_SHAPE', k)
     hb = cfg.get('heartbeat')
@@ -106,7 +104,7 @@ def load(path):
     ru = li.get('rehearsalUser')
     need(ru is None or isinstance(ru, str) and re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', ru) and ru != 'root', 'CONFIG_LINUX_REHEARSAL_USER')
     lh = li['host']
-    # A node without an installed Linux CI yet (a first install, README section 8) has no Source v1, roles or result key: those values are
+    # A node without an installed Linux CI yet (a first install, README section 8) has no roles or result key: those values are
     # null, never invented. The reinstall tools that need them (prep.py, rehearse.py) refuse such a configuration (need_installed_linux).
     need(isinstance(lh, dict) and set(lh) == set(LINUX_HOST_SHAPES) and all(lh[k] is None or isinstance(lh[k], str) and re.fullmatch(v, lh[k])
                                                                          for k, v in LINUX_HOST_SHAPES.items()), 'CONFIG_LINUX_HOST')
@@ -127,18 +125,17 @@ def load(path):
 
 def need_installed_linux(cfg):
     """The reinstall-only tools need the node's installed Linux CI facts; a first-install configuration (nulls) is refused.
-    v1SourceHead may be null: a node first installed without Source v1 (README section 8c). Its root scripts then require that no Source v1
-    is there and take the signing lineage from the node's installed, signed roles-v3 qualifications instead (README section 6)."""
+    The root scripts take the signing lineage from the node's installed, signed roles-v3 qualifications (README section 6)."""
     li = cfg['linux']
     need(li['installedRoles'] is not None and li['host']['toolchainNodeSha256'] is not None and li['host']['resultPublicKeySha256'] is not None,
          'NODE_HAS_NO_INSTALLED_LINUX_CI')
 
 
 def need_first_install_linux(cfg):
-    """linux/first-install.py: a node without a Linux CI yet (no installed roles, no Source v1), whose toolchain node and new result key
+    """linux/first-install.py: a node without a Linux CI yet (no installed roles), whose toolchain node and new result key
     are known (linux.host), signing with its own signer (the public half of that key, same SHA-256)."""
     li, sg = cfg['linux'], cfg['signer']
-    need(li['installedRoles'] is None and li['host']['v1SourceHead'] is None, 'NODE_HAS_AN_INSTALLED_LINUX_CI')
+    need(li['installedRoles'] is None, 'NODE_HAS_AN_INSTALLED_LINUX_CI')
     need(li['host']['toolchainNodeSha256'] is not None and li['host']['resultPublicKeySha256'] is not None, 'FIRST_INSTALL_NEEDS_THE_NODES_HOST_FACTS')
     need(sg is not None and hashlib.sha256(sg['publicKeyPem'].encode('ascii')).hexdigest() == li['host']['resultPublicKeySha256'], 'FIRST_INSTALL_SIGNER_NOT_THE_NODES_RESULT_KEY')
 
@@ -147,15 +144,14 @@ def canonical(v):
     return json.dumps(v, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 
 
-def node_profile(cfg, tree):
-    """The node profile the configuration names, read from the commit's tree (the package records exactly that file's canonical bytes).
-    A commit older than the node's profile (a first install on the Source the other nodes run, README section 8) does not carry it; then
-    the profile is this toolchain checkout's copy at the same path. The commit's own prepare-record.mjs validates it either way."""
-    p = os.path.join(tree, 'work', 'independent-ci-resident-v1', *cfg['nodeProfile'].split('/'))
-    if not os.path.exists(p):
-        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', *cfg['nodeProfile'].split('/'))
-    with open(p, 'rb') as f:
-        prof = json.loads(f.read().decode('utf-8'))
-    need(prof.get('contract') == 'clued.independent-ci.node-profile/1' and prof.get('nodeName') == cfg['node'], 'NODE_PROFILE_NOT_THIS_NODE', prof.get('nodeName'))
+def node_profile(cfg):
+    """The node profile: always the installed one, the node profile of the base (installed) package's record (record/acceptance.json
+    `node`, held to the package manifest's pin). No configuration names a node or a profile file: the repository carries none."""
+    base = cfg['basePackage']
+    pins = {f['target']: f['sha256'] for f in json.loads(open(os.path.join(base, 'package-manifest.json'), 'rb').read().decode('utf-8'))['files']}
+    raw = open(os.path.join(base, 'record', 'acceptance.json'), 'rb').read()
+    need(hashlib.sha256(raw).hexdigest() == pins.get('record\\acceptance.json'), 'BASE_RECORD_FILE_NOT_ITS_PACKAGE', 'acceptance.json')
+    prof = json.loads(raw.decode('utf-8')).get('node')
+    need(isinstance(prof, dict) and prof.get('contract') == 'clued.independent-ci.node-profile/1', 'INSTALLED_NODE_PROFILE_MISSING')
     need(prof.get('wslDistribution') == cfg['linux']['distribution'], 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES', prof.get('wslDistribution'))   # review 1-10
     return prof, hashlib.sha256(canonical(prof).encode('utf-8')).hexdigest()

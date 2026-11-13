@@ -61,7 +61,7 @@ Yes ((Get-CompanionTaskSddl 'S-1-5-21-1-2-3-1001') -ceq 'D:P(A;;FA;;;SY)(A;;FA;;
 # 2026-11-08, the 29th DESK reinstall: the Task Scheduler reads the protected DACL back as D:PAI(...) (a D:P(...) cannot be stored), so
 # Get-CompanionTaskFacts compares the DACL as a security descriptor (protected, the same ACEs in order), not as a string. Run against a
 # fake Schedule.Service (no task is read): the interactive and the password definitions with the DACL the scheduler returns.
-$ownerT = 'S-1-5-21-858977881-4031698862-3006450925-1000'
+$ownerT = 'S-1-5-21-10-11-12-1000'
 $fakeFacts = {
   param([string]$dacl, [int]$logonType)
   $sa2 = Get-SupervisorAction $root
@@ -436,7 +436,7 @@ foreach ($bad in @('Set-Content', 'Set-Acl', 'Set-Item', 'Set-Service', 'Set-Sch
 
 # 9. M5-b (ADR 0023): the companion as its own non-administrator account. Pure functions and the order of the account switch; nothing on
 # the host is read or changed (the prepare script runs only in -Plan mode, read-only and not elevated).
-$acct = 'S-1-5-21-858977881-4031698862-3006450925-1010'; $opr = 'S-1-5-21-858977881-4031698862-3006450925-1000'; $ctl = 'S-1-5-21-858977881-4031698862-3006450925-1007'
+$acct = 'S-1-5-21-10-11-12-1010'; $opr = 'S-1-5-21-10-11-12-1000'; $ctl = 'S-1-5-21-10-11-12-1007'
 $nodeB = [pscustomobject]@{ ownerSid = $acct; ownerProfileDirectory = (Join-Path $Scratch 'companion-profile'); wslDistribution = 'CluedResident-Linux' }
 # the record: exactly three keys, the account is the profile's ownerSid, the operator another user SID
 $rec = { param($c, $a, $o) [pscustomobject]([ordered]@{ contract = $c; companionSid = $a; operatorSid = $o }) }
@@ -459,9 +459,9 @@ Yes $threw 'operator-record-that-does-not-fit-throws'
 $regD = [ordered]@{ guid = '{x}'; name = 'CluedResident-Linux'; basePath = 'C:\Users\Windows\WSL\CluedResident-Linux' }
 $p = Get-CompanionWslMovePlan $regD $true 'D:\clued-resident\wsl\CluedResident-Linux' $false
 Yes ($p.action -ceq 'move' -and -not $p.sameVolume) 'wsl-plan-desk-copy-to-d'
-$regT = [ordered]@{ guid = '{y}'; name = 'Ubuntu-24.04'; basePath = 'C:\Users\17531\AppData\Local\wsl\{7483e0fe-20a8-4d63-8ff8-8572cdf2e45c}' }
+$regT = [ordered]@{ guid = '{y}'; name = 'Ubuntu-24.04'; basePath = 'C:\Users\owner-b\AppData\Local\wsl\{7483e0fe-20a8-4d63-8ff8-8572cdf2e45c}' }
 $p = Get-CompanionWslMovePlan $regT $true 'C:\clued-resident\wsl\Ubuntu-24.04' $false
-Yes ($p.action -ceq 'move' -and $p.sameVolume) 'wsl-plan-turing-rename-on-c'
+Yes ($p.action -ceq 'move' -and $p.sameVolume) 'wsl-plan-node-b-rename-on-c'
 Yes ((Get-CompanionWslMovePlan $regD $false 'D:\clued-resident\wsl\CluedResident-Linux' $true).action -ceq 'forget') 'wsl-plan-file-moved-registration-left-forget'
 Yes ((Get-CompanionWslMovePlan $null $false 'D:\clued-resident\wsl\CluedResident-Linux' $true).action -ceq 'done') 'wsl-plan-done-earlier'
 Yes ((Get-CompanionWslMovePlan $regD $true 'D:\clued-resident\wsl\CluedResident-Linux' $true).code -ceq 'WSL_TARGET_EXISTS') 'wsl-plan-both-present-refused'
