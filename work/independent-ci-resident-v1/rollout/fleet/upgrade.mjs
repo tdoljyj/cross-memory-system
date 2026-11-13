@@ -61,6 +61,8 @@ const need = (ok, code, detail) => { if (!ok) throw new Refused(code, detail); }
 const needUpgradable = (ok, code, detail) => { if (!ok) throw Object.assign(new Refused(code, detail), { reinstall: true }); };
 const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/, ''));
 const parsed = s => { try { return JSON.parse(s); } catch { return null; } };
+// What a failed child said, never empty: its exit status, the end of its stderr, the end of its stdout.
+const failureOf = r => ({ exit: r.status, stderr: r.stderr.slice(-400), stdout: r.stdout.trim().slice(-400) });
 async function readOrNull(file) {
   try { return await fs.readFile(file); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; }
 }
@@ -159,7 +161,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const record = path.join(inputs, 'record');
   const closure = path.join(tree, ...CLOSURE.split('/'));
   const prep = run(nodeBin, [path.join(tree, ...PREPARE_RECORD.split('/')), '--inputs', path.join(inputs, 'record-inputs.json'), '--source-root', tree, '--closure', closure, '--out', record]);
-  need(prep.status === 0, 'PREPARE_RECORD_FAILED', prep.stderr);
+  need(prep.status === 0, 'PREPARE_RECORD_FAILED', failureOf(prep));
   const chk = run(nodeBin, [path.join(R, 'reinstall', 'tools', 'check-record.mjs'), tree, record]);
   need(chk.status === 0, 'RECORD_V2_REFUSED_BY_RUNTIME_VALIDATOR', parsed(chk.last)?.code ?? chk.stderr);
   const manifestBytes = await fs.readFile(path.join(record, 'source-manifest.json'));
@@ -185,7 +187,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
     const r = run(nodeBin, [path.join(R, 'tools', 'build-package.mjs'), '--out', out, '--policy', path.join(inputs, 'policy.input.json'), '--companion', path.join(inputs, 'companion.input.json'),
       '--node', node.nodeExe, '--record', record, '--source-root', tree, '--source-files', path.join(inputs, 'source-files.txt'),
       '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'), '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R });
-    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', r.stderr);
+    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', failureOf(r));
     return parsed(r.last);
   };
   const packageDir = path.join(work, 'package');

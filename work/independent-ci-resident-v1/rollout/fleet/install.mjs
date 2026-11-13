@@ -533,7 +533,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
       '--node', node.nodeExe, '--record', record, '--source-root', tree, '--source-files', path.join(inputs, 'source-files.txt'), '--fresh-install',
       '--upgrader-config', path.join(inputs, 'upgrader.input.json'), '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'),
       '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R });
-    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', r.stderr);
+    need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', { exit: r.status, stderr: r.stderr.slice(-400), stdout: r.stdout.trim().slice(-400) });
     return parsed(r.last);
   };
   const packageDir = path.join(work, 'package');
