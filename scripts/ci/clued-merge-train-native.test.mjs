@@ -20,41 +20,14 @@ function native(answer) {
 }
 const code = c => e => e.code === c;
 
-test('terminal proof reaches only the existing adopt/return RPC and cannot change its exact subject', async () => {
-  const last_admission = { receipt_id: R1, claim_id: C1, fence: 3, execution_epoch: 2, lease_version: 5, head_authorization_id: C2 };
+test('adopt/return send only the fixed fields and answer no release outcome (terminal admission removed)', async () => {
   for (const merged of [false, true]) {
-    const proof = { last_admission, observation: { repository: REPO, pr_ref: REPO+'#910', head_sha: H, base_sha: M,
-      target_branch: 'main', state: 'closed', merged, ...(merged ? { merge_sha: M } : {}) } };
-    const { calls, writer } = native(() => reply(merged ? { status:'ok', adopted:false, reason:'no_copy_for_pr', pr_ref:REPO+'#910' }
-      : { status:'ok', returned:false, pr_ref:REPO+'#910', merge_slot_returned:[] }));
-    if (merged) await writer.adopt({ pr:910, mergeSha:M, terminalProof:proof });
-    else await writer.returnSlot({ pr:910, terminalProof:proof });
-    assert.deepEqual(calls[0].input.terminal_proof, proof, 'the original receipt and CAS must not be discarded by the port');
-    const before = calls.length, changed = structuredClone(proof);changed.observation.pr_ref=REPO+'#911';
-    await assert.rejects(merged ? writer.adopt({ pr:910, mergeSha:M, terminalProof:changed })
-      : writer.returnSlot({ pr:910, terminalProof:changed }));
-    assert.equal(calls.length, before);
-  }
-});
-
-test('terminal release pending is retained for retries and contradictory Native outcomes fail closed', async () => {
-  const release = { status:'pending',released:false,reason:'execution_pending',receipt_id:R1,retryable:true };
-  const {writer} = native(()=>reply({status:'ok',returned:false,pr_ref:REPO+'#910',merge_slot_returned:[],auto_release:release}));
-  assert.deepEqual((await writer.returnSlot({pr:910})).autoRelease,release);
-  for(const delta of [{released:true},{retryable:false},{receipt_id:'bad'},{lease_key:'not-public'}]) {
-    const {writer:bad} = native(()=>reply({status:'ok',returned:false,pr_ref:REPO+'#910',merge_slot_returned:[],auto_release:{...release,...delta}}));
-    await assert.rejects(bad.returnSlot({pr:910}),code('MERGE_TRAIN_NATIVE_UNREADABLE'));
-  }
-});
-
-test('terminal release replay is an explicit bounded no-write observation, outside the five-field outcome', async () => {
-  const release={status:'released',released:true,reason:'released',receipt_id:R1,retryable:false};
-  const body={status:'ok',returned:true,pr_ref:REPO+'#910',merge_slot_returned:[C1],auto_release:release,terminal_replayed:true};
-  const {writer}=native(()=>reply(body));
-  assert.equal((await writer.returnSlot({pr:910})).terminalReplayed,true);
-  for(const delta of [{terminal_replayed:'true'},{auto_release:{...release,status:'pending',released:false,retryable:true}}]) {
-    const {writer:bad}=native(()=>reply({...body,...delta}));
-    await assert.rejects(bad.returnSlot({pr:910}),code('MERGE_TRAIN_NATIVE_UNREADABLE'));
+    const { calls, writer } = native(() => reply(merged
+      ? { status:'ok', adopted:false, reason:'no_copy_for_pr', pr_ref:REPO+'#910', auto_release:{ status:'retained' } }
+      : { status:'ok', returned:false, pr_ref:REPO+'#910', merge_slot_returned:[], auto_release:{ status:'retained' } }));
+    const out = merged ? await writer.adopt({ pr:910, mergeSha:M, terminalProof:{} }) : await writer.returnSlot({ pr:910, terminalProof:{} });
+    assert.deepEqual(Object.keys(calls[0].input).sort(), merged ? ['merge_sha','pr_ref','scope'] : ['pr_ref','scope']);
+    assert.equal(Object.hasOwn(out, 'autoRelease'), false);
   }
 });
 

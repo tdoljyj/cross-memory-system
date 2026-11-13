@@ -61,12 +61,11 @@ const ALLOWED={
     'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
   holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_decide_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1'],
-  // 20261108161615 and 20261108204157 renamed the adopt/return bodies (with their merge-slot check) to the *_before_pr_task
-  // and *_before_terminal predecessors their new public wrappers call; the terminal admission (verify) and its apply ask it too.
-  mergeSlot:['clued_private.clued_work_claim_adopt_v1_before_pr_task','clued_private.clued_work_claim_adopt_v1_before_terminal',
-    'clued_private.clued_work_merge_slot_return_v1_before_pr_task','clued_private.work_claim_ci_lease_extend_v1',
-    'clued_private.work_claim_ci_queue_join_v1','clued_private.work_claim_pr_terminal_apply_v1','public.clued_work_merge_slot_touch_v1',
-    'public.clued_work_verify_v1'],
+  // 20261108161615 renamed the adopt/return bodies (with their merge-slot check) to the *_before_pr_task predecessors;
+  // the public adopt asks it again before its own copy-ambiguity check (terminal admission removed by 20261113151000).
+  mergeSlot:['clued_private.clued_work_claim_adopt_v1_before_pr_task','clued_private.clued_work_merge_slot_return_v1_before_pr_task',
+    'clued_private.work_claim_ci_lease_extend_v1','clued_private.work_claim_ci_queue_join_v1','public.clued_work_claim_adopt_v1',
+    'public.clued_work_merge_slot_touch_v1'],
 };
 
 test('unified scheduling 2A: duty holder, equivalence of every routed entry point, phase moves',{timeout:1200000},async t=>{

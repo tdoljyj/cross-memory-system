@@ -5,7 +5,6 @@
 import { digest } from './proof.mjs';
 import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { sameClaimGeneration } from './job-v2.mjs';
-import { normalizeTerminalAdmission } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { mergeQueueEntryV2, MERGE_QUEUE_STATES } from './independent-control-checks-v2/queue-facts.mjs';
 
 export const FULL_ADMISSION_CONTRACT_V2 = 'clued.independent-ci.full-admission/2';
@@ -109,8 +108,7 @@ function executionFactsValid(facts) {
   return facts.contract === FULL_ADMISSION_CONTRACT_V3 && facts.executionPolicy === 'active' && typeof facts.guarded === 'boolean'
     && facts.publicationRequired === true && (facts.guarded ? typeof facts.headAuthorizationId === 'string' && uuid.test(facts.headAuthorizationId) : facts.headAuthorizationId === null);
 }
-const fieldsFor = facts => [...(facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2),
-  ...(Object.hasOwn(facts ?? {}, 'terminalAdmission') ? ['terminalAdmission'] : [])];
+const fieldsFor = facts => facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2;
 export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } = {}) {
   const serverCurrent = retainedServerAnswerCurrent(facts);
   if (!plain(facts) || !executionFactsValid(facts) || Object.keys(facts).sort().join('|') !== [...fieldsFor(facts)].sort().join('|')
@@ -121,8 +119,6 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
     || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
     || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
     || !(serverCurrent === null ? freshStamp(at(facts.observedAt), now) && at(facts.claimExpiresAt) > now : serverCurrent)) return false;
-  try { if (Object.hasOwn(facts, 'terminalAdmission')) normalizeTerminalAdmission(facts.terminalAdmission, facts.observedClaim); }
-  catch { return false; }
   if (batchClaim && !sameClaimGeneration(facts.observedClaim, batchClaim)) return false;
   const { observationSha256, ...body } = facts;
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;

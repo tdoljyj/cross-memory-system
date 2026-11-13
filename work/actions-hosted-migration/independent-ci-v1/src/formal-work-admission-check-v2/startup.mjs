@@ -21,7 +21,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
     const batchClaims = {
       read: async j => { try { return await readBatchClaim(STATE_V2.batchClaims, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
-      record: (j, claim, at, terminalAdmission) => recordBatchClaim(STATE_V2.batchClaims, j, claim, at, terminalAdmission),
+      record: (j, claim, at) => recordBatchClaim(STATE_V2.batchClaims, j, claim, at),
       rewrite: (...args) => rewriteUnpublishedBatchClaim(STATE_V2.batchClaims, ...args),
       withPublication: (...args) => withBatchClaimPublication(STATE_V2.batchClaims, ...args),
     };

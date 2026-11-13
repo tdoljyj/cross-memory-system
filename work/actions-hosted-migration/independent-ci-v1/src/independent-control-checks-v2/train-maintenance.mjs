@@ -51,13 +51,12 @@ import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
-import { TrainSweepStore, validateLandingState, LANDING_STATE_CONTRACT } from './train-sweep-store.mjs';
+import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
-import { resolvePRTaskBinding, normalizeTerminalAdmission, terminalProofForPull } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { readTerminalAdmission as readRecordedTerminalAdmission } from '../batch-claim-v2.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, MAX_BAD, MAX_ADOPTED } from './train-landing.mjs';
+import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
@@ -113,35 +112,12 @@ export async function readTrainFacts(ports) { return (await runTrain(ports)).fac
 export async function runTrain(ports) {
   const fx = { n: 0 };
   const startedAt = (ports.clock ?? Date.now)();
-  // Cursor progress and the existing bisection/completion updates form one
-  // local publication. Two writes in the same millisecond have no nonce order.
-  let pendingLanding = null, flushStarted = false;
-  const originalStore = ports.sweepStore;
-  const store = originalStore ? Object.create(originalStore) : null;
-  if (store) {
-    store.writeLandingState = async input => {
-      const state = validateLandingState({ contract: LANDING_STATE_CONTRACT, ...input,
-        bad: input.bad.slice(-MAX_BAD), adopted: input.adopted.slice(-MAX_ADOPTED), handled: input.handled.slice(-MAX_ADOPTED) });
-      const { contract, writtenAt, runId, ...meaning } = state;
-      pendingLanding = { writtenAt, runId, ...meaning };
-    };
-    store.readLandingState = async () => pendingLanding
-      ? Object.fromEntries(Object.entries(pendingLanding).filter(([key]) => !['writtenAt', 'runId'].includes(key)))
-      : originalStore.readLandingState();
-  }
-  const flushLanding = async () => {
-    if (pendingLanding && !flushStarted) { flushStarted = true; await originalStore.writeLandingState(pendingLanding); }
-  };
   try {
-    const result = await runTrainCounted({ ...ports, ...(store ? { sweepStore: store } : {}), startedAt }, fx);
-    await flushLanding();
+    const result = await runTrainCounted({ ...ports, startedAt }, fx);
     const claimBindings = ports.observeBindings === true ? await observePRClaimBindings(ports, startedAt) : null;
     return claimBindings === null ? result : { ...result, facts: validateTrainFacts({ ...result.facts, claimBindings }) };
   }
-  catch (e) {
-    try { await flushLanding(); } catch (failure) { e = failure; }
-    if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e;
-  }
+  catch (e) { if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e; }
 }
 
 // This bounded observation is data for rechecking waiting rows, never admission.
@@ -174,7 +150,7 @@ async function observePRClaimBindings({ github, native, job, claimScope, clock =
 }
 
 async function runTrainCounted({ job, github: plainGithub, native, ledger, sweepStore = null, publications = null, appId = APP_ID, clock = Date.now, sleep = wait,
-  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null, terminalAdmissions = null, startedAt = clock() }, fx) {
+  layerOfPaths = () => 'protected', claimScope = null, landing = null, trainLanding = null, startedAt = clock() }, fx) {
   validateTrainRun(job);
   const started = startedAt, at = isoOf(started), acting = job.mode !== 'shadow';
   // Resident DESIGN §65: only 'gate' makes the full sweep a condition of anything.
@@ -584,18 +560,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
         if (!k.onDuty) { lostDuty = true; fx.n--; } else { keptAlive = k.keptAlive; actions.keptAlive = keptAlive.length; }
       }
     } catch { /* keepalive is best effort: the lease clocks still run */ }
-    let frontLanded = false;
-    let terminalHandled = new Set(), landedNow = new Set();
-    let terminalBudgetExhausted = false;
-    if (!takeoverPending && !lostDuty) {
-      const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx, includeLanding: push, until: until.read });
+    let frontLanded = false, landedNow = new Set();
+    if (push && !takeoverPending && !lostDuty) {
+      const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx });
       landingFacts = l.facts;
       if (l.lostDuty) lostDuty = true;
       if (l.adopted.length) actions.adopted = true;
-      if (l.returned.length) actions.returned = true;
-      terminalHandled = l.handled;
-      landedNow = new Set([...l.adopted, ...l.returned]);
-      terminalBudgetExhausted = l.nativeAttempts >= 20;
+      landedNow = new Set(l.adopted);
       frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
       landingState = l.state;
     }
@@ -603,14 +574,14 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // releases its claim first, so nothing else ends that binding. A bound PR GitHub has closed is ended here, merged with its merge
     // commit, otherwise returned; Native keeps the slot while the Task has another active PR (migration 20261108161615). A PR the
     // landing above has just answered is not asked again.
-    for (const p of lostDuty ? [] : endedBound.filter(p => !landedNow.has(p.number) && !terminalHandled.has(`${p.number}:${p.head?.sha}`))) {
+    for (const p of lostDuty ? [] : endedBound.filter(p => !landedNow.has(p.number))) {
       try {
         fx.n++;
         const a = p.merged === true ? await native.adopt({ pr: p.number, mergeSha: p.merge_commit_sha }) : await native.returnSlot({ pr: p.number });
         if (!a.onDuty) { lostDuty = true; fx.n--; break; }
       } catch { /* unreadable reply: counted; the next round reads the PR again */ }
     }
-    if (!takeoverPending && !lostDuty && !terminalBudgetExhausted && holder?.pr && front && !frontLanded && !terminalHandled.has(`${holder.pr}:${front.headSha}`)) {
+    if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
         const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
           ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
@@ -676,7 +647,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
-    const o = await openFront({ job, github, native, claimScope, terminalAdmissions, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
+    const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
       pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
   } else decision = wouldDo;
@@ -869,7 +840,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
 // same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
 // infrastructure failure) counts as running until the holder's running clock or slot ends.
-async function openFront({ job, github, native, claimScope, terminalAdmissions, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
+async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
   try {
@@ -900,27 +871,15 @@ async function openFront({ job, github, native, claimScope, terminalAdmissions, 
     || !(Date.parse(h.mergeSlotUntil) - clock() >= need)) return no('TRAIN_FRONT_BUDGET_SHORT');
   const batch = { pr: holder.pr, headSha: front.headSha, baseSha: mainSha, testSha: composed?.testSha ?? front.testMerge.sha, testTree: composed?.testTree ?? front.testMerge.tree,
     claimId: holder.claimId, since, attempt: Math.min(used, MAX_FRONT_BATCHES_PER_HEAD - 1) + 1 };
-  const capture = async member => {
-    if (typeof terminalAdmissions !== 'function') return member;
-    try {
-      const reference = normalizeTerminalAdmission(await terminalAdmissions({ repo: job.repo, pr: member.pr,
-        headSha: member.headSha, sourceManifestSha256: job.sourceManifestSha256 }));
-      return reference.claim_id === member.claimId ? { ...member, terminalAdmission: reference } : member;
-    } catch { return member; } // Historical or ambiguous evidence never becomes permission.
-  };
-  const capturedFront = await capture({ pr: batch.pr, headSha: batch.headSha, claimId: batch.claimId });
   if (composed) {
     try {
-      const members = [];
-      for (const member of composed.members) members.push(member.pr === capturedFront.pr ? capturedFront : await capture(member));
       await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: batch.pr, frontHeadSha: batch.headSha, baseSha: batch.baseSha,
-        testSha: batch.testSha, testTree: batch.testTree, attempt: batch.attempt, members });
+        testSha: batch.testSha, testTree: batch.testTree, attempt: batch.attempt, members: composed.members });
       if (composed.suspect !== composed.stateSuspect) await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...composed.state, suspect: composed.suspect });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
   // the attempt is counted before the executor sees the batch; a record that cannot be written opens nothing
-  try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch,
-    ...(capturedFront.terminalAdmission ? { terminalAdmission: capturedFront.terminalAdmission } : {}) }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
+  try { await sweepStore.appendFrontBatch({ writtenAt: isoOf(clock()), runId: job.runId, ...batch }); } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   // ADR 0019: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
   // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
   const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
@@ -988,98 +947,44 @@ async function composeBatch({ github, native, landing, max, rows, claimScope, st
 // ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
 // the batch's head (merged, or open while GitHub has not marked it yet) is adopted with S, riders first and the front last. A batch is
 // recorded as adopted once each member was answered (adopted, or moved on to another head); the bisection learns from it once.
-async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx, includeLanding = true, until }) {
-  const out = { facts: null, adopted: [], returned: [], handled: new Set(), lostDuty: false, state: null, nativeAttempts: 0 };
-  let state;
-  try {
-    state = await sweepStore.readLandingState();
-  }
+async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx }) {
+  const out = { facts: null, adopted: [], lostDuty: false, state: null };
+  let state, batches;
+  try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
   catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
   const notMarkedMerged = [], landed = [];
-  const attempted = new Set();
-  let changed = false, scanned = false, nativeAttempts = 0;
-  try { for await (const item of sweepStore.terminalRecords({ cursor: state.terminalScan, includeLanding, clock, until })) {
-    const beforeScan = state.terminalScan;
-    const advance = () => { state = { ...state, terminalScan: item.cursor }; changed = true; scanned = true; };
-    const rewind = () => { const { terminalScan, ...rest } = state; state = beforeScan ? { ...rest, terminalScan: beforeScan } : rest; };
-    if (!item.record || item.kind === 'front' && !item.record.terminalAdmission) { advance(); continue; }
-    const b = item.kind === 'front' ? { ...item.record, terminalFront: true, members: [{ pr: item.record.pr,
-      headSha: item.record.headSha, claimId: item.record.claimId, terminalAdmission: item.record.terminalAdmission }] } : item.record;
-    // Reserve the whole batch. A cursor must not skip its unattempted riders
-    // just because another kind used the last part of the shared RPC budget.
-    if (nativeAttempts + b.members.length > 20) break;
-    advance();
-    for (const member of b.members) if (member.terminalAdmission) out.handled.add(`${member.pr}:${member.headSha}`);
-    if (clock() >= until) { rewind(); break; }
-    // Old completion rings name only test SHAs, not proof generations. They
-    // cannot retire a new terminal witness. Exact Native replay is harmless.
-    if (!b.members.some(m => m.terminalAdmission) && state.adopted.includes(b.testSha)) continue;
-    if (!b.terminalFront) {
-      let cmp;
-      try { cmp = await github.readCompare(b.testSha, mainSha); }
-      catch { if (clock() >= until) rewind(); continue; }
-      if (clock() >= until) { rewind(); break; }
-      if (!(cmp?.status === 'identical' || (cmp?.status === 'ahead' && cmp.behindBy === 0))) continue;
-    }
-    let answered = true, mergedBatch = !b.terminalFront;
+  let changed = false;
+  for (const b of [...batches].reverse()) {
+    if (state.adopted.includes(b.testSha)) continue;
+    let cmp;
+    try { cmp = await github.readCompare(b.testSha, mainSha); } catch { continue; }
+    if (!(cmp?.status === 'identical' || (cmp?.status === 'ahead' && cmp.behindBy === 0))) continue;
+    let answered = true;
     for (const m of [...b.members.slice(1), b.members[0]]) {
-      if (clock() >= until) { answered = false; break; }
-      const identity = `${b.testSha}:${m.pr}:${m.headSha}:${m.terminalAdmission?.receipt_id ?? ''}`;
-      if (attempted.has(identity)) { answered = false; continue; }
-      attempted.add(identity);
       let pull;
-      try { pull = await github.readPullRequest(m.pr, { until }); } catch { answered = false; continue; }
-      if (pull?.number !== m.pr || pull?.head?.sha !== m.headSha) continue;
-      if (b.terminalFront && pull.state !== 'closed') { answered = false; continue; }
-      if (!b.terminalFront && pull.state !== 'open' && pull.merged !== true) continue;
-      if (pull.merged !== true && !b.terminalFront) notMarkedMerged.push(m.pr);
+      try { pull = await github.readPullRequest(m.pr); } catch { answered = false; continue; }
+      if (pull?.head?.sha !== m.headSha || (pull.state !== 'open' && pull.merged !== true)) continue;
+      if (pull.merged !== true) notMarkedMerged.push(m.pr);
       try {
-        let mergeSha = b.testSha;
-        if (b.terminalFront && pull.merged === true) {
-          const commit = await github.readGitCommit(pull.merge_commit_sha);
-          if (commit?.sha !== pull.merge_commit_sha || commit.tree !== b.testTree || commit.parents?.length !== 2
-            || commit.parents[0] !== b.baseSha || commit.parents[1] !== m.headSha) { answered = false; continue; }
-          mergeSha = commit.sha; mergedBatch = true;
-        }
-        const terminalProof = m.terminalAdmission && pull.state === 'closed'
-          ? terminalProofForPull(m.terminalAdmission, pull, { repository: job.repo, prNumber: m.pr,
-            headSha: m.headSha, targetBranch: 'main', ...(pull.merged ? { mergeSha } : {}) }) : null;
-        fx.n++; nativeAttempts++;
-        const a = b.terminalFront && pull.merged === false
-          ? await native.returnSlot({ pr: m.pr, terminalProof })
-          : await native.adopt({ pr: m.pr, mergeSha, ...(terminalProof ? { terminalProof } : {}) });
+        fx.n++;
+        const a = await native.adopt({ pr: m.pr, mergeSha: b.testSha });
         if (!a.onDuty) { fx.n--; out.lostDuty = true; answered = false; break; }
-        out.handled.add(`${m.pr}:${m.headSha}`);
-        if (a.terminalReplayed === true) fx.n--;
-        else {
-          if (a.adopted) out.adopted.push(m.pr);
-          if (b.terminalFront && pull.merged === false && a.returned) out.returned.push(m.pr);
-        }
-        if (a.autoRelease && a.autoRelease.status !== 'released') {
-          const reason = `TRAIN_TERMINAL_${a.autoRelease.reason.toUpperCase()}`;
-          out.facts ??= {};
-          out.facts.error ??= /^[A-Z][A-Z0-9_]{1,79}$/.test(reason) ? reason : 'TRAIN_TERMINAL_UNCONFIRMED';
-        }
-        // The same durable record drives retries after the slot/holder is gone.
-        // An open landed PR is only adoption, never proof of PR termination.
-        if (m.terminalAdmission && (!terminalProof || !a.autoRelease || a.autoRelease.retryable)) answered = false;
+        if (a.adopted) out.adopted.push(m.pr);
       } catch { answered = false; }
     }
-    if (!answered && clock() >= until) rewind();
     if (out.lostDuty) break;
     if (answered) {
-      const next = mergedBatch ? bisectAfter({ suspect: state.suspect, members: b.members, landed: true }) : { suspect: state.suspect, bad: [] };
+      const next = bisectAfter({ suspect: state.suspect, members: b.members, landed: true });
       state = { ...state, suspect: next.suspect, bad: [...state.bad, ...next.bad], adopted: [...state.adopted, b.testSha] };
-      if (mergedBatch) landed.push({ testSha: b.testSha, members: b.members.map(m => m.pr) });
+      landed.push({ testSha: b.testSha, members: b.members.map(m => m.pr) });
       changed = true;
     }
-  } } catch { out.facts = { ...(out.facts ?? {}), error: 'TRAIN_LANDING_STATE_UNREADABLE' }; }
+  }
   if (changed) {
     try { await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...state }); } catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNWRITTEN' }; }
   }
   out.state = state;
-  out.nativeAttempts = nativeAttempts;
-  if (includeLanding || scanned) out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
+  out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
   return out;
 }
 
@@ -1169,8 +1074,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
     return settleTrain({
       run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope,
-        observeBindings: true, landing, trainLanding,
-        terminalAdmissions: subject => readRecordedTerminalAdmission(STATE_V2.batchClaims, subject) }),
+        observeBindings: true, landing, trainLanding }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are
