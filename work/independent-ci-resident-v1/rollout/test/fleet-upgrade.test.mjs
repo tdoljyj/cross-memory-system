@@ -4,7 +4,8 @@
 // (rollout/fleet/upgrade.mjs) give each node its own /4 upgrade package with the SAME ciSourceManifestSha256 (the accepted one), which
 // the installed upgrader's ACCEPT passes (the archive's precheck.mjs) and whose request the FROZEN upgrader (upgrader/src/machine.mjs,
 // the real package, its real plan) runs to SUCCEEDED: generation 2 on the accepted Source. The command again answers
-// FLEET_NODE_ALREADY_AT_THIS_PACKAGE and requests nothing. An open operation is not requested twice. A node the package cannot upgrade
+// FLEET_NODE_ALREADY_AT_THIS_PACKAGE and requests nothing. An open operation is not requested twice; the node on duty is not requested
+// without the Owner's acceptance of the CI pause. A node the package cannot upgrade
 // in place (upgrader changed, Linux tool changed, a Source-entering fleet reference changed, Linux live tree not its generation) is
 // answered FLEET_NODE_UPGRADE_NEEDS_REINSTALL with nothing requested; the same acceptance file's source-hash (what a reinstall
 // installs) is the Source the upgrade installed.
@@ -199,6 +200,15 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
 
   // other refusals are not a reason to reinstall: an archive that is not the accepted one, a work directory that exists
   await refusedBeforeAnyWork(await viaMain({ ...w.acceptance, archive_sha256: 'f'.repeat(64) }), 'FLEET_NODE_UPGRADE_REFUSED', 'FLEET_ARTIFACT_SHA_NOT_THE_ACCEPTED');
+
+  // the node on duty is not requested by default (the standby first, then the hand-over); with the Owner's acceptance of the CI pause it is
+  await fs.mkdir(at('state'), { recursive: true });
+  await fs.writeFile(at('state', 'status.json'), JSON.stringify({ node: { mode: 'ACTIVE', name: n.profile.nodeName } }));
+  const duty = await viaMain(w.acceptance);
+  assert.deepEqual([duty.status, q.calls.length], ['FLEET_NODE_UPGRADE_HAND_OVER_FIRST', 0], JSON.stringify(duty).slice(0, 2000));
+  const accepted = await upgrade(w, n, { request: q.request, allowActiveUpgrade: true, noRequest: true });
+  assert.deepEqual([accepted.status, accepted.ciPause, q.calls.length], ['FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', true, 0]);
+  await fs.rm(at('state', 'status.json'));
 
   // the node is untouched by all of the above: the real request goes through, for the package the dry run assembled
   const r = await viaMain(w.acceptance);

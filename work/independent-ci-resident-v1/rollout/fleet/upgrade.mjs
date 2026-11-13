@@ -6,7 +6,8 @@
 // directory and that one inbox file; no Python, no git, no WSL, no network.
 //
 //   node <unpacked>/tree/work/independent-ci-resident-v1/rollout/fleet/upgrade.mjs
-//        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json> --work <new dir> [--no-request]
+//        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json> --work <new dir>
+//        [--no-request] [--allow-active-upgrade]
 //
 // The command is the same on every node and safe to run again: it answers FLEET_NODE_UPGRADE_IN_PROGRESS while the upgrader has an
 // operation open, FLEET_NODE_ALREADY_AT_THIS_PACKAGE once both sides run this package, and otherwise requests the upgrade.
@@ -26,7 +27,9 @@
 //   6. <work>\package\ (the archive's build-package.mjs, twice: the same sha; the universal values the archive's; identity and profile
 //      the installed ones).
 //   7. the archive's precheck.mjs (the installed generation's own staged package, where the node still has one, as --installed-package).
-//   8. the installed resident\<sha>\windows\request-upgrade.ps1; one JSON line.
+//   8. a node that holds ci-admission now is not requested (FLEET_NODE_UPGRADE_HAND_OVER_FIRST: the standby goes first, then the
+//      hand-over, rollout/README.md section 4) unless --allow-active-upgrade says the Owner accepted the CI pause of its upgrade.
+//   9. the installed resident\<sha>\windows\request-upgrade.ps1; one JSON line.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fsSync from 'node:fs';
@@ -91,7 +94,7 @@ export function defaultRequest({ script, packageDir, packageManifestSha256, deci
 }
 
 export async function upgradeNode({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(), node: nodeBin = process.execPath,
-  request = defaultRequest, noRequest = false, selfDir = HERE }) {
+  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string', 'USAGE');   // the package directory's shape is the installed request tool's to judge (A3)
   const { entries, universal } = readArchive(await fs.readFile(artifactPath), artifactSha256, acceptance);
@@ -213,9 +216,13 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   if (!(pre.status === 0 && typeof precheck.status === 'string' && precheck.status.startsWith('PRECHECK_PASS'))) {
     return { ...result, status: PRECHECK_REINSTALL.includes(precheck.code) ? 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' : 'FLEET_NODE_UPGRADE_PRECHECK_REFUSED', code: precheck.code ?? null };
   }
+  // 8. the node on duty: its upgrade pauses CI (the upgrader drains and pauses it), so it is the Owner's choice, never a default
+  const onDuty = precheck.warnings?.includes('NODE_HOLDS_CI_ADMISSION_HAND_OVER_FIRST') === true;
+  if (onDuty && !allowActiveUpgrade) return { ...result, status: 'FLEET_NODE_UPGRADE_HAND_OVER_FIRST' };
+  if (onDuty) result.ciPause = true;
   if (noRequest) return { ...result, status: 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED' };
 
-  // 8. the request, by the installed tool
+  // 9. the request, by the installed tool
   const script = at('resident', node.current.residentManifestSha256, 'windows', 'request-upgrade.ps1');
   const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef });
   return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null },
@@ -229,10 +236,10 @@ const REINSTALL_HINT = 'This node cannot take this package in place. Its way is 
 export async function main(argv, deps = {}) {
   try {
     const { values } = parseArgs({ args: argv, options: { artifact: { type: 'string' }, 'artifact-sha': { type: 'string' }, acceptance: { type: 'string' }, work: { type: 'string' },
-      'no-request': { type: 'boolean' } } });
+      'no-request': { type: 'boolean' }, 'allow-active-upgrade': { type: 'boolean' } } });
     need(values.artifact && values['artifact-sha'] && values.acceptance && values.work, 'USAGE');
     const r = await upgradeNode({ ...deps, artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance: jsonOf(await fs.readFile(values.acceptance)),
-      workDir: values.work, noRequest: values['no-request'] === true });
+      workDir: values.work, noRequest: values['no-request'] === true, allowActiveUpgrade: values['allow-active-upgrade'] === true });
     return r.status === 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' ? { ...r, reinstall: REINSTALL_HINT } : r;
   } catch (e) {
     return { contract: UPGRADE_CONTRACT, status: e?.reinstall ? 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' : 'FLEET_NODE_UPGRADE_REFUSED', code: e?.code ?? 'FLEET_NODE_UPGRADE_FAILED',

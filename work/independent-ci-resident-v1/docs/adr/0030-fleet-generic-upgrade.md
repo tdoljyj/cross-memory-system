@@ -67,7 +67,8 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
    - 按本机现装引用算出的 Source ≠ 接受文件的 `ciSourceManifestSha256`（见 2.3）。
 5. 组装升级包：record 沿用现装的全部接受引用（Decision `b1dd8a84`：节点身份钉住 7 个资格引用与 Owner 决定、回执，升级代理拒绝身份变了的包）；policy/companion 取现装的，`ownerAcceptance` 写接受文件的 `ownerDecisionRef` / `installationReceiptRef`；Linux 外部钉值按包内 unit 推出（与重装同一个函数）；三个角色哈希按冻结 Linux 工具的 `derive_role` 推出（`ports.rolesDerived`）；用包内 `build-package.mjs` 构建两次，sha 相同；通用值等于 `universal-manifest.json`，节点身份、档案不变。
 6. 预检：包内 `precheck.mjs` 用包里那份（与已装逐字节相同的）升级代理跑一遍 ACCEPT。**不再需要已装包目录**：升级代理清单与回执比，Linux 工具与版本事实比；节点自己有上一个升级包（`upgrade\staged\<当前包 sha>`，第 2 代起都有）时照旧逐文件比。
-7. 预检通过才投请求（已装的 `request-upgrade.ps1`）。输出一行 JSON：包 sha、`grantResource`、请求 id、`statusFile`。`--no-request` 停在第 6 步之后，用于演练。
+7. 当班节点默认不投请求（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`，与 `rollout.mjs` 同一条规则：待命先升、移交、再升）；Owner 接受它升级期间 CI 暂停时加 `--allow-active-upgrade`，结果带 `ciPause: true`。
+8. 预检通过才投请求（已装的 `request-upgrade.ps1`）。输出一行 JSON：包 sha、`grantResource`、请求 id、`statusFile`。`--no-request` 停在第 6 步之后，用于演练。
 
 没有 Python、没有 git、不进 WSL、不改任何 ACL。
 
@@ -116,7 +117,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 - 把请求交给**冻结的升级代理**（`upgrader/src/machine.mjs`，真的包、真的计划）跑到 `SUCCEEDED`：第 2 代，Source 是接受的那个。再跑同一条命令：`FLEET_NODE_ALREADY_AT_THIS_PACKAGE`，不投请求。
 - 操作在途：不投第二个请求。
 - 走不了升级的三种：升级代理变了、Linux 工具变了、`fleetRefs` 的 Source 项变了 → `FLEET_NODE_UPGRADE_NEEDS_REINSTALL`，什么都没投；同一份接受文件的 `source-hash` 与升级得到的 Source 相同。
-- 预检拒绝时不投请求；`--no-request` 不投请求。
+- 预检拒绝时不投请求；`--no-request` 不投请求；当班节点不带 `--allow-active-upgrade` 不投请求。
 
 ## 5. 没有做的
 

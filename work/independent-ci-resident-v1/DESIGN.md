@@ -5745,7 +5745,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 2. **节点值只从本机读，不要已装包目录，也不要服务端记录。** 与重装同一个 `install.mjs#readNode`；Linux 外部钉值与重装同一个 `linuxExternalPins`；角色哈希用冻结 Linux 工具的 `derive_role`（`ports.rolesDerived`）。`precheck.mjs` 的 `--installed-package` 可选：不给时升级代理按回执的清单哈希比，Linux 工具按版本事实比。
 3. **record 的引用不变。** 节点身份钉住 7 个资格引用与 Owner 决定、回执（`src/node-identity.mjs`），升级代理拒绝身份变了的包（`plan.mjs`）。所以升级得到的 Source 由现装的 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 决定，接受文件的 `fleetRefs` 必须沿用这三项；这次的 Decision 与回执只进 policy 的 `ownerAcceptance`、包的 `acceptance.decisionRef`、请求和 Grant。
 4. **升不了的在请求之前就说。** 升级代理清单、Linux 升级工具、上面三项引用、两侧是否同一个 Source，任何一项不对：`FLEET_NODE_UPGRADE_NEEDS_REINSTALL`，什么都不投。同一份接受文件走重装得到同一个 Source，舰队不分叉。
-5. **可重复运行。** 操作在途：`FLEET_NODE_UPGRADE_IN_PROGRESS`；两侧已是这个包：`FLEET_NODE_ALREADY_AT_THIS_PACKAGE`。
+5. **可重复运行。** 操作在途：`FLEET_NODE_UPGRADE_IN_PROGRESS`；两侧已是这个包：`FLEET_NODE_ALREADY_AT_THIS_PACKAGE`。当班节点默认不投请求（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`），Owner 接受 CI 暂停时加 `--allow-active-upgrade`。
 6. **批准。** Owner 对一个版本决定一次（接受文件）；每台的 Grant 由现有自动审批规则放行（迁移 `20261107090000`），没开时每台在页面点一次。没有新增服务端对象。
 
 测试：`rollout/test/fleet-upgrade.test.mjs`（在 CI 的 `resident-node` 套件里）；`rollout/test/precheck.test.mjs` 的“without the installed package”。

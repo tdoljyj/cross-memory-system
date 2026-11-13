@@ -17,7 +17,7 @@
 |---|---|---|
 | 接受这一版 | 一次 Decision（全体节点适用） | 无 |
 | 每台节点升级 | 自动审批开着：什么都不做。没开：在该节点 `upgrade\status.json` 的 `confirmUrl` 页面点一次批准 | 无 |
-| 当班节点 | 在 `/bindings` 点一次移交（待命节点先升好再移交） | 无 |
+| 当班节点 | 二选一：在 `/bindings` 点一次移交（待命节点先升好再移交）；或者接受它升级期间 CI 暂停几分钟，命令加 `--allow-active-upgrade`，不用移交 | 无 |
 | 升级回滚了（`ROLLED_BACK_PAUSED`） | 看原因；恢复该节点 | 无 |
 
 自动审批的边界（服务端现有规则）：每节点 24 小时内自动批 6 次；同一个包第二次请求、或上一次自动批的升级没成功，归 Owner 手动批。
@@ -50,6 +50,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
 | `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
 | `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 用同样三个文件走第 5 节 `install.mjs prepare` |
+| `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 先移交再跑；或 Owner 接受 CI 暂停，加 `--allow-active-upgrade` |
 | `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装（例如 `FLEET_SOURCE_MISMATCH`：先升另一台） | 按 `precheck.advice` |
 | `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
 
@@ -57,7 +58,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 ### 0.4 顺序
 
-与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 移交当班 → 原当班节点再升。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
+与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 移交当班 → 原当班节点再升。Owner 接受 CI 暂停时不用移交：待命节点升好后，当班节点加 `--allow-active-upgrade` 直接升（升级代理排空、暂停、切换、核验、恢复）。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
 
 ### 0.5 失败
 
