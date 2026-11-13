@@ -948,6 +948,32 @@ function Step-Rearm {
 # marker, the credential box on the secure desktop (CluedCompanionTaskRegistrar.exe; the password goes from there to the Task Scheduler
 # and nowhere else), the elevated side's qualification for up to 8 minutes, and the fall-back to the interactive token when it does not
 # pass. A failure is recorded; the node then runs as before the switch (interactive token) and the Owner can run the step again.
+# M5-b (ADR 0023): the account switch's record (install\companion-wsl.json and the owner registration export it names) is the
+# node's own state, not the package's: a reinstall carries it from the kept old root into the new one, bytes and security descriptor
+# as they were, create-only. Without it the switch reads a record with no ownerRegistration and stops, and the roll-back loses the
+# owner's original registration (DESK 2026-11-13: companion-headless exit 1, the node fell back to the interactive definition).
+function Step-CarryCompanionWslRecord([string]$keptAt) {
+  $r = [ordered]@{ from = $keptAt; carried = @(); error = $null }
+  try {
+    if (-not $keptAt -or -not [IO.Directory]::Exists($keptAt)) { $r.error = 'KEPT_ROOT_MISSING'; return $r }
+    # The newest kept root that holds the record: the one just kept, else an earlier one (a reinstall before this carry existed lost it)
+    $roots = @($keptAt) + @(@(Get-ChildItem -LiteralPath (Split-Path -Parent $keptAt) -Directory -ErrorAction Stop | Where-Object { $_.Name -cmatch '^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$' -and $_.FullName -cne $keptAt } | Sort-Object Name -Descending) | ForEach-Object { $_.FullName })
+    $from = @($roots | Where-Object { [IO.File]::Exists((Join-Path (Join-Path $_ 'install') 'companion-wsl.json')) }) | Select-Object -First 1
+    if (-not $from) { $r.error = 'NO_KEPT_RECORD'; return $r }
+    $r.from = $from
+    $src = Join-Path $from 'install'; $dst = Join-Path $ResidentRoot 'install'
+    $names = @(@(Get-ChildItem -LiteralPath $src -File -ErrorAction Stop | Where-Object { $_.Name -ceq 'companion-wsl.json' -or $_.Name -cmatch '^companion-wsl-owner-[0-9A-Fa-f-]{36}\.reg$' }) | ForEach-Object { $_.Name })
+    foreach ($n in $names) {
+      $a = Join-Path $src $n; $to = Join-Path $dst $n
+      if ([IO.File]::Exists($to)) { if ((Get-FileSha $to) -ceq (Get-FileSha $a)) { $r.carried += $n; continue }; $r.error = 'TARGET_DIFFERS:' + $n; return $r }   # a re-run: carried already
+      Write-New $to ([IO.File]::ReadAllBytes($a))
+      $sd = [IO.File]::GetAccessControl($a); [IO.File]::SetAccessControl($to, $sd)
+      if ((Get-FileSha $to) -cne (Get-FileSha $a)) { $r.error = 'CARRY_CHANGED:' + $n; return $r }
+      $r.carried += $n
+    }
+  } catch { $r.error = 'CARRY_EXCEPTION:' + $_.Exception.GetType().Name }
+  $r
+}
 function Step-CompanionHeadless {
   $r = [ordered]@{ ran = $false; exit = $null; status = $null; stdout = $null; error = $null }
   try {
@@ -1564,6 +1590,7 @@ try {
   # Its account switch starts/qualifies the companion after the move itself.
   $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  if ($CompanionWslVhdxDirectory) { Write-Json 'companion-wsl-carry-report.json' (Step-CarryCompanionWslRecord ([string](Get-Key $uninstall 'keptAt'))) }
   $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   Remove-FleetCarry

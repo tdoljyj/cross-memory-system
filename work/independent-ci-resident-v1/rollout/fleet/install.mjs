@@ -171,7 +171,16 @@ export async function readNode({ root, now = Date.now() }) {
     need(ca?.contract === 'clued.independent-ci.companion-account/1' && ca.companionSid === profile.ownerSid && USER_SID.test(ca.companionSid ?? '')
       && USER_SID.test(ca.operatorSid ?? '') && ca.operatorSid !== ca.companionSid, 'NODE_COMPANION_ACCOUNT_REFUSED');
     // the resident distribution registered to that account: its ext4.vhdx directory (the configuration's companionAccount.wslVhdxDirectory)
-    const cw = jsonOf(await fs.readFile(at('install', 'companion-wsl.json')));
+    // the record is the node's own state: the live one, else the newest kept root's (a reinstall before the launcher carried it lost it;
+    // the launcher carries it back from the same place: template.ps1 Step-CarryCompanionWslRecord)
+    let cwBytes = await readOrNull(at('install', 'companion-wsl.json'));
+    if (cwBytes === null) {
+      const parent = path.dirname(root);
+      const kept = (await fs.readdir(parent).catch(() => [])).filter(n => /^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$/.test(n)).sort().reverse();
+      for (const n of kept) { cwBytes = await readOrNull(path.join(parent, n, 'install', 'companion-wsl.json')); if (cwBytes !== null) break; }
+    }
+    need(cwBytes !== null, 'NODE_COMPANION_WSL_RECORD_REFUSED', 'no install\companion-wsl.json, live or kept');
+    const cw = jsonOf(cwBytes);
     const target = typeof cw?.target === 'string' && cw.target.endsWith('\\ext4.vhdx') ? cw.target.slice(0, -'\\ext4.vhdx'.length) : null;
     need(cw?.contract === 'clued.independent-ci.companion-wsl/1' && cw.companionSid === ca.companionSid && cw.distro === policy?.linux?.distribution && cw.stage === 'qualified'
       && /^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,6}[A-Za-z0-9._-]{1,64}$/.test(target ?? ''), 'NODE_COMPANION_WSL_RECORD_REFUSED');
