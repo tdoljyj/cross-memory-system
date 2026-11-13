@@ -27,6 +27,26 @@ const receiptTypes = async root => (await fs.readdir(path.join(root, 'state', 'r
   .filter(name => /^\d+-/.test(name)).sort().map(name => name.replace(/^\d+-/, '').replace(/\.json$/, ''));
 const stale = async root => (await fs.readdir(path.join(root, 'state', 'locks')).catch(() => [])).filter(name => name.startsWith('stale-'));
 
+// Why a start ended as it did, for the assertion messages: what the entry wrote to state/start-refused.json.
+const refusal = async root => fs.readFile(path.join(root, 'state', START_REFUSED_FILE), 'utf8').catch(() => 'no start-refused.json');
+
+// The start got past the lock that `oldPid` held. On Windows it then runs to the end: exit 0, a service-start receipt, no refusal
+// left. The service is Windows-only: on any other host the first step after the lock that needs Windows (runner.mjs serviceEnv:
+// the children's temp directory must be a drive path) refuses the start, which is exactly what the refusal file must then say.
+// (#1095: this test first expected exit 0 everywhere and failed on the Linux runner with a bare "4 !== 0".)
+async function assertStarted(root, code, oldPid) {
+  const why = `exit ${code}; ${await refusal(root)}`;
+  assert.notEqual((await read(path.join(root, 'state', 'executor.lock', 'holder.json'))).pid, oldPid, why);
+  if (process.platform === 'win32') {
+    assert.equal(code, 0, why);
+    assert.equal((await receiptTypes(root))[0], 'service-start', why);
+    await assert.rejects(fs.access(path.join(root, 'state', START_REFUSED_FILE)));
+  } else {
+    const refused = await read(path.join(root, 'state', START_REFUSED_FILE)).catch(() => null);
+    assert.deepEqual([code, refused?.code, refused?.message], [4, 'RESIDENT_START_EXCEPTION', 'SERVICE_TEMP_DIR_REFUSED'], why);
+  }
+}
+
 // A live process that is not the service: it only waits. Ended by the test through its own handle.
 function sleeper(t) {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
@@ -69,11 +89,8 @@ test('a 7 second old lock whose pid now names a live process that is not service
   const { root, pin, lockedAt } = await rootWithLock(t, other.pid);
   // Windows gave the freed pid to another program after the lock was written (the upgrade's own children, that night).
   const code = await startOnce(root, pin, { [other.pid]: { name: 'sc.exe', executablePath: null, commandLine: null, creationMs: lockedAt + 5000 } });
-  assert.equal(code, 0);
-  assert.equal((await receiptTypes(root))[0], 'service-start');
+  await assertStarted(root, code, other.pid);
   assert.equal((await stale(root)).length, 1, 'the old lock is set aside');
-  assert.notEqual((await read(path.join(root, 'state', 'executor.lock', 'holder.json'))).pid, other.pid);
-  await assert.rejects(fs.access(path.join(root, 'state', START_REFUSED_FILE)));
 });
 
 test('the same, when the reused pid is a later node of this root (even a service-main): it started after the lock was written', async t => {
@@ -82,8 +99,7 @@ test('the same, when the reused pid is a later node of this root (even a service
   const node = path.join(root, 'runtime', 'node.exe');
   const code = await startOnce(root, pin, { [other.pid]: { name: 'node.exe', executablePath: node,
     commandLine: `"${node}" "${path.join(root, 'resident', 'x', 'src', 'service-main.mjs')}" --root "${root}" --policy-sha256 ${pin}`, creationMs: lockedAt + 1 } });
-  assert.equal(code, 0);
-  assert.equal((await receiptTypes(root))[0], 'service-start');
+  await assertStarted(root, code, other.pid);
 });
 
 test('the real holder is still alive: the start is refused, nothing is taken over, and the refusal is written down', async t => {
@@ -92,7 +108,7 @@ test('the real holder is still alive: the start is refused, nothing is taken ove
   const node = path.join(root, 'runtime', 'node.exe');
   const processes = { [holder.pid]: { name: 'node.exe', executablePath: node,
     commandLine: `"${node}" "${path.join(root, 'resident', 'x', 'src', 'service-main.mjs')}" --root "${root}" --policy-sha256 ${pin}`, creationMs: lockedAt - 300 } };
-  assert.equal(await startOnce(root, pin, processes), 4);
+  assert.equal(await startOnce(root, pin, processes), 4, await refusal(root));
   assert.deepEqual(await receiptTypes(root), []);
   assert.deepEqual(await stale(root), []);
   assert.equal((await read(path.join(root, 'state', 'executor.lock', 'holder.json'))).pid, holder.pid);
@@ -103,8 +119,7 @@ test('the real holder is still alive: the start is refused, nothing is taken ove
   delete processes[holder.pid];
   holder.kill();
   await new Promise(resolve => holder.once('exit', resolve));
-  assert.equal(await startOnce(root, pin, processes), 0);
-  await assert.rejects(fs.access(path.join(root, 'state', START_REFUSED_FILE)));
+  await assertStarted(root, await startOnce(root, pin, processes), holder.pid);
 });
 
 test('a holder whose process cannot be read at all keeps the old rule: refused, never two executors', async t => {
@@ -120,8 +135,7 @@ test('on Windows, with the real process query: a live pid that is not service-ma
   assert.equal(seen?.name?.toLowerCase(), 'node.exe');
   assert.ok(Number.isFinite(seen.creationMs) && Math.abs(seen.creationMs - Date.now()) < 120_000, JSON.stringify(seen));
   const { root, pin } = await rootWithLock(t, other.pid);
-  assert.equal(await startOnce(root, pin, null), 0);
-  assert.equal((await receiptTypes(root))[0], 'service-start');
+  await assertStarted(root, await startOnce(root, pin, null), other.pid);
 });
 
 test('residentProcessAlive: who counts as the holder', async () => {

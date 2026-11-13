@@ -56,6 +56,8 @@
 
 ## 3. 测试（`test/resident-start-lock.test.mjs`）
 
+服务只在 Windows 上能完整启动：过了锁之后第一个要 Windows 的步骤（`runner.mjs` 的 `serviceEnv`，子进程临时目录必须是盘符路径）在别的系统上会拒绝。所以“启动成功”在 Windows 上断言退出码 0 和 `service-start` 回执，在 Linux 上断言“锁已被接管，拒绝文件写的正是 `SERVICE_TEMP_DIR_REFUSED`”；所有退出码断言都把 `start-refused.json` 的内容带在失败信息里（#1095 第一版在 Linux CI 上只报了 `4 !== 0`）。
+
 端到端：在子进程里跑服务入口本身，根目录是临时目录，锁里的 pid 背后是一个真的活进程。“Windows 对这个 pid 怎么说”由测试写的文件给出（只有测试入口读它），所以 Linux 上同样能跑；Windows 上另有一条用真实查询。
 
 - 7 秒前的锁、pid 是活着的别的进程 → 新一代启动（退出码 0，有 `service-start` 回执，旧锁被搁置）。修复前：退出码 4。
