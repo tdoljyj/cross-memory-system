@@ -12,20 +12,16 @@ const REPO = 'tdoljyj/cross-memory-system';
 const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
-test('full admission retains only its original Native terminal admission Receipt and CAS', async () => {
+test('terminal admission removed: a Native reply naming one yields facts without it, and facts carrying one are refused', async () => {
   const receipt = randomUUID(), authorization = randomUUID();
-  const w = world({ claimOverrides: { lease_version: 5 }, nativeOverrides: {
-    terminal_admission_receipt_id: receipt, head_authorization_id: authorization } });
-  // Populate the authentic verifier response, never the resolver projection.
-  const reference = { receipt_id: receipt, claim_id: w.claimId, fence: 3, execution_epoch: 1,
-    lease_version: 5, head_authorization_id: authorization };
-  const p = world({ claimId: w.claimId, claimOverrides: { lease_version: 5 }, nativeOverrides: {
+  const reference = { receipt_id: receipt, claim_id: null, fence: 3, execution_epoch: 1, lease_version: 5, head_authorization_id: authorization };
+  const p = world({ claimOverrides: { lease_version: 5 }, nativeOverrides: {
     terminal_admission_receipt_id: receipt, terminal_admission: reference, head_authorization_id: authorization } });
   const facts = await p.port.evaluatePr(p.job, p.packet);
-  assert.deepEqual(facts.terminalAdmission, reference);
+  assert.equal(Object.hasOwn(facts, 'terminalAdmission'), false);
   assert.equal(admittedFactsMatchJobV2(facts, p.job, Date.now()), true);
-  const legacy = world();
-  assert.equal(Object.hasOwn(await legacy.port.evaluatePr(legacy.job, legacy.packet), 'terminalAdmission'), false);
+  const { observationSha256, ...body } = facts, carried = { ...body, terminalAdmission: { ...reference, claim_id: facts.claimId } };
+  assert.equal(admittedFactsMatchJobV2({ ...carried, observationSha256: digest(carried) }, p.job, Date.now()), false);
 });
 
 // testSha: the tested commit S (a train front batch when S != H); prBase: the base.sha GitHub and Native report.

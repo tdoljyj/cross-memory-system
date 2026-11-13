@@ -22,9 +22,8 @@
 // Other names are ignored (`foreign`). No credential, no GitHub, no Native.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { canonical } from '../proof.mjs';
-import { normalizeTerminalAdmission } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { MAX_BAD, MAX_ADOPTED, BATCH_MAX_LIMIT } from './train-landing.mjs';
 import { STRICT_PROOF_CONTRACT, STRICT_ROUND_CONTRACT, STRICT_FRONT_PROOF_CONTRACT, validateStrictProof, validateStrictRound, validateStrictFrontProof, sameStrictIdentity } from './train-strict.mjs';
 import { SCAN_CONTRACT, validateScanProgress } from './train-scan-progress.mjs';
@@ -92,7 +91,7 @@ export function validateFullSweep(s) {
 }
 
 export function validateFrontBatch(r) {
-  if (!exact(r, admissionFields(r, FRONT_BATCH_FIELDS)) || !validAdmissionMetadata(r) || r.contract !== FRONT_BATCH_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !Number.isSafeInteger(r.pr) || r.pr < 1
+  if (!exact(r, FRONT_BATCH_FIELDS) || r.contract !== FRONT_BATCH_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !Number.isSafeInteger(r.pr) || r.pr < 1
     || !['headSha', 'baseSha', 'testSha', 'testTree'].every(k => SHA.test(r[k] ?? '')) || !UUID.test(r.claimId ?? '') || !iso(r.since) || ![1, 2].includes(r.attempt)) fail('invalid_train_front_batch');
   return r;
 }
@@ -107,13 +106,7 @@ export function validatePendingRevocations(r) {
   return r;
 }
 
-const admissionFields = (r, keys) => [...keys, ...(Object.hasOwn(r ?? {}, 'terminalAdmission') ? ['terminalAdmission'] : [])];
-function validAdmissionMetadata(r) {
-  if (!Object.hasOwn(r ?? {}, 'terminalAdmission')) return true;
-  try { return normalizeTerminalAdmission(r.terminalAdmission).claim_id === r.claimId; } catch { return false; }
-}
-const member = m => exact(m, admissionFields(m, ['pr', 'headSha', 'claimId'])) && validAdmissionMetadata(m)
-  && Number.isSafeInteger(m.pr) && m.pr > 0 && SHA.test(m.headSha ?? '') && UUID.test(m.claimId ?? '');
+const member = m => exact(m, ['pr', 'headSha', 'claimId']) && Number.isSafeInteger(m.pr) && m.pr > 0 && SHA.test(m.headSha ?? '') && UUID.test(m.claimId ?? '');
 const headRef = m => exact(m, ['pr', 'headSha']) && Number.isSafeInteger(m.pr) && m.pr > 0 && SHA.test(m.headSha ?? '');
 export function validateLandingBatch(r) {
   if (!exact(r, LANDING_BATCH_FIELDS) || r.contract !== LANDING_BATCH_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '')
@@ -123,21 +116,12 @@ export function validateLandingBatch(r) {
   return r;
 }
 export function validateLandingState(r) {
-  if (!exact(r, [...LANDING_STATE_FIELDS, ...(Object.hasOwn(r ?? {}, 'terminalScan') ? ['terminalScan'] : [])])
-    || (Object.hasOwn(r ?? {}, 'terminalScan') && !validTerminalScan(r.terminalScan))
-    || r.contract !== LANDING_STATE_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '')
+  if (!exact(r, LANDING_STATE_FIELDS) || r.contract !== LANDING_STATE_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '')
     || !Array.isArray(r.bad) || r.bad.length > MAX_BAD || !r.bad.every(headRef)
     || !(r.suspect === null || (Array.isArray(r.suspect) && r.suspect.length >= 1 && r.suspect.length <= BATCH_MAX_LIMIT && r.suspect.every(headRef)))
     || !Array.isArray(r.adopted) || r.adopted.length > MAX_ADOPTED || !r.adopted.every(s => SHA.test(s ?? ''))
     || !Array.isArray(r.handled) || r.handled.length > MAX_ADOPTED || !r.handled.every(s => SHA.test(s ?? ''))) fail('invalid_train_landing_state');
   return r;
-}
-
-function validTerminalScan(s) {
-  const position = (p, kind) => p === null || exact(p, ['name', 'recordSha256'])
-    && NAME.exec(p.name ?? '')?.[1] === kind && (p.recordSha256 === null || /^[a-f0-9]{64}$/.test(p.recordSha256 ?? ''));
-  return exact(s, ['nextKind', 'front', 'landing']) && ['front', 'landing-batch'].includes(s.nextKind)
-    && position(s.front, 'front') && position(s.landing, 'landing-batch');
 }
 
 const KIND = { 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
@@ -289,57 +273,19 @@ export class TrainSweepStore {
   async appendLandingBatch(r) { return this.write('landing-batch', { contract: LANDING_BATCH_CONTRACT, ...r }); }
   async landingBatches(limit = 20) { return this.read('landing-batch', limit); }
   async landingBatchByTest(testSha) { return (await this.read('landing-batch', 1, r => r.testSha === testSha))[0] ?? null; }
-  async writeLandingState({ writtenAt, runId, bad, suspect, adopted, handled, terminalScan }) {
-    const r = { writtenAt, runId, bad, suspect, adopted, handled, ...(terminalScan ? { terminalScan } : {}) };
+  async writeLandingState({ writtenAt, runId, bad, suspect, adopted, handled }) {
+    const r = { writtenAt, runId, bad, suspect, adopted, handled };
     return this.write('landing-state', { contract: LANDING_STATE_CONTRACT, ...r, bad: r.bad.slice(-MAX_BAD), adopted: r.adopted.slice(-MAX_ADOPTED), handled: r.handled.slice(-MAX_ADOPTED) });
   }
   // A newer torn state is unreadable (never an older one in its place): the caller does not compose riders or bisect then.
   async readLandingState() {
     const records = await this.read('landing-state', 1), p = records[0] ?? null;
     if ([...this.tornNames.values()].some(t => t.kind === 'landing-state' && (p === null || t.ms >= Date.parse(p.writtenAt)))) fail('TRAIN_LANDING_STATE_UNREADABLE');
-    return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled,
-      ...(p.terminalScan ? { terminalScan: p.terminalScan } : {}) } : { bad: [], suspect: null, adopted: [], handled: [] };
-  }
-  // Scheduling only: immutable filenames plus content digests identify the
-  // records (including their original proof generation), never authorization.
-  // Both kinds share twenty examined files and the caller's stage deadline.
-  async *terminalRecords({ cursor = null, includeLanding = true, limit = 20, clock = Date.now, until }) {
-    if (cursor !== null && !validTerminalScan(cursor) || !Number.isSafeInteger(limit) || limit < 1 || limit > 20
-      || !Number.isFinite(until)) fail('invalid_terminal_scan');
-    let scan = cursor ?? { nextKind: 'landing-batch', front: null, landing: null };
-    if (clock() >= until) return;
-    const names = (await fs.readdir(this.directory)).sort(), lists = {};
-    for (const kind of includeLanding ? ['front', 'landing-batch'] : ['front']) {
-      const key = kind === 'front' ? 'front' : 'landing', after = scan[key]?.name;
-      const matching = names.filter(name => NAME.exec(name)?.[1] === kind);
-      const start = after ? matching.findIndex(name => name > after) : 0;
-      lists[kind] = start < 0 ? matching : [...matching.slice(start), ...matching.slice(0, start)];
-    }
-    for (let count = 0; count < limit && clock() < until; count++) {
-      let kind = scan.nextKind;
-      if (!lists[kind]?.length) kind = kind === 'front' ? 'landing-batch' : 'front';
-      const name = lists[kind]?.shift();
-      if (!name) break;
-      const parts = NAME.exec(name), key = kind === 'front' ? 'front' : 'landing';
-      let record = null, recordSha256 = null;
-      try {
-        const file = path.join(this.directory, name), stat = await fs.lstat(file);
-        if (clock() >= until) return;
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024) fail('unsafe_train_sweep_record');
-        const text = await fs.readFile(file, 'utf8');
-        recordSha256 = createHash('sha256').update(text).digest('hex');
-        record = KIND[kind][1](JSON.parse(text));
-        if (canonical(record) !== text || Date.parse(record.writtenAt) !== Number(parts[2]) || record.runId !== parts[3]) fail('invalid_train_sweep_record');
-      } catch { record = null; this.tornNames.set(name, { kind, ms: Number(parts[2]) }); }
-      scan = { ...scan, [key]: { name, recordSha256 }, nextKind: kind === 'front' ? 'landing-batch' : 'front' };
-      yield { kind, record, cursor: scan };
-    }
+    return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled } : { bad: [], suspect: null, adopted: [], handled: [] };
   }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
   // This node's front batches of one head, newest first.
-  async frontBatches({ pr, headSha } = {}) {
-    return this.read('front', pr === undefined ? 20 : Infinity, r => pr === undefined || r.pr === pr && r.headSha === headSha);
-  }
+  async frontBatches({ pr, headSha }) { return this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha); }
   // Generation 28 (resident docs/adr/0016): the newest front batch this node opened, of any PR, or null; a torn front record at or after it
   // refuses (a newer front this node cannot read must not let an older one count as the newest).
   async latestFrontBatch() {

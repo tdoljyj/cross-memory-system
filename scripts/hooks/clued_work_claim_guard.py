@@ -72,7 +72,7 @@ _edit_spec = importlib.util.spec_from_file_location("clued_holder_edit_resources
 _edit_resources = importlib.util.module_from_spec(_edit_spec)
 _edit_spec.loader.exec_module(_edit_resources)
 
-__version__ = "1.1.13"
+__version__ = "1.1.14"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")

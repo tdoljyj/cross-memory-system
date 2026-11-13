@@ -19,7 +19,7 @@ import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './c
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
-import { normalizePRTaskBinding, terminalAdmissionFromVerification } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { normalizePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, effectiveGuard, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
@@ -240,7 +240,6 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (!plain(outcome.admission_mode) || !plain(outcome.merge_slot)
           || !['normal', 'efficiency', 'frozen'].includes(outcome.admission_mode.state)) return blocked('full_admission_incomplete');
         const active = native.execution_policy === 'active';
-        const terminalAdmission = terminalAdmissionFromVerification(native);
         const facts = { contract: active ? FULL_ADMISSION_CONTRACT_V3 : FULL_ADMISSION_CONTRACT_V2, status: 'ADMITTED', admitted: true,
           completeAdmission: true, evaluator: ENGINE, domain: config.domain, repository: REPO, scope: config.scope,
           prRef, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
@@ -254,7 +253,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
             kind: outcome.owner_review.kind, grantId: outcome.owner_review.grant_id, carriedFrom: outcome.owner_review.carried_from ?? null } : null,
           workflowGateFindings: [...(outcome.workflow_gate_findings ?? [])], observedAt: new Date(finished).toISOString(),
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,
-          packetSha256: digest(packet), evaluationSha256: digest(outcome), ...(terminalAdmission ? { terminalAdmission } : {}) };
+          packetSha256: digest(packet), evaluationSha256: digest(outcome) };
         return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
           { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
       } catch (error) { return blocked('full_admission_unavailable', { phase, transport: transportFault(error) }); }

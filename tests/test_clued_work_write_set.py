@@ -25,7 +25,7 @@ class HolderEdits(unittest.TestCase):
                           task_id='10000000-0000-4000-8000-000000000002',
                           context_key='global', fence=3, execution_epoch=2,
                           lease_version=4, status='ACTIVE', holder_session_ref='fixture-session',
-                          execution_handover_pending=False, terminal_release_ready=False,
+                          execution_handover_pending=False,
                           write_set=['src/a.py', 'other/pr.py', 'record:fixture'])
         self.current = copy.deepcopy(self.claim)
         self.calls = []
@@ -40,8 +40,7 @@ class HolderEdits(unittest.TestCase):
         self.calls.append(('renew', {k: v for k, v in args.items() if k != 'lease_key'}))
         self.assertEqual(args['lease_key'], 'fixture-only-private-key')
         self.assertEqual(args['lease_version'], self.current['lease_version'])
-        self.current.update(write_set=args['write_set'], lease_version=self.current['lease_version'] + 1,
-                            terminal_release_ready=False)
+        self.current.update(write_set=args['write_set'], lease_version=self.current['lease_version'] + 1)
         return dict(status='committed', claim=copy.deepcopy(self.current))
 
     def perform(self, payload, claim):
@@ -109,12 +108,6 @@ class HolderEdits(unittest.TestCase):
         self.assertNotIn('pr_ref', self.calls[2][1])
         self.assertNotIn('head_sha', self.calls[2][1])
 
-    def test_existing_readiness_is_invalidated_even_for_already_covered_path(self):
-        self.current['terminal_release_ready'] = True
-        self.execute()
-        self.assertEqual([x[0] for x in self.calls], ['verify', 'renew', 'verify', 'write'])
-        self.assertFalse(self.current['terminal_release_ready'])
-
     def test_native_rejections_leave_file_unchanged(self):
         for code in ['work_claim_conflict', 'work_claim_version_conflict', 'work_claim_fence_mismatch',
                      'work_claim_lease_key_invalid', 'work_claim_renewals_exhausted', 'work_claim_no_progress']:
@@ -127,7 +120,7 @@ class HolderEdits(unittest.TestCase):
             self.assertEqual(self.path.read_text(), 'old')
             self.assertNotIn('write', [x[0] for x in self.calls])
 
-    def test_stale_generation_handover_wrong_session_or_missing_ready_proof_refuse(self):
+    def test_stale_generation_handover_or_wrong_session_refuse(self):
         changes = [dict(fence=4), dict(execution_epoch=3), dict(lease_version=5),
                    dict(execution_handover_pending=True), dict(holder_session_ref='another-session'),
                    dict(status='RELEASED')]
@@ -136,10 +129,6 @@ class HolderEdits(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(ws.WriteSetError):
                 self.execute()
             self.assertEqual(self.path.read_text(), 'old')
-        self.current = copy.deepcopy(self.claim)
-        del self.current['terminal_release_ready']
-        with self.assertRaises(ws.WriteSetError):
-            self.execute()
 
     def test_fresh_verify_rejection_cannot_write_or_renew(self):
         def reject(args):
@@ -149,7 +138,7 @@ class HolderEdits(unittest.TestCase):
         self.assertEqual(self.path.read_text(), 'old')
         self.assertEqual(self.calls, [])
 
-    def test_bad_committed_reply_or_readiness_not_cleared_cannot_write(self):
+    def test_bad_committed_reply_cannot_write(self):
         def bad(args):
             return dict(status='committed', claim={**self.current, 'write_set': ['new.py'], 'lease_version': 5})
         with self.assertRaises(ws.WriteSetError):
@@ -170,25 +159,6 @@ class HolderEdits(unittest.TestCase):
         with self.assertRaises(ws.WriteSetError) as cm:
             self.execute('new.py', renew=fail)
         self.assertNotIn('fixture-only-private-key', str(cm.exception))
-        self.assertEqual(self.path.read_text(), 'old')
-
-    def test_legacy_renew_projection_still_requires_fresh_readiness_false(self):
-        def legacy(args):
-            reply = self.renew(args)
-            reply['claim'].pop('terminal_release_ready')
-            return reply
-        self.execute('new.py', renew=legacy)
-        self.assertEqual([x[0] for x in self.calls], ['verify', 'renew', 'verify', 'write'])
-
-    def test_post_renew_ready_true_still_refuses_file_write(self):
-        self.current['terminal_release_ready'] = True
-        def stale_ready(args):
-            reply = self.renew(args)
-            self.current['terminal_release_ready'] = True
-            reply['claim'].pop('terminal_release_ready')
-            return reply
-        with self.assertRaises(ws.WriteSetError):
-            self.execute(renew=stale_ready)
         self.assertEqual(self.path.read_text(), 'old')
 
     def test_readonly_admitted_claim_is_not_holder_edit_authority(self):

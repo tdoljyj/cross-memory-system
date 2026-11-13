@@ -17,27 +17,22 @@ const jobsFor = (overrides = {}) => batchJobsV2({ repo: REPO, pr: 1043, headSha:
 const claim = (overrides = {}) => ({ claimId: randomUUID(), fence: 7, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...overrides });
 const keyFor = (job, c) => admissionEffectKeyV2('native-work-admission-check/2', job, c, { appId: 5368905, name: 'kooyumi-work-admission' });
 
-test('batch claim persists the original admission Receipt, and terminal lookup never guesses a newer generation', async t => {
+test('terminal admission removed: a batch claim record has only its fixed fields; one carrying terminalAdmission is refused', async t => {
   const dir = await tempDir(t), job = jobsFor()['work-admission'], c = claim();
-  const terminalAdmission = { receipt_id: randomUUID(), claim_id: c.claimId, fence: c.fence,
-    execution_epoch: c.epoch, lease_version: 5, head_authorization_id: randomUUID() };
-  const written = await store.recordBatchClaim(dir, job, c, iso(Date.now()), terminalAdmission);
-  assert.deepEqual(written.record.terminalAdmission, terminalAdmission);
-  const subject = { repo: job.repo, pr: job.pr, headSha: job.headSha, sourceManifestSha256: job.sourceManifestSha256 };
-  assert.deepEqual(await store.readTerminalAdmission(dir, subject), terminalAdmission);
-  const replay = await store.recordBatchClaim(dir, job, c, iso(Date.now()), { ...terminalAdmission, receipt_id: randomUUID(), lease_version: 6 });
-  assert.deepEqual(replay.record.terminalAdmission, terminalAdmission, 'create-only evidence is never overwritten on a replay');
-  const later = jobsFor({ baseSha: 'e'.repeat(40) })['work-admission'];
-  await store.recordBatchClaim(dir, later, c, iso(Date.now()), { ...terminalAdmission, receipt_id: randomUUID(), lease_version: 6 });
-  assert.equal(await store.readTerminalAdmission(dir, subject), null, 'two admission CAS identities are ambiguous, not latest-wins');
-  assert.equal(await store.readTerminalAdmission(dir, { ...subject, headSha: 'f'.repeat(40) }), null);
+  const written = await store.recordBatchClaim(dir, job, c, iso(Date.now()));
+  assert.equal(Object.hasOwn(written.record, 'terminalAdmission'), false);
+  const { integrity, ...rest } = written.record;
+  const extra = { ...rest, terminalAdmission: { receipt_id: randomUUID(), claim_id: c.claimId, fence: c.fence,
+    execution_epoch: c.epoch, lease_version: 5, head_authorization_id: randomUUID() } };
+  assert.throws(() => store.validateBatchClaimRecord({ ...extra, integrity: digest(extra) }, job), /BATCH_CLAIM_RECORD_INVALID/);
+  assert.equal(store.readTerminalAdmission, undefined);
 });
 async function fixture(t, { old = claim(), current = claim(), journalState = null, complete = true, published = false, valid = true,
   initial = true, terminalAdmission = null } = {}) {
   const dir = await tempDir(t), job = jobsFor()['work-admission'];
   const batchClaims = { dir,
     read: async j => { try { return await store.readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
-    record: (j, c, at, terminal) => store.recordBatchClaim(dir, j, c, at, terminal),
+    record: (j, c, at) => store.recordBatchClaim(dir, j, c, at),
     rewrite: (...args) => store.rewriteUnpublishedBatchClaim(dir, ...args),
     withPublication: (...args) => store.withBatchClaimPublication(dir, ...args) };
   if (initial) await batchClaims.record(job, old, iso(Date.now()));
@@ -95,15 +90,17 @@ async function fixture(t, { old = claim(), current = claim(), journalState = nul
   return { dir, job, old, current, state, checks, calls, journal, batchClaims, pub };
 }
 
-test('actual Source publisher persists its Native receipt on first admission and on the one authorized unpublished repair', async t => {
+test('terminal admission removed: a Native reply that still names one leaves the published record without it', async t => {
   for(const initial of [false,true]) await t.test(initial?'repair':'first admission',async t=>{
     const current=claim(),terminalAdmission={receipt_id:randomUUID(),claim_id:current.claimId,fence:current.fence,
       execution_epoch:current.epoch,lease_version:5,head_authorization_id:randomUUID()};
     const f=await fixture(t,{current,initial,terminalAdmission});
     const result=await f.pub.publish(f.job);
     assert.equal(result.status,'SETTLED',JSON.stringify(result));
-    assert.deepEqual(await store.readTerminalAdmission(f.dir,{repo:REPO,pr:f.job.pr,headSha:HEAD,
-      sourceManifestSha256:f.job.sourceManifestSha256}),terminalAdmission);
+    const names=(await fs.readdir(f.dir)).filter(n=>/^[a-f0-9]{64}\.json$/.test(n));
+    assert.equal(names.length,1);
+    const record=JSON.parse(await fs.readFile(path.join(f.dir,names[0]),'utf8'));
+    assert.equal(Object.hasOwn(record,'terminalAdmission'),false);assert.equal(record.claim.claimId,current.claimId);
   });
 });
 

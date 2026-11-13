@@ -16,6 +16,7 @@ const ciQueueParticipation = JSON.parse(await readFile(new URL('./fixtures/agent
 const prTaskBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v55-v56-map.json', import.meta.url), 'utf8'));
 const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v56-v57-map.json', import.meta.url), 'utf8'));
 const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v57-v58-map.json', import.meta.url), 'utf8'));
+const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -23,9 +24,26 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // runtime additions, the v51 claim-renewal clarification, the v52 title
 // metadata correction, the v53 display-name changes, the v54 resident CI queue assist,
 // the v55 queue participation and explicit holder removal, and the v56 Native
-// PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head. Undo only these declared
+// PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head, and the v59 PR-end release that
+// replaces holder readiness and terminal admission. Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v58Source() {
+  assert.equal(prEndRelease.schema,'clued.agent-contract-pr-end-release-successor/1');
+  assert.equal(prEndRelease.source_version,58);assert.equal(prEndRelease.target_version,59);
+  assert.deepEqual(prEndRelease.edits.map(row=>row.id),['version','no-holder-readiness','pr-end-release']);
+  assert.deepEqual(prEndRelease.edits[0],{id:'version',before:'Contract version: 58',after:'Contract version: 59'});
+  assert.equal(sha256(source),prEndRelease.target_document_normalized_sha256);
+  assert.equal(/terminal_release_ready|terminal_admission/.test(source),false,'no terminal admission or holder readiness is left');
+  let restored=source;
+  for(const {id,before,after} of [...prEndRelease.edits].reverse()){
+    assert.equal(restored.split(after).length-1,1,`${id}: exact PR-end release successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),prEndRelease.source_document_normalized_sha256);
+  return restored;
+}
 function v57Source() {
+  const source=v58Source();
   assert.equal(leasePin.schema,'clued.agent-contract-lease-pin-successor/1');
   assert.equal(leasePin.source_version,57);assert.equal(leasePin.target_version,58);
   assert.deepEqual(leasePin.edits.map(row=>row.id),['version','authorize-pins-lease','ci-extension-pinned','renew-at-deadline']);
