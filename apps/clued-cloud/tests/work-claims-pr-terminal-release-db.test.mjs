@@ -10,6 +10,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { terminalAdmissionFromVerification } from '../../../scripts/ci/clued-pr-task-binding.mjs';
 
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -20,7 +21,8 @@ async function freePort() {
   const p = s.address().port; await new Promise(r => s.close(r)); return p;
 }
 
-test('trusted PR terminal release requires holder intent, real admission and conservative lifecycle proof', { timeout: 300000 }, async t => {
+// Skipped while 20261113144500 pauses terminal admission; the migration that lifts the pause removes this skip.
+test('trusted PR terminal release requires holder intent, real admission and conservative lifecycle proof', { timeout: 300000, skip: 'terminal admission paused by 20261113144500 until every resident node accepts it' }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-pr-task-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
     persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
@@ -122,6 +124,21 @@ test('trusted PR terminal release requires holder intent, real admission and con
       const receipt=(await admin.query('select metadata from public.clued_audit_receipts where id=$1',[result.terminal_admission_receipt_id])).rows[0];
       assert.equal(receipt.metadata.receipt_kind,'WORK_CLAIM_TERMINAL_ADMISSION');assert.equal(JSON.stringify(receipt).includes(r.lease_key),false);
       assert.equal((await verify('reader',r,1,head)).terminal_admission_receipt_id,undefined);committed(await release(r));
+    });
+    await t.test('staged policy: the resident accepts the terminal admission an authorized head gets; no head authorization means none',async()=>{
+      // Field 2026-11-13: staged policy left the reply's head_authorization_id null while the terminal
+      // admission named claim_binding's, so the resident threw terminal_admission_changed on every authorized head.
+      assert.equal((await admin.query('select activated_at from clued_private.work_claim_execution_policy_v1')).rows[0].activated_at,null);
+      const r=await claim(await task()),head='2c'.repeat(20),result=await admitted(r,90,head);
+      const reference=terminalAdmissionFromVerification(result);
+      assert.match(reference.head_authorization_id,/^[0-9a-f-]{36}$/);
+      assert.equal(reference.head_authorization_id,result.head_authorization_id);
+      assert.equal(reference.receipt_id,result.terminal_admission_receipt_id);committed(await release(r));
+      // Without authorize_head the PR never binds, so the same CI verify carries no terminal admission.
+      const u=await claim(await task()),plain=await verify('ci',u,91,'2d'.repeat(20));
+      assert.equal(plain.claim_binding?.head_authorization_id,null,JSON.stringify(plain));
+      assert.equal(plain.terminal_admission,undefined,JSON.stringify(plain));assert.equal(plain.terminal_admission_receipt_id,undefined);
+      assert.equal(terminalAdmissionFromVerification(plain),null);committed(await release(u));
     });
     if(process.env.CLUED_PR_TERMINAL_BASELINE==='1')return;
     await t.test('editing authority requires the actual current holder key and exact claim CAS without metering or mutation',async()=>{
