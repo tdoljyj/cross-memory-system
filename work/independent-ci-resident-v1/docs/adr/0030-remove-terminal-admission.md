@@ -3,7 +3,7 @@
 - 状态：已实现（分支 `claude/remove-terminal-admission`，未发布、未安装；迁移待应用）
 - 日期：2026-11-13
 - Owner Decision：统领原则（`42d5bf8d`：最终系统极简、低耗、高效，错误从机制上堵死）；Owner 同意用极简自动释放取代终态准入，不再靠代理记得释放
-- 代码：迁移 `apps/clued-cloud/supabase/migrations/20261113151000_work_claim_terminal_admission_removed_v1.sql`；常驻 `src/full-admission-v2.mjs`、`src/admission-facts-v2.mjs`、`src/batch-claim-v2.mjs`、`src/independent-control-checks-v2/train-maintenance.mjs`、`train-sweep-store.mjs`；`scripts/ci/clued-pr-task-binding.mjs`、`clued-merge-train-native.mjs`；Worker `apps/clued-cloud/worker/work-claims.ts`；钩子 `scripts/hooks/clued_work_write_set.py`；Agent 合同 v59
+- 代码：迁移 `apps/clued-cloud/supabase/migrations/20261113151000_work_claim_terminal_admission_removed_v1.sql`；常驻 `src/full-admission-v2.mjs`、`src/admission-facts-v2.mjs`、`src/batch-claim-v2.mjs`、`src/independent-control-checks-v2/train-maintenance.mjs`、`train-sweep-store.mjs`；`scripts/ci/clued-merge-train-native.mjs`；Worker `apps/clued-cloud/worker/work-claims.ts`；钩子 `scripts/hooks/clued_work_write_set.py`；Agent 合同 v59
 - 测试：`apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs`（四个场景，见 §3）；常驻 `test/resident-v2-admission.test.mjs`、`test/scan-start-native-port.test.mjs`、`test/batch-claim-rewrite.test.mjs`、`test/train-sweep.test.mjs` 各一条“terminal admission removed”
 
 ## 1. 背景
@@ -38,4 +38,5 @@
 
 - 先上客户端（Worker、常驻包、钩子），后上迁移。恢复后的 adopt/return、authorize_head 逐字段校验输入，会拒收 `terminal_proof`、`terminal_release_ready`；新客户端不发这两个字段，对旧服务端多回的 `terminal_release_ready`、`auto_release` 也不看，所以新客户端配旧服务端可以运行，反过来不行。
 - 节点上残留的旧记录：`20261108204157` 到暂停之间写下的批次认领、车头、落地批次里若带 `terminalAdmission`，落地状态里若带 `terminalScan`，新包按固定字段把它们视为无效。批次认领只影响那个已结束的批次；车头记录按 PR/head 读取时跳过无效条，`latestFrontBatch` 失败时 claim-assist 原样返回；落地状态只在 `train.landing=push` 时读取，github-merge（默认）下不读。push 模式的节点若残留带 `terminalScan` 的最新落地状态，会报 `TRAIN_LANDING_STATE_UNREADABLE`，需要按通用重装清掉 train-sweep 状态。
+- 残留一处：`scripts/ci/clued-pr-task-binding.mjs` 里的终态辅助函数（`normalizeTerminalAdmission`、`terminalAdmissionFromVerification`、`normalizeTerminalProof`、`terminalProofForPull`）及其测试已无人调用，但这个文件和它的测试被已登记的 merge-reconcile Source 按字节钉住（`clued-control-workflow-source.mjs` 的 `MERGE_RECONCILE_CONTROL_SOURCE`，`clued-control-source-pins.mjs` 不许把逻辑改动写进钉子）。删掉它们要登记一个后继 Source，单独做。
 - `20261113142000`、`20261113143000`、`20261113144500` 留作历史，不改。
