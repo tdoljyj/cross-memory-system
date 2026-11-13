@@ -16,7 +16,12 @@
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot
 //     read or a listing at GitHub's 3000-file limit selects everything.
-//     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT.
+//     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT. Only
+//     the suites declared for the host's platform (SUITE_PLATFORMS) are listed.
+//   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>]
+//     selects as --check does, then runs every selected suite in turn and fails
+//     when any of them fails: one job step, the same on Linux and on Windows
+//     (the ci-suites-windows job; resident ADR 0032).
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
@@ -93,7 +98,8 @@ export const SUITES = {
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
-      'scripts/ci/ci-known-failures.json'],
+      'scripts/ci/ci-known-failures.json', 'work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml',
+      '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
   // contract and CI-script tests), so every change runs it, like the disabled
@@ -115,6 +121,33 @@ export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/c
   '.github/workflows/clued-required-tests.yml', '.github/actions/**'];
 
 export const FILE_LIMIT = 3000;
+
+// Where each suite runs (resident ADR 0032). The required checks run the same
+// selection once on each platform: on the self-hosted Linux pool (ci-suites,
+// clued-cloud-tests, migration-verify) and on the Windows runner of a resident
+// node's host (ci-suites-windows). A suite runs on every platform its code runs
+// on in production; a suite of one platform only is simply not selected on the
+// other. This table is the only place that says so: a suite it does not name
+// runs on both, and each entry gives its reason.
+export const PLATFORMS = ['linux', 'win32'];
+export const SUITE_PLATFORMS = {
+  // Renders the panel on a Linux runner from GitHub's API; nothing of it runs on a Windows host.
+  'compute-panel': { platforms: ['linux'], reason: 'the panel is rendered on the Linux pool only' },
+  // The application is built and deployed from Linux (Workers, Supabase); its unit tests take 16 minutes.
+  'clued-cloud': { platforms: ['linux'], reason: 'the application is built, tested and released on Linux only' },
+  'production-schema': { platforms: ['linux'], reason: 'the embedded PostgreSQL replay uses the Linux binary package' },
+  // Repository bookkeeping with one answer for a commit whatever the host: once is enough (execute once, ADR 0003).
+  'components': { platforms: ['linux'], reason: 'a commit has one component state; checked once' },
+  'runner-budget-policy': { platforms: ['linux'], reason: 'a commit has one set of workflows; checked once' },
+  'pinned-registries': { platforms: ['linux'], reason: 'a commit has one set of pinned bytes; checked once (needs the application dependencies)' },
+  'mechanical-outputs': { platforms: ['linux'], reason: 'integrates a throwaway worktree from the Linux dependency store; one answer for a commit' },
+  'ci-deps-entry': { platforms: ['linux'], reason: 'the dependency store it guards exists on the Linux pool only' },
+  // Its 10 Windows failures on main (test_resume_launcher and others) are an open defect; until they are fixed a
+  // required Windows run could never be green. Remove this entry with that fix: the reinstall tools run on Windows.
+  'reinstall-python': { platforms: ['linux'], reason: 'fails on Windows on main today (open defect); joins win32 with its fix' },
+};
+export const hostPlatform = (platform = process.platform) => (platform === 'win32' ? 'win32' : 'linux');
+export const suitePlatforms = (id) => SUITE_PLATFORMS[id]?.platforms ?? PLATFORMS;
 
 // What each suite runs; cwd is relative to the checkout root. Source v2 tests
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
@@ -231,10 +264,14 @@ const matchesAny = (file, patterns) => patterns.some((pattern) => globToRegExp(p
 
 // files: repository paths changed, or null when they are unknown. A renamed
 // file counts under both names (listPullRequestFiles returns both).
-export function selectSuites(check, files) {
+// platform: 'linux' or 'win32' keeps only the suites declared for it
+// (SUITE_PLATFORMS), whatever selected them, also when every suite is selected;
+// null (callers that are not a CI job, such as local-verify) keeps them all.
+export function selectSuites(check, files, platform = null) {
   const suites = SUITES[check];
   if (!suites) throw new Error(`unknown check: ${check}`);
-  const ids = Object.keys(suites);
+  if (platform !== null && !PLATFORMS.includes(platform)) throw new Error(`unknown platform: ${platform}`);
+  const ids = Object.keys(suites).filter((id) => platform === null || suitePlatforms(id).includes(platform));
   if (files === null) return { suites: ids, reason: 'changed files unknown: every suite runs' };
   if (files.some((file) => matchesAny(file, SELECT_ALL))) {
     return { suites: ids, reason: 'the selection or the required-check workflow changed: every suite runs' };
@@ -414,6 +451,21 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
   return 0;
 }
 
+// One job step for a platform: every selected suite runs, in order, even after
+// one fails (so the summary names each); any failure fails the step, and with
+// it the check. Nothing selected is a pass: the change touches no suite of
+// this platform.
+export function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
+  const failed = [];
+  for (const id of suites) {
+    const status = run(id, { root, env, log });
+    summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
+    if (status !== 0) failed.push(id);
+  }
+  if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
+  return failed.length > 0 ? 1 : 0;
+}
+
 const ROOT = path.resolve(HERE, '..', '..');
 
 // The known-failure entries of one run: every failure in the report, keeping
@@ -469,21 +521,25 @@ async function main(argv, env = process.env) {
     const rootIndex = argv.indexOf('--root');
     return runSuite(argv[runIndex + 1], { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env });
   }
-  const index = argv.indexOf('--check');
+  const selectedIndex = argv.indexOf('--run-selected');
+  const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
   if (!SUITES[check]) {
-    console.error('usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run <suite> [--root <checkout>]');
+    console.error('usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>]');
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const files = env.GITHUB_EVENT_NAME === 'pull_request' ? await changedFiles({ event, env }) : null;
-  const selection = selectSuites(check, files);
+  const platform = hostPlatform();
+  const selection = selectSuites(check, files, platform);
   console.log(`${check}: ${selection.reason}; suites: ${selection.suites.join(', ') || 'none'}`);
+  console.log(`platform: ${platform} (suites declared for another platform only are not selected here)`);
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `${outputLines(check, selection).join('\n')}\n`);
-  if (env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(env.GITHUB_STEP_SUMMARY, `### ${check}\n\n${selection.reason}.\n\nSuites: ${selection.suites.map((id) => `\`${id}\``).join(', ') || 'none (not affected)'}\n`);
-  }
-  return 0;
+  const summary = (text) => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, text); };
+  summary(`### ${check}\n\n${selection.reason}.\n\nSuites (${platform}): ${selection.suites.map((id) => `\`${id}\``).join(', ') || 'none (not affected)'}\n`);
+  if (selectedIndex < 0) return 0;
+  const rootIndex = argv.indexOf('--root');
+  return runSelected(selection.suites, { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, summary });
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {

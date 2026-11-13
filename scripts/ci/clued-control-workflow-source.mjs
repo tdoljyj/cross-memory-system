@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.19';
+export const COMPONENT_VERSION='1.0.20';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -548,7 +548,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-merge-reconcile-source-build.mjs": "860478495500a7f22e29b0ac6d31b6285352330e",
     "scripts/ci/clued-merge-reconcile-source.mjs": "c3660096b818e8b432ac641f84526c7a4e0d0664",
     "scripts/ci/clued-merge-reconcile-source.test.mjs": "68801654aa3adab6cb971a0f56c9fdc8b7159bc5",
-    "scripts/ci/clued-merge-reconcile.mjs": "8c17f590402007bdaf43d099f3c9009c0e496a49",
+    "scripts/ci/clued-merge-reconcile.mjs": "3ce6722600ca0ece56c3f333ec01afbeb9214620",
     "scripts/ci/clued-merge-reconcile.test.mjs": "4ba6676ccb86455b8a65a870830aed9189c266c9",
     "scripts/ci/clued-merge-slot-ci.mjs": "3482c6f326affff333ac02bb1c944b544687ab14",
     "scripts/ci/clued-merge-slot-ci.test.mjs": "614692d169f847992cb95d8359986e245a5eae02",

@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "147e110e52814a449216baa44212defc034d695e913232033d04444b324e33f0"
+      "content_sha256": "9fad4815b6190225e8d2297dd32d6b11868bf560ef89d8a4cfdc0d444ca56313"
     },
     {
       "id": "hook.runner-job-started",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.19",
+      "version": "1.0.20",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ef5f0e62bf3600aabdd823f98ce58d722ed44c880fc020ce9df3f4cefd082165"
+      "content_sha256": "c21ab51414885d6cf4f5507cd6dcf264a66f5a88e1434bd7a37068e9acc76891"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "50408a5558d6046ddf878a63901af079a8ac17049af50cf04f2e2be06a770aba"
+      "content_sha256": "1c1a5909429e1431159290b03349125c89ea733de45b620f4578cd3a4c328bfe"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -891,7 +891,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -907,7 +907,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,12 +923,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "6a4555967d4e3eb29aba88aba1ac85a38a5e19f5f8805efe43d6a50ea409afea"
+      "content_sha256": "b1cfa08d3d5f182c2e549628207da3d5bd97acca224585a9f09d673e2e75ec37"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.28",
+      "version": "1.0.29",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "a769f5015c29a0e2271a1f47fe52405734fdcdbde5098c547b342c3b14c846a1"
+      "content_sha256": "5293cd074ae4833a2be8e70d13dfd1d5df1f6fc994f0d824fe16f2c9904f79f6"
     }
   ]
 }
