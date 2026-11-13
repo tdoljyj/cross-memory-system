@@ -44,3 +44,30 @@
 - 卸载之后的各种半途（`inside-uninstall`、`after-uninstall`、`after-install`）本来就由续行覆盖，未动。
 - 冻结通道（`upgrader/src`、`upgrade-apply.ps1`）未动。
 - 模板钉值 `TEMPLATE_SHA` 随 `Wait-RunnerState` 改变；本次改动未经独立审核，也未在真机运行。
+
+## 5. 第二次现场（同日，包 `fleet-node-2026.11.13-45d41ebf`）：Linux A 的升级历史检查
+
+`prepare` 通过；提权运行在 Linux A 停下（`LINUX_PHASE_A_NOT_COMPLETED`，A 的输出末尾 `HISTORY_WINDOWS_GENERATION_MISMATCH`、`UPGRADE_HISTORY_NOT_SETTLED`），A 在这之前只做核对，Linux 侧没有改动。证据：`D:/w/tmp/desk-reinstall-45d41ebf/launch-20261113T104103Z/`。
+
+根因：同一条“先一致”的要求还有第四处，第 3 节第 1 条漏了它。`reinstall/linux/tools/check-reinstall-history.py#windows_idle`（A 的 `capture` 与 B 的 `verify-live` 都调用）除了核对 Windows 升级器空闲（`upgrade\status.json`：`op=null`、5 分钟内），还要求 Windows `current.json` 的 `linux` 块等于 Linux facts。Linux 自己的历史（facts、`current.json`、`g<N>.json`、`.next`/staged 为空、各目录与卸载计划一致）在同一个函数里本来就各自核过。
+
+修法（删，不加特例）：`windows_idle` 只留“Windows 升级器空闲”，不再读 Windows `current.json`；`HISTORY_WINDOWS_GENERATION_MISMATCH` 这个码不复存在。顺带删掉 `prep.py` 里从 Windows `current.json` 取出、写进三个脚本却没有任何地方使用的 `OLD_PKG_SHA`（和输出里的 `oldPackage`）。
+
+全链路清点（这次逐个读过，不再靠撞）：仓库里凡是把 Windows `current.json` 的 `linux` 块或 Windows 记录与 Linux facts 相比的地方——
+
+| 位置 | 在不在通用重装的路上 | 处理 |
+|---|---|---|
+| `install.mjs#readNode`、`rolesDerivedReinstall` | 在 | 第 3 节已改 |
+| `rehearse.py`（两侧比较、Source manifest 副本、已装 verify 的 `two-sides-consistent`） | 在 | 第 3 节已改（fleet 形态） |
+| `prep.py:70` | 在 | 第 3 节已改（fleet 形态） |
+| `check-reinstall-history.py#windows_idle`（A、B） | 在 | 本节 |
+| 已装（旧）`verify-resident.ps1` 的 `two-sides-consistent` | 只在预演里跑 | 第 3 节已放行 |
+| 新包 `verify-resident.ps1`、`Test-FleetLinuxOutput`、`generate.py` 的各项 | 在，但比的是新装的两侧或新包自己 | 不受影响 |
+| 已装（旧）`uninstall-resident.ps1`、`rearm-resident.ps1` | 在 | 不读 facts（已读 DESK 现装文件确认；且两次现场的 `windows-preflight-before-linux` 都在两侧不同的状态下通过了它的 dry run） |
+| Linux 侧其余脚本（`install/uninstall/verify-resident-linux.sh`、`clued-ci-upgrade-linux` 的 `version-facts`/`adopt-generation`、`derive-roles`、`check-host`） | 在 | 只读 Linux 自己的文件 |
+| `src/upgrade-mailbox.mjs#consistent`、`engine-windows.mjs`、`status.mjs`（常驻运行时的 version-skew hold） | 旧常驻运行时 | 只停接活，不影响暂停、卸载 |
+| `rollout/fleet/assemble.mjs`、`rollout/precheck.mjs`、`upgrader/` | 不在（原地升级通道） | 未动；两侧不同时原地升级本来就不该走 |
+
+没有读到的：Linux 侧文件系统本身（A 的暂存目录、DESK 的 Linux 历史现状）——本机会话不进 WSL，只能从 A 的输出判断：A 走到历史检查，前面的现场核对（已装 Source、manifest、facts、主机钉值、卸载计划）都已通过。
+
+测试（修复前以现场同一个码失败）：`reinstall/test/test_reinstall_history.py` `test_a_half_installed_node_is_judged_by_the_linux_sides_own_history`。

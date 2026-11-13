@@ -2,7 +2,10 @@
 
 No historical file contents are scanned: lstat identities/modes/sizes/mtime bind
 the complete tree before/after its same-filesystem move. Public current-generation
-JSON and Windows operation status are the only file contents read. No mutation
+JSON and Windows operation status are the only file contents read. The history is
+judged by the Linux side's own records (its facts, current.json, g<N>.json); what the
+Windows record says the Linux generation is plays no part (DESIGN section 73: after a
+launch that stopped past phase B the two sides name different packages). No mutation
 except create-only capture of the public metadata snapshot named by phase A.
 """
 import contextlib
@@ -83,16 +86,11 @@ def parse_plan(text):
     return fields
 
 
-def windows_idle(windows, facts):
+def windows_idle(windows):
     ws = read_json(os.path.join(windows, 'status.json'))
     need(ws.get('contract') == 'clued.independent-ci.resident-upgrade-status/1' and 'op' in ws and ws['op'] is None, 'WINDOWS_UPGRADE_OPERATION_PRESENT_OR_UNKNOWN')
     written = datetime.datetime.fromisoformat(str(ws.get('writtenAt', '')).replace('Z', '+00:00'))
     need(written.tzinfo is not None and abs((datetime.datetime.now(datetime.timezone.utc) - written).total_seconds()) <= 300, 'WINDOWS_UPGRADE_STATUS_STALE')
-    wc = read_json(os.path.join(windows, 'current.json'))
-    need(wc.get('contract') == 'clued.independent-ci.resident-generation/1' and
-         isinstance(wc.get('linux'), dict) and type(wc['linux'].get('generation')) is int and
-         wc.get('linux') == {'generation': facts['generation'], 'manifestSha256': facts['manifestSha256'],
-                            'ciSourceManifestSha256': facts['ciSourceManifestSha256']}, 'HISTORY_WINDOWS_GENERATION_MISMATCH')
 
 
 @contextlib.contextmanager
@@ -145,7 +143,7 @@ def capture_locked(plan_text, facts, groups, windows):
     # A retained current.opId is historical, not proof of an ongoing operation.
     # The live Windows upgrader status plus the empty Linux .next/staged gates
     # distinguish it from a transaction which is still in progress.
-    windows_idle(windows, facts)
+    windows_idle(windows)
     for key, field in (('generations', 'generations'), ('upgrade-state', 'upgrade-state')):
         p = groups[key][0]
         names = sorted(os.listdir(p)) if os.path.isdir(p) else []
@@ -169,7 +167,7 @@ def verify(snapshot, kept=None, windows=WINDOWS):
 
 def verify_locked(snapshot, kept, windows):
     if kept is None:
-        windows_idle(windows, snapshot['facts'])
+        windows_idle(windows)
     for value in snapshot['groups'].values():
         path = os.path.join(kept, value['kept']) if kept else value['source']
         need(tree(path) == value['entries'], 'KEPT_HISTORY_CHANGED_OR_INCOMPLETE' if kept else 'HISTORY_CHANGED_SINCE_PHASE_A')

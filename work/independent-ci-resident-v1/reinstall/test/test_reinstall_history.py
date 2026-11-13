@@ -68,6 +68,23 @@ class History(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'HISTORY_CHANGED_SINCE_PHASE_A'):
             h.verify(snap, windows=str(self.windows))
 
+    def test_a_half_installed_node_is_judged_by_the_linux_sides_own_history(self):
+        # DESIGN section 73, desk-w-591 on 2026-11-13 (package 45d41ebf, phase A): Linux is generation 1 of the package whose launch
+        # stopped past phase B, its own current.json and g1.json say so, and the Windows record still names the Linux generation of
+        # the install before it. Phase A refused HISTORY_WINDOWS_GENERATION_MISMATCH / UPGRADE_HISTORY_NOT_SETTLED with nothing written.
+        self.doc(self.windows / 'current.json', {'contract': 'clued.independent-ci.resident-generation/1', 'ciSourceManifestSha256': '1' * 64,
+                                               'linux': {'generation': 1, 'manifestSha256': 'c' * 64, 'ciSourceManifestSha256': '1' * 64}})
+        snap = self.capture()                       # phase A
+        h.verify(snap, windows=str(self.windows))   # phase B, before anything is moved
+        self.assertEqual((snap['generation'], snap['facts']['ciSourceManifestSha256']), (1, 'b' * 64))
+        # what the Windows side must still say is only that no upgrade operation is under way
+        self.doc(self.windows / 'status.json', {'contract': 'clued.independent-ci.resident-upgrade-status/1', 'op': {'opId': 'x'},
+                                              'writtenAt': datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        with self.assertRaisesRegex(ValueError, 'WINDOWS_UPGRADE_OPERATION_PRESENT_OR_UNKNOWN'):
+            self.capture()
+        with self.assertRaisesRegex(ValueError, 'WINDOWS_UPGRADE_OPERATION_PRESENT_OR_UNKNOWN'):
+            h.verify(snap, windows=str(self.windows))
+
     def test_pending_stage_and_mismatching_current_generation_are_refused(self):
         for change in ({'staged': {'generation': 2}}, {'generation': 2}):
             with self.subTest(change=change), self.assertRaises(ValueError):
