@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "147e110e52814a449216baa44212defc034d695e913232033d04444b324e33f0"
+      "content_sha256": "91b438c4618dcdb2c718b892411927692511c4dc9718a388f8bb3662fd1e3e52"
     },
     {
       "id": "hook.runner-job-started",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ef5f0e62bf3600aabdd823f98ce58d722ed44c880fc020ce9df3f4cefd082165"
+      "content_sha256": "2b6f99bb78720bd1f92d3cb3a9c8effe205c73070f7e0d69d4c30310b4e0193d"
     },
     {
       "id": "script.required-applicability",
@@ -907,7 +907,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,12 +923,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "6a4555967d4e3eb29aba88aba1ac85a38a5e19f5f8805efe43d6a50ea409afea"
+      "content_sha256": "f3b9309d14d8135e40ea8f2b2f0fdc6f657bab29262f8f12c1c9b4cd4f0810de"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.28",
+      "version": "1.0.29",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "a769f5015c29a0e2271a1f47fe52405734fdcdbde5098c547b342c3b14c846a1"
+      "content_sha256": "0790651032645f87b7e4f12bd30d983a8e9807c3e1d6af25c4cae75b05b5c80f"
     }
   ]
 }
