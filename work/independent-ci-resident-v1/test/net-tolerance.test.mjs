@@ -24,7 +24,7 @@ const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
 const MAIN = 'a'.repeat(40);
 const NETWORK = Object.freeze({ trialDelayMs: 10 * MIN, earlyTrialProbes: 2, releasesPerHeadPer24h: 36 });
-// /9 as it would be installed: the train in shadow (stage 10 runs on quiet ticks, as on DESK-W-591), breaker.network given.
+// /9 as it would be installed: the train in shadow (stage 10 runs on quiet ticks, as on NODE-A), breaker.network given.
 const policyV9 = (network = NETWORK, o = {}) => { const p = rawPolicy(); return rawPolicy({ contract: POLICY_CONTRACT_V9, breaker: { ...p.breaker, ...(network ? { network } : {}) },
   train: { ...p.train, enabled: 'shadow', ...TRAIN_DEFAULTS }, ...o }); };
 const policyV8 = () => { const p = rawPolicy(); return rawPolicy({ contract: POLICY_CONTRACT_V8, train: { ...p.train, enabled: 'shadow', ...TRAIN_DEFAULTS } }); };

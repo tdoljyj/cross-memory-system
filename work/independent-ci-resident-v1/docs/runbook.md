@@ -95,7 +95,7 @@ powershell -NoProfile -File rollout\build-upgrade.ps1 -Config reinstall\config\<
 powershell -NoProfile -File rollout\build-upgrade.ps1 -Config reinstall\config\<node>.json -Commit <40hex> -InstalledPackage <现装包目录> -Final -DecisionRef <uuid> -ReceiptRef <uuid> -Tag <t>
 ```
 
-- `-Config`：仓库里只有 `reinstall\config\turing.json`；其他节点（如 desk-w-591）只有 `.example.json`，实际配置在节点本地。
+- `-Config`：节点本机从已装状态生成的配置（`rollout/fleet/install.mjs`）；仓库里没有任何节点的配置或档案。
 - `-InstalledPackage` 必须是节点现在跑的包：它的清单哈希要等于 `upgrade\current.json` 的 `packageManifestSha256`。
 - 同一输入构建两次，包 sha 必须相同；节点身份和节点档案不能变。
 - 输出一行 JSON：包目录、包 sha、`grantResource`、预检结论，以及 request 命令。
@@ -140,9 +140,9 @@ node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --pa
 ### 2.5 多节点滚动
 
 ```powershell
-node rollout\rollout.mjs plan    --out rollout.json --decision <uuid> --package turing=<dir> --package desk-w-591=<dir>
+node rollout\rollout.mjs plan    --out rollout.json --decision <uuid> --package <node>=<dir> [--package <node>=<dir> ...]
 node rollout\rollout.mjs observe --root C:\ProgramData\CluedIndependentCI\resident --out observation.<node>.json   # 每个节点各跑一次
-node rollout\rollout.mjs next    --plan rollout.json --observation observation.turing.json --observation observation.desk-w-591.json
+node rollout\rollout.mjs next    --plan rollout.json --observation observation.<node>.json [...]
 ```
 
 `next` 每次只给一个下一步：

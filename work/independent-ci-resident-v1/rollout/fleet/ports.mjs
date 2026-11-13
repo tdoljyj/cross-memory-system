@@ -30,12 +30,11 @@ export const RECORD_FILES = Object.freeze(['record-manifest.json', 'installation
 const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 const BASE_VALUE_KEYS = Object.freeze(['appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'controllerNodeSha256']);
 
-// rconfig.node_profile: the profile file of the commit's tree, its canonical sha256.
-export function nodeProfileOf(tree, rel, node, distribution) {
-  const file = path.join(tree, 'work', 'independent-ci-resident-v1', ...rel.split('/'));
-  need(/^config\/node-profile\.[a-z0-9-]+\.json$/.test(rel) && fs.existsSync(file), 'NODE_PROFILE_MISSING', { rel });
-  const prof = pyLoads(fs.readFileSync(file).toString('utf8'));
-  need(get(prof, 'contract') === 'clued.independent-ci.node-profile/1' && get(prof, 'nodeName') === node, 'NODE_PROFILE_NOT_THIS_NODE', { nodeName: get(prof, 'nodeName') });
+// The node profile: always the installed one, the installed (base) package's verified record (readBaseRecord). No caller names a node or
+// a profile file: the repository carries none (rconfig.node_profile is the same rule).
+export function installedNodeProfile(base, distribution) {
+  const prof = base.acc.node;
+  need(get(prof, 'contract') === 'clued.independent-ci.node-profile/1', 'INSTALLED_NODE_PROFILE_MISSING');
   need(get(prof, 'wslDistribution') === distribution, 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES', { wslDistribution: get(prof, 'wslDistribution') });
   return { profile: prof, profileSha256: sha(Buffer.from(pyCanonical(prof), 'utf8')) };
 }
@@ -60,12 +59,12 @@ export function fleetRecordOf(base) {
   return { sourceAcceptanceRef: base.acc.sourceAcceptanceRef, hostQualificationRef: base.acc.hostQualificationRef, formalRoles };
 }
 
-export function recordInputs({ basePackage, tree, commit, node, nodeProfile, distribution, nodeRecord = {}, signer = null }) {
+export function recordInputs({ basePackage, commit, distribution, nodeRecord = {}, signer = null }) {
   need(/^[0-9a-f]{40}$/.test(commit ?? ''), 'COMMIT_MUST_BE_40_HEX');
   const base = readBaseRecord(basePackage);
   const { inst, acc } = base;
   const signers = pyCopy(base.signers);
-  const { profile, profileSha256 } = nodeProfileOf(tree, nodeProfile, node, distribution);
+  const { profile, profileSha256 } = installedNodeProfile(base, distribution);
   const roles = fleetRecordOf(base).formalRoles;
   const refs = Object.fromEntries(RECORD_REFS.map(k => [k, acc[k]]));
   const owner = { ownerDecisionRef: acc.ownerDecisionRef, ownerReceiptRef: acc.ownerReceiptRef, acceptedAt: acc.acceptedAt, validUntil: acc.validUntil };
@@ -77,9 +76,6 @@ export function recordInputs({ basePackage, tree, commit, node, nodeProfile, dis
   if (signer) signers.signers = [{ domain: 'production', keyId: signer.keyId, publicKeyPem: signer.publicKeyPem, qualificationRef: refs.hostQualificationRef,
     runtimeId: signer.runtimeId, sourceAcceptanceRef: refs.sourceAcceptanceRef }];
   const baseValues = Object.fromEntries(BASE_VALUE_KEYS.map(k => [k, inst[k]]));
-  const sameKeys = (a, b) => a.length === b.length && a.every(k => b.includes(k));
-  need(profile.nodeName === acc.node.nodeName || sameKeys(Object.keys(nodeRecord), BASE_VALUE_KEYS), 'NODE_RECORD_INCOMPLETE_FOR_ANOTHER_NODE');
-  need(profile.nodeName === acc.node.nodeName, 'CI_PRINCIPAL_QUALIFICATION_REF_REQUIRED_FOR_ANOTHER_NODE');
   const v = { ...baseValues, ...nodeRecord };
   const inputs = {
     contract: 'clued.independent-ci.resident-record-inputs/2', repository: inst.repository, sourceCommit: commit, scope: inst.scope,

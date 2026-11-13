@@ -33,7 +33,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLOSURE, PREPARE_RECORD, RESIDENT, universalFilesSha256 } from './facts.mjs';
-import { RECORD_FILES, Refused, TOOL_PATH, linuxPins, linuxPinsCheck, nodeInputs, nodeProfileOf, recordInputs, rolesDerived } from './ports.mjs';
+import { RECORD_FILES, Refused, TOOL_PATH, linuxPins, linuxPinsCheck, nodeInputs, recordInputs, rolesDerived } from './ports.mjs';
 import { pyDumps, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
 import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, bundleHeads, tagOf } from './universal.mjs';
@@ -159,9 +159,8 @@ export async function assembleExtracted({ x, universal, target, root, installedP
   const nodeName = policy?.node?.nodeName;
 
   // 3. the record: the installed references, this commit's Source
-  const profileRel = await profileFor(tree, nodeName, inst.nodeProfileSha256);
-  const ri = recordInputs({ basePackage: installedPackageDir, tree, commit: universal.commit, node: nodeName, nodeProfile: profileRel, distribution: policy?.linux?.distribution });
-  need(ri.base.acc.node.nodeName === nodeName, 'INSTALLED_PACKAGE_IS_FOR_ANOTHER_NODE');
+  const ri = recordInputs({ basePackage: installedPackageDir, commit: universal.commit, distribution: policy?.linux?.distribution });
+  need(ri.base.acc.node.nodeName === nodeName && ri.profileSha256 === inst.nodeProfileSha256, 'INSTALLED_PACKAGE_IS_FOR_ANOTHER_NODE');
   await fs.writeFile(path.join(inputs, 'record-inputs.json'), ri.bytes, { flag: 'wx' });
   const record = path.join(workDir, 'record');
   const closure = path.join(tree, ...CLOSURE.split('/'));
@@ -234,21 +233,6 @@ export async function assembleExtracted({ x, universal, target, root, installedP
   return { ...result, status: pass ? 'FLEET_PACKAGE_ASSEMBLED' : 'FLEET_PACKAGE_ASSEMBLED_PRECHECK_REFUSED', node: nodeName, packageDir,
     packageManifestSha256: first.packageManifestSha256, grantResource: `ci-resident:${nodeName}/${first.packageManifestSha256}`,
     universal: got, rolesCopySource: roles.copySource, precheck };
-}
-
-// The node profile file of the archive's tree that is this node's installed profile (by name and canonical sha256).
-async function profileFor(tree, nodeName, profileSha) {
-  const dir = path.join(tree, ...RESIDENT.split('/'), 'config');
-  for (const name of (await fs.readdir(dir)).sort()) {
-    if (!/^node-profile\.[a-z0-9-]+\.json$/.test(name)) continue;
-    let p = null;
-    try { p = pyLoads((await fs.readFile(path.join(dir, name))).toString('utf8')); } catch { continue; }
-    if (p?.nodeName !== nodeName) continue;
-    try {
-      if (nodeProfileOf(tree, `config/${name}`, nodeName, p.wslDistribution).profileSha256 === profileSha) return `config/${name}`;
-    } catch { /* not this node's */ }
-  }
-  throw new Refused('UPGRADE_NODE_PROFILE_NOT_IN_ARCHIVE', { node: nodeName, nodeProfileSha256: profileSha });
 }
 
 export async function main(argv) {

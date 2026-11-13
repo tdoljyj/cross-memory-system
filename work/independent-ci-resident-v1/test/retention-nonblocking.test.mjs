@@ -1,4 +1,4 @@
-// Defect 8f8240ff (TURING, 2026-11-08): the service loop awaited archive retention between batches. Its archive-prune request
+// Defect 8f8240ff (NODE-B, 2026-11-08): the service loop awaited archive retention between batches. Its archive-prune request
 // waited the full 10 minutes for a wsl.exe that never returned (the companion's 9-minute limit ended it, tree 'unconfirmed'),
 // then archive-usage 3 more, and the upgrader's pause request in requests\ went unanswered past its 10 minutes
 // (UPGRADE_PAUSE_UNCONFIRMED, op DEFERRED for an hour). The step now runs beside the loop: ticks (pause, stop, Owner requests)

@@ -126,7 +126,7 @@ foreach ($bad in @(($ca.arguments + ' --extra'), ('--headless ' + $ca.arguments)
 # The supervisor's command line (CompanionSupervisor.cs CommandLine): "<node>" + the launch arguments.
 Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments) $ProdRoot) 'companion-process-command-line'
 Yes (-not (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" "' + $ProdRoot + '\resident\' + (& $h 'c') + '\src\service-main.mjs" --root "' + $ProdRoot + '" --policy-sha256 ' + (& $h 'a')) $ProdRoot)) 'resident-process-is-not-the-companion'
-# Task 42fe5ae4 (op 8e3b3e1b): the node child conhost --headless really starts has no quotes. This is TURING's companion as
+# Task 42fe5ae4 (op 8e3b3e1b): the node child conhost --headless really starts has no quotes. This is NODE-B's companion as
 # Win32_Process.CommandLine showed it on 2026-11-01 (PID 29028, parent conhost 44520 running the task's quoted arguments).
 $real = 'C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe C:\ProgramData\CluedIndependentCI\resident\resident\716587c3dfd689e6a6d517b2bbddef1c4033ec2d79f1689b7c5de96f8fdd1142\src\companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 d9beb17b0b2dc35fd0695afc4ed5147716d12de9b33802dc94bffc4d08eace28'
 Yes (Test-CompanionCommandLine $real $ProdRoot) 'companion-real-conhost-child-command-line'
@@ -159,7 +159,7 @@ Yes ((Get-Match 'x' 'x' 'y') -ceq 'from' -and (Get-Match 'y' 'x' 'y') -ceq 'to' 
 $Root = Join-Path $Scratch 'root'
 $opId = '11111111-2222-4333-8444-555555555555'
 $node = [pscustomobject][ordered]@{ contract = 'clued.independent-ci.node-profile/1'; nodeName = 'company'; hostname = 'COMPANY-PC'; ownerSid = 'S-1-5-21-1-2-3-1001'; ownerProfileDirectory = 'C:\Users\owner'
-  controllerSid = 'S-1-5-21-1-2-3-1015'; runnerService = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-company-win-02'; mutationMutex = 'Global\CluedControlControllerMutationV1-COMPANY-PC-1015'; wslDistribution = 'Ubuntu-24.04' }
+  controllerSid = 'S-1-5-21-1-2-3-1015'; runnerService = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-a'; mutationMutex = 'Global\CluedControlControllerMutationV1-COMPANY-PC-1015'; wslDistribution = 'Ubuntu-24.04' }
 $profileSha = Sha256Text (ConvertTo-NodeProfileCanonical $node)
 function Put([string]$rel, [string]$text) { $p = Join-Path $Root $rel; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $p)); [IO.File]::WriteAllText($p, $text, (New-Object Text.UTF8Encoding($false))); Sha256File $p }
 $r1 = & $h '1'; $r2 = & $h '2'; $c2 = & $h 'd'

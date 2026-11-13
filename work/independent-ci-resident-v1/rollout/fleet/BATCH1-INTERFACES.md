@@ -128,7 +128,7 @@ record 各文件：`source-manifest.json` 全体逐字节相同；`installation.
    - `reasons`：`{ "pause", "rearm", "w1Pause" }`，固定为 `fleet-node-reinstall-<version>` 系列。
 3. **launcher 字段**：generate.py 生成时 `launcher` 为 null；launcher 只钉“生成时的 plan 哈希”，运行时不读 plan。prepare 结束后写回最终 plan（带 launcher），这是给人看的记录，不参与运行。
 4. **超时**：A=1800 秒、B=7200 秒，写在 plan 里。
-5. **v1SourceHead**：Windows 侧读不到时取 null，走 no-v1 签名路径（`sign-qualification-no-v1.mjs`）；节点上若实际有 Source v1，A 步按现有检查拒绝（`NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD`），不会误装。
+5. **Source v1 已退役**：配置不再有 `v1SourceHead`，只有一条签名路径（`sign-qualification.mjs`，来历是已装 roles-v3）；节点上若有 v1 残留，A 步把它整体 `mv -n` 进本次的保留目录并在结果里记下，不再拒绝。
 ## 8. 裁定二：命令不带任何节点专属参数（Decision b5d041d2 v2）
 
 每台节点上运行的命令完全相同：`install.mjs prepare --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录>`（`--root` 只有缺省值）。删除 `--installed-package`、`--upgrade-token-file`、`--heartbeat-token-file`。合并审核把“命令无节点专属参数”作为检查项。

@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "1539719232e4815a8b0816bfb8285c63e21a06d121247c2688334fa3b1be1a00"
+      "content_sha256": "9d8075631ce5573dfb9d4b6be6e6ee89cf080fde4278858123e6887cb67b722e"
     },
     {
       "id": "hook.runner-job-started",
@@ -642,7 +642,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "2a714a34f4260f172d1567c1951b47bfb518507b11c038b9c07fbf5f006fee4a"
+      "content_sha256": "fe97941e5377fed55af9215aca5c20ea58f2d033806b4d7af24469f337d801dc"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "92297da6faa24e45c6429df3276756c29d6ce56a90d997c16c866bf84ecea8ab"
+      "content_sha256": "646f8fcc70fb02352de316cb0566e0325e77f248a848c8257f832a61bf913d70"
     },
     {
       "id": "script.required-applicability",
@@ -907,7 +907,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,12 +923,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "1206f804bdd85469f7e77791686dd1c919810d7d9df99b93ef07198926d674ea"
+      "content_sha256": "6a4555967d4e3eb29aba88aba1ac85a38a5e19f5f8805efe43d6a50ea409afea"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.26",
+      "version": "1.0.27",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0b8a51fc3967a77d85f16208345d7933682f841bdcc9e96a05170c29d9e95c66"
+      "content_sha256": "cb9493c02dcbc035844057d114537430b44632553a806e31c7cdd718ac8f92c9"
     }
   ]
 }

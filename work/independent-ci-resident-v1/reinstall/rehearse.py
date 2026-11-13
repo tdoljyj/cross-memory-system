@@ -187,7 +187,11 @@ def version_facts(raw):
     required = {'contract', 'generation', 'staged', 'pinsOk', 'sourceCommit', 'ciSourceManifestSha256',
                 'manifestSha256', 'roles', 'upgradeToolSha256', 'observedAt'}
     digest = lambda value: isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+    # liveMatchesCurrent: optional, a bool or null (a tool from before it has none), as src/upgrade-mailbox.mjs#validateVersionFacts
+    if isinstance(f, dict) and 'liveMatchesCurrent' in f:
+        required = required | {'liveMatchesCurrent'}
     if (not isinstance(f, dict) or set(f) != required or f.get('contract') != FACTS_CONTRACT
+            or f.get('liveMatchesCurrent') not in (None, True, False)
             or type(f.get('generation')) is not int or not 1 <= f['generation'] <= 999999999
             or type(f.get('pinsOk')) is not bool
             or not isinstance(f.get('sourceCommit'), str) or re.fullmatch(r'[0-9a-f]{40}', f['sourceCommit']) is None
@@ -315,8 +319,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     pkg_sha = sha_file(os.path.join(pkg_dir, 'package-manifest.json'))
     template = open(template_path or os.path.join(HERE, 'launcher', 'template.ps1'), encoding='utf-8').read()
 
-    # node: the package's profile is the configured one
-    profile, _ = rconfig.node_profile(cfg, tree)
+    # node: the package's profile is the installed one
+    profile, _ = rconfig.node_profile(cfg)
     pkg_node = read_json(os.path.join(pkg_dir, 'record', 'acceptance.json'))['node']
     checks['node'] = {'configured': profile['nodeName'], 'package': pkg_node.get('nodeName')}
     if pkg_node != profile:
@@ -570,18 +574,14 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             find(code, detail=p.stderr.strip().splitlines()[-1:] if p.stderr.strip() else None)
 
     # linuxHost (review 1-1): the host facts the root scripts pin are this node's. As root and read-only: the committed check-host.py
-    # (what phase A, B0 and B4 run) on the installed role policies with the configured pins, the Source v1 HEAD that verify-source-v2
-    # requires, and the v1 qualifications the signer reads (a node without Source v1: none of v1 there, the roles-v3 qualifications that
-    # sign-qualification-no-v1.mjs reads instead). Nothing is written; git takes no optional locks.
+    # (what phase A, B0 and B4 run) on the installed role policies with the configured pins, and the installed roles-v3 qualifications
+    # sign-qualification.mjs reads (Source v1 is retired: phase A moves any leftover of it aside). Nothing is written.
     lh = cfg['linux']['host']
     probe = ("import json,os,subprocess,sys\n"
              "env={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','GIT_OPTIONAL_LOCKS':'0','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}\n"
              "p=subprocess.run(['/usr/bin/python3','-I']+sys.argv[1:5],capture_output=True,text=True,env=env)\n"
-             "g=subprocess.run(['/usr/bin/git','--git-dir=/opt/clued-independent-ci/source-first-formal-v1/.git','rev-parse','HEAD'],capture_output=True,text=True,env=env)\n"
-             "q={r:os.path.isfile('/etc/clued-independent-ci/roles/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
-             "v1=[x for x in ('/opt/clued-independent-ci/source-first-formal-v1','/etc/clued-independent-ci/roles','/etc/clued-independent-ci/formal-source-manifest-v1.json') if os.path.lexists(x)]\n"
              "q2={r:os.path.isfile('/etc/clued-independent-ci/roles-v3/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
-             "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q,'v1Present':v1,'v2Qualifications':q2}))")
+             "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v2Qualifications':q2}))")
     if companion:   # not visible to the Owner's WSL; launch phase A runs check-host.py as root before anything changes
         checks['linuxHost'] = dict(DEFERRED_HOST_PROBE)
     else:
@@ -595,16 +595,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
         else:
             if hp.get('checkHostExit') != 0:
                 find('LINUX_HOST_PINS_NOT_THE_CONFIGURED', refusal=(last_json(hp.get('checkHost') or '') or {}).get('code'))
-            if hp.get('v1Head') != lh['v1SourceHead']:
-                find('LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', installed=hp.get('v1Head'), configured=lh['v1SourceHead'])
-            if lh['v1SourceHead'] is not None:   # the signer's lineage: the installed v1 qualifications
-                if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
-                    find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
-            else:   # no Source v1 (README section 6): none of it may be there, and the lineage is the installed roles-v3 qualifications
-                if hp.get('v1Present') != []:
-                    find('LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED', present=hp.get('v1Present'))
-                if not all((hp.get('v2Qualifications') or {}).values()) or not hp.get('v2Qualifications'):
-                    find('LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING', present=hp.get('v2Qualifications'))
+            if not all((hp.get('v2Qualifications') or {}).values()) or not hp.get('v2Qualifications'):   # the signer's lineage
+                find('LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING', present=hp.get('v2Qualifications'))
 
     # roles: the derivation phase A runs, on the copies, as a normal user in the node's WSL distribution
     # A record-only reinstall (README section 8b): the package's CI Source and Linux half are the installed ones, Linux phases A/B do not
@@ -666,7 +658,7 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             find('ROLE_DERIVATION_REFUSED', refusal=r.get('code'), role=r.get('role'), key=r.get('key'))
 
     return {'contract': CONTRACT, 'status': 'REHEARSAL_PASS' if not findings else 'REHEARSAL_FAILED', 'findings': findings,
-            'node': cfg['node'], 'commit': commit, 'packageManifestSha256': pkg_sha, 'configSha256': cfg['_sha256'],
+            'node': profile['nodeName'], 'commit': commit, 'packageManifestSha256': pkg_sha, 'configSha256': cfg['_sha256'],
             'installedResidentManifestSha256': installed, 'checks': checks,
             'observedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
 
@@ -682,7 +674,7 @@ def main(argv):
                       linux_version_facts=opt('--linux-version-facts'), file_locks_in_launcher='--file-locks-in-launcher' in a, installed_linux_in_phase_a='--fleet' in a)
     out_dir = opt('--report-dir', os.path.join(cfg['workDir'], 'rehearsal'))
     os.makedirs(out_dir, exist_ok=True)
-    name = 'rehearsal.%s.%s.%s.%s.json' % (cfg['node'], commit[:8], report['packageManifestSha256'][:8], report['observedAt'].replace('-', '').replace(':', ''))
+    name = 'rehearsal.%s.%s.%s.%s.json' % (report['node'], commit[:8], report['packageManifestSha256'][:8], report['observedAt'].replace('-', '').replace(':', ''))
     data = (json.dumps(report, indent=1, sort_keys=True) + '\n').encode('utf-8')
     with open(os.path.join(out_dir, name), 'xb') as f:
         f.write(data)

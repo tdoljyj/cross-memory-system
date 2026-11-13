@@ -107,7 +107,7 @@
 
 | 术语 | 定义 | 代码 / 章节 |
 |---|---|---|
-| **节点** | 装了一套常驻 CI 的一台 Windows 机器加它的 WSL，例如 `turing`、`desk-w-591`。设计按任意多个节点来做（Decision `d6eef30e`）。 | `node-profile.mjs` |
+| **节点** | 装了一套常驻 CI 的一台 Windows 机器加它的 WSL，例如 `node-a`、`node-b`。设计按任意多个节点来做（Decision `d6eef30e`）。 | `node-profile.mjs` |
 | **当班 / 备用（ACTIVE / STANDBY）** | 节点模式：<br>- ACTIVE：当班，此刻持有服务端的 ci-admission 角色；<br>- STANDBY：备用，不开新批次；<br>- UNCERTAIN：刚启动或复位后还没确认，行为同 STANDBY。<br>角色在服务端，不在安装里。 | `executor.mjs#nodeMode`，`role-probe.mjs` |
 | **角色探测** | 第 11 段只读调用 `clued_work_merge_slot_holders_v1`，判断本节点 held / not-held / uncertain。 | `role-probe.mjs` |
 | **NODE_ROLE_NOT_HELD** | 第 1 段因为本节点不当班而被拒。释放，节点转 STANDBY。 | `failure-table.json` |

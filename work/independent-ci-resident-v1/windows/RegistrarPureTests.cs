@@ -12,9 +12,13 @@ public static class RegistrarPureTests {
   static int n = 0;
   static void Ok(bool c, string what) { n++; if (!c) { Console.Out.WriteLine("{\"status\":\"REGISTRAR_PURE_FAIL\",\"at\":\"" + what + "\"}"); Environment.Exit(1); } }
   const string Root = @"C:\ProgramData\CluedIndependentCI\resident";
-  const string Owner = "S-1-5-21-1173730660-3877291096-655431861-1001";
+  const string Owner = "S-1-5-21-20-21-22-1001";
 
   public static int Main(string[] args) {
+    // the capture's BY_HANDLE_FILE_INFORMATION must match the native layout (52 bytes; links at 40), else the link count is another field
+    Type fi = typeof(CluedCompanionTaskRegistrar).GetNestedType("BY_HANDLE_FILE_INFORMATION", BindingFlags.NonPublic);
+    Ok(fi != null && Marshal.SizeOf(fi) == 52 && (int)Marshal.OffsetOf(fi, "VolumeSerialNumber") == 28 && (int)Marshal.OffsetOf(fi, "FileSizeLow") == 36
+      && (int)Marshal.OffsetOf(fi, "NumberOfLinks") == 40 && (int)Marshal.OffsetOf(fi, "FileIndexLow") == 48, "file-information-native-layout");
     // the definition: password logon, LUA, boot + every 15 minutes, no log-on trigger, no restart on failure, IgnoreNew, fixed action
     XmlDocument x = new XmlDocument();
     x.LoadXml(RegistrarCore.PasswordTaskXml(Root, Owner));
@@ -82,8 +86,8 @@ public static class RegistrarPureTests {
     Ok(!RegistrarCore.PlainUnpackUsable(true, 1) && !RegistrarCore.PlainUnpackUsable(true, 2) && !RegistrarCore.PlainUnpackUsable(true, 3) && !RegistrarCore.PlainUnpackUsable(false, 0), "plain-unpack-protected-or-unchecked-refused");
 
     // the account: DOMAIN\user, a bare user read as this computer's
-    Ok(RegistrarCore.QualifiedAccount("Windows", "", "DESK-W-591") == @"DESK-W-591\Windows", "account-bare-user");
-    Ok(RegistrarCore.QualifiedAccount(@"DESK-W-591\Windows", "", "X") == @"DESK-W-591\Windows", "account-qualified");
+    Ok(RegistrarCore.QualifiedAccount("Windows", "", "NODE-A") == @"NODE-A\Windows", "account-bare-user");
+    Ok(RegistrarCore.QualifiedAccount(@"NODE-A\Windows", "", "X") == @"NODE-A\Windows", "account-qualified");
     Ok(RegistrarCore.QualifiedAccount("Windows", "OTHER", "X") == @"OTHER\Windows", "account-domain");
     Ok(RegistrarCore.QualifiedAccount("", "", "X") == null, "account-empty");
     Ok(RegistrarCore.OwnerSidFromAcceptance("{\"node\":{\"ownerSid\":\"" + Owner + "\"}}") == Owner, "owner-sid-from-record");
@@ -99,11 +103,11 @@ public static class RegistrarPureTests {
     Ok(even && seen[0] == 3 && dropped == 256 - 210, "password-bytes-map-evenly-by-rejection");
     int classes = 0; foreach (char c in alphabet) { int k = RegistrarCore.PasswordClass(c); Ok(k == 1 || k == 2 || k == 4 || k == 8, "password-char-has-one-class:" + c); classes |= k; }
     Ok(classes == 15 && RegistrarCore.PasswordClass('"') == 0 && RegistrarCore.PasswordClass(' ') == 0 && alphabet.IndexOf('"') < 0 && alphabet.IndexOf('\'') < 0 && alphabet.IndexOf('<') < 0 && alphabet.IndexOf('&') < 0, "password-four-classes-no-quote-or-markup");
-    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, false, false) == null, "account-local-user-usable");
-    Ok(RegistrarCore.AccountRefusal("OTHER", "DESK-W-591", true, false, false) == "COMPANION_ACCOUNT_NOT_LOCAL", "account-not-local");
-    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, true, false) == "COMPANION_ACCOUNT_IS_ADMINISTRATOR", "account-administrator-refused");
-    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", true, false, true) == "COMPANION_ACCOUNT_IS_THE_CALLER", "account-the-owner-refused");
-    Ok(RegistrarCore.AccountRefusal("DESK-W-591", "DESK-W-591", false, false, false) == "COMPANION_ACCOUNT_DISABLED", "account-disabled-refused");
+    Ok(RegistrarCore.AccountRefusal("NODE-A", "NODE-A", true, false, false) == null, "account-local-user-usable");
+    Ok(RegistrarCore.AccountRefusal("OTHER", "NODE-A", true, false, false) == "COMPANION_ACCOUNT_NOT_LOCAL", "account-not-local");
+    Ok(RegistrarCore.AccountRefusal("NODE-A", "NODE-A", true, true, false) == "COMPANION_ACCOUNT_IS_ADMINISTRATOR", "account-administrator-refused");
+    Ok(RegistrarCore.AccountRefusal("NODE-A", "NODE-A", true, false, true) == "COMPANION_ACCOUNT_IS_THE_CALLER", "account-the-owner-refused");
+    Ok(RegistrarCore.AccountRefusal("NODE-A", "NODE-A", false, false, false) == "COMPANION_ACCOUNT_DISABLED", "account-disabled-refused");
     Ok(RegistrarCore.ValidAccountName("clued-companion") && !RegistrarCore.ValidAccountName("Administrator") && !RegistrarCore.ValidAccountName("a b") && !RegistrarCore.ValidAccountName("x"), "account-name-shape");
     Ok(RegistrarCore.ValidVhdx(@"D:\clued-resident\wsl\CluedResident-Linux\ext4.vhdx") && RegistrarCore.ValidVhdx(@"C:\clued-resident\wsl\Ubuntu-24.04\ext4.vhdx"), "vhdx-shape");
     Ok(!RegistrarCore.ValidVhdx(@"D:\x\..\y\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\a b\ext4.vhdx") && !RegistrarCore.ValidVhdx(@"D:\x\other.vhdx") && !RegistrarCore.ValidVhdx("D:\\x\\\"ext4.vhdx") && !RegistrarCore.ValidVhdx(@"\\server\x\ext4.vhdx"), "vhdx-refused");

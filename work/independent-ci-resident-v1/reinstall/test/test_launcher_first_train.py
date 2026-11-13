@@ -28,7 +28,7 @@ foreach ($name in @('Get-Key', 'Parse-Json', 'Test-FirstTrainNotApplicable', 'St
 }
 $ResidentRoot = $Directory
 [IO.Directory]::CreateDirectory((Join-Path $ResidentRoot 'state')) | Out-Null
-$NodeName = 'desk-w-591'; $CiSourceManifestSha256 = ('8860531ae1c4' + ('0' * 52))
+$NodeName = 'node-a'; $CiSourceManifestSha256 = ('8860531ae1c4' + ('0' * 52))
 $FirstTrainWaitSeconds = 1500; $RunnerQuietWaitSeconds = 900
 $Done = New-Object 'Collections.Generic.List[string]'
 $script:waits = New-Object 'Collections.Generic.List[int]'
@@ -77,7 +77,7 @@ def standby():
     iso = lambda value: value.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     # Actual DESK shape: its role probe runs every 15 minutes; fullPending does not confer a role.
     return {'contract': 'clued.independent-ci.resident-status/8', 'writtenAt': iso(now),
-            'node': {'name': 'desk-w-591', 'source': SOURCE[:12], 'mode': 'STANDBY',
+            'node': {'name': 'node-a', 'source': SOURCE[:12], 'mode': 'STANDBY',
                      'probe': {'at': iso(now - datetime.timedelta(minutes=6, seconds=46)),
                                'result': 'not-held', 'failures': 0, 'failingSince': None}},
             'executor': {'state': 'IDLE', 'reason': None}, 'current': None, 'pending': [],
@@ -107,7 +107,7 @@ class FirstTrain(unittest.TestCase):
         self.assertFalse(r['report']['observed'], 'inapplicable is not a witnessed train')
         self.assertEqual(r['firstIterations'], 1)
         self.assertEqual(r['done'], ['first-train-not-applicable'])
-        self.assertEqual(r['report']['notApplicableObservation']['nodeName'], 'desk-w-591')
+        self.assertEqual(r['report']['notApplicableObservation']['nodeName'], 'node-a')
         self.assertEqual(r['report']['notApplicableObservation']['mode'], 'STANDBY')
         self.assertEqual(r['report']['notApplicableObservation']['probeResult'], 'not-held')
         self.assertEqual(r['report']['notApplicableObservation']['queueLive'], 0)
@@ -176,7 +176,7 @@ class FirstTrain(unittest.TestCase):
             if 'writtenAt' in patch:
                 s['_preserveWrittenAt'] = True
             cases.append(s)
-        for patch in ({'name': 'turing'}, {'source': '0' * 12}, {'mode': 'UNCERTAIN'}, {'probe': None}):
+        for patch in ({'name': 'node-b'}, {'source': '0' * 12}, {'mode': 'UNCERTAIN'}, {'probe': None}):
             s = standby(); s['node'].update(patch); cases.append(s)
         for patch in ({'result': 'uncertain'}, {'failures': 1}, {'failingSince': now.isoformat()},
                       {'at': (now - datetime.timedelta(minutes=16)).isoformat()},

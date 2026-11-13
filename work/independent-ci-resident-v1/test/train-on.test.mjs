@@ -1011,7 +1011,7 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
   const target = 'd'.repeat(64), heard = new Date(T0 - 5 * MIN).toISOString();
   let peerSource = null, mode = 'on';
   const nodes = own => [{ node: 'desk', sourceManifestSha256: own, state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() },
-    { node: 'turing', sourceManifestSha256: peerSource, state: 'NORMAL', lastHeartbeatAt: heard }];
+    { node: 'node-b', sourceManifestSha256: peerSource, state: 'NORMAL', lastHeartbeatAt: heard }];
   let own = null;
   const f = await executorFixture(t, { policy: policyV8(), status, engine: fakeEngine({ train: m => answer(m, mode === 'on' ? { ...DONE, decision: 'NO_FRONT', nodes: nodes(own), nodesDropped: 0 } : DONE, 0) }) });
   own = f.exec.policy.ciSourceManifestSha256;
@@ -1020,11 +1020,11 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
   const onDisk = () => JSON.parse(JSON.stringify(status.snapshot())).train.nodes; // what precheck.mjs reads from state\status.json
   const read = parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.nodes;
   assert.deepEqual([read.at, read.sourceManifestSha256, read.nodes.map(n => [n.node, n.sourceManifestSha256, n.lastHeartbeatAt])],
-    [new Date(T0).toISOString(), own, [['desk', own, new Date(T0).toISOString()], ['turing', own, heard]]]);
+    [new Date(T0).toISOString(), own, [['desk', own, new Date(T0).toISOString()], ['node-b', own, heard]]]);
   const check = (onDuty = true) => fleetSourceCheck({ view: parseTrainNodes(onDisk()), target, selfNames: ['desk'], now: T0 + MIN, onDuty });
-  assert.deepEqual([check().status, check().upgradeFirst], ['MISMATCH', ['turing']], 'turing still runs the current Source: it goes first');
+  assert.deepEqual([check().status, check().upgradeFirst], ['MISMATCH', ['node-b']], 'node-b still runs the current Source: it goes first');
   assert.deepEqual([check(false).status, check(false).reason], ['UNVERIFIED', 'NOT_ON_DUTY'], 'review m2: only the node on duty refuses');
-  // turing installs the target; the next on-mode run reads it
+  // node-b installs the target; the next on-mode run reads it
   peerSource = target;
   f.advance(10 * MIN);
   await f.exec.tick();
@@ -1034,7 +1034,7 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
 
 test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list only; a malformed list is none', () => {
   const own = 'e'.repeat(64);
-  const facts = o => answer('on', { decision: 'NO_FRONT', nodes: [{ node: 'turing', sourceManifestSha256: 'c'.repeat(64), state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() }], nodesDropped: 2, ...o }, 0).train;
+  const facts = o => answer('on', { decision: 'NO_FRONT', nodes: [{ node: 'node-b', sourceManifestSha256: 'c'.repeat(64), state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() }], nodesDropped: 2, ...o }, 0).train;
   const v = trainNodesView(facts(), own);
   assert.deepEqual([v.sourceManifestSha256, v.dropped, v.nodes.length], [own, 2, 1]);
   assert.equal(trainNodesView(facts({ nodes: null }), own), null, 'a run that read no nodes');

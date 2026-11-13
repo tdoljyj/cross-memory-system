@@ -3291,11 +3291,11 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 与 base 包不同的节点必须给出全部六项身份值。
 - 预演报告 24 小时内有效，由 Linux 脚本生成（`prep.py`）时检查，此时节点还未变动。
 
-**新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
+**新节点**：仓库里没有任何节点的档案；重装和升级一律用本机已装包 record 里的档案。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
 
 **§41 第 8 步补的两处**（2026-10-31，改了启动器模板和 root 脚本生成器，按 `reinstall/README.md` 第 1 节要重新做一次完整的独立审核）：
 - 心跳令牌（§41.6a）：配置可选 `heartbeat`（`tokenFile`，可另给 `bindingId`）。启动器只在配置了时给安装器传 `-HeartbeatTokenFile`（和 `-HeartbeatBindingId`），提权的带令牌计划必须恰好多出这一项。没配置的节点行为不变。模板 sha 换成 `5ff3a1c1`。
-- 没有 Source v1 的节点（Z1 首装）也能整套重装：`linux.host.v1SourceHead` 可为 null。此时 root 脚本要求节点上确实没有 v1，签名的来历改用节点自己已装、已签的 roles-v3 qualification（`linux/tools/sign-qualification-no-v1.mjs`），其余核对不变。有 v1 的节点生成的脚本逐字节不变。
+- Source v1 已退役：只有一条重装路径。配置不再有 `linux.host.v1SourceHead`；签名的来历是节点自己已装、已签的 roles-v3 qualification（`linux/tools/sign-qualification.mjs`）；第 A 步把 v1 残留整体 `mv -n` 进本次保留目录并记录，不再拒绝。
 - 心跳令牌换新或补装：今天只能整套重装（安装器只做全新安装，升级通道不碰 `secrets`）。不重装的办法需要一个新的提权小工具，见 `reinstall/README.md` 第 4 节。
 
 **不在本节**：节点身份冻结全部接受 ref（Note `45e0ed29`）；升级器调用 csc 时没有 TEMP。这两项随下一次整套重装一起做。

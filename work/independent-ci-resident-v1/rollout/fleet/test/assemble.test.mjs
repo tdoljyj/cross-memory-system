@@ -26,7 +26,7 @@ async function getWorld() {
   if (world) return world;
   const t = keep;
   const fleet = fleetFacts();
-  const { repo, commit } = await fixtureRepo(t, ['a', 'b']);
+  const { repo, commit } = await fixtureRepo(t);
   const a = await nodeSite(t, 'a', fleet);
   const b = await nodeSite(t, 'b', fleetFacts());   // its own sourceAcceptanceRef, hostQualificationRef and role material
   const d = await tempDir(t, 'fleetout');
@@ -54,7 +54,7 @@ test('universal: the same commit twice gives the same tar and release.json; SHA2
   assert.ok(names.includes('universal-manifest.json') && names.includes('bundle/accepted.bundle'));
   assert.ok(names.includes('tree/work/independent-ci-resident-v1/rollout/fleet/assemble.mjs'), 'the assembler is archived');
   assert.ok(names.includes('tree/work/independent-ci-resident-v1/windows/install-resident.ps1'), 'the install scripts are archived');
-  assert.ok(names.includes('tree/work/independent-ci-resident-v1/config/node-profile.fixture-b.json'), 'the node profiles are archived');
+  assert.ok(!names.some(n => /\/config\/node-profile\.[^/]+\.json$/.test(n)), 'no node profile is archived (each node uses its installed one)');
   assert.ok(!names.some(n => n.includes('/rollout/fleet/test/') || n === 'tree/README.fixture'), 'nothing outside the subset');
   const um = JSON.parse(entries.find(e => e.path === 'universal-manifest.json').data.toString('utf8'));
   assert.equal(sha(entries.find(e => e.path === 'bundle/accepted.bundle').data), s.bundle_sha256);

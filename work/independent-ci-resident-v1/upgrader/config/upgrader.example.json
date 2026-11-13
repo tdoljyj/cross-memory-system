@@ -1,6 +1,6 @@
 {
   "contract": "clued.independent-ci.resident-upgrader-config/1",
-  "node": "turing",
+  "node": "node-b",
   "nodeProfileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "ownerSid": "S-1-5-21-1-2-3-1001",
   "root": "C:\\ProgramData\\CluedIndependentCI\\resident",

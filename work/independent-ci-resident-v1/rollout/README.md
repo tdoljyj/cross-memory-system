@@ -46,9 +46,9 @@ node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --pa
 ## 4. 滚动升级：`rollout.mjs`
 
 ```
-node rollout\rollout.mjs plan    --out rollout.json --decision <uuid> --package turing=<dir> --package desk-w-591=<dir>
+node rollout\rollout.mjs plan    --out rollout.json --decision <uuid> --package <node>=<dir> [--package <node>=<dir> ...]
 node rollout\rollout.mjs observe --root C:\ProgramData\CluedIndependentCI\resident --out observation.<node>.json      # 每个节点上各跑一次
-node rollout\rollout.mjs next    --plan rollout.json --observation observation.turing.json --observation observation.desk-w-591.json
+node rollout\rollout.mjs next    --plan rollout.json --observation observation.<node>.json [...]
 ```
 
 `next` 只给出一个下一步：

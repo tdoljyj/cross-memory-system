@@ -2,11 +2,11 @@
 (policyInput, companionInput); they carry the node they were made for: the node profile (`node`), its canonical sha256
 (`nodeProfileSha256`), the owner SID the companion runs as (policy `companion.userSid`) and the WSL distribution (policy
 `linux.distribution`, companion `companion.distribution`). build-package.mjs refuses inputs whose node is not the record's
-(PACKAGE_NODE_PROFILE_CHANGED), so for another node (a first install, README section 8) these fields are taken from the configured node's
-profile in the commit's tree; nothing else changes. The base node's own values must sit exactly in those fields, and none of them may be
+(PACKAGE_NODE_PROFILE_CHANGED), so these fields are always taken from the installed node profile (rconfig.node_profile: the base
+package's record); nothing else changes. The base node's own values must sit exactly in those fields, and none of them may be
 left anywhere else in the outputs (NODE_INPUT_KEEPS_THE_BASE_NODE). The policy also gets this install's Owner decision and receipt
 (`ownerAcceptance`; build-package keeps the input's). Create-only.
-  python -I node-inputs.py <config.json> <tree> <decision-uuid> <receipt-uuid> <out-policy.json> <out-companion.json>
+  python -I node-inputs.py <config.json> <tree, not read> <decision-uuid> <receipt-uuid> <out-policy.json> <out-companion.json>
 """
 import importlib.util, json, os, re, sys
 
@@ -46,7 +46,7 @@ def main(argv):
     cfg = rconfig.load(argv[0])
     tree, decision, receipt, out_policy, out_companion = argv[1:6]
     need(UUID.match(decision) and UUID.match(receipt), 'REFS_SHAPE')
-    profile, profile_sha = rconfig.node_profile(cfg, tree)
+    profile, profile_sha = rconfig.node_profile(cfg)
     with open(cfg['policyInput'], encoding='utf-8') as f:
         policy = json.load(f)
     with open(cfg['companionInput'], encoding='utf-8-sig') as f:
