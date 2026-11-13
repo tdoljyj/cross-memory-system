@@ -32,4 +32,4 @@
 
 - 出事的 head 要推新提交才能再跑。Owner 复位不会重跑它。例外见 ADR 0025：重启打断、能证明没发布的批次自动走那一次 attempt 2。
 - 托管转发与本地执行二选一；托管工作流已停用（Decision `928e6638`）。
-- 改错一个被锁定的登记文件也会烧掉 head（例如 #1035）。这类错由 CI 的 `pinned-registries` 套件在几秒内报出来；推送前用 `local-verify --affected` 自查是可选的，不是推送的前提（[ADR 0032](0032-ci-both-platforms.md)）。
+- 改错一个被锁定的登记文件也会烧掉 head（例如 #1035）。所以推送前要用 `local-verify --affected` 跑全部受影响套件。

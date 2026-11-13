@@ -1,11 +1,11 @@
 # ADR 0032：CI 两个平台都测；本地验证改为可选；手拼 `file://` 入口判断从机制上堵死
 
-- 状态：第 1 步已实现（分支 `claude/ci-both-platforms`，未推送）；第 2–4 步待做（见 §7）
+- 状态：第 1 步已实现（分支 `claude/ci-both-platforms`，未推送）：工作流与登记都在这一个 PR 里；观察、设为必需、本地验证改为可选待做（见 §7）
 - 日期：2026-11-14
 - 编号：0030 是通用升级（#1092，已合入），0031 被在途分支 `claude/remove-terminal-admission` 占用，所以取 0032
 - Owner Decision：统领原则（`42d5bf8d`：最终系统极简、低耗、高效，错误从机制上堵死）；看板缺陷第 14 行（重大），Owner 已批“开做”
-- 代码：`scripts/ci/ci-required-selection.mjs`（`SUITE_PLATFORMS`、`selectSuites` 的 `platform`、`runSelected`、`--run-selected`）、`work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml`、`scripts/ci/main-entry-realpath.test.mjs`（`buildsFileUrlByHand`）、`src/service-main.mjs`、`src/companion-main.mjs`、`work/twentyfirst-forward/derive-getter-module.mjs`
-- 测试（修复前都失败）：`scripts/ci/ci-required-selection.test.mjs` “a change that breaks only on Windows fails the Windows side and passes the Linux side …”、“each platform is selected only the suites declared for it …”、“the Windows job of the candidate workflow selects and runs with the trusted selection …”；`scripts/ci/main-entry-realpath.test.mjs` “no source file builds a file: URL by hand …”、“a file: URL built by hand is recognised …”
+- 代码：`scripts/ci/ci-required-selection.mjs`（`SUITE_PLATFORMS`、`selectSuites` 的 `platform`、`runSelected`、`--run-selected`）、`.github/workflows/clued-required-tests-windows.yml`、`scripts/ci/main-entry-realpath.test.mjs`（`buildsFileUrlByHand`）、`src/service-main.mjs`、`src/companion-main.mjs`、`work/twentyfirst-forward/derive-getter-module.mjs`
+- 测试（修复前都失败）：`scripts/ci/ci-required-selection.test.mjs` “a change that breaks only on Windows fails the Windows side and passes the Linux side …”、“each platform is selected only the suites declared for it …”、“the Windows job selects and runs with the trusted selection …”；`scripts/ci/main-entry-realpath.test.mjs` “no source file builds a file: URL by hand …”、“a file: URL built by hand is recognised …”
 
 ## 1. 现场
 
@@ -18,7 +18,7 @@
 ## 2. 决定
 
 1. **CI 两个平台都测。** 同一个选择函数、同一份命令，在 Linux 和 Windows 上各跑一遍；任一边失败，那一边的必需检查失败，PR 合不进去。
-2. **本地验证改为可选自查，不挡推送。** 工具保留，用来在推送前快速看一眼；把关的是 CI。
+2. **本地验证改为可选自查，不挡推送，但只在 `ci-suites-windows` 成为必需检查的同一步生效。** 在那之前，推送前的本地验证仍是现行规则（它默认跑的正是 Windows），不留“Windows 既没有 CI 测、也没有本地验证兜底”的空窗。工具保留。
 3. **手拼 `file://` 从机制上堵死。** 静态检查拦下所有手拼写法，现有的三处改掉。
 
 ## 3. 链路，以及每一环防什么
@@ -31,7 +31,7 @@
 | Windows 作业 `ci-suites-windows`（新） | 一步：`node trusted/…/ci-required-selection.mjs --run-selected ci-suites --root candidate` | Windows 上才出的错。作业只有这一条命令，没有别的能让它变绿或变红 |
 | 准入门（同一个 `admission-gate` 作业，逐字节相同） | 只有已准入的 head 才跑；没放行时作业名是 `ci-suites-windows-skipped` | 未准入的 PR 代码不在节点上执行；跳过的作业不会被当成成功（必需检查缺失，fail closed） |
 | runner 上的 job-started 钩子（现有，`scripts/runner`） | 每个作业开始前在 runner 机器上再核一次准入 | 改工作流的分支去不掉它 |
-| 规则集必需检查（第 4 步） | `ci-suites-windows` 钉 GitHub Actions（App `15368`） | 别的 App 发同名检查顶替；失败的 PR 被合入 |
+| 规则集必需检查（§7 第 3 步） | `ci-suites-windows` 钉 GitHub Actions（App `15368`） | 别的 App 发同名检查顶替；失败的 PR 被合入 |
 | 第 8 段 `requiredCheckFailure`（现有） | 读**实际规则集**里的必需检查；确认失败就不入队、不延长，已入队则归还合并位 | 测试失败的 PR 占着合并位。新检查进了规则集就自动算上，不用改常驻代码 |
 | ADR 0018 落地条件第 5 项（现有） | 规则集里不由 App `5368905` 产生的必需检查都要在 S 上成功 | 列车把 Windows 侧没过的提交推上 main。同样自动算上 |
 
@@ -45,13 +45,14 @@
 - Windows runner 本来就是“在这台宿主机上、以专用低权账户、经准入后执行仓库代码”的那个部件，Linux 侧的三项检查用的就是它在 WSL 里的同类。复用它，执行、调度、准入、收据都是现成的：
   - **执行**：runner 自带的 Node 24 和 Python 3.12，不下载任何东西（网络抖动不影响）。
   - **调度**：Actions 的队列；同一 PR 新 head 取消旧 head 的运行（`concurrency`）。
-  - **让路**：每台宿主机只有一个 Windows runner，同一时刻最多一个 Windows 作业，套件在作业里串行跑。和 Linux 侧一样不等常驻批次（Linux 作业今天就和批次同时跑在同一台机器上）。观察期（第 3 步）里如果出现 `e0a5630d` 那类“宿主机太忙、第 2 段转发放弃”，再给这一步加有界让路（`local-verify.mjs#yieldToResident` 已有实现）；现在不加，因为 `clued-runner` 账户读不读得到 `status.json` 没有实证，加了可能是死代码。
+  - **让路**：每台宿主机只有一个 Windows runner，同一时刻最多一个 Windows 作业，套件在作业里串行跑。和 Linux 侧一样不等常驻批次（Linux 作业今天就和批次同时跑在同一台机器上）。观察期（§7 第 2 步，已列为待观察项）里如果出现 `e0a5630d` 那类“宿主机太忙、第 2 段转发放弃”，再给这一步加有界让路（`local-verify.mjs#yieldToResident` 已有实现）；现在不加，因为 `clued-runner` 账户读不读得到 `status.json` 没有实证，加了可能是死代码。
   - **收据**：check run（App `15368`）和作业日志、步骤摘要（逐套件写 passed / failed）。
 - 常驻包因此**不需要改**，不碰冻结通道（`upgrader/src`、`upgrade-apply.ps1`），不需要重装或升级任何节点。
 
 **为什么是单独的工作流文件**（`clued-required-tests-windows.yml`），而不是给 `clued-required-tests.yml` 加一个作业：
 
 - `clued-required-tests.yml` 的逐字节内容是登记过的复合 Source（`clued-workflow-profile.mjs#REQUIRED_TESTS_SOURCE`：blob、三个角色各自的摘要；`clued-gated-proof.mjs` 写死“四个作业、三个 primary”）。加一个作业要重写这套证明。
+- 登记少：单独的文件只要 §7 第 1 步那几处，能和代码放进一个 PR。
 - 单独的文件可以单独停用：Windows 侧出问题时在 GitHub 上禁用这一个工作流（再由 Owner 把它从规则集里拿掉），Linux 三项不受影响。
 - 代价是每个 PR 多一个准入门作业（Linux runner 上轮询约半分钟）。
 
@@ -75,29 +76,33 @@
   - 环境失败之一，runner 不在线：作业一直排队，检查缺失。fail closed：PR 等着，不算失败，不归还合并位。
   - 环境失败之二，作业在检出或准入钩子处失败：结论同样是 `failure`，从失败的步骤能看出不是测试。处理办法和 Linux 侧今天一样（推一个空提交再跑）。
   - 两种都不计入常驻的熔断和发布上限：那两个只数常驻自己各段的环境类、网络类失败（`queue.mjs`、`classify.mjs`），Actions 检查不是常驻的段。
-- **推送成本。** 每个 head 多一个 Windows 作业；head 配额（每 Task 24 小时 40 个）不变。Windows 侧选中的套件是 Linux 侧 `ci-suites` 的子集；实际用时在第 3 步观察时记下。
+- **推送成本。** 每个 head 多一个 Windows 作业；head 配额（每 Task 24 小时 40 个）不变。Windows 侧选中的套件是 Linux 侧 `ci-suites` 的子集；实际用时在观察期记下。
 - **新检查怎么接进合入门和 Owner 规则。** 只有一处：Owner 在规则集 `24182890` 里加必需检查 `ci-suites-windows`，integration 钉 App `15368`。合并位报告器、第 8 段、列车落地条件读的都是实际规则集，不写死检查名，不用改代码。“别的工作流不许用这些作业名”的门禁守卫今天还没有（`work/ci-required-tests-v1/DESIGN.md` §9 的后续项）；做它的时候把 `ci-suites-windows` 一并算上。
 
-## 7. 上线顺序（不让 main 卡死）
+## 7. 上线顺序（不让 main 卡死，不留覆盖空窗）
 
-1. **本分支（PR-A）**：选择逻辑认平台、`--run-selected`、候选工作流文件、端到端测试、静态检查与三处修复、文档改为“本地验证可选”。合入后 trusted base 上就有 Windows 作业要用的入口。此时还没有任何新检查，main 不受影响。
-2. **PR-B：让工作流生效。** 把候选文件去掉头四行，放到 `.github/workflows/clued-required-tests-windows.yml`，同一个 PR 里做完登记：
-   - `.github/actions/ci-temporary-storage/coverage.json` 加这个工作流（`admission-gate` 与 `ci-suites` 的分类照抄）；
-   - `clued-merge-slot-ci.yml` 的 `workflow_run.workflows` 加 `clued-required-tests-windows`，连同它的 control Source 后继登记（`clued-control-workflow-sources.json`）和 `clued-merge-slot-ci.mjs` 的 `WORKFLOWS`；
-   - `clued-work-admission.test.mjs` 里“用独立 Linux 准入门的工作流”名单加这个文件（门作业的摘要 `9c582144…` 已登记，不变）；
-   - 重新生成 reconcile 登记（`clued-merge-reconcile-source-build.mjs`）；
-   - 这份清单是实测得到的：在本分支上把候选文件放进 `.github/workflows`，`scripts/ci` 里与工作流登记有关的测试失败的就是这几处（另有 `check-workflows.mjs` 的分类检查）。PR-B 以当时的测试结果为准。
-   - 这些都是受保护路径，需要 Owner 的 `repo.protected_change` Grant 和 Source 接受。
-   - 检查此时**不是必需的**：红了不挡任何人。
-3. **观察。** 在两台宿主机的 Windows runner 上各看到至少一次全绿（一个碰常驻代码的普通 PR 即可），并且 main 的 push 运行也绿。有 Windows 上的既有失败就修，或在 `SUITE_PLATFORMS` 里写明理由暂时移出；`admission-self-tests` 的已知失败清单是按 Linux 写的，Windows 上不同就用 `--write-known` 补。
-4. **设为必需。** Owner 在规则集里加 `ci-suites-windows`（App `15368`）。从这一刻起，只在 Windows 上出错的改动合不进去。
-5. **回退。** 任何时候：Owner 从规则集拿掉这项检查，再禁用这个工作流。不影响 Linux 三项，不动节点。
+1. **本分支，一个 PR。** 内容：选择逻辑认平台、`--run-selected`、工作流 `clued-required-tests-windows.yml` 及其登记、端到端测试、静态检查与三处修复。
+   - 登记：`.github/actions/ci-temporary-storage/coverage.json` 加这个工作流；`clued-work-admission.test.mjs` 的“用独立 Linux 准入门的工作流”名单加这个文件（门作业摘要 `9c582144…` 已登记，不变）；reconcile 登记与组件版本由自动生成器重算。
+   - 检查此时**不是必需的**，红了不挡任何人。本地验证的规则**不动**。
+   - 这个 PR 自己的 Windows 运行会失败（退出码 2）：作业用的是 trusted base 上的选择文件，base 还没有 `--run-selected`。合入后 main 的 push 运行和之后的 PR 才是第一次真正的结果。
+   - **没有并进来的一处**：`clued-merge-slot-ci.yml` 的 `workflow_run.workflows` 名单。它是登记过的 control Source（`clued-control-workflow-source.mjs:802` `CONTROL_WORKFLOW_FILES`）；准入用 trusted base 上的目录判定（`clued-work-admission.mjs:789-796` `trustedControlProfiles` 读脚本旁边、也就是 main 上的 `clued-control-workflow-sources.json`），改它的 PR 在 main 的目录里没有这次变更时被拒（`clued-work-admission.mjs:1514-1516`，`control_Source_not_registered`）。所以“登记”和“改名单”必须是先后两个 PR，并不进一个。这个报告器已停用（Decision `928e6638`，GitHub 上 `disabled_manually`；常驻第 8 段自己读检查），漏一个名字只是晚一次报告，所以本 PR 不改它：`clued-merge-slot-ci.test.mjs` 里用 `notYetListed` 写明这一个名字暂不在名单里；将来名单里加上它时，这个测试会要求同时删掉这一项。
+2. **观察**（清单，逐项记结果）：
+   - 两台宿主机的 Windows runner 各至少一次全绿，main 的 push 运行也绿；记下用时。
+   - **Windows 作业不让路给常驻批次（待观察项）。** 它和常驻批次同时跑在同一台宿主机上。观察期内看它会不会挤占生产：常驻第 2 段转发放弃（`e0a5630d` 那一类）、批次用时变长、看门狗暂停 runner、宿主机内存或 C: 余量告警。出现任何一项，就在这一步里加有界让路（`local-verify.mjs#yieldToResident` 已有实现；先实证 `clued-runner` 账户能读 `status.json`），之后才进第 3 步。
+   - runner 上的 job-started 钩子放行这个新工作流的作业（看实际作业日志）。
+   - Windows 上的既有失败：修，或在 `SUITE_PLATFORMS` 里写明理由暂时移出；`admission-self-tests` 的已知失败清单按 Linux 写的，Windows 上不同就用 `--write-known` 补。
+3. **设为必需，同时本地验证改为可选（一步）。**
+   - Owner 在规则集 `24182890` 里加 `ci-suites-windows`（App `15368`）。
+   - 紧接着合入文档 PR，把“推送前本地验证”改成可选自查：`docs/maintenance/independent-ci.md`、`docs/maintenance/README.md`、ADR 0003、runbook §7、`scripts/ci/local-verify.mjs` 文件头。这个 PR 只在规则集改完之后开，它自己就要过 `ci-suites-windows`；规则集没改，它不合入。顺序固定为“先必需，后可选”，中间任何时刻 Windows 都至少有一道把关。
+4. **回退。** 任何时候：Owner 从规则集拿掉这项检查，再禁用这个工作流；同时把第 3 步的文档 PR 回退（本地验证重新成为规则）。不影响 Linux 三项，不动节点。
+
+**最少几个 PR：两个。** 本 PR（代码、工作流、登记），加第 3 步的文档 PR。文档 PR 不能并进来，因为它必须和“设为必需”同时生效，而设为必需要等观察通过。`clued-merge-slot-ci.yml` 的名单不算在内：报告器停用期间不需要改；哪天重新启用它，按它自己的两步登记流程补上。
 
 ## 8. 本地验证
 
-- `local-verify.mjs` 不再是推送的前提。文档里“推送前用 `--affected` 验证”的要求全部改为“可选自查”（`docs/maintenance/independent-ci.md`、`docs/maintenance/README.md`、ADR 0003、runbook §7、工具文件头）。
-- 工具照旧可用。它调用 `selectSuites(check, files)` 时不带平台，选出的是两边的并集；只想看 CI 在某一边会跑什么，看 `SUITE_PLATFORMS`。
-- 改错被锁定的登记文件仍然会烧掉一个 head（ADR 0003）。这件事现在由 CI 在秒级报出来（`pinned-registries`），不再靠“推送前记得跑”。
+- 第 3 步之前：现行规则不变，推送前照旧跑 `local-verify.mjs`（默认模式跑 Windows）。
+- 第 3 步之后：它不再是推送的前提，是可选自查；把关的是两个平台的必需检查。
+- 工具调用 `selectSuites(check, files)` 时不带平台，选出的是两边的并集；CI 在某一边跑什么，只看 `SUITE_PLATFORMS`。
 
 ## 9. 手拼 `file://` 的静态检查
 
@@ -110,6 +115,6 @@
 
 ## 10. 残余
 
-- 第 2–4 步做完之前，Windows 侧仍然没有 CI 把关。这段时间里本地验证（默认模式跑 Windows）是唯一的 Windows 检查，但它不再是规矩。
+- 第 3 步之前，Windows 侧的 CI 检查还不是必需的；这段时间推送前的本地验证仍是规则，由它兜底。
 - `reinstall-python` 在 Windows 上的 10 个失败没有修（§5）。
-- Windows runner 整池不在线时，`ci-suites-windows` 缺失，所有 PR 等着。和 Linux 池不在线时的现状一样；回退办法见 §7 第 5 项。
+- Windows runner 整池不在线时，`ci-suites-windows` 缺失，所有 PR 等着。和 Linux 池不在线时的现状一样；回退办法见 §7 第 4 项。

@@ -1,10 +1,4 @@
-// Local verification: an optional check of one's own change, not a condition
-// of a push (defect 66b7bf56, Owner Decision ecef33d5; resident ADR 0032).
-// The gate is CI, which runs the same selection once on Linux and once on
-// Windows; #1092 was verified here, on Windows alone, and failed on Linux.
-// This tool selects without a platform (selectSuites(check, files)), so it
-// runs the union of what CI runs on either side; which suite CI runs where is
-// SUITE_PLATFORMS in ci-required-selection.mjs and nowhere else.
+// Local verification before a push (defect 66b7bf56, Owner Decision ecef33d5).
 //
 // Runs the suites the required checks (clued-required-tests.yml) would run for
 // this change, the way they run them, on Windows and (--linux) in CluedDev-Linux, and
@@ -16,7 +10,7 @@
 //   node scripts/ci/local-verify.mjs [--base <commit>] [--committed] [--suite <id>]...
 //                                    [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]
 //
-//   --affected    the way to look before a push, when one wants to (task 70e5f450: a hand-picked
+//   --affected    the way to verify before a push (task 70e5f450: a hand-picked
 //                 --suite list missed offline-drill for #1015). It is the default
 //                 selection plus --linux (on Windows), and it refuses --suite and --candidate,
 //                 so the suites cannot be hand-picked: the files the branch

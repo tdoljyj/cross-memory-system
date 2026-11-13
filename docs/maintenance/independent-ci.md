@@ -1,6 +1,6 @@
 # 独立 CI
 
-本文记录 `main` 六项必需检查由谁发布、在哪里执行，以及独立 CI（`work/actions-hosted-migration/independent-ci-v1`）的运行约束、归档、灾备、常驻执行器的主备切换和可选的本地验证。文档不是实时在线状态或操作授权；规则集的实际来源以 GitHub 设置为准。
+本文记录 `main` 六项必需检查由谁发布、在哪里执行，以及独立 CI（`work/actions-hosted-migration/independent-ci-v1`）的运行约束、归档、灾备、常驻执行器的主备切换和推送前的本地验证。文档不是实时在线状态或操作授权；规则集的实际来源以 GitHub 设置为准。
 
 依据：Owner Decision `325717a6`（这些检查的工作可以用免费 Actions 分钟）、`22b0e0ed`（持久、自动的双执行路径，不每月靠人工，不弱化门禁，不开付费，规则集和账单只由 Owner 改）、`36a3efe9`、`1b5d3687`、`bc6fdad1`（同名检查），以及 `89945332`、`4fedfc84`（六项钉 App `5368905`，只由它签发）。
 
@@ -32,21 +32,15 @@
 - **当前限制。** 转发阶段属于 Source v2（PR-A）。装好并由 Owner 打开之前，六项都由本地正式角色产出。
 - **后备的字节绑定。** 独立 CI 的正式角色固定的是已安装副本里的工作流字节（自托管版本：`gitleaks.yml` `168aebaf…`、`trivy.yml` `cea2fd77…`、`contract-placement.yml` `762f1b13…`）。已安装的包继续使用安装时的副本。从包含托管执行者版本的 `main` 重新构建包之前，必须先重新固定这些字节，否则会以 `ORIGINAL_*_WORKFLOW_DRIFT` 拒绝。
 
-## 本地验证（可选自查）
+## 推送前的本地验证
 
-本地验证不是推送的前提，不挡推送。把关的是 CI：同一个选择在 Linux 和 Windows 上各跑一遍，任一边失败就合不进去（[常驻 ADR 0032](../../work/independent-ci-resident-v1/docs/adr/0032-ci-both-platforms.md)）。
-
-- 为什么不再要求：#1092 推送前跑了本地验证（默认模式，只跑 Windows）全绿，推上去 Linux 失败。靠人记得跑、跑对模式的检查挡不住这类错。
-- 哪个套件在哪个平台跑，只看 `scripts/ci/ci-required-selection.mjs` 的 `SUITE_PLATFORMS`，别处不另抄。
-- 当前状态：Windows 侧的检查 `ci-suites-windows` 按 ADR 0032 §7 分步上线。它成为必需检查之前，CI 仍只在 Linux 上测；这期间改常驻层或 Source v2 的 Windows 代码，建议推送前自查一次（默认模式跑的就是 Windows）。
-
-想在推送前快速看一眼时，用 `--affected`，不要手选 `--suite`（#1015 当时手选漏了 `offline-drill`，在常驻 CI 失败，run 42177591049）：
+推送前用 `--affected` 验证，不要手选 `--suite`（#1015 当时手选漏了 `offline-drill`，在常驻 CI 失败，run 42177591049）：
 
 ```bash
 node scripts/ci/local-verify.mjs --affected
 ```
 
-- **选择与 CI 一致。** 它取分支相对 GitHub `main`（先 fetch；也可用 `--base` 指定）的改动路径（含工作区未提交的改动，`--committed` 则不含），用 `main`（或 `--base`）上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和 `clued-required-tests.yml` 里 `ci-suites` 的 “Select suites” 步骤调用的是同一个函数，不另抄一份；区别有两处：文件清单来自 git（合并基点到分支），不来自 GitHub API；它不按平台筛选，选出的是 CI 两边要跑的套件的并集，所以某一侧可能多跑几个 CI 在那一侧不跑的套件。
+- **选择与 CI 一致。** 它取分支相对 GitHub `main`（先 fetch；也可用 `--base` 指定）的改动路径（含工作区未提交的改动，`--committed` 则不含），用 `main`（或 `--base`）上 `scripts/ci/ci-required-selection.mjs` 的 `selectSuites` 选套件。这和 `clued-required-tests.yml` 里 `ci-suites` 的 “Select suites” 步骤调用的是同一个函数，不另抄一份；区别只是文件清单来自 git（合并基点到分支），不来自 GitHub API。
 - **只跑选中的套件，两侧都跑。** 对 `clued-required-tests.yml` 的三项检查 `ci-suites`、`clued-cloud-tests`、`migration-verify` 各选一次。有任何改动文件时都会选中 `clued-cloud`。Windows 和 CluedDev-Linux 两侧同时跑；Linux 一侧需要先用 `setup-clued-dev-linux.ps1` 装好，没装好时摘要里 Linux 一侧显示 `COULD NOT COMPARE`，Windows 一侧照常跑，但只要选中了套件，退出码就是 1；要干净的退出码，用不加 `--affected` 的默认运行（它只跑 Windows 一侧，选择相同）；只跑 Linux 一侧用 `--affected --linux-only`。
 - **先说明选了什么、为什么。** 每项检查打印一行，文字同 CI 日志（`ci-suites: selected by changed paths; suites: ...`），每个选中的套件下面列出选中它的改动文件，最多三个（每个顶层目录的第一个优先），其余写 `... (N more)`。不加 `--affected`、也不加 `--suite` 的默认运行打印的选择说明相同。
 - **不能手选。** `--suite` 和 `--candidate` 不能与 `--affected` 同用。

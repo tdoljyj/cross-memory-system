@@ -543,12 +543,9 @@ test('a change that breaks only on Windows fails the Windows side and passes the
 
 // The Windows job is the selection's own entry point and nothing else, on a self-hosted Windows runner, behind the
 // same gate job as clued-required-tests.yml, and its name is the check's name only when it runs.
-test('the Windows job of the candidate workflow selects and runs with the trusted selection on a self-hosted Windows runner', () => {
+test('the Windows job selects and runs with the trusted selection on a self-hosted Windows runner', () => {
   const live = readFileSync(path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml'), 'utf8');
-  const file = ['.github/workflows/clued-required-tests-windows.yml', 'work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml']
-    .map((name) => path.join(ROOT, name)).find((name) => existsSync(name));
-  assert.ok(file, 'the Windows workflow, or its candidate before step 2 of ADR 0032');
-  const text = readFileSync(file, 'utf8');
+  const text = readFileSync(path.join(ROOT, '.github', 'workflows', 'clued-required-tests-windows.yml'), 'utf8');
   const between = (source, from, to) => source.slice(source.indexOf(from), source.indexOf(to));
   assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'), between(live, 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
     'the triggers, permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');

@@ -513,4 +513,4 @@ strict 开着，GitHub 不会合入落后的车头。目前由 PR 持有者自�
 | 合并队位过期 | 车头批次超过 90 分钟或认领租约到期，第 8 段等不到队首。CI 自动入队、延租；服务端没部署时由持有者续租重新入队 | §5.3 |
 | Owner 请求走错目录 | 复位、恢复、中止写进 `requests\` 会被拒。只用已装的 `rearm-resident.ps1` 提权写进 `owner\` | §0、§5.4 |
 | 装包把全量扫描清零 | 已由 strict 永久开解决：全量扫描不再挡任何事，装包不影响开车 | [ADR 0008](adr/0008-full-sweep-audit.md) |
-| 改了被锁定的文件忘了重新生成登记 | CI 的 `pinned-registries` 套件几秒内报出来并给出修复命令；推送前用 `local-verify --affected` 自查是可选的，不挡推送（Task `f4a02c4b`、`390ad276`） | [ADR 0032](adr/0032-ci-both-platforms.md) |
+| 改了被锁定的文件忘了重新生成登记 | 推送前用 `local-verify --affected` 跑全部受影响套件（Task `f4a02c4b`、`390ad276`） | — |
