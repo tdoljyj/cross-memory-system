@@ -436,8 +436,7 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             and isinstance(checks_v.get('verify-inputs'), dict) and checks_v['verify-inputs'].get('detail') == 'VERIFY_INPUT_UNREADABLE'):
         denied = True
     checks['verify'] = {'script': vscript, 'exit': code, 'status': v.get('status'), 'failed': failed, 'notRunnableUnelevated': denied, 'stderr': err[-300:]}
-    if not denied and (v.get('status') not in VERIFY_OK or failed):
-        find('INSTALLED_VERIFY_NOT_PASSING', status=v.get('status'), failed=failed)
+    verify_finding = not denied and (v.get('status') not in VERIFY_OK or failed)   # decided below, once the two sides are known
 
     # status: the fields the template (Test-OldRootQuiet) and prep.py read, and the upgrade state contracts
     st = host.read_json(host.path('state', 'status.json'))
@@ -497,8 +496,15 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     checks['linux'] = lin
     if not (facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and facts.get('staged') is None and facts.get('pinsOk') is True):
         find('LINUX_FACTS_NOT_A_SETTLED_GENERATION', facts=lin)
-    if gen.get('linux') != {'generation': facts.get('generation'), 'manifestSha256': facts.get('manifestSha256'), 'ciSourceManifestSha256': facts.get('ciSourceManifestSha256')}:
+    # The generic node package (DESIGN section 73): each side is replaced from what it is now, so the Linux side need not be the
+    # generation the Windows record names (a launch that stopped after Linux B leaves exactly that). It is recorded, not refused; the
+    # installed verify's two-sides-consistent, which says the same thing, is then the one check that may fail.
+    sides_differ = gen.get('linux') != {'generation': facts.get('generation'), 'manifestSha256': facts.get('manifestSha256'), 'ciSourceManifestSha256': facts.get('ciSourceManifestSha256')}
+    lin['sameAsTheGenerationRecord'] = not sides_differ
+    if sides_differ and not installed_linux_in_phase_a:
         find('LINUX_FACTS_NOT_THE_GENERATION_RECORD', record=gen.get('linux'))
+    if verify_finding and not (installed_linux_in_phase_a and sides_differ and failed == ['two-sides-consistent']):
+        find('INSTALLED_VERIFY_NOT_PASSING', status=v.get('status'), failed=failed)
     if installed_linux_in_phase_a:
         # The generic node package: the installed Linux manifest's bytes do not exist on the Windows side (only its hash, in the version
         # facts), so the configuration's file is no copy of it. Linux phase A, as root and before it stages anything, requires the live
@@ -544,7 +550,13 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             find('INSTALLED_ROLES_COPY_STALE', role=role, copy=got, installed=want)
     if not facts.get('roles'):
         find('LINUX_FACTS_WITHOUT_ROLES')
-    if sha_file(os.path.join(rd, 'formal-source-manifest-v2.json')) != facts.get('ciSourceManifestSha256'):
+    # The Linux side's Source manifest. The generic node package has its bytes only while the two sides are one package (the Windows
+    # record's); otherwise no copy is given and what needs them (the relay references of the derivation) is Linux phase A's, as root.
+    old_manifest = os.path.join(rd, 'formal-source-manifest-v2.json')
+    old_manifest_deferred = installed_linux_in_phase_a and not os.path.exists(old_manifest)
+    if old_manifest_deferred:
+        lin['installedSourceManifestCopy'] = {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_SOURCE_MANIFEST_BYTES_NOT_ON_WINDOWS', 'expectedSha256': facts.get('ciSourceManifestSha256')}
+    elif sha_file(old_manifest) != facts.get('ciSourceManifestSha256'):
         find('INSTALLED_SOURCE_MANIFEST_COPY_STALE')
 
     # pins: the package's Linux resident manifest against the installed one and the new commit's tree
@@ -605,6 +617,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
                   and pkg.get('ciSourceManifestSha256') == facts.get('ciSourceManifestSha256') and (pkg.get('linux') or {}).get('manifestSha256') == facts.get('manifestSha256'))
     if same_linux:
         checks['roles'] = {'notApplicable': 'SAME_SOURCE_AND_LINUX_HALF_NO_LINUX_PHASE'}
+    elif old_manifest_deferred:
+        checks['roles'] = {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_SOURCE_MANIFEST_BYTES_NOT_ON_WINDOWS'}
     elif skip_roles:
         checks['roles'] = {'skipped': True}
         find('ROLE_DERIVATION_NOT_REHEARSED')

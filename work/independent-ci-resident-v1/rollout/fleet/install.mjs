@@ -20,9 +20,11 @@
 //   2. the node (readNode), read-only: install\install-receipt.json (none: NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH) and upgrade\current.json
 //      (one generation), record\* (the receipt's and the record manifest's hashes), config\policy.json and config\companion.json (the
 //      receipt's), runtime\node.exe (the record's controllerNodeSha256), install\companion-account.json and companion-wsl.json (a
-//      companion-account node), the Linux version facts and roles-public.json copy (the current generation's, at most an hour old; with
-//      current.json: expectedInstalledLinux), the installed tokens from the receipt (installedSecretsOf: target, fingerprint, binding id;
-//      INSTALLED_UPGRADE_TOKEN_UNKNOWN / INSTALLED_HEARTBEAT_TOKEN_UNKNOWN; never opened: the launcher carries them).
+//      companion-account node), the Linux version facts and roles-public.json copy (a settled generation, at most an hour old:
+//      expectedInstalledLinux; each side is read from its own record and the two need not name the same package, DESIGN section 73),
+//      a reinstall's W1 pause an earlier stopped launch left (installedW1Reason), the installed tokens from the receipt
+//      (installedSecretsOf: target, fingerprint, binding id; INSTALLED_UPGRADE_TOKEN_UNKNOWN / INSTALLED_HEARTBEAT_TOKEN_UNKNOWN; never
+//      opened: the launcher carries them).
 //   3. <work>\tree-<c8>\ (the archive's tree) and <work>\x\ (its bundle); inputs (<work>\inputs\): record inputs (the node's record values
 //      + fleetRefs; the commit's prepare-record.mjs, check-record.mjs), policy/companion inputs (the installed ones, back to inputs;
 //      ports.nodeInputs), the upgrader configuration (port of reinstall/tools/upgrader-config.py, validated by the tree's
@@ -37,8 +39,8 @@
 //      hand-written per-node file), the installed copies it names under <work>\inputs\installed\, <work>\rehearsal\src-<c8>.git from the
 //      bundle; then the package's reinstall/rehearse.py --file-locks-in-launcher --fleet (REHEARSAL_PASS or REHEARSAL_FAILED with its findings),
 //      the package's reinstall/linux/prep.py in its --in-dir/--out-dir form (A.sh, B.sh, B-resume.sh in <work>\linux\), then W1: the
-//      package's reinstall/tools/pause-old-resident.py (OLD_RESIDENT_PAUSED_NO_OPEN_BATCH; again with the same version: its own pause, at
-//      once; only after generate.py --fleet-plan --check passed), <work>\install-plan.json (w1Paused, launcher null), the package's
+//      package's reinstall/tools/pause-old-resident.py (OLD_RESIDENT_PAUSED_NO_OPEN_BATCH; a reinstall's W1 pause already in force,
+//      of this or an earlier package, is this launch's: confirmed at once; only after generate.py --fleet-plan --check passed), <work>\install-plan.json (w1Paused, launcher null), the package's
 //      reinstall/launcher/generate.py --fleet-plan; then the plan once more with launcher filled (a record for people; the launcher pins
 //      the plan as generate.py read it).
 //   7. one JSON line { status, node, version, workDir, installPlan, launcher: { path, sha256 }, runCommand }.
@@ -188,14 +190,16 @@ export async function readNode({ root, now = Date.now() }) {
       && /^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,6}[A-Za-z0-9._-]{1,64}$/.test(target ?? ''), 'NODE_COMPANION_WSL_RECORD_REFUSED');
     companionAccount = { companionSid: ca.companionSid, operatorSid: ca.operatorSid, wslVhdxDirectory: target };
   }
-  // the Linux half: the companion's version facts and roles-v3 copy, of the current generation
+  // the Linux half, from its own record: the companion's version facts (a settled generation, at most an hour old) and roles-v3 copy.
+  // DESIGN section 73: it need not be the generation current.json names. A launch that stopped after Linux B leaves the Linux side at
+  // that package and the Windows side at the one before it; the reinstall replaces both, each from what it is now (Linux A compares
+  // the live host with expectedInstalledLinux as root), so no stop can leave a node this command cannot describe.
   const responses = at('upgrade', 'mailbox', 'responses');
   const factsBytes = await fs.readFile(path.join(responses, 'version-facts.json'));
   let facts;
   try { facts = pyLoads(new TextDecoder('utf-8', { fatal: true }).decode(factsBytes)); } catch { throw new Refused('LINUX_VERSION_FACTS_REFUSED'); }
   need(facts?.contract === 'clued.independent-ci.linux-version-facts/1' && facts.staged === null && facts.pinsOk === true, 'LINUX_VERSION_FACTS_NOT_A_SETTLED_GENERATION');
-  need(facts.generation === current.linux?.generation && facts.manifestSha256 === current.linux?.manifestSha256 && facts.ciSourceManifestSha256 === current.ciSourceManifestSha256
-    && current.linux?.ciSourceManifestSha256 === current.ciSourceManifestSha256, 'LINUX_VERSION_FACTS_NOT_THE_CURRENT_GENERATION');
+  need(Number.isSafeInteger(facts.generation) && facts.generation >= 1 && HEX64.test(facts.manifestSha256 ?? '') && HEX64.test(facts.ciSourceManifestSha256 ?? ''), 'LINUX_VERSION_FACTS_REFUSED');
   need(typeof facts.observedAt === 'string' && Math.abs(now - Date.parse(facts.observedAt)) <= FACTS_MAX_AGE_MS, 'LINUX_VERSION_FACTS_NOT_FRESH', { observedAt: facts.observedAt });
   const copy = companionCopy(await readOrNull(path.join(responses, 'roles-public.json')), facts.generation);
   const roles = {};
@@ -211,14 +215,20 @@ export async function readNode({ root, now = Date.now() }) {
   need(toolchain.length === 1 && HEX64.test(toolchain[0] ?? ''), 'NODE_TOOLCHAIN_NODE_NOT_ONE_VALUE', { toolchain });
   const keys = [...new Set(FORMAL_ROLES.map(r => roles[r].payload.resultPublicKeySha256))];
   need(keys.length === 1 && HEX64.test(keys[0] ?? ''), 'NODE_RESULT_KEY_NOT_ONE_VALUE');
-  // the installed Linux generation Linux A finds (section 8.2): current.json and the version facts, already checked to agree above. The
-  // installed Linux manifest's bytes are not on the Windows side; A compares the live one with this hash as root.
+  // the installed Linux generation Linux A finds (section 8.2): the version facts. The installed Linux manifest's bytes are not on the
+  // Windows side; A compares the live one with this hash as root. The Linux side's Source manifest is the Windows record's only while the
+  // two sides are one package (linuxMan; null otherwise: its bytes are then on the Linux side alone and A reads them there).
   const expectedInstalledLinux = { generation: facts.generation, manifestSha256: facts.manifestSha256, ciSourceManifestSha256: facts.ciSourceManifestSha256 };
-  need(pyEqual(expectedInstalledLinux, { generation: current.linux.generation, manifestSha256: current.linux.manifestSha256, ciSourceManifestSha256: current.linux.ciSourceManifestSha256 })
-    && Number.isSafeInteger(facts.generation) && facts.generation >= 1 && HEX64.test(facts.manifestSha256 ?? '') && HEX64.test(facts.ciSourceManifestSha256 ?? ''),
-  'LINUX_VERSION_FACTS_NOT_THE_CURRENT_GENERATION');
+  const linuxMan = facts.ciSourceManifestSha256 === current.ciSourceManifestSha256 ? man : null;
+  // a reinstall's W1 pause an earlier launch left in force (it stopped after Linux A began, or was cut off): this launch's W1 is that
+  // pause, under its own reason, so a stopped launch never needs a person to lift a pause before the next prepare (section 7 step 4).
+  const pausedBytes = await readOrNull(at('state', 'PAUSED.json'));
+  let installedW1Reason = null;
+  try { installedW1Reason = pausedBytes === null ? null : jsonOf(pausedBytes)?.source?.reason ?? null; } catch { installedW1Reason = null; }
+  if (!(typeof installedW1Reason === 'string' && W1_REASON.test(installedW1Reason))) installedW1Reason = null;
   return { root, receipt, current, raw, rm, acc, inst, man, signers, profile, profileSha256, policy, companion, nodeExe, nodeExeSha256, companionAccount,
-    facts, factsBytes, roles, linuxHost: { toolchainNodeSha256: toolchain[0], resultPublicKeySha256: keys[0] }, expectedInstalledLinux, distribution: policy?.linux?.distribution };
+    facts, factsBytes, roles, linuxHost: { toolchainNodeSha256: toolchain[0], resultPublicKeySha256: keys[0] }, expectedInstalledLinux, linuxMan, installedW1Reason,
+    distribution: policy?.linux?.distribution };
 }
 
 // ---------------------------------------------------------------- stage 3: inputs from the node's values and the fleet's
@@ -324,6 +334,7 @@ export function linuxExternalPins({ residentTree, readTreeFile, toolchainNodeSha
   return pins;
 }
 
+export const W1_REASON = /^fleet-node-reinstall-[a-z0-9-]{1,80}-w1-before-linux-switch$/;
 export const reasonsOf = version => {
   const v = `fleet-node-reinstall-${version.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
   return { pause: `${v}-hold-after-install`, rearm: `${v}-rearm-after-verify`, w1Pause: `${v}-w1-before-linux-switch` };
@@ -363,17 +374,19 @@ export function reinstallConfigFor({ node, work, repo, packageDir, inputs, insta
 }
 
 // reinstall/linux/tools/derive-roles.py (what Linux A derives as root and B compares, SOURCE_V2_DERIVED_ROLE_MISMATCH): each installed
-// role policy with the new manifest, the two new references and the five Source pins of the commit; nothing else may change.
+// role policy with the new manifest, the two new references and the five Source pins of the commit; nothing else may change. OLD is
+// the Linux side's own Source (its facts); its relay references are compared here only when that manifest is on the Windows side
+// (node.linuxMan), and by Linux A as root in every case (derive-roles: INSTALLED_REFS_NOT_THE_OLD_RELAY).
 export function rolesDerivedReinstall({ node, newManifestBytes, readTreeFile }) {
-  const NEW = sha(newManifestBytes), OLD = node.current.ciSourceManifestSha256;
+  const NEW = sha(newManifestBytes), OLD = node.expectedInstalledLinux.ciSourceManifestSha256;
   const newM = pyLoads(newManifestBytes.toString('utf8'));
   need(OLD !== NEW && newM.sourceSha !== undefined, 'NEW_SOURCE_IS_THE_INSTALLED_ONE');
   const out = {};
   for (const role of FORMAL_ROLES) {
-    const orel = node.man.roles[role].controllerRelay, nrel = newM.roles[role].controllerRelay;
+    const orel = node.linuxMan?.roles[role].controllerRelay ?? null, nrel = newM.roles[role].controllerRelay;
     const { policy: pol, payload: pay } = node.roles[role];
     need(pol.sourceManifestSha256 === OLD && pay.sourceManifestSha256 === OLD, 'INSTALLED_NOT_THE_OLD_MANIFEST', { role });
-    need(pol.sourceAcceptanceRef === orel.sourceAcceptanceRef && pol.hostAcceptanceRef === orel.hostQualificationRef, 'INSTALLED_REFS_NOT_THE_OLD_RELAY', { role });
+    need(orel === null || (pol.sourceAcceptanceRef === orel.sourceAcceptanceRef && pol.hostAcceptanceRef === orel.hostQualificationRef), 'INSTALLED_REFS_NOT_THE_OLD_RELAY', { role });
     for (const k of ['sourceAcceptanceRef', 'hostAcceptanceRef', 'runtimeIdentity', 'image', 'entrySha256', 'qualificationSha256', 'executionMode', 'workerSha256',
       'proofSha256', 'jobSha256', 'nodeExecutable', 'keyId']) need(pyEqual(pay[k] ?? null, pol[k] ?? null), 'INSTALLED_PAYLOAD_NOT_ITS_POLICY', { role, key: k });
     need(typeof pol.entryFile === 'string' && pol.entryFile.startsWith(`${TRUSTED_SOURCE}/`), 'ENTRY_OUTSIDE_TRUSTED', { role });
@@ -461,6 +474,10 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     need(want && want.equals(await fs.readFile(path.join(selfDir, n))), 'FLEET_INSTALLER_NOT_THE_ARCHIVES', n);
   }
   const node = await readNode({ root, now });
+  // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
+  // Linux phases cannot run again over themselves; that launch is continued from where it stopped (reinstall/README.md, --fleet-continue).
+  need(!(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
+    'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
   const secrets = installedSecretsOf(node.receipt);
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
@@ -551,14 +568,16 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     await writeNew(path.join(installed, 'roles-v3', `${role}.json`), node.roles[role].policyBytes);
     await writeNew(path.join(installed, 'roles-v3', `${role}.qualification.json`), node.roles[role].qualificationBytes);
   }
-  await writeNew(path.join(installed, 'roles-v3', 'formal-source-manifest-v2.json'), node.raw['source-manifest.json']);
+  // the Linux side's Source manifest, when the Windows record is that one; otherwise its bytes are on the Linux side alone and what
+  // needs them is Linux A's (rehearse.py --fleet: deferredTo linux-phase-a)
+  if (node.linuxMan) await writeNew(path.join(installed, 'roles-v3', 'formal-source-manifest-v2.json'), node.raw['source-manifest.json']);
   const repo = path.join(work, 'rehearsal', `src-${universal.commit.slice(0, 8)}.git`);
   await fs.mkdir(path.dirname(repo));
   bareFromBundle({ git: repo, bundle, commit: universal.commit, env: gitEnv(x) });
   const installerText = (await fs.readFile(path.join(R, 'windows', 'install-resident.ps1'))).toString('utf8');
   const originalBinary = [...installerText.matchAll(/^\$OriginalBinary = '([^']+)'/gm)].map(r => r[1]);
   need(originalBinary.length === 1, 'PACKAGE_INSTALLER_RUNNER_BINARY_UNKNOWN');
-  const reasons = reasonsOf(universal.version);
+  const reasons = { ...reasonsOf(universal.version), ...(node.installedW1Reason ? { w1Pause: node.installedW1Reason } : {}) };
   const cfg = reinstallConfigFor({ node, work, repo, packageDir, inputs, installed, secrets, reasons,
     runner: { binary: originalBinary[0], sddl: scm(node.profile.runnerService).sddl } });
   const configFile = path.join(inputs, 'reinstall-config.json');
@@ -599,8 +618,9 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   need(gc.status === 0, 'LAUNCHER_CHECK_FAILED', gc.stderr || gc.last);
 
   // W1 (README section 7 step 4): the package's pause-old-resident.py, non-elevated, with the plan's w1Pause reason (the synthesized
-  // configuration's launcher.w1PauseReason); it waits for OLD_RESIDENT_PAUSED_NO_OPEN_BATCH and, run again with the same version, finds its
-  // own pause confirmed. The PAUSED.json it confirmed is pinned into the plan for generate.py.
+  // configuration's launcher.w1PauseReason: this version's, or the reason of the reinstall W1 pause an earlier stopped launch left in
+  // force, readNode's installedW1Reason); it waits for OLD_RESIDENT_PAUSED_NO_OPEN_BATCH and finds a pause of that reason confirmed at
+  // once. The PAUSED.json it confirmed is pinned into the plan for generate.py.
   const w1 = python(path.join(R, 'reinstall', 'tools', 'pause-old-resident.py'), [configFile]);
   const wr = parsed(String(w1.stdout ?? '').trim().split(/\r?\n/).at(-1) ?? '') ?? parsed(w1.last ?? '');
   need(w1.status === 0 && wr?.status === 'OLD_RESIDENT_PAUSED_NO_OPEN_BATCH' && HEX64.test(wr.pausedSha256 ?? ''), 'W1_PAUSE_NOT_CONFIRMED', wr ?? { stderr: w1.stderr });

@@ -5706,3 +5706,32 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - attempt 2：预检后一次读，head 已变 → `ATTEMPT2_SUPERSEDED`；读不到 → 照常跑完。
 
 随之更新：`test/node-mode.test.mjs`（STANDBY 下停在 A、B 的批次不再续跑，而是按规则结束）、`test/scheduler.test.mjs`（等托管的批次在 tick 上按规则结束，安全点名 `waiting`）、`reinstall/test/test_rehearse.py`（卸载计划里的未结批次不是预演发现）。原有的取代、停靠、#1035、排队观察、重启重跑测试照旧通过。
+
+## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
+
+现场（2026-11-13，desk-w-591）：启动器在 Linux A、B 之后的 Windows 预检停下（`RUNNER_SERVICE_NOT_AS_REVIEWED`），Linux 是新包、Windows 是旧装；之后既续不了也重新 `prepare` 不了。时间线与根因见 ADR 0029。
+
+### 73.1 规则
+
+1. **重装不要求被它替换掉的东西先彼此一致。** `prepare`（`rollout/fleet/install.mjs#readNode`）对两侧各读各的记录：Windows 侧是 `install-receipt.json` 与 `current.json`，Linux 侧是它自己的版本事实（`staged=null`、`pinsOk`、一小时内）与公开角色副本。两者说的不是同一个包不算拒绝理由。`expectedInstalledLinux` 取自 facts，Linux A 以 root 拿它核对现场。
+2. **Linux 侧的东西由 Linux A 核对。** Windows 侧拿不到字节的项一律 `deferredTo: linux-phase-a`：已装 Linux manifest（原有）、Linux 侧的 Source manifest 及用到它的角色推导预演（两侧不同包时新增）。
+3. **本包自己的半途走续行。** Linux 已是本包而 Windows 不是：`LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`，用 `generate.py --fleet-continue`。
+4. **W1 暂停按原因认领，不按某一次确认的字节。** `prepare` 认领现场已有的重装 W1 暂停（reason 形如 `fleet-node-reinstall-<版本>-w1-before-linux-switch`）；续行在钉住的暂停已不在时用启动器自己的 W1 reason 重新请求并重钉 `$InstalledPausedSha256`。启动器运行时仍按钉住的字节核对（`Test-OldRootQuiet`），别人的暂停任何一步都不认。
+5. **运行器先等再判。** 暂停下当班节点的维护（角色探测、队列观察、第 10 段只撤销，§41.3、§72）会临时交换运行器。两处只读预检（`Step-WindowsPreflightBeforeLinux`、`Step-UninstallPreflight`）用 `Wait-RunnerState`：600 秒内每 2 秒读一次，按最后一次读数判。
+
+### 73.2 停在哪一步，下一步是什么
+
+| 停在 | 节点状态 | 再来一次 |
+|---|---|---|
+| A 开始之前 | 两侧都是旧装；W1 暂停已自动解除（解除不成则留着） | 同一条 `prepare`（新 `--work`）；留着的暂停被认领 |
+| A 之后、卸载之前（含断电） | Linux 新、Windows 旧；W1 暂停留着 | 本包：`--fleet-continue`（暂停不在了就重新请求）。换了新包：新包的 `prepare`，认领留下的暂停 |
+| 卸载之中或之后 | 见 `reinstall/README.md` 续行表 | `--fleet-continue`（未变） |
+
+任何一步停下，节点都在暂停或版本不一致的 intake hold 之下，不接活；上表每一格都有一条不带节点参数的命令把它装完。
+
+### 73.3 测试
+
+- `rollout/fleet/test/install.test.mjs`：被更早的包装了一半、W1 暂停还在的节点，`prepare` 通过；`expectedInstalledLinux` 与真 `prep.py` 生成的 `A.sh`（`OLD_MANIFEST`、`OLD_LINUX_RES_MANIFEST`、`OLD_GENERATION`）都是 Linux 自己的事实；不写 `formal-source-manifest-v2.json` 副本；W1 用留下的暂停，不发第二个请求；非重装的暂停不认领；本包自己的半途在写任何东西之前被拒并给出续行命令。
+- `reinstall/test/test_rehearse.py`：fleet 形态下两侧不同不是 finding，两项延后给 A；已装 verify 只许 `two-sides-consistent` 不过，且只在两侧确实不同时。
+- `reinstall/test/test_fleet_continue.py`：停在 `RUNNER_SERVICE_NOT_AS_REVIEWED`、暂停被解除后续行：用真的 `pause-old-resident.py` 重新请求，续行钉新的暂停；模板自己的 `Test-OldRootQuiet` 对原启动器报 `OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE`、对续行通过；暂停仍在时不请求；别人的暂停拒绝。
+- `reinstall/test/test_launcher_service_state.py`：模板的 `Get-RunnerState` + `Wait-RunnerState` 对现场那次读数（controller、RUNNING）等到换回原样后通过；一直不对到时仍拒绝；两处预检都用它。

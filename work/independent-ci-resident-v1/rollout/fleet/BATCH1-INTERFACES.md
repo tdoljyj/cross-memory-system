@@ -143,5 +143,5 @@ record 各文件：`source-manifest.json` 全体逐字节相同；`installation.
 2. **不依赖已装包目录。** prepare 不再要求任何开发工作区路径。已装 Linux manifest 的字节在 Windows 侧不存在（只有 `version-facts.json` 里的哈希），所以：
    - 外部钉值的路径与顺序从包内 unit 文件推出（块 1 最初的做法）；
    - rehearse 在 fleet 模式下把“已装 Linux manifest 与副本一致”这项延后到 Linux A（与 companion 节点 linuxHost 延后同理），记 `deferredTo: linux-phase-a`，不算 finding；
-   - plan 增加 `expectedInstalledLinux: { generation, manifestSha256, ciSourceManifestSha256 }`（取自 `current.json` 与 `version-facts.json`，两者须一致），A 在 root 下核对现场 manifest 的 sha 等于它，不等即停。
+   - plan 增加 `expectedInstalledLinux: { generation, manifestSha256, ciSourceManifestSha256 }`（取自 `version-facts.json`：Linux 侧按它自己的记录描述，不要求等于 `current.json` 的 `linux` 块，DESIGN §73；停在 B 之后的节点两者本来就不同），A 在 root 下核对现场 manifest 的 sha 等于它，不等即停。
 3. **没有旧装的节点**：`install\install-receipt.json` 不存在 → prepare 拒绝 `NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH`（首次安装走 README §8c，不在本批）。

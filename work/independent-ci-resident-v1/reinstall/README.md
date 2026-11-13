@@ -123,7 +123,11 @@ python -I launcher\generate.py --fleet-plan <install-plan.json> --out <launcher.
 
 **如实写明的残余**：companion 账户（即发行版里的 root）能写 `stdout.txt` 的内容，也能写出目录里的 evidence 与 facts，所以它能伪造"B 已完成"的状态行和通过规则的输出。这与已经给予该发行版的信任等同（它就是执行 B 的身份），规则核对和最后 verify 的两侧一致性检查之外不再设防。此类启动器不支持 `resume.py`（`FLEET_LAUNCH_RESUME_NOT_SUPPORTED`），续行见下。
 
+**运行器先等再判（`Wait-RunnerState`，DESIGN §73）**：暂停只停批次；当班节点在暂停下仍为角色探测、队列观察、第 10 段只撤销临时把运行器换成 controller，结束后换回原样。`Step-WindowsPreflightBeforeLinux` 与 `Step-UninstallPreflight` 在 `$RunnerSettleSeconds`（600 秒）内每 2 秒读一次，按最后一次读数判 `RUNNER_SERVICE_NOT_AS_REVIEWED`（2026-11-13 desk-w-591：一次读在交换中间的读数让启动器停在 Linux B 之后）。
+
 #### 中途停止或断电后的续行（`--fleet-continue`）
+
+**W1 暂停**：旧常驻还在的模式（`before-uninstall`、`b-timeout`、`a-timeout`）里，现场 `state\PAUSED.json` 不是启动器钉住的那份时（停下之后被人解除），生成器用启动器自己的 W1 reason 重新请求（`tools/pause-old-resident.py`，与 `prepare` 相同，等到 `OLD_RESIDENT_PAUSED_NO_OPEN_BATCH`），并把续行启动器的 `$InstalledPausedSha256` 钉成现在这份；输出里 `w1PausedAgainSha256` 非空。别的请求的暂停照旧拒绝（`W1_PAUSE_NOT_CONFIRMED`，detail 是该工具自己的报告）。
 
 ```
 python -I launcher\generate.py --fleet-continue <上次的 launcher.ps1> --out <新 launcher.ps1>
@@ -137,7 +141,7 @@ python -I launcher\generate.py --fleet-continue <上次的 launcher.ps1> --out <
 
 | 上次停在 | mode | 续行做什么 |
 |---|---|---|
-| B 输出已核对、卸载未开始（含断电） | `before-uninstall` | 跳过 Linux；重核上次保存的 B 输出；提权文件锁；从现装根带令牌；从 `Step-UninstallPreflight` 起是原文。此时 Linux 已是新代、Windows 仍是旧装，重新 prepare 描述不了这台节点，只能续行 |
+| B 输出已核对、卸载未开始（含断电） | `before-uninstall` | 跳过 Linux；重核上次保存的 B 输出；提权文件锁；从现装根带令牌；从 `Step-UninstallPreflight` 起是原文。此时 Linux 已是新代、Windows 仍是旧装：同一个包只能续行（`prepare` 拒绝 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`）；更新的包可以直接 `prepare`（DESIGN §73） |
 | A 超时 | `a-timeout` | 续行运行时由提权侧看上次 A 的 stdout/stderr：非 companion 节点直接读运行目录 `out\`；companion 节点先由 registrar `capture-file` 把 `out\stdout.txt|stderr.txt` 抓进本次续行在同一运行目录下新建的 `captured-<32hex>\`（仅 SY/BA）再读，抓取 create-only，每次续行一个新目录，旧的留作证据。末行已是 `PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED` → 其余全按原文重跑（Linux 前的 Windows 预检、带令牌、文件锁），`Step-LinuxRoot` 原样跑 B（B 自己按 `phaseA.sha256` 核对），只是其中 A 换成上次那次、出目录改为核对它就是上次建的。判读顺序：先按 `Get-FleetRunProcesses`（template）问该运行是否还有进程：有 → `LINUX_PHASE_STILL_RUNNING_RETRY`（稍后再跑同一条命令，什么也不读），查询失败 → `RUN_PROCESS_QUERY_FAILED`（不当作没有进程）；没有进程才抓取并读：registrar 拒绝抓取 stdout → `LINUX_PHASE_OUTPUT_NOT_CAPTURED`（报告里记 registrar 的拒绝码），读到终态照常往下，末行 REFUSED → `LINUX_PHASE_A_FAILED_AFTER_ITS_TIMEOUT`，其它（没有终态行）→ `LINUX_PHASE_ENDED_WITHOUT_STATUS`（硬失败，不无限重试）。A 已跑过，续行一开始就解除 W1 暂停的自动恢复 |
 | B 超时，或 B 的输出 registrar 拒绝抓取（`LINUX_PHASE_B_OUTPUT_NOT_CAPTURED`，最后一个 run 为 EXITED 且带 `captureRefused`） | `b-timeout` | 跳过 Linux；B 的 stdout 按上一行同样的方式读与判定（B 的终态是 `LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1`，REFUSED → `LINUX_PHASE_B_FAILED_AFTER_ITS_TIMEOUT`）；evidence/facts 经模板的 `Read-FleetOutFile` 读，companion 节点抓进同一个本次的 `captured-<32hex>\`；过规则后提权文件锁、从现装根带令牌，从 `Step-UninstallPreflight` 起是原文 |
 | 卸载半途：quiesce 已完成，已装卸载器 `-Apply` 失败（`UNINSTALL_NOT_COMPLETED`，且证据正是 §4.1 `resume.py` 审过的那种） | `inside-uninstall` | 跳过 Linux 与卸载；重核上次保存的 B 输出；根目录尚未改名，所以**在改名之前**从现装根带令牌（指纹不符即停，节点保持原样，可再生成同一续行）；随后由 `resume.py` 已审的 `Step-FinishUninstall`（`finish-uninstall.ps1` 原样注入、另钉 sha）重核 §4.1 的全部现场条件，只补同目录 rename 和原计划摘要的卸载回执；从 `Step-Preflight` 起是原文 |

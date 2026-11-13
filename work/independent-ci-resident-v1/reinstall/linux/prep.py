@@ -65,7 +65,9 @@ if not FLEET:   # the generic node package: this file's own tree is the unpacked
 _facts = json.load(open(ARGV[7], encoding='utf-8'))
 _gen = json.load(open(ARGV[8], encoding='utf-8'))
 assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and 'staged' in _facts and _facts['staged'] is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
-assert _gen.get('contract') == 'clued.independent-ci.resident-generation/1' and _gen['linux'] == {'generation': _facts['generation'], 'manifestSha256': _facts['manifestSha256'], 'ciSourceManifestSha256': _facts['ciSourceManifestSha256']}, 'INSTALLED_FACTS_NOT_THE_GENERATION_RECORD'
+# The generic node package (DESIGN section 73): the Linux side is what its own facts say; it need not be the generation the Windows
+# record names (a launch that stopped after Linux B). Phase A compares the live host with these values as root.
+assert _gen.get('contract') == 'clued.independent-ci.resident-generation/1' and (FLEET or _gen['linux'] == {'generation': _facts['generation'], 'manifestSha256': _facts['manifestSha256'], 'ciSourceManifestSha256': _facts['ciSourceManifestSha256']}), 'INSTALLED_FACTS_NOT_THE_GENERATION_RECORD'
 OLD_COMMIT = _facts['sourceCommit']
 OLD_MANIFEST = _facts['ciSourceManifestSha256']
 OLD_LINUX_RES_MANIFEST = _facts['manifestSha256']

@@ -123,7 +123,12 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 ## 8. 失败时怎么办
 
 - 生产节点失败一次就停手：不重试、不改参数硬再跑。先在一次性环境复现，核实根因，做最小修复，再一次性上生产。
-- `prepare` 的输出只许新建：失败后换一个新 `--work` 目录，不复用旧的。W1 之后才失败（例如 `generate.py`）时，旧常驻保持暂停；修好后用同一版本重跑 `prepare`，W1 会直接确认这次自己的暂停。
+- `prepare` 的输出只许新建：失败后换一个新 `--work` 目录，不复用旧的。W1 之后才失败（例如 `generate.py`）时，旧常驻保持暂停；重跑 `prepare`（同一版本或更新的包）时 W1 直接认领留下的重装暂停，不需要先解除。
+- 启动器是一次性的：同一个文件再跑只会得到 `EXISTING_EXECUTION_PRESERVED`。停下之后（DESIGN §73）：
+  - A 开始之前停下：节点没动，W1 暂停已自动解除；重跑 `prepare`。
+  - A 之后停下（Linux 已是新包、Windows 还是旧装，节点保持暂停）：`python -I <tree>\work\independent-ci-resident-v1\reinstall\launcher\generate.py --fleet-continue <那次的 launcher.ps1> --out <新 launcher.ps1>`，再提权运行输出里的 `elevatedCommand`。暂停若已被解除，这条命令会重新请求。此时对同一个包重跑 `prepare` 会得到 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`。
+  - 那个包本身续不下去、已经换了新包：直接用新包 `prepare` + 启动器，两侧各从现状装到新包。
+- `RUNNER_SERVICE_NOT_AS_REVIEWED`：当班节点在暂停下仍会为自己的维护临时交换运行器，预检会等它换回（最多 600 秒）；到时仍不对才停。
 - `publish.mjs` 在 gh 失败时不动索引；`release` 失败后先看 Release 是否已建出一部分，不要重复创建同一 tag。
 - `attach-acceptance` 对已接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。
 - B 在 Source 切换之后失败：模板自动用 B-resume 续跑一次；仍失败则停手，交协调者。
