@@ -21,7 +21,8 @@ async function freePort() {
   const p = s.address().port; await new Promise(r => s.close(r)); return p;
 }
 
-test('trusted PR terminal release requires holder intent, real admission and conservative lifecycle proof', { timeout: 300000 }, async t => {
+// Skipped while 20261113144500 pauses terminal admission; the migration that lifts the pause removes this skip.
+test('trusted PR terminal release requires holder intent, real admission and conservative lifecycle proof', { timeout: 300000, skip: 'terminal admission paused by 20261113144500 until every resident node accepts it' }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-pr-task-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
     persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
