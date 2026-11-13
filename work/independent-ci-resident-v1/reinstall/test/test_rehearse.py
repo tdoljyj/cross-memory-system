@@ -171,6 +171,8 @@ class FakeHost:
             return 0, json.dumps(self.uninstall), ''
         if script[-1] == 'verify-resident.ps1' and self.verify == 'denied':
             return 1, '', 'Test-Path : Access is denied (+ FullyQualifiedErrorId : ItemExistsUnauthorizedAccessError)'
+        if script[-1] == 'verify-resident.ps1' and self.verify == 'two-sides':
+            return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'a': {'ok': True}, 'two-sides-consistent': {'ok': False}}}), ''
         if script[-1] == 'verify-resident.ps1' and self.verify == 'failed':
             return 1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': {'a': {'ok': False}}}), ''
         if script[-1] == 'verify-resident.ps1' and self.verify == 'input-unreadable':
@@ -598,6 +600,28 @@ class CompanionNode(unittest.TestCase):
 
     def run_with(self, host, **kw):
         return rehearse.rehearse(self.fx.cfg, COMMIT, self.fx.pkg, host, **kw)
+
+    def test_a_half_installed_node_is_rehearsed_as_it_is_by_the_generic_package(self):
+        # DESIGN section 73 (desk-w-591, 2026-11-13): an earlier launch stopped after Linux B. The Windows record still names the Linux
+        # generation before it, the installed verify fails two-sides-consistent and nothing else, and the Linux side's Source manifest is
+        # not on the Windows side (prepare gives no copy). The generic package replaces both sides: recorded and left to Linux phase A.
+        os.remove(self.fx.installed_manifest)
+        os.remove(os.path.join(self.fx.cfg['linux']['installedRoles'], 'formal-source-manifest-v2.json'))
+        host = CompanionHost(self.fx, verify='two-sides')
+        host.json[('upgrade', 'current.json')]['linux'] = {'generation': 1, 'manifestSha256': 'a' * 64, 'ciSourceManifestSha256': 'b' * 64}
+        r = self.run_with(host, installed_linux_in_phase_a=True)
+        self.assertEqual((r['status'], r['findings']), ('REHEARSAL_PASS', []))
+        self.assertIs(r['checks']['linux']['sameAsTheGenerationRecord'], False)
+        deferred = {'deferredTo': 'linux-phase-a', 'reason': 'INSTALLED_SOURCE_MANIFEST_BYTES_NOT_ON_WINDOWS'}
+        self.assertEqual(r['checks']['linux']['installedSourceManifestCopy'], dict(deferred, expectedSha256=self.fx.facts['ciSourceManifestSha256']))
+        self.assertEqual(r['checks']['roles'], deferred)
+        self.assertIsNone(host.windows_argv, 'no derivation without the Linux side\'s manifest')
+        self.assertEqual(r['checks']['linux']['rolesCopy'], self.fx.facts_roles, 'the role copies are still the facts\' ones')
+        # any other failed check of the installed verify is still a finding; so is a node whose sides agree and whose verify fails that check
+        host = CompanionHost(self.fx, verify='failed')
+        host.json[('upgrade', 'current.json')]['linux'] = {'generation': 1, 'manifestSha256': 'a' * 64, 'ciSourceManifestSha256': 'b' * 64}
+        self.assertEqual(codes(self.run_with(host, installed_linux_in_phase_a=True)), ['INSTALLED_VERIFY_NOT_PASSING'])
+        self.assertEqual(codes(self.run_with(CompanionHost(self.fx, verify='two-sides'), installed_linux_in_phase_a=True)), ['INSTALLED_VERIFY_NOT_PASSING'])
 
     def test_happy_path_calls_no_wsl_and_derives_on_windows(self):
         host = CompanionHost(self.fx)

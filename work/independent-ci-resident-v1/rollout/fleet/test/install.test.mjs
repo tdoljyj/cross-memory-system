@@ -4,8 +4,9 @@
 // frozen upgrader's readPackageOnce reads; the synthesized reinstall configuration is one rconfig.py loads; rehearse.py, prep.py and
 // generate.py get the right arguments in the right order and the plan has every field. The package's prep.py runs for real on both
 // nodes (A.sh, B.sh, B-resume.sh); generate.py runs for real up to the live host (the third test). Refusals: archive sha, acceptance,
-// tampered entry, climbing path, an installer not the archive's, stale facts, no install, facts of another generation, the receipt's tokens,
-// a failed rehearsal. The prepare command line is the same on both nodes (section 8).
+// tampered entry, climbing path, an installer not the archive's, stale facts, no install, the receipt's tokens, a failed rehearsal. The
+// prepare command line is the same on both nodes (section 8). A node an earlier package's launch left half installed (Linux that
+// package's, Windows the install before it, its W1 pause in force: desk-w-591, 2026-11-13) is prepared as it is (DESIGN section 73).
 // Differential: the upgrader configuration against upgrader-config.py, the reinstall role derivation against the frozen tool's.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,8 +15,8 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { FLEET_REF_KEYS, LINUX_SCRIPTS, OWN_MODULES, PLAN_CONTRACT, installedSecretsOf, main, prepareInstall, sourceHashOf, readNode, reasonsOf, recordInputsFor, rolesDerivedReinstall,
-  upgraderConfigFor, validateAcceptance } from '../install.mjs';
+import { FLEET_REF_KEYS, FORMAL_ROLES, LINUX_SCRIPTS, OWN_MODULES, PLAN_CONTRACT, installedSecretsOf, main, prepareInstall, sourceHashOf, readNode, reasonsOf, recordInputsFor,
+  rolesDerivedReinstall, upgraderConfigFor, validateAcceptance } from '../install.mjs';
 import { rolesDerived } from '../ports.mjs';
 import { readTar, writeTar } from '../tar.mjs';
 import { buildUniversal } from '../universal.mjs';
@@ -314,6 +315,102 @@ test('install, no stubs for prep.py and generate.py: A.sh, B.sh, B-resume.sh for
     }
   });
 
+// DESIGN section 73, the field timeline of 2026-11-13 (desk-w-591). The launch of an earlier package ran Linux A and B and then stopped at
+// its Windows preflight (RUNNER_SERVICE_NOT_AS_REVIEWED): the Linux side is that package's generation 1, the Windows side the install
+// before it (current.json still names the old Linux generation), and the launch's W1 pause is still in force. The node's files after it:
+// the Linux version facts and role copies of that package (its Source, its acceptance references), the Windows record unchanged.
+async function leaveHalfInstalled(root, { ciSourceManifestSha256, w1Reason = null }) {
+  const responses = path.join(root, 'upgrade', 'mailbox', 'responses');
+  const facts = readJson(path.join(responses, 'version-facts.json')), copy = readJson(path.join(responses, 'roles-public.json'));
+  const installedCi = readJson(path.join(root, 'upgrade', 'current.json')).ciSourceManifestSha256;
+  const refs = new Map();
+  for (const role of FORMAL_ROLES) {
+    const policy = JSON.parse(Buffer.from(copy.files[`${role}.json`].base64, 'base64').toString('utf8'));
+    for (const k of ['sourceAcceptanceRef', 'hostAcceptanceRef']) if (!refs.has(policy[k])) refs.set(policy[k], randomUUID());
+    for (const [name, key] of [[`${role}.json`, 'policySha256'], [`${role}.qualification.json`, 'qualificationSha256']]) {
+      let text = Buffer.from(copy.files[name].base64, 'base64').toString('utf8').replaceAll(installedCi, ciSourceManifestSha256);
+      for (const [from, to] of refs) text = text.replaceAll(from, to);
+      const b = Buffer.from(text, 'utf8');
+      copy.files[name] = { sha256: sha(b), base64: b.toString('base64') };
+      facts.roles[role][key] = sha(b);
+    }
+  }
+  Object.assign(facts, { ciSourceManifestSha256, sourceCommit: 'd'.repeat(40), manifestSha256: sha(Buffer.from(`linux manifest of ${ciSourceManifestSha256}`)) });
+  await fs.writeFile(path.join(responses, 'version-facts.json'), JSON.stringify(facts));
+  await fs.writeFile(path.join(responses, 'roles-public.json'), JSON.stringify(copy));
+  let pausedSha256 = null;
+  if (w1Reason) {
+    const paused = Buffer.from(JSON.stringify({ at: '2026-11-13T09:09:58.000Z', source: { reason: w1Reason, requestSha256: sha(Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.resident-pause/1', reason: w1Reason }))) } }));
+    await fs.mkdir(path.join(root, 'state'), { recursive: true });
+    await fs.writeFile(path.join(root, 'state', 'PAUSED.json'), paused);
+    pausedSha256 = sha(paused);
+  }
+  return { facts, pausedSha256, installedCi };
+}
+
+test('install: a node an earlier package\'s launch left half installed (Linux new, Windows old, its W1 pause in force) is prepared as it is; this package\'s own half install is sent to its continuation',
+  { timeout: 600_000, skip: PY ? false : 'no Python 3 here' }, async t => {
+    const w = await getWorld();
+    const d = await tempDir(t, 'fleethalf');
+    const root = path.join(d, 'root');
+    await fs.cp(w.b.root, root, { recursive: true });
+    const earlier = reasonsOf('2026.11.13-8238bbf2').w1Pause;
+    const half = await leaveHalfInstalled(root, { ciSourceManifestSha256: '1c'.repeat(32), w1Reason: earlier });
+    assert.notEqual(half.facts.ciSourceManifestSha256, half.installedCi, 'the two sides name different packages');
+    // each side from its own record: the Linux side is what its facts say, its Source manifest is not on the Windows side, the pause is a reinstall's W1
+    const node = await readNode({ root });
+    assert.deepEqual(node.expectedInstalledLinux, { generation: 1, manifestSha256: half.facts.manifestSha256, ciSourceManifestSha256: half.facts.ciSourceManifestSha256 });
+    assert.equal(node.linuxMan, null);
+    assert.equal(node.installedW1Reason, earlier);
+    assert.equal(node.current.linux.ciSourceManifestSha256, half.installedCi, 'the Windows record is untouched');
+
+    const py = pythonTools({ real: ['prep.py'] });
+    const work = path.join(d, 'work');
+    const out = await prepare(w, w.b, work, { root, python: py.fn });
+    assert.equal(out.status, 'FLEET_NODE_INSTALL_PREPARED');
+    const plan = readJson(out.installPlan);
+    // Linux A and B run from what Linux is now to this package; the Windows side from what it is now
+    assert.deepEqual(plan.expectedInstalledLinux, node.expectedInstalledLinux);
+    assert.equal(plan.expectedLinux.ciSourceManifestSha256, w.acceptance.ciSourceManifestSha256);
+    const a = fsSync.readFileSync(path.join(work, 'linux', LINUX_SCRIPTS.A), 'utf8');
+    assert.match(a, new RegExp(`^OLD_MANIFEST=${half.facts.ciSourceManifestSha256}$`, 'm'));
+    assert.match(a, new RegExp(`^OLD_LINUX_RES_MANIFEST=${half.facts.manifestSha256}$`, 'm'));
+    assert.match(a, /^OLD_GENERATION=1$/m);
+    assert.ok(a.includes('refuse INSTALLED_MANIFEST_NOT_SOURCE34') && a.includes('--old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json'), 'A reads the Linux side\'s own Source manifest, as root');
+    const m = readJson(path.join(plan.packageDir, 'package-manifest.json'));
+    assert.deepEqual(m.linux.sourceV2.rolesDerivedSha256, rolesDerivedReinstall({ node, newManifestBytes: fsSync.readFileSync(path.join(plan.packageDir, 'record', 'source-manifest.json')),
+      readTreeFile: rel => fsSync.readFileSync(path.join(work, `tree-${w.commit.slice(0, 8)}`, ...rel.split('/'))) }));
+    for (const h of Object.values(m.linux.sourceV2.rolesDerivedSha256)) assert.ok(a.includes(`= ${h} ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH`), h);
+    const installed = path.join(work, 'inputs', 'installed');
+    assert.ok(!fsSync.existsSync(path.join(installed, 'roles-v3', 'formal-source-manifest-v2.json')), 'no copy that is not the Linux side\'s');
+    assert.deepEqual(readJson(path.join(installed, 'version-facts.json')), half.facts);
+    assert.ok(py.calls.find(c => c.name === 'rehearse.py').args.includes('--fleet'));
+    // the earlier launch's W1 pause is this launch's: one pause, never a second request, never a person lifting it first
+    assert.equal(plan.reasons.w1Pause, earlier);
+    assert.notEqual(reasonsOf(VERSION).w1Pause, earlier);
+    assert.deepEqual(plan.w1Paused, { sha256: half.pausedSha256, reason: earlier });
+    assert.equal(readJson(path.join(work, 'inputs', 'reinstall-config.json')).launcher.w1PauseReason, earlier);
+    assert.deepEqual(py.pauses.map(x => [x.status, x.reusedExistingRequest, x.pausedSha256]), [['OLD_RESIDENT_PAUSED_NO_OPEN_BATCH', true, half.pausedSha256]]);
+    assert.equal(sha(fsSync.readFileSync(path.join(root, 'state', 'PAUSED.json'))), half.pausedSha256, 'the pause was not replaced');
+
+    // a pause that is not a reinstall's W1 is somebody else's: not adopted, and W1 refuses it as before
+    const foreign = path.join(d, 'foreign');
+    await fs.cp(w.b.root, foreign, { recursive: true });
+    await leaveHalfInstalled(foreign, { ciSourceManifestSha256: '1c'.repeat(32), w1Reason: 'owner-maintenance' });
+    assert.equal((await readNode({ root: foreign })).installedW1Reason, null);
+    await assert.rejects(prepare(w, w.b, path.join(d, 'work-foreign'), { root: foreign, python: pythonTools().fn }), { code: 'W1_PAUSE_NOT_CONFIRMED' });
+
+    // this package's own launch stopped after Linux B: Linux is already this package's. Its Linux phases cannot run over themselves:
+    // refused before anything is written, with the way on (the continuation of that launch)
+    const same = path.join(d, 'same');
+    await fs.cp(w.b.root, same, { recursive: true });
+    await leaveHalfInstalled(same, { ciSourceManifestSha256: w.acceptance.ciSourceManifestSha256, w1Reason: reasonsOf(VERSION).w1Pause });
+    const sameWork = path.join(d, 'work-same');
+    await assert.rejects(prepare(w, w.b, sameWork, { root: same, python: () => { throw new Error('not reached'); } }),
+      e => e.code === 'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH' && /--fleet-continue/.test(e.detail.continueWith));
+    await assert.rejects(fs.access(sameWork));
+  });
+
 // Section 8: the command has no node-specific argument. The same argv (the same work path, moved aside between the two runs) prepares both
 // nodes; only the test's stand-ins (the fixture root, the Python tools, the SCM) differ, and the command line cannot name them.
 test('install: the prepare command line is byte for byte the same on both nodes', { timeout: 600_000 }, async t => {
@@ -385,15 +482,10 @@ test('install refuses: archive sha, acceptance, tampered entry, climbing path, a
     const sw = path.join(d, `early${k++}`);
     await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000 }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
     await assert.rejects(fs.access(sw));
-    // a node with no install (a first install, README section 8c), or whose current.json and version facts name other Linux generations
+    // a node with no install (a first install, README section 8c)
     const empty = path.join(d, 'empty-root');
     await fs.mkdir(empty);
     await assert.rejects(prepare(w, w.a, path.join(d, 'first'), { root: empty }), { code: 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH' });
-    const otherRoot = path.join(d, 'other-root');
-    await fs.cp(w.a.root, otherRoot, { recursive: true });
-    const vf = path.join(otherRoot, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
-    await fs.writeFile(vf, JSON.stringify({ ...readJson(vf), manifestSha256: 'e'.repeat(64) }));
-    await assert.rejects(prepare(w, w.a, path.join(d, 'other'), { root: otherRoot }), { code: 'LINUX_VERSION_FACTS_NOT_THE_CURRENT_GENERATION' });
     // the receipt's installed tokens: missing, unplaced or ambiguous entries are refused with what is missing
     const up = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\resident-upgrade.token', placed: true, fingerprint: 'a'.repeat(64) };
     const hbt = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\heartbeat\\ci-node-heartbeat.token', placed: true, fingerprint: 'b'.repeat(64), bindingId: randomUUID() };

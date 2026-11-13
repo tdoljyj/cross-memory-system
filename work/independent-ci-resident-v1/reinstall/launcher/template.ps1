@@ -243,6 +243,16 @@ function Get-RunnerState {
     controller = [bool]($qc -match ('SERVICE_START_NAME\s*:\s*(\.|' + [regex]::Escape($NodeHostname) + ')\\clued-control\s')); stoppedPid0 = [bool]($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); sddl = ((Get-DaclPart $sd) -ceq $RunnerSddl) }
   [ordered]@{ ok = (@($flags.Values | Where-Object { $_ -ne $true }).Count -eq 0); flags = $flags; sdshow = $sd; daclPart = (Get-DaclPart $sd); pinnedDacl = $RunnerSddl; qc = $qc.Trim(); queryex = $q.Trim() }
 }
+# A paused resident on duty still swaps the runner service for its own short maintenance (the role probe, the queue watch, stage 10
+# revoke-only: DESIGN sections 41.3 and 72): the service then runs the controller for a moment and the broker puts the original binary
+# back, stopped. A reading taken during such a swap is not a changed runner (desk-w-591, 2026-11-13: one stopped a launch right after
+# Linux B). The two read-only preflights therefore wait, for a bounded time, until the runner is as reviewed, and judge the last reading.
+$RunnerSettleSeconds = 600   # as the quiesce's wait for the resident: one tick of it ends within this
+function Wait-RunnerState {
+  $until = [DateTime]::UtcNow.AddSeconds($RunnerSettleSeconds); $state = Get-RunnerState
+  while (-not $state.ok -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Seconds 2; $state = Get-RunnerState }
+  $state
+}
 # Diagnostics only (never a decision): which top-level plan fields differ from the reviewed non-elevated dry run.
 # The reviewed non-elevated dry run (in the Owner's work directory): only its pinned bytes are ever parsed. $null: missing or changed.
 function Get-ReviewedPlan {
@@ -795,7 +805,7 @@ function Step-UninstallPreflight {
   if ($report['installedUninstallSha256'] -cne $InstalledUninstallSha256) { $codes.Add('INSTALLED_UNINSTALL_NOT_AS_REVIEWED') }
   $report['haltSha256'] = Get-FileSha (Join-Path $ResidentRoot 'state\HALT.json')
   if ($report['haltSha256'] -cne $InstalledHaltSha256) { $codes.Add('INSTALLED_HALT_NOT_AS_REVIEWED') }
-  $runner = Get-RunnerState; $report['runner'] = $runner
+  $runner = Wait-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
   $report['services'] = @((Get-ScState 'CluedCIResident'), (Get-ScState 'CluedCISwapBroker'))
   $report['executor'] = Test-ExecutorAlive
@@ -1310,7 +1320,7 @@ function Step-WindowsPreflightBeforeLinux {
   if ($report['installedUninstallSha256'] -cne $InstalledUninstallSha256) { $codes.Add('INSTALLED_UNINSTALL_NOT_AS_REVIEWED') }
   $report['haltSha256'] = Get-FileSha (Join-Path $ResidentRoot 'state\HALT.json')
   if ($report['haltSha256'] -cne $InstalledHaltSha256) { $codes.Add('INSTALLED_HALT_NOT_AS_REVIEWED') }
-  $runner = Get-RunnerState; $report['runner'] = $runner
+  $runner = Wait-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
   $report['parentAcl'] = try { (Get-Acl -LiteralPath $ParentAclPath).Sddl } catch { $null }
   if ($report['parentAcl'] -cne $ParentSddlBefore) { $codes.Add('PARENT_ACL_NOT_AS_REVIEWED') }

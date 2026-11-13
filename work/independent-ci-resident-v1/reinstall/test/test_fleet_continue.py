@@ -173,6 +173,84 @@ class ContinueGenerator(unittest.TestCase):
             CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci))
         self.assertEqual(caught.exception.code, 'RESIDENT_ROOT_MISSING_NOT_CONTINUED')
 
+    def test_the_field_stop_after_linux_b_is_continued_even_after_its_w1_pause_was_lifted(self):
+        # DESIGN section 73, desk-w-591 on 2026-11-13: Linux A and B done, the launch stopped at its uninstall preflight
+        # (RUNNER_SERVICE_NOT_AS_REVIEWED: the paused resident's own maintenance swap was under way), and afterwards a person lifted the W1
+        # pause. The launcher requires state\PAUSED.json to be the pinned bytes, so that node could not be continued at all.
+        self.s = Scene(self.tmp.name + '-w1', completed=LINUX_DONE); self.addCleanup(lambda: __import__('shutil').rmtree(self.tmp.name + '-w1', ignore_errors=True))
+        reason, first = 'fleet-node-reinstall-2026-11-13-8238bbf2-w1-before-linux-switch', b'{"at":"2026-11-13T09:09:58Z","source":{"reason":"w1"}}'
+        self.s.pins.update(InstalledPausedSha256="'" + sha(first) + "'", FleetW1PauseReason="'" + reason + "'", InstalledHaltSha256='$null', InstalledHaltCode='$null')
+        self.s.terminal.update(code='RUNNER_SERVICE_NOT_AS_REVIEWED', detail={'codes': ['RUNNER_SERVICE_NOT_AS_REVIEWED', 'UNINSTALL_PLAN_REFUSED']})
+        live = self.s.ci / 'resident'
+        for d in ('state/ledger', 'requests'):
+            (live / d).mkdir(parents=True)
+        status = {'contract': 'clued.independent-ci.resident-status/8', 'writtenAt': 'x', 'executor': {'state': 'IDLE'}, 'paused': False, 'halt': None, 'current': None}
+        (live / 'state/status.json').write_text(json.dumps(status), encoding='utf-8')
+        spec = importlib.util.spec_from_file_location('pause_old_resident', ROOT / 'tools' / 'pause-old-resident.py')
+        tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(tool)
+        asked = []
+
+        def resident(_seconds):   # the installed resident: it takes the request and acknowledges the pause between batches
+            (name,) = os.listdir(live / 'requests')
+            request = (live / 'requests' / name).read_bytes()
+            (live / 'state/PAUSED.json').write_text(json.dumps({'at': '2026-11-13T10:02:11Z', 'source': {'reason': json.loads(request)['reason'], 'requestSha256': sha(request)}}), encoding='utf-8')
+            (live / 'state/status.json').write_text(json.dumps(dict(status, executor={'state': 'PAUSED'}, paused=True)), encoding='utf-8')
+
+        def w1(pause_reason, pause_root):
+            asked.append((pause_reason, pause_root))
+            return tool.run_pause(pause_reason, root=pause_root, sleep=resident)['pausedSha256']
+        self.s.write()
+        now = datetime.datetime(2026, 11, 13, 10, 5, 0, tzinfo=datetime.timezone.utc)
+        data, facts = CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci), now=now, pause=w1)
+        again = sha((live / 'state/PAUSED.json').read_bytes())
+        self.assertEqual((facts['mode'], facts['priorStopCode'], facts['w1PausedAgainSha256'], asked), ('before-uninstall', 'RUNNER_SERVICE_NOT_AS_REVIEWED', again, [(reason, str(live))]))
+        self.assertNotEqual(again, sha(first))
+        self.assertEqual(json.loads((live / 'requests' / os.listdir(live / 'requests')[0]).read_bytes()), {'contract': 'clued.independent-ci.resident-pause/1', 'reason': reason})
+        text = data.decode('utf-8')
+        self.assertIn("\n$InstalledPausedSha256 = '" + again + "'", text); self.assertNotIn(sha(first), text)
+        self.assertIn(CONTINUE.NEW_BEFORE + '  Step-UninstallPreflight\n', text.split('#region main', 1)[1])
+        self.parses(data)
+        # the launcher's own rule (Test-OldRootQuiet), run from each text against that root: the stopped launcher refuses the node for
+        # ever, the continuation accepts it
+        if POWERSHELL.is_file():
+            driver = self.s.root / 'quiet.ps1'
+            driver.write_text(r'''param([string]$Launcher, [string]$Root)
+$ErrorActionPreference = 'Stop'
+$t = [IO.File]::ReadAllText($Launcher)
+$U8 = New-Object Text.UTF8Encoding($false)
+$null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+$Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$errors = $null; $tokens = $null
+$ast = [Management.Automation.Language.Parser]::ParseInput($t, [ref]$tokens, [ref]$errors)
+foreach ($name in @('Sha256Bytes', 'Get-FileSha', 'Get-Key', 'Parse-Json', 'Test-OldRootQuiet')) {
+  $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
+  if ($nodes.Count -ne 1) { throw 'FUNCTION_MISSING_OR_DUPLICATED' }
+  . ([scriptblock]::Create($nodes[0].Extent.Text))
+}
+$InstalledPausedSha256 = [regex]::Match($t, "(?m)^\`$InstalledPausedSha256 = '([0-9a-f]{64})'").Groups[1].Value
+$InstalledHaltSha256 = $null; $InstalledHaltCode = $null; $ResidentRoot = $Root
+ConvertTo-Json -Compress @((Test-OldRootQuiet).codes)
+''', encoding='utf-8')
+            def quiet(launcher):
+                p = subprocess.run([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-File', str(driver), str(launcher), str(live)], capture_output=True, text=True, timeout=60)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                return json.loads(p.stdout or '[]')
+            continuation = self.s.work / 'launcher-continue.ps1'; continuation.write_bytes(data)
+            self.assertEqual(quiet(self.s.launcher), ['OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE'])
+            self.assertEqual(quiet(continuation), [])
+        # the same command again: the pause it requested is in force, so no second request is written and the same pause is pinned
+        data2, facts2 = CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci), now=now + datetime.timedelta(minutes=5), pause=w1)
+        self.assertEqual((facts2['w1PausedAgainSha256'], len(os.listdir(live / 'requests'))), (again, 1))
+        # the pause of the stopped launch still in force (nobody lifted it): nothing is asked and the pin stays
+        (live / 'state/PAUSED.json').write_bytes(first)
+        data3, facts3 = CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci), now=now, pause=lambda *a: self.fail('the pinned pause is in force'))
+        self.assertIsNone(facts3['w1PausedAgainSha256']); self.assertIn("\n$InstalledPausedSha256 = '" + sha(first) + "'", data3.decode('utf-8'))
+        # a pause that is another request's is never taken for W1: refused with the tool's own report
+        (live / 'state/PAUSED.json').write_text(json.dumps({'source': {'reason': 'owner-maintenance', 'requestSha256': 'a' * 64}}), encoding='utf-8')
+        with self.assertRaises(CONTINUE.Refused) as caught:
+            CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci), now=now)   # W1 itself, on this root
+        self.assertEqual((caught.exception.code, caught.exception.detail['status']), ('W1_PAUSE_NOT_CONFIRMED', 'OLD_RESIDENT_PAUSED_BY_OTHER_REQUEST_RESUME_REQUIRED'))
+
     def test_a_phase_b_timeout_is_decided_when_the_continuation_runs(self):
         self.s = Scene(self.tmp.name + '-t', completed=LINUX_DONE[:7]); self.addCleanup(lambda: __import__('shutil').rmtree(self.tmp.name + '-t', ignore_errors=True))
         run = str(self.s.ci / 'resident' / 'install' / ('linux-run-' + '7' * 32))

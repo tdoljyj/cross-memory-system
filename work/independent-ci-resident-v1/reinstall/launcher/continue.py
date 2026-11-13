@@ -43,7 +43,12 @@ NOT continued by this version (refused, named): a launch that stopped before pha
 and phase B or its resume failed (the node stays paused, a person looks: the root scripts' own recovery); inside the uninstall, anything
 but resume.py's failed -Apply or the two cut-off states above; a launch that ran the companion maintenance path.
 
-Windows, non-elevated, writes only the new launcher (create-only) and prints one line of JSON; nothing is run.
+The W1 pause (DESIGN section 73): while the old resident is still installed the launcher requires state\\PAUSED.json to be the pinned
+bytes. When that pause is no longer in force (a person lifted it after the stop), W1 is requested again here, exactly as prepare
+requests it (tools/pause-old-resident.py, the launcher's own W1 reason; another request's pause is refused as there), and the
+continuation pins the pause as it is now. So a stopped launch stays continuable whatever became of its pause.
+
+Windows, non-elevated, writes only the new launcher (create-only) and prints one line of JSON; nothing else is run than that W1 request.
 """
 import datetime, hashlib, importlib.util, json, os, re, subprocess, sys
 from pathlib import Path
@@ -217,6 +222,16 @@ def service_present(name):
     return True if r.returncode == 0 else False if r.returncode == 1060 else None
 
 
+def w1_pause(reason, root):
+    """W1 again, as prepare runs it (tools/pause-old-resident.py): the pause of this reason confirmed with no open batch; its PAUSED.json sha256."""
+    spec = importlib.util.spec_from_file_location('pause_old_resident', HERE.parent / 'tools' / 'pause-old-resident.py')
+    tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(tool)
+    try:
+        return tool.run_pause(reason, root=root)['pausedSha256']
+    except tool.PauseRefused as refused:
+        raise Refused('W1_PAUSE_NOT_CONFIRMED', refused.report)
+
+
 def uninstall_plan_sha(data):
     """The prior launch's uninstall dry run (uninstall.dry-run.stdout.json): its plan digest, by template.ps1 Test-UninstallPlan's rules."""
     v = parse_json_text(data) or {}
@@ -311,9 +326,9 @@ def read_launcher(raw, fragment, finish):
                                  'rootLauncherSha256': values['ContinueRootLauncherSha256'], 'resumePlanSha256': values.get('ResumeUninstallPlanSha256')}
 
 
-def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present):
-    """Returns (continuation bytes, facts for the output line). ci_root and services are the tests' only: the node's are the constant and
-    sc.exe. The prior launcher may itself be a continuation: then its launch directory is the prior launch."""
+def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present, pause=w1_pause):
+    """Returns (continuation bytes, facts for the output line). ci_root, services and pause are the tests' only: the node's are the
+    constant, sc.exe and W1. The prior launcher may itself be a continuation: then its launch directory is the prior launch."""
     fragment, finish = reviewed_sources()
     prior_launcher = os.path.abspath(prior_launcher)
     try:
@@ -500,11 +515,26 @@ def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present):
         need(kept_roots and kept_roots[-1] == os.path.basename(kept), 'KEPT_ROOT_NOT_THE_NEWEST_SOMETHING_WAS_UNINSTALLED_SINCE', kept_roots[-3:])
         extra_pins = ('\n$ContinueKeptRoot = ' + q(kept) + '\n$ContinueUninstallReceiptSha256 = ' + (q(receipt) if receipt else '$null')
                       + '\n$ContinueUninstallPlanSha256 = ' + (q(plan_sha) if plan_sha else '$null'))
+    # The W1 pause, where the old resident is still installed and the launcher will require it (Test-OldRootQuiet): the pinned bytes, or
+    # (it is no longer in force) the same request made again and the pause as it is now.
+    paused_sha = None
+    if mode in ('before-uninstall', 'b-timeout', 'a-timeout') and re.fullmatch(r'[0-9a-f]{64}', lit('InstalledPausedSha256') or '') and lit('FleetW1PauseReason'):
+        paused_file = os.path.join(live_root, 'state', 'PAUSED.json')
+        try:
+            in_force = sha(RESUME.read_plain(paused_file)) if os.path.lexists(paused_file) else None
+        except (ValueError, OSError):
+            raise Refused('W1_PAUSE_NOT_CONFIRMED', 'state/PAUSED.json is not a plain readable file')
+        if in_force != lit('InstalledPausedSha256'):
+            paused_sha = pause(lit('FleetW1PauseReason'), live_root)
+            need(isinstance(paused_sha, str) and re.fullmatch(r'[0-9a-f]{64}', paused_sha), 'W1_PAUSE_NOT_CONFIRMED', paused_sha)
     stamp = (now or datetime.datetime.now(datetime.timezone.utc)).strftime('%Y%m%dT%H%M%SZ')
     launch = os.path.join(lit('W'), 'launch-continue-' + stamp)
     need(not os.path.lexists(launch) and launch != prior, 'CONTINUE_LAUNCH_DIRECTORY_EXISTS', launch)
     new_block, count = re.subn(r'(?m)^\$LaunchOutPin = .*$', lambda _: '$LaunchOutPin = ' + q(launch) + '   # the continuation writes here; the prior launch is kept as it is', block)
     need(count == 1, 'PRIOR_PINS_STRUCTURE')
+    if paused_sha:
+        new_block, count = re.subn(r"(?m)^\$InstalledPausedSha256 = '[0-9a-f]{64}'", lambda _: '$InstalledPausedSha256 = ' + q(paused_sha), new_block)
+        need(count == 1, 'PRIOR_PINS_STRUCTURE')
     hashes = {name: sha(data) for name, data in held.items()}
     extra = ('\n$ContinueOriginalLauncherSha256 = ' + q(launcher_sha) + '\n$ContinueRootLauncherSha256 = ' + q(root_sha) + '\n$ContinuePriorRoot = ' + q(prior)
              + '\n$ContinuePriorPins = [ordered]@{\n' + ''.join('  ' + q(name) + ' = ' + q(digest) + '\n' for name, digest in hashes.items()) + '}\n$ContinuePriorProgress = ' + q('|'.join(names))
@@ -512,7 +542,7 @@ def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present):
     data = transform(source, block, new_block, extra, mode, start, fragment, finish).encode('utf-8')
     return data, {'mode': mode, 'originalLauncher': prior_launcher, 'originalLauncherSha256': launcher_sha, 'rootLauncherSha256': root_sha, 'priorLaunchDir': prior,
                   'priorIsAContinuation': chained is not None, 'skippedContinuationLaunchDir': delegated, 'continuationRenamedTheRoot': renamed_by is not None, 'priorCutOff': t is None, 'priorStopCode': stop_code, 'priorHadTerminal': 'terminal.json' in held,
-                  'priorLastStep': steps[-1], 'keptRoot': kept, 'afterInstallFrom': start, 'uninstallPlanSha256': plan_sha, 'priorFileSha256': hashes, 'launchDir': launch, 'node': lit('NodeName'), 'packageManifestSha256': lit('PackageManifestSha256')}
+                  'priorLastStep': steps[-1], 'w1PausedAgainSha256': paused_sha, 'keptRoot': kept, 'afterInstallFrom': start, 'uninstallPlanSha256': plan_sha, 'priorFileSha256': hashes, 'launchDir': launch, 'node': lit('NodeName'), 'packageManifestSha256': lit('PackageManifestSha256')}
 
 
 def main(argv):
