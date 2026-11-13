@@ -1,4 +1,4 @@
-// The service's own use of the executor lock (DESK 2026-11-14 01:38:38, upgrade op 17a31df9; ADR 0032). Generation 2's first
+// The service's own use of the executor lock (DESK 2026-11-14 01:38:38, upgrade op 17a31df9; ADR 0033). Generation 2's first
 // start, seven seconds after generation 1 ended, left with exit 4 before it took the lock and the upgrade rolled back: the lock
 // (instance-lock.mjs) counts any live pid as its holder, and that node hands a freed pid to another process within seconds.
 // instance-lock.mjs and store.mjs are part of the frozen upgrade channel (the upgrader imports them), so they stay byte for byte
