@@ -1,10 +1,72 @@
-# 通用节点包重装：操作说明
+# 通用节点包：升级与重装操作说明
 
-目标：只构建一个通用包，所有节点用同一个包重装，每台节点 Owner 只点 1 次 UAC。包里没有任何节点值（无 record 引用、节点档案选择、SID、路径），节点身份全部在节点上从本机记录读。接口细节见 `BATCH1-INTERFACES.md`。
+节点只有两条路，用的是**同一个通用包、同一份接受文件**：
+
+1. **通用升级**（第 0 节）：已装节点原地升级，零 UAC，失败自动回滚。默认走这条。
+2. **通用重装**（第 1–8 节）：节点答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` 时才走，每台 1 次 UAC。
+
+只构建一个通用包。包里没有任何节点值（无 record 引用、节点档案选择、SID、路径），节点身份全部在节点上从本机记录读。接口细节见 `BATCH1-INTERFACES.md`，升级的设计见 [ADR 0030](../../docs/adr/0030-fleet-generic-upgrade.md)。
 
 `R = work/independent-ci-resident-v1`。
 
-## 目录
+## 0. 通用升级（Owner 手册）
+
+### 0.1 Owner 做什么
+
+| 步骤 | Owner | UAC |
+|---|---|---|
+| 接受这一版 | 一次 Decision（全体节点适用） | 无 |
+| 每台节点升级 | 自动审批开着：什么都不做。没开：在该节点 `upgrade\status.json` 的 `confirmUrl` 页面点一次批准 | 无 |
+| 当班节点 | 在 `/bindings` 点一次移交（待命节点先升好再移交） | 无 |
+| 升级回滚了（`ROLLED_BACK_PAUSED`） | 看原因；恢复该节点 | 无 |
+
+自动审批的边界（服务端现有规则）：每节点 24 小时内自动批 6 次；同一个包第二次请求、或上一次自动批的升级没成功，归 Owner 手动批。
+
+### 0.2 发布机与协调者（一次）
+
+1. 构建、发布：第 2、3 节，不变。
+2. 写接受文件：第 4 节，不变，只多一条规则。**`fleetRefs` 里进入 Source 的三项 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 沿用现装值**（任一已装节点上 `node …\install.mjs fleet-refs` 只读取出），这一版才能原地升级；`ownerDecisionRef`、`installationReceiptRef`（= `ownerReceiptRef`）写这次的 Decision 与回执。三项里有任何一项要换，这一版对所有节点都是重装。
+3. `publish.mjs attach-acceptance`：不变。
+
+### 0.3 每台节点：同一条命令
+
+Owner 会话、非提权。前三步与重装相同（第 5 节第 1、2 步），第四步换成 `upgrade.mjs`：
+
+```
+gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <下载目录>
+(Get-FileHash -Algorithm SHA256 <下载目录>\fleet-node-<version>.tar).Hash.ToLower()
+python -I -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" <下载目录>\fleet-node-<version>.tar <解包目录>
+node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.mjs --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录>
+```
+
+没有节点参数。`<新目录>` 不要放在会被清理的临时目录里：升级代理要从 `<新目录>\package` 读包。加 `--no-request` 只组装和预检，不发请求（演练）。
+
+输出一行 JSON，`status` 是下面之一：
+
+| status | 意思 | 下一步 |
+|---|---|---|
+| `FLEET_NODE_UPGRADE_REQUESTED` | 已组装、预检通过、请求已投 | 等；再跑同一条命令看进度 |
+| `FLEET_NODE_UPGRADE_IN_PROGRESS` | 升级代理有操作在途（`op.state`、`op.confirmUrl`） | 等；`WAITING_GRANT` 且没开自动审批时 Owner 批一次 |
+| `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
+| `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
+| `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 用同样三个文件走第 5 节 `install.mjs prepare` |
+| `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装（例如 `FLEET_SOURCE_MISMATCH`：先升另一台） | 按 `precheck.advice` |
+| `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
+
+命令可以重复运行：在途时不发第二个请求，做完后只报告做完。
+
+### 0.4 顺序
+
+与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 移交当班 → 原当班节点再升。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
+
+### 0.5 失败
+
+- 请求之前的任何失败：节点没动，改正后换新 `--work` 重跑。
+- 升级代理拒绝（Grant 被拒或过期、排空超时、暂存或 Linux stage 拒绝）：节点没动。
+- 切换之后核验不过：升级代理把 Windows 与 Linux 两侧一起换回上一代，节点保持暂停，`status.json` 的 `recent` 写着 `ROLLED_BACK_PAUSED` 和原因。生产节点失败一次就停手，先在一次性环境复现。
+- `ROLLBACK_FAILED`：走通用重装（它不要求两侧先一致）。
+
+## 目录（通用重装）
 
 1. 总览与顺序
 2. 发布机：构建一次

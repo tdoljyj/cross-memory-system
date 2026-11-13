@@ -86,8 +86,23 @@ test('precheck: PASS with the installed upgrader; the plan it reports is the one
   assert.ok(r.plan.newDirs.some(d => d === `resident\\${next.residentSha}`));
   assert.ok(r.warnings.includes('LINUX_VERSION_FACTS_UNREADABLE'));
   assert.deepEqual(await listing(root), before);
-  // the installed package is required: it is what the frozen files are compared with
-  await assert.rejects(run({ installedPkgDir: undefined }), { code: 'USAGE' });
+  // without the installed package (ADR 0030: a universal reinstall leaves the node no copy of it) the same decision and the same plan
+  const alone = await run({ installedPkgDir: null });
+  assert.deepEqual([alone.status, alone.plan, alone.upgrader], [r.status, r.plan, r.upgrader]);
+  assert.deepEqual(await listing(root), before);
+});
+
+test('precheck without the installed package: a changed upgrader is decided by the receipt, a changed Linux tool by the version facts', async t => {
+  const a = await world(t, { change: 'src/store.mjs' });
+  const r = await a.run({ installedPkgDir: null });
+  assert.deepEqual([r.status, r.code, r.detail, r.changedFrozenFiles], ['PRECHECK_REFUSED', 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', 'upgrader', undefined]);
+  assert.notEqual(r.upgrader.installed, r.upgrader.package);
+  const b = await world(t);
+  await writeFacts(b.root, { upgradeToolSha256: 'e'.repeat(64) });
+  const s = await b.run({ installedPkgDir: null });
+  assert.deepEqual([s.status, s.code, s.detail], ['PRECHECK_REFUSED', 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL', 'linux-upgrade-tool']);
+  await writeFacts(b.root, {});
+  assert.equal((await b.run({ installedPkgDir: null })).status, 'PRECHECK_PASS');
 });
 
 test('precheck: an admin-only slot is a stand-in, the rest is still decided', async t => {

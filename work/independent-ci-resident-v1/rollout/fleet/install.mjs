@@ -233,7 +233,8 @@ export async function readNode({ root, now = Date.now() }) {
 
 // ---------------------------------------------------------------- stage 3: inputs from the node's values and the fleet's
 // resident-record-inputs/2 (reinstall/tools/record-inputs.py with -Final refs): the node's own values from its installed record, the
-// references and the formal role material from fleetRefs. The signers are the node's, bound to the new references.
+// references and the formal role material from fleetRefs. The signers are the node's, bound to the new references. (An upgrade passes
+// the installed record back in, upgrade.mjs carriedRecord: validUntil is then the installed one; an acceptance file has none.)
 export function recordInputsFor(node, acceptance) {
   const f = acceptance.fleetRefs, { acc, inst } = node;
   need(inst.ciPrincipalQualificationRef === acc.ciPrincipalQualificationRef && UUID.test(acc.ciPrincipalQualificationRef ?? ''), 'NODE_CI_PRINCIPAL_QUALIFICATION_REF_REFUSED');
@@ -252,7 +253,7 @@ export function recordInputsFor(node, acceptance) {
     appKeyId: inst.appKeyId, ciPrincipalBindingId: inst.ciPrincipalBindingId, ciPrincipalRoleRef: inst.ciPrincipalRoleRef, ciTokenPinSha256: inst.ciTokenPinSha256,
     appPublicKeySha256Base64: inst.appPublicKeySha256Base64, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey,
     controllerNodeSha256: inst.controllerNodeSha256, references,
-    owner: { ownerDecisionRef: f.ownerDecisionRef, ownerReceiptRef: f.ownerReceiptRef, acceptedAt: acceptance.acceptedAt, validUntil: null },
+    owner: { ownerDecisionRef: f.ownerDecisionRef, ownerReceiptRef: f.ownerReceiptRef, acceptedAt: acceptance.acceptedAt, validUntil: acceptance.validUntil ?? null },
     formalRoles: f.formalRoles, signers };
 }
 
