@@ -3,8 +3,10 @@
 // Owner's elevated install wrote into the service configuration; nothing is read from a user profile.
 //
 //   node service-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --policy-sha256 <sha>
+import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, UUID, check, parseBoundedJson, sha256 } from './canonical.mjs';
 import { validatePolicy, installedTrainLanding } from './policy.mjs';
@@ -252,6 +254,10 @@ export async function run(argv = process.argv.slice(2), ports = {}) {
   try { return await main(argv, ports); } catch (error) { await recordStartRefusal(argv, error); return 4; }
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+// The entry point on any platform, also behind a junction or a symlink (scripts/ci/main-entry-realpath.test.mjs): links resolved
+// on both sides. (The earlier test built a file:/// URL by hand, which no POSIX path ever equals: on Linux the program did nothing
+// and exited 0.) Not import.meta.main, which the installed runtime\node.exe may be too old for.
+const isEntryPoint = () => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntryPoint()) {
   run().then(code => { process.exitCode = code; });
 }

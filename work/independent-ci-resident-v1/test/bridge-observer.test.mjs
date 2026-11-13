@@ -201,7 +201,7 @@ test('the heartbeat timer: a beat at once and every 10 s apart from the lanes; a
 
 test('the heartbeat timer starts only after the job host probe and every set-up step, and stops with the lanes (design r3 review MINOR 1; r3 review MAJOR 2)', async () => {
   const src = await fs.readFile(new URL('../src/companion-main.mjs', import.meta.url), 'utf8');
-  const entry = src.indexOf('\nif (import.meta.url');
+  const entry = src.indexOf('\nif (isEntryPoint())');
   const main = src.slice(src.indexOf('export async function main'), entry);
   const at = needle => { const i = main.indexOf(needle); assert.ok(i > 0, needle); return i; };
   const beat = at('const beating = startHeartbeat(mailbox);');

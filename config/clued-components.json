@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "91b438c4618dcdb2c718b892411927692511c4dc9718a388f8bb3662fd1e3e52"
+      "content_sha256": "9fad4815b6190225e8d2297dd32d6b11868bf560ef89d8a4cfdc0d444ca56313"
     },
     {
       "id": "hook.runner-job-started",
@@ -697,7 +697,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.19",
+      "version": "1.0.20",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2b6f99bb78720bd1f92d3cb3a9c8effe205c73070f7e0d69d4c30310b4e0193d"
+      "content_sha256": "c21ab51414885d6cf4f5507cd6dcf264a66f5a88e1434bd7a37068e9acc76891"
     },
     {
       "id": "script.required-applicability",
@@ -730,7 +730,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "50408a5558d6046ddf878a63901af079a8ac17049af50cf04f2e2be06a770aba"
+      "content_sha256": "1c1a5909429e1431159290b03349125c89ea733de45b620f4578cd3a4c328bfe"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -891,7 +891,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -923,7 +923,7 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "f3b9309d14d8135e40ea8f2b2f0fdc6f657bab29262f8f12c1c9b4cd4f0810de"
+      "content_sha256": "b1cfa08d3d5f182c2e549628207da3d5bd97acca224585a9f09d673e2e75ec37"
     },
     {
       "id": "script.merge-reconciliation",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0790651032645f87b7e4f12bd30d983a8e9807c3e1d6af25c4cae75b05b5c80f"
+      "content_sha256": "5293cd074ae4833a2be8e70d13dfd1d5df1f6fc994f0d824fe16f2c9904f79f6"
     }
   ]
 }
