@@ -13,6 +13,7 @@ import { serverAnswerCurrent } from '../clock-skew.mjs';
 import { createGitHubChecksPort } from '../github.mjs';
 import { createGitHubBudgetObserver, guardedGitHubBudgetObserver } from '../github-budget.mjs';
 import { createFullAdmissionPortV2 } from '../full-admission-v2.mjs';
+import { effectiveGuard } from '../admission-facts-v2.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { INSTALL_ROOT, APP_KEY_FILE, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule } from './held-record.mjs';
@@ -260,7 +261,7 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
       head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
     const b=reply.body,c=b?.claim,failed=[];
     for (const [name, ok] of [['reply',reply.status===200&&b?.status==='ok'],['verdict',b?.verdict==='ADMITTED'],
-      ['execution_policy',b?.execution_policy===mode.executionPolicy],['lease_key_required',c?.lease_key_required===mode.guarded],
+      ['execution_policy',b?.execution_policy===mode.executionPolicy],['lease_key_required',effectiveGuard(b?.execution_policy,c?.lease_key_required)===mode.guarded],
       ['handover_pending',c?.execution_handover_pending===false],['claim_status',c?.status==='ACTIVE'],
       ['claim_identity',c?.claim_id===identity.claim.claim_id&&c.fence===identity.claim.fence&&c.execution_epoch===identity.claim.execution_epoch],
       ['current_fence',b?.current_fence===c?.fence&&b?.execution_epoch===c?.execution_epoch],['context_key',c?.context_key===mode.scope],

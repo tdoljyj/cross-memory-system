@@ -118,7 +118,7 @@
 //     too); a front batch's automatic attempt 2 is one of its head's two front batches; with nonFrontRuns false only the front
 //     subject runs; the front rows of a duty that ended (STANDBY, train not on) are dropped;
 //   - relayPlan keeps every role of a subject with S local (RELAY_TRAIN_FRONT_LOCAL) before writing 20-plan-intent;
-//   - HALT, PAUSE and the intake pause are written into the status board in the same tick they are latched.
+//   - HALT, PAUSE and the intake pause are written into the status board in the same tick they are latched or lifted.
 // requests\ also carries the "立即探测" and "撤车头" requests (resident-requests.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -728,6 +728,13 @@ export class ResidentExecutor {
   // HALT, PAUSE and the intake pause go into the status board in the tick they are latched (DESIGN §41.6a: the companion's
   // heartbeat reports them at once); the tick's own report (reportTick) then confirms them from the ledger.
   reportLatch(patch) { this.report(s => s.update(patch)); }
+  // HALT and PAUSE as the ledger has them now, set or lifted (reportTick and the start of a tick, after the Owner's requests).
+  async reportLedgerLatches() {
+    try {
+      const halt = await this.ledger.halted(), paused = await this.ledger.paused();
+      this.reportLatch({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused });
+    } catch { /* advisory: the tick's own report confirms it */ }
+  }
 
   // ---- the node mode (primary/standby C3; DESIGN §29) ----
 
@@ -1872,6 +1879,9 @@ export class ResidentExecutor {
     }
     this.recoveredThisTick = recovered;
     await this.takeOwnerRequests();
+    // Field defect 2026-11-13 (PR #1085): a latch the Owner lifted (resume, re-arm) reaches the status in this tick, before any batch
+    // it lets run; otherwise the status kept PAUSE until the tick's end (reportTick), after the whole batch.
+    await this.reportLedgerLatches();
     // DESIGN §34: the versions of both sides, and the version-skew hold, before anything is scheduled.
     await this.versionsRefresh();
     // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
@@ -1935,6 +1945,13 @@ export class ResidentExecutor {
     // DESIGN §72: the rule first, with this tick's triggers: a resting batch that no longer stands ends before anything tries it.
     const ended = await this.endNotStanding();
     if (ended) return ended;
+    // Field 2026-11-13 (PR #1085): the stage-10 run a lifted pause owes (trainResumeOwed, defect b0426896) comes before any batch work,
+    // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
+    // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
+    if (!this.betweenBatchesRunning && this.trainResumeOwed()) {
+      const owed = await this.trainMaintenance();
+      if (owed) return owed;
+    }
     // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
     // once (and continues to its end when it may), a parked one whose stage-8 try is due runs that try. They are
     // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE. Then the queue.

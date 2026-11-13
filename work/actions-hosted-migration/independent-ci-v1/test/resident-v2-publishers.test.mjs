@@ -321,7 +321,9 @@ test('one-shot v2: the protected observation must name exactly the batch claim g
   const f = protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body, status: 200, config, accepted, ...timing });
   assert.deepEqual(f.claim, claimGeneration(c));
   assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: { ...claimGeneration(c), fence: 4 }, body, status: 200, config, accepted, ...timing }), { code: 'native_claim_observation_refused' });
-  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: true } }, status: 200, config, accepted, ...timing }), { code: 'native_claim_observation_refused' });
+  // Field 2026-11-13 (PR #1086): a handed-over claim (lease key required) runs while Native's policy is staged, with no guard in force.
+  assert.equal(protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: true } }, status: 200, config, accepted, ...timing }).guarded, false);
+  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: 'yes' } }, status: 200, config, accepted, ...timing }), { code: 'native_claim_observation_refused' });
   assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body, status: 200, config, accepted }),
     error => error.code === 'native_claim_observation_refused' && error.checks.includes('round_trip_age'), 'missing monotonic evidence must fail closed');
 });

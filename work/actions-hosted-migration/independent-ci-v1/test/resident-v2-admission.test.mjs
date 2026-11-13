@@ -117,14 +117,23 @@ test('full admission v2: batch stickiness allows a renewal, refuses another gene
   assert.equal((await w.port.evaluatePr(w.job, w.packet, { batchClaim: { claimId: 'not-a-uuid', fence: 1, epoch: 1 } })).reason, 'full_admission_subject_invalid');
 });
 
-test('full admission v2: missing and contradictory trailers are advisory, guarded claim and inconsistent Native still refuse', async () => {
+test('full admission v2: missing and contradictory trailers are advisory, a handed-over claim runs while staged, an unauthorized guarded one and inconsistent Native refuse', async () => {
   assert.equal((await (w => w.port.evaluatePr(w.job, w.packet))(world({ trailer: 'no trailer here' }))).status, 'ADMITTED');
   const id = randomUUID();
   const viaCommit = world({ trailer: `Clued-Work-Claim: ${randomUUID()}\nClued-Work-Scope: global`, claimId: id,
     commitTrailer: `x\n\nClued-Work-Claim: ${randomUUID()}\nClued-Work-Scope: global` });
   assert.equal((await viaCommit.port.evaluatePr(viaCommit.job, viaCommit.packet)).status, 'ADMITTED');
+  // Field 2026-11-13 (PR #1086): a claim handed over on the BeamingFace page keeps lease_key_required, and Native's execution policy is
+  // still 'staged' (not activated): Native admits it without any key or head authorization, so the resident runs it like any staged
+  // claim (guarded false: no execution guard is in force). It refused it as NATIVE_POLICY_UNSUPPORTED and burned the head.
   const guarded = world({ claimOverrides: { lease_key_required: true } });
-  assert.equal((await guarded.port.evaluatePr(guarded.job, guarded.packet)).reason, 'full_admission_native_unsupported');
+  const staged = await guarded.port.evaluatePr(guarded.job, guarded.packet);
+  assert.equal(staged.status, 'ADMITTED', JSON.stringify(staged));
+  assert.equal(staged.guarded, false);
+  assert.equal(admittedFactsMatchJobV2(staged, guarded.job, Date.now()), true);
+  // Once activated, the guard is in force: without the holder's head authorization Native's answer is not one the resident runs on.
+  const unauthorized = world({ claimOverrides: { lease_key_required: true }, nativeOverrides: { execution_policy: 'active', head_authorization_id: null } });
+  assert.equal((await unauthorized.port.evaluatePr(unauthorized.job, unauthorized.packet)).reason, 'full_admission_native_unsupported');
   const torn = world({ nativeOverrides: { current_fence: 99 } });
   assert.equal((await torn.port.evaluatePr(torn.job, torn.packet)).reason, 'full_admission_native_changed');
   const blocked = await torn.port.evaluatePr(torn.job, torn.packet);

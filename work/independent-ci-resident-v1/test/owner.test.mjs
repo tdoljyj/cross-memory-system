@@ -193,3 +193,40 @@ test('a torn PAUSED.json is still a pause the Owner can name and resume (fifth r
   await writeOwnerRequest(path.join(f.root, 'owner'), resumeRequest({ expectedPausedSha256: p.sha256, by: OWNER }, f.clock), f.clock);
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
 });
+
+// Field defect 2026-11-13 (DESK, PR #1085): the Owner resumed at 03:32:14Z and the same tick ran the batch to 03:46:45Z; status.json kept
+// paused=true the whole time (only the tick's end reported the ledger), so the PR page said 停摆（PAUSED） while the batch ran and the
+// standby wrote "停摆 10 分钟". The latch a resume (or a re-arm) lifts reaches the status in the tick that lifts it, before any batch.
+test('a resume reaches the status before the batch it lets run (field 2026-11-13, PR #1085)', async t => {
+  const { StatusBoard } = await import('../src/status.mjs');
+  const { NodeDuty, freshMemory } = await import('../src/node-duty.mjs');
+  const { describe } = await import('../src/pr-status.mjs');
+  const seen = [];
+  let f;
+  const engine = fakeEngine();
+  const runStage = engine.runStage.bind(engine);
+  engine.runStage = async (batch, stage, o) => {
+    const s = f.exec.status.content;
+    // What the companion writes on the PR page at this moment (pr-status.mjs#describe through node-duty.mjs#want).
+    const status = { ...s, writtenAt: f.clock() };
+    const duty = new NodeDuty({ memory: freshMemory(), fallbackName: 'desk-w-591', staleMs: 600_000 });
+    duty.node = { name: 'desk-w-591', mode: 'ACTIVE', probe: null, known: false };
+    const pull = { pr: 884, headSha: HEAD, eligible: true };
+    seen.push([stage.number, s.paused, duty.want(pull, status, f.clock(), describe({ pull, status, now: f.clock() }))?.description ?? null]);
+    return runStage(batch, stage, o);
+  };
+  f = await executorFixture(t, { engine, status: new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') }) });
+  await f.ledger.pause({ reason: 'fleet-node-reinstall-hold-after-install' });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PAUSED');
+  assert.equal(f.exec.status.content.paused, true);
+  const p = await f.ledger.paused();
+  const { resumeRequest } = await import('../tools/rearm-tool.mjs');
+  await writeOwnerRequest(path.join(f.root, 'owner'), resumeRequest({ expectedPausedSha256: p.sha256, by: OWNER }, f.clock), f.clock);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.ok(seen.length >= 2, 'the batch ran in the resuming tick');
+  for (const [stage, paused, text] of seen) {
+    assert.equal(paused, false, `stage ${stage}: status still paused`);
+    assert.ok(!/^停摆/.test(text ?? ''), `stage ${stage}: ${text}`);
+  }
+});

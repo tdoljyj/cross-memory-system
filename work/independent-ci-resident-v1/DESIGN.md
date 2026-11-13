@@ -1981,7 +1981,7 @@ C5 的代码已由 PR #918 合入。本节说明 `src/node-duty.mjs`、`src/pr-s
 
 ### 23.2 每个节点写自己的页面状态
 
-节点使用 commit status `resident-queue/<node> (info only)`；备用提醒另用 `resident-standby (info only)`。旧名 `resident-queue (info only)` 不再写，也不作为别的节点当班的依据。读不到 main 的 required checks，或任一待写 context 与其重名时，本轮不写页面状态；正常读取结果缓存 30 分钟，比较时忽略大小写和首尾空白。
+节点使用 commit status `resident-queue/<node> (info only)`；`resident-standby/<node> (info only)` 只用于结束 ADR 0028 之前写下的备用提醒（§23.3）。旧名 `resident-queue (info only)` 不再写，也不作为别的节点当班的依据。读不到 main 的 required checks，或任一待写 context 与其重名时，本轮不写页面状态；正常读取结果缓存 30 分钟，比较时忽略大小写和首尾空白。
 
 | 文字开头 | 含义与写入范围 |
 |---|---|
@@ -1995,13 +1995,11 @@ C5 的代码已由 PR #918 合入。本节说明 `src/node-duty.mjs`、`src/pr-s
 
 相同的当班、双活和停摆文字每 14 分钟可重写一次，保持存活时间；该 head/context 的本地累计写入数达到 900 后停止这种定时刷新，变化的文字仍可写。companion 重启后，对本地记得最近 30 分钟写过当班或双活、仍打开且本轮没有重新描述的 head，补 `停摆（NODE_RESTARTED）`，写成功才销账。
 
-### 23.3 备用提醒与接班时间
+### 23.3 备用提醒（已删除，ADR 0028）与接班时间
 
-STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写停摆至少 10 分钟且最新状态仍在 30 分钟窗口内；对方最新当班或双活文字已超过 30 分钟没刷新；或本 companion 看到这个 head 已至少 30 分钟、没有节点当班，且查明 App `5368905` 没有发布名为 `kooyumi-work-admission` 的 check-run。最后一项判断的是检查是否存在，不是它是否通过；读不到检查结果不当作没有检查。
+STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原来的三种提醒（对方停摆 10 分钟、当班文字 30 分钟没刷新、30 分钟没人接手）都已有人说：当班节点自己的 PR 页面文字和通知，以及服务端看门狗（持有者 5 分钟没心跳就交接；总开关关时写告警，ADR 0026）。2026-11-13 它还误报过一次（DESK 在跑批，TURING 报“停摆 10 分钟”）。
 
-提醒写在备用 context，并发 Windows 通知，建议 Owner 移交 ci-admission；它不会自行移交。每个 `(PR, head, reason)` 在本地保留窗口内只提醒一次，相关记忆保留 24 小时。一个 head 的 statuses 成功读到后缓存 5 分钟；读取失败不更新缓存时间，可以在下一轮报告时再试（正常轮询约 1 分钟）。每轮最多尝试读 10 个 head，并受读取前的预算检查约束。
-
-提醒的结束（Task `63c3c879`，PR #1027）：提醒写的是 pending，GitHub 会把任何 pending 的 commit status（即使不是 required）算作未完成，mergeStateStatus 变 UNSTABLE。现在每条已写出的提醒都记在 companion 记忆 `standby` 里，直到它被结束：本节点转为 ACTIVE（“<节点> 已接班，备用提醒结束”）、PR 不再符合条件（“备用节点 <节点>，不参与本 PR”），或 STANDBY 再读这个 head 时有正面证据表明当班节点已接手——它在该 head 上 30 分钟内写了当班/双活停机，或 App `5368905` 已发布 `kooyumi-work-admission`（“备用节点 <节点>，不参与本 PR：当班节点已接手”）。三种都在同一备用 context 上写 success；读取失败或未知不结束。已不打开的 head 直接忘记、不写。升级前的记忆没有 `standby` 时，从 24 小时内的 `reminded` 键恢复待结束的提醒。
+只留收尾：升级前写下、仍在 pending 的提醒（companion 记忆 `standby`），在 head 仍打开时于同一备用 context 写一次 success（“备用提醒已取消（ADR 0028）”），否则 GitHub 把 PR 当 UNSTABLE（Task `63c3c879`，PR #1027）；已不打开的 head 直接忘记。
 
 时间口径与通知一致：移交后，对方空闲或停摆时，本节点下一次角色探测通常在 15 分钟内接班；对方仍在跑批时，要等它发现角色已失去并写“已交班”。这不是固定的最长接班时间。确定的 ACTIVE / STANDBY 转换及连续至少三次不确定的角色探测也有通知，UNCERTAIN 本身不算一次确定模式转换。
 
@@ -3316,7 +3314,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 | 2 服务端 | 一次迁移：记下车头与按优先级排位（41.5）、排队认领保活（41.4）、节点心跳函数与记录、holders 回答的 `nodes`、清扫水位（41.6、41.6a）、ci-admission 自动接班的资格标记、次序、总开关（默认关）与看门狗（41.6a）；`/bindings` 页面加资格、次序、总开关、心跳连接，都走两步确认 | 否 | 否 | 授权迁移；标记资格；建心跳连接 |
 | 3 Source A | Native 写端口（touch、adopt、return、保活、清扫水位，CI 身份），`clued-work-admission.test.mjs` 跟上 | 随第 8 步 | 是 | protected-change Grant |
 | 4 Source B | 第 8 段单绿、第 10 段 on 与只撤模式、清扫、两处 `binding` 改动；train-run `/2`（`frontOutcome`）；C# 边界接受 on 与 train-run `/2` | 随第 8 步，两侧 | 否 | 无 |
-| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；companion 的心跳与自动接班的 @Owner 评论（41.6a）；安装参数 `-HeartbeatTokenFile` 与 `secrets\heartbeat\`；HALT、PAUSE、暂停接新在 latch 的同一 tick 写进状态 | 随第 8 步，Windows | 否 | 无 |
+| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；companion 的心跳与自动接班的 @Owner 评论（41.6a）；安装参数 `-HeartbeatTokenFile` 与 `secrets\heartbeat\`；HALT、PAUSE、暂停接新在 latch（及 Owner 解除，ADR 0028）的同一 tick 写进状态 | 随第 8 步，Windows | 否 | 无 |
 | 6 文档 | 下面列的 v0.2 与合同草稿改动；GitConnectorWriteContract、`docs/maintenance/independent-ci.md` | 否 | 否（文档层） | 接受 v0.2；接受草稿、发布 Grant |
 | 7 守队程序与算力面板 | 41.8；算力面板认自动接班评论的标记、不重复 @（`scripts/ci/self-hosted/compute_panel.py`，41.6a） | 否 | 是（`.github/**`、`scripts/ci/**`） | protected-change Grant |
 | 8 安装 | 一轮安装覆盖全部常驻节点（今天是 TURING 与 desk-w-591；同一个包，§40 工具链，含 #949），策略 `/8` 但 `train.enabled=shadow`；这一轮里还没装上的节点保持 STANDBY，不标自动接班资格 | 是：每个节点各 UAC 加 Linux root | 否 | UAC |
@@ -4995,6 +4993,8 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 - §62.5 的两条测试改为“第1段不报队列条目”变体，继续钉住停车点 A、B 的接替路径。
 
 残余：节省的是普通批次第2–7段（现场约 13–15 分钟）；车头批次本身仍完整一遍。现场 ≤30 分钟仍需实测（§62 开头）。
+
+补（ADR 0028，2026-11-13 PR #1085）：让位读的是最近一次第 10 段。暂停期间第 10 段只跑 revoke-only；恢复所在的 tick 先排了队首的普通批次，让位读到 revoke-only 那一轮而不生效，H 上跑完第 1–7 段，车头批次又在同树的 S 上全跑一遍。现在 tick 在任何批次工作（停靠批次、调度）之前先跑恢复欠下的那一轮第 10 段（`trainResumeOwed`），让位和调度读到的是当前列车状态。端到端测试 `test/train-takeover-front.test.mjs` “field 2026-11-13 (PR #1085)”：修复前第 2–7 段各跑两次，修复后各一次。
 
 ### 62.7 wsprep 与第1段并发：不做（第 5 项分析）
 

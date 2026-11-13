@@ -458,47 +458,46 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   assert.throws(() => validateStatusConfig({ node: 'Company 01' }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
 });
 
-// Task 63c3c879 (PR #1027): end to end over the reporter: the STANDBY's resident-standby/<node> reminder (pending) is followed by a success
-// on the same context once the node on duty picked the head up, so GitHub no longer counts a pending status on the PR.
-test('Task 63c3c879: the STANDBY reminder under resident-standby/<node> does not stay pending', async t => {
+// ADR 0028, field 2026-11-13 (PR #1085): TURING (STANDBY) read DESK's 停摆（PAUSED） for 10 minutes and wrote "当班节点 desk-w-591 已停摆
+// 10 分钟" under resident-standby/turing, while DESK ran the batch. End to end over the reporter: a STANDBY writes no reminder and shows no
+// toast, whatever the node on duty wrote; a reminder it left pending before ADR 0028 ends once as success.
+test('ADR 0028: a STANDBY writes no reminder under resident-standby/<node>; one written before ends once', async t => {
   const root = await tempRoot(t);
-  let now = Date.parse('2026-10-23T06:00:00Z');
+  let now = Date.parse('2026-11-13T03:32:00Z');
   const calls = [];
-  let other = [];
+  const paused = at => ({ context: 'resident-queue/desk-w-591 (info only)', state: 'pending', description: '停摆（PAUSED）：执行器已暂停，等 Owner 恢复', created_at: new Date(at).toISOString(), login: 'tdoljyj' });
+  const other = [paused(now)];
   const run = async argv => {
     calls.push(argv);
     if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
-    if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
+    if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify([...other].reverse()) };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
     if (argv[4]?.includes('/check-runs?')) return { code: 0, stdout: '0\n' };
     return { code: 0, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
   const store = await LocalStore.open(path.join(root, 's.json'), () => now);
-  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, notifications: false });
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, notify: async () => { calls.push(['toast']); } });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
   const node = () => ({ name: 'node-b', mode: 'STANDBY', probe: { at: new Date(now - 30_000).toISOString(), result: 'not-held', failures: 0, failingSince: null } });
   const status = () => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: node() }); }, now);
   const standbyPosts = () => calls.filter(a => a.includes('POST') && a.some(x => x.includes(`repos/${REPO}/statuses/${H(7)}`)) && a.includes(`context=${standbyContext('node-b')}`))
     .map(a => [a.find(x => x.startsWith('state=')), a.find(x => x.startsWith('description='))]);
+  for (let m = 0; m <= 40; m += 1) { await reporter.pass({ pulls, status: status() }); now += 60_000; if (m % 14 === 13) other.push(paused(now)); }
+  assert.deepEqual(standbyPosts(), [], 'no reminder at 10 minutes of 停摆, nor at 30 without a pickup');
+  assert.equal(calls.filter(a => a[0] === 'toast').length, 0, 'no toast');
+  assert.equal(calls.filter(a => a[4]?.includes('/check-runs?')).length, 0, 'no admission read');
+  // a reminder written before ADR 0028 (the reporter's memory) ends once as success
+  store.data.node.standby[H(7)] = { pr: 7, at: new Date(now).toISOString() };
   await reporter.pass({ pulls, status: status() });
-  now += 31 * 60_000;
+  now += 60_000;
   await reporter.pass({ pulls, status: status() });
-  assert.deepEqual(standbyPosts().map(p => p[0]), ['state=pending'], 'the reminder');
-  assert.ok(reporter.store.data.node.standby[H(7)], 'owed an end');
-  // the node on duty takes the head up
-  now += 6 * 60_000;
-  other = [{ context: 'resident-queue/company-01 (info only)', state: 'pending', description: '当班：运行中：第 3 段（gitleaks 发布）', created_at: new Date(now - 60_000).toISOString(), login: 'tdoljyj' }];
-  await reporter.pass({ pulls, status: status() });
-  assert.deepEqual(standbyPosts().at(-1), ['state=success', 'description=备用节点 node-b，不参与本 PR：当班节点已接手']);
-  assert.deepEqual(reporter.store.data.node.standby, {});
-  now += 6 * 60_000;
-  await reporter.pass({ pulls, status: status() });
-  assert.equal(standbyPosts().length, 2, 'ended once');
+  assert.deepEqual(standbyPosts(), [['state=success', 'description=备用提醒已取消（ADR 0028）']]);
+  assert.deepEqual(store.data.node.standby, {});
 });
 
-test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; a reminder toast owed is shown later; refreshes stop at 900', async t => {
+test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; refreshes stop at 900', async t => {
   const root = await tempRoot(t);
   let now = Date.parse('2026-10-23T06:00:00Z');
   const calls = [];
@@ -531,13 +530,6 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   r2.store.data.posted[H(7)].n = 900;
   now += 15 * 60_000;
   assert.equal((await r2.pass({ pulls, status: queued() })).posted, 0, 'no refresh past 900 writes');
-  // m6: a reminder toast that could not be shown is owed and shown in a later pass
-  const store = await LocalStore.open(path.join(root, 'm.json'), () => now);
-  store.data.node.toasts['standby:7:x:unclaimed'] = { title: 'PR #7：当班节点没接手', body: 'b', at: new Date(now).toISOString() };
-  const r3 = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store });
-  assert.equal((await r3.pass({ pulls: [], status: queued() })).toasts, 1);
-  assert.deepEqual(store.data.node.toasts, {});
-  assert.ok(store.data.notified['standby:7:x:unclaimed']);
 });
 
 // Node Resource Governance v1 (after Owner decision 241824b2): the node's status file (C:\ProgramData\Clued\node-governance\status.json)
