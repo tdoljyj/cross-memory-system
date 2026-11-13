@@ -714,7 +714,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "646f8fcc70fb02352de316cb0566e0325e77f248a848c8257f832a61bf913d70"
+      "content_sha256": "b62a5576a08e79ed13c9247a6dfac5a29be9345fa3cd5ac4020c4039171fc555"
     },
     {
       "id": "script.required-applicability",
@@ -946,7 +946,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "e40029b8d88c45fbc3aff2c882c2d950b607170bc31e2dd5ecd73713347b81b4"
+      "content_sha256": "372fd5e50cc1614a1c7681c8d308f593c9976254ba8faf18b19c42179ba61cc7"
     }
   ]
 }
