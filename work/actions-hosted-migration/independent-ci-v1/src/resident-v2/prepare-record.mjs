@@ -12,7 +12,7 @@
 //   - the record pins the controller node and the six check mappings exactly as v1 did.
 // Inputs /2 (resident active/standby design v0.4 §9 C1): the input `node` (node profile /1, validateNodeProfile
 // below) replaces `hostname`; acceptance.json carries it whole as `node`, next to the unchanged `hostname`
-// (= node.hostname). It is the host identity the Source used to carry as TURING constants. The acceptance contract
+// (= node.hostname). It is the host identity; the Source carries no host constant. The acceptance contract
 // stays /2: a reader that does not use `node` yet (the generic helper's FormalPublicBoundaryV2.cs) is unaffected,
 // and every JS reader (record.mjs) refuses a record without a valid one.
 // ciPrincipalRoleRef (primary/standby C7, design v0.4 section 7.2, resident DESIGN.md section 30) changes meaning, not shape: it is the
@@ -53,12 +53,10 @@ const noSecrets = v => { if (plain(v)) { check(!Object.keys(v).some(k => /privat
 // Node profile /1: the one host identity an install is pinned to (design §9 C1), carried whole as the record's
 // acceptance.json `node`; nodeProfileSha256 = hash(profile) (SHA-256 of its canonical JSON). The elevated
 // installers (install/verify/uninstall-resident.ps1), the controller read lease (hold-record.ps1, held-record.mjs)
-// and the v2 entries' secret reads (entry-runtime.mjs) take the host identity from it. TURING's profile is
-// independent-ci-resident-v1/config/node-profile.turing.json: exactly the values the Source carried before.
-// Every rule is a shape rule except mutationMutex, which must be the v1 name derived from the host and the
-// controller account's RID (TURING: Global\CluedControlControllerMutationV1-TURING-1015, the name the v1 elevated tool
-// control-install-delta-v2/invoker/FixedScm.cs shares with the broker so the two exclude each other; a new node has no v1
-// tool, so there the derived name only has to be one fixed name per host). install-resident.ps1#Assert-NodeProfile is
+// and the v2 entries' secret reads (entry-runtime.mjs) take the host identity from it; every node's profile lives only
+// in its own install record. Every rule is a shape rule except mutationMutex, which must be the name derived from the
+// host and the controller account's RID (Global\CluedControlControllerMutationV1-<HOSTNAME>-<RID>: one fixed name per
+// host). install-resident.ps1#Assert-NodeProfile is
 // the PowerShell twin; test/fixtures/node-profile-cases.json holds both to the same answers and refusal codes.
 //   nodeName              lower-case node label (resident-queue/<nodeName> on the PR page, design §5.2)
 //   hostname              NetBIOS computer name, upper-case (COMPUTERNAME, Environment.MachineName)

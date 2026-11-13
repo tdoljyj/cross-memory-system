@@ -109,7 +109,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '4d53ede1e30f48f5c2caaa749b75041e80a221ea987955824d747be4ad5b34b2'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES
+TEMPLATE_SHA = '1a833ea83c260a7c10f832757d82494c716863e1ac220220a83515b5f44a2012'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -188,7 +188,7 @@ acceptance = json.load(open(os.path.join(PKG, 'record', 'acceptance.json'), enco
 node = acceptance['node']
 TREE = os.path.join(R4, 'tree-' + COMMIT[:8])
 if not FLEET_PLAN:
-    profile, _profile_sha = rconfig.node_profile(CFG, TREE)
+    profile, _profile_sha = rconfig.node_profile(CFG)
     assert node == profile, ('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', node.get('nodeName'))
 OWNER, CONTROLLER = node['ownerSid'], node['controllerSid']
 FLEET = None

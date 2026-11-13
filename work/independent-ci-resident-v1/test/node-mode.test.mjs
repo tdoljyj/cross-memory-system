@@ -177,7 +177,7 @@ test('an uncertain probe keeps the mode: UNCERTAIN at a start, ACTIVE, STANDBY a
 });
 
 test('an uncertain answer is retried soon (1, 2, 4, then 5 minutes) in every mode; ACTIVE never sooner than its 5 minutes', async t => {
-  // TURING 2026-11-11: a boot-time probe answered uncertain and the node stayed UNCERTAIN for the full 15 minutes.
+  // NODE-B 2026-11-11: a boot-time probe answered uncertain and the node stayed UNCERTAIN for the full 15 minutes.
   const a = await nodeFx(t, { facts: [UNCERTAIN, UNCERTAIN, UNCERTAIN, HELD] });
   await a.exec.tick();
   assert.deepEqual([a.engine.probes.length, a.exec.roleProbeMode], [1, 'UNCERTAIN']);

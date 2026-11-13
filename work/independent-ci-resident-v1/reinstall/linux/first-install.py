@@ -97,21 +97,20 @@ for role in ROLES:
         PULL_IMAGES += [tp['image']] if tp['image'] not in PULL_IMAGES else []
 
 # ---- the assembled input (linux/assemble.py) + the first-install tools, the generated verify-source-v2.sh and the template ----
-SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # the reviewed signer (= prep.py's), imported by the first-install signer
-VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'   # = prep.py's
+SIGN_SHA = '2158d29184e7568abb0a24fc62ea1a38c95c13f7b29810f699b1404dcf636cfa'   # sign-qualification.mjs (= prep.py's), imported by the first-install signer
+VERIFY_TEMPLATE_SHA = '4dd35484578ebd01c8296543980c095ad7a809690b2713dd4c2354f3f61dcfd9'   # = prep.py's
 # the two first-install root tools as reviewed (Z1 review round 1); a change needs a new review and new pins here
-SIGN_FIRST_SHA = 'cac02a6a08e60dccd713820dc3f39853d0700cd26b52dfac99572e63625ce79d'
+SIGN_FIRST_SHA = '03f789904cb1fa6e48af13a6a71dc610c84be6552377c0ae383e408fa4eb50fb'
 NODE_FACTS_SHA = 'f315be5aa89498405c5ff4e4d090c9ca08c172b877e59df8ac20b54f6dfe54e5'
 assert sha(os.path.join(TOOLS, 'sign-first-qualification.mjs')) == SIGN_FIRST_SHA and sha(os.path.join(TOOLS, 'first-node-facts.py')) == NODE_FACTS_SHA, 'FIRST_INSTALL_TOOLS_CHANGED'
-assert sha(os.path.join(TOOLS, 'sign-qualification-v2.mjs')) == SIGN_SHA and sha(os.path.join(TOOLS, 'verify-source-v2.template.sh')) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
+assert sha(os.path.join(TOOLS, 'sign-qualification.mjs')) == SIGN_SHA and sha(os.path.join(TOOLS, 'verify-source-v2.template.sh')) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
 for src, name in (('check-host.py', 'check-host-r4.py'), ('verify-signed.mjs', 'verify-signed-r4.mjs'), ('derive-roles.py', 'derive-roles-r7.py')):
     assert sha(os.path.join(IN, 'tools', name)) == sha(os.path.join(TOOLS, src)), ('TOOL_NOT_THE_COMMITTED_ONE', name)
 vt = open(os.path.join(TOOLS, 'verify-source-v2.template.sh'), 'rb').read().decode('utf-8')
 v2, n1 = re.subn(r'(?m)^COMMIT=[0-9a-f]{40}$', 'COMMIT=' + COMMIT, vt)
 v2, n2 = re.subn(r'(?m)^MANIFEST_SHA=[0-9a-f]{64}$', 'MANIFEST_SHA=' + NEW, v2)
-v2, n3 = re.subn(r'(?m)^V1_HEAD=[0-9a-f]{40}$', 'V1_HEAD=', v2)   # no Source v1 on a first install (the template then checks there is none)
-assert n1 == 1 and n2 == 1 and n3 == 1
-extra = {'tools/sign-qualification-v2.mjs': open(os.path.join(TOOLS, 'sign-qualification-v2.mjs'), 'rb').read(),
+assert n1 == 1 and n2 == 1
+extra = {'tools/sign-qualification.mjs': open(os.path.join(TOOLS, 'sign-qualification.mjs'), 'rb').read(),
          'tools/sign-first-qualification.mjs': open(os.path.join(TOOLS, 'sign-first-qualification.mjs'), 'rb').read(),
          'tools/first-node-facts.py': open(os.path.join(TOOLS, 'first-node-facts.py'), 'rb').read(),
          'tools/verify-source-v2.sh': v2.encode('utf-8'), 'template/public.pem': TEMPLATE_PUB}
@@ -152,7 +151,7 @@ upg_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', '
                      + ['resident.exists=yes', 'upgrade-v1.exists=no', 'generation.current.exists=no'])
 UPG_PLAN = shab(upg_text.encode('utf-8'))
 files = (['tools/' + f for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'clued-ci-install-source-v2', 'derive-roles-r7.py', 'verify-signed-r4.mjs',
-                                 'check-host-r4.py', 'sign-qualification-v2.mjs', 'sign-first-qualification.mjs', 'first-node-facts.py', 'verify-source-v2.sh')]
+                                 'check-host-r4.py', 'sign-qualification.mjs', 'sign-first-qualification.mjs', 'first-node-facts.py', 'verify-source-v2.sh')]
          + ['linux-pkg/' + f for f in UPG_FILES] + ['linux-res-pkg/' + f for f in RES_FILES]
          + ['record/' + f for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json')]
          + ['template/' + r + s for r in ROLES for s in ('.json', '.qualification.json')] + ['template/formal-source-manifest-v2.json', 'template/public.pem'])
@@ -250,9 +249,9 @@ host_ready() {
 A = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase A (root, NO private key, writes only under $BASE). Commit @@C8@@, node @@NODE_NAME@@.
 #   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-A.@@SUFFIX@@.sh
 """ + COMMON + r"""host_ready
-# a first install: nothing of a Linux CI here yet (no Source v1 either)
-for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 /opt/clued-independent-ci/source-first-formal-v1 \
-         /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/roles /etc/clued-independent-ci/formal-source-manifest-v2.json \
+# a first install: nothing of a Linux CI here yet
+for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 \
+         /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/formal-source-manifest-v2.json \
          /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json /var/lib/clued-independent-ci/resident/upgrade/current.json; do
   [ ! -e "$p" ] || refuse "NOT_A_FIRST_INSTALL:$p"
 done
@@ -270,7 +269,7 @@ G fsck --strict --no-dangling --no-progress >/dev/null || refuse SOURCE_REPOSITO
 cd "$STG"
 sha256sum --quiet -c - <<'EOF' || refuse STAGED_BYTES_NOT_THE_REVIEWED_ONES
 @@SUMS@@EOF
-[ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_NOT_THE_REVIEWED_ONE
+[ "$(sha256sum "$STG/tools/sign-qualification.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_NOT_THE_REVIEWED_ONE
 [ "$(sha256sum "$STG/template/public.pem" | cut -d' ' -f1)" = "$TEMPLATE_PUB_SHA" ] || refuse TEMPLATE_PUBLIC_KEY_CHANGED
 # derive (no key): the template node's reviewed policies v3 and signed payloads, for this record (Source values; every pin checked in the commit)
 $CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed "$STG/template" --old-manifest-file "$STG/template/formal-source-manifest-v2.json" --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "$HOST_REF" --out "$STG/roles-derived" > "$STG/derive.stdout.json" || { cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }
@@ -311,7 +310,7 @@ B = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase B (ro
 [ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
 (cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 src_git_clean
-[ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
+[ "$(sha256sum "$STG/tools/sign-qualification.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
 T=$(mktemp -d "$STG/b-$(date -u +%Y%m%dT%H%M%SZ)-XXXX")
 if [ ! -e /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json ]; then
   host_ready

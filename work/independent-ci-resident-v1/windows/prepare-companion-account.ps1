@@ -18,8 +18,8 @@
     6. read-only facts for the Agent: the account's facts (registrar account-facts), the scheduled tasks whose principal is one of the
        local service accounts (clued-runner, clued-control, the new account), the user-rights lines that name them (secedit export into a
        protected temporary folder), and this user's WSL registrations.
-  Exit 0 and status COMPANION_ACCOUNT_PREPARED: send the log's nodeProfile lines (ownerSid, ownerProfileDirectory) to the Agent; they go
-  into config\node-profile.<node>.json for the reinstall.
+  Exit 0 and status COMPANION_ACCOUNT_PREPARED: the log's nodeProfile lines (ownerSid, ownerProfileDirectory) are this machine's facts
+  for its own install record; the repository holds no node's profile.
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File prepare-companion-account.ps1 -LogDirectory <folder> -RegistrarSha256 <sha>
       [-AccountName clued-companion] [-WslMemory 16GB -WslProcessors 8 -WslSwap 4GB]

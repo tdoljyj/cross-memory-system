@@ -171,7 +171,18 @@ export async function readNode({ root, now = Date.now() }) {
     need(ca?.contract === 'clued.independent-ci.companion-account/1' && ca.companionSid === profile.ownerSid && USER_SID.test(ca.companionSid ?? '')
       && USER_SID.test(ca.operatorSid ?? '') && ca.operatorSid !== ca.companionSid, 'NODE_COMPANION_ACCOUNT_REFUSED');
     // the resident distribution registered to that account: its ext4.vhdx directory (the configuration's companionAccount.wslVhdxDirectory)
-    const cw = jsonOf(await fs.readFile(at('install', 'companion-wsl.json')));
+    // the record is the node's own state: the live one, else the newest kept root's (a reinstall before the launcher carried it lost it;
+    // the launcher carries it back from the same place: template.ps1 Step-CarryCompanionWslRecord)
+    let cwBytes = await readOrNull(at('install', 'companion-wsl.json'));
+    if (cwBytes === null) {
+      const parent = path.dirname(root);
+      // the kept roots: the parent's listing where this (non-elevated) process may list it, and those the installed backfill manifest names
+      const named = ((await readOrNull(at('install', 'backfill-manifest.json')))?.toString('utf8').match(/resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+/g)) ?? [];
+      const kept = [...new Set([...(await fs.readdir(parent).catch(() => [])), ...named])].filter(n => /^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$/.test(n)).sort().reverse();
+      for (const n of kept) { cwBytes = await readOrNull(path.join(parent, n, 'install', 'companion-wsl.json')); if (cwBytes !== null) break; }
+    }
+    need(cwBytes !== null, 'NODE_COMPANION_WSL_RECORD_REFUSED', 'no install\companion-wsl.json, live or kept');
+    const cw = jsonOf(cwBytes);
     const target = typeof cw?.target === 'string' && cw.target.endsWith('\\ext4.vhdx') ? cw.target.slice(0, -'\\ext4.vhdx'.length) : null;
     need(cw?.contract === 'clued.independent-ci.companion-wsl/1' && cw.companionSid === ca.companionSid && cw.distro === policy?.linux?.distribution && cw.stage === 'qualified'
       && /^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,6}[A-Za-z0-9._-]{1,64}$/.test(target ?? ''), 'NODE_COMPANION_WSL_RECORD_REFUSED');
@@ -331,12 +342,12 @@ export const defaultScm = service => {
 // clued.independent-ci.reinstall-config/1 (reinstall/tools/rconfig.py) of this node, from the node alone (sections 7.1, 8): the work
 // directory and the copies under it, the bare repository of the archive's bundle, the new package (its record is the base), the installed
 // runtime and configuration, the installed tokens' targets (paths only; the launcher carries them, section 8.1), the runner (the package
-// installer's original binary, the live DACL), the fleet reasons, the Linux host facts (v1SourceHead null: the no-v1 signing path, 7.5)
+// installer's original binary, the live DACL), the fleet reasons, the Linux host facts (the one signing path: the installed roles-v3, 7.5)
 // and the companion account. linux.installedManifest names a file that does not exist on the Windows side: the fleet rehearsal defers
 // that comparison to Linux A, which checks the plan's expectedInstalledLinux (section 8.2).
 export function reinstallConfigFor({ node, work, repo, packageDir, inputs, installed, secrets, runner, reasons }) {
   const { inst } = node;
-  const cfg = { contract: CONFIG_CONTRACT, node: node.profile.nodeName, nodeProfile: `config/node-profile.${node.profile.nodeName}.json`, workDir: work, repo,
+  const cfg = { contract: CONFIG_CONTRACT, workDir: work, repo,
     basePackage: packageDir,
     nodeRecord: { appKeyId: inst.appKeyId, appPublicKeySha256Base64: inst.appPublicKeySha256Base64, ciPrincipalBindingId: inst.ciPrincipalBindingId,
       ciPrincipalRoleRef: inst.ciPrincipalRoleRef, ciTokenPinSha256: inst.ciTokenPinSha256, controllerNodeSha256: inst.controllerNodeSha256 },
@@ -345,7 +356,7 @@ export function reinstallConfigFor({ node, work, repo, packageDir, inputs, insta
     ...(secrets.heartbeatToken ? { heartbeat: { tokenFile: secrets.heartbeatToken.target, bindingId: secrets.heartbeatToken.bindingId } } : {}),
     runner, launcher: { pauseReason: reasons.pause, rearmReason: reasons.rearm, w1PauseReason: reasons.w1Pause },
     linux: { distribution: node.distribution, installedManifest: path.join(installed, 'linux-resident-manifest.json'), installedRoles: path.join(installed, 'roles-v3'),
-      host: { toolchainNodeSha256: node.linuxHost.toolchainNodeSha256, resultPublicKeySha256: node.linuxHost.resultPublicKeySha256, v1SourceHead: null } },
+      host: { toolchainNodeSha256: node.linuxHost.toolchainNodeSha256, resultPublicKeySha256: node.linuxHost.resultPublicKeySha256 } },
     secretTargetsExist: [true, true],
     ...(node.companionAccount ? { operatorSid: node.companionAccount.operatorSid, companionAccount: { wslVhdxDirectory: node.companionAccount.wslVhdxDirectory } } : {}) };
   return cfg;
@@ -541,11 +552,6 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     await writeNew(path.join(installed, 'roles-v3', `${role}.qualification.json`), node.roles[role].qualificationBytes);
   }
   await writeNew(path.join(installed, 'roles-v3', 'formal-source-manifest-v2.json'), node.raw['source-manifest.json']);
-  // the node profile the configuration names, in the package's tree: the installed one (rconfig.node_profile reads it there)
-  const profileFile = path.join(R, 'config', `node-profile.${node.profile.nodeName}.json`);
-  const inTree = await readOrNull(profileFile);
-  if (inTree === null) await writeNew(profileFile, JSON.stringify(node.profile, null, 2) + '\n');
-  else need(pyEqual(pyLoads(inTree.toString('utf8').replace(/^﻿/, '')), pyLoads(pyCanonical(node.profile))), 'PACKAGE_NODE_PROFILE_NOT_THE_INSTALLED', node.profile.nodeName);
   const repo = path.join(work, 'rehearsal', `src-${universal.commit.slice(0, 8)}.git`);
   await fs.mkdir(path.dirname(repo));
   bareFromBundle({ git: repo, bundle, commit: universal.commit, env: gitEnv(x) });

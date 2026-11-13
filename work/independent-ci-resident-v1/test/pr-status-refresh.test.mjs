@@ -61,7 +61,7 @@ test('a write lost to the outage is tried again at the next pass once the text c
     if (argv.includes('POST')) { if (!up) return { code: 1, stdout: '' }; posted.push(argv.join(' ')); return { code: 0, stdout: '{}' }; }
     return { code: 0, stdout: '{}' };
   };
-  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
   const behind = { pr: 998, headSha: H(6), eligible: false, hint: 'merge-main', behindBy: 2 };
   // the line is down: the write fails
@@ -72,7 +72,7 @@ test('a write lost to the outage is tried again at the next pass once the text c
   assert.equal((await reporter.pass({ pulls: [behind], status: null })).posted, 0);
   // the text changed (the PR is now 3 behind): tried at once
   assert.equal((await reporter.pass({ pulls: [{ ...behind, behindBy: 3 }], status: null })).posted, 1);
-  assert.match(posted[0], new RegExp(nodeContext('turing').replace(/[()]/g, '\\$&')));
+  assert.match(posted[0], new RegExp(nodeContext('node-b').replace(/[()]/g, '\\$&')));
   // a failed text is tried again after POST_RETRY_MS, which is short (2 minutes)
   assert.equal(POST_RETRY_MS, 2 * MIN);
   up = false;
@@ -91,7 +91,7 @@ test('review round 4: the reporter puts the re-run line after the duty word and 
     if (argv.includes('POST')) { posted.push(argv.find(a => a.startsWith('description=')).slice('description='.length)); return { code: 0, stdout: '{}' }; }
     return { code: 0, stdout: '{}' };
   };
-  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
   reporter.rerunDone = h => h === H(6);
   reporter.watchdogStale = () => true;
@@ -103,7 +103,7 @@ test('review round 4: the reporter puts the re-run line after the duty word and 
   assert.equal((await reporter.pass({ pulls: [{ pr: 998, headSha: H(6), eligible: true, hint: null, behindBy: 0 }], status })).posted, 1);
   assert.match(posted[0], /^当班：已自动补跑一次必需测试；运行中：第 3 段/);
   assert.ok(posted[0].endsWith(WATCHDOG_STALE_TEXT), posted[0]);
-  assert.equal(parseDutyStatus({ login: 'owner', context: nodeContext('turing'), created_at: new Date(T0).toISOString(), description: posted[0] }, 'owner')?.word, '当班');
+  assert.equal(parseDutyStatus({ login: 'owner', context: nodeContext('node-b'), created_at: new Date(T0).toISOString(), description: posted[0] }, 'owner')?.word, '当班');
 });
 
 test('review round 20: a network back-off whose time came and that a per-row deferral holds says the deferral, not the network and a passed time', async t => {

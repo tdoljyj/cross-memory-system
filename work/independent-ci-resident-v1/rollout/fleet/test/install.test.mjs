@@ -108,7 +108,7 @@ const SCM = () => ({ sddl: 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCR
 let world = null;
 async function getWorld() {
   if (world) return world;
-  const { repo, commit } = await fixtureRepo(keep, ['a', 'b']);
+  const { repo, commit } = await fixtureRepo(keep);
   const a = await nodeSite(keep, 'a', fleetFacts());
   // other refs, other role material, its own companion account and a heartbeat token
   const b = await nodeSite(keep, 'b', fleetFacts(), { companionAccount: true, heartbeat: true });
@@ -214,7 +214,7 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       // the synthesized configuration: rconfig.py loads it; the node's values; the copies it names are the installed bytes
       const cfg = readJson(config);
       assert.deepEqual([cfg.node, cfg.workDir, cfg.basePackage, cfg.nodeExe, cfg.upgradeTokenFile], [n.profile.nodeName, work, plan.packageDir, path.join(n.root, 'runtime', 'node.exe'), receipt.upgradeToken.target]);
-      assert.deepEqual(cfg.linux.host, { toolchainNodeSha256: n.toolchainSha, resultPublicKeySha256: n.resultPublicKeySha256, v1SourceHead: null });
+      assert.deepEqual(cfg.linux.host, { toolchainNodeSha256: n.toolchainSha, resultPublicKeySha256: n.resultPublicKeySha256 });
       assert.deepEqual(cfg.launcher, { pauseReason: plan.reasons.pause, rearmReason: plan.reasons.rearm, w1PauseReason: plan.reasons.w1Pause });
       await assert.rejects(fs.access(cfg.linux.installedManifest), 'the installed Linux manifest is not on the Windows side (section 8.2)');
       assert.equal(sha(await fs.readFile(path.join(cfg.linux.installedRoles, 'formal-source-manifest-v2.json'))), n.pkg.ciSource);
@@ -308,8 +308,8 @@ test('install, no stubs for prep.py and generate.py: A.sh, B.sh, B-resume.sh for
         assert.ok(t.includes(w.commit) && t.includes(plan.ciSourceManifestSha256), file);
         assert.ok(t.includes(n.toolchainSha), `${file}: the node's toolchain node pin`);
       }
-      // a node without Source v1 (v1SourceHead null): B signs with the no-v1 signer; the derived roles are the package's
-      assert.ok(texts['B.sh'].includes('sign-qualification-no-v1.mjs'));
+      // the one signing path (Source v1 is retired): B signs from the installed roles-v3; the derived roles are the package's
+      assert.ok(texts['B.sh'].includes('sign-qualification.mjs'));
       for (const h of Object.values(readJson(path.join(plan.packageDir, 'package-manifest.json')).linux.sourceV2.rolesDerivedSha256)) assert.ok(texts['A.sh'].includes(`= ${h} ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH`), h);
     }
   });

@@ -97,7 +97,7 @@ test('M5: the six notification sites write the queue; companion-main.mjs itself 
   const queued = [];
   const notify = queueNotify({ notify: async (k, ti, b) => { queued.push([k, ti, b]); return { queued: true, dropped: 0 }; } });
   const store = await LocalStore.open(path.join(dir, 's.json'), () => T0);
-  const reporter = new PrStatusReporter({ node: 'turing', repo: 'r/r', ghExe: 'C:\\gh.exe', powershellExe: 'C:\\ps.exe', run: async () => assert.fail('no toast child'), clock: () => T0, store, notify });
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: 'r/r', ghExe: 'C:\\gh.exe', powershellExe: 'C:\\ps.exe', run: async () => assert.fail('no toast child'), clock: () => T0, store, notify });
   reporter.passStartedAt = T0;
   assert.equal(await reporter.toast({ key: 'k', title: 'T', body: 'B' }, T0), true);
   assert.deepEqual(queued, [['k', 'T', 'B']]);

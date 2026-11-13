@@ -948,6 +948,32 @@ function Step-Rearm {
 # marker, the credential box on the secure desktop (CluedCompanionTaskRegistrar.exe; the password goes from there to the Task Scheduler
 # and nowhere else), the elevated side's qualification for up to 8 minutes, and the fall-back to the interactive token when it does not
 # pass. A failure is recorded; the node then runs as before the switch (interactive token) and the Owner can run the step again.
+# M5-b (ADR 0023): the account switch's record (install\companion-wsl.json and the owner registration export it names) is the
+# node's own state, not the package's: a reinstall carries it from the kept old root into the new one, bytes and security descriptor
+# as they were, create-only. Without it the switch reads a record with no ownerRegistration and stops, and the roll-back loses the
+# owner's original registration (DESK 2026-11-13: companion-headless exit 1, the node fell back to the interactive definition).
+function Step-CarryCompanionWslRecord([string]$keptAt) {
+  $r = [ordered]@{ from = $keptAt; carried = @(); error = $null }
+  try {
+    if (-not $keptAt -or -not [IO.Directory]::Exists($keptAt)) { $r.error = 'KEPT_ROOT_MISSING'; return $r }
+    # The newest kept root that holds the record: the one just kept, else an earlier one (a reinstall before this carry existed lost it)
+    $roots = @($keptAt) + @(@(Get-ChildItem -LiteralPath (Split-Path -Parent $keptAt) -Directory -ErrorAction Stop | Where-Object { $_.Name -cmatch '^resident-uninstalled-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$' -and $_.FullName -cne $keptAt } | Sort-Object Name -Descending) | ForEach-Object { $_.FullName })
+    $from = @($roots | Where-Object { [IO.File]::Exists((Join-Path (Join-Path $_ 'install') 'companion-wsl.json')) }) | Select-Object -First 1
+    if (-not $from) { $r.error = 'NO_KEPT_RECORD'; return $r }
+    $r.from = $from
+    $src = Join-Path $from 'install'; $dst = Join-Path $ResidentRoot 'install'
+    $names = @(@(Get-ChildItem -LiteralPath $src -File -ErrorAction Stop | Where-Object { $_.Name -ceq 'companion-wsl.json' -or $_.Name -cmatch '^companion-wsl-owner-[0-9A-Fa-f-]{36}\.reg$' }) | ForEach-Object { $_.Name })
+    foreach ($n in $names) {
+      $a = Join-Path $src $n; $to = Join-Path $dst $n
+      if ([IO.File]::Exists($to)) { if ((Get-FileSha $to) -ceq (Get-FileSha $a)) { $r.carried += $n; continue }; $r.error = 'TARGET_DIFFERS:' + $n; return $r }   # a re-run: carried already
+      Write-New $to ([IO.File]::ReadAllBytes($a))
+      $sd = [IO.File]::GetAccessControl($a); [IO.File]::SetAccessControl($to, $sd)
+      if ((Get-FileSha $to) -cne (Get-FileSha $a)) { $r.error = 'CARRY_CHANGED:' + $n; return $r }
+      $r.carried += $n
+    }
+  } catch { $r.error = 'CARRY_EXCEPTION:' + $_.Exception.GetType().Name }
+  $r
+}
 function Step-CompanionHeadless {
   $r = [ordered]@{ ran = $false; exit = $null; status = $null; stdout = $null; error = $null }
   try {
@@ -1140,10 +1166,10 @@ function Step-LinuxOutAclProbe([string]$registrar) {
   $sd = { param($p) $(if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }).GetSecurityDescriptorSddlForm('All') }
   $watched = @($run.out, (Join-Path $run.out 'stdout.txt'), (Join-Path $run.out 'stderr.txt'))
   $before = @($watched | ForEach-Object { & $sd $_ })
-  $report = [ordered]@{ directory = $run.directory; outcome = $null; exit = $null; code = $null; stdoutIsX = $false; stderrEmpty = $false; aclUnchanged = $false; failed = @(); removed = $false; registrarStderr = $null }
+  $report = [ordered]@{ directory = $run.directory; outcome = $null; exit = $null; code = $null; captureRefused = $null; stdoutIsX = $false; stderrEmpty = $false; aclUnchanged = $false; failed = @(); removed = $false; registrarStderr = $null }
   try {
     $c = Invoke-FleetProcess $registrar ('write-probe ' + $ResidentRoot + ' ' + $run.directory + ' 120') 420
-    if ($c.timedOut) { $report.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $report.outcome = $line.outcome; $report.exit = $line.exit; $report.code = $line.code; $report.registrarStderr = (Tail $c.stderr) }
+    if ($c.timedOut) { $report.outcome = 'TIMEOUT' } else { $line = ConvertFrom-FleetRootRunLine $c.stdout; $report.outcome = $line.outcome; $report.exit = $line.exit; $report.code = $line.code; $report.captureRefused = $line.captureRefused; $report.registrarStderr = (Tail $c.stderr) }
     $so = Read-FleetFileChecked $run.captured 'stdout.txt' 4096; $se = Read-FleetFileChecked $run.captured 'stderr.txt' 4096
     $report.stdoutIsX = ($null -ne $so -and $U8.GetString($so).Trim() -ceq 'x')
     $report.stderrEmpty = ($null -ne $se -and $se.Length -eq 0)
@@ -1151,6 +1177,7 @@ function Step-LinuxOutAclProbe([string]$registrar) {
     $report.aclUnchanged = (($before -join "`n") -ceq ($after -join "`n"))
   } catch { $report.code = 'PROBE_EXCEPTION:' + $_.Exception.GetType().Name }
   if (-not ($report.outcome -ceq 'EXITED' -and $report.exit -eq 0)) { $report.failed += 'exit' }
+  if ($report.captureRefused) { $report.failed += ('capture:' + $report.captureRefused) }   # the registrar's own reason: a probe failure names its cause
   if (-not $report.stdoutIsX) { $report.failed += 'stdout' }
   if (-not $report.stderrEmpty) { $report.failed += 'stderr' }
   if (-not $report.aclUnchanged) { $report.failed += 'acl' }
@@ -1563,6 +1590,7 @@ try {
   # Its account switch starts/qualifies the companion after the move itself.
   $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  if ($CompanionWslVhdxDirectory) { Write-Json 'companion-wsl-carry-report.json' (Step-CarryCompanionWslRecord ([string](Get-Key $uninstall 'keptAt'))) }
   $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   Remove-FleetCarry

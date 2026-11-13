@@ -33,7 +33,7 @@ foreach ($file in @('install-resident.ps1', 'verify-resident.ps1', 'rearm-reside
   Yes ($errors.Count -eq 0) ('parse:' + $file)
   foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$file + ':' + $f.Name] = $f.Extent.Text }
 }
-$OwnerSid = 'S-1-5-21-1173730660-3877291096-655431861-1001'; $ControllerSid = 'S-1-5-21-1173730660-3877291096-655431861-1015'
+$OwnerSid = 'S-1-5-21-20-21-22-1001'; $ControllerSid = 'S-1-5-21-20-21-22-1015'
 $ServiceName = 'CluedCIResident'; $ResidentPrivileges = @('SeChangeNotifyPrivilege'); $BrokerPrivileges = @('SeChangeNotifyPrivilege', 'SeCreateGlobalPrivilege')
 $FirewallRuleName = 'CluedCIResident-BlockOutbound'
 foreach ($name in @('install-resident.ps1:ConvertFrom-ScPrivs', 'install-resident.ps1:Get-AclPlan', 'install-resident.ps1:Get-PrivilegePlan', 'install-resident.ps1:Invoke-Sc')) {
@@ -153,16 +153,16 @@ if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $na.path)) 
 
 # 4c. Node profile (resident active/standby design v0.4, section 9 C1): install-resident.ps1 takes the host identity
 #     from the package's install record (record\acceptance.json `node`) and holds it to the shape rules of
-#     resident-v2/prepare-record.mjs; TURING's profile (config\node-profile.turing.json) is the values this harness has
+#     resident-v2/prepare-record.mjs; the fake node's profile (test\fixtures\node-profile.json) is the values this harness has
 #     always used. verify and uninstall read the installed record's profile (no host constant left in the three).
 foreach ($name in @('install-resident.ps1:Assert-NodeProfile', 'install-resident.ps1:Get-PackageNodeProfile', 'install-resident.ps1:Sha256Bytes', 'install-resident.ps1:ConvertTo-NodeProfileCanonical')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 Yes ($installText -match '(?m)^\$NodeProfileKeys = @\([^\r\n]+\)') 'present:NodeProfileKeys'; . ([scriptblock]::Create($Matches[0]))
-$turingText = [IO.File]::ReadAllText((Join-Path $here '..\config\node-profile.turing.json'))
-$turing = $turingText | ConvertFrom-Json
-Assert-NodeProfile $turing; $n++
-Yes ((ConvertTo-NodeProfileCanonical $turing) -ceq $turingText) 'profile-canonical-original-bytes'
-Yes ((Sha256Bytes ([Text.Encoding]::UTF8.GetBytes((ConvertTo-NodeProfileCanonical $turing)))) -ceq '4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6') 'profile-canonical-original-hash'
-Yes ($turing.hostname -ceq 'TURING' -and $turing.ownerSid -ceq $OwnerSid -and $turing.controllerSid -ceq $ControllerSid -and $turing.runnerService -ceq 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02' -and $turing.wslDistribution -ceq 'Ubuntu-24.04') 'turing-profile-is-todays-values'
+$turingText = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\node-profile.json'))
+$nodeB = $turingText | ConvertFrom-Json
+Assert-NodeProfile $nodeB; $n++
+Yes ((ConvertTo-NodeProfileCanonical $nodeB) -ceq $turingText) 'profile-canonical-original-bytes'
+Yes ((Sha256Bytes ([Text.Encoding]::UTF8.GetBytes((ConvertTo-NodeProfileCanonical $nodeB)))) -ceq 'b47a313e05f471de6d70de84cefc7e275f0fb79a65a8252db941bcc5f8ab54ce') 'profile-canonical-original-hash'
+Yes ($nodeB.hostname -ceq 'NODE-B' -and $nodeB.ownerSid -ceq $OwnerSid -and $nodeB.controllerSid -ceq $ControllerSid -and $nodeB.runnerService -ceq 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-b' -and $nodeB.wslDistribution -ceq 'Ubuntu-24.04') 'node-b-profile-is-todays-values'
 function Test-Refused([scriptblock]$body, [string]$code) { try { & $body; return $false } catch { return $_.Exception.Message -ceq $code } }
 # The shared cases (independent-ci-v1/test/fixtures/node-profile-cases.json): the JS validator is held to the same answers
 # and refusal codes (test/resident-v2-node-profile.test.mjs), so the two cannot drift apart.
@@ -186,17 +186,17 @@ function Write-NodePackage([string]$acceptance) {
   $script:pkgBytes = (New-Object Text.UTF8Encoding($false)).GetBytes('{"contract":"clued.independent-ci.resident-package/3","files":[{"path":"record/acceptance.json","target":"record\\acceptance.json","sha256":"' + (Sha256Bytes $ab) + '"}]}')
   $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
 }
-Write-NodePackage ('{"accepted":true,"hostname":"TURING","node":' + $turingText + '}')
-Yes ((Get-PackageNodeProfile).nodeName -ceq 'turing') 'package-node-profile-read'
+Write-NodePackage ('{"accepted":true,"hostname":"NODE-B","node":' + $turingText + '}')
+Yes ((Get-PackageNodeProfile).nodeName -ceq 'node-b') 'package-node-profile-read'
 $ExpectedPackageManifestSha256 = 'f' * 64; Yes (Test-Refused { Get-PackageNodeProfile } 'REVIEWED_PACKAGE_CHANGED') 'package-node-profile-manifest-pin'
-Write-NodePackage ('{"accepted":true,"hostname":"TURING","node":' + $turingText + '}'); [IO.File]::WriteAllText((Join-Path $PackageRoot 'record\acceptance.json'), '{"hostname":"TURING","node":' + $turingText + '}')
+Write-NodePackage ('{"accepted":true,"hostname":"NODE-B","node":' + $turingText + '}'); [IO.File]::WriteAllText((Join-Path $PackageRoot 'record\acceptance.json'), '{"hostname":"NODE-B","node":' + $turingText + '}')
 Yes (Test-Refused { Get-PackageNodeProfile } 'PACKAGE_FILE_CHANGED:record\acceptance.json') 'package-node-profile-bytes-pin'
-Write-NodePackage '{"accepted":true,"hostname":"TURING"}'; Yes (Test-Refused { Get-PackageNodeProfile } 'PACKAGE_NODE_PROFILE_REQUIRED') 'package-node-profile-missing'
+Write-NodePackage '{"accepted":true,"hostname":"NODE-B"}'; Yes (Test-Refused { Get-PackageNodeProfile } 'PACKAGE_NODE_PROFILE_REQUIRED') 'package-node-profile-missing'
 Write-NodePackage ('{"accepted":true,"hostname":"OTHER","node":' + $turingText + '}'); Yes (Test-Refused { Get-PackageNodeProfile } 'NODE_PROFILE_INVALID') 'package-node-profile-hostname'
 Yes ($functions['install-resident.ps1:Assert-Owner'].Contains("throw 'NODE_HOST_REQUIRED'") -and $functions['install-resident.ps1:Assert-Owner'].Contains("throw 'NODE_PROFILE_ACCOUNTS_MISMATCH'")) 'install-host-and-accounts-from-profile'
 foreach ($s in @('install-resident.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1')) {
   $code = @((Get-Content -LiteralPath (Join-Path $here $s)) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
-  Yes (-not ($code -match 'clued-ci-home-win-02|S-1-5-21-\d+-\d+-\d+-\d+|''TURING''|\(\\\.\|TURING\)')) ('no-host-constant:' + $s)
+  Yes (-not ($code -match 'clued-ci-node-b|S-1-5-21-\d+-\d+-\d+-\d+|''NODE-B''|\(\\\.\|NODE-B\)')) ('no-host-constant:' + $s)
 }
 
 # The same-buffer review pin must be checked before consuming any node-bearing public JSON.
@@ -275,9 +275,9 @@ foreach ($name in @('install-resident.ps1:Get-HeartbeatNextStep', 'install-resid
 . ([scriptblock]::Create($hbPlan))
 $zh = { param([int[]]$c) -join @($c | ForEach-Object { [char]$_ }) }
 $hbId = '0a1b2c3d-0000-4000-8000-0000000000cc'
-$stepWith = Get-HeartbeatNextStep 'turing' $hbId; $stepWithout = Get-HeartbeatNextStep 'turing' $null
+$stepWith = Get-HeartbeatNextStep 'node-b' $hbId; $stepWithout = Get-HeartbeatNextStep 'node-b' $null
 # "qing Owner zai KooYomi de /bindings/failover ba xin-tiao lian-jie <id> gua-dao ben jie-dian <node> (liang-bu que-ren)"
-$wantWith = (& $zh 0x8bf7) + ' Owner ' + (& $zh 0x5728) + ' KooYomi ' + (& $zh 0x7684) + ' /bindings/failover ' + (& $zh 0x628a, 0x5fc3, 0x8df3, 0x8fde, 0x63a5) + ' ' + $hbId + ' ' + (& $zh 0x6302, 0x5230, 0x672c, 0x8282, 0x70b9) + ' turing' + (& $zh 0xff08, 0x4e24, 0x6b65, 0x786e, 0x8ba4, 0xff09)
+$wantWith = (& $zh 0x8bf7) + ' Owner ' + (& $zh 0x5728) + ' KooYomi ' + (& $zh 0x7684) + ' /bindings/failover ' + (& $zh 0x628a, 0x5fc3, 0x8df3, 0x8fde, 0x63a5) + ' ' + $hbId + ' ' + (& $zh 0x6302, 0x5230, 0x672c, 0x8282, 0x70b9) + ' node-b' + (& $zh 0xff08, 0x4e24, 0x6b65, 0x786e, 0x8ba4, 0xff09)
 Yes ($stepWith -ceq $wantWith) 'heartbeat-next-step:with-the-connection-id'
 Yes ($stepWithout -ceq $wantWith.Replace(' ' + $hbId + ' ', '')) 'heartbeat-next-step:the-same-step-without-an-id'
 $hbInstallCode = @((Get-Content -LiteralPath (Join-Path $here 'install-resident.ps1')) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
@@ -333,13 +333,13 @@ function New-IdentityCase($case) {
   if (@($case.PSObject.Properties.Name) -ccontains 'pin') { $pin = $case.pin }
   [pscustomobject]@{ installation = $docs.installation; accepted = $docs.accepted; pin = $pin }
 }
-foreach ($nodeName in @('turing', 'company')) {
+foreach ($nodeName in @('node-b', 'company')) {
   $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
   $id = Get-NodeIdentity $nd.installation $nd.accepted $nd.acceptancePin
   Yes ((ConvertTo-NodeIdentityCanonical $id) -ceq (ConvertTo-NodeIdentityCanonical $nd.identity)) ('identity-derived:' + $nodeName)
   Yes ((Sha256Text (ConvertTo-NodeIdentityCanonical $id)) -ceq $nd.identitySha256) ('identity-sha-equals-the-javascript-one:' + $nodeName)
 }
-Yes ((($idCases.nodes.turing.identity.nodeName) -ceq 'turing') -and (($idCases.nodes.company.identity.nodeName) -ceq 'company') -and $idCases.nodes.turing.identitySha256 -cne $idCases.nodes.company.identitySha256) 'two-different-node-identities'
+Yes ((($idCases.nodes.'node-b'.identity.nodeName) -ceq 'node-b') -and (($idCases.nodes.company.identity.nodeName) -ceq 'company') -and $idCases.nodes.'node-b'.identitySha256 -cne $idCases.nodes.company.identitySha256) 'two-different-node-identities'
 $i = 0; foreach ($case in @($idCases.refused)) { $i++; $c = New-IdentityCase $case; Yes (Test-Refused { Get-NodeIdentity $c.installation $c.accepted $c.pin } $case.code) ('node-identity-refused:' + $i + ':' + $case.node + ':' + $case.name) }
 Yes (Test-Refused { Get-NodeIdentity $null $null ('a' * 64) } 'NODE_IDENTITY_FIELDS_REQUIRED') 'node-identity-refused:null'
 
@@ -358,7 +358,7 @@ function Write-IdentityPackage([string]$dir, $nd, [string]$identitySha, [switch]
   if ($identitySha) { $manifest.nodeIdentitySha256 = $identitySha }
   $script:pkgBytes = $enc.GetBytes(($manifest | ConvertTo-Json -Depth 6)); $script:PackageRoot = $dir; $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
 }
-foreach ($nodeName in @('turing', 'company')) {
+foreach ($nodeName in @('node-b', 'company')) {
   $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
   Write-IdentityPackage (Join-Path $Scratch ('identity-package-' + $nodeName)) $nd $nd.identitySha256
   $fromPackage = Get-PackageNodeIdentity
@@ -367,7 +367,7 @@ foreach ($nodeName in @('turing', 'company')) {
 $nd = ($idCasesText | ConvertFrom-Json).nodes.company
 Write-IdentityPackage (Join-Path $Scratch 'identity-package-no-pin') $nd ''; Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_REQUIRED') 'package-identity-pin-required'
 Write-IdentityPackage (Join-Path $Scratch 'identity-package-wrong-pin') $nd ('0' * 64); Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_CHANGED') 'package-identity-pin-mismatch'
-Write-IdentityPackage (Join-Path $Scratch 'identity-package-turing-pin') $nd $idCases.nodes.turing.identitySha256; Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_CHANGED') 'package-identity-other-nodes-pin'
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-node-b-pin') $nd $idCases.nodes.'node-b'.identitySha256; Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_CHANGED') 'package-identity-other-nodes-pin'
 Write-IdentityPackage (Join-Path $Scratch 'identity-package-disagree') $nd $nd.identitySha256 -Disagree; Yes (Test-Refused { Get-PackageNodeIdentity } 'NODE_IDENTITY_RECORDS_DISAGREE') 'package-identity-record-files-disagree'
 Write-IdentityPackage (Join-Path $Scratch 'identity-package-edited') $nd $nd.identitySha256
 [IO.File]::WriteAllText((Join-Path $PackageRoot 'record\installation.json'), '{"appKeyId":1}'); Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_FILE_CHANGED:record\installation.json') 'package-identity-bytes-pin'
@@ -383,15 +383,15 @@ function New-IdentityReceipt($id, [string]$role = 'NONE', [bool]$keyPlaced = $tr
   if ($role -eq '') { $r.Remove('roleAssumption') }
   ($r | ConvertTo-Json -Depth 6) | ConvertFrom-Json   # as verify reads the receipt: parsed from the file
 }
-foreach ($nodeName in @('turing', 'company')) {
+foreach ($nodeName in @('node-b', 'company')) {
   $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
   $receipt = New-IdentityReceipt $nd.identity
   $res = Test-NodeIdentityReceipt $receipt $nd.installation $nd.accepted $nd.acceptancePin
   Yes ($res.ok -eq $true -and $res.detail -ceq $nodeName -and $res.identity.nodeName -ceq $nodeName) ('verify-node-identity:' + $nodeName)
   Yes ((Test-SecretsReceipt $receipt $res.identity) -and (Test-SecretsReceipt (New-IdentityReceipt $nd.identity 'NONE' $true $true) $res.identity) -and (Test-SecretsReceipt (New-IdentityReceipt $nd.identity 'NONE' $false $false) $res.identity)) ('verify-secrets-receipt:' + $nodeName)
 }
-$company = ($idCasesText | ConvertFrom-Json).nodes.company; $turing = ($idCasesText | ConvertFrom-Json).nodes.turing
-$res = Test-NodeIdentityReceipt (New-IdentityReceipt $turing.identity) $company.installation $company.accepted $company.acceptancePin
+$company = ($idCasesText | ConvertFrom-Json).nodes.company; $nodeB = ($idCasesText | ConvertFrom-Json).nodes.'node-b'
+$res = Test-NodeIdentityReceipt (New-IdentityReceipt $nodeB.identity) $company.installation $company.accepted $company.acceptancePin
 Yes ($res.ok -eq $false -and $res.detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:another-nodes-receipt'
 foreach ($role in @('ACTIVE', 'STANDBY', '')) {
   $res = Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity $role) $company.installation $company.accepted $company.acceptancePin
@@ -657,7 +657,7 @@ if (Test-Path -LiteralPath $probeNode) {
     $HeartbeatBindingId = $case[0]
     $hp = Get-HeartbeatTokenPlan
     Yes ($hp.supplied -and $hp.verified -and $hp.fingerprint -ceq $hbPin -and $hp.bindingId -ceq $case[1] -and $script:SecretBytes.ContainsKey('heartbeatToken')) ('heartbeat-binding-id:token-file-' + $case[2])
-    $hpJson = $hp | ConvertTo-Json -Depth 4; $hpStep = Get-HeartbeatNextStep 'turing' $hp.bindingId
+    $hpJson = $hp | ConvertTo-Json -Depth 4; $hpStep = Get-HeartbeatNextStep 'node-b' $hp.bindingId
     Yes (-not $hpJson.Contains($hbTokenText) -and -not $hpJson.Contains('clued_hbt_') -and -not $hpStep.Contains('clued_hbt_') -and -not $hpStep.Contains($hbPin)) ('heartbeat-binding-id:no-secret-in-plan-or-step-' + $case[2])
     Clear-SecretBytes
   }
@@ -829,7 +829,7 @@ foreach ($case in @(
   Yes ($v.status -ceq $case[1] -and $v.exit -eq $case[2]) ('verify-verdict:' + $case[3])
 }
 
-# 4z. Language-independent service facts (DESK-W-591, 2026-10-30: sc qfailure printed 重新启动) and the controller's right to log on
+# 4z. Language-independent service facts (NODE-A, 2026-10-30: sc qfailure printed 重新启动) and the controller's right to log on
 #     as a service (SCM 7041, then ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED).
 foreach ($name in @('ConvertFrom-FailureActions', 'Test-BrokerFailureActions', 'Test-ServiceLogonRight')) {
   Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))
@@ -838,7 +838,7 @@ foreach ($name in @('Test-ServiceLogonRight', 'Read-ServiceLogonRight')) {   # i
   Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['verify-resident.ps1:' + $name]) ('same-copy:' + $name)
 }
 $hex = { param([string]$s) [byte[]]@($s -split ' ' | ForEach-Object { [Convert]::ToByte($_, 16) }) }
-# the SCM's value on TURING after `sc failure CluedCISwapBroker reset= 86400 actions= restart/60000/restart/300000//300000`
+# the SCM's value on NODE-B after `sc failure CluedCISwapBroker reset= 86400 actions= restart/60000/restart/300000//300000`
 $installed = [byte[]](& $hex '80 51 01 00 00 00 00 00 00 00 00 00 03 00 00 00 14 00 00 00 01 00 00 00 60 ea 00 00 01 00 00 00 e0 93 04 00 00 00 00 00 e0 93 04 00')
 Yes ((ConvertFrom-FailureActions $installed).actions -ceq '1/60000,1/300000,0/300000') 'failure-actions-parsed'
 Yes (Test-BrokerFailureActions $installed 1) 'failure-actions-as-installed'
@@ -857,17 +857,17 @@ Yes (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @($ctl) })
 Yes (-not (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @('S-1-5-21-9-8-7-1000') })) 'logon-right-group-without-it'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeNetworkLogonRight = *$ctl`r`n" $ctl @{})) 'logon-right-only-another-right'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-name-without-a-resolution'
-# secedit writes local accounts by name (TURING, 2026-10-31); Read-ServiceLogonRight resolves each name to its SID
-$turing = "[Privilege Rights]`r`nSeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`r`n"
+# secedit writes local accounts by name (NODE-B, 2026-10-31); Read-ServiceLogonRight resolves each name to its SID
+$nodeB = "[Privilege Rights]`r`nSeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`r`n"
 $resolved = @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $ctl }
-Yes (Test-ServiceLogonRight $turing $ctl @{} $resolved) 'logon-right-by-name-as-turing-exports-it'
-Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = TURING\clued-control`r`n" $ctl @{} @{ 'TURING\clued-control' = $ctl }) 'logon-right-by-qualified-name'
-Yes (-not (Test-ServiceLogonRight $turing 'S-1-5-21-9-8-7-1000' @{} $resolved)) 'logon-right-by-name-other-account'
-Yes (-not (Test-ServiceLogonRight $turing $ctl @{} @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $null })) 'logon-right-unresolved-name-grants-nothing'
+Yes (Test-ServiceLogonRight $nodeB $ctl @{} $resolved) 'logon-right-by-name-as-node-b-exports-it'
+Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = NODE-B\clued-control`r`n" $ctl @{} @{ 'NODE-B\clued-control' = $ctl }) 'logon-right-by-qualified-name'
+Yes (-not (Test-ServiceLogonRight $nodeB 'S-1-5-21-9-8-7-1000' @{} $resolved)) 'logon-right-by-name-other-account'
+Yes (-not (Test-ServiceLogonRight $nodeB $ctl @{} @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $null })) 'logon-right-unresolved-name-grants-nothing'
 Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-ci-hosts`r`n" $ctl @{ 'S-1-5-21-9-8-7-1012' = @($ctl) } @{ 'clued-ci-hosts' = 'S-1-5-21-9-8-7-1012' }) 'logon-right-through-a-group-by-name'
-Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-control`r`n") $ctl @{} $resolved)) 'logon-right-denied-by-name'
-Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = gone-account`r`n") $ctl @{} ($resolved + @{ 'gone-account' = $null }))) 'logon-right-unresolved-deny-fails-closed'
-Yes (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-runner`r`n") $ctl @{} $resolved) 'logon-right-deny-by-name-for-another-account'
+Yes (-not (Test-ServiceLogonRight ($nodeB + "SeDenyServiceLogonRight = clued-control`r`n") $ctl @{} $resolved)) 'logon-right-denied-by-name'
+Yes (-not (Test-ServiceLogonRight ($nodeB + "SeDenyServiceLogonRight = gone-account`r`n") $ctl @{} ($resolved + @{ 'gone-account' = $null }))) 'logon-right-unresolved-deny-fails-closed'
+Yes (Test-ServiceLogonRight ($nodeB + "SeDenyServiceLogonRight = clued-runner`r`n") $ctl @{} $resolved) 'logon-right-deny-by-name-for-another-account'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *$ctl`r`n") $ctl @{})) 'logon-right-denied-directly'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1011`r`n") $ctl @{ 'S-1-5-21-9-8-7-1011' = @($ctl) })) 'logon-right-denied-through-a-group'
 Yes (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1000`r`n") $ctl @{}) 'logon-right-deny-for-another-account'

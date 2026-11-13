@@ -1,10 +1,8 @@
 {
   "contract": "clued.independent-ci.reinstall-config/1",
-  "node": "new-node",
-  "nodeProfile": "config/node-profile.new-node.json",
-  "workDir": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\new-node-work",
-  "repo": "C:\\Users\\17531\\AppData\\Local\\Temp\\b3res",
-  "basePackage": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\template-node-package",
+  "workDir": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\new-node-work",
+  "repo": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\b3res",
+  "basePackage": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\template-node-package",
   "nodeRecord": {
     "appKeyId": "REPLACE_WITH_THE_NODE_APP_KEY_ID_AS_A_NUMBER",
     "appPublicKeySha256Base64": "REPLACE_WITH_THE_NODE_APP_PUBLIC_KEY_FINGERPRINT",
@@ -13,9 +11,9 @@
     "ciTokenPinSha256": "REPLACE_WITH_THE_NODE_CI_ADMISSION_TOKEN_PIN",
     "controllerNodeSha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32"
   },
-  "nodeExe": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\package\\s34-resident-package-r1\\runtime\\node.exe",
-  "policyInput": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\policy.r4.input.json",
-  "companionInput": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\companion.r41.input.json",
+  "nodeExe": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\package\\s34-resident-package-r1\\runtime\\node.exe",
+  "policyInput": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\policy.r4.input.json",
+  "companionInput": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\companion.r41.input.json",
   "upgradeTokenFile": "C:\\Users\\Windows\\clued-secrets\\resident-upgrade.token",
   "runner": {
     "binary": "\"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\"",
@@ -28,12 +26,11 @@
   },
   "linux": {
     "distribution": "CluedResident-Linux",
-    "installedManifest": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\resident-v1-manifest.json",
+    "installedManifest": "C:\\Users\\owner-b\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\resident-v1-manifest.json",
     "installedRoles": null,
     "host": {
       "toolchainNodeSha256": null,
-      "resultPublicKeySha256": null,
-      "v1SourceHead": null
+      "resultPublicKeySha256": null
     }
   },
   "signer": {

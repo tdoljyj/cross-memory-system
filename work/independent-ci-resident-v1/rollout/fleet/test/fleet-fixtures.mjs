@@ -47,8 +47,9 @@ export function profileOf(letter) {
     runnerService: `actions.runner.tdoljyj-cross-memory-system.clued-ci-${name}`, mutationMutex: `Global\\CluedControlControllerMutationV1-${host}-1015` });
 }
 
-// The checkout's universal subset (tracked files and this assembler's untracked ones) plus the profiles, as one commit.
-export async function fixtureRepo(t, letters) {
+// The checkout's universal subset (tracked files and this assembler's untracked ones), as one commit. No node profile:
+// a package carries none (each node's comes from its installed record).
+export async function fixtureRepo(t) {
   const d = await tempDir(t, 'fleetrepo');
   const listing = new Map();
   for (const rec of git(CHECKOUT, 'ls-files', '-s', '-z').toString('utf8').split('\0').filter(Boolean)) {
@@ -62,10 +63,6 @@ export async function fixtureRepo(t, letters) {
   const selected = await selectTree(listing, read);
   const repo = path.join(d, 'repo');
   for (const p of selected) await put(path.join(repo, ...p.split('/')), await fs.readFile(path.join(CHECKOUT, ...p.split('/'))));
-  for (const l of letters) {
-    const p = profileOf(l);
-    await put(path.join(repo, 'work', 'independent-ci-resident-v1', 'config', `node-profile.${p.nodeName}.json`), JSON.stringify(p, null, 2) + '\n');
-  }
   await put(path.join(repo, 'README.fixture'), 'not part of the universal subset\n');
   git(repo, '-c', 'core.autocrlf=false', 'init', '-q', '--initial-branch=main');
   git(repo, '-c', 'core.autocrlf=false', 'add', '-A');

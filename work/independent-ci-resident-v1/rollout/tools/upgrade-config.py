@@ -3,7 +3,7 @@ replaced by the package the node runs now, so that record-inputs.py carries that
 (Decision b1dd8a84: the node identity pins them) and node-inputs.py starts from the same node. NON-elevated; writes one new file.
 
 The installed package must be the node's current generation: its package-manifest.json hashes to upgrade\\current.json's
-packageManifestSha256 (Owner-readable), and its record names the configured node.
+packageManifestSha256 (Owner-readable); its record's node profile is the node's (rconfig.node_profile).
 
   python -I upgrade-config.py <reinstall-config.json> <installed package dir> <resident root> <out.json>
 """
@@ -32,7 +32,6 @@ def main(argv):
     need(hashlib.sha256(pkg_raw).hexdigest() == current.get('packageManifestSha256'), 'INSTALLED_PACKAGE_IS_NOT_THE_CURRENT_GENERATION',
          {'package': hashlib.sha256(pkg_raw).hexdigest(), 'current': current.get('packageManifestSha256'), 'generation': current.get('generation')})
     acc = json.loads(open(os.path.join(installed, 'record', 'acceptance.json'), 'rb').read().decode('utf-8'))
-    need(acc.get('node', {}).get('nodeName') == raw.get('node'), 'INSTALLED_PACKAGE_IS_FOR_ANOTHER_NODE', acc.get('node', {}).get('nodeName'))
     raw['basePackage'] = installed
     data = (json.dumps(raw, indent=1, sort_keys=True) + '\n').encode('utf-8')
     with open(out, 'xb') as f:

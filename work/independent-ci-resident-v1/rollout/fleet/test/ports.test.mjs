@@ -60,10 +60,10 @@ async function basePackage(dir, { node = nodeProfile(), extraRoleValue = true } 
 }
 
 function rconfigDoc(d, { node, base, policyInput = 'C:\\p.json', companionInput = 'C:\\c.json', signer = null, nodeRecord = {} }) {
-  return { contract: 'clued.independent-ci.reinstall-config/1', node: node.nodeName, nodeProfile: `config/node-profile.${node.nodeName}.json`, workDir: d, repo: 'C:\\repo',
+  return { contract: 'clued.independent-ci.reinstall-config/1', workDir: d, repo: 'C:\\repo',
     basePackage: base, nodeRecord, nodeExe: 'C:\\node.exe', policyInput, companionInput, upgradeTokenFile: 'C:\\t\\resident-upgrade.token',
     runner: { binary: '"C:\\r\\RunnerService.exe"', sddl: 'D:(A;;;;;SY)' }, launcher: { pauseReason: 'p', rearmReason: 'r', w1PauseReason: 'w' },
-    linux: { distribution: node.wslDistribution, installedManifest: 'C:\\i\\m.json', installedRoles: 'C:\\i\\roles-v3', host: { toolchainNodeSha256: 'b'.repeat(64), resultPublicKeySha256: 'c'.repeat(64), v1SourceHead: 'f'.repeat(40) } },
+    linux: { distribution: node.wslDistribution, installedManifest: 'C:\\i\\m.json', installedRoles: 'C:\\i\\roles-v3', host: { toolchainNodeSha256: 'b'.repeat(64), resultPublicKeySha256: 'c'.repeat(64) } },
     ...(signer ? { signer } : {}) };
 }
 
@@ -72,8 +72,7 @@ test('record-inputs.py without --ref == recordInputs, byte for byte (installed s
   const node = nodeProfile();
   const base = path.join(d, 'base');
   await basePackage(base, { node });
-  const tree = path.join(d, 'tree');
-  await put(path.join(tree, 'work', 'independent-ci-resident-v1', 'config', `node-profile.${node.nodeName}.json`), JSON.stringify(node, null, 2));
+  const tree = path.join(d, 'tree');   // not read: the node profile is the installed package's
   const commit = '1234567890abcdef1234567890abcdef12345678';
   const sk = signerKeys();
   for (const signer of [null, { keyId: 'test-key-2', runtimeId: 'fixture-runtime-2', publicKeyPem: sk.publicKeyPem }]) {
@@ -82,12 +81,12 @@ test('record-inputs.py without --ref == recordInputs, byte for byte (installed s
     const out = path.join(d, `inputs-${signer ? 's' : 'n'}.json`);
     const r = py([path.join(RES, 'reinstall', 'tools', 'record-inputs.py'), cfg, tree, commit, out]);
     assert.equal(r.status, 0, String(r.stderr) + String(r.stdout));
-    const js = recordInputs({ basePackage: base, tree, commit, node: node.nodeName, nodeProfile: `config/node-profile.${node.nodeName}.json`, distribution: node.wslDistribution, signer });
+    const js = recordInputs({ basePackage: base, commit, distribution: node.wslDistribution, signer });
     assert.ok(js.bytes.equals(await fs.readFile(out)), 'the same bytes');
   }
   // refusals keep their codes: a record file that is not its package's
   await fs.appendFile(path.join(base, 'record', 'signers.json'), ' ');
-  assert.throws(() => recordInputs({ basePackage: base, tree, commit, node: node.nodeName, nodeProfile: `config/node-profile.${node.nodeName}.json`, distribution: node.wslDistribution }),
+  assert.throws(() => recordInputs({ basePackage: base, commit, distribution: node.wslDistribution }),
     { code: 'BASE_RECORD_FILE_NOT_ITS_PACKAGE' });
   const r = py([path.join(RES, 'reinstall', 'tools', 'record-inputs.py'), path.join(d, 'cfg-n.json'), tree, commit, path.join(d, 'again.json')]);
   assert.match(String(r.stderr), /BASE_RECORD_FILE_NOT_ITS_PACKAGE/);
@@ -106,14 +105,15 @@ test('node-inputs.py == nodeInputs, byte for byte; the same refusal for a base n
   companion.status = { ...(companion.status ?? {}), node: baseNode.nodeName };
   const pFile = path.join(d, 'p.json'), cFile = path.join(d, 'c.json');
   await put(pFile, JSON.stringify(policy, null, 2)); await put(cFile, '\uFEFF' + JSON.stringify(companion));
-  const tree = path.join(d, 'tree');
-  await put(path.join(tree, 'work', 'independent-ci-resident-v1', 'config', `node-profile.${node.nodeName}.json`), JSON.stringify(node));
+  const tree = path.join(d, 'tree');   // not read: the node profile is the installed package's
+  const base = path.join(d, 'base');
+  await basePackage(base, { node });
   const cfg = path.join(d, 'cfg.json');
-  await put(cfg, JSON.stringify(rconfigDoc(d, { node, base: 'C:\\base', policyInput: pFile, companionInput: cFile })));
+  await put(cfg, JSON.stringify(rconfigDoc(d, { node, base, policyInput: pFile, companionInput: cFile })));
   const [dec, rec] = [randomUUID(), randomUUID()];
   const r = py([path.join(RES, 'reinstall', 'tools', 'node-inputs.py'), cfg, tree, dec, rec, path.join(d, 'po.json'), path.join(d, 'co.json')]);
   assert.equal(r.status, 0, String(r.stderr));
-  const profile = pyLoads(await fs.readFile(path.join(tree, 'work', 'independent-ci-resident-v1', 'config', `node-profile.${node.nodeName}.json`), 'utf8'));
+  const profile = node;
   const js = nodeInputs({ policy: pyLoads(await fs.readFile(pFile, 'utf8')), companion: pyLoads((await fs.readFile(cFile, 'utf8')).replace(/^\uFEFF/, '')),
     profile, profileSha256: sha(Buffer.from(pyCanonical(profile))), decision: dec, receipt: rec });
   assert.ok(js.policyBytes.equals(await fs.readFile(path.join(d, 'po.json'))), 'policy bytes');

@@ -1,8 +1,8 @@
 // First install of a node's Linux half (Z1; derived from a template node's reviewed roles-v3,
 // README section 8c). Root, Linux, the pinned toolchain node: sign the three runtime qualifications v2 with THIS node's new result key. It
 // reads the private key itself and never prints, copies or logs it. Same checks and the same signing bytes as the reviewed
-// sign-qualification-v2.mjs (whose canonicalJson, ROLES and FIXED it imports), except where that tool requires the node's own
-// installed v1 qualification, which a new node does not have. Instead each payload must be the TEMPLATE node's reviewed, signed
+// sign-qualification.mjs (whose canonicalJson, ROLES and FIXED it imports), except where that tool requires the node's own
+// installed v2 qualification, which a new node does not have. Instead each payload must be the TEMPLATE node's reviewed, signed
 // qualification of the same role (signature verified with the template's public key, pinned by its SHA-256) with only the values
 // that belong to this record and this node changed: sourceManifestSha256, sourceAcceptanceRef, hostAcceptanceRef (derive-roles),
 // keyId, runtimeIdentity, resultPublicKeySha256 (first-node-facts), and a Source pin derive-roles repinned from the commit. Image,
@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { canonicalJson, FIXED, ROLES } from './sign-qualification-v2.mjs';
+import { canonicalJson, FIXED, ROLES } from './sign-qualification.mjs';
 
 const FACTS = ['prCannotReadSignerKey', 'noControllerMounts', 'noCredentials', 'networkDisabled', 'cleanupQualified'];
 const BIND = ['runtimeIdentity', 'sourceManifestSha256', 'image', 'entrySha256', 'qualificationSha256', 'executionMode', 'workerSha256', 'proofSha256',
@@ -40,7 +40,7 @@ export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templat
   for (const role of ROLES) {
     const policyBytes = fs.readFileSync(path.join(inDir, `${role}.json`)), payloadBytes = fs.readFileSync(path.join(inDir, `${role}.qualification.payload.json`));
     const policy = JSON.parse(policyBytes), payload = JSON.parse(payloadBytes);
-    // sign-qualification-v2.mjs's policy and payload checks, unchanged
+    // sign-qualification.mjs's policy and payload checks, unchanged
     check(policy.schema === 'independent-ci.linux-policy.v3' && policy.role === role && policy.formalEnabled === true && !('currentClaim' in policy) && !('claimId' in policy)
       && policy.signingKeyFile === fixed.key && policy.publicKeyFile === fixed.pub && policy.nodeExecutable === fixed.node, 'ROLE_POLICY_V3_REFUSED');
     check(typeof keyId === 'string' && policy.keyId === keyId && policy.runtimeIdentity === runtimeId, 'POLICY_NOT_THIS_NODES_SIGNER');
@@ -50,7 +50,7 @@ export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templat
       && BIND.every(k => typeof payload[k] === 'string' && payload[k] === policy[k])
       && (policy.executionMode === 'scanner' || (payload.containerNodeExecutable === policy.containerNodeExecutable && payload.containerNodeSha256 === policy.containerNodeSha256)),
     'UNSIGNED_PAYLOAD_REFUSED');
-    // In place of the v1 lineage: the template node's reviewed, signed qualification of the same role, identical but for this
+    // In place of the node's own lineage: the template node's reviewed, signed qualification of the same role, identical but for this
     // record's and this node's values.
     const t = JSON.parse(fs.readFileSync(path.join(templateDir, `${role}.qualification.json`), 'utf8'));
     check(t && Object.keys(t).length === 2 && verify(null, Buffer.from(canonicalJson(t.payload)), templatePubPem, Buffer.from(String(t.signature), 'base64'))
@@ -82,7 +82,7 @@ export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templat
   return { status: 'FIRST_QUALIFICATIONS_V2_SIGNED', qualifiedAt, publicKeySha256: pubSha, templatePublicKeySha256: templatePubSha256, roles, privateKeyPrinted: false };
 }
 
-// sign-qualification-v2.mjs's protectedKey: the private key's whole path is root-owned and not group/other-writable, 0600, single link.
+// sign-qualification.mjs's protectedKey: the private key's whole path is root-owned and not group/other-writable, 0600, single link.
 function protectedKey(file) {
   for (let p = file; ; p = path.dirname(p)) {
     const s = fs.lstatSync(p);

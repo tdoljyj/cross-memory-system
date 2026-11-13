@@ -1,6 +1,6 @@
 """Offline tests of the reinstall rehearsal and configuration (no host access: a fake Host answers for the node).
 
-Regression cases (README.md section 5): the three refusals of the r7 TURING reinstall must each be a rehearsal finding before any final:
+Regression cases (README.md section 5): the three refusals of the r7 NODE-B reinstall must each be a rehearsal finding before any final:
   1. the Linux resident manifest kept the INSTALLED external pins although the new commit changed those Source files (Linux A/B);
   2. the role derivation refused a Source file the new commit changed (PINNED_FILE_CHANGED_IN_NEW_COMMIT_REPIN_NEEDED, Linux A);
   3. the launcher accepted only uninstall plan /2 while the installed uninstall writes /3 (UNINSTALL_PLAN_REFUSED, launcher f3).
@@ -29,10 +29,10 @@ WORKER = 'work/actions-hosted-migration/independent-ci-v1/worker/protected-job-b
 NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node'
 OWN = ['/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux', '/etc/systemd/system/clued-ci-worker@.service',
        '/etc/systemd/system/clued-ci-wsprep@.service', '/etc/systemd/system/clued-ci-archive@.service']
-PROFILE = {'contract': 'clued.independent-ci.node-profile/1', 'controllerSid': 'S-1-5-21-1-2-3-1015', 'hostname': 'TURING',
-           'mutationMutex': 'Global\\CluedControlControllerMutationV1-TURING-1015', 'nodeName': 'turing', 'ownerProfileDirectory': 'C:\\Users\\o',
-           'ownerSid': 'S-1-5-21-1-2-3-1001', 'runnerService': 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02', 'wslDistribution': 'Ubuntu-24.04'}
-HOST_FACTS = {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64, 'v1SourceHead': 'f' * 40}
+PROFILE = {'contract': 'clued.independent-ci.node-profile/1', 'controllerSid': 'S-1-5-21-1-2-3-1015', 'hostname': 'NODE-B',
+           'mutationMutex': 'Global\\CluedControlControllerMutationV1-NODE-B-1015', 'nodeName': 'node-b', 'ownerProfileDirectory': 'C:\\Users\\o',
+           'ownerSid': 'S-1-5-21-1-2-3-1001', 'runnerService': 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-b', 'wslDistribution': 'Ubuntu-24.04'}
+HOST_FACTS = {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64}
 
 
 VERIFY_TAIL ='''  if ($allOk) { return @{ status = 'RESIDENT_VERIFIED'; exit = 0 } }
@@ -53,9 +53,12 @@ class Fixture:
         self.dir = tempfile.mkdtemp(prefix='rehearse-')
         w = self.w = os.path.join(self.dir, 'work')
         tree = os.path.join(w, 'tree-' + COMMIT[:8])
-        os.makedirs(os.path.join(tree, 'work', 'independent-ci-resident-v1', 'config'))
-        with open(os.path.join(tree, 'work', 'independent-ci-resident-v1', 'config', 'node-profile.turing.json'), 'w', encoding='utf-8') as f:
-            json.dump(PROFILE, f)
+        # the installed (base) package: its record's node profile is the node's only profile (rconfig.node_profile)
+        base = self.base = os.path.join(w, 'base')
+        os.makedirs(os.path.join(base, 'record'))
+        acc = json.dumps({'node': PROFILE}).encode()
+        open(os.path.join(base, 'record', 'acceptance.json'), 'wb').write(acc)
+        json.dump({'files': [{'target': 'record\\acceptance.json', 'sha256': sha(acc)}]}, open(os.path.join(base, 'package-manifest.json'), 'w'))
         os.makedirs(os.path.dirname(os.path.join(tree, *WORKER.split('/'))))
         with open(os.path.join(tree, *WORKER.split('/')), 'wb') as f:
             f.write(new_worker)
@@ -88,8 +91,8 @@ class Fixture:
         open(os.path.join(pkg, 'resident', 'windows', 'verify-resident.ps1'), 'w').write(VERIFY_TAIL)
         self.cfg_path = os.path.join(self.dir, 'config.json')
         win = lambda p: fixture_paths.win(self.cfg_path, p)   # the configuration names Windows paths on every host
-        cfg_doc = {'contract': rconfig.CONTRACT, 'node': 'turing', 'nodeProfile': 'config/node-profile.turing.json', 'workDir': win(w), 'repo': 'C:\\repo',
-                   'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
+        cfg_doc = {'contract': rconfig.CONTRACT, 'workDir': win(w), 'repo': 'C:\\repo',
+                   'basePackage': win(base), 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
                    'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
                    'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
                    'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': win(self.installed_manifest), 'installedRoles': win(os.path.join(inst_dir, 'roles-v3')),
@@ -106,11 +109,11 @@ class Fixture:
 
 
 class FakeHost:
-    """The installed node as the rehearsal sees it. uninstall_contract / upgrader / derive answer what the r7 TURING host answered."""
+    """The installed node as the rehearsal sees it. uninstall_contract / upgrader / derive answer what the r7 NODE-B host answered."""
     def __init__(self, fx, uninstall_contract=3, upgrader=True, derive=None, verify='partial', probe=None, file_locks=None):
         self.fx, self.files, self.verify = fx, {}, verify
-        self.probe = {'checkHostExit': 0, 'checkHost': '{"status":"HOST_PINS_AS_DERIVED"}', 'v1Head': HOST_FACTS['v1SourceHead'],
-                      'v1Qualifications': {'gitleaks': True, 'trivy': True, 'contract-placement': True}, **(probe or {})}
+        self.probe = {'checkHostExit': 0, 'checkHost': '{"status":"HOST_PINS_AS_DERIVED"}',
+                      'v2Qualifications': {'gitleaks': True, 'trivy': True, 'contract-placement': True}, **(probe or {})}
         self.probe_argv = None
         self.locks = {'contract': 'clued.independent-ci.rehearsal-file-locks/1', 'status': 'OBSERVED',
                       'coverage': 'installed-public-binaries-only', 'fileCount': 3, 'secretsEnumerated': False,
@@ -213,6 +216,15 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
         self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
+
+    def test_version_facts_accept_the_optional_live_matches_current(self):
+        # the Linux tool writes liveMatchesCurrent (DESK 2026-11-13: a strict key set refused the node's own facts)
+        for v in (True, False, None):
+            self.assertEqual(rehearse.version_facts(json.dumps({**self.fx.facts, 'liveMatchesCurrent': v}).encode())['generation'], 1)
+        with self.assertRaisesRegex(ValueError, 'LINUX_FACTS_INVALID'):
+            rehearse.version_facts(json.dumps({**self.fx.facts, 'liveMatchesCurrent': 'yes'}).encode())
+        with self.assertRaisesRegex(ValueError, 'LINUX_FACTS_INVALID'):
+            rehearse.version_facts(json.dumps({**self.fx.facts, 'other': 1}).encode())
 
     def snapshot(self, facts=None, raw=None):
         path = os.path.join(self.fx.dir, 'snapshot.json')
@@ -490,33 +502,23 @@ class Rehearsal(unittest.TestCase):
         d = json.load(open(acc)); d['node'] = dict(PROFILE, hostname='OTHER'); json.dump(d, open(acc, 'w'))
         self.assertIn('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', codes(self.run_with(FakeHost(self.fx))))
 
-    # review 1-1: the root scripts pinned TURING's toolchain node, result key and Source v1; on another node phase A would refuse
+    # review 1-1: the root scripts pin the node's own toolchain node and result key; other values make phase A refuse
     def test_linux_host_facts_not_the_nodes(self):
         h = FakeHost(self.fx)
         self.assertEqual(self.run_with(h)['status'], 'REHEARSAL_PASS')
         self.assertEqual(h.probe_argv[-2:], [HOST_FACTS['toolchainNodeSha256'], HOST_FACTS['resultPublicKeySha256']])
         c = codes(self.run_with(FakeHost(self.fx, probe={'checkHostExit': 1, 'checkHost': '{"status":"REFUSED","code":"PUBLIC_RESULT_KEY_CHANGED"}',
-                                                          'v1Head': '0' * 40, 'v1Qualifications': {'gitleaks': False}})))
-        self.assertTrue({'LINUX_HOST_PINS_NOT_THE_CONFIGURED', 'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(c), c)
+                                                          'v2Qualifications': {'gitleaks': False}})))
+        self.assertTrue({'LINUX_HOST_PINS_NOT_THE_CONFIGURED', 'LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING'} <= set(c), c)
 
-    # a node without Source v1 (Z1 first install, README section 6): rehearses to PASS on its roles-v3 lineage; fails closed otherwise
-    def test_a_node_without_source_v1(self):
-        doc = json.load(open(self.fx.cfg_path))
-        doc['linux']['host'] = dict(HOST_FACTS, v1SourceHead=None)
-        p = os.path.join(self.fx.dir, 'no-v1.json'); json.dump(doc, open(p, 'w'))
-        cfg = self.fx.load(p)
-        z1 = {'v1Head': None, 'v1Qualifications': {r: False for r in ('gitleaks', 'trivy', 'contract-placement')}, 'v1Present': [],
-              'v2Qualifications': {r: True for r in ('gitleaks', 'trivy', 'contract-placement')}}
-        run = lambda probe: rehearse.rehearse(cfg, COMMIT, self.fx.pkg, FakeHost(self.fx, probe=dict(z1, **probe)))
+    # the one signing lineage (Source v1 is retired, README section 6): rehearses to PASS on the installed roles-v3; fails closed otherwise
+    def test_the_signing_lineage_is_the_installed_roles_v3(self):
+        cfg = self.fx.cfg
+        run = lambda probe: rehearse.rehearse(cfg, COMMIT, self.fx.pkg, FakeHost(self.fx, probe=probe))
         r = run({})
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
-        self.assertEqual(codes(run({'v1Present': ['/etc/clued-independent-ci/roles']})), ['LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED'])
-        self.assertEqual(codes(run({'v1Head': 'f' * 40, 'v1Present': ['/opt/clued-independent-ci/source-first-formal-v1']})),
-                         ['LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED'])
         self.assertEqual(codes(run({'v2Qualifications': {'gitleaks': True, 'trivy': False, 'contract-placement': True}})), ['LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING'])
         self.assertEqual(codes(run({'v2Qualifications': None})), ['LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING'])   # an older probe answer: neither form
-        # a v1 node's configuration with a node that has no v1: the v1 lineage is missing, refused as before
-        self.assertTrue({'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(codes(self.run_with(FakeHost(self.fx, probe=z1)))))
 
     # record-only reinstall (README 8b): same CI Source and Linux half as installed, so no Linux phase and nothing to derive
     def test_record_only_package_needs_no_role_derivation(self):
@@ -794,7 +796,7 @@ class TemplateContract(unittest.TestCase):
         contract, fields = rehearse.template_contract(text)
         self.assertEqual(contract, '3')
         self.assertTrue({'openBatches', 'upgraderService', 'upgradeOpState', 'runnerOriginalStopped', 'runnerSddlUnchanged', 'deletesEvidence'} <= set(fields))
-        self.assertNotIn("'TURING'", text)   # the host comes from the node profile ($NodeHostname)
+        self.assertNotIn("'NODE-B'", text)   # the host comes from the node profile ($NodeHostname)
 
 
 class Config(unittest.TestCase):
@@ -846,12 +848,11 @@ class Config(unittest.TestCase):
         c = self.load(dict(self.doc, nodeRecord={'appKeyId': 123, 'ciTokenPinSha256': '0' * 64}))
         self.assertEqual(c['nodeRecord']['appKeyId'], 123)
 
-    def test_unknown_keys_and_profile_of_another_node(self):
-        with self.assertRaises(rconfig.ConfigError):
-            self.load(dict(self.doc, extra=1))
-        c = self.load(dict(self.doc, node='desk-w-591'))
-        with self.assertRaises(rconfig.ConfigError):
-            rconfig.node_profile(c, os.path.join(self.fx.w, 'tree-' + COMMIT[:8]))
+    def test_unknown_keys_and_no_node_name_or_profile_file(self):
+        for extra in ({'extra': 1}, {'node': 'node-a'}, {'nodeProfile': 'config/node-profile.node-a.json'}):
+            with self.assertRaises(rconfig.ConfigError, msg=extra) as e:
+                self.load(dict(self.doc, **extra))
+            self.assertEqual(e.exception.code, 'CONFIG_UNKNOWN_KEYS')
 
     # review 1-3: values that reach the root shell or the elevated PowerShell
     def test_values_unsafe_in_a_shell_or_powershell_are_refused(self):
@@ -865,17 +866,17 @@ class Config(unittest.TestCase):
             self.load(dict(self.doc, linux={k: v for k, v in self.doc['linux'].items() if k != 'host'}))
         self.assertEqual(e.exception.code, 'CONFIG_LINUX')
         with self.assertRaises(rconfig.ConfigError) as e:
-            self.load(dict(self.doc, linux=dict(self.doc['linux'], host=dict(HOST_FACTS, v1SourceHead='REPLACE_ME'))))
+            self.load(dict(self.doc, linux=dict(self.doc['linux'], host=dict(HOST_FACTS, v1SourceHead='f' * 40))))   # no Source v1 key any more
         self.assertEqual(e.exception.code, 'CONFIG_LINUX_HOST')
         c = self.load(dict(self.doc, linux=dict(self.doc['linux'], distribution='CluedResident-Linux')))
         with self.assertRaises(rconfig.ConfigError) as e:
-            rconfig.node_profile(c, os.path.join(self.fx.w, 'tree-' + COMMIT[:8]))
+            rconfig.node_profile(c)
         self.assertEqual(e.exception.code, 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES')
 
     # Z1: another node's own result signer (public half only)
     def test_signer_is_an_ed25519_public_key_only(self):
         pem = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + 'A' * 43 + '=\n-----END PUBLIC KEY-----\n'
-        good = {'keyId': 'desk-w-591-result-1', 'runtimeId': 'DESK-W-591-cluedresident-independent-ci-v1', 'publicKeyPem': pem}
+        good = {'keyId': 'node-a-result-1', 'runtimeId': 'NODE-A-cluedresident-independent-ci-v1', 'publicKeyPem': pem}
         self.assertEqual(self.load(dict(self.doc, signer=good))['signer'], good)
         self.assertIsNone(self.load(self.doc)['signer'])
         for bad in (dict(good, publicKeyPem='-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI' + 'A' * 43 + '\n-----END PRIVATE KEY-----\n'),
@@ -886,7 +887,7 @@ class Config(unittest.TestCase):
 
     # M5-b (ADR 0023): the Owner who runs the launcher (operatorSid) and where the resident distribution moves; both or neither
     def test_companion_account_operator_and_vhdx_directory(self):
-        op = 'S-1-5-21-858977881-4031698862-3006450925-1000'
+        op = 'S-1-5-21-10-11-12-1000'
         ca = {'wslVhdxDirectory': 'D:\\clued-resident\\wsl\\CluedResident-Linux'}
         got = self.load(dict(self.doc, operatorSid=op, companionAccount=ca))
         self.assertEqual((got['operatorSid'], got['companionAccount']), (op, ca))
@@ -924,15 +925,10 @@ class Config(unittest.TestCase):
             elif name.endswith('.json'):
                 rconfig.load(path)
 
-    def test_every_node_profile_in_the_tree_is_valid_for_its_config(self):
-        root = os.path.dirname(RE)   # work/independent-ci-resident-v1
-        for name in os.listdir(os.path.join(RE, 'config')):
-            if name == 'new-node.example.json':   # the generic example: a new node adds its own profile (README section 8c)
-                continue
-            doc = json.load(open(os.path.join(RE, 'config', name), encoding='utf-8'))
-            prof = json.load(open(os.path.join(root, *doc['nodeProfile'].split('/')), encoding='utf-8'))
-            self.assertEqual(prof['nodeName'], doc['node'], name)
-            self.assertEqual(prof['wslDistribution'], doc['linux']['distribution'], name)
+    def test_no_shipped_configuration_names_a_node(self):
+        self.assertEqual(sorted(os.listdir(os.path.join(RE, 'config'))), ['new-node.example.json'])
+        doc = json.load(open(os.path.join(RE, 'config', 'new-node.example.json'), encoding='utf-8'))
+        self.assertFalse({'node', 'nodeProfile'} & set(doc))
 
 
 class Tree(unittest.TestCase):
@@ -960,9 +956,9 @@ class Tree(unittest.TestCase):
         self.assertEqual(e.exception.code, 'TREE_NOT_THE_COMMIT_FILES')
 
 
-DESK = {'contract': 'clued.independent-ci.node-profile/1', 'controllerSid': 'S-1-5-21-9-8-7-1007', 'hostname': 'DESK-W-591',
-        'mutationMutex': 'Global\\CluedControlControllerMutationV1-DESK-W-591-1007', 'nodeName': 'desk-w-591', 'ownerProfileDirectory': 'C:\\Users\\Windows',
-        'ownerSid': 'S-1-5-21-9-8-7-1000', 'runnerService': 'actions.runner.tdoljyj-cross-memory-system.clued-ci-company-win-02', 'wslDistribution': 'CluedResident-Linux'}
+DESK = {'contract': 'clued.independent-ci.node-profile/1', 'controllerSid': 'S-1-5-21-9-8-7-1007', 'hostname': 'NODE-A',
+        'mutationMutex': 'Global\\CluedControlControllerMutationV1-NODE-A-1007', 'nodeName': 'node-a', 'ownerProfileDirectory': 'C:\\Users\\Windows',
+        'ownerSid': 'S-1-5-21-9-8-7-1000', 'runnerService': 'actions.runner.tdoljyj-cross-memory-system.clued-ci-node-a', 'wslDistribution': 'CluedResident-Linux'}
 
 
 class FirstInstall(unittest.TestCase):
@@ -989,7 +985,7 @@ class FirstInstall(unittest.TestCase):
         with self.assertRaises(rconfig.ConfigError):   # one known fact is not an installed Linux CI
             rconfig.need_installed_linux(c)
         with self.assertRaises(rconfig.ConfigError) as e:   # a value that is there keeps its shape
-            self.load(dict(first, linux=dict(first['linux'], host=dict(first['linux']['host'], v1SourceHead='REPLACE_ME'))))
+            self.load(dict(first, linux=dict(first['linux'], host=dict(first['linux']['host'], resultPublicKeySha256='REPLACE_ME'))))
         self.assertEqual(e.exception.code, 'CONFIG_LINUX_HOST')
         rconfig.need_installed_linux(self.fx.cfg)   # the installed node's configuration still passes
 
@@ -1015,24 +1011,25 @@ class FirstInstall(unittest.TestCase):
         self.assertNotEqual(run('check', pkgm, self.fx.installed_manifest, tree).returncode, 0)   # the copy's node is not this package's
         self.assertNotEqual(run('pins', self.fx.installed_manifest, os.path.join(self.fx.dir, 'x.json'), tree, '--toolchain-node', 'nope').returncode, 0)
 
-    def test_a_commit_without_the_nodes_profile_uses_the_toolchains_copy(self):
-        tree = os.path.join(self.fx.w, 'tree-' + COMMIT[:8])   # the fixture tree carries only TURING's profile, like a0e15a91
-        c = self.load(dict(self.doc, node='desk-w-591', nodeProfile='config/node-profile.desk-w-591.json',
-                           linux=dict(self.doc['linux'], distribution='CluedResident-Linux')))
-        prof, prof_sha = rconfig.node_profile(c, tree)
-        self.assertEqual(prof['nodeName'], 'desk-w-591')
+    def test_the_node_profile_is_the_installed_packages(self):
+        prof, prof_sha = rconfig.node_profile(self.fx.cfg)
+        self.assertEqual(prof, PROFILE)
         self.assertEqual(prof_sha, hashlib.sha256(rconfig.canonical(prof).encode()).hexdigest())
-        self.assertEqual(rconfig.node_profile(self.fx.cfg, tree)[0], PROFILE)   # a profile in the commit's tree still wins
+        with open(os.path.join(self.fx.base, 'record', 'acceptance.json'), 'ab') as f:   # not the package's own record any more
+            f.write(b' ')
+        with self.assertRaises(rconfig.ConfigError) as e:
+            rconfig.node_profile(self.fx.cfg)
+        self.assertEqual(e.exception.code, 'BASE_RECORD_FILE_NOT_ITS_PACKAGE')
 
     def test_node_inputs_carry_the_configured_node_only(self):
         ni = load('node_inputs', os.path.join(RE, 'tools', 'node-inputs.py'))
         policy = {'node': PROFILE, 'nodeProfileSha256': 'old', 'companion': {'userSid': PROFILE['ownerSid'], 'enabled': True},
                   'linux': {'distribution': PROFILE['wslDistribution'], 'stage': 1}, 'train': {'max': 3}}
         companion = {'companion': {'node': PROFILE, 'nodeProfileSha256': 'old', 'distribution': PROFILE['wslDistribution'], 'relayScript': 'r'},
-                     'status': {'node': 'turing'}, 'repo': 'tdoljyj/cross-memory-system'}
+                     'status': {'node': 'node-b'}, 'repo': 'tdoljyj/cross-memory-system'}
         p, c = ni.derive(policy, companion, DESK, 'new', '1' * 8 + '-1111-4111-8111-' + '1' * 12, '2' * 8 + '-2222-4222-8222-' + '2' * 12)
         self.assertEqual((p['node'], p['nodeProfileSha256'], p['companion']['userSid'], p['linux']['distribution']), (DESK, 'new', DESK['ownerSid'], 'CluedResident-Linux'))
-        self.assertEqual((c['companion']['node'], c['companion']['distribution'], c['status']['node']), (DESK, 'CluedResident-Linux', 'desk-w-591'))
+        self.assertEqual((c['companion']['node'], c['companion']['distribution'], c['status']['node']), (DESK, 'CluedResident-Linux', 'node-a'))
         self.assertEqual((p['train'], p['linux']['stage'], c['repo'], c['companion']['relayScript']), ({'max': 3}, 1, 'tdoljyj/cross-memory-system', 'r'))
         self.assertEqual(p['ownerAcceptance']['decisionRef'][:8], '1' * 8)
         with self.assertRaises(SystemExit) as e:   # a base-node value left in another field (a path under its profile directory)
