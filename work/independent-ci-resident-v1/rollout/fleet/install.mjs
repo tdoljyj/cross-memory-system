@@ -541,11 +541,12 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     await writeNew(path.join(installed, 'roles-v3', `${role}.qualification.json`), node.roles[role].qualificationBytes);
   }
   await writeNew(path.join(installed, 'roles-v3', 'formal-source-manifest-v2.json'), node.raw['source-manifest.json']);
-  // the node profile the configuration names, in the package's tree: the installed one (rconfig.node_profile reads it there)
+  // the node profile the configuration names, in the package's tree: always the installed one (rconfig.node_profile reads it there).
+  // A package carries no per-node configuration: a profile file of the same name in the commit (a repository copy that can be stale,
+  // e.g. TURING's from before its companion account) is replaced in this work tree, never compared and never trusted.
   const profileFile = path.join(R, 'config', `node-profile.${node.profile.nodeName}.json`);
-  const inTree = await readOrNull(profileFile);
-  if (inTree === null) await writeNew(profileFile, JSON.stringify(node.profile, null, 2) + '\n');
-  else need(pyEqual(pyLoads(inTree.toString('utf8').replace(/^﻿/, '')), pyLoads(pyCanonical(node.profile))), 'PACKAGE_NODE_PROFILE_NOT_THE_INSTALLED', node.profile.nodeName);
+  await fs.rm(profileFile, { force: true });
+  await writeNew(profileFile, JSON.stringify(node.profile, null, 2) + '\n');
   const repo = path.join(work, 'rehearsal', `src-${universal.commit.slice(0, 8)}.git`);
   await fs.mkdir(path.dirname(repo));
   bareFromBundle({ git: repo, bundle, commit: universal.commit, env: gitEnv(x) });
