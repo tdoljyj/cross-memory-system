@@ -102,11 +102,13 @@ const AUTHORIZATION_DB_TESTS = [
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
-// inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here).
+// inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here). The worker's
+// own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
+// not what these tests check.
 const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
   'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
-  'apps/clued-cloud/worker/**', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
+  'apps/clued-cloud/worker/*', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
   'kernel/policy/resource-center-*.mjs', 'scripts/phase2-qualification/minimum-context-compiler/**',
   'development/contracts/information-flow/vendored/**',
   'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'];

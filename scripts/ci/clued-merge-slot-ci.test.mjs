@@ -389,7 +389,7 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   // the Source itself changes or is deleted. Exactly these names are extra, nothing else.
   const DELETED = ["clued-cloud-quality", "clued-components", "runner-budget-policy",
     ...["company-linux-01", "company-linux-02", "company-linux-03", "company-linux-04", "company-win-01", "home-win-01"]
-      .map((id) => `Clued handover hook qualification / ${id}`)];
+      .map((id) => `Clued handover hook qualification / ${id}`), "Clued connection authorization candidate"];
   for (const name of DELETED) assert.ok(names.includes(name) && !expected.includes(name), name);
   assert.deepEqual(names.filter((name) => !DELETED.includes(name)).sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);

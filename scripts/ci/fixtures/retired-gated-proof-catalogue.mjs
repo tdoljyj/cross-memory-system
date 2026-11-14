@@ -12,6 +12,8 @@ const ROOT=new URL('../../../',import.meta.url);
 const object=blob=>execFileSync('git',['cat-file','blob',blob],{cwd:ROOT,maxBuffer:8*1024*1024});
 export const retiredProfilesRaw=()=>object(RETIRED_CATALOGUE_BLOBS.profiles);
 export const retiredRolesRaw=()=>object(RETIRED_CATALOGUE_BLOBS.roles);
+// The bytes a retired workflow had at that commit: the last Source its catalogue entry described.
+export const retiredWorkflowBlob=file=>execFileSync('git',['rev-parse',`${RETIRED_CATALOGUE_COMMIT}:${file}`],{cwd:ROOT,encoding:'utf8'}).trim();
 export const retiredCatalogue=()=>({registry:parseWorkflowProfiles(retiredProfilesRaw()),specs:JSON.parse(retiredRolesRaw())});
 // Puts the retired workflows' entries back into a copy of the current catalogue (registry and specs are mutated).
 export function restoreRetiredEntries(registry,specs){
