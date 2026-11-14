@@ -240,7 +240,7 @@
     "scripts/ci/clued-scan-start.mjs": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
     "scripts/ci/clued-scan-start.test.mjs": "a395d93328ac61683f73536ec8b8d983bae738258b1853cefee0bb286ef5e4c9",
     "scripts/ci/clued-source-only-workflow.mjs": "4b6840be92f22bbc699f4c20392c200b6694a6025bcff21b014e285a253ae1d8",
-    "scripts/ci/clued-source-only-workflow.test.mjs": "bad4638ecb7c8c18eb20e5b76e215725e4c1d8d55ce892130c502a501d9ebce0",
+    "scripts/ci/clued-source-only-workflow.test.mjs": "0c2958c135e46d5c5ca68305109f865bdae4a79b277a59d3836974514092df69",
     "scripts/ci/clued-standard-runner-actor-source.mjs": "87b7b9a14833afad3382907085765b3cea8595e4c3e69ab56f10d795c9949d43",
     "scripts/ci/clued-standard-runner-actor-source.test.mjs": "2bf634b0ecedfbb59bef2d5610e21a9727a2b02c2dbd6cc026d295fac110d5fb",
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
