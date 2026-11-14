@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.21';
+export const COMPONENT_VERSION='1.0.22';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -528,7 +528,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "7bd6642aff58eb96ceff622da5f1feaba36c274a",
     "scripts/ci/clued-independent-publication-identity.mjs": "1abf7547bf9a2edf22eb748bb0eeea17410ddf77",
     "scripts/ci/clued-independent-publication-identity.test.mjs": "4f4c10cf2bb978e569bccd71ec5613fe787ba55a",
-    "scripts/ci/clued-independent-publication-port.mjs": "7fd1b27c298fd876cbf602f5e7d8b7d8f59b8eb2",
+    "scripts/ci/clued-independent-publication-port.mjs": "7f64b1bbbef982ca841e538e03c2443534926627",
     "scripts/ci/clued-independent-publication-port.test.mjs": "4491ae0f7a2d0d6c589cc87c9010490b00b09882",
     "scripts/ci/clued-independent-publication-runtime.mjs": "afe70fbd4f10f446bb51b16b39102e5f9ae42676",
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "f3218b078c77926d7db5c34cae4e2bdda6ce7c94",
@@ -579,7 +579,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-scan-start-prereg.test.mjs": "83b3b9bb200f46bd97385e444cb2fc781656f871",
     "scripts/ci/clued-scan-start.mjs": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
     "scripts/ci/clued-scan-start.test.mjs": "8fcfe1d6b92f865a216e1154a3044b8feb595f07",
-    "scripts/ci/clued-source-only-workflow.mjs": "ab784bff64ac4caaad473ffe728e391997df6594",
+    "scripts/ci/clued-source-only-workflow.mjs": "50edecfd56f899077169719f3e777bf2bc4723b4",
     "scripts/ci/clued-source-only-workflow.test.mjs": "51a222b76c384af2f2ae2646054f30352200a0f2",
     "scripts/ci/clued-standard-runner-actor-source.mjs": "e8de9a37f939941fc5ce05627c08e2db57a298e6",
     "scripts/ci/clued-standard-runner-actor-source.test.mjs": "399d7c66d3a51e88f6c2e1eda5cb95bfbbf0d5b1",

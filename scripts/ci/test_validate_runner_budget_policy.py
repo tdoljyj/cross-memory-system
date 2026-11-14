@@ -276,7 +276,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
 
     def test_exact_732_and_observer_candidate_successors_keep_original_debt_and_fail_unknown(self):
-        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 42)
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 34)
         self.assertEqual(sum(len(row["jobs"]) for row in policy.OWNER_DECISION_HOSTED_JOBS.values()), 6)
         self.assertEqual(policy.LEGACY_HOSTED_DEBT["clued-merge-slot-ci.yml"]["control_sha256"],
                          "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f")

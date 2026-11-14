@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import {retiredProfilesRaw} from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import test from 'node:test';
 import {parseWorkflowProfiles,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,checkoutIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
-const profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+// Fixture catalogue: the last one that registered clued-components and the quality gate (both deleted with their
+// entries); the proof logic under test is the same for any registered catalogue.
+const profiles=parseWorkflowProfiles(retiredProfilesRaw());
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
 const step=(name,conclusion='success')=>({name,status:'completed',conclusion});

@@ -88,7 +88,7 @@ export const SUITES = {
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
-      'VERSION', '.claude/settings.json'],
+      'VERSION', '.claude/settings.json', 'scripts/ci/clued_release_tags.py', 'scripts/ci/test_clued_release_tags.py'],
     'runner-budget-policy': ['.github/workflows/**', 'scripts/ci/validate_runner_budget_policy.py',
       'scripts/ci/test_validate_runner_budget_policy.py'],
     'admission-self-tests': [...RESIDENT_AND_SOURCE, '.github/workflows/**'],
@@ -101,8 +101,7 @@ export const SUITES = {
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
-  // contract and CI-script tests), so every change runs it, like the disabled
-  // clued-cloud-quality-gate.yml did.
+  // contract and CI-script tests), so every change runs it.
   'clued-cloud-tests': {
     'clued-cloud': ['**'],
   },
@@ -174,6 +173,9 @@ export const SUITE_COMMANDS = {
   'components': [
     { cwd: '.', argv: [PYTHON, 'scripts/clued_components.py', 'check', '--base', '{base}'] },
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'tests.test_clued_components', 'tests.test_clued_version_check'] },
+    // VERSION and its git tag agree (ComponentVersioning v0.2; the checkout has full history).
+    { cwd: '.', argv: [PYTHON, 'scripts/ci/clued_release_tags.py', 'check'] },
+    { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/ci/test_clued_release_tags.py'] },
   ],
   'runner-budget-policy': [
     { cwd: '.', argv: [PYTHON, 'scripts/ci/validate_runner_budget_policy.py'], quiet: true },

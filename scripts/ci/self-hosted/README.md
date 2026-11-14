@@ -71,7 +71,7 @@ For carried delays whose occupation is unresolved, the hourly scan re-reads thei
 
 Each slow start records the runner that finally took it and a `wait_cause`, derived only from the collected jobs:
 
-- `runner_occupied`: observed jobs cover that runner's wait except at most 30 seconds of dispatch grace (or the configured threshold if lower). The entry lists them in `occupied_by`, for example a long Linux job ahead of that runner's exact-route heartbeat. (`public-mcp-gate-receipt` used to poll for up to an hour on a Windows runner; it now evaluates once each time a required check completes.)
+- `runner_occupied`: observed jobs cover that runner's wait except at most 30 seconds of dispatch grace (or the configured threshold if lower). The entry lists them in `occupied_by`, for example a long Linux job ahead of that runner's exact-route heartbeat.
 - `runner_idle_while_work_queued`: no collected job covers a long wait while other compatible jobs (their labels are a subset of its required labels) also queued. This is missing occupation evidence, not verified online/idleness. At least two such jobs raise `RUNNER_IDLE_WHILE_WORK_QUEUED` for investigation, without asserting offline, suspension or a pool outage.
 - `unassigned`: the job is still queued. `unexplained`: neither pattern applies, or the runner is not in the inventory.
 

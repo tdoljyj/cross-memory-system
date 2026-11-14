@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {restoreRetiredEntries} from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import os from 'node:os';
@@ -37,8 +38,12 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,71);
-  const original=structuredClone(decoded);delete original.workflows[REQUIRED_TESTS_SOURCE.file];
+  assert.equal(sources(decoded).length,56);
+  // The original catalogue still registered the nine workflows deleted later; restore them before comparing it.
+  const original=structuredClone(decoded),oldRoles=structuredClone(specs);
+  assert.equal(restoreRetiredEntries(original,oldRoles).length,9);
+  assert.equal(sources(original).length,71);
+  delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary.
   const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='bf46c22f3ff1c9e491d181ca1464f174b4a21d9b';
   assert.equal(original.workflows[WINDOWS].workflow_blob,WINDOWS_BLOB);assert.deepEqual(original.workflows[WINDOWS].primary_ids,['ci-suites-windows']);
@@ -58,7 +63,7 @@ test('all original sources and complete successors roundtrip without losing byte
   original.workflows[NODE22].accepted_sources=original.workflows[NODE22].accepted_sources.filter(source=>source.workflow_blob!==NODE22_BLOB);
   assert.equal(sources(original).length,66);
   assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
-  const oldRoles=structuredClone(specs);delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
+  delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
   assert.deepEqual(oldRoles.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role=>[role.job_id,role.definition_sha256]),
     [['ci-suites-windows','67a8d5c72a1499e0f6445a9e5f266b281e4b8f9734c45e7a5bd268278dc43936']]);
   delete oldRoles.workflows[WINDOWS];

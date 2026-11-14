@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {retiredCatalogue} from '../../../scripts/ci/fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
@@ -79,7 +80,8 @@ test('YAML aliases and duplicate fields cannot hide an execution role or trigger
 });
 
 test('docs telemetry skip is derived only from the exact reviewed Self command and condition',()=>{
-  const file='.github/workflows/clued-cloud-quality-gate.yml',record=registry.workflows[file];
+  // The quality gate is deleted with its entries; its last registered Source is the fixture.
+  const retired=retiredCatalogue().registry,file='.github/workflows/clued-cloud-quality-gate.yml',record=retired.workflows[file];
   const parsed=parseYaml(record.source_yaml);
   for(const edit of [step=>step.if='always()',step=>step.run='echo helper',
     step=>step.env.NPM_INSTALL_OUTCOME='success',step=>step['continue-on-error']=true]) {
@@ -92,7 +94,7 @@ test('docs telemetry skip is derived only from the exact reviewed Self command a
   for(const edit of [route=>route.documentation_skipped_steps=['Run npm run test:unit'],
     route=>route.documentation_skipped_steps=['Observe npm HTTP cache events','Unreviewed helper'],
     route=>route.command_digests['Observe npm HTTP cache events']=['a'.repeat(64)]]) {
-    const changed=structuredClone(registry);edit(changed.workflows[file].routes[0]);
+    const changed=structuredClone(retired);edit(changed.workflows[file].routes[0]);
     assert.equal(registeredWorkflowSource(changed,file,record.workflow_blob).state,'unknown');
   }
 });

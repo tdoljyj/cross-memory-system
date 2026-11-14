@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {retiredCatalogue} from './fixtures/retired-gated-proof-catalogue.mjs';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
   explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader,
@@ -456,10 +457,10 @@ test('complete catalogue retains counted CI when a PR deletes its gate; non-CI e
 function futureExecutionWorld({trustedFuture=true,acceptance='accepted',critical='success',primary='success',
   staleAttempt=false,moveMain=false,truncateHead=false,truncateDefault=false,treeTruncated=false,
   actualSourceDiffers=false,alreadyInstalled=false,gateHashDiffers=false,defaultBranch='main',sourceRegistries=null}={}) {
-  const w=executionWorld(),saved=sourceRegistries?structuredClone(sourceRegistries.profiles):
-    parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const savedRoles=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):
-    JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  // The handover qualification Sources are retired; the last catalogue that registered them supplies the future entry.
+  const retired=sourceRegistries?null:retiredCatalogue();
+  const w=executionWorld(),saved=sourceRegistries?structuredClone(sourceRegistries.profiles):retired.registry;
+  const savedRoles=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):retired.specs;
   const consumer_id='company-linux-01',futureFile=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`;
   const registered=saved.future_workflows?.find(entry=>entry.file===futureFile),profile=structuredClone(
     registered?.source_profile??saved.workflows[futureFile]);

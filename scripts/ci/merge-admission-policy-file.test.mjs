@@ -1,6 +1,6 @@
 // Merge Admission v0.1: the repository's own policy file and the workflows
-// that pass the state, as a pull request head has them. Run by clued-components
-// on every pull request head, NOT by the admission job's self-test on the
+// that pass the state, as a pull request head has them. Run by the ci-suites
+// admission-self-tests suite on every pull request head, NOT by the admission job's self-test on the
 // default branch: a later, Owner-approved change to these files must not fail
 // the admission of every pull request (review MAJOR-1, the deadlock of Owner
 // Decision 22c20e14). The admission run itself refuses a pull request whose
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadPolicy, POLICY_PATH, readPolicy, STATE_VARIABLE } from "./merge-admission-policy.mjs";
 import { RECOMMENDED_POLICY_TEXT } from "./merge-admission-policy.fixtures.mjs";
+import { SUITE_COMMANDS } from "./ci-required-selection.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -44,10 +45,7 @@ test("workflows: the admission and re-verification jobs read the state variable;
   assert.deepEqual(more, []);
   assert.ok(admissionLine.includes("scripts/ci/merge-admission-policy.test.mjs"));
   assert.ok(!admissionLine.includes("merge-admission-policy-file.test.mjs"), "the file's own test never runs before admission");
-  // clued-components (each pull request head, both jobs): the file's test too.
-  const components = selfTests("clued-components.yml");
-  assert.equal(components.length, 2);
-  for (const line of components) {
-    assert.ok(line.includes("scripts/ci/merge-admission-policy.test.mjs") && line.includes("scripts/ci/merge-admission-policy-file.test.mjs"), line.trim());
-  }
+  // ci-suites admission-self-tests (each pull request head): the file's test too.
+  const suite = SUITE_COMMANDS["admission-self-tests"][0].argv;
+  assert.ok(suite.includes("scripts/ci/merge-admission-policy.test.mjs") && suite.includes("scripts/ci/merge-admission-policy-file.test.mjs"));
 });

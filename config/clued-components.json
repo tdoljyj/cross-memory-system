@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "c8ea864f238b8acfe5db55d3bb4933a2a1932179ce0554d408766a3a0330b00a"
+      "content_sha256": "7402a180bd7a9a59a3a4dbab4cc607ad1b3c3bffc48914f0ab9b2234fb96f564"
     },
     {
       "id": "hook.runner-job-started",
@@ -212,7 +212,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -220,7 +220,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "d1c9b4713db9f3436641571a34ee1e0956dba13592bbd69409688e4541d8d540",
+      "content_sha256": "662f15bbb08f0afe269ede5e80d4f9fa9e40813789b503a9477e038db569f086",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.61",
+      "version": "1.1.62",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "aa25a74a34b18e968aeb053e4afcf1dd46b4b8dd59f6fe3480cb2405967b7aad"
+      "content_sha256": "fe19035b3f5e92011c38958767db8ee70402b7d5d3a7e8c013fdbb4fae1099aa"
     },
     {
       "id": "script.resource-maintenance",
@@ -673,7 +673,7 @@
     {
       "id": "script.source-only-workflow",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Bounded disabled-Source metadata identity and request-local immutable catalogue reader. Never grants execution or Host qualification.",
       "root": "scripts/ci",
       "files": [
@@ -684,12 +684,12 @@
         "file": "clued-source-only-workflow.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "011faed4f08aaee5a8893466dd5ac5fdc615f9bd938f7b6b5078527b67d4b116"
+      "content_sha256": "5f81ca690cc3bbe77cfff3c38755961b024aadfd674f821702eb4e74c46594b7"
     },
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.21",
+      "version": "1.0.22",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7f81868bb90e4a5b135aab4b33763951f67e47c2796373ee92489d7f91561719"
+      "content_sha256": "01acf4820865247b46eeb4c71962d0f6c2e75062c18453bffc307b1d6b2172e7"
     },
     {
       "id": "script.required-applicability",
@@ -722,7 +722,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "cf49248a1f04c66b147b6e096d92eb2360867868ec363a9ca1d0d174c79723b8"
+      "content_sha256": "c423f6daa662f438dc697aa9a2e2018b9dcf15da48e9be58dc1c95db60782ce3"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -883,7 +883,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -894,7 +894,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "bb3f11a4155c4d117380d67ec6956bea6f7f674c5a5bca2af3c4155622e9feef"
+      "content_sha256": "df8b0c721c9912d13f8b13b9d3191858aefd68faf4c116b06673ffa91e3286c4"
     },
     {
       "id": "script.archive-retention",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "25a61df2f1907a245918d15e4e5b83d05b2e9f1691208810684c437868bed59b"
+      "content_sha256": "c8264c2e9a2d7764296e85ad86c806e60dbe120f9c990c495c342b13392bd11f"
     }
   ]
 }

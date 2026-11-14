@@ -394,10 +394,13 @@ test('actual frozen registry gitleaks/trivy closures and full tracked inventory 
     const REPINNED = new Set(['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/reviewed_gitleaks_historical.py']);
     const closure = clone(accepted.closure);
     const closureFiles = new Map(closure.map(entry => {
-      const historicalCoverage = entry.path === '.github/actions/ci-temporary-storage/coverage.json';
+      // coverage.json and check-workflows.mjs moved on (deleted workflows); the frozen closure keeps their exact old objects.
+      const HISTORICAL = { '.github/actions/ci-temporary-storage/coverage.json': ['12f0ff5aca09df465aa0461d493485c3ed2c65b1', '55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be'],
+        '.github/actions/ci-temporary-storage/check-workflows.mjs': ['bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc', '832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa'] };
+      const historicalCoverage = Object.hasOwn(HISTORICAL, entry.path);
       if (historicalCoverage) {
-        assert.equal(entry.blob, '12f0ff5aca09df465aa0461d493485c3ed2c65b1');
-        assert.equal(entry.sha256, '55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be');
+        assert.equal(entry.blob, HISTORICAL[entry.path][0]);
+        assert.equal(entry.sha256, HISTORICAL[entry.path][1]);
       }
       const bytes = historicalCoverage
         ? execFileSync('git', ['cat-file', 'blob', entry.blob], { cwd: repoRoot })

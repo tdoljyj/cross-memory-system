@@ -17,17 +17,23 @@ async function verify(path,bytes,{hash=sha(bytes),actual=gitBlob(bytes),expected
   return {result,reads:()=>gitReads};
 }
 
-test('the real registered catalogue above 1 MiB passes its SHA and actual Git tree pin',async()=>{
-  const bytes=await fs.readFile(new URL('../../../../'+CATALOGUE,import.meta.url));
-  assert.equal(bytes.length,1062190);
-  assert.equal(sha(bytes),'6b3c0b511a65a47dc83478d9d8caa3bda5e50f7804fbdaf34b6dc892b689561e');
-  const expected=execFileSync('git',['rev-parse','HEAD:'+CATALOGUE],{cwd:ROOT,encoding:'utf8'}).trim();
+// The registered catalogue was above 1 MiB until nine deleted workflows left it (main 4a3e0485 is the last such
+// catalogue); its exact Git object still exercises the bound, and the current catalogue passes the same check.
+test('the last registered catalogue above 1 MiB and the current one pass their SHA and actual Git tree pin',async()=>{
+  const LAST='2a59cc0fee3ea1d62b6e2a18dea41b835184f28f';
+  const last=execFileSync('git',['cat-file','blob',LAST],{cwd:ROOT,maxBuffer:8*1024*1024});
+  assert.equal(last.length,1062190);
+  assert.equal(sha(last),'6b3c0b511a65a47dc83478d9d8caa3bda5e50f7804fbdaf34b6dc892b689561e');
   let gitReads=0;
+  await validateTrackedSourceBytes({path:CATALOGUE,sha256:sha(last)},last,async()=>{gitReads++;return gitBlob(last)+'\n';},LAST);
+  assert.equal(gitReads,1);
+  const bytes=await fs.readFile(new URL('../../../../'+CATALOGUE,import.meta.url));
+  const expected=execFileSync('git',['rev-parse','HEAD:'+CATALOGUE],{cwd:ROOT,encoding:'utf8'}).trim();
   await validateTrackedSourceBytes({path:CATALOGUE,sha256:sha(bytes)},bytes,async()=>{
     gitReads++;
     return execFileSync('git',['hash-object','--no-filters','--',CATALOGUE],{cwd:ROOT,encoding:'utf8'});
   },expected);
-  assert.equal(gitReads,1);
+  assert.equal(gitReads,2);
 });
 
 test('only the exact catalogue path allows the 2 MiB inclusive bound',async()=>{
