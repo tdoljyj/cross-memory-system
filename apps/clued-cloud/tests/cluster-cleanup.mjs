@@ -15,6 +15,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CLEANUP_DEFAULTS = Object.freeze({
   attempts: 8, // outer attempts, each with fs.rm's own retries
@@ -46,11 +47,17 @@ function options(overrides = {}) {
   };
 }
 
-// A cleanup is only ever pointed at something strictly inside the temp directory.
+// The checkout's fixed test root: the database tests that must not use the
+// temp directory keep their clusters under work/host-harness/ (and point TEMP
+// into their own cluster directory while they run).
+export const HOST_HARNESS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../work/host-harness');
+
+// A cleanup is only ever pointed at something strictly inside the temp
+// directory or the checkout's work/host-harness/.
 async function checkedDirectory(directory, o) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory)) return null;
   const target = path.resolve(directory);
-  const roots = new Set([o.tmpdir ?? os.tmpdir()].map((root) => path.resolve(root)));
+  const roots = new Set([o.tmpdir ?? os.tmpdir(), o.harnessRoot ?? HOST_HARNESS_ROOT].map((root) => path.resolve(root)));
   for (const root of [...roots]) {
     try { roots.add(path.resolve(await o.realpath(root))); } catch { /* keep the unresolved root */ }
   }
@@ -86,7 +93,7 @@ async function removeWhatCan(directory, o) {
 }
 
 // Removes a test directory (cluster data, scratch parents, bundles) that lies
-// inside the temp directory. Retries lock errors and never throws.
+// inside the temp directory or work/host-harness/. Retries lock errors and never throws.
 export async function removeTestDirectory(directory, overrides = {}) {
   const o = options(overrides);
   const target = await checkedDirectory(directory, o);

@@ -179,6 +179,69 @@ test('node governance changes select its suite; the standard also selects the re
   assert.ok(SUITE_COMMANDS['node-governance'].some(c => c.argv.includes('{tests:scripts/ci/self-hosted/node-governance}')));
 });
 
+// IntegrationRuntime v0.1.8 §13.2 P2 (c): 250,000 fixed-seed random facts in CI. The file's default count is the CI
+// obligation; clued-connection-authorization.yml ran it until it was disabled (2026-10-17) and then nothing did.
+test('the Integration Runtime 250,000-sample property test runs in a required check, selected by its own paths', () => {
+  const file = 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs';
+  const runs = Object.entries(SUITE_COMMANDS).filter(([, commands]) => commands.some(({ cwd, argv }) =>
+    argv.some((arg) => path.posix.join(cwd, arg) === file)));
+  assert.deepEqual(runs.map(([id]) => id), ['production-schema']);
+  assert.deepEqual(suitePlatforms('production-schema'), ['linux']);
+  for (const changed of [file, 'apps/clued-cloud/tests/fixtures/integration-runtime/golden-vectors.v1.json',
+    'apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql']) {
+    assert.deepEqual(selectSuites('migration-verify', [changed], 'linux').suites, ['production-schema'], changed);
+  }
+  for (const unrelated of ['apps/clued-cloud/tests/integration-runtime-worker.test.mjs', 'apps/clued-cloud/app/main.tsx',
+    'development/contracts/integration-runtime/IntegrationRuntime.v0.1.8.md', 'docs/README.md']) {
+    assert.deepEqual(selectSuites('migration-verify', [unrelated], 'linux').suites, [], unrelated);
+  }
+});
+
+// The database tests clued-connection-authorization.yml ran, which nothing ran after it was disabled (2026-10-17).
+const productionSchemaFiles = () => SUITE_COMMANDS['production-schema'].flatMap(({ cwd, argv }) =>
+  argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => path.posix.join(cwd, arg)));
+test('the database tests of the retired connection-authorization workflow run in production-schema, selected by what they read', () => {
+  const moved = ['authorization-end-to-end', 'connection-authorization-db', 'context-v2-terminal-restore-db', 'projection-refresh-pipeline-db',
+    'work-claims-acceptance-db', 'work-claims-continuation-db', 'db-security-hygiene-db', 'information-flow-candidate-store-db',
+    'information-flow-context-db', 'record-update-field-merge-db', 'mtpe-universal-intake-db', 'project-invitations-db',
+    'authorization-migration-chain', 'model-domain-bootstrap-db', 'resource-center-authority-db', 'dataset-split-native-grant-correction-db']
+    .map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
+  const files = productionSchemaFiles();
+  for (const file of moved) {
+    assert.ok(files.includes(file), `${file} runs in production-schema`);
+    assert.ok(existsSync(path.join(ROOT, file)), `${file} exists`);
+    assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
+  }
+  for (const input of ['apps/clued-cloud/worker/continuity.ts', 'apps/clued-cloud/tests/resource-center-oauth-db.fixture.mjs',
+    'kernel/host/resource-center-online-tool-host.mjs', 'scripts/phase2-qualification/minimum-context-compiler/compiler.mjs',
+    'development/contracts/information-flow/vendored/m0a/x.json']) {
+    assert.deepEqual(selectSuites('migration-verify', [input], 'linux').suites, ['production-schema'], input);
+  }
+  for (const unrelated of ['apps/clued-cloud/app/main.tsx', 'apps/clued-cloud/tests/home-project-create.test.mjs', 'kernel/domain/attempt-fsm.mjs']) {
+    assert.deepEqual(selectSuites('migration-verify', [unrelated], 'linux').suites, [], unrelated);
+  }
+});
+
+// A database test is selected by the files it imports: every repository file a moved database test reaches through a
+// relative import (helpers, bundled worker code, kernel modules) must select production-schema.
+test('every file a moved database test imports selects production-schema', () => {
+  const specifiers = (source) => [...source.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)]
+    .map((match) => match[1] ?? match[2]).filter((spec) => spec.startsWith('.'));
+  const seen = new Set();
+  const roots = [...SUITE_COMMANDS['production-schema'].at(-1).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
+    'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs', 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'];
+  const pending = roots.map((file) => path.join(ROOT, file));
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (seen.has(file) || !existsSync(file)) continue;
+    seen.add(file);
+    const relative = path.relative(ROOT, file).split(path.sep).join('/');
+    assert.deepEqual(selectSuites('migration-verify', [relative], 'linux').suites, ['production-schema'], relative);
+    if (/\.(?:m?js|ts)$/.test(file)) pending.push(...specifiers(readFileSync(file, 'utf8')).map((spec) => path.resolve(path.dirname(file), spec)));
+  }
+  assert.ok(roots.length > 60 && seen.size > roots.length);
+});
+
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', () => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
@@ -187,10 +250,11 @@ test('a migration selects the production-schema check; ordinary documentation se
   // Invariant DB tests on the migrated database: run with every migration change and with their own tests.
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs']).suites,
     ['production-schema']);
-  const scanStart = SUITE_COMMANDS['production-schema'].at(-1);
+  const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
-    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs']);
+    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
+    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);

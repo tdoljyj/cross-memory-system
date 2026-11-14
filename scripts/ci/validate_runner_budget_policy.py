@@ -112,12 +112,6 @@ LEGACY_HOSTED_DEBT = {
             "release": "354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0"
         }
     },
-    "clued-connection-authorization.yml": {
-        "control_sha256": "3b612ffbd70f686787c9c4b73717a49dcf1c42a38e59ba6c7a63543a34530c1e",
-        "jobs": {
-            "isolated-candidate-untrusted-hosted": "55c18e5085b2f39b17e6f1bd0842720d61e00f89ac1ac151689e616b46033edd"
-        }
-    },
     "clued-currentness-post-deploy-attestation.yml": {
         "control_sha256": "3e5d2cc28b9b03d5a806d76ef8c80175ccbc502da0d6a5ca733c62482fcfb491",
         "jobs": {

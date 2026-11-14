@@ -118,6 +118,14 @@ test('work claims hardening: glob/glob overlap and pull request binding',
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic',$2,$3,$4,array['*'])`, [userId, name, tokens[name], scopes]);
     }
+    // The verifier is the CI admission Binding, as in production (Owner
+    // Decision 38ddb8cf): only it observes a PR and activates its PR -> Task
+    // relation (20261108161615).
+    const verifierId = (await admin.query("select id from public.clued_agent_bindings where user_id=$1 and agent_name='verifier'", [userId])).rows[0].id;
+    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,version,metadata,status)
+      values($1,'global','fixture_role','binding',$2,1,'{}','committed') returning id`, [userId, verifierId])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, verifierId, roleReceipt]);
     const connect = async () => {
       const client = server.getPgClient();
       clients.push(client);
@@ -126,7 +134,6 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       return client;
     };
     const anon = await connect();
-    const anon2 = await connect();
     // A distinct GW connection for each original transport preserves real
     // concurrent transactions; CI and permission-negative callers stay anon.
     const workerClients = new Map();
@@ -149,10 +156,29 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       confidence_reason: 'work claim hardening fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = (token, input) => call(token, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), ...input });
+    const holders = new Map();
+    const claim = async (token, input) => {
+      const result = await call(token, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), ...input });
+      if (result.status === 'committed') holders.set(result.claim.claim_id, { token, lease_key: result.lease_key });
+      return result;
+    };
     const release = (token, c) => call(token, 'clued_work_release_v1', {
       scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'abandoned' });
     const verify = (input, client = anon) => rpc(client, tokens.verifier, 'clued_work_verify_v1', { scope: 'global', ...input });
+    // A PR verify of a bound PR: the holder authorizes the exact head naming
+    // the PR, the CI Binding observes it, then verifies the exact head and base.
+    const base = 'b'.repeat(40);
+    const prVerify = async (input) => {
+      const { token, lease_key } = holders.get(input.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [input.claim_id])).rows[0];
+      committed(await call(token, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: input.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: input.pr_ref.split('#')[0],
+        head_sha: input.head_sha, target_branch: 'main', pr_number: Number(input.pr_ref.split('#')[1]), idempotency_key: uuid() }));
+      const seen = await verify({ action: 'resolve_pr_claim', pr_ref: input.pr_ref, head_sha: input.head_sha, base_sha: base,
+        target_branch: 'main', scope: undefined });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+      return verify({ base_sha: base, target_branch: 'main', ...input });
+    };
 
     // --- Glob/glob conflicts reach the claim RPC. ---
     const lock = committed(await claim(tokens.A, { task_id: await createTask('lockfile A'),
@@ -177,59 +203,33 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     committed(await release(tokens.A, left));
     committed(await release(tokens.B, right));
 
-    // --- One pull request per claim. ---
-    const taskPr = await createTask('bound to one PR');
+    // --- A verify never binds a pull request. ---
+    // Since 20261108161615 a PR belongs to a Task, not to a claim: the
+    // holder's head authorization or the CI Binding's discovery binds it, and
+    // a Task may have several PRs (work-claims-pr-task-binding-db covers the
+    // relation, its conflicts and races). A verify only reads the relation.
+    const taskPr = await createTask('verify does not bind');
     const bound = committed(await claim(tokens.A, { task_id: taskPr, write_set: ['web/**'] })).claim;
     assert.equal(bound.bound_pr, null);
-    const receipts = async () => (await admin.query(`select count(*)::int n from public.clued_audit_receipts
-      where operation='work_claim_bind_pr' and object_id=$1`, [bound.claim_id])).rows[0].n;
-    // A failing verify does not bind.
-    let v = await verify({ claim_id: bound.claim_id, changed_paths: ['api/x.ts'], pr_ref: 'o/r#9' });
-    assert.deepEqual([v.verdict, v.reasons, v.bound_pr], ['REJECTED', ['paths_outside_write_set'], null]);
+    const relations = async () => (await admin.query(`select count(*)::int n from clued_private.work_claim_pr_task_bindings_v1
+      where task_id=$1`, [taskPr])).rows[0].n;
+    const exact = { head_sha: 'a'.repeat(40), base_sha: 'b'.repeat(40), target_branch: 'main' };
+    let v = await verify({ claim_id: bound.claim_id, changed_paths: ['web/a.ts'], pr_ref: 'o/r#1', ...exact });
+    assert.deepEqual([v.verdict, v.reasons, v.claim_binding.binding_status], ['REJECTED', ['pr_task_binding_unbound'], 'unbound']);
     // Without pr_ref nothing changes (the MCP tool's call).
     v = await verify({ claim_id: bound.claim_id, changed_paths: ['web/a.ts'] });
     assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', null]);
-    assert.equal(await receipts(), 0);
-    // The first admitting verify with a pr_ref binds; the same PR stays admitted.
-    v = await verify({ claim_id: bound.claim_id, changed_paths: ['web/a.ts'], pr_ref: 'o/r#1', head_sha: 'abc1234' });
-    assert.deepEqual([v.verdict, v.bound_pr, v.claim.bound_pr], ['ADMITTED', 'o/r#1', 'o/r#1']);
-    v = await verify({ claim_id: bound.claim_id, changed_paths: ['web/b.ts'], pr_ref: 'o/r#1' });
-    assert.equal(v.verdict, 'ADMITTED');
-    assert.equal(await receipts(), 1);
-    // Any other PR naming the same claim is rejected, with or without other faults.
-    v = await verify({ claim_id: bound.claim_id, changed_paths: ['web/a.ts'], pr_ref: 'o/r#2' });
-    assert.deepEqual([v.verdict, v.reasons, v.bound_pr], ['REJECTED', ['claim_bound_to_other_pr'], 'o/r#1']);
-    v = await verify({ claim_id: bound.claim_id, changed_paths: ['api/x.ts'], pr_ref: 'other/repo#1' });
-    assert.deepEqual(v.reasons, ['paths_outside_write_set', 'claim_bound_to_other_pr']);
-    assert.equal(await receipts(), 1);
-    // Malformed pr_ref raises instead of silently not binding.
+    assert.equal(await relations(), 0);
+    // A malformed pr_ref, or one without its exact head and base, raises.
     for (const bad of ['', '#1', 'o/r', 'o/r#x', 'o r/x#1', 'o/r#12345678901']) {
-      await assert.rejects(() => verify({ claim_id: bound.claim_id, pr_ref: bad }), /work_claim_pr_ref_invalid/, bad);
+      await assert.rejects(() => verify({ claim_id: bound.claim_id, pr_ref: bad, ...exact }), /work_claim_pr_binding_input_invalid/, bad);
     }
-    // A takeover starts unbound.
-    await admin.query(`update clued_private.work_claims_v1 set issued_at=clock_timestamp()-interval '3 hours',
-      expires_at=clock_timestamp()-interval '1 second' where claim_id=$1`, [bound.claim_id]);
-    const taken = committed(await call(tokens.B, 'clued_work_takeover_v1', { scope: 'global',
-      claim_id: bound.claim_id, idempotency_key: uuid() })).claim;
-    assert.equal(taken.bound_pr, null);
-    v = await verify({ claim_id: taken.claim_id, changed_paths: ['web/a.ts'], pr_ref: 'o/r#2' });
-    assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', 'o/r#2']);
-    committed(await release(tokens.B, taken));
-
-    // Two PRs verified at the same moment: exactly one binds.
-    for (let round = 0; round < 5; round += 1) {
-      const c = committed(await claim(tokens.A, { task_id: await createTask(`race ${round}`), write_set: [`race/${round}/**`] })).claim;
-      const answers = await Promise.all([
-        verify({ claim_id: c.claim_id, changed_paths: [`race/${round}/a`], pr_ref: `o/r#${100 + round}` }),
-        verify({ claim_id: c.claim_id, changed_paths: [`race/${round}/a`], pr_ref: `o/r#${200 + round}` }, anon2),
-      ]);
-      const admitted = answers.filter((a) => a.verdict === 'ADMITTED');
-      assert.equal(admitted.length, 1, `round ${round}: ${JSON.stringify(answers)}`);
-      const refused = answers.find((a) => a.verdict === 'REJECTED');
-      assert.deepEqual(refused.reasons, ['claim_bound_to_other_pr']);
-      assert.equal(refused.bound_pr, admitted[0].pr_ref);
-      committed(await release(tokens.A, c));
-    }
+    await assert.rejects(() => verify({ claim_id: bound.claim_id, pr_ref: 'o/r#1', head_sha: 'abc1234', base_sha: 'b'.repeat(40) }),
+      /work_claim_pr_binding_input_invalid/);
+    await assert.rejects(() => verify({ claim_id: bound.claim_id, pr_ref: 'o/r#1', head_sha: 'a'.repeat(40) }),
+      /work_claim_pr_binding_input_invalid/);
+    assert.equal(await relations(), 0);
+    committed(await release(tokens.A, bound));
 
     // --- Concurrency caps (migration 20261002060001): 3 per session, 10 per
     // Binding across sessions; a claim without holder_session_ref counts in
@@ -337,25 +337,26 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     const headClaim = committed(await claim(tokens.A, { task_id: await createTask('head cap'), write_set: ['heads/**'] })).claim;
     const sha = (i) => i.toString(16).padStart(40, '0');
     for (let i = 1; i <= 20; i += 1) {
-      v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(i) });
+      v = await prVerify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(i) });
       assert.deepEqual([v.verdict, v.admitted_heads, v.task_ci_heads_24h, v.task_ci_head_cap], ['ADMITTED', i, i, 40],
         JSON.stringify(v));
     }
     // The same head again (a re-run, the hourly reverify) does not count.
-    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(5).toUpperCase() });
+    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(5),
+      base_sha: base, target_branch: 'main' });
     assert.deepEqual([v.verdict, v.admitted_heads], ['ADMITTED', 20]);
     // A 21st head is no longer refused per claim.
-    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(21) });
+    v = await prVerify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(21) });
     assert.deepEqual([v.verdict, v.reasons, v.admitted_heads], ['ADMITTED', [], 21]);
     // A failing verify does not record its head either.
     const headTwo = committed(await claim(tokens.A, { task_id: await createTask('head fail'), write_set: ['heads2/**'] })).claim;
-    v = await verify({ claim_id: headTwo.claim_id, changed_paths: ['elsewhere/a'], pr_ref: 'o/r#78', head_sha: sha(1) });
+    v = await prVerify({ claim_id: headTwo.claim_id, changed_paths: ['elsewhere/a'], pr_ref: 'o/r#78', head_sha: sha(1) });
     assert.deepEqual([v.verdict, v.admitted_heads], ['REJECTED', 0]);
     // Without pr_ref (a hand dispatch, an Agent's own check) nothing is recorded.
     v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], head_sha: sha(22) });
     assert.deepEqual([v.verdict, v.admitted_heads, v.task_ci_heads_24h], ['ADMITTED', 21, 21]);
-    await assert.rejects(() => verify({ claim_id: headClaim.claim_id, pr_ref: 'o/r#77', head_sha: 'not-a-sha' }),
-      /work_claim_head_sha_invalid/);
+    await assert.rejects(() => verify({ claim_id: headClaim.claim_id, pr_ref: 'o/r#77', head_sha: 'not-a-sha', base_sha: base }),
+      /work_claim_pr_binding_input_invalid/);
     committed(await release(tokens.A, headClaim));
     committed(await release(tokens.A, headTwo));
 

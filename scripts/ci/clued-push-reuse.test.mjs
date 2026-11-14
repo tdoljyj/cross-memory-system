@@ -146,15 +146,6 @@ test('API failure, pagination, stale retry and archive digest mismatch fall back
   }
 });
 
-test('report binds the checkout actually tested and refuses dirty tracked bytes', () => {
-  const event = { pull_request: { number: 12, user: { login: 'owner' }, head: { sha: H, repo: { full_name: 'owner/repo' } } } };
-  const prEnv = { ...env, REUSE_WORKFLOW: 'clued-connection-authorization.yml', GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: C, GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '2' };
-  const git = (verb, ref) => verb === 'status' ? '' : ref === 'HEAD' ? C : T;
-  assert.equal(testedTreeReport(prEnv, event, git).tree, T);
-  assert.throws(() => testedTreeReport(prEnv, event, (verb, ref) => verb === 'status' ? ' M tracked' : git(verb, ref)));
-  assert.throws(() => testedTreeReport({ ...prEnv, GITHUB_SHA: M }, event, git));
-});
-
 test('only the exact registered listener and run-specific project changes qualify, never arbitrary dirty configuration', () => {
   const source = G4_CONFIG;
   const expected = 'project_id = "clued-g4-100-2"\n[api]\nport = 17617\n[db]\nport = 17618\nshadow_port = 17616\nmajor_version = 17\n[studio]\nport = 17619\n[local_smtp]\nport = 17620\n[analytics]\nport = 17623\n[db.pooler]\nport = 17625\n[edge_runtime]\ninspector_port = 17626\n[db.seed]\nenabled = false\n';

@@ -1205,7 +1205,11 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
   assert.match(admit, /^run-name: admit \$\{\{ inputs\.workflow \}\} \$\{\{ inputs\.ref \}\} \$\{\{ inputs\.claim_id \}\}$/m);
   assert.match(admit, /^ {4}if: github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)$/m);
   assert.doesNotMatch(admit, /^ {2}pull_request/m);
-  for (const file of DISPATCH_GATED_WORKFLOWS) {
+  // Deleted with its checks moved to migration-verify; its name stays in this frozen list and in the disabled
+  // dispatch Source until either changes. Exactly this one is missing, nothing else.
+  const DELETED = ["clued-connection-authorization.yml"];
+  for (const file of DELETED) assert.ok(DISPATCH_GATED_WORKFLOWS.includes(file) && !fs.existsSync(path.join(dir, file)), file);
+  for (const file of DISPATCH_GATED_WORKFLOWS.filter((name) => !DELETED.includes(name))) {
     const text = fs.readFileSync(path.join(dir, file), "utf8");
 
     assert.match(text, /^ {2}workflow_dispatch:\n {4}inputs:\n {6}admission_run_id:\n/m, file);

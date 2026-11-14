@@ -73,9 +73,10 @@ two SECURITY DEFINER findings, 0 for `function_search_path_mutable`.
 
 ### Tests
 
-`.github/workflows/clued-connection-authorization.yml` runs
-`db-security-hygiene-db.test.mjs` on every change to a migration, without
-`--test-force-exit`: the file stops its embedded PostgreSQL servers itself.
+`db-security-hygiene-db.test.mjs` runs in the required check `migration-verify`
+(suite `production-schema` in `scripts/ci/ci-required-selection.mjs`) on every
+change to a migration, without `--test-force-exit`: the file stops its embedded
+PostgreSQL servers itself.
 
 `integration-runtime-identity-db.test.mjs` and
 `integration-runtime-lifecycle-db.test.mjs` apply the migrations in production

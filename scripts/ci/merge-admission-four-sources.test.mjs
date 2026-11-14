@@ -1,5 +1,5 @@
 import test from 'node:test';
-import {retiredProfilesRaw,retiredRolesRaw} from './fixtures/retired-gated-proof-catalogue.mjs';
+import {retiredProfilesRaw,retiredRolesRaw,retiredWorkflowBlob} from './fixtures/retired-gated-proof-catalogue.mjs';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -49,10 +49,11 @@ const sourcePackets=JSON.stringify([{source_checkout_sha:fixture,sources_raw:sou
 // Registry-defined synthetic execution world: this does not qualify working-tree workflows.
 const registryObject=parseWorkflowProfiles(profiles);
 const executionEntries=Object.entries(registryObject.workflows).map(([workflow_file,profile])=>{
-  const candidate=existsSync(path.join(repo,workflow_file))?sourceBlob(workflow_file):null,
-    actual=candidate===null?{passed:false}:registeredWorkflowSource(registryObject,workflow_file,candidate);
+  // A deleted workflow keeps the bytes it had when the retired catalogue was current.
+  const candidate=existsSync(path.join(repo,workflow_file))?sourceBlob(workflow_file):retiredWorkflowBlob(workflow_file),
+    actual=registeredWorkflowSource(registryObject,workflow_file,candidate);
   // Keep an explicitly registered fixture Source where the working-tree Source
-  // is not yet registered, or is deleted. The separate counterexample below must still refuse it.
+  // is not yet registered. The separate counterexample below must still refuse it.
   return {workflow_file,workflow_blob:actual.passed?candidate:profile.workflow_blob};
 });
 const selectedProfileObject={workflows:Object.fromEntries(executionEntries.map(x=>{const q=registeredWorkflowSource(registryObject,x.workflow_file,x.workflow_blob);

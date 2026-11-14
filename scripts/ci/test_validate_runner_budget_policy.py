@@ -276,7 +276,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
 
     def test_exact_732_and_observer_candidate_successors_keep_original_debt_and_fail_unknown(self):
-        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 34)
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 33)
         self.assertEqual(sum(len(row["jobs"]) for row in policy.OWNER_DECISION_HOSTED_JOBS.values()), 6)
         self.assertEqual(policy.LEGACY_HOSTED_DEBT["clued-merge-slot-ci.yml"]["control_sha256"],
                          "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f")
@@ -444,12 +444,11 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                 self.assert_rejected(self.evaluate({"legacy.yml": text}, owner_hosted=invalid), "Owner-decision")
         self.assert_rejected(self.evaluate({"legacy.yml": text}, exact, exact), "never both")
 
-    def test_real_three_push_reuse_migrations_require_debt_retirement(self):
+    def test_real_push_reuse_migrations_require_debt_retirement(self):
         texts = {p.name: p.read_text(encoding="utf-8")
                  for p in policy.WORKFLOW_DIR.glob("*.yml")}
         debt = copy.deepcopy(policy.LEGACY_HOSTED_DEBT)
-        names = ["clued-connection-authorization.yml", "clued-g4-database.yml",
-                 "information-flow-e2e.yml"]
+        names = ["clued-g4-database.yml", "information-flow-e2e.yml"]
         for filename in names:
             _, jobs, _ = policy.split_workflow(texts[filename])
             block = jobs["push-reuse"]

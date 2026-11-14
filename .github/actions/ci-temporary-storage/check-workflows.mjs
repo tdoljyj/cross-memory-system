@@ -9,7 +9,6 @@ import { createHash } from "node:crypto";
 export const APPLICATION_WORKFLOWS = [
   "clued-cloud-node22-install.yml",
   "clued-integration-runtime-nightly.yml",
-  "clued-connection-authorization.yml",
   "clued-g4-database.yml",
   "information-flow-e2e.yml",
   "public-mcp-protocol.yml",

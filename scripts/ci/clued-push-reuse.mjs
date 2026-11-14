@@ -13,10 +13,6 @@ export const TARGETS = Object.freeze({
     job: 'Supabase migration, RLS, transaction, and pgTAP',
     steps: ['Prepare, start and verify one fresh isolated Supabase runtime', 'Run Unified Record V2 RLS and transaction tests', 'Run Project Lifecycle Successor v2 database and surface tests'],
   },
-  'clued-connection-authorization.yml': {
-    job: 'isolated-candidate',
-    steps: ['S2c gate evidence', 'Upload S2c gate evidence'],
-  },
   'information-flow-e2e.yml': {
     job: 'Information Flow E2E over the local Worker and Supabase stack',
     steps: ['Run the Information Flow E2E harness', 'Recompute normalized evidence digests'],

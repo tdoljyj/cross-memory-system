@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { CLEANUP_DEFAULTS, removeTestDirectory, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { CLEANUP_DEFAULTS, HOST_HARNESS_ROOT, removeTestDirectory, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 
 // No real waiting: every injected sleep only counts.
 const harness = (overrides = {}) => {
@@ -68,6 +68,17 @@ test('only directories strictly inside the temp directory are removed', async ()
   assert.equal(state.logs.length, outside.length);
   assert.equal(await removeTestDirectory(path.join(os.tmpdir(), 'clued-ok'), deps), true);
   assert.equal(await removeTestDirectory(path.join(os.tmpdir(), '.', 'nested', 'clued-ok'), deps), true);
+});
+
+test('a cluster under the checkout work/host-harness/ is removed too, the root itself and its parent never', async () => {
+  const { state, deps } = harness({ rm: async (target) => { state.rmCalls.push(target); } });
+  const inside = path.join(HOST_HARNESS_ROOT, 'ngc', 'clued-ngc-1');
+  assert.equal(await removeTestDirectory(inside, { ...deps, tmpdir: inside }), true, 'TEMP pointed at the cluster itself');
+  assert.deepEqual(state.rmCalls, [inside]);
+  for (const bad of [HOST_HARNESS_ROOT, path.dirname(HOST_HARNESS_ROOT), path.join(HOST_HARNESS_ROOT, '..', 'other')]) {
+    assert.equal(await removeTestDirectory(bad, deps), false, bad);
+  }
+  assert.deepEqual(state.rmCalls, [inside]);
 });
 
 test('really removes a populated directory, and an absent one is fine', async () => {

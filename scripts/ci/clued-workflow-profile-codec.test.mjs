@@ -38,10 +38,10 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,56);
-  // The original catalogue still registered the nine workflows deleted later; restore them before comparing it.
+  assert.equal(sources(decoded).length,51);
+  // The original catalogue still registered the ten workflows deleted later; restore them before comparing it.
   const original=structuredClone(decoded),oldRoles=structuredClone(specs);
-  assert.equal(restoreRetiredEntries(original,oldRoles).length,9);
+  assert.equal(restoreRetiredEntries(original,oldRoles).length,10);
   assert.equal(sources(original).length,71);
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary.

@@ -78,6 +78,13 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
         values($1,'synthetic',$2,$3,$4,array['*']) returning id`,
         [userId, name, tokens[name], name === 'reader' ? ['context:read'] : ['context:read', 'context:write']])).rows[0].id;
     }
+    // The read-only admission Binding is the CI admission Binding, as in
+    // production (Owner Decision 38ddb8cf): only it observes a PR and
+    // activates its PR -> Task relation (20261108161615).
+    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,version,metadata,status)
+      values($1,'global','fixture_role','binding',$2,1,'{}','committed') returning id`, [userId, bindingIds.reader])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, bindingIds.reader, roleReceipt]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();
@@ -106,13 +113,34 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
       confidence_reason: 'race fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) =>
-      agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
+    const holders = new Map();
+    const claim = async (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) => {
+      const result = await agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
         write_set: writeSet, holder_session_ref: session });
+      if (result.status === 'committed') holders.set(result.claim.claim_id, { who, lease_key: result.lease_key });
+      return result;
+    };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
-    const verify = (c, pr, head = crypto.randomBytes(20).toString('hex')) => agent('reader', 'clued_work_verify_v1',
-      { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head });
+    // A PR verify (20261108161615): the holder authorizes the exact head
+    // naming its PR, the CI Binding observes the PR, then verifies the exact
+    // head and base. reverify repeats the last verify of a claim's PR head.
+    const base = 'b'.repeat(40);
+    const heads = new Map();
+    const reverify = (c, pr) => agent('reader', 'clued_work_verify_v1',
+      { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: heads.get(c.claim_id), base_sha: base, target_branch: 'main' });
+    const verify = async (c, pr, head = crypto.randomBytes(20).toString('hex')) => {
+      const { who, lease_key } = holders.get(c.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0];
+      committed(await agent(who, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: c.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: pr.split('#')[0],
+        head_sha: head, target_branch: 'main', pr_number: Number(pr.split('#')[1]), idempotency_key: uuid() }));
+      const seen = await agent('reader', 'clued_work_verify_v1', { action: 'resolve_pr_claim', pr_ref: pr, head_sha: head,
+        base_sha: base, target_branch: 'main' });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+      heads.set(c.claim_id, head);
+      return reverify(c, pr);
+    };
     const gate = async (who, c, resources) => (await admin.query(
       `select clued_private.work_claim_gate_v1($1,$2,'clued-storage','storage_submit','collision_only',$3,$4) v`,
       [userId, bindingIds[who], resources, c ? { claim_id: c.claim_id, fence: c.fence } : null])).rows[0].v;
@@ -226,15 +254,17 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
       ['WORK_CLAIM_COPY_ADOPTED', 'clued-storage', 2]);
     // The other copies are out at every door.
     assert.equal((await gate('claude', c1.claim, ['storage:c1/_copies/1/b.md'])).error_code, 'copy_not_adopted');
-    const late = await verify(c1.claim, 'o/n#11');
-    assert.equal(late.verdict, 'REJECTED');
-    assert.ok(late.reasons.includes('copy_not_adopted') && late.reasons.includes('claim_not_current'), JSON.stringify(late));
+    const late = await reverify(c1.claim, 'o/n#11');
+    // The PR belongs to the Task, whose only current claim is now the winner:
+    // the loser's head grant does not carry over to it.
+    assert.deepEqual([late.verdict, late.reasons, late.claim_binding.claim.claim_id],
+      ['REJECTED', ['head_authorization_required'], c2.claim.claim_id], JSON.stringify(late));
     assert.equal((await agent('claude', 'clued_work_renew_v1', { scope: 'global', claim_id: c3.claim.claim_id,
       fence: c3.claim.fence, lease_version: 1, progress_ref: 'r2' })).error_code, 'work_claim_not_active');
     const lost = await agent('reader', 'clued_work_claim_adopt_v1', { pr_ref: 'o/n#11', merge_sha: 'abcdef1' });
     assert.deepEqual([lost.status, lost.error_code], ['rejected', 'copy_not_adopted']);
     // The winner is still admitted; after adoption the Task is exclusive again.
-    assert.equal((await verify(c2.claim, 'o/n#12')).verdict, 'ADMITTED');
+    assert.equal((await reverify(c2.claim, 'o/n#12')).verdict, 'ADMITTED');
     assert.equal((await claim(task, 'claude', 'session-f')).error_code, 'work_claim_conflict');
     committed(await release('codex', c2.claim));
     const after = committed(await claim(task, 'claude', 'session-f'));
@@ -251,7 +281,7 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
     assert.equal((await verify(g2.claim, 'o/n#22')).verdict, 'ADMITTED');
     // The admission Binding is read-only; adopt accepts it, like verify's binding.
     assert.deepEqual(await agent('reader', 'clued_work_claim_adopt_v1', { pr_ref: 'o/n#99', merge_sha: 'abcdef1' }),
-      { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'o/n#99' });
+      { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'o/n#99', binding_receipt_id: null });
     await assert.rejects(() => agent('reader', 'clued_work_claim_adopt_v1', { pr_ref: 'not a pr', merge_sha: 'abcdef1' }),
       /work_claim_pr_ref_invalid/);
     await assert.rejects(() => agent('reader', 'clued_work_claim_adopt_v1', { pr_ref: 'o/n#22', merge_sha: 'abcdef1', x: 1 }),
@@ -262,7 +292,7 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
     assert.deepEqual([won.status, won.adopted, won.claim_id, won.not_adopted], ['ok', true, g2.claim.claim_id, [g1.claim.claim_id]]);
     const again = await agent('reader', 'clued_work_claim_adopt_v1', { pr_ref: 'o/n#22', merge_sha: 'abcdef1234' });
     assert.deepEqual([again.adopted, again.replayed], [true, true]);
-    assert.equal((await verify(g1.claim, 'o/n#21')).verdict, 'REJECTED');
+    assert.equal((await reverify(g1.claim, 'o/n#21')).verdict, 'REJECTED');
     assert.deepEqual(await row(g1.claim.claim_id),
       { status: 'SUPERSEDED', outcome: 'not_adopted', copy_index: 1, superseded_by: g2.claim.claim_id });
 
@@ -276,6 +306,7 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
     const taken = committed(await agent('codex', 'clued_work_takeover_v1',
       { scope: 'global', claim_id: t1.claim.claim_id, idempotency_key: uuid(), holder_session_ref: 'tk-c' }));
     assert.equal(taken.claim.copy_index, 1);
+    holders.set(taken.claim.claim_id, { who: 'codex', lease_key: taken.lease_key });
     assert.equal((await verify(taken.claim, 'o/n#31')).verdict, 'ADMITTED');
     assert.equal((await verify(t2.claim, 'o/n#32')).verdict, 'ADMITTED');
 

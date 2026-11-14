@@ -1,6 +1,6 @@
-// The last gated-proof catalogue that registered the nine workflows deleted with their entries
-// (clued-cloud-quality-gate, clued-components, runner-budget-policy and the six handover hook
-// qualification workflows): the exact Git objects of main 4a3e0485. Tests whose fixtures were those
+// The last gated-proof catalogue that registered the ten workflows deleted with their entries
+// (clued-cloud-quality-gate, clued-components, runner-budget-policy, the six handover hook
+// qualification workflows and clued-connection-authorization): the exact Git objects of main 4a3e0485. Tests whose fixtures were those
 // entries, or whose frozen digests describe a catalogue that still had them, read them from here;
 // nothing in this module is an active registration.
 import {execFileSync} from 'node:child_process';
@@ -12,6 +12,8 @@ const ROOT=new URL('../../../',import.meta.url);
 const object=blob=>execFileSync('git',['cat-file','blob',blob],{cwd:ROOT,maxBuffer:8*1024*1024});
 export const retiredProfilesRaw=()=>object(RETIRED_CATALOGUE_BLOBS.profiles);
 export const retiredRolesRaw=()=>object(RETIRED_CATALOGUE_BLOBS.roles);
+// The bytes a retired workflow had at that commit: the last Source its catalogue entry described.
+export const retiredWorkflowBlob=file=>execFileSync('git',['rev-parse',`${RETIRED_CATALOGUE_COMMIT}:${file}`],{cwd:ROOT,encoding:'utf8'}).trim();
 export const retiredCatalogue=()=>({registry:parseWorkflowProfiles(retiredProfilesRaw()),specs:JSON.parse(retiredRolesRaw())});
 // Puts the retired workflows' entries back into a copy of the current catalogue (registry and specs are mutated).
 export function restoreRetiredEntries(registry,specs){
