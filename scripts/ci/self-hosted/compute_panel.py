@@ -65,6 +65,9 @@ METRICS_PULLS = 50
 UTILIZATION_HOURS = 24
 LOW_DISK_GB = 20.0
 LOW_MEMORY_GB = 1.0
+# CI stall (resident_stall): the resident's DUTY_WINDOW_MS, and the word its node on duty starts each status with.
+STALL_AFTER = timedelta(minutes=30)
+DUTY_WORD = "当班"
 
 # Duplicate-run alert (Task e435e658, rule 41ab823a: one commit's one check really runs once).
 DUP_LOOKBACK = timedelta(days=3)       # PRs updated, and runs started, within this window
@@ -514,11 +517,62 @@ def resident_latest(combined: list[tuple[int, dict]]) -> dict[str, dict]:
     return latest
 
 
-def collect_residents(client: GitHub, limit: int = RESIDENT_PULLS) -> tuple[dict[str, dict], dict[str, str]]:
-    """The resident state per node, and the failed batches on the open PRs' current heads."""
+def resident_rows(status: dict) -> list[dict]:
+    """The resident-queue rows of one head (its latest per node, or its history), newest first."""
+    rows = [row for row in status.get("statuses") or [] if RESIDENT_CONTEXT.match(str(row.get("context", "")))]
+    return sorted(rows, key=lambda row: row.get("updated_at") or row.get("created_at") or "", reverse=True)
+
+
+def row_time(row: dict | None) -> datetime | None:
+    return parse_time(row.get("updated_at") or row.get("created_at")) if row else None
+
+
+def is_duty(row: dict) -> bool:
+    return str(row.get("description", "")).startswith(DUTY_WORD)
+
+
+def waiting_since(client: GitHub, sha: str) -> datetime | None:
+    """When a node was last on duty for this head, from its newest 100 statuses; never on duty: its first resident row."""
+    history = resident_rows({"statuses": client.get(f"/commits/{sha}/statuses", {"per_page": 100}) or []})
+    return row_time(next((row for row in history if is_duty(row)), history[-1] if history else None))
+
+
+def resident_stall(client: GitHub, pulls: list[dict], combined: list[tuple[int, dict]], now: datetime) -> list[dict]:
+    """The open PRs whose resident work nobody moves (board row 26, gap 2): CI is stalled.
+
+    A head waits on the residents when its newest resident row is pending or error (success and failure are
+    results, such as 已完成 or 落后 main). It is stalled when no node has been on duty for it for STALL_AFTER:
+    a node on duty rewrites 当班 on every queued commit at least every 14 minutes (the resident's
+    DUTY_REFRESH_MS), so STALL_AFTER is its DUTY_WINDOW_MS. An error row (HALT, or a status no longer updated)
+    is a stall at once: a HALT never hands over (Decision 199cf3de) and waits for the Owner. Only a head whose
+    newest row is neither 当班 nor error costs a read (its history: since when nobody was on duty).
+    """
+    drafts = {pull.get("number") for pull in pulls if pull.get("draft")}
+    stalled = []
+    for number, status in combined:
+        rows = resident_rows(status)
+        if number in drafts or not rows or rows[0].get("state") not in ("pending", "error"):
+            continue
+        since = row_time(next((row for row in rows if is_duty(row)), None))
+        if since is not None and now - since < STALL_AFTER:
+            continue  # a node is on duty for it and alive
+        if rows[0].get("state") != "error":
+            if since is None and status.get("sha"):
+                since = waiting_since(client, status["sha"])
+            if since is None or now - since < STALL_AFTER:
+                continue
+        stalled.append({"pr": number, "node": RESIDENT_CONTEXT.match(rows[0]["context"]).group(1),
+                        "description": rows[0].get("description"), "since": iso(since) if since else None})
+    return stalled[:RESIDENT_PULLS]
+
+
+def collect_residents(client: GitHub, now: datetime,
+                      limit: int = RESIDENT_PULLS) -> tuple[dict[str, dict], dict[str, str], list[dict]]:
+    """The resident state per node, the failed batches on the open PRs' current heads, and the stalled ones."""
     pulls = client.get("/pulls", {"state": "open", "sort": "updated", "direction": "desc", "per_page": limit}) or []
     combined = [(pull["number"], client.get(f"/commits/{pull['head']['sha']}/status") or {}) for pull in pulls[:limit]]
-    return resident_latest(combined), batch_failures(pulls[:limit], combined)
+    return (resident_latest(combined), batch_failures(pulls[:limit], combined),
+            resident_stall(client, pulls[:limit], combined, now))
 
 
 def batch_failures(pulls: list[dict], combined: list[tuple[int, dict]]) -> dict[str, str]:
@@ -842,8 +896,14 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
             "skipped_heads": skipped_heads, "total": len(found), "found": found, "settled": settled}
 
 
-def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
+def alerts_for(pool: dict[str, dict], residents: dict[str, dict], stall: list[dict] | None = None) -> dict[str, str]:
     alerts = {}
+    if stall:
+        # One key for the whole stall: more PRs or newer texts during it are not a new alert.
+        shown = "；".join(f"PR #{item['pr']}（{item['node']}：{cell(item.get('description'))}）" for item in stall[:3])
+        alerts["stall"] = (f"CI 停摆：{len(stall)} 个 PR 在等常驻执行器，没有节点当班推进"
+                           f"（停机，或 {int(STALL_AFTER.total_seconds() // 60)} 分钟无人当班）：{shown}"
+                           + ("；……" if len(stall) > 3 else ""))
     for name, node in pool.items():
         if node["status"] == "offline":
             alerts[f"offline:{name}"] = f"{name} 离线（最近一次探测成功：{node['last_probe'] or '无'}）"
@@ -1054,20 +1114,21 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         for key in extra:
             del events[key]
         events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项，见面板“重复执行”表"
+    stall = None
     if client.low():
         errors.append("residents: 额度不足，沿用上一轮常驻状态")
         residents = None
     else:
-        collected = attempt("residents", lambda: collect_residents(client), None)
-        residents = collected[0] if collected else None
+        collected = attempt("residents", lambda: collect_residents(client, now), None)
+        residents, stall = (collected[0], collected[2]) if collected else (None, None)
         events.update(collected[1] if collected else {})
         merges = attempt("merges", lambda: recent_merges(client, parse_time(state.get("events_at"))), None)
         if merges is not None:  # a failed read keeps the window open, so its merges are announced next run
             events.update(merges)
             state["events_at"] = iso(now)
-    if residents is None:  # keep the last known resident state (and its HALT alert) rather than clearing it
-        residents = state.get("residents") or {}
-    state["residents"] = residents
+    if residents is None:  # keep the last known resident state (and its HALT and stall alerts) rather than clearing it
+        residents, stall = state.get("residents") or {}, state.get("stall") or []
+    state["residents"], state["stall"] = residents, stall
     return {
         "schema": SCHEMA,
         "generated_at": iso(now),
@@ -1078,7 +1139,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "metrics": metrics,
         "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "skipped", "total", "omitted") if key in duplicates},
                        "found": (duplicates.get("found") or [])[:DUP_ROWS]},
-        "alerts": alerts_for(pool, residents),
+        "alerts": alerts_for(pool, residents, stall),
         "events": events,
         "errors": errors,
     }
@@ -1099,6 +1160,37 @@ def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | No
         lines.append("已恢复：")
         lines += [f"- {text}" for text in resolved.values()]
     return "\n".join(lines)
+
+
+def announce(client: GitHub, issue: dict | None, report: dict, state: dict, previous: dict[str, str],
+             first_events: bool, owner: str | None) -> dict:
+    """Comment the new and ended alerts and the new events on the panel issue (created if missing) and save them as said.
+
+    The comment is sent before the state is saved. When it fails, the failure is recorded on the panel and the state
+    keeps the previous alerts and the unsaid events, so the next run says them again; the panel itself still updates
+    (the alert channel never stops it).
+    """
+    new = {k: v for k, v in report["alerts"].items() if k not in previous}
+    resolved = {k: v for k, v in previous.items() if k not in report["alerts"]}
+    said = {key: list(state.get(key) or []) for key in ("announced", "announced_dup")}
+    # Events are announced once: the keys already announced stay in the state (the newest 200; duplicates have their own set).
+    events = {k: v for k, v in report["events"].items() if not is_announced(state, k)}
+    mark_announced(state, list(events))
+    if first_events:
+        events = {}
+    comment = alert_comment(new, resolved, owner, events)
+    if issue is None:
+        # Created without alert state, so the alerts are announced by the comment below.
+        issue = client.send("POST", "/issues", {"title": ISSUE_TITLE, "body": render(report, {**state, "alerts": {}})})
+    if comment:
+        try:
+            client.send("POST", f"/issues/{issue['number']}/comments", {"body": comment})
+        except (RuntimeError, OSError) as error:
+            report["errors"].append(f"告警评论未发出，下一轮重发：{error}")
+            print(f"::warning::compute panel alert comment failed: {error}")
+            state["alerts"] = dict(previous)
+            state.update(said)
+    return issue
 
 
 def main() -> int:
@@ -1123,13 +1215,7 @@ def main() -> int:
         print(body.replace(write_state(state), ""))
         print(json.dumps({"requests": client.requests}))
         return 0
-    new = {k: v for k, v in report["alerts"].items() if k not in previous}
-    resolved = {k: v for k, v in previous.items() if k not in report["alerts"]}
-    # Events are announced once: the keys already announced stay in the state (the newest 200; duplicates have their own set).
-    events = {k: v for k, v in report["events"].items() if not is_announced(state, k)}
-    mark_announced(state, list(events))
-    if first_events:
-        events = {}
+    issue = announce(client, issue, report, state, previous, first_events, os.environ.get("GITHUB_REPOSITORY_OWNER"))
     body = render(report, state)
     for level in (1, 2, 3, 4, 5):
         if len(body) <= DUP_BODY_LIMIT:
@@ -1139,13 +1225,6 @@ def main() -> int:
     if len(body) > ISSUE_LIMIT - 500:
         report["errors"].append(f"正文 {len(body)} 字符，接近 Issue 上限 {ISSUE_LIMIT}")
         body = render(report, state)
-    comment = alert_comment(new, resolved, os.environ.get("GITHUB_REPOSITORY_OWNER"), events)
-    if issue is None:
-        # Created without alert state, so the alerts are announced by the comment below.
-        issue = client.send("POST", "/issues", {"title": ISSUE_TITLE, "body": render(report, {**state, "alerts": {}})})
-    # Announce first and save the alert state after: a failed comment is retried next run, never lost.
-    if comment:
-        client.send("POST", f"/issues/{issue['number']}/comments", {"body": comment})
     client.send("PATCH", f"/issues/{issue['number']}", {"body": body})
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:

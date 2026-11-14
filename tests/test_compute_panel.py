@@ -266,6 +266,107 @@ class AlertAndStateTests(unittest.TestCase):
         self.assertIn("控制机", body)
 
 
+class StallTests(unittest.TestCase):
+    """CI stall (board row 26, gap 2): work waits on the resident executors and no node is on duty for it."""
+
+    class History:
+        """A client that serves one commit's status history (newest first) and counts the reads."""
+
+        def __init__(self, rows: list[dict] | None = None) -> None:
+            self.rows = rows or []
+            self.paths: list[str] = []
+
+        def get(self, path: str, params: dict | None = None):
+            self.paths.append(path)
+            return self.rows
+
+    def stall(self, combined, pulls=None, client=None):
+        pulls = pulls if pulls is not None else [{"number": number} for number, _ in combined]
+        return panel.resident_stall(client or self.History(), pulls, combined, NOW)
+
+    def test_halt_with_a_queued_pr_alerts_once_and_recovers_once(self) -> None:
+        # 2026-11-14 03:31 (Beijing): TURING HALTed on PR #1095's head; nobody else took the work.
+        halted = [(1095, {"sha": "a9e717d" + "0" * 33,
+                          "statuses": [status(2, "error", "执行器停机（PUBLICATION_UNCERTAIN），等 Owner 复位")]})]
+        stall = self.stall(halted)
+        self.assertEqual([item["pr"] for item in stall], [1095])
+        alerts = panel.alerts_for({}, {}, stall)
+        self.assertIn("stall", alerts)
+        self.assertIn("PR #1095", alerts["stall"])
+        # The same stall seen again (more PRs, newer text) is the same alert: it is not announced again.
+        again = panel.alerts_for({}, {}, stall + [{**stall[0], "pr": 1096}])
+        self.assertEqual(set(again), set(alerts))
+        self.assertEqual(panel.alerts_for({}, {}, []), {})
+
+    def test_a_node_on_duty_is_no_stall(self) -> None:
+        on_duty = [(1, {"sha": "1" * 40, "statuses": [status(10, "pending", "当班：排队第 2 位"),
+                                                      status(1, "pending", "停摆（PAUSED）：执行器已暂停，等 Owner 恢复", node="desk")]})]
+        self.assertEqual(self.stall(on_duty), [])
+
+    def test_finished_hinted_and_draft_heads_are_no_work(self) -> None:
+        combined = [(1, {"sha": "1" * 40, "statuses": [status(90, "success", "已完成：常驻执行器跑完八段，检查已发布")]}),
+                    (2, {"sha": "2" * 40, "statuses": [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+                    (3, {"sha": "3" * 40, "statuses": [status(90, "error", "执行器停机（X），等 Owner 复位")]}),
+                    (4, {"sha": "4" * 40, "statuses": [{"context": "gitleaks", "state": "pending", "created_at": at(90)}]})]
+        pulls = [{"number": 1}, {"number": 2}, {"number": 3, "draft": True}, {"number": 4}]
+        self.assertEqual(self.stall(combined, pulls), [])
+
+    def test_a_silent_node_is_a_stall_after_the_duty_window(self) -> None:
+        # The node stopped writing (machine off, companion gone): its last 当班 ages past the window.
+        late = [(5, {"sha": "5" * 40, "statuses": [status(31, "pending", "当班：运行中：第 2 段（gitleaks 扫描）")]})]
+        early = [(5, {"sha": "5" * 40, "statuses": [status(20, "pending", "当班：运行中：第 2 段（gitleaks 扫描）")]})]
+        self.assertEqual([item["pr"] for item in self.stall(late)], [5])
+        self.assertEqual(self.stall(early), [])
+
+    def test_a_pause_is_a_stall_once_nobody_was_on_duty_for_the_window(self) -> None:
+        # A paused node rewrites its 停摆 text every 14 minutes, so the time comes from the commit's history.
+        paused = [(6, {"sha": "6" * 40, "statuses": [status(1, "pending", "停摆（PAUSED）：执行器已暂停，等 Owner 恢复")]})]
+        long_ago = self.History([status(1, "pending", "停摆（PAUSED）：执行器已暂停，等 Owner 恢复"),
+                                 status(45, "pending", "当班：排队第 1 位")])
+        self.assertEqual([item["pr"] for item in self.stall(paused, client=long_ago)], [6])
+        self.assertEqual(long_ago.paths, ["/commits/" + "6" * 40 + "/statuses"])
+        just_now = self.History([status(1, "pending", "停摆（BREAKER_OPEN）：执行器熔断中"),
+                                 status(8, "pending", "当班：运行中：第 1 段（准入）")])
+        self.assertEqual(self.stall(paused, client=just_now), [])
+        # Never on duty on this commit: it has waited since its first resident row.
+        never = self.History([status(1, "pending", "已提议，等待执行器读取"), status(40, "pending", "已提议，等待执行器读取")])
+        self.assertEqual([item["pr"] for item in self.stall(paused, client=never)], [6])
+
+    def test_healthy_heads_cost_no_history_read(self) -> None:
+        client = self.History()
+        busy = [(7, {"sha": "7" * 40, "statuses": [status(1, "pending", "当班：运行中：第 4 段（trivy 扫描）")]})]
+        self.assertEqual(self.stall(busy, client=client), [])
+        self.assertEqual(client.paths, [])
+
+    def test_a_failed_alert_comment_is_recorded_and_said_again_next_run(self) -> None:
+        class Channel:
+            def __init__(self, fail: bool) -> None:
+                self.fail = fail
+                self.sent: list[tuple[str, str]] = []
+
+            def send(self, method: str, path: str, body):
+                if self.fail and path.endswith("/comments"):
+                    raise RuntimeError("POST /issues/952/comments failed (502)")
+                self.sent.append((method, path))
+                return {"number": 952}
+
+        report = {"alerts": {"stall": "CI 停摆：PR #1095"}, "events": {"merged:1": "PR #1 已合入 main"}, "errors": []}
+        state = {"alerts": dict(report["alerts"])}
+        broken = Channel(fail=True)
+        panel.announce(broken, {"number": 952}, report, state, {}, False, "owner")  # must not raise
+        self.assertEqual(state["alerts"], {})  # not saved as said: the next run says it again
+        self.assertFalse(panel.is_announced(state, "merged:1"))
+        self.assertTrue(any("告警评论未发出" in error for error in report["errors"]))
+        working = Channel(fail=False)
+        report["errors"] = []
+        state["alerts"] = dict(report["alerts"])
+        panel.announce(working, {"number": 952}, report, state, {}, False, "owner")
+        self.assertEqual(working.sent, [("POST", "/issues/952/comments")])
+        self.assertEqual(state["alerts"], report["alerts"])
+        self.assertTrue(panel.is_announced(state, "merged:1"))
+        self.assertEqual(report["errors"], [])
+
+
 class GovernanceStatusTests(unittest.TestCase):
     """The probe prints one COMPUTE_PANEL_GOVERNANCE line from the node governance status file."""
 
