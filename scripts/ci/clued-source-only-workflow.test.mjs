@@ -23,7 +23,7 @@ function denied(args){const r=recognizeCatalogueWorkflow(args);assert.equal(r.so
 test('ordinary registered Source retains independent legacy roles and input is not mutated',()=>{
   const world=loadRetired(),file='.github/workflows/clued-components.yml',blob=world.registry.workflows[file].workflow_blob;
   const before=JSON.stringify(world),r=recognizeCatalogueWorkflow({...world,file,blob});
-  assert.equal(COMPONENT_VERSION,'1.0.0');assert.equal(r.source_identified,true);assert.equal(r.kind,REGISTERED_SOURCE);
+  assert.equal(COMPONENT_VERSION,JSON.parse(fs.readFileSync(new URL('../../config/clued-components.json',import.meta.url))).components.find(c=>c.id==='script.source-only-workflow').version);assert.equal(r.source_identified,true);assert.equal(r.kind,REGISTERED_SOURCE);
   assert.equal(r.execution_eligible,true);assert.ok(r.roles.length>0);
   assert.equal(Object.hasOwn(r,'passed'),false);assert.equal(Object.hasOwn(r,'NativeProof'),false);
   assert.equal(JSON.stringify(world),before);assert.ok(Object.isFrozen(r)&&Object.isFrozen(r.profile)&&Object.isFrozen(r.roles));
