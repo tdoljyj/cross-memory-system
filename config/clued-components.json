@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "e1697cf468ceff0f80ba80a9b6839973220eaf63b2344c44a58aefdb46938ec6"
+      "content_sha256": "cf467b9729c852df14eed98094b28f9a2aba92fdf090007c256f7b566b4b7cde"
     },
     {
       "id": "hook.runner-job-started",
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "baa58706706f368f15eb4dfde1bcaaea1bf2022114627bfc488cf7d5a9dbb4ac"
+      "content_sha256": "ee69341ca83ff11e7547e78d2ba02ad74bf2fa94a87cae967215aa79607f61c7"
     },
     {
       "id": "script.resource-maintenance",
@@ -671,7 +671,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.23",
+      "version": "1.0.24",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -688,7 +688,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7a43addf1e9e85b48586f3350c3a3fbc4ea974d1801df7a70944ea8aecb8060f"
+      "content_sha256": "c76f00e05fc05a7ab11784560e5d89fbe7a5c38aae5cd5dd332397b1f2bdfaec"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "abc5726d8224ed436ff1ab7d25af76aff991a55969c9e51983a31b6d881428eb"
+      "content_sha256": "c64604492588b8027a4bd56a3e240b16dfd1d0587ec656786767fbdf119bb364"
     }
   ]
 }
