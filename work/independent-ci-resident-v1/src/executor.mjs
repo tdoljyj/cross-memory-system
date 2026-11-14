@@ -122,7 +122,7 @@ import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, 
 import { CLAIM_REASONS } from './queue.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, EXECUTOR_RESTARTED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
-import { BUNDLE_NETWORK_UNAVAILABLE, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
+import { BUNDLE_NETWORK_UNAVAILABLE, RESIDENT_BASE_MOVED, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breakerRelease, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -3418,6 +3418,8 @@ export class ResidentExecutor {
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
+      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase).
+      if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored') this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
       if (settled === 'stopped') {
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h, ...(network ? { networkReleases24h } : {}) });
@@ -3544,7 +3546,9 @@ export class ResidentExecutor {
     this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
     // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
-    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED : 'BUNDLE_UNAVAILABLE';
+    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
+    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
+      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
     if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
       // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
       bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
@@ -3849,6 +3853,18 @@ export class ResidentExecutor {
         this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'SUPERSEDED',
           settle: { kind: 'released', reason: 'SUPERSEDED', code: failure.code, klass: 'superseded', breaker: 'neutral', breakerState, pos, dropFront: true } };
+      }
+      if (!started && failure.phase === 'bundle' && failure.code === RESIDENT_BASE_MOVED) {
+        // Field defect 2026-11-14 (TURING, PRs #594/#942: three of these opened the breaker and held every other PR for an hour): the
+        // bundle found GitHub's main is no longer this subject's base. Nothing ran; the fact is about this subject alone, which can
+        // never pass with that base. Released like a supersession (no release cap, no breaker) and the row stops (settle ignored:
+        // only a new commit, the PR brought up to main, runs it again; a front S is dropped). A real environment fault stays below.
+        await this.closeOrThrow(batch, { linux: false });
+        await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: failure.code, basis: 'main-moved-before-stage-1', class: 'superseded', breaker: 'neutral' });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release: 'SUPERSEDED', companionJobTree: failure.companionJobTree ?? null, network: false });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'SUPERSEDED',
+          settle: { kind: 'ignored', reason: 'SUPERSEDED', code: failure.code, klass: 'superseded', breaker: 'neutral', breakerState, pos, dropFront: true } };
       }
       if (!started && failure.phase === 'bundle') {
         // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for

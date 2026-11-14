@@ -28,7 +28,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
-  "script.independent-native-publication": "1.1.64",
+  "script.independent-native-publication": "1.1.65",
   "script.resource-maintenance": "1.0.1",
   "script.non-pr-control-source": "1.0.4",
   "script.source-only-workflow": "1.0.1",
@@ -37,6 +37,6 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.7",
   "script.archive-retention": "1.0.7",
-  "script.merge-reconciliation": "1.0.31"
+  "script.merge-reconciliation": "1.0.32"
 };
 export const MCP_SERVER_VERSION = "0.9.12";

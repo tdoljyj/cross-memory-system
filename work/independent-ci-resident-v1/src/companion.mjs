@@ -297,6 +297,12 @@ export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote']);
 export const BUNDLE_MEMBER_MOVED_REASONS = Object.freeze(['BATCH_MEMBER_NOT_BRANCH_TIP', 'BATCH_MEMBER_NOT_PR_HEAD']);
 export const TRAIN_BATCH_MEMBER_MOVED = 'TRAIN_BATCH_MEMBER_MOVED';
 export const BUNDLE_NETWORK_UNAVAILABLE = 'BUNDLE_NETWORK_UNAVAILABLE';
+// Field defect 2026-11-14 (TURING, PRs #594/#942): main moved while a head waited in the run queue with the old main as its base. The
+// script then fetched GitHub's refs, found refs/heads/main is not the descriptor's base and refused (REMOTE_MAIN_BASE_CHANGED). That is
+// a checked fact about this one subject, which can never pass with that base, not about the node: it is answered as RESIDENT_BASE_MOVED
+// (the code stage 8 uses for the same fact), so the executor stops that row alone instead of counting it towards the breaker.
+export const BUNDLE_BASE_MOVED_REASONS = Object.freeze(['REMOTE_MAIN_BASE_CHANGED']);
+export const RESIDENT_BASE_MOVED = 'RESIDENT_BASE_MOVED';
 export function bundleNetworkRefusal(runner) {
   if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return false;
   let v = null;
@@ -516,6 +522,7 @@ export class Companion {
         if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN') return { ok: true, code: null };
         await this.noteBundleRefusal('build-bundle', r);
         if (r.code === 2 && BUNDLE_MEMBER_MOVED_REASONS.includes(v?.reason)) return { ok: false, code: TRAIN_BATCH_MEMBER_MOVED };
+        if (r.code === 2 && BUNDLE_BASE_MOVED_REASONS.includes(v?.reason)) return { ok: false, code: RESIDENT_BASE_MOVED };
         return { ok: false, code: bundleNetworkRefusal(r) ? BUNDLE_NETWORK_UNAVAILABLE : 'BUNDLE_UNAVAILABLE' };
       }
       // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean

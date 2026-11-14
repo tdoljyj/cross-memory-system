@@ -108,6 +108,13 @@ export const TRAIN_SWEEP_DEFAULT = 'audit';
 export const TRAIN_LANDINGS = Object.freeze(['github-merge', 'push']);
 export const TRAIN_LANDING_DEFAULT = 'github-merge';
 export const TRAIN_BATCH_MAX_LIMIT = 4;
+// The fleet's train (DESIGN §41.9 step 4, §65; Decisions 0ac620fa, 78a3052f): ONE value for every node. tools/build-package.mjs writes
+// it into every package's policy of contract /8 and later (a /7 policy cannot say 'on'), so a node's train changes only with an accepted
+// package and all nodes of one Source run one mode. Before, every package carried the node's installed train unchanged (the generic
+// upgrade's configInputsFor), so the mode a node was first installed with stayed (2026-11-14: turing shadow, desk-w-591 on). Going back
+// (shadow or off) is this value and a new package; the immediate stop is the Owner's PAUSE request, as before.
+export const FLEET_TRAIN = Object.freeze({ enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS,
+  sweep: TRAIN_SWEEP_DEFAULT });
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 // The heavy roles of every batch, in their fixed order.

@@ -358,6 +358,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'NOT_EXECUTED':
         // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
+        // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base).
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
         return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
