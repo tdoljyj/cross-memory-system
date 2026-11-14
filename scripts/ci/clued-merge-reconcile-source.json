@@ -133,7 +133,7 @@
     "scripts/ci/check_active_doc_links.py": "45ba8e59e126406a59e46078b20a5c3aa1b1b1abf60f8f84849f197c439c77c5",
     "scripts/ci/check_contract_placement.py": "18a5c02a7f39e397c0d4cd6273620dd5ed91a2a12351ed3639ab7986533ba007",
     "scripts/ci/check_design_refs.py": "448c6db2491582d12691998a51455610bf5b4dc6eec2048325f716b62db0b543",
-    "scripts/ci/ci-deps-legacy.json": "f7ef7bdf4c8589818fd1e10d18c46549f90c8625609e86075b0ae982a3d11f23",
+    "scripts/ci/ci-deps-legacy.json": "80d516b0bddd5dae6808d76285e93cb5be76f22e82587b19e5ba948381f9c344",
     "scripts/ci/ci-deps.mjs": "c05d216129bd63b5d05fb5beab138796971c8190047e22a90efc2ca64563c097",
     "scripts/ci/ci-deps.test.mjs": "cd36c0c64a19a3d1061a73944ffd7d027cf7a026f80ba4578fb7aaa57c51254d",
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
