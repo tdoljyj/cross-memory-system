@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "c8ea864f238b8acfe5db55d3bb4933a2a1932179ce0554d408766a3a0330b00a"
+      "content_sha256": "402398f4fef7286b6c98b8ac72e6a5f3eedc9b91aa88a7fff2999074dbd283d6"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.61",
+      "version": "1.1.62",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "aa25a74a34b18e968aeb053e4afcf1dd46b4b8dd59f6fe3480cb2405967b7aad"
+      "content_sha256": "d06e0bebcaac138d3a1f9516f093061a4662b969bb6bb57c6e1d897cd4372b01"
     },
     {
       "id": "script.resource-maintenance",
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "7f81868bb90e4a5b135aab4b33763951f67e47c2796373ee92489d7f91561719"
+      "content_sha256": "20c8a4e35b53a7e3e7d55d4cad3b90338eb3244bde1836c086e3d0fe58acb988"
     },
     {
       "id": "script.required-applicability",
@@ -722,7 +722,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2c46845c7ec576c2a5f708ffcb7fe0da22d1bdaa2ba5ad3840af573be0dafdc0"
+      "content_sha256": "6742aec8d5e06cbba7a2200cd47f15ebedffadef4956c36d104145e8d8bdf726"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "25a61df2f1907a245918d15e4e5b83d05b2e9f1691208810684c437868bed59b"
+      "content_sha256": "c00cb5483c32dd68347843f953bcd427dde8139cb2c3297c49d67dcef716faf1"
     }
   ]
 }
