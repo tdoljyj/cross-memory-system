@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "c88b1b393f70b11ccbe23bd7aacb2848ea73d6619d84f585428f1f04cd800397"
+      "content_sha256": "fdd23dc7e15de66eb8e849543621855900f872b7750b5d896d1ebc0196e94454"
     },
     {
       "id": "hook.runner-job-started",
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "c3af12bb0e43837a5403e353876845949dd2f9db4d17288d3686e52f88cd03df"
+      "content_sha256": "182980e3568e8b61d81e2891a0601bbeb7f232a898c3ab63110a16601fb43588"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.31",
+      "version": "1.0.32",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "075ae147902db50c43e9dc349b788edacfcd2ee572ae86c7a01facdc5e9dcaae"
+      "content_sha256": "3bd832d46a94201ae300a22310d83dfbb25ddd4e6e36656f756c2eeeb8667c73"
     }
   ]
 }
