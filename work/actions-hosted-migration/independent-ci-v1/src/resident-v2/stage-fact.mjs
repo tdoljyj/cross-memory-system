@@ -5,12 +5,10 @@
 // Pure.
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
-import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
+import { HEX64, OUTCOME_CONTRACT, TRAIN_STAGE_NUMBER } from './layout.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { roleProbeFact } from './role-probe-run.mjs';
 import { validateRevocationFacts } from './revocation-run.mjs';
-import { validateRelayQualificationRun, validateRelayQualificationObservation } from './relay-qualification-run.mjs';
-import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 import { admissionVerificationRetryable } from '../withdrawal-text.mjs';
@@ -48,7 +46,7 @@ export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAI
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
   'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
-  // Stage R refused before anything was observed or written (relay not configured, input invalid).
+  // The removed stage R's clean refusal (resident DESIGN §76): kept so the catalogue stays the resident's, which reads old receipts.
   'RELAY_STAGE_REFUSED',
   // Stage 8 not ready (phase 2, step 2; publisher.mjs STAGE8_NOT_READY_REASONS): the resident parks and retries.
   'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE',
@@ -58,7 +56,7 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
   // App 5368905 already published on this head (primary/standby design v0.4 §6.2, C4; published-on-github-v2.mjs):
   // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
-  // there before its first publication (stage R: an ON_GITHUB plan row). Nothing was published for that role (an earlier
+  // there before its first publication. Nothing was published for that role (an earlier
   // stage of the batch may have published its own); a new commit is needed.
   HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB,
   // Merge train (DESIGN §41.2–41.4): clean endings with zero side effects. Stages 1 and 8 refuse a train front job while the
@@ -75,8 +73,8 @@ export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAG
   'RECONCILIATION_REQUIRED', 'EVIDENCE_IDENTITY_CONFLICT', 'ADMISSION_CONFIGURATION_REFUSED', 'BROKER_UNCONFIRMED',
   // Another controller tool held the mutation mutex: an unexpected concurrent effect the Owner must see.
   'BROKER_BUSY',
-  // Stage R (free-minutes design §7.3, S21): a relay publication that may exist unsettled, a role already
-  // held on the head by the other path, or a relay plan that does not validate. Never local afterwards.
+  // A role already held on the head by the other path (publishers), and the removed stage R's two HALT codes (resident DESIGN §76;
+  // kept so the catalogue stays the resident's, which reads old receipts).
   'RELAY_PUBLICATION_UNCERTAIN', 'ROLE_ALREADY_PUBLISHED_ON_HEAD', 'RELAY_PLAN_UNCONFIRMED']);
 
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
@@ -128,7 +126,7 @@ export function notAdmittedCode(diagnostic) {
 // later: the batch claim moved under a running batch).
 export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
-  if (outcome.status === 'UNCERTAIN') return stageNumber === RELAY_STAGE_NUMBER && RELAY_HALT_CODES.includes(outcome.reason) ? outcome.reason : 'PUBLICATION_UNCERTAIN';
+  if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
   // Generation 10: only stage 1's own admission check, only when it was withdrawn because it could not be verified for a passing cause
   // (withdrawal-text.mjs#admissionVerificationRetryable, with the outcome's bound diagnostic: the entry's own result names it
@@ -168,8 +166,6 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (r === 'full_admission_subject_changed') return 'PR_NOT_OPEN_OR_CHANGED';
   if (r === 'full_admission_native_unsupported' || r === 'native_policy_changed') return 'NATIVE_POLICY_UNSUPPORTED';
   if (r === 'execution_proof_refused') return 'EVIDENCE_REFUSED';
-  // A refused installed registry (for example one built before the isolation rules) is a clean stage-R refusal.
-  if (stageNumber === RELAY_STAGE_NUMBER && (r === 'RELAY_STAGE_NOT_CONFIGURED' || r === 'RELAY_STAGE_INPUT_INVALID' || /^RELAY_REGISTRY_[A-Z_]+$/.test(r ?? ''))) return 'RELAY_STAGE_REFUSED';
   return stageNumber === 1 || stageNumber === 2 || stageNumber === 4 || stageNumber === 6 ? 'STAGE_CHILD_REFUSED' : 'PUBLICATION_BLOCKED';
 }
 
@@ -220,10 +216,10 @@ const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { re
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
 // trainJobMode (stage 10): the mode of the sealed train-run job (jobs.json, invoke-stage.mjs); the facts' own mode must be it.
 export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null,
-  trainJobMode = null, relayQualificationJob = null }) {
+  trainJobMode = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
-    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
+    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, train: null, broker_no_launch: false };
   const done = code => ({ ...fact, failure_code: code });
   if (preflightCode) {
     // Nothing was requested from the broker: no service change, no child; the original is untouched.
@@ -255,10 +251,6 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   if (!n.treeZero) return done(n.code);
   const boundOutcome = receipt.outcome_sha256 && outcomeBytes && hash(outcomeBytes) === receipt.outcome_sha256 ? validateOutcome(outcome, { nonce, plan }) : null;
   fact.outcome = boundOutcome ? outcomeFacts(boundOutcome) : null;
-  // Stage R: the relay plan rows travel with the fact (the resident writes them into 25-plan), on success
-  // and on a HALT alike; rows that do not validate never pass as a completed relay stage.
-  const relayRows = plan.stage === RELAY_STAGE_NUMBER && boundOutcome ? validateRelayPlanRows(outcome.relay) : null;
-  if (plan.stage === RELAY_STAGE_NUMBER) fact.relay = relayRows;
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): the train facts travel with the fact, validated again; a run is a
   // success only as TRAIN_FACTS with zero side effects and facts that validate. Anything else is the existing
   // STAGE_OUTCOME_MISSING; the executor decides from the proof and the bound outcome whether that ending is clean
@@ -266,26 +258,6 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
   if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
-    // Stage 13 is a bounded observation only. Its typed payload must match the
-    // original sealed job, not merely an arbitrary zero-effect result/job name.
-    if (plan.stage === 13) {
-      let observation = null;
-      try {
-        const job = validateRelayQualificationRun(relayQualificationJob);
-        if (boundOutcome && boundOutcome.stage === 13 && boundOutcome.entryRole === 'relay-qualification'
-          && boundOutcome.status === 'RELAY_QUALIFICATION_OBSERVATION' && boundOutcome.reason === null
-          && boundOutcome.sideEffects === 0 && boundOutcome.mayHavePublished === false
-          && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1 && HEX64.test(boundOutcome.jobIds[0] ?? '')
-          && Array.isArray(expectedJobIds) && expectedJobIds.length === 1 && boundOutcome.jobIds[0] === expectedJobIds[0]
-          && job.id === expectedJobIds[0] && job.runId === plan.batchId
-          && job.sourceManifestSha256 === plan.sourceManifestSha256 && job.nodeProfileSha256 === plan.nodeProfileSha256)
-          observation = validateRelayQualificationObservation(boundOutcome.observation, job);
-      } catch { /* Unknown/invalid observations cannot confer qualification. */ }
-      if (!observation) return done('STAGE_OUTCOME_MISSING');
-      return { ...fact, state: SUCCESS_STATE, observation,
-        observationLocator: { nonce, outcomeSha256: receipt.outcome_sha256,
-          nativeReceiptSha256: fact.native_receipt_sha256, jobId: expectedJobIds[0] } };
-    }
     if (plan.stage === 12) {
       let revocation = null;
       try { revocation = validateRevocationFacts(boundOutcome?.revocation); } catch { /* unconfirmed */ }
@@ -319,21 +291,7 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
       if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || !effects || !trainFacts || trainFacts.mode !== trainJobMode) return done('STAGE_OUTCOME_MISSING');
       return { ...fact, state: SUCCESS_STATE };
     }
-    if (plan.stage === RELAY_STAGE_NUMBER) {
-      if (!boundOutcome || boundOutcome.status !== 'RELAY_COMPLETE') return done('STAGE_OUTCOME_MISSING');
-      // A complete plan (every row RELAYED or LOCAL_REQUIRED) with no reason, or one ending ON_GITHUB (C4) with exactly that reason.
-      const ending = relayRows ? relayPlanEnding(relayRows) : null;
-      if (!ending || boundOutcome.reason !== (ending === 'ON_GITHUB' ? ROLE_ALREADY_ON_GITHUB : null)) return done('RELAY_PLAN_UNCONFIRMED');
-      return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
-    }
     if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');
-    if (plan.stage === 1 && boundOutcome.status === 'SETTLED'
-      && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1
-      && Array.isArray(expectedJobIds) && expectedJobIds.length === 1
-      && HEX64.test(boundOutcome.jobIds[0] ?? '') && boundOutcome.jobIds[0] === expectedJobIds[0]) {
-      fact.stage1Locator = { nonce, outcomeSha256: receipt.outcome_sha256,
-        nativeReceiptSha256: fact.native_receipt_sha256, jobId: boundOutcome.jobIds[0] };
-    }
     return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
   }
   if (n.code === 'STAGE_CHILD_TIMEOUT') return done(boundOutcome ? outcomeFailureCode(boundOutcome, plan.stage) : 'STAGE_CHILD_TIMEOUT');

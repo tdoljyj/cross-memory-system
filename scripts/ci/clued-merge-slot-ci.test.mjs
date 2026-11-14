@@ -965,7 +965,6 @@ test("A2: required checks come from every required_status_checks rule of the bra
 test("A2: independent CI checks bind to the pull request by head and the independent CI external_id formats", () => {
   const ok = { headSha: HEAD, prNumber: 5, repository: REPO };
   for (const name of REQUIRED_NAMES) assert.equal(independentCheckBindsPullRequest(independent(name), ok), true, name);
-  assert.equal(independentCheckBindsPullRequest(independent("gitleaks", { external_id: "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1" }), ok), true);
   for (const [label, check] of [
     ["another head", independent("gitleaks", { head_sha: OTHER })],
     ["another App", independent("gitleaks", { app: { id: 15368 } })],
@@ -1104,12 +1103,9 @@ test("A2 v2: the Source v2 staged, native admission and control ids bind by head
     ["an unknown control role", "kooyumi-admission-verified", `independent-ci:control:control-other:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`],
     ["an unknown v1 control role", "kooyumi-admission-verified", `independent-ci:control:control-other:${V2_JOB}:f3:e2:a1`],
     ["a v3 id", "gitleaks", `independent-ci:staged:v3:${V2_JOB}:a1`],
-    ["a relay id for another head", "gitleaks", "independent-ci:relay:gitleaks:bbbbbbbbbbbb:run123:a1"],
-    ["a relay id for another role", "trivy", "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1"],
-    ["a relay id for placement", "contract-placement", "independent-ci:relay:contract-placement:aaaaaaaaaaaa:run123:a1"],
+    ["a relay id (the hosted relay is removed)", "gitleaks", "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1"],
     ["a foreign prefix", "gitleaks", `other-ci:staged:v2:${V2_JOB}:a1`],
   ]) assert.equal(independentCheckBindsPullRequest(v2(name, { external_id: externalId }), ok), false, label);
-  assert.equal(independentCheckBindsPullRequest(v2("trivy", { external_id: "independent-ci:relay:trivy:aaaaaaaaaaaa:run123:a1" }), ok), true);
 });
 
 test("A2 v2: the slot reporter counts v2 checks: green, and a v2 final failure returns the slot", async () => {

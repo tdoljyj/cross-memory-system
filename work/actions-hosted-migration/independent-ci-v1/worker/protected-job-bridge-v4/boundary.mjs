@@ -24,7 +24,7 @@ export const REQUIRED_SOURCE_PATHS=Object.freeze([...LOCAL_FILES.map(n=>P+'worke
   '.github/workflows/contract-placement.yml','.github/workflows/gitleaks.yml','.github/workflows/trivy.yml','.gitleaks.toml',
   'config/merge-admission-policy.json','scripts/ci/clued-work-admission.mjs','scripts/ci/reviewed_gitleaks.py',
   ...['src/proof.mjs','src/proof-v2.mjs','src/job-v2.mjs','src/admission-facts-v2.mjs','src/scan-start-v1/grant.mjs','src/scan-start-v1/native-port.mjs',
-    'src/hosted-relay-v1/registry.mjs','src/hosted-relay-v1/registry.json','src/full-admission-v2.mjs','src/batch-claim-v2.mjs','src/worker-v2.mjs','src/worker.mjs',
+    'src/scan-start-v1/registry.mjs','src/scan-start-v1/registry.json','src/full-admission-v2.mjs','src/batch-claim-v2.mjs','src/worker-v2.mjs','src/worker.mjs',
     'src/independent-control-checks-v2/queue-facts.mjs','src/github.mjs','runtime/protected-files.mjs',
     'src/resident-v2/entry-runtime.mjs','src/resident-v2/stage-inputs.mjs','src/resident-v2/held-record.mjs','src/resident-v2/hold-record.ps1','src/resident-v2/layout.mjs','src/resident-v2/record.mjs',
     'worker/qualification-v2.mjs','worker/qualification.mjs','worker/formal-fixed-role-policy-v3/policy.mjs',

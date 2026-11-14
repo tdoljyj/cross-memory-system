@@ -14,12 +14,9 @@ import { createFixtureControlPublisherV2 } from '../src/independent-control-chec
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { fixtureRecord, tempDir, subject, admittedFacts, signResult } from './resident-v2-fixtures.mjs';
-import { createWorld } from './fixtures/hosted-relay/world.mjs';
-import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
-import { makeJobV2 } from '../src/job-v2.mjs';
 
 function entryFacade({ports,jobs,journal,record,nonce}) {
- const [stage,entryRole]=jobs.length===2 ? (jobs[0].role==='control-admission'?[8,'control-checks']:[9,'relay-publisher'])
+ const [stage,entryRole]=jobs.length===2 ? [8,'control-checks']
   : jobs[0].role==='work-admission'?[1,'work-admission']:[3,'check-publisher'];
  const plan={contract:PLAN_CONTRACT_V2,enabled:true,stage,entryRole,batchKey:'b'.repeat(64),batchId:'b'.repeat(16)+'-'+'c'.repeat(12),
   ownerPackageAcceptanceRef:record.accepted.ownerPackageAcceptanceRef,nodeSha256:record.config.controllerNodeSha256,nodeProfileSha256:digest(record.accepted.node),
@@ -165,36 +162,4 @@ test('the real read-only controller request carries the complete admitted packet
  await assert.rejects(ports.native.command({action:'resolve_pr_claim',scope:record.config.scope,pr_ref:'foreign/repo#1',
   head_sha:job.headSha,base_sha:job.baseSha,target_branch:'main'}),{code:'NATIVE_PUBLICATION_SCOPE_REFUSED'});
  assert.equal(requests.length,before,'foreign repository rejected before the RPC can create a binding');
-});
-
-test('active hosted relay reaches the actual entry adapter without replacing its attested external identity',async t=>{
- const w=createWorld({now:Date.now()});w.allHosted();
- const journal=await EffectJournal.open(path.join(await tempDir(t),'effects')),s=w.subject();
- const jobs=['gitleaks','trivy'].map(role=>makeJobV2({repo:s.repo,pr:s.pr,headSha:s.headSha,baseSha:s.baseSha,testSha:s.headSha,sourceManifestSha256:s.sourceManifestSha256,
-  role,createdAt:new Date(w.state.now-1200000).toISOString(),attempt:1}));
- const claim={claimId:s.claimId,fence:s.fence,epoch:s.epoch,expiresAt:new Date(w.state.now+3600000).toISOString()};
- const calls=[],tickets=new Map(),native={async current(){return true;},async command(input){calls.push(input);
-  if(input.action==='publication_begin_independent'){
-   const identity=input.independent_identity;if(!tickets.has(identity.effect_key))tickets.set(identity.effect_key,{publication_id:randomUUID(),receipt_id:randomUUID()});
-   return {status:'ok',verdict:'ADMITTED',execution_policy:'active',execution_authorized:true,publication_required:true,...tickets.get(identity.effect_key),independent_identity:identity};
-  }return {status:'committed',receipt_id:randomUUID(),must_revoke:false};
- }};
- const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:w.state.now});
- const github=entryFacade({ports:{github:w.github,native},jobs,journal,nonce:'b'.repeat(32),record});
- const headAuthorizationId=randomUUID(),nativeAdmission={fixture:true,async evaluatePr(job,packet,options={}){
-  const facts=admittedFacts(job,claim,packet,{domain:'fixture',observedAt:w.state.now,batchClaim:options.batchClaim,slotUntil:w.state.now+3600000});
-  delete facts.observationSha256;const body={...facts,contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',guarded:true,publicationRequired:true,headAuthorizationId};
-  return {...body,observationSha256:digest(body)};
- }};
- const sample=await w.authority.observe(jobs[0]),refs=Object.fromEntries(['sourceAcceptanceRef','hostQualificationRef','ownerAuthorizationRef','publisherQualificationRef','ciPrincipalQualificationRef'].map(k=>[k,sample[k]]));
- const authority={fixture:true,async observe(job){return {...await w.authority.observe(job),claim:claimGeneration(claim),claimExpiresAt:claim.expiresAt};}};
- const verifier=w.verifier(),publisher=createStagedCheckPublisherV2({nativeAdmission,authority,github,journal,signers:w.signers,
-  configuredChecks:record.config.checks,readChangedPaths:j=>github.readChangedPaths(j),batchClaim:claimGeneration(claim),domain:'fixture',clock:()=>w.state.now,
-  hostedVerifier:verifier,protectedDeployment:{enabled:true,domain:'fixture',repository:s.repo,ciPrincipalBindingId:sample.ciPrincipalBindingId,...refs}});
- const stage=createHostedRelayStage({registry:w.registry,verifier,publisher,localInputPins:{trivy:{checksDigest:w.registry.roles.trivy.checksDigest}}});
- const result=await stage.run({subject:s,attempt:1,roles:['gitleaks','trivy']});
- assert.equal(result.status,'COMPLETE',JSON.stringify(result));assert.ok(result.roles.every(r=>r.outcome==='RELAYED'));
- const checks=w.state.checkRuns.filter(c=>c.app.id===5368905);assert.equal(checks.length,2);
- assert.ok(checks.every(c=>c.external_id.startsWith('independent-ci:relay:')&&c.output.summary.includes('Native publication independent-ci:native:v1:')));
- assert.equal(calls.filter(c=>c.action==='publication_finish').length,2);
 });

@@ -5,12 +5,13 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {validateRegistry,registryDigestOf,REGISTRY_CONTRACT_V2,REPOSITORY,REPOSITORY_ID,REQUIRED_CHECK_NAMES,safeRepoPath}
-  from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.mjs';
-import {gitObjectReader,gitBlobSha1} from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs';
+  from '../../actions-hosted-migration/independent-ci-v1/src/scan-start-v1/registry.mjs';
+import {gitObjectReader,gitBlobSha1} from './git-objects.mjs';
 import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../../actions-hosted-migration/independent-ci-v1/worker/trusted-workflows.mjs';
 import {canonicalJson} from '../src/canonical.mjs';
 
 export const PLAN_CONTRACT='clued.ci-scan-start-cutover-policy-plan/1';
+// Where the registry sat in the frozen commit the plan reads (it lives in src/scan-start-v1/ today, same bytes).
 export const REGISTRY_PATH='work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.json';
 const HEX40=/^[a-f0-9]{40}$/,HEX64=/^[a-f0-9]{64}$/,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ROLES=['contract-placement','gitleaks','trivy'];
@@ -177,6 +178,6 @@ export function main(argv=process.argv.slice(2),out=process.stdout){
     if(flag==='--out'){need(destination===null,'CUTOVER_DUPLICATE_ARGUMENT');destination=value;}else{need(Object.hasOwn(flags,flag)&&!Object.hasOwn(input,flags[flag]),'CUTOVER_ARGUMENTS_REQUIRED');input[flags[flag]]=value;}
   }
   const plan=buildScanStartCutoverPlan(input),bytes=serializeCutoverPolicyPlan(plan);if(destination)fs.writeFileSync(destination,bytes,{flag:'wx'});else out.write(bytes);
-  return 0;}catch(e){out.write(JSON.stringify({state:'REFUSED',error_code:/^CUTOVER_|^RELAY_/.test(e?.code??'')?e.code:'CUTOVER_BUILD_REFUSED'})+'\n');return 2;}
+  return 0;}catch(e){out.write(JSON.stringify({state:'REFUSED',error_code:/^CUTOVER_|^RELAY_|^GIT_OBJECT_/.test(e?.code??'')?e.code:'CUTOVER_BUILD_REFUSED'})+'\n');return 2;}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)process.exitCode=main();

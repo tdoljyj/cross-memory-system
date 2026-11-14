@@ -9,7 +9,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {buildScanStartCutoverPlan,validateCutoverPolicyPlan,serializeCutoverPolicyPlan,REGISTRY_PATH,main} from './scan-start-cutover-plan.mjs';
-import {gitObjectReader} from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs';
+import {gitObjectReader} from './git-objects.mjs';
 import {canonicalJson} from '../src/canonical.mjs';
 const ROOT=fileURLToPath(new URL('../../../',import.meta.url));
 const env={...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_TERMINAL_PROMPT:'0',

@@ -358,7 +358,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
     // read-back (resident primary/standby design v0.4 §6.2; published-on-github-v2.mjs). Complete, or refused.
     async readAppChecks(headSha) { return inventory(headSha, null, null, true); },
-    // Hosted relay reads (design S16/S17): GET only, same fixed origin, same
+    // Merge-train reads (stage 8 and 10): GET only, same fixed origin, same
     // installation token and permission set. Replies are normalized and checked.
     async readBranchHead(name) {
       if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(name)) fail('invalid_branch');
@@ -382,20 +382,6 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         || body.parents.some(parent => !sha.test(parent?.sha ?? ''))) fail('invalid_commit_reply');
       return { sha: commitSha, tree: body.tree.sha, parents: body.parents.map(parent => parent.sha) };
     },
-    // One directory level; a truncated listing is refused, never guessed.
-    async readGitTree(treeSha) {
-      if (!sha.test(treeSha)) fail('invalid_tree');
-      const body = await scoped(`/git/trees/${treeSha}`);
-      if (body?.sha !== treeSha || body.truncated !== false || !Array.isArray(body.tree) || body.tree.length > 100_000) fail('invalid_tree_reply');
-      const names = new Set();
-      const entries = body.tree.map(entry => {
-        if (typeof entry?.path !== 'string' || !entry.path || entry.path.includes('/') || entry.path.includes('\0') || names.has(entry.path)
-          || !/^[0-7]{6}$/.test(entry.mode ?? '') || !['blob', 'tree', 'commit'].includes(entry.type) || !sha.test(entry.sha ?? '')) fail('invalid_tree_reply');
-        names.add(entry.path);
-        return { name: entry.path, mode: entry.mode, type: entry.type, sha: entry.sha };
-      });
-      return { sha: treeSha, entries };
-    },
     // The rules GitHub applies to one branch (quota phase 2, step 3a: stage 8 reads main's live before writing a
     // green). Metadata read, which every installation token of this port carries. One page; a full page is refused,
     // never guessed.
@@ -406,10 +392,6 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         || !(rule.parameters === null || rule.parameters === undefined || (typeof rule.parameters === 'object' && !Array.isArray(rule.parameters))))) fail('invalid_rules_reply');
       return { complete: true, branch, rules: body.map(rule => ({ type: rule.type, rulesetId: Number.isSafeInteger(rule.ruleset_id) ? rule.ruleset_id : null,
         parameters: rule.parameters ? structuredClone(rule.parameters) : null })) };
-    },
-    async readCheckRunsByName(headSha, name) {
-      if (typeof name !== 'string' || !name || name.length > 100 || /[\x00-\x1f]/.test(name)) fail('invalid_check_name');
-      return inventory(headSha, null, name);
     },
     // Merge-train sweep reads (DESIGN §41.3; stage 10). Bounded, complete or refused. GET only, except the GraphQL
     // query: a read sent as POST, repeated like a read.
@@ -493,26 +475,6 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         after = items.pageInfo.endCursor;
       }
       fail('force_push_events_page_limit');
-    },
-    // Complete annotation list of one check run, checked against the
-    // annotations_count the caller read from that check run.
-    async readCheckRunAnnotations(id, expectedCount) {
-      if (!positive(id) || !Number.isSafeInteger(expectedCount) || expectedCount < 0 || expectedCount > 100 * maxPages) fail('invalid_annotation_request');
-      const annotations = [];
-      for (let page = 1; page <= maxPages; page++) {
-        if (page > 1 && annotations.length === expectedCount) break;
-        const list = await scoped(`/check-runs/${id}/annotations?per_page=100&page=${page}`);
-        if (!Array.isArray(list) || list.length > 100) fail('invalid_annotations_reply');
-        for (const item of list) {
-          if (!['notice', 'warning', 'failure'].includes(item?.annotation_level) || typeof item.message !== 'string' || item.message.length > 65_536
-            || !(item.title === null || item.title === undefined || typeof item.title === 'string') || typeof item.path !== 'string') fail('invalid_annotations_reply');
-          annotations.push({ level: item.annotation_level, title: item.title ?? '', message: item.message, path: item.path });
-        }
-        if (annotations.length > expectedCount) fail('annotations_changed');
-        if (list.length < 100) break;
-      }
-      if (annotations.length !== expectedCount) fail('incomplete_annotations');
-      return { complete: true, checkRunId: id, annotations };
     },
     async createCheck(body) {
       if (!body || !sha.test(body.head_sha) || body.status !== 'completed'

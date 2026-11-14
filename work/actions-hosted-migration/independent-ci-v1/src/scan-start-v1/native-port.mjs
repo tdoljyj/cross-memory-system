@@ -2,7 +2,7 @@
 // first-insert grant through the fixed bridge, never a Native credential.
 import { validateJobV2 } from '../job-v2.mjs';
 import { validateFormalAdmissionV2 } from '../admission-facts-v2.mjs';
-import { REPOSITORY, REPOSITORY_ID } from '../hosted-relay-v1/registry.mjs';
+import { REPOSITORY, REPOSITORY_ID } from './registry.mjs';
 import { validateScanStartGrant } from './grant.mjs';
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;

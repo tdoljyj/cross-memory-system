@@ -344,13 +344,11 @@ test('the install authority keeps at least the helper\'s fixed margin; stage 10\
   const broker = table('../windows/SwapBroker.cs');
   const boundary = table('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/FormalPublicBoundaryV2.cs');
   assert.deepEqual(broker, boundary);
-  // All twelve original caps are unchanged. Stage13 is only a short protected
-  // relay observation; it does not make a new scanner or Linux worker route.
-  assert.deepEqual(broker.slice(0, 12), [900_000, 2_700_000, 900_000, 1_800_000, 900_000, 600_000, 900_000, 2_700_000, 900_000, 300_000, 60_000, 300_000]);
-  assert.deepEqual([broker.length, broker[12]], [13, 300_000]);
+  // Stages 1-8 and 10-12 keep their caps. Stage 9 is a reserved number (the hosted relay, removed; DESIGN §76): cap 0 in both
+  // C# tables (never runnable) and no Source row; stage 13 (the relay qualification) is gone.
+  assert.deepEqual(broker, [900_000, 2_700_000, 900_000, 1_800_000, 900_000, 600_000, 900_000, 2_700_000, 0, 300_000, 60_000, 300_000]);
   const { stageByNumber } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/layout.mjs');
-  const observer = stageByNumber(13);
-  assert.deepEqual([observer.kind, observer.entryRole, observer.jobRoles, observer.runMilliseconds, observer.linuxWorker],
-    ['relay-qualification', 'relay-qualification', ['relay-qualification-run'], 300_000, false]);
-  assert.equal(stageByNumber(14), null);
+  for (let n = 1; n <= 12; n++) assert.equal(stageByNumber(n)?.runMilliseconds ?? 0, broker[n - 1], `stage ${n}`);
+  assert.equal(stageByNumber(9), null);
+  assert.equal(stageByNumber(13), null);
 });

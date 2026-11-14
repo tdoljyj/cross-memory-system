@@ -35,36 +35,29 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const string ResidentSid="S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629";
  static readonly string[] Management={"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
  const string P="work/actions-hosted-migration/independent-ci-v1/";
- // Stage 9 is stage R, the hosted relay (free-minutes design S19/S22): entry relay-publisher, a non-empty
- // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
- public const int RelayStage=9;
+ // Stage 9 is a reserved number (the hosted relay, removed; resident DESIGN §76): it has no entry role, no jobs and
+ // no cap, so PlanStage, SelectedJobRoles and BoundedDeadline refuse it. Stages 10-12 keep their numbers.
  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
  // (train-run.mjs: contract clued.independent-ci.train-run/3, mode shadow, on or revoke-only), never a formal job (of contract /3).
  public const int TrainStage=10;
  public const int RoleProbeStage=11;
  public const int RevocationStage=12;
- public const int RelayQualificationStage=13;
- public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher","train-maintenance","role-probe","revocation-maintenance","relay-qualification"};
- public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000,300000};
- public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"},new[]{"train-run"},new[]{"role-probe-run"},new[]{"revocation-maintenance-run"},new[]{"relay-qualification-run"}};
- // The job roles a stage package may carry: exactly the row's, or (stage R) a non-empty ordered subset.
+ public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks",null,"train-maintenance","role-probe","revocation-maintenance"};
+ public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,0,300000,60000,300000};
+ public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},null,new[]{"train-run"},new[]{"role-probe-run"},new[]{"revocation-maintenance-run"}};
+ public static bool Runnable(long stage){return stage>=1&&stage<=StageRole.Length&&StageRole[stage-1]!=null;}
+ // The job roles a stage package carries: exactly the row's.
  public static string[] SelectedJobRoles(int stage,object[] jobs){
-  if(stage<1||stage>StageRole.Length||jobs==null)Deny("EXACT_STAGE_JOBS_REQUIRED");string[] row=StageJobRoles[stage-1];
-  if(stage!=RelayStage){if(jobs.Length!=row.Length)Deny("EXACT_STAGE_JOBS_REQUIRED");return row;}
-  if(jobs.Length<1||jobs.Length>row.Length)Deny("EXACT_STAGE_JOBS_REQUIRED");var roles=new string[jobs.Length];int last=-1;
-  for(int i=0;i<jobs.Length;i++){var j=jobs[i] as Dictionary<string,object>;string r=j==null?null:j.ContainsKey("role")?j["role"] as string:null;int at=r==null?-1:Array.IndexOf(row,r);if(at<=last)Deny("EXACT_STAGE_JOBS_REQUIRED");last=at;roles[i]=r;}
-  return roles;
+  if(!Runnable(stage)||jobs==null||jobs.Length!=StageJobRoles[stage-1].Length)Deny("EXACT_STAGE_JOBS_REQUIRED");return StageJobRoles[stage-1];
  }
  public static string RelativeEntryForRole(string role){
   if(role=="work-admission")return P+"src/formal-work-admission-check-v2/startup.mjs";
   if(role=="scanner-issuer")return P+"worker/protected-job-bridge-v4/windows-issuer.mjs";
   if(role=="check-publisher")return P+"runtime/one-shot-v2.mjs";
   if(role=="control-checks")return P+"src/independent-control-checks-v2/startup.mjs";
-  if(role=="relay-publisher")return P+"src/hosted-relay-v1/relay-entry-v2.mjs";
   if(role=="train-maintenance")return P+"src/independent-control-checks-v2/train-maintenance.mjs";
   if(role=="role-probe")return P+"src/resident-v2/role-probe-entry.mjs";
   if(role=="revocation-maintenance")return P+"src/resident-v2/revocation-entry.mjs";
-  if(role=="relay-qualification")return P+"src/resident-v2/relay-qualification-entry.mjs";
   Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");return null;
  }
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
@@ -145,7 +138,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public static void NoLegacy(object v){var m=v as Dictionary<string,object>;if(m!=null)foreach(var p in m){if(p.Key=="ciTokenSha256"||p.Key=="currentClaim")Deny("REPLAYABLE_OR_CLAIM_BOUND_INPUT_REFUSED");NoLegacy(p.Value);}var a=v as object[];if(a!=null)foreach(var x in a)NoLegacy(x);}
  static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
  public static int PlanStage(Dictionary<string,object> plan){
-  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/3");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
+  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/3");True(plan,"enabled");long stage=Int(plan,"stage");if(!Runnable(stage))Deny("FIXED_FORMAL_STAGE_REQUIRED");
   if(Text(plan,"entryRole")!=StageRole[stage-1])Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");Ref(plan,"ownerPackageAcceptanceRef");Sha(plan,"batchKey");
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
   foreach(string f in new[]{"nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
@@ -214,38 +207,6 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
   if(RevocationRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
- // Stage 13 uses a separate public observation job. No scanner/publication job
- // or role-probe shape can be reinterpreted as this exact, Source-bound input.
- // Identity order is relay-qualification-run.mjs RELAY_QUALIFICATION_SUBJECT_FIELDS,
- // followed by phase/prior nonce/prior hash; createdAt is deliberately excluded.
- static readonly string[] RelayQualificationSubjectFields={"repo","runId","pr","headSha","baseSha","testSha","sourceManifestSha256","nodeProfileSha256","claimId","fence","executionEpoch","stage1JobId","stage1OutcomeNonce","stage1OutcomeSha256"};
- static readonly string[] RelayQualificationRunFields={"contract","id","repo","runId","pr","headSha","baseSha","testSha","sourceManifestSha256","nodeProfileSha256","claimId","fence","executionEpoch","stage1JobId","stage1OutcomeNonce","stage1OutcomeSha256","phase","priorObservationNonce","priorObservationSha256","createdAt"};
- public static string RelayQualificationRunId(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.relay-qualification-run/1"};
-  foreach(string field in RelayQualificationSubjectFields)identity.Add(At(job,field));
-  foreach(string field in new[]{"phase","priorObservationNonce","priorObservationSha256"})identity.Add(At(job,field));
-  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
- }
- public static Dictionary<string,object> ValidateRelayQualificationRun(Dictionary<string,object> job,string sourceManifest,string batchId,string profileSha){
-  Fields(job,RelayQualificationRunFields);Exact(job,"contract","clued.independent-ci.relay-qualification-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
-  string run=Text(job,"runId");
-  if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))
-    ||Sha(job,"sourceManifestSha256")!=sourceManifest||Sha(job,"nodeProfileSha256")!=profileSha
-    ||!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||!Commit(Text(job,"testSha"))||Text(job,"testSha")!=Text(job,"headSha")
-    ||!LowerUuid(At(job,"claimId"))||!ValidNonce(Text(job,"stage1OutcomeNonce")))Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");
-  Sha(job,"stage1JobId");Sha(job,"stage1OutcomeSha256");
-  foreach(string field in new[]{"pr","fence","executionEpoch"}){long value=Int(job,field);if(value<1||value>9007199254740991)Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
-  string phase=Text(job,"phase");object priorNonce=At(job,"priorObservationNonce"),priorSha=At(job,"priorObservationSha256");
-  if(phase=="initial"){if(priorNonce!=null||priorSha!=null)Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
-  else if(phase=="after-ref-move"){if(!ValidNonce(priorNonce as string)||!Hash(priorSha as string)||(string)priorNonce==Text(job,"stage1OutcomeNonce"))Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");}
-  else Deny("FIXED_RELAY_QUALIFICATION_RUN_REQUIRED");
-  string created=At(job,"createdAt") as string;
-  // ECMAScript's canonical ISO range includes year 0000; .NET DateTime starts
-  // at 0001. Year 0400 has the same Gregorian leap-day rules, so validate that
-  // one representation without broadening any prior stage's time parser.
-  if(!(IsoMs(created)||(created!=null&&created.StartsWith("0000-",StringComparison.Ordinal)&&IsoMs("0400"+created.Substring(4)))))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
-  if(RelayQualificationRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
- }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
   Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   if(Text(job,"role")!=expectedRole)Deny("FIXED_FORMAL_JOB_ROLE_REQUIRED");Sha(job,"id");
@@ -262,7 +223,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  }
  // S5: the stage cap, bounded only by the install's validUntil (null = until Source change/uninstall).
  public static DateTimeOffset BoundedDeadline(int stage,DateTimeOffset now,DateTimeOffset? validUntil){
-  if(stage<1||stage>StageMilliseconds.Length)Deny("FIXED_RUNTIME_STAGE_REQUIRED");uint duration=StageMilliseconds[stage-1];
+  if(!Runnable(stage))Deny("FIXED_RUNTIME_STAGE_REQUIRED");uint duration=StageMilliseconds[stage-1];
   if(validUntil.HasValue&&validUntil.Value<now.AddMilliseconds((long)duration+180000))Deny("FULL_FORMAL_ROLE_AND_RESTORE_WINDOW_REQUIRED");return now.AddMilliseconds(duration);
  }
  public uint RemainingRunMilliseconds(){double ms=(RuntimeDeadlineUtc-DateTimeOffset.UtcNow).TotalMilliseconds;if(ms<1||ms>StageMilliseconds[Stage-1])Deny("ACTUAL_FORMAL_RUNTIME_WINDOW_EXPIRED");return (uint)Math.Floor(ms);}
@@ -299,7 +260,6 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
    if(Stage==TrainStage){ValidateTrainRun(j,SourceManifestHash,Text(plan,"batchId"));continue;}
    if(Stage==RoleProbeStage){ValidateRoleProbeRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
    if(Stage==RevocationStage){ValidateRevocationRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
-   if(Stage==RelayQualificationStage){ValidateRelayQualificationRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
    ValidateJobV2(j,roles[i],SourceManifestHash);
    if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it

@@ -397,9 +397,8 @@ export const GATE_JOB_SHA256 = new Set([
   "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
   // Owner Decisions 325717a6 and 22b0e0ed: the Stage C gate on
   // ubuntu-latest for the gitleaks, trivy and contract-placement hosted
-  // executors on free minutes ($0 Actions budget cap). Only gitleaks and
-  // trivy are relayable (hosted-relay-v1 RELAYABLE_ROLES); the placement
-  // hosted run is execution only and never relayed. Admitting on the
+  // executors on free minutes ($0 Actions budget cap). The hosted relay
+  // these served is removed (resident DESIGN §76, §77). Admitting on the
   // independent CI's own admission (CLUED_ADMISSION_GATE_SOURCE, a
   // 600-second bounded wait, a 15-minute job). Registered here (PR-A)
   // before the workflows change (PR-B).
