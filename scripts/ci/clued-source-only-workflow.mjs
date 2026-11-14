@@ -3,7 +3,7 @@ import {compileRegisteredWorkflow,decodeWorkflowProfiles,native617PendingWorkflo
   registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 import {createHash} from 'node:crypto';
 
-export const COMPONENT_VERSION='1.0.0';
+export const COMPONENT_VERSION='1.0.1';
 export const REGISTERED_SOURCE='REGISTERED_SOURCE';
 export const SOURCE_METADATA_ONLY_DISABLED='SOURCE_METADATA_ONLY_DISABLED';
 const CONTRACT='clued.catalogue-workflow-source-recognition/1';

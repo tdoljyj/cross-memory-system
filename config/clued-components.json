@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "402398f4fef7286b6c98b8ac72e6a5f3eedc9b91aa88a7fff2999074dbd283d6"
+      "content_sha256": "7402a180bd7a9a59a3a4dbab4cc607ad1b3c3bffc48914f0ab9b2234fb96f564"
     },
     {
       "id": "hook.runner-job-started",
@@ -212,7 +212,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -220,7 +220,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "d1c9b4713db9f3436641571a34ee1e0956dba13592bbd69409688e4541d8d540",
+      "content_sha256": "662f15bbb08f0afe269ede5e80d4f9fa9e40813789b503a9477e038db569f086",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "f6c4d1a4dc6449746b869e7af5897ac81c3035083e7fb89fb47499b74248884c"
+      "content_sha256": "fe19035b3f5e92011c38958767db8ee70402b7d5d3a7e8c013fdbb4fae1099aa"
     },
     {
       "id": "script.resource-maintenance",
@@ -673,7 +673,7 @@
     {
       "id": "script.source-only-workflow",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Bounded disabled-Source metadata identity and request-local immutable catalogue reader. Never grants execution or Host qualification.",
       "root": "scripts/ci",
       "files": [
@@ -684,7 +684,7 @@
         "file": "clued-source-only-workflow.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "011faed4f08aaee5a8893466dd5ac5fdc615f9bd938f7b6b5078527b67d4b116"
+      "content_sha256": "c05606e75a51332ad8e1c2db0916504a7d5a07fa19b3a1905562131f183c356f"
     },
     {
       "id": "script.control-workflow-source",
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "e4375116bf7990cd6b45642072d9bfa8799a98ac9adc276ec157490ccea0f219"
+      "content_sha256": "01acf4820865247b46eeb4c71962d0f6c2e75062c18453bffc307b1d6b2172e7"
     },
     {
       "id": "script.required-applicability",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "d64de5695ff2d216a17c3307867a2c5bdda4e8f18527668f76a0f30e25aed81a"
+      "content_sha256": "76d4f421a2f8fc8e929d1472461942e0195dc3df30e26ed19f4fad86c6ac9ce4"
     }
   ]
 }
