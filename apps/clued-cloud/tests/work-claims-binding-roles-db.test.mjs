@@ -108,9 +108,13 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       confidence_reason: 'race fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) =>
-      agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
+    const holders = new Map();
+    const claim = async (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) => {
+      const result = await agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
         write_set: writeSet, holder_session_ref: session });
+      if (result.status === 'committed') holders.set(result.claim.claim_id, { who, lease_key: result.lease_key });
+      return result;
+    };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
     const verify = (c, pr, head = crypto.randomBytes(20).toString('hex')) => agent('reader', 'clued_work_verify_v1',
@@ -131,7 +135,27 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const sha = (i) => i.toString(16).padStart(40, '0');
     const usage = async (taskId) => Number((await admin.query(`select count(*) n from clued_private.work_claim_door_usage_v1
       where user_id=$1 and door='github-ci' and task_id=$2`, [userId, taskId])).rows[0].n);
-    const verifyAs = (who, c, input) => agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id, ...input });
+    // A PR belongs to its Task (20261108161615): the holder's head
+    // authorization naming the PR binds it (relation unknown), and only the
+    // CI admission Binding's observation activates it. A verify only reads it,
+    // with the exact head and base.
+    const BASE = 'b'.repeat(40);
+    const authorizeHead = async (c, pr, head) => {
+      const { who, lease_key } = holders.get(c.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0];
+      committed(await agent(who, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: c.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: pr.split('#')[0],
+        head_sha: head, target_branch: 'main', pr_number: Number(pr.split('#')[1]), idempotency_key: uuid() }));
+    };
+    const observe = (who, pr, head) => agent(who, 'clued_work_verify_v1', { action: 'resolve_pr_claim', pr_ref: pr,
+      head_sha: head, base_sha: BASE, target_branch: 'main' });
+    const bindPr = async (c, pr, head) => {
+      await authorizeHead(c, pr, head);
+      const seen = await observe('ci', pr, head);
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+    };
+    const verifyAs = (who, c, input) => agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id,
+      ...(input.pr_ref ? { base_sha: BASE, target_branch: 'main' } : {}), ...input });
     // A ci-admission mark takes a purpose and starts 5 minutes later (C10,
     // Task bb13efb5, tested in ci-admission-handover-db); here the CI Binding
     // is a resident node's (merge-slot calls admit only that purpose since
@@ -150,11 +174,19 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       return result;
     };
 
-    // --- Before any role is marked, every Binding keeps the earlier behaviour. ---
+    // --- Before any role is marked, no Binding activates a PR. ---
+    // Since 20261108161615 only the CI admission Binding's observation makes a
+    // PR -> Task relation active; the holder's authorization alone leaves it
+    // unknown, and nobody else's verify or observation activates or meters it.
     const legacyTask = await createTask('legacy');
     const legacy = committed(await claim(legacyTask, 'claude', 'session-a', ['legacy/**'])).claim;
+    await authorizeHead(legacy, 'o/r#1', sha(1));
+    for (const who of ['reader', 'ci']) {
+      assert.deepEqual([(await observe(who, 'o/r#1', sha(1))).reason], ['pr_task_binding_unknown'], who);
+    }
     let v = await verifyAs('reader', legacy, { pr_ref: 'o/r#1', head_sha: sha(1) });
-    assert.deepEqual([v.verdict, v.bound_pr, v.task_ci_heads_24h], ['ADMITTED', 'o/r#1', 1]);
+    assert.deepEqual([v.verdict, v.reasons, v.bound_pr], ['REJECTED', ['pr_task_binding_unknown'], undefined]);
+    assert.equal(await usage(legacyTask), 0);
     committed(await release('claude', legacy));
 
     // --- Only the Owner's Native session manages roles. ---
@@ -209,15 +241,20 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     // --- N2: once marked, only the CI Binding binds, meters and admits dispatches. ---
     const task = await createTask('roles');
     const mine = committed(await claim(task, 'claude', 'session-a', ['roles/**'])).claim;
+    // Another Binding's observation does not activate a PR either.
+    await authorizeHead(mine, 'o/r#7', sha(2));
+    assert.equal((await observe('reader', 'o/r#7', sha(2))).reason, 'pr_task_binding_unknown');
+    assert.equal((await observe('ci', 'o/r#7', sha(2))).binding_status, 'bound');
     for (const who of ['claude', 'codex', 'reader']) {
-      v = await verifyAs(who, mine, { pr_ref: 'o/r#666', head_sha: sha(2) });
+      v = await verifyAs(who, mine, { pr_ref: 'o/r#7', head_sha: sha(2) });
       assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);
       v = await verifyAs(who, mine, { head_sha: sha(3), ci_dispatch: true });
       assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);
     }
     assert.equal(await usage(task), 0, 'nothing metered');
     v = await verifyAs('codex', mine, { changed_paths: ['roles/a'] });
-    assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', null], 'read-only verify stays open to every Binding');
+    assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', 'o/r#7'], 'read-only verify stays open to every Binding (it shows the Task PR)');
+    await bindPr(mine, 'o/r#7', sha(4));
     v = await verifyAs('ci', mine, { pr_ref: 'o/r#7', head_sha: sha(4), changed_paths: ['roles/a'] });
     assert.deepEqual([v.verdict, v.bound_pr, v.task_ci_heads_24h, v.admitted_heads], ['ADMITTED', 'o/r#7', 1, 1]);
     // A hand dispatch meters its head without binding a pull request.
@@ -231,7 +268,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     v = await verifyAs('ci', mine, { head_sha: sha(6), ci_dispatch: true });
     assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['task_ci_head_cap_reached']]);
     for (const input of [{ head_sha: sha(6), ci_dispatch: 'true' }, { ci_dispatch: true },
-      { head_sha: sha(6), ci_dispatch: true, pr_ref: 'o/r#7' }]) {
+      { head_sha: sha(4), ci_dispatch: true, pr_ref: 'o/r#7' }]) {
       await assert.rejects(() => verifyAs('ci', mine, input), /work_claim_ci_dispatch_invalid/, JSON.stringify(input));
     }
     committed(await release('claude', mine));
@@ -242,7 +279,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const copyA = committed(await claim(raceTask, 'claude', 'session-b', ['storage:c9/**'])).claim;
     const copyB = committed(await claim(raceTask, 'codex', 'session-c', ['storage:c9/**'])).claim;
     v = await verifyAs('codex', copyB, { pr_ref: 'o/r#999', head_sha: sha(9) });
-    assert.deepEqual(v.reasons, ['admission_binding_required'], 'a copy cannot bind itself to a made-up PR');
+    assert.deepEqual(v.reasons, ['pr_task_binding_unbound'], 'a copy cannot bind itself to a made-up PR');
+    await bindPr(copyB, 'o/r#11', sha(10));
     v = await verifyAs('ci', copyB, { pr_ref: 'o/r#11', head_sha: sha(10) });
     assert.equal(v.verdict, 'ADMITTED');
     let adopted = await agent('codex', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
@@ -256,7 +294,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([adopted.adopted, adopted.reason], [false, 'admission_binding_required']);
     await ciRolePurpose('resident-node');
     adopted = await agent('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
-    assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2]);
+    assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2], JSON.stringify(adopted));
     assert.equal((await row(copyA.claim_id)).outcome, 'not_adopted');
 
     // --- N5: the release door, legacy first, then only the marked Binding. ---
@@ -278,6 +316,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     // --- Re-review 2, finding A: a revoked or expired holder keeps the role locked. ---
     const t2 = await createTask('roles revoked');
     const c2 = committed(await claim(t2, 'claude', 'session-d', ['roles2/**'])).claim;
+    await bindPr(c2, 'o/r#12', sha(13));
     assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required']);
     await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [bindingIds.ci]);
     assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required'],
@@ -301,7 +340,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     // Ending the dead CI holder's role, the last one, reopens binding to every Binding.
     committed(await setRole(bindingIds.ci, 'ci-admission', false));
     const v2 = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });
-    assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'], 'no role marked any more: the earlier behaviour');
+    assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'],
+      'no role marked any more: the earlier behaviour for a PR the CI Binding activated');
     assert.ok(!(await native('clued_binding_roles_list_v1', {})).bindings.some((b) => b.binding_id === bindingIds.ci),
       'a revoked Binding without a role is not listed');
     // This full chain includes the explicit scan-start successor (Worker82/CI8).
