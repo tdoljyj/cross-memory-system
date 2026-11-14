@@ -82,6 +82,9 @@ export const QUEUE_POLL_MS = 30_000;
 export const MERGE_SLOT_WINDOW_MS = 45 * 60_000;
 // One stage-8 run (phase 2, step 2): the resident retries a parked batch, so a run only checks for this long.
 export const STAGE8_CHECK_MS = 90_000;
+// The time two publications need (queueWindow's reserve before the stage cap). The queue head is ready only while the merge slot
+// still holds for this long, so the slot cannot lapse between the two halves of the pair (resident DESIGN §28.6).
+export const PAIR_PUBLICATION_RESERVE_MS = 7 * 60_000;
 // Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
 export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
   REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE,
@@ -496,7 +499,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           return { ready: false, reason: REQUIRED_CHECK_FAILED, polls, scheduling };
         }
       }
-      if (observed && queueHeadReady(slotJob, observed, clock())) {
+      // §28.6: ready only with the slot still held after the time the pair needs; a shorter slot is not ready yet. The claim lease that
+      // bounds the slot is extended below (extendOnce) and observed again; a slot nothing extends lapses and the claim joins again.
+      if (observed && queueHeadReady(slotJob, observed, clock() + PAIR_PUBLICATION_RESERVE_MS)) {
         // Step 3a: the queue head may write only under live rules that still hold main, on a test merge of exactly [T, H].
         const train = await trainFacts(slotJob);
         // §41.2: with the train on, only a green the single-green proof covers; not waited out (the next stage 10 decides).
@@ -706,7 +711,13 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const results = []; let sideEffects = 0;
     for (const job of jobs) {
       const r = await publishOne(job, { train: head.train }); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });
-      if (r.status !== 'SETTLED') return { status: r.status === 'BLOCKED' && sideEffects > 0 ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false, ...lease };
+      if (r.status === 'SETTLED') continue;
+      // §28.6: every half before r is SETTLED (journaled and read back; publishOne reads a settled entry back again and never writes it twice). A half
+      // refused before its write (BLOCKED, zero effects) so leaves nothing unknown: a clean BLOCKED with zero unsettled effects, never
+      // UNCERTAIN. A slot that lapsed before the write is the queue head not reached: stage 8's own not-ready answer, tried again.
+      if (r.status === 'BLOCKED' && r.sideEffects === 0) return { status: 'BLOCKED', reason: r.reason === 'LIVE_ACTUAL_MERGE_SLOT_REQUIRED' ? 'RESIDENT_QUEUE_HEAD_NOT_REACHED' : r.reason,
+        results, sideEffects: 0, productionAuthorized: false, ...lease };
+      return { status: r.status === 'BLOCKED' ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false, ...lease };
     }
     const touched = trainOn && head.train?.proof ? { trainTouch: await touchGreen(jobs[1], head.train.proof) } : {};
     return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched };
@@ -723,6 +734,6 @@ export function createProductionControlPublisherV2(dependencies) { return engine
 // Window of the S8 wait: merge slot 45 min, the batch claim's lease, the install's validUntil and the
 // stage cap minus the time two publications need.
 // Phase 2, step 2: checkMs (STAGE8_CHECK_MS) bounds one run; the resident parks and runs stage 8 again.
-export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = 7 * 60_000, checkMs = Infinity }) {
+export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = PAIR_PUBLICATION_RESERVE_MS, checkMs = Infinity }) {
   return Math.min(startedAt + MERGE_SLOT_WINDOW_MS, startedAt + checkMs, Date.parse(claimExpiresAt), validUntil === null ? Infinity : Date.parse(validUntil), stageDeadline - publicationReserveMs);
 }

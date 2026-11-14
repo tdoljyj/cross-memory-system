@@ -2406,6 +2406,16 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
 - 只需一次常驻层 Windows 重装（与 §24、§25 同一次即可；同一次 UAC 里重签 policy 文件的 `residentManifestSha256`），不碰 policy 合同、Source 或 Linux 工具。
 - 不增加发布路径；证明不了就 HALT；自动逻辑不写、不清除 `HALT.json`；不增加 GitHub 读写，不在新地方用 App 凭据；不杀未知进程（Linux worker 照旧不被结束，Windows 侧只用审过的 broker 停止通道）；executed-heads 只增不减；失败表仍是白名单。
 
+### 28.6 合并位在两次写之间到期：不再写一半，也不再误判 HALT（2026-11-14 TURING #1095）
+
+- **现象**：TURING 跑 #1095（head `a9e717d3`）第 8 段，`kooyumi-admission-verified` 已发布并记账（SETTLED）；`kooyumi-merge-slot` 写前复查失败（`LIVE_ACTUAL_MERGE_SLOT_REQUIRED`），没写、零副作用。`publishPair` 把“已 SETTLED 的一半 + 写前被拦的一半”算成 `sideEffects 1` 的 `UNCERTAIN`，`stage-fact.mjs#outcomeFailureCode` 映射成 `PUBLICATION_UNCERTAIN`，整个节点 HALT。
+- **根因**：合并位 `until` 默认 45 分钟（`merge_slot_seconds 2700`）；非列车模式下唯一续时的是 `clued_work_merge_slot_touch_v1`，它的调用方 `clued-merge-slot-ci.yml`、`clued-merge-executor.yml`、`clued-work-admission-reverify.yml` 都已 `disabled_manually`（最后运行 10-17），列车的第 10 段只在 `train on` 时 touch。`waitForQueueHead` 只要求 `until > now` 就判就绪，剩几秒也开写；写完第一半位子到期，第二半被拦。分类又只看本次写了几次，不看写的是否已 SETTLED：同一状态在下一次运行里（前一半按日志读回、`sideEffects 0`）本来就是干净的。
+- **修法**（`independent-control-checks-v2/publisher.mjs`）：
+  1. 就绪要求位子在发完一对检查之后仍有效：`queueHeadReady(job, facts, now + PAIR_PUBLICATION_RESERVE_MS)`。`PAIR_PUBLICATION_RESERVE_MS`（7 分钟）就是 `queueWindow` 原有的发布余量，具名后两处共用。位子受认领租约限制时，等待里原有的 `extendOnce`（claim-assist `lease_extend`）续上后再观察就会就绪；没有任何机制能续的 45 分钟基数，就答未就绪，位子到期后认领按原有 claim-assist 重新入队，走第 8 段原有的停靠重试。
+  2. 一对里前面各半都 SETTLED、当前一半在写前被拦（`BLOCKED`、零副作用）时，答干净的 `BLOCKED`、`sideEffects 0`（不是本次写了几次，而是“未落定的副作用”）；其中位子失效（`LIVE_ACTUAL_MERGE_SLOT_REQUIRED`）改答第 8 段已有的未就绪码 `RESIDENT_QUEUE_HEAD_NOT_REACHED`（`STAGE8_NOT_READY_CODES` 已含，不新增码）。下一次试：前一半按日志读回 SETTLED、不重写，后一半照常写。真正可能已发布的情况（写后失败、`REVOKED`、`RECONCILIATION_REQUIRED`、`UNCERTAIN`）不变，照旧 HALT 或撤回。
+- **测试**：`test/stage8-slot-halfpublish.test.mjs`（常驻层目录，端到端：Source 控制发布器 → 第 8 段 outcome 文件 → 阶段码 → 执行器）。① 位子剩 10 秒、第一次写的读回耗 20 秒：修复前 `UNCERTAIN` → `PUBLICATION_UNCERTAIN` → `HALTED`；修复后第一次试什么也不写、停靠，第二次试（新位子）两项都 SETTLED、`COMPLETED`。② 位子在第一半 SETTLED 后丢失：修复前同样 HALT；修复后停靠，重试只写第二半，GitHub 上恰好一对、不撤回。
+- **安装**：只改 Source v2（第 8 段）；不碰 policy 合同、常驻层代码与 Linux 工具。
+
 ## 29. 主备 C3：节点模式与 NODE_ROLE_NOT_HELD（Task `17b703a0`）
 
 依据：《常驻执行器主备部署·设计说明 v0.4》§5.2、§8.2、§9 C3，以及 C3 方案草稿。C2（本文末节“C2”）已经有空闲时的角色探测，并留下一个输入口 `roleProbeMode`。C3 让执行器自己维护这个模式，并按它行动。代码：`src/executor.mjs`（`nodeMode()`、`setNodeMode()`、`nodeGate()`、`roleProbeMaintenance()`）、`src/role-probe.mjs`（`urgent`）、`src/classify.mjs`、`src/failure-table.json`、`src/ledger.mjs`、`src/status.mjs`；Source 一侧是 `resident-v2/stage-fact.mjs`。测试在 `test/node-mode.test.mjs` 等（§29.8）。
