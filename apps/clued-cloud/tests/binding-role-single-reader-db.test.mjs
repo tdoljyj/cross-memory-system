@@ -231,7 +231,8 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       await m.beat('former', { mode: 'ACTIVE', probe: 'held' });
       await m.beat('behind', { ci_source_manifest_sha256: BEHIND });
       await m.beat('fit');
-      await admin.query("update clued_private.binding_roles_v1 set revoked_at=now() where binding_id=$1 and revoked_at is null", [m.ids.former]);
+      await admin.query(`update clued_private.binding_roles_v1 set revoked_at=now(),revoked_receipt_id=$2
+        where binding_id=$1 and revoked_at is null`, [m.ids.former, await m.receipt()]);
       for (const purpose of ['resident-node', 'other']) {
         const refused = await m.mark('behind', purpose);
         assert.deepEqual([refused.status, refused.error_code], ['rejected', 'ci_admission_target_source_not_accepted'], JSON.stringify({ purpose, refused }));
