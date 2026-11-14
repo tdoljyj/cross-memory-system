@@ -46,10 +46,11 @@ async function fixture(t, per) {
   return f;
 }
 
-test('main moved under three queued PRs: each stops alone (RESIDENT_BASE_MOVED), the breaker stays closed and the PR behind them runs', async t => {
+test('main moved under three queued PRs on three old bases: each stops alone (RESIDENT_BASE_MOVED), the breaker stays closed and the PR behind them runs', async t => {
   const moved = { ok: false, code: 'RESIDENT_BASE_MOVED' };
   const f = await fixture(t, { 1: moved, 2: moved, 3: moved });
-  for (const n of [1, 2, 3, 4]) await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+  for (const n of [1, 2, 3]) await f.drop(triggerBytes({ pr: n, headSha: H(n), baseSha: H(n + 5) }));
+  await f.drop(triggerBytes({ pr: 4, headSha: H(4) }));
   for (const n of [1, 2, 3]) {
     const r = await f.exec.tick();
     assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED'], `PR ${n}: ${JSON.stringify(r)}`);
@@ -67,6 +68,22 @@ test('main moved under three queued PRs: each stops alone (RESIDENT_BASE_MOVED),
   const said = describe({ pull: { pr: 1, headSha: H(1), eligible: true }, now,
     status: { writtenAt: now, current: null, pending: [], recent: [{ pr: 1, headSha: H(1), outcome: 'NOT_EXECUTED', code: 'RESIDENT_BASE_MOVED' }] } });
   assert.deepEqual(said, { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' });
+});
+
+test('main moved under three queued PRs with the same old base: one bundle finds it, all three stop with the same code', async t => {
+  const moved = { ok: false, code: 'RESIDENT_BASE_MOVED' };
+  const f = await fixture(t, { 1: moved, 2: moved, 3: moved });
+  for (const n of [1, 2, 3]) await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+  await f.drop(triggerBytes({ pr: 4, headSha: H(4), baseSha: H(9) }));
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED']);
+  for (const n of [1, 2, 3]) assert.deepEqual([f.queue.row(n).state, f.queue.row(n).reason], ['STOPPED', 'RESIDENT_BASE_MOVED'], `PR ${n}`);
+  assert.equal(f.queue.row(4).state, 'QUEUED', 'a row on another base is not touched');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 4 runs next');
+  f.advance(3 * 60 * MIN);
+  await f.exec.tick();
+  assert.deepEqual(f.bundles, [1, 4], 'one bundle for the stale base, not one per row');
+  assert.equal(f.queue.breaker?.state ?? 'closed', 'closed');
 });
 
 test('a real environment fault of the bundle still counts: three of them open the breaker and the PR behind them waits', async t => {
