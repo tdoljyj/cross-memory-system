@@ -1,6 +1,6 @@
 // Resident primary/standby design v0.4 §6.1-§6.4 (C4, Task c2af8d17): GitHub is the shared record of what App 5368905
 // already published on a head. Stage 1 stops a published head before Native is asked (HEAD_PUBLISHED_ON_GITHUB); a role
-// this node knows nothing of but finds on GitHub ends cleanly (ROLE_ALREADY_ON_GITHUB; stage R: an ON_GITHUB row).
+// this node knows nothing of but finds on GitHub ends cleanly (ROLE_ALREADY_ON_GITHUB).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,10 +15,7 @@ import { CHECKS_V2 } from '../src/resident-v2/prepare-record.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { CONTROL_CHECKS_V2, createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
-import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
-import { entryResultOf, planRowOf, relayPlanEnding, validateRelayPlanRows } from '../src/hosted-relay-v1/relay-plan.mjs';
 import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
-import { createWorld } from './fixtures/hosted-relay/world.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, OTHER_APP = 15368;
 const iso = ms => new Date(ms).toISOString();
@@ -171,87 +168,6 @@ test('stage 1: a batch that already recorded its claim is this node\'s own and k
   const again = await pub.publish(job);
   assert.deepEqual([again.status, again.sideEffects], ['SETTLED', 0]);
   assert.equal(github.calls.readAppChecks, 1);
-});
-
-// ---- stage R rows ----
-
-function relayStage(w, answers) {
-  const calls = [];
-  const publisher = { fixture: true, async publishHosted(input) { calls.push(input.envelope.role); return answers[input.envelope.role]; } };
-  return { stage: createHostedRelayStage({ registry: w.registry, verifier: w.verifier(), publisher, localInputPins: { trivy: { checksDigest: w.registry.roles.trivy?.checksDigest } } }), calls };
-}
-const onGithubAnswer = { status: 'BLOCKED', reason: 'role_already_on_github', effectKey: 'e'.repeat(64), sideEffects: 0, productionAuthorized: false, roleMutex: { key: 'k'.repeat(64), held: false } };
-const relayedAnswer = { status: 'SETTLED', mode: 'hosted-relay', effectKey: 'f'.repeat(64), checkRunId: 77, externalId: `independent-ci:relay:gitleaks:${'a'.repeat(12)}:run5:a1`,
-  sideEffects: 1, productionAuthorized: false, roleMutex: { key: 'k'.repeat(64), held: true } };
-const outcomes = result => Object.fromEntries(result.roles.map(row => [row.role, row.reason ? `${row.outcome}:${row.reason}` : row.outcome]));
-
-test('stage R: a role already on GitHub is an ON_GITHUB row; later relayable roles are not processed', async () => {
-  const w = createWorld(); w.allHosted();
-  const { stage, calls } = relayStage(w, { gitleaks: onGithubAnswer });
-  const result = await stage.run({ subject: w.subject(), attempt: 1, roles: ['gitleaks', 'contract-placement', 'trivy'] });
-  assert.deepEqual([result.status, result.code, result.sideEffects], ['ON_GITHUB', ROLE_ALREADY_ON_GITHUB, 0]);
-  assert.deepEqual(outcomes(result), { gitleaks: `ON_GITHUB:${ROLE_ALREADY_ON_GITHUB}`, 'contract-placement': 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE', trivy: 'NOT_PROCESSED' });
-  assert.deepEqual(calls, ['gitleaks']);
-  const row = result.roles[0];
-  assert.deepEqual([row.receipt, row.checkRunId, row.externalId, row.detail], [null, null, null, 'role_already_on_github']);
-  // The entry result is a completed relay stage whose rows say ON_GITHUB; never LOCAL_REQUIRED for that role.
-  const entry = entryResultOf(result);
-  assert.deepEqual([entry.status, entry.reason, entry.sideEffects], ['RELAY_COMPLETE', ROLE_ALREADY_ON_GITHUB, 0]);
-  assert.ok(validateRelayPlanRows(entry.relay));
-  assert.equal(relayPlanEnding(entry.relay), 'ON_GITHUB');
-  assert.deepEqual(entry.relay.map(r => r.outcome), ['ON_GITHUB', 'LOCAL_REQUIRED', 'NOT_PROCESSED']);
-});
-
-test('stage R: a role relayed before the one already on GitHub is kept in the rows and its side effect counted', async () => {
-  const w = createWorld(); w.allHosted();
-  const { stage } = relayStage(w, { gitleaks: relayedAnswer, trivy: onGithubAnswer });
-  const result = await stage.run({ subject: w.subject(), attempt: 1, roles: ['gitleaks', 'trivy'] });
-  assert.deepEqual([result.status, result.sideEffects], ['ON_GITHUB', 1]);
-  const entry = entryResultOf(result);
-  assert.deepEqual([entry.status, entry.reason, entry.sideEffects], ['RELAY_COMPLETE', ROLE_ALREADY_ON_GITHUB, 1]);
-  assert.deepEqual(entry.relay.map(r => r.outcome), ['RELAYED', 'ON_GITHUB']);
-  assert.equal(relayPlanEnding(entry.relay), 'ON_GITHUB');
-});
-
-test('stage R: only a clean refusal before K with zero side effects is ON_GITHUB; any other shape HALTs, never goes local', async () => {
-  for (const answer of [{ ...onGithubAnswer, roleMutex: { key: 'k'.repeat(64), held: true } }, { ...onGithubAnswer, sideEffects: 1 }, { ...onGithubAnswer, status: 'REFUSED' }]) {
-    const w = createWorld(); w.allHosted();
-    const { stage } = relayStage(w, { gitleaks: answer });
-    const result = await stage.run({ subject: w.subject(), attempt: 1, roles: ['gitleaks'] });
-    assert.equal(result.status, 'HALT');
-    assert.equal(entryResultOf(result).status, 'UNCERTAIN');
-  }
-});
-
-test('stage R: a read-back that could not be completed is a refusal before K, so the role stays local (the local path reads again)', async () => {
-  const w = createWorld(); w.allHosted();
-  const { stage } = relayStage(w, { gitleaks: { status: 'BLOCKED', reason: 'incomplete_checks', effectKey: 'e'.repeat(64), sideEffects: 0, productionAuthorized: false, roleMutex: { key: 'k'.repeat(64), held: false } } });
-  const result = await stage.run({ subject: w.subject(), attempt: 1, roles: ['gitleaks'] });
-  assert.deepEqual([result.status, outcomes(result)], ['COMPLETE', { gitleaks: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_NOT_ADMITTED' }]);
-  assert.equal(result.roles[0].detail, 'incomplete_checks');
-});
-
-test('relay plan rows: ON_GITHUB rows and the endings the executor acts on', () => {
-  const row = (role, outcome, fields = {}) => planRowOf({ role, outcome, ...fields });
-  const relayed = role => row(role, 'RELAYED', { checkRunId: 9, externalId: `independent-ci:relay:${role}:${'a'.repeat(12)}:run5:a1`, attestationSha256: 'b'.repeat(64), receipt: 'relay-attested' });
-  const local = (role, reason = 'RELAY_ROLE_NOT_RELAYABLE') => row(role, 'LOCAL_REQUIRED', { reason, receipt: 'relay-local-fallback' });
-  const on = role => row(role, 'ON_GITHUB', { reason: ROLE_ALREADY_ON_GITHUB });
-  const skipped = role => row(role, 'NOT_PROCESSED');
-  assert.deepEqual(on('gitleaks'), { role: 'gitleaks', outcome: 'ON_GITHUB', reason: ROLE_ALREADY_ON_GITHUB, receipt: null, checkRunId: null, externalId: null, attestationSha256: null, detail: null });
-  // An ON_GITHUB row with another reason is not one (fail closed: HALT).
-  assert.equal(row('gitleaks', 'ON_GITHUB', { reason: 'RELAY_PUBLICATION_UNCERTAIN' }).outcome, 'HALT');
-  assert.equal(relayPlanEnding([relayed('gitleaks'), local('contract-placement')]), 'COMPLETE');
-  assert.equal(relayPlanEnding([on('gitleaks'), skipped('trivy')]), 'ON_GITHUB');
-  assert.equal(relayPlanEnding([relayed('gitleaks'), on('trivy'), local('contract-placement')]), 'ON_GITHUB');
-  for (const rows of [[], [skipped('gitleaks')], [relayed('gitleaks'), skipped('trivy')], [on('gitleaks'), on('trivy')], [on('gitleaks'), relayed('trivy')],
-    [on('gitleaks'), local('trivy', 'RELAY_NOT_ATTESTED_PENDING')], [skipped('gitleaks'), on('trivy')], [row('gitleaks', 'HALT', { reason: 'RELAY_PUBLICATION_UNCERTAIN' })]]) {
-    assert.equal(relayPlanEnding(rows), null, JSON.stringify(rows.map(r => r.outcome)));
-  }
-  // A stage result that says ON_GITHUB with rows that do not end so is uncertain, never a completed relay stage.
-  const bad = entryResultOf({ status: 'ON_GITHUB', code: ROLE_ALREADY_ON_GITHUB, sideEffects: 0, roles: [{ role: 'gitleaks', outcome: 'NOT_PROCESSED' }] });
-  assert.deepEqual([bad.status, bad.reason], ['UNCERTAIN', 'RELAY_PUBLICATION_UNCERTAIN']);
-  const coded = entryResultOf({ status: 'COMPLETE', code: ROLE_ALREADY_ON_GITHUB, sideEffects: 0, roles: [local('contract-placement')] });
-  assert.equal(coded.status, 'UNCERTAIN');
 });
 
 // ---- github.mjs readAppChecks ----

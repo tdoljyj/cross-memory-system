@@ -68,10 +68,8 @@ async function world(t, options = {}) {
     time.now += state.fetchDelay;
     return { status: 200, async json() { return verifyBody(); } };
   };
-  const hostedVerifier = { fixture: true, registrySha256: digest('offline-registry'), publisherAppId: 5368905,
-    async confirm(e) { ports.push('attestation'); return { confirmed: true, attestationSha256: e.attestationSha256 }; } };
   const stage = options.stage ?? 5;
-  const recoveryContext = { nonce: randomUUID().replaceAll('-', ''), stage, entryRole: stage === 9 ? 'relay-publisher' : 'check-publisher',
+  const recoveryContext = { nonce: randomUUID().replaceAll('-', ''), stage, entryRole: 'check-publisher',
     batchKey: digest('offline-batch'), configSha256: digest(`offline-stage-plan-${stage}`), sourceManifestSha256: jobs.trivy.sourceManifestSha256,
     acceptanceSha256: record.hashes.acceptanceSha256, entrySha256: digest('offline-installed-entry') };
   const actualAuditWriter = createPublicationRecoveryAuditWriter({ context: recoveryContext, domain: 'fixture', fixtureDirectory: auditDir });
@@ -79,7 +77,7 @@ async function world(t, options = {}) {
   const actualHashLog = options.hashOnlyLog ? observationLog(hashLogDir, jobs.trivy.id) : null;
   const publisher = createRecoverableCheckPublisherV2({
     publisherOptions: { nativeAdmission, github, journal, signers,
-      configuredChecks: record.config.checks, readChangedPaths: j => github.readChangedPaths(j), batchClaim: claimGeneration(claim), domain: 'fixture', hostedVerifier,
+      configuredChecks: record.config.checks, readChangedPaths: j => github.readChangedPaths(j), batchClaim: claimGeneration(claim), domain: 'fixture',
       protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...accepted } },
     authorityOptions: { config: record.config, accepted, fetchImpl, nativeToken: 'offline-fixture-only',
       sleep: async ms => { time.now += ms + state.sleepDelay; }, timeoutSignal: ms => ({ testTimeout: ms }) },
@@ -94,17 +92,8 @@ async function world(t, options = {}) {
   const input = (role, times = {}) => ({ job: jobs[role], envelope: signResult(jobs[role], signer, { finishedAt: t0 - 1000, startedAt: t0 - 5000, ...times, domain: 'fixture' }) });
   const key = role => scanEffectKeyV2(jobs[role], record.config.checks[role]);
   const mutex = role => ({ repo: REPO, headSha: HEAD, role, checkName: record.config.checks[role].name, appId: record.config.checks[role].appId });
-  const hosted = role => {
-    const evidence = { contract: 'clued.independent-ci.hosted-attestation/1', registrySha256: hostedVerifier.registrySha256, role,
-      checkName: record.config.checks[role].name, hostedCheckName: `${role}-hosted`, repository: REPO, repositoryId: 1, pr: 888, headSha: HEAD, baseSha: BASE,
-      mergeSha: 'c'.repeat(40), mergeBaseSha: BASE, runId: '101', runAttempt: '1', checkRunId: 202, runUrl: `https://github.com/${REPO}/actions/runs/101`,
-      jobUrl: `https://github.com/${REPO}/actions/runs/101/job/202`, workflowPath: `.github/workflows/${role}.yml`, workflowBlob: 'c'.repeat(40),
-      closureSha256: digest('closure'), claimsSha256: digest('claims'), tokenSha256: digest('fixture-token'), iat: Math.floor(t0 / 1000) };
-    return { subject: { repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: jobs[role].sourceManifestSha256, ...claimGeneration(claim) },
-      attempt: 1, envelope: { ...evidence, attestationSha256: digest(evidence) } };
-  };
   return { publisher, state, checks, mutations, fetches, evaluations, events, ports, signers, rawJournal, dir, auditDir, hashLogDir, recoveryContext,
-    actualAuditWriter, time, t0, jobs, input, key, mutex, hosted };
+    actualAuditWriter, time, t0, jobs, input, key, mutex };
 }
 
 const attempts = w => w.events.filter(e => e.kind === 'publication_recovery_result').at(-1)?.publisherAttempts;
@@ -287,42 +276,16 @@ test('a revoke attempt that cannot be confirmed stays UNCERTAIN and never POSTs 
   assert.equal(w.mutations.filter(x => x === 'revoke').length, 1); assert.equal(w.checks.length, 1); assert.equal(attempts(w), 2);
 });
 
-test('hosted current-role recovery preserves an earlier SETTLED prefix and never republishes either role', async t => {
-  const w = await world(t, { exhaust: 0, stage: 9 }); const prefix = await w.publisher.publishHosted(w.hosted('gitleaks'));
-  assert.equal(prefix.status, 'SETTLED', JSON.stringify(prefix)); const old = structuredClone(w.checks[0]);
-  w.state.exhaust = 3;
-  const current = await w.publisher.publishHosted(w.hosted('trivy'));
-  assert.equal(current.status, 'SETTLED', JSON.stringify(current)); assert.equal(attempts(w), 2);
-  assert.equal(w.checks.length, 2); assert.deepEqual(w.checks[0], old); assert.equal((await w.rawJournal.read(prefix.effectKey)).state, 'settled');
-  const repeat = await w.publisher.publishHosted(w.hosted('gitleaks'));
-  assert.equal(repeat.status, 'UNCERTAIN'); assert.equal(repeat.reason, 'publication_recovery_reentry_refused');
-  assert.equal(repeat.sideEffects, 0); assert.equal(w.checks.length, 2); assert.deepEqual(w.checks[0], old);
-  assert.equal(w.mutations.filter(x => x === 'create').length, 2);
-});
-
-test('hosted SETTLED role reentry performs no ports and cannot exhaust or revoke its settled prefix', async t => {
-  const w = await world(t, { exhaust: 0, stage: 9 }); const input = w.hosted('gitleaks'); const prefix = await w.publisher.publishHosted(input);
-  assert.equal(prefix.status, 'SETTLED'); w.state.exhaust = 3;
-  const beforePorts = [...w.ports], beforeEvents = structuredClone(w.events), beforeCheck = structuredClone(w.checks[0]);
-  const result = await w.publisher.publishHosted(input);
-  assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_reentry_refused');
-  assert.equal(w.checks.length, 1); assert.equal((await w.rawJournal.read(prefix.effectKey)).state, 'settled');
-  assert.deepEqual(w.ports, beforePorts); assert.deepEqual(w.events, beforeEvents); assert.deepEqual(w.checks[0], beforeCheck);
-  assert.equal(w.mutations.filter(x => x === 'create').length, 1); assert.equal(w.mutations.filter(x => x === 'revoke').length, 0);
-});
-
-test('a terminal exhausted role cannot obtain a fresh allowance through another call or the hosted path', async t => {
+test('a terminal exhausted role cannot obtain a fresh allowance through another call', async t => {
   const w = await world(t, { exhaust: 6 }); const input = w.input('trivy');
   const first = await w.publisher.publish(input);
   assert.notEqual(first.status, 'SETTLED'); assert.equal(attempts(w), 2); assert.equal(w.checks.length, 0);
   assert.equal(w.fetches.length, 6); assert.equal(w.time.now - w.t0, 60000);
   const beforePorts = [...w.ports], beforeEvents = structuredClone(w.events);
   w.state.exhaust = 0; w.time.now += 60000;
-  for (const repeat of [() => w.publisher.publish(input), () => w.publisher.publishHosted(w.hosted('trivy'))]) {
-    const result = await repeat();
-    assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_reentry_refused'); assert.equal(result.sideEffects, 0);
-    assert.deepEqual(w.ports, beforePorts); assert.deepEqual(w.events, beforeEvents); assert.equal(w.checks.length, 0);
-  }
+  const result = await w.publisher.publish(input);
+  assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_reentry_refused'); assert.equal(result.sideEffects, 0);
+  assert.deepEqual(w.ports, beforePorts); assert.deepEqual(w.events, beforeEvents); assert.equal(w.checks.length, 0);
 });
 
 test('G10: the actual hash-only production observation log cannot replace durable recovery proof', async t => {
