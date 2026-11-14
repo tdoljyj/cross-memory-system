@@ -5816,13 +5816,13 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 **删掉的**：
 - CI Source：`src/hosted-relay-v1/` 除注册表外全部（attest、oidc、observe、stage、relay-plan、relay-entry-v2、qualification-observer、build-registry 和两份 spec）；`resident-v2/relay-qualification-entry.mjs`、`relay-qualification-run.mjs`；`derive-batch.mjs --relay-roles/--batch-dir`；`invoke-stage.mjs --relay-qualification-window/--relay-qualification`；`stage-fact`/`stage-inputs` 的转发行；`prepare-record` 的 `relayQualificationWindow`；`layout` 的 `relay-publisher`、`relay-qualification` 入口和第 9、13 段行、`state\relay\jwks`（`acl-model.json` 不再建它）；两个发布器和 `one-shot*.mjs` 的 `publishHosted`、`hostedVerifier`、K 的 relay 持有路径（本地路径的 effect key、external id、K、错误码不变）；`github.mjs` 只给转发用的 `readGitTree`、`readCheckRunsByName`、`readCheckRunAnnotations`；`source-closure.mjs` 固定文件里的 `scripts/ci/clued-scan-start.mjs`（Source 里没有读者）。
 - 段号：第 13 段从 C# 边界、代理和 JS 表里全部删除；第 9 段保留编号（常驻 `policy.mjs` 的 `FIXED_STAGES` 和已装策略的十项时限表仍按位置读），但任何表都不能再运行它：C# `StageRole[8]` 为 null、时限 0，`Runnable(9)` 为假；代理 `SwapBroker` 第 9 项时限 0，`RuntimeStageValid(9)` 为假；JS `STAGES_V2` 没有这一行。第 10–12 段编号不变。常驻读旧账本的 `RELAY_STAGE`、`stage-fact` 的 RELAY 失败码保留（旧回执照旧可读）。
+- `scripts/ci`：`clued-independent-revoker.mjs` 的 `relay-publisher` 入口允许项、`clued-merge-slot-ci.mjs` 的 relay external id 格式（从未发布过），`clued-work-admission.mjs` 的相关注释；它们的 blob 钉由自动构建器重新生成。
 - 常驻：`src/gh-read-port.mjs`（companion 提示模式的只读端口，§76 后已无读者）；`qualification/` 里的转发资格控制器（`controller.mjs`、`controller-contract.json`）和只为转发影子观察写的 `duplicate-execution.mjs`，及其测试。
 - Worker：`worker/ci-scan-start-v1.ts`（`/v1/ci/scan-start`，只接受 `runner_environment=github-hosted` 的 OIDC）和 `continuity.ts` 里的路由、`tests/ci-scan-start-worker.test.mjs`。
 
 **留下的，以及为什么**：
 - 注册表 `registry.json` 原字节移到 `src/scan-start-v1/`：Native 扫描许可把每次许可绑定到这份字节的 sha256（`entry-runtime.mjs` → `native-port.mjs` → 策略的 `registry_sha256`），改一个字节就对不上。`registry.mjs` 只保留对这份冻结文档的校验和仓库常量（离线 cutover plan、`native-port.mjs` 在用）；cutover plan 读冻结提交里的旧路径，git 读取器移到 `qualification/git-objects.mjs`。
 - `gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 不删也不改：本地正式角色按精确字节钉着它们（`worker/trusted-workflows.mjs`、节点 `roles-v3` 档案的 `workflowSha256`、桥 v4 的 Source 清单、各 adapter 的 `ORIGINAL_*_WORKFLOW_*` 检查）。改字节或删文件要先改三个正式角色及其 Linux 档案、走一次通用升级，属于正式角色的事，不是转发的事。`validate_runner_budget_policy.py` 的 `OWNER_DECISION_HOSTED_JOBS` 按同样的字节放行这些 job，随工作流一起留；`scripts/ci/clued-scan-start.mjs` 被工作流按哈希引用，也随工作流留。
-- 已被别处按 blob 钉住的脚本里的转发残句不改（`clued-control-workflow-sources.json` 钉着 `clued-independent-revoker.mjs` 的 `'relay-publisher'` 允许项、`clued-merge-slot-ci.mjs` 的 relay external id 格式、`clued-work-admission.mjs` 的注释）：都不可达（没有计划能带 `relay-publisher` 入口，也没有发布过 relay external id），随各自下一次重钉一起删。
 - 数据库：`clued_ci_scan_start_hosted_v1`、策略列 `hosted_head_sha`、`ci_scan_start_begin_v1` 的 `github-actions` 分支只为托管入口存在；删它们是生产迁移（要 Owner 批），并且要在不再调用它的 Worker 部署之后，所以单列为后续一步，和 cutover plan 的 `hostedQualificationPolicy` 一起删。
 
 **过渡**：
