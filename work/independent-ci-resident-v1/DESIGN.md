@@ -3612,12 +3612,12 @@ node rollout/rollout.mjs next    --plan <rollout.json> --observation <file> [...
 | `BLOCKED ROLLOUT_TWO_ACTIVE`、`WAIT ROLLOUT_NODE_UNCERTAIN` | 两个当班（移交请求后 15 分钟内是 `WAIT ROLLOUT_HANDOVER_PENDING`：角色移动时两边可能短暂都报 ACTIVE）；有节点处于 UNCERTAIN（移交生效前后常见） |
 | `DONE` | 每个节点都到了目标包、`consistent` 为 true、没有暂停，并且恰好一个当班节点在 plan 里（否则 `WAIT ROLLOUT_VERSIONS_NOT_CONSISTENT`、`BLOCKED ROLLOUT_NODE_PAUSED`、`BLOCKED ROLLOUT_NO_ACTIVE_NODE_IN_PLAN`） |
 | `UPGRADE <node>` | 还没到目标包、STANDBY、未暂停的节点里名字最小的一个（还没到目标包的待命节点都暂停着：`BLOCKED ROLLOUT_STANDBY_PAUSED`） |
-| `HANDOVER <from> → <to>` | 待命节点全部到了目标包，当班节点还没有；`<to>` 是已到目标包、`consistent`、未暂停的待命节点里名字最小的。协调者请 Owner 移交时记下时刻，用 `--handover-issued-at` 传入：之后 15 分钟内同一步是 `WAIT ROLLOUT_HANDOVER_PENDING`，不会再弹第二次 |
+| `UPGRADE <当班节点>`（`ciPause: true`） | 待命节点全部到了目标包，当班节点还没有，且有一个已到目标包、`consistent`、未暂停的待命节点。2026-11-14 起不再给 `HANDOVER`：服务端只把 ci-admission 移交给与全队同一 Source 的节点（迁移 `20261114120000`，`ci_admission_target_source_not_accepted`），而且 Source 不同的窗口里列车本来就以 `TRAIN_SOURCE_MISMATCH` 停车（以前在这里给 `HANDOVER <from> → <to>`） |
 | `BLOCKED ROLLOUT_NO_STANDBY` / `ROLLOUT_NO_HEALTHY_UPGRADED_STANDBY` | 根本没有待命节点；有待命节点，但没有一个已升级且健康 |
 
-- 当班节点从不出现在 `UPGRADE` 里。只有一个节点、没有待命节点时，`next --allow-active-upgrade` 才会给出 `UPGRADE <当班节点>`，并标 `ciPause: true`；这个开关只在 Owner 选了“接受暂停 CI”之后由协调者加上（弹窗）。
+- 当班节点最后升、原地升（上一行）。只有一个节点、没有待命节点时，`next --allow-active-upgrade` 才会给出 `UPGRADE <当班节点>`，并标 `ciPause: true`；这个开关只在 Owner 选了“接受暂停 CI”之后由协调者加上（弹窗）。
 - 一次只升一个：保证任何时刻至少有一个节点没在升级、可以接班；任意多个节点都按同一规则推进（`d6eef30e`）。
-- 执行 `UPGRADE <node>`：该节点的 Agent 在 Owner 会话里非提权运行 build-upgrade 输出的 request 命令；Owner 在 `upgrade\status.json` 的 `confirmUrl` 页面批准一次。执行 `HANDOVER`：Owner 在 `/bindings` 一键移交（5 分钟后生效）。两者都由协调者以弹窗请 Owner 授权，Agent 不替 Owner 点。
+- 执行 `UPGRADE <node>`：该节点的 Agent 在 Owner 会话里非提权运行 build-upgrade 输出的 request 命令；Owner 在 `upgrade\status.json` 的 `confirmUrl` 页面批准一次。要移交只在两台同一 Source 时由 Owner 在 `/bindings` 一键移交（5 分钟后生效）。两者都由协调者以弹窗请 Owner 授权，Agent 不替 Owner 点。
 
 #### 42.3.4 轨 1 的 Owner 动作
 

@@ -150,7 +150,6 @@ node rollout\rollout.mjs next    --plan rollout.json --observation observation.<
 | 结果 | 怎么做 |
 |---|---|
 | `UPGRADE <node>` | 按 2.4 请求 |
-| `HANDOVER <from> → <to>` | Owner 在 `/bindings` 一键移交，5 分钟后生效。之后带 `--handover-issued-at <ISO>` 再调 `next` |
 | `WAIT` | 过一会儿重新 observe |
 | `BLOCKED` | 报告 Owner：回滚、被拒、HALT、两个当班等。处理完后用 `--ack-op <opId>` 确认 |
 | `DONE` | 完成 |

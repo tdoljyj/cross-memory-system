@@ -27,8 +27,9 @@
 //   6. <work>\package\ (the archive's build-package.mjs, twice: the same sha; the universal values the archive's; identity and profile
 //      the installed ones).
 //   7. the archive's precheck.mjs (the installed generation's own staged package, where the node still has one, as --installed-package).
-//   8. a node that holds ci-admission now is not requested (FLEET_NODE_UPGRADE_HAND_OVER_FIRST: the standby goes first, then the
-//      hand-over, rollout/README.md section 4) unless --allow-active-upgrade says the Owner accepted the CI pause of its upgrade.
+//   8. a node that holds ci-admission now is not requested (FLEET_NODE_UPGRADE_HAND_OVER_FIRST: the standbys go first, the holder last,
+//      rollout/README.md section 4) unless --allow-active-upgrade says the Owner accepted the CI pause of its upgrade. ci-admission is
+//      never handed to an upgraded node while the holder runs the older Source (the server refuses it, migration 20261114120000).
 //   9. the installed resident\<sha>\windows\request-upgrade.ps1; one JSON line.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

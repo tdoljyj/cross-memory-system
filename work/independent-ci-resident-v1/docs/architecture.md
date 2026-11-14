@@ -673,7 +673,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
    - 自动审批开关开着时，服务端按高风险规则自动批准，写 `OWNER_GRANT_GIVEN`（principal `owner_auto_approve`）；
    - 当前已上线的迁移是 `20261106100000_resident_upgrade_auto_approve_v1.sql`：**每节点 24 小时自动批一次**，超出转人工；
    - Owner 已决定放宽到每天 6 次（Decision `56371a46`），迁移在 Task `3b4f1f12` 中，等发布批准。
-6. 多节点滚动：`rollout/rollout.mjs plan / observe / next`。顺序是先升待命节点、再移交、后升原当班节点，一次只升一个。当班节点不出现在 `UPGRADE` 里；唯一例外是没有可接班节点、Owner 明确同意暂停 CI 时的 `--allow-active-upgrade`。
+6. 多节点滚动：`rollout/rollout.mjs plan / observe / next`。顺序是先升待命节点、后原地升当班节点（`ciPause`），一次只升一个；不跨 Source 移交（服务端拒绝，迁移 `20261114120000`）。没有已升好的健康待命节点时，当班节点只在 Owner 明确同意暂停 CI 时（`--allow-active-upgrade`）才升。
 
 ### 11.3 版本一致
 

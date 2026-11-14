@@ -6,13 +6,15 @@
 //   node rollout/rollout.mjs next    --plan <rollout.json> --observation <file> [--observation <file> ...] [--now <ISO>] [--allow-active-upgrade]
 //        [--handover-issued-at <ISO>] [--ack-op <opId> ...]   (an op the Owner has looked at: its outcome no longer blocks)
 //
-// `next` is a pure function of the plan, one fresh observation per node and the clock. It names the one next step: UPGRADE a STANDBY
-// node, HANDOVER ci-admission from the holder to an upgraded STANDBY, WAIT, DONE or BLOCKED. The holder is never upgraded while it
-// holds the role, unless no other node can take it and the Owner chose to pause CI (--allow-active-upgrade). One node upgrades at a
-// time, so another node can always take the role; the same rule holds for any number of nodes (Decision d6eef30e).
+// `next` is a pure function of the plan, one fresh observation per node and the clock. It names the one next step: UPGRADE a node,
+// WAIT, DONE or BLOCKED. The STANDBY nodes go first, one at a time (the same rule for any number of nodes, Decision d6eef30e); the
+// holder goes last, in place, with ciPause: ci-admission is never handed to a node on another Source (the server refuses it,
+// migration 20261114120000: ci_admission_target_source_not_accepted), and while the nodes run different Sources the train stands
+// still anyway (TRAIN_SOURCE_MISMATCH). With no upgraded, healthy STANDBY the holder is upgraded only when the Owner chose to pause CI
+// (--allow-active-upgrade). A hand-over the Owner wants (between nodes of one Source) is made before the rollout starts.
 //
 // Nothing here admits anything: the Owner's Grant on the KooYomi page (one per node and package, resource ci-resident:<node>/<sha>)
-// admits each upgrade, and the Owner's one-click handover on /bindings moves the role. This tool only says what is due.
+// admits each upgrade. This tool only says what is due.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,8 +144,8 @@ export function validateObservation(v) {
 
 // ---- next (pure) ----
 
-// handoverIssuedAt: when the coordinator last asked the Owner for the handover `next` named (the role takes effect 5 minutes later,
-// and the former holder writes STANDBY when it sees it): until HANDOVER_PENDING_MS after it, the same HANDOVER is a WAIT.
+// handoverIssuedAt: when the Owner's last hand-over was asked for (the role takes effect 5 minutes later, and the former holder writes
+// STANDBY when it sees it): until HANDOVER_PENDING_MS after it, two ACTIVE nodes are a WAIT, not two holders.
 export function nextStep(plan, observations, now, { allowActiveUpgrade = false, handoverIssuedAt = null, ackOps = [] } = {}) {
   check(Array.isArray(ackOps) && ackOps.every(id => UUID.test(id)), 'USAGE', 'ack-op');
   const issued = handoverIssuedAt === null ? NaN : Date.parse(handoverIssuedAt);
@@ -214,12 +216,13 @@ export function nextStep(plan, observations, now, { allowActiveUpgrade = false, 
   const upgrade = (r, ciPause = false) => out('UPGRADE', { node: r.node, packageManifestSha256: target(r.node).packageManifestSha256, grantResource: target(r.node).grantResource, ciPause });
   if (ready.length) return upgrade(ready[0]);
   if (due.length) return out('BLOCKED', { code: 'ROLLOUT_STANDBY_PAUSED', node: due[0].node });
-  // Every STANDBY is on the new package; only the holder is left.
+  // Every STANDBY is on the new package; only the holder is left. It is upgraded in place (ciPause): a hand-over to a node on another
+  // Source is refused by the server, and the train already stands still while the Sources differ.
   const holder = active[0];
   const healthy = standbys.filter(r => r.atTarget && !r.paused && r.consistent === true);
   if (healthy.length) {
-    if (handoverPending) return out('WAIT', { code: 'ROLLOUT_HANDOVER_PENDING', from: holder.node });
-    return out('HANDOVER', { from: holder.node, to: healthy[0].node });
+    if (holder.paused) return out('BLOCKED', { code: 'ROLLOUT_STANDBY_PAUSED', node: holder.node });
+    return upgrade(holder, true);
   }
   if (standbys.length === 0) {
     if (!allowActiveUpgrade) return out('BLOCKED', { code: 'ROLLOUT_NO_STANDBY', node: holder.node });

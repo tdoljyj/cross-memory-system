@@ -333,6 +333,13 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       await admin.query("insert into auth.sessions(id,user_id,not_after)values($1,$2,clock_timestamp()+interval '1 hour')",[sessionId,user]);
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[user,JSON.stringify({sub:user,role:'authenticated',session_id:sessionId,aal:'aal1',amr:[{method:'password',timestamp:seconds}]})]);
       const owner=async(name,data)=>json(human,'select public.'+name+'($1::jsonb) v',[data]);
+      // 20261114120000: a handover lands only on a node heard lately, reporting NORMAL and the Source the fleet runs.
+      await admin.query(`insert into clued_private.ci_nodes_v1(user_id,project_id,binding_id,name,profile,profile_sha256,identity_public_jwk,
+        encryption_public_jwk,identity_fingerprint,encryption_fingerprint,registration_digest,idempotency_key)
+        values($1,$2,$3,'SECOND','{}'::jsonb,$4,'{}'::jsonb,'{}'::jsonb,$5,$6,$7,$8)`,[user,project,second,digest('p2'),digest('i2'),digest('e2'),digest('r2'),uuid()]);
+      const heard=await json(ci,'select public.clued_work_verify_v1($1,$2::jsonb) v',[secondToken,{action:'ci_node_heartbeat',scope:'global',
+        state:'NORMAL',mode:'STANDBY',probe:'not-held',ci_source_manifest_sha256:source,service_running:true,snapshot_age_seconds:5}]);
+      assert.equal(heard.status,'ok',JSON.stringify(heard));
       const confirmation=await owner('clued_binding_role_handover_confirmation_issue_v1',{from_binding_id:ciBinding,to_binding_id:second});
       assert.equal(confirmation.status,'issued',JSON.stringify(confirmation));
       const moved=await owner('clued_binding_role_handover_v1',{confirmation_token:confirmation.confirmation_token,view_digest:confirmation.view_digest});
