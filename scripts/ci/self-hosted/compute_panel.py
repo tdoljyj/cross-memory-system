@@ -65,6 +65,10 @@ METRICS_PULLS = 50
 UTILIZATION_HOURS = 24
 LOW_DISK_GB = 20.0
 LOW_MEMORY_GB = 1.0
+# A raised low-disk or low-memory alert ends only at these (a quarter, a half above the line): available memory
+# swings far more than free disk between probes, so it gets the larger share.
+DISK_CLEAR_GB = LOW_DISK_GB + 5.0
+MEMORY_CLEAR_GB = LOW_MEMORY_GB + 0.5
 # CI stall (resident_stall): the resident's DUTY_WINDOW_MS, and the word its node on duty starts each status with.
 STALL_AFTER = timedelta(minutes=30)
 DUTY_WORD = "当班"
@@ -376,14 +380,19 @@ def latest_health(client: GitHub, jobs: list[dict], cache: dict, now: datetime) 
     return result
 
 
-def health_flags(health: dict) -> list[str]:
+def health_flags(health: dict, held: set[str] | frozenset[str] = frozenset()) -> list[str]:
+    """Low disk or memory flags. A flag already raised (held) ends only past a margin, or the alert would come
+    and go with every probe around the line (#952: home-win-01's disk four times in two hours); an unread value
+    keeps it."""
     flags = []
-    disk = health.get("disk_free_gb")
-    memory = health.get("mem_available_gb")
-    if isinstance(disk, (int, float)) and disk < LOW_DISK_GB:
-        flags.append("disk")
-    if isinstance(memory, (int, float)) and memory < LOW_MEMORY_GB:
-        flags.append("memory")
+    for flag, key, low, clear in (("disk", "disk_free_gb", LOW_DISK_GB, DISK_CLEAR_GB),
+                                  ("memory", "mem_available_gb", LOW_MEMORY_GB, MEMORY_CLEAR_GB)):
+        value = health.get(key)
+        if not isinstance(value, (int, float)):
+            if flag in held:
+                flags.append(flag)
+        elif value < (clear if flag in held else low):
+            flags.append(flag)
     if (health.get("governance") or {}).get("level") == "red":
         flags.append("governance")
     return flags
@@ -898,6 +907,15 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict], stall: list[dict] | None = None) -> dict[str, str]:
     alerts = {}
+    # A HALTed node's alert already names the node and its reason, and exists before any PR queues; the PRs its HALT
+    # holds up are added to it rather than said again as a stall. Keyed by node, it is not announced again (nor
+    # "recovered") when PRs come or go. Only a stall no HALT explains (a pause, a silent node) is its own alert.
+    halted = {node for node, row in residents.items() if row["halted"]}
+    held_up: dict[str, list[int]] = {}
+    for item in stall or []:
+        if item["node"] in halted:
+            held_up.setdefault(item["node"], []).append(item["pr"])
+    stall = [item for item in stall or [] if item["node"] not in halted]
     if stall:
         # One key for the whole stall: more PRs or newer texts during it are not a new alert.
         shown = "；".join(f"PR #{item['pr']}（{item['node']}：{cell(item.get('description'))}）" for item in stall[:3])
@@ -913,7 +931,9 @@ def alerts_for(pool: dict[str, dict], residents: dict[str, dict], stall: list[di
                 if flag == "governance" else f"{name} {'磁盘' if flag == 'disk' else '内存'}不足")
     for node, row in residents.items():
         if row["halted"]:
-            alerts[f"halt:{node}"] = f"常驻执行器 {node} 停机或未更新：{cell(row.get('description'))}（PR #{row.get('pr')}）"
+            prs = held_up.get(node, [])
+            alerts[f"halt:{node}"] = (f"常驻执行器 {node} 停机或未更新：{cell(row.get('description'))}（PR #{row.get('pr')}）"
+                                      + (f"；CI 停摆，{len(prs)} 个 PR 在等：" + "、".join(f"#{pr}" for pr in prs) if prs else ""))
     return alerts
 
 
@@ -1056,7 +1076,8 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         row = classify_node(node["name"], jobs, active, now)
         row.update(os=node["os"], site=node["site"], can_run=node["can_run"])
         row["health"] = dict(health.get(node["name"], {}))
-        row["flags"] = health_flags(row["health"]) if row["status"] == "online" else []
+        held = {flag for flag in ("disk", "memory") if f"{flag}:{node['name']}" in (state.get("alerts") or {})}
+        row["flags"] = health_flags(row["health"], held) if row["status"] == "online" else []
         pool[node["name"]] = row
     utilization = record_utilization(state.setdefault("samples", {}), pool, now)
     metrics = state.get("metrics") or {}
@@ -1149,13 +1170,15 @@ def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | No
                   events: dict[str, str] | None = None) -> str | None:
     if not new and not resolved and not events:
         return None
+    # Only a new alert mentions the Owner, first so it leads the notification: events and recoveries are news, not
+    # calls to act, and mentioning them drowned the 2026-11-13 HALT alert in issue #952.
     lines = []
-    if events:
-        lines.append(("@" + owner + " " if owner and not new else "") + "动态：")
-        lines += [f"- {text}" for text in events.values()]  # titles and descriptions already escaped by cell()
     if new:
         lines.append(("@" + owner + " " if owner else "") + "新告警：")
         lines += [f"- {text}" for text in new.values()]  # alerts_for already escaped the untrusted parts
+    if events:
+        lines.append("动态：")
+        lines += [f"- {text}" for text in events.values()]  # titles and descriptions already escaped by cell()
     if resolved:
         lines.append("已恢复：")
         lines += [f"- {text}" for text in resolved.values()]

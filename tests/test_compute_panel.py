@@ -210,8 +210,35 @@ class AlertAndStateTests(unittest.TestCase):
         merged = panel.recent_merges(Closed(), NOW - timedelta(minutes=10))
         self.assertEqual(list(merged), ["merged:20"])
         comment = panel.alert_comment({}, {}, "owner", merged)
-        self.assertTrue(comment.startswith("@owner 动态："))
+        self.assertTrue(comment.startswith("动态："))
         self.assertIn("PR #20", comment)
+
+    def test_only_a_new_alert_mentions_the_owner(self) -> None:
+        # Issue #952: every merge's event mentioned the Owner, and the 2026-11-13 HALT alert drowned in them.
+        events = {"merged:20": "PR #20 已合入 main", "dup:1": "重复执行：PR #21", "failed:22:abc:turing": "PR #22 检查失败"}
+        for comment in (panel.alert_comment({}, {}, "owner", events), panel.alert_comment({}, {"disk:x": "x 磁盘不足"}, "owner")):
+            self.assertNotIn("@", comment)
+        both = panel.alert_comment({"halt:turing": "停机"}, {"disk:x": "x 磁盘不足"}, "owner", events)
+        self.assertTrue(both.startswith("@owner 新告警："))
+        self.assertEqual(both.count("@"), 1)
+
+    def test_low_disk_and_memory_clear_only_past_a_margin(self) -> None:
+        # Issue #952: home-win-01 disk alerted and recovered four times in two hours around 20 GB.
+        said: list[str] = []
+        previous: dict[str, str] = {}
+        for disk in (19.0, 21.0, 19.0, 24.9):
+            held = {flag for flag in ("disk", "memory") if f"{flag}:{NAME}" in previous}
+            row = {"status": "online", "last_probe": at(1), "health": {"disk_free_gb": disk},
+                   "flags": panel.health_flags({"disk_free_gb": disk}, held)}
+            alerts = panel.alerts_for({NAME: row}, {})
+            said += [key for key in alerts if key not in previous]
+            previous = alerts
+        self.assertEqual(said, [f"disk:{NAME}"])
+        self.assertEqual(panel.health_flags({"disk_free_gb": 25.0}, {"disk"}), [])
+        self.assertEqual(panel.health_flags({"mem_available_gb": 1.4}, {"memory"}), ["memory"])
+        self.assertEqual(panel.health_flags({"mem_available_gb": 1.5}, {"memory"}), [])
+        self.assertEqual(panel.health_flags({"mem_available_gb": 1.4}), [])
+        self.assertEqual(panel.health_flags({}, {"disk"}), ["disk"])  # an unread value does not end the alert
 
     def test_untrusted_text_is_inert(self) -> None:
         self.assertEqual(panel.cell("a|b `c` @owner <x>\nnext"), "a\\|b 'c' ＠owner &lt;x&gt; next")
@@ -337,6 +364,18 @@ class StallTests(unittest.TestCase):
         busy = [(7, {"sha": "7" * 40, "statuses": [status(1, "pending", "当班：运行中：第 4 段（trivy 扫描）")]})]
         self.assertEqual(self.stall(busy, client=client), [])
         self.assertEqual(client.paths, [])
+
+    def test_halt_with_a_queued_pr_is_one_alert(self) -> None:
+        # The HALT alert names the node and its reason; the PRs it holds up are added to it, not a second alert.
+        residents = {"turing": {"halted": True, "description": "执行器停机（PUBLICATION_UNCERTAIN），等 Owner 复位", "pr": 1095}}
+        stall = [{"pr": 1095, "node": "turing", "description": "执行器停机（PUBLICATION_UNCERTAIN），等 Owner 复位", "since": None}]
+        alerts = panel.alerts_for({}, residents, stall)
+        self.assertEqual(list(alerts), ["halt:turing"])
+        self.assertIn("PUBLICATION_UNCERTAIN", alerts["halt:turing"])
+        self.assertIn("1 个 PR 在等：#1095", alerts["halt:turing"])
+        # A stall no HALT explains (a pause, a silent node) stays its own alert.
+        paused = [{"pr": 7, "node": "desk", "description": "停摆（PAUSED）：执行器已暂停，等 Owner 恢复", "since": at(40)}]
+        self.assertEqual(sorted(panel.alerts_for({}, residents, stall + paused)), ["halt:turing", "stall"])
 
     def test_a_failed_alert_comment_is_recorded_and_said_again_next_run(self) -> None:
         class Channel:
@@ -1167,7 +1206,7 @@ class DuplicateMainTests(unittest.TestCase):
         self.run_main(store, both, checks, NOW + timedelta(hours=1))
         self.assertEqual(len(store["comments"]), 1)
         self.assertIn("重复执行：PR #2", store["comments"][0])
-        self.assertIn("@owner", store["comments"][0])
+        self.assertNotIn("@owner", store["comments"][0])  # an event, not an alert: no mention
         for hour in (2, 3, 4):
             self.run_main(store, both, checks, NOW + timedelta(hours=hour))
         self.assertEqual(len(store["comments"]), 1)
