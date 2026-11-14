@@ -165,6 +165,11 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
     { ...f, mode: 'on', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }, { ...f, decision: 'SOMETHING' }, { ...f, nodes: [{ node: 'x' }] }])
     assert.throws(() => validateTrainFacts(bad), e => e.code === 'invalid_train_facts');
   assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'OPEN_FRONT_BATCH', openFrontBatch: batch }).openFrontBatch.testSha, S);
+  // resident DESIGN §75: H's own tree, optional, a SHA, and only for a front of one member
+  const open = b => ({ ...f, mode: 'on', decision: 'OPEN_FRONT_BATCH', openFrontBatch: b });
+  assert.equal(validateTrainFacts(open({ ...batch, headTree: TREE })).openFrontBatch.headTree, TREE);
+  for (const bad of [{ ...batch, headTree: 'x' }, { ...batch, headTree: null }, { ...batch, headTree: TREE, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
+    assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
   assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }).requestPause, 'TRAIN_LANDED_TREE_MISMATCH');
   assert.equal(validateTrainFacts({ ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...f.sweep, revoked: 3 } }).sweep.revoked, 3);
   assert.throws(() => validateTrainFacts({ ...f, wouldDo: 'REVOKE_EVERYTHING' }), e => e.code === 'invalid_train_facts');

@@ -222,10 +222,12 @@ const membersOf = o => {
 export function openFrontBatchOf(o) {
   if (!plain(o)) return null;
   const members = membersOf(o);
+  // headTree (rule 41ab823a, DESIGN §75): H's own tree, which stage 10 names for a front of one member only; anything else names none.
+  const headTree = !members && SHA.test(o.headTree ?? '') ? o.headTree : null;
   const ok = Number.isSafeInteger(o.pr) && o.pr > 0 && SHA.test(o.headSha ?? '') && SHA.test(o.baseSha ?? '') && SHA.test(o.testSha ?? '') && SHA.test(o.testTree ?? '')
     && o.testSha !== o.headSha && typeof o.claimId === 'string' && CLAIM.test(o.claimId) && isoOrNull(o.since) !== null && [1, 2].includes(o.attempt) && members !== null;
   return ok ? Object.freeze({ pr: o.pr, headSha: o.headSha, baseSha: o.baseSha, testSha: o.testSha, testTree: o.testTree, claimId: o.claimId, since: o.since, attempt: o.attempt,
-    ...(members ? { members } : {}) }) : null;
+    ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) }) : null;
 }
 
 // ADR 0019 (engine-windows.mjs#derive, executor.mjs#drive): the front batch's members and S's tree as the descriptor /4 names them,

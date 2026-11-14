@@ -822,6 +822,16 @@ class DuplicateReviewTests(unittest.TestCase):
         (item,) = findings([native("job-1", 50, "t1"), native("job-2", 40, "t2")])  # two jobs
         self.assertEqual(item["count"], 2)
 
+    def test_a_resident_check_republished_under_its_external_id_is_one_run(self) -> None:
+        # PR #1094: contract-placement withdrawn after a read timeout (failure) and published again (success), one external_id.
+        first, again = resident("contract-placement", 50, conclusion="failure"), resident("contract-placement", 48)
+        self.assertEqual(first["external_id"], again["external_id"])
+        self.assertEqual(findings([first, again]), [])
+        # the front batch (another job, so another external_id) that really ran the scan again still counts
+        front = check("contract-placement", 20, external=f"independent-ci:staged:v2:{'1' * 64}:a1", app="clued-ci-checks-turing-20261018")
+        (item,) = findings([first, again, front])
+        self.assertEqual((item["count"], item["causes"]), (2, ["same-executor"]))
+
     def test_a_closed_unmerged_pr_is_read_until_it_has_been_closed_for_a_day(self) -> None:
         recent = {**pull(1, SHA, "closed", 3 * 60), "closed_at": at(3 * 60)}
         old = {**pull(2, "b" * 40, "closed", 30 * 60), "closed_at": at(30 * 60)}

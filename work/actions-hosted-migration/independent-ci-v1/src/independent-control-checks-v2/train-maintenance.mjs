@@ -883,7 +883,12 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   // ADR 0019: a batch of several members names them, in merge order (the front first), so the resident can write the descriptor /4 the
   // bundle and the workspace preparation check the chain against. One member: the batch exactly as before (descriptor /3).
   const members = composed && composed.members.length > 1 ? composed.members.map(m => ({ pr: m.pr, headSha: m.headSha })) : null;
-  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: members ? { ...batch, members } : batch };
+  // Rule 41ab823a (resident DESIGN §75): a front of one member also names H's own tree, read here from GitHub. When it equals S's tree the
+  // scans would read exactly what an ordinary batch of (H, T) already scanned, and the resident reuses that batch's results instead of
+  // scanning again. A read that fails or does not fit names nothing (the front batch scans as before); it is never a refusal.
+  let headTree = null;
+  if (!members) try { const c = await github.readGitCommit(front.headSha); if (c?.sha === front.headSha && SHA.test(c.tree ?? '')) headTree = c.tree; } catch { headTree = null; }
+  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) } };
 }
 
 // ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose Native binding names a current claim of this install and

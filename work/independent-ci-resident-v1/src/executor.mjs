@@ -2321,7 +2321,7 @@ export class ResidentExecutor {
     this.frontKeys.set(key, front.attempt);
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
-      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}) });
+      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}), ...(front.headTree ? { headTree: front.headTree } : {}) });
     this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
   }
@@ -3851,6 +3851,37 @@ export class ResidentExecutor {
     try { return { hint: parseHint(bytes, subject), refused: false, sha256: sha256(bytes) }; } catch { return { hint: null, refused: true }; }
   }
 
+  // Rule 41ab823a, DESIGN §75: which scans of this front batch (a subject with S) already ran on exactly the same input, here: a batch of
+  // this node with the same repo, PR, head H, base T and Source whose tested tree is S's tree, and that rested at parking point B (every
+  // stage of its local roles passed, their checks are on H). Those are its ordinary batch when stage 10 named H's tree and it equals S's
+  // tree (a single-member front: S = merge(T, H) adds nothing to H), and an earlier front batch of this head on this main whose S had the
+  // same tree (GitHub regenerated S). Each role a parked candidate ran locally is reused once: [{ role, from: its batch key }], in role
+  // order. Anything that does not fit or cannot be read reuses nothing (the front batch scans as before); a relayed role never counts
+  // (another provider: no trusted transfer, rule 41ab823a).
+  async frontScansReused(subject) {
+    const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
+    if (!front || front.members || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha || !HEX40.test(front.testTree ?? '')) return [];
+    const { testSha, ...ordinary } = subject;
+    const candidates = [];
+    if (front.headTree === front.testTree) candidates.push(ordinary);
+    for (const f of this.frontBindings.values()) {
+      if (f !== front && !f.members && f.pr === subject.pr && f.headSha === subject.headSha && f.baseSha === subject.baseSha && f.testSha !== testSha
+        && f.testTree === front.testTree) candidates.push({ ...ordinary, testSha: f.testSha });
+    }
+    const out = [];
+    for (const c of candidates) {
+      for (const attempt of [1, 2]) {
+        try {
+          const from = batchKey({ ...c, attempt }), s = await this.ledger.state(from), r = s.reserved?.subject;
+          if (!s.parked || !Array.isArray(s.parked.local) || !r || r.repo !== subject.repo || r.pr !== subject.pr || r.headSha !== subject.headSha
+            || r.baseSha !== subject.baseSha || r.sourceManifestSha256 !== subject.sourceManifestSha256 || r.testSha !== c.testSha || batchKey(r) !== from) continue;
+          for (const role of HEAVY_ROLES) if (s.parked.local.includes(role) && !out.some(x => x.role === role)) out.push({ role, from });
+        } catch { /* reuses nothing from it */ }
+      }
+    }
+    return HEAVY_ROLES.flatMap(role => out.filter(x => x.role === role));
+  }
+
   // One hosted-wait evaluation -> { waiting, until } | 20-plan-intent -> stage R (only with candidates) ->
   // 25-plan. Returns the plan { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
   async relayPlan(key, subject, batch, t0) {
@@ -3862,13 +3893,17 @@ export class ResidentExecutor {
     // A train front batch (a subject with S, §41.4, §38.8 m1) never relays: every role stays local, decided here, before
     // 20-plan-intent (the derivation and the relay entry would only refuse it later).
     const front = Object.hasOwn(subject, 'testSha');
+    // Rule 41ab823a (DESIGN §75): a scan whose exact input already passed in a batch of this node is not run again on the front.
+    const reused = front ? await this.frontScansReused(subject) : [];
+    const ownRoles = HEAVY_ROLES.filter(r => !reused.some(x => x.role === r));
     const seen = relay.enabled === true && !front ? await this.hint(subject) : { hint: null, refused: false };
-    const decision = front ? { action: 'START', relayCandidates: [], local: [...HEAVY_ROLES], reasons: Object.fromEntries(HEAVY_ROLES.map(r => [r, RELAY_TRAIN_FRONT_LOCAL])),
-      reason: RELAY_TRAIN_FRONT_LOCAL } : decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
+    const decision = front ? { action: 'START', relayCandidates: [], local: ownRoles, reasons: Object.fromEntries(ownRoles.map(r => [r, RELAY_TRAIN_FRONT_LOCAL])),
+      reason: RELAY_TRAIN_FRONT_LOCAL, ...(reused.length ? { reused } : {}) } : decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
     if (decision.action === 'WAIT') return { waiting: true, until: decision.until, reason: decision.reason };
     const candidates = decision.relayCandidates;
     await this.ledger.writePlanIntent(key, { candidates, local: decision.local, reasons: decision.reasons, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0),
-      hintSha256: seen.sha256 ?? null, hintRefused: seen.refused });
+      hintSha256: seen.sha256 ?? null, hintRefused: seen.refused, ...(reused.length ? { reused } : {}) });
+    if (reused.length) await this.receipt('train-front-scans-reused', { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha, reused });
     await this.receipt('relay-plan-intent', { key, candidates, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0), hintRefused: seen.refused });
     // Roles the resident never sent to stage R stay local with the resident's own scheduling reason.
     const scheduled = decision.local.map(role => ({ role, reason: decision.reasons[role],
@@ -3941,7 +3976,8 @@ export class ResidentExecutor {
       attested = rows.local.map(row => ({ role: row.role, reason: row.reason, receipt: row.receipt, source: 'stage-r', detail: row.detail }));
     }
     const local = [...attested, ...scheduled].sort((a, b) => HEAVY_ROLES.indexOf(a.role) - HEAVY_ROLES.indexOf(b.role));
-    const plan = { candidates, relayed: relayed.map(r => ({ role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 })), local };
+    const plan = { candidates, relayed: relayed.map(r => ({ role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 })), local,
+      ...(reused.length ? { reused } : {}) };
     await this.ledger.writePlan(key, plan);
     for (const r of plan.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 });
     if (relay.enabled === true) for (const l of local) await this.receipt(l.receipt === 'relay-billing-refused' ? RELAY_RECEIPTS.billingRefused : RELAY_RECEIPTS.localFallback, { key, role: l.role, reason: l.reason, source: l.source });
