@@ -74,13 +74,23 @@ test('non-PR enumeration requires fresh complete fixed-family data and exact Sou
   assert.throws(()=>ciWorkflows(ROOT,()=>names,p=>p.endsWith('clued-non-pr-control-sources.json')?Buffer.from([0xff]):fs.readFileSync(p)),/invalid UTF-8/);
 });
 
-const registeredOrdinaryText=file=>Buffer.from(parseWorkflowProfiles(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'))).workflows[file].source_yaml);
+// The last catalogue with a registered nongated ordinary CI Source (runner-budget-policy.yml, deleted with its profile and
+// role entries): exact Git objects of main 4a3e0485, read with the workflow's registered bytes in place of the live files.
+const LAST_ORDINARY_CATALOGUE={profiles:'2a59cc0fee3ea1d62b6e2a18dea41b835184f28f',roles:'e23a3d9f16bd4ac0fa0791175ad070096e0314bf'};
+function lastOrdinaryCatalogue(file){
+  const object=blob=>execFileSync('git',['cat-file','blob',blob],{cwd:ROOT,maxBuffer:8*1024*1024});
+  const profiles=object(LAST_ORDINARY_CATALOGUE.profiles),roles=object(LAST_ORDINARY_CATALOGUE.roles),
+    text=Buffer.from(parseWorkflowProfiles(profiles).workflows[file].source_yaml),
+    profilePath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),rolePath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json');
+  const read=p=>p===profilePath?profiles:p===rolePath?roles:p===path.join(ROOT,file)?text:fs.readFileSync(p);
+  return {profiles,roles,text,read};
+}
 
 test('nongated ordinary CI needs an exact registered Source and independent complete FullRoles, not a basename',()=>{
-  // runner-budget-policy.yml is deleted; its registered Source bytes stay in the catalogue and stand in for the file.
-  const name='runner-budget-policy.yml',file='.github/workflows/'+name,text=registeredOrdinaryText(file),
+  const name='runner-budget-policy.yml',file='.github/workflows/'+name,{text,read}=lastOrdinaryCatalogue(file),
     ordinaryPath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),rolesPath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json');
-  const expected=gitBlobSha(text),read=p=>p===path.join(ROOT,file)?text:fs.readFileSync(p);
+  const expected=gitBlobSha(text);
+  assert.equal(ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?text:fs.readFileSync(p)).size,0,'the current catalogue no longer registers it');
   assert.deepEqual([...ciWorkflows(ROOT,()=>[name],read)],[[file,expected]]);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.concat([text,Buffer.from('\n')]):read(p)),/unregistered default ordinary Source/);
   const specs=JSON.parse(read(rolesPath));specs.workflows[file].sources[expected].pop();
@@ -1137,8 +1147,8 @@ test('ordinary catalogue reader accepts only the profile through 2 MiB and keeps
   const name='runner-budget-policy.yml',file='.github/workflows/'+name,
     profilePath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),
     rolePath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json'),
-    original=fs.readFileSync(profilePath),legacy=Buffer.from(JSON.stringify(parseWorkflowProfiles(original))+'\n'),
-    text=registeredOrdinaryText(file),expected=gitBlobSha(text),read=p=>p===path.join(ROOT,file)?text:fs.readFileSync(p);
+    {profiles:original}=lastOrdinaryCatalogue(file),legacy=Buffer.from(JSON.stringify(parseWorkflowProfiles(original))+'\n'),
+    {text,read}=lastOrdinaryCatalogue(file),expected=gitBlobSha(text);
   assert.ok(original.length>1048576,'the actual G4 successor crosses the old bound');
   for(const size of [original.length,WORKFLOW_PROFILES_MAX_BYTES]) {
     const padded=size===original.length?original:Buffer.concat([legacy,Buffer.alloc(size-legacy.length,32)]);
@@ -1146,5 +1156,5 @@ test('ordinary catalogue reader accepts only the profile through 2 MiB and keeps
   }
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===profilePath?Buffer.alloc(WORKFLOW_PROFILES_MAX_BYTES+1):read(p)),/exceeds bounds/);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolePath?Buffer.alloc(524289):read(p)),/exceeds bounds/);
-  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.alloc(524289):read(p)),/exceeds bounds/);
 });

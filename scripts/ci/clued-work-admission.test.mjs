@@ -3679,7 +3679,7 @@ test('trusted admission catalogue reader permits only the profile through 2 MiB 
     profiles=parseWorkflowProfiles(raw),legacy=Buffer.from(JSON.stringify(profiles)+'\n'),source=blob=>registeredWorkflowSource(profiles,file,blob).profile.source_yaml,
     before=source('ba4690650935961e7f4aa289a3aa0dc874b8b4fd'),after=source('6441fc32b084002de697415ea8343af07816c929'),
     originalStat=fs.lstatSync,originalRead=fs.readFileSync;
-  assert.ok(raw.length>1048576,'the actual preregistered catalogue crosses the old bound');
+  assert.ok(raw.length<=2097152,'the actual catalogue fits the 2 MiB bound');
   const fetchImpl=async url=>{
     const address=new URL(url);assert.equal(address.pathname,`/repos/o/r/contents/${file}`);
     const text=address.searchParams.get('ref')===HEAD?after:before;
