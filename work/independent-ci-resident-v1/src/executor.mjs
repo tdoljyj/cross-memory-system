@@ -7,23 +7,17 @@
 // admission, Owner grants, merge queue) is decided inside the stages by the existing reviewed helpers
 // that run as clued-control; this module never sees a secret.
 //
-// Order of one batch (PR-A, free-minutes design S19):
+// Order of one batch:
 //   reserve -> derive -> companion bundle -> stage 1 (admission) -> markStarted (burns the head) ->
-//   15-relay-wait (t0, batch) -> hosted wait (bounded, hosted-wait.mjs#decide over the companion's untrusted
-//   hints; NON-BLOCKING: while it says WAIT the tick returns WAITING, and every later tick re-evaluates it
-//   from the stored t0 only after recovery, the Owner's requests, HALT and PAUSE, so the emergency stop is
-//   never delayed by a wait and the service loop keeps the instance lock fresh) -> 20-plan-intent ->
-//   stage R (hosted relay, only when there are relay candidates) -> 25-plan ->
-//   [Linux workspace preparation] -> execution + publication stages of the LOCAL_REQUIRED roles only ->
+//   15-relay-wait (t0, batch; the record keeps its historic name) -> 20-plan-intent -> 25-plan (every heavy role local) ->
+//   [Linux workspace preparation] -> execution + publication stages of the heavy roles ->
 //   stage 8 -> close (success-path archive) -> COMPLETED
 // Before markStarted nothing touched Linux, no scanner ran and no success check was published, so a
 // bundle failure or a stage-1 "not admitted" releases the reservation instead of burning the head.
-// A batch whose heavy roles were all relayed still burns its head (markStarted) and never touches WSL.
-// Stage R: RELAY_PUBLICATION_UNCERTAIN (or any plan row that is not a clean RELAYED / LOCAL_REQUIRED) is
-// UNKNOWN and HALTs; such a role is never run locally afterwards. A role is run locally only from 25-plan.
-// An ON_GITHUB row (primary/standby C4: the role's check is already on GitHub, unknown to this node) ends the batch
-// cleanly as ROLE_ALREADY_ON_GITHUB, with no 25-plan and no local stage; so does stage 1's HEAD_PUBLISHED_ON_GITHUB,
-// after which the head is recorded as executed.
+// The hosted relay (stage R, the hosted wait and its hints, the relay qualification hold) is removed (Owner 2026-11-14,
+// DESIGN §76): it was never switched on. The plan records keep their fields (candidates [], relayed [], every role local with
+// RELAY_DISABLED), byte for byte what relay.enabled = false wrote, so every reader of older ledger entries stays as it was.
+// Stage 1's HEAD_PUBLISHED_ON_GITHUB ends the batch cleanly, after which the head is recorded as executed.
 //
 // Failure handling (Owner Decision 0d84ddbb item 4): a failure with a complete cleanup proof is
 // archived (rename only) and the executor moves on; the head is never re-run automatically, with ONE
@@ -117,7 +111,7 @@
 //     full sweep in on mode is complete since this onSince (the take-over sweep comes before any publication: parked batches wait
 //     too); a front batch's automatic attempt 2 is one of its head's two front batches; with nonFrontRuns false only the front
 //     subject runs; the front rows of a duty that ended (STANDBY, train not on) are dropped;
-//   - relayPlan keeps every role of a subject with S local (RELAY_TRAIN_FRONT_LOCAL) before writing 20-plan-intent;
+//   - localPlan keeps every role of a subject with S local (RELAY_TRAIN_FRONT_LOCAL) before writing 20-plan-intent;
 //   - HALT, PAUSE and the intake pause are written into the status board in the same tick they are latched or lifted.
 // requests\ also carries the "立即探测" and "撤车头" requests (resident-requests.mjs).
 import fs from 'node:fs/promises';
@@ -133,11 +127,9 @@ import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breakerRelease, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
-import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
-import { RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
+import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
+import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
-import { RELAY_RECEIPTS } from './receipts.mjs';
 import { ALERT_RECEIPT } from './retention.mjs';
 import { NODE_STATUS_MAX_AGE_MS } from './host-capacity.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
@@ -149,8 +141,6 @@ import { classifyFailure } from './classify.mjs';
 import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
-import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
-import { RelayQualificationObservations } from './relay-qualification-observations.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
   REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
@@ -223,7 +213,7 @@ export const LIMITS_REFRESH_MS = 60_000;
 // The global deferrals of a scheduling pass (precheck, trainGate) that hold every row: kept on the status (queue.hold) from the pass
 // that met one until a pass that got past it or until batch work starts (atStage: a new batch, one going on from A, a stage-8 try),
 // also while a batch only rests at A (review rounds 25 and 26).
-export const SCHEDULE_HOLDS = Object.freeze(['COMPANION_NOT_READY', VERSION_SKEW, 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED', ...TRAIN_SCHEDULE_DEFERRALS]);
+export const SCHEDULE_HOLDS = Object.freeze(['COMPANION_NOT_READY', VERSION_SKEW, ...TRAIN_SCHEDULE_DEFERRALS]);
 const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
 // The train on: the newest front-batch receipts read back at a start (per head, whatever their age; review R3 MINOR 11).
 const FRONT_RECOVER_RECEIPTS = 512;
@@ -462,9 +452,6 @@ export class ResidentExecutor {
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
     this.revocationBook = new RevocationMaintenanceBook();
-    this.qualificationHolds = new RelayQualificationHolds(this.ledger.root, this.clock);
-    this.qualificationObservations = new RelayQualificationObservations({ holds: this.qualificationHolds, engine: this.engine, clock: this.clock });
-    this.qualificationWindows = new Map();
     // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
     this.roleProbeMode = 'UNCERTAIN';
     this.roleProbe.markUrgent();
@@ -962,16 +949,6 @@ export class ResidentExecutor {
   // processes may still exist, so it is UNKNOWN and HALT is latched (once). The one exception (DESIGN §71): a batch an earlier boot
   // left open, proven unpublished and quiet on both hosts, is closed FAILED_CLEAN and runs again as its attempt 2.
   async recover() {
-    // A crash after creating the guard but before a Stage1 intent is a safe
-    // pre-execution hold, not permission to repeat admission. Intent presence
-    // keeps the original crash/UNKNOWN handling (Stage1 might have run).
-    for (const e of await this.ledger.open()) {
-      if (e.state !== 'RESERVED' || e.qualificationHold || e.abort || e.selfAbort) continue;
-      const held = await this.qualificationHolds.inspect(e.reserved.subject);
-      if (held.record?.key === e.key && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(held.record.batchId ?? '')
-        && !(await this.qualificationHolds.stage1Attempted(e.reserved.subject)))
-        await this.ledger.beginQualificationHold(e.key, { t0: Date.parse(e.reserved.reservedAt), batch: { batchId: held.record.batchId, key: e.key } });
-    }
     // A batch that only waits for hosted signals runs nothing: it is resumed by tick(), never a crash scene.
     let open = await this.ledger.crashed();
     // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT. An entry
@@ -2688,7 +2665,6 @@ export class ResidentExecutor {
     const all = entries ?? await this.ledger.parkedEntries();
     let inside = 0, outside = 0;
     for (const e of all) {
-      if (Ledger.qualificationHeldAt(e) || (Ledger.waitingAt(e) && (await this.qualificationHolds.inspect(e.reserved.subject)).held)) continue;
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
       const last = ResidentExecutor.lastTry(e);
       const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
@@ -2730,8 +2706,7 @@ export class ResidentExecutor {
     // DESIGN §72), whatever the train gate below says: field defect PR #1035 needs no step of its own here.
     if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
     if (entries.length === 0) return { acted: null, waiting: null };
-    let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
-      ? this.qualificationWaiting(entries.find(e => Ledger.qualificationHeldAt(e)).key) : null;
+    let waiting = null;
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
       const r = await this.resumeWaiting(e);
       if (r?.state !== 'WAITING') return { acted: r, waiting: null };
@@ -3178,17 +3153,6 @@ export class ResidentExecutor {
   async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued', claimChanged = false } = {}) {
     const now = this.clock();
     const l = this.policy.limits;
-    if ((await this.qualificationHolds.inspect(subject)).held) return { defer: RELAY_QUALIFICATION_HELD, perRow: true };
-    let qualificationWindow = null;
-    try {
-      const q = await this.readQualificationWindow();
-      qualificationWindow = q;
-      if (q && q.subject.repo.toLowerCase() === subject.repo.toLowerCase() && q.subject.headSha === subject.headSha
-        && (!qualificationWindowMatches(q, subject, this.policy) || Date.parse(q.validUntil) <= now)) {
-        await this.qualificationHolds.arm(q, subject, { key });
-        return { defer: RELAY_QUALIFICATION_HELD, perRow: true };
-      }
-    } catch { return { defer: 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED' }; }
     if (await this.ledger.headBurned(hk)) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
     // A head that may have published a check under ANY Source or attempt (executed-heads.mjs) never runs again: a new
     // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
@@ -3225,7 +3189,6 @@ export class ResidentExecutor {
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
     if (!beat || typeof beat.at !== 'number' || now - beat.at > this.policy.companion.heartbeatMaxAgeMs) return { defer: 'COMPANION_NOT_READY' };
-    this.qualificationWindows.set(key, qualificationWindow);
     return {};
   }
 
@@ -3398,7 +3361,6 @@ export class ResidentExecutor {
       // An exception in the executor itself (or a port) is never classified as clean.
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', null, archiveFacts(error));
     }
-    this.qualificationWindows.delete(key);
     return this.afterBatch(subject, origin, outcome);
   }
 
@@ -3593,29 +3555,6 @@ export class ResidentExecutor {
     const superseded = await this.supersededBeforeStart(key, subject, batch);
     if (superseded) return superseded;
 
-    let guarded = false;
-    const oldGuard = await this.qualificationHolds.inspect(subject);
-    if (oldGuard.held) {
-      await this.ledger.beginQualificationHold(key, { t0, batch });
-      return this.qualificationWaiting(key);
-    }
-    const q = this.qualificationWindows.has(key) ? this.qualificationWindows.get(key) : await this.readQualificationWindow();
-    this.qualificationWindows.delete(key);
-    if (q && q.subject.repo.toLowerCase() === subject.repo.toLowerCase() && q.subject.headSha === subject.headSha) {
-      const armed = await this.qualificationHolds.arm(q, subject, { key, batchId: batch.batchId });
-      guarded = armed.created && qualificationWindowMatches(armed.window, subject, this.policy) && Date.parse(armed.window.validUntil) > this.clock();
-      if (!guarded) {
-        await this.ledger.beginQualificationHold(key, { t0, batch });
-        return this.qualificationWaiting(key);
-      }
-      if (Date.parse(armed.window.validUntil) <= this.clock()) {
-        await this.ledger.beginQualificationHold(key, { t0, batch });
-        return this.qualificationWaiting(key);
-      }
-      // From this durable intent onward an uncertain ending is never promoted
-      // to a pre-Stage1 hold, even if the window expires during an await.
-      await this.qualificationHolds.stage1Intent(subject, { key, batchId: batch.batchId });
-    }
     this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null, outcome: outcomeSummary(first) });
@@ -3627,7 +3566,6 @@ export class ResidentExecutor {
       }
       return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
     }
-    if (guarded) await this.qualificationHolds.recordStage1(subject, { key, batchId: batch.batchId, result: first });
     // Defect a8910e41 (DESIGN §62.4): the take-over binding run ends right here, before markStarted would burn the head: only stage 1
     // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
     // run that an older version left STARTED still ends in continueBatch, burned as before.
@@ -3640,7 +3578,7 @@ export class ResidentExecutor {
       return this.frontBindEnd(key);
     }
 
-    // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
+    // Admitted and published: from here on this head is burned.
     await this.ledger.markStarted(key, { batchId: batch.batchId });
     await this.receipt('batch-started', { key });
     // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72).
@@ -3658,15 +3596,6 @@ export class ResidentExecutor {
     const { key } = entry, { t0, batch } = entry.wait, subject = entry.reserved.subject;
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
     this.atStage(null, 'relay-wait');
-    if ((await this.qualificationHolds.inspect(subject)).held) {
-      // Advisory hints only schedule the installed Source's protected read.
-      // The persistent head guard remains in force after either observation;
-      // no result here authorizes Stage R, scanners, publication or relay.
-      const observation = await this.qualificationObservations.tick({ subject,
-        hint: (await this.hint(subject)).hint, livePull: await this.livePull(subject.pr, batch) });
-      return { ...this.qualificationWaiting(key), qualificationObservation: {
-        state: observation.state, code: observation.code ?? null, phase: observation.phase ?? null, liveQualified: false } };
-    }
     let outcome;
     try {
       // An install authority that ends within one batch budget closes a batch at parking point A neutrally, as at B
@@ -3688,26 +3617,23 @@ export class ResidentExecutor {
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
-  // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
-  // stage R, 25-plan, the local roles, stage 8 and the close.
+  // Everything after 15-relay-wait: 20-plan-intent, 25-plan, the local roles, stage 8 and the close.
   //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
   //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
   async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
-    if ((await this.qualificationHolds.inspect(subject)).held) return this.qualificationWaiting(key);
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
-    const plan = await this.relayPlan(key, subject, batch, t0);
-    if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
-    const relayed = plan.relayed.length;
+    const plan = await this.localPlan(key, subject, t0);
+    const relayed = 0;
 
     // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
     // local Linux role are archived before the next one (between-roles-4 / -6 only where needed).
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
-      if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
+      if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-workspace', POSITIONS[1]))) return aborted;
       // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
       // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
       // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
@@ -3818,7 +3744,6 @@ export class ResidentExecutor {
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);
       }
     }
-    await this.lateHostedResults(key, subject, plan);
     if ((aborted = await this.abortIfRequested(key, batch, 'before-stage-8'))) return aborted;
     // Phase 2, step 2: the close archive on both hosts ends the Linux exclusive zone; then the batch rests at parking
     // point B and stage 8 runs as tries (the first one right away). Stage 8 touches only Windows.
@@ -3830,25 +3755,6 @@ export class ResidentExecutor {
     // here never changes the batch, which already rests at B (independent review of step 2, m12).
     try { await this.feedBreaker(subject, { pos: POSITIONS[7], breaker: 'neutral', linux: localRoles.length > 0, kind: 'parked', code: null }); } catch { /* a view */ }
     return this.stage8Try(key, subject, batch);
-  }
-
-  qualificationWaiting(key) {
-    return { state: 'WAITING', key, until: this.clock() + this.policy.relay.wait.pollMs, reason: RELAY_QUALIFICATION_HELD };
-  }
-
-  async readQualificationWindow() {
-    check(typeof this.engine.relayQualificationWindow === 'function', 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
-    const raw = await this.engine.relayQualificationWindow();
-    return raw === null ? null : qualificationWindowSnapshot(raw);
-  }
-
-  // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
-  // batch wait less or relay less, never more).
-  async hint(subject) {
-    let bytes = null;
-    try { bytes = await this.companion.hostedHint?.(subject); } catch { bytes = null; }
-    if (!bytes) return { hint: null, refused: false };
-    try { return { hint: parseHint(bytes, subject), refused: false, sha256: sha256(bytes) }; } catch { return { hint: null, refused: true }; }
   }
 
   // Rule 41ab823a, DESIGN §75: which scans of this front batch (a subject with S) already ran on exactly the same input, here: a batch of
@@ -3882,115 +3788,23 @@ export class ResidentExecutor {
     return HEAVY_ROLES.flatMap(role => out.filter(x => x.role === role));
   }
 
-  // One hosted-wait evaluation -> { waiting, until } | 20-plan-intent -> stage R (only with candidates) ->
-  // 25-plan. Returns the plan { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
-  async relayPlan(key, subject, batch, t0) {
-    const relay = this.policy.relay;
-    // Owner once-per-head rule 41ab823a overrides the historic fallback design.
-    // No trusted atomic provider transfer exists here, including for train S.
-    if (relay.enabled === true && Object.hasOwn(subject, 'testSha'))
-      return { waiting: true, until: this.clock() + relay.wait.pollMs, reason: 'RELAY_PROVIDER_TRANSFER_REQUIRED' };
-    // A train front batch (a subject with S, §41.4, §38.8 m1) never relays: every role stays local, decided here, before
-    // 20-plan-intent (the derivation and the relay entry would only refuse it later).
+  // 20-plan-intent -> 25-plan: every heavy role is local (the hosted relay is removed, DESIGN §76). The records are written exactly as
+  // relay.enabled = false wrote them (reason RELAY_DISABLED, no candidates, nothing relayed), so older readers keep their meaning.
+  // Returns the plan { candidates: [], relayed: [], local: [{ role, reason, receipt, source }] }.
+  async localPlan(key, subject, t0) {
+    // A train front batch (a subject with S, §41.4, §38.8 m1): every role stays local with its own reason.
     const front = Object.hasOwn(subject, 'testSha');
     // Rule 41ab823a (DESIGN §75): a scan whose exact input already passed in a batch of this node is not run again on the front.
     const reused = front ? await this.frontScansReused(subject) : [];
-    const ownRoles = HEAVY_ROLES.filter(r => !reused.some(x => x.role === r));
-    const seen = relay.enabled === true && !front ? await this.hint(subject) : { hint: null, refused: false };
-    const decision = front ? { action: 'START', relayCandidates: [], local: ownRoles, reasons: Object.fromEntries(ownRoles.map(r => [r, RELAY_TRAIN_FRONT_LOCAL])),
-      reason: RELAY_TRAIN_FRONT_LOCAL, ...(reused.length ? { reused } : {}) } : decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
-    if (decision.action === 'WAIT') return { waiting: true, until: decision.until, reason: decision.reason };
-    const candidates = decision.relayCandidates;
-    await this.ledger.writePlanIntent(key, { candidates, local: decision.local, reasons: decision.reasons, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0),
-      hintSha256: seen.sha256 ?? null, hintRefused: seen.refused, ...(reused.length ? { reused } : {}) });
+    const roles = front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES];
+    const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
+    const reasons = Object.fromEntries(roles.map(r => [r, reason]));
+    await this.ledger.writePlanIntent(key, { candidates: [], local: roles, reasons, reason, waitedMs: Math.max(0, this.clock() - t0), hintSha256: null, hintRefused: false, ...(reused.length ? { reused } : {}) });
     if (reused.length) await this.receipt('train-front-scans-reused', { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha, reused });
-    await this.receipt('relay-plan-intent', { key, candidates, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0), hintRefused: seen.refused });
-    // Roles the resident never sent to stage R stay local with the resident's own scheduling reason.
-    const scheduled = decision.local.map(role => ({ role, reason: decision.reasons[role],
-      receipt: decision.reasons[role] === 'RELAY_HINT_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback', source: 'resident' }));
-    let relayed = [], attested = [];
-    if (candidates.length > 0) {
-      const unrecorded = await this.beforePublication(key, subject, RELAY_STAGE);
-      if (unrecorded) return unrecorded;
-      this.atStage(RELAY_STAGE, 'stage');
-      const r = await this.engine.runRelayStage(batch, candidates);
-      await this.receipt('stage-terminal', { key, stage: RELAY_STAGE, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
-      if (r.ok !== true) {
-        // Failure can follow a confirmed publication (a later role HALTs, or
-        // the independent SCM readback fails). Retain only a closed, ordered
-        // packet's confirmed rows; this is evidence, never an execution plan.
-        const confirmed = (() => {
-          try {
-            if (!Array.isArray(r.relay)) return [];
-            const packet = Object.getOwnPropertyDescriptors(r.relay);
-            if (packet.length.value !== candidates.length || Reflect.ownKeys(packet).length !== candidates.length + 1) return [];
-            const fields = ['role', 'outcome', 'reason', 'receipt', 'checkRunId', 'externalId', 'attestationSha256', 'detail'];
-            const published = [], ids = new Set(); let stopped = false;
-            for (let i = 0; i < candidates.length; i++) {
-              const item = packet[i];
-              if (!item || !Object.hasOwn(item, 'value') || !item.enumerable
-                || !item.value || Object.getPrototypeOf(item.value) !== Object.prototype) return [];
-              const d = Object.getOwnPropertyDescriptors(item.value);
-              if (Reflect.ownKeys(d).length !== fields.length || !fields.every(k => d[k]
-                && Object.hasOwn(d[k], 'value') && d[k].enumerable
-                && (d[k].value === null || ['string', 'number'].includes(typeof d[k].value)))) return [];
-              const row = Object.fromEntries(fields.map(k => [k, d[k].value]));
-              if (row.role !== candidates[i] || !(row.detail === null
-                || typeof row.detail === 'string' && /^[A-Za-z0-9_:.-]{1,160}$/.test(row.detail))) return [];
-              const empty = row.reason === null && row.receipt === null && row.checkRunId === null
-                && row.externalId === null && row.attestationSha256 === null;
-              if (stopped) { if (row.outcome !== 'NOT_PROCESSED' || !empty) return []; continue; }
-              if (row.outcome === 'HALT') {
-                if (!['RELAY_PUBLICATION_UNCERTAIN', 'ROLE_ALREADY_PUBLISHED_ON_HEAD'].includes(row.reason)
-                  || row.receipt !== null || row.checkRunId !== null || row.externalId !== null || row.attestationSha256 !== null) return [];
-                stopped = true; continue;
-              }
-              const one = relayPlanFromRows([row], [candidates[i]]);
-              if (!one) return [];
-              if (one.relayed.length === 1) {
-                if (row.externalId.split(':')[3] !== subject.headSha.slice(0, 12) || ids.has(row.checkRunId)) return [];
-                ids.add(row.checkRunId); published.push(one.relayed[0]);
-              } else if (one.onGithub) stopped = true;
-            }
-            return published;
-          } catch { return []; } // no caller-owned error or partial invalid row is serialized
-        })();
-        for (const x of confirmed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
-        return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', confirmed.length, r);
-      }
-      const rows = relayPlanFromRows(r.relay, candidates);
-      if (!rows) return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', 0);
-      if (rows.local.length > 0) {
-        // Preserve confirmed publications before holding any unresolved role.
-        // A LOCAL_REQUIRED row is not a scan-start/provider-transfer authority.
-        for (const x of rows.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
-        return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', rows.relayed.length, r);
-      }
-      // C4: a role already on GitHub that this node knew nothing of ends the batch cleanly: no 25-plan and no local stage
-      // for any role (the head was recorded as executed before stage R). A role relayed before it keeps its receipt.
-      if (rows.onGithub) {
-        for (const x of rows.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
-        return new StepFailure(RELAY_STAGE, 'ROLE_ALREADY_ON_GITHUB', r.proof, 'stage', rows.relayed.length, r);
-      }
-      relayed = rows.relayed;
-      attested = rows.local.map(row => ({ role: row.role, reason: row.reason, receipt: row.receipt, source: 'stage-r', detail: row.detail }));
-    }
-    const local = [...attested, ...scheduled].sort((a, b) => HEAVY_ROLES.indexOf(a.role) - HEAVY_ROLES.indexOf(b.role));
-    const plan = { candidates, relayed: relayed.map(r => ({ role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 })), local,
-      ...(reused.length ? { reused } : {}) };
+    await this.receipt('relay-plan-intent', { key, candidates: [], reason, waitedMs: Math.max(0, this.clock() - t0), hintRefused: false });
+    const plan = { candidates: [], relayed: [], local: roles.map(role => ({ role, reason, receipt: 'relay-local-fallback', source: 'resident' })), ...(reused.length ? { reused } : {}) };
     await this.ledger.writePlan(key, plan);
-    for (const r of plan.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 });
-    if (relay.enabled === true) for (const l of local) await this.receipt(l.receipt === 'relay-billing-refused' ? RELAY_RECEIPTS.billingRefused : RELAY_RECEIPTS.localFallback, { key, role: l.role, reason: l.reason, source: l.source });
     return plan;
-  }
-
-  // A hosted run that finished after the local path started is never relayed (design §7.4): it is only
-  // recorded, once per role, as relay-late-ignored.
-  async lateHostedResults(key, subject, plan) {
-    if (this.policy.relay.enabled !== true) return;
-    const { hint } = await this.hint(subject);
-    if (!hint) return;
-    for (const l of plan.local) if (RELAY_ROLES.includes(l.role) && hint.roles[l.role]?.state === 'SUCCESS') await this.receipt(RELAY_RECEIPTS.lateIgnored, { key, role: l.role, reason: l.reason });
   }
 
   // The cleanup proof is always gathered fresh at failure time from both hosts (Windows from the

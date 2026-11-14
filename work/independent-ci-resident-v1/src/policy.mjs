@@ -12,11 +12,11 @@
 //   - retention: the archive size at which a reminder receipt is written (50 GB; archives are rename-only
 //     and never deleted by the resident), and how often it is measured;
 //   - validUntil null = valid until the Source changes or the resident is uninstalled.
-// Contract /3 (PR-A, free-minutes design S21): adds `relay` (the Owner's switch for stage R, the relayable
-// roles it may consider and the hosted-wait bounds of §7.2) and stage R's run cap as the ninth entry of
-// stageRunMilliseconds. The example and the initial install ship relay.enabled = false (Owner decision:
-// the OIDC claim values can only be measured when free minutes return); switching it on is a policy change
-// (new policy hash, one UAC), never a per-batch input.
+// Contract /3 (PR-A, free-minutes design S21) added `relay` (the switch for stage R, the hosted relay) and stage R's run cap as the
+// ninth entry of stageRunMilliseconds. The hosted relay is removed (Owner 2026-11-14, DESIGN §76; it was never switched on): a
+// `relay` key an installed policy still carries is accepted and dropped unread (LEGACY_POLICY_KEYS), and build-package leaves it out
+// of every new package, so the generic upgrade converges each node's policy without a step of its own. Stage 9 stays a reserved
+// number with its run cap (the installed policies and the broker's fixed stage table keep ten entries); no batch runs it.
 // Contract /4 (resident quota redesign phase 2, step 1: design v0.5 §4.7, Task 6451a55d): the executor's own run queue
 // (queue.mjs) and circuit breaker (breaker.mjs) take their bounds from here:
 //   - limits.maxBatchesPer24h up to 72 (executions; at the limit the queue waits and the Owner is told, nothing is
@@ -64,7 +64,6 @@
 // per batch, more than 1 only with push. push needs strict-permanent mode (sweep audit or off). Neither key written: the policy and its
 // digest are unchanged; an older resident refuses a policy that names one (POLICY_TRAIN_KEYS_INVALID).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
-import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
 export const POLICY_CONTRACT_V7 = 'clued.independent-ci.resident-policy/7';
@@ -89,7 +88,7 @@ export const FIXED_STAGES = Object.freeze([
   { number: 6, name: 'placement-execution', jobRole: 'contract-placement', linuxWorker: true },
   { number: 7, name: 'placement-publication', jobRole: 'contract-placement', linuxWorker: false },
   { number: 8, name: 'native-control-pair', jobRole: 'control-admission', linuxWorker: false },
-  // Stage R (hosted relay): runs between stage 1 and the local roles, only for relay candidates.
+  // Stage 9 (stage R, the hosted relay): removed (DESIGN §76); a reserved number that no batch runs.
   { number: 9, name: 'hosted-relay', jobRole: null, linuxWorker: false },
   // Stage 10 (train maintenance): outside every batch; runs only when train.enabled is not 'off'.
   { number: 10, name: 'train-maintenance', jobRole: null, linuxWorker: false },
@@ -111,14 +110,18 @@ export const TRAIN_LANDING_DEFAULT = 'github-merge';
 export const TRAIN_BATCH_MAX_LIMIT = 4;
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
+// The heavy roles of every batch, in their fixed order.
+export const HEAVY_ROLES = Object.freeze(Object.keys(ROLE_STAGES));
+// Keys an installed policy may still carry from a removed feature: accepted, never read, dropped from the validated policy.
+export const LEGACY_POLICY_KEYS = Object.freeze(['relay']);
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay', 'node', 'nodeProfileSha256',
-    ...(p?.contract === POLICY_CONTRACT_V10 ? ['roleProbe'] : [])], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'node', 'nodeProfileSha256',
+    ...(p?.contract === POLICY_CONTRACT_V10 ? ['roleProbe'] : []), ...LEGACY_POLICY_KEYS.filter(k => Object.hasOwn(p ?? {}, k))], 'POLICY_KEYS_INVALID');
   check(POLICY_CONTRACTS.includes(p.contract), 'POLICY_CONTRACT_INVALID');
   const node = pinnedNodeProfile(p.node, p.nodeProfileSha256);
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
@@ -168,8 +171,8 @@ export function validatePolicy(p) {
   check(typeof p.automaticAttempt2.enabled === 'boolean' && int(p.automaticAttempt2.delayMs, 60_000, 3_600_000), 'POLICY_ATTEMPT2_INVALID');
   exactKeys(p.retention, ['reminderBytes', 'checkEveryMs'], 'POLICY_RETENTION_KEYS_INVALID');
   check(int(p.retention.reminderBytes, 1024 ** 3, 1024 ** 4) && int(p.retention.checkEveryMs, 60_000, 86_400_000), 'POLICY_RETENTION_INVALID');
-  validateRelay(p.relay);
-  return Object.freeze({ ...p, node, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
+  const current = Object.fromEntries(Object.entries(p).filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)));
+  return Object.freeze({ ...current, node, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
 }
 
 // roleProbe (contract /10): interruptedMax 1 HALTs at the first interrupted probe (the behaviour of /9 and earlier); up to 10.
@@ -225,22 +228,5 @@ export function trainLandingMode(train) { return Object.hasOwn(train ?? {}, 'lan
 export function trainBatchMax(train) { return Object.hasOwn(train ?? {}, 'batchMax') ? train.batchMax : 1; }
 export function installedTrainLanding(policy) { return { landing: trainLandingMode(policy?.train), batchMax: trainBatchMax(policy?.train) }; }
 
-// relay: { enabled, roles (a non-empty ordered subset of the registry's relayable roles), wait (§7.2) }.
-export function validateRelay(r) {
-  exactKeys(r, ['enabled', 'roles', 'wait'], 'POLICY_RELAY_KEYS_INVALID');
-  check(typeof r.enabled === 'boolean', 'POLICY_RELAY_INVALID');
-  check(Array.isArray(r.roles) && r.roles.length > 0 && new Set(r.roles).size === r.roles.length && r.roles.every(x => RELAY_ROLES.includes(x))
-    && r.roles.every((x, i) => i === 0 || RELAY_ROLES.indexOf(r.roles[i - 1]) < RELAY_ROLES.indexOf(x)), 'POLICY_RELAY_ROLES_INVALID');
-  const w = r.wait;
-  exactKeys(w, ['signalMs', 'queueMs', 'runSlackMs', 'totalMs', 'pollMs', 'jobTimeoutMs'], 'POLICY_RELAY_WAIT_KEYS_INVALID');
-  check(int(w.signalMs, 60_000, 1_800_000) && int(w.queueMs, 60_000, 3_600_000) && int(w.runSlackMs, 60_000, 1_800_000) && int(w.totalMs, 60_000, 7_200_000)
-    && int(w.pollMs, 10_000, 300_000) && w.signalMs <= w.totalMs, 'POLICY_RELAY_WAIT_INVALID');
-  exactKeys(w.jobTimeoutMs, [...RELAY_ROLES], 'POLICY_RELAY_WAIT_KEYS_INVALID');
-  check(RELAY_ROLES.every(x => int(w.jobTimeoutMs[x], 60_000, 21_600_000)), 'POLICY_RELAY_WAIT_INVALID');
-  return r;
-}
-
-// Worst-case wall time of one batch: every formal stage at its cap plus the per-stage margin, and, when the
-// relay is on, the bounded hosted wait plus stage R. Stage 10 is never part of a batch.
-export const batchBudgetMs = policy => policy.stages.filter(s => s.number !== RELAY_STAGE && s.number !== TRAIN_STAGE).reduce((sum, s) => sum + s.runMilliseconds + policy.limits.stageMarginMs, 0)
-  + (policy.relay?.enabled === true ? policy.relay.wait.totalMs + policy.stages.find(s => s.number === RELAY_STAGE).runMilliseconds + policy.limits.stageMarginMs : 0);
+// Worst-case wall time of one batch: every formal stage at its cap plus the per-stage margin. Stages 9 and 10 are never part of a batch.
+export const batchBudgetMs = policy => policy.stages.filter(s => s.number !== RELAY_STAGE && s.number !== TRAIN_STAGE).reduce((sum, s) => sum + s.runMilliseconds + policy.limits.stageMarginMs, 0);

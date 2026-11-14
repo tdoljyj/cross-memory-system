@@ -24,10 +24,6 @@
     },
     "nodeProfileSha256": "b47a313e05f471de6d70de84cefc7e275f0fb79a65a8252db941bcc5f8ab54ce"
   },
-  "hints": {
-    "enabled": false,
-    "ciSourceManifestSha256": null
-  },
   "status": {
     "prStatus": true,
     "notifications": true

@@ -10,7 +10,7 @@ import { CHECK_REFS_REQUEST_MS, Mailbox } from '../src/mailbox.mjs';
 import { networkFailure } from '../src/classify.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig } from '../src/companion.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { RELAY_ON, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, relayedRow, tempRoot, triggerBytes } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);

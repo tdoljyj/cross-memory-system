@@ -1,24 +1,20 @@
 // Task 32d10618 (DESIGN §31): a reader never meets a half-written mailbox file. The mailbox writers (send, cancel, respond,
-// writeHint) publish a file whole - a temporary name, then one rename - and the readers that cannot be helped that way (the
-// Owner's create-only drop boxes inbox\ and requests\, a hint written by an older companion) wait for an unfinished file.
+// writeTiming) publish a file whole - a temporary name, then one rename - and the readers that cannot be helped that way (the
+// Owner's create-only drop boxes inbox\ and requests\) wait for an unfinished file.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HINT_LOOKBACK, Mailbox } from '../src/mailbox.mjs';
+import { Mailbox } from '../src/mailbox.mjs';
 import { Inbox, INBOX_UNFINISHED_GRACE_MS } from '../src/inbox.mjs';
 import { TEMP_FILE, TEMP_PREFIX, sweepTemp, writeNewAtomic } from '../src/store.mjs';
-import { parseHint } from '../src/hosted-wait.mjs';
 import { parseTrigger } from '../src/trigger.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { PAUSE_CONTRACT } from '../src/executor.mjs';
-import { HEAD, executorFixture, fastSleep, hintFor, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { HEAD, executorFixture, fastSleep, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const BATCH = '0123456789abcdef-0123456789ab';
 const T0 = Date.parse('2026-10-29T08:00:00Z');
-const SUBJECT = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD };
-const SUCCESS = { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } };
-const PENDING = { gitleaks: { state: 'PENDING_RUNNING', startedAt: T0 - 60_000 }, trivy: { state: 'PENDING_QUEUED', queuedAt: T0 - 60_000 } };
 
 // The write steps of writeNewAtomic and writeNew, as a test can stop at them: 'created' (the file exists, empty), 'written',
 // 'synced', 'before-rename' and 'renamed'. probe(stage) runs at each, with the step not yet taken (or just taken, as named).
@@ -98,13 +94,12 @@ test('writeNewAtomic: a rename that a scanner blocks for a moment is tried again
   assert.deepEqual(await fs.readdir(dir), ['a.json']);
 });
 
-test('at no moment of send, respond, cancel or writeHint does a mailbox directory hold an empty or incomplete file; every reader copes', async t => {
+test('at no moment of send, respond or cancel does a mailbox directory hold an empty or incomplete file; every reader copes', async t => {
   let now = T0;
   const box = await Mailbox.open(await tempRoot(t), () => now);
   // The companion's twin on the same directories (the service's send, the companion's respond share one root here).
   const first = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 6 * 60_000);
   await box.respond(first, { ok: true, verified: true, directory: 'archive-0123456789ab-success-close-aaaaaaaaaaaa' });
-  await box.writeHint(hintFor(PENDING)); // hint 1, the "old value"
 
   const seen = [];
   const known = new Set([first.requestId]);
@@ -119,10 +114,6 @@ test('at no moment of send, respond, cancel or writeHint does a mailbox director
     if (target?.kind === 'send') assert.equal(pending.filter(p => !known.has(p.requestId)).length, stage === 'renamed' ? 1 : 0, `send, ${stage}`);
     if (target?.kind === 'respond') assert.equal(await box.poll(target.request) !== null, stage === 'renamed', `respond, ${stage}`);
     if (target?.kind === 'cancel') assert.equal(await box.cancelled(target.request), stage === 'renamed', `cancel, ${stage}`);
-    if (target?.kind === 'hint') {
-      const bytes = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
-      assert.deepEqual(parseHint(bytes, SUBJECT).roles.gitleaks.state, stage === 'renamed' ? 'SUCCESS' : 'PENDING_RUNNING', `hint, ${stage}`);
-    }
     if (stage === 'renamed') published = true;
   };
   await steps(t, probe);
@@ -146,11 +137,6 @@ test('at no moment of send, respond, cancel or writeHint does a mailbox director
   target = { kind: 'cancel', request: other };
   await box.cancel(other, 'owner-abort');
   assert.equal(published, true);
-
-  published = false;
-  target = { kind: 'hint' };
-  await box.writeHint(hintFor(SUCCESS));
-  assert.equal(published, true);
 });
 
 test('create-only holds for the answer, the request and the cancel: the first stands, a second write is refused or a no-op', async t => {
@@ -169,27 +155,23 @@ test('create-only holds for the answer, the request and the cancel: the first st
   assert.deepEqual((await fs.readdir(box.responses)).filter(n => TEMP_FILE.test(n)), []);
 });
 
-test('a temporary name is never taken for a request, an answer, a hint or a cancel; old ones are swept, young ones are not', async t => {
+test('a temporary name is never taken for a request, an answer or a cancel; old ones are swept, young ones are not', async t => {
   const root = await tempRoot(t);
   const box = await Mailbox.open(root, () => T0);
   const req = await box.send('linux-quiescence', { batchId: BATCH }, 60_000);
   const complete = await fs.readFile(path.join(box.requests, `${req.requestId}.json`), 'utf8');
   const answerName = `${req.requestId}.json`;
-  const hint = (await (async () => { await box.writeHint(hintFor(SUCCESS)); return (await fs.readdir(box.responses)).find(n => n.startsWith('hosted-hint-')); })());
   // Temporary names of every writer, each holding a complete copy of what it would publish.
   const strays = [
     [box.requests, `${TEMP_PREFIX}aaaaaaaaaaaa-${req.requestId}.json`, complete],
     [box.requests, `${TEMP_PREFIX}bbbbbbbbbbbb-11111111-1111-4111-8111-111111111111.json`, complete],
     [box.responses, `${TEMP_PREFIX}cccccccccccc-${answerName}`, '{"a":1}\n'],
-    [box.responses, `${TEMP_PREFIX}dddddddddddd-${hint}`, '{"a":1}\n'],
     [box.responses, `${TEMP_PREFIX}eeeeeeeeeeee-heartbeat.json`, '{"a":1}\n'],
   ];
   for (const [dir, name, text] of strays) await fs.writeFile(path.join(dir, name), text);
   assert.deepEqual((await box.pending()).map(p => p.requestId), [req.requestId], 'only the real request is pending');
   assert.equal(await box.poll(req), null);
-  assert.equal((await box.latestHint(SUBJECT.pr, SUBJECT.headSha)).length > 0, true);
   assert.equal(await box.heartbeat(), null);
-  // a temporary name in the hint's own name pattern is not a hint (it starts with the prefix, not "hosted-hint-")
   assert.ok(strays.every(([, name]) => TEMP_FILE.test(name)));
   // sweep: only names of this shape, only files older than the minimum age
   const old = new Date(Date.now() - 2 * 3_600_000);
@@ -199,9 +181,9 @@ test('a temporary name is never taken for a request, an answer, a hint or a canc
   assert.equal(await sweepTemp(box.requests), 2);
   assert.equal(await sweepTemp(box.responses), 1);
   const left = [...(await fs.readdir(box.requests)), ...(await fs.readdir(box.responses))];
-  assert.ok(left.includes(`${TEMP_PREFIX}dddddddddddd-${hint}`) && left.includes(`${TEMP_PREFIX}eeeeeeeeeeee-heartbeat.json`), 'young temporary files stay');
+  assert.ok(left.includes(`${TEMP_PREFIX}eeeeeeeeeeee-heartbeat.json`), 'young temporary files stay');
   assert.ok(left.includes('not-ours.tmp'), 'other names are not touched');
-  assert.ok(left.includes(`${req.requestId}.json`) && left.includes(hint), 'the real files are not touched');
+  assert.ok(left.includes(`${req.requestId}.json`), 'the real files are not touched');
   // opening a mailbox sweeps the same way
   for (const [dir, name] of strays.slice(3)) await fs.utimes(path.join(dir, name), old, old);
   await Mailbox.open(root, () => T0);
@@ -219,68 +201,6 @@ test('the heartbeat is written under a swept temporary name and a failed beat le
   fs.rename = rename;
   assert.deepEqual(await fs.readdir(box.responses), ['heartbeat.json']);
   assert.deepEqual(await box.heartbeat(), { at: T0 });
-});
-
-test('hint: a newest file still being written (an older companion) is not there yet - the complete old value stands, then the new one; never refused, never all-local', async t => {
-  let now = T0;
-  const box = await Mailbox.open(await tempRoot(t), () => now);
-  const old = hintFor(PENDING);
-  await box.writeHint(old);
-  const oldBytes = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
-  assert.equal(parseHint(oldBytes, SUBJECT).roles.gitleaks.state, 'PENDING_RUNNING');
-  // the next hint, written the old way into the next sequence number
-  const next = hintFor(SUCCESS);
-  const nextBytes = Buffer.from(JSON.stringify(next) + '\n');
-  const nextFile = path.join(box.responses, (await fs.readdir(box.responses)).find(n => n.startsWith('hosted-hint-')).replace('-000001.json', '-000002.json'));
-  const w = await slowWrite(t, nextFile, nextBytes);
-  for (const end of [0, 1, Math.floor(nextBytes.length / 2), nextBytes.length - 2]) {
-    await w.upTo(end);
-    const bytes = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
-    assert.deepEqual(bytes, oldBytes, `${end} of ${nextBytes.length} bytes of the new hint written`);
-    assert.equal(parseHint(bytes, SUBJECT).roles.gitleaks.state, 'PENDING_RUNNING');
-  }
-  await w.finish();
-  assert.equal(parseHint(await box.latestHint(SUBJECT.pr, SUBJECT.headSha), SUBJECT).roles.gitleaks.state, 'SUCCESS', 'the re-read finds the complete new value');
-  // a lone unfinished hint is "no hint yet", not a refusal
-  const lone = await Mailbox.open(await tempRoot(t), () => now);
-  const loneFile = path.join(lone.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-000001.json`);
-  await fs.writeFile(loneFile, '');
-  assert.equal(await lone.latestHint(SUBJECT.pr, SUBJECT.headSha), null);
-  await fs.writeFile(loneFile, '{"contract":"clued.independent');
-  assert.equal(await lone.latestHint(SUBJECT.pr, SUBJECT.headSha), null);
-});
-
-test('hint: the executor reads the old complete value through the service port while the newest is half written - no hintRefused, no fallback to all-local', async t => {
-  const box = await Mailbox.open(await tempRoot(t), () => T0);
-  await box.writeHint(hintFor(PENDING));
-  const bytes = Buffer.from(JSON.stringify(hintFor(SUCCESS)) + '\n');
-  const w = await slowWrite(t, path.join(box.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-000002.json`), bytes);
-  await w.upTo(Math.floor(bytes.length / 2));
-  const f = await executorFixture(t, { policy: rawPolicy(), companion: mailboxCompanion(box, fastSleep) });
-  const seen = await f.exec.hint(SUBJECT);
-  assert.equal(seen.refused, false);
-  assert.equal(seen.hint.roles.gitleaks.state, 'PENDING_RUNNING', 'the old observation, not "no hint"');
-  await w.finish();
-  assert.equal((await f.exec.hint(SUBJECT)).hint.roles.gitleaks.state, 'SUCCESS');
-});
-
-test('hint: a finished hint that is wrong is still refused; an oversize or linked one still throws; only the newest few files are looked at', async t => {
-  const box = await Mailbox.open(await tempRoot(t), () => T0);
-  const name = n => path.join(box.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-${String(n).padStart(6, '0')}.json`);
-  await box.writeHint(hintFor(PENDING));
-  await fs.writeFile(name(2), '{"a":1}\n'); // finished JSON of the wrong shape: the newest finished file, returned for the caller to refuse
-  const bytes = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
-  assert.equal(bytes.toString('utf8'), '{"a":1}\n');
-  assert.throws(() => parseHint(bytes, SUBJECT));
-  await fs.writeFile(name(3), 'x'.repeat(4096));
-  await assert.rejects(box.latestHint(SUBJECT.pr, SUBJECT.headSha), { code: 'HOSTED_HINT_REFUSED', detail: 'size' });
-  await fs.rm(name(3));
-  // more unfinished files than the look-back: nothing older is reached
-  const crowded = await Mailbox.open(await tempRoot(t), () => T0);
-  const at = n => path.join(crowded.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-${String(n).padStart(6, '0')}.json`);
-  await fs.writeFile(at(1), JSON.stringify(hintFor(SUCCESS)) + '\n');
-  for (let n = 2; n < 2 + HINT_LOOKBACK; n += 1) await fs.writeFile(at(n), '');
-  assert.equal(await crowded.latestHint(SUBJECT.pr, SUBJECT.headSha), null);
 });
 
 // ---- the Owner's drop boxes: inbox\ and requests\ cannot be renamed in, so the reader waits ----
@@ -384,22 +304,9 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   // mailbox.mjs: one writeNew (the pump mark), every other mailbox file through writeNewAtomic
   assert.equal([...mailbox.matchAll(/\bwriteNew\(/g)].length, 1);
   assert.match(mailbox, /async claimPump[\s\S]{0,900}await writeNew\(/);
-  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 5); // send, cancel, respond, writeHint, writeTiming
+  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 4); // send, cancel, respond, writeTiming
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
   assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);
   assert.doesNotMatch(await read('ruleset-backstop.mjs'), /\bwriteNew\(/);
-});
-
-test('hint (review NIT-1): a newest file that is not JSON cannot be told from one still being written - the older complete hint stands; oversize and linked ones still throw', async t => {
-  const box = await Mailbox.open(await tempRoot(t), () => T0);
-  const at = n => path.join(box.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-${String(n).padStart(6, '0')}.json`);
-  await box.writeHint(hintFor(PENDING));
-  const old = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
-  await fs.writeFile(at(2), 'this is not json at all\n');
-  assert.deepEqual(await box.latestHint(SUBJECT.pr, SUBJECT.headSha), old, 'skipped like a prefix, the older complete hint is returned');
-  await fs.writeFile(at(2), Buffer.from([0x7b, 0x22, 0xe2, 0x82])); // a cut multi-byte character
-  assert.deepEqual(await box.latestHint(SUBJECT.pr, SUBJECT.headSha), old);
-  await fs.writeFile(at(2), 'x'.repeat(4096));
-  await assert.rejects(box.latestHint(SUBJECT.pr, SUBJECT.headSha), { code: 'HOSTED_HINT_REFUSED', detail: 'size' });
 });

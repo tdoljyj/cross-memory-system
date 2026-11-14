@@ -14,7 +14,7 @@ import { describe as prPage, events as notificationEvents } from '../src/pr-stat
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const OWNER = 'S-1-5-21-1-2-3-1001';
@@ -198,18 +198,15 @@ test('the breaker: parking after stage 7 is a pass of every stage before it; a s
 });
 
 test('parking point A: a batch resumed with a bundle older than 100 minutes ends before the workspace, nothing on Linux', async t => {
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const f = await executorFixture(t);
+  const atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
-  // A late success is only a Stage R candidate; it never grants Native scans.
-  // With the hosted receipts confirmed, the original bundle age gate is reached.
   f.advance(101 * MIN);
-  f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } },
-    { pr: s.pr, head: s.headSha, at: f.clock() })));
+  atA.release();
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD']);
-  assert.deepEqual(stagesRun(f.engine), [1, 9], 'no workspace preparation or local Linux scan');
+  assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation or local Linux scan');
   assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
   assert.equal(f.queue.row(884).state, 'STOPPED');
@@ -295,7 +292,8 @@ test('review M1, m10: the drain keeps the Owner abort guards (another scene, dri
 });
 
 test('review M1: the drain ends a batch waiting at parking point A (not published) the same way', async t => {
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const f = await executorFixture(t);
+  holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(1);
@@ -424,7 +422,8 @@ test('review m9, m11, m12: no new batch while the outside bound is full or a tri
   await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
   assert.deepEqual([(await f.exec.tick()).reason, f.engine.calls.filter(c => c[0] === 'derive').length], ['PARKING_FULL', 1]);
   // a half-open breaker starts no trial while a batch rests at parking point A
-  const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const g = await executorFixture(t);
+  holdAtA(g.exec);
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   g.queue.breaker = { ...closedBreaker(), state: 'open', level: 0, openedAt: g.clock(), nextTrialAt: g.clock() - 1, failingPos: POSITIONS[2], failingWindowsOnly: false, exclude: [] };
@@ -509,10 +508,11 @@ test('re-review m8, N6, N9: parking full is on every status; the back-off after 
 
 // ---- the final check of step 2 (test gaps n1, n2) ----
 test('final check n1: drifted bytes at an expiring authority end a batch waiting at A with a HALT, no archive', async t => {
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const f = await executorFixture(t);
+  holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
-  const later = new ResidentExecutor({ ...f.ports, policy: validatePolicy(rawPolicy({ relay: RELAY_ON, validUntil: new Date(f.clock() + 60_000).toISOString() })),
+  const later = new ResidentExecutor({ ...f.ports, policy: validatePolicy(rawPolicy({ validUntil: new Date(f.clock() + 60_000).toISOString() })),
     sourceIntegrity: async () => ({ ok: false }) });
   const r = await later.tick();
   assert.equal(r.state, 'HALTED');
