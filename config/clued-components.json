@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "f7cec19cf8647e332c7ddd536008b990c0270f5c98b2adafafd53a552c180bfe"
+      "content_sha256": "c8ea864f238b8acfe5db55d3bb4933a2a1932179ce0554d408766a3a0330b00a"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.60",
+      "version": "1.1.61",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "076d0ca7b5db9fc79e6c4ff113052891e947d5ec86caba2aef5007f1e61429f2"
+      "content_sha256": "aa25a74a34b18e968aeb053e4afcf1dd46b4b8dd59f6fe3480cb2405967b7aad"
     },
     {
       "id": "script.resource-maintenance",
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "f68836f8c617e4cc500a4b1c976f375058cc883ea90fd8a8b371ae9166d0a618"
+      "content_sha256": "7f81868bb90e4a5b135aab4b33763951f67e47c2796373ee92489d7f91561719"
     },
     {
       "id": "script.required-applicability",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "30bae83784fbacc1c6dc4f43a39dad0021064b15929479cb97a79a1aec1bbb6c"
+      "content_sha256": "fe47a7991c63a0d27015e8b2d7484de345b710d2021405ac26f6d4c1e9079c17"
     }
   ]
 }
