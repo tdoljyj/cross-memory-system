@@ -2133,6 +2133,49 @@
         }
       }
     },
+    "clued-required-tests-windows.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "ci-suites-windows": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
     "clued-standard-runner-actor-qualification.yml": {
       "jobs": {
         "admission-gate": {

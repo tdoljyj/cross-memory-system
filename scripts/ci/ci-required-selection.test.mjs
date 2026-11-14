@@ -503,7 +503,21 @@ test('a platform step runs every selected suite, names each result, fails when a
 // End to end (defect board row 14; #1092 was the mirror case, green on Windows and broken on Linux): a change that
 // is wrong on Windows only. The checkout below is the candidate; the selection and the commands are this (trusted)
 // file's, as in the job. The tool splits its own path on "/" to find its name, which a Windows path never contains.
-test('a change that breaks only on Windows fails the Windows side and passes the Linux side, through the same selection and commands', (t) => {
+// The job is read from the workflow GitHub runs (.github/workflows): before step 2 of ADR 0032 there was no such
+// workflow, so nothing published ci-suites-windows and this test could not find the job.
+const WINDOWS_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests-windows.yml');
+function windowsJob() {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const published = /&& '([a-z-]+)' \|\| '[a-z-]+-skipped' \}\}\n/.exec(job)[1];
+  const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
+  const [, check, root] = /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected (\S+) --root (\S+)\n {10}exit \$LASTEXITCODE\n/.exec(job);
+  return { published, platform: labels.includes('Windows') ? 'win32' : 'linux', check, root };
+}
+
+test('a change that breaks only on Windows fails ci-suites-windows and passes the Linux side, through the same selection and commands', (t) => {
+  const job = windowsJob();
+  assert.deepEqual(job, { published: 'ci-suites-windows', platform: 'win32', check: 'ci-suites', root: 'candidate' });
   const candidate = mkdtempSync(path.join(os.tmpdir(), 'ci-both-platforms-'));
   t.after(() => rmSync(candidate, { recursive: true, force: true }));
   mkdirSync(path.join(candidate, 'scripts', 'ci'), { recursive: true });
@@ -527,13 +541,16 @@ test('a change that breaks only on Windows fails the Windows side and passes the
   // What the pull request changes selects the same suite on both platforms.
   const files = ['tools/setup.ps1'];
   for (const platform of PLATFORMS) assert.deepEqual(selectSuites('ci-suites', files, platform).suites, ['powershell-count'], platform);
+  // The workflow's job runs this check for its runner's platform; the failing suite is in what it selects.
+  assert.deepEqual(selectSuites(job.check, files, job.platform).suites, ['powershell-count']);
   // The step of the job on this host: the real commands, in the candidate checkout.
   const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
   const lines = [];
-  const status = runSelected(selectSuites('ci-suites', files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+  const status = runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
     run: (id, options) => runSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
   if (process.platform === 'win32') {
-    assert.equal(status, 1, 'the Windows side fails: this is the failure a Linux-only CI never saw');
+    assert.equal(hostPlatform(), job.platform, 'this host is the platform of the ci-suites-windows job');
+    assert.equal(status, 1, 'ci-suites-windows fails: this is the failure a Linux-only CI never saw');
     assert.deepEqual(lines, ['- `powershell-count`: **failed**\n']);
   } else {
     assert.equal(status, 0, 'the same change is green on Linux');
@@ -543,12 +560,10 @@ test('a change that breaks only on Windows fails the Windows side and passes the
 
 // The Windows job is the selection's own entry point and nothing else, on a self-hosted Windows runner, behind the
 // same gate job as clued-required-tests.yml, and its name is the check's name only when it runs.
-test('the Windows job of the candidate workflow selects and runs with the trusted selection on a self-hosted Windows runner', () => {
+test('the Windows job of the workflow selects and runs with the trusted selection on a self-hosted Windows runner', () => {
   const live = readFileSync(path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml'), 'utf8');
-  const file = ['.github/workflows/clued-required-tests-windows.yml', 'work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml']
-    .map((name) => path.join(ROOT, name)).find((name) => existsSync(name));
-  assert.ok(file, 'the Windows workflow, or its candidate before step 2 of ADR 0032');
-  const text = readFileSync(file, 'utf8');
+  assert.ok(!existsSync(path.join(ROOT, 'work', 'ci-required-tests-v1', 'clued-required-tests-windows.candidate.yml')), 'one copy: the workflow');
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
   const between = (source, from, to) => source.slice(source.indexOf(from), source.indexOf(to));
   assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'), between(live, 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
     'the triggers, permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');
