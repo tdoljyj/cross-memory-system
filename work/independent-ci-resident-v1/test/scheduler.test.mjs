@@ -7,7 +7,7 @@ import path from 'node:path';
 import { ResidentExecutor, SUPERSEDED_AT_SAFE_POINT, SUPERSEDED_ARCHIVE_REASON, BATCH_SUPERSEDED } from '../src/executor.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { RunQueue } from '../src/queue.mjs';
-import { BASE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -184,7 +184,8 @@ test('the queue survives a restart; a row left running by a crash follows the le
 // ---- independent review of step 1: the gaps it named ----
 
 test('review M1: the executor\'s own end writes its record first; a crash in the middle is SUPERSEDE_INTERRUPTED, never a resumed wait', async t => {
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null, pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  const f = await executorFixture(t, { companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   const key = batchKey(subject());
@@ -210,21 +211,10 @@ test('review M1: quiescence that cannot be proven at the executor\'s own end HAL
   assert.equal(engine.calls.some(c => c[0] === 'archive-windows'), false, 'the scene is left as it is');
 });
 
-test('supersession at the before-workspace safe point (after stage R) and during a hosted wait', async t => {
-  // a newer commit arrives while stage R runs: caught before the workspace, after the plan was written
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => relayedRow(r)) }) });
-  const relay = engine.runRelayStage.bind(engine);
-  let f;
-  engine.runRelayStage = async (batch, roles) => { await f.drop(triggerBytes({ headSha: H(7) })); return relay(batch, roles); };
-  f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }), pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
-  await f.drop(triggerBytes());
-  const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'before-workspace']);
-  assert.deepEqual(stagesRun(engine), [1, 9]);
-  assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'), 'superseded before placement workspace; no local scanner');
-  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
-  // during a hosted wait: the next resume sees the newer commit and the live read confirms it
-  const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null, pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+test('supersession of a batch resting at parking point A', async t => {
+  // the next resume sees the newer commit and the live read confirms it
+  const g = await executorFixture(t, { companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  holdAtA(g.exec);
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   await g.drop(triggerBytes({ headSha: H(7) }));

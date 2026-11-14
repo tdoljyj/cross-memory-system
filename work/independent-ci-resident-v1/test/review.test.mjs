@@ -9,7 +9,7 @@ const { WindowsEngine } = eng;
 const PUMP_CODES = eng.PUMP_CODES ?? [];
 import { classifyFailure, isTransient } from '../src/classify.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { TEST_NODE, TEST_NODE_SHA, BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, BASE, CLEAN_PROOF, HEAD, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const stage1Calls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
 // Attempt 1 fails stage 2 with a clean transient code (schedules attempt 2); later stage-1 runs answer `later`.
@@ -61,26 +61,28 @@ test('MAJOR 2: a pending attempt 2 from before a reinstall (another Source) is c
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
 });
 
-test('MAJOR 3: every resume of a waiting batch re-runs the start checks; Source drift fails closed before stage R', async t => {
+test('MAJOR 3: every resume of a batch at parking point A re-runs the start checks; Source drift fails closed before the plan', async t => {
   let drift = false;
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => hintFor({ gitleaks: { state: 'PENDING_QUEUED', queuedAt: Date.parse('2026-10-20T12:00:00Z') }, trivy: { state: 'SUCCESS' } }) }) });
+  const f = await executorFixture(t);
   f.ports.sourceIntegrity = async () => ({ ok: !drift, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT });
   const exec = new ResidentExecutor(f.ports);
+  holdAtA(exec);
   await f.drop(triggerBytes());
   assert.equal((await exec.tick()).state, 'WAITING');
   drift = true;
   f.advance(60_000);
   const r = await exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['HALTED', 'RESIDENT_SOURCE_DRIFT']);
-  assert.deepEqual(f.engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1], 'no stage R, no local stage');
+  assert.deepEqual(f.engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1], 'no local stage');
   const key = r.key;
   assert.equal((await f.ledger.state(key)).outcome, 'FAILED_UNKNOWN');
   // validUntil expiring while waiting ends the waiting batch neutrally (phase 2, step 2: a batch at a parking point is
   // closed, not halted; design v0.5 §4.8, review of step 2 m1): nothing ran after stage 1, nothing published
-  const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const g = await executorFixture(t);
+  holdAtA(g.exec);
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
-  const later = new ResidentExecutor({ ...g.ports, policy: validatePolicy(rawPolicy({ relay: RELAY_ON, validUntil: new Date(g.clock() + 60_000).toISOString() })) });
+  const later = new ResidentExecutor({ ...g.ports, policy: validatePolicy(rawPolicy({ validUntil: new Date(g.clock() + 60_000).toISOString() })) });
   const r2 = await later.tick();
   assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'PARKED_AUTHORITY_EXPIRING']);
   assert.equal(await g.ledger.halted(), null);

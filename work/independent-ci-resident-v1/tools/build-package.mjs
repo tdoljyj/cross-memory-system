@@ -36,8 +36,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX40, HEX64, UUID, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
-import { validatePolicy } from '../src/policy.mjs';
-import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
+import { LEGACY_POLICY_KEYS, validatePolicy } from '../src/policy.mjs';
+import { RESIDENT_INSTALL_ROOT, validateCompanionConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { PANEL_REPO, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import {MERGE_RECONCILE_REPO,validateMergeReconcileConfig} from '../src/merge-reconcile-config.mjs';
@@ -181,22 +181,22 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const sourceManifest = { contract: INSTALLED_MANIFEST_CONTRACT, root: 'source', files: sourceEntries };
   const sourceManifestSha256 = sha256(Buffer.from(canonicalJson(sourceManifest) + '\n'));
   const policy = JSON.parse(await fs.readFile(policyFile, 'utf8'));
-  const finalPolicy = { ...policy, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256 };
+  // DESIGN §76: the keys of a removed feature (policy `relay`, companion `hints`) an installed node's inputs still carry are left out
+  // here, so every package (an upgrade carries the node's own policy and companion configuration) converges without a step of its own.
+  const finalPolicy = Object.fromEntries(Object.entries({ ...policy, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256 })
+    .filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)));
   validatePolicy(finalPolicy);
   check(finalPolicy.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalPolicy.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
-  const companion = JSON.parse(await fs.readFile(companionFile, 'utf8'));
+  const { hints: _legacyHints, ...companion } = JSON.parse(await fs.readFile(companionFile, 'utf8'));
   check(companion.status?.node === undefined || companion.status.node === node.nodeName, 'PACKAGE_NODE_PROFILE_CHANGED');
   const sub = s => s.replaceAll('<sourceManifestSha256>', ciSourceManifestSha256);
   const finalCompanion = { ...companion, companion: { ...companion.companion, relayScript: sub(companion.companion.relayScript), bundleScript: sub(companion.companion.bundleScript),
     ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) },
-    // Hint mode reads the installed CI Source's relay observer; it follows the policy's relay switch.
-    hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 },
     status: { ...companion.status, node: node.nodeName } };
   // DESIGN §33: every Source script path lies under source\<this package's ciSourceManifestSha256>\ (a literal hash of another Source
   // in the input file is not replaced above and is refused here), so the installed config never names a Source that is not installed.
   validateCompanionConfig(finalCompanion.companion, { root: RESIDENT_INSTALL_ROOT, ciSourceManifestSha256 });
   check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
-  validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);
   // The panel trigger is on unless switched off, and it only exists for the panel's own repository: no silent "on" that does nothing.
   check(!validatePanelDispatchConfig(finalCompanion.panelDispatch).enabled || finalCompanion.repo === PANEL_REPO, 'PACKAGE_PANEL_DISPATCH_REPO_MISMATCH');

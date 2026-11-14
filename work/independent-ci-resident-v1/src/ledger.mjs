@@ -18,11 +18,10 @@
 // so a STARTED entry with 15-relay-wait and no 20-plan-intent is RESUMABLE, not a crash: recovery leaves it,
 // a restart continues it without re-running stage 1, and re-arm may clear a HALT while it waits.
 //
-// Stage R (PR-A, free-minutes design §7.3): between 10-started and the local roles, 20-plan-intent records
-// (create-only) which roles the executor is about to ask stage R to relay, and 25-plan records (create-only)
-// the per-role outcome: RELAYED or LOCAL_REQUIRED(reason). Only LOCAL_REQUIRED roles ever run locally. An
-// entry with 20-plan-intent and no 25-plan was interrupted inside stage R: a relay key may have been begun,
-// so recovery closes it FAILED_UNKNOWN (RELAY_STAGE_INTERRUPTED) and HALTs; nothing of it runs locally.
+// The plan (PR-A, free-minutes design §7.3): between 10-started and the local roles, 20-plan-intent and 25-plan record
+// (create-only) that every heavy role runs locally. The hosted relay (stage R) that once ran between them is removed
+// (DESIGN §76); the records keep their fields (candidates [], relayed []). An entry with 20-plan-intent and no 25-plan is still
+// closed FAILED_UNKNOWN (RELAY_STAGE_INTERRUPTED) with a HALT, as before; nothing of it runs locally.
 //
 // Owner abort (DESIGN §6.5): an accepted abort writes 80-owner-abort (create-only) before anything is stopped. An
 // entry with it is never a resumable wait, so a service that dies in the middle of an abort leaves a crash scene
@@ -51,10 +50,9 @@
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { HEX40, HEX64, REPO, ResidentError, check, digest, exactKeys, fail, isoNow } from './canonical.mjs';
-import { ensureDir, exists, nonce, readJson, renameToNew, writeNew, writeNewAtomic } from './store.mjs';
+import { HEX40, HEX64, REPO, ResidentError, check, digest, fail, isoNow } from './canonical.mjs';
+import { ensureDir, exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 import { CLAIM_REASONS } from './queue.mjs';
-import { RelayQualificationHolds } from './relay-qualification-hold.mjs';
 
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
@@ -77,7 +75,7 @@ export const UNCAPPED_RELEASES = Object.freeze(['SUPERSEDED', 'TRAIN_FRONT_BOUND
 export const QUOTA_TIER_EVALUATION = 'evaluation';
 export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
-export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '14-qualification-hold.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json', '70-parked.json']);
+export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json', '70-parked.json']);
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
 export const PARK_RECORD = '70-parked.json';
 export const MAX_TRIES = 99;
@@ -140,13 +138,11 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, qualificationHold, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived;
+    let reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
       started = await read('10-started.json');
-      const qualificationHoldPresent = await exists(path.join(dir, '14-qualification-hold.json'));
-      qualificationHold = qualificationHoldPresent ? (await readJson(path.join(dir, '14-qualification-hold.json'))).value : null;
       wait = await read('15-relay-wait.json');
       planIntent = await read('20-plan-intent.json');
       plan = await read('25-plan.json');
@@ -156,22 +152,6 @@ export class Ledger {
       selfAbort = await read(SELF_ABORT_RECORD);
       terminal = await read('90-terminal.json');
       archived = await read('95-archived.json');
-      if (qualificationHoldPresent) {
-        const code = 'QUALIFICATION_HOLD_RECORD_UNREADABLE', h = qualificationHold;
-        exactKeys(h, ['key', 'contract', 't0', 'batch', 'at'], code);
-        exactKeys(h.batch, ['key', 'batchId'], code);
-        check(reserved && h.contract === 'clued.independent-ci.resident-pre-stage1-qualification-hold/1'
-          && h.key === key && reserved.key === key && batchKey(reserved.subject) === key && h.batch.key === key
-          && typeof h.batch.batchId === 'string' && new RegExp('^' + key.slice(0, 16) + '-[a-f0-9]{12}$').test(h.batch.batchId)
-          && Number.isSafeInteger(h.t0) && h.t0 > 0 && h.t0 === Date.parse(reserved.reservedAt)
-          && typeof h.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(h.at)
-          && Number.isFinite(Date.parse(h.at)) && new Date(h.at).toISOString() === h.at && Date.parse(h.at) >= h.t0, code);
-        const guard = await new RelayQualificationHolds(this.root, this.clock).inspect(reserved.subject);
-        check(guard.record?.key === key && guard.record.batchId === h.batch.batchId, code);
-        const conflicts = ['10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json', PARK_RECORD];
-        check(!(await Promise.all(conflicts.map(name => exists(path.join(dir, name))))).some(Boolean)
-          && !(await new RelayQualificationHolds(this.root, this.clock).stage1Attempted(reserved.subject)), code);
-      }
     } catch (error) {
       if (!contentError(error)) throw error;
       return { state: 'UNREADABLE' };
@@ -180,7 +160,7 @@ export class Ledger {
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait: wait ?? qualificationHold, qualificationHold, planIntent, plan, parked, tries, abort, selfAbort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort };
   }
 
   // The stage-8 tries of a parked entry, in order: [{ n, begun, ended }] (ended null while a try runs or crashed). A gap
@@ -245,28 +225,12 @@ export class Ledger {
       ...(typeof claimExpiresAt === 'string' ? { claimExpiresAt } : {}) });
   }
 
-  // Restrictive parking before Stage 1. No 10-started, head burn or cleanup
-  // assertion: this says only that this path did not invoke Stage1.
-  async beginQualificationHold(key, { batch }) {
-    const s = await this.state(key);
-    const t0 = Date.parse(s.reserved?.reservedAt);
-    check(s.state === 'RESERVED' && !s.started && !s.qualificationHold && !s.planIntent && !s.abort
-      && Number.isSafeInteger(t0) && t0 > 0 && batch && batch.key === key
-      && typeof batch.batchId === 'string' && new RegExp('^' + key.slice(0, 16) + '-[a-f0-9]{12}$').test(batch.batchId), 'QUALIFICATION_HOLD_REQUIRES_UNSTARTED_ENTRY');
-    check(!(await new RelayQualificationHolds(this.root, this.clock).stage1Attempted(s.reserved.subject)), 'QUALIFICATION_HOLD_STAGE1_INTENT_CONFLICT');
-    await writeNewAtomic(path.join(this.dir(key), '14-qualification-hold.json'), { key,
-      contract: 'clued.independent-ci.resident-pre-stage1-qualification-hold/1', t0,
-      batch: { key, batchId: batch.batchId }, at: isoNow(this.clock) });
-  }
-
   // An open entry at a parking point (nothing of it can be running): A, waiting for hosted signals; B, parked before
   // stage 8 with every try settled. One whose Owner abort (or the executor's own end) was accepted is never resumed: if it
   // is still open at a tick start, that end was interrupted (a crash scene).
   static waitingAt(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.parked && !entry.abort && !entry.selfAbort; }
   static parkedAt(entry) { return entry?.state === 'STARTED' && !!entry.plan && !!entry.parked && !entry.abort && !entry.selfAbort && (entry.tries ?? []).every(t => t.ended !== null); }
-  static qualificationHeldAt(entry) { return entry?.state === 'RESERVED' && !!entry.qualificationHold && !entry.started
-    && !entry.planIntent && !entry.plan && !entry.parked && !entry.abort && !entry.selfAbort; }
-  static resumable(entry) { return Ledger.waitingAt(entry) || Ledger.parkedAt(entry) || Ledger.qualificationHeldAt(entry); }
+  static resumable(entry) { return Ledger.waitingAt(entry) || Ledger.parkedAt(entry); }
 
   // Open entries that are a crash scene (recovery closes them) - everything open except an entry at a parking point.
   async crashed() { return (await this.open()).filter(e => !Ledger.resumable(e)); }

@@ -26,10 +26,6 @@ export const RECEIPT_CONTRACT = 'clued.independent-ci.resident-receipt/1';
 export const RECEIPT_SEAL_CONTRACT = 'clued.independent-ci.resident-receipt-seal/1';
 export const INDEX_DIR = 'index';
 export const ARCHIVE_DIR = 'archive';
-// Stage R receipt types (free-minutes design S22). Bodies carry the batch key, the role and, for a local
-// fallback, the stable reason (a RELAY_NOT_ATTESTED_* code of stage R or a resident scheduling reason).
-export const RELAY_RECEIPTS = Object.freeze({ attested: 'relay-attested', localFallback: 'relay-local-fallback', billingRefused: 'relay-billing-refused',
-  lateIgnored: 'relay-late-ignored' });
 const NAME = /^(\d{8})-([a-z0-9-]{1,48})\.json$/;
 const SEAL = /^(\d{4})\.json$/;
 const SEGMENT = /^(\d{4})-(\d{4}-\d{2})$/;

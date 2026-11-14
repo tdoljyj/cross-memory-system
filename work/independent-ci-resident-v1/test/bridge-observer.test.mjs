@@ -207,7 +207,7 @@ test('the heartbeat timer starts only after the job host probe and every set-up 
   const beat = at('const beating = startHeartbeat(mailbox);');
   assert.equal(main.split('startHeartbeat(').length - 1, 1, 'started once');
   // every step that can throw in set-up comes before the first beat: a companion that failed to set up sends none
-  for (const step of ['await probeJobHost(runner);', 'validateHintConfig(raw.hints)', 'validateStatusConfig(raw.status)', "check(statusCfg.node === cfg.node.nodeName", 'await LocalStore.open(', 'keepalive(companionArgv(cfg).keepalive());']) {
+  for (const step of ['await probeJobHost(runner);', 'validateStatusConfig(raw.status)', "check(statusCfg.node === cfg.node.nodeName", 'await LocalStore.open(', 'keepalive(companionArgv(cfg).keepalive());']) {
     assert.ok(at(step) < beat, `${step} comes before the heartbeat`);
   }
   // the lanes run right after it, and the timer is cleared whatever ends them

@@ -499,7 +499,7 @@ v0.7 按 PR-A 复审补强（每一条都有先失败、后通过的离线复现
 
 归档只改名、从不删除。服务在批次之间最多每小时量一次：Windows spool 的 `archive-*`、`failed-*` 目录、常驻层自己的 `work\` 和 `bundles\`，以及 companion 转来的 Linux spool 归档大小（`clued-ci-resident-linux archive-usage`）。合计达到策略 `retention.reminderBytes`（50 GB）时，每天最多写一条 `archive-retention-reminder` 回执（`deletesAnything: false`），由 Owner 决定移走或删除什么（`R/src/retention.mjs`）。读不到的部分会让测量标为不完整，但只会让提醒更容易发出，不会相反。
 
-### 7.4 留给中继集成（S19–S22）的接口与未完成项
+### 7.4 留给中继集成（S19–S22）的接口与未完成项（托管转发已移除，见 §76）
 
 v0.6 只实现 S1–S14。中继集成要调用的接口（都已存在、有测试）：
 
@@ -516,7 +516,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - A2 的 guarded claim（`lease_key_required`）仍然拒绝，没有放开。v0.7 仍然如此；
 - Linux 侧 Source v2 的安装（`/opt/clued-independent-ci/source-v2`、`roles-v3/*.json`、`formal-source-manifest-v2.json`）。**v0.7 已写成脚本**；qualification v2 的签发仍是单独的主机步骤。
 
-### 7.5 托管转发接进常驻执行器（S19–S22，v0.7）
+### 7.5 托管转发接进常驻执行器（S19–S22，v0.7；已移除，见 §76）
 
 依据：免费分钟设计 §4.1–§4.3 的 S19–S22、§7（切换逻辑、`20-plan-intent`/`25-plan`、幂等、合并位时序）、§11（测试）。转发核心（S15–S18：登记表、OIDC 验签、观察、第 R 段、`publishHosted`、K(head, role)）已在 PR-A 里，本节只讲接线。`R/` 指 `work/independent-ci-resident-v1/`，`HR/` 指 `CI/src/hosted-relay-v1/`。
 
@@ -1005,7 +1005,7 @@ v0.5 时的记录：
   - relay v4 从 `resident\source\<sha>` 运行、bundle 清单哈希、challenge 优先的泵顺序；
   - Linux 工具的扁平归档在真实目录上、`ROLE_LOCK_HELD_PRESERVED` 与 partial 状态、`archive-usage`；
   - 安装脚本：record、stage、bundles 目录、助手编译、`broker.json`、ACL 迁移的调用。
-  - **v0.7 转发集成新增的主机项**：
+  - **v0.7 转发集成新增的主机项**（托管转发已移除，这些项不再需要，见 §76）：
     - 托管运行的 OIDC 声明实际取值（免费分钟设计 L1：pull_request 事件下 `sha`/`workflow_sha` 是否就是合并提交，`base_ref`、`head_ref`、`runner_environment`、`check_run_id` 是否存在）；注解能否完整容纳 JWT、5368905 能否读到（L2）；`refs/pull/N/merge` 移动后旧合并提交能否按 SHA 读到（L3）；clued-control 环境访问 `token.actions.githubusercontent.com` 的网络路径（L4）。这些要等免费分钟恢复后才能测，所以转发默认关闭；
     - 第 9 段经真实交换代理和通用助手运行：stage 表、时间窗、`relay-publisher` 入口、子集作业的 C# 校验；
     - `state\relay\jwks` 的真实 ACL 和 JWKS 文件缓存；
@@ -1495,7 +1495,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - **停靠点 B**：最后一个角色段之后、两端收尾归档之后、第 8 段之前（`70-parked.json`）。收尾归档从第 8 段之后挪到了第 8 段之前：第 8 段只碰 Windows，停在 B 的批次 Linux 侧什么都没有。
 - 停在任一停靠点的批次什么都没在运行；执行器在它停着时照常跑别的批次。账本原来的“只能有一个等待中的批次”（`RELAY_WAIT_MORE_THAN_ONE_BATCH`）去掉，改由执行器按 `park.maxParked` 限制（18.5）。
 
-### 18.2 停靠点 A：等托管不占执行器（设计 §4.8）
+### 18.2 停靠点 A：等托管不占执行器（设计 §4.8；托管等待已移除，见 §76）
 
 - 每个 tick 开头（崩溃恢复、Owner 请求、HALT、暂停之后），每个停在 A 的批次读一次托管提示、按保存的 t0 判断；结论是“继续”就照 18.1 一口气跑到停靠点 B（或结束）；都还在等就接着调度别的行。总上限仍是 60 分钟，从 t0 算，被别的批次推迟的时间也算在内。
 - **bundle 太旧**：设计 §4.3 第 3 条要求停靠批次恢复时 bundle 超过 100 分钟就在工作区准备前由 companion 重新打 bundle。companion 的 `build-bundle.ps1` 现在每个批次只能建一次（只新建），重新打需要第二代 bundle，而托管转发要到 11 月 Owner 实测才打开，停靠点 A 今天不会走到。所以本步只做保护：工作区准备之前，若离预留（早于 bundle）已超过 100 分钟（`BUNDLE_MAX_AGE_AT_WORKSPACE_MS`），以 `PARKED_BUNDLE_TOO_OLD` 干净结束（clean-final、中性、Linux 上什么都没跑；除非第 R 段转发过角色，否则未发布，换 Source 重装后可再跑，同一 Source 下要推新提交）。
@@ -5782,3 +5782,29 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - 端到端 `test/train-takeover-front.test.mjs`（真实 executor + Source v2 第 10 段 + 第 8 段发布者）“rule 41ab823a (PR #1086): same head, same main, S with H's tree…”：普通批次第 1–7 段停 B、第 10 段开车头，断言第 2–7 段各只跑一次、车头批次只跑 [1, 8]、`headTree == testTree`、复用来源是普通批次，并拿到 merge-slot 绿。修复前失败（`stage 2 ran more than once`，车头批次又跑了 2–7）。“…a scan whose input changed runs again…”：H 的树不同或第 10 段没给 `headTree` 时车头批次照旧跑 1–8。
 - `actions-hosted-migration/independent-ci-v1/test/train-facts.test.mjs`：`headTree` 的形状与“只限单成员”。
 - `tests/test_compute_panel.py` “a resident check republished under its external_id is one run”：同一 external_id 的 failure + success 不算重复，另一个 job 的真重跑仍算。修复前失败。
+
+## 76. 托管转发已移除（Owner 2026-11-14，分支 `claude/remove-hosted-relay`）
+
+**原因**：托管转发（gitleaks、trivy 在 GitHub 托管机上跑，常驻 CI 核验后以 App 5368905 发布同名必需检查）从未在生产打开：两台节点 `policy.json` 的 `relay.enabled=false`，`gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 是 `disabled_manually`，生产扫描许可（`scan-start-v1/grant.mjs` 的 `NATIVE_SCAN_START_REQUIRED=false`）也未激活。它关着时仍在必经路径上留下代价：每个批次在排程前检查里多起一个 node 进程读“转发资格窗口”（`invoke-stage.mjs --relay-qualification-window`），读失败就整轮暂缓（`RELAY_QUALIFICATION_WINDOW_UNCONFIRMED`）；执行器、companion、poller、邮箱、策略里各有一段只为它存在的分支。Owner 决定保持关闭并整体删除；Fable 独立判断同意（看板第 30 行）。
+
+**第一步（本分支，main 不再选用或调用）**：
+- 执行器：删掉托管等待（`hosted-wait.mjs#decide` 与提示读取）、第 9 段（stage R）的调用与结果处理、迟到托管结果的回执、转发资格保护（`relay-qualification-hold.mjs`、`relay-qualification-observations.mjs`、`14-qualification-hold`、排程前的资格窗口读取与 `RELAY_QUALIFICATION_*` 暂缓）。`relayPlan` 换成 `localPlan`：三个重型角色都在本地跑。
+- `20-plan-intent`、`25-plan`、`relay-plan-intent` 回执的字段和取值与 `relay.enabled=false` 时逐字节相同（`candidates: []`、`relayed: []`、每个角色 `RELAY_DISABLED`/`relay-local-fallback`；车头批次仍是 `RELAY_TRAIN_FRONT_LOCAL`）。所以旧账本的所有读者（attempt 2 的 `relayedNothing`、重启重跑、停靠点 B、状态）含义不变；`15-relay-wait` 记录名和停靠点 A 保留（崩溃落在它和计划之间时照旧续跑）；有 `20-plan-intent` 无 `25-plan` 仍按 `RELAY_STAGE_INTERRUPTED` 停机，与原来一致。
+- 引擎删掉 `runRelayStage`、`relayQualificationWindow`、`runRelayQualification` 和第 9/13 段事实里的 `relay`、`observation`、`stage1Locator` 解析；`classify.mjs#relayPlanFromRows`、`receipts.mjs#RELAY_RECEIPTS` 删掉（失败码表里第 R 段的码保留，旧回执照旧可读）。
+- companion：删掉提示模式（`hosted-hints.mjs`、`validateHintConfig`、poller 的托管观察、邮箱的 `hosted-hint-*` 文件读写、服务端口 `hostedHint`）。
+- 第 9 段编号与它在 `stageRunMilliseconds` 里的上限保留为保留号：已装策略和代理的固定段表都是十项，删号要动 C# 边界，留到第二步与 Source 一起做；没有批次再跑它，`batchBudgetMs` 不再加托管等待。
+- 删掉的常驻文件（`hosted-wait.mjs`、`hosted-hints.mjs`、`relay-qualification-hold.mjs`、`relay-qualification-observations.mjs` 及其测试）一步删：常驻目录由通用包整体替换，旧版本从不加载新目录里的文件，新代码已不引用它们。
+
+**残留字段的兼容（由通用包自己收敛，不按台处理）**：每台已装节点的 `policy.json` 带 `relay` 段，`companion.json` 带 `hints` 段，通用升级会把两者原样交回 `build-package`（`rollout/fleet/install.mjs#configInputsFor`）。
+- `policy.mjs#LEGACY_POLICY_KEYS = ['relay']`：带这个键的策略照样通过校验，内容不读（无论 `enabled` 是什么），校验后的策略对象里没有它，下游代码无从读取；其他未知键仍拒绝。
+- `build-package.mjs`：新包的 `config/policy.json` 去掉 `relay`，`config/companion.json` 去掉 `hints`。所以一次通用升级之后每台节点的配置就收敛了，不需要单独的迁移步骤；在那之前跑的旧服务和新服务都能读当时的文件。
+- `companion-main.mjs` 不再读 `hints`；示例配置（`config/policy*.example.json`、`config/companion.example.json`）去掉这两段。
+- 两台节点已核：没有 `relay-qualification-holds` 目录、`14-qualification-hold.json` 或 `hosted-hint-*` 文件（这些只有资格窗口被 Owner 接受或提示模式打开才会产生，从未发生）。
+
+**测试**：`test/hosted-relay-removed.test.mjs`
+- “relay removed, no relay block / a legacy relay block, off / a legacy relay block that says on: one batch runs 1-8 …”：一批跑完 1–8，没有等待、没有第 9 段，删掉的端口（提示、第 9 段、资格窗口读取）一次都没被调用；`20-plan-intent`、`25-plan` 和回执序列与 main `6eac0f12` 在 `relay.enabled=false` 下写的逐项相同（修复前同一场景每批调用一次 `relayQualificationWindow`，其余输出相同）。
+- “a legacy relay block is accepted and dropped unread …”：旧 `relay` 段被接受并丢弃，批次预算不变，其他未知键仍拒绝。
+- “a crash between 20-plan-intent and 25-plan still closes … RELAY_STAGE_INTERRUPTED”：崩溃恢复不变。
+- `test/package.test.mjs` “package: the legacy relay block of an installed policy and companion hints are left out …”：带旧段的节点输入打出的新包里两段都没有。
+
+**第二步（两台通用升级到第一步之后，另开 PR）**：删 CI Source 里的转发（`hosted-relay-v1/` 全部、`resident-v2/relay-qualification-entry.mjs`/`relay-qualification-run.mjs`、`derive-batch.mjs --relay-roles`、`invoke-stage.mjs --relay-qualification-window` 与第 13 段、`stage-fact.mjs`/`stage-inputs.mjs` 的转发行、`FormalPublicBoundaryV2.cs` 的第 9/13 段及其 C# 测试、`source-closure.json`），它们要等节点不再运行会调用它们的旧常驻；三个托管工作流和 `validate_runner_budget_policy.py` 的 `OWNER_DECISION_HOSTED_JOBS`、相关脚本与 fixture，要等 `claude/ci-both-platforms-pr2` 合入（它改着其中几份文件）；Worker 的托管入口（`hosted_head_sha` 路径）删除需要部署 Worker（DESK 走 release workflow），单列。

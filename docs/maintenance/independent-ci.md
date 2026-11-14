@@ -7,6 +7,7 @@
 ## 发布者与执行者
 
 - **发布者只有一个。** 规则集 `24182890` 的六项必需检查 `gitleaks`、`trivy`、`kooyumi-work-admission`、`kooyumi-admission-verified`、`kooyumi-merge-slot`、`contract-placement` 都钉在 App `5368905`，始终由 TURING 上的独立 CI 发布。有没有免费分钟都一样：规则集不按月切换，也不为此改代码。
+- **托管转发已移除（Owner 2026-11-14，`work/independent-ci-resident-v1/DESIGN.md` §76）。** 常驻执行器不再等托管、不再读提示、不再跑转发段，三个重型角色一律本地执行。下面关于托管 job、转发和 `admission-gate` 的描述只对仍在仓库里、处于停用状态（disabled_manually）的 `gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 成立，它们在第二步删除。
 - **托管 job 只是执行者，自己不发布必需检查。**
   - `gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 的 `admission-gate` 和重型 job 跑在 `ubuntu-latest` 上，用免费分钟。Actions 预算是 $0 硬上限，分钟用完时 GitHub 拒绝启动，不计费。
   - 重型 job 名为 `gitleaks-hosted-executor`、`trivy-hosted-executor`、`contract-placement-hosted-executor`；动态名的另一个分支是对应的 `*-hosted-executor-skipped`。按 `bc6fdad1`，GitHub 把任何同名 check run 都算作必需检查，不看 integration，同名的托管 job 一旦失败就会挡住合并。所以托管 job 的名字（包括动态名的每个分支）绝不能是六个必需检查名之一。
