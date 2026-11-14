@@ -440,7 +440,18 @@ export function knownFailureVerdict({ status, report, known }) {
   return { ok: problems.length === 0 && unexpected.length === 0, problems, unexpected, expected, fixed, missing };
 }
 
-export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log,
+// Windows ships npm/npx as .cmd shims, which spawn cannot start without a shell
+// (ENOENT, or EINVAL since the CVE-2024-27980 fix). Run npm's own JS entry with this
+// node instead: no shell, so no quoting or argument injection. Elsewhere unchanged.
+const NPM_ENTRIES = { npm: 'npm-cli.js', npx: 'npx-cli.js' };
+export function resolveCommand(argv, { platform = process.platform, nodePath = process.execPath, exists = existsSync } = {}) {
+  const entry = NPM_ENTRIES[argv[0]];
+  if (platform !== 'win32' || !entry) return argv;
+  const script = path.win32.join(path.win32.dirname(nodePath), 'node_modules', 'npm', 'bin', entry);
+  return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
+}
+
+export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   const commands = SUITE_COMMANDS[id];
   if (!commands) throw new Error(`unknown suite: ${id}`);
@@ -458,7 +469,8 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
         ...argv.slice(index + 1)];
     }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
-    const result = spawn(argv[0], argv.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const run = resolveCommand(argv, { platform });
+    const result = spawn(run[0], run.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();

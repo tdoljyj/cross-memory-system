@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
-  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, runSuite, selectSuites,
+  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, runSuite, selectSuites,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
@@ -431,8 +431,27 @@ test('a known-failure command adds the trusted reporter, warns on known failures
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log }), 2);
+  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
+});
+
+test('on Windows the entry starts npm and npx through node, not the .cmd shim; elsewhere the command is unchanged', () => {
+  const node = 'C:\\nodejs\\node.exe';
+  const entry = (name) => `C:\\nodejs\\node_modules\\npm\\bin\\${name}`;
+  const win = { platform: 'win32', nodePath: node, exists: () => true };
+  assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], win), [node, entry('npm-cli.js'), 'run', 'lint']);
+  assert.equal(resolveCommand(['npx', 'x'], win)[1], entry('npx-cli.js'));
+  assert.deepEqual(resolveCommand(['node', '--test'], win), ['node', '--test']);
+  assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
+  assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
+  const calls = [];
+  runSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  assert.equal(calls.length, 1);
+  if (process.platform === 'win32') {
+    assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
+    const probe = spawnSync(calls[0][0], [calls[0][1], '--version'], { encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+  }
 });
 
 test('the committed known-failure list is well formed, one entry per failure, each with a reason', () => {
