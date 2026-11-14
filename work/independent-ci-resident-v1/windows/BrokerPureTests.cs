@@ -39,11 +39,11 @@ public static class BrokerPureTests
         {
             ProfileConfigCases();
             var stageCaps=(long[])typeof(SwapBroker).GetField("StageMilliseconds",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).GetValue(null);
-            Yes(stageCaps.Length==13&&stageCaps[10]==60000,"C2-probe-cap");
-            Yes(stageCaps[11]==300000,"revocation-maintenance-cap");
-            Yes(stageCaps[12]==300000&&SwapBroker.RuntimeStageValid(13)&&!SwapBroker.RuntimeStageValid(14)&&!SwapBroker.RuntimeStageValid(0),"relay-qualification-cap-and-range");
-            var existingStageCaps=new long[12];Array.Copy(stageCaps,existingStageCaps,12);
-            Yes(string.Join(",",Array.ConvertAll(existingStageCaps,x=>x.ToString()))=="900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000","existing-twelve-caps-unchanged");
+            Yes(stageCaps.Length==12&&stageCaps[10]==60000,"C2-probe-cap");
+            Yes(stageCaps[11]==300000&&SwapBroker.RuntimeStageValid(12)&&!SwapBroker.RuntimeStageValid(13)&&!SwapBroker.RuntimeStageValid(0),"revocation-maintenance-cap-and-range");
+            // Stage 9 is a reserved number (the hosted relay, removed): no cap, never runnable; its neighbours keep their numbers.
+            Yes(stageCaps[8]==0&&!SwapBroker.RuntimeStageValid(9)&&SwapBroker.RuntimeStageValid(8)&&SwapBroker.RuntimeStageValid(10),"stage-9-reserved");
+            Yes(string.Join(",",Array.ConvertAll(stageCaps,x=>x.ToString()))=="900000,2700000,900000,1800000,900000,600000,900000,2700000,0,300000,60000,300000","existing-caps-unchanged");
             Yes(string.Join(",",Array.ConvertAll(StopRequest.AbortableStages,x=>x.ToString()))=="2,4,6","abortable-stages-unchanged");
             string ok = Path.Combine(dir, "ok.json"), big = Path.Combine(dir, "big.json"), empty = Path.Combine(dir, "empty.json");
             File.WriteAllBytes(ok, new byte[4096]); File.WriteAllBytes(big, new byte[4097]); File.WriteAllBytes(empty, new byte[0]);
@@ -75,7 +75,7 @@ public static class BrokerPureTests
             Refused(() => StopRequest.Validate(utf8(stop(id, 8, nonce, config)), id, nonce, 8, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-control-stage");
             Refused(() => StopRequest.Validate(utf8(stop(id, 11, nonce, config)), id, nonce, 11, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-role-probe-stage");
             Refused(() => StopRequest.Validate(utf8(stop(id, 12, nonce, config)), id, nonce, 12, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-revocation-stage");
-            Refused(() => StopRequest.Validate(utf8(stop(id, 13, nonce, config)), id, nonce, 13, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-relay-qualification-stage");
+            Refused(() => StopRequest.Validate(utf8(stop(id, 13, nonce, config)), id, nonce, 13, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-stage-13-gone");
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace("}", ",\"extra\":1}")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-extra-key");
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace(StopRequest.Contract, "clued.independent-ci.swap-broker-stop/2")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-contract");
             Refused(() => StopRequest.Validate(utf8("{\"contract\":"), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-torn");

@@ -9,7 +9,7 @@ import { canonical, digest } from '../src/proof.mjs';
 import { validateFormalAcceptance } from '../worker/protected-job-bridge-v2/boundary.mjs';
 import { decodeHeldSource } from '../worker/protected-job-bridge-v2/held-source.mjs';
 import { fixtureRecord, NOW } from './resident-v2-fixtures.mjs';
-import { deriveBatch, deriveRelayStage, deriveTrainRun, residentBatchKey } from '../src/resident-v2/derive-batch.mjs';
+import { deriveBatch, deriveTrainRun, residentBatchKey } from '../src/resident-v2/derive-batch.mjs';
 import { trainRunKey } from '../src/resident-v2/train-run.mjs';
 import { subject } from './resident-v2-fixtures.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
@@ -53,14 +53,13 @@ test('the existing genuine legacy /1 shape still passes the old pure acceptance 
   assert.throws(() => validateFormalAcceptance(config, accepted, {...identity, hostname:'COMPANY-01'}, NOW), { code: 'FORMAL_CONTROLLER_ACCEPTANCE_MISSING' });
 });
 
-test('all actual current formal/R/train producers bind the same complete-node hash without selecting a legacy entry', () => {
+test('all actual current formal/train producers bind the same complete-node hash without selecting a legacy entry', () => {
   const r=fixtureRecord(), s=subject(), key=residentBatchKey(s), batchId=key.slice(0,16)+'-123456789abc';
   const d=deriveBatch({recordDocs:r.docs,subject:s,batchKey:key,batchId,now:NOW});
-  const rs=deriveRelayStage({recordDocs:r.docs,batchJson:d.files['batch.json'],roles:['gitleaks','trivy'],batchKey:key,batchId,now:NOW});
   const rk=trainRunKey({repo:s.repo,seed:'e'.repeat(64)});
   const tr=deriveTrainRun({recordDocs:r.docs,runId:rk.slice(0,16)+'-abcdef012345',runKey:rk,mode:'shadow',now:NOW});
-  const plans=Object.entries({...d.files,...rs.files,...tr.files}).filter(([n])=>n.endsWith('/formal-service-entry.json')).map(([,v])=>JSON.parse(v));
-  assert.equal(plans.length,10);
+  const plans=Object.entries({...d.files,...tr.files}).filter(([n])=>n.endsWith('/formal-service-entry.json')).map(([,v])=>JSON.parse(v));
+  assert.equal(plans.length,9);
   for(const p of plans){assert.equal(p.contract,'clued.independent-ci.fixed-formal-windows-entry/3');assert.equal(p.nodeProfileSha256,digest(r.inputs.node));assert.equal(p.acceptanceSha256,r.recordManifest.acceptanceSha256);}
   const current=fs.readFileSync(new URL('../src/independent-control-checks-v2/consumer.mjs',import.meta.url),'utf8');
   assert.match(current,/CONSUMER_PROVIDER_V2 = 'independent-control-checks-v2'/);

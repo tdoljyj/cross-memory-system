@@ -17,7 +17,7 @@ const clone = v => JSON.parse(JSON.stringify(v));
 test('accepted bridge pins must include both the Native gate implementation and its registry boundary', () => {
   const prefix = 'work/actions-hosted-migration/independent-ci-v1/';
   const pins = REQUIRED_SOURCE_PATHS.map(path => ({ path, sha256: 'c'.repeat(64) }));
-  for (const name of ['src/scan-start-v1/grant.mjs', 'src/scan-start-v1/native-port.mjs', 'src/hosted-relay-v1/registry.mjs', 'src/hosted-relay-v1/registry.json']) {
+  for (const name of ['src/scan-start-v1/grant.mjs', 'src/scan-start-v1/native-port.mjs', 'src/scan-start-v1/registry.mjs', 'src/scan-start-v1/registry.json']) {
     assert.ok(REQUIRED_SOURCE_PATHS.includes(prefix + name));
     assert.throws(() => validateSourcePins(pins.filter(p => p.path !== prefix + name)), { code: 'BRIDGE_ACCEPTED_SOURCE_INCOMPLETE' });
   }

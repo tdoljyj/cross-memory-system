@@ -28,7 +28,7 @@ export async function registerIndependentController({ identity, journal, args, p
   identity = validateIndependentPublicationIdentity(identity);
   validatePlanV2(plan);
   if (!/^[0-9a-f]{32}$/.test(args?.nonce??'') || !/^[0-9a-f]{64}$/.test(args?.configSha256??'')
-    || !plan || !['work-admission','check-publisher','control-checks','relay-publisher'].includes(plan.entryRole)
+    || !plan || !['work-admission','check-publisher','control-checks'].includes(plan.entryRole)
     || plan.sourceManifestSha256 !== identity.job.sourceManifestSha256
     || plan.sourceManifestSha256 !== record?.config?.sourceManifestSha256
     || plan.acceptanceSha256 !== record?.hashes?.acceptanceSha256

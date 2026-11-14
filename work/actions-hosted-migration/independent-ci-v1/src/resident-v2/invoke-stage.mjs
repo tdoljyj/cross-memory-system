@@ -16,13 +16,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { canonical } from '../proof.mjs';
-import { validateJobV2, makeJobV2 } from '../job-v2.mjs';
+import { validateJobV2 } from '../job-v2.mjs';
 import { ENVELOPE_CONTRACT_V2 } from '../proof-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { readSealedStage, PLAN_CONTRACT_V2 } from './stage-package.mjs';
 import { makeRoleProbeRun, validWatchPr } from './role-probe-run.mjs';
 import { makeRevocationRun, revocationQualification } from './revocation-run.mjs';
-import { validateRelayQualificationRun, relayQualificationWindow } from './relay-qualification-run.mjs';
 import { readRecordDocs } from './derive-batch.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs';
@@ -206,94 +205,7 @@ export async function invokeRevocationMaintenance({ runKey, runId, nodeProfileSh
     controllerSid:record.accepted.node.controllerSid,expectedJobIds:JSON.parse(jobsText).map(j=>j.id)});
 }
 
-// Fixed read-only Stage13. It neither derives a new PR batch nor re-runs Stage1;
-// the sealed job points to the original protected Stage1 outcome. A held install
-// with an exact accepted window is required before asking the broker at all.
-export async function invokeRelayQualification({ runKey, job, stageRoot = WIN_STAGE,
-  brokerRoot = path.join(WIN_RESIDENT, 'broker'), receiptsRoot = STATE_V2.receipts,
-  recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
-  nonce = randomBytes(16).toString('hex') }) {
-  let record, plan, jobsText, planText, sealedJob;
-  let workManifestSha256 = hash(canonical({ contract: 'clued.independent-ci.relay-qualification-intent/1' }));
-  try {
-    sealedJob = validateRelayQualificationRun(job);
-    check(HEX64.test(runKey ?? '') && sealedJob.runId.startsWith(runKey.slice(0, 16)), 'RELAY_QUALIFICATION_RUN_REFUSED');
-    workManifestSha256 = hash(canonical({ contract: 'clued.independent-ci.relay-qualification-intent/1', runKey, job: sealedJob }));
-    record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD),
-      { now: clock(), required: [ENTRY_V2['relay-qualification']] });
-    check(sealedJob.repo === record.config.repository && sealedJob.sourceManifestSha256 === record.config.sourceManifestSha256
-      && sealedJob.nodeProfileSha256 === hash(record.accepted.node), 'RELAY_QUALIFICATION_RUN_REFUSED');
-    check(relayQualificationWindow(record, { job: sealedJob, now: clock(), reserveMs: 300_000 }),
-      'RELAY_QUALIFICATION_WINDOW_REQUIRED');
-    jobsText = canonical([sealedJob]);
-    plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: 13, entryRole: 'relay-qualification',
-      batchKey: runKey, batchId: sealedJob.runId, ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef,
-      nodeSha256: record.config.controllerNodeSha256, nodeProfileSha256: sealedJob.nodeProfileSha256,
-      entrySha256: record.pins.get(ENTRY_V2['relay-qualification']), acceptanceSha256: record.hashes.acceptanceSha256,
-      sourceManifestSha256: record.config.sourceManifestSha256, installationSha256: record.hashes.installationSha256,
-      runtimeConfigPinSha256: record.hashes.runtimeConfigPinSha256, jobSha256: hash(jobsText) };
-    planText = canonical(plan);
-  } catch { return buildStageFact({ stage: 13, nonce, workManifestSha256, preflightCode: 'STAGE_PACKAGE_REFUSED' }); }
-  await prepareStageDirectory({ stageRoot, nonce, sealed: { files: {
-    'formal-service-entry.json': Buffer.from(planText), 'jobs.json': Buffer.from(jobsText) } } });
-  const planSha256 = hash(planText), request = makeBrokerRequest({ stage: 13, nonce, configSha256: planSha256, now: clock() });
-  const { response } = await askBroker({ brokerRoot, request, clock, sleep, waitUntil: Date.parse(request.deadline) + 180_000 });
-  const receiptBytes = await readBounded(path.join(receiptsRoot, `windows-formal-entry-${nonce}.json`), 65536).catch(() => null);
-  const outcomeBytes = await readBounded(path.join(receiptsRoot, `outcome-${nonce}.json`), 65536).catch(() => null);
-  return buildStageFact({ stage: 13, nonce, plan, planSha256, workManifestSha256, broker: response,
-    receipt: receiptBytes ? parse(receiptBytes) : null, receiptBytes,
-    outcome: outcomeBytes ? parse(outcomeBytes) : null, outcomeBytes,
-    controllerSid: record.accepted.node.controllerSid, expectedJobIds: [sealedJob.id], relayQualificationJob: sealedJob });
-}
-
-// This metadata can only restrict ordinary execution. Read expired windows too:
-// expiration is not permission to fall back to a local scanner. Actual stage13
-// admission always uses the real clock and refuses an expired window.
-export function readRelayQualificationHoldWindow({ recordDocs = null, now = Date.now(), nodeProfileSha256 } = {}) {
-  check(HEX64.test(nodeProfileSha256 ?? ''), 'RELAY_QUALIFICATION_WINDOW_REFUSED');
-  const record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now,
-    required: [ENTRY_V2['relay-qualification']] });
-  check(hash(record.accepted.node) === nodeProfileSha256, 'RELAY_QUALIFICATION_WINDOW_REFUSED');
-  let window = null;
-  if (Object.hasOwn(record.accepted, 'relayQualificationWindow')) {
-    window = relayQualificationWindow(record, { now: 1, reserveMs: 0 });
-    check(window && window.subject.repo === record.config.repository
-      && window.subject.nodeProfileSha256 === nodeProfileSha256, 'RELAY_QUALIFICATION_WINDOW_REFUSED');
-    const s = window.subject;
-    const job = makeJobV2({ repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, testSha: s.testSha,
-      sourceManifestSha256: s.sourceManifestSha256, role: 'work-admission', attempt: 1,
-      createdAt: new Date(now).toISOString() });
-    check(s.stage1JobId === job.id, 'RELAY_QUALIFICATION_WINDOW_REFUSED');
-  }
-  return { authority: 'RESTRICTIVE_HOLD_ONLY', sourceManifestSha256: record.config.sourceManifestSha256,
-    nodeProfileSha256, window };
-}
-
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
-  if (argv[0] === '--relay-qualification-window') {
-    try {
-      check(argv.length === 3 && argv[1] === '--node-profile-sha256', 'RELAY_QUALIFICATION_WINDOW_REFUSED');
-      output.write(JSON.stringify(readRelayQualificationHoldWindow({ nodeProfileSha256: argv[2] })) + '\n');
-      return 0;
-    } catch { output.write(JSON.stringify({ authority: 'NONE', code: 'RELAY_QUALIFICATION_WINDOW_REFUSED' }) + '\n'); return 2; }
-  }
-  if (argv[0] === '--relay-qualification') {
-    if (argv.length !== 7 || argv[1] !== '--run-key' || argv[3] !== '--subject-file'
-      || argv[5] !== '--subject-sha256' || !HEX64.test(argv[2] ?? '') || !HEX64.test(argv[6] ?? '')
-      || !path.isAbsolute(argv[4] ?? '')) {
-      output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
-    }
-    let job;
-    try {
-      const bytes = await readBounded(argv[4], 65536);
-      check(bytes && hash(bytes) === argv[6], 'EXACT_QUALIFICATION_INPUT_REQUIRED');
-      job = validateRelayQualificationRun(parse(bytes));
-      check(canonical(job) === bytes.toString('utf8'), 'EXACT_QUALIFICATION_INPUT_REQUIRED');
-    } catch { output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2; }
-    const fact = await invokeRelayQualification({ runKey: argv[2], job });
-    output.write(JSON.stringify(fact) + '\n');
-    return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
-  }
   if (argv[0] === '--revocation-maintenance-qualification') {
     try {
       check(argv.length===3 && argv[1]==='--node-profile-sha256' && HEX64.test(argv[2]??''),'REVOCATION_QUALIFICATION_REQUIRED');

@@ -275,7 +275,7 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   }});
   // This URL is part of the computed held Source closure; a caller supplies
   // neither the registry bytes nor their digest. Policy activation stays Native.
-  const registryBytes = fs.readFileSync(new URL('../hosted-relay-v1/registry.json', import.meta.url));
+  const registryBytes = fs.readFileSync(new URL('../scan-start-v1/registry.json', import.meta.url));
   const scanStartRegistrySha256 = createHash('sha256').update(registryBytes).digest('hex');
   const scanStart = createIndependentScanStartPort({ native, github, scope: record.config.scope, live,
     registrySha256: scanStartRegistrySha256 });
@@ -318,7 +318,7 @@ export async function runEntry({ argv, entryRole, moduleUrl, body, output = proc
   } finally {
     if (args) {
       try { await writeOutcome({ receiptsRoot: STATE_V2.receipts, nonce: args.nonce, plan: inputs?.plan ?? null, jobIds: inputs?.jobs?.map(j => j.id) ?? [],
-        relayQualificationJob: inputs?.plan?.stage === 13 ? inputs.jobs[0] : null, result }); } catch { /* outcome missing = UNKNOWN for the resident */ }
+        result }); } catch { /* outcome missing = UNKNOWN for the resident */ }
     }
     if (lease) await lease.close();
   }

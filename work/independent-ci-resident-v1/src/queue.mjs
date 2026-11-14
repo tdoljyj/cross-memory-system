@@ -311,6 +311,19 @@ export class RunQueue {
     return n;
   }
 
+  // A bundle found that main is no longer baseSha (RESIDENT_BASE_MOVED): every other waiting row on that same base can never pass
+  // either, so it stops now with the same code, without a bundle of its own (only a new commit runs that PR again). Returns how many.
+  stopBase(baseSha, code, now) {
+    let n = 0;
+    for (const r of this.data.rows) {
+      if (r.running || r.current?.baseSha !== baseSha || !['QUEUED', 'WAITING', 'BACKOFF'].includes(r.state)) continue;
+      Object.assign(r, { stopKind: 'burned', stopClass: 'superseded', nextAt: null, poke: null, deferred: null, deferUntil: null });
+      this.setState(r, 'STOPPED', code, now);
+      n += 1;
+    }
+    return n;
+  }
+
   // The rows that may be tried now, in the order the executor tries them (design v0.5 §4.3 steps 5 and 6; v0.6 §7
   // minor 4): a train front batch first (step 3c-2b), due waits and poked rows next (by due time), then the rest first come,
   // first served (by order; a released row went to the tail).

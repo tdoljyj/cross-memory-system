@@ -32,7 +32,7 @@ const uuid=()=>crypto.randomUUID();
 const digest=(s='fixture')=>crypto.createHash('sha256').update(s).digest('hex');
 const sha=(s='fixture')=>crypto.createHash('sha1').update(s).digest('hex');
 async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
-// The wire identity the real port sends (hosted-relay-v1/registry.mjs) and the scope the admitted-facts fixture names.
+// The wire identity the real port sends (scan-start-v1/registry.mjs) and the scope the admitted-facts fixture names.
 const repository='tdoljyj/cross-memory-system',repoId=1334673495,pr=888,project='00000000-0000-4000-8000-000000000000',scope='project:'+project;
 
 // One isolated cluster. migrate(filter) applies the sorted migrations the filter accepts.

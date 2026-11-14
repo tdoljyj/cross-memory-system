@@ -13,7 +13,6 @@ import { canonical, digest } from '../src/proof.mjs';
 import { subjectOfV2, validateJobV2, scanEffectKeyV2, sameClaimGeneration, claimGeneration, SCANNER_ROLES_V2 } from '../src/job-v2.mjs';
 import { verifyResultV2 } from '../src/proof-v2.mjs';
 import { readPublishedChecks } from '../src/published-on-github-v2.mjs';
-import { relayExternalId, validateHostedEnvelope } from '../src/hosted-relay-v1/attest.mjs';
 import { EffectJournal, rolePublicationKey } from '../src/effect-journal.mjs';
 import { readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
@@ -75,7 +74,7 @@ export const transientFetchError = error => error?.name === 'TimeoutError'
     && [error.cause?.code, ...(Array.isArray(error.cause?.errors) ? error.cause.errors.map(e => e?.code) : [])].some(code => NETWORK_CODES.has(code)));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// The protected observation port of a v2 scanner publisher (this entry and the stage-R relay entry): the
+// The protected observation port of a v2 scanner publisher (this entry): the
 // read-only Native verify RPC for the batch claim generation. It never binds a PR or charges a meter.
 // clock (audit anchors), monotonic (answer age and retry budget), sleep and timeoutSignal are the tests' seams.
 export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log, clock = Date.now, monotonic = () => performance.now(), sleep = pause,
@@ -177,8 +176,8 @@ const auditExact = (value, fields) => value && Object.getPrototypeOf(value) === 
   && Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value, key));
 const CONTEXT_FIELDS = ['nonce', 'stage', 'entryRole', 'batchKey', 'configSha256', 'sourceManifestSha256', 'acceptanceSha256', 'entrySha256'];
 function auditContextValid(c) {
-  return auditExact(c, CONTEXT_FIELDS) && /^[a-f0-9]{32}$/.test(c.nonce ?? '') && [3, 5, 7, 9].includes(c.stage)
-    && c.entryRole === (c.stage === 9 ? 'relay-publisher' : 'check-publisher')
+  return auditExact(c, CONTEXT_FIELDS) && /^[a-f0-9]{32}$/.test(c.nonce ?? '') && [3, 5, 7].includes(c.stage)
+    && c.entryRole === 'check-publisher'
     && CONTEXT_FIELDS.filter(k => k.endsWith('Sha256') || k === 'batchKey').every(k => auditHash(c[k]));
 }
 function validateRecoveryAudit(record, context, domain) {
@@ -189,8 +188,7 @@ function validateRecoveryAudit(record, context, domain) {
     && record.auditOnly === true && record.grantsExecution === false && digest(record.context) === digest(context));
   validateJobV2(record.job);
   const role = ({ 3: 'gitleaks', 5: 'trivy', 7: 'contract-placement' })[context.stage];
-  deny(record.job.sourceManifestSha256 === context.sourceManifestSha256
-    && (context.stage === 9 ? ['gitleaks', 'trivy'].includes(record.job.role) : record.job.role === role));
+  deny(record.job.sourceManifestSha256 === context.sourceManifestSha256 && record.job.role === role);
   const i = record.identity, c = record.clock, n = record.counters, e = record.firstExhaustion, p = record.negativeProof;
   deny(auditExact(i, ['effectKey', 'roleMutexKey', 'inputSha256', 'evidenceSha256', 'claim'])
     && ['effectKey', 'roleMutexKey', 'inputSha256', 'evidenceSha256'].every(k => auditHash(i[k]))
@@ -354,30 +352,15 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     requireGuard(definition && Object.keys(definition).sort().join('|') === 'appId|name'
       && Number.isSafeInteger(definition.appId) && definition.appId > 0 && typeof definition.name === 'string');
     const mutexKey = rolePublicationKey({ repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId });
-    let key;
     const evidence = async () => {
       safeLive();
-      if (op.method === 'publish') {
-        requireGuard(digest(subjectOfV2(op.input.job)) === digest(subjectOfV2(job)));
-        verifyResultV2({ job, envelope: op.input.envelope, signers: publisherOptions.signers, now: clock(), domain: publisherOptions.domain });
-      } else {
-        const s = op.input.subject, e = op.input.envelope;
-        validateHostedEnvelope(e);
-        requireGuard(['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => s[k] === job[k])
-          && op.input.attempt === job.attempt && e.role === job.role && sameClaimGeneration(s, publisherOptions.batchClaim));
-        const confirmed = await publisherOptions.hostedVerifier.confirm(e);
-        requireGuard(confirmed?.confirmed === true && confirmed.attestationSha256 === e.attestationSha256);
-      }
+      requireGuard(digest(subjectOfV2(op.input.job)) === digest(subjectOfV2(job)));
+      verifyResultV2({ job, envelope: op.input.envelope, signers: publisherOptions.signers, now: clock(), domain: publisherOptions.domain });
       requireGuard(sameClaimGeneration(await readCurrentBatchClaim(job), publisherOptions.batchClaim));
       safeLive();
     };
-    if (op.method === 'publish') key = scanEffectKeyV2(job, definition);
-    else {
-      const e = op.input.envelope;
-      const externalId = relayExternalId({ role: job.role, headSha: job.headSha, runId: e.runId, runAttempt: e.runAttempt });
-      key = digest({ action: 'hosted-relay-check/2', roleMutexKey: mutexKey, externalId, definition });
-    }
-    requireGuard(result.effectKey === key && (op.method !== 'publishHosted' || result.roleMutex?.key === mutexKey && result.roleMutex.held === false));
+    const key = scanEffectKeyV2(job, definition);
+    requireGuard(result.effectKey === key);
     const latch = op.observation.exhaustion;
     requireGuard(latch?.transient === true && latch.attempt > 0 && latch.subjectSha256 === digest(subjectOfV2(job))
       && latch.claimSha256 === digest(claimGeneration(publisherOptions.batchClaim)));
@@ -396,7 +379,7 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     op.firstExhaustion = structuredClone(latch);
     op.auditJob = structuredClone(job);
     op.auditIdentity = { effectKey: key, roleMutexKey: mutexKey, inputSha256: op.inputSha256,
-      evidenceSha256: op.method === 'publish' ? digest(op.input.envelope) : op.input.envelope.attestationSha256, claim: claimGeneration(publisherOptions.batchClaim) };
+      evidenceSha256: digest(op.input.envelope), claim: claimGeneration(publisherOptions.batchClaim) };
     op.negativeProof = { ownEffectKeyNull: true, roleMutexKeyNull: true, remoteComplete: true, appId: definition.appId, checkName: definition.name,
       headSha: job.headSha, inventorySha256: digest(inventory), inventoryCount: inventory.length, matchingCount: 0, observedAt: new Date(clock()).toISOString() };
     return { jobId: job.id, role: job.role, ...op.auditIdentity, maxPublisherAttempts: 2, maxObservationMs: PUBLICATION_OBSERVE_BUDGET_MS };
@@ -422,29 +405,27 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
       nonce: recoveryContext.nonce, configSha256: recoveryContext.configSha256, jobId: op.auditJob.id });
     return saved;
   }
-  const run = async (method, input) => {
+  const run = async input => {
     if (active) stop('publication_recovery_unconfirmed');
     // Only the internal continuation below can use a role twice. A fresh public call must
-    // never reset that role's 60 s allowance or re-enter a previous SETTLED relay prefix.
-    const subject = method === 'publish' ? input?.job : input?.subject;
-    const role = method === 'publish' ? input?.job?.role : input?.envelope?.role;
-    const roleId = digest({ repo: subject?.repo, headSha: subject?.headSha, role });
+    // never reset that role's 60 s allowance.
+    const roleId = digest({ repo: input?.job?.repo, headSha: input?.job?.headSha, role: input?.job?.role });
     if (usedRoles.has(roleId)) return { status: 'UNCERTAIN', reason: 'publication_recovery_reentry_refused', sideEffects: 0,
-      mayHavePublished: true, productionAuthorized: false, ...(method === 'publishHosted' ? { roleMutex: { key: null, held: true } } : {}) };
+      mayHavePublished: true, productionAuthorized: false };
     usedRoles.add(roleId);
-    const op = { method, input: structuredClone(input), inputSha256: digest(input), mutationAttempted: false,
+    const op = { input: structuredClone(input), inputSha256: digest(input), mutationAttempted: false,
       evaluations: 0, unsafe: false, attempts: 1, observation: { deadline: null, startedAt: null, observationCalls: 0, verifyRequests: 0, exhaustion: null, written: false, postWriteDeadline: null, slowestReadMs: 0 }, observedJob: null };
     active = op;
     let result;
     try {
-      result = await publisher[method](op.input);
+      result = await publisher.publish(op.input);
       const exhausted = result?.status === 'BLOCKED' && result.reason === 'native_claim_observation_unavailable' && result.sideEffects === 0;
       if (exhausted) {
         if (!op.observation.exhaustion || result.mayHavePublished === true || op.mutationAttempted || op.evaluations !== 0 || op.unsafe) op.unsafe = true;
         // Generation 28 (resident docs/adr/0015): a republication's effect key is not the original's and the original is on record (revoked),
         // so the no-effect proof below cannot hold for it: no second attempt in this window; the clean BLOCKED goes back as it is and the
         // resident's bounded publication retry runs the stage again.
-        else if (op.method === 'publish' && Number.isSafeInteger(result.republication) && result.republication > 0) { /* returned as is */ }
+        else if (Number.isSafeInteger(result.republication) && result.republication > 0) { /* returned as is */ }
         else if (monotonic() + OBSERVE_MIN_ATTEMPT_MS <= op.observation.deadline) {
           try {
             const proof = await proveNoEffects(op, result);
@@ -454,7 +435,7 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
             requireGuard(monotonic() + OBSERVE_MIN_ATTEMPT_MS <= op.observation.deadline && !op.unsafe && !op.mutationAttempted && op.evaluations === 0);
             safeLive();
             op.attempts = 2; op.observation.exhaustion = null; op.observation.slowestReadMs = 0;
-            result = await publisher[method](op.input);
+            result = await publisher.publish(op.input);
           } catch { op.unsafe = true; }
         }
       }
@@ -473,9 +454,9 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     // withdrawal's republishSafe (generation 28).
     const { safeToRerun: _dropped, republishSafe: _droppedToo, ...rest } = result ?? {};
     return { ...rest, status: 'UNCERTAIN', reason: 'publication_recovery_unconfirmed', sideEffects: result?.sideEffects ?? 0,
-      productionAuthorized: false, mayHavePublished: true, ...(method === 'publishHosted' ? { roleMutex: { key: result?.roleMutex?.key ?? null, held: true } } : {}) };
+      productionAuthorized: false, mayHavePublished: true };
   };
-  return Object.freeze({ fixture: publisher.fixture, publish: input => run('publish', input), publishHosted: input => run('publishHosted', input) });
+  return Object.freeze({ fixture: publisher.fixture, publish: run });
 }
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
