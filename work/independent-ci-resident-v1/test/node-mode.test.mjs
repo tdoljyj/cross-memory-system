@@ -14,7 +14,7 @@ import { intakePauseRequest } from '../src/intake-pause.mjs';
 import { rearmRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { pauseRequestBytes } from '../upgrader/src/resident-ports.mjs';
 import { refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
-import { BASE, CI_SOURCE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, CI_SOURCE, HEAD, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-10-29T08:00:00Z');
@@ -33,14 +33,12 @@ const probeResult = fact => ({ ok: true, proof: { windowsTreeZero: true, service
   outcome: { status: 'BLOCKED', reason: fact.code, sideEffects: 0, mayHavePublished: false } });
 
 // An executor whose engine can probe the role (so the node mode is on). facts: the probe's answers in order, the last one repeats.
-async function nodeFx(t, { facts = [HELD], engine = fakeEngine(), hint = null, ...rest } = {}) {
+async function nodeFx(t, { facts = [HELD], engine = fakeEngine(), ...rest } = {}) {
   engine.facts = [...facts];
   engine.probes = [];
   engine.runRoleProbe = async () => { const fact = engine.facts.length > 1 ? engine.facts.shift() : engine.facts[0]; engine.probes.push(fact.result); return probeResult(fact); };
   let f;
   const board = new StatusBoard({ clock: () => f?.clock() ?? T0 });
-  // hint: the companion's hosted hint (a function of the subject), on the fixture's own clock so its heartbeat is fresh
-  if (hint) rest.companion = fakeCompanion({ hint }, () => f?.clock() ?? T0);
   f = await executorFixture(t, { engine, status: board, now: T0, ...rest });
   f.board = board;
   return f;
@@ -485,12 +483,14 @@ test('M1: after a restart or a re-arm a batch parked at B or A does not keep the
   assert.deepEqual([h.engine.probes.length, h.exec.roleProbeMode], [2, 'ACTIVE']);
   assert.deepEqual((await receiptBodies(h, 'node-mode')).map(b => `${b.from}>${b.to}:${b.why}`), ['UNCERTAIN>ACTIVE:probe-held', 'ACTIVE>UNCERTAIN:rearm', 'UNCERTAIN>ACTIVE:probe-held']);
 
-  // A, restart: a batch waiting for hosted signals stays the tick's result, and the probe still runs
-  const g = await nodeFx(t, { policy: rawPolicy({ relay: RELAY_ON }), hint: () => Buffer.from('{"contract":"x"}'), facts: [HELD] });
+  // A, restart: a batch resting at parking point A stays the tick's result, and the probe still runs
+  const g = await nodeFx(t, { facts: [HELD] });
+  holdAtA(g.exec);
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   const again = new ResidentExecutor(g.ports);
+  holdAtA(again);
   g.advance(MIN);
   assert.equal((await again.tick()).state, 'WAITING');
   assert.deepEqual([g.engine.probes.length, again.roleProbeMode], [2, 'ACTIVE']);
@@ -526,8 +526,9 @@ test('STANDBY: a batch parked at B or waiting at A ends at the next tick by the 
   assert.equal(derives(f), before);
   assert.deepEqual(['QUEUED'], [f.queue.row(901).state]);
 
-  // A: a batch waiting for hosted signals ends the same way at the next tick (only stage 1 ran: nothing published).
-  const g = await nodeFx(t, { policy: rawPolicy({ relay: RELAY_ON }), hint: () => null, facts: [HELD, NOT_HELD] });
+  // A: a batch resting at parking point A ends the same way at the next tick (only stage 1 ran: nothing published).
+  const g = await nodeFx(t, { facts: [HELD, NOT_HELD] });
+  holdAtA(g.exec);
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
@@ -536,7 +537,7 @@ test('STANDBY: a batch parked at B or waiting at A ends at the next tick by the 
   g.advance(MIN);
   const a = await g.exec.tick();
   assert.deepEqual([a.state, a.failureCode, a.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'waiting']);
-  assert.deepEqual(stagesRun(g.engine), [1], 'neither the relay nor a local scanner started');
+  assert.deepEqual(stagesRun(g.engine), [1], 'no local scanner started');
   assert.equal(await g.executedHeads.published(subject()), false);
   assert.deepEqual(await g.ledger.pendingAttempts2(), []);
   assert.equal(derives(g), 1, 'PR 900 never started');

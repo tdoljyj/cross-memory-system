@@ -15,7 +15,7 @@ import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { describe as prPage } from '../src/pr-status.mjs';
 import { batchKey } from '../src/ledger.mjs';
 import { drainRequest, inspect, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-10-23T05:00:00Z');
@@ -318,9 +318,9 @@ test('the Owner tool writes the requests into requests\\ (no elevation) and insp
 
 test('a batch waiting at parking point A goes on under the hold and stays the status\'s current batch (review minor 3)', async t => {
   const W0 = Date.parse('2026-10-20T12:00:00Z');
-  let hint = hintFor({ gitleaks: { state: 'PENDING_RUNNING', startedAt: W0 - 60_000 }, trivy: { state: 'SUCCESS' } });
   const board = new StatusBoard({ clock: () => W0 });
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => hint }), status: board });
+  const f = await executorFixture(t, { status: board });
+  const atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   await f.drop(json(intakePauseRequest({ reason: 'planned switch' }, f.clock)), 'requests');
@@ -328,7 +328,7 @@ test('a batch waiting at parking point A goes on under the hold and stays the st
   assert.equal((await f.exec.tick()).state, 'WAITING', 'the wait, not the deferral');
   assert.equal(board.snapshot().current?.pr, 884, 'a planned switch sees the batch at A');
   assert.notEqual(board.snapshot().intakePause, null);
-  hint = hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
+  atA.release();
   f.advance(MIN);
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'the batch at A ran to its end under the hold');
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);

@@ -10,7 +10,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
 import { Mailbox, REQUEST_CONTRACT, validateRequest } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig, workerRanEvidence, workerRanSince } from '../src/companion.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, relayedRow, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 const KEY = batchKey(subject());
@@ -438,19 +438,4 @@ test('m4: a HALT that comes during the wait: no run again, the batch ends by the
   await f.exec.tick();
   assert.deepEqual(stagesRun(engine).filter(n => n === 4), [4], 'never run again');
   assert.deepEqual((await bodies(f, 'execution-retry-refused')).map(b => b.step), ['after-wait-halt']);
-});
-
-test('the first local Linux stage (gitleaks and trivy relayed to hosted): its run again keeps firstLinux, so the refs gate is passed again', async t => {
-  const base = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const engine = engineWith(6, [lost()], base);
-  const f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  f.advance(61 * 60_000);
-  f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at: f.clock() })));
-  const r = await f.exec.tick();
-  assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
-  const opts6 = engine.opts.filter(o => o[0] === 6).map(o => o[1]);
-  assert.ok(opts6.every(o => typeof o.stillAllowed === 'function'), "the refs gate's waits ask the executor (DESIGN 55)");
-  assert.deepEqual(opts6.map(({ stillAllowed, ...o }) => o), [{ betweenRoles: false, firstLinux: true }, { betweenRoles: false, firstLinux: true, again: 1 }]);
 });

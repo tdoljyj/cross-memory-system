@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PAUSE_CONTRACT, SUPERSEDE_LIVE_READ_MS, SUPERSEDED_AT_SAFE_POINT, SUPERSEDED_ARCHIVE_REASON } from '../src/executor.mjs';
 import { Ledger, batchKey } from '../src/ledger.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-11-13T08:00:00Z');
@@ -123,8 +123,9 @@ test('node loses duty: STANDBY ends every resting batch (A and B) at the next ti
   assert.equal(stagesRun(f.engine).filter(n => n === 8).length, tries, 'no stage-8 try on a node off duty');
   await ended(f, 'not-on-duty');
 
-  // A: a batch waiting for hosted signals ends the same way (stage 1 only: not published, the head may run on the node on duty)
-  const g = await fx(t, { probe: [HELD], policy: rawPolicy({ relay: RELAY_ON }) });
+  // A: a batch resting at parking point A ends the same way (stage 1 only: not published, the head may run on the node on duty)
+  const g = await fx(t, { probe: [HELD] });
+  holdAtA(g.exec);
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');

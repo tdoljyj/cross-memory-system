@@ -6,7 +6,7 @@
 // Source (actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs); a test keeps the
 // two identical. The resident never imports the Source at run time (it is a separate pinned layer).
 import { readFileSync } from 'node:fs';
-import { CODE, HEX64, check } from './canonical.mjs';
+import { CODE, check } from './canonical.mjs';
 
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
 // NODE_ROLE_NOT_HELD (primary/standby C3, DESIGN §29): the last one, the answer "this node holds no ci-admission role".
@@ -58,42 +58,6 @@ export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAG
   // relay plan that does not validate. The role is never run locally afterwards; the head burns and HALTs.
   'RELAY_PUBLICATION_UNCERTAIN', 'ROLE_ALREADY_PUBLISHED_ON_HEAD', 'RELAY_PLAN_UNCONFIRMED']);
 
-// ---- stage R plan rows (mirror of hosted-relay-v1/stage.mjs LOCAL_REASONS and relay-plan.mjs) ----
-// Why a relay candidate stays local: every RELAY_NOT_ATTESTED_* reason of stage R, and RELAY_ROLE_NOT_RELAYABLE.
-// A LOCAL_REQUIRED row with any other reason is not a plan the executor acts on (RELAY_PLAN_UNCONFIRMED).
-export const RELAY_LOCAL_REASONS = Object.freeze(['RELAY_ROLE_NOT_RELAYABLE', 'RELAY_NOT_ATTESTED_BILLING_REFUSED', 'RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS',
-  'RELAY_NOT_ATTESTED_PENDING', 'RELAY_NOT_ATTESTED_ABSENT', 'RELAY_NOT_ATTESTED_NOT_ELIGIBLE', 'RELAY_NOT_ATTESTED_ATTESTATION_FAILED',
-  'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED', 'RELAY_NOT_ATTESTED_NOT_CONFIRMED', 'RELAY_NOT_ATTESTED_NOT_ADMITTED']);
-export const RELAY_ROW_FIELDS = Object.freeze(['role', 'outcome', 'reason', 'receipt', 'checkRunId', 'externalId', 'attestationSha256', 'detail']);
-const EXTERNAL = /^independent-ci:relay:(gitleaks|trivy):[a-f0-9]{12}:run[1-9][0-9]{0,19}:a[1-9][0-9]{0,3}$/;
-
-// Stage R rows for exactly the candidates (in order) -> { relayed: [row], local: [row], onGithub: row | null }, or null
-// when the rows are not a plan the executor acts on. A plan is every row a clean RELAYED / LOCAL_REQUIRED row, or such
-// rows, then one ON_GITHUB row (ROLE_ALREADY_ON_GITHUB: App 5368905 already published that role on the head and this node
-// knew nothing of it; C4), then only NOT_PROCESSED rows or never-relayable LOCAL_REQUIRED rows (mirror of the Source's
-// relay-plan.mjs#relayPlanEnding). Anything else (HALT, NOT_PROCESSED without ON_GITHUB before it, an unknown reason, a
-// missing field) is null.
-export function relayPlanFromRows(rows, candidates) {
-  if (!Array.isArray(rows) || !Array.isArray(candidates) || rows.length !== candidates.length || rows.length === 0) return null;
-  const relayed = [], local = []; let onGithub = null;
-  for (const [i, r] of rows.entries()) {
-    if (r === null || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).length !== RELAY_ROW_FIELDS.length || !RELAY_ROW_FIELDS.every(k => Object.hasOwn(r, k))) return null;
-    if (r.role !== candidates[i]) return null;
-    const nothing = r.checkRunId === null && r.externalId === null && r.attestationSha256 === null;
-    const localRow = r.outcome === 'LOCAL_REQUIRED' && RELAY_LOCAL_REASONS.includes(r.reason) && ['relay-local-fallback', 'relay-billing-refused'].includes(r.receipt) && nothing;
-    if (onGithub) {
-      if (r.outcome === 'NOT_PROCESSED' && r.reason === null && r.receipt === null && nothing) continue;
-      if (localRow && r.reason === 'RELAY_ROLE_NOT_RELAYABLE') { local.push(r); continue; }
-      return null;
-    }
-    if (r.outcome === 'RELAYED' && r.reason === null && r.receipt === 'relay-attested' && Number.isSafeInteger(r.checkRunId) && r.checkRunId > 0
-      && typeof r.externalId === 'string' && EXTERNAL.test(r.externalId) && r.externalId.split(':')[2] === r.role && HEX64.test(r.attestationSha256 ?? '')) relayed.push(r);
-    else if (localRow) local.push(r);
-    else if (r.outcome === 'ON_GITHUB' && r.reason === 'ROLE_ALREADY_ON_GITHUB' && r.receipt === null && nothing) onGithub = r;
-    else return null;
-  }
-  return { relayed, local, onGithub };
-}
 // Resident-side codes that end a stage cleanly before or around the Source stage (companion pump, the v1
 // one-shot states kept for an unchanged reading of older receipts).
 // REFS_GATE_UNCONFIRMED: the refs gate before the first local scanner got no explicit answer; nothing ran; clean

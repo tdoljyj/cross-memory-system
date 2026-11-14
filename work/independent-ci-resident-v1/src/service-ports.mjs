@@ -30,8 +30,6 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
   };
   return {
     heartbeat: () => mailbox.heartbeat(),
-    // The newest companion hint for this head (bytes; the executor parses), or null. Never authority.
-    async hostedHint(subject) { try { return await mailbox.latestHint(subject.pr, subject.headSha); } catch { return null; } },
     // jobTree (DESIGN §24): what the companion's job host found about the bundle's child (mailbox.mjs RESPONSE_CONTRACT); null
     // also when no answer came. Recorded with a stage-0 failure; the release never waits for it.
     async buildBundle(batch) {

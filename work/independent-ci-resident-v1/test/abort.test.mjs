@@ -10,7 +10,7 @@ import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, OWNER_ABORT_STAGE_ENDINGS, UNKNOWN_
 import { FIXED_STAGES } from '../src/policy.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { abortRequest, inspect, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, triggerBytes } from './helpers.mjs';
 
 const OWNER = 'S-1-5-21-1-2-3-1001';
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
@@ -27,9 +27,10 @@ async function ownerAborts(f, key = KEY, { reason = 'stage stuck', sha } = {}) {
   const latest = await f.ledger.latestRecord(key);
   return writeOwnerRequest(path.join(f.root, 'owner'), abortRequest({ batchKey: key, expectedLedgerEntrySha256: sha ?? latest.sha256, reason, by: OWNER }, f.clock), f.clock);
 }
-// A batch that waits for hosted signals (relay on, no hint yet): safe point P0 at every tick start.
-async function waitingBatch(t, companion = fakeCompanion({ hint: () => null })) {
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion });
+// A batch resting at parking point A (helpers.mjs#holdAtA): safe point P0 at every tick start.
+async function waitingBatch(t, companion = fakeCompanion({})) {
+  const f = await executorFixture(t, { companion });
+  holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   return f;
@@ -140,7 +141,7 @@ test('an abort naming a stale ledger digest is refused and the batch goes on', a
 
 test('quiescence that cannot be proven HALTs exactly as before: FAILED_UNKNOWN, scene untouched, bounded re-check', async t => {
   const busy = { linuxUnitsInactive: false, containersZero: true };
-  const companion = fakeCompanion({ hint: () => null, linux: busy });
+  const companion = fakeCompanion({ linux: busy });
   const f = await waitingBatch(t, companion);
   await ownerAborts(f);
   assert.equal((await f.exec.tick()).state, 'HALTED');
@@ -159,7 +160,7 @@ test('quiescence that cannot be proven HALTs exactly as before: FAILED_UNKNOWN, 
 
 test('quiescence that comes within the bounded re-check is enough', async t => {
   let left = 2;
-  const companion = fakeCompanion({ hint: () => null });
+  const companion = fakeCompanion({});
   companion.linuxQuiescence = async () => { companion.calls.push(['quiescence']); left -= 1; return { linuxUnitsInactive: left < 0, containersZero: true }; };
   const f = await waitingBatch(t, companion);
   await ownerAborts(f);

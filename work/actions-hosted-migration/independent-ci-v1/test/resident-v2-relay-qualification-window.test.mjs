@@ -9,7 +9,6 @@ import { readRelayQualificationHoldWindow } from '../src/resident-v2/invoke-stag
 import { relayQualificationWindow, RELAY_QUALIFICATION_WINDOW_CONTRACT,
   RELAY_QUALIFICATION_AUTHORITY_ID } from '../src/resident-v2/relay-qualification-run.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { WindowsEngine, parseStageFact } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { NOW, fixtureRecord } from './resident-v2-fixtures.mjs';
 
 function record(window = true, until = NOW + 3600000) {
@@ -58,38 +57,4 @@ test('window lookup re-derives the static Stage1 identity and validates installe
     const f = record(); f.accepted.relayQualificationWindow.subject[field] = '0'.repeat(64); f.save();
     assert.throws(() => readRelayQualificationHoldWindow({ recordDocs:f.docs, now:NOW, nodeProfileSha256:f.nodeHash }));
   }
-});
-
-test('engine window reader never converts transport failure or malformed output to absence', async () => {
-  const f = record(); let response, runs = [];
-  const engine = new WindowsEngine({ node:f.accepted.node, nodeProfileSha256:f.nodeHash,
-    paths:{nodeExe:'fixed-node.exe'}, run:async argv => { runs.push(argv); return response; } });
-  engine.requireV2 = async name => { assert.equal(name,'invoke-stage.mjs'); return 'fixed-invoke-stage.mjs'; };
-  const valid = readRelayQualificationHoldWindow({ recordDocs:f.docs, now:NOW, nodeProfileSha256:f.nodeHash });
-  for (const bad of [{code:2,stdout:'{}'}, {code:0,timedOut:true,stdout:'{}'}, {code:0,stdout:'not json'},
-    {code:0,stdout:JSON.stringify({...valid,authority:'EXECUTION_ALLOWED'})},
-    {code:0,stdout:JSON.stringify({...valid,nodeProfileSha256:'0'.repeat(64)})}]) {
-    response = bad; await assert.rejects(() => engine.relayQualificationWindow());
-  }
-  response={code:0,stdout:JSON.stringify({...valid,window:null})};
-  assert.equal(await engine.relayQualificationWindow(),null);
-  response={code:0,stdout:JSON.stringify(valid)};
-  assert.deepEqual(await engine.relayQualificationWindow(),valid.window);
-  assert.ok(runs.every(argv => argv.join('|') === ['fixed-node.exe','fixed-invoke-stage.mjs','--relay-qualification-window','--node-profile-sha256',f.nodeHash].join('|')));
-});
-
-test('Stage1 public locator is retained only on bound, successful, exact-shape facts', () => {
-  const nonce='a'.repeat(32), manifest='b'.repeat(64), receipt='c'.repeat(64);
-  const f={contract:'clued.independent-ci.resident-stage-fact/2',stage:1,nonce,manifest_sha256:manifest,
-    state:'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION',failure_code:null,
-    scm_start_call_issued:true,original_binary_restored:true,complete_original_readback:true,
-    configuration_conflict_detected:false,tree_cleanup_confirmed:true,tree_active_processes:0,
-    root_exit_confirmed:true,native_receipt_sha256:receipt,
-    outcome:{status:'SETTLED',reason:null,sideEffects:1,mayHavePublished:true},
-    stage1Locator:{nonce,outcomeSha256:'d'.repeat(64),nativeReceiptSha256:receipt,jobId:'e'.repeat(64)}};
-  assert.deepEqual(parseStageFact(JSON.stringify(f),manifest).stage1Locator,f.stage1Locator);
-  for (const patch of [{stage:2},{failure_code:'REFUSED',state:'REFUSED'},{nonce:'f'.repeat(32)},
-    {stage1Locator:{...f.stage1Locator,nativeReceiptSha256:'0'.repeat(64)}},
-    {stage1Locator:{...f.stage1Locator,rawToken:'never-output'}}])
-    assert.equal(parseStageFact(JSON.stringify({...f,...patch}),manifest).stage1Locator,undefined);
 });

@@ -9,13 +9,10 @@
 //   archive-windows-spool.ps1 -BatchKey -Reason -> {verified, directory, moved, code} (S14)
 //   companion check-refs before the first local Linux stage (S9, lesson b29) and the v4 bridge pump for
 //   stages 2, 4, 6 (S7)
-//   derive-batch.mjs --relay-roles --batch-dir --batch-key --batch-id -> RESIDENT_RELAY_STAGE_DERIVED (stage R)
-//   invoke-stage.mjs --stage 9 -> stage fact /2 with the per-role relay rows (free-minutes design S19)
 // Owner abort (DESIGN §6.5): requestStop() asks a running scanner-issuer stage to stop through its own stop path
 // (a pump cancel for the companion and a broker stop request bound to the in-flight swap); nothing here kills.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { CODE, HEX64, check, fail, parseBoundedJson, sha256, canonicalJson } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
@@ -99,19 +96,6 @@ export const BROKER_REQUEST_CONTRACT = 'clued.independent-ci.swap-broker-request
 export const BROKER_STOP_CONTRACT = 'clued.independent-ci.swap-broker-stop/1';
 export const BROKER_STOP_RECEIPT_CONTRACT = 'clued.independent-ci.swap-broker-stop-receipt/1';
 const NONCE32 = /^[0-9a-f]{32}$/;
-const QUALIFICATION_LOCATOR_FIELDS = Object.freeze(['nonce', 'outcomeSha256', 'nativeReceiptSha256', 'jobId']);
-function qualificationLocator(value) {
-  try {
-    if (value === null || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(descriptors).length !== QUALIFICATION_LOCATOR_FIELDS.length
-      || !QUALIFICATION_LOCATOR_FIELDS.every(k => Object.hasOwn(descriptors, k) && Object.hasOwn(descriptors[k], 'value') && descriptors[k].enumerable)) return null;
-    const v = Object.fromEntries(QUALIFICATION_LOCATOR_FIELDS.map(k => [k, descriptors[k].value]));
-    if (typeof v.nonce !== 'string' || !NONCE32.test(v.nonce)
-      || !['outcomeSha256', 'nativeReceiptSha256', 'jobId'].every(k => typeof v[k] === 'string' && HEX64.test(v[k]))) return null;
-    return Object.freeze(v);
-  } catch { return null; }
-}
 const SWAP_REQUEST = /^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.json$/;
 
 // The in-flight swap of one stage: a broker request the broker has taken (<id>.taken) and not answered yet, whose
@@ -208,8 +192,6 @@ export function parseStageFact(text, expectedManifestSha256) {
   const ok = terminalState && (f.stage !== REVOCATION_STAGE || revocation !== null) && restored && treeZero
     && f.manifest_sha256 === expectedManifestSha256 && f.scm_start_call_issued === true && f.configuration_conflict_detected === false;
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
-  // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
-  const relay = Array.isArray(f.relay) ? f.relay : null;
   // Stage 10 only: the train facts as the Source wrote them; the executor keeps only what train.mjs#trainSummary reads.
   const train = f.train && typeof f.train === 'object' && !Array.isArray(f.train) ? f.train : null;
   // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
@@ -217,28 +199,10 @@ export function parseStageFact(text, expectedManifestSha256) {
   const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
   let roleProbe = null;
   if (f.stage === 11 && ok) { try { roleProbe = validateRoleProbeFact(f.roleProbe); } catch { /* no fact */ } }
-  let stage1Locator = null;
-  const locator = f.stage1Locator;
-  if (f.stage === 1 && ok && outcome?.status === 'SETTLED' && locator && typeof locator === 'object'
-    && !Array.isArray(locator) && Object.keys(locator).sort().join('|') === 'jobId|nativeReceiptSha256|nonce|outcomeSha256'
-    && NONCE32.test(locator.nonce ?? '') && locator.nonce === f.nonce
-    && ['outcomeSha256', 'nativeReceiptSha256', 'jobId'].every(k => HEX64.test(locator[k] ?? ''))
-    && locator.nativeReceiptSha256 === f.native_receipt_sha256) stage1Locator = locator;
-  let observation = null, observationLocator = null;
-  if (f.stage === 13 && ok && f.contract === STAGE_FACT_CONTRACT
-    && outcome?.status === 'RELAY_QUALIFICATION_OBSERVATION' && outcome.reason === null
-    && outcome.sideEffects === 0 && outcome.mayHavePublished === false) {
-    const candidate = qualificationLocator(f.observationLocator);
-    if (candidate && candidate.nonce === f.nonce && candidate.nativeReceiptSha256 === f.native_receipt_sha256
-      && f.observation && typeof f.observation === 'object' && !Array.isArray(f.observation)) {
-      observation = f.observation; observationLocator = candidate;
-    }
-  }
-  return { ok: ok && (f.stage !== 13 || observationLocator !== null), code: f.stage === 13 && ok && !observationLocator ? 'RELAY_QUALIFICATION_FACT_UNCONFIRMED' : code,
-    proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train, roleProbe,
-    ...(f.stage === 13 ? { observation, observationLocator } : {}),
+  return { ok, code,
+    proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, train, roleProbe,
     ...(f.stage === REVOCATION_STAGE ? { revocation,maintenancePending } : {}),
-    ...(stage1Locator ? { stage1Locator } : {}), outcome, brokerNoLaunch };
+    outcome, brokerNoLaunch };
 }
 
 // Independent SCM readback (sc.exe qc / queryex), so "original and stopped" never rests on the
@@ -557,24 +521,6 @@ export class WindowsEngine {
     return { verified: answer?.ok === true && answer.verified === true, directory: answer?.directory ?? null };
   }
 
-  // Stage R: derive its package for exactly the relay candidates (create-only, next to the batch), then run
-  // it like any stage (no Linux, no bridge pump). The fact carries the per-role rows.
-  async runRelayStage(batch, roles) {
-    check(Array.isArray(roles) && roles.length > 0 && roles.every(r => ['gitleaks', 'trivy'].includes(r)), 'RESIDENT_RELAY_ROLES_INVALID');
-    const entry = await this.requireV2('derive-batch.mjs');
-    const d = await this.run([this.paths.nodeExe, entry, '--relay-roles', roles.join(','), '--batch-dir', batch.dir, '--batch-key', batch.key, '--batch-id', batch.batchId], { timeoutMs: 5 * 60_000 });
-    let row = null;
-    if (d.code === 0) {
-      const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
-      if (v.status === 'RESIDENT_RELAY_STAGE_DERIVED' && v.batchKey === batch.key && v.batchId === batch.batchId && v.stage?.number === 9
-        && HEX64.test(v.stage.workManifestSha256 ?? '') && Array.isArray(v.stage.jobIds) && v.stage.jobIds.length === roles.length && v.stage.jobIds.every(j => HEX64.test(j))) row = v.stage;
-    }
-    // Nothing was requested from the broker yet: a refused derivation is a clean stage-R refusal.
-    if (!row) return { ok: false, code: 'RELAY_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, relay: null };
-    batch.relayRow = row;
-    return this.invoke(batch, { number: 9, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row);
-  }
-
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
   // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
   // fresh random values (the derivation checks their shape); the fact carries the train facts.
@@ -625,108 +571,6 @@ export class WindowsEngine {
     if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
     const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
     return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };
-  }
-
-  // Read-only, token-free qualification lookup through this installed Source's
-  // existing protected record reader. A missing block or old Source defers.
-  async relayQualificationWindow() {
-    const entry = await this.requireV2('invoke-stage.mjs');
-    const r = await this.run([this.paths.nodeExe, entry, '--relay-qualification-window',
-      '--node-profile-sha256', this.nodeProfileSha256], { timeoutMs: 15_000 });
-    check(r.code === 0 && !r.timedOut, 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
-    const reply = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
-    check(reply.authority === 'RESTRICTIVE_HOLD_ONLY' && HEX64.test(reply.sourceManifestSha256 ?? '')
-      && reply.nodeProfileSha256 === this.nodeProfileSha256
-      && Object.hasOwn(reply, 'window'), 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
-    if (reply.window === null) return null; // explicit validated absence only
-    const q = reply.window, s = q?.subject;
-    check(q?.contract === 'clued.independent-ci.relay-qualification-window/1'
-      && s && typeof s === 'object' && !Array.isArray(s)
-      && q.sourceManifestSha256 === reply.sourceManifestSha256
-      && s.sourceManifestSha256 === reply.sourceManifestSha256
-      && s.nodeProfileSha256 === this.nodeProfileSha256, 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
-    return q; // restriction only; no execution authority is inferred from it
-  }
-
-  // Explicit read lane only: no scheduler, hosted dispatch, publication or relay
-  // enablement. The installed Source rechecks its held window, original Stage1
-  // receipts and current Native admission inside the broker's fixed Stage13.
-  async runRelayQualification({ stage1Locator, phase = 'initial', priorObservation = null } = {}) {
-    const refused = (code, deferred = false) => ({ ok: false, code, deferred,
-      proof: { windowsTreeZero: false, serviceOriginalStopped: false },
-      liveQualified: false, observation: null, observationLocator: null });
-    if (this.busy?.() !== false || this.inflight || this.relayQualificationActive)
-      return refused('RELAY_QUALIFICATION_BUSY', true);
-    this.relayQualificationActive = true;
-    try {
-      const q = await this.relayQualificationWindow();
-      if (!q) return refused('RELAY_QUALIFICATION_WINDOW_UNCONFIRMED', true);
-      // This is one fixed module from the engine's installed Source root, never
-      // a caller-supplied module URL or JSON-selected implementation.
-      const model = await import(pathToFileURL(await this.requireV2('relay-qualification-run.mjs')).href);
-      const now = this.clock(), checkedWindow = model.relayQualificationWindow({
-        accepted: { relayQualificationWindow: q, ownerReceiptRef: q.ownerReceiptRef },
-        config: { sourceManifestSha256: q.sourceManifestSha256 },
-      }, { now, reserveMs: 300_000 });
-      if (!checkedWindow || checkedWindow.subject.nodeProfileSha256 !== this.nodeProfileSha256)
-        return refused('RELAY_QUALIFICATION_WINDOW_UNCONFIRMED', true);
-      const stage1 = qualificationLocator(stage1Locator);
-      if (!stage1 || stage1.jobId !== checkedWindow.subject.stage1JobId
-        || !['initial', 'after-ref-move'].includes(phase)) return refused('RELAY_QUALIFICATION_INPUT_REFUSED');
-      const initialInput = { ...checkedWindow.subject, stage1OutcomeNonce: stage1.nonce,
-        stage1OutcomeSha256: stage1.outcomeSha256, phase: 'initial', priorObservationNonce: null,
-        priorObservationSha256: null, createdAt: new Date(now).toISOString() };
-      const initialJob = model.makeRelayQualificationRun(initialInput);
-      let prior = null;
-      if (phase === 'initial') {
-        if (priorObservation !== null) return refused('RELAY_QUALIFICATION_INPUT_REFUSED');
-      } else {
-        prior = qualificationLocator(priorObservation?.observationLocator);
-        if (!prior || prior.jobId !== initialJob.id || priorObservation?.liveQualified !== false)
-          return refused('RELAY_QUALIFICATION_INPUT_REFUSED');
-        model.validateRelayQualificationObservation(priorObservation.observation, initialJob);
-      }
-      const job = phase === 'initial' ? initialJob : model.makeRelayQualificationRun({ ...initialInput, phase,
-        priorObservationNonce: prior.nonce, priorObservationSha256: prior.outcomeSha256 });
-      // Revalidate the exact phase and full job against the same installed
-      // restriction; post-Stage1 locators never broaden that restriction.
-      if (!model.relayQualificationWindow({ accepted: { relayQualificationWindow: q, ownerReceiptRef: q.ownerReceiptRef },
-        config: { sourceManifestSha256: q.sourceManifestSha256 } }, { job, now: this.clock(), reserveMs: 300_000 }))
-        return refused('RELAY_QUALIFICATION_WINDOW_UNCONFIRMED', true);
-      if (this.busy?.() !== false || this.inflight || !(await this.scReadback()))
-        return refused('RELAY_QUALIFICATION_BUSY', true);
-      const entry = await this.requireV2('invoke-stage.mjs');
-      const runKey = checkedWindow.subject.runId.slice(0, 16) + randomBytes(24).toString('hex');
-      const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.relay-qualification-intent/1', runKey, job })));
-      const root = path.join(this.paths.workRoot, 'relay-qualification');
-      await ensureDir(root);
-      const directory = path.join(root, `${job.id}-${randomBytes(12).toString('hex')}`);
-      await fs.mkdir(directory, { mode: 0o700 });
-      const subjectFile = path.join(directory, 'subject.json'), subjectText = canonicalJson(job);
-      const handle = await fs.open(subjectFile, 'wx', 0o600);
-      try { await handle.writeFile(subjectText); await handle.sync(); } finally { await handle.close(); }
-      const subjectSha256 = sha256(Buffer.from(subjectText));
-      // One durable attempt per exact job. A timeout/unknown response consumes
-      // it too; a later call cannot repost merely because its answer was lost.
-      await writeNew(path.join(root, `intent-${job.id}.json`), {
-        contract: 'clued.independent-ci.relay-qualification-engine-intent/1', jobId: job.id,
-        phase, subjectSha256, workManifestSha256: manifest, createdAt: job.createdAt,
-        stage1LocatorSha256: sha256(Buffer.from(canonicalJson(stage1))),
-      });
-      const r = await this.run([this.paths.nodeExe, entry, '--relay-qualification', '--run-key', runKey,
-        '--subject-file', subjectFile, '--subject-sha256', subjectSha256], { timeoutMs: 660_000 });
-      if (r.timedOut || r.code !== 0) return refused('RELAY_QUALIFICATION_TERMINAL_UNCONFIRMED');
-      const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
-      const locator = qualificationLocator(fact.observationLocator);
-      if (!fact.ok || !stopped || !locator || locator.jobId !== job.id
-        || locator.nativeReceiptSha256 !== fact.nativeReceiptSha256)
-        return refused('RELAY_QUALIFICATION_FACT_UNCONFIRMED');
-      const observation = model.validateRelayQualificationObservation(fact.observation, job);
-      return { ok: true, code: null, proof: { ...fact.proof, serviceOriginalStopped: true },
-        state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION',
-        nativeReceiptSha256: locator.nativeReceiptSha256, observation, observationLocator: locator, liveQualified: false };
-    } catch { return refused('RELAY_QUALIFICATION_UNCONFIRMED'); }
-    finally { this.relayQualificationActive = false; }
   }
 
   async revocationMaintenanceQualification() {
@@ -944,8 +788,7 @@ export class WindowsEngine {
       // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
       // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
-        ...(ok && stage.number === 1 && fact.stage1Locator ? { stage1Locator: fact.stage1Locator } : {}),
+        train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
         ...(bridge ? { bridge } : {}), ...(relayTiming ? { relayTiming } : {}) };
     } finally {
       this.inflight = null;
