@@ -11,6 +11,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { fitNode } from './fit-node-fixture.mjs';
 
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
 // 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
@@ -164,7 +165,10 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const ciPurpose = (role, enabled) => role === 'ci-admission' && enabled ? { purpose: 'resident-node' } : {};
     const elapse = (binding) => admin.query(`update clued_private.binding_roles_v1 set granted_at=granted_at-interval '5 minutes',
       effective_at=effective_at-interval '5 minutes' where binding_id=$1 and revoked_at is null and purpose<>'parking'`, [binding]);
+    // The CI Binding's node is fit to hold ci-admission (20261114120000); it reports again before each mark.
+    const ciNode = await fitNode(admin, { userId, bindingId: bindingIds.ci });
     const setRole = async (binding, role, enabled, claims) => {
+      if (binding === bindingIds.ci && role === 'ci-admission' && enabled) await ciNode.heard();
       const issued = await native('clued_binding_role_confirmation_issue_v1',
         { binding_id: binding, role, enabled, ...ciPurpose(role, enabled) }, claims);
       assert.equal(issued.status, 'issued', JSON.stringify(issued));
@@ -218,6 +222,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: true }, noSession),
       'confirmation_token_session_id_required');
     // The view is rendered by Clued; a newer issue revokes the older token.
+    await ciNode.heard();
     const first = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true, purpose: 'other' });
     assert.deepEqual([first.confirmation_view.agent_name, first.confirmation_view.role, first.confirmation_view.enabled,
       first.confirmation_view.others], ['ci', 'ci-admission', true, []]);

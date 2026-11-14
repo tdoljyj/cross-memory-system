@@ -18,7 +18,8 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 //    that reader compares a start with the clock.
 // 2. A handover of ci-admission lands only on a node fit to take it over (migration 20261114120000): heard lately, its
 //    latest report NORMAL, running the Source the fleet runs. Every handover (the Owner's one-click handover, the failover
-//    watchdog) goes through the handover core's check; the watchdog alerts instead of handing over to an unfit node.
+//    watchdog) goes through the handover core's check, and so does marking it by hand; the watchdog alerts instead of
+//    handing over to an unfit node.
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
@@ -172,7 +173,13 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       const ago = async (who, minutes) => admin.query(`update clued_private.ci_node_liveness_v1 l set
         last_heartbeat_at=l.last_heartbeat_at-make_interval(mins=>$2),heartbeat_previous_at=l.heartbeat_previous_at-make_interval(mins=>$2)
         from clued_private.ci_nodes_v1 n where n.node_id=l.node_id and n.binding_id=$1`, [ids[who], minutes]);
-      return { user, ids, beat, handover, holders, ago, receipt };
+      // Marking ci-admission by hand (binding_role_set, both Native steps): the refusal of whichever step refuses, or the result.
+      const mark = async (who, purpose) => {
+        const issued = await owner('clued_binding_role_confirmation_issue_v1', { binding_id: ids[who], role: 'ci-admission', enabled: true, purpose });
+        if (issued.status !== 'issued') return issued;
+        return owner('clued_binding_role_set_v1', { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest });
+      };
+      return { user, ids, beat, handover, mark, holders, ago, receipt };
     };
 
     const fleet = await account('fit-fleet', ['turing', 'desk', 'spare', 'blank', 'silent']);
@@ -217,6 +224,24 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       const moved = await fleet.handover('turing', 'spare');
       assert.equal(moved.status, 'committed', JSON.stringify(moved));
       assert.deepEqual(await fleet.holders(), ['spare']);
+    });
+
+    await t.test('no way around it: with the holder role ended, marking a node behind by hand is refused the same way', async () => {
+      const m = await account('fit-mark', ['former', 'behind', 'fit']);
+      await m.beat('former', { mode: 'ACTIVE', probe: 'held' });
+      await m.beat('behind', { ci_source_manifest_sha256: BEHIND });
+      await m.beat('fit');
+      await admin.query("update clued_private.binding_roles_v1 set revoked_at=now() where binding_id=$1 and revoked_at is null", [m.ids.former]);
+      for (const purpose of ['resident-node', 'other']) {
+        const refused = await m.mark('behind', purpose);
+        assert.deepEqual([refused.status, refused.error_code], ['rejected', 'ci_admission_target_source_not_accepted'], JSON.stringify({ purpose, refused }));
+      }
+      await m.beat('behind', { state: 'PAUSED' }); // upgraded since, but paused
+      assert.equal((await m.mark('behind', 'resident-node')).error_code, 'ci_admission_target_paused');
+      assert.deepEqual(await m.holders(), []);
+      const marked = await m.mark('fit', 'resident-node');
+      assert.equal(marked.status, 'committed', JSON.stringify(marked));
+      assert.deepEqual(await m.holders(), ['fit']);
     });
 
     await t.test('the watchdog: no fit node, no handover and an alert; the core refuses an unfit node whoever asks', async () => {
