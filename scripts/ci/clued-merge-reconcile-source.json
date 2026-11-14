@@ -311,7 +311,7 @@
     "scripts/ci/self-hosted/ci_health.py": "80b5154f54897757ee9f9db0a08d09de047bcfa8aea58313b5e572e45fe1b833",
     "scripts/ci/self-hosted/ci_health_analyze.py": "4f7914d6bf8654e9855fc06ff65d7bcd05134dbce1192c74b184c53f5171e118",
     "scripts/ci/self-hosted/ci_health_transport.py": "80b699350b6a3d2583c2332f00dceed6d9259c0b594b15df30121c2a624712a4",
-    "scripts/ci/self-hosted/compute_panel.py": "7a32c53f316a19925e48ffdf93478da4631da229c1348af07c0ed8bb3799c4f2",
+    "scripts/ci/self-hosted/compute_panel.py": "9b26eb6c16f8fbc97ee15c7c1c7582ab2478927e487c8a4c8d2a0a6717c0de59",
     "scripts/ci/self-hosted/host-port-lock.sh": "87d437f440d5feb16ccc0651ee105e821e9cace6483b3a6cded2d02750abbd7e",
     "scripts/ci/self-hosted/node-governance/governance.test.mjs": "f551c19d2e5aee8aabd60a89ffa92ce7a478cb372a492e7ad8b1a31b6303997e",
     "scripts/ci/self-hosted/node-governance/install.ps1": "b3b78282c3719a258c6ec2e1b71ade1570e8820704823fc336582ba5d8bf3571",
