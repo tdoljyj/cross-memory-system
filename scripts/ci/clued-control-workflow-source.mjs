@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.21';
+export const COMPONENT_VERSION='1.0.22';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -528,7 +528,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "7bd6642aff58eb96ceff622da5f1feaba36c274a",
     "scripts/ci/clued-independent-publication-identity.mjs": "1abf7547bf9a2edf22eb748bb0eeea17410ddf77",
     "scripts/ci/clued-independent-publication-identity.test.mjs": "4f4c10cf2bb978e569bccd71ec5613fe787ba55a",
-    "scripts/ci/clued-independent-publication-port.mjs": "97dacaf993843228dbeb228724c1f3365cb22f6f",
+    "scripts/ci/clued-independent-publication-port.mjs": "7fd1b27c298fd876cbf602f5e7d8b7d8f59b8eb2",
     "scripts/ci/clued-independent-publication-port.test.mjs": "4491ae0f7a2d0d6c589cc87c9010490b00b09882",
     "scripts/ci/clued-independent-publication-runtime.mjs": "afe70fbd4f10f446bb51b16b39102e5f9ae42676",
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "f3218b078c77926d7db5c34cae4e2bdda6ce7c94",
