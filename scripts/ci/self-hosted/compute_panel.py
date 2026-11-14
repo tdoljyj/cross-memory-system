@@ -580,8 +580,9 @@ def real_run(check: dict, workflows: dict[int, dict], now: datetime | None = Non
         if kind in RESIDENT_CONTROL_KINDS or "relay" in kind or name.startswith("kooyumi-"):
             return None
         attempt = RESIDENT_ATTEMPT.search(external)
-        # A native publication is named by its job: the same job published twice is one run.
-        job = external.split(":")[3] if kind == "native" and external.count(":") >= 3 else None
+        # One execution, one identity: a native publication is named by its job, any other resident check by its external_id (a
+        # check withdrawn and published again under the same external_id, e.g. after a read timeout, is the same run).
+        job = external.split(":")[3] if kind == "native" and external.count(":") >= 3 else external
         return {"key": name, "label": name, "executor": "resident", "at": iso(started), "conclusion": conclusion or status,
                 "attempt": int(attempt.group(1)) if attempt else None, "run": None, "event": None, "job": job}
     match = RUN_URL.search(str(check.get("details_url") or ""))

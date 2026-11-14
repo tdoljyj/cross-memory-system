@@ -5759,3 +5759,26 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 6. **批准。** Owner 对一个版本决定一次（接受文件）；每台的 Grant 由现有自动审批规则放行（迁移 `20261107090000`），没开时每台在页面点一次。没有新增服务端对象。
 
 测试：`rollout/test/fleet-upgrade.test.mjs`（在 CI 的 `resident-node` 套件里）；`rollout/test/precheck.test.mjs` 的“without the installed package”。
+
+## 75. 车头批次不再重跑输入相同的扫描（规则 41ab823a），面板按执行身份去重
+
+**现象**（11-13/14，DESK 账本与 GitHub）：PR #1086 head `723e4ece`，普通批次（origin `new-trigger`，base `db755d57`，无 S）跑完 gitleaks、trivy、contract-placement 停在 B；11 分钟后第 10 段开车头批次（origin `queued`，同一 base，S = `c9c63a96`），§62.5 的 `TRAIN_FRONT_TAKES_OVER` 结束普通批次，车头批次在同一输入上把三项扫描又跑一遍、又在 H 上各发一条（external_id 不同）。#1085 同理。另有面板误报：PR #1094 `contract-placement` 两条检查 external_id 完全相同（读超时撤回后原 external_id 改发，§51/ADR 0015），是一次执行，面板只对 native 按 job 去重，把它算成重复。
+
+**根因**：车头批次 (H, S) 是独立身份（§38.1、§41.4），`relayPlan` 对带 S 的 subject 无条件把三个角色全放本地（`executor.mjs#relayPlan`，原 `local: [...HEAVY_ROLES]`），从不看同一输入是否已扫过。§62.6 的让位只覆盖“第 1 段时就是队首”的普通批次；第 1 段时还在排队、之后才成为车头的 PR（#1086），普通批次照常跑完第 2–7 段。面板：`compute_panel.py#real_run` 只给 `kind == "native"` 设执行身份。
+
+**每项检查读的是什么**（同一 Source、同一 base T、同一 H 时）：
+- gitleaks：`gitleaks git /repo`，读密封仓库里可达的全部提交补丁（H、T 的历史，车头另加 S）。S = merge(T, H) 是两个父提交的合并、本身不带补丁内容，所以 T、H 相同时扫到的补丁相同。
+- trivy：S 的检出树（快照跳过 `.git`）。
+- contract-placement：S 的检出树，加候选代码能读到的提交历史、`/request/job.json`（含 testSha）、构建常量 `__CLUED_BUILD_SHA__`（S）和墙钟（§68.1）。
+
+**修法**（判定只用本节点自己的账本和第 10 段的可信事实）：
+- Source 第 10 段 `train-maintenance.mjs#openFront`：单成员车头的 `openFrontBatch` 多给一个可选的 `headTree`（GitHub 上 H 自己的树，开车头时读一次 `git/commits/H`；读不到就不给，不是拒绝）。`train-facts.mjs#validateTrainFacts` 只接受 40 位 SHA，且有 `members` 时不许带。
+- 常驻层 `executor.mjs#frontScansReused`：车头批次写 `20-plan-intent` 之前，找本节点账本里同一 (repo, PR, H, T, Source) 的批次，要求它停在过 B（`parked`：其本地角色的执行段和发布段全部成功、检查已在 H 上）且它测过的树等于这次 S 的树：普通批次（attempt 1、2）要求 `headTree == testTree`；同一 head、同一 main 的前一个车头批次（GitHub 重算了 S）要求两者 `testTree` 相同。命中的角色不再进本地计划，计划意向与 `25-plan` 记 `reused: [{role, from: 批次 key}]`，回执 `train-front-scans-reused`；三项都命中时不打工作区、不动 Linux，直接停 B 跑第 8 段。中继过的角色不算（另一个执行方，没有可信的转移，规则 41ab823a）。任何一项不符或读不到：不复用，照旧真跑。
+- 面板 `compute_panel.py#real_run`：常驻检查的执行身份是 native 的 job、其它种类的完整 external_id；同一身份的改发只算一次。真正再跑的车头批次（另一个 job、另一个 external_id）仍算重复。
+
+**为什么复用安全、没有改列车语义**：车头批次要防的是“合入的树没被测过”。H 含 T（strict 下 GitHub 只合跟上 main 的 head；受保护层第 10 段本来就要求）且 S 的父提交正好是 [T, H] 时，S 的树就是 H 的树，现在还逐字核对 `headTree == testTree`；GitHub 合入后 main 的树就是被扫过的树。与 §68 不缓存 placement、gitleaks 的理由不冲突：那里的键跨越不同的提交和历史；这里 H、T、Source 都相同，历史只多一个不带内容的合并提交 S，差别只有提交号、`job.json` 与墙钟，而墙钟本来就让同一提交的两次真跑也不可按构造复现。第 8 段（单绿、实时 strict、holder、claim generation、试合并 [T, H] 与树、Native 准入）不变；它只看车头自己 job 的失败，复用的检查在 H 上、按名字由 GitHub 的必需检查实时把关。残余：普通批次在另一节点跑的（本节点账本里没有）照旧再跑；推送模式（ADR 0018）下 S 不是 H 的树，不复用。
+
+**测试**：
+- 端到端 `test/train-takeover-front.test.mjs`（真实 executor + Source v2 第 10 段 + 第 8 段发布者）“rule 41ab823a (PR #1086): same head, same main, S with H's tree…”：普通批次第 1–7 段停 B、第 10 段开车头，断言第 2–7 段各只跑一次、车头批次只跑 [1, 8]、`headTree == testTree`、复用来源是普通批次，并拿到 merge-slot 绿。修复前失败（`stage 2 ran more than once`，车头批次又跑了 2–7）。“…a scan whose input changed runs again…”：H 的树不同或第 10 段没给 `headTree` 时车头批次照旧跑 1–8。
+- `actions-hosted-migration/independent-ci-v1/test/train-facts.test.mjs`：`headTree` 的形状与“只限单成员”。
+- `tests/test_compute_panel.py` “a resident check republished under its external_id is one run”：同一 external_id 的 failure + success 不算重复，另一个 job 的真重跑仍算。修复前失败。

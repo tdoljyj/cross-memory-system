@@ -308,6 +308,50 @@ test('steady state (task ad19ef19): a queue-head PR pushed after the take-over g
   assert.equal((await f.receipts.latest(['train-front-takes-over'], 5)).length, 1);
 });
 
+// Rule 41ab823a, field 2026-11-14 (DESK, PR #1086 head 723e4ece; #1085 the same): the ordinary batch of H on main T ran gitleaks, trivy and
+// contract-placement and rested at B; stage 10 then opened the front batch (H, S) on the same T, and S = merge(T, H) has H's own tree, yet
+// the front batch ran all three scans again on that same input and published them on H a second time. DESIGN §75: stage 10 names H's tree,
+// and the front batch reuses each scan its ordinary batch ran on exactly that input; a scan whose input changed still runs.
+async function untilSlotGreen(e, f) {
+  let green = null;
+  for (let i = 0; i < 60 && !green; i++) {
+    await f.exec.tick();
+    green = slotGreen(e, H);
+    if (!green) f.advance(MIN);
+  }
+  return green;
+}
+
+test('rule 41ab823a (PR #1086): same head, same main, S with H\'s tree: the front batch runs no scan again and gets the merge-slot green', async t => {
+  const { e, f, engine, terminals } = await steadyState(t, { queueFacts: false });
+  const tree = e.gh.world.commits.get(S).tree;
+  e.gh.world.commits.set(H, { sha: H, tree, parents: [T] });
+  const green = await untilSlotGreen(e, f);
+  assert.ok(green, `no kooyumi-merge-slot success; stages ${JSON.stringify(engine.stages)}`);
+  assert.equal(engine.published.status, 'SETTLED');
+  assert.ok((await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), 'the ordinary batch rested at B and gave way');
+  for (const stage of [2, 3, 4, 5, 6, 7]) {
+    assert.equal(engine.stages.filter(s => s.pr === 910 && s.stage === stage).length, 1, `stage ${stage} ran more than once: ${JSON.stringify(engine.stages)}`);
+  }
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 8]);
+  const [enqueued] = (await f.receipts.latest(['train-front-enqueued'], 5)).map(r => r.value.body);
+  assert.deepEqual([enqueued.headTree, enqueued.testTree], [tree, tree], 'stage 10 named H\'s tree');
+  const [reused] = (await f.receipts.latest(['train-front-scans-reused'], 5)).map(r => r.value.body);
+  assert.deepEqual(reused.reused.map(x => x.role), ['gitleaks', 'trivy', 'contract-placement']);
+  const ordinaryKey = engine.calls.find(c => c[0] === 'derive' && !engine.subjects.get(c[1]).testSha)[1];
+  assert.ok(reused.reused.every(x => x.from === ordinaryKey), 'reused from the ordinary batch of (H, T)');
+});
+
+test('rule 41ab823a: a scan whose input changed runs again on the front batch (S\'s tree is not H\'s, or no H tree was named)', async t => {
+  for (const headTree of [sha(0x7777), null]) {
+    const { e, f, engine } = await steadyState(t, { queueFacts: false });
+    if (headTree) e.gh.world.commits.set(H, { sha: H, tree: headTree, parents: [T] });
+    assert.ok(await untilSlotGreen(e, f), `no green: ${JSON.stringify(engine.stages)}`);
+    assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8], String(headTree));
+    assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 0);
+  }
+});
+
 // The same at parking point A: Stage R on and no hosted signal, so the ordinary batch rests at A right after its stage 1 bound the claim.
 // It gives way the same way and the front batch starts. (With relay on, a front batch then waits for RELAY_PROVIDER_TRANSFER_REQUIRED by
 // the Owner's once-per-head rule 41ab823a, unrelated to this fix; the shipped policies keep relay off, where A never happens.)
