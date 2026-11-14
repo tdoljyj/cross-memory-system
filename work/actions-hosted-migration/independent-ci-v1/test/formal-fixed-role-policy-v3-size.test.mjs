@@ -25,8 +25,7 @@ test('the last registered catalogue above 1 MiB and the current one pass their S
   assert.equal(last.length,1062190);
   assert.equal(sha(last),'6b3c0b511a65a47dc83478d9d8caa3bda5e50f7804fbdaf34b6dc892b689561e');
   let gitReads=0;
-  await validateTrackedSourceBytes({path:CATALOGUE,sha256:sha(last)},last,async()=>{gitReads++;return gitBlob(last)+'
-';},LAST);
+  await validateTrackedSourceBytes({path:CATALOGUE,sha256:sha(last)},last,async()=>{gitReads++;return gitBlob(last)+'\n';},LAST);
   assert.equal(gitReads,1);
   const bytes=await fs.readFile(new URL('../../../../'+CATALOGUE,import.meta.url));
   const expected=execFileSync('git',['rev-parse','HEAD:'+CATALOGUE],{cwd:ROOT,encoding:'utf8'}).trim();
