@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import './clued-scan-start-732-successor.test.mjs';
+import { restoreRetiredEntries } from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
@@ -102,6 +103,10 @@ async function findings(row, headText, baseText = source(row.file, row.before), 
 
 test('the integrated candidate uses exactly the two preregistered workflow bytes and preserves the prior catalogue', () => {
   const profileBefore = structuredClone(profiles), rolesBefore = structuredClone(roleSpecs);
+  // The ten workflows deleted after this generation are restored from the last catalogue that registered them.
+  const RETIRED = restoreRetiredEntries(profileBefore, rolesBefore);
+  assert.equal(RETIRED.length, 10, RETIRED.join(', '));
+  for (const file of RETIRED) assert.equal(fs.existsSync(new URL(file, ROOT)), false, file);
   const h=registeredWorkflowSource(profileBefore,HISTORY_732.file,HISTORY_732.candidate_blob);
   assert.equal(h.passed,true);
   assert.equal(h.profile.source_sha256,HISTORY_732.candidate_sha256);

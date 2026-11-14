@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "402398f4fef7286b6c98b8ac72e6a5f3eedc9b91aa88a7fff2999074dbd283d6"
+      "content_sha256": "7402a180bd7a9a59a3a4dbab4cc607ad1b3c3bffc48914f0ab9b2234fb96f564"
     },
     {
       "id": "hook.runner-job-started",
@@ -212,7 +212,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -220,7 +220,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "d1c9b4713db9f3436641571a34ee1e0956dba13592bbd69409688e4541d8d540",
+      "content_sha256": "662f15bbb08f0afe269ede5e80d4f9fa9e40813789b503a9477e038db569f086",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "d06e0bebcaac138d3a1f9516f093061a4662b969bb6bb57c6e1d897cd4372b01"
+      "content_sha256": "fe19035b3f5e92011c38958767db8ee70402b7d5d3a7e8c013fdbb4fae1099aa"
     },
     {
       "id": "script.resource-maintenance",
@@ -673,7 +673,7 @@
     {
       "id": "script.source-only-workflow",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Bounded disabled-Source metadata identity and request-local immutable catalogue reader. Never grants execution or Host qualification.",
       "root": "scripts/ci",
       "files": [
@@ -684,7 +684,7 @@
         "file": "clued-source-only-workflow.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "011faed4f08aaee5a8893466dd5ac5fdc615f9bd938f7b6b5078527b67d4b116"
+      "content_sha256": "5f81ca690cc3bbe77cfff3c38755961b024aadfd674f821702eb4e74c46594b7"
     },
     {
       "id": "script.control-workflow-source",
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "20c8a4e35b53a7e3e7d55d4cad3b90338eb3244bde1836c086e3d0fe58acb988"
+      "content_sha256": "01acf4820865247b46eeb4c71962d0f6c2e75062c18453bffc307b1d6b2172e7"
     },
     {
       "id": "script.required-applicability",
@@ -722,7 +722,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "6742aec8d5e06cbba7a2200cd47f15ebedffadef4956c36d104145e8d8bdf726"
+      "content_sha256": "c423f6daa662f438dc697aa9a2e2018b9dcf15da48e9be58dc1c95db60782ce3"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -894,7 +894,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "f9f12b3295f7698efa04144bd99c484ecf1e05b2aec4c0a1b4bb618e6f45f48a"
+      "content_sha256": "df8b0c721c9912d13f8b13b9d3191858aefd68faf4c116b06673ffa91e3286c4"
     },
     {
       "id": "script.archive-retention",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "c00cb5483c32dd68347843f953bcd427dde8139cb2c3297c49d67dcef716faf1"
+      "content_sha256": "c8264c2e9a2d7764296e85ad86c806e60dbe120f9c990c495c342b13392bd11f"
     }
   ]
 }

@@ -145,17 +145,7 @@ class DocumentationQualification(unittest.TestCase):
         self.commit()
         self.assertTrue(scope.classify(*self.inputs('push'))['run_full'])
 
-    def test_workflow_keeps_gate_and_same_checks_while_heavy_steps_fall_back(self):
-        text = MODULE.parents[2].joinpath('.github/workflows/clued-cloud-quality-gate.yml').read_text(encoding='utf-8')
-        self.assertNotIn('paths:', text)
-        self.assertEqual(text.count('id: classify'), 2)
-        self.assertEqual(text.count('continue-on-error: true'), 2)
-        self.assertEqual(text.count('fetch-depth: 2'), 2)
-        self.assertEqual(text.count("if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'"), 12)
-        self.assertIn("&& 'clued-cloud-quality'", text)
-        self.assertIn("cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}", text)
-
-    def test_partial_false_output_followed_by_failure_requires_workflow_full_path(self):
+    def test_partial_false_output_followed_by_failure_exits_nonzero(self):
         self.put('README.md', 'ordinary docs\n')
         self.commit()
         env, event = self.inputs()
@@ -167,8 +157,6 @@ class DocumentationQualification(unittest.TestCase):
         done = subprocess.run([os.sys.executable, str(MODULE)], env=variables, capture_output=True)
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(output.read_text(encoding='utf-8'), 'run_full=false\n')
-        text = MODULE.parents[2].joinpath('.github/workflows/clued-cloud-quality-gate.yml').read_text(encoding='utf-8')
-        self.assertEqual(text.count("if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'"), 12)
 
     def test_pr_number_ref_target_head_and_merge_shape_are_required(self):
         self.put('README.md', 'ordinary docs\n')

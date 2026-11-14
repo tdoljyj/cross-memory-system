@@ -136,8 +136,8 @@ test('fixed retirement snapshot authenticates historical objects while the indep
       'scripts/ci/clued-gated-proof-role-specs.json':['28a2750730f1d9c9d22759d67acdf7c35985cb5b','c4b86e501a8c4bf1d19b1d34e6e013d528ae69b304a8ebdc2a2693952e194591'],
       'scripts/ci/clued-gated-proof-runtime.mjs':['c7884078fee3afbf98681425982051a87df38ce9','312f7a5a9187007904aadb54b35f3424a73488a84e007253c85a0490dfea49fb'],
       'scripts/ci/clued-workflow-profile.mjs':['69622ceef577da9e4eb8dab25fed4bdc1cbb50f3','35c93cbe1f0fffc7f020e790eafd732b13ade0b8cda8f0ffb77645075a30f84a'],
-      '.github/actions/ci-temporary-storage/coverage.json':['12f0ff5aca09df465aa0461d493485c3ed2c65b1','55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be'],
       '.github/actions/ci-temporary-storage/check-workflows.mjs':['bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc','832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa'],
+      '.github/actions/ci-temporary-storage/coverage.json':['12f0ff5aca09df465aa0461d493485c3ed2c65b1','55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be'],
     };
     if(Object.hasOwn(historicalPins,name)){
       // These fixed objects retain their original bytes and qualification scope.

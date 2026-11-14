@@ -231,7 +231,7 @@ class CluedCiHealthTests(unittest.TestCase):
         gate = self.routed_job(
             1, name, t0 - timedelta(minutes=2), t0 - timedelta(minutes=2), t0 + timedelta(minutes=12),
             labels=["self-hosted", "Windows", "X64", "clued", "pool-general", "trust-internal", "cap-node24"],
-            name="public-mcp-gate-receipt",
+            name="clued-g4-database",
         )
         probe = self.routed_job(
             2, name, t0, t0 + timedelta(minutes=12, seconds=4), t0 + timedelta(minutes=12, seconds=14),
@@ -240,7 +240,7 @@ class CluedCiHealthTests(unittest.TestCase):
         entry = self.slow_entries(self.secretless_report([gate, probe]))["2"]
         self.assertEqual(entry["wait_cause"], "runner_occupied")
         self.assertEqual(entry["runner_name"], name)
-        self.assertEqual([item["name"] for item in entry["occupied_by"]], ["public-mcp-gate-receipt"])
+        self.assertEqual([item["name"] for item in entry["occupied_by"]], ["clued-g4-database"])
 
     def test_idle_runner_while_eligible_work_queued_notifies(self):
         idle = "clued-ci-company-linux-03"

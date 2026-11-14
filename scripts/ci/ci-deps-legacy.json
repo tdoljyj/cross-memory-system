@@ -14,14 +14,6 @@
       "line": "run: npm ci --ignore-scripts"
     },
     {
-      "file": ".github/workflows/clued-cloud-quality-gate.yml",
-      "line": "npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
-    },
-    {
-      "file": ".github/workflows/clued-cloud-quality-gate.yml",
-      "line": "run: npm ci --ignore-scripts"
-    },
-    {
       "file": ".github/workflows/clued-currentness-post-deploy-attestation.yml",
       "line": "- run: npm ci --ignore-scripts"
     },

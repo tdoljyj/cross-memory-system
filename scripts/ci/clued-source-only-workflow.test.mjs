@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {retiredCatalogue} from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import test from 'node:test';
@@ -10,6 +11,8 @@ const require=createRequire(new URL('../../apps/clued-cloud/package.json',import
 const YAML=require('yaml');
 const load=()=>({registry:parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
   roleSpecs:JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)))});
+// Ordinary registered Source fixtures (clued-components, deleted with its entries) come from the last catalogue that had them.
+const loadRetired=()=>{const {registry,specs}=retiredCatalogue();return {registry,roleSpecs:specs};};
 const names=Object.keys(SOURCE_ONLY_METADATA_PINS);
 const input=(name=names[0],world=load())=>({...world,file:name,blob:SOURCE_ONLY_METADATA_PINS[name]?.blob});
 const entry=(world,name=names[0])=>world.registry.native617_pending_sources.find(row=>row.file===name);
@@ -18,9 +21,9 @@ function denied(args){const r=recognizeCatalogueWorkflow(args);assert.equal(r.so
   assert.equal(r.kind,null);assert.equal(r.reason,'CATALOGUE_SOURCE_NOT_IDENTIFIED');assert.equal(Object.hasOwn(r,'passed'),false);}
 
 test('ordinary registered Source retains independent legacy roles and input is not mutated',()=>{
-  const world=load(),file='.github/workflows/clued-components.yml',blob=world.registry.workflows[file].workflow_blob;
+  const world=loadRetired(),file='.github/workflows/clued-components.yml',blob=world.registry.workflows[file].workflow_blob;
   const before=JSON.stringify(world),r=recognizeCatalogueWorkflow({...world,file,blob});
-  assert.equal(COMPONENT_VERSION,'1.0.0');assert.equal(r.source_identified,true);assert.equal(r.kind,REGISTERED_SOURCE);
+  assert.equal(COMPONENT_VERSION,JSON.parse(fs.readFileSync(new URL('../../config/clued-components.json',import.meta.url))).components.find(c=>c.id==='script.source-only-workflow').version);assert.equal(r.source_identified,true);assert.equal(r.kind,REGISTERED_SOURCE);
   assert.equal(r.execution_eligible,true);assert.ok(r.roles.length>0);
   assert.equal(Object.hasOwn(r,'passed'),false);assert.equal(Object.hasOwn(r,'NativeProof'),false);
   assert.equal(JSON.stringify(world),before);assert.ok(Object.isFrozen(r)&&Object.isFrozen(r.profile)&&Object.isFrozen(r.roles));
@@ -124,7 +127,7 @@ test('ordinary Source recognition still rejects missing, partial or altered inde
   const file='.github/workflows/clued-components.yml';
   for(const edit of [w=>{delete w.roleSpecs.workflows[file];},w=>{const b=w.registry.workflows[file].workflow_blob;w.roleSpecs.workflows[file].sources[b]=[];},
     w=>{const b=w.registry.workflows[file].workflow_blob;w.roleSpecs.workflows[file].sources[b][0].definition={steps:[]};}]){
-    const world=load(),blob=world.registry.workflows[file].workflow_blob;edit(world);denied({...world,file,blob});
+    const world=loadRetired(),blob=world.registry.workflows[file].workflow_blob;edit(world);denied({...world,file,blob});
   }
 });
 
@@ -160,7 +163,7 @@ test('request factory snapshots data once; later caller mutation cannot alter an
 });
 
 test('factory ordinary cache is immutable static data and a fresh factory validates changed source anew',()=>{
-  const world=load(),file='.github/workflows/clued-components.yml',blob=world.registry.workflows[file].workflow_blob,
+  const world=loadRetired(),file='.github/workflows/clued-components.yml',blob=world.registry.workflows[file].workflow_blob,
     reader=createCatalogueSourceReader(world),first=reader({file,blob});
   assert.equal(first.source_identified,true);assert.equal(reader({file,blob}),first);
   world.registry.workflows[file].source_yaml+=' changed';

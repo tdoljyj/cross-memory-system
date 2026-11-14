@@ -43,9 +43,6 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-work-admission-reverify.yml": (
         "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no application dependency install, no pull request trigger."
     ),
-    "clued-work-claim-handover-revoke.yml": (
-        "Task 6176fdcc private-handover consumer: a bounded five-minute sweep on the default branch revokes required App checks and confirms stopped old PR/dispatch jobs before ACK. The admission Binding and App remain in the isolated clued-admission environment, never on a self-hosted runner; no application dependency install or pull-request trigger."
-    ),
     "clued-merge-slot-ci.yml": (
         "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes, then executes the merge queue head in the same trusted job; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
@@ -60,12 +57,6 @@ HOSTED_ONLY_ALLOWLIST = {
     ),
     "clued-release-tags.yml": (
         "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no application dependency install, no pull request trigger."
-    ),
-    "phase2-naming-surface-inventory.yml": (
-        "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
-    ),
-    "phase2-v027-validation.yml": (
-        "Frozen historical exact-source validation lane with self-referential accepted-source bindings."
     ),
 }
 
@@ -119,18 +110,6 @@ LEGACY_HOSTED_DEBT = {
         "control_sha256": "ba9aebecbf6b9a87fdfb2563ba8f223bfbfe4e44211ca32dac64145c48a53f68",
         "jobs": {
             "release": "354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0"
-        }
-    },
-    "clued-cloud-quality-gate.yml": {
-        "control_sha256": "308387e658cd8ac4d5edbcd286f9285e562c81ce7a344922424c50e1484c6f46",
-        "jobs": {
-            "untrusted-hosted": "50123d63d447c0b0ba475b3263368d928d6743f7977b01c608745b2c5ea915ff"
-        }
-    },
-    "clued-components.yml": {
-        "control_sha256": "5a4c866aa0d8333cf2a6ce5973f01ef986544831d77fbe49513ebbc6324190ff",
-        "jobs": {
-            "untrusted-hosted": "6babc102fba76d91397d52f013291fe4646b273b3c05399393498bfaf3a12bdb"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
@@ -210,12 +189,6 @@ LEGACY_HOSTED_DEBT = {
             "clued-work-adopt": "f1858367bf28b2ffb092c8fdfd83c138a0b8a374eb194ad349b439f0c125df5f"
         }
     },
-    "clued-work-claim-handover-revoke.yml": {
-        "control_sha256": "50ea6e5ffa83b03ee4ebb79ef7bedc0fa3386f4abc8957808fa64089905a7427",
-        "jobs": {
-            "revoke": "05c9112397ce11199544fa0893d674ff79b89db5683030a8fa8c293ceab97437"
-        }
-    },
     "design-refs.yml": {
         "control_sha256": "6327e8203db425c4bf5c2ae87d1c4e58a235307ce616fdc5f4a7db93c0b2b6c8",
         "jobs": {
@@ -276,29 +249,10 @@ LEGACY_HOSTED_DEBT = {
             "untrusted-hosted": "e6b8787973d2f48fcb4435b55bb136bfd8a627602acc575dcce25d680bd43452"
         }
     },
-    "phase2-naming-surface-inventory.yml": {
-        "control_sha256": "9d0afb3c004db56864ae1e5f8faaefa9f8f2346da84f9d7eb81ac8e18d8e2dcd",
-        "jobs": {
-            "inventory": "ae8245234f81f220ccad5eb22392b3ff4b683737457f97fda1e2b7e2e15c6feb"
-        }
-    },
-    "phase2-v027-validation.yml": {
-        "control_sha256": "e3f6e7958c64ff61f23c9d8eba95f23c8c393233b022add0418d3571787f2127",
-        "jobs": {
-            "validate-v027": "d833b3d8aec21655f5f7c477594d0ec47318ca7a1308901ba52688e0e8877880",
-            "permission-check": "62b123972ca9f91b2581de7f72b52338d781fce4511a467b03b12b68973879e3"
-        }
-    },
     "public-mcp-behavior.yml": {
         "control_sha256": "3cfab33876aec48f8421f98267a400b02f6f7cf7766680aa9627d82dfa2ad344",
         "jobs": {
             "untrusted-hosted": "c8abc2a96948c6f4552e7578aa0bb24565da47aeb3c562db478b725048c20d4e"
-        }
-    },
-    "public-mcp-gate-receipt.yml": {
-        "control_sha256": "f7d7f7e20c5d3ba14d60b12ac1820b810d8982e8be518cb5c8598b3d5b248de0",
-        "jobs": {
-            "untrusted-hosted": "e110e5b26d91532d19be905c89f855f00759b9f21ab21625c2480ca9e58cbdfe"
         }
     },
     "public-mcp-protocol.yml": {
@@ -307,12 +261,6 @@ LEGACY_HOSTED_DEBT = {
             "untrusted-hosted": "8f3caece0a4eaa6eda10802811fc19c074acb2210aeae7000190dd41c0921104"
         }
     },
-    "runner-budget-policy.yml": {
-        "control_sha256": "44132161236e58006357936aeffc66876cf3e453188ad0f3cdf5abc0f5a8f346",
-        "jobs": {
-            "untrusted-hosted": "6c05c4e934d9565c13a14945e52f5a25490760088e740e17fd252cc2f268a564"
-        }
-    }
 }
 
 # Owner Decision 325717a6: the gitleaks, trivy and contract-placement work may

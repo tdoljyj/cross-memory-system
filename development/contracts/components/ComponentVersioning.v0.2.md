@@ -92,7 +92,7 @@ A component's files and its version change together. `scripts/clued_components.p
 4. against the base manifest, a component's digest changed while its version did not, its version went down, or it was removed.
 5. the `--base` ref cannot be used: it is empty, option-like, does not resolve to a commit, or its manifest is not a component manifest. A commit that holds no manifest is reported on stderr as not compared.
 
-The `clued-components` workflow runs this on every pull request and every push to `main`; the placement check of §2.4 runs beside it as `contract-placement`. `bump <id> <version>` raises a version and rewrites its marker; `update` re-records digests; `node apps/clued-cloud/scripts/generate-agent-contract.mjs` regenerates the Worker modules.
+The `components` suite of `ci-suites` (`clued-required-tests.yml`) runs this on every pull request and every push to `main` that changes a component path; the placement check of §2.4 runs beside it as `contract-placement`. `bump <id> <version>` raises a version and rewrites its marker; `update` re-records digests; `node apps/clued-cloud/scripts/generate-agent-contract.mjs` regenerates the Worker modules.
 
 ## 4. What the service reports
 
@@ -123,7 +123,7 @@ v0.1 §5 is carried over unchanged:
 - **Product version tag.** Its name is exactly the root `VERSION` text, for example `Clued-v1.6`, and it points at the commit on `main` that set `VERSION` to that value. This is the convention of the older `vNext-1.3` and `vNext-2.0` tags. A push to `main` that changes `VERSION` creates it.
 - **Release tag.** `release/<YYYY-MM-DD>-r<run number>` points at the commit a successful production deploy put live: a `workflow_dispatch` run of `clued-cloud-production-release.yml` on `main` whose "Deploy Clued production Worker" step succeeded. Its message names the run, the deploy time, `VERSION` and every component version of `config/clued-components.json` at that commit. Runs that only preflight, back up, migrate or capture a source get no tag.
 
-`clued_release_tags.py check` runs in the `clued-components` workflow: `VERSION` must be a valid tag name, and if its tag exists it must be on the commit that set `VERSION`, so a new product version always needs a new `VERSION` value. A missing tag is backfilled with `workflow_dispatch` (`product`, or `release_run_id`).
+`clued_release_tags.py check` runs in the same `components` suite: `VERSION` must be a valid tag name, and if its tag exists it must be on the commit that set `VERSION`, so a new product version always needs a new `VERSION` value. A missing tag is backfilled with `workflow_dispatch` (`product`, or `release_run_id`).
 
 Tags are pushed with the repository secret `CLUED_RELEASE_TAG_TOKEN`, a fine-grained token for this repository with Contents and Workflows read/write: GitHub treats a new tag on a commit whose workflow files differ from `main` as a workflow change, and `GITHUB_TOKEN` cannot hold the `workflows` permission. The workflow fails with that explanation when the secret is missing.
 

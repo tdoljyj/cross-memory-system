@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import {retiredProfilesRaw} from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import test from 'node:test';
 import {parseWorkflowProfiles,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,checkoutIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
-const profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+// Fixture catalogue: the last one that registered clued-components and the quality gate (both deleted with their
+// entries); the proof logic under test is the same for any registered catalogue.
+const profiles=parseWorkflowProfiles(retiredProfilesRaw());
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
 const step=(name,conclusion='success')=>({name,status:'completed',conclusion});
@@ -310,8 +313,8 @@ test('audited documentation diff preserves the original five and includes the ne
   assert.deepEqual([...applicableCI({...w,changedFiles:[]}).workflows.keys()].sort(),expected);
   assert.equal(applicableCI({...w,changedFiles:[],diffComplete:false}).state,'unknown');
   assert.ok(result.workflows.has(QUALITY));assert.equal(result.workflows.has('.github/workflows/clued-g4-database.yml'),false);
-  w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/information-flow-e2e.yml'));
-  w.changedFiles=['apps/clued-cloud/tests/information-flow-x.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/information-flow-e2e.yml'));
+  w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
+  w.changedFiles=['apps/clued-cloud/tests/owner-authorization-db.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
 });
 test('trigger applicability refuses incomplete, excessive, changed or unsupported sources',()=>{
   const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));

@@ -6,7 +6,7 @@ import {ACTOR_WORKFLOW,registeredActorTransition} from './clued-standard-runner-
 import {readRequiredApplicability} from './clued-required-applicability.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherTransition} from './clued-production-publisher-source.mjs';
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationTransition} from './clued-publisher-qualification-source.mjs';
-export const COMPONENT_VERSION = "1.0.6";
+export const COMPONENT_VERSION = "1.0.7";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {retiredCatalogue} from './fixtures/retired-gated-proof-catalogue.mjs';
 
 test('Native617 candidate Source catalogue is complete but never an accepted registration',async()=>{
   const {native617PendingWorkflowCatalogue}=await import('./clued-workflow-profile.mjs');
@@ -112,8 +113,8 @@ test('a future source uses only an independently preregistered default-branch en
 });
 
 function acceptedFutureFixture() {
-  const source=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const roles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  // The handover qualification Sources are retired; the last catalogue that registered them supplies the fixture.
+  const {registry:source,specs:roles}=retiredCatalogue();
   const consumer_id='company-linux-01',file=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`;
   const saved=source.future_workflows?.find(entry=>entry.file===file);
   const profile=structuredClone(saved?.source_profile??source.workflows[file]);

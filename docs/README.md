@@ -40,7 +40,7 @@
 
 ## CI 检查的范围
 
-[`clued-cloud-quality`](../.github/workflows/clued-cloud-quality-gate.yml) 保留每个 PR 的同名检查。仅普通文档变更通过完整差异和检出身份核对时，摘要显示 `DOCUMENTATION_ONLY`，省略应用依赖安装、lint、账本校验、类型检查、构建及单元测试。这个结果只证明文档范围检查成功，不证明应用测试已执行，也不形成 Native 或发布资格。
+[`clued-cloud-tests`](../.github/workflows/clued-required-tests.yml) 在每个 PR 和每次推送 `main` 时运行 lint、账本校验、类型检查、构建及单元测试，不按路径过滤；同一工作流里的 `ci-suites` 按改动路径选跑仓库其余测试套件。
 
 代码、依赖、配置、被排除的治理文档路径、数据库安全与迁移账本文档仍走完整应用检查；比较数据缺失、分类失败或身份不一致也会回到完整检查。准入、扫描和其它适用检查各自执行。
 
