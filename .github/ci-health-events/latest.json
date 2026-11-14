@@ -1,7 +1,7 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-11-12T15:06:48.277224Z",
+  "observed_at": "2026-11-14T13:29:59.917478Z",
   "status": "ANOMALY",
   "notify_model": true,
   "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
@@ -28,28 +28,28 @@
         },
         "jobs": [
           {
-            "job_id": "130723762555",
-            "run_id": 43078259717,
+            "job_id": "132425642202",
+            "run_id": 43587698754,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-11T18:29:31Z",
-            "started_at": "2026-11-11T18:37:13Z",
-            "delay_seconds": 462,
+            "created_at": "2026-11-14T10:57:28Z",
+            "started_at": "2026-11-14T11:19:54Z",
+            "delay_seconds": 1346,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 462
+            "idle_seconds": 1346
           },
           {
-            "job_id": "131054091651",
-            "run_id": 43180218698,
+            "job_id": "132425642435",
+            "run_id": 43587698754,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-12T08:06:14Z",
-            "started_at": "2026-11-12T08:13:35Z",
-            "delay_seconds": 441,
+            "created_at": "2026-11-14T10:57:28Z",
+            "started_at": "2026-11-14T11:06:28Z",
+            "delay_seconds": 540,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 441
+            "idle_seconds": 540
           }
         ]
       }
@@ -75,7 +75,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-12T08:06:14Z",
+          "last_verified_at": "2026-11-14T10:57:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -93,7 +93,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-12T08:06:14Z",
+          "last_verified_at": "2026-11-14T10:57:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -146,7 +146,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-12T08:06:14Z",
+          "last_verified_at": "2026-11-14T10:57:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -163,7 +163,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-12T08:06:14Z",
+          "last_verified_at": "2026-11-14T10:57:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -177,28 +177,42 @@
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
           {
-            "job_id": "130723762555",
-            "run_id": 43078259717,
+            "job_id": "132425642202",
+            "run_id": 43587698754,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-11T18:29:31Z",
-            "started_at": "2026-11-11T18:37:13Z",
-            "delay_seconds": 462,
+            "created_at": "2026-11-14T10:57:28Z",
+            "started_at": "2026-11-14T11:19:54Z",
+            "delay_seconds": 1346,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 462
+            "idle_seconds": 1346
           },
           {
-            "job_id": "131054091651",
-            "run_id": 43180218698,
+            "job_id": "132425642435",
+            "run_id": 43587698754,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-12T08:06:14Z",
-            "started_at": "2026-11-12T08:13:35Z",
-            "delay_seconds": 441,
+            "created_at": "2026-11-14T10:57:28Z",
+            "started_at": "2026-11-14T11:06:28Z",
+            "delay_seconds": 540,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 441
+            "idle_seconds": 540
+          }
+        ],
+        "windows-general-v1": [
+          {
+            "job_id": "132425642384",
+            "run_id": 43587698754,
+            "name": "runner-heartbeat / clued-ci-company-win-01",
+            "runner_name": "clued-ci-company-win-01",
+            "created_at": "2026-11-14T10:57:28Z",
+            "started_at": "2026-11-14T11:03:46Z",
+            "delay_seconds": 378,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 378
           }
         ]
       }
