@@ -136,7 +136,7 @@
     "scripts/ci/ci-deps.test.mjs": "cd36c0c64a19a3d1061a73944ffd7d027cf7a026f80ba4578fb7aaa57c51254d",
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
     "scripts/ci/ci-required-selection.mjs": "cac3873652bdae2cfa03c9cee897502e8b35ee91b392eb66edc261d9c841dfb5",
-    "scripts/ci/ci-required-selection.test.mjs": "1bc96af3c69de364b063b82ad81d873bab130f1b1d19893ea28cb63f481cfd88",
+    "scripts/ci/ci-required-selection.test.mjs": "ac2dff3fb20336f582f6d94c8e4f11a16bdd9a9f51b98a75a4c82468cb011931",
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
     "scripts/ci/ci-usage-attribution.mjs": "164b77b7e9dbd0b1e1384b966d0c9530f0d525b3e5a47b45cf0a4b05c65830f0",
     "scripts/ci/ci-usage-attribution.test.mjs": "90470ac2c126ad2818bcb8efff33b7b7a1fd3b1b8dd60229ff0a7d29efca4b9e",
