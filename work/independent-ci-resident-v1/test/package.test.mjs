@@ -113,6 +113,24 @@ async function inputs(t) {
   return { root, node, record, profile, policyInput, policyFile, companionFile, upgraderConfigFile, bundle };
 }
 
+// DESIGN §76: every installed node's policy still carries `relay` and its companion.json `hints` (the removed hosted relay); the generic
+// upgrade hands both back to build-package unchanged (rollout/fleet/install.mjs#configInputsFor), and the package leaves them out.
+test('package: the legacy relay block of an installed policy and companion hints are left out, so the upgrade converges every node', async t => {
+  const i = await inputs(t);
+  const relay = { enabled: false, roles: ['gitleaks', 'trivy'], wait: { signalMs: 600000, queueMs: 900000, runSlackMs: 600000, totalMs: 3600000, pollMs: 60000,
+    jobTimeoutMs: { gitleaks: 1500000, trivy: 1500000 } } };
+  await fs.writeFile(i.policyFile, JSON.stringify({ ...i.policyInput, relay }), { flag: 'w' });
+  const companionInput = JSON.parse(await fs.readFile(i.companionFile, 'utf8'));
+  await fs.writeFile(i.companionFile, JSON.stringify({ ...companionInput, hints: { enabled: false, ciSourceManifestSha256: 'd'.repeat(64) } }), { flag: 'w' });
+  const out = path.join(i.root, 'pkg-legacy');
+  await buildPackage({ out, policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
+  const policy = JSON.parse(await fs.readFile(path.join(out, 'config', 'policy.json'), 'utf8'));
+  const companion = JSON.parse(await fs.readFile(path.join(out, 'config', 'companion.json'), 'utf8'));
+  assert.equal(Object.hasOwn(policy, 'relay'), false);
+  assert.equal(Object.hasOwn(companion, 'hints'), false);
+  assert.equal(validatePolicy(policy).ciSourceManifestSha256, policy.ciSourceManifestSha256);
+});
+
 test('package /4: layout, state compatibility, acceptance, the Linux section with the upgrade tool, and the upgrader section without its install targets', async t => {
   const i = await inputs(t);
   const out = path.join(i.root, 'pkg');

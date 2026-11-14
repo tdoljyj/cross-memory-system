@@ -33,10 +33,8 @@ export const COMPARE_TIMEOUT_MS = 15_000;
 export const MAX_COMPARES_PER_PASS = 10;
 export const SLOW_COMPARE_SKIP_MS = 15 * 60_000;
 // The 60-second poll (Decision 1b99e7e4) must not multiply what was paced by the old five-minute pass: a compare GitHub did not
-// answer is asked again for the same (main, head) only after COMPARE_RETRY_MS, and a head's hint observation (several reads)
-// runs at most every HINT_OBSERVE_EVERY_MS. Both were once per five-minute pass before.
+// answer is asked again for the same (main, head) only after COMPARE_RETRY_MS (once per five-minute pass before).
 export const COMPARE_RETRY_MS = 5 * 60_000;
-export const HINT_OBSERVE_EVERY_MS = 5 * 60_000;
 const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 // The two conditional reads. An ETag goes back into an argv (If-None-Match), so only GitHub's shape is kept.
 export const PULLS_ROUTE = repo => `repos/${repo}/pulls?state=open&base=main&per_page=50`;
@@ -59,10 +57,6 @@ export function parseIncluded(text) {
   return { status: Number(m[1]), etag, body };
 }
 
-// Hint mode (free-minutes design S20): a proposed head is also observed for its GitHub-hosted runs, read-only,
-// for this long after it was first proposed (the executor waits at most policy.relay.wait.totalMs after it
-// reserved the head); the observation goes to `hints` (hosted-hints.mjs#HostedHints), data only.
-export const HINT_WINDOW_MS = 2 * 3_600_000;
 
 // Pure: is this PR head up to date with main, and if not, what should its author do?
 export function upToDate({ mainSha, baseSha, behindBy }) {
@@ -72,12 +66,12 @@ export function upToDate({ mainSha, baseSha, behindBy }) {
 }
 
 export class Poller {
-  // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock, hints? }
+  // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock }
   constructor(ports) {
     Object.assign(this, ports);
-    this.sent = new Map(); this.firstSeen = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
+    this.sent = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
-    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map(); this.observedAt = new Map();
+    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map();
   }
 
   // One conditional REST read: the value of a 200 (kept with its ETag once `accept` takes it), or the kept value on a 304.
@@ -152,19 +146,12 @@ export class Poller {
       pulls.push({ pr: p.number, headSha: p.headRefOid, baseSha: prBase, mainSha: base, behindBy: behind, ...verdict });
       if (!verdict.eligible) continue;
       const id = `${p.number}:${p.headRefOid}:${base}`;
-      if (!this.firstSeen.has(id)) this.firstSeen.set(id, this.clock());
-      if (this.hints && this.clock() - this.firstSeen.get(id) <= HINT_WINDOW_MS && !(this.clock() - (this.observedAt.get(id) ?? -Infinity) < HINT_OBSERVE_EVERY_MS)) {
-        this.observedAt.set(id, this.clock());
-        try { await this.hints.observe({ pr: p.number, headSha: p.headRefOid, baseSha: base }); } catch { /* a hint is advisory */ }
-      }
       if (this.sent.get(id) === p.updatedAt) continue;
       const prUpdatedAt = typeof p.updatedAt === 'string' && Number.isFinite(Date.parse(p.updatedAt)) ? new Date(Date.parse(p.updatedAt)).toISOString() : null;
       await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: base, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
       this.sent.set(id, p.updatedAt);
       proposed += 1;
     }
-    if (this.firstSeen.size > 512) for (const k of [...this.firstSeen.keys()].slice(0, this.firstSeen.size - 512)) this.firstSeen.delete(k);
-    if (this.observedAt.size > 512) for (const k of [...this.observedAt.keys()].slice(0, this.observedAt.size - 512)) this.observedAt.delete(k);
     // What the PR page status shows for the PRs this pass looked at (pr-status.mjs).
     this.lastPass = { at: this.clock(), mainSha: base, pulls, reads: { ...this.reads } };
     return proposed;

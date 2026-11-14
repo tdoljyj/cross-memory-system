@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
-import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, relayedRow, triggerBytes, RELAY_ON, SOURCE, CI_SOURCE } from './helpers.mjs';
+import { executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes, SOURCE, CI_SOURCE } from './helpers.mjs';
 import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
@@ -265,12 +265,13 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
 // refused it (TRAIN_FRONT_PR_BUSY), stage 10 then said TRAIN_FRONT_BATCH_RUNNING, and no merge-slot green came within the hour.
 // queueFacts false: stage 1 reports no merge-queue entry, so the ordinary batch does not give way after stage 1 (DESIGN §62.6) and the
 // take-over at a parking point is what lets the front batch start.
-async function steadyState(t, { relay = false, queueFacts = true, pr = 910, claim = CLAIM, head = H } = {}) {
+async function steadyState(t, { atA = false, queueFacts = true, pr = 910, claim = CLAIM, head = H } = {}) {
   const e = await world(t, { quick: true });
   const at = { t };
-  const engine = engineFor(e, at, relay ? { relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role, H)) }) } : {}, { queueFacts });
-  const f = await executorFixture(t, { policy: policy(true, relay ? { relay: RELAY_ON } : {}), engine, now: NOW,
-    ...(relay ? { companion: fakeCompanion({ hint: () => null }) } : {}) });
+  const engine = engineFor(e, at, {}, { queueFacts });
+  const f = await executorFixture(t, { policy: policy(true), engine, now: NOW });
+  // atA: an ordinary batch (no S) rests at parking point A (helpers.mjs#holdAtA) right after its stage 1.
+  if (atA) holdAtA(f.exec, { when: s => !Object.hasOwn(s, 'testSha') });
   Object.assign(at, { clock: f.clock, advance: f.advance });
   await f.exec.trainRecover();
   for (let i = 0; i < 12 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
@@ -352,11 +353,10 @@ test('rule 41ab823a: a scan whose input changed runs again on the front batch (S
   }
 });
 
-// The same at parking point A: Stage R on and no hosted signal, so the ordinary batch rests at A right after its stage 1 bound the claim.
-// It gives way the same way and the front batch starts. (With relay on, a front batch then waits for RELAY_PROVIDER_TRANSFER_REQUIRED by
-// the Owner's once-per-head rule 41ab823a, unrelated to this fix; the shipped policies keep relay off, where A never happens.)
+// The same at parking point A: the ordinary batch rests at A right after its stage 1 bound the claim (as one a restart found there).
+// It gives way the same way and the front batch starts.
 test('steady state (task ad19ef19): an ordinary batch resting at parking point A gives way to the front batch of its head (no queue fact)', async t => {
-  const { f, engine, refused, terminals } = await steadyState(t, { relay: true, queueFacts: false });
+  const { f, engine, refused, terminals } = await steadyState(t, { atA: true, queueFacts: false });
   for (let i = 0; i < 30 && !engine.stages.some(s => s.testSha === S); i++) { await f.exec.tick(); f.advance(MIN); }
   assert.deepEqual(await refused(), [], 'the front batch is never refused as busy');
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage), [1], 'the ordinary batch ran stage 1 only');

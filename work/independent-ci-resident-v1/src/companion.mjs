@@ -362,15 +362,6 @@ export function validateCompanionConfig(c, source = null) {
   return Object.freeze({ ...c, node });
 }
 
-// Hint mode (free-minutes design S20) is off unless the installed companion.json says so; it names the
-// installed CI Source whose hosted-relay-v1 observer and pure hint attestation the companion runs.
-export function validateHintConfig(h) {
-  if (h === undefined || h === null) return Object.freeze({ enabled: false, ciSourceManifestSha256: null });
-  check(typeof h === 'object' && Object.keys(h).sort().join('|') === 'ciSourceManifestSha256|enabled' && typeof h.enabled === 'boolean'
-    && (h.enabled === false || HEX64.test(h.ciSourceManifestSha256 ?? '')), 'COMPANION_HINT_CONFIG_INVALID');
-  return Object.freeze({ enabled: h.enabled, ciSourceManifestSha256: h.ciSourceManifestSha256 ?? null });
-}
-
 // The frozen Linux upgrade tool's arguments (in-place upgrade channel, Task 018da927, DESIGN §34): exactly one of these lines once
 // joined by single spaces, every element a plain token of its own (no space, no quote, no path). upgrade-mailbox.mjs#upgradeToolArgs
 // builds them from a validated request; this is the companion's own second check before anything runs as root.

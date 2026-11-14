@@ -91,12 +91,10 @@ const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额�
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
   REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑',
   TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑' });
-// A per-row hold that is not a limit running out by itself (no "自动重试" promised).
-const HELD_TEXT = Object.freeze({ RELAY_QUALIFICATION_HELD: '本提交被托管资格保护扣住' });
 // The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
 // until a pass gets past it: no row runs while one holds (review rounds 24 and 25). The daily budgets come from status.limits (quotaFull).
 const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion 就绪', VERSION_SKEW: '两端版本不一致，等升级处理完',
-  RELAY_QUALIFICATION_WINDOW_UNCONFIRMED: '托管资格窗口未确认，稍后重查', TRAIN_TAKEOVER_SWEEP_PENDING: '合并列车接管扫描中',
+  TRAIN_TAKEOVER_SWEEP_PENDING: '合并列车接管扫描中',
   TRAIN_SOURCE_MISMATCH: '合并列车的 Source 不一致，等 Owner 处理', TRAIN_SOURCE_UNREADABLE: '合并列车的 Source 读不出，稍后重查' });
 const globalDefer = status => GLOBAL_DEFER_TEXT[status?.queue?.hold] ? status.queue.hold : null;
 // Generation 15 (DESIGN 60.2): the take-over sweep after main was rewritten says why.
@@ -300,7 +298,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     if (row.state === 'BACKOFF' || row.state === 'WAITING') {
       const due = !(row.nextAt > now);
       if (due && !gate && row.heldBy) {
-        return { state: 'pending', description: clip(DEFERRED_TEXT[row.heldBy] ? `排队中：${DEFERRED_TEXT[row.heldBy]}，之后自动重试` : `排队中：${HELD_TEXT[row.heldBy] ?? `暂缓（${row.heldBy}）`}`) };
+        return { state: 'pending', description: clip(DEFERRED_TEXT[row.heldBy] ? `排队中：${DEFERRED_TEXT[row.heldBy]}，之后自动重试` : `排队中：暂缓（${row.heldBy}）`) };
       }
       if (!(due && gate)) {
         const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
@@ -409,7 +407,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? HELD_TEXT[d] ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {

@@ -11,12 +11,11 @@ import { EXECUTOR_RESTARTED_UNPUBLISHED, failureRow } from '../src/classify.mjs'
 import { mayHavePublished } from '../src/executed-heads.mjs';
 import { acquireInstanceLock } from '../src/instance-lock.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 const KEY = batchKey(subject());
 const KEY2 = batchKey(subject({ attempt: 2 }));
-const SUCCESS = { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } };
 const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);
 async function bodies(f, type) {
   const out = [];
@@ -119,25 +118,6 @@ test('a reboot at or after a publication stage HALTs exactly as before', async t
     assert.deepEqual(await f.ledger.pendingAttempts2(), [], `${point}: no attempt 2`);
     assert.ok(!companion.calls.some(c => c[0] === 'archive-linux'), `${point}: the scene is left for the Owner`);
   }
-});
-
-test('a reboot in or after stage R HALTs: stage R interrupted, or a role relayed', async t => {
-  const policy = rawPolicy({ relay: RELAY_ON });
-  // stage R interrupted (20-plan-intent without 25-plan)
-  const engineR = fakeEngine();
-  engineR.runRelayStage = () => new Promise(() => {});
-  const f = await executorFixture(t, { policy, engine: engineR, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-  await f.drop(triggerBytes());
-  f.exec.tick();
-  kill(f.exec);
-  for (let i = 0; i < 200 && !(await f.ledger.state(KEY)).planIntent; i += 1) await new Promise(r => setTimeout(r, 5));
-  assert.equal((await restart(f).tick()).state, 'HALTED');
-  assert.equal((await f.ledger.state(KEY)).terminal.facts.failureCode, 'RELAY_STAGE_INTERRUPTED');
-  // gitleaks and trivy relayed, placement interrupted locally
-  const g = await dieAt(t, 'stage-6', { policy, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-  assert.equal((await g.ledger.state(KEY)).plan.relayed.length, 2);
-  assert.equal((await restart(g).tick()).state, 'HALTED');
-  assert.equal((await g.ledger.state(KEY)).terminal.facts.failureCode, 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
 });
 
 test('anything not proven HALTs as before: same boot, Linux not quiet, a HALT already latched, a may-have-published record, drift', async t => {

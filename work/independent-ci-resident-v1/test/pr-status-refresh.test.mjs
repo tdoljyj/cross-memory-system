@@ -150,8 +150,8 @@ test('review round 21: a due back-off or wait never shows a passed time; a hold 
   // a hold that is not a limit: no promise to retry by itself
   let s = await setup();
   s.clock.time = T0 + 30 * MIN;
-  s.q.defer(998, 'RELAY_QUALIFICATION_HELD', s.clock.time);
-  assert.equal(s.page(), '排队中：本提交被托管资格保护扣住');
+  s.q.defer(998, 'SOME_ROW_HOLD', s.clock.time);
+  assert.equal(s.page(), '排队中：暂缓（SOME_ROW_HOLD）');
   // a gate of the whole queue (the breaker opened by the network failures): its text, not the passed back-off time
   s = await setup();
   s.clock.time = T0 + 40 * MIN;
@@ -329,13 +329,13 @@ test('review round 24: the daily budgets reach the status at most once a minute 
 });
 
 test('review round 25: a global deferral stays on the status while a batch rests at A, and goes once a pass gets past it', async t => {
-  const { RELAY_ON, executorFixture, fakeCompanion, hintFor, rawPolicy, triggerBytes } = await import('./helpers.mjs');
+  const { executorFixture, holdAtA, triggerBytes } = await import('./helpers.mjs');
   const H = n => String(n).repeat(40).slice(0, 40);
   const W0 = Date.parse('2026-10-20T12:00:00Z');
-  const hint = hintFor({ gitleaks: { state: 'PENDING_RUNNING', startedAt: W0 - 60_000 }, trivy: { state: 'SUCCESS' } });
   let f;
   const board = new StatusBoard({ clock: () => f?.clock() ?? W0 });
-  f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => hint }), status: board, now: W0 });
+  f = await executorFixture(t, { status: board, now: W0 });
+  holdAtA(f.exec, { when: s => s.pr === 884 });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
@@ -370,12 +370,10 @@ test('review round 25: the notice of a back-off whose own time is ahead names it
 });
 
 test('review round 26: a batch going on from A ends a global deferral an earlier pass met (no stale "等 companion 就绪")', async t => {
-  const { RELAY_ON, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, triggerBytes } = await import('./helpers.mjs');
+  const { executorFixture, fakeCompanion, fakeEngine, holdAtA, triggerBytes } = await import('./helpers.mjs');
   const H = n => String(n).repeat(40).slice(0, 40);
   const W0 = Date.parse('2026-10-20T12:00:00Z');
-  const pending = hintFor({ gitleaks: { state: 'PENDING_RUNNING', startedAt: W0 - 60_000 }, trivy: { state: 'SUCCESS' } });
-  const done = hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
-  const script = { hint: () => pending };
+  const script = {};
   let f;
   const board = new StatusBoard({ clock: () => f?.clock() ?? W0 });
   const now = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
@@ -384,7 +382,8 @@ test('review round 26: a batch going on from A ends a global deferral an earlier
   const engine = fakeEngine();
   const run = engine.runStage.bind(engine);
   engine.runStage = async (b, st, o) => { const s = now(); seen.push([st.number, s.queue?.hold ?? null, page(s)]); return run(b, st, o); };
-  f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion(script), status: board, now: W0 });
+  f = await executorFixture(t, { engine, companion: fakeCompanion(script), status: board, now: W0 });
+  const atA = holdAtA(f.exec, { when: s => s.pr === 884 });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
@@ -393,7 +392,7 @@ test('review round 26: a batch going on from A ends a global deferral an earlier
   assert.equal(now().queue.hold, 'COMPANION_NOT_READY');
   assert.equal(page(now()), '排队第 1 位：等 companion 就绪', 'while the batch only rests at A');
   delete script.heartbeat;
-  script.hint = () => done;
+  atA.release();
   f.advance(60_000);
   seen.length = 0;
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'the batch at A went on to its end, with no scheduling pass');

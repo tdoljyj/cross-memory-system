@@ -36,7 +36,7 @@ export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1
 export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost', 'service-stopping']);
 // One pump per relay-stage request (DESIGN §26.5; r3 implementation review MINOR 1): the companion's first pump of a request
 // creates <requestId>.pump.json in responses/ (create-only). A companion restarted while that pump ran finds it and starts no
-// second one: no second issue transfer, no second worker start. pending() and the hint reads never list it.
+// second one: no second issue transfer, no second worker start. pending() never lists it.
 export const PUMP_MARK_CONTRACT = 'clued.independent-ci.resident-companion-pump-mark/1';
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -70,13 +70,6 @@ export const PULL_STATES = Object.freeze(['open', 'closed', 'merged']);
 // A pr-head answer's claim trailers (companion.mjs#claimTrailers): data the run queue compares, never authority.
 export const PULL_CLAIMS_MAX = 8;
 export const pullClaimsOk = c => Array.isArray(c) && c.length <= PULL_CLAIMS_MAX && c.every((x, i) => typeof x === 'string' && UUID.test(x) && (i === 0 || c[i - 1] < x));
-// Hosted hints (free-minutes design S20, §7.1): the companion's read-only observation of the GitHub-hosted
-// runs of one PR head, as untrusted scheduling data (clued.independent-ci.hosted-hint/1, <= 2 KB). They are
-// not request kinds: the companion writes them on its own poll, create-only, next to its answers, and the
-// executor reads only the newest one of the head it is waiting for (hosted-wait.mjs#parseHint).
-export const HINT_FILE = /^hosted-hint-([1-9][0-9]{0,8})-([0-9a-f]{12})-([0-9]{6})\.json$/;
-export const HINT_FILE_MAX_BYTES = 2048;
-const hintPrefix = (pr, headSha) => `hosted-hint-${pr}-${headSha.slice(0, 12)}-`;
 
 // Exact request shapes per kind; nothing else (no path, argv, env or script) can be carried.
 const REQUEST_FIELDS = {
@@ -184,8 +177,6 @@ async function readFinished(file, maximum, code) {
   return (await readFinishedBoth(file, maximum, code))?.value ?? null;
 }
 const TIMING_FILE_MAX_BYTES = 32 * 1024;
-// How many of the newest hint files latestHint looks at when the newest is unfinished.
-export const HINT_LOOKBACK = 3;
 
 export class Mailbox {
   constructor(root, clock) {
@@ -313,39 +304,6 @@ export class Mailbox {
     const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, prune: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
-  }
-
-  // Companion side: one new hint file per changed observation (sequence = newest + 1, create-only).
-  async writeHint(record) {
-    check(record && Number.isSafeInteger(record.pr) && record.pr > 0 && record.pr < 1e9 && HEX40.test(record.headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
-    const bytes = Buffer.from(canonicalJson(record) + '\n', 'utf8');
-    check(bytes.length <= HINT_FILE_MAX_BYTES, 'HOSTED_HINT_TOO_LARGE');
-    const prefix = hintPrefix(record.pr, record.headSha);
-    const seqs = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).map(n => Number(HINT_FILE.exec(n)[3]));
-    const next = (seqs.length ? Math.max(...seqs) : 0) + 1;
-    check(next <= 999_999, 'HOSTED_HINT_SEQUENCE_EXHAUSTED');
-    const file = path.join(this.responses, `${prefix}${String(next).padStart(6, '0')}.json`);
-    await writeNewAtomic(file, record);
-    return file;
-  }
-
-  // Service side: the newest COMPLETE hint's bytes for this PR head, or null. Bounded read; the caller parses. A hint file that
-  // is still being written (empty, or a prefix of its JSON: a companion of before DESIGN §31, which created the file before it
-  // wrote it) is not there yet: the previous complete hint stands, and the next call reads the new one. Looking at an older
-  // observation of the same head for a moment only delays the scheduling hint by one tick; a hint is never authority. A prefix
-  // of a JSON object is itself not JSON, so a newest file that is not JSON cannot be told from one still being written (or from
-  // garbage) and is skipped the same way: the older complete hint stands, where it used to reach parseHint and be recorded as
-  // hintRefused. A file that is oversize, a link or has a second name is still refused; complete JSON of the wrong shape is
-  // returned for parseHint to refuse (DESIGN §31.3; review of §31, NIT-1).
-  async latestHint(pr, headSha) {
-    check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
-    const prefix = hintPrefix(pr, headSha);
-    const names = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).sort();
-    for (const name of names.slice(-HINT_LOOKBACK).reverse()) {
-      const read = await readFinishedBoth(path.join(this.responses, name), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
-      if (read !== null) return read.bytes;
-    }
-    return null;
   }
 
   // One beat at a time (DESIGN §26: the companion's own timer and its step() both beat): a beat asked for while one is

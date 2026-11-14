@@ -144,7 +144,7 @@ test('closed with no eligible stops and half-open still refuse; a subject change
   assert.equal(f.queue.row(884).state, 'STOPPED');
 });
 
-test('a lifted row still observes qualification holds and ledger daily budgets', async t => {
+test('a lifted row still observes the ledger daily budgets', async t => {
   const f = await executorFixture(t);
   const s = subject(), key = batchKey(s), hk = headKey(s);
   stop(f);
@@ -157,6 +157,4 @@ test('a lifted row still observes qualification holds and ledger daily budgets',
   usage.started = 0;
   usage.evaluations = f.exec.policy.limits.maxEvaluationsPer24h;
   assert.equal((await f.exec.precheck(key, hk, s, { usage, origin: candidate.origin })).defer, 'DAILY_EVALUATION_LIMIT');
-  f.exec.qualificationHolds.inspect = async () => ({ held: true });
-  assert.equal((await f.exec.precheck(key, hk, s, { usage, origin: candidate.origin })).defer, 'RELAY_QUALIFICATION_HELD');
 });

@@ -7,7 +7,7 @@ import { LEASE_BATCH_ESTIMATE_MS, LEASE_MARGIN_MS, StatusBoard, leaseShort, pars
 import { describe, events, leaseText } from '../src/pr-status.mjs';
 import { parseStageOutcome } from '../src/engine-windows.mjs';
 import { ResidentExecutor } from '../src/executor.mjs';
-import { HEAD as FIXTURE_HEAD, RELAY_ON, SAFE_REFUSAL, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, relayedRow, triggerBytes } from './helpers.mjs';
+import { HEAD as FIXTURE_HEAD, SAFE_REFUSAL, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 import { PARK_RETRY_MS } from '../src/executor.mjs';
 import { STAGE8_LEASE_MINUTES } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/claim-assist-native.mjs';
 
@@ -249,39 +249,6 @@ test('review round 17: a stage-1 refusal that released the batch gives no "runni
   assert.deepEqual(f.exec.queue.notices.filter(n => n.kind === 'lease-short'), []);
 });
 
-test('review round 17: a batch going on from A after a long wait is no longer shown at A, and its page and notice agree (counted from then)', async t => {
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const run = engine.runStage;
-  let f;
-  const seen = [];
-  const exp = new Date(T0 + 90 * MIN).toISOString();
-  engine.runStage = async (batch, stage, o) => {
-    if (stage.number === 1) { engine.calls.push(['stage', 1]); return withLease({ ok: true, factsSha256: 'd'.repeat(64) }, exp); }
-    const st = parseStatus(Buffer.from(JSON.stringify(f.exec.status.snapshot())));
-    seen.push({ stage: stage.number, row: st.pending.find(p => p.pr === 884)?.deferred ?? null,
-      page: describe({ pull: { pr: 884, headSha: FIXTURE_HEAD, eligible: true }, status: st, now: f.clock() }).description,
-      notice: f.exec.queue.notices.some(n => n.kind === 'lease-short') });
-    return run(batch, stage, o);
-  };
-  let ready = false;
-  const companion = fakeCompanion({ hint: (s, now) => ready ? hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at: now }) : null });
-  const board = new StatusBoard({ clock: () => f?.clock() ?? T0 });
-  f = await executorFixture(t, { engine, companion, status: board, now: T0, policy: rawPolicy({ relay: RELAY_ON }) });
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  for (let i = 0; i < 9; i++) { f.advance(5 * MIN); await f.exec.tick(); }
-  ready = true;
-  f.advance(MIN);
-  await f.exec.tick();
-  assert.ok(seen.length > 0);
-  for (const x of seen) {
-    assert.notEqual(x.row, 'PARKED_A', `stage ${x.stage}: not shown at A any more`);
-    // 44 minutes left, counted from now (22 + 30 needed): both the page and the notice say renew
-    assert.match(x.page, /请现在续租/, `stage ${x.stage}`);
-    assert.equal(x.notice, true, `stage ${x.stage}`);
-  }
-});
-
 test('review round 19: a lease kept from a refused earlier attempt of the head is forgotten when the next attempt starts (no false "expired")', async t => {
   const exp = new Date(T0 + 10 * MIN).toISOString();
   const out = { ...SAFE_REFUSAL, scheduling: { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: exp } };
@@ -305,31 +272,6 @@ test('review round 19: a lease kept from a refused earlier attempt of the head i
   for (let i = 0; i < 5 && calls < 2; i++) { await f.exec.tick(); f.advance(MIN); }
   assert.equal(calls, 2, 'a second attempt ran');
   assert.deepEqual(seenAtSecond, { notices: [], lease: null }, 'the stale end is gone before the new batch shows as running');
-});
-
-test('review round 18: the batch in flight resting at A, whose PR row shows a newer commit, is counted from now (one CLAIM_LEASE_SHORT)', async t => {
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const run = engine.runStage;
-  // 70 minutes at stage 1; after 30 minutes at A, 40 are left: short for a batch with its whole run ahead (22 + 30), not for one
-  // counted from its reservation 30 minutes ago (30 only)
-  const exp = new Date(T0 + 70 * MIN).toISOString();
-  engine.runStage = async (batch, stage, o) => {
-    if (stage.number === 1) { engine.calls.push(['stage', 1]); return withLease({ ok: true, factsSha256: 'd'.repeat(64) }, exp); }
-    return run(batch, stage, o);
-  };
-  const companion = fakeCompanion({ hint: () => null });
-  let f;
-  const board = new StatusBoard({ clock: () => f?.clock() ?? T0 });
-  f = await executorFixture(t, { engine, companion, status: board, now: T0, policy: rawPolicy({ relay: RELAY_ON }) });
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  assert.deepEqual(f.exec.queue.notices.filter(n => n.kind === 'lease-short'), []);
-  await f.drop(triggerBytes({ headSha: 'd'.repeat(40) }));
-  f.advance(30 * MIN);
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  assert.equal(f.queue.row(884)?.current?.headSha, 'd'.repeat(40), 'the PR row shows the newer commit');
-  const notices = f.exec.queue.notices.filter(n => n.kind === 'lease-short');
-  assert.deepEqual(notices.map(n => [n.code, n.headSha]), [['CLAIM_LEASE_SHORT', FIXTURE_HEAD]]);
 });
 
 test('review round 20: a ready try that hit a transient failure after the CI extended the lease parks with the extended end (no false reminder)', async t => {
