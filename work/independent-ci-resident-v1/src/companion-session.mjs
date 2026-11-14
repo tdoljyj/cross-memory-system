@@ -49,7 +49,7 @@ export function companionGitConfig(profileDir, ghExe) {
 const sameDir = (a, b) => typeof a === 'string' && typeof b === 'string' && path.normalize(a).replace(/\\+$/, '').toLowerCase() === path.normalize(b).replace(/\\+$/, '').toLowerCase();
 // gh's hosts.yml with insecure storage: a github.com entry with an oauth_token. A classic personal access token starts with ghp_.
 // Owner decision (2026-11-08, superseding the fine-grained token): GitHub gives a fine-grained token no Checks permission, and the
-// companion reads check runs (gh-read-port, node-duty, admission-rerun); the token is a classic one with the repo scope. A
+// companion reads check runs (node-duty, admission-rerun); the token is a classic one with the repo scope. A
 // fine-grained token is refused here, so the companion fails closed at start rather than on its first check-run read.
 export function hostsFileShape(text) {
   const t = String(text ?? '');

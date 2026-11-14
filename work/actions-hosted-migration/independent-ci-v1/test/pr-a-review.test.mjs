@@ -1,6 +1,6 @@
 // PR-A review fixes on the Source side (each test failed before its fix):
 //   v1 pins of the modules the v1 one-shot loads; the v2 Native verify timeout; a local K refusal is UNKNOWN;
-//   uncoded exceptions are never transient; contract-placement is never relayed (registry and spec).
+//   uncoded exceptions are never transient.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { V1_REQUIRED_SOURCE } from '../runtime/one-shot.mjs';
 import { protectedAuthority } from '../runtime/one-shot-v2.mjs';
 import { outcomeFailureCode, TRANSIENT_CODES, UNKNOWN_CODES } from '../src/resident-v2/stage-fact.mjs';
-import { RELAYABLE_ROLES } from '../src/hosted-relay-v1/registry.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CI = 'work/actions-hosted-migration/independent-ci-v1/';
@@ -43,7 +42,6 @@ test('v1 one-shot pins exactly the transitive static load closure of runtime/one
   assert.ok(V1_REQUIRED_SOURCE.includes('scripts/ci/clued-pr-task-binding.mjs'), 'the shared Native binding normalizer is in the actual admission import closure');
   // The round-3 omission: full-admission.mjs imports queue-facts.mjs, which only a transitive walk reaches.
   assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/independent-control-checks-v1/queue-facts.mjs`));
-  for (const p of ['attest.mjs', 'registry.mjs', 'oidc.mjs']) assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/hosted-relay-v1/${p}`), p);
   // The pin list the one-shot enforces is the closure, not a one-level list: dropping a transitive file is visible.
   const oneLevel = staticClosure(CI + 'src/staged-check-publisher.mjs');
   assert.ok(closure.length > oneLevel.length && oneLevel.every(p => closure.includes(p)));
@@ -59,7 +57,7 @@ test('v2 protected Native verify carries the same bounded 10 s signal as v1', as
 });
 
 test('a local publication refused by K (role_already_published_on_head) is UNKNOWN on every stage, never a clean block', () => {
-  for (const stage of [3, 5, 7, 9]) assert.equal(outcomeFailureCode(blocked('role_already_published_on_head'), stage), 'ROLE_ALREADY_PUBLISHED_ON_HEAD', String(stage));
+  for (const stage of [3, 5, 7]) assert.equal(outcomeFailureCode(blocked('role_already_published_on_head'), stage), 'ROLE_ALREADY_PUBLISHED_ON_HEAD', String(stage));
   assert.ok(UNKNOWN_CODES.includes('ROLE_ALREADY_PUBLISHED_ON_HEAD'));
 });
 
@@ -75,14 +73,4 @@ test('uncoded exceptions are never a transient code (no automatic attempt 2 can 
     const text = fs.readFileSync(path.join(ROOT, ...(CI + f).split('/')), 'utf8');
     assert.ok(!/: '(publication_observation_unconfirmed|NATIVE_CHECK_UNCONFIRMED)';/.test(text), f);
   }
-});
-
-test('contract-placement is never relayed: neither the production registry nor its spec registers it', () => {
-  const registry = JSON.parse(fs.readFileSync(path.join(ROOT, ...`${CI}src/hosted-relay-v1/registry.json`.split('/')), 'utf8'));
-  const spec = JSON.parse(fs.readFileSync(path.join(ROOT, ...`${CI}src/hosted-relay-v1/registry.spec.json`.split('/')), 'utf8'));
-  assert.deepEqual(Object.keys(registry.roles).sort(), Object.keys(RELAYABLE_ROLES).sort());
-  assert.deepEqual(Object.keys(spec.roles).sort(), Object.keys(RELAYABLE_ROLES).sort());
-  assert.ok(!Object.hasOwn(RELAYABLE_ROLES, 'contract-placement'));
-  const admission = fs.readFileSync(path.join(ROOT, 'scripts', 'ci', 'clued-work-admission.mjs'), 'utf8');
-  assert.match(admission, /contract-placement is never relayed/, 'the placement registration says so');
 });

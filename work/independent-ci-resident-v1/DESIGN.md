@@ -5808,3 +5808,26 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - `test/package.test.mjs` “package: the legacy relay block of an installed policy and companion hints are left out …”：带旧段的节点输入打出的新包里两段都没有。
 
 **第二步（两台通用升级到第一步之后，另开 PR）**：删 CI Source 里的转发（`hosted-relay-v1/` 全部、`resident-v2/relay-qualification-entry.mjs`/`relay-qualification-run.mjs`、`derive-batch.mjs --relay-roles`、`invoke-stage.mjs --relay-qualification-window` 与第 13 段、`stage-fact.mjs`/`stage-inputs.mjs` 的转发行、`FormalPublicBoundaryV2.cs` 的第 9/13 段及其 C# 测试、`source-closure.json`），它们要等节点不再运行会调用它们的旧常驻；三个托管工作流和 `validate_runner_budget_policy.py` 的 `OWNER_DECISION_HOSTED_JOBS`、相关脚本与 fixture，要等 `claude/ci-both-platforms-pr2` 合入（它改着其中几份文件）；Worker 的托管入口（`hosted_head_sha` 路径）删除需要部署 Worker（DESK 走 release workflow），单列。
+
+## 77. 托管转发第二步：删 CI Source 的转发、Worker 的托管入口（Owner 2026-11-14，分支 `claude/remove-hosted-relay-2`）
+
+§76 第一步之后两台节点已通用升级到 `fleet-node-2026.11.14-01049279`，常驻不再调用转发。本步删掉只为转发存在的其余部分；判断标准是“还有没有非转发的读者”，有就留，并写明为什么。
+
+**删掉的**：
+- CI Source：`src/hosted-relay-v1/` 除注册表外全部（attest、oidc、observe、stage、relay-plan、relay-entry-v2、qualification-observer、build-registry 和两份 spec）；`resident-v2/relay-qualification-entry.mjs`、`relay-qualification-run.mjs`；`derive-batch.mjs --relay-roles/--batch-dir`；`invoke-stage.mjs --relay-qualification-window/--relay-qualification`；`stage-fact`/`stage-inputs` 的转发行；`prepare-record` 的 `relayQualificationWindow`；`layout` 的 `relay-publisher`、`relay-qualification` 入口和第 9、13 段行、`state\relay\jwks`（`acl-model.json` 不再建它）；两个发布器和 `one-shot*.mjs` 的 `publishHosted`、`hostedVerifier`、K 的 relay 持有路径（本地路径的 effect key、external id、K、错误码不变）；`github.mjs` 只给转发用的 `readGitTree`、`readCheckRunsByName`、`readCheckRunAnnotations`；`source-closure.mjs` 固定文件里的 `scripts/ci/clued-scan-start.mjs`（Source 里没有读者）。
+- 段号：第 13 段从 C# 边界、代理和 JS 表里全部删除；第 9 段保留编号（常驻 `policy.mjs` 的 `FIXED_STAGES` 和已装策略的十项时限表仍按位置读），但任何表都不能再运行它：C# `StageRole[8]` 为 null、时限 0，`Runnable(9)` 为假；代理 `SwapBroker` 第 9 项时限 0，`RuntimeStageValid(9)` 为假；JS `STAGES_V2` 没有这一行。第 10–12 段编号不变。常驻读旧账本的 `RELAY_STAGE`、`stage-fact` 的 RELAY 失败码保留（旧回执照旧可读）。
+- 常驻：`src/gh-read-port.mjs`（companion 提示模式的只读端口，§76 后已无读者）；`qualification/` 里的转发资格控制器（`controller.mjs`、`controller-contract.json`）和只为转发影子观察写的 `duplicate-execution.mjs`，及其测试。
+- Worker：`worker/ci-scan-start-v1.ts`（`/v1/ci/scan-start`，只接受 `runner_environment=github-hosted` 的 OIDC）和 `continuity.ts` 里的路由、`tests/ci-scan-start-worker.test.mjs`。
+
+**留下的，以及为什么**：
+- 注册表 `registry.json` 原字节移到 `src/scan-start-v1/`：Native 扫描许可把每次许可绑定到这份字节的 sha256（`entry-runtime.mjs` → `native-port.mjs` → 策略的 `registry_sha256`），改一个字节就对不上。`registry.mjs` 只保留对这份冻结文档的校验和仓库常量（离线 cutover plan、`native-port.mjs` 在用）；cutover plan 读冻结提交里的旧路径，git 读取器移到 `qualification/git-objects.mjs`。
+- `gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 不删也不改：本地正式角色按精确字节钉着它们（`worker/trusted-workflows.mjs`、节点 `roles-v3` 档案的 `workflowSha256`、桥 v4 的 Source 清单、各 adapter 的 `ORIGINAL_*_WORKFLOW_*` 检查）。改字节或删文件要先改三个正式角色及其 Linux 档案、走一次通用升级，属于正式角色的事，不是转发的事。`validate_runner_budget_policy.py` 的 `OWNER_DECISION_HOSTED_JOBS` 按同样的字节放行这些 job，随工作流一起留；`scripts/ci/clued-scan-start.mjs` 被工作流按哈希引用，也随工作流留。
+- 已被别处按 blob 钉住的脚本里的转发残句不改（`clued-control-workflow-sources.json` 钉着 `clued-independent-revoker.mjs` 的 `'relay-publisher'` 允许项、`clued-merge-slot-ci.mjs` 的 relay external id 格式、`clued-work-admission.mjs` 的注释）：都不可达（没有计划能带 `relay-publisher` 入口，也没有发布过 relay external id），随各自下一次重钉一起删。
+- 数据库：`clued_ci_scan_start_hosted_v1`、策略列 `hosted_head_sha`、`ci_scan_start_begin_v1` 的 `github-actions` 分支只为托管入口存在；删它们是生产迁移（要 Owner 批），并且要在不再调用它的 Worker 部署之后，所以单列为后续一步，和 cutover plan 的 `hostedQualificationPolicy` 一起删。
+
+**过渡**：
+- CI Source 和常驻的改动都在通用包里，两半（Windows 与 Linux）由同一次通用升级一起换；旧包继续用旧 Source，新包不调用旧文件，不需要分两步。升级前合入不影响正在跑的节点：节点读的是已装副本，不读 main。
+- Worker：没有调用方。唯一的调用方是三个托管工作流里的取许可步骤，工作流全是 `disabled_manually`，生产扫描许可策略也从未激活。部署前旧 Worker 照旧，部署后这个路径 404，重新启用的托管 gitleaks/trivy job 会在扫描前失败，不产生检查结论。
+- 节点上已经存在的空目录 `state\relay\jwks`：新包不再建它，`migrate-acl` 只增不删，留空目录无害。
+
+**灾备影响**：`docs/maintenance/independent-ci.md` 的“灾备：Owner 临时切换规则集”依赖托管 gitleaks/trivy job，入口删除后走不通（之前也要先激活扫描许可策略）。有两台常驻节点后，灾备走主备切换；这一节和 `clued-work-admission.yml` 的去留待 Owner 决定。

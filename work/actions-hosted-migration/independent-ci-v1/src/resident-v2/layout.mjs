@@ -19,9 +19,6 @@ export const WIN_SPOOL = `${WIN_ROOT}\\formal-spool`;
 // Controller (clued-control) state for Source v2. Effect journals live here, never in the spool, so
 // no archive can ever move them (S13).
 export const WIN_STATE_V2 = `${WIN_ROOT}\\state\\v2`;
-// Hosted relay (stage R, free-minutes design S16): the relay entry's GitHub OIDC JWKS cache (clued-control
-// modify, created by migrate-acl.ps1; never in the spool, never archived).
-export const STATE_RELAY_JWKS = `${WIN_ROOT}\\state\\relay\\jwks`;
 export const STATE_V2 = Object.freeze({
   effectsScan: `${WIN_STATE_V2}\\effects-scan`,
   effectsWorkAdmission: `${WIN_STATE_V2}\\effects-work-admission`,
@@ -64,25 +61,20 @@ export const LINUX_POLICY_DIR = '/etc/clued-independent-ci/roles-v3';
 export const LINUX_DESCRIPTORS = '/mnt/c/ProgramData/CluedIndependentCI/resident/outbox';
 export const LINUX_WSPREP = id => `${LINUX_STATE}/ws-prep-${id}`;
 
-// ---- the fixed eight stages, stage R and stage 10 (stages.json semantics; S11 gives each a stable failure catalogue) ----
+// ---- the fixed eight stages and the maintenance stages 10-12 (stages.json semantics; S11 gives each a stable failure catalogue) ----
 const P = 'work/actions-hosted-migration/independent-ci-v1/';
 export const ENTRY_V2 = Object.freeze({
   'work-admission': `${P}src/formal-work-admission-check-v2/startup.mjs`,
   'scanner-issuer': `${P}worker/protected-job-bridge-v4/windows-issuer.mjs`,
   'check-publisher': `${P}runtime/one-shot-v2.mjs`,
   'control-checks': `${P}src/independent-control-checks-v2/startup.mjs`,
-  // Stage R (hosted relay, free-minutes design S17/S19): verify GitHub-hosted runs and relay them to App 5368905.
-  'relay-publisher': `${P}src/hosted-relay-v1/relay-entry-v2.mjs`,
   // Stage 10 (quota phase 2, step 3c-1): train maintenance, read-only in shadow mode.
   'train-maintenance': `${P}src/independent-control-checks-v2/train-maintenance.mjs`,
   'role-probe': `${P}src/resident-v2/role-probe-entry.mjs`,
   'revocation-maintenance': `${P}src/resident-v2/revocation-entry.mjs`,
-  // Stage 13 observes live relay prerequisites; it never dispatches or qualifies.
-  'relay-qualification': `${P}src/resident-v2/relay-qualification-entry.mjs`,
 });
-// Kind 'formal': the fixed eight stages, all derived with the batch. Kind 'hosted-relay': stage R, number 9,
-// derived only after the hosted wait (derive-batch.mjs --relay-roles) for the relay candidates the resident
-// wrote into 20-plan-intent; its job list is a non-empty ordered subset of its jobRoles (variableJobRoles).
+// Kind 'formal': the fixed eight stages, all derived with the batch. Number 9 is reserved (the hosted relay,
+// removed; resident DESIGN §76): it has no row, so stageByNumber(9) is null and no stage package can name it.
 const ROWS = [
   { number: 1, kind: 'formal', name: 'native-work-admission', entryRole: 'work-admission', jobRoles: ['work-admission'], runMilliseconds: 900_000, linuxWorker: false },
   { number: 2, kind: 'formal', name: 'gitleaks-execution', entryRole: 'scanner-issuer', jobRoles: ['gitleaks'], runMilliseconds: 2_700_000, linuxWorker: true },
@@ -94,8 +86,6 @@ const ROWS = [
   // Stage 8 waits inside the control helper for the Native merge-queue head (S8), so it gets the
   // longest window: min(merge slot 45 min, claim, acceptance) bounded by this cap.
   { number: 8, kind: 'formal', name: 'native-control-pair', entryRole: 'control-checks', jobRoles: ['control-admission', 'control-merge-slot'], runMilliseconds: 2_700_000, linuxWorker: false },
-  // Stage R: only the relayable roles of the installed relay registry (contract-placement is never relayed).
-  { number: 9, kind: 'hosted-relay', name: 'hosted-relay', entryRole: 'relay-publisher', jobRoles: ['gitleaks', 'trivy'], variableJobRoles: true, runMilliseconds: 900_000, linuxWorker: false },
   // Stage 10 (quota phase 2, step 3c-1; DESIGN §21.1): train maintenance, outside any batch. Its one job is a train run
   // (train-run.mjs), not a job of contract /3; derive-batch.mjs --train-run derives it.
   { number: 10, kind: 'train', name: 'train-maintenance', entryRole: 'train-maintenance', jobRoles: ['train-run'], runMilliseconds: 300_000, linuxWorker: false },
@@ -103,23 +93,16 @@ const ROWS = [
   { number: 11, kind: 'role-probe', name: 'role-probe', entryRole: 'role-probe', jobRoles: ['role-probe-run'], runMilliseconds: 60_000, linuxWorker: false },
   // Independent negative-effect maintenance, outside PR batches and scanner quotas.
   { number: 12, kind: 'revocation-maintenance', name: 'revocation-maintenance', entryRole: 'revocation-maintenance', jobRoles: ['revocation-maintenance-run'], runMilliseconds: 300_000, linuxWorker: false },
-  { number: 13, kind: 'relay-qualification', name: 'relay-qualification', entryRole: 'relay-qualification', jobRoles: ['relay-qualification-run'], runMilliseconds: 300_000, linuxWorker: false },
 ];
-export const STAGES_V2 = Object.freeze(ROWS.map(s => Object.freeze({ variableJobRoles: false, ...s, jobRoles: Object.freeze([...s.jobRoles]) })));
+export const STAGES_V2 = Object.freeze(ROWS.map(s => Object.freeze({ ...s, jobRoles: Object.freeze([...s.jobRoles]) })));
 export const FORMAL_STAGES_V2 = Object.freeze(STAGES_V2.filter(s => s.kind === 'formal'));
-export const RELAY_STAGE_NUMBER = 9;
-export const RELAY_STAGE_V2 = STAGES_V2.find(s => s.number === RELAY_STAGE_NUMBER);
 export const TRAIN_STAGE_NUMBER = 10;
 export const TRAIN_STAGE_V2 = STAGES_V2.find(s => s.number === TRAIN_STAGE_NUMBER);
 export const ROLE_PROBE_STAGE_NUMBER = 11;
 export const REVOCATION_STAGE_NUMBER = 12;
-export const RELAY_QUALIFICATION_STAGE_NUMBER = 13;
-// The job roles of one stage package: exactly the row's roles, or (stage R) a non-empty subset in row order.
+// The job roles of one stage package: exactly the row's roles.
 export function stageJobRolesValid(row, roles) {
-  if (!row || !Array.isArray(roles)) return false;
-  if (!row.variableJobRoles) return roles.length === row.jobRoles.length && roles.every((r, i) => r === row.jobRoles[i]);
-  return roles.length > 0 && new Set(roles).size === roles.length && roles.every(r => row.jobRoles.includes(r))
-    && roles.every((r, i) => i === 0 || row.jobRoles.indexOf(roles[i - 1]) < row.jobRoles.indexOf(r));
+  return !!row && Array.isArray(roles) && roles.length === row.jobRoles.length && roles.every((r, i) => r === row.jobRoles[i]);
 }
 export const STAGE_MARGIN_MS = 180_000;
 export const stageByNumber = n => STAGES_V2.find(s => s.number === n) ?? null;

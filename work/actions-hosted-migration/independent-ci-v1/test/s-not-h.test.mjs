@@ -12,8 +12,7 @@ import { batchJobsV2, batchRefV2, isTrainFrontJobV2, makeJobV2, prBaseAcceptedV2
 import { BATCH_CLAIM_CONTRACT, BATCH_CLAIM_CONTRACT_FRONT, recordBatchClaim, readBatchClaim, recordTestShaV2, validateBatchClaimRecord } from '../src/batch-claim-v2.mjs';
 import { controlJobsFor } from '../src/independent-control-checks-v2/consumer.mjs';
 import { CONTROL_CHECKS_V2 } from '../src/independent-control-checks-v2/publisher.mjs';
-import { deriveBatch, deriveRelayStage, residentBatchKey, subjectTestSha, validateSubject } from '../src/resident-v2/derive-batch.mjs';
-import { relaySubject } from '../src/hosted-relay-v1/relay-entry-v2.mjs';
+import { deriveBatch, residentBatchKey, subjectTestSha, validateSubject } from '../src/resident-v2/derive-batch.mjs';
 import { collectCompleteRemoteRefs } from '../worker/protected-controller-ports-v2/refs.mjs';
 import { NOW, HEAD, BASE, iso, tempDir, fixtureRecord, subject } from './resident-v2-fixtures.mjs';
 
@@ -101,18 +100,6 @@ test('resident subject: S joins the subject and the batch key only for a front b
   // the key must be the subject's own: the head-only key does not derive a front batch
   const headKey = residentBatchKey(s);
   assert.throws(() => deriveBatch({ recordDocs: r.docs, subject: f, batchKey: headKey, batchId: headKey.slice(0, 16) + '-123456789abc', now: NOW }), { code: 'RESIDENT_BATCH_KEY_MISMATCH' });
-});
-
-test('hosted relay: a train front batch never gets a stage R package or a relay subject', () => {
-  const r = fixtureRecord(), f = subject({ testSha: S }), key = residentBatchKey(f), batchId = key.slice(0, 16) + '-123456789abc';
-  const d = deriveBatch({ recordDocs: r.docs, subject: f, batchKey: key, batchId, now: NOW });
-  assert.throws(() => deriveRelayStage({ recordDocs: r.docs, batchJson: d.files['batch.json'], roles: ['gitleaks', 'trivy'], batchKey: key, batchId, now: NOW }),
-    { code: 'RESIDENT_RELAY_TEST_COMMIT_REFUSED' });
-  const c = { claimId: randomUUID(), fence: 3, epoch: 1 };
-  const head = batchJobsV2(base()), front = batchJobsV2(base({ testSha: S }));
-  assert.equal(relaySubject([head.gitleaks, head.trivy], c).headSha, HEAD);
-  for (const jobs of [[front.gitleaks], [head.gitleaks, front.trivy]]) assert.throws(() => relaySubject(jobs, c), { code: 'RELAY_TEST_COMMIT_REFUSED' });
-  assert.throws(() => relaySubject([], c), { code: 'RELAY_SUBJECT_JOBS_REQUIRED' });
 });
 
 test('protected refs observation: the PR base.sha is a fact for a front batch, and main must still be T', async () => {

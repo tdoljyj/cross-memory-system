@@ -331,8 +331,8 @@ test('real undici: a refused connect lets a write be sent again after an empty r
   assert.equal(net.counts[listKey], 1);
 });
 
-// Hosted relay reads (S16/S17): GET only, fixed origin, unchanged token scope.
-function relayGithub(routes = {}) {
+// Merge-train reads (stage 8 and 10): GET only, fixed origin, unchanged token scope.
+function readGithub(routes = {}) {
   const calls = [], minted = [];
   async function fetchImpl(url, options) {
     const parsed = new URL(url), key = `${options.method} ${parsed.pathname}`;
@@ -349,67 +349,41 @@ function relayGithub(routes = {}) {
     privateKeyProvider: async () => privateKey, fetchImpl, clock: () => Date.parse('2026-10-21T00:00:00Z'), sleep: async () => {} });
   return { port, calls, minted };
 }
-const TREE = 'c'.repeat(40), CHILD = 'd'.repeat(40);
-const relayRun = (id, name = 'gitleaks-hosted-executor') => ({ id, name, head_sha: HEAD, status: 'completed', conclusion: 'success', app: { id: 15368 } });
-const annotation = n => ({ annotation_level: 'notice', title: n === 0 ? 'clued-hosted-relay-v1' : '', message: `m${n}`, path: '.github' });
+const TREE = 'c'.repeat(40);
 
-test('hosted relay reads are normalized GET requests on the fixed origin with the unchanged token scope', async () => {
-  const fake = relayGithub({
+test('merge-train reads are normalized GET requests on the fixed origin with the unchanged token scope', async () => {
+  const fake = readGithub({
     [`GET /repos/${REPO}/branches/main`]: { name: 'main', commit: { sha: BASE } },
     [`GET /repos/${REPO}/compare/${BASE}...${HEAD}`]: { status: 'ahead', ahead_by: 2, behind_by: 0, base_commit: { sha: BASE }, merge_base_commit: { sha: BASE }, files: [] },
     [`GET /repos/${REPO}/git/commits/${HEAD}`]: { sha: HEAD, tree: { sha: TREE }, parents: [{ sha: BASE }] },
-    [`GET /repos/${REPO}/git/trees/${TREE}`]: { sha: TREE, truncated: false, tree: [{ path: '.github', mode: '040000', type: 'tree', sha: CHILD },
-      { path: '.gitattributes', mode: '100644', type: 'blob', sha: BASE, size: 3 }] },
-    [`GET /repos/${REPO}/commits/${HEAD}/check-runs`]: url => reply({ total_count: 1, check_runs: [relayRun(5, url.searchParams.get('check_name'))] }),
-    [`GET /repos/${REPO}/check-runs/5/annotations`]: [annotation(0), annotation(1)],
   });
   const { port } = fake;
   assert.deepEqual(await port.readBranchHead('main'), { name: 'main', sha: BASE });
   assert.deepEqual(await port.readCompare(BASE, HEAD), { baseSha: BASE, headSha: HEAD, status: 'ahead', aheadBy: 2, behindBy: 0, mergeBaseSha: BASE });
   assert.deepEqual(await port.readGitCommit(HEAD), { sha: HEAD, tree: TREE, parents: [BASE] });
-  assert.deepEqual(await port.readGitTree(TREE), { sha: TREE, entries: [{ name: '.github', mode: '040000', type: 'tree', sha: CHILD },
-    { name: '.gitattributes', mode: '100644', type: 'blob', sha: BASE }] });
-  const named = await port.readCheckRunsByName(HEAD, 'gitleaks-hosted-executor');
-  assert.deepEqual(named.checks.map(check => check.name), ['gitleaks-hosted-executor']);
-  assert.deepEqual(await port.readCheckRunAnnotations(5, 2), { complete: true, checkRunId: 5, annotations: [
-    { level: 'notice', title: 'clued-hosted-relay-v1', message: 'm0', path: '.github' }, { level: 'notice', title: '', message: 'm1', path: '.github' }] });
   const reads = fake.calls.filter(call => call.key.startsWith(`GET /repos/${REPO}/`));
   assert.ok(fake.calls.every(call => call.origin === 'https://api.github.com'));
   assert.ok(reads.every(call => call.method === 'GET'));
-  assert.equal(reads.find(call => call.key.endsWith('/check-runs')).search, '?check_name=gitleaks-hosted-executor&filter=all&per_page=100&page=1');
   assert.equal(reads.find(call => call.key.includes('/compare/')).search, '?per_page=1');
   assert.deepEqual(fake.minted, [{ repository_ids: [REPO_ID], permissions: { checks: 'write', contents: 'read', pull_requests: 'read' } }]);
 });
 
-test('relay reads refuse incomplete, truncated, renamed or mismatched replies', async () => {
+test('merge-train reads refuse mismatched replies', async () => {
   const cases = [
-    [`GET /repos/${REPO}/commits/${HEAD}/check-runs`, () => reply({ total_count: 1, check_runs: [relayRun(5, 'gitleaks')] }), port => port.readCheckRunsByName(HEAD, 'gitleaks-hosted-executor'), 'invalid_check_set'],
-    [`GET /repos/${REPO}/commits/${HEAD}/check-runs`, () => reply({ total_count: 2, check_runs: [relayRun(5)] }), port => port.readCheckRunsByName(HEAD, 'gitleaks-hosted-executor'), 'incomplete_checks'],
-    [`GET /repos/${REPO}/check-runs/5/annotations`, () => reply([annotation(0)]), port => port.readCheckRunAnnotations(5, 2), 'incomplete_annotations'],
-    [`GET /repos/${REPO}/check-runs/5/annotations`, () => reply([annotation(0), annotation(1)]), port => port.readCheckRunAnnotations(5, 1), 'annotations_changed'],
-    [`GET /repos/${REPO}/check-runs/5/annotations`, () => reply([{ ...annotation(0), annotation_level: 'debug' }]), port => port.readCheckRunAnnotations(5, 1), 'invalid_annotations_reply'],
-    [`GET /repos/${REPO}/git/trees/${TREE}`, () => reply({ sha: TREE, truncated: true, tree: [] }), port => port.readGitTree(TREE), 'invalid_tree_reply'],
-    [`GET /repos/${REPO}/git/trees/${TREE}`, () => reply({ sha: TREE, truncated: false, tree: [{ path: 'a/b', mode: '100644', type: 'blob', sha: BASE }] }), port => port.readGitTree(TREE), 'invalid_tree_reply'],
     [`GET /repos/${REPO}/git/commits/${HEAD}`, () => reply({ sha: BASE, tree: { sha: TREE }, parents: [] }), port => port.readGitCommit(HEAD), 'invalid_commit_reply'],
     [`GET /repos/${REPO}/compare/${BASE}...${HEAD}`, () => reply({ status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: HEAD }, merge_base_commit: { sha: BASE } }), port => port.readCompare(BASE, HEAD), 'invalid_compare_reply'],
     [`GET /repos/${REPO}/branches/main`, () => reply({ name: 'other', commit: { sha: BASE } }), port => port.readBranchHead('main'), 'invalid_branch_reply'],
   ];
   for (const [key, route, call, code] of cases) {
-    const fake = relayGithub({ [key]: route });
+    const fake = readGithub({ [key]: route });
     await assert.rejects(call(fake.port), { code }, code);
   }
-  // 150 annotations over two pages are read completely.
-  const many = Array.from({ length: 150 }, (_, n) => annotation(n + 1));
-  const paged = relayGithub({ [`GET /repos/${REPO}/check-runs/9/annotations`]: url => reply(url.searchParams.get('page') === '1' ? many.slice(0, 100) : many.slice(100)) });
-  assert.equal((await paged.port.readCheckRunAnnotations(9, 150)).annotations.length, 150);
 });
 
-test('relay read arguments are validated before any request', async () => {
-  const fake = relayGithub();
-  for (const [call, code] of [[port => port.readCompare('main', HEAD), 'invalid_compare'], [port => port.readGitTree('x'), 'invalid_tree'],
-    [port => port.readGitCommit(HEAD.toUpperCase()), 'invalid_commit'], [port => port.readCheckRunsByName(HEAD, 'a\nb'), 'invalid_check_name'],
-    [port => port.readBranchHead('../main'), 'invalid_branch'], [port => port.readCheckRunAnnotations(0, 1), 'invalid_annotation_request'],
-    [port => port.readCheckRunAnnotations(1, -1), 'invalid_annotation_request']]) await assert.rejects(call(fake.port), { code }, code);
+test('merge-train read arguments are validated before any request', async () => {
+  const fake = readGithub();
+  for (const [call, code] of [[port => port.readCompare('main', HEAD), 'invalid_compare'],
+    [port => port.readGitCommit(HEAD.toUpperCase()), 'invalid_commit'], [port => port.readBranchHead('../main'), 'invalid_branch']]) await assert.rejects(call(fake.port), { code }, code);
   assert.equal(fake.calls.length, 0);
 });
 
