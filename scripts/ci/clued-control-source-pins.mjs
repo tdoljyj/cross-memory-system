@@ -80,7 +80,8 @@ function initialEntry(registry,file){
 }
 function projectedRegistry(value,file,names){const result=structuredClone(value),entry=initialEntry(result,file);entry.implementation_blobs=projectedDescriptor({implementation_blobs:entry.implementation_blobs},names).implementation_blobs;return result;}
 function ensureVersionManifest(manifest,file,text){
-  const rows=manifest.components?.filter(c=>c.version_marker?.file===file);
+  // A marker file is relative to its component root (e.g. root scripts/ci, file clued-source-only-workflow.mjs).
+  const rows=manifest.components?.filter(c=>typeof c.version_marker?.file==='string'&&path.posix.join(c.root??'.',c.version_marker.file)===file);
   if(rows?.length!==1||rows[0].version!==version(text))refuse(`version/manifest mismatch: ${file}`);
 }
 
