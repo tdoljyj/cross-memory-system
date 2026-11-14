@@ -556,7 +556,6 @@
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-entry-runtime-reasons.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-publishers.test.mjs",
-        "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-engine.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-entry.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-run.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-stage.test.mjs",
