@@ -34,6 +34,23 @@ B1 = '1111111111111111-111111111111'
 B2 = '2222222222222222-222222222222'
 CID = [c * 64 for c in 'abcdef']
 
+# Windows refuses a path of 260 characters or more unless the host opted in to long paths (a node setting we do not change).
+# The longest file TwoBatches creates (the container-sweep evidence) has a tail of about 207 characters below the fixture root, and
+# the runner's own temporary directory is already 41-44 characters before tempfile adds its name: the same test passed with a short
+# TMP and failed on both runners. So on Windows the fixture root must not hang below the host's TMP: it is a short directory at the
+# drive root, whatever TMP/TEMP the runner uses.
+MAX_PATH_WINDOWS = 259
+SHORT_ROOT_LIMIT = 24
+
+
+def short_temp_dir():
+    if os.name == 'nt':
+        try:
+            return tempfile.TemporaryDirectory(prefix='t', dir=os.path.splitdrive(os.path.abspath(tempfile.gettempdir()))[0] + os.sep)
+        except OSError:
+            pass
+    return tempfile.TemporaryDirectory()
+
 
 def descriptor(batch, head):
     d = {'contract': 'clued.independent-ci.resident-batch-descriptor/3', 'batchId': batch, 'batchKey': batch[:16] + 'a' * 48,
@@ -195,7 +212,7 @@ class TwoBatches(unittest.TestCase):
     view shows nothing batch 1 wrote except the trivy cache."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = short_temp_dir()
         self.root = self.tmp.name
         self.state = os.path.join(self.root, STATE.lstrip('/'))
         for d in ('formal-spool/incoming', 'formal-spool/outgoing', 'runs', 'workspaces', 'resident', 'toolchain-build-legacy-v1', 'trusted-source'):
@@ -235,6 +252,16 @@ class TwoBatches(unittest.TestCase):
                 mock.patch('os.geteuid', create=True, return_value=0):
             return tool.main(['archive', '--instance', instance]), status_dir
 
+    @unittest.skipUnless(os.name == 'nt', 'the Windows path limit')
+    def test_fixture_root_is_short_whatever_the_runner_temp_is(self):
+        long_tmp = 'C:' + os.sep + 'x' * 58
+        with mock.patch.dict(os.environ, {'TMP': long_tmp, 'TEMP': long_tmp}), mock.patch.object(tempfile, 'tempdir', None):
+            tmp = short_temp_dir()
+            try:
+                self.assertLessEqual(len(tmp.name), SHORT_ROOT_LIMIT, tmp.name)
+            finally:
+                tmp.cleanup()
+
     def test_batch_2_sees_nothing_of_batch_1_but_the_cache(self):
         written, cache = self.run_batch_1()
         inst = f'{B1}_formal-bridge-stage-deadline'
@@ -258,6 +285,11 @@ class TwoBatches(unittest.TestCase):
         with open(os.path.join(status_dir, f'{inst}.json')) as f:
             self.assertTrue(json.load(f)['verified'])
         self.assertEqual(len(os.listdir(os.path.join(self.state, 'resident', 'container-sweep', inst))), 2)
+        if os.name == 'nt':
+            # Only Windows has the path limit (Linux CI's temp is as long and has none: 260 there is fine).
+            longest = max(len(os.path.join(d, n)) for d, _, names in os.walk(self.root) for n in names)
+            self.assertLessEqual(longest, MAX_PATH_WINDOWS, 'the longest path of the scenario must fit Windows without long-path support')
+            self.assertLessEqual(len(self.root), SHORT_ROOT_LIMIT)
         self.assertTrue(all(not p.exists() for p in written), 'the whole failed scene was moved')
         self.assertEqual({c[0] for c in docker.calls} - set(tool.DOCKER_VERBS), set())
 
