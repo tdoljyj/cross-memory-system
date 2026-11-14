@@ -97,8 +97,8 @@ files is a separate decision (P1-5), as is removing the test schema (P0-4).
 ## Checks
 
 - **Offline, every pull request**: `npm run ledger:verify`
-  (`scripts/migration-ledger.mjs verify`, a step of the `clued-cloud-quality`
-  workflow, and `tests/migration-ledger.test.mjs` under `test:unit`). Every row
+  (`scripts/migration-ledger.mjs verify`, a step of the `clued-cloud-tests`
+  check in `clued-required-tests.yml`, and `tests/migration-ledger.test.mjs` under `test:unit`). Every row
   resolves to a file with the recorded md5 and length; every migration file up
   to the release baseline is carried by a row or listed under
   `repository_only`; every pending file is one `migrate` mode can apply; every

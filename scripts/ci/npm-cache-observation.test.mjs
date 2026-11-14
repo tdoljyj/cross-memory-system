@@ -3,8 +3,6 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {createRequire} from 'node:module';
-import {fileURLToPath} from 'node:url';
 import {npmCacheObservation,readJobObservation,observationDirectory} from './npm-cache-observation.mjs';
 const log=events=>['0 info using npm@11.6.0','1 verbose title npm ci',
   ...events.map((message,i)=>`${i+2} ${message}`),`${events.length+2} verbose exit 0`,''].join('\n');
@@ -82,21 +80,3 @@ test('missing serials and retry markers never imply unique request/retry totals'
   assert.equal(npmCacheObservation(source.replace('2 http','9 http')).complete,false);
 });
 
-test('actual workflow retains install/cache/timeout/trust and only observes that step',()=>{
-  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),YAML=require('yaml');
-  const root=fileURLToPath(new URL('../../',import.meta.url));
-  const workflow=YAML.parse(fs.readFileSync(path.join(root,'.github/workflows/clued-cloud-quality-gate.yml'),'utf8'));
-  const job=workflow.jobs['trusted-self-hosted'],install=job.steps.find(step=>step.id==='install');
-  const observe=job.steps.find(step=>step.name==='Observe npm HTTP cache events');
-  assert.equal(job['runs-on'].includes('trust-internal'),true);
-  assert.equal(job['timeout-minutes'],25);
-  assert.equal(install.name,'Install from lockfile');
-  assert.equal(install.run,'timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000');
-  assert.equal(install['continue-on-error'],undefined);
-  assert.equal(install.env.npm_config_logs_dir,observe.env.npm_config_logs_dir);
-  assert.match(observe.if,/!cancelled\(\)/);
-  assert.equal(observe.env.NPM_INSTALL_OUTCOME,'${{ steps.install.outcome }}');
-  assert.equal(job.steps.indexOf(observe),job.steps.indexOf(install)+1);
-  assert.equal(workflow.jobs['untrusted-hosted'].steps.some(step=>step.name===observe.name),false);
-  assert.doesNotMatch(JSON.stringify(workflow.permissions),/write/);
-});

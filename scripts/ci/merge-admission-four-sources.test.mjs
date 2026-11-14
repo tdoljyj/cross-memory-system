@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -46,9 +46,10 @@ const sourcePackets=JSON.stringify([{source_checkout_sha:fixture,sources_raw:sou
 // Registry-defined synthetic execution world: this does not qualify working-tree workflows.
 const registryObject=parseWorkflowProfiles(profiles);
 const executionEntries=Object.entries(registryObject.workflows).map(([workflow_file,profile])=>{
-  const candidate=sourceBlob(workflow_file),actual=registeredWorkflowSource(registryObject,workflow_file,candidate);
+  const candidate=existsSync(path.join(repo,workflow_file))?sourceBlob(workflow_file):null,
+    actual=candidate===null?{passed:false}:registeredWorkflowSource(registryObject,workflow_file,candidate);
   // Keep an explicitly registered fixture Source where the working-tree Source
-  // is not yet registered. The separate counterexample below must still refuse it.
+  // is not yet registered, or was deleted. The separate counterexample below must still refuse it.
   return {workflow_file,workflow_blob:actual.passed?candidate:profile.workflow_blob};
 });
 const selectedProfileObject={workflows:Object.fromEntries(executionEntries.map(x=>{const q=registeredWorkflowSource(registryObject,x.workflow_file,x.workflow_blob);

@@ -4,10 +4,9 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
-// Preserve the eight recurring application consumers as a compatibility subset;
+// Preserve the seven recurring application consumers as a compatibility subset;
 // repository-wide checks below also cover control and production source.
 export const APPLICATION_WORKFLOWS = [
-  "clued-cloud-quality-gate.yml",
   "clued-cloud-node22-install.yml",
   "clued-integration-runtime-nightly.yml",
   "clued-connection-authorization.yml",

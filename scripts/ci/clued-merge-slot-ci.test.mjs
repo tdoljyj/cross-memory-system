@@ -74,10 +74,13 @@ test('non-PR enumeration requires fresh complete fixed-family data and exact Sou
   assert.throws(()=>ciWorkflows(ROOT,()=>names,p=>p.endsWith('clued-non-pr-control-sources.json')?Buffer.from([0xff]):fs.readFileSync(p)),/invalid UTF-8/);
 });
 
+const registeredOrdinaryText=file=>Buffer.from(parseWorkflowProfiles(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'))).workflows[file].source_yaml);
+
 test('nongated ordinary CI needs an exact registered Source and independent complete FullRoles, not a basename',()=>{
-  const name='runner-budget-policy.yml',file='.github/workflows/'+name,text=fs.readFileSync(path.join(ROOT,file)),
+  // runner-budget-policy.yml is deleted; its registered Source bytes stay in the catalogue and stand in for the file.
+  const name='runner-budget-policy.yml',file='.github/workflows/'+name,text=registeredOrdinaryText(file),
     ordinaryPath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),rolesPath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json');
-  const expected=gitBlobSha(text),read=p=>fs.readFileSync(p);
+  const expected=gitBlobSha(text),read=p=>p===path.join(ROOT,file)?text:fs.readFileSync(p);
   assert.deepEqual([...ciWorkflows(ROOT,()=>[name],read)],[[file,expected]]);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.concat([text,Buffer.from('\n')]):read(p)),/unregistered default ordinary Source/);
   const specs=JSON.parse(read(rolesPath));specs.workflows[file].sources[expected].pop();
@@ -235,7 +238,7 @@ test('the observer exact pins refuse every other signal, trigger, env, permissio
 });
 
 const GITLEAKS = ".github/workflows/gitleaks.yml";
-const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
+const QUALITY = ".github/workflows/clued-cloud-node22-install.yml";
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
@@ -349,7 +352,9 @@ test("PR CI enumeration retains registered ordinary Sources and excludes only ex
       for(const role of roles)assert.equal(roleDefinitionDigest(role.definition),role.definition_sha256,file);
       return true;
     });
-  assert.deepEqual(ordinary,['runner-budget-policy.yml'],'the existing registered nongated CI must not disappear');
+  // The one registered nongated ordinary CI, runner-budget-policy.yml, was deleted (ci-suites runs its checks); its
+  // Source stays registered, and no other ordinary workflow is on main.
+  assert.deepEqual(ordinary,[],'only registered nongated CI that is still on main is counted');
   // Required-check workflows are counted once, and controllers add no PR test.
   assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS,...ordinary])].map((name) => `.github/workflows/${name}`).sort());
   assert.equal(WORKFLOWS.has('.github/workflows/clued-compute-panel.yml'),false);
@@ -371,7 +376,13 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   for (const name of NOT_YET_A_TRIGGER) assert.ok(!names.includes(name), name);
   const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")]
     .filter((name) => !NOT_YET_A_TRIGGER.includes(name));
-  assert.deepEqual([...names].sort(), [...new Set(expected)].sort());
+  // Deleted workflows (their checks moved to ci-suites) whose names stay in this frozen, disabled Source's list until
+  // the Source itself changes or is deleted. Exactly these names are extra, nothing else.
+  const DELETED = ["clued-cloud-quality", "clued-components", "runner-budget-policy",
+    ...["company-linux-01", "company-linux-02", "company-linux-03", "company-linux-04", "company-win-01", "home-win-01"]
+      .map((id) => `Clued handover hook qualification / ${id}`)];
+  for (const name of DELETED) assert.ok(names.includes(name) && !expected.includes(name), name);
+  assert.deepEqual(names.filter((name) => !DELETED.includes(name)).sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);
   assert.doesNotMatch(text, /schedule:/, "the hourly report is a step of the re-verification run");
   // Only pull request runs can be a holder's head; the event is used to skip, never to decide.
@@ -978,7 +989,7 @@ test("A2: with the rules on App 5368905, hosted executor results never return th
   }
   // ...but another gated workflow's failure, or the same under rules that count Actions checks, still fails as before.
   const failedProof = (file) => async (pr) => ({ passed: false, state: "failed", head: pr.head.sha, pr_number: pr.number, reason: `.github/workflows/${file}: CI job failed` });
-  state = await independentState(fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, []) }), { qualifyExecution: failedProof("clued-cloud-quality-gate.yml") });
+  state = await independentState(fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, []) }), { qualifyExecution: failedProof("clued-cloud-node22-install.yml") });
   assert.equal(state.state, "failed");
   state = await actualCiStateOf(fakeFetch({ ...allGreen(), ...runsRoute(HEAD, []) }).fetchImpl, env(), REPO, HEAD, WORKFLOWS, null,
     { pr: pull(5), qualifyExecution: failedProof("gitleaks.yml"), required: LEGACY_RULES });
@@ -1126,13 +1137,14 @@ test('ordinary catalogue reader accepts only the profile through 2 MiB and keeps
   const name='runner-budget-policy.yml',file='.github/workflows/'+name,
     profilePath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),
     rolePath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json'),
-    original=fs.readFileSync(profilePath),legacy=Buffer.from(JSON.stringify(parseWorkflowProfiles(original))+'\n'),expected=gitBlobSha(fs.readFileSync(path.join(ROOT,file)));
+    original=fs.readFileSync(profilePath),legacy=Buffer.from(JSON.stringify(parseWorkflowProfiles(original))+'\n'),
+    text=registeredOrdinaryText(file),expected=gitBlobSha(text),read=p=>p===path.join(ROOT,file)?text:fs.readFileSync(p);
   assert.ok(original.length>1048576,'the actual G4 successor crosses the old bound');
   for(const size of [original.length,WORKFLOW_PROFILES_MAX_BYTES]) {
     const padded=size===original.length?original:Buffer.concat([legacy,Buffer.alloc(size-legacy.length,32)]);
-    assert.deepEqual([...ciWorkflows(ROOT,()=>[name],p=>p===profilePath?padded:fs.readFileSync(p))],[[file,expected]]);
+    assert.deepEqual([...ciWorkflows(ROOT,()=>[name],p=>p===profilePath?padded:read(p))],[[file,expected]]);
   }
-  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===profilePath?Buffer.alloc(WORKFLOW_PROFILES_MAX_BYTES+1):fs.readFileSync(p)),/exceeds bounds/);
-  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolePath?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===profilePath?Buffer.alloc(WORKFLOW_PROFILES_MAX_BYTES+1):read(p)),/exceeds bounds/);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===rolePath?Buffer.alloc(524289):read(p)),/exceeds bounds/);
   assert.throws(()=>ciWorkflows(ROOT,()=>[name],p=>p===path.join(ROOT,file)?Buffer.alloc(524289):fs.readFileSync(p)),/exceeds bounds/);
 });

@@ -660,7 +660,7 @@ test('N4: known-known start conflict and a false FINAL keep the original strict 
 if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a checkout-shaped tree without any private directory or override',()=>{
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'clued-r9-checkout-'));
   try{
-    const paths=[...C.R9_SOURCE_PATHS,...Object.keys(parseWorkflowProfiles(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))).workflows),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
+    const paths=[...C.R9_SOURCE_PATHS,...Object.keys(parseWorkflowProfiles(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))).workflows).filter(rel=>fs.existsSync(path.join(repo,rel))),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
       'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-pr-task-binding.mjs','scripts/ci/clued-source-only-workflow.mjs','scripts/ci/clued-required-applicability.mjs','scripts/runner/clued-runner-job-started.mjs',
       'scripts/ci/clued-control-workflow-source.mjs','scripts/ci/clued-control-workflow-sources.json',
       'scripts/ci/clued-production-publisher-source.mjs','scripts/ci/clued-production-publisher-sources.json',

@@ -5,7 +5,7 @@
 // them on main and refuse every pull request, the fix included (review
 // MAJOR-1, the deadlock of Owner Decision 22c20e14). The tests judge against
 // these fixed tables instead; merge-admission-policy-file.test.mjs, run on
-// pull request heads only (clued-components), checks the repository's file.
+// pull request heads only (ci-suites admission-self-tests), checks the repository's file.
 
 import { BASELINE, STATE_VARIABLE } from "./merge-admission-policy.mjs";
 
