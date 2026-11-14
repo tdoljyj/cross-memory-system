@@ -17,7 +17,7 @@
 |---|---|---|
 | 接受这一版 | 一次 Decision（全体节点适用） | 无 |
 | 每台节点升级 | 自动审批开着：什么都不做。没开：在该节点 `upgrade\status.json` 的 `confirmUrl` 页面点一次批准 | 无 |
-| 当班节点 | 二选一：在 `/bindings` 点一次移交（待命节点先升好再移交）；或者接受它升级期间 CI 暂停几分钟，命令加 `--allow-active-upgrade`，不用移交 | 无 |
+| 当班节点 | 最后升，命令加 `--allow-active-upgrade`，升级期间 CI 暂停几分钟。服务端不把 ci-admission 移交给 Source 与全队不同的节点（迁移 `20261114120000`），所以要移交只能在开始前、两台还是同一 Source 时做 | 无 |
 | 升级回滚了（`ROLLED_BACK_PAUSED`） | 看原因；恢复该节点 | 无 |
 
 自动审批的边界（服务端现有规则）：每节点 24 小时内自动批 6 次；同一个包第二次请求、或上一次自动批的升级没成功，归 Owner 手动批。
@@ -50,7 +50,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
 | `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
 | `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 用同样三个文件走第 5 节 `install.mjs prepare` |
-| `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 先移交再跑；或 Owner 接受 CI 暂停，加 `--allow-active-upgrade` |
+| `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 其他节点都升好后加 `--allow-active-upgrade` 再跑（CI 暂停几分钟）；不能移交给已升级的节点（Source 不同，服务端拒绝） |
 | `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装（例如 `FLEET_SOURCE_MISMATCH`：先升另一台） | 按 `precheck.advice` |
 | `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
 
@@ -58,7 +58,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 ### 0.4 顺序
 
-与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 移交当班 → 原当班节点再升。Owner 接受 CI 暂停时不用移交：待命节点升好后，当班节点加 `--allow-active-upgrade` 直接升（升级代理排空、暂停、切换、核验、恢复）。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
+与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 当班节点加 `--allow-active-upgrade` 原地升（升级代理排空、暂停、切换、核验、恢复）。不跨 Source 移交：服务端拒绝把 ci-admission 交给 Source 与全队不同的节点（迁移 `20261114120000`）。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
 
 ### 0.5 失败
 
@@ -85,7 +85,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 节点     gh release download -> install.mjs prepare（非提权） -> Owner 点 1 次 UAC 运行 runCommand
 ```
 
-节点顺序：先 DESK（待命） -> 核验 -> 移交当班 -> 再 TURING。两台装同一个提交的同一个包，前后接着装。
+节点顺序：先待命节点 -> 核验 -> 再当班节点（重装期间 CI 停）。要换当班，在开始前、两台还是同一 Source 时移交；装好一台之后不能再移交给它（Source 与全队不同，服务端拒绝，迁移 `20261114120000`）。两台装同一个提交的同一个包，前后接着装。
 
 ## 2. 发布机：构建一次
 
@@ -168,12 +168,12 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 
 **Owner 只做一件事：点 1 次 UAC 运行 `runCommand`。** 一次 UAC 内的顺序：W1 暂停（已由 `prepare` 完成，启动器只核 `w1Paused`） -> 暂存 -> Linux A -> Linux B（失败时 B-resume 一次）-> 核 B 的输出（evidence 恰一行 `sha256:` 等于包的 `ciSourceManifestSha256` 且 `exit: 0`；facts 第 1 代、`staged` 为 null、Source 与 Linux manifest 等于包、`pinsOk` 为 true，即 `install-plan.json` 的 `expectedLinux`）-> 卸载 -> 安装 -> verify -> rearm。有 companion 账户的节点，Linux root 步骤由 registrar 的 `root-run` 在 companion 账户的发行版里执行；没有的节点（`companionAccount=false`）由提权 Owner 直接 `wsl.exe -d <发行版> -u root` 运行，其余相同。
 
-## 6. 顺序与列车窗口（先 DESK，后 TURING）
+## 6. 顺序与列车窗口（先待命，后当班）
 
-1. 发布、Owner 接受完成后，先在 DESK 上做第 5 节（DESK 处于待命，不是当班）。
-2. 核验 DESK：`verify` 通过、版本事实与 `install-plan.json` 的 `expectedLinux` 一致，`ciSourceManifestSha256` 等于包里的值。
-3. 移交当班：把当班角色交给 DESK。
-4. 再在 TURING 上做第 5 节。
+1. 要换当班的，先在两台还是同一 Source 时移交（`/bindings`）。
+2. 发布、Owner 接受完成后，先在待命节点上做第 5 节。
+3. 核验它：`verify` 通过、版本事实与 `install-plan.json` 的 `expectedLinux` 一致，`ciSourceManifestSha256` 等于包里的值。
+4. 再在当班节点上做第 5 节（重装期间 CI 停）。不移交给刚装好的节点：它的 Source 与当班节点不同，服务端拒绝（迁移 `20261114120000`）。
 
 列车只比较 `ciSourceManifestSha256`；两台装不同提交的包会出现 `TRAIN_SOURCE_MISMATCH`。所以两台装同一个提交的同一个包，DESK 核验通过后立刻接着装 TURING，缩短两台 Source 不同的窗口。
 
@@ -195,4 +195,4 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 - `publish.mjs` 在 gh 失败时不动索引；`release` 失败后先看 Release 是否已建出一部分，不要重复创建同一 tag。
 - `attach-acceptance` 对已接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。
 - B 在 Source 切换之后失败：模板自动用 B-resume 续跑一次；仍失败则停手，交协调者。
-- 节点装完 `verify` 不过：不移交当班，不继续装另一台。
+- 节点装完 `verify` 不过：不继续装另一台。

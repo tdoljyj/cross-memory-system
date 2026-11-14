@@ -27,26 +27,25 @@ function obs(p, node, { mode = 'STANDBY', atTarget = false, halt = null, paused 
     upgrade: { op, last } };
 }
 
-test('next: two nodes, standby first, then handover, then the former holder, then done', () => {
+test('next: two nodes, standby first, then the holder in place (never a hand-over across Sources), then done', () => {
   const p = plan(['node-a', 'node-b']);
   let r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE' }), obs(p, 'node-a')], NOW);
   assert.equal(r.contract, NEXT_CONTRACT);
   assert.deepEqual([r.action, r.node, r.ciPause, r.grantResource], ['UPGRADE', 'node-a', false, `ci-resident:node-a/${target(p, 'node-a')}`]);
   r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE' }), obs(p, 'node-a', { op: { opId: '11111111-1111-4111-8111-111111111111', state: 'WAITING_GRANT', code: null } })], NOW);
   assert.deepEqual([r.action, r.code, r.node, r.state], ['WAIT', 'ROLLOUT_UPGRADE_IN_PROGRESS', 'node-a', 'WAITING_GRANT']);
+  // the standby runs the new Source, the holder the old one: the server refuses that hand-over, the holder goes in place
   r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE' }), obs(p, 'node-a', { atTarget: true, last: { opId: '11111111-1111-4111-8111-111111111111', outcome: 'SUCCEEDED', code: null } })], NOW);
-  assert.deepEqual([r.action, r.from, r.to], ['HANDOVER', 'node-b', 'node-a']);
-  // during the 5 minutes before the role takes effect a node may be UNCERTAIN: wait
+  assert.deepEqual([r.action, r.node, r.ciPause, r.grantResource], ['UPGRADE', 'node-b', true, `ci-resident:node-b/${target(p, 'node-b')}`]);
+  // a node UNCERTAIN (after a restart): wait
   r = nextStep(p, [obs(p, 'node-b', { mode: 'UNCERTAIN' }), obs(p, 'node-a', { atTarget: true })], NOW);
   assert.deepEqual([r.action, r.code], ['WAIT', 'ROLLOUT_NODE_UNCERTAIN']);
-  r = nextStep(p, [obs(p, 'node-b'), obs(p, 'node-a', { mode: 'ACTIVE', atTarget: true })], NOW);
-  assert.deepEqual([r.action, r.node], ['UPGRADE', 'node-b']);
-  r = nextStep(p, [obs(p, 'node-b', { atTarget: true }), obs(p, 'node-a', { mode: 'ACTIVE', atTarget: true })], NOW);
+  r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE', atTarget: true }), obs(p, 'node-a', { atTarget: true })], NOW);
   assert.equal(r.action, 'DONE');
   assert.equal(r.nodes.length, 2);
 });
 
-test('next: three nodes upgrade one at a time, standbys by name, then the handover goes to a healthy upgraded standby', () => {
+test('next: three nodes upgrade one at a time, standbys by name, then the holder in place once a standby is upgraded and healthy', () => {
   const p = plan(['a1', 'b2', 'c3']);
   let r = nextStep(p, [obs(p, 'c3', { mode: 'ACTIVE' }), obs(p, 'b2'), obs(p, 'a1')], NOW);
   assert.deepEqual([r.action, r.node], ['UPGRADE', 'a1']);
@@ -54,9 +53,9 @@ test('next: three nodes upgrade one at a time, standbys by name, then the handov
   assert.equal(r.action, 'WAIT');
   r = nextStep(p, [obs(p, 'c3', { mode: 'ACTIVE' }), obs(p, 'b2'), obs(p, 'a1', { atTarget: true })], NOW);
   assert.deepEqual([r.action, r.node], ['UPGRADE', 'b2']);
-  // a1 is upgraded but not consistent: the handover goes to b2
+  // a1 is upgraded but not consistent; b2 is healthy: the holder goes in place
   r = nextStep(p, [obs(p, 'c3', { mode: 'ACTIVE' }), obs(p, 'b2', { atTarget: true }), obs(p, 'a1', { atTarget: true, consistent: null })], NOW);
-  assert.deepEqual([r.action, r.from, r.to], ['HANDOVER', 'c3', 'b2']);
+  assert.deepEqual([r.action, r.node, r.ciPause], ['UPGRADE', 'c3', true]);
   r = nextStep(p, [obs(p, 'c3', { mode: 'ACTIVE' }), obs(p, 'b2', { atTarget: true, paused: true }), obs(p, 'a1', { atTarget: true, consistent: false })], NOW);
   assert.deepEqual([r.action, r.code], ['BLOCKED', 'ROLLOUT_NO_HEALTHY_UPGRADED_STANDBY']);
   // every node on the target but one half not consistent yet
@@ -64,7 +63,7 @@ test('next: three nodes upgrade one at a time, standbys by name, then the handov
   assert.deepEqual([r.action, r.code, r.node], ['WAIT', 'ROLLOUT_VERSIONS_NOT_CONSISTENT', 'a1']);
 });
 
-test('next: the holder is never upgraded unless the Owner chose to pause CI and no node can take the role', () => {
+test('next: with no standby the holder is upgraded only when the Owner chose to pause CI; with one, the standby goes first', () => {
   const p = plan(['node-b']);
   let r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE' })], NOW);
   assert.deepEqual([r.action, r.code], ['BLOCKED', 'ROLLOUT_NO_STANDBY']);
@@ -86,7 +85,7 @@ test('next: halts, rollbacks, two holders, paused standbys, stale and missing ob
   assert.deepEqual([r.action, r.code, r.upgradeCode], ['BLOCKED', 'ROLLOUT_NODE_ROLLED_BACK', 'UPGRADE_VERIFY_FAILED']);
   // an old rollback on a node that has since reached the target is history, not a stop
   r = nextStep(p, with_(1, { atTarget: true, last: { opId: '11111111-1111-4111-8111-111111111111', outcome: 'ROLLED_BACK_PAUSED', code: null } }), NOW);
-  assert.equal(r.action, 'HANDOVER');
+  assert.deepEqual([r.action, r.node], ['UPGRADE', 'node-b']);
   r = nextStep(p, with_(1, { mode: 'ACTIVE' }), NOW);
   assert.deepEqual([r.action, r.code], ['BLOCKED', 'ROLLOUT_TWO_ACTIVE']);
   r = nextStep(p, with_(1, { paused: true }), NOW);
@@ -126,7 +125,7 @@ test('next: outcomes of this rollout stop it, older ones do not; ROLLBACK_FAILED
   assert.deepEqual([r.action, r.code, r.opId], ['BLOCKED', 'ROLLOUT_NODE_ROLLED_BACK', op]);
   // the way past it: the Owner recovered and looked, the coordinator acknowledges that op (and only that op)
   r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE' }), obs(p, 'node-a', { atTarget: true, last: { opId: op, outcome: 'ROLLBACK_FAILED', code: null, at: ago(900) } })], NOW, { ackOps: [op] });
-  assert.equal(r.action, 'HANDOVER');
+  assert.deepEqual([r.action, r.node], ['UPGRADE', 'node-b']);
   r = nextStep(p, desk({ opId: op, outcome: 'REFUSED', code: null, at: null }), NOW, { ackOps: [op] });
   assert.deepEqual([r.action, r.node], ['UPGRADE', 'node-a']);
   r = nextStep(p, desk({ opId: op, outcome: 'REFUSED', code: null, at: null }), NOW, { ackOps: ['22222222-2222-4222-8222-222222222222'] });
@@ -142,17 +141,14 @@ test('next: two ACTIVE nodes while a handover takes effect are a WAIT, otherwise
   assert.deepEqual(nextStep(p, both, NOW).code, 'ROLLOUT_TWO_ACTIVE');
 });
 
-test('next: DONE needs no paused node and the holder among the plan\'s; a pending handover is a WAIT', () => {
+test('next: DONE needs no paused node and the holder among the plan\'s; a paused holder is not upgraded', () => {
   const p = plan(['node-a', 'node-b']);
   let r = nextStep(p, [obs(p, 'node-b', { atTarget: true }), obs(p, 'node-a', { mode: 'ACTIVE', atTarget: true, paused: true })], NOW);
   assert.deepEqual([r.action, r.code, r.node], ['BLOCKED', 'ROLLOUT_NODE_PAUSED', 'node-a']);
   r = nextStep(p, [obs(p, 'node-b', { atTarget: true }), obs(p, 'node-a', { atTarget: true })], NOW);
   assert.deepEqual([r.action, r.code], ['BLOCKED', 'ROLLOUT_NO_ACTIVE_NODE_IN_PLAN']);
-  const before = [obs(p, 'node-b', { mode: 'ACTIVE' }), obs(p, 'node-a', { atTarget: true })];
-  r = nextStep(p, before, NOW, { handoverIssuedAt: ago(4) });
-  assert.deepEqual([r.action, r.code], ['WAIT', 'ROLLOUT_HANDOVER_PENDING']);
-  r = nextStep(p, before, NOW, { handoverIssuedAt: ago(20) });
-  assert.equal(r.action, 'HANDOVER');
+  r = nextStep(p, [obs(p, 'node-b', { mode: 'ACTIVE', paused: true }), obs(p, 'node-a', { atTarget: true })], NOW);
+  assert.deepEqual([r.action, r.code, r.node], ['BLOCKED', 'ROLLOUT_STANDBY_PAUSED', 'node-b']);
 });
 
 test('plan and observation shapes: sorted nodes, the observation names its own resident', () => {

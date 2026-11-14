@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { fitNode } from './fit-node-fixture.mjs';
 
 // Headless Binding issuance (migration 20261004120000, Task 364212a1, Owner
 // Decision 6e0371e3): the Owner issues a least-privilege, expiring Binding
@@ -232,7 +233,9 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.ok(!listed.eligible.some((e) => e.resource_id === `project:${otherProject}`));
 
     // --- Rotation of the legacy CI Binding, which holds the ci-admission role. ---
-    // Marked as a resident node, the role starts 5 minutes later (C10, Task bb13efb5).
+    // Marked as a resident node, the role starts 5 minutes later (C10, Task bb13efb5); the connection's node must be fit
+    // to hold it (20261114120000).
+    await fitNode(admin, { userId, bindingId: legacyId, projectId });
     const role = await native('clued_binding_role_confirmation_issue_v1',
       { binding_id: legacyId, role: 'ci-admission', enabled: true, purpose: 'resident-node' });
     assert.equal((await native('clued_binding_role_set_v1',

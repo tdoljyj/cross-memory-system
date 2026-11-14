@@ -1,6 +1,6 @@
 # 原地升级与滚动升级工具（rollout/）
 
-换常驻或 CI Source 时，不再整套卸载重装：用节点上**已装的**升级代理（`CluedCIUpgrader`）原地升级，失败自动回滚到上一代；多个节点按“先待命、再移交、后原当班”的顺序滚动。设计见 DESIGN §42，Task `018da927`。
+换常驻或 CI Source 时，不再整套卸载重装：用节点上**已装的**升级代理（`CluedCIUpgrader`）原地升级，失败自动回滚到上一代；多个节点按“先待命、后当班（原地，CI 暂停几分钟）”的顺序滚动；要移交就在开始前、两台还是同一 Source 时做。设计见 DESIGN §42，Task `018da927`。
 
 ## 1. 边界
 
@@ -56,12 +56,11 @@ node rollout\rollout.mjs next    --plan rollout.json --observation observation.<
 | 结果 | 谁来做 |
 |---|---|
 | `UPGRADE <node>` | 该节点的 Agent 在 Owner 会话里非提权运行 build-upgrade 给出的 request 命令；Owner 在 `upgrade\status.json` 的 `confirmUrl` 页面批准一次 |
-| `HANDOVER <from> → <to>` | Owner 在 `/bindings` 一键移交（5 分钟后生效）；协调者记下请求时刻，之后用 `--handover-issued-at <ISO>` 调 `next`（15 分钟内是 `WAIT ROLLOUT_HANDOVER_PENDING`，不会再要第二次） |
-| `WAIT` | 过一会儿重新 observe（升级在进行、移交生效中、节点 UNCERTAIN、observation 过期或缺） |
+| `WAIT` | 过一会儿重新 observe（升级在进行、节点 UNCERTAIN、observation 过期或缺；Owner 刚移交过时带 `--handover-issued-at <ISO>`，15 分钟内两个 ACTIVE 是 `WAIT ROLLOUT_HANDOVER_PENDING`） |
 | `BLOCKED` | 协调者报告 Owner：回滚了（`ROLLOUT_NODE_ROLLED_BACK`，节点保持暂停）、本次升级被拒或 Grant 过期（`ROLLOUT_NODE_UPGRADE_REFUSED`）、HALT、两个当班、没有待命节点等。plan 记了 `createdAt`：它之前的结局属于上一次 rollout，不算。Owner 看过之后（ROLLBACK_FAILED 先提权 `-Recover`），协调者用 `--ack-op <opId>` 确认那一个 op，它就不再阻塞 |
 | `DONE` | 全部节点到了目标包、两侧一致、没有暂停，当班节点也在 plan 里 |
 
-- 当班节点永远不出现在 `UPGRADE` 里。只有一个节点可用、且 Owner 在弹窗里选了“接受暂停 CI”时，协调者才加 `--allow-active-upgrade`，此时结果带 `ciPause: true`。
+- 待命节点都已升好且有一个健康时，下一步是 `UPGRADE <当班节点>`，带 `ciPause: true`（协调者加 `--allow-active-upgrade` 运行它的升级命令）：不再给 `HANDOVER`，因为服务端只把 ci-admission 移交给与全队同一 Source 的节点（迁移 `20261114120000`，`ci_admission_target_source_not_accepted`），而且 Source 不同的窗口里列车本来就以 `TRAIN_SOURCE_MISMATCH` 停车。没有待命节点时，只有 Owner 在弹窗里选了“接受暂停 CI”、协调者加 `--allow-active-upgrade` 才给出它。
 - 一次只升一个节点，任意多个节点同一规则。
 
 ## 5. 测试
