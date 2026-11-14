@@ -36,7 +36,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX40, HEX64, UUID, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
-import { LEGACY_POLICY_KEYS, validatePolicy } from '../src/policy.mjs';
+import { FLEET_TRAIN, LEGACY_POLICY_KEYS, POLICY_CONTRACT_V7, validatePolicy } from '../src/policy.mjs';
 import { RESIDENT_INSTALL_ROOT, validateCompanionConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { PANEL_REPO, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
@@ -183,7 +183,9 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const policy = JSON.parse(await fs.readFile(policyFile, 'utf8'));
   // DESIGN §76: the keys of a removed feature (policy `relay`, companion `hints`) an installed node's inputs still carry are left out
   // here, so every package (an upgrade carries the node's own policy and companion configuration) converges without a step of its own.
-  const finalPolicy = Object.fromEntries(Object.entries({ ...policy, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256 })
+  // DESIGN §41.9 step 4: the train is the fleet's (policy.mjs FLEET_TRAIN), never the node's input; a /7 policy cannot carry it.
+  const train = policy.contract === POLICY_CONTRACT_V7 ? policy.train : { ...FLEET_TRAIN };
+  const finalPolicy = Object.fromEntries(Object.entries({ ...policy, train, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256 })
     .filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)));
   validatePolicy(finalPolicy);
   check(finalPolicy.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalPolicy.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
