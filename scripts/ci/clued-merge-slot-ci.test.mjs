@@ -363,7 +363,14 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const names = listed[1].trim().split("\n").map((line) => line.replace(/^\s*- /, "").trim());
   const dir = path.join(ROOT, ".github", "workflows");
   const nameOf = (file) => /^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(dir, file), "utf8"))[1].trim();
-  const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")];
+  // Resident ADR 0032 step 2: clued-required-tests-windows is counted (WORKFLOWS) but not yet a trigger. This
+  // workflow is a registered control Source and its reporter is disabled (Decision 928e6638); the name joins the
+  // list with the Source change that re-enables it. Exactly this one name is missing, nothing else.
+  const NOT_YET_A_TRIGGER = ["clued-required-tests-windows"];
+  assert.ok(WORKFLOWS.has(".github/workflows/clued-required-tests-windows.yml"));
+  for (const name of NOT_YET_A_TRIGGER) assert.ok(!names.includes(name), name);
+  const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")]
+    .filter((name) => !NOT_YET_A_TRIGGER.includes(name));
   assert.deepEqual([...names].sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);
   assert.doesNotMatch(text, /schedule:/, "the hourly report is a step of the re-verification run");

@@ -1,11 +1,11 @@
 # ADR 0032：CI 两个平台都测；本地验证改为可选；手拼 `file://` 入口判断从机制上堵死
 
-- 状态：第 1 步已实现（分支 `claude/ci-both-platforms`，未推送）；工作流生效、观察、设为必需并把本地验证改为可选待做（见 §7）
+- 状态：第 1 步已合入（#1094）；第 2 步已实现（分支 `claude/ci-both-platforms-pr2`：工作流生效并登记，检查**非必需**）；观察、设为必需并把本地验证改为可选待做（见 §7）
 - 日期：2026-11-14
 - 编号：0030 是通用升级（#1092），0031 是去掉终态准入（#1093），所以取 0032
 - Owner Decision：统领原则（`42d5bf8d`：最终系统极简、低耗、高效，错误从机制上堵死）；看板缺陷第 14 行（重大），Owner 已批“开做”
-- 代码：`scripts/ci/ci-required-selection.mjs`（`SUITE_PLATFORMS`、`selectSuites` 的 `platform`、`runSelected`、`--run-selected`）、`work/ci-required-tests-v1/clued-required-tests-windows.candidate.yml`、`scripts/ci/main-entry-realpath.test.mjs`（`buildsFileUrlByHand`）、`src/service-main.mjs`、`src/companion-main.mjs`、`work/twentyfirst-forward/derive-getter-module.mjs`
-- 测试（修复前都失败）：`scripts/ci/ci-required-selection.test.mjs` “a change that breaks only on Windows fails the Windows side and passes the Linux side …”、“each platform is selected only the suites declared for it …”、“the Windows job of the candidate workflow selects and runs with the trusted selection …”；`scripts/ci/main-entry-realpath.test.mjs` “no source file builds a file: URL by hand …”、“a file: URL built by hand is recognised …”
+- 代码：`scripts/ci/ci-required-selection.mjs`（`SUITE_PLATFORMS`、`selectSuites` 的 `platform`、`runSelected`、`--run-selected`）、`.github/workflows/clued-required-tests-windows.yml`、`scripts/ci/main-entry-realpath.test.mjs`（`buildsFileUrlByHand`）、`src/service-main.mjs`、`src/companion-main.mjs`、`work/twentyfirst-forward/derive-getter-module.mjs`
+- 测试（修复前都失败）：`scripts/ci/ci-required-selection.test.mjs` “a change that breaks only on Windows fails ci-suites-windows and passes the Linux side …”（第 2 步起从 `.github/workflows` 里的工作流读出作业、检查名和命令；没有这个工作流就失败）、“each platform is selected only the suites declared for it …”、“the Windows job of the workflow selects and runs with the trusted selection …”；`scripts/ci/main-entry-realpath.test.mjs` “no source file builds a file: URL by hand …”、“a file: URL built by hand is recognised …”
 
 ## 1. 现场
 
@@ -92,6 +92,9 @@
    - reconcile、R9 登记与组件版本由自动生成器重算；
    - 都是受保护路径，需要 Owner 的 `repo.protected_change` Grant 和 Source 接受。
    - 规则集里此时**没有**这项检查，本地验证的规则仍不动。
+   - 实际做的时候多出的一处：候选文件转正后，`ci-required-selection.mjs` 里指向候选文件的路径删掉，这个文件的字节被 `clued-required-applicability.mjs#REQUIRED_SELECTOR_SOURCE` 钉住，所以同一个 PR 里重钉（blob、sha256）。
+   - **非必需期间它挡不挡合入（已查实）。** 不挡。现行合入路径（常驻列车、第 8 段、合并位）读的是实际规则集，规则集里没有它。读 Full 证明集合（`applicableCI`、`qualifiedCI`、`ciWorkflows`）的只有 `clued-merge-executor.mjs` 和 `clued-merge-slot-ci.mjs`，两个托管工作流都已停用（Decision `928e6638`）；Merge Admission 是候选、未接受。**如果在第 4 步之前重新启用这两个托管工作流，它们会把这项检查当成每个 PR 都要有的成员**，那时要先完成第 4 步，或先停用本工作流。
+   - 常驻包不改，不出新包，两台节点不用升级。
 
    **为什么并不进 PR 1（硬性原因）：**
    - **新工作流必须有登记过的 Source。** `apps/clued-cloud/tests/ci-proof-profiles.test.mjs:47-49` 要求 `ciWorkflows()` 列出的每个带准入门的工作流都有登记的 Source 身份；没有就过不了 `clued-cloud-tests`。
@@ -103,7 +106,14 @@
    - **Windows 作业不让路给常驻批次（待观察项）。** 它和常驻批次同时跑在同一台宿主机上。观察期内看它会不会挤占生产：常驻第 2 段转发放弃（`e0a5630d` 那一类）、批次用时变长、看门狗暂停 runner、宿主机内存或 C: 余量告警。出现任何一项，就先加有界让路（`local-verify.mjs#yieldToResident` 已有实现；先实证 `clued-runner` 账户能读 `status.json`），再进第 4 步。
    - runner 上的 job-started 钩子放行这个新工作流的作业（看实际作业日志）。
    - Windows 上的既有失败：修，或在 `SUITE_PLATFORMS` 里写明理由暂时移出；`admission-self-tests` 的已知失败清单按 Linux 写的，Windows 上不同就用 `--write-known` 补。
-   - 登记进 Full 证明集合之后，Merge Admission 那一侧的实际表现（它今天是候选、未接受；有没有消费者在读，PR 2 的作者要查实并写进 PR）。
+   - 登记进 Full 证明集合之后，Merge Admission 那一侧的实际表现（消费者已查实，见第 2 步最后两项）。
+
+   **通过标准（全部满足才进第 4 步）：**
+   - `ci-suites-windows` 在 DESK（`clued-ci-company-win-01`）和 TURING（`clued-ci-home-win-01`）上各至少一次结论为 `success` 的 PR 运行（看作业的 runner 名），其中至少一次选中了全部 Windows 套件；合入后 main 的 push 运行也是 `success`。
+   - 观察期内（至少 10 个 PR head）没有一次“Linux 三项全绿而 `ci-suites-windows` 因非测试原因失败”（检出、钩子、临时目录、runner 掉线）。出现一次就先查清并修掉，重新计数。
+   - 观察期内常驻侧没有新增的第 2 段转发放弃、看门狗暂停、内存或 C: 余量告警；批次用时没有明显变长。
+   - 未准入的 PR 上作业名是 `ci-suites-windows-skipped`，没有以 `ci-suites-windows` 之名成功过。
+   - Windows 上没有靠“已知失败”之外的办法放过的失败；`SUITE_PLATFORMS` 里每一项暂时移出都写了理由并登记了缺陷。
 4. **设为必需，同时本地验证改为可选（一步）。**
    - Owner 在规则集 `24182890` 里加 `ci-suites-windows`（App `15368`）。
    - 紧接着合入 **PR 3**（文档）：把“推送前本地验证”改成可选自查，涉及 `docs/maintenance/independent-ci.md`、`docs/maintenance/README.md`、ADR 0003、runbook §7、`scripts/ci/local-verify.mjs` 文件头。PR 3 只在规则集改完之后开，它自己就要过 `ci-suites-windows`；规则集没改，它不合入。顺序固定为“先必需，后可选”，任何时刻 Windows 都至少有一道把关。

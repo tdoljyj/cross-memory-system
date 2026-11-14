@@ -379,13 +379,17 @@ function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null,workflo
   if(r.merge_proof)r.merge_proof.used_run_keys=[...r.run_keys];p.rounds.push(r);seal(p);return r;
 }
 
+// Resident ADR 0032 step 2: the Windows side of the required tests has no path filter, so it is a Full member too,
+// as an ordinary one-primary workflow (its own run; it never shares the compound run of clued-required-tests.yml).
 test('current Full fixture retains five original workflows plus required-tests with three same-attempt primary jobs',()=>{
   assert.deepEqual(fullFiles,[
     '.github/workflows/clued-cloud-quality-gate.yml','.github/workflows/clued-components.yml',
-    '.github/workflows/clued-required-tests.yml','.github/workflows/contract-placement.yml',
+    '.github/workflows/clued-required-tests-windows.yml','.github/workflows/clued-required-tests.yml','.github/workflows/contract-placement.yml',
     '.github/workflows/gitleaks.yml','.github/workflows/trivy.yml']);
   const p=packet(),round=addRound(p),required=round.execution_packets.find(x=>x.workflow_file==='.github/workflows/clued-required-tests.yml');
-  assert.ok(required);assert.equal(round.execution_packets.length,6);assert.equal(p.attempts.length,6);
+  assert.ok(required);assert.equal(round.execution_packets.length,7);assert.equal(p.attempts.length,7);
+  const windows=round.execution_packets.find(x=>x.workflow_file==='.github/workflows/clued-required-tests-windows.yml');
+  assert.deepEqual(windows.jobs.map(job=>job.name),['admission-gate','ci-suites-windows']);assert.notEqual(windows.run_key,required.run_key);
   assert.deepEqual(required.jobs.map(job=>job.name),['admission-gate','clued-cloud-tests','ci-suites','migration-verify']);
   assert.equal(new Set(required.jobs.map(job=>job.id)).size,4);
   assert.ok(required.jobs.every(job=>job.run_id===required.jobs[0].run_id&&job.run_attempt===1));
@@ -589,7 +593,7 @@ test('R1: legitimate unknown-to-known no-final progression remains valid, confli
   assert.equal(call(seal(p)).status,'NOT_QUALIFIED');
 });
 function cancelRoundMember(p,r){
-  assert.equal(r.execution_packets.length,6,'all five original Full workflows plus exact required-tests remain applicable');
+  assert.equal(r.execution_packets.length,fullFiles.length,'all five original Full workflows plus both required-tests workflows remain applicable');
   const x=r.execution_packets[1],a=p.attempts.find(a=>`${a.run_id}:${a.attempt}`===x.run_key);
   a.started_at=null;a.conclusion='cancelled';
   x.before_attempt.conclusion='cancelled';x.after_attempt.conclusion='cancelled';
@@ -602,7 +606,7 @@ test('R2: complete multi-workflow unsuccessful round preserves its never-started
   assert.equal(r.metrics.wasted_final_rounds.non_successful_rounds,1);assert.equal(r.metrics.wasted_final_rounds.value,null);
   assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,0);assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);
   assert.equal(r.metrics.cancellation_causes.denominator,1);assert.equal(r.metrics.cancellation_causes.value.UNKNOWN_CAUSE,1);
-  assert.equal(r.metrics.cancellation_causes.cause_coverage,0);assert.equal(p.attempts.length,6);boundaries(r);
+  assert.equal(r.metrics.cancellation_causes.cause_coverage,0);assert.equal(p.attempts.length,fullFiles.length);boundaries(r);
 });
 test('R2: every known round-member bound is checked even on unsuccessful or unknown aggregate paths',()=>{
   for(const end of [time(19),time(28)]){const p=packet(),round=addRound(p),a=cancelRoundMember(p,round);a.completed_at=end;
@@ -651,7 +655,7 @@ test('R3: a genuinely unknown round end retains the complete unfinished populati
   assert.equal(r.supplied_data_consistency,true);assert.equal(r.supplied_population_manifest_complete,true);
   assert.equal(r.metrics.wasted_final_rounds.value,null);assert.equal(r.metrics.wasted_final_rounds.unknown,1);
   assert.equal(r.metrics.wasted_final_rounds.denominator,1);assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,0);
-  assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);assert.equal(p.attempts.length,6);boundaries(r);
+  assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);assert.equal(p.attempts.length,fullFiles.length);boundaries(r);
 });
 
 test('F3: complete current source/profile/roles, supplied critical steps, explicit termination and supplied Native merge produce candidate classifications',()=>{

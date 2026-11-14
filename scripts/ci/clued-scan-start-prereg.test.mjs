@@ -130,6 +130,13 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     .map(id => [id, REQUIRED_TESTS_SOURCE.role_sha256[id]]));
   delete profileBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
+  // Resident ADR 0032 step 2: the Windows side of the required tests is registered after this generation, additive too.
+  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml', WINDOWS_BLOB = 'bf46c22f3ff1c9e491d181ca1464f174b4a21d9b';
+  assert.equal(profileBefore.workflows[WINDOWS].workflow_blob, WINDOWS_BLOB);
+  assert.deepEqual(rolesBefore.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role => [role.job_id, role.definition_sha256]),
+    [['ci-suites-windows', '67a8d5c72a1499e0f6445a9e5f266b281e4b8f9734c45e7a5bd268278dc43936']]);
+  delete profileBefore.workflows[WINDOWS];
+  delete rolesBefore.workflows[WINDOWS];
   // #988: the Node 22 install managed-cache Source is registered after this generation; strip it like the other later successors.
   const NODE22 = '.github/workflows/clued-cloud-node22-install.yml', NODE22_BLOB = '30e783feb7ab54a578b5ed3b692fa664e00207d1';
   assert.equal(profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob === NODE22_BLOB).length, 1);
