@@ -4,12 +4,21 @@
 -- Source generations behind the holder and CI stood still: nothing refused a
 -- handover to a node off the fleet's Source, halted, paused or unheard.
 --
--- One entry. Every handover of ci-admission goes through the handover core
--- (20261031090000), which runs clued_private.binding_role_handover_check_v1
--- under the role lock: the Owner's one-click handover (its confirmation issue
--- runs the same check first), the failover watchdog and the phase 4 -> 3
--- rollback. The new row is always a resident node's. This file adds one
--- check there, clued_private.ci_admission_target_require_v1, and nothing else.
+-- One check, clued_private.ci_admission_target_require_v1, at every way a
+-- node comes to hold ci-admission:
+-- - every handover goes through the handover core (20261031090000), which
+--   runs clued_private.binding_role_handover_check_v1 under the role lock: the
+--   Owner's one-click handover (its confirmation issue runs the same check
+--   first), the failover watchdog and the phase 4 -> 3 rollback;
+-- - marking it by hand (clued_binding_role_set_v1, both Native steps, through
+--   clued_private.binding_role_change_check_v1) with purpose resident-node, or
+--   any purpose but parking on a connection that has a live node (purpose
+--   other admits for duty too); so "end the holder's role, then mark a node
+--   behind" is refused like the handover;
+-- - the phase 4 -> 3 rollback's grant when no resident node holds the role
+--   (clued_private.ci_phase_4_to_3_v1).
+-- A token rotation (clued_headless_binding_issue_v1) moves a row from a
+-- connection to its successor on the same node and is not a new holder.
 --
 -- The accepted Source. The server keeps no copy of the Owner's acceptance (ADR
 -- 0030: the acceptance file on the release is its carrier; no server object).
@@ -41,9 +50,7 @@
 --                                            live node heard within
 --                                            source_window_hours
 --
--- The one-click handover and the watchdog keep every other rule. Marking
--- ci-admission by hand when no resident node holds it (binding_role_set) is
--- not a handover and is unchanged.
+-- Every other rule of these entries stays.
 
 set local lock_timeout = '5s';
 
@@ -74,15 +81,30 @@ end $$;
 revoke all on function clued_private.ci_admission_target_require_v1(uuid,uuid)
   from public,anon,authenticated,service_role,clued_worker_gateway;
 
--- The check, last in binding_role_handover_check_v1 (after the existing
--- refusals, whose codes keep their precedence). Anchored: fails unless the
--- anchor occurs exactly once.
+-- The check in each entry, after its existing refusals (whose codes keep
+-- their precedence). Anchored: each fails unless its anchor occurs exactly once.
 do $patch$
-declare body text:=pg_get_functiondef('clued_private.binding_role_handover_check_v1(public.clued_agent_bindings,public.clued_agent_bindings)'::regprocedure);
-  anchor text:=$a$raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;$a$;
+declare x record; body text;
 begin
-  if (length(body)-length(replace(body,anchor,'')))<>length(anchor) then
-    raise exception 'ci_admission_target_fit_anchor_mismatch'; end if;
-  execute replace(body,anchor,anchor||$r$
-  perform clued_private.ci_admission_target_require_v1(p_from.user_id,p_to.id);$r$);
+  for x in select * from (values
+    ('clued_private.binding_role_handover_check_v1(public.clued_agent_bindings,public.clued_agent_bindings)',
+     $a$raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;$a$,
+     $r$
+  perform clued_private.ci_admission_target_require_v1(p_from.user_id,p_to.id);$r$),
+    ('clued_private.binding_role_change_check_v1(public.clued_agent_bindings,text,boolean,jsonb)',
+     $a$raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;$a$,
+     $r$
+  if p_purpose#>>'{}'='resident-node' or (p_purpose#>>'{}'<>'parking' and exists(select 1 from clued_private.ci_nodes_v1 n
+      where n.user_id=p_binding.user_id and n.binding_id=p_binding.id and n.state not in ('retired','revoked'))) then
+    perform clued_private.ci_admission_target_require_v1(p_binding.user_id,p_binding.id); end if;$r$),
+    ('clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
+     $a$raise exception 'CI_PHASE_ROLLBACK_TARGET_INVALID' using errcode='55000'; end if;$a$,
+     $r$
+        perform clued_private.ci_admission_target_require_v1(u,tb.id);$r$)
+  ) v(sig,anchor,addition) loop
+    body:=pg_get_functiondef(x.sig::regprocedure);
+    if (length(body)-length(replace(body,x.anchor,'')))<>length(x.anchor) then
+      raise exception 'ci_admission_target_fit_anchor_mismatch: %',x.sig; end if;
+    execute replace(body,x.anchor,x.anchor||x.addition);
+  end loop;
 end $patch$;
