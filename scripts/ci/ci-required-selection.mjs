@@ -77,11 +77,9 @@ const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test
 // The database tests clued-connection-authorization.yml ran (authorization, context v2, projection refresh, work
 // claims, Information Flow, records, MTPE, invitations, migration chain, Resource Center authority, end-to-end
 // authorization, DatasetSplit grants); nothing ran them once it was disabled
-// (2026-10-17). Their tests that need no database run in clued-cloud-tests already. Left out because they fail on
-// main (to be repaired, then listed here): the S2c identity, lifecycle and verification suites (their migration replay
-// stops at 20261010161848_worker_gateway_closeout_v1 with worker_gateway_role_unexpected_privileges on the later
-// clued_ci_* functions) and five work-claim files (work_claim_pr_binding_input_invalid / pr_task_binding_unbound since
-// 20261108161615_work_claim_pr_task_binding_v1): binding-roles, ci-metering, hardening, multi-copy, reject-receipts.
+// (2026-10-17). Their tests that need no database run in clued-cloud-tests already. The S2c identity, lifecycle and
+// verification suites and five work-claim files were red on main while nothing ran them (stale against the gateway closeout
+// replay and the PR-binding plan of 20261108161615); repaired 2026-11-14 and listed here.
 const AUTHORIZATION_DB_TESTS = [
   'agent-messages-db', 'all-contexts-authorization-db', 'all-contexts-authorization-locks-db', 'authorization-closeout', 'authorization-end-to-end',
   'authorization-expiry-db', 'authorization-migration-chain', 'authorization-roles-db', 'checkpoint-backlog-controls-db', 'checkpoint-idempotency-db',
@@ -91,14 +89,15 @@ const AUTHORIZATION_DB_TESTS = [
   'dataset-split-native-grant-currentness-scope-db', 'decision-supersede-schema-guard-db', 'event-carrier-block-reasons-db',
   'event-continuity-manifest-db', 'global-scope-projection-invalidation-db', 'headless-binding-issuance-db', 'information-flow-candidate-store-db',
   'information-flow-context-db', 'information-flow-intake-transport-db', 'information-flow-invalidation-db', 'information-flow-promotion-db',
-  'information-flow-token-hardening-db',
+  'information-flow-token-hardening-db', 'integration-runtime-identity-db', 'integration-runtime-lifecycle-db',
+  'integration-runtime-verification-db',
   'issuer-credentials-db', 'k-cont-db', 'model-domain-bootstrap-db', 'mtpe-frontier-eligibility-v2-1-db', 'mtpe-frontier-eligibility-v2-db',
   'mtpe-owner-pin-consistency-db', 'mtpe-universal-intake-db', 'now-conflict-null-project-db', 'owner-grants-db', 'owner-grants-release-door-db',
   'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'project-invitations-db',
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
   'resume-constraint-index-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
-  'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db',
-  'work-claims-continuation-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
+  'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db', 'work-claims-binding-roles-db', 'work-claims-ci-metering-db',
+  'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
