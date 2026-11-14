@@ -84,6 +84,15 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
         values($1,$2,$3,$4,array['context:read','context:write'],array['*'])`,
       [userId, vendor, `${name} connection`, tokens[name]]);
     }
+    // The Owner marks the CI admission Binding (Owner Decision 38ddb8cf), as in
+    // production: only it observes a PR and activates its PR -> Task relation
+    // (20261108161615), and only it may report or list (checked at the end).
+    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
+      values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [userId])).rows[0].id;
+    // By name: the stored token_hash is a verifier since 20261008210000 (P0-4), not the token's hash.
+    const ciBinding = (await admin.query(`select id from public.clued_agent_bindings where user_id=$1 and agent_name='ci connection'`, [userId])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, ciBinding, roleReceipt]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();
@@ -116,9 +125,25 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       confidence_reason: 'merge slot fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = async (who, title, extra = {}) => committed(await agent(who, 'clued_work_claim_v1',
+    const leaseKeys = new Map();
+    const held = (who, result) => { leaseKeys.set(result.claim.claim_id, { who, lease_key: result.lease_key }); return result.claim; };
+    const claim = async (who, title, extra = {}) => held(who, committed(await agent(who, 'clued_work_claim_v1',
       { scope: 'global', idempotency_key: uuid(), task_id: await createTask(title),
-        write_set: [`merge-slot/${uuid()}`], holder_label: title, ...extra })).claim;
+        write_set: [`merge-slot/${uuid()}`], holder_label: title, ...extra })));
+    // A PR is bound to its Task by the holder's head authorization naming it,
+    // and activated by the CI Binding's observation (20261108161615); a verify
+    // only reads that relation.
+    const BASE = 'b'.repeat(40);
+    const bindPr = async (c, pr, head) => {
+      const { who, lease_key } = leaseKeys.get(c.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0];
+      committed(await agent(who, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: c.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: pr.split('#')[0].toLowerCase(),
+        head_sha: head, target_branch: 'main', pr_number: Number(pr.split('#')[1]), idempotency_key: uuid() }));
+      const seen = await agent('ci', 'clued_work_verify_v1', { action: 'resolve_pr_claim', pr_ref: pr, head_sha: head,
+        base_sha: BASE, target_branch: 'main' });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+    };
     const renew = (who, c, extra = {}) => agent(who, 'clued_work_renew_v1', { scope: 'global',
       claim_id: c.claim_id, fence: c.fence, lease_version: c.lease_version, progress_ref: uuid(), ...extra });
     const view = async (c) => (await agent('ci', 'clued_work_verify_v1',
@@ -202,6 +227,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     await assertEnds(a.merge_slot_until, 45, 'a renewal restarts the 45 minutes');
     await age(10);
     const aged = await slotAt(a);
+    await bindPr(a, 'tdoljyj/cross-memory-system#5', 'a'.repeat(40));
     const bound = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: a.claim_id,
       head_sha: 'a'.repeat(40), base_sha: 'b'.repeat(40), pr_ref: 'tdoljyj/cross-memory-system#5' });
     assert.equal(bound.verdict, 'ADMITTED', JSON.stringify(bound));
@@ -229,6 +255,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.equal(a.merge_queue, null);
 
     // --- A merge returns the slot of the claims bound to the pull request. ---
+    await bindPr(b, 'tdoljyj/cross-memory-system#6', 'c'.repeat(40));
     const boundB = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: b.claim_id,
       head_sha: 'c'.repeat(40), base_sha: 'b'.repeat(40), pr_ref: 'tdoljyj/cross-memory-system#6' });
     assert.equal(boundB.verdict, 'ADMITTED', JSON.stringify(boundB));
@@ -237,7 +264,8 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual([merged.status, merged.adopted, merged.reason, merged.merge_slot_returned],
       ['ok', false, 'no_copy_for_pr', [b.claim_id]]);
     b = await view(b);
-    assert.deepEqual([b.trigger_refs, b.merge_slot_until, b.status], [[], null, 'ACTIVE'], 'the claim itself stays live');
+    // The merged PR was its Task's only one: the claim that served it is released too (20261113151000).
+    assert.deepEqual([b.trigger_refs, b.merge_slot_until, b.status], [[], null, 'RELEASED']);
     const receipt = (await admin.query(`select metadata from public.clued_audit_receipts
       where operation='work_claim_merge_slot_return' and object_id=$1`, [b.claim_id])).rows;
     assert.deepEqual([receipt.length, receipt[0].metadata.receipt_kind, receipt[0].metadata.why,
@@ -246,7 +274,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // Replaying the merge report returns nothing more, and answers as before.
     assert.deepEqual(await agent('ci', 'clued_work_claim_adopt_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#6', merge_sha: 'd'.repeat(40) }),
-    { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'tdoljyj/cross-memory-system#6' });
+    { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'tdoljyj/cross-memory-system#6', binding_receipt_id: null });
 
     // --- So does a pull request closed without a merge. ---
     a = committed(await renew('claude', a, { trigger_refs: [SLOT] })).claim;
@@ -254,7 +282,8 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     const closed = await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#5' });
     assert.deepEqual([closed.status, closed.returned, closed.merge_slot_returned], ['ok', true, [a.claim_id]]);
-    assert.equal((await view(a)).merge_slot_until, null);
+    // Its Task's only PR closed: the claim that served it is released too (20261113151000).
+    assert.deepEqual([(await view(a)).merge_slot_until, (await view(a)).status], [null, 'RELEASED']);
     assert.equal((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#77' })).returned, false);
     await assert.rejects(() => agent('ci', 'clued_work_merge_slot_return_v1',
@@ -270,7 +299,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' }));
     c = await view(c);
     assert.equal(c.merge_slot_until, null);
-    a = committed(await renew('claude', await view(a), { trigger_refs: [SLOT] })).claim;
+    a = await claim('claude', 'A: next pull request', { trigger_refs: [SLOT] });
     assert.ok(a.merge_slot_until);
 
     // --- The copies of a race share the one slot too (review MAJOR-1). ---
@@ -281,9 +310,9 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.equal(issued.status, 'issued', JSON.stringify(issued));
     committed(await native('clued_work_claim_multi_enable_v1',
       { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }));
-    const copy = async (session) => committed(await agent('claude', 'clued_work_claim_v1', { scope: 'global',
+    const copy = async (session) => held('claude', committed(await agent('claude', 'clued_work_claim_v1', { scope: 'global',
       idempotency_key: uuid(), task_id: raceTask, write_set: ['merge-slot/race/**'], trigger_refs: ['task:race'],
-      holder_session_ref: session })).claim;
+      holder_session_ref: session })));
     let c1 = await copy('race-1');
     let c2 = await copy('race-2');
     assert.deepEqual([c1.copy_index, c2.copy_index], [1, 2], 'siblings with the same paths and refs do not conflict');
@@ -298,6 +327,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
 
     // --- The return drops only the pull request's own repository's slots. ---
     c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race', SLOT, 'merge:other/repo:main'] })).claim;
+    await bindPr(c1, 'tdoljyj/Cross-Memory-System#9', 'e'.repeat(40));
     const boundC1 = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: c1.claim_id,
       head_sha: 'e'.repeat(40), base_sha: 'b'.repeat(40), pr_ref: 'tdoljyj/Cross-Memory-System#9' });
     assert.equal(boundC1.verdict, 'ADMITTED', JSON.stringify(boundC1));
@@ -318,29 +348,33 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       where operation=$2 and object_id=$1 order by created_at,id`, [c.claim_id, operation])).rows.map((row) => row.metadata);
     const setSlot = (c, column, minutes) => admin.query(`update clued_private.work_claims_v1
       set ${column}=clock_timestamp()-make_interval(mins=>$2) where claim_id=$1`, [c.claim_id, minutes]);
-    c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race'] })).claim;
+    // That PR was its Task's only one: the copy that served it is released (20261113151000).
+    assert.equal((await view(c1)).status, 'RELEASED');
     let d = await claim('codex', 'D: final round under CI', { trigger_refs: [SLOT] });
     assert.ok(d.merge_slot_until);
     assert.deepEqual(d.merge_slot_ci, { taken_at: d.merge_slot_ci.taken_at, hard_cap_until: null,
       ci_state: null, ci_head_sha: null, ci_at: null }, 'a new slot has no CI state and no cap yet');
 
-    // §10: the admission mode goes into the Receipts of the binding and of each newly admitted head.
+    // §10: the admission mode goes into the Receipt of each newly admitted head.
+    await bindPr(d, PR, HEAD);
     await assert.rejects(() => agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
       head_sha: HEAD, base_sha: 'b'.repeat(40), pr_ref: PR, admission_mode: { state: 'relaxed', layer: 'code' } }),
     /work_claim_admission_mode_invalid/);
     for (const mode of [[], { state: 'normal' }, { state: 'normal', layer: 'code', reruns_per_head: 4 },
       { state: 'normal', layer: 'code', extra: 1 }, { state: 'normal', layer: 'code', reruns_per_head: '1' }]) {
       await assert.rejects(() => agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
-        head_sha: HEAD, pr_ref: PR, admission_mode: mode }), /work_claim_admission_mode_invalid/, JSON.stringify(mode));
+        head_sha: HEAD, base_sha: BASE, pr_ref: PR, admission_mode: mode }), /work_claim_admission_mode_invalid/, JSON.stringify(mode));
     }
     const MODE = { state: 'normal', layer: 'code', reruns_per_head: 1 };
     const boundD = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
       head_sha: HEAD, base_sha: 'b'.repeat(40), pr_ref: PR, admission_mode: MODE });
     assert.deepEqual([boundD.verdict, boundD.admission_mode], ['ADMITTED', MODE], JSON.stringify(boundD));
-    assert.deepEqual((await receipts(d, 'work_claim_bind_pr')).map((m) => m.admission_mode), [MODE]);
+    // A verify binds nothing: the PR's binding is the Task relation's own Receipt.
+    assert.deepEqual(await receipts(d, 'work_claim_bind_pr'), []);
     // The same head again writes nothing more; a new head writes its own Receipt, with or without a mode.
-    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: HEAD, pr_ref: PR, admission_mode: MODE });
-    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: '9'.repeat(40), pr_ref: PR });
+    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: HEAD, base_sha: BASE, pr_ref: PR, admission_mode: MODE });
+    await bindPr(d, PR, '9'.repeat(40));
+    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: '9'.repeat(40), base_sha: BASE, pr_ref: PR });
     assert.deepEqual((await receipts(d, 'work_claim_admit_head')).map((m) => [m.receipt_kind, m.head_sha, m.pr_ref, m.admission_mode]),
       [['WORK_CLAIM_HEAD_ADMITTED', HEAD, PR, MODE], ['WORK_CLAIM_HEAD_ADMITTED', '9'.repeat(40), PR, null]]);
     // A read-only verify (no pull request) with a mode admits nothing and writes nothing.
@@ -575,13 +609,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     x = committed(await renew('claude', x, { trigger_refs: [] })).claim;
     h = committed(await renew('codex', h, { trigger_refs: [] })).claim;
 
-    // Once the Owner marks the CI admission Binding, only it may report or list.
-    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
-      values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [userId])).rows[0].id;
-    // By name: the stored token_hash is a verifier since 20261008210000 (P0-4), not the token's hash.
-    const ciBinding = (await admin.query(`select id from public.clued_agent_bindings where user_id=$1 and agent_name='ci connection'`, [userId])).rows[0].id;
-    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
-      values($1,$2,'ci-admission',now(),$3)`, [userId, ciBinding, roleReceipt]);
+    // With the CI admission Binding marked (above), only it may report or list.
     assert.deepEqual(await agent('claude', 'clued_work_merge_slot_touch_v1',
       { scope: 'global', pr_ref: PR, head_sha: HEAD, ci_state: 'failed' }),
     { status: 'ok', touched: false, reason: 'admission_binding_required' });

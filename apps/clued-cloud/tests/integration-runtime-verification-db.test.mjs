@@ -1,5 +1,5 @@
 import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
-import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -1037,7 +1037,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     });
     const closeout=await findGatewayCloseoutMigration(root);
     const callerCatalog=await snapshotCallerCatalog(admin);
-    await apply(closeout);
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeout), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
     await assertGatewayCloseoutBoundary(admin);
   } finally {

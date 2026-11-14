@@ -70,13 +70,19 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
       values($1,'ci@example.invalid',now()),($2,'ci-other@example.invalid',now())`, [userId, otherUser]);
     const tokens = {};
     const bindingIds = {};
-    for (const name of ['claude', 'codex', 'reader']) {
+    for (const name of ['claude', 'codex', 'reader', 'ci']) {
       tokens[name] = hash();
       bindingIds[name] = (await admin.query(`insert into public.clued_agent_bindings
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic',$2,$3,$4,array['*']) returning id`,
-        [userId, name, tokens[name], name === 'reader' ? ['context:read'] : ['context:read', 'context:write']])).rows[0].id;
+        [userId, name, tokens[name], ['reader', 'ci'].includes(name) ? ['context:read'] : ['context:read', 'context:write']])).rows[0].id;
     }
+    // The CI admission Binding (as in production, Owner Decision 38ddb8cf): only
+    // it observes a PR and activates its PR -> Task relation (20261108161615).
+    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,version,metadata,status)
+      values($1,'global','fixture_role','binding',$2,1,'{}','committed') returning id`, [userId, bindingIds.ci])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, bindingIds.ci, roleReceipt]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();
@@ -105,13 +111,38 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
       confidence_reason: 'race fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) =>
-      agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
+    const holders = new Map();
+    const claim = async (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) => {
+      const result = await agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
         write_set: writeSet, holder_session_ref: session });
+      if (result.status === 'committed') holders.set(result.claim.claim_id, { who, lease_key: result.lease_key });
+      return result;
+    };
+    // A verify never binds a PR (20261108161615): the holder's head
+    // authorization names the PR (relation unknown), the CI Binding's
+    // observation activates it, and the CI verify carries the exact head, base
+    // and target branch.
+    const base = 'b'.repeat(40);
+    const authorizeHead = async (c, pr, head) => {
+      const { who, lease_key } = holders.get(c.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0];
+      return committed(await agent(who, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: c.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: pr.split('#')[0],
+        head_sha: head, target_branch: 'main', pr_number: Number(pr.split('#')[1]), idempotency_key: uuid() }));
+    };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
-    const verify = (c, pr, head = crypto.randomBytes(20).toString('hex')) => agent('reader', 'clued_work_verify_v1',
-      { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head });
+    const observe = async (pr, head) => {
+      const seen = await agent('ci', 'clued_work_verify_v1', { action: 'resolve_pr_claim', pr_ref: pr, head_sha: head,
+        base_sha: base, target_branch: 'main' });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+    };
+    const verify = async (c, pr, head = crypto.randomBytes(20).toString('hex'), extra = {}) => {
+      await authorizeHead(c, pr, head);
+      await observe(pr, head);
+      return agent('ci', 'clued_work_verify_v1',
+        { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head, base_sha: base, target_branch: 'main', ...extra });
+    };
     const gate = async (who, c, resources) => (await admin.query(
       `select clued_private.work_claim_gate_v1($1,$2,'clued-storage','storage_submit','collision_only',$3,$4) v`,
       [userId, bindingIds[who], resources, c ? { claim_id: c.claim_id, fence: c.fence } : null])).rows[0].v;
@@ -153,8 +184,11 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     assert.equal(new Date(v.ci_retry_after).getTime(), oldest.getTime() + 24 * 3600 * 1000);
     assert.equal(await usage(task), 40, 'a refused head is not recorded');
     // A head already counted (a re-run, the hourly re-verify) is still admitted.
-    v = await verify(first, 'o/r#1', sha(7).toUpperCase());
+    v = await verify(first, 'o/r#1', sha(7));
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 40]);
+    // A PR verify carries the base as well as the head (20261108161615).
+    await assert.rejects(() => agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: first.claim_id,
+      pr_ref: 'o/r#1', head_sha: sha(7) }), /work_claim_pr_binding_input_invalid/);
     // Without pr_ref (a hand dispatch, an Agent's own check) nothing is metered.
     v = await agent('reader', 'clued_work_verify_v1', { scope: 'global', claim_id: first.claim_id, head_sha: sha(99) });
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 40]);
@@ -181,8 +215,7 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     // --- Other Tasks have their own meter; a failing verify takes nothing. ---
     const other = await createTask('ci meter other');
     const otherClaim = committed(await claim(other, 'codex', 'session-c', ['storage:c2/**'])).claim;
-    v = await agent('reader', 'clued_work_verify_v1', { scope: 'global', claim_id: otherClaim.claim_id,
-      pr_ref: 'o/r#3', head_sha: sha(1), changed_paths: ['elsewhere/a'] });
+    v = await verify(otherClaim, 'o/r#3', sha(1), { changed_paths: ['elsewhere/a'] });
     assert.deepEqual([v.verdict, v.reasons, v.task_ci_heads_24h], ['REJECTED', ['paths_outside_write_set'], 0]);
     v = await verify(otherClaim, 'o/r#3', sha(1));
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 1]);
@@ -212,9 +245,14 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
       await client.query('set role anon');
       racers.push(client);
     }
+    await authorizeHead(copyA, 'o/r#4', sha(100));
+    await authorizeHead(copyB, 'o/r#5', sha(101));
+    await observe('o/r#4', sha(100));
+    await observe('o/r#5', sha(101));
     const results = await Promise.all([[copyA, 'o/r#4', sha(100)], [copyB, 'o/r#5', sha(101)]].map(([c, pr, head], i) =>
       racers[i].query('select public.clued_work_verify_v1($1,$2) v',
-        [tokens.reader, { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head }]).then((r) => r.rows[0].v)));
+        [tokens.ci, { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head, base_sha: base,
+          target_branch: 'main' }]).then((r) => r.rows[0].v)));
     assert.deepEqual(results.map((r) => r.verdict).sort(), ['ADMITTED', 'REJECTED'], JSON.stringify(results));
     assert.equal(await usage(raceTask), 40);
 

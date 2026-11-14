@@ -1678,7 +1678,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     });
     const closeout=await findGatewayCloseoutMigration(root);
     const callerCatalog=await snapshotCallerCatalog(admin);
-    await apply(closeout);
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeout), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
     await assertGatewayCloseoutBoundary(admin);
   } finally {
