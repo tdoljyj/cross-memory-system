@@ -25,6 +25,7 @@ import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSigna
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { NODE_STATUS_FILE, readCapacityAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { readWin32Process } from './resident-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
 import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
@@ -167,32 +168,8 @@ function keepalive(cmd) {
 // cannot be read keeps the frozen rule (a refused start, never two companions). A refusal is written next to the lock for the
 // Owner (companion-lock\refused.json); at most COMPANION_STALE_LOCKS_KEPT set-aside locks are kept.
 export const COMPANION_STALE_LOCKS_KEPT = 10;
-const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
-// { executablePath, commandLine } of one pid; { executablePath: null, commandLine: null } when it is gone; null when unreadable.
-export function readWin32Process(pid, { run = execFileText } = {}) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve(null);
-  return run(POWERSHELL_EXE, ['-NoProfile', '-NonInteractive', '-Command',
-    `Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}' | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress`])
-    .then(text => {
-      if (text === null) return null;
-      if (text.trim() === '') return { executablePath: null, commandLine: null };
-      try { const v = JSON.parse(text); return { executablePath: v?.ExecutablePath ?? null, commandLine: v?.CommandLine ?? null }; } catch { return null; }
-    });
-}
-function execFileText(file, args) {
-  return new Promise(resolve => {
-    let out = '';
-    let child;
-    try { child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { resolve(null); return; }
-    // A cold PowerShell start on a busy node can take tens of seconds; unread means refused, so allow it a minute.
-    const timer = setTimeout(() => { child.kill(); resolve(null); }, 60_000);
-    child.stdout.on('data', d => { if (out.length < 65536) out += d.toString('utf8'); });
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
-    child.on('close', code => { clearTimeout(timer); resolve(code === 0 ? out : null); });
-  });
-}
-
+// readWin32Process (resident-lock.mjs): { executablePath, commandLine } of one pid, both null when it is gone; null when unreadable.
 export async function companionProcessAlive(pid, root, { alive = processAlive, readProcess = readWin32Process } = {}) {
   if (!(await alive(pid))) return false;
   const p = await readProcess(pid);

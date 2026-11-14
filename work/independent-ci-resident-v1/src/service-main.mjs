@@ -18,7 +18,7 @@ import { ResidentExecutor, lockHeldInEarlierBoot } from './executor.mjs';
 import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine, installedTrainMode } from './engine-windows.mjs';
-import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { acquireResidentLock } from './resident-lock.mjs';
 import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
 import { KEEP_FILE, RetentionWatch, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
@@ -50,7 +50,8 @@ export async function recordServiceStart({ receipts, root, policySha256, pid = p
   return { generation, upgraded: true };
 }
 
-export async function main(argv = process.argv.slice(2)) {
+// `ports` is for the tests only (readProcess: what Windows says about a pid); the service passes none.
+export async function main(argv = process.argv.slice(2), ports = {}) {
   const { values } = parseArgs({ args: argv, options: { root: { type: 'string' }, 'policy-sha256': { type: 'string' }, once: { type: 'boolean' } } });
   check(typeof values.root === 'string' && path.isAbsolute(values.root), 'SERVICE_ROOT_REQUIRED');
   check(HEX64.test(values['policy-sha256'] ?? ''), 'SERVICE_POLICY_PIN_REQUIRED');
@@ -62,7 +63,9 @@ export async function main(argv = process.argv.slice(2)) {
   const state = path.join(root, 'state');
   // DESIGN §71: read before the lock is taken over (the takeover renames it away).
   const lockFromEarlierBoot = await lockHeldInEarlierBoot(state);
-  const lock = await acquireInstanceLock(state, { alive: processAlive, clock });
+  // The holder counts only while its pid is still this root's service-main, started no later than its lock (resident-lock.mjs).
+  const lock = await acquireResidentLock(state, root, { clock, readProcess: ports.readProcess });
+  await fs.rm(path.join(state, START_REFUSED_FILE), { force: true }).catch(() => {}); // an earlier refusal no longer holds
   const ledger = await Ledger.open(state, clock);
   // DESIGN §41.7: the start closes the months before the current one (receipts.mjs); it then reads only the seals and this month.
   const receipts = await ReceiptChain.open(path.join(state, 'receipts'), clock, { seal: true });
@@ -228,10 +231,33 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
   }
 }
 
+// A start that ends before the loop runs (exit 4; the host reports 1064 and the SCM restarts the service after a minute) used to
+// leave nothing behind: the host does not keep the executor's output and no receipt exists yet (DESK 2026-11-14 01:38:38). The code
+// and what it names are now written to state\start-refused.json (as the companion's companion-lock\refused.json); the next start
+// that gets the lock removes it. Best effort: a start refused for its arguments has no root to write to.
+export const START_REFUSED_FILE = 'start-refused.json';
+export async function recordStartRefusal(argv, error, clock = Date.now) {
+  try {
+    const at = argv.indexOf('--root');
+    const root = at >= 0 ? argv[at + 1] : null;
+    if (typeof root !== 'string' || !path.isAbsolute(root)) return;
+    const coded = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.code);
+    const detail = ['string', 'number', 'boolean'].includes(typeof error?.detail) ? error.detail : null;
+    await fs.mkdir(path.join(root, 'state'), { recursive: true });
+    await fs.writeFile(path.join(root, 'state', START_REFUSED_FILE), JSON.stringify({ contract: 'clued.independent-ci.start-refused/1',
+      code: coded ? error.code : 'RESIDENT_START_EXCEPTION', detail, message: coded ? null : String(error?.message ?? error).slice(0, 500),
+      at: new Date(clock()).toISOString(), pid: process.pid }) + '\n');
+  } catch { /* the refusal stands */ }
+}
+
+export async function run(argv = process.argv.slice(2), ports = {}) {
+  try { return await main(argv, ports); } catch (error) { await recordStartRefusal(argv, error); return 4; }
+}
+
 // The entry point on any platform, also behind a junction or a symlink (scripts/ci/main-entry-realpath.test.mjs): links resolved
 // on both sides. (The earlier test built a file:/// URL by hand, which no POSIX path ever equals: on Linux the program did nothing
 // and exited 0.) Not import.meta.main, which the installed runtime\node.exe may be too old for.
 const isEntryPoint = () => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isEntryPoint()) {
-  main().then(code => { process.exitCode = code; }, () => { process.exitCode = 4; });
+  run().then(code => { process.exitCode = code; });
 }
