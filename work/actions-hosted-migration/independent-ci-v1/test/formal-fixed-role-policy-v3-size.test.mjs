@@ -19,8 +19,8 @@ async function verify(path,bytes,{hash=sha(bytes),actual=gitBlob(bytes),expected
 
 test('the real registered catalogue above 1 MiB passes its SHA and actual Git tree pin',async()=>{
   const bytes=await fs.readFile(new URL('../../../../'+CATALOGUE,import.meta.url));
-  assert.equal(bytes.length,1055067);
-  assert.equal(sha(bytes),'acae3e467ea30a93423fe2d6d2a5a90c38057777a2b4ec92b68553cd9405bbd2');
+  assert.equal(bytes.length,1062190);
+  assert.equal(sha(bytes),'6b3c0b511a65a47dc83478d9d8caa3bda5e50f7804fbdaf34b6dc892b689561e');
   const expected=execFileSync('git',['rev-parse','HEAD:'+CATALOGUE],{cwd:ROOT,encoding:'utf8'}).trim();
   let gitReads=0;
   await validateTrackedSourceBytes({path:CATALOGUE,sha256:sha(bytes)},bytes,async()=>{
