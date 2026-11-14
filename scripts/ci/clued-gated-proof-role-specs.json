@@ -3486,6 +3486,70 @@
           }
         ]
       }
+    },
+    ".github/workflows/clued-required-tests-windows.yml": {
+      "sources": {
+        "bf46c22f3ff1c9e491d181ca1464f174b4a21d9b": [
+          {
+            "job_id": "ci-suites-windows",
+            "definition_sha256": "67a8d5c72a1499e0f6445a9e5f266b281e4b8f9734c45e7a5bd268278dc43936",
+            "definition": {
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Windows",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-node24",
+                "cap-python312"
+              ],
+              "timeout-minutes": 45,
+              "permissions": {
+                "contents": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "name": "Check out the trusted base (selection and commands)",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "path": "trusted"
+                  }
+                },
+                {
+                  "name": "Check out the candidate",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0,
+                    "path": "candidate"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./trusted/.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Select and run the suites declared for Windows",
+                  "shell": "powershell",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.token }}",
+                    "CI_BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
+                    "PYTHONDONTWRITEBYTECODE": "1"
+                  },
+                  "run": "$ErrorActionPreference = 'Stop'\n& node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\nexit $LASTEXITCODE\n"
+                }
+              ]
+            }
+          }
+        ]
+      }
     }
   },
   "future_workflows": [],

@@ -303,7 +303,9 @@ test('audited documentation diff preserves the original five and includes the ne
   const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
   const result=applicableCI(w);assert.equal(result.passed,true);
   const expected=[QUALITY,'.github/workflows/clued-components.yml','.github/workflows/contract-placement.yml',
-    '.github/workflows/gitleaks.yml','.github/workflows/trivy.yml',REQUIRED_TESTS_SOURCE.file].sort();
+    '.github/workflows/gitleaks.yml','.github/workflows/trivy.yml',REQUIRED_TESTS_SOURCE.file,
+    // Resident ADR 0032 step 2: the Windows side has no path filter either, so it applies to every pull request.
+    '.github/workflows/clued-required-tests-windows.yml'].sort();
   assert.deepEqual([...result.workflows.keys()].sort(),expected);
   assert.deepEqual([...applicableCI({...w,changedFiles:[]}).workflows.keys()].sort(),expected);
   assert.equal(applicableCI({...w,changedFiles:[],diffComplete:false}).state,'unknown');
