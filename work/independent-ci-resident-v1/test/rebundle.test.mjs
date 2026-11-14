@@ -1,4 +1,4 @@
-// Parking point A's second bundle (Task 4012c1b9, DESIGN §37): a batch resumed from the hosted wait gets one more bundle right
+// Parking point A's second bundle (Task 4012c1b9, DESIGN §37): a batch resumed from parking point A gets one more bundle right
 // before its workspace; refs that moved on end it as the clean transient REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as
 // before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched. The status page shows every batch resting at A.
 import test from 'node:test';
@@ -9,18 +9,15 @@ import { Mailbox } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
 import { PARKED_A_REASON } from '../src/executor.mjs';
 import { StatusBoard } from '../src/status.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
-const relayedEngine = () => fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-const hostedSuccess = f => {
-  f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } },
-    { pr: s.pr, head: s.headSha, at: f.clock() })));
-};
+// A batch resting at parking point A (helpers.mjs#holdAtA) goes on at the next tick.
+const hostedSuccess = f => f.atA.release();
 // A companion with the second-bundle port: answer(n) is the answer to the n-th call (0-based).
-const withRebundle = (answer, script = { hint: () => null }) => {
+const withRebundle = (answer, script = {}) => {
   const c = fakeCompanion(script);
   c.rebuilds = 0;
   c.rebuildBundle = async () => { c.calls.push(['rebundle']); return answer(c.rebuilds++); };
@@ -29,7 +26,8 @@ const withRebundle = (answer, script = { hint: () => null }) => {
 
 test('resumed from parking point A after the wait: one second bundle, then the workspace and every stage', async t => {
   const companion = withRebundle(() => ({ ok: true, code: null }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { companion });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
@@ -39,8 +37,8 @@ test('resumed from parking point A after the wait: one second bundle, then the w
   const order = companion.calls.map(c => c[0]).filter(x => ['bundle', 'rebundle', 'wsprep'].includes(x));
   assert.deepEqual(order, ['bundle', 'rebundle', 'wsprep']);
   assert.ok((await receiptTypes(f)).includes('batch-rebundled'));
-  assert.deepEqual([r.relayed, r.local], [['gitleaks', 'trivy'], ['contract-placement']]);
-  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8], 'only placement runs locally');
+  assert.deepEqual([r.relayed, r.local], [[], ['gitleaks', 'trivy', 'contract-placement']]);
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8], 'every role runs locally');
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
   await f.drop(triggerBytes({ pr: 990 }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
@@ -49,42 +47,45 @@ test('resumed from parking point A after the wait: one second bundle, then the w
 
 test('even past the old 100-minute bound, a renewed bundle lets the batch go on', async t => {
   const companion = withRebundle(() => ({ ok: true, code: null }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { companion });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(101 * MIN);
   hostedSuccess(f);
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.equal(companion.rebuilds, 1);
-  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8]);
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
 });
 
 test('refs moved on since the first bundle: a clean transient ending before the workspace, nothing on Linux', async t => {
   const companion = withRebundle(() => ({ ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { companion });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
   hostedSuccess(f);
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE']);
-  assert.deepEqual(stagesRun(f.engine), [1, 9], 'hosted receipts are confirmed; no workspace preparation or Linux stage');
+  assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation or Linux stage');
   assert.ok(!companion.calls.some(c => c[0] === 'wsprep'));
-  assert.deepEqual(await f.ledger.pendingAttempts2(), [], 'confirmed hosted scans cannot be retried locally');
+  assert.equal((await f.ledger.pendingAttempts2()).length, 1, 'nothing was published: the clean transient gets its one attempt 2');
 });
 
 test('any other refusal (or no answer) of the second bundle ends the batch as before, PARKED_BUNDLE_TOO_OLD', async t => {
   for (const answer of [{ ok: false, code: 'BUNDLE_UNAVAILABLE' }, null, { ok: false, code: 'SOMETHING_ELSE' }]) {
     const companion = withRebundle(() => answer);
-    const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+    const f = await executorFixture(t, { companion });
+    f.atA = holdAtA(f.exec);
     await f.drop(triggerBytes());
     assert.equal((await f.exec.tick()).state, 'WAITING');
     f.advance(61 * MIN);
     hostedSuccess(f);
     const r = await f.exec.tick();
     assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD'], JSON.stringify(answer));
-    assert.deepEqual(stagesRun(f.engine), [1, 9]);
+    assert.deepEqual(stagesRun(f.engine), [1]);
     assert.ok(!companion.calls.some(c => c[0] === 'wsprep'));
     assert.deepEqual(await f.ledger.pendingAttempts2(), []);
   }
@@ -122,7 +123,8 @@ test('without the re-bundle port the old 100-minute rule still holds for a first
 
 test('the status page shows each batch resting at parking point A on its own row', async t => {
   const status = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') });
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: withRebundle(() => ({ ok: true, code: null })), status });
+  const f = await executorFixture(t, { companion: withRebundle(() => ({ ok: true, code: null })), status });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes({ pr: 884, headSha: HEAD }));
   assert.equal((await f.exec.tick()).state, 'WAITING');
   await f.drop(triggerBytes({ pr: 885, headSha: '5'.repeat(40) }));
@@ -171,7 +173,8 @@ test('companion: rebuild-bundle runs the fixed -Rebundle command and maps the sc
 test('generation 13: a network failure of the second bundle is built again after the waits, and the batch goes on', async t => {
   const { REBUNDLE_NETWORK_RETRY_MS } = await import('../src/executor.mjs');
   const companion = withRebundle(n => n < 2 ? { ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' } : { ok: true, code: null });
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { companion });
+  f.atA = holdAtA(f.exec);
   const slept = [];
   const sleep = f.exec.sleep.bind(f.exec);
   f.exec.sleep = async ms => { slept.push(ms); return sleep(ms); };
@@ -183,12 +186,13 @@ test('generation 13: a network failure of the second bundle is built again after
   assert.equal(companion.rebuilds, 3);
   assert.deepEqual(slept.filter(ms => REBUNDLE_NETWORK_RETRY_MS.includes(ms)), [...REBUNDLE_NETWORK_RETRY_MS]);
   assert.equal((await receiptTypes(f)).filter(x => x === 'rebundle-retry').length, 2);
-  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8]);
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
 test('generation 13: the network still down after the waits ends the batch as before; another refusal is never built again', async t => {
   const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  const f = await executorFixture(t, { companion: down });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
@@ -196,7 +200,8 @@ test('generation 13: the network still down after the waits ends the batch as be
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode, down.rebuilds], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD', 3]);
   const other = withRebundle(() => ({ ok: false, code: 'BUNDLE_UNAVAILABLE' }));
-  const g = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: other });
+  const g = await executorFixture(t, { companion: other });
+  g.atA = holdAtA(g.exec);
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   g.advance(61 * MIN);
@@ -207,7 +212,8 @@ test('generation 13: the network still down after the waits ends the batch as be
 
 test('generation 13: a rebuild that still fails on the line keeps the network marker on the ending (review round 1, MINOR 6)', async t => {
   const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  const f = await executorFixture(t, { companion: down });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
@@ -224,7 +230,8 @@ test('generation 13: each rebuild after a wait is allowed like an execution retr
   const types = async f => (await f.receipts.latest(['rebundle-retry-refused'], 1))[0]?.value.body.step ?? null;
   // a HALT latched during the wait
   const halted = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: halted });
+  const f = await executorFixture(t, { companion: halted });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
@@ -235,7 +242,8 @@ test('generation 13: each rebuild after a wait is allowed like an execution retr
   assert.deepEqual([halted.rebuilds, await types(f)], [1, 'after-wait-halt']);
   // the installed Source drifted during the wait
   const drifted = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const d = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: drifted });
+  const d = await executorFixture(t, { companion: drifted });
+  d.atA = holdAtA(d.exec);
   await d.drop(triggerBytes());
   assert.equal((await d.exec.tick()).state, 'WAITING');
   d.advance(61 * MIN);
@@ -248,7 +256,8 @@ test('generation 13: each rebuild after a wait is allowed like an execution retr
   assert.deepEqual([drifted.rebuilds, await types(d)], [1, 'after-wait-drift']);
   // the authority would not cover the wait, the rebuild and the stages: no wait at all
   const short = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const g = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: short });
+  const g = await executorFixture(t, { companion: short });
+  g.atA = holdAtA(g.exec);
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   g.advance(61 * MIN);
@@ -270,7 +279,8 @@ test('generation 13: an Owner abort filed during the wait before a rebuild ends 
   const { batchKey } = await import('../src/ledger.mjs');
   const { abortRequest, writeOwnerRequest } = await import('../tools/rearm-tool.mjs');
   const down = withRebundle(() => ({ ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion: down });
+  const f = await executorFixture(t, { companion: down });
+  f.atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);

@@ -11,7 +11,7 @@ import { archiveReason, classifyFailure } from '../src/classify.mjs';
 import { batchBudgetMs, validatePolicy } from '../src/policy.mjs';
 import { nodeProfileSha256, pinnedNodeProfile } from '../src/node-profile.mjs';
 import { readFileSync } from 'node:fs';
-import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RELAY_OFF, SOURCE, TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 
@@ -222,17 +222,11 @@ test('classification is an allow-list and needs the complete cleanup proof', () 
 
 test('policy refuses general retries, concurrency and drifted shapes; attempt 2 and retention are bounded', () => {
   const p = validatePolicy(rawPolicy());
-  assert.equal(p.stages.length, 10, 'eight formal stages, stage R and stage 10 (train maintenance, never in a batch)');
-  assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000, 'relay off: no wait, no stage R');
-  const on = validatePolicy(rawPolicy({ relay: RELAY_ON }));
-  assert.equal(batchBudgetMs(on), batchBudgetMs(p) + RELAY_ON.wait.totalMs + 900000 + 180000, 'relay on: the bounded wait and stage R are budgeted');
-  assert.equal(JSON.parse(readFileSync(new URL('../config/policy.example.json', import.meta.url), 'utf8')).relay.enabled, false, 'the example ships with the relay off');
+  assert.equal(p.stages.length, 10, 'eight formal stages, the reserved stage 9 (the removed stage R) and stage 10 (train maintenance, never in a batch)');
+  assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000, 'no wait, no stage R');
+  assert.equal(batchBudgetMs(validatePolicy(rawPolicy({ relay: { ...RELAY_OFF, enabled: true } }))), batchBudgetMs(p), 'a legacy relay block is never budgeted (DESIGN §76)');
+  assert.equal(Object.hasOwn(JSON.parse(readFileSync(new URL('../config/policy.example.json', import.meta.url), 'utf8')), 'relay'), false, 'the example has no relay block');
   validatePolicy(JSON.parse(readFileSync(new URL('../config/policy.example.json', import.meta.url), 'utf8')));
-  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, roles: ['contract-placement'] } })), { code: 'POLICY_RELAY_ROLES_INVALID' });
-  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, roles: ['trivy', 'gitleaks'] } })), { code: 'POLICY_RELAY_ROLES_INVALID' });
-  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, totalMs: 8 * 3_600_000 } } })), { code: 'POLICY_RELAY_WAIT_INVALID' });
-  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, extra: 1 } } })), { code: 'POLICY_RELAY_WAIT_KEYS_INVALID' });
-  assert.throws(() => validatePolicy(rawPolicy({ relay: { enabled: true } })), { code: 'POLICY_RELAY_KEYS_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ stageRunMilliseconds: rawPolicy().stageRunMilliseconds.slice(0, 9) })), { code: 'POLICY_STAGE_TIMES_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticRetryAllowed: true })), { code: 'POLICY_KEYS_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 1000 } })), { code: 'POLICY_ATTEMPT2_INVALID' });

@@ -10,11 +10,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
+import { fileURLToPath } from 'node:url';
+import { Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig } from './companion.mjs';
 import { UpgradeMailbox } from './upgrade-mailbox.mjs';
-import { HostedHints, sourceHintObserver } from './hosted-hints.mjs';
-import { createGhReadPort } from './gh-read-port.mjs';
 import { Mailbox } from './mailbox.mjs';
 import { Runner, JOB_HOST_EXE } from './runner.mjs';
 import { Poller } from './poller.mjs';
@@ -240,21 +238,9 @@ export async function main(args = process.argv.slice(2)) {
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
     readText, log: relayLog });
   const inboxDir = path.join(values.root, 'inbox');
-  // Hint mode: the installed (admin-only, read by the Owner) CI Source's relay observer and pure hint
-  // attestation over the Owner's own read-only gh login. Off unless companion.json enables it.
-  const hintCfg = validateHintConfig(raw.hints);
-  let hints = null;
-  if (hintCfg.enabled) {
-    const dir = path.join(values.root, 'source', hintCfg.ciSourceManifestSha256, 'work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'hosted-relay-v1');
-    const load = name => import(pathToFileURL(path.join(dir, name)).href);
-    const [{ validateRegistry }, { createHostedRelayObserver }, { hostedHint }] = await Promise.all([load('registry.mjs'), load('observe.mjs'), load('stage.mjs')]);
-    const registry = validateRegistry(JSON.parse(await fs.readFile(path.join(dir, 'registry.json'), 'utf8')), { domain: 'production' });
-    const github = createGhReadPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => advisory.run(a, o) });
-    hints = new HostedHints({ repo: raw.repo, mailbox, clock: Date.now,
-      observeHead: sourceHintObserver({ registry, createObserver: createHostedRelayObserver, hostedHint, github, repo: raw.repo }) });
-  }
+  // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
   const poller = new Poller({
-    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => advisory.run(a, o), clock: Date.now, hints,
+    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => advisory.run(a, o), clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
   });
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the

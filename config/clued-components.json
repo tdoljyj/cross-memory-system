@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "92980b708a22f24b734a54ddbc819a538c2ca329674ef7eed86d76a3c98ec642"
+      "content_sha256": "c8ea864f238b8acfe5db55d3bb4933a2a1932179ce0554d408766a3a0330b00a"
     },
     {
       "id": "hook.runner-job-started",
@@ -556,7 +556,6 @@
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-entry-runtime-reasons.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-publishers.test.mjs",
-        "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-engine.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-entry.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-run.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/resident-v2-relay-qualification-stage.test.mjs",
@@ -603,13 +602,10 @@
         "work/independent-ci-resident-v1/src/engine-windows.mjs",
         "work/independent-ci-resident-v1/src/executor.mjs",
         "work/independent-ci-resident-v1/src/failure-table.json",
-        "work/independent-ci-resident-v1/src/hosted-wait.mjs",
         "work/independent-ci-resident-v1/src/ledger.mjs",
         "work/independent-ci-resident-v1/src/poller.mjs",
         "work/independent-ci-resident-v1/src/pr-status.mjs",
         "work/independent-ci-resident-v1/src/queue.mjs",
-        "work/independent-ci-resident-v1/src/relay-qualification-hold.mjs",
-        "work/independent-ci-resident-v1/src/relay-qualification-observations.mjs",
         "work/independent-ci-resident-v1/src/revocation-maintenance.mjs",
         "work/independent-ci-resident-v1/src/service-ports.mjs",
         "work/independent-ci-resident-v1/src/status.mjs",
@@ -618,14 +614,10 @@
         "work/independent-ci-resident-v1/test/companion.test.mjs",
         "work/independent-ci-resident-v1/test/failure-table.test.mjs",
         "work/independent-ci-resident-v1/test/helpers.mjs",
-        "work/independent-ci-resident-v1/test/hosted-wait.test.mjs",
         "work/independent-ci-resident-v1/test/native-revocation-maintenance.test.mjs",
         "work/independent-ci-resident-v1/test/node-mode.test.mjs",
         "work/independent-ci-resident-v1/test/poller-conditional.test.mjs",
         "work/independent-ci-resident-v1/test/pr-status.test.mjs",
-        "work/independent-ci-resident-v1/test/relay-qualification-hold.test.mjs",
-        "work/independent-ci-resident-v1/test/relay-qualification-observations.test.mjs",
-        "work/independent-ci-resident-v1/test/relay.test.mjs",
         "work/independent-ci-resident-v1/test/status.test.mjs",
         "work/independent-ci-resident-v1/test/train-strict-readiness.test.mjs",
         "work/independent-ci-resident-v1/test/train-takeover-front.test.mjs",
@@ -642,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "f1c71245eb9131c2da754bbff69b649555d139f2df9d5b122a357e0b79224ca2"
+      "content_sha256": "aa25a74a34b18e968aeb053e4afcf1dd46b4b8dd59f6fe3480cb2405967b7aad"
     },
     {
       "id": "script.resource-maintenance",
@@ -714,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ec2e1cf1bd883511b1919110b722753f81ae91418c50a7f58a70bf0c34e3606c"
+      "content_sha256": "7f81868bb90e4a5b135aab4b33763951f67e47c2796373ee92489d7f91561719"
     },
     {
       "id": "script.required-applicability",
@@ -907,7 +899,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -923,12 +915,12 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "d85a13b4835a5c9888428ff46afe52774011f2ff05a1569dfaa508b937671c17"
+      "content_sha256": "381840c7ccedca69a55a26cf5459547e2b409dfe1cc305ec67bc1e87584e1f74"
     },
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.30",
+      "version": "1.0.31",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [
@@ -946,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "10523a7515a4d12a699c6afccc62f4f672493733422bdbbba694d6b56bc4f823"
+      "content_sha256": "25a61df2f1907a245918d15e4e5b83d05b2e9f1691208810684c437868bed59b"
     }
   ]
 }
