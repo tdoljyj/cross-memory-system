@@ -5830,4 +5830,4 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - Worker：没有调用方。唯一的调用方是三个托管工作流里的取许可步骤，工作流全是 `disabled_manually`，生产扫描许可策略也从未激活。部署前旧 Worker 照旧，部署后这个路径 404，重新启用的托管 gitleaks/trivy job 会在扫描前失败，不产生检查结论。
 - 节点上已经存在的空目录 `state\relay\jwks`：新包不再建它，`migrate-acl` 只增不删，留空目录无害。
 
-**灾备影响**：`docs/maintenance/independent-ci.md` 的“灾备：Owner 临时切换规则集”依赖托管 gitleaks/trivy job，入口删除后走不通（之前也要先激活扫描许可策略）。有两台常驻节点后，灾备走主备切换；这一节和 `clued-work-admission.yml` 的去留待 Owner 决定。
+**灾备**：`docs/maintenance/independent-ci.md` 原来的“灾备：Owner 临时切换规则集”依赖托管 gitleaks/trivy job，本来就要先激活从未激活的扫描许可策略，入口删除后更走不通，已删；灾备只走主备切换（服务端看门狗自动接班）。`clued-work-admission.yml` 不在本步处理，故障接班实测通过后再删。
