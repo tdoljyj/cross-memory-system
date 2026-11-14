@@ -1,6 +1,7 @@
 import test from 'node:test';
+import {retiredProfilesRaw,retiredRolesRaw} from './fixtures/retired-gated-proof-catalogue.mjs';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -34,7 +35,9 @@ const SOURCE={repository:'tdoljyj/cross-memory-system',commit:fixture,source_che
 for(const k of ['script','workflow','reverify_workflow','policy'])SOURCE[k+'_blob']=sourceBlob(SOURCE[k+'_path']);
 const sources=JSON.stringify({script:sourceText(SOURCE.script_path),workflow:sourceText(SOURCE.workflow_path),
   reverify_workflow:sourceText(SOURCE.reverify_workflow_path),policy:sourceText(SOURCE.policy_path)});
-const profiles=sourceText('scripts/ci/clued-gated-proof-profiles.json'),roles=sourceText('scripts/ci/clued-gated-proof-role-specs.json');
+// The synthetic execution world is the last catalogue whose Full set still had the quality gate and clued-components
+// (both deleted with their entries); the four-source rules under test do not depend on which catalogue is current.
+const profiles=retiredProfilesRaw().toString('utf8'),roles=retiredRolesRaw().toString('utf8');
 const legacyProfiles='{"schema":"unsupported-profile-fixture","workflows":{}}';
 const PROFILE_SOURCE_SHA256=h(profiles),ROLE_SOURCE_SHA256=h(roles),EXECUTION_SOURCE_COMMIT=fixture;
 const scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:tdoljyj/cross-memory-system:main'};
@@ -46,9 +49,10 @@ const sourcePackets=JSON.stringify([{source_checkout_sha:fixture,sources_raw:sou
 // Registry-defined synthetic execution world: this does not qualify working-tree workflows.
 const registryObject=parseWorkflowProfiles(profiles);
 const executionEntries=Object.entries(registryObject.workflows).map(([workflow_file,profile])=>{
-  const candidate=sourceBlob(workflow_file),actual=registeredWorkflowSource(registryObject,workflow_file,candidate);
+  const candidate=existsSync(path.join(repo,workflow_file))?sourceBlob(workflow_file):null,
+    actual=candidate===null?{passed:false}:registeredWorkflowSource(registryObject,workflow_file,candidate);
   // Keep an explicitly registered fixture Source where the working-tree Source
-  // is not yet registered. The separate counterexample below must still refuse it.
+  // is not yet registered, or is deleted. The separate counterexample below must still refuse it.
   return {workflow_file,workflow_blob:actual.passed?candidate:profile.workflow_blob};
 });
 const selectedProfileObject={workflows:Object.fromEntries(executionEntries.map(x=>{const q=registeredWorkflowSource(registryObject,x.workflow_file,x.workflow_blob);

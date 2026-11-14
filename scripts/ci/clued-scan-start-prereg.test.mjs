@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import './clued-scan-start-732-successor.test.mjs';
-import { execFileSync } from 'node:child_process';
+import { restoreRetiredEntries } from './fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
@@ -103,18 +103,10 @@ async function findings(row, headText, baseText = source(row.file, row.before), 
 
 test('the integrated candidate uses exactly the two preregistered workflow bytes and preserves the prior catalogue', () => {
   const profileBefore = structuredClone(profiles), rolesBefore = structuredClone(roleSpecs);
-  // The nine workflows deleted after this generation (gated-proof entries removed with them) are restored from the
-  // exact catalogue objects of main 4a3e0485, the last that registered them; nothing else is taken from there.
-  const object = blob => execFileSync('git', ['cat-file', 'blob', blob], { cwd: new URL('.', ROOT), maxBuffer: 8 * 1024 * 1024 });
-  const lastProfiles = parseWorkflowProfiles(object('2a59cc0fee3ea1d62b6e2a18dea41b835184f28f')),
-    lastRoles = JSON.parse(object('e23a3d9f16bd4ac0fa0791175ad070096e0314bf'));
-  const RETIRED = Object.keys(lastProfiles.workflows).filter(file => !Object.hasOwn(profileBefore.workflows, file));
+  // The nine workflows deleted after this generation are restored from the last catalogue that registered them.
+  const RETIRED = restoreRetiredEntries(profileBefore, rolesBefore);
   assert.equal(RETIRED.length, 9, RETIRED.join(', '));
-  for (const file of RETIRED) {
-    assert.equal(fs.existsSync(new URL(file, ROOT)), false, file);
-    profileBefore.workflows[file] = lastProfiles.workflows[file];
-    rolesBefore.workflows[file] = lastRoles.workflows[file];
-  }
+  for (const file of RETIRED) assert.equal(fs.existsSync(new URL(file, ROOT)), false, file);
   const h=registeredWorkflowSource(profileBefore,HISTORY_732.file,HISTORY_732.candidate_blob);
   assert.equal(h.passed,true);
   assert.equal(h.profile.source_sha256,HISTORY_732.candidate_sha256);

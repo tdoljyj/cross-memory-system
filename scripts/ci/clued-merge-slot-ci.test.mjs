@@ -6,6 +6,7 @@ import {CONTROL_WORKFLOW_SOURCE_PATH,CONTROL_WORKFLOW_FILES,MAIN_SECRET_CONTROLL
 // Merge Admission v0.1 §7.3, step 3: the merge slot follows CI
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
 import assert from "node:assert/strict";
+import {retiredProfilesRaw,retiredRolesRaw} from './fixtures/retired-gated-proof-catalogue.mjs';
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync,createHash } from "node:crypto";
 import fs from "node:fs";
@@ -75,11 +76,9 @@ test('non-PR enumeration requires fresh complete fixed-family data and exact Sou
 });
 
 // The last catalogue with a registered nongated ordinary CI Source (runner-budget-policy.yml, deleted with its profile and
-// role entries): exact Git objects of main 4a3e0485, read with the workflow's registered bytes in place of the live files.
-const LAST_ORDINARY_CATALOGUE={profiles:'2a59cc0fee3ea1d62b6e2a18dea41b835184f28f',roles:'e23a3d9f16bd4ac0fa0791175ad070096e0314bf'};
+// role entries), read with the workflow's registered bytes in place of the live files.
 function lastOrdinaryCatalogue(file){
-  const object=blob=>execFileSync('git',['cat-file','blob',blob],{cwd:ROOT,maxBuffer:8*1024*1024});
-  const profiles=object(LAST_ORDINARY_CATALOGUE.profiles),roles=object(LAST_ORDINARY_CATALOGUE.roles),
+  const profiles=retiredProfilesRaw(),roles=retiredRolesRaw(),
     text=Buffer.from(parseWorkflowProfiles(profiles).workflows[file].source_yaml),
     profilePath=path.join(ROOT,'scripts/ci/clued-gated-proof-profiles.json'),rolePath=path.join(ROOT,'scripts/ci/clued-gated-proof-role-specs.json');
   const read=p=>p===profilePath?profiles:p===rolePath?roles:p===path.join(ROOT,file)?text:fs.readFileSync(p);
