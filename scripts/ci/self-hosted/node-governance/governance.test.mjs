@@ -250,8 +250,11 @@ test('a sweep goes to WSL as one bash -c with the script base64-encoded and no d
   assert.equal(at(out.lines, 'actions'), '3');
 });
 
-test('the Windows sweep removes only old files under its roots, never through a link or inside a protected folder; a dry run removes nothing', { skip }, (t) => {
-  const r = render(t, 'home-primary');
+// The renderer protects the node's Windows runner root. A fixture under the temp folder is only outside it if the runner
+// root is somewhere else, so the test pins the root instead of inheriting whichever machine it runs on (on clued-ci-home-win-01
+// TEMP is inside the runner root and the sweep correctly refused the fixture).
+function windowsSweepCase(t, runnerRoot) {
+  const r = render(t, 'home-primary', (d) => { d.hosts.find((h) => h.host_id === 'home-primary').windows_runner.root = runnerRoot; });
   const root = path.join(r.dir, 'cache');
   fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
   const old = new Date(Date.now() - 40 * 86_400_000);
@@ -269,6 +272,17 @@ test('the Windows sweep removes only old files under its roots, never through a 
   assert.ok(fs.existsSync(path.join(target, 'keep.bin')), 'a junction is never entered');
   assert.equal(at(real.lines, 'p'), '0');
   assert.match(real.log, /refused: a protected folder/);
+}
+
+test('the Windows sweep removes only old files under its roots, never through a link or inside a protected folder; a dry run removes nothing', { skip }, (t) => {
+  windowsSweepCase(t, 'Z:/no-such-runner-root');
+});
+
+test('the Windows sweep gives the same result wherever TEMP is, except that a fixture inside the runner root is refused', { skip }, (t) => {
+  const r = render(t, 'home-primary', (d) => { d.hosts.find((h) => h.host_id === 'home-primary').windows_runner.root = os.tmpdir(); });
+  const out = run(t, r, ['windows-sweep'], [`$x = Remove-OldFiles ${quote(r.dir)} 30; 'n=' + $x.Files`]);
+  assert.equal(at(out.lines, 'n'), '0');
+  assert.match(out.log, /refused: a protected folder/);
 });
 
 // ---- linux-sweep.sh in bash, with fake pgrep and docker on PATH ----
