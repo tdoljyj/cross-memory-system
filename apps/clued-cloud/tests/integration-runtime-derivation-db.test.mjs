@@ -14,7 +14,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // (T-A3-1…6, T-A7-3…9 function layer, P1, P2, P3, P5), T-A7-10 and T-S-1/2/3.
 //
 // Sample counts. §13.2 P2 (c) states two separate obligations, and both are met verbatim:
-//   CI      — 250,000 fixed-seed random facts, the default of this file;
+//   CI      — 250,000 fixed-seed random facts, the default of this file, run by the required check
+//             migration-verify (suite production-schema in scripts/ci/ci-required-selection.mjs);
 //   nightly — 2,000,000, run by CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1, which
 //             .github/workflows/clued-integration-runtime-nightly.yml sets once a day.
 // The seed is mulberry32(20260924) (§13.0) and is printed with every failing sample.

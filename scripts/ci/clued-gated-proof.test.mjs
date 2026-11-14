@@ -310,8 +310,8 @@ test('audited documentation diff preserves the original five and includes the ne
   assert.deepEqual([...applicableCI({...w,changedFiles:[]}).workflows.keys()].sort(),expected);
   assert.equal(applicableCI({...w,changedFiles:[],diffComplete:false}).state,'unknown');
   assert.ok(result.workflows.has(QUALITY));assert.equal(result.workflows.has('.github/workflows/clued-g4-database.yml'),false);
-  w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
-  w.changedFiles=['apps/clued-cloud/tests/owner-authorization-db.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
+  w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/information-flow-e2e.yml'));
+  w.changedFiles=['apps/clued-cloud/tests/information-flow-x.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/information-flow-e2e.yml'));
 });
 test('trigger applicability refuses incomplete, excessive, changed or unsupported sources',()=>{
   const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));

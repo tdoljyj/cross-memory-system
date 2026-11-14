@@ -2,9 +2,9 @@ name: Clued integration runtime nightly property run
 
 # IntegrationRuntime v0.1.8 §13.2 P2 (c) states two separate obligations: 250,000 fixed-seed random
 # facts in CI, and 2,000,000 nightly. The CI figure is the default of
-# apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs and runs in
-# clued-connection-authorization.yml; this workflow is the nightly one, and it is the only place
-# that sets CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1.
+# apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs and runs in the required check
+# migration-verify (suite production-schema, scripts/ci/ci-required-selection.mjs); this workflow is
+# the nightly one, and it is the only place that sets CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1.
 #
 # It never runs on pull requests: the 2,000,000-sample run is far outside the per-PR runner budget
 # that scripts/ci/validate_runner_budget_policy.py guards, so it is scheduled and Owner-dispatched
@@ -26,7 +26,7 @@ concurrency:
 jobs:
   nightly-property-run:
     name: integration-runtime-nightly
-    # Owner-dispatched only, the same gate clued-connection-authorization.yml puts on every
+    # Owner-dispatched only, the same gate the retired clued-connection-authorization.yml put on every
     # self-hosted path, so a collaborator with write access cannot dispatch this onto the trusted
     # pool. GitHub populates github.actor on a schedule run (in practice, the last actor to touch
     # the workflow on the default branch — observed behaviour, not a documented guarantee), so the

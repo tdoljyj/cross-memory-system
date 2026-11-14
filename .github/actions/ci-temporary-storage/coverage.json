@@ -467,79 +467,6 @@
         }
       }
     },
-    "clued-connection-authorization.yml": {
-      "jobs": {
-        "admission-gate": {
-          "mode": "job-temp",
-          "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        },
-        "push-reuse": {
-          "mode": "job-temp",
-          "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "github.event_name == 'push'",
-              "path": "",
-              "ref": "${{ github.sha }}",
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        },
-        "isolated-candidate-trusted-self-hosted": {
-          "mode": "job-temp",
-          "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": null,
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [
-            "${{ runner.temp }}/integration-runtime-gate-evidence.json",
-            "${{ runner.temp }}/clued-tested-tree.json"
-          ],
-          "persistent_action_caches": []
-        },
-        "isolated-candidate-untrusted-hosted": {
-          "mode": "job-temp",
-          "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": null,
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [
-            "${{ runner.temp }}/integration-runtime-gate-evidence.json"
-          ],
-          "persistent_action_caches": []
-        }
-      }
-    },
     "clued-currentness-post-deploy-attestation.yml": {
       "jobs": {
         "verify-and-attest": {
@@ -1333,42 +1260,6 @@
           "persistent_action_caches": []
         },
         "untrusted-linux": {
-          "mode": "job-temp",
-          "purpose": "qualification/validation",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": null,
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        }
-      }
-    },
-    "mps03-native-agent.yml": {
-      "jobs": {
-        "mps03-local-reference-and-static": {
-          "mode": "job-temp",
-          "purpose": "qualification/validation",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": null,
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        },
-        "mps04-live-native-nonprod-g6": {
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",

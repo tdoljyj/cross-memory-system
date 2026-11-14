@@ -713,9 +713,9 @@ test('S1: registry-defined source selection qualifies protocol paths and the acc
       source_descriptor:{workflow_blob:profile.workflow_blob,workflow_source_sha256:hash(profile.source_yaml),source_checkout_sha:EXECUTION_SOURCE_COMMIT,role:'primary_execution',role_source_sha256:ROLE_SOURCE_SHA256}});
   }
   let result=call(seal(p));assert.equal(result.candidate_ready,true);assert.equal(result.metrics.wasted_final_rounds.non_successful_rounds,0);
-  const connection=r.execution_packets.find(x=>x.workflow_file==='.github/workflows/clued-connection-authorization.yml');
-  assert.ok(connection);const job=connection.jobs.at(-1);assert.ok(job.steps.some(x=>x.name==='Verify DatasetSplit Native grant correction and Binding successor'));
-  job.steps=job.steps.filter(x=>x.name!=='Verify DatasetSplit Native grant correction and Binding successor');
+  const applicable=r.execution_packets.find(x=>r.applicability.workflow_files.includes(x.workflow_file)&&x.jobs.at(-1).steps.length>0);
+  assert.ok(applicable);const job=applicable.jobs.at(-1),required=job.steps[0].name;
+  job.steps=job.steps.filter(x=>x.name!==required);
   result=call(p);assert.equal(result.candidate_ready,true);assert.equal(result.metrics.wasted_final_rounds.non_successful_rounds,1);
 });
 test('S2: post-end ever-target closure is retained without entering the admission cohort',()=>{

@@ -594,11 +594,11 @@ test("backup cleanup retains verified evidence and refuses a producer it cannot 
   }
 }));
 
-test("ICU downloads in all three workflows clean their own job package on installer failure", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
+test("ICU downloads in both workflows clean their own job package on installer failure", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
   const bin = path.join(base, "bin"); mkdirSync(bin);
   mockCommand(bin, "curl", 'printf fixture-package > "$2"');
   mockCommand(bin, "sudo", "exit 42");
-  for (const name of ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml", "clued-connection-authorization.yml"]) {
+  for (const name of ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml"]) {
     const workflow = parse(readFileSync(new URL("../../../.github/workflows/" + name, import.meta.url), "utf8"));
     const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? []);
     const install = steps.find(step => step.name === "Install embedded PostgreSQL ICU compatibility runtime");

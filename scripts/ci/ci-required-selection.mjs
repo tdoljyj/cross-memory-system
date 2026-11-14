@@ -67,9 +67,12 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 
 // Database tests of invariants every later migration must keep, on the database every migration builds. Database
 // tests run in no other required check; a verifier rewrite (20261108161615) once left every scan start refused in
-// production. The scan start (both providers) end to end; one reader of whether a role row has started.
+// production. The scan start (both providers) end to end; one reader of whether a role row has started; the
+// Integration Runtime derivation and its 250,000 fixed-seed random facts, the CI half of IntegrationRuntime v0.1.8
+// §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml), with its golden vectors.
 const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
-  'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs'];
+  'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'];
+const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -109,7 +112,7 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
-      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, 'apps/clued-cloud/package.json',
+      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json'],
   },
 };
