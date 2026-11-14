@@ -69,10 +69,48 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 // tests run in no other required check; a verifier rewrite (20261108161615) once left every scan start refused in
 // production. The scan start (both providers) end to end; one reader of whether a role row has started; the
 // Integration Runtime derivation and its 250,000 fixed-seed random facts, the CI half of IntegrationRuntime v0.1.8
-// §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml), with its golden vectors.
+// §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml); the database security hygiene,
+// which stops its own embedded PostgreSQL servers and so runs without --test-force-exit.
 const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
-  'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'];
-const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**'];
+  'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
+  'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'];
+// The database tests clued-connection-authorization.yml ran (authorization, context v2, projection refresh, work
+// claims, Information Flow, records, MTPE, invitations, migration chain, Resource Center authority, end-to-end
+// authorization, DatasetSplit grants); nothing ran them once it was disabled
+// (2026-10-17). Their tests that need no database run in clued-cloud-tests already. Left out because they fail on
+// main (to be repaired, then listed here): the S2c identity, lifecycle and verification suites (their migration replay
+// stops at 20261010161848_worker_gateway_closeout_v1 with worker_gateway_role_unexpected_privileges on the later
+// clued_ci_* functions) and five work-claim files (work_claim_pr_binding_input_invalid / pr_task_binding_unbound since
+// 20261108161615_work_claim_pr_task_binding_v1): binding-roles, ci-metering, hardening, multi-copy, reject-receipts.
+const AUTHORIZATION_DB_TESTS = [
+  'agent-messages-db', 'all-contexts-authorization-db', 'all-contexts-authorization-locks-db', 'authorization-closeout', 'authorization-end-to-end',
+  'authorization-expiry-db', 'authorization-migration-chain', 'authorization-roles-db', 'checkpoint-backlog-controls-db', 'checkpoint-idempotency-db',
+  'checkpoint-replay-receipt-db', 'checkpoint-session-renewal-db', 'connection-authorization-db', 'connection-permission-request-db',
+  'context-ownership-db', 'context-v2-terminal-restore-db', 'currentness-admission-db', 'currentness-record-fence-db', 'currentness-retained-all',
+  'currentness-work-claims-db', 'dataset-split-native-grant-binding-successor-db', 'dataset-split-native-grant-correction-db',
+  'dataset-split-native-grant-currentness-scope-db', 'decision-supersede-schema-guard-db', 'event-carrier-block-reasons-db',
+  'event-continuity-manifest-db', 'global-scope-projection-invalidation-db', 'headless-binding-issuance-db', 'information-flow-candidate-store-db',
+  'information-flow-context-db', 'information-flow-intake-transport-db', 'information-flow-invalidation-db', 'information-flow-promotion-db',
+  'information-flow-token-hardening-db',
+  'issuer-credentials-db', 'k-cont-db', 'model-domain-bootstrap-db', 'mtpe-frontier-eligibility-v2-1-db', 'mtpe-frontier-eligibility-v2-db',
+  'mtpe-owner-pin-consistency-db', 'mtpe-universal-intake-db', 'now-conflict-null-project-db', 'owner-grants-db', 'owner-grants-release-door-db',
+  'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'project-invitations-db',
+  'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
+  'resume-constraint-index-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
+  'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db',
+  'work-claims-continuation-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
+  'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
+].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
+// What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
+// Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
+// inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here).
+const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+  'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
+  'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
+  'apps/clued-cloud/worker/**', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
+  'kernel/policy/resource-center-*.mjs', 'scripts/phase2-qualification/minimum-context-compiler/**',
+  'development/contracts/information-flow/vendored/**',
+  'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -112,7 +150,7 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
-      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
+      'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json'],
   },
 };
@@ -212,6 +250,9 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '--test-concurrency=1',
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
+    // run-tests.mjs bounds the file concurrency for a shared runner, as the package scripts these tests came from did.
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '--test-force-exit',
+      ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
 
