@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "cae5434c1c131fe2014b6beeb7360188e4e70e96747ed85f984f0fe61efa6739"
+      "content_sha256": "c88b1b393f70b11ccbe23bd7aacb2848ea73d6619d84f585428f1f04cd800397"
     },
     {
       "id": "hook.runner-job-started",
@@ -634,7 +634,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "524313246bed286d6d223ee40c29dc1d6e2508d4362480c15353a2297eb6ad6a"
+      "content_sha256": "8b6fdf468e4d646ac3eeaf6a1cd64f4a2eaf07ddf7ee1d6d864ee654ad795e8d"
     },
     {
       "id": "script.resource-maintenance",
@@ -689,7 +689,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.22",
+      "version": "1.0.23",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [
@@ -706,7 +706,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "dbb3e4baeee505d9b92c6824818a8480fbe6bc7feb3f317351e8c54c7eceb621"
+      "content_sha256": "c3af12bb0e43837a5403e353876845949dd2f9db4d17288d3686e52f88cd03df"
     },
     {
       "id": "script.required-applicability",
@@ -722,7 +722,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5555d6150f7683bde17adac9f0b29dc81b7a83037a6cc6e311682d0281a20591"
+      "content_sha256": "cfeee2f3776cac3c61d4d73e98ad1c459c1179ce5b388b6d4c6ba8557227becd"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -938,7 +938,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5e29277c97aaf40dfc195a074212505a5d49176e1c9f33a1be9198a0e92ef5ff"
+      "content_sha256": "1789336a41177d25a53eb31e244178d1c19255a71671788470d584bf5d73dcce"
     }
   ]
 }
