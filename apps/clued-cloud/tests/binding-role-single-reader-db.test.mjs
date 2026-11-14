@@ -170,7 +170,7 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
         join public.clued_agent_bindings b on b.id=r.binding_id where r.user_id=$1 and r.role='ci-admission' and r.revoked_at is null
         order by 1`, [user])).rows.map(r => r.agent_name);
       const ago = async (who, minutes) => admin.query(`update clued_private.ci_node_liveness_v1 l set
-        last_heartbeat_at=last_heartbeat_at-make_interval(mins=>$2),heartbeat_previous_at=heartbeat_previous_at-make_interval(mins=>$2)
+        last_heartbeat_at=l.last_heartbeat_at-make_interval(mins=>$2),heartbeat_previous_at=l.heartbeat_previous_at-make_interval(mins=>$2)
         from clued_private.ci_nodes_v1 n where n.node_id=l.node_id and n.binding_id=$1`, [ids[who], minutes]);
       return { user, ids, beat, handover, holders, ago, receipt };
     };
