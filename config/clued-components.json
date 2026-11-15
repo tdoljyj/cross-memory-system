@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "ba0a7ab1426f89326962f50a38a9eef834242b8b254ceaa423eeab8b3c7c9c55"
+      "content_sha256": "063f263d928a6c2c9e73c74c2d8ee45b66e2a0fc67ea1adc6070d0f4d7bb7417"
     },
     {
       "id": "hook.runner-job-started",
@@ -309,13 +309,13 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "8cb2c4a3ebfeb9f3ab43e1a73fd04b4811a185ffcb6fed5c17c6ab88d612c6b3",
+      "content_sha256": "16c213c6249376736db1d8ced73421acdc59997b75cdae6af9cfa9e920f713af",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "9c79dde9e4b3459a7c759f83080cc2eff892b8cd292a307f9742baf9e24145f4"
+      "content_sha256": "5acc8d4d84eb6c0cd129970769ffc208b4d26055a5758d832b0fdd961350213f"
     }
   ]
 }
