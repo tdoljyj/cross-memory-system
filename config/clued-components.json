@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "05f1ab6670ba73ca96741562eee2368e764ea7b7c4aa21b6014ce80870fdf2d9"
+      "content_sha256": "0379da588e6430251235438e58aae00052a8877174e86e7b2c545e5c695c2723"
     },
     {
       "id": "hook.runner-job-started",
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "1377f3de00c87e6f081e367c3d8f12af70a0c9feebd1cbb8af817b77467883c9"
+      "content_sha256": "67eec8f766cac23fbcfc227ec6f765208d0fa5f60f6c981f6eb9735230a01eda"
     },
     {
       "id": "script.resource-maintenance",

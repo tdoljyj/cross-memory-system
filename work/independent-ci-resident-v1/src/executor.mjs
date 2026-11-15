@@ -2093,6 +2093,12 @@ export class ResidentExecutor {
       }
       // Only a watch can name its PR as the slot holder; a probe without one that says so is no fact.
       if (fact?.code === ROLE_PROBE_CODES.watchedHead && !watch) fact = null;
+      // The probe's child ran past its window and the helper killed it (STAGE_CHILD_TIMEOUT, FIXED_CHILD_TIMEOUT) with the tree proven
+      // zero and the original runner read back stopped: nothing runs and nothing was published, only the role is unknown. That is an
+      // uncertain answer (DESIGN §29.2, §56.2), never a HALT (TURING 2026-11-15 08:13Z). Any other ending without a fact HALTs as before.
+      if (!deferred && !fact && r?.code === 'STAGE_CHILD_TIMEOUT' && r.proof?.windowsTreeZero === true && r.proof?.serviceOriginalStopped === true) {
+        fact = Object.freeze({ result: 'uncertain', code: ROLE_PROBE_CODES.uncertain });
+      }
       const watchedHead = !!watch && fact?.code === ROLE_PROBE_CODES.watchedHead;
       if (!deferred && !fact) await this.haltWith('ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', { intentSeq: intent.seq, failureCode: r?.code ?? null });
       const observedAt = this.clock();

@@ -661,7 +661,8 @@ test('E3 + timing: controllerPorts serves a repeated SHA-fixed read from its cac
   assert.deepEqual(lines.map(l => [l.url, l.method, l.status, l.cache]), [['github/repos/{repo}/commits/{sha}', 'GET', 200, false], ['github/repos/{repo}/commits/{sha}', 'GET', 200, true],
     ['github/repos/{repo}/commits/{sha}', 'GET', 200, true], ['github/repos/{repo}/pulls/{n}', 'GET', 200, false]]);
   assert.ok(lines.every(l => Number.isSafeInteger(l.ms) && l.jobId === 'f'.repeat(64)));
-  assert.doesNotMatch(text, /SECRET|tdoljyj|aaaaaaaaaa|888/);
+  // The clock fields (at, ms) are measurements: a millisecond of 888 is not a leaked PR number.
+  assert.doesNotMatch(JSON.stringify(lines.map(({ at, ms, ...rest }) => rest)), /SECRET|tdoljyj|aaaaaaaaaa|888/);
   assert.equal(fetchUrlPattern(`${GH}/contents/secret/dir/file.txt?ref=${A40}`), 'github/repos/{repo}/contents/{path}?ref');
   assert.equal(fetchUrlPattern(`${GH}/compare/${A40}...${B40}?per_page=1`), 'github/repos/{repo}/compare/{range}?per_page');
   assert.equal(fetchUrlPattern('https://abc.supabase.co/rest/v1/rpc/clued_work_verify_v1'), 'native/rpc/clued_work_verify_v1');
