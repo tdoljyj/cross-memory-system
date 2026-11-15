@@ -4489,6 +4489,12 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
 - **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
 
+#### 56.5b 改受保护工作流的 PR：准入晚于 runner 钩子（缺陷 B，2026-11-15）
+
+- **现场。** #1121 run `43720693841`、#1122 run `43720708199`：推送后 attempt 1 的每个作业在 “Set up runner” 等满钩子时限，以 “Native admission absent” 被拒（准入要等 PR 成为车头，14:11:36 才发）；attempt 2 有了准入（check `132838811702`），仍因钩子只认 attempt 1 被拒，只能人工推空提交。gate 在 “Set up runner” 被拒时，`diedInSetup` 只认 “Set up job”，这个 lane 也就把 head 判为 final，不会点补跑。
+- **做法。** `diedInSetup`（gate 与 `src/env-failure.mjs` 同一份）把紧跟 “Set up job” 的钩子步骤 “Set up runner” 也算 runner 自己的准备步骤：被钩子拒的作业什么也没跑。于是准入到达后，这个 lane 照 56.5 的规则点那一次 “Re-run all jobs”，gate 照 #993 放行；钩子后继版本 `required-tests-late-admission-v1`（组件 1.0.3，见 `scripts/runner/README.md`）不再只认 attempt 1，而是认“本运行之前每个尝试都什么也没跑”的那个尝试。同一提交仍只真跑一次。
+- **测试**：`test/env-failure.test.mjs`、`test/admission-rerun.test.mjs` 的 setup 一例，`scripts/ci/clued-work-admission.test.mjs` 的 environment re-run 一例，`scripts/runner/clued-runner-job-started.test.mjs` 的 `defect B` 两例。
+
 ### 56.6 策略、Source 与安装
 
 - **策略。** 不改（仍是 /9），没有新的策略字段。观察的节奏和上限是代码常量。
