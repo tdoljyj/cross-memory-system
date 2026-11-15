@@ -54,7 +54,7 @@ test('status /7: versions from the three files; consistent true, false (generati
   const root = await upgradeRoot(t, { status: upgradeStatus(op('WAITING_GRANT')) });
   const s = await readVersionState({ root, policy, policySha256: POLICY_SHA, clock: () => T0 });
   assert.deepEqual(s.view, { generation: 2, windows: { packageManifestSha256: PKG, residentManifestSha256: RESIDENT, ciSourceManifestSha256: CI_SOURCE, policySha256: POLICY_SHA },
-    linux: { observedAt: new Date(T0 - 60_000).toISOString(), generation: 2, ciSourceManifestSha256: CI_SOURCE, manifestSha256: LINUX_MANIFEST, pinsOk: true }, consistent: true,
+    linux: { observedAt: new Date(T0 - 60_000).toISOString(), generation: 2, ciSourceManifestSha256: CI_SOURCE, manifestSha256: LINUX_MANIFEST, pinsOk: true }, consistent: true, selfcheck: null,
     upgrade: { opId: OP, state: 'WAITING_GRANT', phase: 'grant', since: new Date(T0 - 120_000).toISOString(), code: null, confirmUrl: `https://kooyomi.example/confirm/${OP}` } });
   assert.deepEqual(s.notices.map(n => n.kind), ['upgrade-grant-pending']);
   const view = inputs => versionsView(inputs, { policy, now: T0 }).consistent;

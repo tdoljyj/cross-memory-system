@@ -12,6 +12,8 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   archive-prune                                        one retention pass of the spool archives (DESIGN S35)
   view-properties --instance <jobId>                   the worker unit's file-system view as systemd-run --property arguments
   view-check --instance <jobId>                        run inside that view: does it hide and expose what DESIGN 70.2 says
+  selfcheck                                            read-only, between batches: the 70.7 probe (view-properties + systemd-run view-check)
+                                                       and the labelled-container count; always one JSON answer, exit 0 when it ran
 
 L2, every batch and role starts clean (DESIGN 70): the worker's guard refuses while any container carrying the bridge nonce
 label exists, in any state (EARLIER_CONTAINER_PRESENT, with the ids); a failure-scope archive records each such exited/dead
@@ -841,6 +843,53 @@ def view_facts(job_id, entries, writable):
             want(writable(p), 'NOT_WRITABLE:' + p)
     return {'contract': VIEW_CONTRACT, 'jobId': job_id, 'ok': not fails, 'failures': fails}
 
+SELFCHECK_CONTRACT = 'clued.independent-ci.resident-linux-selfcheck/1'
+SELFCHECK_JOB = '0' * 64   # every path of the view is optional ('-'), so no workspace needs to exist for the probe
+SYSTEMD_RUN = '/usr/bin/systemd-run'
+SELFCHECK_FAILURE = re.compile(r'^[A-Z][A-Z0-9_]{2,59}(:[A-Za-z0-9/._-]{1,120})?$')
+
+
+def view_probe(props, run_view):
+    """DESIGN 70.7: the worker unit's own view settings handed to systemd-run, running view-check inside it. A failure carries the
+    check's own codes (never free text); a probe that could not run is a failure too, never a pass."""
+    argv = [SYSTEMD_RUN, '--wait', '--pipe', '--collect', *props, f'{OPT}/bin/clued-ci-resident-linux', 'view-check', '--instance', SELFCHECK_JOB]
+    try:
+        code, out = run_view(argv)
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'code': 'VIEW_PROBE_TIMEOUT', 'failures': []}
+    except OSError:
+        return {'ok': False, 'code': 'VIEW_PROBE_NOT_RUN', 'failures': []}
+    if code == 0:
+        return {'ok': True, 'code': None, 'failures': []}
+    reply = {}
+    for line in reversed((out or '').splitlines()):
+        try:
+            reply = json.loads(line)
+            break
+        except ValueError:
+            continue
+    reply = reply if isinstance(reply, dict) else {}
+    found = reply.get('code') if isinstance(reply.get('code'), str) and SELFCHECK_FAILURE.fullmatch(reply['code']) else 'VIEW_PROBE_FAILED'
+    details = reply.get('details') if isinstance(reply.get('details'), list) else []
+    return {'ok': False, 'code': found, 'failures': [d for d in details if isinstance(d, str) and SELFCHECK_FAILURE.fullmatch(d)][:12]}
+
+
+def selfcheck(units, unit_text, run_view, docker, now):
+    """Between batches only: while any clued-ci unit is not inactive/failed (before or after the probes) the answer is BUSY and
+    nothing is judged. Reads only; the probe is a transient systemd unit that is gone when it exits. A container read that fails
+    says so (count null), it never reports zero."""
+    base = {'contract': SELFCHECK_CONTRACT, 'at': now()}
+    if other_units_quiet(units(), None):
+        return {**base, 'state': 'BUSY'}
+    view = view_probe(namespace_properties(unit_text, SELFCHECK_JOB), run_view)
+    try:
+        containers = {'count': len(list_nonce(docker)), 'code': None}
+    except Refused as e:
+        containers = {'count': None, 'code': e.code}
+    if other_units_quiet(units(), None):
+        return {**base, 'state': 'BUSY'}
+    return {**base, 'state': 'DONE', 'view': view, 'containers': containers}
+
 
 def _entries(path):
     try:
@@ -999,6 +1048,10 @@ def main(argv):
         if not facts['ok']:
             raise Refused('WORKER_VIEW_CHECK_FAILED', facts['failures'])
         return facts
+    if cmd == 'selfcheck':
+        with open(WORKER_UNIT_FILE) as f:
+            unit_text = f.read()
+        return selfcheck(list_units, unit_text, lambda a: run(a, timeout=60), docker_port, lambda: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     if cmd == 'quiescence':
         need(BATCH_ID.fullmatch(args.get('--batch', '')), 'BATCH_REFUSED')
         return quiescence()
