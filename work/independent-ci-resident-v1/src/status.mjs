@@ -41,6 +41,7 @@ import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
+import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
@@ -70,6 +71,8 @@ export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-bu
   // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
+  // Task 4a: the node's own self-check (selfcheck.mjs) ran and failed.
+  'selfcheck-failed',
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
   'train-owner',
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
@@ -349,6 +352,8 @@ export function parseVersions(v) {
     linux: l ? { observedAt: isoMs(l.observedAt), generation: generationOf(l.generation), ciSourceManifestSha256: hexOrNull(l.ciSourceManifestSha256),
       manifestSha256: hexOrNull(l.manifestSha256), pinsOk: l.pinsOk === true } : null,
     consistent: [true, false].includes(v.consistent) ? v.consistent : null,
+    // Task 4a: the node's self-check (selfcheck.mjs); null before the first one. Only shown, nothing decides on it.
+    selfcheck: parseSelfcheckView(v.selfcheck),
     upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
       code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
   };
@@ -363,7 +368,8 @@ export async function readVersionInputs(root) {
   const upgrade = path.join(root, 'upgrade');
   const [current, facts, status] = await Promise.all([readJsonLenient(path.join(upgrade, 'current.json')),
     readJsonLenient(path.join(upgrade, 'mailbox', 'responses', VERSION_FACTS_FILE)), readJsonLenient(path.join(upgrade, 'status.json'))]);
-  return { current: plain(current) && current.contract === GENERATION_CURRENT_CONTRACT ? current : null,
+  const selfcheck = await readSelfcheck(path.join(upgrade, 'mailbox', 'responses'));
+  return { selfcheck, current: plain(current) && current.contract === GENERATION_CURRENT_CONTRACT ? current : null,
     facts: plain(facts) && facts.contract === LINUX_VERSION_FACTS_CONTRACT ? facts : null,
     status: plain(status) && status.contract === UPGRADE_STATUS_CONTRACT ? status : null };
 }
@@ -371,7 +377,7 @@ export async function readVersionInputs(root) {
 // The view from the raw values. windows: what this executor runs (its policy and the policy's own hash), never taken from a file.
 // consistent: upgrade-mailbox.mjs#consistent (B1, frozen /1); without a current.json (a node installed before the channel, or
 // one whose current.json cannot be read now) nothing is compared and it is null: the version-skew hold never acts on "unknown".
-export function versionsView({ current, facts, status }, { policy, policySha256 = null, now = Date.now() }) {
+export function versionsView({ current, facts, status, selfcheck = null }, { policy, policySha256 = null, now = Date.now() }) {
   let agreed = null;
   if (current && facts) { try { const c = versionsConsistent(current, facts, now); agreed = [true, false].includes(c) ? c : null; } catch { agreed = null; } }
   const op = plain(status?.op) ? status.op : null;
@@ -381,6 +387,7 @@ export function versionsView({ current, facts, status }, { policy, policySha256 
       ciSourceManifestSha256: policy.ciSourceManifestSha256, policySha256 },
     linux: facts ? { observedAt: facts.observedAt, generation: facts.generation, ciSourceManifestSha256: facts.ciSourceManifestSha256, manifestSha256: facts.manifestSha256, pinsOk: facts.pinsOk } : null,
     consistent: agreed,
+    selfcheck: selfcheckView(selfcheck, now),
     upgrade: op ? { opId: op.opId, state: op.state, phase: op.phase, since: op.phaseSince, code: op.code, confirmUrl: op.grant?.confirmUrl ?? null } : null,
   });
 }
@@ -399,6 +406,8 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
 export function versionNotices(view, upgradeStatus = null) {
   const out = [];
   if (!view) return out;
+  const failed = selfcheckNotice(view.selfcheck);
+  if (failed) out.push(failed);
   if (view.consistent === false) out.push({ key: `version-skew:w${view.generation ?? 'x'}:l${view.linux?.generation ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
   const u = view.upgrade;
   if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });
