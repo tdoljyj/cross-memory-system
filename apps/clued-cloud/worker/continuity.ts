@@ -2668,8 +2668,11 @@ async function callTool(
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
-  const captured = await withAgentMessages(request, env, name, args,
-    await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated)));
+  // The two fold-in reads (live claims, inbox summary) are independent: start
+  // the inbox read first so both run concurrently, one serial step after the RPC.
+  const base = withAuthorityCapture(name, gated);
+  const inbox = startAgentInboxSummary(request, env, name, args, base);
+  const captured = await withAgentMessages(env, name, await withWorkClaims(request, env, name, args, base), inbox);
   const result = name in workClaimRpcByTool ? withConfirmUrl(captured, new URL(request.url).origin, "owner_request") : captured;
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
@@ -2782,27 +2785,35 @@ function stringArg(args: unknown, key: string): string | null {
 // Resume: agent_inbox for this session (client_session_id), every context the
 // connection reads. Renewal: agent_inbox for the renewed claim only. A
 // work-claim conflict: who to write to. Inbox: the notice next to the text.
-async function withAgentMessages(request: Request, env: ContinuityEnv, name: string, args: unknown, value: unknown): Promise<unknown> {
+// The summary read starts from the raw tool result (same token, same RPC, same
+// input as before) so it can run beside the claims read; null = no fold-in due.
+function startAgentInboxSummary(request: Request, env: ContinuityEnv, name: string, args: unknown, value: unknown): Promise<unknown> | null {
+  if (!agentMessagesEnabled(env)) return null;
+  const body = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!body || body.error) return null;
+  if (name !== "clued_session_resume" && !(name === "clued_work_renew" && body.status === "committed")) return null;
+  const input: Record<string, unknown> = { scope: name === "clued_session_resume"
+    ? stringArg(args, "context_key") ?? "global" : stringArg(args, "scope") ?? "global" };
+  if (name === "clued_session_resume") {
+    const session = stringArg(args, "client_session_id");
+    if (session) input.session_ref = session;
+  } else {
+    input.claim_id = stringArg(args, "claim_id");
+  }
+  return (async () => {
+    try {
+      return sanitizeCluedResult(await callAgentInboxSummary(request, env, input));
+    } catch {
+      return null;
+    }
+  })();
+}
+
+async function withAgentMessages(env: ContinuityEnv, name: string, value: unknown, inbox: Promise<unknown> | null): Promise<unknown> {
   if (!agentMessagesEnabled(env)) return value;
   const body = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
   if (!body || body.error) return value;
-  if (name === "clued_session_resume" || (name === "clued_work_renew" && body.status === "committed")) {
-    const input: Record<string, unknown> = { scope: name === "clued_session_resume"
-      ? stringArg(args, "context_key") ?? "global" : stringArg(args, "scope") ?? "global" };
-    if (name === "clued_session_resume") {
-      const session = stringArg(args, "client_session_id");
-      if (session) input.session_ref = session;
-    } else {
-      input.claim_id = stringArg(args, "claim_id");
-    }
-    let summary: unknown = null;
-    try {
-      summary = sanitizeCluedResult(await callAgentInboxSummary(request, env, input));
-    } catch {
-      summary = null;
-    }
-    return withAgentInbox(value, summary);
-  }
+  if (inbox) return withAgentInbox(value, await inbox);
   if (name in workClaimRpcByTool) return withCoordinationHint(value);
   return withAgentMessageNotice(name, value);
 }
