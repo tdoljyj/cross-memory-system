@@ -69,7 +69,7 @@ export const FLEET_REF_KEYS = Object.freeze(['sourceAcceptanceRef', 'hostQualifi
   'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef']);
 export const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // The modules of this directory that run before the archive is extracted: they must be the archive's bytes.
-export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs']);
+export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs']);
 export const LINUX_TIMEOUT_SECONDS = Object.freeze({ A: 1800, B: 7200 });
 export const LINUX_SCRIPTS = Object.freeze({ A: 'A.sh', B: 'B.sh', BResume: 'B-resume.sh' });
 const TOOLCHAIN_NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node';
