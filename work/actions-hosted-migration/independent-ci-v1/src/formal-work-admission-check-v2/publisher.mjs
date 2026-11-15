@@ -34,8 +34,12 @@
 //   - with the train on, after this check settled for a front job: the second touch running of the front batch (§41.4), only
 //     while the holders read in this run show this batch claim as the one front holder of this PR, with the sweep proof's
 //     slotHardCapMinutes; it never changes the ending, what happened is logged and returned;
-//   - the binding binds the merge slot by state, ref and tip only, never its until or the claim lease (Decision b30b1b79
-//     item 3): a renewal, keepalive or touch between the two observations no longer voids the publication;
+//   - the binding binds the merge slot by ref and tip only, never its state, its until or the claim lease (Decision b30b1b79
+//     item 3; resident DESIGN §79): a renewal, keepalive or touch between the two observations does not void the publication, nor
+//     does the claim joining, leaving or lapsing out of the merge queue (field PR #1123: the slot's hard cap ended 3 s after the
+//     write, held -> missing). The work admission's verdict does not depend on the slot (the merge slot check and stage 8 judge
+//     it), the same rule as the scanner roles (staged-check-publisher-v2.mjs#slotBindingFor). Which slot and which main tip stay
+//     bound: main moving under the publication still voids it;
 //   - a front job's HEAD_PUBLISHED_ON_GITHUB counts only the role checks of its own front subject's jobs (external ids carry the
 //     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
@@ -112,7 +116,7 @@ const fresh = (f, now) => freshStamp(Date.parse(f.observedAt), now) && Date.pars
 function binding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
     ...(facts.publicationRequired ? { guarded: facts.guarded, publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
-    mode: facts.mode, mergeSlot: { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip }, ownerReview: facts.ownerReview,
+    mode: facts.mode, mergeSlot: { ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip }, ownerReview: facts.ownerReview,
     workflowGateFindings: facts.workflowGateFindings, authority, definition: DEFINITION });
 }
 

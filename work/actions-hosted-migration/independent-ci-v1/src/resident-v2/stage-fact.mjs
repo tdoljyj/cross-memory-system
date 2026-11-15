@@ -34,8 +34,13 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 export const ADMISSION_VERIFICATION_UNAVAILABLE = 'ADMISSION_VERIFICATION_UNAVAILABLE';
 // HEAD_INTERRUPTED_ON_GITHUB (resident DESIGN §78): stage 1 found only this attempt's own admission check on the head, written by a
 // run that was interrupted (a failover) before any role or control check: nothing of the head ran; attempt 2 runs it under new job ids.
+// ADMISSION_AUTHORIZATION_CHANGED (resident DESIGN §79, field PR #1123): stage 1 withdrew its own attempt-scoped admission check because
+// the authorization observed after the write differed from the one before it (NATIVE_AUTHORIZATION_BINDING_CHANGED). Nothing of the head
+// ran (stage 1 is the first stage); attempt 2 admits it again from a fresh observation under new job ids, instead of asking for a new
+// commit. Any other stage's withdrawal stays PUBLICATION_REVOKED (a role check is on the head).
+export const ADMISSION_AUTHORIZATION_CHANGED = 'ADMISSION_AUTHORIZATION_CHANGED';
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', ADMISSION_VERIFICATION_UNAVAILABLE, HEAD_INTERRUPTED_ON_GITHUB]);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', ADMISSION_VERIFICATION_UNAVAILABLE, HEAD_INTERRUPTED_ON_GITHUB, ADMISSION_AUTHORIZATION_CHANGED]);
 export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_REVOKE_UNCONFIRMED',
   'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED',
   'RELAY_TRAIN_FRONT_LOCAL',
@@ -134,8 +139,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // (withdrawal-text.mjs#admissionVerificationRetryable, with the outcome's bound diagnostic: the entry's own result names it
   // admissionDiagnostic, the bound outcome diagnostic), is transient. Every other withdrawal, and every one at any other stage (a role
   // check is on the head), stays PUBLICATION_REVOKED: clean and final for the head.
-  if (outcome.status === 'REVOKED') return stageNumber === 1 && admissionVerificationRetryable(outcome.reason, outcome.diagnostic ?? outcome.admissionDiagnostic ?? null)
-    ? ADMISSION_VERIFICATION_UNAVAILABLE : 'PUBLICATION_REVOKED';
+  if (outcome.status === 'REVOKED') return stageNumber !== 1 ? 'PUBLICATION_REVOKED'
+    : admissionVerificationRetryable(outcome.reason, outcome.diagnostic ?? outcome.admissionDiagnostic ?? null) ? ADMISSION_VERIFICATION_UNAVAILABLE
+      : outcome.reason === 'NATIVE_AUTHORIZATION_BINDING_CHANGED' ? ADMISSION_AUTHORIZATION_CHANGED : 'PUBLICATION_REVOKED';
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;

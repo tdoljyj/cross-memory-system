@@ -1,7 +1,10 @@
 """Offline migration checks. Every installation target is a disposable test directory."""
 import importlib.util
+import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -109,6 +112,63 @@ class UnifiedSkillInstallationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'separate from repository sources'):
             updater.update(updater.SOURCE)
 
+
+class ReleasedVersionTests(unittest.TestCase):
+    """ComponentVersioning v0.4: versions are raised on purpose, never per pull request. A host without a checkout
+    (claude.ai, Codex) compares only the number, so the installer refuses Skill files that differ from what their
+    version meant when it was released: the same number with other content would look current everywhere."""
+
+    MANIFEST = {"schema": "clued.components/1", "components": [{
+        "id": "skill.clued", "kind": "skill", "version": "1.0.0", "root": "skills/clued", "files": ["**/*"],
+        "version_marker": {"file": "SKILL.md", "pattern": '  version: "{version}"'}}]}
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='clued-skill-release-')
+        self.addCleanup(self.temporary.cleanup)
+        self.repository = Path(self.temporary.name) / 'repo'
+        scripts = self.repository / 'scripts'
+        scripts.mkdir(parents=True)
+        shutil.copyfile(Path(__file__).with_name('clued_components.py'), scripts / 'clued_components.py')
+        (self.repository / 'config').mkdir()
+        (self.repository / 'config/clued-components.json').write_text(json.dumps(self.MANIFEST), encoding='utf-8')
+        self.skill = self.repository / 'skills/clued'
+        self.skill.mkdir(parents=True)
+        (self.skill / 'SKILL.md').write_text('---\nname: clued\nmetadata:\n  version: "1.0.0"\n---\nbody\n', encoding='utf-8')
+        self.git('init', '-q', '-b', 'main')
+        self.commit('release 1.0.0')
+        source = patch.object(updater, 'SOURCE', self.repository / 'skills')
+        source.start()
+        self.addCleanup(source.stop)
+
+    def git(self, *args):
+        done = subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+                               '-c', 'core.hooksPath=', *args], cwd=self.repository, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def commit(self, message):
+        self.git('add', '-A')
+        self.git('commit', '-qm', message)
+
+    def test_same_version_with_other_files_is_not_installed(self):
+        target = Path(self.temporary.name) / 'skills'
+        self.assertEqual(updater.update(target)['clued']['status'], 'UPDATED')
+        (self.skill / 'SKILL.md').write_text('---\nname: clued\nmetadata:\n  version: "1.0.0"\n---\nchanged\n', encoding='utf-8')
+        self.commit('edit the Skill without a version')
+        other = Path(self.temporary.name) / 'other'
+        with self.assertRaisesRegex(ValueError, r'skill\.clued 1\.0\.0: its files differ from version 1\.0\.0 as released'):
+            updater.update(other)
+        self.assertFalse(other.exists())
+        self.assertEqual(updater.update(target, check=True)['clued']['status'], 'DIFFERENT', '--check still reports')
+        subprocess.run([sys.executable, 'scripts/clued_components.py', 'bump', 'skill.clued', '1.0.1'],
+                       cwd=self.repository, check=True, capture_output=True)
+        self.commit('release 1.0.1')
+        self.assertEqual(updater.update(other)['clued']['status'], 'UPDATED')
+
+    def test_an_uncommitted_version_is_not_installed(self):
+        subprocess.run([sys.executable, 'scripts/clued_components.py', 'bump', 'skill.clued', '1.0.1'],
+                       cwd=self.repository, check=True, capture_output=True)
+        with self.assertRaisesRegex(ValueError, r'skill\.clued 1\.0\.1 is in no commit'):
+            updater.update(Path(self.temporary.name) / 'skills')
 
 if __name__ == '__main__':
     unittest.main()
