@@ -1680,6 +1680,26 @@
           "pre_bootstrap_lifecycle": "native617-read-guard-v1"
         }
       }
+    },
+    "clued-front-main-merge.yml": {
+      "jobs": {
+        "merge-main": {
+          "mode": "job-temp",
+          "purpose": "merge train front main merge (update-branch and one attestation check); default-branch code only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
     }
   }
 }

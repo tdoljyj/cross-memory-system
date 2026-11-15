@@ -72,7 +72,7 @@
 
     ".github/actions/ci-temporary-storage/check-workflows.mjs": "5f3bdc672c484f376f656f89afd522cca203b78b303c790b9e34bac992c902ff",
 
-    ".github/actions/ci-temporary-storage/coverage.json": "6503643a81f50708f497c2259c24ce05918cbfcf214823db11d526e182a5bf0b",
+    ".github/actions/ci-temporary-storage/coverage.json": "cbaad7d62ad94088181b668b5cb73be26ae208223e064b17c4aebba680d64390",
 
     ".github/actions/ci-temporary-storage/setup.mjs": "dd64d641d040f2036edec99ff1b86d780d12e1b73c5036f839734398946df270",
 
@@ -96,7 +96,7 @@
 
     ".github/workflows/clued-currentness-post-deploy-attestation.yml": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
 
-    ".github/workflows/clued-front-main-merge.yml": "554820b905ffeea5f002faacea87cbfca9fc73c98ddbab215d84d6cc6a2c2885",
+    ".github/workflows/clued-front-main-merge.yml": "64deb30777fc36311e0f6172265799e28139f001238b928cf4f246f3d1efd53b",
 
     ".github/workflows/clued-g4-database.yml": "570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d",
 
