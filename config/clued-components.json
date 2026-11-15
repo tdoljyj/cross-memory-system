@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "fab948d941b16b3a17e4cb82ac20029345f2e95b430b04c78d1e67542a839624"
+      "content_sha256": "091b6e11ac934e63464a8dfb3c593397cad9be78673e12cd95e6bb57e9d4ed5b"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.68",
+      "version": "1.1.69",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "2b61dc63e2e503b420057ba9a47f07209d5a1906a79803a757ee32f4a40e315e"
+      "content_sha256": "1341036551a8452b0c34c1c3d9439d7248b07cd7085dc47b0a8957c200d2aa93"
     },
     {
       "id": "script.resource-maintenance",
@@ -688,7 +688,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "a94b01741c24169fb1dd11d2aec2636b74374e6298d7d548770481ff036218d6"
+      "content_sha256": "3f74d033502ff6a92f087f159c10a0efeb9b26a2136f13b3908d9076d9a19097"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "35b85444b129149dc7c7d7231751d487f344eff42ecae99068b088ff6dea50e0"
+      "content_sha256": "ffebfdbe965bf6714d3e38bc26c6d8d36bfd09015b4370a51d9ba22c87880b4e"
     }
   ]
 }
