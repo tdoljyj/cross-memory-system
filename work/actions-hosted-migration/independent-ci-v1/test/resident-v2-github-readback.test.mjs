@@ -12,10 +12,11 @@ import { createGitHubChecksPort } from '../src/github.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { CHECKS_V2 } from '../src/resident-v2/prepare-record.mjs';
-import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { CONTROL_CHECKS_V2, createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
+import { TRANSIENT_CODES, outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, OTHER_APP = 15368;
 const iso = ms => new Date(ms).toISOString();
@@ -130,14 +131,24 @@ test('stage 1: kooyumi-work-admission of an earlier attempt and checks of other 
   assert.equal(admission.calls, 2);
 });
 
-test('stage 1: the work admission of this very job (same job id and attempt) from another node counts; that of another attempt does not', async t => {
+test('stage 1: the work admission of this very job (same job id and attempt) from another node stops it; that of another attempt does not', async t => {
   const job = jobsFor()['work-admission'];
   const own = { ...run(7, 'kooyumi-work-admission'), external_id: `independent-ci:native-work-admission:v2:${job.id}:a1:c12345678:f3:e1` };
   const github = fakeGithub([own]);
   const { pub, admission } = await stageOne(t, github);
   const r = await pub.publish(job);
-  assert.deepEqual([r.status, r.reason, r.publishedChecks, r.sideEffects], ['BLOCKED', HEAD_PUBLISHED_ON_GITHUB, ['kooyumi-work-admission'], 0]);
+  // Alone (no role or control check): the run that wrote it was interrupted before any check ran (resident DESIGN §78): the
+  // transient HEAD_INTERRUPTED_ON_GITHUB, so the resident's attempt 2 runs the head; this attempt's identity is never posted again.
+  assert.deepEqual([r.status, r.reason, r.publishedChecks, r.sideEffects, r.safeToRerun], ['BLOCKED', HEAD_INTERRUPTED_ON_GITHUB, ['kooyumi-work-admission'], 0, false]);
+  assert.equal(outcomeFailureCode({ ...r, mayHavePublished: false }, 1), HEAD_INTERRUPTED_ON_GITHUB);
+  assert.ok(TRANSIENT_CODES.includes(HEAD_INTERRUPTED_ON_GITHUB));
   assert.equal(admission.calls, 0);
+  assert.equal(github.calls.createCheck, 0);
+  // Beside a role check it is a head that ran: HEAD_PUBLISHED_ON_GITHUB, final, as before.
+  const ran = await stageOne(t, fakeGithub([own, { ...run(8, 'gitleaks'), external_id: `independent-ci:staged:v2:${jobsFor().gitleaks.id}:a1` }]));
+  const r2 = await ran.pub.publish(job);
+  assert.deepEqual([r2.status, r2.reason, r2.publishedChecks], ['BLOCKED', HEAD_PUBLISHED_ON_GITHUB, ['gitleaks', 'kooyumi-work-admission']]);
+  assert.equal(outcomeFailureCode({ ...r2, mayHavePublished: false }, 1), HEAD_PUBLISHED_ON_GITHUB);
   // attempt 2 is another job id: attempt 1's work admission does not stop it
   const second = await stageOne(t, fakeGithub([own]));
   assert.equal((await second.pub.publish(jobsFor(2)['work-admission'])).status, 'SETTLED');

@@ -19,8 +19,10 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // proved BLOCKED/zero effects/no possible publication. It does not widen attempts.mjs's stage 0/1/2 boundary.
 // ADMISSION_VERIFICATION_UNAVAILABLE (generation 10, DESIGN 53.6): stage 1 withdrew its own admission check because it could not be
 // verified (GitHub or Native unreadable after the bounded re-reads); attempt 2 re-proves it under new job ids instead of a burned head.
+// HEAD_INTERRUPTED_ON_GITHUB (DESIGN §78, field defect PR #1110): stage 1 found only this attempt's own admission check on the head, from
+// a run interrupted by a failover before any role or control check: nothing of the head ran, so attempt 2 runs it, no new commit.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE']);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE', 'HEAD_INTERRUPTED_ON_GITHUB']);
 // Why the roles of a train front batch (a subject with testSha) stay local: a relay reason, not a failure (§41.4, §38.8 m1);
 // listed with the codes so every table knows it.
 export const RELAY_TRAIN_FRONT_LOCAL = 'RELAY_TRAIN_FRONT_LOCAL';

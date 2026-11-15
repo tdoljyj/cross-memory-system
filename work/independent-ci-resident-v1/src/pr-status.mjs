@@ -346,6 +346,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'TRAIN_TEST_COMMIT_GONE') return { state: 'pending', description: 'GitHub 已重算试合并：下一次第 10 段重读后开第二次车头批次，不用推新提交' };
         // Primary/standby C4: App 5368905 had already published on this head (another node or install).
         if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };
+        // DESIGN §78: the run before a failover stopped after its admission check only; attempt 2 runs the head on its own.
+        if (recent.code === 'HEAD_INTERRUPTED_ON_GITHUB') return recent.attempt === 1
+          ? { state: 'pending', description: '上一当班节点的运行被交接中断：自动接着跑（第二次尝试），不用推新提交' }
+          : { state: 'failure', description: '第二次尝试也被交接中断：请推新提交' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };

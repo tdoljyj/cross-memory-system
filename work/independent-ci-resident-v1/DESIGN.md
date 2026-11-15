@@ -5838,3 +5838,12 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - 节点上已经存在的空目录 `state\relay\jwks`：新包不再建它，`migrate-acl` 只增不删，留空目录无害。
 
 **灾备**：`docs/maintenance/independent-ci.md` 原来的“灾备：Owner 临时切换规则集”依赖托管 gitleaks/trivy job，本来就要先激活从未激活的扫描许可策略，入口删除后更走不通，已删；灾备只走主备切换（服务端看门狗自动接班）。`clued-work-admission.yml` 不在本步处理，故障接班实测通过后再删。
+
+## 78. 故障接班：旧当班节点没跑完的提交由新当班节点自动接着跑（分支 `claude/failover-stranded-head`）
+
+- **现场（2026-11-15，PR #1110，head 9ffc459c）。** TURING 当班，第 1 段发布了本次尝试的 `kooyumi-work-admission`（job `6ace81b5…`、`a1`），第 2 段时断网（`REMOTE_REFS_CHANGED_SINCE_BUNDLE`）；看门狗把角色交给 DESK。DESK 对同一 head 的 attempt 1 算出的 job id 相同（身份 = 内容 + 尝试次数，与节点无关），第 1 段回读看到“本 job 自己的准入检查已在 GitHub 上”，按 C4 结束为 `HEAD_PUBLISHED_ON_GITHUB`：烧掉、记为已执行、无第二次尝试，PR 页写“这个提交已有检查，请推新提交”。五个必需检查一直缺，只能推空提交。
+- **根因。** C4 的第 1 段回读把“本 job 本尝试的准入检查”和角色/控制检查算作同一类“已有检查”。前者只说明有一次运行开过头；没有任何角色或控制检查时，这次运行在跑出任何检查之前就中断了，这个 head 实际上没跑过。
+- **修法。** 第 1 段回读（`formal-work-admission-check-v2/publisher.mjs`）分开两种情形：有角色或控制检查（`PUBLISHED_ROLE_CHECK_NAMES`）→ 照旧 `HEAD_PUBLISHED_ON_GITHUB`（最终，不重跑）；只有本尝试自己的准入检查 → 新原因码 `HEAD_INTERRUPTED_ON_GITHUB`。它是暂时性代码（两边 `TRANSIENT_CODES` 同列，失败表一行：烧 attempt 1、`attempt2`、熔断器不计），不写已执行记录；常驻按现有规则排唯一一次 attempt 2，新 job id 的准入是新身份，不和旧检查冲突。PR 页写“上一当班节点的运行被交接中断：自动接着跑（第二次尝试），不用推新提交”；attempt 2 又碰到同样情形则照旧要新提交（没有 attempt 3）。
+- **不变量。** “同一提交同一检查只真跑一次”不变：中断的那次没有发布任何角色检查，所以不算跑过；准入检查本来就按尝试证明（§7.2）。若旧节点复网后还在推进旧批次，两边在角色检查首次发布前都要回读 GitHub（`ROLE_ALREADY_ON_GITHUB`），控制检查要经 Native 准入，不会各发一份。
+- **测试。** `test/failover-stranded-head.test.mjs`：真实 Source 第 1 段发布器 + 真实阶段事实映射，接两个常驻执行器、一个共享 GitHub。A 跑完第 1 段后断线、B 接班 → B 自动跑 attempt 2 到 `COMPLETED`，gitleaks 只发一次（修复前 B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，失败）；A 已跑完 → B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，不重跑。Source 侧 `resident-v2-github-readback.test.mjs` 相应改为两种情形。
+- **旁注。** 同一现场 TURING 复网后的 attempt 2 被 Native 以 `unknown_reason` 拒（`NATIVE_NOT_ADMITTED`，`unmapped-stage-1`，熔断器计数）。本机记录里没有 Native 原始原因；修复后新当班节点不再依赖旧节点的结局。
