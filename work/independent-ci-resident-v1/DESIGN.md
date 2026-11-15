@@ -4445,7 +4445,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   1. 恰好一个开着的、目标为默认分支、来自本仓库的 PR 的 head 正是它，并且 App 5368905 在这个 head 上最新的 `kooyumi-work-admission` 是 completed/success、绑定这个 PR（第 1 段已发出准入；同 `independentAdmissionCheck`）。
   2. 这个 head 的 `clued-required-tests` pull_request 运行全部 completed，没有排队或在跑的尝试。
   3. 这个 head 的任何运行、任何尝试里，除 gate 外没有 job 真跑过（都是 completed/skipped）。
-  4. gate 自己的补跑规则（`repairAllowed`，照搬 #993 的 `independentRepairRerun`）允许下一个尝试：之前每个尝试只跑了 gate，gate 以 `ADMISSION_PENDING`、`RERUN_REFUSED` 或 GitHub 5xx/连不上的 ERROR 结束。手动点过、但什么也没跑的补跑不占这一次。
+  4. gate 自己的补跑规则（`repairAllowed`，照搬 #993 的 `independentRepairRerun`）允许下一个尝试：之前每个尝试只跑了 gate，gate 以 `ADMISSION_PENDING`、`RERUN_REFUSED` 或 GitHub 5xx/连不上的 ERROR 结束。手动点过、但什么也没跑的补跑不占这一次。例外（任务 1b）：唯一一次真跑过的尝试，若其失败的作业全是环境类（只死在 runner 的“Set up job”，或日志有网络失败特征且无任何测试失败，证据规则见 scripts/ci/clued-work-admission.mjs 的 jobFailureKind，resident 在 src/env-failure.mjs 留一份、测试保持一致）且 gate 作业本身成功，也允许这一次整轮重跑；gate 作业死在 “Set up job” 视为没跑过。每个 head 上限一次，来自 GitHub 的记录，不是计数器。
   5. 点之前再读一次：PR 仍开着、仍是这个 head，运行仍是 completed、仍是同一个尝试。
   - 从不点“Re-run failed jobs”或单个 job。新尝试里的 gate 会再判一次，这一侧从来不是放行重型 job 的依据。
 - **最多一次，断流时也不重复。**
