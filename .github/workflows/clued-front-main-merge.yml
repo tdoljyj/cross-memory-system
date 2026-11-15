@@ -35,7 +35,8 @@ permissions:
 jobs:
   merge-main:
     name: clued-front-main-merge
-    runs-on: ubuntu-slim
+    # The self-hosted pool, as clued-native617-admission-dispatch.yml with the same environment (new hosted execution is prohibited).
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 5
     environment: clued-admission
     # One at a time; a second request for the same front reads the state the first one left.

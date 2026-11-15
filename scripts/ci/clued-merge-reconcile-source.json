@@ -96,7 +96,7 @@
 
     ".github/workflows/clued-currentness-post-deploy-attestation.yml": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
 
-    ".github/workflows/clued-front-main-merge.yml": "425f2088c6a2ed2221639e1021d77e4f199bba7371641d16074c4fb0ab1647cb",
+    ".github/workflows/clued-front-main-merge.yml": "554820b905ffeea5f002faacea87cbfca9fc73c98ddbab215d84d6cc6a2c2885",
 
     ".github/workflows/clued-g4-database.yml": "570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d",
 
@@ -610,7 +610,7 @@
 
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
 
-    "scripts/ci/validate_runner_budget_policy.py": "05f33add0981566a0214c8a3fcac38e0c41f11c2dd489a5d2585fb6aac7aa030",
+    "scripts/ci/validate_runner_budget_policy.py": "a915d5d4d2e25a66926928a4abe799088a1a66faa75a4eea24fae1fc90061eb3",
 
     "scripts/runner/clued-runner-job-started.mjs": "c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912",
 

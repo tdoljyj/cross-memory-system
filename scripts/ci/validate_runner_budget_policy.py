@@ -49,9 +49,6 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-merge-executor.yml": (
         "Merge Admission step 5: the independent workflow reports CI before bringing the default branch into the merge queue head and turning on auto-merge or merging it as the clued-admission App, on main push and by hand; the slot report invokes the same executor script inline under the shared job lock; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
-    "clued-front-main-merge.yml": (
-        "Merge train front main merge (resident DESIGN 80): dispatched with one PR and head when the train's front is behind main; update-branch and one attestation check as the clued-admission App, whose key must not reach the self-hosted pool; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
-    ),
     "contract-placement.yml": (
         "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."
     ),
