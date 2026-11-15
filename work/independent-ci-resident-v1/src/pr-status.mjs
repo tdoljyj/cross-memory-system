@@ -362,6 +362,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'HEAD_INTERRUPTED_ON_GITHUB') return recent.attempt === 1
           ? { state: 'pending', description: '上一当班节点的运行被交接中断：自动接着跑（第二次尝试），不用推新提交' }
           : { state: 'failure', description: '第二次尝试也被交接中断：请推新提交' };
+        // DESIGN §79: stage 1's authorization changed between the reads before and after its write; attempt 2 admits the head again.
+        if (recent.code === 'ADMISSION_AUTHORIZATION_CHANGED') return recent.attempt === 1
+          ? { state: 'pending', description: '准入在写入后有变：自动重新准入（第二次尝试），不用推新提交' }
+          : { state: 'failure', description: '第二次准入也在写入后有变：请推新提交' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };

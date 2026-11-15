@@ -28,7 +28,8 @@ export const withdrawnForUnavailability = cause => withdrawalUnavailable(cause);
 //   - an observation that was incomplete or too old on a slow line: the mode or the observer could not be read in time, the Native
 //     observation expired before it was used, or the after-write observation expired before the read-back finished. Pre-write these
 //     are transient too (stage-fact.mjs TRANSPORT_REASONS); a fresh evaluation is all they need.
-// A changed binding, a read-back that disagrees and every other refusal stay final (PUBLICATION_REVOKED).
+// A changed binding is its own transient code at stage 1 (ADMISSION_AUTHORIZATION_CHANGED, resident DESIGN §79: attempt 2 admits the head
+// again); a read-back that disagrees and every other refusal stay final (PUBLICATION_REVOKED).
 export const ADMISSION_REREAD_REASONS = Object.freeze(['full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired',
   'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE']);
 export const admissionVerificationRetryable = (cause, diagnostic = null) => (cause === 'full_admission_unavailable' ? diagnostic?.transport === true : verificationUnavailable(cause))
