@@ -2555,7 +2555,7 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
 ### 29.9 安装与不变量
 
 - 需要先接受新的 Source（它的 `stage-fact.mjs` 变了），再做一次常驻层 Windows 重装，同一次 UAC 里重签 policy 里的 `residentManifestSha256` 和 `ciSourceManifestSha256`。policy 合同不变（`/7`）。
-- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`），所以装的 Source 必须带第 11 段。
+- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`；清理已证明的子进程超时除外，记 uncertain，见 §56.2），所以装的 Source 必须带第 11 段。
 - 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。重启时有批次停在 A、B 也一样：探测不等它们结束（§29.2 第 5 条）。
 - 不增加发布路径，不增加 GitHub 读写，不碰 App 凭据；模式只会让执行器少做事，从不让它多做事。
 
@@ -4373,7 +4373,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 有确定答复（held、not-held）时，照常记账并更新节点模式。记账时存成普通的 `ROLE_PROBE_HELD`（`role-probe.mjs#roleBookFact`），所以上一代读回去也认得。
   - 观察的 uncertain 答复不记进角色账：观察比定时探测频繁得多，一次 90 s 的网络抖动不该让 Owner 收到“连续三次无法确认”；定时探测仍照原样计数。但对熔断器，它和别的探测一样算一次失败（只是打断连续成功的计数，不通知 Owner），网络还在抖时不会凑够提前试跑的条件。
   - 探测途中时钟往回跳了，就不记账。
-  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。
+  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。唯一例外：第 11 段子进程超时（`STAGE_CHILD_TIMEOUT`）而进程树清零、原 runner 已读回停止（两项证明都成立），按 `ROLE_PROBE_UNCERTAIN` 处理：记账、计入熔断器、退避，模式不变，不 HALT，观察答复为 unknown（TURING 2026-11-15 08:13Z 因此误停）。`BROKER_BUSY`、任一证明不成立、`STAGE_OUTCOME_MISSING` 照旧 HALT。
   - 不带观察的探测如果说“观察到队首”，不算事实。
 - **断流。** holders 读不到时，探测回答 `ROLE_PROBE_UNCERTAIN`：不提前尝试，不 HALT，按 `QUEUE_WATCH_FAIL_MS` 退避，批次照原来的退避重试。
 - **效果。**
@@ -5877,3 +5877,11 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **不变量。** “同一提交同一检查只真跑一次”不变：中断的那次没有发布任何角色检查，所以不算跑过；准入检查本来就按尝试证明（§7.2）。若旧节点复网后还在推进旧批次，两边在角色检查首次发布前都要回读 GitHub（`ROLE_ALREADY_ON_GITHUB`），控制检查要经 Native 准入，不会各发一份。
 - **测试。** `test/failover-stranded-head.test.mjs`：真实 Source 第 1 段发布器 + 真实阶段事实映射，接两个常驻执行器、一个共享 GitHub。A 跑完第 1 段后断线、B 接班 → B 自动跑 attempt 2 到 `COMPLETED`，gitleaks 只发一次（修复前 B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，失败）；A 已跑完 → B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，不重跑。Source 侧 `resident-v2-github-readback.test.mjs` 相应改为两种情形。
 - **旁注。** 同一现场 TURING 复网后的 attempt 2 被 Native 以 `unknown_reason` 拒（`NATIVE_NOT_ADMITTED`，`unmapped-stage-1`，熔断器计数）。本机记录里没有 Native 原始原因；修复后新当班节点不再依赖旧节点的结局。
+
+## 79. 第 1 段写后核验：与本 PR 无关的变化不撤回，真的变了由 attempt 2 自动重新准入（分支 `claude/admission-revoke`）
+
+- **现场（2026-11-15，PR #1123，head 0ad88499，认领 96373a88，fence 37）。** Native 的执行准入记录：写前一次 10:32:36.12，写后一次 10:32:46.51；`kooyumi-work-admission` 10:32:40 写入成功，随后以 `NATIVE_AUTHORIZATION_BINDING_CHANGED` 撤回（"Work admission authorization changed"）。常驻结束为最终的 `PUBLICATION_REVOKED`，必需作业 skipped，只能推空提交 9d40b1dc。
+- **根因（生产只读证据）。** 第 1 段 binding 绑合并位的 `state`。该认领 08:32:43 入队，`merge_slot_hard_cap_seconds` 7200，`work_claim_merge_queue_v1` 记 `head_left_at` 10:32:43.64：两次观察之间合并位到硬上限出队，写前 `held`、写后 `missing`（`mergeSlotState`：`merge_slot_until` 已早于写后的 `verified_at`）。main 在 09:33–11:00 没动（tip 未变）；fence/epoch 未变；本 head 的授权 56ee43ba 在 10:31:42 签发、未撤销，两次观察之间没有新的 head 授权；DESK 10:30–10:31 的续租与他 PR 的授权都早于写前观察，不在窗口内。
+- **修法一（不该撤回的不撤回）。** `formal-work-admission-check-v2/publisher.mjs#binding` 的合并位只绑 `ref`、`tip`，不绑 `state`（与扫描角色 `slotBindingFor` 同一规则）：第 1 段准入的结论不依赖合并位，合并位由 `kooyumi-merge-slot` 与第 8 段判定（第 8 段不变）。其余字段（认领代、路径、执行策略、head 授权、模式、Owner 审核、tip、ref）照旧绑定。
+- **修法二（真的变了，系统自动重算）。** `stage-fact.mjs#outcomeFailureCode`：只在第 1 段、原因是 `NATIVE_AUTHORIZATION_BINDING_CHANGED` 的 `REVOKED` 映射为新暂时性码 `ADMISSION_AUTHORIZATION_CHANGED`（两边 `TRANSIENT_CODES` 同列；失败表一行：烧 attempt 1、`attempt2`、熔断器不计）。第 1 段是第一段、它的检查按尝试证明，head 没跑过；常驻按现有规则排唯一一次 attempt 2（新 job id，从新观察准入），不写已执行记录。attempt 2 再撤回就是最终（没有 attempt 3），PR 页要新提交。其它段的撤回、读回不符等仍是 `PUBLICATION_REVOKED`。
+- **测试。** `test/admission-binding-revoke.test.mjs`：真实 Source 第 1 段发布器 + 真实阶段事实映射 + 常驻执行器。合并位写后出队 → `COMPLETED`（修复前 `FAILED_CLEAN`/`PUBLICATION_REVOKED`）；模式在写后变化 → attempt 1 `ADMISSION_AUTHORIZATION_CHANGED`、attempt 2 `COMPLETED`（修复前 `PUBLICATION_REVOKED`、无 attempt 2）；attempt 2 也变 → 最终；其余绑定字段变化照旧撤回；PR 页文案。
