@@ -1,0 +1,73 @@
+{
+  "contract": "clued.independent-ci.fleet-node-prereq-manifest/1",
+  "pending": "sha256 and bytes are pinned by the coordinator for each version from the official file (never computed on a node, never guessed); until then every item is null and bootstrap.ps1 refuses with PREREQ_NOT_PINNED. Open points per item in its own `pending`.",
+  "items": [
+    {
+      "name": "node",
+      "use": "the controller runtime and install.mjs: node.exe must have the record's controllerNodeSha256 (ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32 = node v24.21.0 win-x64 as installed on DESK-W-591, 2026-11-16)",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+      "fileName": "node-v24.21.0-win-x64.zip",
+      "kind": "zip",
+      "sha256": null,
+      "bytes": null,
+      "pending": "pin the zip; also confirm its node.exe is the controllerNodeSha256 binary (the MSI-installed one was measured, not the zip's)"
+    },
+    {
+      "name": "python",
+      "use": "the package's Python tools (rehearse.py, prep.py, first-install.py, generate.py), run with python -I",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+      "fileName": "python-3.12.10-embed-amd64.zip",
+      "kind": "zip",
+      "sha256": null,
+      "bytes": null,
+      "pending": "pin; confirm the embeddable distribution runs every package tool under -I (stdlib only, no site)"
+    },
+    {
+      "name": "git",
+      "use": "bareFromBundle and the rehearsal's bare repository (git.exe under cmd\\)",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip",
+      "fileName": "MinGit-2.55.0.3-64-bit.zip",
+      "kind": "zip",
+      "sha256": null,
+      "bytes": null,
+      "pending": "pin; the asset name follows Git for Windows' MinGit naming for v2.55.0.windows.3 and is to be confirmed on the release page"
+    },
+    {
+      "name": "ubuntu-rootfs",
+      "use": "the resident distribution CluedResident-Linux (wsl --import by first-install-host.ps1)",
+      "url": "https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz",
+      "fileName": "ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz",
+      "kind": "tar.gz",
+      "sha256": null,
+      "bytes": null,
+      "pending": "pin a dated build (not `current`, which moves): the coordinator replaces `current` with the build directory it pinned"
+    },
+    {
+      "name": "actions-runner",
+      "use": "the carrier runner binaries at C:\\ProgramData\\CluedControl\\runner (never registered with GitHub by the first install)",
+      "url": null,
+      "fileName": "actions-runner-win-x64.zip",
+      "kind": "zip",
+      "sha256": null,
+      "bytes": null,
+      "pending": "the version the installed nodes run is not known here (their runner-package.zip sha256 is 1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc, host-baseline.ps1); the coordinator names that release (https://github.com/actions/runner/releases/download/v<ver>/actions-runner-win-x64-<ver>.zip) and pins it"
+    },
+    {
+      "name": "linux-node",
+      "use": "the toolchain node of the resident distribution (/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node): its bin/node must have the role policies' nodeExecutableSha256 (the kit's template roles; bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12 in formal-roles.example.json)",
+      "url": null,
+      "fileName": "node-linux-x64.tar.xz",
+      "kind": "tar.xz",
+      "sha256": null,
+      "bytes": null,
+      "pending": "the node version whose linux-x64 bin/node has that sha256 is not known here; the coordinator names the official tarball (https://nodejs.org/dist/v<ver>/node-v<ver>-linux-x64.tar.xz) and pins it"
+    }
+  ],
+  "aptPins": {
+    "docker.io": null,
+    "containerd": null,
+    "python3.12": null,
+    "git": null
+  },
+  "aptPinsPending": "the Ubuntu 24.04 (noble) package versions linux/first-host-prep.sh installs and holds; docker.io must be a version whose default image store is the classic one (the script also pins it in daemon.json and checks docker info)"
+}

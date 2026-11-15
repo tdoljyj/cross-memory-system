@@ -21,6 +21,7 @@ DRIVER = r'''
 param([string]$Template, [string]$Case, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
@@ -255,6 +256,23 @@ class FleetPins(unittest.TestCase):
         self.assertIn("Get-InstallArgs -NoHeartbeat", early)   # the installer's -PreviewAfterUninstall dry run
         self.assertIn("'  Step-UninstallPreflight\n  $parentAcl = Step-ParentAcl   # r4.1 C2\n  $quiesce = Step-Quiesce\n  $uninstall = Step-Uninstall\n'".strip("'").encode().decode('unicode_escape'), template)
 
+    def test_a_first_install_launcher_has_no_w1_no_old_resident_step_and_the_same_main_region(self):
+        # (first install, PR1 test 3) every old-resident step steps aside on $FleetFirstInstall, from its own first line; the main region
+        # is the reinstall's text (continue.py transforms its lines); the tokens and the Linux steps are the same functions
+        template, generator = TEMPLATE.read_text(encoding='utf-8'), GENERATE.read_text(encoding='utf-8')
+        body = lambda name: template.split('function ' + name + ' ', 1)[1].split('\nfunction ', 1)[0]
+        for name, first in (('Step-WindowsPreflightBeforeLinux', '  if ($FleetFirstInstall) { $W1Restore.armed = $false; Step-FirstInstallPreflight; return }'),
+                            ('Step-FileLocks', '  if ($FleetFirstInstall) { return $null }'), ('Step-UninstallPreflight', '  if ($FleetFirstInstall) { return }'),
+                            ('Step-Quiesce', '  if ($FleetFirstInstall) { return $null }'), ('Step-Uninstall', '  if ($FleetFirstInstall) { return [ordered]@{ firstInstall = $true; keptAt = $null } }')):
+            self.assertEqual(body(name).split('\n')[1].split('   #')[0], first, name)
+        self.assertIn('Remove-FirstInstallCredentials', body('Step-Install'))
+        self.assertIn('Join-Path $FleetFirstInstallDirectory ([string]$w[4])', body('Step-CarryTokens'))
+        self.assertIn("'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1'", body('Step-LinuxRoot'))
+        self.assertNotIn('FleetFirstInstall', template.split('#region main', 1)[1])
+        # pinned only from the plan's firstInstall; a first-install launcher pins no installed Resume door
+        self.assertIn("'$FleetFirstInstall = ' + ('$true' if FIRST else '$null')", generator)
+        self.assertIn("_fq(FLEET and not FIRST and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1')))", generator)
+
     def test_both_ways_run_the_script_with_the_registrars_command_line(self):
         template = TEMPLATE.read_text(encoding='utf-8')
         registrar = (ROOT.parent / 'windows' / 'CompanionTaskRegistrar.cs').read_text(encoding='utf-8')
@@ -392,6 +410,41 @@ class FleetPlanChecks(unittest.TestCase):
             self.assertIn(code, self.run_plan(), (key, code))
             self.scripts = good
 
+    def first_install(self):
+        # (first install, PR1 test 3) the plan rollout/fleet/install.mjs writes for a node without an install receipt: first-install.py's
+        # scripts (A refuses any Linux CI, B names its own status, B-resume is B), no W1, the host preparation's tokens and facts
+        a = ('#!/bin/bash\nDRAFT=0\nW=%s\nO=%s\nBASE=/root/x\nrefuse "NOT_A_FIRST_INSTALL:$p"\n' % (self.wsl(self.ind), self.wsl(self.out))).encode()
+        b = ('#!/bin/bash\nDRAFT=0\nW=%s\nO=%s\nBASE=/root/x\necho LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1\n' % (self.wsl(self.ind), self.wsl(self.out))).encode()
+        self.scripts = {'A': a, 'B': b, 'BResume': b}
+        vhdx = 'C:\\ProgramData\\CluedIndependentCI\\wsl\\D'
+        raw = json.dumps({'contract': 'clued.independent-ci.first-install-facts/1', 'node': self.node, 'operatorSid': self.OPERATOR,
+                          'companionWsl': {'distribution': 'D', 'vhdxDirectory': vhdx}}).encode()
+        (self.d / 'first-install').mkdir(exist_ok=True); (self.d / 'first-install' / 'facts.json').write_bytes(raw)
+        cred = 'C:\\ProgramData\\CluedIndependentCI\\first-install\\credentials\\'
+        def change(plan):
+            plan.update(firstInstall={'factsSha256': hashlib.sha256(raw).hexdigest(), 'operatorSid': self.OPERATOR, 'wslVhdxDirectory': vhdx, 'kitSha256': '9' * 64},
+                        expectedInstalledLinux=None, w1Paused=None, reasons={'pause': 'fleet-node-reinstall-x', 'rearm': 'fleet-node-reinstall-x'},
+                        secrets={'source': 'first-install', 'upgradeToken': {'target': cred + 'resident-upgrade.token', 'fingerprint': '7' * 64}, 'heartbeatToken': None})
+        return change
+
+    def test_a_first_install_plan_passes_every_plan_check_without_an_installed_resident(self):
+        fi = self.first_install()
+        self.assertIn('RUNNER_SERVICE_FACTS_UNREADABLE', self.run_plan(fi))
+        self.assertIn('RUNNER_SERVICE_FACTS_UNREADABLE', self.run_plan(fi, check=True))
+        both = lambda extra: (lambda p: (fi(p), extra(p)))
+        for extra, code in ((lambda p: p.update(w1Paused={'sha256': '3' * 64, 'reason': 'x'}), 'FLEET_PLAN_W1_PAUSED'),
+                            (lambda p: p['reasons'].update(w1Pause='fleet-node-reinstall-x-w1'), 'FLEET_PLAN_REASONS'),
+                            (lambda p: p['secrets'].update(source='installed'), 'FLEET_PLAN_SECRETS'),
+                            (lambda p: p['secrets']['upgradeToken'].update(target=str(self.live / 'secrets' / 'resident-upgrade.token')), 'FLEET_PLAN_FIRST_INSTALL_SHAPE'),
+                            (lambda p: p.update(expectedInstalledLinux={'generation': 3, 'manifestSha256': '6' * 64, 'ciSourceManifestSha256': '5' * 64}), 'FLEET_PLAN_FIRST_INSTALL_SHAPE'),
+                            (lambda p: p['firstInstall'].update(factsSha256='e' * 64), 'FIRST_INSTALL_FACTS_NOT_THE_PLANS'),
+                            (lambda p: p['firstInstall'].update(operatorSid='S-1-5-21-1-2-3-1009'), 'FIRST_INSTALL_FACTS_NOT_THE_PLANS'),
+                            (lambda p: p['firstInstall'].pop('kitSha256'), 'FLEET_PLAN_FIRST_INSTALL')):
+            self.assertIn(code, self.run_plan(both(extra)), code)
+        # a reinstall's scripts (they compare an installed Linux generation) are not a first install's
+        fi = self.first_install(); self.scripts = {k: self.script() for k in ('A', 'B', 'BResume')}
+        self.assertIn('FLEET_SCRIPTS_NOT_FIRST_INSTALL_SCRIPTS', self.run_plan(fi))
+
     def test_companion_account_exactly_as_the_node_records_it(self):
         self.assertIn('FLEET_PLAN_COMPANION_ACCOUNT_NOT_AS_INSTALLED', self.run_plan(lambda p: p.update(companionAccount=True)))
         yes = self.companion()
@@ -441,6 +494,7 @@ TOKEN_DRIVER = r"""
 param([string]$Template, [string]$Case, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
@@ -459,6 +513,7 @@ $CarryParent = Join-Path $Work 'ci-root'; [void][IO.Directory]::CreateDirectory(
 $CarriedTokens = [ordered]@{ directory = $null; tokens = @(); removed = $null }
 $UpgradeTokenTarget = $c.upgradeTarget; $HeartbeatTokenTarget = $c.heartbeatTarget
 $FleetUpgradeTokenFingerprint = $c.upgradeFingerprint; $FleetHeartbeatTokenFingerprint = $c.heartbeatFingerprint
+if (@($c.PSObject.Properties.Name) -contains 'firstInstallDirectory' -and $c.firstInstallDirectory) { $FleetFirstInstall = $true; $FleetFirstInstallDirectory = $c.firstInstallDirectory }   # a first install's pins
 function Stop-Launch([string]$code, $detail) { $script:stopped = [ordered]@{ code = $code; detail = $detail }; throw $code }
 $script:stopped = $null; $got = $null
 try { $got = Step-CarryTokens } catch { if (-not $script:stopped) { throw } }
@@ -485,7 +540,7 @@ class CarriedTokens(unittest.TestCase):
         domain = {'ci-token': 'clued.independent-ci.ci-binding-pin/1\0', 'heartbeat-token': 'clued.independent-ci.heartbeat-token-pin/1\0'}[kind]
         return hashlib.sha256((domain + token.strip()).encode()).hexdigest()
 
-    def carry(self, upgrade=None, heartbeat=None, pins=None, with_heartbeat=True, remove=False):
+    def carry(self, upgrade=None, heartbeat=None, pins=None, with_heartbeat=True, remove=False, first_install=False):
         upgrade = (self.UPGRADE + '\n').encode() if upgrade is None else upgrade
         heartbeat = self.HEARTBEAT.encode() if heartbeat is None else heartbeat
         with tempfile.TemporaryDirectory(prefix='carry-') as directory:
@@ -495,7 +550,14 @@ class CarriedTokens(unittest.TestCase):
             if heartbeat is not False:
                 (secrets / 'heartbeat' / 'ci-node-heartbeat.token').write_bytes(heartbeat)
             case = {'upgradeTarget': str(secrets / 'resident-upgrade.token'), 'heartbeatTarget': str(secrets / 'heartbeat' / 'ci-node-heartbeat.token'),
-                    'upgradeFingerprint': self.fingerprint('ci-token', self.UPGRADE), 'heartbeatFingerprint': self.fingerprint('heartbeat-token', self.HEARTBEAT) if with_heartbeat else None, 'remove': remove}
+                    'upgradeFingerprint': self.fingerprint('ci-token', self.UPGRADE), 'heartbeatFingerprint': self.fingerprint('heartbeat-token', self.HEARTBEAT) if with_heartbeat else None, 'remove': remove,
+                    'firstInstallDirectory': None}
+            if first_install:   # the host preparation's directory holds the two tokens under the names the carry gives them; nothing is installed
+                cred = root / 'first-install' / 'credentials'; cred.mkdir(parents=True)
+                for src in (secrets / 'resident-upgrade.token', secrets / 'heartbeat' / 'ci-node-heartbeat.token'):
+                    if src.exists():
+                        (cred / src.name).write_bytes(src.read_bytes()); src.unlink()
+                case['firstInstallDirectory'] = str(cred)
             case.update(pins or {})
             (root / 'driver.ps1').write_text(TOKEN_DRIVER, encoding='utf-8')
             (root / 'case.json').write_text(json.dumps(case), encoding='utf-8')
@@ -515,6 +577,17 @@ class CarriedTokens(unittest.TestCase):
         self.assertEqual((r['carry']['tokens'], r['carry']['removed'], r['done']), (['upgradeToken', 'heartbeatToken'], None, ['tokens-carried']))
         self.assertEqual(r['acl'], 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + r['me'] + ')')   # protected: the directory's own DACL only
         self.assertEqual((r['removedAfter'], r['leftAfter']), (True, 0))
+
+    def test_a_first_install_carries_the_host_preparations_tokens_by_the_same_rules(self):
+        # (first install, PR1 test 3) the tokens come from the host preparation's credentials directory, the installed targets do not
+        # exist; copied, fingerprint-checked against the plan's pins and handed to the installer exactly as a reinstall's installed ones
+        r, upgrade, heartbeat = self.carry(remove=True, first_install=True)
+        self.assertIsNone(r['stopped'])
+        self.assertEqual({k: (v['leaf'], v['sha256']) for k, v in r['copies'].items()}, {'upgradeToken': ('resident-upgrade.token', hashlib.sha256(upgrade).hexdigest()),
+                                                                                          'heartbeatToken': ('ci-node-heartbeat.token', hashlib.sha256(heartbeat).hexdigest())})
+        self.assertEqual((r['removedAfter'], r['leftAfter']), (True, 0))
+        r, _, _ = self.carry(first_install=True, upgrade=('clued' + '_bnd_' + 'Z' * 40).encode())
+        self.assertEqual((r['stopped']['code'], r['stopped']['detail']['token'], r['left']), ('CARRIED_TOKEN_FINGERPRINT_MISMATCH', 'upgradeToken', []))
 
     def test_a_node_without_a_heartbeat_token_carries_only_the_upgrade_token(self):
         r, _, _ = self.carry(with_heartbeat=False, heartbeat=False)
@@ -557,6 +630,7 @@ CLEANUP_DRIVER = r"""
 param([string]$Template, [string]$Case, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
@@ -580,6 +654,7 @@ $CarriedTokens = [ordered]@{ directory = $null; tokens = @(); removed = $null; r
 $SourceSha = 'a' * 40; $PackageHead = 'b' * 40
 $UpgradeTokenTarget = $c.upgradeTarget; $HeartbeatTokenTarget = $c.heartbeatTarget
 $FleetUpgradeTokenFingerprint = $c.upgradeFingerprint; $FleetHeartbeatTokenFingerprint = $c.heartbeatFingerprint
+if (@($c.PSObject.Properties.Name) -contains 'firstInstallDirectory' -and $c.firstInstallDirectory) { $FleetFirstInstall = $true; $FleetFirstInstallDirectory = $c.firstInstallDirectory }   # a first install's pins
 $W1Restore = [ordered]@{ armed = $false; result = $null }; $FleetOutDir = $(if ($c.ownOut) { Join-Path $CarryParent $c.ownOut } else { $null })
 $thrown = $null; $sweep = $null; $during = $null
 if ($c.mode -ceq 'sweep') {
@@ -725,6 +800,7 @@ RECORDS_DRIVER = r"""
 param([string]$Template, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $text = [IO.File]::ReadAllText($Template)
 $m = [regex]::Match($text, '(?s)\n(\$Progress = @\{.*?\.GetNewClosure\(\)\))\r?\n')
@@ -801,6 +877,7 @@ PROBE_DRIVER = r"""
 param([string]$Template, [string]$Case, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $fx = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null

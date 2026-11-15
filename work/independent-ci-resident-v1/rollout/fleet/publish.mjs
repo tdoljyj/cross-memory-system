@@ -2,11 +2,22 @@
 //
 //   node rollout/fleet/publish.mjs release --dir <universal.mjs build out> --repo <owner/name> [--index <index file>]
 //   node rollout/fleet/publish.mjs attach-acceptance --version <v> --acceptance <fleet-node-<v>.acceptance.json> [--repo <owner/name>] [--index <index file>] [--dir <build out>]
+//   node rollout/fleet/publish.mjs attach-first-install-kit --version <v> --kit <fleet-node-<v>.first-install-kit.json> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>]
 //
 // release: the build output is checked first (exactly one fleet-node-<v>.release.json, its tar with the sha256 it names, SHA256SUMS naming
 //   both). The index must not name this version yet (an absent index is created with its header). Then
 //   gh release create fleet-node-<v> <tar> <release.json> SHA256SUMS --repo <repo> --target <commit> ..., gh release view checks the
 //   three assets by name and size, and only after that one row is appended: | version | Release URL | tar sha256 | commit | | |.
+//   Two more assets are the node entry of a first install (rollout/fleet/bootstrap.ps1 and prereq-manifest.json), taken from the
+//   checked archive itself (never a working-tree copy: the bytes the Owner accepts) as fleet-node-<v>.bootstrap.ps1 and
+//   fleet-node-<v>.prereq-manifest.json; the published SHA256SUMS is the build's two lines plus these two (written into a new temporary
+//   directory; the build output is not changed). An archive without them is refused before gh is called.
+// attach-first-install-kit: the coordinator's first-install kit (install.mjs first-install-kit, contract
+//   clued.independent-ci.fleet-node-first-install-kit/1) and the role images it lists as local (images.local[].{id, asset}: each
+//   asset role-image-<64hex>.tar.gz, a gzip of the template node's docker save; exactly those, no more, no fewer), uploaded one by one
+//   without --clobber, then fleet-node-<v>.first-install.SHA256SUMS over them (the release's SHA256SUMS was published with the release
+//   and is never replaced). A release that already has the kit or that sums file is refused before anything is uploaded. The index is
+//   not changed: the kit is not an acceptance.
 // attach-acceptance: the Owner's acceptance file (contract clued.independent-ci.fleet-node-acceptance/1) is checked against the index
 //   row of that version (archive_sha256 and commit; with --dir also against the build's release.json), its whole contract as
 //   install.mjs prepare reads it (validateAcceptance: repository = --repo, ciSourceManifestSha256, fleetRefs); its file name must be
@@ -19,13 +30,21 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import os from 'node:os';
+import { RESIDENT } from './facts.mjs';
 import { validateAcceptance } from './install.mjs';
+import { readTar } from './tar.mjs';
 import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_INDEX = 'G:\\我的云端硬盘\\Clued_资料中心\\10_E_工程与平台\\CI基础设施\\通用节点包_归档索引.md';
 export const INDEX_HEADER = ['版本', 'Release', 'tar sha256', 'commit', '接受时间', 'Decision'];
+export const KIT_CONTRACT = 'clued.independent-ci.fleet-node-first-install-kit/1';
+// the node entry of a first install, in the archive's tree: published asset name suffix -> archive path
+export const NODE_ENTRY = Object.freeze({ 'bootstrap.ps1': `tree/${RESIDENT}/rollout/fleet/bootstrap.ps1`, 'prereq-manifest.json': `tree/${RESIDENT}/rollout/fleet/prereq-manifest.json` });
+const ROLE_IMAGE = /^role-image-([0-9a-f]{64})\.tar\.gz$/;
+const sumsText = pairs => [...pairs].sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0]))).map(([n, h]) => `${h}  ${n}\n`).join('');
 const sha = b => createHash('sha256').update(b).digest('hex');
 const fail = (code, detail) => { throw Object.assign(new Error(detail === undefined ? code : `${code} ${JSON.stringify(detail)}`), { code, detail }); };
 const check = (ok, code, detail) => { if (!ok) fail(code, detail); };
@@ -46,7 +65,25 @@ export async function readBuild(dir) {
   const sums = (await fs.readFile(path.join(dir, 'SHA256SUMS'))).toString('utf8');
   const want = [[release.archive.name, s.archive_sha256], [releases[0], sha(releaseBytes)]].map(([n, h]) => `${h}  ${n}`).sort();
   check(sums.split('\n').filter(Boolean).sort().join('\n') === want.join('\n'), 'PUBLISH_SHA256SUMS_MISMATCH');
-  return { release, assets: [release.archive.name, releases[0], 'SHA256SUMS'].map(n => ({ name: n, file: path.join(dir, n) })) };
+  return { release, tarBytes, sums, assets: [release.archive.name, releases[0], 'SHA256SUMS'].map(n => ({ name: n, file: path.join(dir, n) })) };
+}
+
+// The node entry assets from the checked archive, and the SHA256SUMS that lists them with the build's two files, in a new directory.
+export async function stageNodeEntry({ release, tarBytes, sums }, stage) {
+  const tag = tagOf(release.source.version);
+  const byPath = new Map(readTar(tarBytes).map(e => [e.path, e.data]));
+  const out = [];
+  const lines = sums.split('\n').filter(Boolean).map(l => { const i = l.indexOf('  '); return [l.slice(i + 2), l.slice(0, i)]; });
+  for (const [suffix, at] of Object.entries(NODE_ENTRY)) {
+    const data = byPath.get(at);
+    check(data !== undefined, 'PUBLISH_ARCHIVE_LACKS_NODE_ENTRY', at);
+    const name = `${tag}.${suffix}`;
+    await fs.writeFile(path.join(stage, name), data, { flag: 'wx' });
+    out.push({ name, file: path.join(stage, name) });
+    lines.push([name, sha(data)]);
+  }
+  await fs.writeFile(path.join(stage, 'SHA256SUMS'), sumsText(lines), { flag: 'wx' });
+  return { sums: { name: 'SHA256SUMS', file: path.join(stage, 'SHA256SUMS') }, entry: out };
 }
 
 function gh(ghCommand, args) {
@@ -93,10 +130,20 @@ function viewRelease(ghCommand, repo, tag) {
 
 export async function publish({ dir, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'] }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
-  const { release, assets } = await readBuild(dir);
-  const s = release.source;
+  const build = await readBuild(dir);
+  const s = build.release.source;
   const idx = await readIndex(index);
   check(findRow(idx.lines, s.version) < 0, 'PUBLISH_INDEX_ALREADY_HAS_VERSION', s.version);
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-publish-'));
+  try {
+    const { sums, entry } = await stageNodeEntry(build, stage);
+    return await publishAssets({ ghCommand, repo, index, idx, s, assets: [build.assets[0], build.assets[1], sums, ...entry] });
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+  }
+}
+
+async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
   for (const a of assets) await fs.access(a.file);
   const notes = [`Universal node package ${s.version} (commit ${s.commit}).`, `archive_sha256 ${s.archive_sha256}`,
     `resident_manifest_sha256 ${s.resident_manifest_sha256}`,
@@ -157,10 +204,50 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   return { status: 'FLEET_ACCEPTANCE_ATTACHED', tag, url: v.url, version, acceptedAt: a.acceptedAt, cluedDecision: a.cluedDecision, indexLine: idx.lines[at] };
 }
 
+// The first-install kit and the local role images it names, then one sums file over them (see the head of this file).
+export async function attachFirstInstallKit({ version, kit, images = [], repo = DEFAULT_REPO, ghCommand = ['gh'] }) {
+  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
+  check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
+  const tag = tagOf(version);
+  check(path.basename(kit) === `${tag}.first-install-kit.json`, 'FIRST_INSTALL_KIT_FILE_NAME_REFUSED', path.basename(kit));
+  const kitBytes = await fs.readFile(kit);
+  let k;
+  try { k = JSON.parse(kitBytes.toString('utf8')); } catch { fail('FIRST_INSTALL_KIT_NOT_JSON'); }
+  check(k?.contract === KIT_CONTRACT, 'FIRST_INSTALL_KIT_CONTRACT_REFUSED');
+  const local = Array.isArray(k.images?.local) ? k.images.local : null;
+  check(local && local.every(i => /^[0-9a-f]{64}$/.test(i?.id ?? '') && i.asset === `role-image-${i.id}.tar.gz`), 'FIRST_INSTALL_KIT_IMAGES_REFUSED');
+  const given = [];
+  for (const f of images) {
+    const m = ROLE_IMAGE.exec(path.basename(f));
+    check(m, 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED', path.basename(f));
+    given.push({ id: m[1], file: f, bytes: await fs.readFile(f) });
+  }
+  const want = [...new Set(local.map(i => i.id))].sort(), have = given.map(g => g.id).sort();
+  check(want.length === have.length && want.every((x, i) => x === have[i]), 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS', { kit: want, given: have });
+  const sumsName = `${tag}.first-install.SHA256SUMS`;
+  const before = viewRelease(ghCommand, repo, tag);
+  check(!before.assets.some(a => a.name === sumsName || a.name === path.basename(kit)), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED', tag);
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-kit-'));
+  try {
+    const sumsFile = path.join(stage, sumsName);
+    await fs.writeFile(sumsFile, sumsText([[path.basename(kit), sha(kitBytes)], ...given.map(g => [path.basename(g.file), sha(g.bytes)])]), { flag: 'wx' });
+    const uploads = [{ file: kit, size: kitBytes.length }, ...given.map(g => ({ file: g.file, size: g.bytes.length })), { file: sumsFile, size: (await fs.stat(sumsFile)).size }];
+    for (const u of uploads) {
+      const up = gh(ghCommand, ['release', 'upload', tag, u.file, '--repo', repo]);
+      check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: path.basename(u.file), stderr: up.stderr });
+    }
+    const v = viewRelease(ghCommand, repo, tag);
+    for (const u of uploads) check(v.assets.some(x => x.name === path.basename(u.file) && x.size === u.size), 'PUBLISH_RELEASE_ASSET_MISSING', path.basename(u.file));
+    return { status: 'FLEET_FIRST_INSTALL_KIT_ATTACHED', tag, url: v.url, version, kitSha256: sha(kitBytes), images: have, sums: sumsName };
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+  }
+}
+
 export async function main(argv) {
   const [sub, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
-    version: { type: 'string' }, acceptance: { type: 'string' } } });
+    version: { type: 'string' }, acceptance: { type: 'string' }, kit: { type: 'string' }, image: { type: 'string', multiple: true } } });
   check(positionals.length === 0, 'USAGE');
   const only = (...allowed) => check(Object.keys(values).every(k => allowed.includes(k)), 'USAGE');
   if (sub === 'release') {
@@ -170,6 +257,10 @@ export async function main(argv) {
   if (sub === 'attach-acceptance') {
     only('version', 'acceptance', 'repo', 'index', 'dir'); check(values.version && values.acceptance, 'USAGE');
     return attachAcceptance({ version: values.version, acceptance: values.acceptance, repo: values.repo, index: values.index, dir: values.dir });
+  }
+  if (sub === 'attach-first-install-kit') {
+    only('version', 'kit', 'image', 'repo'); check(values.version && values.kit, 'USAGE');
+    return attachFirstInstallKit({ version: values.version, kit: values.kit, images: values.image ?? [], repo: values.repo });
   }
   return fail('USAGE');
 }

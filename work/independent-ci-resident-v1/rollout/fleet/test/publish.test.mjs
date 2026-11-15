@@ -7,13 +7,19 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { attachAcceptance, main, publish } from '../publish.mjs';
+import { attachAcceptance, attachFirstInstallKit, main, publish } from '../publish.mjs';
+import { writeTar } from '../tar.mjs';
 
 const sha = b => createHash('sha256').update(b).digest('hex');
 const VERSION = '2026.11.12-1', TAG = `fleet-node-${VERSION}`, COMMIT = 'a1'.repeat(20);
+const FLEET = 'tree/work/independent-ci-resident-v1/rollout/fleet/';
+const BOOTSTRAP = Buffer.from('# bootstrap.ps1 of the accepted commit\r\nparam([string]$From)\r\n');
+const PREREQ = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-prereq-manifest/1', items: [] }) + '\n');
 
 // Records its argv and whether a token variable reached it; "release view" answers from what "release create" uploaded.
 const FAKE_GH = `import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+const asset = f => { const b = fs.readFileSync(f), name = f.split(/[\\\\/]/).pop(); return { name, size: b.length, sha256: createHash('sha256').update(b).digest('hex'), ...(name.endsWith('SHA256SUMS') ? { text: b.toString('utf8') } : {}) }; };
 const state = process.env.FAKE_GH_STATE;
 const log = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { calls: [], assets: [] };
 const args = process.argv.slice(2);
@@ -21,10 +27,10 @@ log.calls.push({ args, tokenSeen: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TO
 if (process.env.FAKE_GH_FAIL === '1') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 422: fake failure'); process.exit(1); }
 if (args[0] === 'release' && args[1] === 'create') {
   const files = args.slice(3, args.indexOf('--repo'));
-  log.assets = files.map(f => ({ name: f.split(/[\\\\/]/).pop(), size: fs.statSync(f).size }));
+  log.assets = files.map(asset);
   console.log('https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2]);
 }
-if (args[0] === 'release' && args[1] === 'upload') log.assets.push({ name: args[3].split(/[\\\\/]/).pop(), size: fs.statSync(args[3]).size });
+if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]));
 if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: log.assets }));
 fs.writeFileSync(state, JSON.stringify(log));
 `;
@@ -34,7 +40,9 @@ async function world(t) {
   t.after(() => fs.rm(d, { recursive: true, force: true }));
   const out = path.join(d, 'out');
   await fs.mkdir(out);
-  const tar = Buffer.from('not really a tar, only its bytes matter here\n');
+  // the archive carries the commit's bootstrap.ps1 and prereq-manifest.json: publish takes those bytes, never a working-tree copy
+  const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: `${FLEET}prereq-manifest.json`, data: PREREQ },
+    { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
   const source = { version: VERSION, release_tag: TAG, archive_sha256: sha(tar), commit: COMMIT, resident_manifest_sha256: '2'.repeat(64),
     source_manifest_sha256: '3'.repeat(64), upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
   const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) } }, null, 1) + '\n');
@@ -54,7 +62,8 @@ async function world(t) {
     finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   };
   const calls = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).calls; } catch { return []; } };
-  return { d, out, tar, source, index, run, calls };
+  const assets = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).assets; } catch { return []; } };
+  return { d, out, tar, source, index, run, calls, assets, fake };
 }
 
 test('publish: gh release create <tag> <assets> --target <commit>, without any token variable; then one index line', async t => {
@@ -64,7 +73,16 @@ test('publish: gh release create <tag> <assets> --target <commit>, without any t
   assert.equal(r.url, `https://github.com/tdoljyj/cross-memory-system/releases/tag/${TAG}`);
   const [create, view] = await w.calls();
   assert.deepEqual(create.args.slice(0, 3), ['release', 'create', TAG]);
-  assert.deepEqual(create.args.slice(3, 6).map(f => path.basename(f)), [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS']);
+  assert.deepEqual(create.args.slice(3, 8).map(f => path.basename(f)), [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`]);
+  // the two node-entry assets are the archive's bytes; the published SHA256SUMS lists the four others (the build's two lines kept)
+  const up = Object.fromEntries((await w.assets()).map(a => [a.name, a]));
+  assert.equal(up[`${TAG}.bootstrap.ps1`].sha256, sha(BOOTSTRAP));
+  assert.equal(up[`${TAG}.prereq-manifest.json`].sha256, sha(PREREQ));
+  const sums = up.SHA256SUMS.text.split('\n').filter(Boolean);
+  assert.deepEqual(sums.map(l => l.split('  ')[1]), [`${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`, `${TAG}.release.json`, `${TAG}.tar`], 'sorted by name');
+  for (const l of sums) { const [h, n] = l.split('  '); assert.equal(h, up[n].sha256, n); }
+  assert.equal(up[`${TAG}.tar`].sha256, sha(w.tar));
+  assert.equal((await fs.readFile(path.join(w.out, 'SHA256SUMS'), 'utf8')).split('\n').filter(Boolean).length, 2, 'the build output is not changed');
   assert.equal(create.args[create.args.indexOf('--repo') + 1], 'tdoljyj/cross-memory-system');
   assert.equal(create.args[create.args.indexOf('--target') + 1], COMMIT);
   assert.deepEqual(create.tokenSeen, [], 'gh uses only its own login');
@@ -174,7 +192,77 @@ test('attach-acceptance refuses a file that is not this release, and leaves inde
   assert.equal((await w.calls()).length, n);
 });
 
-test('main: only the two subcommands, with their own options', async () => {
+test('publish refuses an archive without the node entry (bootstrap.ps1, prereq-manifest.json) before gh is called', async t => {
+  const w = await world(t);
+  const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
+  const rel = JSON.parse(await fs.readFile(path.join(w.out, `${TAG}.release.json`), 'utf8'));
+  rel.source.archive_sha256 = sha(tar); rel.archive = { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) };
+  const rb = Buffer.from(JSON.stringify(rel, null, 1) + '\n');
+  await fs.writeFile(path.join(w.out, `${TAG}.tar`), tar);
+  await fs.writeFile(path.join(w.out, `${TAG}.release.json`), rb);
+  await fs.writeFile(path.join(w.out, 'SHA256SUMS'), `${sha(rb)}  ${TAG}.release.json\n${sha(tar)}  ${TAG}.tar\n`);
+  await assert.rejects(w.run(), { code: 'PUBLISH_ARCHIVE_LACKS_NODE_ENTRY' });
+  assert.equal((await w.calls()).length, 0);
+});
+
+const IMAGE = 'c'.repeat(64);
+async function kitWorld(t) {
+  const w = await world(t);
+  await w.run();
+  const kit = path.join(w.d, `${TAG}.first-install-kit.json`);
+  await fs.writeFile(kit, JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }] } }));
+  const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
+  await fs.writeFile(image, Buffer.from('gzip of a docker save'));
+  const saved = { ...process.env };
+  process.env.FAKE_GH_STATE = path.join(w.d, 'gh-state.json');
+  process.env.GH_TOKEN = 'fake-token-value-for-the-test';
+  t.after(() => { for (const k of ['FAKE_GH_STATE', 'GH_TOKEN']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  const attach = (over = {}) => attachFirstInstallKit({ version: VERSION, kit, images: [image], ghCommand: [process.execPath, w.fake], ...over });
+  return { ...w, kit, image, attach };
+}
+
+test('attach-first-install-kit: the kit, its local role images and one sums file over them, each uploaded without --clobber; a second time refused', async t => {
+  const w = await kitWorld(t);
+  const before = (await w.calls()).length;
+  const r = await w.attach();
+  assert.equal(r.status, 'FLEET_FIRST_INSTALL_KIT_ATTACHED');
+  const calls = (await w.calls()).slice(before);
+  const uploads = calls.filter(c => c.args[1] === 'upload');
+  assert.deepEqual(uploads.map(c => path.basename(c.args[3])), [`${TAG}.first-install-kit.json`, `role-image-${IMAGE}.tar.gz`, `${TAG}.first-install.SHA256SUMS`]);
+  for (const c of uploads) { assert.equal(c.args[2], TAG); assert.ok(!c.args.includes('--clobber')); assert.deepEqual(c.tokenSeen, []); }
+  const sums = (await w.assets()).find(a => a.name === `${TAG}.first-install.SHA256SUMS`).text.split('\n').filter(Boolean);
+  assert.deepEqual(sums.sort(), [`${sha(await fs.readFile(w.image))}  role-image-${IMAGE}.tar.gz`, `${sha(await fs.readFile(w.kit))}  ${TAG}.first-install-kit.json`].sort());
+  const n = (await w.calls()).length;
+  await assert.rejects(w.attach(), { code: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED' });
+  assert.equal((await w.calls()).length, n + 1, 'only the view, nothing uploaded');
+});
+
+test('attach-first-install-kit refuses a kit and images that do not name each other, a wrong name, another version', async t => {
+  const w = await kitWorld(t);
+  const n = (await w.calls()).length;
+  const other = path.join(w.d, `role-image-${'d'.repeat(64)}.tar.gz`);
+  await fs.writeFile(other, 'x');
+  await assert.rejects(w.attach({ images: [] }), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS' });
+  await assert.rejects(w.attach({ images: [w.image, other] }), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS' });
+  await assert.rejects(w.attach({ images: [other] }), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS' });
+  const badName = path.join(w.d, 'kit.json');
+  await fs.copyFile(w.kit, badName);
+  await assert.rejects(w.attach({ kit: badName }), { code: 'FIRST_INSTALL_KIT_FILE_NAME_REFUSED' });
+  const badContract = path.join(w.d, 'sub', `${TAG}.first-install-kit.json`);
+  await fs.mkdir(path.dirname(badContract));
+  await fs.writeFile(badContract, JSON.stringify({ contract: 'x' }));
+  await assert.rejects(w.attach({ kit: badContract }), { code: 'FIRST_INSTALL_KIT_CONTRACT_REFUSED' });
+  const imgName = path.join(w.d, 'image.tar.gz');
+  await fs.copyFile(w.image, imgName);
+  await assert.rejects(w.attach({ images: [imgName] }), { code: 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED' });
+  await assert.rejects(w.attach({ version: '2026.11.12-9' }), { code: 'FIRST_INSTALL_KIT_FILE_NAME_REFUSED' });
+  await assert.rejects(w.attach({ repo: 'bad repo' }), { code: 'PUBLISH_REPO_REFUSED' });
+  assert.equal((await w.calls()).length, n, 'refused before gh');
+});
+
+test('main: only the three subcommands, with their own options', async () => {
+  await assert.rejects(main(['attach-first-install-kit', '--version', '1']), { code: 'USAGE' });
+  await assert.rejects(main(['attach-first-install-kit', '--version', '1', '--kit', 'k', '--acceptance', 'a']), { code: 'USAGE' });
   await assert.rejects(main([]), { code: 'USAGE' });
   await assert.rejects(main(['--dir', 'x', '--repo', 'a/b', '--index', 'i']), { code: 'USAGE' });
   await assert.rejects(main(['release', '--dir', 'x']), { code: 'USAGE' });

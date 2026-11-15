@@ -18,6 +18,17 @@ package's record signers.json (the reviewed package; its SHA-256 is the payloads
 
   python -I first-install.py <config.json> <commit40> <package-dir> <out-suffix> <in-dir-name> <template-roles-dir> <template-version-facts.json>
       [<the in-dir's path on the node as its WSL sees it, when the in-dir is copied there; default: this machine's /mnt path>]
+
+The generic node package's first install (rollout/fleet/install.mjs prepare on a node without an install receipt; one UAC, the elevated
+launcher runs the scripts): --in-dir/--out-dir as prep.py's (the scripts read only <in-dir> and write their evidence, version facts and
+review copies only to <out-dir>, which the launcher makes), the template from the version's first-install kit:
+  python -I first-install.py <config.json> <commit40> <package-dir> <out-suffix> --in-dir <Windows path> --out-dir <Windows path>
+      --template <roles dir> --template-facts <version facts> --template-public <the template's public key PEM>
+Then the scripts are <workDir>/linux/A.sh, B.sh and B-resume.sh (B again: B continues where it stopped), take no argument and need no
+clean-environment variable (the registrar's fixed environment has none; the dirty-environment check stays); B ends with the launcher's
+contract: the evidence (linux-live-manifest.<UTC>.txt) and version facts (linux-version-facts.<UTC>.json) in <out-dir> and
+{"status":"LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1","evidence":...,"versionFacts":...}. Every local role image's
+archive must be in <in-dir>/images (the version's role-image asset): no script is written that would wait for one.
 """
 import datetime, hashlib, json, os, re, shlex, shutil, sys
 
@@ -30,18 +41,42 @@ def _load(name, path):
     mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
     return mod
 rconfig = _load('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
-CFG = rconfig.load(sys.argv[1])
+ARGV = list(sys.argv)
+def _take(flag):
+    if flag not in ARGV:
+        return None
+    i = ARGV.index(flag); v = ARGV[i + 1]; del ARGV[i:i + 2]
+    return v
+IN_DIR, OUT_DIR = _take('--in-dir'), _take('--out-dir')
+T_DIR, T_FACTS, T_PUBLIC = _take('--template'), _take('--template-facts'), _take('--template-public')
+FLEET = IN_DIR is not None
+assert (not FLEET and OUT_DIR is None and T_DIR is None) or (FLEET and None not in (OUT_DIR, T_DIR, T_FACTS, T_PUBLIC) and len(ARGV) == 5), 'FLEET_ARGUMENTS_GO_TOGETHER'
+CFG = rconfig.load(ARGV[1])
 rconfig.need_first_install_linux(CFG)
 R = CFG['workDir']
-COMMIT, PKG, SUFFIX, IN_NAME, TEMPLATE, TFACTS = sys.argv[2:8]
+if FLEET:
+    COMMIT, PKG, SUFFIX = ARGV[2:5]
+    IN_NAME, TEMPLATE, TFACTS = None, T_DIR, T_FACTS
+else:
+    COMMIT, PKG, SUFFIX, IN_NAME, TEMPLATE, TFACTS = ARGV[2:8]
+    assert re.fullmatch(r'[A-Za-z0-9._-]{1,64}', IN_NAME) and IN_NAME not in ('.', '..'), 'IN_DIR_NAME_SHAPE'
 assert re.fullmatch(r'[0-9a-f]{40}', COMMIT) and re.fullmatch(r'[a-z0-9-]{1,20}', SUFFIX), 'ARGUMENT_SHAPE'
-assert re.fullmatch(r'[A-Za-z0-9._-]{1,64}', IN_NAME) and IN_NAME not in ('.', '..'), 'IN_DIR_NAME_SHAPE'
 DRAFT = SUFFIX.startswith('draft')
-_load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], COMMIT, os.path.join(R, 'tree-' + COMMIT[:8]))
+assert not (FLEET and DRAFT), 'FLEET_SCRIPTS_ARE_FINAL'
+def _wsl(p, code):   # a Windows path the registrar's WslPath rule accepts, as WSL sees it (prep.py's)
+    a = os.path.abspath(p)
+    assert re.fullmatch(r'[A-Za-z]:(?:\\(?!\.{1,2}(?:\\|$))[A-Za-z0-9._-]*[A-Za-z0-9_-])+', a), code
+    return '/mnt/' + a[0].lower() + '/' + a[3:].replace('\\', '/')
+WSL_IN = WSL_OUT = None
+if FLEET:   # the generic node package: this file's own tree is the unpacked, hash-checked archive of the commit
+    WSL_IN, WSL_OUT = _wsl(IN_DIR, 'IN_DIR_PATH_SHAPE'), _wsl(OUT_DIR, 'OUT_DIR_PATH_SHAPE')
+    assert IN_DIR.lower() != OUT_DIR.lower() and not (OUT_DIR.lower() + '\\').startswith(IN_DIR.lower() + '\\'), 'OUT_DIR_INSIDE_IN_DIR'
+else:
+    _load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], COMMIT, os.path.join(R, 'tree-' + COMMIT[:8]))
 sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
 shab = lambda b: hashlib.sha256(b).hexdigest()
 ROLES = ('gitleaks', 'trivy', 'contract-placement')
-IN = os.path.join(R, 'linux', IN_NAME)
+IN = os.path.abspath(IN_DIR) if FLEET else os.path.join(R, 'linux', IN_NAME)
 TOOLS = os.path.join(HERE, 'tools')
 NODE_SHA = CFG['linux']['host']['toolchainNodeSha256']
 PUB_SHA = CFG['linux']['host']['resultPublicKeySha256']
@@ -53,7 +88,8 @@ PKG_SHA = sha(os.path.join(PKG, 'package-manifest.json'))
 NEW = pkg['ciSourceManifestSha256']
 acc = json.load(open(os.path.join(PKG, 'record', 'acceptance.json'), encoding='utf-8'))
 src_manifest = json.load(open(os.path.join(PKG, 'record', 'source-manifest.json'), encoding='utf-8'))
-assert acc['node']['nodeName'] == CFG['node'] and src_manifest['sourceSha'] == COMMIT and sha(os.path.join(PKG, 'record', 'source-manifest.json')) == NEW, 'PACKAGE_NOT_THIS_NODE_AND_COMMIT'
+NODE_NAME = acc['node']['nodeName']   # the package's record names the node (no configuration does: rconfig has no node key)
+assert acc['node']['wslDistribution'] == CFG['linux']['distribution'] and src_manifest['sourceSha'] == COMMIT and sha(os.path.join(PKG, 'record', 'source-manifest.json')) == NEW, 'PACKAGE_NOT_THIS_NODE_AND_COMMIT'
 signers = json.load(open(os.path.join(PKG, 'record', 'signers.json'), encoding='utf-8'))['signers']
 assert [(s['keyId'], s['runtimeId'], s['publicKeyPem']) for s in signers] == [(SIGNER['keyId'], SIGNER['runtimeId'], SIGNER['publicKeyPem'])], 'PACKAGE_SIGNERS_NOT_THIS_NODES'
 REF, HREF, RECEIPT = acc['sourceAcceptanceRef'], acc['hostQualificationRef'], acc['installationReceiptRef']
@@ -71,15 +107,20 @@ assert sha(os.path.join(TEMPLATE, 'formal-source-manifest-v2.json')) == tf['ciSo
 for role in ROLES:
     assert {'policySha256': sha(os.path.join(TEMPLATE, role + '.json')), 'qualificationSha256': sha(os.path.join(TEMPLATE, role + '.qualification.json'))} == \
         {k: tf['roles'][role][k] for k in ('policySha256', 'qualificationSha256')}, ('TEMPLATE_ROLE_NOT_THE_FACTS', role)
-base_signers = json.load(open(os.path.join(CFG['basePackage'], 'record', 'signers.json'), encoding='utf-8'))['signers']
-base_pm = json.load(open(os.path.join(CFG['basePackage'], 'package-manifest.json'), encoding='utf-8'))
-assert sha(os.path.join(CFG['basePackage'], 'record', 'signers.json')) == {f['target']: f['sha256'] for f in base_pm['files']}.get('record\\signers.json'), 'BASE_SIGNERS_NOT_ITS_PACKAGE'
-assert len(base_signers) == 1, 'BASE_RECORD_HAS_NOT_ONE_SIGNER'
-TEMPLATE_PUB = base_signers[0]['publicKeyPem'].encode('ascii')
+if FLEET:   # the kit's template key (install.mjs readKit held it to every payload); one key for the three
+    TEMPLATE_PUB = open(T_PUBLIC, 'rb').read()
+    TEMPLATE_KEY_ID = json.load(open(os.path.join(TEMPLATE, ROLES[0] + '.qualification.json'), encoding='utf-8'))['payload']['keyId']
+else:
+    base_signers = json.load(open(os.path.join(CFG['basePackage'], 'record', 'signers.json'), encoding='utf-8'))['signers']
+    base_pm = json.load(open(os.path.join(CFG['basePackage'], 'package-manifest.json'), encoding='utf-8'))
+    assert sha(os.path.join(CFG['basePackage'], 'record', 'signers.json')) == {f['target']: f['sha256'] for f in base_pm['files']}.get('record\\signers.json'), 'BASE_SIGNERS_NOT_ITS_PACKAGE'
+    assert len(base_signers) == 1, 'BASE_RECORD_HAS_NOT_ONE_SIGNER'
+    TEMPLATE_PUB = base_signers[0]['publicKeyPem'].encode('ascii')
+    TEMPLATE_KEY_ID = base_signers[0]['keyId']
 TEMPLATE_PUB_SHA = shab(TEMPLATE_PUB)
 for role in ROLES:
     tq = json.load(open(os.path.join(TEMPLATE, role + '.qualification.json'), encoding='utf-8'))
-    assert tq['payload']['resultPublicKeySha256'] == TEMPLATE_PUB_SHA and tq['payload']['keyId'] == base_signers[0]['keyId'], ('TEMPLATE_KEY_NOT_THE_BASE_SIGNER', role)
+    assert tq['payload']['resultPublicKeySha256'] == TEMPLATE_PUB_SHA and tq['payload']['keyId'] == TEMPLATE_KEY_ID, ('TEMPLATE_KEY_NOT_THE_BASE_SIGNER', role)
 assert TEMPLATE_PUB_SHA != PUB_SHA, 'NODE_KEY_IS_THE_TEMPLATE_KEY'
 # the run roots readiness requires as root directories (loadQualifiedPolicyV2); a first install creates them in phase B
 ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent-ci/runs')
@@ -138,7 +179,7 @@ for f in UPG_FILES:
     assert sha(os.path.join(IN, 'linux-pkg', *f.split('/'))) == sha(os.path.join(PKG, 'linux', *f.split('/'))), ('UPGRADE_FILE_NOT_THE_PACKAGES', f)
 for f in RES_FILES:
     assert sha(os.path.join(IN, 'linux-res-pkg', *f.split('/'))) == sha(os.path.join(PKG, 'linux', *f.split('/'))), ('RESIDENT_FILE_NOT_THE_PACKAGES', f)
-TREE_LINUX = os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
+TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh'):
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
 UNITS = ['clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service']
@@ -159,10 +200,10 @@ for f in files:
     assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join('%s  %s\n' % (sha(os.path.join(IN, *f.split('/'))), f) for f in files)
 # where the node's root shell finds the in-dir: this machine's path as WSL sees it, or (the in-dir copied to the node) the 8th argument
-NODE_IN = sys.argv[8] if len(sys.argv) > 8 else '/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/')
+NODE_IN = WSL_IN if FLEET else ARGV[8] if len(ARGV) > 8 else '/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/')
 assert re.fullmatch(r'/[A-Za-z0-9._/-]+', NODE_IN) and '..' not in NODE_IN.split('/'), 'NODE_IN_DIR_SHAPE'
 W = shlex.quote(NODE_IN)
-BASE = '/root/clued-ci-first-install-' + COMMIT[:8]
+BASE = '/root/clued-ci-first-install-' + COMMIT[:8] + ('-' + SUFFIX if FLEET else '')   # the package path: a new prepare, a new staging
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 
@@ -189,9 +230,7 @@ docker_ready() {
 COMMON = DOCKER_READY + r"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
 refuse() { echo "{\"status\":\"REFUSED\",\"code\":\"$1\"}"; exit 1; }
-# The Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`
-[ "${R4_CLEAN_ENV:-}" = 1 ] || refuse RUN_UNDER_ENV_I_AS_IN_RUN_ORDER
-for v in BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_DIR GIT_EXEC_PATH GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT WSLENV; do
+@@ENV_GATE@@for v in BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_DIR GIT_EXEC_PATH GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT WSLENV; do
   [ -z "${!v+x}" ] || refuse "ENVIRONMENT_NOT_CLEAN:$v"
 done
 export PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0
@@ -200,7 +239,7 @@ umask 077
 DRAFT=@@DRAFT@@
 [ "$DRAFT" = 0 ] || refuse DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY
 W=@@W@@
-BASE=@@BASE@@
+@@O_LINE@@BASE=@@BASE@@
 STG=$BASE/stg
 COMMIT=@@COMMIT@@
 NEW_MANIFEST=@@NEW@@
@@ -247,8 +286,7 @@ host_ready() {
 """
 
 A = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase A (root, NO private key, writes only under $BASE). Commit @@C8@@, node @@NODE_NAME@@.
-#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-A.@@SUFFIX@@.sh
-""" + COMMON + r"""host_ready
+@@HOW_A@@""" + COMMON + r"""host_ready
 # a first install: nothing of a Linux CI here yet
 for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 \
          /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/formal-source-manifest-v2.json \
@@ -305,10 +343,7 @@ echo "{\"status\":\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\",\"phaseAMani
 
 B = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase B (root). STEP B1 READS THIS NODE'S NEW PRIVATE KEY /etc/clued-independent-ci/verify-result-key.pem
 # through sign-first-qualification.mjs; nothing prints it. Each step is done once and checked when found done: run B again to continue.
-#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-B.@@SUFFIX@@.sh <phaseAManifestSha256 as reviewed>
-""" + COMMON + r"""WANT_A="${1:?phase A manifest sha256 required}"
-[ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
-(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+@@HOW_B@@""" + COMMON + r"""@@WANT_A@@(cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 src_git_clean
 [ "$(sha256sum "$STG/tools/sign-qualification.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
 T=$(mktemp -d "$STG/b-$(date -u +%Y%m%dT%H%M%SZ)-XXXX")
@@ -395,15 +430,14 @@ fi
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --adopt-generation 1 "$PKG_SHA" > "$T/upgrade-adopt.stdout.json" || { cat "$T/upgrade-adopt.stdout.json"; refuse GENERATION_ADOPT_FAILED_SEE_RECOVERY; }
 grep -q LINUX_GENERATION_ADOPTED "$T/upgrade-adopt.stdout.json" || refuse GENERATION_ADOPT_FAILED_SEE_RECOVERY
 # B10: the version facts for the Windows side, from the installed frozen tool, read-only
-VF="$W/../linux-version-facts.@@NODE_NAME@@.$(date -u +%Y%m%dT%H%M%SZ).json"
+VF="@@VF@@"
 $CLEAN $PY -I "$UPG/bin/clued-ci-upgrade-linux" version-facts > "$VF" || { cat "$VF"; refuse VERSION_FACTS_FAILED; }
 $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not (f.get("contract")=="clued.independent-ci.linux-version-facts/1" and f.get("generation")==1 and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True))' "$VF" "$NEW_MANIFEST" "$LINUX_RES_MANIFEST" || { cat "$VF"; refuse VERSION_FACTS_NOT_THIS_INSTALL; }
 # B11: verify-resident-linux, every check fatal
 bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/verify-resident.stdout.json" || true
 cat "$T/verify-resident.stdout.json"
 grep -q '"status":"LINUX_RESIDENT_VERIFIED"' "$T/verify-resident.stdout.json" || refuse VERIFY_RESIDENT_LINUX_FAILED
-echo "{\"status\":\"LINUX_FIRST_INSTALL_DONE\",\"node\":\"@@NODE_NAME@@\",\"sourceCommit\":\"$COMMIT\",\"ciSourceManifestSha256\":\"$NEW_MANIFEST\",\"packageManifestSha256\":\"$PKG_SHA\",\"versionFacts\":\"$VF\"}"
-"""
+@@B_DONE@@"""
 
 # each local image's archive as it is in the in-dir now (pinned), or '-' (B then refuses until the image is loaded)
 LOCAL_ARCHIVES, LOCAL_LINES = {}, ''
@@ -411,10 +445,35 @@ for h in LOCAL_IMAGES:
     found = [n for n in (h + '.tar', h + '.tar.gz') if os.path.isfile(os.path.join(IN, 'images', n))]
     assert len(found) <= 1, ('IMAGE_ARCHIVE_AMBIGUOUS', h)
     LOCAL_ARCHIVES[h] = {'archive': 'images/' + found[0], 'sha256': sha(os.path.join(IN, 'images', found[0]))} if found else None
+    assert found or not FLEET, ('LOCAL_ROLE_IMAGE_ARCHIVE_MISSING', h)   # the package path never waits for a person to put one there
     LOCAL_LINES += '%s %s %s' % (h, found[0] if found else '-', LOCAL_ARCHIVES[h]['sha256'] if found else '-') + chr(10)
+# The two forms differ only in these pieces (reinstall/test/test_first_install.py holds every other line equal).
+if FLEET:
+    FORM = {'ENV_GATE': '# run by the elevated launcher under `/usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc` (fixed by the registrar)\n',
+            'O_LINE': 'O=' + shlex.quote(WSL_OUT) + '\n[ -d "$O" ] || refuse OUT_DIRECTORY_MISSING\n',
+            'HOW_A': '#   run by the elevated first-install launcher only (no argument): A.sh\n',
+            'HOW_B': '#   run by the elevated first-install launcher only (no argument): B.sh after A.sh; B-resume.sh (the same text) once after a failed B\n',
+            'WANT_A': '[ -s "$STG/phaseA.sha256" ] || refuse PHASE_A_NOT_DONE\n',
+            'VF': '$O/linux-version-facts.$(date -u +%Y%m%dT%H%M%SZ).json',
+            'B_DONE': ('E="$O/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"\n'
+                       '{ echo "source: first-install-linux-B (root, launcher)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; '
+                       'echo "command: /usr/bin/sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json"; echo "exit: 0"; '
+                       'echo "sha256: $(sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json | cut -d\' \' -f1)"; } > "$E"\n'
+                       'echo "{\\"status\\":\\"LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1\\",\\"evidence\\":\\"$E\\",\\"versionFacts\\":\\"$VF\\",\\"node\\":\\"@@NODE_NAME@@\\"}"\n')}
+else:
+    FORM = {'ENV_GATE': '# The Owner runs this under `/usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc`\n'
+                        '[ "${R4_CLEAN_ENV:-}" = 1 ] || refuse RUN_UNDER_ENV_I_AS_IN_RUN_ORDER\n',
+            'O_LINE': '',
+            'HOW_A': '#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-A.@@SUFFIX@@.sh\n',
+            'HOW_B': '#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-B.@@SUFFIX@@.sh <phaseAManifestSha256 as reviewed>\n',
+            'WANT_A': 'WANT_A="${1:?phase A manifest sha256 required}"\n[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' \' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED\n',
+            'VF': '$W/../linux-version-facts.@@NODE_NAME@@.$(date -u +%Y%m%dT%H%M%SZ).json',
+            'B_DONE': 'echo "{\\"status\\":\\"LINUX_FIRST_INSTALL_DONE\\",\\"node\\":\\"@@NODE_NAME@@\\",\\"sourceCommit\\":\\"$COMMIT\\",\\"ciSourceManifestSha256\\":\\"$NEW_MANIFEST\\",\\"packageManifestSha256\\":\\"$PKG_SHA\\",\\"versionFacts\\":\\"$VF\\"}"\n'}
+for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ / @@NODE_NAME@@ of their own
+    A, B = A.replace('@@' + _k + '@@', _v), B.replace('@@' + _k + '@@', _v)
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
-          'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': CFG['node'],
+          'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': NODE_NAME,
           'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
     assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
@@ -423,12 +482,16 @@ def render(text):
         text = text.replace('@@' + k + '@@', v)
     assert '@@' not in text, 'UNRENDERED_PLACEHOLDER'
     return text
-out = {}
-for name, text in (('first-install-linux-A.' + SUFFIX + '.sh', A), ('first-install-linux-B.' + SUFFIX + '.sh', B)):
+out, paths = {}, {}
+NAMES = (('A.sh', A), ('B.sh', B), ('B-resume.sh', B)) if FLEET else (('first-install-linux-A.' + SUFFIX + '.sh', A), ('first-install-linux-B.' + SUFFIX + '.sh', B))
+if FLEET:
+    os.makedirs(os.path.join(R, 'linux'), exist_ok=True)
+for name, text in NAMES:
     p = os.path.join(R, 'linux', name)
     with open(p, 'xb') as f:
         f.write(render(text).encode('utf-8'))
-    out[name] = sha(p)
-print(json.dumps({'scripts': out, 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'node': CFG['node'], 'packageManifestSha256': PKG_SHA,
+    out[name] = sha(p); paths[name] = p
+print(json.dumps({'scripts': out, **({'paths': paths, 'inDir': IN, 'wslInDir': WSL_IN, 'outDir': OUT_DIR, 'wslOutDir': WSL_OUT} if FLEET else {}),
+                  'pinnedFiles': len(files), 'W': W, 'base': BASE, 'node': NODE_NAME, 'packageManifestSha256': PKG_SHA,
                   'ciSourceManifestSha256': NEW, 'keyId': SIGNER['keyId'], 'runtimeId': SIGNER['runtimeId'], 'resultPublicKeySha256': PUB_SHA,
                   'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'pullImages': PULL_IMAGES, 'localImages': LOCAL_ARCHIVES, 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))

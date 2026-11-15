@@ -338,6 +338,9 @@ def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present, p
     source, block, pins, chained = read_launcher(raw, fragment, finish)
     lit = lambda name: pins[name][1:-1] if pins[name].startswith("'") else None
     need(lit('FleetPlanSha256') and pins['DraftOnly'] == '$false', 'PRIOR_LAUNCHER_NOT_A_PACKAGE_LAUNCHER')
+    # a first install's launch is not continued by this version: stopped before Linux A it changed nothing (the same command again); stopped
+    # after Linux B the Linux half is installed and Linux A of a new prepare refuses it (NOT_A_FIRST_INSTALL): an open gap, named in the report
+    need(pins.get('FleetFirstInstall', '$null') == '$null', 'PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED')
     launcher_sha = sha(raw); root_sha = chained['rootLauncherSha256'] if chained else launcher_sha
     plan_path = os.path.join(os.path.dirname(prior_launcher), 'install-plan.json')
     if os.path.isfile(plan_path):

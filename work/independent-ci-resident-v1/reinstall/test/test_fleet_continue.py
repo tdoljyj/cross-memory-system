@@ -46,7 +46,7 @@ class Scene:
         self.pins = {name: "'fixture'" for name in names}
         self.pins.update(DraftOnly='$false', SourceSha="'" + '1' * 40 + "'", PackageHead="'" + '2' * 40 + "'", W="'" + str(self.work) + "'", LaunchOutPin="'" + str(self.prior) + "'",
                          InstalledReceiptSha256="'" + RECEIPT + "'", FleetPlanSha256="'" + '9' * 64 + "'", CiSourceManifestSha256="'" + SOURCE + "'", PackageManifestSha256="'" + PACKAGE + "'",
-                         FleetLinuxManifestSha256="'" + LINUX_MANIFEST + "'", NodeName="'node-a'")
+                         FleetLinuxManifestSha256="'" + LINUX_MANIFEST + "'", NodeName="'node-a'", FleetFirstInstall='$null', FleetFirstInstallDirectory='$null')
         self.terminal = {'contract': 'clued.independent-ci.source-v2-windows-launch-terminal/1', 'status': 'STOPPED', 'code': 'INSTALL_NOT_COMPLETED', 'detail': {'exit': 1, 'residentRootExists': False},
                          'completed': list(completed), 'sourceSha': '1' * 40, 'packageHead': '2' * 40, 'carriedTokens': {'removed': True}}
         self.progress = None   # None: one record per completed step
@@ -356,6 +356,10 @@ ConvertTo-Json -Compress @((Test-OldRootQuiet).codes)
         self.s.pins['FleetPlanSha256'] = '$null'
         self.refused('PRIOR_LAUNCHER_NOT_A_PACKAGE_LAUNCHER')
         self.s.pins['FleetPlanSha256'] = "'" + '9' * 64 + "'"
+        # a first install's launch (the first-install plan) is not continued by this version, named
+        self.s.pins['FleetFirstInstall'] = '$true'
+        self.refused('PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED')
+        self.s.pins['FleetFirstInstall'] = '$null'
         self.s.write()
         (self.s.work / 'install-plan.json').write_text(json.dumps({'launcher': {'path': 'x', 'sha256': '0' * 64}}), encoding='utf-8')
         with self.assertRaises(CONTINUE.Refused) as caught:
@@ -392,6 +396,7 @@ DRIVER = r"""
 param([string]$Template, [string]$Fragment, [string]$Case, [string]$Work)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null

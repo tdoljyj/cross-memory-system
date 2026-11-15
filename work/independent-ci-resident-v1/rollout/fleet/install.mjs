@@ -8,6 +8,8 @@
 //        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json>
 //        --work <new dir>
 //   node .../install.mjs fleet-refs        (read-only: the installed record's formal role material, for an acceptance file)
+//   node .../install.mjs first-install-kit (read-only, a settled installed node: the version's first-install kit, see readKit)
+//   prepare ... --from <dir>               (a node without an install receipt: its first install, from the version's assets in <dir>)
 //   node .../install.mjs source-hash --artifact <tar> --artifact-sha <hex> --acceptance <draft>
 //                                           (read-only, any machine: the acceptance file's ciSourceManifestSha256, sourceHashOf)
 // The command is the same on every node (section 8): no node-specific argument; the root is always C:\ProgramData\CluedIndependentCI\resident.
@@ -93,9 +95,13 @@ const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/
 // The acceptance file (sections 2, 6): repository and ciSourceManifestSha256 are what the Owner accepts (the Source the train compares);
 // `draft` (install.mjs source-hash) is the same file before its ciSourceManifestSha256 is known.
 export const ACCEPTANCE_KEYS = Object.freeze(['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'cluedDecision', 'acceptedAt', 'fleetRefs']);
+// firstInstallKitSha256 (optional): the version's first-install kit the Owner accepts with it (firstInstallKitOf); a first install
+// (prepare without an install receipt) refuses an acceptance without it, a reinstall never reads it.
 export function validateAcceptance(a, now = Date.now(), { draft = false } = {}) {
-  const keys = draft ? ACCEPTANCE_KEYS.filter(k => k !== 'ciSourceManifestSha256' || Object.hasOwn(a ?? {}, k)) : ACCEPTANCE_KEYS;
+  const keys = [...(draft ? ACCEPTANCE_KEYS.filter(k => k !== 'ciSourceManifestSha256' || Object.hasOwn(a ?? {}, k)) : ACCEPTANCE_KEYS),
+    ...(Object.hasOwn(a ?? {}, 'firstInstallKitSha256') ? ['firstInstallKitSha256'] : [])];
   need(exact(a, keys) && a.contract === ACCEPTANCE_CONTRACT, 'FLEET_ACCEPTANCE_REFUSED', 'shape');
+  need(a.firstInstallKitSha256 === undefined || HEX64.test(a.firstInstallKitSha256), 'FLEET_ACCEPTANCE_REFUSED', 'firstInstallKitSha256');
   need(VERSION.test(a.version ?? '') && HEX64.test(a.archive_sha256 ?? '') && /^[0-9a-f]{40}$/.test(a.commit ?? ''), 'FLEET_ACCEPTANCE_REFUSED', 'archive');
   need(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(a.repository ?? '') && (draft && a.ciSourceManifestSha256 === undefined || HEX64.test(a.ciSourceManifestSha256 ?? '')),
     'FLEET_ACCEPTANCE_REFUSED', 'source');
@@ -139,7 +145,7 @@ async function readOrNull(file) {
 export async function readNode({ root, now = Date.now() }) {
   const at = (...p) => path.join(root, ...p);
   const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
-  need(receiptBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no install\\install-receipt.json: a first install follows reinstall/README.md section 8c');
+  need(receiptBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no install\\install-receipt.json: prepareInstall takes its first-install branch (readFreshNode)');
   const receipt = jsonOf(receiptBytes);
   const current = jsonOf(await fs.readFile(at('upgrade', 'current.json')));
   need(HEX64.test(current?.packageManifestSha256 ?? '') && current.packageManifestSha256 === receipt.packageManifestSha256 && current.installReceiptSha256 === sha(receiptBytes),
@@ -226,7 +232,7 @@ export async function readNode({ root, now = Date.now() }) {
   let installedW1Reason = null;
   try { installedW1Reason = pausedBytes === null ? null : jsonOf(pausedBytes)?.source?.reason ?? null; } catch { installedW1Reason = null; }
   if (!(typeof installedW1Reason === 'string' && W1_REASON.test(installedW1Reason))) installedW1Reason = null;
-  return { root, receipt, current, raw, rm, acc, inst, man, signers, profile, profileSha256, policy, companion, nodeExe, nodeExeSha256, companionAccount,
+  return { root, receipt, current, raw, rm, acc, inst, man, signers, profile, profileSha256, policy, companion, policyBytes, companionBytes, nodeExe, nodeExeSha256, companionAccount,
     facts, factsBytes, roles, linuxHost: { toolchainNodeSha256: toolchain[0], resultPublicKeySha256: keys[0] }, expectedInstalledLinux, linuxMan, installedW1Reason,
     distribution: policy?.linux?.distribution };
 }
@@ -462,8 +468,11 @@ export function runCommandOf(launcher, launcherSha256) {
 }
 
 // ---------------------------------------------------------------- prepare
+// One command for every node (section 8): with install\install-receipt.json the reinstall (readNode); without it the first install
+// (readFreshNode: this machine's own facts, the version's first-install kit; the same package, Linux and launcher steps after it).
 export async function prepareInstall({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(),
-  node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE }) {
+  node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE,
+  from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
@@ -474,13 +483,14 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     const want = byPath.get(`tree/${RESIDENT}/rollout/fleet/${n}`);
     need(want && want.equals(await fs.readFile(path.join(selfDir, n))), 'FLEET_INSTALLER_NOT_THE_ARCHIVES', n);
   }
-  const node = await readNode({ root, now });
+  const fresh = (await readOrNull(path.join(root, 'install', 'install-receipt.json'))) === null;
+  const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname }) : await readNode({ root, now });
   // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
   // Linux phases cannot run again over themselves; that launch is continued from where it stopped (reinstall/README.md, --fleet-continue).
-  need(!(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
+  need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
     'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
-  const secrets = installedSecretsOf(node.receipt);
+  const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt);
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
   const work = path.resolve(workDir);
   await fs.mkdir(work, { recursive: false });
@@ -525,6 +535,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   const rolesDerivedSha256 = rolesDerivedReinstall({ node, newManifestBytes: manifestBytes, readTreeFile });
   await writeNew(path.join(inputs, 'source-v2.json'), JSON.stringify({ commit: universal.commit, bundle, rolesDerivedSha256 }, null, 2));
   const stateCompat = universal.stateCompat ?? node.current.stateCompat;
+  need(stateCompat !== undefined && stateCompat !== null, 'STATE_COMPAT_UNKNOWN');
   await writeNew(path.join(inputs, 'state-compat.json'), pyDumps(stateCompat, { sortKeys: true }) + '\n');
 
   // the package, twice, with the archive's build-package.mjs
@@ -559,6 +570,10 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   need(!fsSync.existsSync(linuxOut), 'LINUX_OUT_DIRECTORY_EXISTS', linuxOut);
   await fs.mkdir(linuxIn);
   await assembleLinuxIn({ pkg: packageDir, residentTree: R, bundle, commit: universal.commit, out: linuxIn, scratch: x });
+  if (fresh) {
+    return prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
+      ciSourceManifestSha256, now, python, scm, secrets });
+  }
 
   // the synthesized reinstall configuration and the installed copies it names (section 7.1)
   const installed = path.join(inputs, 'installed');
@@ -643,6 +658,271 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256) };
 }
 
+// ---------------------------------------------------------------- first install (no install receipt)
+// A node with no install receipt is installed by the same command (section 8). What a reinstall reads from the installed record it
+// reads from two files instead, each checked whole:
+//   <CI root>\first-install\facts.json  clued.independent-ci.first-install-facts/1, this machine's own facts, written by the elevated
+//       host preparation (windows/first-install-host.ps1): the profile (derived from the machine name and its accounts; the rules below
+//       hold it to that), the operator, the node's own record values and token fingerprints, its result signer and Linux host facts.
+//   fleet-node-<v>.first-install-kit.json  clued.independent-ci.fleet-node-first-install-kit/1, the same file for every new node of a
+//       version, taken read-only from any installed node (install.mjs first-install-kit) and accepted with the version
+//       (acceptance.firstInstallKitSha256): the template's signed roles-v3 and version facts, its Source manifest and public key, the
+//       fleet's shared record values, the template's policy and companion configuration, the role images.
+// Its local role images (an image id, not a registry digest: contract-placement) come with the version as role-image-<id>.tar.gz
+// (docker save | gzip, made once for the fleet): Linux B loads it and docker holds the loaded content to the id, so no node is
+// asked to export anything for another.
+export const KIT_CONTRACT = 'clued.independent-ci.fleet-node-first-install-kit/1';
+export const FIRST_INSTALL_FACTS_CONTRACT = 'clued.independent-ci.first-install-facts/1';
+export const FIRST_INSTALL_DISTRIBUTION = 'CluedResident-Linux';
+export const FIRST_INSTALL_VHDX_DIRECTORY = `${CI_ROOT}\\wsl\\${FIRST_INSTALL_DISTRIBUTION}`;
+export const RESIDENT_SERVICES = Object.freeze(['CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader']);
+// The two connection tokens the host preparation leaves for the installer (SYSTEM and Administrators only; the launcher checks each against
+// its fingerprint here and hands it to install-resident.ps1, which places it; the directory is deleted once the install has run). The App
+// key and the ci-admission token the host preparation places itself, where every install finds them (install-resident.ps1 $SecretTargets).
+export const CREDENTIAL_FILES = Object.freeze({ upgradeToken: 'resident-upgrade.token', heartbeatToken: 'ci-node-heartbeat.token' });
+export const imageAssetOf = id => `role-image-${id}.tar.gz`;
+const NODE_PROFILE_KEYS = ['contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution'];
+const SIGNER_PEM = /^-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA[A-Za-z0-9+/]{43}=\n-----END PUBLIC KEY-----\n$/;
+const PULL_IMAGE = /^[a-z0-9][a-z0-9./-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/;
+const b64 = b => Buffer.from(b).toString('base64');
+const unb64 = (s, code, detail) => {
+  need(typeof s === 'string' && s.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(s), code, detail);
+  const b = Buffer.from(s, 'base64');
+  need(b.toString('base64') === s, code, detail);
+  return b;
+};
+// sc.exe query: 1060 is "no such service"; anything else that is not success is not knowing
+export const defaultServiceState = name => {
+  const r = run('C:\\Windows\\System32\\sc.exe', ['query', name]);
+  return r.status === 1060 ? 'absent' : r.status === 0 ? 'present' : 'unknown';
+};
+export const defaultHostname = () => String(process.env.COMPUTERNAME ?? '');
+
+// The role images of a set of role policies: registry images by digest (pulled by it) and local image ids (loaded from the asset).
+function imagesOf(policies) {
+  const pull = [], local = [];
+  for (const role of FORMAL_ROLES) {
+    const img = policies[role].image;
+    if (/^sha256:[0-9a-f]{64}$/.test(img ?? '')) { if (!local.some(l => l.id === img.slice(7))) local.push({ id: img.slice(7), asset: imageAssetOf(img.slice(7)) }); }
+    else { need(PULL_IMAGE.test(img ?? ''), 'ROLE_IMAGE_REF_SHAPE', { role }); if (!pull.includes(img)) pull.push(img); }
+  }
+  return { pull, local };
+}
+
+// first-install-kit (read-only, a settled installed node): what every new node of this version derives its first install from.
+export async function firstInstallKitOf({ root = DEFAULT_ROOT, now = Date.now() } = {}) {
+  const node = await readNode({ root, now });
+  // the Linux side's Source is the Windows record's: one package on both sides, so the template's manifest bytes are the record's
+  need(node.linuxMan !== null, 'KIT_NODE_SIDES_NOT_ONE_PACKAGE', { linux: node.facts.ciSourceManifestSha256, windows: node.current.ciSourceManifestSha256 });
+  const ss = node.signers?.signers;
+  need(Array.isArray(ss) && ss.length === 1 && SIGNER_PEM.test(ss[0].publicKeyPem ?? ''), 'KIT_RECORD_HAS_NOT_ONE_SIGNER');
+  for (const role of FORMAL_ROLES) {
+    const pay = node.roles[role].payload;
+    need(pay.resultPublicKeySha256 === sha(Buffer.from(ss[0].publicKeyPem, 'ascii')) && pay.keyId === ss[0].keyId, 'KIT_TEMPLATE_KEY_NOT_THE_RECORD_SIGNER', { role });
+  }
+  const { inst, acc } = node;
+  const roles = Object.fromEntries(FORMAL_ROLES.flatMap(r => [[`${r}.json`, b64(node.roles[r].policyBytes)], [`${r}.qualification.json`, b64(node.roles[r].qualificationBytes)]]));
+  return { contract: KIT_CONTRACT,
+    template: { versionFacts: b64(node.factsBytes), roles, formalSourceManifest: b64(node.raw['source-manifest.json']), publicKeyPem: ss[0].publicKeyPem, keyId: ss[0].keyId,
+      toolchainNodeSha256: node.linuxHost.toolchainNodeSha256 },
+    record: { repository: inst.repository, scope: inst.scope, controllerAccount: acc.controllerAccount, appId: inst.appId, installationId: inst.installationId,
+      repositoryId: inst.repositoryId, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey, controllerNodeSha256: inst.controllerNodeSha256 },
+    config: { policy: b64(node.policyBytes), companion: b64(node.companionBytes), ciSourceManifestSha256: node.current.ciSourceManifestSha256, stateCompat: node.current.stateCompat ?? null },
+    images: imagesOf(Object.fromEntries(FORMAL_ROLES.map(r => [r, node.roles[r].policy]))) };
+}
+
+// The kit as a new node reads it: every file held to the template's own version facts, every claim derived again from those files.
+export function readKit(bytes) {
+  const k = jsonOf(bytes);
+  need(exact(k, ['contract', 'template', 'record', 'config', 'images']) && k.contract === KIT_CONTRACT, 'FIRST_INSTALL_KIT_REFUSED', 'shape');
+  const t = k.template;
+  need(exact(t, ['versionFacts', 'roles', 'formalSourceManifest', 'publicKeyPem', 'keyId', 'toolchainNodeSha256']), 'FIRST_INSTALL_KIT_REFUSED', 'template');
+  const factsBytes = unb64(t.versionFacts, 'FIRST_INSTALL_KIT_REFUSED', 'versionFacts');
+  const facts = pyLoads(factsBytes.toString('utf8'));
+  need(facts?.contract === 'clued.independent-ci.linux-version-facts/1' && facts.staged === null && facts.pinsOk === true && HEX64.test(facts.ciSourceManifestSha256 ?? ''),
+    'FIRST_INSTALL_KIT_TEMPLATE_NOT_A_SETTLED_GENERATION');
+  const manifestBytes = unb64(t.formalSourceManifest, 'FIRST_INSTALL_KIT_REFUSED', 'formalSourceManifest');
+  need(sha(manifestBytes) === facts.ciSourceManifestSha256, 'FIRST_INSTALL_KIT_MANIFEST_NOT_THE_FACTS');
+  need(exact(t.roles, FORMAL_ROLES.flatMap(r => [`${r}.json`, `${r}.qualification.json`])), 'FIRST_INSTALL_KIT_REFUSED', 'roles');
+  need(SIGNER_PEM.test(t.publicKeyPem ?? '') && typeof t.keyId === 'string' && HEX64.test(t.toolchainNodeSha256 ?? ''), 'FIRST_INSTALL_KIT_REFUSED', 'key');
+  const roles = {};
+  for (const role of FORMAL_ROLES) {
+    const policyBytes = unb64(t.roles[`${role}.json`], 'FIRST_INSTALL_KIT_REFUSED', role), qualificationBytes = unb64(t.roles[`${role}.qualification.json`], 'FIRST_INSTALL_KIT_REFUSED', role);
+    need(sha(policyBytes) === facts.roles?.[role]?.policySha256 && sha(qualificationBytes) === facts.roles?.[role]?.qualificationSha256, 'FIRST_INSTALL_KIT_ROLE_NOT_THE_FACTS', { role });
+    const q = pyLoads(qualificationBytes.toString('utf8')), policy = pyLoads(policyBytes.toString('utf8'));
+    need(exact(q, ['payload', 'signature']) && q.payload.resultPublicKeySha256 === sha(Buffer.from(t.publicKeyPem, 'ascii')) && q.payload.keyId === t.keyId,
+      'FIRST_INSTALL_KIT_TEMPLATE_KEY_NOT_THE_PAYLOADS', { role });
+    need(policy.nodeExecutable !== TOOLCHAIN_NODE || policy.nodeExecutableSha256 === t.toolchainNodeSha256, 'FIRST_INSTALL_KIT_TOOLCHAIN_NOT_THE_POLICIES', { role });
+    roles[role] = { policyBytes, qualificationBytes, policy, payload: q.payload };
+  }
+  const rec = k.record;
+  need(exact(rec, ['repository', 'scope', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'supabaseUrl', 'publishableKey', 'controllerNodeSha256'])
+    && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(rec.repository ?? '') && ['appId', 'installationId', 'repositoryId'].every(n => Number.isSafeInteger(rec[n]) && rec[n] > 0)
+    && HEX64.test(rec.controllerNodeSha256 ?? '') && typeof rec.scope === 'string' && typeof rec.controllerAccount === 'string', 'FIRST_INSTALL_KIT_REFUSED', 'record');
+  const c = k.config;
+  need(exact(c, ['policy', 'companion', 'ciSourceManifestSha256', 'stateCompat']) && HEX64.test(c.ciSourceManifestSha256 ?? ''), 'FIRST_INSTALL_KIT_REFUSED', 'config');
+  const policyBytes = unb64(c.policy, 'FIRST_INSTALL_KIT_REFUSED', 'policy'), companionBytes = unb64(c.companion, 'FIRST_INSTALL_KIT_REFUSED', 'companion');
+  // the images are the policies' (the kit names nothing the template's signed roles do not)
+  const images = imagesOf(Object.fromEntries(FORMAL_ROLES.map(r => [r, roles[r].policy])));
+  need(pyEqual(pyLoads(pyCanonical(k.images)), pyLoads(pyCanonical(images))), 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_POLICIES');
+  return { facts, factsBytes, manifestBytes, man: pyLoads(manifestBytes.toString('utf8')), roles, publicKeyPem: t.publicKeyPem, keyId: t.keyId, record: rec,
+    policy: pyLoads(policyBytes.toString('utf8').replace(/^\uFEFF/, '')), companion: pyLoads(companionBytes.toString('utf8').replace(/^\uFEFF/, '')),
+    configCi: c.ciSourceManifestSha256, stateCompat: c.stateCompat, images };
+}
+
+// facts.json, held to the rules the host preparation derived it by: nothing in it is a choice, every name follows from the machine.
+export function readFirstInstallFacts(bytes, { hostname }) {
+  const f = jsonOf(bytes);
+  need(exact(f, ['contract', 'observedAt', 'node', 'operatorSid', 'companionWsl', 'nodeRecord', 'credentials', 'signer', 'linuxHost']) && f.contract === FIRST_INSTALL_FACTS_CONTRACT
+    && typeof f.observedAt === 'string' && ISO_Z.test(f.observedAt), 'FIRST_INSTALL_FACTS_REFUSED', 'shape');
+  const n = f.node, H = String(hostname ?? '');
+  need(exact(n, NODE_PROFILE_KEYS) && n.contract === 'clued.independent-ci.node-profile/1', 'FIRST_INSTALL_FACTS_REFUSED', 'node');
+  // the derivation rules (first-install-host.ps1): the machine's own name; the carrier runner named after the node; the one distribution
+  need(H !== '' && n.hostname === H, 'FIRST_INSTALL_FACTS_NOT_THIS_MACHINE', { facts: n.hostname, machine: H });
+  need(n.nodeName === H.toLowerCase() && n.runnerService === `actions.runner.tdoljyj-cross-memory-system.clued-ci-${n.nodeName}` && n.wslDistribution === FIRST_INSTALL_DISTRIBUTION,
+    'FIRST_INSTALL_PROFILE_NOT_DERIVED', { nodeName: n.nodeName, runnerService: n.runnerService, wslDistribution: n.wslDistribution });
+  need(USER_SID.test(f.operatorSid ?? '') && f.operatorSid !== n.ownerSid && f.operatorSid !== n.controllerSid, 'FIRST_INSTALL_FACTS_REFUSED', 'operatorSid');
+  need(exact(f.companionWsl, ['distribution', 'vhdxDirectory']) && f.companionWsl.distribution === n.wslDistribution && f.companionWsl.vhdxDirectory === FIRST_INSTALL_VHDX_DIRECTORY,
+    'FIRST_INSTALL_FACTS_REFUSED', 'companionWsl');
+  const r = f.nodeRecord;
+  need(exact(r, ['appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciPrincipalQualificationRef', 'ciTokenPinSha256'])
+    && Number.isSafeInteger(r.appKeyId) && r.appKeyId > 0 && /^[A-Za-z0-9+/]{43}=$/.test(r.appPublicKeySha256Base64 ?? '') && HEX64.test(r.ciTokenPinSha256 ?? '')
+    && ['ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciPrincipalQualificationRef'].every(k => UUID.test(r[k] ?? '')), 'FIRST_INSTALL_FACTS_REFUSED', 'nodeRecord');
+  const c = f.credentials, up = c?.upgradeToken, hb = c?.heartbeatToken;
+  need(exact(c, ['upgradeToken', 'heartbeatToken']) && exact(up, ['fingerprint']) && HEX64.test(up.fingerprint ?? '')
+    && (hb === null || (exact(hb, ['fingerprint', 'bindingId']) && HEX64.test(hb.fingerprint ?? '') && hb.fingerprint !== up.fingerprint && (hb.bindingId === null || UUID.test(hb.bindingId ?? ''))))
+    && hb?.bindingId !== r.ciPrincipalBindingId, 'FIRST_INSTALL_FACTS_REFUSED', 'credentials');
+  const s = f.signer;
+  need(exact(s, ['keyId', 'runtimeId', 'publicKeyPem']) && SIGNER_PEM.test(s.publicKeyPem ?? ''), 'FIRST_INSTALL_FACTS_REFUSED', 'signer');
+  // the README section 8c convention, now the rule: keyId <node>-first-run-<yyyymmdd>, runtimeId <NODE>-cluedresident-independent-ci-v1
+  need(new RegExp(`^${n.nodeName}-first-run-20[0-9]{6}$`).test(s.keyId) && s.runtimeId === `${n.hostname}-cluedresident-independent-ci-v1`, 'FIRST_INSTALL_SIGNER_NOT_DERIVED', { keyId: s.keyId, runtimeId: s.runtimeId });
+  const lh = f.linuxHost;
+  need(exact(lh, ['toolchainNodeSha256', 'resultPublicKeySha256']) && HEX64.test(lh.toolchainNodeSha256 ?? '') && lh.resultPublicKeySha256 === sha(Buffer.from(s.publicKeyPem, 'ascii')),
+    'FIRST_INSTALL_SIGNER_NOT_THE_RESULT_KEY');
+  return f;
+}
+
+// The first install's node: nothing of a resident on this machine (a leftover is refused by name, never guessed at or written over),
+// this machine's facts and the accepted kit, in the shape the reinstall's stages read (recordInputsFor, configInputsFor,
+// rolesDerivedReinstall: the template takes the installed node's place, as first-install.py's Linux A derives from it).
+export async function readFreshNode({ root, ciRoot = CI_ROOT, from, acceptance, controllerNode, serviceState = defaultServiceState, hostname = defaultHostname }) {
+  const residue = [];
+  for (const s of RESIDENT_SERVICES) { const st = serviceState(s); if (st !== 'absent') residue.push(`service:${s}:${st}`); }
+  if (fsSync.existsSync(root)) residue.push(`directory:${root}`);
+  need(residue.length === 0, 'FIRST_INSTALL_RESIDUE_PRESENT', { residue, next: 'a node with a resident is reinstalled (it has an install receipt) or uninstalled first (uninstall-resident.ps1); then the same command' });
+  need(typeof acceptance.firstInstallKitSha256 === 'string', 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT');
+  need(typeof from === 'string' && path.isAbsolute(from), 'FIRST_INSTALL_NEEDS_THE_RELEASE_DIRECTORY', '--from <the directory of the version\'s assets>');
+  const kitFile = path.join(from, `fleet-node-${acceptance.version}.first-install-kit.json`);
+  const kitBytes = await readOrNull(kitFile);
+  need(kitBytes !== null && sha(kitBytes) === acceptance.firstInstallKitSha256, 'FIRST_INSTALL_KIT_NOT_THE_ACCEPTED', { file: kitFile, sha256: kitBytes && sha(kitBytes) });
+  const kit = readKit(kitBytes);
+  const factsFile = path.join(ciRoot, 'first-install', 'facts.json');
+  const factsRaw = await readOrNull(factsFile);
+  need(factsRaw !== null, 'FIRST_INSTALL_FACTS_MISSING', { file: factsFile, next: 'the host preparation (bootstrap.ps1 runs windows/first-install-host.ps1) writes it' });
+  const facts = readFirstInstallFacts(factsRaw, { hostname: hostname() });
+  // the controller runtime: every node's is the same (kit.record.controllerNodeSha256); the one running this is the bootstrap's, by hash
+  const nodeExeSha256 = sha(await fs.readFile(controllerNode));
+  need(nodeExeSha256 === kit.record.controllerNodeSha256, 'FIRST_INSTALL_CONTROLLER_NODE_NOT_THE_FLEETS', { runtime: nodeExeSha256, fleet: kit.record.controllerNodeSha256 });
+  const images = [];
+  for (const l of kit.images.local) {
+    const file = path.join(from, l.asset);
+    need(fsSync.existsSync(file), 'FIRST_INSTALL_ROLE_IMAGE_ASSET_MISSING', { asset: l.asset });
+    images.push({ id: l.id, file });
+  }
+  const f = acceptance.fleetRefs, profile = facts.node, nr = facts.nodeRecord;
+  const credDir = path.join(ciRoot, 'first-install', 'credentials');
+  const cred = n => path.join(credDir, CREDENTIAL_FILES[n]);
+  const hb = facts.credentials.heartbeatToken;
+  return { fresh: true, root, profile, profileSha256: sha(Buffer.from(pyCanonical(profile), 'utf8')), facts, factsRaw, factsFile, kit, images,
+    inst: { repository: kit.record.repository, scope: kit.record.scope, appId: kit.record.appId, installationId: kit.record.installationId, repositoryId: kit.record.repositoryId,
+      supabaseUrl: kit.record.supabaseUrl, publishableKey: kit.record.publishableKey, controllerNodeSha256: kit.record.controllerNodeSha256, appKeyId: nr.appKeyId,
+      appPublicKeySha256Base64: nr.appPublicKeySha256Base64, ciPrincipalBindingId: nr.ciPrincipalBindingId, ciPrincipalRoleRef: nr.ciPrincipalRoleRef,
+      ciTokenPinSha256: nr.ciTokenPinSha256, ciPrincipalQualificationRef: nr.ciPrincipalQualificationRef },
+    acc: { controllerAccount: kit.record.controllerAccount, ciPrincipalQualificationRef: nr.ciPrincipalQualificationRef, sourceAcceptanceRef: f.sourceAcceptanceRef,
+      hostQualificationRef: f.hostQualificationRef },
+    // the node's own result signer only (README section 8: no node takes over a role before it has its own)
+    signers: { signers: [{ domain: 'production', keyId: facts.signer.keyId, publicKeyPem: facts.signer.publicKeyPem, runtimeId: facts.signer.runtimeId,
+      qualificationRef: f.hostQualificationRef, sourceAcceptanceRef: f.sourceAcceptanceRef }] },
+    policy: kit.policy, companion: kit.companion, current: { ciSourceManifestSha256: kit.configCi, stateCompat: kit.stateCompat },
+    nodeExe: controllerNode, nodeExeSha256, linuxHost: facts.linuxHost, distribution: profile.wslDistribution,
+    companionAccount: { operatorSid: facts.operatorSid, wslVhdxDirectory: facts.companionWsl.vhdxDirectory },
+    roles: kit.roles, expectedInstalledLinux: { ciSourceManifestSha256: kit.facts.ciSourceManifestSha256 }, linuxMan: kit.man,
+    secrets: { source: 'first-install', upgradeToken: { target: cred('upgradeToken'), fingerprint: facts.credentials.upgradeToken.fingerprint },
+      heartbeatToken: hb ? { target: cred('heartbeatToken'), fingerprint: hb.fingerprint, bindingId: hb.bindingId } : null } };
+}
+
+// The first install's tail, after the package and the Linux inputs (prepareInstall): the template and the role images into the
+// Linux inputs, the package's first-install.py in its --in-dir/--out-dir form (A.sh, B.sh, B-resume.sh: Linux A refuses a node
+// with any Linux CI, B installs it), the plan (firstInstall; no W1: there is no old resident to pause) and generate.py.
+async function prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256, m, ciSourceManifestSha256, now, python, scm, secrets }) {
+  const template = path.join(inputs, 'template');
+  await fs.mkdir(template);
+  for (const role of FORMAL_ROLES) {
+    await writeNew(path.join(template, `${role}.json`), node.kit.roles[role].policyBytes);
+    await writeNew(path.join(template, `${role}.qualification.json`), node.kit.roles[role].qualificationBytes);
+  }
+  await writeNew(path.join(template, 'formal-source-manifest-v2.json'), node.kit.manifestBytes);
+  const templateFacts = path.join(inputs, 'template-version-facts.json'), templatePublic = path.join(inputs, 'template-public.pem');
+  await writeNew(templateFacts, node.kit.factsBytes);
+  await writeNew(templatePublic, Buffer.from(node.kit.publicKeyPem, 'ascii'));
+  await fs.mkdir(path.join(linuxIn, 'images'));
+  for (const i of node.images) await fs.copyFile(i.file, path.join(linuxIn, 'images', `${i.id}.tar.gz`), fsSync.constants.COPYFILE_EXCL);
+  const installerText = (await fs.readFile(path.join(R, 'windows', 'install-resident.ps1'))).toString('utf8');
+  const originalBinary = [...installerText.matchAll(/^\$OriginalBinary = '([^']+)'/gm)].map(r => r[1]);
+  need(originalBinary.length === 1, 'PACKAGE_INSTALLER_RUNNER_BINARY_UNKNOWN');
+  const reasons = reasonsOf(universal.version);
+  // reinstall-config/1 as first-install.py reads it (rconfig.need_first_install_linux): no installed roles, this node's signer and host
+  const cfg = { contract: CONFIG_CONTRACT, workDir: work, repo: path.join(linuxIn, 'src.git'), basePackage: packageDir,
+    nodeRecord: { appKeyId: node.inst.appKeyId, appPublicKeySha256Base64: node.inst.appPublicKeySha256Base64, ciPrincipalBindingId: node.inst.ciPrincipalBindingId,
+      ciPrincipalRoleRef: node.inst.ciPrincipalRoleRef, ciTokenPinSha256: node.inst.ciTokenPinSha256, controllerNodeSha256: node.inst.controllerNodeSha256 },
+    nodeExe: node.nodeExe, policyInput: path.join(inputs, 'policy.input.json'), companionInput: path.join(inputs, 'companion.input.json'),
+    upgradeTokenFile: secrets.upgradeToken.target,
+    ...(secrets.heartbeatToken ? { heartbeat: { tokenFile: secrets.heartbeatToken.target, bindingId: secrets.heartbeatToken.bindingId } } : {}),
+    runner: { binary: originalBinary[0], sddl: scm(node.profile.runnerService).sddl },
+    launcher: { pauseReason: reasons.pause, rearmReason: reasons.rearm, w1PauseReason: reasons.w1Pause },
+    linux: { distribution: node.distribution, installedManifest: path.join(inputs, 'no-installed-linux-manifest.json'), installedRoles: null, host: { ...node.linuxHost } },
+    secretTargetsExist: [true, true], signer: { ...node.facts.signer },
+    operatorSid: node.companionAccount.operatorSid, companionAccount: { wslVhdxDirectory: node.companionAccount.wslVhdxDirectory } };
+  const configFile = path.join(inputs, 'reinstall-config.json');
+  await writeNew(configFile, JSON.stringify(cfg, null, 2) + '\n');
+  const pyJson = r => parsed(String(r.stdout ?? '').trim()) ?? parsed(r.last ?? '');
+  const suffix = `f${new Date(now).toISOString().replace(/[-:]/g, '').slice(0, 15).toLowerCase()}`;
+  const p = python(path.join(R, 'reinstall', 'linux', 'first-install.py'), [configFile, universal.commit, packageDir, suffix, '--in-dir', linuxIn, '--out-dir', linuxOut,
+    '--template', template, '--template-facts', templateFacts, '--template-public', templatePublic]);
+  const pr = pyJson(p);
+  need(p.status === 0 && pr?.scripts && pr.paths, 'LINUX_FIRST_INSTALL_PREP_FAILED', p.stderr || p.last);
+  const scripts = {};
+  for (const [k, n] of Object.entries(LINUX_SCRIPTS)) {
+    const file = pr.paths[n];
+    const b = typeof file === 'string' ? await readOrNull(file) : null;
+    need(b !== null && b.length > 0 && sha(b) === pr.scripts[n] && path.resolve(file) === path.join(work, 'linux', n), 'LINUX_PREP_SCRIPT_MISSING', n);
+    scripts[k] = { path: file, sha256: sha(b) };
+  }
+  const plan = { contract: PLAN_CONTRACT, firstInstall: { factsSha256: sha(node.factsRaw), operatorSid: node.companionAccount.operatorSid,
+    wslVhdxDirectory: node.companionAccount.wslVhdxDirectory, kitSha256: acceptance.firstInstallKitSha256 },
+  node: node.profile.nodeName, version: universal.version, archive_sha256: acceptance.archive_sha256, commit: universal.commit,
+  packageDir, packageManifestSha256: pkgSha256, ciSourceManifestSha256, linuxManifestSha256: m.linux.manifestSha256,
+  // the Linux root steps run as the elevated operator (wsl --user root): the distribution is the operator's until the companion takes it
+  companionAccount: false,
+  linux: { distribution: node.distribution, inDir: linuxIn, wslInDir: wslPath(linuxIn), outDir: linuxOut, scripts, timeoutSeconds: { ...LINUX_TIMEOUT_SECONDS } },
+  expectedLinux: { generation: 1, ciSourceManifestSha256, manifestSha256: m.linux.manifestSha256, packageManifestSha256: pkgSha256 },
+  expectedInstalledLinux: null, secrets, reasons: { pause: reasons.pause, rearm: reasons.rearm }, w1Paused: null, launcher: null };
+  const planFile = path.join(work, 'install-plan.json');
+  await writePlan(planFile, plan);
+  const generatePy = path.join(R, 'reinstall', 'launcher', 'generate.py');
+  const gc = python(generatePy, ['--fleet-plan', planFile, '--check']);
+  need(gc.status === 0, 'LAUNCHER_CHECK_FAILED', gc.stderr || gc.last);
+  const launcherFile = path.join(work, 'launcher.ps1');
+  const g = python(generatePy, ['--fleet-plan', planFile, '--out', launcherFile]);
+  need(g.status === 0, 'LAUNCHER_GENERATE_FAILED', g.stderr || g.last);
+  const lb = await readOrNull(launcherFile);
+  need(lb !== null && lb.length > 0, 'LAUNCHER_MISSING');
+  plan.launcher = { path: launcherFile, sha256: sha(lb) };
+  await writePlan(planFile, plan);
+  return { status: 'FLEET_NODE_FIRST_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
+    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256) };
+}
+
 // source-hash (read-only, no node): the ciSourceManifestSha256 every node's record will carry, from the package and a draft acceptance
 // alone (repository, commit, fleetRefs: sourceAcceptanceRef, hostQualificationRef, formalRoles), computed by the archive's own
 // prepare-record.mjs#assembleRecord over the archive's Source closure. The node values it needs to run are stand-ins: they never reach
@@ -689,16 +969,23 @@ export async function main(argv, deps = {}) {
     parseArgs({ args: rest, options: {} });
     return installedFleetMaterial(deps.root ?? DEFAULT_ROOT);
   }
+  if (cmd === 'first-install-kit') {
+    parseArgs({ args: rest, options: {} });
+    return firstInstallKitOf({ root: deps.root ?? DEFAULT_ROOT });
+  }
   if (cmd === 'source-hash') {
     const { values } = parseArgs({ args: rest, options: { artifact: { type: 'string' }, 'artifact-sha': { type: 'string' }, acceptance: { type: 'string' } } });
     need(values.artifact && values['artifact-sha'] && values.acceptance, 'USAGE');
     return sourceHashOf({ artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance: jsonOf(await fs.readFile(values.acceptance)) });
   }
   need(cmd === 'prepare', 'USAGE');
-  const { values } = parseArgs({ args: rest, options: { artifact: { type: 'string' }, 'artifact-sha': { type: 'string' }, acceptance: { type: 'string' }, work: { type: 'string' } } });
+  // --from: the directory of the version's assets (bootstrap.ps1 -From); a first install reads its kit and role images there
+  const { values } = parseArgs({ args: rest, options: { artifact: { type: 'string' }, 'artifact-sha': { type: 'string' }, acceptance: { type: 'string' }, work: { type: 'string' },
+    from: { type: 'string' } } });
   need(values.artifact && values['artifact-sha'] && values.acceptance && values.work, 'USAGE');
   const acceptance = jsonOf(await fs.readFile(values.acceptance));
-  return prepareInstall({ ...deps, artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance, workDir: values.work });
+  return prepareInstall({ ...deps, artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance, workDir: values.work,
+    from: values.from ? path.resolve(values.from) : null });
 }
 
 if (import.meta.main) {

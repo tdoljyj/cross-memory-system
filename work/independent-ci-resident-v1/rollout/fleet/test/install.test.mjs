@@ -482,10 +482,10 @@ test('install refuses: archive sha, acceptance, tampered entry, climbing path, a
     const sw = path.join(d, `early${k++}`);
     await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000 }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
     await assert.rejects(fs.access(sw));
-    // a node with no install (a first install, README section 8c)
+    // a root without an install receipt is not a node to reinstall; it is not a first install either while the root is there (residue)
     const empty = path.join(d, 'empty-root');
     await fs.mkdir(empty);
-    await assert.rejects(prepare(w, w.a, path.join(d, 'first'), { root: empty }), { code: 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH' });
+    await assert.rejects(prepare(w, w.a, path.join(d, 'first'), { root: empty, serviceState: () => 'absent' }), e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue.includes(`directory:${empty}`));
     // the receipt's installed tokens: missing, unplaced or ambiguous entries are refused with what is missing
     const up = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\resident-upgrade.token', placed: true, fingerprint: 'a'.repeat(64) };
     const hbt = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\heartbeat\\ci-node-heartbeat.token', placed: true, fingerprint: 'b'.repeat(64), bindingId: randomUUID() };

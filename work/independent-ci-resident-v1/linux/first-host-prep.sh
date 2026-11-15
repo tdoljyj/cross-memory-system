@@ -1,0 +1,112 @@
+#!/bin/bash
+# First install, host preparation of the resident distribution (CluedResident-Linux), ROOT, idempotent: every step that is already
+# as wanted is only checked. Run by windows/first-install-host.ps1 (elevated, P1) through
+#   wsl.exe -d CluedResident-Linux -u root -- /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc \
+#       <this file> <apt-pins file> <toolchain node tarball> <toolchain node sha256>
+# It makes the host reinstall/linux/first-install.py's phase A expects (host_ready): systemd as PID 1, cgroup v2, docker.service active
+# with the CLASSIC image store, /usr/bin/python3.12 and /usr/bin/git, the toolchain node at its fixed path with the pinned sha256.
+# It does NOT make the result key (reinstall/linux/tools/make-result-key.sh, run next by P1) and installs nothing of the Linux CI itself.
+#
+#   <apt-pins file>   lines "<package>=<version>" (exactly docker.io, containerd, python3.12, git; the coordinator's pins from the
+#                     prerequisite manifest's aptPins): apt installs exactly those versions, never "latest".
+#   <toolchain node tarball>  the official node-v<ver>-linux-x64.tar.xz as P1 staged it (its sha256 checked by P1 against the manifest);
+#                     its bin/node must have <toolchain node sha256> (the template role policies' nodeExecutableSha256, from the kit).
+#
+# Docker's image store: Docker Engine 29 makes the containerd image store the default of a NEW install. There the image ID of a local
+# image is its manifest digest, not its config digest, so the role policies' `image: sha256:<config id>` (contract-placement, loaded
+# from the release asset role-image-<id>.tar.gz) would not resolve and `docker image inspect sha256:<id>` would not be that image.
+# The classic store is pinned here (/etc/docker/daemon.json "features": {"containerd-snapshotter": false}) and checked afterwards:
+# `docker info` must report the overlay2 graph driver and no containerd snapshotter in its driver status.
+#
+# Exit 0 and last line {"status":"LINUX_HOST_READY",...}; exit 2 and {"status":"RESTART_THIS_DISTRIBUTION"} when systemd was just
+# enabled (P1 then restarts ONLY this distribution, `wsl -t CluedResident-Linux`, never `wsl --shutdown`, and runs this again);
+# exit 1 and {"status":"REFUSED","code":...} otherwise.
+set -euo pipefail
+umask 022
+refuse() { echo "{\"status\":\"REFUSED\",\"code\":\"$1\"}"; exit 1; }
+[ "$(id -u)" = 0 ] || refuse ROOT_REQUIRED
+[ "$#" = 3 ] || refuse USAGE
+PINS=$1; NODE_TGZ=$2; NODE_SHA=$3
+[[ "$NODE_SHA" =~ ^[0-9a-f]{64}$ ]] || refuse TOOLCHAIN_NODE_SHA_SHAPE
+[ -f "$PINS" ] && [ ! -L "$PINS" ] || refuse APT_PINS_MISSING
+[ -f "$NODE_TGZ" ] && [ ! -L "$NODE_TGZ" ] || refuse TOOLCHAIN_NODE_TARBALL_MISSING
+export DEBIAN_FRONTEND=noninteractive
+NODE=/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node
+DAEMON=/etc/docker/daemon.json
+
+# 1. systemd as PID 1 (the WSL boot setting; a change needs a restart of this distribution only)
+if [ "$(cat /proc/1/comm)" != systemd ]; then
+  if ! grep -qxE 'systemd=true' /etc/wsl.conf 2>/dev/null; then
+    if [ -e /etc/wsl.conf ]; then
+      grep -qE '^\[boot\]' /etc/wsl.conf && refuse WSL_CONF_HAS_A_BOOT_SECTION_WITHOUT_SYSTEMD_TRUE
+      printf '\n[boot]\nsystemd=true\n' >> /etc/wsl.conf
+    else
+      printf '[boot]\nsystemd=true\n' > /etc/wsl.conf
+    fi
+  fi
+  echo '{"status":"RESTART_THIS_DISTRIBUTION","windows":"wsl -t CluedResident-Linux","never":"wsl --shutdown"}'; exit 2
+fi
+# 2. cgroup v2 (unified hierarchy)
+[ -e /sys/fs/cgroup/cgroup.controllers ] || refuse CGROUP_V2_REQUIRED
+
+# 3. the pinned packages: exactly docker.io, containerd, python3.12 and git, each "<name>=<version>"
+mapfile -t WANT < <(grep -v '^[[:space:]]*$' "$PINS")
+[ "${#WANT[@]}" = 4 ] || refuse APT_PINS_NOT_FOUR
+names=""
+for p in "${WANT[@]}"; do
+  [[ "$p" =~ ^(docker\.io|containerd|python3\.12|git)=[A-Za-z0-9.+:~-]+$ ]] || refuse "APT_PIN_SHAPE:$p"
+  names="$names ${p%%=*}"
+done
+[ "$(echo $names | tr ' ' '\n' | sort | tr '\n' ' ')" = "containerd docker.io git python3.12 " ] || refuse APT_PINS_NOT_THE_FOUR_PACKAGES
+missing=()
+for p in "${WANT[@]}"; do
+  have=$(dpkg-query -W -f='${Status} ${Version}' "${p%%=*}" 2>/dev/null || true)
+  [ "$have" = "install ok installed ${p#*=}" ] || missing+=("$p")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  apt-get update -q >/dev/null || refuse APT_UPDATE_FAILED
+  apt-get install -y -q --no-install-recommends "${missing[@]}" >/dev/null || refuse APT_INSTALL_FAILED
+  for p in "${WANT[@]}"; do
+    [ "$(dpkg-query -W -f='${Status} ${Version}' "${p%%=*}")" = "install ok installed ${p#*=}" ] || refuse "APT_NOT_THE_PINNED_VERSION:${p%%=*}"
+  done
+  apt-mark hold docker.io containerd python3.12 git >/dev/null || refuse APT_HOLD_FAILED
+fi
+[ -x /usr/bin/python3.12 ] && [ -x /usr/bin/git ] && [ -x /usr/bin/docker ] || refuse EXECUTABLES_MISSING
+
+# 4. docker: the classic image store, then enabled and active
+want_daemon='{"features":{"containerd-snapshotter":false}}'
+if [ -e "$DAEMON" ]; then
+  /usr/bin/python3.12 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("features",{}).get("containerd-snapshotter") is False else 1)' "$DAEMON" \
+    || refuse DOCKER_DAEMON_JSON_NOT_THE_CLASSIC_STORE
+else
+  install -d -o root -g root -m 0755 /etc/docker
+  printf '%s\n' "$want_daemon" > "$DAEMON"
+  systemctl restart docker.service 2>/dev/null || true
+fi
+systemctl enable docker.service >/dev/null 2>&1 || refuse DOCKER_ENABLE_FAILED
+[ "$(systemctl is-active docker.service)" = active ] || systemctl start docker.service || refuse DOCKER_START_FAILED
+driver=$(docker info --format '{{.Driver}}') || refuse DOCKER_INFO_FAILED
+status=$(docker info --format '{{json .DriverStatus}}') || refuse DOCKER_INFO_FAILED
+[ "$driver" = overlay2 ] || refuse "DOCKER_NOT_THE_CLASSIC_STORE:$driver"
+case "$status" in *io.containerd.snapshotter*) refuse DOCKER_CONTAINERD_SNAPSHOTTER_ACTIVE ;; esac
+
+# 5. the toolchain node at its fixed path (root-owned, not writable by others), with the pinned sha256
+if [ -e "$NODE" ]; then
+  [ "$(sha256sum "$NODE" | cut -d' ' -f1)" = "$NODE_SHA" ] || refuse TOOLCHAIN_NODE_PRESENT_NOT_THE_PINNED_ONE
+else
+  T=$(mktemp -d /root/clued-first-host-node-XXXX)
+  tar -xJf "$NODE_TGZ" -C "$T" --wildcards --no-anchored 'bin/node' || { rm -rf "$T"; refuse TOOLCHAIN_NODE_EXTRACT_FAILED; }
+  found=$(find "$T" -path '*/bin/node' -type f)
+  [ "$(printf '%s\n' "$found" | grep -c .)" = 1 ] || { rm -rf "$T"; refuse TOOLCHAIN_NODE_NOT_ONE_IN_THE_TARBALL; }
+  [ "$(sha256sum "$found" | cut -d' ' -f1)" = "$NODE_SHA" ] || { rm -rf "$T"; refuse TOOLCHAIN_NODE_NOT_THE_PINNED_ONE; }
+  [ -e /var/lib/clued-independent-ci ] || install -d -o root -g root -m 0700 /var/lib/clued-independent-ci
+  install -d -o root -g root -m 0755 /var/lib/clued-independent-ci/toolchain-build-legacy-v1
+  install -o root -g root -m 0755 "$found" "$NODE"
+  rm -rf "$T"
+fi
+for d in /var/lib/clued-independent-ci /var/lib/clued-independent-ci/toolchain-build-legacy-v1; do
+  [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ] || refuse "TOOLCHAIN_DIRECTORY_NOT_ROOT_PROTECTED:$d"
+done
+[ ! -L "$NODE" ] && [ "$(stat -c %u "$NODE")" = 0 ] && [ $(( 0$(stat -c %a "$NODE") & 022 )) = 0 ] || refuse TOOLCHAIN_NODE_NOT_ROOT_PROTECTED
+
+echo "{\"status\":\"LINUX_HOST_READY\",\"dockerDriver\":\"$driver\",\"toolchainNodeSha256\":\"$NODE_SHA\",\"python\":\"$(/usr/bin/python3.12 -c 'import platform; print(platform.python_version())')\",\"git\":\"$(git --version | cut -d' ' -f3)\"}"

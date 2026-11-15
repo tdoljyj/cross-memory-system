@@ -122,6 +122,9 @@ export const SUITES = {
       'config/node-governance-standard.json', 'work/independent-ci-resident-v1/src/host-capacity.mjs'],
     'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
     'resident-python': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
+    // The universal node package's node side (rollout/fleet: prepare, the first install, upgrade, publish): its own tests, which no
+    // suite ran before (they need Windows: sc.exe, Windows PowerShell 5.1, the package's Python tools on Windows paths).
+    'resident-fleet-node': RESIDENT_AND_SOURCE,
     // The reinstall tools' own tests (work/independent-ci-resident-v1/reinstall/test) pin the launcher template, read the resident's
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
     'reinstall-python': RESIDENT_AND_SOURCE,
@@ -171,6 +174,8 @@ export const FILE_LIMIT = 3000;
 // runs on both, and each entry gives its reason.
 export const PLATFORMS = ['linux', 'win32'];
 export const SUITE_PLATFORMS = {
+  // install.mjs / upgrade.mjs run on a node's Windows host only (the Owner session); their tests read sc.exe and Windows PowerShell 5.1.
+  'resident-fleet-node': { platforms: ['win32'], reason: 'the node side of the universal package runs on the Windows host only' },
   // Renders the panel on a Linux runner from GitHub's API; nothing of it runs on a Windows host.
   'compute-panel': { platforms: ['linux'], reason: 'the panel is rendered on the Linux pool only' },
   // The application is built and deployed from Linux (Workers, Supabase); its unit tests take 16 minutes.
@@ -206,6 +211,7 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: [PYTHON, '-I', '-B', 'scripts/ci/self-hosted/validate_node_profiles.py'], quiet: true }],
   // The upgrade precheck and rollout tools' own tests (rollout/test) run with the resident's (defect 15894c2a review M1).
   'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}', '{tests:rollout/test}'] }],
+  'resident-fleet-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:rollout/fleet/test}'] }],
   'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] },
     { cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'rollout/test', '-p', 'test_*.py'] }],
   'reinstall-python': [{ cwd: `${RESIDENT}/reinstall`, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
