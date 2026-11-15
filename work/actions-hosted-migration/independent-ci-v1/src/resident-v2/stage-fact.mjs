@@ -10,7 +10,7 @@ import { validateTrainFacts } from '../independent-control-checks-v2/train-facts
 import { roleProbeFact } from './role-probe-run.mjs';
 import { validateRevocationFacts } from './revocation-run.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
-import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 import { admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
@@ -32,8 +32,10 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // outcomeFailureCode below). Unlike the other transient codes a check WAS published (and withdrawn) on the head: it is stage 1's own
 // attempt-scoped control check, never a role check; nothing about the PR was found and attempt 2 re-proves under new job ids.
 export const ADMISSION_VERIFICATION_UNAVAILABLE = 'ADMISSION_VERIFICATION_UNAVAILABLE';
+// HEAD_INTERRUPTED_ON_GITHUB (resident DESIGN §78): stage 1 found only this attempt's own admission check on the head, written by a
+// run that was interrupted (a failover) before any role or control check: nothing of the head ran; attempt 2 runs it under new job ids.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', ADMISSION_VERIFICATION_UNAVAILABLE]);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', ADMISSION_VERIFICATION_UNAVAILABLE, HEAD_INTERRUPTED_ON_GITHUB]);
 export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_REVOKE_UNCONFIRMED',
   'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED',
   'RELAY_TRAIN_FRONT_LOCAL',
@@ -150,6 +152,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // On GitHub but unknown to this node (C4): clean, final, only on this clean BLOCKED with zero side effects (stage 1's
   // read-back is the only one that ends a head as HEAD_PUBLISHED_ON_GITHUB).
   if (r === HEAD_PUBLISHED_ON_GITHUB && stageNumber === 1) return HEAD_PUBLISHED_ON_GITHUB;
+  if (r === HEAD_INTERRUPTED_ON_GITHUB && stageNumber === 1) return HEAD_INTERRUPTED_ON_GITHUB;
   if (r === ROLE_ALREADY_ON_GITHUB_REASON || r === ROLE_ALREADY_ON_GITHUB) return ROLE_ALREADY_ON_GITHUB;
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
   if (stageNumber === 8 && STAGE8_OWN_CODES.has(r)) return r;
