@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 import { sourceHashOf } from '../fleet/install.mjs';
@@ -213,4 +214,35 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   // the node is untouched by all of the above: the real request goes through, for the package the dry run assembled
   const r = await viaMain(w.acceptance);
   assert.deepEqual([r.status, r.packageManifestSha256, q.calls.length], ['FLEET_NODE_UPGRADE_REQUESTED', dry.packageManifestSha256, 1], JSON.stringify(r).slice(0, 2000));
+});
+
+test('fleet upgrade fetch: one command takes the tar from the second source, checks its sha256, unpacks it and runs the UNPACKED upgrade.mjs; a wrong tar is never unpacked', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const version = w.release.source.version, tag = `fleet-node-${version}`, sha256 = w.release.source.archive_sha256;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-fetch-cmd-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const from = path.join(dir, 'from');
+  await fs.mkdir(from);
+  await fs.copyFile(w.tar, path.join(from, `${tag}.tar`));
+  await fs.writeFile(path.join(from, `${tag}.acceptance.json`), JSON.stringify(w.acceptance));
+  await fs.writeFile(path.join(from, 'SHA256SUMS'), `${sha256}  ${tag}.tar\n`);
+  const noNetwork = { fetch: { apiBase: 'http://127.0.0.1:1', getToken: () => { throw new Error('no token'); } } };
+  const ran = [];
+  const runChild = (exe, args) => { ran.push(args); return { status: 0, stdout: '', last: JSON.stringify({ contract: 'clued.independent-ci.fleet-node-upgrade/1', status: 'FLEET_NODE_UPGRADE_REQUESTED' }), stderr: '' }; };
+  const r = await main(['fetch', '--version', version, '--work', path.join(dir, 'w1'), '--from', from, '--no-request'], { ...noNetwork, runChild });
+  assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 800));
+  assert.equal(r.fetched.source, 'from');
+  const [script, ...rest] = ran[0];
+  assert.equal(script, path.join(dir, 'w1', 'unpacked', 'tree', 'work', 'independent-ci-resident-v1', 'rollout', 'fleet', 'upgrade.mjs'));
+  assert.ok((await fs.readFile(script)).length > 0, 'the unpacked package has its own upgrade.mjs, and fetch.mjs beside it');
+  await fs.access(path.join(path.dirname(script), 'fetch.mjs'));
+  assert.deepEqual(rest.slice(0, 6), ['--artifact', path.join(dir, 'w1', 'dl', `${tag}.tar`), '--artifact-sha', sha256, '--acceptance', path.join(dir, 'w1', 'dl', `${tag}.acceptance.json`)]);
+  assert.ok(rest.includes('--no-request'));
+  // a tar that is not the accepted one: refused, nothing unpacked, nothing run
+  const bad = Buffer.from(await fs.readFile(w.tar)); bad[600] ^= 1;
+  await fs.writeFile(path.join(from, `${tag}.tar`), bad);
+  const r2 = await main(['fetch', '--version', version, '--work', path.join(dir, 'w2'), '--from', from], { ...noNetwork, fetch: { ...noNetwork.fetch, deadlineMs: 100, backoffMs: () => 10 }, runChild });
+  assert.equal(r2.status, 'FLEET_NODE_UPGRADE_REFUSED');
+  await assert.rejects(fs.access(path.join(dir, 'w2', 'unpacked')));
+  assert.equal(ran.length, 1);
 });

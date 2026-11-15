@@ -5,6 +5,12 @@
 // drain, both sides' switch, the verify, the rollback. NON-elevated, Owner session; no UAC anywhere; writes only under a new work
 // directory and that one inbox file; no Python, no git, no WSL, no network.
 //
+//   node upgrade.mjs fetch --version <v> --work <new dir> [--from <dir>] [--repo <owner/name>] [--no-request] [--allow-active-upgrade]
+//        the whole node step in ONE command: fetch.mjs takes fleet-node-<v>.tar, its acceptance and SHA256SUMS from the release (resumed
+//        after a dropped connection, retried with backoff, one total deadline) or from the files in --from, and trusts only the sha256;
+//        only a tar that matches is unpacked (<work>/unpacked) and the UNPACKED upgrade.mjs below is run on it (--work <work>/upgrade).
+//        Run it again with the same --work after a failure: the part file is continued. Any copy of upgrade.mjs + fetch.mjs will do
+//        for this step (the previous unpacked package has them); the package's own copy is what runs the upgrade.
 //   node <unpacked>/tree/work/independent-ci-resident-v1/rollout/fleet/upgrade.mjs
 //        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json> --work <new dir>
 //        [--no-request] [--allow-active-upgrade]
@@ -43,6 +49,7 @@ import { DEFAULT_ROOT, FLEET_REF_KEYS, FORMAL_ROLES, OWN_MODULES, configInputsFo
   validateAcceptance } from './install.mjs';
 import { Refused, TOOL_PATH, rolesDerived } from './ports.mjs';
 import { pyCanonical, pyDumps } from './pyjson.mjs';
+import { DEFAULT_REPO, fetchPackage } from './fetch.mjs';
 import { extractTar } from './tar.mjs';
 import { BUNDLE_NAME, bundleHeads } from './universal.mjs';
 
@@ -235,9 +242,32 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
 export const OK_STATUSES = Object.freeze(['FLEET_NODE_UPGRADE_REQUESTED', 'FLEET_NODE_UPGRADE_IN_PROGRESS', 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED']);
 const REINSTALL_HINT = 'This node cannot take this package in place. Its way is the reinstall: install.mjs prepare with the same --artifact, --artifact-sha and --acceptance (rollout/fleet/README.md).';
 
+// `upgrade fetch`: fetch (resumable, hash-checked), unpack, then the unpacked package's own upgrade.mjs does the upgrade. `deps` is for
+// tests only: fetch options (the fake API, no waiting), the root, and a stand-in for the child process.
+export async function fetchAndUpgrade(argv, deps = {}) {
+  const { values } = parseArgs({ args: argv, options: { version: { type: 'string' }, work: { type: 'string' }, from: { type: 'string' }, repo: { type: 'string' },
+    'no-request': { type: 'boolean' }, 'allow-active-upgrade': { type: 'boolean' } } });
+  need(values.version && values.work, 'USAGE');
+  const work = path.resolve(values.work);
+  const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'), from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO });
+  const acceptance = jsonOf(await fs.readFile(fetched.acceptance));
+  validateAcceptance(acceptance, deps.now ?? Date.now());
+  const { entries } = readArchive(await fs.readFile(fetched.artifact), fetched.artifactSha256, acceptance);   // the hash again, then the strict read
+  const unpacked = path.join(work, 'unpacked');
+  await fs.rm(unpacked, { recursive: true, force: true });   // this command's own scratch, so the same --work can be run again
+  await extractTar(entries, unpacked);
+  const script = path.join(unpacked, 'tree', ...RESIDENT.split('/'), 'rollout', 'fleet', 'upgrade.mjs');
+  const args = [script, '--artifact', fetched.artifact, '--artifact-sha', fetched.artifactSha256, '--acceptance', fetched.acceptance, '--work', path.join(work, 'upgrade'),
+    ...(values['no-request'] ? ['--no-request'] : []), ...(values['allow-active-upgrade'] ? ['--allow-active-upgrade'] : [])];
+  const r = (deps.runChild ?? run)(process.execPath, args);
+  const answer = parsed(r.last ?? '') ?? { contract: UPGRADE_CONTRACT, status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'FLEET_UNPACKED_UPGRADE_NO_ANSWER', detail: failureOf({ status: r.status, stderr: r.stderr ?? '', stdout: r.stdout ?? '' }) };
+  return { ...answer, fetched: { artifact: fetched.artifact, artifactSha256: fetched.artifactSha256, source: fetched.source, attempts: fetched.attempts, resumed: fetched.resumed, unpacked } };
+}
+
 // `deps` is for tests only (a fixture root, a stand-in for the installed request tool); the command line cannot reach it.
 export async function main(argv, deps = {}) {
   try {
+    if (argv[0] === 'fetch') return await fetchAndUpgrade(argv.slice(1), deps);
     const { values } = parseArgs({ args: argv, options: { artifact: { type: 'string' }, 'artifact-sha': { type: 'string' }, acceptance: { type: 'string' }, work: { type: 'string' },
       'no-request': { type: 'boolean' }, 'allow-active-upgrade': { type: 'boolean' } } });
     need(values.artifact && values['artifact-sha'] && values.acceptance && values.work, 'USAGE');
