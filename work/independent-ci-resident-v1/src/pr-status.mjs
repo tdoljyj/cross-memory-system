@@ -157,9 +157,12 @@ export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
 // Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
 // (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
 // of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
-export function withRerunLine(want, rerun) {
-  if (!want || want.weak || rerun !== true) return want;
-  return { ...want, description: clip(`已自动补跑一次必需测试；${want.description}`) };
+// The lost-run lane's line (a head GitHub created no run for, AdmissionRerunner#line) goes in the same place. line: true (the re-run
+// line) or that lane's text; anything else adds nothing.
+export function withRerunLine(want, line) {
+  const text = line === true ? '已自动补跑一次必需测试' : typeof line === 'string' && line.length > 0 ? line : null;
+  if (!want || want.weak || text === null) return want;
+  return { ...want, description: clip(`${text}；${want.description}`) };
 }
 // The lines kept at the end of a text, never clipped away: the node resource line (host-capacity.mjs, node governance v1), then
 // the watchdog warning. Each is added at most once; adding one keeps the other (the text before them is clipped instead).
@@ -447,6 +450,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
+      case 'selfcheck-failed': out.push({ key: `notice:${n.key}`, title: '节点用完即弃自检未通过', body: `原因：${n.code ?? '?'}（视图探针或遗留容器，详见 status.json 的 versions.selfcheck）。不影响准入和合入，请查明后处理。` }); break;
       // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
       case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;
       default: break;
@@ -623,7 +627,7 @@ export class PrStatusReporter {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
-          const base = withRerunLine(describe({ pull, status, now }), this.rerunDone?.(pull.headSha) === true);
+          const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
           const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;

@@ -4464,6 +4464,31 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 每个新 workflow 都必须登记进 `.github/actions/ci-temporary-storage/coverage.json`。这个文件被 gitleaks/trivy 的 scan-start 策略钉住（`hosted-relay-v1/registry.json` 的冻结闭包，生产 Worker `ci-scan-start-v1.ts` 会核对）。所以加任何一个 workflow，都得重新钉值并部署生产 Worker，否则之后 PR 的 scan start 会被拒（`clued-cloud` 的 `ci-scan-start-worker.test.mjs` 会失败）。
   - 后者已立为 Clued 任务 `259a20c6-1e77-46fb-8ef1-8d8386d38ffc`（“新 workflow 登记要重钉 scan-start 策略并部署，应改成不需要部署”）。
 
+#### 56.5a 必需检查的运行没被创建（丢事件）：同一 lane 补发一次（Task `7067280f`，PLAN 1a）
+
+- **现场证据。** a0122fd9（#1058，2026-11-09）推送后 GitHub 没有创建任何 `clued-required-tests` 运行，也没有 GitHub Actions（App 15368）的 check suite，只有其他 App 的 suite；当时靠空提交 8d1775f9 重跑。
+- **补发入口实测**（一次性私有仓库，`on: pull_request`，job `if: false` 不耗分钟）：
+  - 用 `[skip ci]` 推送、或先停用 Actions 再推送，都复现了“无运行、无 Actions suite”，和 a0122fd9 一样。
+  - Owner 的 gh 登录（用户令牌）调 `POST check-suites/{id}/rerequest`：对已有的 Actions suite 也是 HTTP 404；`POST check-suites`（创建）HTTP 404。丢事件时本来也没有 suite 可重新请求，所以这条路走不通。
+  - 草稿→就绪、改 PR 正文：不产生运行（`pull_request` 默认只有 opened、synchronize、reopened）。
+  - 把分支先推到一个子提交再强推回原 head：原 head 会补出一次 `pull_request` 运行。但中间那个 head 没有认领授权，常驻和准入会看到它，而且强推回去不是比较后交换（可能覆盖 Agent 同时推的提交）。不采用。
+  - close→reopen 会清自动合入、发通知（DESK 已排除）。
+  - 结论：不改受保护工作流就没有安全的入口。lane 用 `workflow_dispatch`（`POST actions/workflows/clued-required-tests.yml/dispatches -f ref=<PR 分支>`）；在工作流加上这个入口之前，GitHub 回 HTTP 422，lane 记 `refused` 并告知一次。
+- **做法**（`admission-rerun.mjs`，同一个 lane、同一个记忆文件、同一种回执，`kind: redispatch`）：
+  - 候选仍然只看本节点 ACTIVE 时跑过或排过、且仍开着的 PR 的 head。
+  - 恰好一个开着的本仓库 PR 有这个 head，且这个 lane 第一次看到它已满 `LOST_RUN_AFTER_MS`（5 分钟）。这个 lane 在推送后约两分钟内就能看到 head，所以这是推送时间的保守下界。
+  - 这个工作流在这个 head 上的运行完整列表（`runs?head_sha=`，`total_count` 必须等于条数且不超过 100）为空。
+  - 发请求前再读一次：PR 仍开着、仍是这个 head、分支名合格，运行列表仍为空。
+  - 读失败、列表截断、head 变了、年龄不知道，都算“未知”，不动作，2 分钟后再读。
+  - 先写 `intent` 回执再发请求；每个 head 一辈子只发一次，不论结果。
+- **告知。** PR 页面基础文字前加一句：已补发写“必需测试没有运行，已自动补发一次”，被拒或没发出写“……自动补发未成功”，结果不明写“……自动补发结果不确定”。同时给 Owner 弹一次通知。
+- **还缺的受保护改动（要 Grant）**：
+  - `clued-required-tests.yml`：加 `workflow_dispatch`，各 job 的 `if:` 认这种事件；
+  - `scripts/ci/clued-work-admission.mjs`：dispatch 也走 Native 准入，并绑定这个分支唯一开着的 PR；
+  - `scripts/runner/clued-runner-job-started.mjs`：把它列进 `DISPATCH_GATED_WORKFLOWS`，各 runner 重装 hook。
+  - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
+- **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
+
 ### 56.6 策略、Source 与安装
 
 - **策略。** 不改（仍是 /9），没有新的策略字段。观察的节奏和上限是代码常量。

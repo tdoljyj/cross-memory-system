@@ -93,7 +93,7 @@ test('review round 4: the reporter puts the re-run line after the duty word and 
   };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
-  reporter.rerunDone = h => h === H(6);
+  reporter.rerunLine = h => h === H(6);
   reporter.watchdogStale = () => true;
   const board = new StatusBoard({ clock: () => now });
   board.update({ backfill: { complete: true, published: 0, unreadable: 0 } });
