@@ -5194,7 +5194,9 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - §41.7 兜底里“strict=false 而全量清扫没完成”那一档只在 `gate` 下还有意义。
 - **回退**：一次 UAC 把策略写成 `train.sweep: "gate"`（新策略、新摘要、新职责），即回到 §41/§60–§62 的接管门；Source 不用换代。再往回（关 strict 的列车）仍按 §41.9 的流程，且必须先在 `gate` 下完成一轮真实全量扫描。
 
-### 65.6 车头落后自动更新分支：方案（未实现，需要 Owner 决定）
+### 65.6 车头落后自动更新分支：已获授权，未实现
+
+**更正（2026-11-16，缺陷 C）**：本节原题“需要 Owner 决定”已过时。Owner 决定 `9e2511fe` 第 3 条（机器人自动给落后 main 的车头更新分支）与 `78a3052f` 第 2 条（`clued-merge-executor` 重新启用，范围收窄为列车开时只给 BEHIND 的车头 update-branch、merge 方式；受保护层 PR 暂不自动更新；测过再启用）已授权下文的建议方案，下文“需要 Owner 决定”的 ① 已答，② 答为“暂不”。现状仍是未实现、工作流 `disabled_manually`。另：组件版本规则 v0.4（`development/contracts/components/ComponentVersioning.v0.4.md`）之后合 main 是普通合并、不需重生成，update-branch 产生的 head 本身就是正确的；PR 页面只提示车头合 main，其余落后的 PR 显示“排队中，不必现在合 main”（30 分钟内没有列车给出车头时退回旧提示）。
 
 GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需要有人把 main 合进 PR 分支（update-branch，merge 方式），然后对新 head 走正常流程（第 1 段重新准入、第 10 段重开车头批次）。只读核对（2026-11-07）：
 

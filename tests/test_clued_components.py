@@ -339,11 +339,30 @@ class BaseRefTest(unittest.TestCase):
 class QueuedPullRequestTest(unittest.TestCase):
     """Defect C (2026-11-15): when one queued PR merges, the next one only has to take main in.
 
-    Two PRs from the same main change the same component and each runs the repository's integration
-    builder before it is tested. The first merges. A plain merge of the new main into the second (what
-    GitHub's update-branch does) must be clean and already correct: no conflict in generated component
-    metadata, nothing left for the builder to regenerate, so no person or builder has to touch the PR.
+    Two PRs from the same main change the same component and two neighbouring pinned scripts/ci files,
+    and each runs the repository's integration builder before it is tested. The builder runs a Source pin
+    registry generator ("path -> sha256" of every scripts/ci file, written with the repository's registry
+    layout, like scripts/ci/clued-merge-reconcile-source.json) and the pinned-registry check verifies that
+    registry for real. The first PR merges. A plain merge of the new main into the second (what GitHub's
+    update-branch does) must be clean and already correct: no conflict in generated component metadata or
+    in the pin registry, nothing left for the builder to regenerate, so no person or builder touches the PR.
     """
+
+    REGISTRY = "scripts/ci/clued-merge-reconcile-source.json"
+    # The real generator's registry part: every scripts/ci file except the registry, hashed, in the shared layout.
+    GENERATOR = r"""import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {layoutRegistry} from './registry-layout.mjs';
+const OUT='scripts/ci/clued-merge-reconcile-source.json';
+const files=Object.fromEntries(fs.readdirSync('scripts/ci').map(n=>'scripts/ci/'+n).filter(n=>n!==OUT).sort()
+  .map(n=>[n,createHash('sha256').update(fs.readFileSync(n)).digest('hex')]));
+const text=layoutRegistry({schema:'fixture',files});
+if(process.argv[2]==='--check')process.exit(fs.existsSync(OUT)&&fs.readFileSync(OUT,'utf8')===text?0:1);
+fs.writeFileSync(OUT,text);
+"""
+    CHECK = r"""import {spawnSync} from 'node:child_process';
+process.exit(spawnSync(process.execPath,['scripts/ci/clued-merge-reconcile-source-build.mjs','--check'],{stdio:'inherit'}).status);
+"""
 
     def setUp(self):
         spec = importlib.util.spec_from_file_location(
@@ -353,10 +372,18 @@ class QueuedPullRequestTest(unittest.TestCase):
         self.repo = Fixture()
         self.addCleanup(self.repo.close)
         self.repo.git("init", "-q", "-b", "main")
-        write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs", "process.exit(0);\n")
+        write(self.repo.dir / "scripts/ci/registry-layout.mjs",
+              (ROOT / "scripts/ci/registry-layout.mjs").read_text(encoding="utf-8"))
+        write(self.repo.dir / "scripts/ci/clued-merge-reconcile-source-build.mjs", self.GENERATOR)
+        write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs", self.CHECK)
+        write(self.repo.dir / "scripts/ci/a.mjs", "export const a = 1;\n")
+        write(self.repo.dir / "scripts/ci/b.mjs", "export const b = 1;\n")
         policy = json.loads((ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
         write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
-            policy, mechanical_paths=[], marker_paths=["config/clued-components.json", "pkg/SKILL.md"])))
+            policy, mechanical_paths=[self.REGISTRY], marker_paths=["config/clued-components.json", "pkg/SKILL.md"])))
+        done = subprocess.run(["node", "scripts/ci/clued-merge-reconcile-source-build.mjs"], cwd=self.repo.dir,
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
         self.commit("main")
         self.main = self.head()
 
@@ -372,10 +399,11 @@ class QueuedPullRequestTest(unittest.TestCase):
         done = self.git("commit", "-qm", message)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
-    def pull_request(self, branch, path, text):
+    def pull_request(self, branch, changes):
         """A PR as it reaches the queue today: the author's change, then the builder's outputs."""
         self.git("checkout", "-q", "-b", branch, self.main)
-        write(self.repo.dir / path, text)
+        for path, text in changes.items():
+            write(self.repo.dir / path, text)
         self.commit(f"{branch}: source change")
         self.builder.integrate_candidate(self.repo.dir, self.main, self.head(), write=True)
         if self.git("status", "--porcelain").stdout.strip():
@@ -383,8 +411,8 @@ class QueuedPullRequestTest(unittest.TestCase):
         return self.head()
 
     def test_next_queued_pr_needs_only_a_plain_merge_of_main(self):
-        first = self.pull_request("first", "pkg/references/a.md", "first\n")
-        self.pull_request("second", "pkg/references/b.md", "second\n")
+        first = self.pull_request("first", {"pkg/references/a.md": "first\n", "scripts/ci/a.mjs": "export const a = 2;\n"})
+        self.pull_request("second", {"pkg/references/b.md": "second\n", "scripts/ci/b.mjs": "export const b = 2;\n"})
         self.git("branch", "-f", "main", first)  # the first PR merges (strict: it contained main)
         merged = self.git("merge", "--no-edit", "main")
         self.assertEqual(merged.returncode, 0, "taking main in conflicts:\n" + merged.stdout + merged.stderr)

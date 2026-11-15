@@ -131,6 +131,7 @@ export const SUITES = {
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
       'scripts/ci/component-version-integration.py', 'scripts/ci/component-version-integration.test.py',
+      'scripts/update_clued_skills.py', 'scripts/test_update_clued_skills.py', 'plugins/kooyumi/**',
       'VERSION', '.claude/settings.json', 'scripts/ci/clued_release_tags.py', 'scripts/ci/test_clued_release_tags.py'],
     'runner-budget-policy': ['.github/workflows/**', 'scripts/ci/validate_runner_budget_policy.py',
       'scripts/ci/test_validate_runner_budget_policy.py'],
@@ -218,6 +219,8 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'tests.test_clued_components', 'tests.test_clued_version_check'] },
     // The integration builder's own tests (they were in no suite before defect C).
     { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.test.py'] },
+    // The Skill publishing entries refuse a changed Skill under its released version (ComponentVersioning v0.4).
+    { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/test_update_clued_skills.py', 'plugins/kooyumi/test_build_bundle.py'] },
     // VERSION and its git tag agree (ComponentVersioning v0.2; the checkout has full history).
     { cwd: '.', argv: [PYTHON, 'scripts/ci/clued_release_tags.py', 'check'] },
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/ci/test_clued_release_tags.py'] },

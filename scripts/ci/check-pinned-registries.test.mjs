@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CHECK_IDS, GENERATED, COMPONENTS_FIX, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
 import { PINNED_REGISTRY_PATHS, globToRegExp } from './ci-required-selection.mjs';
 import { SOURCE_FILE, hash, sourceClosure } from './clued-merge-reconcile-source.mjs';
+import { layoutRegistry } from './registry-layout.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.resolve(here, '../..');
 const CLI = path.join(here, 'check-pinned-registries.mjs');
@@ -74,7 +75,7 @@ const byId = (report, id) => report.results.find((r) => r.id === id);
 function refreshReconcile(dir) {
   const file = path.join(dir, SOURCE_FILE), source = JSON.parse(fs.readFileSync(file, 'utf8'));
   source.files = Object.fromEntries(sourceClosure(dir).map((name) => [name, hash(fs.readFileSync(path.join(dir, name)))]));
-  fs.writeFileSync(file, JSON.stringify(source, null, 2) + '\n');
+  fs.writeFileSync(file, layoutRegistry(source));
 }
 // A registered copy: this checkout's files with the reconcile registry brought up to date for the files this
 // change adds, committed as the base.

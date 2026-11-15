@@ -262,6 +262,59 @@ def check(root: Path = ROOT, base_ref: str | None = None) -> list[str]:
     return problems
 
 
+def released_at(component_id: str, root: Path = ROOT) -> str | None:
+    """The first commit on HEAD's first-parent line that carries the component's current version.
+
+    That commit's files are what this version means. None when the checkout has no commit with the current
+    version (an uncommitted bump). Raises BaseRefError on a shallow checkout: its history may end inside the
+    version and name a later commit than the release."""
+    if str(_git_output(root, ["rev-parse", "--is-shallow-repository"])).strip() != "false":
+        raise BaseRefError("the checkout is shallow; publishing needs the full history to find the release commit")
+    version = by_id(load_manifest(root))[component_id]["version"]
+    released = None
+    for commit in str(_git_output(root, ["log", "--first-parent", "--format=%H", "HEAD", "--", MANIFEST.as_posix()])).split():
+        try:
+            prior = by_id(json.loads(str(_git_output(root, ["show", f"{commit}:{MANIFEST.as_posix()}"])))).get(component_id)
+        except (BaseRefError, ValueError, KeyError, TypeError):
+            break
+        if prior is None or prior.get("version") != version:
+            break
+        released = commit
+    return released
+
+
+def committed_digest(commit: str, component: dict, root: Path = ROOT) -> str | None:
+    """content_digest of the component's files as that commit has them (same formula, read from git)."""
+    prefix = _safe_component_path(component.get("root", "."))
+    listed = str(_git_output(root, ["ls-tree", "-r", "-z", "--name-only", commit, "--", "." if prefix == "." else prefix]))
+    lines = []
+    for name in sorted(n for n in listed.split("\0") if n):
+        rel = name if prefix == "." else name[len(prefix) + 1:]
+        parts = rel.split("/")
+        if SKIP_PARTS.intersection(parts) or not any(_glob_matches(rel, p) for p in component.get("files", [])):
+            continue
+        data = bytes(_git_output(root, ["show", f"{commit}:{name}"], binary=True)).replace(b"\r\n", b"\n")
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {rel}\n")
+    return hashlib.sha256("".join(lines).encode()).hexdigest() if lines else None
+
+
+def unreleased_change(component_id: str, root: Path = ROOT) -> str | None:
+    """Why the component's files may not be published under their version, or None (ComponentVersioning v0.4).
+
+    A host without a checkout (claude.ai, Codex) can only compare version numbers. A version is raised on
+    purpose, never per pull request, so a publishing entry refuses files that differ from what the version
+    meant when it first reached this line of history: same number, different content would look current."""
+    component = by_id(load_manifest(root))[component_id]
+    commit = released_at(component_id, root)
+    bump_hint = f"bump it first (clued_components.py bump {component_id} <version>) and publish from that commit"
+    if commit is None:
+        return f"{component_id} {component['version']} is in no commit of this checkout; {bump_hint}"
+    if committed_digest(commit, component, root) != content_digest(root / component["root"], component["files"]):
+        return (f"{component_id} {component['version']}: its files differ from version {component['version']} as released "
+                f"in {commit[:12]}; {bump_hint}")
+    return None
+
+
 def bump(component_id: str, version: str, root: Path = ROOT) -> None:
     data = load_manifest(root)
     component = by_id(data).get(component_id)
