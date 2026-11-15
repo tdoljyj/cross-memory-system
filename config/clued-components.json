@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "b8084e0703d520524bf4b60beacac9537e54445210fcf473481ebbeae6a0670b"
+      "content_sha256": "863e0a32a065e168724ef7f45a726c27aa96c19a5bdf7dd9eb40fba07ac8d2a2"
     },
     {
       "id": "hook.runner-job-started",
