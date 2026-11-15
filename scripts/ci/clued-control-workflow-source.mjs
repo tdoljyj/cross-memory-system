@@ -528,7 +528,7 @@ export const MERGE_RECONCILE_CONTROL_SOURCE=freeze({
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "7bd6642aff58eb96ceff622da5f1feaba36c274a",
     "scripts/ci/clued-independent-publication-identity.mjs": "1abf7547bf9a2edf22eb748bb0eeea17410ddf77",
     "scripts/ci/clued-independent-publication-identity.test.mjs": "4f4c10cf2bb978e569bccd71ec5613fe787ba55a",
-    "scripts/ci/clued-independent-publication-port.mjs": "8acf3d5fecd2dc90a12bb6cabffc4142a1f863a4",
+    "scripts/ci/clued-independent-publication-port.mjs": "11183255707355df2cbc619c9eea85f2f02a2ec2",
     "scripts/ci/clued-independent-publication-port.test.mjs": "4491ae0f7a2d0d6c589cc87c9010490b00b09882",
     "scripts/ci/clued-independent-publication-runtime.mjs": "afe70fbd4f10f446bb51b16b39102e5f9ae42676",
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "f3218b078c77926d7db5c34cae4e2bdda6ce7c94",
