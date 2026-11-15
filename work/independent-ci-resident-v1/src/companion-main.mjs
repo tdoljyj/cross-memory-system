@@ -333,7 +333,7 @@ export async function main(args = process.argv.slice(2)) {
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
-      lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
+      lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),

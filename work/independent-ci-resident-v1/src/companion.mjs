@@ -16,6 +16,7 @@ import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
+import { SELFCHECK_BUSY_RETRY_MS, SELFCHECK_REFRESH_MS, SELFCHECK_TIMEOUT_MS, selfcheckDocument, writeSelfcheck } from './selfcheck.mjs';
 import { ROLES_PUBLIC_LINUX_DIR, ROLES_PUBLIC_NAMES, ROLES_PUBLIC_TIMEOUT_MS, readRolesPublic, rolePublicBytes, rolesPublicCurrent, rolesPublicDocument, rolesPublicWanted, writeRolesPublic } from './roles-public.mjs';
 
 export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
@@ -400,6 +401,8 @@ export function argv(cfg) {
     unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl('/usr/bin/python3', '-I', '-c', LINUX_QUIESCENCE_PROBE, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
+    // Task 4a: the node's own check that the Linux side is used once and thrown away (read-only; BUSY while a batch runs).
+    selfcheck: () => wsl(cfg.linuxTool, 'selfcheck'),
     // DESIGN §35: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
     archivePrune: () => wsl(cfg.linuxTool, 'archive-prune'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
@@ -1006,6 +1009,8 @@ export class UpgradeLane {
     this.factsAt = null;       // the last facts written (lane clock)
     this.factsTriedAt = null;  // the last facts read tried
     this.factsDue = true;
+    this.selfcheckAt = null;       // the last answer that was a result (lane clock)
+    this.selfcheckTriedAt = null;  // the last run tried (a BUSY or failed run is tried again after SELFCHECK_BUSY_RETRY_MS)
   }
 
   async box() {
@@ -1060,6 +1065,40 @@ export class UpgradeLane {
     } catch {
       return (this.rolesPublic = 'failed');
     }
+  }
+
+  // Task 4a: the node's self-check, run by the root tool between batches and kept whole in responses\selfcheck.json (selfcheck.mjs). A run that
+  // is BUSY, refused, timed out or unreadable writes nothing (the file keeps the last result and its age shows it as STALE): a helper that
+  // cannot run does nothing and never stops the lane. Returns true when a result was written.
+  async refreshSelfcheck(box) {
+    this.selfcheckTriedAt = this.clock();
+    try {
+      if (typeof box?.responses !== 'string') return false;
+      const r = await this.run(this.a.selfcheck(), { timeoutMs: SELFCHECK_TIMEOUT_MS });
+      if (!r || r.code !== 0 || r.timedOut || r.refused || typeof r.stdout !== 'string') return false;
+      let tool;
+      try { tool = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1)); } catch { return false; }
+      const doc = selfcheckDocument(tool, this.clock());
+      if (!doc) return false;
+      await writeSelfcheck(box.responses, doc);
+      this.selfcheckAt = this.clock();
+      return true;
+    } catch { return false; }
+  }
+
+  // Its own pass after step() (companion-main.mjs): due when never written or older than SELFCHECK_REFRESH_MS; a run that wrote nothing is
+  // tried again after SELFCHECK_BUSY_RETRY_MS. Never throws.
+  async selfcheckStep() {
+    try {
+      if (!this.selfcheckWanted(this.clock())) return false;
+      const box = await this.box();
+      return box ? await this.refreshSelfcheck(box) : false;
+    } catch { return false; }
+  }
+
+  selfcheckWanted(now) {
+    if (this.selfcheckTriedAt !== null && now - this.selfcheckTriedAt < SELFCHECK_BUSY_RETRY_MS) return false;
+    return this.selfcheckAt === null || now - this.selfcheckAt >= SELFCHECK_REFRESH_MS;
   }
 
   // Due (never written, or a switch or rollback asked for it) or older than VERSION_FACTS_REFRESH_MS; a failed read waits VERSION_FACTS_RETRY_MS.
