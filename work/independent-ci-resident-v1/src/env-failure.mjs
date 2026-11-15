@@ -3,7 +3,8 @@
 // the job record (its steps) and its log; whatever does not prove an environment failure is "not environment" and never re-run:
 //   setup:   every failed step is the runner's "Set up job" (it died before the workflow's own steps began; no test ran, no log needed);
 //   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
-// The resident companion keeps a byte-identical copy (work/independent-ci-resident-v1/src/env-failure.mjs; a test keeps them equal).
+// The classifier of the admission gate (scripts/ci/clued-work-admission.mjs) lives there, inside the pinned file; this is its copy for the
+// companion's admission-rerun lane, and test/env-failure.test.mjs keeps the two identical.
 export const SETUP_STEP = "Set up job";
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;

@@ -85,7 +85,6 @@ import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
 import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles,WORKFLOW_PROFILES_MAX_BYTES} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
-import { diedInSetup, failedSteps, jobFailureKind, MAX_LOG_CHARS } from './ci-env-failure.mjs';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
@@ -298,6 +297,48 @@ export async function githubJson(fetchImpl, env, route, { allowMissing = false }
   if (allowMissing && response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   return await response.json();
+}
+
+// Environment failures of a required-tests job (Task 1b): a job that died only because of the network or the runner's own setup, with
+// no test failing, may be re-run once ("Re-run all jobs", the only re-run clued-required-tests.yml allows). Evidence only, read from
+// the job record (its steps) and its log; whatever does not prove an environment failure is "not environment" and never re-run:
+//   setup:   every failed step is the runner's "Set up job" (it died before the workflow's own steps began; no test ran, no log needed);
+//   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
+// Kept inside this file (a new imported file would widen the pinned Source closure). The resident companion's admission-rerun lane
+// keeps a copy (work/independent-ci-resident-v1/src/env-failure.mjs); its test keeps the two identical.
+export const SETUP_STEP = "Set up job";
+// A log longer than this is never classified (the tail with the verdict may be missing): not environment.
+export const MAX_LOG_CHARS = 3_500_000;
+const NETWORK_FAILURE = [
+  /\bECONNRESET\b/, /\bETIMEDOUT\b/, /\bEAI_AGAIN\b/, /\bENOTFOUND\b/, /\bECONNREFUSED\b/, /\bEPIPE\b/,
+  /socket hang up/i, /network (?:aborted|timeout|socket disconnected)/i, /connection reset by peer/i, /TLS handshake timeout/i,
+  /could not resolve host/i, /temporary failure in name resolution/i, /unexpected disconnect while reading sideband/i,
+  /RPC failed; curl \d+/, /early EOF/i, /\b429 Too Many Requests\b/i,
+  /npm (?:ERR!|error) network/i, /request to https?:\/\/\S+ failed, reason:/i,
+];
+const TEST_FAILURE = [
+  /\bnot ok \d+/, /# fail [1-9]\d*/, /\bAssertionError\b/, /✖/, /\b[1-9]\d* (?:failed|failing)\b/i, /(?:^|\s)FAIL(?:\s|$)/,
+];
+export function failedSteps(job) {
+  return Array.isArray(job?.steps) ? job.steps.filter((step) => step && step.conclusion === "failure") : null;
+}
+// Did the job die in the runner's own setup, before any workflow step ran?
+export function diedInSetup(job) {
+  if (!job || job.status !== "completed" || job.conclusion !== "failure") return false;
+  const failed = failedSteps(job);
+  return failed !== null && failed.length > 0 && failed.every((step) => step.name === SETUP_STEP);
+}
+// job: the Actions API job record; log: its log text, or null when it was not read. -> { environment, kind, why }
+export function jobFailureKind(job, log = null) {
+  const no = (why) => ({ environment: false, kind: "unknown", why });
+  if (!job || job.status !== "completed" || job.conclusion !== "failure") return no("the job did not end in failure");
+  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${SETUP_STEP} step failed` };
+  const failed = failedSteps(job);
+  if (failed === null || failed.length === 0) return no("the job record names no failed step");
+  if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
+  if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
+  const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
+  return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
 }
 
 // A job's log is plain text behind a redirect; fetch follows it (and drops the token for the other host).
@@ -2670,7 +2711,7 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
 //     nothing either).
 // One exception (Task 1b): the single earlier attempt that did run heavy jobs is
 // repaired too, when the gate job of it succeeded and every heavy job that did
-// not pass failed of the environment alone (ci-env-failure.mjs: the runner's
+// not pass failed of the environment alone (the classifier above: the runner's
 // "Set up job" step, or a network failure in the log with no failed test), read
 // from the job records and logs; a gate job that died in "Set up job" counts as
 // having run nothing. Anything else that ran refuses as before.

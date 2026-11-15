@@ -1,5 +1,5 @@
-// Task 1b: the evidence rules that call a failed required-tests job an environment failure. The resident keeps a byte-identical copy of
-// scripts/ci/ci-env-failure.mjs (the gate's classifier); this test keeps them one.
+// Task 1b: the evidence rules that call a failed required-tests job an environment failure. The gate's classifier lives inside the pinned
+// scripts/ci/clued-work-admission.mjs; the resident keeps a copy of it, and the first test keeps the two identical.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -10,10 +10,12 @@ const job = (conclusion, steps, extra = {}) => ({ id: 1, name: 'ci-suites', stat
 const SETUP = [step('Set up job', 'failure'), step('Run tests', 'skipped')];
 const RUN = [step('Set up job', 'success'), step('Run tests', 'failure')];
 
-test('the resident copy is byte-identical to the gate classifier', async () => {
-  const gate = await fs.readFile(new URL('../../../scripts/ci/ci-env-failure.mjs', import.meta.url), 'utf8');
-  const copy = await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8');
-  assert.equal(copy.replace(/\r\n/g, '\n'), gate.replace(/\r\n/g, '\n'));
+test('the resident copy is identical to the classifier inside the gate', async () => {
+  const classifier = text => text.slice(text.indexOf('export const SETUP_STEP'), text.includes("// A job's log is plain text") ? text.indexOf("// A job's log is plain text") : undefined).replaceAll('\r\n', '\n').trim();
+  const gate = classifier(await fs.readFile(new URL('../../../scripts/ci/clued-work-admission.mjs', import.meta.url), 'utf8'));
+  const copy = classifier(await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8'));
+  assert.ok(gate.includes('export function jobFailureKind') && gate.length > 1500);
+  assert.equal(copy, gate);
 });
 
 test('a job that died in the runner\'s setup is an environment failure with no log; any other failed step needs the log', () => {
