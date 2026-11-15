@@ -50,14 +50,14 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.14",
+      "version": "0.9.15",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "b70ba5b5af7a0201f18f62bf033075af7e26258da8fa50faa1a551eb9b465308"
+      "content_sha256": "83bf3c87e42661379c3c3dc7ee24ecacf3a19fdad309644bd3799eac0e2d1bb4"
     },
     {
       "id": "hook.runner-job-started",

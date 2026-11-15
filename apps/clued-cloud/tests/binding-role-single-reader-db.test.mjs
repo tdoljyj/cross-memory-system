@@ -22,6 +22,9 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 //    handing over to an unfit node.
 // 3. A planned handover leaves automatic takeover working (migration 20261115100000): after the Owner hands the role
 //    from B to A, B takes over when A falls silent; only an automatic handover keeps its node out (no hand-back).
+// 4. ... and only until it has proven itself steady again (migration 20261115120000): a node handed out automatically
+//    that is then heard without a silence and healthy for rejoin_steady_minutes takes the role back when the holder falls
+//    silent; one that keeps dropping out or reporting its service down stays out (no ping-pong).
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
@@ -172,9 +175,13 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       const holders = async () => (await admin.query(`select b.agent_name from clued_private.binding_roles_v1 r
         join public.clued_agent_bindings b on b.id=r.binding_id where r.user_id=$1 and r.role='ci-admission' and r.revoked_at is null
         order by 1`, [user])).rows.map(r => r.agent_name);
-      const ago = async (who, minutes) => admin.query(`update clued_private.ci_node_liveness_v1 l set
-        last_heartbeat_at=l.last_heartbeat_at-make_interval(mins=>$2),heartbeat_previous_at=l.heartbeat_previous_at-make_interval(mins=>$2)
-        from clued_private.ci_nodes_v1 n where n.node_id=l.node_id and n.binding_id=$1`, [ids[who], minutes]);
+      // Time passes for this node: every time on its liveness row moves back, as if those heartbeats had arrived earlier.
+      const ago = async (who, minutes) => {
+        const times = (await admin.query(`select column_name c from information_schema.columns where table_schema='clued_private'
+          and table_name='ci_node_liveness_v1' and data_type='timestamp with time zone' order by ordinal_position`)).rows.map(r => r.c);
+        await admin.query(`update clued_private.ci_node_liveness_v1 l set ${times.map(c => `${c}=l.${c}-make_interval(mins=>$2)`).join(',')}
+          from clued_private.ci_nodes_v1 n where n.node_id=l.node_id and n.binding_id=$1`, [ids[who], minutes]);
+      };
       // Marking ci-admission by hand (binding_role_set, both Native steps): the refusal of whichever step refuses, or the result.
       const mark = async (who, purpose) => {
         const issued = await owner('clued_binding_role_confirmation_issue_v1', { binding_id: ids[who], role: 'ci-admission', enabled: true, purpose });
@@ -302,6 +309,58 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       o = await tick();
       assert.deepEqual([o.outcome, reasonsOf(o, 'a')], ['no_target', ['auto_handed_out']], JSON.stringify(o));
       assert.deepEqual(await p.holders(), ['b']);
+    });
+
+    // 2026-11-15 (production): TURING lost its network, the watchdog handed the role to DESK, TURING was back and fit
+    // 8 minutes later, and stayed 'auto_handed_out' with no time bound: had DESK gone silent, nobody would have taken over.
+    const handedOut = async (label) => {
+      const f = await account(label, ['a', 'b']); // a holds, b stands by
+      const anchor = await f.receipt();
+      await admin.query(`insert into clued_private.ci_failover_settings_v1(user_id,enabled,enabled_at,version,updated_at,receipt_id)
+        values($1,true,now()-interval '1 day',1,now()-interval '1 day',$2)`, [f.user, anchor]);
+      await admin.query(`insert into clued_private.ci_failover_members_v1(user_id,binding_id,rank,marked_at,receipt_id)
+        values($1,$2,1,now()-interval '1 day',$4),($1,$3,2,now()-interval '1 day',$4)`, [f.user, f.ids.a, f.ids.b, anchor]);
+      const tick = async () => (await admin.query('select clued_private.ci_admission_failover_owner_v1($1) v', [f.user])).rows[0].v;
+      const reasonsOf = (o, who) => o.candidates.find((c) => c.binding_id === f.ids[who]).reasons;
+      // A falls silent past silence_minutes; B, heard twice meanwhile, takes over.
+      await f.beat('a', { mode: 'ACTIVE', probe: 'held' });
+      await f.beat('b');
+      await f.ago('a', 10);
+      await f.beat('b'); await f.beat('b');
+      const o = await tick();
+      assert.deepEqual([o.outcome, reasonsOf(o, 'b')], ['handed_over', []], JSON.stringify(o));
+      assert.deepEqual(await f.holders(), ['b']);
+      // Later B, the holder, falls silent; A is heard twice meanwhile; the watchdog decides.
+      const holderSilent = async () => {
+        await f.beat('b', { mode: 'ACTIVE', probe: 'held' });
+        await f.ago('b', 10);
+        await f.beat('a'); await f.beat('a');
+        return tick();
+      };
+      return { ...f, tick, reasonsOf, holderSilent };
+    };
+
+    await t.test('a node handed out automatically, back and steadily healthy for 30 minutes, takes the role back when the holder falls silent', async () => {
+      const f = await handedOut('rejoin-steady');
+      // A is back: heard every 4 minutes (under silence_minutes) for 32 minutes, service running, snapshot fresh.
+      for (let i = 0; i < 8; i++) { await f.beat('a'); await f.ago('a', 4); }
+      const o = await f.holderSilent();
+      assert.deepEqual([o.outcome, f.reasonsOf(o, 'a')], ['handed_over', []], JSON.stringify(o));
+      assert.deepEqual(await f.holders(), ['a']);
+    });
+
+    await t.test('a node handed out automatically that keeps dropping out or reporting its service down stays out (no ping-pong)', async () => {
+      const f = await handedOut('rejoin-flapping');
+      // A flaps: back for a moment, then silent for 6 minutes (over silence_minutes), for 36 minutes.
+      for (let i = 0; i < 6; i++) { await f.beat('a'); await f.ago('a', 6); }
+      let o = await f.holderSilent();
+      assert.deepEqual([o.outcome, f.reasonsOf(o, 'a')], ['no_target', ['auto_handed_out']], JSON.stringify(o));
+      assert.deepEqual(await f.holders(), ['b']);
+      // A heard every 4 minutes for 32 minutes, but once in the middle reporting its service not running.
+      for (let i = 0; i < 8; i++) { await f.beat('a', i === 3 ? { service_running: false } : {}); await f.ago('a', 4); }
+      o = await f.holderSilent();
+      assert.deepEqual([o.outcome, f.reasonsOf(o, 'a')], ['no_target', ['auto_handed_out']], JSON.stringify(o));
+      assert.deepEqual(await f.holders(), ['b']);
     });
   });
 });
