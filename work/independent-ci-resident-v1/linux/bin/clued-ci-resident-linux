@@ -649,6 +649,36 @@ def trim_root(run=subprocess.run):
         return {'exit': None, 'error': type(e).__name__}
 
 
+def sweep_stale_workspaces(state, now_ms, remove=remove_tree, rule=RETENTION_RULE):
+    """DESIGN 70.9: the workspaces a re-arm without a descriptor leaves behind (workspaces/<jobId>, ws-prep-<batch>) are in no
+    archive, so the archive rule never reaches them. They are regenerable (every batch builds its own from the bundle), so the
+    same pass drops those older than the archive rule's success age. Only exact names directly below the state root; a link or
+    anything unexpected stops the sweep (fail closed); a batch still using one is hours old, not weeks. Never raises."""
+    out = {'deleted': [], 'bytes': 0, 'stopped': None}
+    max_age = rule['maxAgeDays']['success'] * DAY_MS
+    try:
+        cands = []
+        ws = os.path.join(state, 'workspaces')
+        if os.path.isdir(ws) and not os.path.islink(ws):
+            cands += [(f'workspaces/{n}', os.path.join(ws, n)) for n in sorted(os.listdir(ws)) if JOB_ID.fullmatch(n)]
+        cands += [(n, os.path.join(state, n)) for n in sorted(os.listdir(state)) if re.fullmatch(r'ws-prep-[0-9a-f]{16}-[0-9a-f]{12}', n)]
+        for rel, full in cands:
+            st = os.lstat(full)
+            if not _st.S_ISDIR(st.st_mode) or now_ms - st.st_mtime_ns // 1_000_000 <= max_age:
+                continue
+            if len(out['deleted']) >= rule['maxDeletesPerPass']:
+                break
+            size = tree_facts(full)['bytes']
+            remove(full)
+            out['deleted'].append(rel)
+            out['bytes'] += size
+    except Refused as e:
+        out['stopped'] = e.code
+    except OSError as e:
+        out['stopped'] = type(e).__name__
+    return out
+
+
 def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree, authorize=lambda: True, now=None):
     """One retention pass: inventory, plan, apply (each directory re-checked right before it goes)."""
     if not keep.get('ok'):
@@ -1091,16 +1121,17 @@ def main(argv):
         return archive_usage(STATE)
     if cmd == 'archive-prune':
         q = quiescence()
-        trim = None
+        trim = wsweep = None
         if q['linuxUnitsInactive'] and q['containersZero']:
             facts = configured_prune(SPOOL, KEEP_FILE, SETTINGS_FILE)
+            wsweep = sweep_stale_workspaces(STATE, time.time() * 1000)
             trim = trim_root()
         else:
             facts = _refused_pass(RETENTION_RULE, 'ARCHIVE_PRUNE_REQUIRES_QUIESCENCE')
         receipts = f'{RESIDENT_STATE}/retention'
         os.makedirs(receipts, mode=0o700, exist_ok=True)
         # the local receipt records the trim; the answer's exact shape (mailbox.mjs#validatePrune) is unchanged
-        _durable_new(f'{receipts}/{int(time.time() * 1000):013d}-{secrets.token_hex(6)}.json', {'contract': PRUNE_CONTRACT, **facts, 'trim': trim})
+        _durable_new(f'{receipts}/{int(time.time() * 1000):013d}-{secrets.token_hex(6)}.json', {'contract': PRUNE_CONTRACT, **facts, 'trim': trim, 'workspaceSweep': wsweep})
         return {'contract': PRUNE_CONTRACT, 'prune': public_prune(facts), 'usage': archive_usage(STATE)}
     raise Refused('COMMAND_REFUSED')
 
