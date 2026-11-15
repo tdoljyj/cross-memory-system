@@ -705,7 +705,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await n.close();
     });
 
-    await t.test('cooldown and no automatic hand-back, three nodes', async () => {
+    await t.test('no cooldown after a manual handover; no automatic hand-back, three nodes (migration 20261115100000)', async () => {
       const s = await account('three', ['a', 'b', 'c']);
       await s.members(['a', 'b', 'c']);
       await s.switch(true);
@@ -714,34 +714,34 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.equal((await s.receipt_(manual.receipt_id)).metadata.principal, 'native_account_session');
       await s.ago(5);
       assert.equal(await s.admits('b'), true);
-      // B goes silent within 6 hours: A is cooling down, so C takes over; A is not taken back.
+      // B goes silent: A, handed over by hand and healthy, takes over (first in the Owner's order).
       await s.beat('b', HOLDER);
       await s.ago(30);
       for (let i = 0; i < 2; i++) { await s.beat('a'); await s.beat('c'); }
       let o = await s.tick();
-      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'c']);
-      assert.ok(reasons(o, 'a', s).includes('cooldown'));
+      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'a']);
+      assert.deepEqual(reasons(o, 'a', s), []);
       await s.ago(5);
-      // C goes silent: A still cooling down, B handed out automatically: nothing, alert only.
+      // A goes silent: B was handed out automatically, so C takes over.
+      await s.beat('a', HOLDER);
+      await s.ago(30);
+      for (let i = 0; i < 2; i++) { await s.beat('b'); await s.beat('c'); }
+      o = await s.tick();
+      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'c']);
+      assert.deepEqual(reasons(o, 'b', s), ['auto_handed_out']);
+      await s.ago(5);
+      // C goes silent: A and B were both handed out automatically: nothing, alert only.
       await s.beat('c', HOLDER);
       await s.ago(30);
       for (let i = 0; i < 2; i++) { await s.beat('a'); await s.beat('b'); }
       o = await s.tick();
       assert.equal(o.outcome, 'no_target');
-      assert.deepEqual(o.candidates.map((x) => [s.nameOf(x.binding_id), x.reasons]), [['a', ['cooldown']], ['b', ['auto_handed_out']]]);
-      // Six hours after the manual handover A is chosen; B is still excluded.
-      await s.ago(6 * 60);
-      for (let i = 0; i < 2; i++) { await s.beat('a'); await s.beat('b'); }
-      o = await s.tick();
-      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'a']);
-      assert.equal(await s.excluded('b'), 'auto_handed_out');
-      assert.equal(await s.excluded('c'), 'auto_handed_out');
-      // A manual handover involving B restores B only; C stays excluded.
-      await s.ago(5);
-      await s.handover('a', 'b');
+      assert.deepEqual(o.candidates.map((x) => [s.nameOf(x.binding_id), x.reasons]), [['a', ['auto_handed_out']], ['b', ['auto_handed_out']]]);
+      // A manual handover involving B restores B only; A stays excluded, and C, which handed over by hand, is not.
+      await s.handover('c', 'b');
       assert.equal(await s.excluded('b'), null);
-      assert.equal(await s.excluded('c'), 'auto_handed_out');
-      assert.equal(await s.excluded('a'), 'cooldown');
+      assert.equal(await s.excluded('a'), 'auto_handed_out');
+      assert.equal(await s.excluded('c'), null);
       await s.close();
     });
 
