@@ -157,9 +157,12 @@ export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
 // Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
 // (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
 // of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
-export function withRerunLine(want, rerun) {
-  if (!want || want.weak || rerun !== true) return want;
-  return { ...want, description: clip(`已自动补跑一次必需测试；${want.description}`) };
+// The lost-run lane's line (a head GitHub created no run for, AdmissionRerunner#line) goes in the same place. line: true (the re-run
+// line) or that lane's text; anything else adds nothing.
+export function withRerunLine(want, line) {
+  const text = line === true ? '已自动补跑一次必需测试' : typeof line === 'string' && line.length > 0 ? line : null;
+  if (!want || want.weak || text === null) return want;
+  return { ...want, description: clip(`${text}；${want.description}`) };
 }
 // The lines kept at the end of a text, never clipped away: the node resource line (host-capacity.mjs, node governance v1), then
 // the watchdog warning. Each is added at most once; adding one keeps the other (the text before them is clipped instead).
@@ -623,7 +626,7 @@ export class PrStatusReporter {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
-          const base = withRerunLine(describe({ pull, status, now }), this.rerunDone?.(pull.headSha) === true);
+          const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
           const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
