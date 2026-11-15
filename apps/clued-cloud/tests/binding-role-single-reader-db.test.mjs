@@ -20,6 +20,8 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 //    latest report NORMAL, running the Source the fleet runs. Every handover (the Owner's one-click handover, the failover
 //    watchdog) goes through the handover core's check, and so does marking it by hand; the watchdog alerts instead of
 //    handing over to an unfit node.
+// 3. A planned handover leaves automatic takeover working (migration 20261115100000): after the Owner hands the role
+//    from B to A, B takes over when A falls silent; only an automatic handover keeps its node out (no hand-back).
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
@@ -266,6 +268,40 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
         '{"receipt_kind":"CI_ADMISSION_AUTO_HANDOVER","principal":"server_watchdog","start":"quiet_holder"}'::jsonb)`,
       [wd.user, wd.ids.holder, wd.ids.behind]), /ci_admission_target_source_not_accepted/);
       assert.deepEqual(await wd.holders(), ['holder']);
+    });
+
+    // 2026-11-15: after two planned handovers TURING -> DESK -> TURING both nodes were in a 6-hour cooldown, so nobody
+    // would have taken over from a silent holder.
+    await t.test('after a planned handover B -> A, B takes over when A falls silent; an automatic handover is not handed back', async () => {
+      const p = await account('planned-then-silent', ['b', 'a']); // b holds
+      const anchor = await p.receipt();
+      await admin.query(`insert into clued_private.ci_failover_settings_v1(user_id,enabled,enabled_at,version,updated_at,receipt_id)
+        values($1,true,now()-interval '1 hour',1,now()-interval '1 hour',$2)`, [p.user, anchor]);
+      await admin.query(`insert into clued_private.ci_failover_members_v1(user_id,binding_id,rank,marked_at,receipt_id)
+        values($1,$2,1,now()-interval '1 hour',$4),($1,$3,2,now()-interval '1 hour',$4)`, [p.user, p.ids.a, p.ids.b, anchor]);
+      const tick = async () => (await admin.query('select clued_private.ci_admission_failover_owner_v1($1) v', [p.user])).rows[0].v;
+      const reasonsOf = (o, who) => o.candidates.find((c) => c.binding_id === p.ids[who]).reasons;
+      await p.beat('b', { mode: 'ACTIVE', probe: 'held' });
+      await p.beat('a');
+      const planned = await p.handover('b', 'a');
+      assert.equal(planned.status, 'committed', JSON.stringify(planned));
+      assert.deepEqual(await p.holders(), ['a']);
+      // A holds and falls silent past silence_minutes; B, healthy on the same Source, is heard twice meanwhile.
+      await p.beat('a', { mode: 'ACTIVE', probe: 'held' });
+      await p.beat('b');
+      await p.ago('a', 10);
+      await p.beat('b'); await p.beat('b');
+      let o = await tick();
+      assert.deepEqual([o.outcome, reasonsOf(o, 'b')], ['handed_over', []], JSON.stringify(o));
+      assert.deepEqual(await p.holders(), ['b']);
+      // B falls silent in turn: A, handed out automatically, is not taken back; nothing but an alert.
+      await p.beat('b', { mode: 'ACTIVE', probe: 'held' });
+      await p.beat('a');
+      await p.ago('b', 10);
+      await p.beat('a'); await p.beat('a');
+      o = await tick();
+      assert.deepEqual([o.outcome, reasonsOf(o, 'a')], ['no_target', ['auto_handed_out']], JSON.stringify(o));
+      assert.deepEqual(await p.holders(), ['b']);
     });
   });
 });
