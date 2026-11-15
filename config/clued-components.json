@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "b09c71150d05169940476ed2100f03f316cb032cd745ac6c9ace8a47ba3e4a34"
+      "content_sha256": "863e0a32a065e168724ef7f45a726c27aa96c19a5bdf7dd9eb40fba07ac8d2a2"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.70",
+      "version": "1.1.71",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "cfc434f2c32c5a33cd4dcb5a9fc7930a44d3ee176a2523176c4207713beceb8a"
+      "content_sha256": "10c42cfce747d89e525b41e24a24b7ffe71398382521e9fa0f6f2b6b1f2a1dbf"
     },
     {
       "id": "script.resource-maintenance",
@@ -688,7 +688,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "dbbee7aed9a286f0c713b9ad85015fef028cb5810ae5eecaa62b9db16e188b48"
+      "content_sha256": "ef70b7a981c7ebadefccfe9576dd7a05771255a0b02d45d87f55b8e55170ef35"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "6a9516662bc179e4436e7539a2c7492904c9f9f35dc356d166bed37f61d8d3ef"
+      "content_sha256": "4a719f6d98d5e827acb93a8302549314a9ec2010169fff24f145319aae968663"
     }
   ]
 }

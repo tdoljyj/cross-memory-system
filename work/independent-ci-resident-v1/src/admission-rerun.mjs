@@ -42,6 +42,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
+import { diedInSetup, failedSteps, jobFailureKind } from './env-failure.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
 export const RERUN_STATE_CONTRACT = 'clued.independent-ci.admission-rerun-state/1';
@@ -71,6 +72,7 @@ export const POST_TIMEOUT_MS = 30_000;
 export const HEADS_PER_STEP = 5;
 export const HEAD_CANDIDATE_MARK_MS = 60 * 60_000;
 const MAX_PAGES = 10;
+const MAX_TEXT = 3_500_000;
 // Runner refusals before any child ran (runner.mjs): nothing reached GitHub.
 const UNSENT_REFUSALS = Object.freeze(['RUNNER_ARGV_REFUSED', 'RUNNER_BUSY_WITH_UNFINISHED_CHILD', 'RUNNER_SPAWN_FAILED', 'RUNNER_TIMEOUT_REFUSED']);
 export const RERUN_OUTCOMES = Object.freeze(['intent', 'sent', 'unsent', 'refused', 'unknown']);
@@ -99,6 +101,16 @@ export function ghPort({ ghExe, repo, run }) {
     if (r?.code !== 0) unreadable(`GET ${route} failed`);
     try { return JSON.parse(r.stdout); } catch { return unreadable(`GET ${route} answered no JSON`); }
   }
+  // A job log: plain text (gh follows GitHub's redirect). The runner keeps at most MAX_TEXT characters of stdout; a log that long may have lost
+  // its verdict, so it is answered as empty, which never proves an environment failure.
+  async function text(route) {
+    check(routeOk(route), 'ADMISSION_RERUN_ROUTE_REFUSED');
+    let r;
+    try { r = await run([ghExe, 'api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', `repos/${repo}${route}`], { timeoutMs: READ_TIMEOUT_MS }); }
+    catch { return unreadable(`GET ${route} could not start`); }
+    if (r?.code !== 0 || typeof r.stdout !== 'string') unreadable(`GET ${route} failed`);
+    return r.stdout.length >= MAX_TEXT ? '' : r.stdout;
+  }
   async function post(tail) {
     let r;
     try { r = await run([ghExe, 'api', '--method', 'POST', '-H', 'Accept: application/vnd.github+json', ...tail], { timeoutMs: POST_TIMEOUT_MS }); }
@@ -110,7 +122,7 @@ export function ghPort({ ghExe, repo, run }) {
     return http ? { outcome: 'refused', why: `GitHub 拒绝（HTTP ${http[1]}）` } : { outcome: 'unknown', why: `gh 退出码 ${short(r?.code ?? '无')}，没有 HTTP 答复` };
   }
   return Object.freeze({
-    repo, get,
+    repo, get, text,
     // Every page of a list route (key: the array's field, or null for a bare array).
     async paged(route, key = null) {
       const out = [];
@@ -153,14 +165,30 @@ async function admissionOf(gh, headSha, prNumber) {
 }
 
 // clued-work-admission.mjs#independentRepairRerun (#993), over the gh port: may attempt `attempt` of run `runId` be a repair re-run?
+// Task 1b: besides the attempts that ran nothing, the ONE earlier attempt that ran heavy jobs is repaired when every job that did not pass
+// died of the environment alone (env-failure.mjs, the same evidence as the gate's environmentFailures) and its gate job succeeded.
+// -> { allowed: true, environment: names | null } | { allowed: false, reason }
 export async function repairAllowed(gh, runId, headSha, attempt) {
+  let environment = null;
   for (let earlier = 1; earlier < attempt; earlier += 1) {
     const jobs = await gh.paged(`/actions/runs/${runId}/attempts/${earlier}/jobs`, 'jobs');
     const listed = jobs.filter(j => j && typeof j === 'object');
     const gates = listed.filter(j => j.name === GATE_JOB_NAME), heavy = listed.filter(j => j.name !== GATE_JOB_NAME);
     if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0) return { allowed: false, reason: `attempt ${earlier} does not list one ${GATE_JOB_NAME} job and its heavy jobs` };
     if (listed.some(j => j.head_sha !== headSha)) return { allowed: false, reason: `attempt ${earlier} has a job of another head` };
-    if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped'))) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job` };
+    if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped'))) {
+      const failed = heavy.filter(j => j.conclusion === 'failure');
+      const settled = failed.length > 0 && gates[0].status === 'completed' && gates[0].conclusion === 'success'
+        && heavy.every(j => j.status === 'completed' && ['success', 'skipped', 'failure'].includes(j.conclusion));
+      if (environment !== null || !settled) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job` };
+      for (const j of failed) {
+        const log = diedInSetup(j) || !(failedSteps(j)?.length > 0) || !positive(j.id) ? null : await gh.text(`/actions/jobs/${j.id}/logs`);
+        if (!jobFailureKind(j, log).environment) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job (not an environment failure)` };
+      }
+      environment = failed.map(j => String(j.name).slice(0, 80));
+      continue;
+    }
+    if (diedInSetup(gates[0])) continue; // the gate job died in the runner's setup: it ran nothing and left no verdict
     if (!positive(gates[0].id)) unreadable(`the gate job of attempt ${earlier} has no id`);
     const notes = await gh.paged(`/check-runs/${gates[0].id}/annotations`);
     if (!notes.some(n => n && ((n.title === GATE_JOB_NAME && NOT_ADMITTED_VERDICT.test(String(n.message ?? '')))
@@ -168,14 +196,14 @@ export async function repairAllowed(gh, runId, headSha, attempt) {
       return { allowed: false, reason: `the ${GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage` };
     }
   }
-  return { allowed: true };
+  return { allowed: true, environment };
 }
 
 // The decision for one head (rules 1-5, or the lost run). -> { action: 'rerun' | 'redispatch' | 'skip' | 'final' | 'error', reason, pr,
 // runId, attempt, ref }. 'final': this head never needs this lane again (a heavy job ran, the repair rule refused). 'skip': not now.
 // 'error': unreadable. headAgeMs: how long ago this lane first saw the head (null: not known, never old).
 export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = null }) {
-  const out = { action: 'skip', reason: '', pr: null, runId: null, attempt: null, ref: null };
+  const out = { action: 'skip', reason: '', pr: null, runId: null, attempt: null, ref: null, environment: null };
   const say = (action, reason) => Object.assign(out, { action, reason: short(reason) });
   if (!HEX40.test(headSha ?? '')) return say('final', 'no head');
   try {
@@ -210,8 +238,9 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     const newest = ofPr.reduce((a, b) => (b.id > a.id ? b : a));
     Object.assign(out, { runId: newest.id, attempt: newest.run_attempt });
     if (ofHead.some(r => r.status !== 'completed')) return say('skip', 'an attempt is queued or running');
-    // 3. No heavy job of this head ever ran, in any attempt of any run.
-    for (const r of ofHead) {
+    // 3. No heavy job of this head ever ran in another run (the newest run's own attempts are judged by step 4, which also allows the one
+    // environment failure).
+    for (const r of ofHead.filter(x => x.id !== newest.id)) {
       const jobs = await gh.paged(`/actions/runs/${r.id}/jobs?filter=all`, 'jobs');
       if (jobs.some(j => !j || typeof j !== 'object' || j.head_sha !== headSha)) unreadable(`the jobs of run ${r.id} are malformed`);
       if (jobs.some(j => j.name !== GATE_JOB_NAME && !(j.status === 'completed' && j.conclusion === 'skipped'))) return say('final', `run ${r.id} already ran its heavy jobs`);
@@ -225,7 +254,8 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch) return say('skip', `#${pr.number} is no longer open on this head`);
     const again = await gh.get(`/actions/runs/${newest.id}`);
     if (!again || again.head_sha !== headSha || again.status !== 'completed' || again.run_attempt !== newest.run_attempt) return say('skip', `run ${newest.id} changed since it was read`);
-    return say('rerun', `"Re-run all jobs" of run ${newest.id} (attempt ${next}) for #${pr.number}`);
+    out.environment = repair.environment;
+    return say('rerun', `"Re-run all jobs" of run ${newest.id} (attempt ${next}) for #${pr.number}${repair.environment ? ` after an environment failure of ${repair.environment.join(', ')}` : ''}`);
   } catch (e) {
     return say('error', `nothing re-run: ${e instanceof Unreadable ? e.message : 'a read failed'}`);
   }
@@ -337,6 +367,8 @@ export class AdmissionRerunner {
       if (fullView || !(now - Date.parse(h.lastCandidateAt ?? h.firstSeen) < 2 * HEAD_WATCH_MS)) { delete this.state.data.heads[k]; changed = true; }
     }
     for (const { pr, headSha } of candidates) {
+      // One request per head in all, whatever it was: the lost-run dispatch, the ADMISSION_PENDING repair or the environment-failure re-run share this one
+      // record (a head whose run was re-dispatched is not re-run again by this lane; the gate still allows its own one environment re-run by hand).
       if (this.state.record(headSha)) continue; // asked once already, whatever came of it
       if (!this.state.data.heads[headSha]) { this.state.data.heads[headSha] = { firstSeen: new Date(now).toISOString(), lastCandidateAt: new Date(now).toISOString(), lookedAt: null, final: null }; changed = true; }
       const seen = this.state.data.heads[headSha];
@@ -369,7 +401,9 @@ export class AdmissionRerunner {
         refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}（${REQUIRED_TESTS_WORKFLOW} 还没有可用的 workflow_dispatch 入口时就是这样）。不会再自动补发；请推一个新提交。`],
         unknown: [`PR #${record.pr}：必需测试没有运行，自动补发结果不确定`, `${record.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`],
       }[r.outcome] : {
-        sent: [`PR #${record.pr}：已自动补跑一次必需测试`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
+        sent: d.environment
+          ? [`PR #${record.pr}：环境类失败，已自动整轮重跑一次`, `${d.environment.join('、')} 因网络或 runner 启动失败（日志里没有测试失败），已按 gate 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`]
+          : [`PR #${record.pr}：已自动补跑一次必需测试`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
         unsent: [`PR #${record.pr}：自动补跑没有发出`, `${record.why}，请求没有到 GitHub。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
         refused: [`PR #${record.pr}：自动补跑被 GitHub 拒绝`, `${record.why}。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
         unknown: [`PR #${record.pr}：自动补跑结果不确定`, `${record.why}。请到 PR 页面看 run ${d.runId} 是否已经重新开始；没有开始再手动补跑一次。不会再自动点。`],

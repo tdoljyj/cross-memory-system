@@ -3371,6 +3371,13 @@ async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nat
     const text = String(url);
     const jobs = /\/actions\/runs\/9001\/attempts\/(\d+)\/jobs/.exec(text);
     const notes = /\/check-runs\/(\d+)\/annotations/.exec(text);
+    const logs = /\/actions\/jobs\/(\d+)\/logs/.exec(text);
+    if (logs) {
+      extra.push({ url: text, method: init.method ?? "GET" });
+      const found = earlier.map((entry) => entry.logs?.[logs[1]]).find((value) => value !== undefined);
+      const status = listStatus.logs ?? (found === undefined ? 404 : 200);
+      return { ok: status === 200, status, headers: { get: () => null }, json: async () => ({}), text: async () => found ?? "" };
+    }
     if (jobs || notes) {
       extra.push({ url: text, method: init.method ?? "GET" });
       const status = (jobs ? listStatus.jobs : listStatus.notes) ?? 200;
@@ -3419,6 +3426,64 @@ test("independent gate repair re-run: an earlier attempt that ran any heavy job 
   }
   // A later attempt does not hide an earlier one that ran.
   assert.equal((await repairGate([earlierAttempt(1, { heavy: ["success", "success", "success"] }), earlierAttempt(2), earlierAttempt(3)])).outcome.verdict, "RERUN_REFUSED");
+});
+
+// --- Environment re-run (Task 1b): an earlier attempt that ran heavy jobs is repaired once when every failed job died of the
+// environment alone (the runner's "Set up job", or a network failure in its log with no failed test).
+const step = (name, conclusion) => ({ name, status: "completed", conclusion });
+const SETUP_DIED = [step("Set up job", "failure"), step("Run tests", "skipped")];
+const TESTS_DIED = [step("Set up job", "success"), step("Run tests", "failure")];
+const NET_LOG = "2026-11-15T01:00:00Z npm error code ECONNRESET\n2026-11-15T01:00:01Z npm error network aborted\n##[error]Process completed with exit code 1.";
+const TEST_LOG = "2026-11-15T01:00:00Z not ok 3 - admission refuses\n2026-11-15T01:00:01Z # fail 1\n##[error]Process completed with exit code 1.";
+// An attempt n that ran: each spec is { conclusion, steps, log }. Job ids are 100n+1... like earlierAttempt.
+const ranAttempt = (n, specs, { gate = attemptJob(100 * n, "admission-gate", "success"), notes = [] } = {}) => ({
+  jobs: [gate, ...specs.map((spec, index) => attemptJob(100 * n + 1 + index, HEAVY_JOBS[index] ?? `heavy-${index}`, spec.conclusion, spec.steps ? { steps: spec.steps } : {}))],
+  notes,
+  logs: Object.fromEntries(specs.flatMap((spec, index) => spec.log === undefined ? [] : [[String(100 * n + 1 + index), spec.log]])),
+});
+const pass = { conclusion: "success", steps: [step("Set up job", "success"), step("Run tests", "success")] };
+const netFail = { conclusion: "failure", steps: TESTS_DIED, log: NET_LOG };
+const setupFail = { conclusion: "failure", steps: SETUP_DIED };
+
+test("independent gate environment re-run: a network failure or a setup death of the one attempt that ran admits one re-run", async () => {
+  const net = await repairGate([ranAttempt(1, [netFail, pass, pass])]);
+  assert.deepEqual([net.outcome.admitted, net.outcome.verdict], [true, "ADMITTED"]);
+  assert.deepEqual(net.outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3, environment_failure: ["clued-cloud-tests"] }] });
+  assert.ok(net.extra.some((call) => /\/actions\/jobs\/101\/logs$/.test(call.url)), "the failed job's log was read");
+  assert.ok([...net.calls, ...net.extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only");
+  // Setup death needs no log: the step record alone is the evidence.
+  const setup = await repairGate([ranAttempt(1, [setupFail, setupFail, setupFail])]);
+  assert.deepEqual([setup.outcome.admitted, setup.outcome.verdict, setup.extra.some((call) => /\/logs/.test(call.url))], [true, "ADMITTED", false]);
+  // Several environment failures at once, the rest passed or skipped.
+  assert.equal((await repairGate([ranAttempt(1, [netFail, setupFail, { conclusion: "skipped" }])])).outcome.admitted, true);
+  // After a pending attempt, the attempt that did run may be repaired too (the heavy jobs ran once).
+  assert.equal((await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass])])).outcome.admitted, true);
+  // A gate job that died in the runner's setup ran nothing: no verdict annotation is needed (the RERUN_REFUSED of the setup death).
+  const gateDied = earlierAttempt(1, { gateJobs: [attemptJob(100, "admission-gate", "failure", { steps: SETUP_DIED }), ...HEAVY_JOBS.map((name, index) => attemptJob(101 + index, name, "skipped"))], notes: [] });
+  assert.deepEqual([(await repairGate([gateDied])).outcome.admitted], [true]);
+});
+
+test("independent gate environment re-run: a failed test, an unproven failure or a second ran attempt never re-runs", async () => {
+  const refused = async (label, earlier, options, reason = /already ran/) => {
+    const { outcome } = await repairGate(earlier, options);
+    assert.deepEqual([label, outcome.admitted, outcome.verdict], [label, false, "RERUN_REFUSED"]);
+    assert.match(outcome.reasons[0], reason, label);
+  };
+  await refused("a failed test, whatever else the log says", [ranAttempt(1, [{ conclusion: "failure", steps: TESTS_DIED, log: TEST_LOG }, pass, pass])]);
+  await refused("a network failure and a failed test in one log", [ranAttempt(1, [{ conclusion: "failure", steps: TESTS_DIED, log: NET_LOG + "\n" + TEST_LOG }, pass, pass])]);
+  await refused("an environment failure beside a failed test of another job", [ranAttempt(1, [netFail, { conclusion: "failure", steps: TESTS_DIED, log: TEST_LOG }, pass])]);
+  await refused("a failure with no network signature", [ranAttempt(1, [{ conclusion: "failure", steps: TESTS_DIED, log: "##[error]lint failed" }, pass, pass])]);
+  await refused("a failure whose steps are not recorded", [ranAttempt(1, [{ conclusion: "failure", log: NET_LOG }, pass, pass])]);
+  await refused("a failure after the setup step passed is not a setup death", [ranAttempt(1, [{ conclusion: "failure", steps: TESTS_DIED, log: "" }, pass, pass])]);
+  await refused("a cancelled job", [ranAttempt(1, [netFail, { conclusion: "cancelled", steps: TESTS_DIED, log: NET_LOG }, pass])]);
+  await refused("a timed-out job", [ranAttempt(1, [{ conclusion: "timed_out", steps: TESTS_DIED, log: NET_LOG }, pass, pass])]);
+  await refused("all green", [ranAttempt(1, [pass, pass, pass])]);
+  await refused("a gate job that did not succeed", [ranAttempt(1, [netFail, pass, pass], { gate: attemptJob(100, "admission-gate", "failure", { steps: TESTS_DIED }) })]);
+  await refused("a log that cannot be read", [ranAttempt(1, [netFail, pass, pass])], { listStatus: { logs: 500 } }, /earlier attempts could not be read/);
+  await refused("a log that is gone", [ranAttempt(1, [netFail, pass, pass])], { listStatus: { logs: 404 } }, /earlier attempts could not be read/);
+  // The allowance is one per head: the re-run of an environment failure ran, and failed of the environment again: no third attempt.
+  await refused("a second environment failure on the same head", [ranAttempt(1, [netFail, pass, pass]), ranAttempt(2, [netFail, pass, pass])], {}, /attempt 2 already ran/);
+  await refused("a ran attempt that passed, then an environment failure", [ranAttempt(1, [pass, pass, pass]), ranAttempt(2, [netFail, pass, pass])], {}, /attempt 1 already ran/);
 });
 
 test("independent gate repair re-run: anything the earlier attempts do not prove refuses", async () => {
