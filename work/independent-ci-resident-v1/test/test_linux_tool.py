@@ -360,6 +360,60 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class WorkspaceSweep(unittest.TestCase):
+    """DESIGN 70.9: workspaces a re-arm without a descriptor left behind are dropped by the retention pass once past the archive age."""
+    NOW = 1_800_000_000_000
+    OLD, JOB1, BATCH = 'a' * 64, 'b' * 64, '0123456789abcdef-0123456789ab'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _dir(self, rel, age_days):
+        d = self.state / rel
+        (d / 'repo').mkdir(parents=True)
+        (d / 'repo' / 'f.bin').write_bytes(b'x' * 100)
+        t = (self.NOW - int(age_days * 86_400_000)) * 1_000_000
+        os.utime(d, ns=(t, t))
+        return d
+
+    def test_old_orphans_go_and_a_running_or_unknown_one_stays(self):
+        old_ws = self._dir(f'workspaces/{self.OLD}', 20)
+        old_prep = self._dir(f'ws-prep-{self.BATCH}', 20)
+        young_ws = self._dir(f'workspaces/{self.JOB1}', 1)          # the batch in flight
+        young_prep = self._dir('ws-prep-fedcba9876543210-ba9876543210', 0.1)
+        odd = self._dir('workspaces/not-a-job-id', 90)               # not a name the tool creates
+        archive = self._dir('formal-spool/failed-x-1', 90)           # retention's, not this sweep's
+        r = tool.sweep_stale_workspaces(str(self.state), self.NOW)
+        self.assertEqual((r['stopped'], sorted(r['deleted']), r['bytes']), (None, sorted([f'workspaces/{self.OLD}', f'ws-prep-{self.BATCH}']), 200))
+        self.assertFalse(old_ws.exists() or old_prep.exists())
+        self.assertTrue(all(p.exists() for p in (young_ws, young_prep, odd, archive)))
+
+    def test_nothing_to_sweep_and_missing_directories_are_fine(self):
+        self.assertEqual(tool.sweep_stale_workspaces(str(self.state), self.NOW), {'deleted': [], 'bytes': 0, 'stopped': None})
+
+    @unittest.skipUnless(hasattr(os, 'symlink') and os.name != 'nt', 'symbolic links (POSIX)')
+    def test_a_link_inside_stops_the_sweep_and_is_never_followed(self):
+        d = self._dir(f'workspaces/{self.OLD}', 20)
+        outside = self.state / 'outside'
+        outside.mkdir()
+        (outside / 'precious').write_text('keep')
+        os.symlink(outside, d / 'repo' / 'escape')
+        r = tool.sweep_stale_workspaces(str(self.state), self.NOW)
+        self.assertEqual((r['deleted'], r['stopped']), ([], 'RETENTION_LINK_REFUSED'))
+        self.assertEqual((outside / 'precious').read_text(), 'keep')
+
+    def test_runs_in_the_quiet_pass_only_and_never_blocks_it(self):
+        src = (HERE.parent / 'linux' / 'bin' / 'clued-ci-resident-linux').read_text(encoding='utf-8')
+        block = src[src.index("    if cmd == 'archive-prune':"):src.index("    raise Refused('COMMAND_REFUSED')")]
+        self.assertLess(block.index("if q['linuxUnitsInactive'] and q['containersZero']:"), block.index('sweep_stale_workspaces('))
+        self.assertLess(block.index('sweep_stale_workspaces('), block.index('else:'))
+        self.assertIn("'workspaceSweep': wsweep", block)
+
+
 class Trim(unittest.TestCase):
     """Disk/memory guard: a quiet retention pass ends with one fixed-argv fstrim of /; its failure is recorded, never raised."""
     def test_fixed_argv_and_failures_are_facts(self):

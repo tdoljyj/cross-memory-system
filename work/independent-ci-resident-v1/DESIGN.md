@@ -5595,7 +5595,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 - **内核、VM、dockerd 长期运行**：容器逃逸后的 root 可以持久化，包括篡改镜像层，而 dockerd 不逐批复核层内容。B 也挡不住，这一项要靠 C1。
 - **worker 持有 docker socket**：代码执行级的漏洞可以绕过视图（例如起一个特权容器）。视图挡的是“写到不该写的路径”这一类原语，以及受信代码自己误读误写。
-- **state 根仍可写**：worker 能在 state 根新建条目；`ws-prep-<批次>` 和 `resident-uninstalled-*` 这类动态名字没有藏起来。rearm 且没有描述符时留下的工作区不在保留规则里，磁盘会一直涨。
+- **state 根仍可写**：worker 能在 state 根新建条目；`ws-prep-<批次>` 和 `resident-uninstalled-*` 这类动态名字没有藏起来。rearm 且没有描述符时留下的工作区（`workspaces/<作业 id>`、`ws-prep-<批次>`）不在任何归档里：`archive-prune` 的静止分支在归档保留之后顺带清掉超过成功类年龄（14 天）的这类目录（`sweep_stale_workspaces`，只认确切名字、遇链接即停、记入本地回执 `workspaceSweep`，不挡剪枝）。
 - **不带标签的容器**不在“起点干净”的检查范围内。
 
 ## 71. 重启打断的批次：能证明没发布就自动重跑一次（分支 `claude/restart-rerun-open-batch`）
