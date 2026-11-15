@@ -1,9 +1,15 @@
 # drill-vm.ps1 -- the new-node first-install drill machine: one Hyper-V VM on this host (plan PLAN-drill-vm-20261116, phase A).
 #
 #   pwsh -NoProfile -File drill-vm.ps1 -BaselineOnly
+#   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
 #   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall]
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
 #
+# Inputs on the host: D:\clued-drill\iso (the Windows 11 ISO and expected-sha256.txt), D:\clued-drill\prereq\prereq.json (the
+# pinned WSL package, Ubuntu image and docker .debs, see Read-DrillPrereq), and the kit's kit.json:
+#   { contract: clued.drill.first-install-kit/1, files: [{path, sha256}], entry: {file: <.ps1>, arguments: [-Name | {from} {kit}
+#     {fake} {work} {version}]}, timeoutMinutes: 5..240, perNodeSteps: [..], prereqSha256: <sha256 of prereq.json> }
+# The entry's last stdout line is { status, stopCode, tree, node } (tree: the unpacked package; node: a node.exe to run it).
 # No node parameter. Every state is read from the scene (does the VM exist, is the checkpoint there); there is no state file.
 # Prints one JSON line: { status, code, receipt, ... }.
 #
@@ -21,6 +27,7 @@ param(
   [string]$From,
   [string]$Kit,
   [switch]$BaselineOnly,
+  [switch]$PrereqOnly,
   [switch]$SkipReinstall,
   [string]$Finalize,
   [string]$ProductionReadback
@@ -59,6 +66,9 @@ $script:Drill = [ordered]@{
   SelfcheckFreshMinutes = 30
   UnattendedRebootMinutes = 10
   KitContract = 'clued.drill.first-install-kit/1'
+  PrereqDir = 'D:\clued-drill\prereq'
+  PrereqContract = 'clued.drill.prereq/1'
+  PrereqTimeoutMinutes = 40
   ReceiptContract = 'clued.independent-ci.drill-receipt/1'
   ReadbackContract = 'clued.drill.production-readback/1'
 }
@@ -272,7 +282,62 @@ function Read-DrillKit([string]$Dir) {
   if (-not ($timeout -is [int] -or $timeout -is [long]) -or $timeout -lt 5 -or $timeout -gt 240) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'timeoutMinutes') }
   if ($null -eq $kit.PSObject.Properties['perNodeSteps']) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'perNodeSteps') }
   $perNode = @($kit.perNodeSteps | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode }
+  $prereqSha = [string](Get-Prop $kit 'prereqSha256')
+  if ($prereqSha -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'prereqSha256') }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha }
+}
+
+# The prerequisites a new node needs before the first install (plan 1.2; Owner approved 11-16): the WSL package, the Ubuntu
+# 24.04 WSL image and the .deb closure of docker.io, all downloaded once from their official sources into D:\clued-drill\prereq
+# and pinned in prereq.json (contract clued.drill.prereq/1, one place for these pins; the kit names it by sha256). The drill
+# injects them into the VM: nothing is downloaded inside the VM, so every drill starts from the same bytes.
+function Read-DrillPrereq([string]$Dir) {
+  $file = Join-Path $Dir 'prereq.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw (New-DrillError 'DRILL_PREREQ_MISSING') }
+  $p = Read-DrillJson $file
+  if ([string](Get-Prop $p 'contract') -cne $script:Drill.PrereqContract) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'contract') }
+  $distro = [string](Get-Prop $p 'distribution')
+  if ($distro -notmatch '^[A-Za-z][A-Za-z0-9._-]{0,63}$') { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'distribution') }
+  $root = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
+  $check = {
+    param($f, [string]$what, [string]$suffix)
+    $rel = [string](Get-Prop $f 'path'); $want = [string](Get-Prop $f 'sha256'); $url = [string](Get-Prop $f 'url')
+    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or -not $rel.EndsWith($suffix) -or $want -notmatch '^[0-9a-f]{64}$' -or $url -notmatch '^https?://(github\.com/microsoft/WSL/|releases\.ubuntu\.com/|archive\.ubuntu\.com/ubuntu/|security\.ubuntu\.com/ubuntu/)') {
+      throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
+    $full = [IO.Path]::GetFullPath((Join-Path $Dir $rel))
+    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw (New-DrillError 'DRILL_PREREQ_FILE_MISSING' $rel) }
+    if ((Get-Sha256Hex $full) -cne $want) { throw (New-DrillError 'DRILL_PREREQ_FILE_CHANGED' $rel) }
+    return $rel
+  }
+  $wsl = & $check (Get-Prop $p 'wsl') 'wsl' '.msi'
+  $rootfs = & $check (Get-Prop $p 'rootfs') 'rootfs' '.wsl'
+  $debs = @(Get-Prop $p 'debs')
+  if ($debs.Count -lt 1) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs') }
+  $debPaths = @($debs | ForEach-Object { & $check $_ 'deb' '.deb' })
+  if (@($debPaths | Where-Object { $_ -notmatch '^debs\\[^\\]+$' }).Count) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs live in debs\') }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); distribution = $distro; wsl = $wsl; rootfs = $rootfs; debs = $debPaths; wslVersion = [string](Get-Prop $p 'wsl.version') }
+}
+
+# Inside the VM (elevated PowerShell Direct session): install the pinned WSL package, register the pinned Ubuntu image under the
+# prerequisite distribution name, install the pinned .deb closure offline and confirm docker.service runs under systemd.
+# Returns facts only. Never downloads: apt is pointed at the local files and told not to fetch.
+$script:GuestPrereq = {
+  param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion)
+  $ErrorActionPreference = 'Stop'
+  $wslExe = "$env:SystemRoot\System32\wsl.exe"
+  $p = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart') -Wait -PassThru
+  if ($p.ExitCode -notin @(0, 3010)) { throw "PREREQ_WSL_MSI_EXIT_$($p.ExitCode)" }
+  $ver = ((& $wslExe --version) -join ' ') -replace [char]0, ''
+  if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { throw "PREREQ_WSL_VERSION_NOT_PINNED" }
+  & $wslExe --install --from-file (Join-Path $Dir $Rootfs) --name $Distro --no-launch | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "PREREQ_DISTRO_INSTALL_EXIT_$LASTEXITCODE" }
+  $root = { param([string]$cmd) $o = @(& $wslExe -d $Distro -u root -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c $cmd 2>&1 | ForEach-Object { ([string]$_) -replace [char]0, '' }); [ordered]@{ exit = $LASTEXITCODE; out = $o } }
+  $debDir = '/mnt/' + $Dir.Substring(0, 1).ToLowerInvariant() + ($Dir.Substring(2) -replace '\\', '/') + '/debs'
+  $apt = & $root "apt-get install -y --no-download --no-install-recommends -o Dpkg::Options::=--force-confold $debDir/*.deb"
+  if ($apt.exit -ne 0) { throw ("PREREQ_APT_EXIT_$($apt.exit): " + (@($apt.out | Select-Object -Last 5) -join ' | ')) }
+  $facts = & $root "for i in `$(seq 1 30); do systemctl is-active --quiet docker.service && break; sleep 2; done; grep ^PRETTY_NAME /usr/lib/os-release; ps -p 1 -o comm=; systemctl is-active docker.service; dpkg-query -W -f='`${Package} `${Version}\n' docker.io containerd runc"
+  [ordered]@{ wslVersion = $ver; distribution = $Distro; aptTail = @($apt.out | Select-Object -Last 3); facts = $facts.out; dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
 }
 
 # The kit entry's arguments with the fixed guest paths in place.
@@ -620,8 +685,50 @@ $script:GuestRead = {
   [ordered]@{ status = $status; current = $current; facts = $facts; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
 }
 
-function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, [pscredential]$Cred) {
+# Copy the pinned prerequisites into the VM, re-check their hashes there, install them (GuestPrereq). Stops on any miss.
+function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred) {
+  $dest = "$($script:Drill.GuestWork)\prereq"
+  $files = @($Prereq.wsl, $Prereq.rootfs) + @($Prereq.debs)
+  $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
+  try {
+    Invoke-Command -Session $session -ScriptBlock { param($d) New-Item -ItemType Directory -Force -Path $d, (Join-Path $d 'debs') | Out-Null } -ArgumentList $dest
+    foreach ($rel in $files) { Copy-Item -LiteralPath (Join-Path $Prereq.dir $rel) -Destination (Join-Path $dest $rel) -ToSession $session }
+    $want = @{}; foreach ($rel in $files) { $want[$rel] = Get-Sha256Hex (Join-Path $Prereq.dir $rel) }
+    $bad = Invoke-Command -Session $session -ScriptBlock { param($d, $w) @($w.Keys | Where-Object { (Get-FileHash -LiteralPath (Join-Path $d $_) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $w[$_] }) } -ArgumentList $dest, $want
+    if (@($bad).Count) { throw (New-DrillError 'DRILL_PREREQ_CHANGED_IN_COPY' @($bad)) }
+  } finally { Remove-PSSession -Session $session }
+  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' }
+  catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_UNEXPECTED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
+  Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
+  if (-not $facts.dockerActive -or -not $facts.systemdPid1) { throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
+  return $facts
+}
+
+# Restore the clean checkpoint, start the VM behind the memory gate, run $Body with the guest credential, and always end Off
+# and restored, whatever happened. Returns @{ result; failure; restored }.
+function Invoke-DrillOnCheckpoint([scriptblock]$Body) {
+  $result = $null; $failure = $null; $restored = $false
+  try {
+    Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
+    [void](Assert-DrillHost)   # the gate again right before the VM takes its 8 GB
+    Start-VM -Name $script:Drill.VmName
+    $cred = Get-DrillCredential
+    [void](Wait-DrillGuest $cred 15)
+    $result = & $Body $cred
+  } catch { $failure = Get-DrillCode $_ }
+  finally {
+    try {
+      if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -Name $script:Drill.VmName -TurnOff -Force }
+      Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
+      $restored = (Get-VM -Name $script:Drill.VmName).State -eq 'Off'
+    } catch { $restored = $false }
+  }
+  return @{ result = $result; failure = $failure; restored = $restored }
+}
+
+function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
   $g = $script:Drill.GuestWork
+  $prereqFacts = Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
   $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
   try {
@@ -694,7 +801,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, [pscredential]$Cre
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
-  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake }
+  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts }
 }
 
 # ---------------------------------------------------------------- main
@@ -713,40 +820,37 @@ function Invoke-DrillMain {
     return [ordered]@{ status = 'DRILL_FINALIZED'; conclusion = $receipt.conclusion; receipt = $Finalize }
   }
 
-  if (-not $BaselineOnly -and (-not $Version -or -not $From -or -not $Kit)) { throw (New-DrillError 'DRILL_USAGE' 'give -Version, -From and -Kit (or -BaselineOnly / -Finalize)') }
-  $package = $null; $kitInfo = $null
-  if (-not $BaselineOnly) { $package = Test-DrillPackageDir $From $Version; $kitInfo = Read-DrillKit $Kit }
+  $full = -not $BaselineOnly -and -not $PrereqOnly
+  if ($full -and (-not $Version -or -not $From -or -not $Kit)) { throw (New-DrillError 'DRILL_USAGE' 'give -Version, -From and -Kit (or -BaselineOnly / -PrereqOnly / -Finalize)') }
+  $package = $null; $kitInfo = $null; $prereq = $null
+  if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
+  if ($full) {
+    $package = Test-DrillPackageDir $From $Version; $kitInfo = Read-DrillKit $Kit
+    if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
+  }
   $mem = Assert-DrillHost
   $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-  $label = if ($Version) { $Version } else { 'baseline' }
+  $label = if ($Version) { $Version } elseif ($PrereqOnly) { 'prereq' } else { 'baseline' }
   $runDir = Join-Path $script:Drill.Runs "$stamp-$label"
   New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
+  $baseline = Invoke-DrillBaseline $runDir
   if ($BaselineOnly) {
-    $b = Invoke-DrillBaseline $runDir
-    Write-DrillJson (Join-Path $runDir 'baseline.json') $b
-    return [ordered]@{ status = 'DRILL_BASELINE_READY'; action = $b.action; checkpoint = $b.checkpoint; hostFreeGB = $mem.freeGB; evidence = (Join-Path $runDir 'baseline.json') }
+    Write-DrillJson (Join-Path $runDir 'baseline.json') $baseline
+    return [ordered]@{ status = 'DRILL_BASELINE_READY'; action = $baseline.action; checkpoint = $baseline.checkpoint; hostFreeGB = $mem.freeGB; evidence = (Join-Path $runDir 'baseline.json') }
+  }
+  if ($PrereqOnly) {
+    # The prerequisites alone, on a fresh copy of the baseline, then restored: WSL2 under nested virtualization, systemd, docker.
+    $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillPrereqInGuest $runDir $prereq $cred }
+    $out = [ordered]@{ status = $(if ($o.failure) { 'DRILL_PREREQ_FAILED' } else { 'DRILL_PREREQ_READY' }); code = $(if ($o.failure) { $o.failure.code } else { $null });
+      detail = $(if ($o.failure) { $o.failure.detail } else { $null }); restored = $o.restored; prereqSha256 = $prereq.sha256; evidence = (Join-Path $runDir 'prereq-facts.json') }
+    Write-DrillJson (Join-Path $runDir 'prereq-run.json') $out
+    return $out
   }
 
-  $baseline = Invoke-DrillBaseline $runDir
   $startedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  $vm = Get-VM -Name $script:Drill.VmName
-  $run = $null; $failure = $null; $restored = $false
-  try {
-    Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
-    [void](Assert-DrillHost)   # the gate again right before the VM takes its 8 GB
-    Start-VM -VM $vm
-    $cred = Get-DrillCredential
-    [void](Wait-DrillGuest $cred 15)
-    $run = Invoke-DrillRun $runDir $package $kitInfo $cred
-  } catch { $failure = Get-DrillCode $_ }
-  finally {
-    try {
-      if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -Name $script:Drill.VmName -TurnOff -Force }
-      Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
-      $restored = (Get-VM -Name $script:Drill.VmName).State -eq 'Off'
-    } catch { $restored = $false }
-  }
+  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $package $kitInfo $prereq $cred }
+  $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
   $evidence = [ordered]@{ localSource = $null }
   $items = @()
@@ -759,7 +863,7 @@ function Invoke-DrillMain {
     contract = $script:Drill.ReceiptContract
     machine = 'Hyper-V VM on DESK (drill machine, not a node; phase A)'
     version = $package.version; tarSha256 = $package.tarSha256; ciSourceManifestSha256 = $package.ciSourceManifestSha256
-    kitSha256 = $kitInfo.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
+    kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = $mem.freeGB
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items
