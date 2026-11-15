@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "f85cb90cfb013405a5301649bd898b56f2346588656f4baa1cf7012a0b5fbdf7"
+      "content_sha256": "c32583d8aec52e10306e64457933664ccb9c7227bbed3f8d737158f1e80ae5e1"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.66",
+      "version": "1.1.67",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "72134674f4d8662b2172fe3a8f07208f57770a6cb512856fdbb90efd65465712"
+      "content_sha256": "16be0e0f65508dbc29876e31ca28898db49c5b5e730be5d80286fb6d87e9375f"
     },
     {
       "id": "script.resource-maintenance",
@@ -688,7 +688,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "a86b39996eb5357abae8b191c1959aab641e0f6d295cb8945c6aa2e7f4bbdc24"
+      "content_sha256": "7f6cf8d30f715b7b942d6df6f79f57f5c7569b774c6134fff9248e6214a24efb"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "0d1e6ff006dcff649f64bc423351032af540d7c7d0bb28b0ef37f55d06e3464d"
+      "content_sha256": "7ead492e252a996013b2d1b1c4ea1871cfe4333f2e7a33fd464811abb67c7b28"
     }
   ]
 }

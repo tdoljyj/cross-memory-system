@@ -23,9 +23,10 @@
 // published, the head's complete check-run inventory of this App is read on GitHub (published-on-github-v2.mjs). A head
 // that already carries a role or control check, published by another node, another Source install or another batch,
 // ends with HEAD_PUBLISHED_ON_GITHUB: nothing evaluated, nothing published, never reaching the Task's CI meter, never safe
-// to re-run (a new commit runs the PR again). So does this very job's own kooyumi-work-admission (same job id and attempt)
-// published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
-// check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
+// to re-run (a new commit runs the PR again). This very job's own kooyumi-work-admission (same job id and attempt) published by
+// another node or install, with no role or control check beside it, ends with HEAD_INTERRUPTED_ON_GITHUB instead (resident DESIGN
+// §78): posting it again would make a second check of the same identity and HALT on the read-back, but the run that wrote it stopped
+// before any check ran, so the resident's attempt 2 (new job ids) runs the head, no new commit. A batch that already recorded its claim is this node's own and
 // keeps its path. A read that is not complete refuses (fail closed).
 //
 // Merge train (DESIGN §41.2, §41.4, §41.8; trainMode = the installed policy's train.enabled, train-mode.mjs):
@@ -44,7 +45,7 @@ import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
-import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
 import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
@@ -229,11 +230,17 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`;
         // §41.4: a train front batch is its own identity (H, S): only the role checks of its own jobs count, never a non-front run of H.
         const front = frontJobIdsV2(job);
-        const published = [...new Set((await readPublishedChecks(github, job.headSha, APP_ID))
-          .filter(c => (PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)))
-            || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
-          .map(c => c.name))].sort();
-        if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
+        const appChecks = await readPublishedChecks(github, job.headSha, APP_ID);
+        const roles = appChecks.some(c => PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)));
+        const ownAdmission = appChecks.some(c => c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob));
+        const published = [...new Set(appChecks.filter(c => (PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)))
+          || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob))).map(c => c.name))].sort();
+        if (roles) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
+        // Field defect 2026-11-15 (PR #1110, resident DESIGN §78): only this attempt's own admission is on the head, no role or control
+        // check: the run that wrote it (another node before a failover, or this node before its records were lost) stopped before any
+        // check ran. Nothing of the head ran, so it is not "executed": HEAD_INTERRUPTED_ON_GITHUB, and the resident's one automatic
+        // attempt 2 (new job ids, so a new admission identity) runs the head again. Posting this attempt's identity again stays refused.
+        if (ownAdmission) throw Object.assign(new Error(HEAD_INTERRUPTED_ON_GITHUB), { code: HEAD_INTERRUPTED_ON_GITHUB, publishedChecks: published });
       }
       step = 'boundary';
       let evaluated;
