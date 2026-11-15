@@ -540,6 +540,32 @@ test('multi-PR holder: a front that cannot land (failed GitHub check, auto-merge
   });
 });
 
+// The same field case across claims (one deliverable, one claim): a head claim whose only PR cannot land gives way to waiting claims
+// through Native's merge_queue_yield (migration 20261115150000) instead of holding the slot for its whole turn.
+test('a head whose PR cannot land yields the merge slot (Native decides whether anyone waits); a landable one opens its batch', async t => {
+  for (const mode of ['failed-check', 'auto-merge-off', 'draft', 'landable', 'nobody-waiting', 'not-deployed']) await t.test(mode, async t => {
+    // Steady state (the take-over full sweep done): a cold start holds every front until its strict observation, a draft's never comes.
+    const e = await setup(t, { strict: true, native: healthy, tick: 1 });
+    const read = e.gh.readPullRequest;
+    e.gh.readPullRequest = async n => ({ ...(await read(n)), draft: mode === 'draft', auto_merge: mode === 'auto-merge-off' ? null : { merge_method: 'merge' } });
+    if (mode !== 'landable' && mode !== 'auto-merge-off' && mode !== 'draft')
+      e.gh.world.checks.set(501, { id: 501, app: { id: 15368 }, name: 'admission-gate', head_sha: H, status: 'completed', conclusion: 'failure' });
+    e.native.port.yieldSlot = async i => { e.native.calls.push(['yield', i]);
+      return mode === 'not-deployed' ? { onDuty: null, yielded: false } : { onDuty: true, yielded: mode !== 'nobody-waiting' }; };
+    const r = await e.run();
+    const yields = e.native.calls.filter(c => c[0] === 'yield').map(c => c[1]);
+    if (mode === 'landable') {
+      assert.deepEqual(yields, []);
+      assert.equal(r.facts.openFrontBatch?.pr, 910, JSON.stringify(r.facts));
+      return;
+    }
+    assert.deepEqual(yields, [{ pr: 910, headSha: H }], JSON.stringify(r.facts));
+    if (['failed-check', 'auto-merge-off', 'draft'].includes(mode)) {
+      assert.equal(r.facts.decision, 'FRONT_RETURNED'); assert.equal(r.facts.actions.returned, true); assert.equal(r.facts.openFrontBatch, null);
+    } else assert.equal(r.facts.actions.returned, false, 'nothing yielded: the round goes on as before');
+  });
+});
+
 test('take-over front binding: nothing is named without strict, healthy Source and store, one holder, one PR, its scope and an open non-draft PR', async t => {
   for (const change of ['strict-off', 'fleet', 'pending', 'revoke-head', 'two-holders', 'bound-elsewhere', 'ambiguous', 'generation-race', 'scope', 'draft', 'fork', 'beyond-reads', 'full-done', 'shadow'])
     await t.test(change, async t => {

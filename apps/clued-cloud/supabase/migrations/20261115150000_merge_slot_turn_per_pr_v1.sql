@@ -33,7 +33,8 @@
 -- state, no hard cap until the next touch). trigger_refs end exactly as they
 -- were, so no execution admission changes. The slot is still not returned;
 -- a closed pull request, a Task's last pull request and an idle lapse are
--- unchanged. One WORK_CLAIM_MERGE_QUEUE_REJOINED receipt per join.
+-- unchanged. One WORK_CLAIM_MERGE_QUEUE_REJOINED receipt per join. Item 3
+-- below: a head that cannot land gives way to waiting claims.
 
 create function clued_private.work_claim_merge_rejoin_v1(p_claim uuid,p_binding_id uuid,p_why text,p_detail jsonb)
 returns void language plpgsql volatile security definer set search_path='' as $$
@@ -122,3 +123,71 @@ begin
   execute replace(body,anchor,anchor||'  perform clued_private.work_claim_merge_cap_rejoin_v1(b,v_scope,v_prefix,v_prs);
 ');
 end $keepalive_cap_rejoin$;
+
+-- 3. A head that cannot land gives way (merge_queue_yield, an action of the
+-- CI command door, behind its role check and claim lock like
+-- merge_queue_join). Input {action, scope, pr_ref, head_sha}: the train
+-- (stage 10 of the duty node) found the head claim's front pull request
+-- pr_ref at head_sha unable to merge as it stands (draft, auto-merge off, a
+-- GitHub Actions check failed: field 2026-11-15, #1121, whose required
+-- checks never ran). When that claim is the head of merge:<repo>:main, is
+-- bound to pr_ref, and another claim is waiting, it joins again at the back
+-- (work_claim_merge_rejoin_v1, why cannot_land); otherwise nothing is
+-- written (not_head, nobody_waiting). The server trusts the duty node's
+-- judgment as it does for the join; yielding grants nothing and the claim
+-- keeps its place behind the others.
+create function clued_private.work_claim_merge_queue_yield_v1(b public.clued_agent_bindings,p_input jsonb)
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare v_scope text:=coalesce(p_input->>'scope','global'); v_pr text:=p_input->>'pr_ref'; v_head text:=lower(p_input->>'head_sha');
+  v_prefix text; v_ref text; q jsonb; c clued_private.work_claims_v1%rowtype;
+begin
+  if not clued_private.work_claim_ci_assist_input_v1(p_input,array['action','scope','pr_ref','head_sha']) then
+    raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+  if not clued_private.merge_slot_admits_v1(b) then
+    return jsonb_build_object('status','rejected','error_code','admission_binding_required'); end if;
+  v_prefix:='merge:'||lower(split_part(v_pr,'#',1))||':';
+  v_ref:=v_prefix||'main';
+  perform clued_private.work_claim_expire_due(b.user_id);
+  perform clued_private.work_claim_merge_front_sync_all_v1(b.user_id,v_prefix);
+  q:=clued_private.work_claim_merge_queue_current_v1(b.user_id,v_ref);
+  select * into c from clued_private.work_claims_v1 w
+    where w.claim_id=(q->'head'->>'claim_id')::uuid and w.user_id=b.user_id and w.context_key=v_scope
+      and clued_private.work_claim_pr_matches_v1(w,v_pr);
+  if not found then
+    return jsonb_build_object('status','ok','yielded',false,'reason','not_head','pr_ref',v_pr,'head_sha',v_head); end if;
+  if not exists(select 1 from jsonb_array_elements(q->'entries') e where e->>'state'='waiting') then
+    return jsonb_build_object('status','ok','yielded',false,'reason','nobody_waiting','claim_id',c.claim_id,'pr_ref',v_pr,'head_sha',v_head); end if;
+  perform clued_private.work_claim_merge_rejoin_v1(c.claim_id,b.id,'cannot_land',jsonb_build_object('pr',v_pr,'head_sha',v_head));
+  select * into c from clued_private.work_claims_v1 where claim_id=c.claim_id;
+  return jsonb_build_object('status','ok','yielded',true,'claim_id',c.claim_id,'pr_ref',v_pr,'head_sha',v_head,
+    'merge_queue',clued_private.work_claim_merge_queue_view_v1(c));
+end $$;
+revoke all on function clued_private.work_claim_merge_queue_yield_v1(public.clued_agent_bindings,jsonb) from public,anon,authenticated;
+
+do $ci_queue_yield$
+declare body text; anchor text:=$a$  if op='merge_queue_join' then
+    return clued_private.work_claim_ci_queue_join_v1(b,p_input);
+  end if;
+$a$;
+begin
+  body:=pg_catalog.pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure);
+  if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 or position('merge_queue_yield' in body)>0 then
+    raise exception 'merge_queue_yield_command_source_unexpected'; end if;
+  execute replace(body,anchor,anchor||$a$  if op='merge_queue_yield' then
+    return clued_private.work_claim_merge_queue_yield_v1(b,p_input);
+  end if;
+$a$);
+end $ci_queue_yield$;
+
+-- Self-check: both entries are in the live bodies. The database tests replay
+-- every migration and check the same, so a later redefinition from older text
+-- that drops either fails there instead of silently.
+do $merge_turn_selfcheck$
+begin
+  if position('clued_private.work_claim_merge_cap_rejoin_v1(b,v_scope,v_prefix,v_prs)' in (select p.prosrc from pg_catalog.pg_proc p
+      where p.oid='clued_private.work_claim_merge_queue_keepalive_v1(public.clued_agent_bindings,jsonb)'::regprocedure))=0
+    or position('clued_private.work_claim_merge_queue_yield_v1(b,p_input)' in (select p.prosrc from pg_catalog.pg_proc p
+      where p.oid='clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure))=0 then
+    raise exception 'merge_turn_selfcheck_failed';
+  end if;
+end $merge_turn_selfcheck$;

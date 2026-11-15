@@ -5,6 +5,7 @@
 // active PR, its claim leaves the queue and joins again at the back: claims that waited go first, and a claim
 // alone is head again at once with a whole turn. A turn that lapsed at the hard cap (12:46 that day: nothing joined again until
 // a manual renew at 13:21) joins again the same way on the duty node's next queue keepalive; an idle lapse stays out.
+// A head whose PR cannot land (field #1121) gives way to a waiting claim through the CI door's merge_queue_yield.
 // Imported by work-claims-reject-receipts-db.test.mjs, so it runs in the production-schema suite.
 import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
@@ -200,6 +201,34 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(entry(await queue(), c).state, 'lapsed', 'an idle lapse is not revived');
       committed(await release(c));
     });
+    await t.test('a head whose PR cannot land yields to a waiting claim; alone or not head, nothing moves', async () => {
+      repo = 'fixture/merge-turn-yield';
+      const yieldSlot = (n, head) => call('ci', 'clued_work_verify_v1', { action: 'merge_queue_yield', scope: 'global', pr_ref: `${repo}#${n}`, head_sha: head });
+      const a = await claim(await task()), headA = '51'.repeat(20);
+      await admitted(a, 51, headA); await join(51, headA);
+      assert.deepEqual(await yieldSlot(51, headA), { status: 'ok', yielded: false, reason: 'nobody_waiting', claim_id: a.claim.claim_id, pr_ref: `${repo}#51`, head_sha: headA });
+      const b = await claim(await task()), headB = '52'.repeat(20);
+      await admitted(b, 52, headB); await join(52, headB);
+      assert.equal((await yieldSlot(52, headB)).reason, 'not_head');
+      const refs = (await admin.query('select trigger_refs from clued_private.work_claims_v1 where claim_id=$1', [a.claim.claim_id])).rows[0].trigger_refs;
+      const y = await yieldSlot(51, headA);
+      assert.equal(y.yielded, true, JSON.stringify(y));
+      const q = await queue();
+      assert.equal(q.head.claim_id, b.claim.claim_id, JSON.stringify(q));
+      assert.deepEqual({ state: entry(q, a).state, position: entry(q, a).position }, { state: 'waiting', position: 2 });
+      assert.deepEqual((await admin.query('select trigger_refs from clued_private.work_claims_v1 where claim_id=$1', [a.claim.claim_id])).rows[0].trigger_refs, refs);
+      const why = (await admin.query("select metadata from public.clued_audit_receipts where operation='work_claim_merge_queue_rejoin' and object_id=$1", [a.claim.claim_id])).rows;
+      assert.deepEqual(why.map(r => [r.metadata.why, r.metadata.pr, r.metadata.head_sha]), [['cannot_land', `${repo}#51`, headA]]);
+      committed(await release(a)); committed(await release(b));
+    });
+
+    await t.test('the keepalive and the CI door carry their calls after every migration', async () => {
+      const src = async sig => (await admin.query('select prosrc from pg_proc where oid=$1::regprocedure', [sig])).rows[0].prosrc;
+      assert.match(await src('clued_private.work_claim_merge_queue_keepalive_v1(public.clued_agent_bindings,jsonb)'),
+        /perform clued_private\.work_claim_merge_cap_rejoin_v1\(b,v_scope,v_prefix,v_prs\);/);
+      assert.match(await src('clued_private.work_claim_ci_command_v1(text,jsonb)'), /if op='merge_queue_yield' then\s+return clued_private\.work_claim_merge_queue_yield_v1\(b,p_input\);/);
+    });
+
   } finally {
     for (const c of clients.reverse()) await c.end().catch(() => {});
     const ownPid = server.process?.pid;

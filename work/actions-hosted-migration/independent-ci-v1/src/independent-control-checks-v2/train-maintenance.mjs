@@ -617,6 +617,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           fx.n++; fx.slotTouched = true;
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
+        } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
+          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks })))) {
+          // Field 2026-11-15 (#1121): a front that cannot land as it stands (draft, auto-merge off, a GitHub Actions check failed) never
+          // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
+          fx.n++;
+          const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
+          if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }
@@ -740,10 +747,9 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
 // choice is then as before); a later run of the same name supersedes an earlier one.
 const ACTIONS_APP_ID = 15368;
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
-async function landable(github, pull) {
+async function landable(github, pull, listed = null) {
   if (pull.auto_merge == null) return false;
-  let listed;
-  try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
+  if (listed === null) try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
   if (listed?.complete !== true || !Array.isArray(listed.checks)) return true;
   const latest = new Map();
   for (const c of listed.checks) if (c?.app?.id === ACTIONS_APP_ID && c.head_sha === pull.head.sha && Number.isSafeInteger(c.id)
