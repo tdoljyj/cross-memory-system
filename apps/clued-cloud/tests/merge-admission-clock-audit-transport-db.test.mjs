@@ -73,7 +73,9 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // Reviewed successors through a438599e8 change only brand strings, storage
   // digest routes, the MTPE Owner Pin tool and two fixed /v1/ci/* doors; the
   // C1 audit tool, its RPC mapping, error mapping and REST route are unchanged.
-  assert.equal(hash(workerSource),'2578493c142cf0181db9206a877f34ec72f7289b8305fb7dd590de4a64a194f6');
+  // Prior pin (before #1106 hosted-relay removal): 2578493c142cf0181db9206a877f34ec72f7289b8305fb7dd590de4a64a194f6.
+  // #1106 only dropped the hosted scan-start import and door; C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
+  assert.equal(hash(workerSource),'d09c61e3ced3d1c919477a0faef8493d310ee186b7801c712e90bbdac8345728');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
