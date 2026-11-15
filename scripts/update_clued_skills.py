@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import uuid
 
@@ -35,6 +36,19 @@ def hashes(folder):
     return result
 
 
+def released_change(repository):
+    """Why this checkout's Skill may not be installed under its version, or None (clued_components.py)."""
+    sys.path.insert(0, str(repository / 'scripts'))
+    try:
+        import clued_components
+    finally:
+        sys.path.pop(0)
+    try:
+        return clued_components.unreleased_change('skill.clued', repository)
+    except clued_components.BaseRefError as error:
+        return f'cannot tell which commit released the Skill: {error}'
+
+
 def update(target, check=False):
     target = target.resolve()
     source_root = SOURCE.resolve()
@@ -53,6 +67,10 @@ def update(target, check=False):
                     for name in RETIRED_NAMES if name in existing})
     if check or all(value['status'] == 'MATCH' for value in results.values()):
         return results
+    # ComponentVersioning v0.4: a host compares only the version number, so the same number never ships other files.
+    refused = released_change(SOURCE.parent)
+    if refused:
+        raise ValueError(refused)
 
     target.mkdir(parents=True, exist_ok=True)
     # Backups, staging and failed candidates are outside Skill discovery.
