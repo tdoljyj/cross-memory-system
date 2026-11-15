@@ -8,7 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fetchPackage } from '../fetch.mjs';
+import { fetchPackage } from '../fleet/fetch.mjs';
 
 const sha = b => createHash('sha256').update(b).digest('hex');
 const VERSION = '2026.11.15-1', TAG = `fleet-node-${VERSION}`, FAKE_TOKEN = 'fake-token-for-test';
