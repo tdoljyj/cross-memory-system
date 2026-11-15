@@ -42,7 +42,7 @@ class Fixture:
                 {"id": "svc", "kind": "service", "version": "0.1.0", "root": ".", "files": ["service.js"]},
             ],
         }
-        cc.save_manifest(manifest, self.dir)
+        write(self.dir / cc.MANIFEST, json.dumps(manifest))
 
     def git(self, *args: str) -> None:
         # No signing and no hooks of the machine's global git configuration in a throwaway repository.
