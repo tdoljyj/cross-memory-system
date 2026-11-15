@@ -5,14 +5,15 @@ on:
     inputs:
       mode:
         description: >-
-          Release mode. Only deploy and migrate change production, and both first consume
-          an Owner Grant for this commit. preflight runs the read-only gate, backup creates
-          the encrypted pre-migration backup, source-capture captures one reviewed storage
-          client source, migrate applies the named migration files. deploy publishes the
-          PDF, main application and Kooyumi Connect Workers as one controlled release.
+          Release mode. Only deploy, migrate and release change production, and each first
+          consumes an Owner Grant for this commit. preflight runs the read-only gate, backup
+          creates the encrypted pre-migration backup, source-capture captures one reviewed
+          storage client source, migrate applies the named migration files. deploy publishes
+          the PDF, main application and Kooyumi Connect Workers as one controlled release.
           release runs preflight, backup, the named migrations (if any), deploy and the
-          post-deploy verification in one run from one Owner approval, and rolls the
-          Workers back to the versions they served before if a deploy or verification fails.
+          post-deploy verification in one run from one Owner approval (each of its grants
+          used once), and rolls the Workers back to the versions they served before if a
+          deploy or verification fails.
         type: choice
         required: true
         default: preflight
@@ -287,10 +288,9 @@ jobs:
       # this commit. Advisory until the Owner sets CLUED_RELEASE_GRANT_ENFORCE=true;
       # then no grant, no run. It runs after the credential checks, so a run that
       # cannot proceed uses no grant. deploy consumes its grant further down,
-      # after the release gate. A release with migrations uses its one approval
-      # here, migrations and deploy together (clued-release-grant.mjs --mode
-      # release), after the build and the backup: the release gate needs the
-      # migrations applied, so it runs after them.
+      # after the release gate. A release with migrations consumes the same
+      # grant here, after the build and the backup; it asks for the deploy with
+      # it, so the Owner approves both with one link, and each is used once.
       - name: Consume the Owner Grant for the named migrations
         if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
         working-directory: .
@@ -298,7 +298,7 @@ jobs:
           # In a release, npm ci, tests and the build ran before this step; none
           # of that dependency code may preload code into the grant check.
           NODE_OPTIONS: ''
-          RELEASE_MODE: ${{ inputs.mode }}
+          RELEASE_MODE: ${{ inputs.mode == 'release' && 'migrate' || inputs.mode }}
           MIGRATIONS: ${{ inputs.migrations }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
@@ -384,15 +384,16 @@ jobs:
       # commit before anything changes production. It runs after the release
       # gate and the credential checks, so a deploy the gate stops uses no grant
       # (run 37329072487 used its grant and then stopped at the gate). A release
-      # without migrations uses its approval (the deploy only) here as well.
+      # consumes its deploy grant here as well: the one the migration step asked
+      # for with its migrations, or, without migrations, the only one.
       - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' || (inputs.mode == 'release' && inputs.migrations == '') }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         working-directory: .
         env:
           # Steps before this one ran dependency code (npm ci, tests, build);
           # none of it may preload code into the grant check.
           NODE_OPTIONS: ''
-          RELEASE_MODE: ${{ inputs.mode }}
+          RELEASE_MODE: ${{ inputs.mode == 'release' && 'deploy' || inputs.mode }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
@@ -488,10 +489,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
-        run: >-
-          node scripts/release-worker-versions.mjs rollback
-          --from .sites-runtime/release-evidence/worker-versions.json
-          --out .sites-runtime/release-evidence/worker-rollback.json
+        run: node scripts/release-worker-versions.mjs rollback --from .sites-runtime/release-evidence/worker-versions.json --out .sites-runtime/release-evidence/worker-rollback.json
       - name: Preserve release evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

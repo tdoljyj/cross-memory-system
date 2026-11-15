@@ -107,9 +107,9 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-cloud-production-release.yml": {
-        "control_sha256": "ba9aebecbf6b9a87fdfb2563ba8f223bfbfe4e44211ca32dac64145c48a53f68",
+        "control_sha256": "fa8aa425cecbf174a94d13cf48b044810cfe5c8e47fafa9eae7ebd182e478f7c",
         "jobs": {
-            "release": "354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0"
+            "release": "55ce04bef0e78748171e81dbb28df48721e018b62e1f86585199894c80a2416e"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {

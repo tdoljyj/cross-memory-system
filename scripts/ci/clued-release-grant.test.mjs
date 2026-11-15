@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { ACTIONS, DOOR_RPC, admitted, checkGrant, checkRelease, commitResource, grantEnforced, main, releaseAdmitted } from "./clued-release-grant.mjs";
+import { ACTIONS, DOOR_RPC, admitted, checkGrant, commitResource, grantEnforced, main } from "./clued-release-grant.mjs";
 import { resolvePublicSupabaseConfig, sha256Hex } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -134,52 +134,5 @@ test("release grant: main exit codes and summary", async () => {
     assert.equal(await main(["--mode", "migrate"], base, fakeFetch(() => ({ body: { status: "ok", consumed: false,
       owner_request: { request_id: REQUEST, confirm_path: `/confirm/${REQUEST}` } } })).fetchImpl), 1);
     assert.match(fs.readFileSync(summary, "utf8"), new RegExp(`Ask the Owner to approve: https://kooyumi.pixelgrav.com/confirm/${REQUEST}`));
-  } finally { console.log = log; console.error = error; }
-});
-
-test("release grant: release mode uses the one bundle approval once, migrations first, deploy only without them", async () => {
-  const consumed = (id) => ({ body: { status: "ok", consumed: true, grant: { grant_id: id, use: 1, max_uses: 1 } } });
-  const pending = { body: { status: "ok", consumed: false, owner_request: { request_id: REQUEST, confirm_path: `/confirm/${REQUEST}`,
-    bundle: [{ request_id: REQUEST, action: "migration.production" }, { request_id: "44444444-4444-4444-8444-444444444444", action: "release.production" }] } } };
-  const call = async (overrides, answers) => {
-    const fake = fakeFetch(() => answers.shift());
-    const results = await checkRelease({ env: env(overrides), fetchImpl: fake.fetchImpl, workspace: ROOT });
-    return { results, calls: fake.calls };
-  };
-  const migrationResource = `repo:o/r/${SHA}/apps/clued-cloud/supabase/migrations/20261003170000_a.sql`;
-  // With migrations: the migration grant (asking for the deploy with it), then the deploy grant; each once.
-  let { results, calls } = await call({ MIGRATIONS: "20261003170000_a.sql" }, [consumed("g-m"), consumed("g-d")]);
-  assert.deepEqual(calls.map((c) => c.body.p_input.action), ["migration.production", "release.production"]);
-  assert.deepEqual(calls[0].body.p_input, { action: "migration.production", resources: [migrationResource],
-    with: [{ action: "release.production", resources: [`repo:o/r/${SHA}`] }] });
-  assert.deepEqual(calls[1].body.p_input, { action: "release.production", resources: [`repo:o/r/${SHA}`] });
-  assert.deepEqual(results.map((r) => [r.mode, r.consumed, r.grant.grant_id]), [["migrate", true, "g-m"], ["deploy", true, "g-d"]]);
-  assert.equal(releaseAdmitted(results), true);
-  // Without migrations: only the deploy of the commit.
-  ({ results, calls } = await call({ MIGRATIONS: "" }, [consumed("g-d")]));
-  assert.deepEqual(calls.map((c) => c.body.p_input), [{ action: "release.production", resources: [`repo:o/r/${SHA}`] }]);
-  assert.equal(releaseAdmitted(results), true);
-  // No grant yet: one bundle link for both, and the deploy grant is not asked for separately.
-  ({ results, calls } = await call({ MIGRATIONS: "20261003170000_a.sql" }, [pending]));
-  assert.equal(calls.length, 1);
-  assert.equal(releaseAdmitted(results), false);
-  assert.equal(results[0].confirm_url, `https://kooyumi.pixelgrav.com/confirm/${REQUEST}`);
-  assert.deepEqual(results[0].bundle.map((m) => m.action), ["migration.production", "release.production"]);
-  // The migration grant alone does not admit the release.
-  ({ results } = await call({ MIGRATIONS: "20261003170000_a.sql" }, [consumed("g-m"), pending]));
-  assert.equal(releaseAdmitted(results), false);
-  assert.equal(releaseAdmitted(results.map((r) => ({ ...r, enforced: false }))), true, "advisory until enforced");
-
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-grant-"));
-  const summary = path.join(dir, "summary.md");
-  const log = console.log; const error = console.error;
-  console.log = () => {}; console.error = () => {};
-  try {
-    const base = env({ GITHUB_STEP_SUMMARY: summary, GITHUB_WORKSPACE: ROOT, MIGRATIONS: "20261003170000_a.sql" });
-    const answers = [consumed("g-m"), consumed("g-d")];
-    assert.equal(await main(["--mode", "release"], base, fakeFetch(() => answers.shift()).fetchImpl), 0);
-    const text = fs.readFileSync(summary, "utf8");
-    assert.match(text, /Owner Grant for release[\s\S]*migration\.production[\s\S]*Consumed grant `g-m`[\s\S]*release\.production[\s\S]*Consumed grant `g-d`/);
-    assert.equal(await main(["--mode", "release"], base, fakeFetch(() => pending).fetchImpl), 1);
   } finally { console.log = log; console.error = error; }
 });

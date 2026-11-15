@@ -383,9 +383,12 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   const migrateGrant = names.indexOf('name: Consume the Owner Grant for the named migrations');
   const deployGrant = names.indexOf('name: Consume the Owner Grant for this commit');
   assert.ok(migrateGrant > 0 && deployGrant > 0);
-  // A release uses one of the two: with migrations the first, else the second.
+  // A release with migrations uses both (one bundle approval), without them only the second.
   assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
-  assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \|\| \(inputs\.mode == 'release' && inputs\.migrations == ''\) \}\}/);
+  assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \|\| inputs\.mode == 'release' \}\}/);
+  // A release calls the grant check as migrate and as deploy: the same two door calls, each used once.
+  assert.match(steps[migrateGrant], /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'migrate' \|\| inputs\.mode \}\}/);
+  assert.match(steps[deployGrant], /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'deploy' \|\| inputs\.mode \}\}/);
   for (const grant of [migrateGrant, deployGrant]) {
     assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
     assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
@@ -547,26 +550,33 @@ const RELEASE_ORDER = [
   'Verify projection and MTPE behavior', 'Build exact Worker source', 'Verify and build Kooyumi Connect release source',
   'Create and verify encrypted pre-migration backup', 'Consume the Owner Grant for the named migrations',
   'Apply the named migrations', 'Block release unless database and Worker heartbeat are ready',
-  'Record the Worker versions production serves', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
+  'Consume the Owner Grant for this commit', 'Record the Worker versions production serves', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
   'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
   'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
   'Verify projection currentness after deployment', 'Preserve release evidence',
 ];
 const ROLLBACK_STEP = 'Roll back the Workers after a failed deploy or verification';
-const grantSteps = (run) => run.steps.filter((step) => /clued-release-grant\.mjs/.test(step.text));
+const grantSteps = (run) => run.steps.filter((step) => /\n {8}run: node scripts\/ci\/clued-release-grant\.mjs /.test(step.text));
 const MIGRATION = '20261003170000_owner_grants_release_door.sql';
 
-test('release mode runs preflight, backup, migrations, deploy and verification in one run from one grant step', () => {
+test('release mode runs preflight, backup, migrations, deploy and verification in one run and uses each grant once', () => {
   const run = simulateRelease({ mode: 'release', migrations: MIGRATION });
   assert.equal(run.conclusion, 'success');
   const positions = RELEASE_ORDER.map((name) => run.ran.indexOf(name));
   assert.ok(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1])),
     JSON.stringify(Object.fromEntries(RELEASE_ORDER.map((name, i) => [name, positions[i]]))));
-  // One grant step, before anything changes production, consuming the bundle once.
-  assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for the named migrations']);
-  assert.match(grantSteps(run)[0].text, /--mode "\$RELEASE_MODE"/);
-  assert.match(grantSteps(run)[0].text, /RELEASE_MODE: \$\{\{ inputs\.mode \}\}/);
-  assert.match(grantSteps(run)[0].text, /NODE_OPTIONS: ''/);
+  // The one bundle approval: the migration grant (asking for the deploy with it)
+  // before the migrations, the deploy grant after the gate; each step runs once.
+  assert.deepEqual(grantSteps(run).map((step) => step.name),
+    ['Consume the Owner Grant for the named migrations', 'Consume the Owner Grant for this commit']);
+  const [migrationGrant, deployGrant] = grantSteps(run);
+  assert.match(migrationGrant.text, /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'migrate' \|\| inputs\.mode \}\}/);
+  assert.match(migrationGrant.text, /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  assert.match(deployGrant.text, /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'deploy' \|\| inputs\.mode \}\}/);
+  for (const step of [migrationGrant, deployGrant]) {
+    assert.match(step.text, /--mode "\$RELEASE_MODE"/);
+    assert.match(step.text, /NODE_OPTIONS: ''/);
+  }
   assert.ok(!run.ran.includes(ROLLBACK_STEP));
   // Every credential is checked before the grant is used.
   const grantAt = run.ran.indexOf('Consume the Owner Grant for the named migrations');
