@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "d41e2af7ccbcd008a1b13bb368cbacf0608c9c72af02cfed43e1f58c70fafcfd"
+      "content_sha256": "bd7ba7443c66b1813a10745396b18fa60493298bb28abfc6e0c7521cb0cf83f9"
     },
     {
       "id": "hook.runner-job-started",
@@ -68,7 +68,7 @@
       "files": [
         "clued-runner-job-started.mjs"
       ],
-      "content_sha256": "283a50582cb9b0bc2b11ae68221ebff5231c9e6a6ce709f77cbdf87a85c0ea62",
+      "content_sha256": "8622588fc82259da8e37137aa5b57c43f55ddfb09b04e1079531074bd7960944",
       "version_marker": {
         "file": "clued-runner-job-started.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -83,7 +83,7 @@
       "files": [
         "clued-runner-hook-loader.mjs"
       ],
-      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "content_sha256": "1b213ff2e73ab2dcc93f52a5d16a15730e97e02f2ab550c0e840b2f9c0c85bc3",
       "version_marker": {
         "file": "clued-runner-hook-loader.mjs",
         "pattern": "export const LOADER_VERSION = \"{version}\";"
@@ -631,7 +631,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "40c2663e5ae74b79e8c422f08ee90c2721d3779b6b3d69c5002de0fb36fdb164"
+      "content_sha256": "27134c38e812ec482dd07d4a44b6f55a97a02c6d226ac26a57c5d2ee3b1f3390"
     },
     {
       "id": "script.resource-maintenance",
@@ -719,7 +719,7 @@
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "00a17968567d6b4ee5c4a802bdba388b2e66e1d003cd5e8867c7dcfe6309bb9d"
+      "content_sha256": "dbfb66bc1ea3a3ee00da6de54be6c33dbf07ff483d549e07fa9eb1877145279f"
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -935,7 +935,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5dc5c1f0c034f68bb7d65e56ab8f970ffd2fc984ccebdb293afadf49f539c31b"
+      "content_sha256": "e3ae2b90ddb193b827607a07e2ccbb6bd1c27a4455ade78d8327cade573598a3"
     }
   ]
 }
