@@ -3,7 +3,8 @@
 // it left, the train refused the next front as TRAIN_FRONT_BUDGET_SHORT until the turn lapsed, and the lapsed
 // entry stayed out of the queue until the holder renewed by hand). When the merged PR's Task still has another
 // active PR, its claim leaves the queue and joins again at the back: claims that waited go first, and a claim
-// alone is head again at once with a whole turn.
+// alone is head again at once with a whole turn. A turn that lapsed at the hard cap (12:46 that day: nothing joined again until
+// a manual renew at 13:21) joins again the same way on the duty node's next queue keepalive; an idle lapse stays out.
 // Imported by work-claims-reject-receipts-db.test.mjs, so it runs in the production-schema suite.
 import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
@@ -134,6 +135,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
         [a.claim.claim_id])).rows;
       assert.equal(rejoined.length, 1); assert.equal(rejoined[0].binding_id, ids.ci);
       assert.equal(rejoined[0].metadata.receipt_kind, 'WORK_CLAIM_MERGE_QUEUE_REJOINED'); assert.equal(rejoined[0].metadata.merged_pr, `${repo}#21`);
+      assert.equal(rejoined[0].metadata.why, 'merged');
 
       // B lands its only PR and leaves: A is head again with a whole new turn, not the rest of the old one.
       assert.equal((await adopt(23)).status, 'ok');
@@ -160,6 +162,43 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.ok(Date.parse(q.head.since) >= mergedAt.getTime(), 'a new turn from the merge: ' + JSON.stringify(q.head));
       assert.ok(Date.parse(q.head.until) - Date.now() > 40 * 60_000, 'time for the next front batch');
       committed(await release(a));
+    });
+    await t.test('a turn that lapsed at the hard cap joins again on the next keepalive; an idle lapse stays out', async () => {
+      repo = 'fixture/merge-turn-cap';
+      const keepalive = prs => call('ci', 'clued_work_verify_v1', { action: 'merge_queue_keepalive', scope: 'global', repository: repo, pr_refs: prs.map(n => `${repo}#${n}`) });
+      const a = await claim(await task()), headA = '41'.repeat(20);
+      await admitted(a, 41, headA); await join(41, headA);
+      // The CI kept reporting (renewal clock past the cap), so the 2-hour cap ended the turn a minute ago (production: 12:46:03).
+      await admin.query(`update clued_private.work_claims_v1 set merge_queued_at=now()-interval '121 minutes',merge_slot_taken_at=now()-interval '121 minutes',
+        merge_slot_at=now()-interval '10 minutes',merge_slot_hard_cap_seconds=7200 where claim_id=$1`, [a.claim.claim_id]);
+      const refs = (await admin.query('select trigger_refs from clued_private.work_claims_v1 where claim_id=$1', [a.claim.claim_id])).rows[0].trigger_refs;
+      const lapsed = await queue();
+      assert.equal(lapsed.head, null, JSON.stringify(lapsed)); assert.equal(entry(lapsed, a).state, 'lapsed');
+      const at = await now();
+      const kept = await keepalive([41]);
+      assert.equal(kept.status, 'ok', JSON.stringify(kept));
+      const q = await queue();
+      assert.equal(q.head?.claim_id, a.claim.claim_id, 'the claim is head again: ' + JSON.stringify(q));
+      assert.ok(Date.parse(q.head.since) >= at.getTime() && Date.parse(q.head.until) - Date.now() > 40 * 60_000, JSON.stringify(q.head));
+      assert.deepEqual((await admin.query('select trigger_refs from clued_private.work_claims_v1 where claim_id=$1', [a.claim.claim_id])).rows[0].trigger_refs, refs,
+        'trigger_refs end as they were (no execution admission changes)');
+      const rejoined = (await admin.query("select metadata from public.clued_audit_receipts where operation='work_claim_merge_queue_rejoin' and object_id=$1", [a.claim.claim_id])).rows;
+      assert.deepEqual(rejoined.map(r => r.metadata.why), ['hard_cap']);
+      assert.equal((await keepalive([41])).status, 'ok');
+      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='work_claim_merge_queue_rejoin' and object_id=$1", [a.claim.claim_id])).rows[0].n,
+        1, 'a head is not joined again');
+      committed(await release(a));
+
+      // Idle: the renewal clock ran out before the cap; no keepalive brings it back.
+      repo = 'fixture/merge-turn-idle';
+      const c = await claim(await task()), headC = '43'.repeat(20);
+      await admitted(c, 43, headC); await join(43, headC);
+      await admin.query(`update clued_private.work_claims_v1 set merge_queued_at=now()-interval '60 minutes',merge_slot_taken_at=now()-interval '60 minutes',
+        merge_slot_at=now()-interval '50 minutes',merge_slot_hard_cap_seconds=7200 where claim_id=$1`, [c.claim.claim_id]);
+      assert.equal(entry(await queue(), c).state, 'lapsed');
+      assert.equal((await keepalive([43])).status, 'ok');
+      assert.equal(entry(await queue(), c).state, 'lapsed', 'an idle lapse is not revived');
+      committed(await release(c));
     });
   } finally {
     for (const c of clients.reverse()) await c.end().catch(() => {});
