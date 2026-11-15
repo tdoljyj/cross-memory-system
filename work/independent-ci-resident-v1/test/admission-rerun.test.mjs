@@ -54,6 +54,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); return ok({ jobs: r.attempts.flatMap((_, i) => jobsOf(r, i + 1)) }); }
     if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) return ok({ jobs: jobsOf(byId(m[1]), Number(m[2])) });
     if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) { const id = Number(m[1]); const r = byId(Math.floor(id / 100)); return ok(r.attempts[Math.floor((id % 100) / 10) - 1].notes); }
+    if ((m = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route))) { st.logReads = (st.logReads ?? 0) + 1; const id = Number(m[1]); const r = byId(Math.floor(id / 100)); const n = Math.floor((id % 100) / 10); return { code: 0, stdout: r.attempts[n - 1].logs?.[id % 10] ?? '' }; }
     if ((m = /^\/pulls\/(\d+)$/.exec(route))) return ok(st.pulls.find(p => p.number === Number(m[1])) ?? null);
     if ((m = /^\/actions\/runs\/(\d+)$/.exec(route))) return ok(shown(byId(m[1])));
     assert.fail(`unexpected route ${route}`);
@@ -436,4 +437,73 @@ test('review round 30: an intent that cannot be saved leaves the step\'s other c
   assert.deepEqual(again.toasts, ['PR #452：自动补跑结果不确定']);
   assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records[HEAD].outcome, 'unknown');
   assert.deepEqual(w2.posts, [], 'never asked');
+});
+
+// --- Task 1b: an environment failure (the runner's setup, or the network with no failed test) of the one attempt that ran is re-run once.
+const step = (name, conclusion) => ({ name, status: 'completed', conclusion });
+const SETUP_DIED = [step('Set up job', 'failure'), step('Run tests', 'skipped')];
+const TESTS_DIED = [step('Set up job', 'success'), step('Run tests', 'failure')];
+const NET_LOG = '2026-11-15T01:00:00Z npm error code ECONNRESET\n2026-11-15T01:00:01Z npm error network aborted\n##[error]Process completed with exit code 1.';
+const TEST_LOG = '2026-11-15T01:00:00Z not ok 3 - admission refuses\n2026-11-15T01:00:01Z # fail 1\n##[error]Process completed with exit code 1.';
+const ok = { conclusion: 'success', steps: [step('Set up job', 'success'), step('Run tests', 'success')] };
+const netFail = { conclusion: 'failure', steps: TESTS_DIED, log: NET_LOG };
+const setupFail = { conclusion: 'failure', steps: SETUP_DIED };
+// An attempt that ran: specs = [{ conclusion, steps, log }] for the three heavy jobs; logs are keyed by the job's index (the gate is 0).
+const ran = (specs, { gate = { name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: HEAD } } = {}) => ({ notes: [],
+  jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}) }))],
+  logs: Object.fromEntries(specs.flatMap((sp, i) => sp.log === undefined ? [] : [[i + 1, sp.log]])) });
+
+test('environment failure: a network failure of the attempt that ran is re-run once; a second one on the same head never is', async t => {
+  const w = world({ runs: [run(700, [ran([netFail, ok, ok])])] });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt, d.environment], ['rerun', 700, 1, [HEAVY[0]]]);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+  assert.equal(l.state.record(HEAD).attempt, 2);
+  assert.match(l.toasts[0], /环境类失败/);
+  // The re-run (attempt 2) ran and failed of the network again: the head is done, nothing is clicked again.
+  w.runs[0].status = 'completed';
+  w.runs[0].attempts[1] = ran([netFail, ok, ok]);
+  l.advance(HEAD_RECHECK_MS + 1);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
+});
+
+test('environment failure: a setup death needs no log; a gate job that died in setup ran nothing', async t => {
+  const w = world({ runs: [run(700, [ran([setupFail, setupFail, ok])])] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'rerun');
+  assert.equal(w.calls.filter(c => /logs/.test(c.target)).length, 0);
+  const died = ran([{ conclusion: 'skipped' }, { conclusion: 'skipped' }, { conclusion: 'skipped' }], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: SETUP_DIED } });
+  const d = await decide({ gh: world({ runs: [run(700, [died])] }).gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.environment], ['rerun', null]);
+});
+
+test('environment failure: a failed test, an unproven failure, a cancelled job or a failure of the attempt after a pending one never re-runs', async t => {
+  const cases = {
+    'a failed test': [ran([{ conclusion: 'failure', steps: TESTS_DIED, log: TEST_LOG }, ok, ok])],
+    'a network failure and a failed test in one log': [ran([{ conclusion: 'failure', steps: TESTS_DIED, log: NET_LOG + '\n' + TEST_LOG }, ok, ok])],
+    'a failed test in another job': [ran([netFail, { conclusion: 'failure', steps: TESTS_DIED, log: TEST_LOG }, ok])],
+    'no network signature': [ran([{ conclusion: 'failure', steps: TESTS_DIED, log: '##[error]lint failed' }, ok, ok])],
+    'no step record': [ran([{ conclusion: 'failure', log: NET_LOG }, ok, ok])],
+    'a cancelled job': [ran([netFail, { conclusion: 'cancelled', steps: TESTS_DIED, log: NET_LOG }, ok])],
+    'a gate job that did not succeed': [ran([netFail, ok, ok], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: TESTS_DIED } })],
+    'a head that ran twice': [ran([ok, ok, ok]), ran([netFail, ok, ok])],
+  };
+  for (const [label, attempts] of Object.entries(cases)) {
+    const w = world({ runs: [run(700, attempts)] });
+    assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final', label);
+    assert.deepEqual(w.posts, [], label);
+  }
+  // An unreadable log is not "no evidence of a test failure": nothing is clicked, and it is read again later.
+  const w = world({ runs: [run(700, [ran([netFail, ok, ok])])], fail: target => (/logs/.test(target) ? { code: 1, stdout: '', stderr: 'HTTP 500' } : null) });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'error');
+  // A pending attempt, then an environment failure of the attempt that ran: that one is repaired.
+  assert.equal((await decide({ gh: world({ runs: [run(700, [attempt(), ran([netFail, ok, ok])])] }).gh, headSha: HEAD })).action, 'rerun');
+});
+
+test('the log read: an over-long log is answered empty, never as evidence', async () => {
+  const w = world({ runs: [run(700, [ran([netFail, ok, ok])])], fail: target => (/logs/.test(target) ? { code: 0, stdout: 'x'.repeat(3_500_000) } : null) });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
 });
