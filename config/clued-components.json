@@ -68,7 +68,7 @@
       "files": [
         "clued-runner-job-started.required-tests-dispatch-v1.mjs"
       ],
-      "content_sha256": "5b5cc62156c8ca0686f981fd0140821b7f863dc7d3ed8bcb91cc41ae69a92c6e",
+      "content_sha256": "2b858d189d070b16468304894bf5f227964fbf354e89f7d883e1f2a4d27f30f6",
       "version_marker": {
         "file": "clued-runner-job-started.required-tests-dispatch-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "5acc8d4d84eb6c0cd129970769ffc208b4d26055a5758d832b0fdd961350213f"
+      "content_sha256": "a30c1100d2d6e47b5639ffc5df1b04e4f384aa34505e4261b04ac3b5054b2cdd"
     }
   ]
 }
