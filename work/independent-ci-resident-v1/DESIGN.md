@@ -2555,7 +2555,7 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
 ### 29.9 安装与不变量
 
 - 需要先接受新的 Source（它的 `stage-fact.mjs` 变了），再做一次常驻层 Windows 重装，同一次 UAC 里重签 policy 里的 `residentManifestSha256` 和 `ciSourceManifestSha256`。policy 合同不变（`/7`）。
-- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`），所以装的 Source 必须带第 11 段。
+- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`；清理已证明的子进程超时除外，记 uncertain，见 §56.2），所以装的 Source 必须带第 11 段。
 - 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。重启时有批次停在 A、B 也一样：探测不等它们结束（§29.2 第 5 条）。
 - 不增加发布路径，不增加 GitHub 读写，不碰 App 凭据；模式只会让执行器少做事，从不让它多做事。
 
@@ -4373,7 +4373,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 有确定答复（held、not-held）时，照常记账并更新节点模式。记账时存成普通的 `ROLE_PROBE_HELD`（`role-probe.mjs#roleBookFact`），所以上一代读回去也认得。
   - 观察的 uncertain 答复不记进角色账：观察比定时探测频繁得多，一次 90 s 的网络抖动不该让 Owner 收到“连续三次无法确认”；定时探测仍照原样计数。但对熔断器，它和别的探测一样算一次失败（只是打断连续成功的计数，不通知 Owner），网络还在抖时不会凑够提前试跑的条件。
   - 探测途中时钟往回跳了，就不记账。
-  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。
+  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。唯一例外：第 11 段子进程超时（`STAGE_CHILD_TIMEOUT`）而进程树清零、原 runner 已读回停止（两项证明都成立），按 `ROLE_PROBE_UNCERTAIN` 处理：记账、计入熔断器、退避，模式不变，不 HALT，观察答复为 unknown（TURING 2026-11-15 08:13Z 因此误停）。`BROKER_BUSY`、任一证明不成立、`STAGE_OUTCOME_MISSING` 照旧 HALT。
   - 不带观察的探测如果说“观察到队首”，不算事实。
 - **断流。** holders 读不到时，探测回答 `ROLE_PROBE_UNCERTAIN`：不提前尝试，不 HALT，按 `QUEUE_WATCH_FAIL_MS` 退避，批次照原来的退避重试。
 - **效果。**
