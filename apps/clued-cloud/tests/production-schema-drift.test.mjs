@@ -9,7 +9,7 @@ import test from 'node:test';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
 import {
   SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, prepareReplay, relationAliases,
-  printSummary, repositoryOnlyObjects, runCheck, serializeSnapshot,
+  printSummary, readBaseMigrations, repositoryOnlyObjects, runCheck, serializeSnapshot,
 } from '../scripts/production-schema-drift.mjs';
 import { md5 } from '../scripts/migration-ledger.mjs';
 import { pendingBreakingFindings } from '../scripts/release-migration-compat.mjs';
@@ -273,4 +273,13 @@ test('migration-verify blocks an undeclared breaking pending migration and passe
   // A file the base already has was judged when it was added: a snapshot that lags production cannot fail it.
   const onMain = withPending(drop);
   assert.deepEqual(judged(onMain, new Set(Object.keys(onMain.migrations))), []);
+});
+
+test('the base migrations are read from the base commit tree, relative to the application directory', async () => {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  if (head.status !== 0) return;
+  const names = await readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() });
+  assert.ok(names instanceof Set && names.size > 100, 'the base tree lists the committed migrations');
+  assert.equal(names.has('20261113151000_work_claim_terminal_admission_removed_v1.sql'), true);
+  assert.equal(await readBaseMigrations({}), undefined);
 });

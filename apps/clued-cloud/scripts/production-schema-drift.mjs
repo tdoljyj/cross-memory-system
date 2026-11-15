@@ -484,14 +484,14 @@ function argument(args, name) {
 // Migration file names the base has: the trusted base checkout that
 // migration-verify puts next to the candidate checkout (workspace/trusted), else
 // the base commit tree (CI_BASE_SHA, local-verify); undefined when neither is known.
-async function readBaseMigrations(env = process.env) {
+export async function readBaseMigrations(env = process.env) {
   const trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations');
   const sibling = await readdir(trusted).catch(() => null);
   if (sibling) return new Set(sibling);
   if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
-    const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'apps/clued-cloud/supabase/migrations'],
+    const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'supabase/migrations'],
       { cwd: appDirectory, encoding: 'utf8' });
-    if (run.status === 0) return new Set(run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter((name) => name && name !== '.'));
+    if (run.status === 0) { const names = run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter(Boolean); if (names.length > 0) return new Set(names); }
   }
   return undefined;
 }
