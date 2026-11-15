@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "948e7c141cf7f540f41cac4826a1a888f8f52403c09e70d84fcb15e59e8baeb1"
+      "content_sha256": "efca83cc2354e4d85fca31ccac7d95df2ba10520a0d56844b37e7ea632d428a2"
     },
     {
       "id": "script.resource-maintenance",
@@ -897,7 +897,7 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "c6c425c25025a2ed8eb6fa6ddbcd649d6dd20ef6690a2efbb438821eed7c3249"
+      "content_sha256": "35a54e1cd96c33f509d1da444aa8970fb3763f05c1c79ead3b3ee5b92f1ffd3a"
     },
     {
       "id": "script.merge-reconciliation",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "4f6753f61cfe75fdfe704a42fc9044ce891a6ed5bccf0de25f311ff2d8d1f84f"
+      "content_sha256": "3afc48de6b0caa036a13b463c6eb0fa6b65b3abea2d51bb89cace396bb20b8a3"
     }
   ]
 }
