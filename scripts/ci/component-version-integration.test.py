@@ -47,25 +47,20 @@ class CandidateIntegrationTest(unittest.TestCase):
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo.dir,
                               capture_output=True, text=True, check=True).stdout.strip()
 
-    def test_default_does_not_write_unbumped_pr(self):
+    def test_default_does_not_write(self):
         before = (self.repo.dir / cc.MANIFEST).read_bytes()
         report = integration.integrate_candidate(self.repo.dir, self.base, self.head())
         self.assertFalse(report["applied"])
-        self.assertEqual(report["changes"][0]["target_version"], "3")
         self.assertEqual((self.repo.dir / cc.MANIFEST).read_bytes(), before)
 
-    def test_clean_candidate_is_generated_then_verified_without_git_mutation(self):
+    def test_source_change_sets_no_version_and_writes_nothing(self):
         before = self.head()
         report = integration.integrate_candidate(self.repo.dir, self.base, before, write=True)
         self.assertTrue(report["applied"])
-        self.assertEqual(cc.by_id(cc.load_manifest(self.repo.dir))["tool"]["version"], "3")
+        self.assertEqual(cc.by_id(cc.load_manifest(self.repo.dir))["tool"]["version"], "2")
         self.assertEqual(cc.check(self.repo.dir, self.base), [])
         self.assertEqual(self.head(), before)
-        self.assertIn("config/clued-components.json", report["output_sha256"])
-        self.commit("generated integration metadata")
-        second = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
-        self.assertEqual(second["changes"], [])
-        self.assertEqual(second["output_sha256"], {})
+        self.assertEqual(report["output_sha256"], {})
 
     def test_refuses_dirty_candidate_before_mutation(self):
         write(self.repo.dir / "tool.py", "print(3)\n")
@@ -100,7 +95,7 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
         self.assertTrue(report["applied"])
         observed = json.loads((self.repo.dir / "control-source-observed.json").read_text())
-        self.assertEqual(observed, {"base": self.base, "version": "3"})
+        self.assertEqual(observed, {"base": self.base, "version": "2"})
 
     def generator(self, body):
         write(self.repo.dir / GENERATOR, "import fs from 'node:fs';\n" + body)
@@ -126,16 +121,21 @@ fs.writeFileSync('control-source-observed.json',JSON.stringify({
         with self.assertRaisesRegex(ValueError, "pkg/SKILL.md 未登记"):
             integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
 
+    RENDER_PKG_VERSION = ("const m=JSON.parse(fs.readFileSync('config/clued-components.json','utf8'));\n"
+                          "m.components.find(c=>c.id==='pkg').version='1.0.1';\n"
+                          "fs.writeFileSync('config/clued-components.json',JSON.stringify(m,null,2)+'\\n');\n"
+                          "const t=fs.readFileSync('pkg/SKILL.md','utf8');\n"
+                          "fs.writeFileSync('pkg/SKILL.md',t.replace('version: \"1.0.0\"','version: \"1.0.1\"'));\n")
+
     def test_registered_marker_file_may_change_only_its_version_line(self):
-        write(self.repo.dir / "pkg/references/a.md", "b\n")
-        self.commit("skill change")
+        self.generator(self.RENDER_PKG_VERSION)
         report = integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
         self.assertIn("pkg/SKILL.md", report["output_sha256"])
 
-    def test_declared_version_marker_missing_from_marker_paths_fails(self):
+    def test_marker_file_missing_from_marker_paths_fails(self):
         write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
             REAL_POLICY, mechanical_paths=["control-source-observed.json"], marker_paths=["config/clued-components.json"])))
-        self.commit("marker file not registered")
+        self.generator(self.RENDER_PKG_VERSION)
         with self.assertRaisesRegex(ValueError, "pkg/SKILL.md 未登记"):
             integration.integrate_candidate(self.repo.dir, self.base, self.head(), write=True)
 

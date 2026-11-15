@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import io
 import json
 import os
@@ -36,15 +37,12 @@ class Fixture:
             "schema": cc.SCHEMA,
             "components": [
                 {"id": "pkg", "kind": "skill", "version": "1.0.0", "root": "pkg", "files": ["**/*"],
-                 "content_sha256": None,
                  "version_marker": {"file": "SKILL.md", "pattern": '  version: "{version}"'}},
-                {"id": "tool", "kind": "script", "version": "2", "root": ".", "files": ["tool.py"],
-                 "content_sha256": None},
+                {"id": "tool", "kind": "script", "version": "2", "root": ".", "files": ["tool.py"]},
                 {"id": "svc", "kind": "service", "version": "0.1.0", "root": ".", "files": ["service.js"]},
             ],
         }
-        write(self.dir / cc.MANIFEST, json.dumps(manifest))
-        cc.update(self.dir)
+        cc.save_manifest(manifest, self.dir)
 
     def git(self, *args: str) -> None:
         # No signing and no hooks of the machine's global git configuration in a throwaway repository.
@@ -96,28 +94,39 @@ class CheckTest(unittest.TestCase):
     def test_fresh_fixture_passes(self):
         self.assertEqual(cc.check(self.repo.dir), [])
 
-    def test_changed_file_without_update_fails(self):
+    def test_changed_file_needs_nothing_recorded(self):
         write(self.repo.dir / "pkg" / "references" / "a.md", "changed\n")
+        self.assertEqual(cc.check(self.repo.dir), [])
+
+    def test_a_stored_digest_is_refused(self):
+        # A digest kept in the manifest changes with every pull request's content and makes queued PRs conflict.
+        data = cc.load_manifest(self.repo.dir)
+        cc.by_id(data)["tool"]["content_sha256"] = cc.content_digest(self.repo.dir, ["tool.py"])
+        cc.save_manifest(data, self.repo.dir)
         problems = cc.check(self.repo.dir)
-        self.assertEqual(len(problems), 1)
-        self.assertIn("pkg: files changed", problems[0])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("tool: stores content_sha256", problems[0])
+
+    def test_versions_reports_the_computed_digest(self):
+        status = cc.component_status(cc.by_id(cc.load_manifest(self.repo.dir))["tool"], self.repo.dir)
+        self.assertEqual(status["content_sha256"], cc.content_digest(self.repo.dir, ["tool.py"]))
+        self.assertEqual(status["problems"], [])
 
     def test_crlf_checkout_hashes_like_lf(self):
+        before = cc.content_digest(self.repo.dir / "pkg", ["**/*"])
         path = self.repo.dir / "pkg" / "references" / "a.md"
         path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
-        self.assertEqual(cc.check(self.repo.dir), [])
+        self.assertEqual(cc.content_digest(self.repo.dir / "pkg", ["**/*"]), before)
 
     def test_marker_must_match_manifest(self):
         write(self.repo.dir / "pkg" / "SKILL.md", '---\nname: x\nmetadata:\n  version: "1.0.1"\n---\nbody\n')
-        cc.update(self.repo.dir)
         problems = cc.check(self.repo.dir)
         self.assertTrue(any("declares 1.0.1, the manifest 1.0.0" in p for p in problems), problems)
 
-    def test_bump_rewrites_marker_and_update_records_digest(self):
+    def test_bump_rewrites_marker(self):
         write(self.repo.dir / "pkg" / "references" / "a.md", "changed\n")
         cc.bump("pkg", "1.1.0", self.repo.dir)
         self.assertIn('  version: "1.1.0"', (self.repo.dir / "pkg" / "SKILL.md").read_text())
-        cc.update(self.repo.dir)
         self.assertEqual(cc.check(self.repo.dir), [])
 
     def test_bump_keeps_the_blank_line_after_the_marker(self):
@@ -135,19 +144,18 @@ class CheckTest(unittest.TestCase):
         cc.bump("pkg", "1.1.0", self.repo.dir)
         self.assertEqual(skill.read_text(), "  path: C:\\x 1.1.0\nbody\n")
 
-    def test_bump_and_update_write_lf_only(self):
+    def test_bump_writes_lf_only(self):
         # On Windows write_text turns "\n" into CRLF; the R9 re-registration helper refuses such files.
         root = self.repo.dir
         skill = root / "pkg" / "SKILL.md"
         skill.write_bytes(b'---\r\nname: x\r\nmetadata:\r\n  version: "1.0.0"\r\n---\r\nbody\r\n')
         (root / "tool.py").write_text("print(2)\n")
         cc.bump("pkg", "1.1.0", root)
-        cc.update(root)
         for path in (skill, root / cc.MANIFEST):
             self.assertNotIn(b"\r", path.read_bytes(), path.name)
         self.assertEqual(cc.check(root), [])
 
-    def test_bump_and_update_write_lf_where_text_mode_translates(self):
+    def test_bump_writes_lf_where_text_mode_translates(self):
         # The same check on every platform: make a text-mode write translate "\n" to CRLF, as Windows does.
         real_open = io.open
 
@@ -159,7 +167,6 @@ class CheckTest(unittest.TestCase):
         write(self.repo.dir / "pkg" / "references" / "a.md", "changed\n")
         with mock.patch("io.open", windows_open), mock.patch("builtins.open", windows_open):
             cc.bump("pkg", "1.1.0", self.repo.dir)
-            cc.update(self.repo.dir)
         for path in (self.repo.dir / "pkg" / "SKILL.md", self.repo.dir / cc.MANIFEST):
             self.assertNotIn(b"\r", path.read_bytes(), path.name)
 
@@ -167,15 +174,13 @@ class CheckTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cc.bump("pkg", "1.0.0", self.repo.dir)
 
-    def test_change_against_base_needs_a_higher_version(self):
+    def test_change_against_base_needs_no_version_bump(self):
+        # A version is a label raised on purpose; a per-PR bump made every queued PR re-bump after each merge.
         self.repo.git("init", "-q")
         self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
         self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
         write(self.repo.dir / "tool.py", "print(2)\n")
-        cc.update(self.repo.dir)  # digest re-recorded, version not bumped
-        problems = cc.check(self.repo.dir, base_ref="HEAD")
-        self.assertEqual(problems, ["tool: files changed but the version is still 2; bump it "
-                                    "(clued_components.py bump tool <version>)"])
+        self.assertEqual(cc.check(self.repo.dir, base_ref="HEAD"), [])
         cc.bump("tool", "3", self.repo.dir)
         self.assertEqual(cc.check(self.repo.dir, base_ref="HEAD"), [])
 
@@ -331,6 +336,63 @@ class BaseRefTest(unittest.TestCase):
         self.assertTrue(any("is not valid JSON" in p for p in problems), problems)
 
 
+class QueuedPullRequestTest(unittest.TestCase):
+    """Defect C (2026-11-15): when one queued PR merges, the next one only has to take main in.
+
+    Two PRs from the same main change the same component and each runs the repository's integration
+    builder before it is tested. The first merges. A plain merge of the new main into the second (what
+    GitHub's update-branch does) must be clean and already correct: no conflict in generated component
+    metadata, nothing left for the builder to regenerate, so no person or builder has to touch the PR.
+    """
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "component_version_integration", ROOT / "scripts/ci/component-version-integration.py")
+        self.builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.builder)
+        self.repo = Fixture()
+        self.addCleanup(self.repo.close)
+        self.repo.git("init", "-q", "-b", "main")
+        write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs", "process.exit(0);\n")
+        policy = json.loads((ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
+        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(dict(
+            policy, mechanical_paths=[], marker_paths=["config/clued-components.json", "pkg/SKILL.md"])))
+        self.commit("main")
+        self.main = self.head()
+
+    def git(self, *args):
+        return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                               "-c", "core.hooksPath=", *args], cwd=self.repo.dir, capture_output=True, text=True)
+
+    def head(self):
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def commit(self, message):
+        self.git("add", "-A")
+        done = self.git("commit", "-qm", message)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def pull_request(self, branch, path, text):
+        """A PR as it reaches the queue today: the author's change, then the builder's outputs."""
+        self.git("checkout", "-q", "-b", branch, self.main)
+        write(self.repo.dir / path, text)
+        self.commit(f"{branch}: source change")
+        self.builder.integrate_candidate(self.repo.dir, self.main, self.head(), write=True)
+        if self.git("status", "--porcelain").stdout.strip():
+            self.commit(f"{branch}: builder outputs")
+        return self.head()
+
+    def test_next_queued_pr_needs_only_a_plain_merge_of_main(self):
+        first = self.pull_request("first", "pkg/references/a.md", "first\n")
+        self.pull_request("second", "pkg/references/b.md", "second\n")
+        self.git("branch", "-f", "main", first)  # the first PR merges (strict: it contained main)
+        merged = self.git("merge", "--no-edit", "main")
+        self.assertEqual(merged.returncode, 0, "taking main in conflicts:\n" + merged.stdout + merged.stderr)
+        self.assertEqual(cc.check(self.repo.dir, base_ref=first), [])
+        report = self.builder.integrate_candidate(self.repo.dir, first, self.head(), write=True)
+        self.assertEqual(report["output_sha256"], {}, "the builder still has to regenerate after taking main in")
+
+
 class AutomaticIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.repo = Fixture()
@@ -347,71 +409,15 @@ class AutomaticIntegrationTest(unittest.TestCase):
         self.repo.git("add", "-A")
         self.repo.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
 
-    def test_unbumped_source_change_is_planned_and_applied_once(self):
-        write(self.repo.dir / "tool.py", "print(2)\n")
-        self.commit("source without metadata")
-        plan = cc.integration_plan(self.base, self.repo.dir)
-        self.assertEqual({x["id"]: x["target_version"] for x in plan["changes"]}, {"tool": "3"})
-        self.assertEqual(cc.by_id(cc.load_manifest(self.repo.dir))["tool"]["version"], "2")
-        cc.apply_integration(plan, self.repo.dir)
-        self.assertEqual(cc.check(self.repo.dir, self.base), [])
-        first = (self.repo.dir / cc.MANIFEST).read_bytes()
-        cc.apply_integration(cc.integration_plan(self.base, self.repo.dir), self.repo.dir)
-        self.assertEqual((self.repo.dir / cc.MANIFEST).read_bytes(), first)
-
-    def test_two_sources_auto_bump_only_their_own_components(self):
+    def test_plan_sets_no_version(self):
         write(self.repo.dir / "tool.py", "print(2)\n")
         write(self.repo.dir / "pkg/references/a.md", "changed\n")
-        self.commit("two independent changes")
-        cc.apply_integration(cc.integration_plan(self.base, self.repo.dir), self.repo.dir)
-        versions = {x["id"]: x["version"] for x in cc.load_manifest(self.repo.dir)["components"]}
-        self.assertEqual(versions, {"pkg": "1.0.1", "tool": "3", "svc": "0.1.0"})
+        self.commit("two source changes, no version edited")
+        plan = cc.integration_plan(self.base, self.repo.dir)
+        self.assertEqual({row["id"]: row["version"] for row in plan["components"]},
+                         {"pkg": "1.0.0", "tool": "2", "svc": "0.1.0"})
+        self.assertNotIn("changes", plan)
         self.assertEqual(cc.check(self.repo.dir, self.base), [])
-
-    def test_marker_only_change_does_not_bump_overlapping_component(self):
-        data = cc.load_manifest(self.repo.dir)
-        data["components"].append({"id": "outer", "kind": "script", "version": "4.0.0",
-                                   "root": ".", "files": ["pkg/**/*"]})
-        cc.save_manifest(data, self.repo.dir)
-        cc.update(self.repo.dir)
-        self.commit("outer baseline")
-        baseline = self.head()
-        cc.bump("pkg", "2.0.0", self.repo.dir)
-        self.commit("explicit semantic release")
-        plan = cc.integration_plan(baseline, self.repo.dir)
-        cc.apply_integration(plan, self.repo.dir)
-        current = cc.by_id(cc.load_manifest(self.repo.dir))
-        self.assertEqual(current["pkg"]["version"], "2.0.0")
-        self.assertEqual(current["outer"]["version"], "4.0.0")
-
-    def test_mechanical_only_change_does_not_raise_source_version(self):
-        write(self.repo.dir / "config/clued-mechanical-files.json",
-              (ROOT / "config/clued-mechanical-files.json").read_text(encoding="utf-8"))
-        write(self.repo.dir / "apps/clued-cloud/worker/generated/example.ts", "old\n")
-        data = cc.load_manifest(self.repo.dir)
-        cc.by_id(data)["tool"]["files"].append("apps/clued-cloud/worker/generated/**")
-        cc.save_manifest(data, self.repo.dir)
-        cc.update(self.repo.dir)
-        self.commit("mechanical baseline")
-        baseline = self.head()
-        write(self.repo.dir / "apps/clued-cloud/worker/generated/example.ts", "new\n")
-        self.commit("generated only")
-        self.assertEqual(cc.integration_plan(baseline, self.repo.dir)["changes"], [])
-        cc.apply_integration(cc.integration_plan(baseline, self.repo.dir), self.repo.dir)
-        self.assertEqual(cc.check(self.repo.dir, baseline), [])
-
-    def test_service_auto_bump_uses_explicit_coverage_not_a_name_heuristic(self):
-        data = cc.load_manifest(self.repo.dir)
-        cc.by_id(data)["svc"].update({"root": ".", "files": ["tool.py"]})
-        cc.save_manifest(data, self.repo.dir)
-        cc.update(self.repo.dir)
-        self.commit("explicit service coverage")
-        baseline = self.head()
-        write(self.repo.dir / "tool.py", "print(2)\n")
-        self.commit("backend change")
-        plan = cc.integration_plan(baseline, self.repo.dir)
-        self.assertEqual({row["id"]: row["target_version"] for row in plan["changes"]},
-                         {"tool": "3", "svc": "0.1.1"})
 
     def test_component_retires_only_together_with_all_its_files(self):
         data = cc.load_manifest(self.repo.dir)
@@ -421,7 +427,7 @@ class AutomaticIntegrationTest(unittest.TestCase):
             cc.integration_plan(self.base, self.repo.dir)
         (self.repo.dir / "tool.py").unlink()
         self.commit("retire tool with its files")
-        self.assertNotIn("tool", {x["id"] for x in cc.integration_plan(self.base, self.repo.dir)["changes"]})
+        self.assertNotIn("tool", {x["id"] for x in cc.integration_plan(self.base, self.repo.dir)["components"]})
         self.assertEqual(cc.check(self.repo.dir, self.base), [])
         data["components"].append(dict(data["components"][0]))
         cc.save_manifest(data, self.repo.dir)
@@ -437,34 +443,6 @@ class AutomaticIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "svc: service has no explicit source coverage"):
             cc.integration_plan(self.base, self.repo.dir)
 
-    def test_mechanical_version_marker_does_not_hide_executable_body_change(self):
-        policy = {"schema": 1, "repository": "tdoljyj/cross-memory-system",
-                  "context_keys": ["project:0597aa60-9b98-4da6-a4ab-63d7705b632f"],
-                  "mechanical_paths": ["scripts/ci/clued-merge-reconcile.mjs"]}
-        write(self.repo.dir / "config/clued-mechanical-files.json", json.dumps(policy))
-        source = "scripts/ci/clued-merge-reconcile.mjs"
-        write(self.repo.dir / source, "export const COMPONENT_VERSION='2';\nexport const decision = false;\n")
-        data = cc.load_manifest(self.repo.dir)
-        cc.by_id(data)["tool"].update({"files": [source], "version_marker": {
-            "file": source, "pattern": "export const COMPONENT_VERSION='{version}';"}})
-        cc.save_manifest(data, self.repo.dir)
-        cc.update(self.repo.dir)
-        self.commit("mechanical marker baseline")
-        baseline = self.head()
-        write(self.repo.dir / source, "export const COMPONENT_VERSION='2';\nexport const decision = true;\n")
-        self.commit("executable body change")
-        self.assertEqual(cc.integration_plan(baseline, self.repo.dir)["changes"][0]["target_version"], "3")
-
-    def test_deleted_source_and_new_coverage_are_changes(self):
-        (self.repo.dir / "pkg/references/a.md").unlink()
-        self.commit("remove source")
-        self.assertEqual(cc.integration_plan(self.base, self.repo.dir)["changes"][0]["id"], "pkg")
-
-    def test_rename_out_of_component_keeps_the_deleted_source_change(self):
-        self.repo.git("mv", "pkg/references/a.md", "outside.md")
-        self.commit("move outside component")
-        self.assertEqual(cc.integration_plan(self.base, self.repo.dir)["changes"][0]["id"], "pkg")
-
     def test_rejects_version_rollback_and_stale_expected_head(self):
         data = cc.load_manifest(self.repo.dir)
         cc.by_id(data)["tool"]["version"] = "1"
@@ -474,12 +452,10 @@ class AutomaticIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "head changed"):
             cc.integration_plan(self.base, self.repo.dir, expected_head="0" * 40)
 
-    def test_apply_refuses_source_changed_after_plan(self):
+    def test_input_state_follows_component_bytes(self):
+        first = cc.integration_plan(self.base, self.repo.dir)["input_state_sha256"]
         write(self.repo.dir / "tool.py", "print(2)\n")
-        plan = cc.integration_plan(self.base, self.repo.dir)
-        write(self.repo.dir / "tool.py", "print(3)\n")
-        with self.assertRaisesRegex(ValueError, "changed since integration plan"):
-            cc.apply_integration(plan, self.repo.dir)
+        self.assertNotEqual(cc.integration_plan(self.base, self.repo.dir)["input_state_sha256"], first)
 
     def test_marker_path_cannot_escape_checkout(self):
         data = cc.load_manifest(self.repo.dir)

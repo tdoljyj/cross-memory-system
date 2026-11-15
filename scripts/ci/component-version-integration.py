@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Materialise automatic component metadata before an integration candidate is tested.
+"""Regenerate the mechanical outputs of a pull request's own change before its head is tested.
 
-Invoke from the existing integration builder after its trial merge and before
-publishing/checking the candidate head. Never run this after the merge to main:
-this command writes files only, never commits, pushes, updates a ref or grants
-Source/host qualification. Default is a read-only plan.
+It runs the fixed generators (registries, Source pins, the generated version
+module, the plugin copy) and verifies them. It sets no component version: a
+version is a release label raised on purpose (scripts/clued_components.py bump),
+and no derived digest is stored, so taking main into a queued pull request is a
+plain merge with nothing to regenerate (defect C, 2026-11-15). Never run this
+after the merge to main: this command writes files only, never commits, pushes,
+updates a ref or grants Source/host qualification. Default is a read-only plan.
 """
 from __future__ import annotations
 
@@ -105,23 +108,19 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
     before = _mtimes(root)
     for _ in range(3):
         previous = _state(root)
-        components.apply_integration(components.integration_plan(base, root, expected_head=head), root)
         for command in generators:
             if (root / command[1]).is_file():
                 _command(root, command)
-        components.update(root)
         agent_generator = root / "apps/clued-cloud/scripts/generate-agent-contract.mjs"
         if agent_generator.is_file():
             _command(root, ["node", agent_generator.relative_to(root).as_posix()])
         if _state(root) == previous:
             break
     else:
-        raise ValueError("automatic component metadata did not converge in three passes")
+        raise ValueError("mechanical outputs did not converge in three passes")
     written = set(str(components._git_output(root, ["diff", "--no-renames", "--name-only", "-z", "HEAD", "--"])).split("\0"))
     written.update(str(components._git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"))
     written.update(name for name, mtime in _mtimes(root).items() if before.get(name) != mtime)
-    # apply_integration may rewrite any declared version marker on a later bump.
-    written.update(components._marker_map(components.load_manifest(root)))
     written.discard("")
     tracked = set(str(components._git_output(root, ["ls-tree", "-r", "--name-only", "-z", "HEAD"])).split("\0"))
     bad = unregistered_outputs(root, written, lambda name: components._git_output(
@@ -133,8 +132,6 @@ def integrate_candidate(root: Path, base: str, head: str, *, write: bool = False
         raise ValueError("integrated component verification failed: " + "; ".join(problems))
     _command(root, ["node", "scripts/ci/check-pinned-registries.mjs", "--base", base, "--root", str(root)])
     after = components.integration_plan(base, root, expected_head=head)
-    if after["changes"]:
-        raise ValueError("automatic component metadata changed after verification")
     paths = set(str(components._git_output(root, ["diff", "--name-only", "HEAD", "--"])).splitlines())
     paths.update(name for name in str(components._git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0") if name)
     outputs = {name: hashlib.sha256(components._checked_file(root, name).read_bytes()).hexdigest()
