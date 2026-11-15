@@ -170,7 +170,7 @@
 
     "apps/clued-cloud/package.json": "f16653d202e17235f3ac2e45ca8eb08fe1293727f893e7c8f65abea02a61297d",
 
-    "config/clued-mechanical-files.json": "e7dab54c2fa2c781185a50f749e4198615880b34f14491bd18912bc506f39bed",
+    "config/clued-mechanical-files.json": "fce04110b1d9b6ac7870709dd058ee457db14970ef1664a1861be5445c556e07",
 
     "config/merge-admission-policy.json": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
 
@@ -222,9 +222,9 @@
 
     "scripts/ci/clued-control-workflow-reconcile-source.test.mjs": "e31ce637c6fab136d9cc5ae91a9f19022769d197b7c858d2ff274fe8f9738914",
 
-    "scripts/ci/clued-control-workflow-source.mjs": "db484e8b24ec0c14715e4e54e8c82a6f7ea2537b079fbc7c1354a2fbf62f2b7a",
+    "scripts/ci/clued-control-workflow-source.mjs": "243da8492460462ee880431c0496d85d444dfa3fb7292b147954950941726c5a",
 
-    "scripts/ci/clued-control-workflow-source.test.mjs": "a7a479885ff8e4dda8b43ec34e43ff114020abaff7f3eae1be5726091bd782bb",
+    "scripts/ci/clued-control-workflow-source.test.mjs": "f35ebc464b7065cc02da7930b6319c17e18038fbb4765035c78cdd12d3cfa2d8",
 
     "scripts/ci/clued-control-workflow-sources.json": "db94156e4eb6c0d0c37dc36489f83091b8d52066e49eb43c4f75e0ed68876ae6",
 
@@ -416,9 +416,9 @@
 
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
 
-    "scripts/ci/clued-work-admission.mjs": "558f8d679a373b4ca90f13a2fdc4882e4f00e41069ac6bd73c558b8a83fb1c4e",
+    "scripts/ci/clued-work-admission.mjs": "459fe35322553bfd70bcd548aadb546636c50c27af5489c6fed6539d5508d13e",
 
-    "scripts/ci/clued-work-admission.test.mjs": "f0772baf7234d68a78d0c0f5abff3874248f65bd771f3878bd0973e109a3ef1a",
+    "scripts/ci/clued-work-admission.test.mjs": "4e6ae1e4bdf4de62da6f852d13d8418d602fc830bf84d54f110e962862bf1aca",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -464,7 +464,7 @@
 
     "scripts/ci/local-verify.test.mjs": "103e3d8e6747a3e279fd8dba8719b067f09f7bcf5b6a68a214eb32c596a54f39",
 
-    "scripts/ci/main-entry-legacy.json": "7344774391c98033a94bb92cf3800b9969b826588d5ce0f0b73ab60f4cf7c15e",
+    "scripts/ci/main-entry-legacy.json": "ac555b84df927f2b1f2871a9955321c0ccea3b34fa4351e8c4a0217208f6e011",
 
     "scripts/ci/main-entry-realpath.test.mjs": "b0a2308233c39ae0faed8eaa92f98b145d1faa5d009a5de094c440eca34bf86c",
 
@@ -512,7 +512,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "4fe5eca2f0f98e8351f0a0429b032b92feb33e3cc8a53040361493b47674a863",
+    "scripts/ci/merge-admission-r9-source.json": "3773a4d7848a752f7dfd10793647f706392436e69de063ac02e6daf7382ef7d4",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
@@ -606,13 +606,15 @@
 
     "scripts/ci/validate_runner_budget_policy.py": "a915d5d4d2e25a66926928a4abe799088a1a66faa75a4eea24fae1fc90061eb3",
 
-    "scripts/runner/clued-runner-job-started.mjs": "c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912",
+    "scripts/runner/clued-runner-job-started.mjs": "547c8d0fb4029a715a0389e1b85fead93fc6d3b234541073a134b8dc889af3fe",
 
     "scripts/runner/clued-runner-job-started.ps1": "d3ed2f7755db0f906d60064926d5bf233ceef51089dc64c1bc736f92d0065217",
 
+    "scripts/runner/clued-runner-job-started.required-tests-late-admission-v1.mjs": "547c8d0fb4029a715a0389e1b85fead93fc6d3b234541073a134b8dc889af3fe",
+
     "scripts/runner/clued-runner-job-started.sh": "47022237ae7f41e00b61dc158f103002d20787e555a42b6afeed7ed5561e26f0",
 
-    "scripts/runner/clued-runner-job-started.test.mjs": "772a78b8779371a2ad2b2e94e792268a5e0717549c1d4cec26fe2030bd8de79c",
+    "scripts/runner/clued-runner-job-started.test.mjs": "8b17bfbceb4a307d6d9e96b77d73c454fb3caed0b3ffce95595c06ad55c0cd30",
 
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
 
