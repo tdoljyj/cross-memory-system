@@ -783,8 +783,10 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   return enforce ? 1 : 0;
 }
 
-// The entry point, also behind a link or junction (defect 2102f7e1); a path that cannot be resolved throws: the job is refused.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+// The entry point, also behind a link or junction (defect 2102f7e1). An argv[1] that does not exist is not this file
+// (an importer's); this file's own path always resolves.
+const realOrNull = (file) => { try { return fs.realpathSync(file); } catch { return null; } };
+if (process.argv[1] && realOrNull(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const proxyArguments = proxyBootstrapArguments();
     if (proxyArguments) {
