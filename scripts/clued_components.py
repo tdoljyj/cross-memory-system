@@ -3,23 +3,29 @@
 
 config/clued-components.json lists every self-developed Clued component (the
 Skill, the Agent contract, the Claude Code hooks, the local scripts, the MCP
-service) with its version. A component that ships files also records
-content_sha256, a digest of those files, and may name a version marker: a line
-in one of its files that repeats the version, so a copy installed elsewhere
-still says which version it is.
+service) with its version and the files it covers, and may name a version
+marker: a line in one of its files that repeats the version, so a copy
+installed elsewhere still says which version it is.
 
     python3 scripts/clued_components.py versions [--json]
     python3 scripts/clued_components.py check [--base <git ref>]
     python3 scripts/clued_components.py bump <component id> <new version>
-    python3 scripts/clued_components.py update
 
-`check` fails when a component's files no longer match its recorded digest or
-its marker, and, with --base, when a component changed against the base
-manifest without a higher version. A --base that does not resolve to a commit
-(not fetched, misspelled, all zeros or empty) is an error and a non-zero exit, never
-a skipped comparison (Task 18af3b76). `bump` raises a version and rewrites its
-marker; `update` re-records the digests. A content change therefore ships as:
-edit -> bump -> update -> commit. Task 6dfd7560 (Owner Decision 967df3da).
+A version is a release label someone raises on purpose (`bump`). What a
+component's files are is their content digest, computed from the files whenever
+it is needed (`versions`, the version-check hook) and never stored: a value
+derived from every pull request's content, kept in the repository, makes any two
+queued pull requests that touch a component conflict, and every merge of main
+needs a builder to recompute it (defect C, 2026-11-15). For the same reason no
+pull request is required to raise a version: that per-PR counter made the next
+queued PR re-bump after every merge. Main still takes in exactly the tree that
+was tested (strict); `source_commit` identifies it.
+
+`check` fails when a marker or the generated version module disagrees with the
+manifest, when a digest is stored again, and, with --base, when a version went
+down or a component was dropped while its files remain. A --base that does not
+resolve to a commit (not fetched, misspelled, all zeros or empty) is an error
+and a non-zero exit, never a skipped comparison (Task 18af3b76).
 """
 from __future__ import annotations
 
@@ -32,7 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.11"
+__version__ = "1.1.0"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
@@ -123,16 +129,15 @@ def component_status(component: dict, root: Path = ROOT) -> dict:
         parse_version(component["version"])
     except ValueError as error:
         status["problems"].append(str(error))
+    if "content_sha256" in component:
+        status["problems"].append("stores content_sha256: the digest is computed from the files, never stored "
+                                  "(a stored digest makes queued pull requests conflict)")
     patterns = component.get("files")
     if patterns:
         digest = content_digest(root / component["root"], patterns)
         status["content_sha256"] = digest
         if digest is None:
             status["problems"].append(f"no files match {component['root']}/{patterns}")
-        elif digest != component.get("content_sha256"):
-            status["problems"].append(
-                "files changed since the recorded digest: bump the version "
-                f"(clued_components.py bump {component['id']} <version>) and run clued_components.py update")
     marker = component.get("version_marker")
     if marker:
         try:
@@ -203,7 +208,7 @@ def base_manifest(ref: str, root: Path = ROOT) -> dict | None:
     return data
 
 
-def against_base(data: dict, base: dict, semantic_changes: dict[str, bool] | None = None, root: Path | None = None) -> list[str]:
+def against_base(data: dict, base: dict, root: Path | None = None) -> list[str]:
     problems = []
     old = by_id(base)
     for component in data["components"]:
@@ -216,10 +221,6 @@ def against_base(data: dict, base: dict, semantic_changes: dict[str, bool] | Non
             continue  # reported by component_status
         if order < 0:
             problems.append(f"{component['id']}: version went down from {before['version']} to {component['version']}")
-        elif (order == 0 and component.get("content_sha256") != before.get("content_sha256")
-              and (semantic_changes is None or semantic_changes.get(component["id"], True))):
-            problems.append(f"{component['id']}: files changed but the version is still {component['version']}; "
-                            f"bump it (clued_components.py bump {component['id']} <version>)")
     for removed in sorted(set(old) - set(by_id(data))):
         # Retired: allowed only together with every file it covered.
         if root is not None and not component_files(root / old[removed].get("root", "."), old[removed].get("files", [])):
@@ -257,18 +258,61 @@ def check(root: Path = ROOT, base_ref: str | None = None) -> list[str]:
                 print(f"clued-components: base ref {base_ref!r} holds no {MANIFEST.as_posix()}; "
                       "nothing was compared", file=sys.stderr)
             else:
-                # A generated registry or another component's marker may change
-                # these bytes without changing this component's source. Actual
-                # bytes still have to match above; this only avoids a cascade
-                # of releases for the same mechanical update.
-                try:
-                    semantic = {row["id"]: row["content_changed"]
-                                for row in integration_plan(base_ref, root)["components"]}
-                except (ValueError, BaseRefError) as error:
-                    problems.append(str(error))
-                else:
-                    problems += against_base(data, base, semantic, root)
+                problems += against_base(data, base, root)
     return problems
+
+
+def released_at(component_id: str, root: Path = ROOT) -> str | None:
+    """The first commit on HEAD's first-parent line that carries the component's current version.
+
+    That commit's files are what this version means. None when the checkout has no commit with the current
+    version (an uncommitted bump). Raises BaseRefError on a shallow checkout: its history may end inside the
+    version and name a later commit than the release."""
+    if str(_git_output(root, ["rev-parse", "--is-shallow-repository"])).strip() != "false":
+        raise BaseRefError("the checkout is shallow; publishing needs the full history to find the release commit")
+    version = by_id(load_manifest(root))[component_id]["version"]
+    released = None
+    for commit in str(_git_output(root, ["log", "--first-parent", "--format=%H", "HEAD", "--", MANIFEST.as_posix()])).split():
+        try:
+            prior = by_id(json.loads(str(_git_output(root, ["show", f"{commit}:{MANIFEST.as_posix()}"])))).get(component_id)
+        except (BaseRefError, ValueError, KeyError, TypeError):
+            break
+        if prior is None or prior.get("version") != version:
+            break
+        released = commit
+    return released
+
+
+def committed_digest(commit: str, component: dict, root: Path = ROOT) -> str | None:
+    """content_digest of the component's files as that commit has them (same formula, read from git)."""
+    prefix = _safe_component_path(component.get("root", "."))
+    listed = str(_git_output(root, ["ls-tree", "-r", "-z", "--name-only", commit, "--", "." if prefix == "." else prefix]))
+    lines = []
+    for name in sorted(n for n in listed.split("\0") if n):
+        rel = name if prefix == "." else name[len(prefix) + 1:]
+        parts = rel.split("/")
+        if SKIP_PARTS.intersection(parts) or not any(_glob_matches(rel, p) for p in component.get("files", [])):
+            continue
+        data = bytes(_git_output(root, ["show", f"{commit}:{name}"], binary=True)).replace(b"\r\n", b"\n")
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {rel}\n")
+    return hashlib.sha256("".join(lines).encode()).hexdigest() if lines else None
+
+
+def unreleased_change(component_id: str, root: Path = ROOT) -> str | None:
+    """Why the component's files may not be published under their version, or None (ComponentVersioning v0.4).
+
+    A host without a checkout (claude.ai, Codex) can only compare version numbers. A version is raised on
+    purpose, never per pull request, so a publishing entry refuses files that differ from what the version
+    meant when it first reached this line of history: same number, different content would look current."""
+    component = by_id(load_manifest(root))[component_id]
+    commit = released_at(component_id, root)
+    bump_hint = f"bump it first (clued_components.py bump {component_id} <version>) and publish from that commit"
+    if commit is None:
+        return f"{component_id} {component['version']} is in no commit of this checkout; {bump_hint}"
+    if committed_digest(commit, component, root) != content_digest(root / component["root"], component["files"]):
+        return (f"{component_id} {component['version']}: its files differ from version {component['version']} as released "
+                f"in {commit[:12]}; {bump_hint}")
+    return None
 
 
 def bump(component_id: str, version: str, root: Path = ROOT) -> None:
@@ -289,19 +333,6 @@ def bump(component_id: str, version: str, root: Path = ROOT) -> None:
         write_lf(path, regex.sub(lambda _: line, text, count=1))
     component["version"] = version
     save_manifest(data, root)
-
-
-def update(root: Path = ROOT) -> list[str]:
-    data = load_manifest(root)
-    changed = []
-    for component in data["components"]:
-        if component.get("files"):
-            digest = content_digest(root / component["root"], component["files"])
-            if digest != component.get("content_sha256"):
-                component["content_sha256"] = digest
-                changed.append(component["id"])
-    save_manifest(data, root)
-    return changed
 
 
 def _safe_component_path(value: str, *, pattern: bool = False) -> str:
@@ -455,11 +486,12 @@ def _without_versions(name: str, data: bytes | None, markers: dict[str, set[str]
 
 
 def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | None = None) -> dict:
-    """Read-only exact-base plan: ordinary source PRs need no hand-edited versions.
+    """Read-only exact-base checks for the integration builder; it computes no versions.
 
-    Mechanical outputs and declared version-marker lines do not cause cascading
-    releases. Explicit higher semantic versions remain valid; automation never
-    downgrades one or invents coverage for a marker-less logical service.
+    The candidate's manifest must be sound against the base (no duplicate, no
+    version going down, no component dropped while its files remain, explicit
+    service coverage, safe paths). input_state_sha256 binds the builder's run to
+    the exact component bytes it started from.
     """
     root = root.resolve()
     base = resolve_base(base_ref, root)
@@ -487,22 +519,9 @@ def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | N
     for cid in sorted(set(old) - set(current)):
         if component_files(root / old[cid].get("root", "."), old[cid].get("files", [])):
             raise ValueError(f"{cid}: a component is removed only together with all its files")
-    markers = _marker_map(before, data)
-    ignored, marked = mechanical_paths(root), set(marker_paths(root))
-    changed = set(str(_git_output(root, ["diff", "--no-renames", "--name-only", "-z", base, "--"])).split("\0"))
-    changed.update(str(_git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"))
-    changed.discard("")
-    base_names = set(str(_git_output(root, ["ls-tree", "-r", "--name-only", "-z", base])).split("\0"))
-    cache: dict[str, bytes | None] = {}
-
-    def old_bytes(name: str) -> bytes | None:
-        if name not in cache:
-            cache[name] = _git_output(root, ["show", f"{base}:{name}"], binary=True) if name in base_names else None
-        return cache[name]
-
     rows, snapshot = [], {"manifest": data, "files": []}
     for component in data["components"]:
-        patterns = _component_patterns(component)
+        _component_patterns(component)
         prior = old.get(component["id"])
         version = component["version"]
         parse_version(version)
@@ -513,79 +532,10 @@ def integration_plan(base_ref: str, root: Path = ROOT, *, expected_head: str | N
             name = rel.as_posix() if prefix == "." else prefix + "/" + rel.as_posix()
             path = _checked_file(root, name)
             snapshot["files"].append([name, hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()])
-        semantic = prior is None or {k: v for k, v in component.items() if k not in ("version", "content_sha256")} != {
-            k: v for k, v in (prior or {}).items() if k not in ("version", "content_sha256")}
-        relevant = patterns + (_component_patterns(prior) if prior else [])
-        for name in sorted(changed):
-            # A version-bearing .mjs is still executable source. Its marker
-            # line is mechanical; a body edit must raise the owning version.
-            # Full generated outputs remain independently generation-checked.
-            if name not in markers and any(_glob_matches(name, pattern) for pattern in ignored):
-                continue
-            if not any(_glob_matches(name, pattern) for pattern in relevant):
-                continue
-            path = _checked_file(root, name)
-            actual = path.read_bytes() if path.is_file() else None
-            if name in marked:
-                semantic = semantic or not generated_only(name, old_bytes(name), actual, markers)
-            elif _without_versions(name, actual, markers) != _without_versions(name, old_bytes(name), markers):
-                semantic = True
-        target = version
-        if prior and semantic:
-            parts = list(parse_version(prior["version"]))
-            parts[-1] += 1
-            automatic = ".".join(map(str, parts))
-            if compare_versions(target, automatic) < 0:
-                target = automatic
-        rows.append({"id": component["id"], "base_version": prior["version"] if prior else None,
-                     "current_version": version, "target_version": target, "content_changed": semantic})
+        rows.append({"id": component["id"], "base_version": prior["version"] if prior else None, "version": version})
     state = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-    return {"schema": "clued.component-integration/1", "base_commit": base, "head_commit": head,
-            "input_state_sha256": state, "components": rows,
-            "changes": [row for row in rows if row["target_version"] != row["current_version"]]}
-
-
-def apply_integration(plan: dict, root: Path = ROOT) -> list[str]:
-    """Apply a still-current plan to a disposable integration candidate, never Git refs."""
-    current = integration_plan(plan["base_commit"], root, expected_head=plan["head_commit"])
-    if current != plan:
-        raise ValueError("component sources or versions changed since integration plan")
-    data = load_manifest(root)
-    targets = {row["id"]: row["target_version"] for row in plan["components"]}
-    edits: dict[Path, str] = {}
-    for component in data["components"]:
-        target = targets[component["id"]]
-        marker = component.get("version_marker")
-        if marker:
-            prefix = component.get("root", ".")
-            relative = marker["file"] if prefix == "." else prefix + "/" + marker["file"]
-            path = _checked_file(root.resolve(), relative)
-            text = edits.get(path, path.read_text(encoding="utf-8"))
-            regex = marker_regex(marker["pattern"])
-            if not regex.search(text):
-                raise ValueError(f"{relative}: missing declared version marker")
-            rendered = regex.sub(lambda _: marker["pattern"].replace("{version}", target), text, count=1)
-            if rendered != text:
-                edits[path] = rendered
-        component["version"] = target
-    for path, text in edits.items():
-        write_lf(path, text)
-    save_manifest(data, root)
-    changed = update(root)
-    generated = root / GENERATED
-    if generated.exists():
-        versions = {c["id"]: c["version"] for c in data["components"]}
-        lines = ["// Generated by scripts/generate-agent-contract.mjs from", "// config/clued-components.json. Do not edit by hand.",
-                 f'export const CLUED_COMPONENTS_SCHEMA = {json.dumps(data["schema"])};',
-                 "export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = "
-                 + json.dumps(versions, indent=2, ensure_ascii=False) + ";"]
-        if "mcp.server" in versions:
-            lines.append(f'export const MCP_SERVER_VERSION = {json.dumps(versions["mcp.server"])};')
-        write_lf(generated, "\n".join(lines) + "\n")
-    # A declared service may cover generated modules. Record their final bytes,
-    # after rendering versions, rather than leaving an immediately stale hash.
-    changed.extend(item for item in update(root) if item not in changed)
-    return changed
+    return {"schema": "clued.component-integration/2", "base_commit": base, "head_commit": head,
+            "input_state_sha256": state, "components": rows}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -593,38 +543,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     versions = sub.add_parser("versions", help="list component versions and whether the files match")
     versions.add_argument("--json", action="store_true")
-    checker = sub.add_parser("check", help="fail on a changed component without a version bump")
+    checker = sub.add_parser("check", help="fail on a marker, module or base version that disagrees")
     checker.add_argument("--base", help="git ref of the base manifest, for example origin/main")
     bumper = sub.add_parser("bump", help="raise a component's version and rewrite its marker")
     bumper.add_argument("component")
     bumper.add_argument("version")
-    sub.add_parser("update", help="re-record content digests")
-    integrator = sub.add_parser("integrate", help="plan automatic versions for an exact integration base")
-    integrator.add_argument("--base", required=True)
-    integrator.add_argument("--expect-head")
-    integrator.add_argument("--json", action="store_true")
-    integrator.add_argument("--write", action="store_true", help="apply versions only to a clean candidate; no Git writes")
     args = parser.parse_args(argv)
-
-    if args.command == "integrate":
-        try:
-            plan = integration_plan(args.base, expected_head=args.expect_head)
-            if args.write:
-                if args.expect_head is None:
-                    raise ValueError("--write requires --expect-head")
-                if str(_git_output(ROOT, ["status", "--porcelain", "--untracked-files=all"])).strip():
-                    raise ValueError("component integration requires a clean candidate checkout")
-                apply_integration(plan)
-                plan["applied"] = True
-            else:
-                plan["applied"] = False
-            print(json.dumps(plan, ensure_ascii=False, indent=2) if args.json else "\n".join(
-                f'{row["id"]}: {row["current_version"]} -> {row["target_version"]}' for row in plan["changes"])
-                or "no automatic component version changes")
-            return 0
-        except (ValueError, BaseRefError, OSError) as error:
-            print(f"clued-components: {error}", file=sys.stderr)
-            return 1
 
     if args.command == "versions":
         rows = [component_status(c) for c in load_manifest()["components"]]
@@ -644,11 +568,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if problems else 0
     if args.command == "bump":
         bump(args.component, args.version)
-        print(f"{args.component} -> {args.version}; now run: python3 scripts/clued_components.py update")
+        print(f"{args.component} -> {args.version}; now run node apps/clued-cloud/scripts/generate-agent-contract.mjs")
         return 0
-    changed = update()
-    print("updated digests: " + (", ".join(changed) if changed else "none"))
-    return 0
+    return 2
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
-import { MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
+import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -235,11 +235,20 @@ export function timingText(status, now, room) {
   return table ? `${out}；${table}`.slice(0, room) : out;
 }
 
+// A train run of the last TRAIN_PAGE_MAX_AGE_MS named a front, and it is another PR. Unknown or stale: false.
+const notTheFront = (last, pr, now) => Number.isFinite(last?.at) && now - last.at <= TRAIN_PAGE_MAX_AGE_MS
+  && Number.isSafeInteger(last?.front?.pr) && last.front.pr !== pr;
+
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
   if (!pull.eligible) {
+    // Defect C: under strict only the PR about to merge has to contain main. A behind PR that a recent train run did not
+    // see at the front waits instead (each merge used to ask every queued PR for a merge-only head: O(N^2) heads).
+    if (pull.hint === 'merge-main' && notTheFront(status?.train?.last, pull.pr, now)) {
+      return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：排队中，不必现在合 main（轮到它合入时再合一次）`) };
+    }
     if (pull.hint === 'merge-main') return { state: 'failure', description: clip(`落后 main ${pull.behindBy} 个提交：请合入最新 main 并推送`) };
     if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
     return null;
@@ -353,6 +362,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'HEAD_INTERRUPTED_ON_GITHUB') return recent.attempt === 1
           ? { state: 'pending', description: '上一当班节点的运行被交接中断：自动接着跑（第二次尝试），不用推新提交' }
           : { state: 'failure', description: '第二次尝试也被交接中断：请推新提交' };
+        // DESIGN §79: stage 1's authorization changed between the reads before and after its write; attempt 2 admits the head again.
+        if (recent.code === 'ADMISSION_AUTHORIZATION_CHANGED') return recent.attempt === 1
+          ? { state: 'pending', description: '准入在写入后有变：自动重新准入（第二次尝试），不用推新提交' }
+          : { state: 'failure', description: '第二次准入也在写入后有变：请推新提交' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };

@@ -313,8 +313,11 @@ test('work admission v2 (gen 10): what is not a passing cause is never read agai
     assert.match(github.checks[0].output.title, /withdrawn: verification failed/, 'neither "authorization changed" nor "could not be read": the evaluation failed');
     assert.match(github.checks[0].output.summary, /admission evaluation failed/);
   }
-  for (const reason of ['NATIVE_AUTHORIZATION_BINDING_CHANGED', 'NATIVE_CHECK_READBACK_UNCONFIRMED', 'github_http_429', 'github_http_501', 'full_admission_claim_changed'])
+  for (const reason of ['NATIVE_CHECK_READBACK_UNCONFIRMED', 'github_http_429', 'github_http_501', 'full_admission_claim_changed'])
     assert.equal(outcomeFailureCode({ status: 'REVOKED', reason, sideEffects: 2 }, 1), 'PUBLICATION_REVOKED', reason);
+  // Resident DESIGN §79: a changed authorization is not read again either, but at stage 1 it is the transient ADMISSION_AUTHORIZATION_CHANGED
+  // (attempt 2 admits the head again; test/admission-binding-revoke.test.mjs of the resident).
+  assert.equal(outcomeFailureCode({ status: 'REVOKED', reason: 'NATIVE_AUTHORIZATION_BINDING_CHANGED', sideEffects: 2 }, 1), 'ADMISSION_AUTHORIZATION_CHANGED');
   for (const [reason, diagnostic, want] of [['github_http_503', null, true], ['github_transport_unconfirmed', null, true], ['full_admission_unavailable', { transport: true }, true],
     ['full_admission_unavailable', { transport: false }, false], ['full_admission_unavailable', null, false], ['NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE', null, true],
     ['full_admission_observer_unknown', null, true], ['full_admission_principal_unknown', null, false], ['github_http_403', null, false]])

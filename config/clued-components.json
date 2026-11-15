@@ -11,7 +11,6 @@
       "files": [
         "VERSION"
       ],
-      "content_sha256": "3ea30a4ec5707eb188f3f050470c524649cf19d73a080d6e0ee7f3fe8c58eea7",
       "version_marker": {
         "file": "VERSION",
         "pattern": "Clued-v{version}"
@@ -26,7 +25,6 @@
       "files": [
         "**/*"
       ],
-      "content_sha256": "8166f32dded2b7cb511c8ef74ca1aafe4bb0bd324630c065d526e84db78ad271",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -41,7 +39,6 @@
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "f1b8c9951940379a8bf612a5ff791ea7a5ae94cadb21a755c110f5fcc8b8ee0c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -56,8 +53,7 @@
       "files": [
         "worker/**/*",
         "supabase/migrations/*.sql"
-      ],
-      "content_sha256": "bd7ba7443c66b1813a10745396b18fa60493298bb28abfc6e0c7521cb0cf83f9"
+      ]
     },
     {
       "id": "hook.runner-job-started",
@@ -68,7 +64,6 @@
       "files": [
         "clued-runner-job-started.mjs"
       ],
-      "content_sha256": "8622588fc82259da8e37137aa5b57c43f55ddfb09b04e1079531074bd7960944",
       "version_marker": {
         "file": "clued-runner-job-started.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -83,7 +78,6 @@
       "files": [
         "clued-runner-hook-loader.mjs"
       ],
-      "content_sha256": "1b213ff2e73ab2dcc93f52a5d16a15730e97e02f2ab550c0e840b2f9c0c85bc3",
       "version_marker": {
         "file": "clued-runner-hook-loader.mjs",
         "pattern": "export const LOADER_VERSION = \"{version}\";"
@@ -98,7 +92,6 @@
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "144a64bf5b82e17b79148b58ccf1c2fed4016b5813b15f1746001316849df541",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -114,7 +107,6 @@
         "clued_work_claim_guard.py",
         "clued_work_write_set.py"
       ],
-      "content_sha256": "ea229ff3994e458f042cb116f29db50d57e51ecef1d7bb309e42ebd0f81bcf9d",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -123,13 +115,12 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "17aa7b9b46309de222e570009c1e01a43eba0ef3dbc83b0484d2c9159b230756",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""
@@ -144,7 +135,6 @@
       "files": [
         "run_python.sh"
       ],
-      "content_sha256": "c5ca61bba222975eb55fc5de4748d17a07e8fe24e9238d6f98139f1fed02eccd",
       "version_marker": {
         "file": "run_python.sh",
         "pattern": "# Version: {version}"
@@ -158,8 +148,7 @@
       "root": ".claude",
       "files": [
         "settings.json"
-      ],
-      "content_sha256": "c0d1e8e8801714524b4359974d64817caade55d6e0eb09e8e35a86ef48aed1e9"
+      ]
     },
     {
       "id": "script.runner-handover-qualifier",
@@ -170,7 +159,6 @@
       "files": [
         "qualify-work-handover.mjs"
       ],
-      "content_sha256": "becfaac789374d15858f5b0205f1661b2fc955aba0603ca4c8842b9589b7842c",
       "version_marker": {
         "file": "qualify-work-handover.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -179,7 +167,7 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
@@ -187,7 +175,6 @@
         "ci/component-version-integration.py",
         "ci/component-version-integration.test.py"
       ],
-      "content_sha256": "2999e76bb47ded8fc23aa1b24999ca42c5fd9bd94692b5cd728e8dcbcad40648",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -202,7 +189,6 @@
       "files": [
         "update_clued_skills.py"
       ],
-      "content_sha256": "c0b45bc7ca13cfa9a946cec5ec56dffc785d5c59fffb4e94f750b82f173e3e45",
       "version_marker": {
         "file": "update_clued_skills.py",
         "pattern": "__version__ = \"{version}\""
@@ -221,8 +207,7 @@
         "scripts/sync-memory.py",
         "scripts/memory.py",
         "scripts/verification_context.py"
-      ],
-      "content_sha256": "554b5be11cd146343bca3d7df68ca3622e5b0ee70994af4a53d71df757ea7e03"
+      ]
     },
     {
       "id": "script.gated-proof-runtime",
@@ -235,7 +220,6 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "662f15bbb08f0afe269ede5e80d4f9fa9e40813789b503a9477e038db569f086",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -262,7 +246,6 @@
         "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
         "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "6a1b6f2a55a7a24b62282e0e44a81323efe91d3c5bbdb4911c0aa246ba7871b9",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -279,7 +262,6 @@
         "scripts/ci/clued-handover-external-source-pins.json",
         "scripts/ci/clued-handover-external-source-check.test.mjs"
       ],
-      "content_sha256": "01e25984256e6574775d75cd0bd0c91ffbe4ef245bffe55621b03d0646d1e82b",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -294,7 +276,6 @@
       "files": [
         "clued-handover-external-journal.mjs"
       ],
-      "content_sha256": "7919a5492e178dc57685f1347464cde7d072873227da5d7aac23e69028fa61fb",
       "version_marker": {
         "file": "clued-handover-external-journal.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -315,7 +296,6 @@
         "config/clued-handover-external-catalog.json",
         "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "94b48d901f6ff07cee89ea74f723b12a207a67c743c6f991c37397622607386d",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -330,7 +310,6 @@
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "df1c786855193a6c9a4766e8299952bbb4d2559eb808f2939012603bad43b754",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -345,7 +324,6 @@
       "files": [
         "**/*"
       ],
-      "content_sha256": "951876a4d818db286e99577ee09b051f10f76613520d6bfcfe1f1669895c7041",
       "version_marker": {
         "file": "build_bundle.py",
         "pattern": "__version__ = \"{version}\""
@@ -361,7 +339,6 @@
         "scripts/storage-google-redirect-cutover.mjs",
         "tests/storage-google-redirect-cutover.test.mjs"
       ],
-      "content_sha256": "11a114db0b8615ac50ec3288f73c7ee76334092cc4c3e854c7000a79f1a58649",
       "version_marker": {
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"
@@ -378,8 +355,7 @@
         "scripts/storage/package_zip.py",
         "tests/test_storage_zip.py",
         "apps/clued-cloud/tests/storage-zip-packaging.test.mjs"
-      ],
-      "content_sha256": "504084360302d49a2f6a4dc803fd6f83e9abfd111da11c8157938623f8baf09c"
+      ]
     },
     {
       "id": "script.production-publisher-source",
@@ -398,8 +374,7 @@
       "version_marker": {
         "file": "scripts/ci/clued-production-publisher-source.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
-      },
-      "content_sha256": "68731f9dff3ebcbe478bf78d5ad5c102d33a9085b3dd3192ce85b8e0d190a10f"
+      }
     },
     {
       "id": "script.publisher-pr-qualification-source",
@@ -415,8 +390,7 @@
       "version_marker": {
         "file": "scripts/ci/clued-publisher-qualification-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "a959297dd7cb49436caa2269cd2cddb800e236351092af06c4392ff2194db47e"
+      }
     },
     {
       "id": "script.native617-entry",
@@ -429,7 +403,6 @@
         "scripts/ci/clued-handover-native-entry.test.mjs",
         "config/clued-handover-native-entry-policy.json"
       ],
-      "content_sha256": "6276be4cba7e97dd24b55cb8653da1be8d738e69ccea4fbabf00c45c7fb57494",
       "version_marker": {
         "file": "scripts/ci/clued-handover-native-entry.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -630,8 +603,7 @@
       "version_marker": {
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
-      },
-      "content_sha256": "27134c38e812ec482dd07d4a44b6f55a97a02c6d226ac26a57c5d2ee3b1f3390"
+      }
     },
     {
       "id": "script.resource-maintenance",
@@ -644,7 +616,6 @@
         "scripts/ci/self-hosted/resource-maintenance/README.md",
         "config/ci-resource-maintenance.json"
       ],
-      "content_sha256": "cee184416d253fbdd42b47b6d21b1629c3703beacd4d918f75ae531926ae8a8a",
       "version_marker": {
         "file": "scripts/ci/self-hosted/resource-maintenance/maintenance.py",
         "pattern": "VERSION = \"{version}\""
@@ -664,8 +635,7 @@
       "version_marker": {
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "c080bd5c8ecb013b30a9b97c45c7d78ce8155c99655275b90b5ea0112d6d9720"
+      }
     },
     {
       "id": "script.source-only-workflow",
@@ -680,8 +650,7 @@
       "version_marker": {
         "file": "clued-source-only-workflow.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "5f81ca690cc3bbe77cfff3c38755961b024aadfd674f821702eb4e74c46594b7"
+      }
     },
     {
       "id": "script.control-workflow-source",
@@ -702,8 +671,7 @@
       "version_marker": {
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "537b44da133f7e2e5c99c96acc19f52a4ee756f617ddfed61ba12353258719fb"
+      }
     },
     {
       "id": "script.required-applicability",
@@ -718,8 +686,7 @@
       "version_marker": {
         "file": "clued-required-applicability.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "dbfb66bc1ea3a3ee00da6de54be6c33dbf07ff483d549e07fa9eb1877145279f"
+      }
     },
     {
       "id": "script.standard-runner-actor-source",
@@ -874,8 +841,7 @@
         "scripts/runner/standard-runner-actor181/server/runner_spawn_transport181.mjs",
         "scripts/runner/standard-runner-actor181/source-capture.mjs",
         "scripts/runner/standard-runner-actor181/source-manifest.json"
-      ],
-      "content_sha256": "6e2d62ce2f8ff236ccb7e2925edfbcbd4dca6cba9e7fb645f3fb037d94e1b63e"
+      ]
     },
     {
       "id": "ci.temporary-storage-lifecycle",
@@ -890,8 +856,7 @@
         ".github/actions/ci-temporary-storage/check-workflows.mjs",
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
-      ],
-      "content_sha256": "569a777de2e61ac1179da4b7bd5851e85cb89f955523b819c87215e2677fa535"
+      ]
     },
     {
       "id": "script.archive-retention",
@@ -911,8 +876,7 @@
         "work/independent-ci-resident-v1/test/test_linux_tool.py",
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
-      ],
-      "content_sha256": "712aa37f3c126309e22105c96e54a2395e3138e52cccd2aa11ffa5360c59260f"
+      ]
     },
     {
       "id": "script.merge-reconciliation",
@@ -934,8 +898,7 @@
       "version_marker": {
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
-      },
-      "content_sha256": "e3ae2b90ddb193b827607a07e2ccbb6bd1c27a4455ade78d8327cade573598a3"
+      }
     }
   ]
 }

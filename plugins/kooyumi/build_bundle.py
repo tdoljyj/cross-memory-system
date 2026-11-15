@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import zipfile
 
@@ -207,8 +208,23 @@ def check_archive(value):
     return summary(path, raw, files)
 
 
+def released_skill():
+    """ComponentVersioning v0.4: a host compares only the version number, so the same number never ships other files."""
+    sys.path.insert(0, str(Path(__file__).absolute().parents[2] / "scripts"))
+    try:
+        import clued_components
+    finally:
+        sys.path.pop(0)
+    try:
+        reason = clued_components.unreleased_change("skill.clued", REPOSITORY_ROOT)
+    except (clued_components.BaseRefError, OSError, ValueError, KeyError) as error:
+        raise BundleError("skill_release_unknown") from error
+    require(reason is None, "skill_changed_without_version")
+
+
 def build_archive(value):
     path = archive_path(value, must_exist=False)
+    released_skill()
     files = source_files()
     raw = zip_bytes(files)
     validate_zip(raw, files)

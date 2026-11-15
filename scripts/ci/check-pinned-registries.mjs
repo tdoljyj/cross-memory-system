@@ -12,7 +12,7 @@
 //   r9         scripts/ci/merge-admission-r9-source.json      merge-admission-r9-reregister.mjs --write
 //   reconcile  scripts/ci/clued-merge-reconcile-source.json   clued-merge-reconcile-source-build.mjs (needs yaml)
 //   control-source-pins  pure component-version changes in the initial control Source; all other historical pins stay fixed
-//   components config/clued-components.json                   scripts/clued_components.py (bump, update)
+//   components config/clued-components.json                   scripts/clued_components.py (bump; no stored digest)
 //   agent-contract worker/generated/{agent-contract,components}.ts  generate-agent-contract.mjs
 //   plugin     integrations/claude-code/clued/ (copies of skills/hooks)  build_claude_code_plugin.py
 //   pdf-cmaps  worker/generated/pdf-cmaps.ts                    generate-pdf-cmaps.mjs (needs npm ci in apps/clued-cloud)
@@ -225,7 +225,7 @@ export function render({ base, results }) {
     if (stale.some((r) => r.id === 'control-source-pins')) out.push(`  ${n++}. ${CONTROL_SOURCE_FIX.replace('<main commit>', base ?? '<main commit>')}`);
     if (stale.some((r) => r.id === 'components')) out.push(`  ${n++}. ${COMPONENTS_FIX.replace('<main commit>', base ?? '<main commit>')}   (commit generated outputs before testing the final candidate)`);
     for (const g of GENERATED) if (g.id !== 'agent-contract' && stale.some((r) => r.id === g.id)) out.push(`  ${n++}. ${g.fix.replace(CLOUD_DEPS_HINT, '')}`);
-    out.push(`  ${n++}. ${RECONCILE_FIX}`, `  ${n++}. ${PYTHON} scripts/clued_components.py update`,
+    out.push(`  ${n++}. ${RECONCILE_FIX}`,
       `  ${n++}. node apps/clued-cloud/scripts/generate-agent-contract.mjs`,
       `  ${n++}. node scripts/ci/check-pinned-registries.mjs --base ${base ?? '<main commit>'}   (a component bump edits a locked file, so steps 2-3 may need a second pass)`);
   }
