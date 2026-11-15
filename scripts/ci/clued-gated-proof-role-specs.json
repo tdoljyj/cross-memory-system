@@ -2047,14 +2047,14 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "8a22de3a97425d9f85bc9f605dbdbf748b8e0946": [
+        "78450678975a213c2ffb338fb12e348f1b0bde27": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910",
+            "definition_sha256": "746e299a018b9b0efc8f4310cc6f57e773a1d48c3d4cc9c4887f77a03048e9db",
             "definition": {
-              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n     (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
-              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
               "runs-on": [
                 "self-hosted",
                 "Linux",
@@ -2074,7 +2074,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "ref": "${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
                   }
                 },
@@ -2127,11 +2127,11 @@
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa",
+            "definition_sha256": "4c2e267328d417543b883cdfb618b2e0e15b11b5f5dd762d4e90e09c8458c528",
             "definition": {
-              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n     (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
-              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
               "runs-on": [
                 "self-hosted",
                 "Linux",
@@ -2151,7 +2151,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "ref": "${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
                   }
                 },
@@ -2190,18 +2190,18 @@
                     "CI_BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
                     "PYTHONDONTWRITEBYTECODE": "1"
                   },
-                  "run": "failed=\"\"\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  if node \"$SELECTOR\" --run \"$suite\" --root candidate; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
+                  "run": "# A lost-run dispatch has no event base: the default branch it checked out as trusted stands in.\nif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then CI_BASE_SHA=\"$(git -C trusted rev-parse HEAD)\"; export CI_BASE_SHA; fi\nfailed=\"\"\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  if node \"$SELECTOR\" --run \"$suite\" --root candidate; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
                 }
               ]
             }
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1",
+            "definition_sha256": "df86f60de73f76903c3783366f08a6716744ce0bcaf9d911481926da84196e94",
             "definition": {
-              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n     (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
-              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
               "runs-on": [
                 "self-hosted",
                 "Linux",
@@ -2221,7 +2221,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "ref": "${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
                   }
                 },

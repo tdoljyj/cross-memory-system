@@ -138,6 +138,8 @@ test('fixed retirement snapshot authenticates historical objects while the indep
       'scripts/ci/clued-workflow-profile.mjs':['69622ceef577da9e4eb8dab25fed4bdc1cbb50f3','35c93cbe1f0fffc7f020e790eafd732b13ade0b8cda8f0ffb77645075a30f84a'],
       '.github/actions/ci-temporary-storage/check-workflows.mjs':['bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc','832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa'],
       '.github/actions/ci-temporary-storage/coverage.json':['12f0ff5aca09df465aa0461d493485c3ed2c65b1','55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be'],
+      // Runner hook 1.0.2 (work-handover-native-admission-retry-v1); 1.0.3 adds the lost-run dispatch (Task 7067280f).
+      'scripts/runner/clued-runner-job-started.mjs':['263c9f53b42c66c385fdb808345170ead9462ccf','c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912'],
     };
     if(Object.hasOwn(historicalPins,name)){
       // These fixed objects retain their original bytes and qualification scope.

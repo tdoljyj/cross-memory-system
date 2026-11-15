@@ -6017,7 +6017,7 @@
         {
           "command_digests": {
             "Run the selected suites": [
-              "475750114c5326faa66b30b574e09592613b3b7206332f195a7af6c1befbd32f"
+              "1a7b68833fe1f0a84625cafb989bf99741466b5df8a1c434cf35d70b8b3ca13a"
             ],
             "Select suites": [
               "9af935ba9d05d77a4883c27088ef7e81323ffae429998ee7873f4ada3a279668"
@@ -6056,7 +6056,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89",
+      "source_sha256": "893df0644fea85831272f413c8343c486cf9677d687042efc0eb13b3311c77ed",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -6089,10 +6089,20 @@
 "# counting as success. Only \"Re-run all jobs\" on the current head may be",
 "# considered, through the gate's per-head rerun rules and Agent Contract A.7.",
 "# Never rerun failed or single jobs using the gate's earlier outputs.",
+"#",
+"# workflow_dispatch is only the lost-run repair (Task 7067280f; resident",
+"# DESIGN §56.5a): when GitHub created no run for a pull request head, the",
+"# on-duty node asks once for \"Run workflow\" on that pull request's branch. The",
+"# gate (scripts/ci/clued-work-admission.mjs#lostRunPullRequest) admits it only",
+"# as the first run of the exact head of one open pull request into main, under",
+"# that pull request's Native admission; any other ref, a head that already has",
+"# a run or a re-run is refused, and the runner hook lists this workflow among",
+"# its dispatch-gated ones. Selection then runs every suite (no event file list).",
 "on:",
 "  pull_request:",
 "  push:",
 "    branches: [main]",
+"  workflow_dispatch:",
 "",
 "permissions:",
 "  contents: read",
@@ -6148,7 +6158,8 @@
 "          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "            github.event.pull_request.head.repo.full_name == github.repository &&",
-"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"           (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "          && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
 "    needs: admission-gate",
 "    if: >-",
@@ -6156,7 +6167,8 @@
 "      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "        github.event.pull_request.head.repo.full_name == github.repository &&",
-"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"       (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
 "    timeout-minutes: 30",
 "    permissions:",
@@ -6167,7 +6179,7 @@
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
 "        with:",
 "          persist-credentials: false",
-"          ref: ${{ github.event.pull_request.base.sha || github.sha }}",
+"          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
 "      - name: Check out the candidate",
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
@@ -6213,7 +6225,8 @@
 "          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "            github.event.pull_request.head.repo.full_name == github.repository &&",
-"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"           (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "          && 'ci-suites' || 'ci-suites-skipped' }}",
 "    needs: admission-gate",
 "    if: >-",
@@ -6221,7 +6234,8 @@
 "      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "        github.event.pull_request.head.repo.full_name == github.repository &&",
-"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"       (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
 "    timeout-minutes: 45",
 "    permissions:",
@@ -6232,7 +6246,7 @@
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
 "        with:",
 "          persist-credentials: false",
-"          ref: ${{ github.event.pull_request.base.sha || github.sha }}",
+"          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
 "      - name: Check out the candidate",
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
@@ -6264,6 +6278,8 @@
 "          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}",
 "          PYTHONDONTWRITEBYTECODE: \"1\"",
 "        run: |",
+"          # A lost-run dispatch has no event base: the default branch it checked out as trusted stands in.",
+"          if [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then CI_BASE_SHA=\"$(git -C trusted rev-parse HEAD)\"; export CI_BASE_SHA; fi",
 "          failed=\"\"",
 "          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do",
 "            if node \"$SELECTOR\" --run \"$suite\" --root candidate; then",
@@ -6284,7 +6300,8 @@
 "          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "            github.event.pull_request.head.repo.full_name == github.repository &&",
-"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"           (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "          && 'migration-verify' || 'migration-verify-skipped' }}",
 "    needs: admission-gate",
 "    if: >-",
@@ -6292,7 +6309,8 @@
 "      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||",
 "       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&",
 "        github.event.pull_request.head.repo.full_name == github.repository &&",
-"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+"        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||",
+"       (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner))",
 "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
 "    timeout-minutes: 30",
 "    permissions:",
@@ -6303,7 +6321,7 @@
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
 "        with:",
 "          persist-credentials: false",
-"          ref: ${{ github.event.pull_request.base.sha || github.sha }}",
+"          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
 "      - name: Check out the candidate",
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
@@ -6358,7 +6376,7 @@
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
 ""
       ],
-      "workflow_blob": "8a22de3a97425d9f85bc9f605dbdbf748b8e0946"
+      "workflow_blob": "78450678975a213c2ffb338fb12e348f1b0bde27"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [
