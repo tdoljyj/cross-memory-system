@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "2979b271bed1db0877a7ecb5cb2ca8ee25a8f663ea04dba7eddf5c651b8a7022"
+      "content_sha256": "87a6874ba0ec83dee6f27201f3a76d82457645621b05c4646239f86ca7005e49"
     },
     {
       "id": "hook.runner-job-started",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "3afc48de6b0caa036a13b463c6eb0fa6b65b3abea2d51bb89cace396bb20b8a3"
+      "content_sha256": "c42d4eb59ad6926610db99d97ce8ff58500deb91ab54331ed34269b34e31d049"
     }
   ]
 }

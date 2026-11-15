@@ -481,12 +481,13 @@ function argument(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-// Migration file names the base has: the trusted base checkout in CI
-// (CLUED_BASE_ROOT), else the base commit's tree (CI_BASE_SHA); undefined when neither is known.
+// Migration file names the base has: the trusted base checkout that
+// migration-verify puts next to the candidate checkout (workspace/trusted), else
+// the base commit tree (CI_BASE_SHA, local-verify); undefined when neither is known.
 async function readBaseMigrations(env = process.env) {
-  if (env.CLUED_BASE_ROOT) {
-    return new Set(await readdir(path.join(env.CLUED_BASE_ROOT, 'apps/clued-cloud/supabase/migrations')));
-  }
+  const trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations');
+  const sibling = await readdir(trusted).catch(() => null);
+  if (sibling) return new Set(sibling);
   if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
     const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'apps/clued-cloud/supabase/migrations'],
       { cwd: appDirectory, encoding: 'utf8' });
