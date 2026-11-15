@@ -18,15 +18,15 @@ const outageNote = { title: 'kooyumi-work-admission', message: 'GitHub API /repo
 const otherNote = { title: 'admission-gate', message: 'REJECTED: something else' };
 const nativeCheck = (o = {}) => ({ id: 50, name: 'kooyumi-work-admission', head_sha: HEAD, status: 'completed', conclusion: 'success', external_id: NATIVE_ID, app: { id: 5368905 },
   output: { summary: `Independent Native control check for o/r#452; observation sha256 ${'5'.repeat(64)}.` }, ...o });
-const pullRequest = (o = {}) => ({ number: 452, state: 'open', head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: 'main', repo: { full_name: REPO } }, ...o });
+const pullRequest = (o = {}) => ({ number: 452, state: 'open', head: { sha: HEAD, ref: 'claude/x', repo: { full_name: REPO } }, base: { ref: 'main', repo: { full_name: REPO } }, ...o });
 const attempt = ({ heavy = ['skipped', 'skipped', 'skipped'], notes = [pendingNote], head = HEAD } = {}) => ({ notes,
   jobs: [{ name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: head },
     ...heavy.map((c, i) => ({ name: HEAVY[i], head_sha: head, status: c === 'in_progress' ? 'in_progress' : 'completed', conclusion: c === 'in_progress' ? null : c }))] });
 const run = (id, attempts, o = {}) => ({ id, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o });
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
-function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, fail = () => null } = {}) {
-  const st = { pulls, checks, runs, posts: [], calls: [] };
+function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null } = {}) {
+  const st = { pulls, checks, runs, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
   const shown = r => { const { attempts, ...rest } = r; return { ...rest, run_attempt: attempts.length }; };
@@ -41,6 +41,12 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.ok(target.startsWith(`repos/${REPO}/`), target);
     const route = target.slice(`repos/${REPO}`.length);
     let m;
+    if (method === 'POST' && route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`) {
+      const i = argv.indexOf('-f'); assert.ok(i > 0, 'the ref is a field');
+      st.dispatches.push(argv[i + 1]);
+      if (dispatchCode === 0) st.runs.push(run(900, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { event: 'workflow_dispatch', status: 'queued', pull_requests: [] }));
+      return { code: dispatchCode, stdout: '', stderr: dispatchCode === 0 ? '' : "gh: Workflow does not have 'workflow_dispatch' trigger (HTTP 422)" };
+    }
     if (method === 'POST') {
       m = /^\/actions\/runs\/(\d+)\/rerun$/.exec(route); assert.ok(m, route);
       st.posts.push(Number(m[1]));
@@ -50,7 +56,8 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.equal(method, 'GET');
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
-    if (route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${HEAD}&per_page=100`) return ok({ total_count: st.runs.length, workflow_runs: st.runs.map(shown) });
+    if (route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${HEAD}&per_page=100`
+      || route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`) return ok({ total_count: st.runs.length, workflow_runs: st.runs.map(shown) });
     if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); return ok({ jobs: r.attempts.flatMap((_, i) => jobsOf(r, i + 1)) }); }
     if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) return ok({ jobs: jobsOf(byId(m[1]), Number(m[2])) });
     if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) { const id = Number(m[1]); const r = byId(Math.floor(id / 100)); return ok(r.attempts[Math.floor((id % 100) / 10) - 1].notes); }
@@ -436,4 +443,125 @@ test('review round 30: an intent that cannot be saved leaves the step\'s other c
   assert.deepEqual(again.toasts, ['PR #452：自动补跑结果不确定']);
   assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records[HEAD].outcome, 'unknown');
   assert.deepEqual(w2.posts, [], 'never asked');
+});
+
+// Task 7067280f (PLAN 1a): GitHub never created the clued-required-tests run of a pushed head (a0122fd9, 2026-11-09: no Actions check
+// suite at all, so there is nothing to re-run or re-request). The lane notices it and asks for the run once, through the workflow's
+// dispatch entry. N = 5 minutes (DESK, PLAN 1a).
+const LOST_RUN_AFTER_MS = 5 * 60_000;
+test('lost run: a head with no clued-required-tests run 5 minutes after it was seen gets one dispatch, receipt first; never a second one', async t => {
+  const w = world({ runs: [] });
+  const l = await lane(t, w);
+  const order = [];
+  const save = l.state.save.bind(l.state);
+  l.state.save = async () => { order.push([l.state.record(HEAD)?.outcome ?? null, w.dispatches.length]); return save(); };
+  await l.r.step();
+  l.advance(LOST_RUN_AFTER_MS - 60_000);
+  await l.r.step();
+  assert.deepEqual(w.dispatches, [], 'not before 5 minutes');
+  l.advance(HEAD_RECHECK_MS); // looked at again 2 minutes later: 6 minutes after it was first seen
+  assert.deepEqual(await l.r.step(), { acted: 1, looked: 1 });
+  assert.deepEqual(w.dispatches, ['ref=claude/x'], 'one dispatch of the PR branch');
+  assert.deepEqual(w.posts, [], 'no re-run: there is no run');
+  assert.ok(order.some(([outcome, n]) => outcome === 'intent' && n === 0), 'the intent is on disk before the request');
+  const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records[HEAD];
+  assert.deepEqual([rec.kind, rec.pr, rec.runId, rec.outcome], ['redispatch', 452, null, 'sent']);
+  assert.equal(l.r.done(HEAD), false, 'not a re-run');
+  assert.equal(l.r.line(HEAD), '必需测试没有运行，已自动补发一次');
+  assert.deepEqual(l.toasts, ['PR #452：必需测试没有运行，已自动补发一次']);
+  assert.equal(withRerunLine({ state: 'pending', description: '运行中：第 3 段（扫描）' }, l.r.line(HEAD)).description, '必需测试没有运行，已自动补发一次；运行中：第 3 段（扫描）');
+  // the dispatched run is gone again (cancelled, say): the head is still never dispatched twice, not after a restart either
+  w.runs.length = 0;
+  for (let i = 0; i < 5; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
+  const again = await lane(t, w, { stateFile: l.file });
+  again.advance(LOST_RUN_AFTER_MS);
+  await again.r.step();
+  assert.deepEqual(w.dispatches, ['ref=claude/x'], 'never twice');
+});
+
+test('lost run: a run exists (any event, any state), or the head is younger than 5 minutes: no dispatch', async t => {
+  const cases = [
+    [run(700, [attempt({ heavy: ['success', 'success', 'success'] })])],
+    [run(700, [attempt()], { status: 'in_progress' })],
+    [run(700, [attempt()], { status: 'queued', pull_requests: [] })],
+    [run(700, [attempt()], { event: 'push' })],
+    [run(700, [attempt()], { event: 'workflow_dispatch', pull_requests: [] })],
+  ];
+  for (const runs of cases) {
+    const w = world({ runs, checks: [] });
+    const l = await lane(t, w);
+    for (let i = 0; i < 6; i++) { await l.r.step(); l.advance(HEAD_RECHECK_MS); }
+    assert.deepEqual(w.dispatches, [], JSON.stringify(runs));
+  }
+  const young = world({ runs: [] });
+  assert.equal((await decide({ gh: young.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS - 1 })).action, 'skip');
+  assert.equal((await decide({ gh: young.gh, headSha: HEAD })).action, 'skip', 'an unknown age is not old');
+  assert.equal((await decide({ gh: young.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS })).action, 'redispatch');
+  assert.deepEqual(young.dispatches, [], 'decide never writes');
+});
+
+test('lost run: a failed or truncated query, a moved head, a run that appears right before the request: no dispatch, read again later', async t => {
+  const runsRoute = `repos/${REPO}/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`;
+  const broken = [
+    route => (route === runsRoute ? { code: 1, stdout: '', stderr: 'HTTP 502' } : null),
+    route => (route === runsRoute ? { code: null, timedOut: true, stdout: '' } : null),
+    route => (route === runsRoute ? { code: 0, stdout: JSON.stringify({ total_count: 101, workflow_runs: [] }) } : null),
+    route => (route === runsRoute ? { code: 0, stdout: JSON.stringify({ workflow_runs: [] }) } : null),
+    route => (route === runsRoute ? { code: 0, stdout: 'not json' } : null),
+    route => (route.endsWith('/pulls/452') ? { code: 0, stdout: JSON.stringify(pullRequest({ head: { sha: 'b'.repeat(40), ref: 'claude/x', repo: { full_name: REPO } } })) } : null),
+    route => (route.endsWith('/pulls/452') ? { code: 1, stdout: '' } : null),
+    route => (route.endsWith('/pulls/452') ? { code: 0, stdout: JSON.stringify(pullRequest({ head: { sha: HEAD, ref: 'bad ref;', repo: { full_name: REPO } } })) } : null),
+  ];
+  for (const fail of broken) {
+    let down = true;
+    const w = world({ runs: [], fail: (route, method) => (down && method === 'GET' ? fail(route) : null) });
+    const d = await decide({ gh: w.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS });
+    assert.notEqual(d.action, 'redispatch', String(fail));
+    const l = await lane(t, w);
+    for (let i = 0; i < 4; i++) { await l.r.step(); l.advance(HEAD_RECHECK_MS); }
+    assert.deepEqual(w.dispatches, [], String(fail));
+    assert.equal(l.state.record(HEAD), null, 'nothing recorded: the head is looked at again');
+    down = false;
+    l.advance(HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.deepEqual(w.dispatches, ['ref=claude/x'], 'read again later, dispatched once');
+  }
+  // a run is created between the first read and the one right before the request
+  let reads = 0;
+  const late = world({ runs: [], fail: (route, method, st) => { if (method === 'GET' && route === runsRoute && ++reads === 2) st.runs.push(run(700, [attempt()], { status: 'queued' })); return null; } });
+  assert.equal((await decide({ gh: late.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS })).action, 'skip');
+  assert.deepEqual(late.dispatches, []);
+});
+
+test('lost run: GitHub refuses the dispatch (no workflow_dispatch entry yet) or its answer is lost: recorded, the Owner told once, never asked again', async t => {
+  const cases = [
+    [{ dispatchCode: 1 }, 'refused', 'PR #452：必需测试没有运行，自动补发被 GitHub 拒绝', '必需测试没有运行，自动补发未成功'],
+    [{ fail: (route, method) => (method === 'POST' ? { code: null, timedOut: true, stdout: '' } : null) }, 'unknown', 'PR #452：必需测试没有运行，自动补发结果不确定', '必需测试没有运行，自动补发结果不确定'],
+    [{ fail: (route, method) => (method === 'POST' ? { code: null, stdout: '', refused: 'RUNNER_SPAWN_FAILED' } : null) }, 'unsent', 'PR #452：必需测试没有运行，自动补发没有发出', '必需测试没有运行，自动补发未成功'],
+  ];
+  for (const [o, outcome, toast, line] of cases) {
+    const w = world({ runs: [], ...o });
+    const l = await lane(t, w);
+    await l.r.step();
+    l.advance(LOST_RUN_AFTER_MS);
+    await l.r.step();
+    assert.equal(l.state.record(HEAD)?.outcome, outcome, toast);
+    assert.deepEqual(l.toasts, [toast]);
+    assert.equal(l.r.line(HEAD), line);
+    const posts = w.calls.filter(c => c.method === 'POST').length;
+    assert.equal(posts, 1);
+    for (let i = 0; i < 4; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
+    assert.equal(w.calls.filter(c => c.method === 'POST').length, posts, 'never repeated');
+  }
+  // an intent left by a stop: unknown, told once, never sent
+  const w = world({ runs: [] });
+  const l = await lane(t, w);
+  l.state.data.records[HEAD] = { contract: 'clued.independent-ci.admission-rerun/1', kind: 'redispatch', pr: 452, headSha: HEAD, runId: null, attempt: null, outcome: 'intent', at: new Date(T0).toISOString(), why: null };
+  await l.state.save();
+  const again = await lane(t, w, { stateFile: l.file });
+  again.advance(LOST_RUN_AFTER_MS);
+  await again.r.step();
+  await again.r.step();
+  assert.deepEqual(again.toasts, ['PR #452：必需测试没有运行，自动补发结果不确定']);
+  assert.deepEqual(w.dispatches, []);
 });

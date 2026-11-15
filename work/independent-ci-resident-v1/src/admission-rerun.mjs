@@ -26,6 +26,18 @@
 // without acting (it is asked again at the next step). The one write is never repeated: its outcome is recorded (sent; unsent: gh
 // never ran; refused: GitHub answered 4xx; unknown: timed out, unconfirmed or no HTTP answer) and the head is done for this lane;
 // every outcome is told to the Owner once.
+//
+// Lost run (Task 7067280f, PLAN 1a): GitHub sometimes creates no clued-required-tests run at all for a pushed head (a0122fd9,
+// 2026-11-09: no GitHub Actions check suite either, so there is nothing to re-run or re-request; a user token is refused the
+// check-suite rerequest and create routes anyway, HTTP 404 in a throwaway repository). When rule 1 holds and, LOST_RUN_AFTER_MS after
+// this lane first saw the head, the complete listing of the workflow's runs of the head is empty (total_count 0), read again right
+// before the request together with the pull request (still open on that head, its branch name valid), the lane asks once for
+// "Run workflow" of clued-required-tests.yml on the pull request's branch (gh api --method POST
+// repos/<repo>/actions/workflows/clued-required-tests.yml/dispatches -f ref=<branch>). A failed or truncated listing, a moved head or
+// an unknown age is "not known": nothing is asked, the head is read again later. The same receipt (kind redispatch) makes it once per
+// head whatever the outcome, and the PR page says what came of it. GitHub refuses the dispatch (HTTP 422) until the workflow has a
+// workflow_dispatch trigger that its gate and the runners' job-started hook admit (a protected change, outside this lane): then the
+// refusal is recorded and told once, which still replaces the Owner noticing the missing run.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
@@ -33,6 +45,12 @@ import { STATUS_STALE_MS } from './status.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
 export const RERUN_STATE_CONTRACT = 'clued.independent-ci.admission-rerun-state/1';
+// A head with no run of the workflow this long after the lane first saw it lost its run (the lane sees a head within about two
+// minutes of the push: the poller's minute, then this lane's).
+export const LOST_RUN_AFTER_MS = 5 * 60_000;
+export const REDISPATCH_KIND = 'redispatch';
+// A pull request's branch name as it goes into the dispatch's argv: no '..', no leading or trailing '/', nothing else.
+const BRANCH_REF = /^(?!.*\.\.)(?!\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 export const REQUIRED_TESTS_WORKFLOW = 'clued-required-tests.yml';
 export const ADMISSION_APP_ID = 5368905;
 export const ADMISSION_CHECK = 'kooyumi-work-admission';
@@ -61,7 +79,7 @@ const plainObject = v => v !== null && typeof v === 'object' && Object.getProtot
 function validState(v) {
   if (!plainObject(v) || Object.keys(v).sort().join('|') !== 'contract|heads|records' || v.contract !== RERUN_STATE_CONTRACT || !plainObject(v.heads) || !plainObject(v.records)) return false;
   for (const [k, h] of Object.entries(v.heads)) if (!HEX40.test(k) || !plainObject(h) || !Number.isFinite(Date.parse(h.firstSeen))) return false;
-  for (const [k, r] of Object.entries(v.records)) if (!HEX40.test(k) || !plainObject(r) || r.headSha !== k || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at))) return false;
+  for (const [k, r] of Object.entries(v.records)) if (!HEX40.test(k) || !plainObject(r) || r.headSha !== k || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at)) || ![undefined, REDISPATCH_KIND].includes(r.kind)) return false;
   return true;
 }
 const positive = v => Number.isSafeInteger(v) && v > 0;
@@ -80,6 +98,16 @@ export function ghPort({ ghExe, repo, run }) {
     catch { return unreadable(`GET ${route} could not start`); }
     if (r?.code !== 0) unreadable(`GET ${route} failed`);
     try { return JSON.parse(r.stdout); } catch { return unreadable(`GET ${route} answered no JSON`); }
+  }
+  async function post(tail) {
+    let r;
+    try { r = await run([ghExe, 'api', '--method', 'POST', '-H', 'Accept: application/vnd.github+json', ...tail], { timeoutMs: POST_TIMEOUT_MS }); }
+    catch { return { outcome: 'unsent', why: 'gh 没有启动' }; }
+    if (r?.code === 0) return { outcome: 'sent' };
+    if (UNSENT_REFUSALS.includes(r?.refused)) return { outcome: 'unsent', why: `gh 没有启动（${r.refused}）` };
+    if (r?.timedOut || r?.refused) return { outcome: 'unknown', why: r?.timedOut ? 'gh 超时' : `gh 的结束状态无法确认（${short(r.refused)}）` };
+    const http = /\(HTTP (4\d\d)\)/.exec(String(r?.stderr ?? ''));
+    return http ? { outcome: 'refused', why: `GitHub 拒绝（HTTP ${http[1]}）` } : { outcome: 'unknown', why: `gh 退出码 ${short(r?.code ?? '无')}，没有 HTTP 答复` };
   }
   return Object.freeze({
     repo, get,
@@ -102,14 +130,12 @@ export function ghPort({ ghExe, repo, run }) {
     //   or may not have started the run.
     async rerun(runId) {
       check(positive(runId), 'ADMISSION_RERUN_ROUTE_REFUSED');
-      let r;
-      try { r = await run([ghExe, 'api', '--method', 'POST', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/actions/runs/${runId}/rerun`], { timeoutMs: POST_TIMEOUT_MS }); }
-      catch { return { outcome: 'unsent', why: 'gh 没有启动' }; }
-      if (r?.code === 0) return { outcome: 'sent' };
-      if (UNSENT_REFUSALS.includes(r?.refused)) return { outcome: 'unsent', why: `gh 没有启动（${r.refused}）` };
-      if (r?.timedOut || r?.refused) return { outcome: 'unknown', why: r?.timedOut ? 'gh 超时' : `gh 的结束状态无法确认（${short(r.refused)}）` };
-      const http = /\(HTTP (4\d\d)\)/.exec(String(r?.stderr ?? ''));
-      return http ? { outcome: 'refused', why: `GitHub 拒绝（HTTP ${http[1]}）` } : { outcome: 'unknown', why: `gh 退出码 ${short(r?.code ?? '无')}，没有 HTTP 答复` };
+      return post([`repos/${repo}/actions/runs/${runId}/rerun`]);
+    },
+    // The lost-run write: "Run workflow" of the required tests on a pull request's branch. Same outcomes as rerun.
+    async dispatch(ref) {
+      check(BRANCH_REF.test(ref ?? ''), 'ADMISSION_RERUN_ROUTE_REFUSED');
+      return post(['-f', `ref=${ref}`, `repos/${repo}/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`]);
     },
   });
 }
@@ -145,10 +171,11 @@ export async function repairAllowed(gh, runId, headSha, attempt) {
   return { allowed: true };
 }
 
-// The decision for one head (rules 1-5). -> { action: 'rerun' | 'skip' | 'final' | 'error', reason, pr, runId, attempt }.
-// 'final': this head never needs this lane again (a heavy job ran, the repair rule refused). 'skip': not now. 'error': unreadable.
-export async function decide({ gh, headSha, defaultBranch = 'main' }) {
-  const out = { action: 'skip', reason: '', pr: null, runId: null, attempt: null };
+// The decision for one head (rules 1-5, or the lost run). -> { action: 'rerun' | 'redispatch' | 'skip' | 'final' | 'error', reason, pr,
+// runId, attempt, ref }. 'final': this head never needs this lane again (a heavy job ran, the repair rule refused). 'skip': not now.
+// 'error': unreadable. headAgeMs: how long ago this lane first saw the head (null: not known, never old).
+export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = null }) {
+  const out = { action: 'skip', reason: '', pr: null, runId: null, attempt: null, ref: null };
   const say = (action, reason) => Object.assign(out, { action, reason: short(reason) });
   if (!HEX40.test(headSha ?? '')) return say('final', 'no head');
   try {
@@ -159,11 +186,24 @@ export async function decide({ gh, headSha, defaultBranch = 'main' }) {
     if (open.length !== 1) return say(open.length === 0 ? 'skip' : 'final', open.length === 0 ? 'no open pull request into the default branch has this head' : 'more than one pull request has this head');
     const pr = open[0];
     out.pr = pr.number;
+    // 2. The required-tests runs of this head, every event; none at all is a lost run.
+    const runsRoute = `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${headSha}&per_page=100`;
+    const listRuns = async () => {
+      const body = await gh.get(runsRoute);
+      const runs = body?.workflow_runs;
+      if (!Array.isArray(runs) || body.total_count !== runs.length || runs.length > 100 || runs.some(r => !r || !positive(r.id) || !positive(r.run_attempt) || typeof r.status !== 'string')) unreadable('the required-tests runs are incomplete');
+      return runs;
+    };
+    const runs = await listRuns();
+    if (runs.length === 0) {
+      if (!(Number.isFinite(headAgeMs) && headAgeMs >= LOST_RUN_AFTER_MS)) return say('skip', `#${pr.number} has no ${REQUIRED_TESTS_WORKFLOW} run on this head (yet)`);
+      const now = await gh.get(`/pulls/${pr.number}`);
+      if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch || now.head?.repo?.full_name !== gh.repo || !BRANCH_REF.test(now.head?.ref ?? '')) return say('skip', `#${pr.number} is no longer open on this head`);
+      if ((await listRuns()).length !== 0) return say('skip', `a ${REQUIRED_TESTS_WORKFLOW} run of this head appeared`);
+      out.ref = now.head.ref;
+      return say('redispatch', `GitHub created no ${REQUIRED_TESTS_WORKFLOW} run of this head: "Run workflow" on ${now.head.ref} for #${pr.number}`);
+    }
     if (!(await admissionOf(gh, headSha, pr.number)).admitted) return say('skip', `the ${ADMISSION_CHECK} check does not admit #${pr.number} (yet)`);
-    // 2. The required-tests runs of this head.
-    const body = await gh.get(`/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${headSha}&per_page=100`);
-    const runs = body?.workflow_runs;
-    if (!Array.isArray(runs) || body.total_count !== runs.length || runs.length > 100 || runs.some(r => !r || !positive(r.id) || !positive(r.run_attempt) || typeof r.status !== 'string')) unreadable('the required-tests runs are incomplete');
     const ofHead = runs.filter(r => r.head_sha === headSha && r.event === 'pull_request');
     const ofPr = ofHead.filter(r => Array.isArray(r.pull_requests) && r.pull_requests.some(e => e?.number === pr.number));
     if (ofPr.length === 0) return say('skip', `#${pr.number} has no ${REQUIRED_TESTS_WORKFLOW} run on this head`);
@@ -239,8 +279,14 @@ export class AdmissionRerunner {
   // ports: { gh (ghPort), state (AdmissionRerunState), clock, readStatus() -> parsed status.json, pulls() -> the poller's open pull
   //   requests, notify(key, title, body) (a toast for the Owner) }
   constructor(ports) { Object.assign(this, ports); }
-  // Whether this lane asked for a re-run of the head and GitHub accepted it (the PR page says so).
-  done(headSha) { return this.state.record(headSha)?.outcome === 'sent'; }
+  // Whether this lane asked for a re-run of the head and GitHub accepted it.
+  done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && r.kind !== REDISPATCH_KIND; }
+  // What the PR page says of this head (pr-status.mjs#withRerunLine): a re-run GitHub accepted, or what came of a lost run's dispatch.
+  line(headSha) {
+    const r = this.state.record(headSha);
+    if (r?.kind === REDISPATCH_KIND) return r.outcome === 'sent' ? '必需测试没有运行，已自动补发一次' : ['intent', 'unknown'].includes(r.outcome) ? '必需测试没有运行，自动补发结果不确定' : '必需测试没有运行，自动补发未成功';
+    return this.done(headSha) ? '已自动补跑一次必需测试' : null;
+  }
   async step() {
     // An unreadable memory file stops the lane (a forgotten record could click twice). It is read again at each step (a passing lock
     // by an antivirus or a profile sync), and the Owner is told once while it stays unreadable.
@@ -266,7 +312,9 @@ export class AdmissionRerunner {
       let saved = true;
       try { await this.state.save(); } catch { saved = false; }
       if (!saved) { rec.outcome = 'intent'; rec.why = null; break; }
-      try { await this.notify(`admission-rerun:${headSha}`, `PR #${rec.pr}：自动补跑结果不确定`, `${rec.why}。请到 PR 页面看 run ${rec.runId} 是否已经重新开始；没有开始再手动补跑一次。不会再自动点。`); } catch { /* a toast only */ }
+      const told = rec.kind === REDISPATCH_KIND ? [`PR #${rec.pr}：必需测试没有运行，自动补发结果不确定`, `${rec.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`]
+        : [`PR #${rec.pr}：自动补跑结果不确定`, `${rec.why}。请到 PR 页面看 run ${rec.runId} 是否已经重新开始；没有开始再手动补跑一次。不会再自动点。`];
+      try { await this.notify(`admission-rerun:${headSha}`, told[0], told[1]); } catch { /* a toast only */ }
     }
     let status;
     try { status = await this.readStatus(); } catch { return { acted: 0, reason: 'STATUS_UNREADABLE' }; }
@@ -298,22 +346,29 @@ export class AdmissionRerunner {
       looked += 1;
       changed = true;
       seen.lookedAt = new Date(now).toISOString();
-      const d = await decide({ gh: this.gh, headSha });
+      const d = await decide({ gh: this.gh, headSha, headAgeMs: now - Date.parse(seen.firstSeen) });
       if (d.action === 'final') seen.final = d.reason;
-      if (d.action !== 'rerun') continue;
+      if (d.action !== 'rerun' && d.action !== 'redispatch') continue;
+      const lost = d.action === 'redispatch';
       // The receipt first, on disk, then the one request. A crash or a lost answer in between leaves the intent: never sent again.
-      const record = { contract: RERUN_RECORD_CONTRACT, pr: d.pr ?? pr, headSha, runId: d.runId, attempt: d.attempt + 1, outcome: 'intent', at: new Date(now).toISOString(), why: null };
+      const record = lost ? { contract: RERUN_RECORD_CONTRACT, kind: REDISPATCH_KIND, pr: d.pr ?? pr, headSha, runId: null, attempt: null, outcome: 'intent', at: new Date(now).toISOString(), why: null }
+        : { contract: RERUN_RECORD_CONTRACT, pr: d.pr ?? pr, headSha, runId: d.runId, attempt: d.attempt + 1, outcome: 'intent', at: new Date(now).toISOString(), why: null };
       this.state.data.records[headSha] = record;
       // No receipt, no request; this step's earlier changes stay to be written at the next step (review round 30, NIT 1).
       try { await this.state.save(); } catch { delete this.state.data.records[headSha]; this.unsaved = true; return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' }; }
       let r;
-      try { r = await this.gh.rerun(d.runId); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
+      try { r = await (lost ? this.gh.dispatch(d.ref) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
       Object.assign(record, { outcome: r.outcome, why: r.outcome === 'sent' ? null : short(r.why), at: new Date(this.clock()).toISOString() });
       // The intent on disk already stops a second request; an unsaved outcome is written again at the end of this step or the next
       // (review round 29, NIT 3).
       try { await this.state.save(); changed = false; } catch { changed = true; this.unsaved = true; }
       acted += 1;
-      const text = {
+      const text = lost ? {
+        sent: [`PR #${record.pr}：必需测试没有运行，已自动补发一次`, `推送 ${LOST_RUN_AFTER_MS / 60_000} 分钟后 GitHub 仍没有创建 ${REQUIRED_TESTS_WORKFLOW} 的运行，已在分支 ${d.ref} 上点了一次“Run workflow”。`],
+        unsent: [`PR #${record.pr}：必需测试没有运行，自动补发没有发出`, `${record.why}，请求没有到 GitHub。不会再自动补发；请推一个新提交。`],
+        refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}（${REQUIRED_TESTS_WORKFLOW} 还没有可用的 workflow_dispatch 入口时就是这样）。不会再自动补发；请推一个新提交。`],
+        unknown: [`PR #${record.pr}：必需测试没有运行，自动补发结果不确定`, `${record.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`],
+      }[r.outcome] : {
         sent: [`PR #${record.pr}：已自动补跑一次必需测试`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
         unsent: [`PR #${record.pr}：自动补跑没有发出`, `${record.why}，请求没有到 GitHub。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
         refused: [`PR #${record.pr}：自动补跑被 GitHub 拒绝`, `${record.why}。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
