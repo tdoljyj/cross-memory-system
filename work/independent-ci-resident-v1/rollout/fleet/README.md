@@ -30,16 +30,21 @@
 
 ### 0.3 每台节点：同一条命令
 
-Owner 会话、非提权。前三步与重装相同（第 5 节第 1、2 步），第四步换成 `upgrade.mjs`：
+Owner 会话、非提权。一条命令（取包、核哈希、解包、组装、预检、发请求）：
 
 ```
-gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <下载目录>
-(Get-FileHash -Algorithm SHA256 <下载目录>\fleet-node-<version>.tar).Hash.ToLower()
-python -I -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" <下载目录>\fleet-node-<version>.tar <解包目录>
+node <任一份 upgrade.mjs> fetch --version <version> --work <新目录> [--from <本地或共享目录>] [--no-request] [--allow-active-upgrade]
+```
+
+`<任一份 upgrade.mjs>` 用上一版已解包的包里的（或任何一份 `upgrade.mjs` 加 `fetch.mjs`）；真正执行升级的是新包解出来的那份 `upgrade.mjs`。取包由 `fetch.mjs` 做：按 release 资产分段续传（Range，连接被断就从已收到的字节接着要，退避重试，总时限 30 分钟），令牌只在进程内取自 `gh auth token`，不打印不落盘；也可以把 `fleet-node-<version>.tar`、`.acceptance.json`、`SHA256SUMS` 放进 `--from` 目录（Google Drive、共享盘都行，release 取不下来时用）。两个来源一视同仁，只认哈希：tar 的 sha256 必须等于接受文件的 `archive_sha256` 且等于 `SHA256SUMS` 那行，不符就删掉、不解包、不组装。断了就原样再跑同一条命令（同一个 `--work`），续传。产物：`<新目录>\dl\`（下载）、`<新目录>\unpacked\`（解包）、`<新目录>\upgrade\`（升级的工作目录）。输出是新包 `upgrade.mjs` 的那一行 JSON，多一个 `fetched`（来源、尝试次数、续传次数）。
+
+分步手动做仍可以：`gh release download` + `Get-FileHash` + 解包，再用 `--artifact` 形式（输出相同）：
+
+```
 node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.mjs --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录>
 ```
 
-没有节点参数。`<新目录>` 不要放在会被清理的临时目录里：升级代理要从 `<新目录>\package` 读包。加 `--no-request` 只组装和预检，不发请求（演练）。
+没有节点参数。`--work` 目录不要放在会被清理的临时目录里：升级代理要从 `<新目录>\package` 读包。加 `--no-request` 只组装和预检，不发请求（演练）。
 
 输出一行 JSON，`status` 是下面之一：
 
@@ -147,14 +152,14 @@ node R/rollout/fleet/publish.mjs attach-acceptance --version <version> --accepta
 
 ## 5. 每台节点：取包、组装、一次 UAC
 
-在节点上、Owner 会话、非提权：
+在节点上、Owner 会话、非提权。取包用同一个 `fetch.mjs`（断流续传、只认哈希，见 0.3）：
 
 ```
-gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <下载目录>
-(Get-FileHash -Algorithm SHA256 <下载目录>\fleet-node-<version>.tar).Hash.ToLower()
-python -I -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" <下载目录>\fleet-node-<version>.tar <解包目录>
-node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs prepare --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录>
+node <任一份 upgrade.mjs> fetch --version <version> --work <新目录> [--from <目录>] --no-request
+node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs prepare --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录2>
 ```
+
+第一条取包、核哈希、解包（得到 `<新目录>\dl` 与 `<新目录>\unpacked`），并顺带用新包 `upgrade.mjs` 对本机做一次 `--no-request` 演练；需要重装的节点它会答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL`，正是要走本节的信号。手动 `gh release download` + `Get-FileHash` + 解包同样可以。
 
 1. 先用 `Get-FileHash` 核 tar：输出必须等于接受文件的 `archive_sha256`（也等于索引行与 SHA256SUMS），不等就停，不解包。
 2. 解包用 Python 的 `tarfile`（`filter='data'` 拒绝链接、绝对路径和越界路径），不用 Windows 的 `tar.exe`（它解不了非 ASCII 文件名）。`<解包目录>` 必须是新目录。
