@@ -222,11 +222,11 @@
 
     "scripts/ci/clued-control-workflow-reconcile-source.test.mjs": "e31ce637c6fab136d9cc5ae91a9f19022769d197b7c858d2ff274fe8f9738914",
 
-    "scripts/ci/clued-control-workflow-source.mjs": "f79eca266acee0a9dcea947952e8d97bcf7a0f15c63c5a1b6d6436466bb0ea90",
+    "scripts/ci/clued-control-workflow-source.mjs": "db484e8b24ec0c14715e4e54e8c82a6f7ea2537b079fbc7c1354a2fbf62f2b7a",
 
     "scripts/ci/clued-control-workflow-source.test.mjs": "a7a479885ff8e4dda8b43ec34e43ff114020abaff7f3eae1be5726091bd782bb",
 
-    "scripts/ci/clued-control-workflow-sources.json": "c4a50423a8184208a05801f5dcd13500573b988565c45660abb1c6e27b3f4a5e",
+    "scripts/ci/clued-control-workflow-sources.json": "db94156e4eb6c0d0c37dc36489f83091b8d52066e49eb43c4f75e0ed68876ae6",
 
     "scripts/ci/clued-docs-only.py": "55a23681687378d3732c3416e88ad55c3244e69d04d1d09b5c3ac3e15013b573",
 
@@ -304,7 +304,7 @@
 
     "scripts/ci/clued-independent-publication-identity.test.mjs": "0c2c540737f2d6375e8903c7ab26cf03eb3f4ad8918035de6617f56cc553369c",
 
-    "scripts/ci/clued-independent-publication-port.mjs": "ca68b92fb61af05acbaf4fd43939629cc2dca8c844868834d7261f6fb6215982",
+    "scripts/ci/clued-independent-publication-port.mjs": "34d357da29ad8a29d23f701ca4e0dd481ef66b2c36470051a09dade6f2420658",
 
     "scripts/ci/clued-independent-publication-port.test.mjs": "1d319cce907478765d3aa7aeef849d4f53d6d75dcc1da8b1553fd56a6bf2de8e",
 
