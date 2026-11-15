@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
   from '../scripts/production-release-gate.mjs';
@@ -466,4 +468,240 @@ test('the release gate evaluates the committed migration ledger against producti
   assert.match(gateSource, /evaluateLedger\(\{ ledger, history,\n\s+migrations: await readSqlDirectory\(migrationsDirectory\),\n\s+historyOnly: await readSqlDirectory\(historyOnlyDirectory\),\n\s+historicalThrough: baselineVersion\(baseline\) \}\)/);
   assert.match(gateSource, /const errors = \[\.\.\.settled\.errors, \.\.\.ledgerReport\.errors\];\n\s+if \(errors\.length\) throw/);
   assert.doesNotMatch(gateSource, /ledgerReport\.warnings[^\n]*errors/);
+});
+
+// A small model of how GitHub runs this job's steps: each step's `if` (an
+// implicit success() unless it names a status function) over the dispatch
+// inputs, the earlier failure and the outcomes of steps with an id. It runs
+// the real workflow file, so the order, the grant steps and the rollback
+// below are the ones production runs.
+const releaseSteps = productionWorkflow.split(/\n      - /).slice(1).map((text) => ({
+  text,
+  name: /(?:^|\n {8})name: (.+)\n/.exec(text)?.[1] ?? text.split('\n')[0],
+  id: /(?:^|\n {8})id: (\S+)\n/.exec(text)?.[1] ?? null,
+  condition: /(?:^|\n {8})if: \$\{\{ (.+?) \}\}\n/.exec(text)?.[1] ?? null,
+}));
+
+function evaluateCondition(source, context) {
+  const tokens = source.match(/'[^']*'|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*|==|!=|&&|\|\||[()!]/g);
+  assert.equal(tokens.join(''), source.replace(/\s+/g, ''), `unsupported condition: ${source}`);
+  let at = 0;
+  const value = (token) => {
+    if (token.startsWith("'")) return token.slice(1, -1);
+    if (token === 'failure()') return context.failed;
+    if (token === 'success()') return !context.failed;
+    if (token === 'always()') return true;
+    if (token.startsWith('inputs.')) return context.inputs[token.slice(7)] ?? '';
+    const outcome = /^steps\.([\w-]+)\.outcome$/.exec(token);
+    if (outcome) return context.outcomes[outcome[1]] ?? '';
+    throw new Error(`unsupported operand ${token} in ${source}`);
+  };
+  let or;
+  const primary = () => {
+    const token = tokens[at++];
+    if (token === '!') return !primary();
+    if (token === '(') { const inner = or(); assert.equal(tokens[at++], ')'); return inner; }
+    const left = value(token);
+    if (tokens[at] === '==' || tokens[at] === '!=') {
+      const op = tokens[at++]; const right = value(tokens[at++]);
+      return (op === '==') === (String(left).toLowerCase() === String(right).toLowerCase());
+    }
+    return Boolean(left);
+  };
+  const and = () => { let v = primary(); while (tokens[at] === '&&') { at++; const next = primary(); v = v && next; } return v; };
+  or = () => { let v = and(); while (tokens[at] === '||') { at++; const next = and(); v = v || next; } return v; };
+  const result = or();
+  assert.equal(at, tokens.length, `unparsed condition: ${source}`);
+  return result;
+}
+
+function simulateRelease(inputs, failAt = null) {
+  const context = { inputs: { source_request_id: '', source_request_digest: '', migrations: '', ...inputs }, failed: false, outcomes: {} };
+  const ran = [];
+  for (const step of releaseSteps) {
+    const condition = step.condition ?? 'success()';
+    const runs = /\b(failure|success|always|cancelled)\(\)/.test(condition)
+      ? evaluateCondition(condition, context) : !context.failed && evaluateCondition(condition, context);
+    if (!runs) { if (step.id) context.outcomes[step.id] = 'skipped'; continue; }
+    ran.push(step);
+    const ok = step.name !== failAt;
+    if (step.id) context.outcomes[step.id] = ok ? 'success' : 'failure';
+    if (!ok) context.failed = true;
+  }
+  return { ran: ran.map((step) => step.name), steps: ran, conclusion: context.failed ? 'failure' : 'success' };
+}
+
+const RELEASE_ORDER = [
+  'Check production database credential', 'Check production backup encryption credential',
+  'Check migration database credential', 'Check Cloudflare deployment credential',
+  'Verify projection and MTPE behavior', 'Build exact Worker source', 'Verify and build Kooyumi Connect release source',
+  'Create and verify encrypted pre-migration backup', 'Consume the Owner Grant for the named migrations',
+  'Apply the named migrations', 'Block release unless database and Worker heartbeat are ready',
+  'Record the Worker versions production serves', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
+  'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
+  'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
+  'Verify projection currentness after deployment', 'Preserve release evidence',
+];
+const ROLLBACK_STEP = 'Roll back the Workers after a failed deploy or verification';
+const grantSteps = (run) => run.steps.filter((step) => /clued-release-grant\.mjs/.test(step.text));
+const MIGRATION = '20261003170000_owner_grants_release_door.sql';
+
+test('release mode runs preflight, backup, migrations, deploy and verification in one run from one grant step', () => {
+  const run = simulateRelease({ mode: 'release', migrations: MIGRATION });
+  assert.equal(run.conclusion, 'success');
+  const positions = RELEASE_ORDER.map((name) => run.ran.indexOf(name));
+  assert.ok(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1])),
+    JSON.stringify(Object.fromEntries(RELEASE_ORDER.map((name, i) => [name, positions[i]]))));
+  // One grant step, before anything changes production, consuming the bundle once.
+  assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for the named migrations']);
+  assert.match(grantSteps(run)[0].text, /--mode "\$RELEASE_MODE"/);
+  assert.match(grantSteps(run)[0].text, /RELEASE_MODE: \$\{\{ inputs\.mode \}\}/);
+  assert.match(grantSteps(run)[0].text, /NODE_OPTIONS: ''/);
+  assert.ok(!run.ran.includes(ROLLBACK_STEP));
+  // Every credential is checked before the grant is used.
+  const grantAt = run.ran.indexOf('Consume the Owner Grant for the named migrations');
+  run.ran.forEach((name, index) => { if (/^Check .* credentials?$/.test(name)) assert.ok(index < grantAt, name); });
+});
+
+test('release mode without migrations skips backup and migrations and uses the deploy grant after the gate', () => {
+  const run = simulateRelease({ mode: 'release' });
+  assert.equal(run.conclusion, 'success');
+  for (const name of ['Check production backup encryption credential', 'Check migration database credential',
+    'Create and verify encrypted pre-migration backup', 'Consume the Owner Grant for the named migrations', 'Apply the named migrations']) {
+    assert.ok(!run.ran.includes(name), name);
+  }
+  assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for this commit']);
+  const at = (name) => run.ran.indexOf(name);
+  assert.ok(at('Block release unless database and Worker heartbeat are ready') < at('Consume the Owner Grant for this commit'));
+  assert.ok(at('Consume the Owner Grant for this commit') < at('Record the Worker versions production serves'));
+  assert.ok(at('Record the Worker versions production serves') < at('Deploy Clued PDF extractor Worker'));
+  assert.ok(at('Verify projection currentness after deployment') > at('Deploy Kooyumi Connect Worker'));
+  assert.ok(!run.ran.includes(ROLLBACK_STEP));
+});
+
+test('only deploy and release reach production Workers; the single-step modes keep their own steps', () => {
+  const touchesWorkers = (step) => /wrangler (deploy|rollback|queues create)|release-worker-versions\.mjs/.test(step.text);
+  for (const mode of ['preflight', 'backup', 'migrate', 'source-capture']) {
+    const inputs = { mode, migrations: mode === 'migrate' ? MIGRATION : '',
+      source_request_id: mode === 'source-capture' ? 'r' : '', source_request_digest: mode === 'source-capture' ? 'd' : '' };
+    for (const failAt of [null, 'Verify projection and MTPE behavior', 'Apply the named migrations']) {
+      const run = simulateRelease(inputs, failAt);
+      assert.deepEqual(run.steps.filter(touchesWorkers).map((step) => step.name), [], `${mode} ${failAt}`);
+    }
+  }
+  assert.deepEqual(grantSteps(simulateRelease({ mode: 'migrate', migrations: MIGRATION })).map((s) => s.name),
+    ['Consume the Owner Grant for the named migrations']);
+  assert.deepEqual(grantSteps(simulateRelease({ mode: 'deploy' })).map((s) => s.name), ['Consume the Owner Grant for this commit']);
+  assert.ok(!simulateRelease({ mode: 'deploy' }).ran.includes('Apply the named migrations'));
+  assert.ok(simulateRelease({ mode: 'backup' }).ran.includes('Create and verify encrypted pre-migration backup'));
+});
+
+test('a failed deploy or post-deploy verification rolls the Workers back and the release still fails', () => {
+  for (const mode of ['release', 'deploy']) {
+    for (const failAt of ['Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
+      'Verify exact live commit and currentness transport', 'Verify the PDF extractor service binding',
+      'Verify Kooyumi Connect production release', 'Verify projection currentness after deployment']) {
+      const run = simulateRelease({ mode, migrations: mode === 'release' ? MIGRATION : '' }, failAt);
+      assert.equal(run.conclusion, 'failure', failAt);
+      assert.ok(run.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt} did not roll back`);
+      assert.ok(run.ran.indexOf(ROLLBACK_STEP) > run.ran.indexOf(failAt));
+      assert.ok(run.ran.indexOf(ROLLBACK_STEP) < run.ran.indexOf('Preserve release evidence'));
+      if (failAt.startsWith('Verify exact')) assert.ok(!run.ran.includes('Deploy Kooyumi Connect Worker'));
+    }
+    // Nothing was deployed yet, or the versions were never recorded: nothing to roll back to.
+    for (const failAt of ['Block release unless database and Worker heartbeat are ready', 'Record the Worker versions production serves']) {
+      const run = simulateRelease({ mode }, failAt);
+      assert.equal(run.conclusion, 'failure');
+      assert.ok(!run.ran.includes(ROLLBACK_STEP), failAt);
+      assert.ok(!run.ran.some((name) => /^Deploy /.test(name)), failAt);
+    }
+  }
+  const migrated = simulateRelease({ mode: 'release', migrations: MIGRATION }, 'Apply the named migrations');
+  assert.ok(!migrated.ran.includes(ROLLBACK_STEP) && !migrated.ran.some((name) => /^Deploy /.test(name)));
+  const step = releaseSteps.find((s) => s.name === ROLLBACK_STEP);
+  assert.match(step.text, /node scripts\/release-worker-versions\.mjs rollback --from \.sites-runtime\/release-evidence\/worker-versions\.json --out \.sites-runtime\/release-evidence\/worker-rollback\.json/);
+  assert.match(step.text, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 \}\}/);
+  const record = releaseSteps.find((s) => s.name === 'Record the Worker versions production serves');
+  assert.match(record.text, /node scripts\/release-worker-versions\.mjs record --out \.sites-runtime\/release-evidence\/worker-versions\.json/);
+  assert.doesNotMatch(productionWorkflow, /continue-on-error/);
+  for (const file of ['worker-versions', 'worker-rollback']) {
+    assert.match(productionWorkflow, new RegExp(`release-evidence/${file}\\.json\\n`));
+  }
+});
+
+test('the rollback restores each changed Worker to its recorded version, last deployed first, and reports it', async () => {
+  const { WORKERS, main, recordVersions, rollbackVersions, renderRollbackSummary, servedVersion } =
+    await import('../scripts/release-worker-versions.mjs');
+  // The names are the ones the deploy steps' configurations publish.
+  for (const { name, config } of WORKERS) {
+    const text = await readFile(new URL(`../${config}`, import.meta.url), 'utf8');
+    assert.equal(/"name": "([^"]+)"/.exec(text)[1], name, config);
+    assert.ok(productionWorkflow.includes(config), config);
+  }
+  const id = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
+  const status = (version) => ({ status: 0, stdout: JSON.stringify({ id: 'd', versions: [{ version_id: version, percentage: 100 }] }) });
+  assert.equal(servedVersion(`banner\n${status(id(1)).stdout}\n`), id(1));
+  assert.equal(servedVersion(JSON.stringify({ versions: [{ version_id: id(1), percentage: 60 }, { version_id: id(2), percentage: 40 }] })), null);
+  const fakeCloudflare = (served, { failRollback = [] } = {}) => {
+    const calls = [];
+    const wrangler = async (args) => {
+      calls.push(args);
+      if (args[0] === 'deployments') return status(served[args[3]]);
+      if (args[0] === 'rollback') {
+        if (failRollback.includes(args[3])) return { status: 1, stdout: '', stderr: 'rollback refused' };
+        served[args[3]] = args[1];
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected wrangler ${args.join(' ')}`);
+    };
+    return { wrangler, calls, served };
+  };
+  const wait = async () => {};
+  const env = { GITHUB_SHA: 'c'.repeat(40), GITHUB_RUN_ID: '42' };
+  const before = { 'clued-storage-pdf': id(1), 'clued-cloud': id(2), 'clued-connect': id(3) };
+  const recorded = await recordVersions({ wrangler: fakeCloudflare({ ...before }).wrangler, wait, env });
+  assert.deepEqual(recorded.workers, Object.entries(before).map(([name, version_id]) => ({ name, version_id })));
+  // A split deployment stops the release before anything is deployed.
+  await assert.rejects(recordVersions({ wait, env, wrangler: async () => ({ status: 0, stdout: '{"versions":[]}' }) }),
+    /clued-storage-pdf does not serve exactly one version/);
+  // The PDF extractor and the main Worker were deployed, then verification failed.
+  const cloud = fakeCloudflare({ ...before, 'clued-storage-pdf': id(4), 'clued-cloud': id(5) });
+  const result = await rollbackVersions({ recorded, wrangler: cloud.wrangler, wait, env });
+  assert.equal(result.ok, true);
+  assert.deepEqual(cloud.served, before);
+  assert.deepEqual(result.workers.map((w) => [w.name, w.action]),
+    [['clued-connect', 'unchanged'], ['clued-cloud', 'rolled_back'], ['clued-storage-pdf', 'rolled_back']]);
+  assert.deepEqual(cloud.calls.filter((args) => args[0] === 'rollback').map((args) => args.slice(0, 4)),
+    [['rollback', id(2), '--name', 'clued-cloud'], ['rollback', id(1), '--name', 'clued-storage-pdf']]);
+  assert.ok(cloud.calls.filter((args) => args[0] === 'rollback').every((args) => args.includes('--yes')));
+  const summary = renderRollbackSummary(result);
+  assert.ok(summary.includes(`| \`clued-cloud\` | \`${id(2)}\` | \`${id(5)}\` | rolled_back |`), summary);
+  assert.match(summary, /database is forward-only and was not rolled back/);
+  // A refused rollback is reported and fails the step.
+  const refused = await rollbackVersions({ recorded, wait, env,
+    wrangler: fakeCloudflare({ ...before, 'clued-cloud': id(5) }, { failRollback: ['clued-cloud'] }).wrangler });
+  assert.equal(refused.ok, false);
+  assert.match(renderRollbackSummary(refused), /rollback_failed: rollback refused[\s\S]*could not be rolled back/);
+  await assert.rejects(rollbackVersions({ recorded: { ...recorded, workers: recorded.workers.slice(1) }, wait, env }), /not a valid record/);
+
+  // The commands the workflow runs: record, then rollback with the summary.
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-versions-'));
+  const files = { versions: path.join(dir, 'v.json'), rollback: path.join(dir, 'r.json'), summary: path.join(dir, 's.md') };
+  await writeFile(files.summary, '');
+  const log = console.log; const error = console.error; const errors = [];
+  console.log = () => {}; console.error = (line) => errors.push(line);
+  try {
+    assert.equal(await main(['record', '--out', files.versions], { wrangler: fakeCloudflare({ ...before }).wrangler, wait, env }), 0);
+    const failed = fakeCloudflare({ ...before, 'clued-connect': id(6) });
+    assert.equal(await main(['rollback', '--from', files.versions, '--out', files.rollback],
+      { wrangler: failed.wrangler, wait, env: { ...env, GITHUB_STEP_SUMMARY: files.summary } }), 0);
+    assert.deepEqual(failed.served, before);
+    assert.match(await readFile(files.summary, 'utf8'), /Automatic Worker rollback[\s\S]*`clued-connect`[^\n]*rolled_back/);
+    assert.equal(JSON.parse(await readFile(files.rollback, 'utf8')).ok, true);
+    assert.ok(errors.some((line) => /::error title=Release rolled back::Rolled back clued-connect/.test(line)));
+    assert.equal(await main(['rollback'], { env }), 2);
+  } finally {
+    console.log = log; console.error = error;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
