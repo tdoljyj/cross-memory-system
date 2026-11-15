@@ -6,6 +6,7 @@
 import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, UUID, check, parseBoundedJson, sha256 } from './canonical.mjs';
@@ -23,7 +24,7 @@ import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
 import { KEEP_FILE, RetentionWatch, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
-import { NODE_STATUS_FILE, readNodeStatus } from './host-capacity.mjs';
+import { NODE_STATUS_FILE, createNodeResourceReader } from './host-capacity.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
@@ -128,8 +129,9 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
     lockFromEarlierBoot,
     // Generation 10 (DESIGN 53.5): the executor writes status.json at once when a batch is claimed and when a breaker trial starts.
     statusFlush: () => statusTimer.flush(),
-    // Node governance v1: the node's status file is the only disk rule (red on the resident WSL disk's drive holds new batches).
-    nodeStatus: () => readNodeStatus(NODE_STATUS_FILE),
+    // The disk/memory guard: the node governance status when fresh, else the resident's own reading of its drives and host memory.
+    nodeStatus: createNodeResourceReader({ statusFile: NODE_STATUS_FILE, installRecord: path.join(root, 'install', 'companion-wsl.json'), root,
+      statfs: p => fs.statfs(p), freemem: () => os.freemem(), clock }),
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),

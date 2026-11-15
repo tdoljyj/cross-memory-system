@@ -87,6 +87,8 @@ REASON = re.compile(r'^[a-z0-9][a-z0-9-]{0,39}$')
 UNIT = re.compile(r'^(clued-ci-(?:worker|wsprep|archive)@[0-9a-z_-]{1,120}\.service)\s+\S+\s+(\S+)\s+(\S+)')
 SYSTEMCTL = '/usr/bin/systemctl'
 DOCKER = '/usr/bin/docker'
+FSTRIM = '/usr/sbin/fstrim'
+FSTRIM_TIMEOUT_S = 300
 ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C'}
 SEQ = [f'{i:02d}' for i in range(1, 33)]
 # Linux view of the bridge records (mirror of the Windows view in src/archive.mjs).
@@ -634,6 +636,17 @@ def _refused_pass(rule, code):
     return {'rule': dict(rule), 'refused': code, 'classes': None, 'protected': None, 'deferred': 0, 'deleted': [], 'deletedBytes': 0, 'stopped': None}
 
 
+def trim_root(run=subprocess.run):
+    """Disk/memory guard (2026-11-15): after a quiet retention pass, give the blocks the distribution freed back to its
+    virtual disk (fstrim of /, fixed argv, root). A sparse VHDX then shrinks on the Windows drive; a non-sparse one keeps its
+    size but a later offline compaction reclaims them. Advisory: any failure is only recorded, never a refusal."""
+    try:
+        r = run([FSTRIM, '/'], env=ENV, capture_output=True, timeout=FSTRIM_TIMEOUT_S, check=False)
+        return {'exit': r.returncode}
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {'exit': None, 'error': type(e).__name__}
+
+
 def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree, authorize=lambda: True, now=None):
     """One retention pass: inventory, plan, apply (each directory re-checked right before it goes)."""
     if not keep.get('ok'):
@@ -1025,13 +1038,16 @@ def main(argv):
         return archive_usage(STATE)
     if cmd == 'archive-prune':
         q = quiescence()
+        trim = None
         if q['linuxUnitsInactive'] and q['containersZero']:
             facts = configured_prune(SPOOL, KEEP_FILE, SETTINGS_FILE)
+            trim = trim_root()
         else:
             facts = _refused_pass(RETENTION_RULE, 'ARCHIVE_PRUNE_REQUIRES_QUIESCENCE')
         receipts = f'{RESIDENT_STATE}/retention'
         os.makedirs(receipts, mode=0o700, exist_ok=True)
-        _durable_new(f'{receipts}/{int(time.time() * 1000):013d}-{secrets.token_hex(6)}.json', {'contract': PRUNE_CONTRACT, **facts})
+        # the local receipt records the trim; the answer's exact shape (mailbox.mjs#validatePrune) is unchanged
+        _durable_new(f'{receipts}/{int(time.time() * 1000):013d}-{secrets.token_hex(6)}.json', {'contract': PRUNE_CONTRACT, **facts, 'trim': trim})
         return {'contract': PRUNE_CONTRACT, 'prune': public_prune(facts), 'usage': archive_usage(STATE)}
     raise Refused('COMMAND_REFUSED')
 
