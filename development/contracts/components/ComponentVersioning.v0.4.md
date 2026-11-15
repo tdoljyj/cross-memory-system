@@ -43,9 +43,24 @@ Consequence: a PR's own change still regenerates its own outputs, but taking
 main into a queued PR is a plain merge (what GitHub's update-branch does) with
 nothing to regenerate, unless both sides changed the same real input.
 
+## Only the front takes main in
+
+The resident's PR page used to tell every behind PR "请合入最新 main 并推送"
+after each merge, so N queued PRs produced O(N²) merge-only heads (Task
+`570bd3e3` reached GenericWorkClaim §10.4's 40 heads in 24 h on 2026-11-15; #1123
+alone had three heads that only took main in). With this change
+(`work/independent-ci-resident-v1/src/pr-status.mjs`) a behind PR that a train
+run of the last 30 minutes did not see at the front is told to wait; the front,
+or any PR when no front is known, is still told to take main in. Each PR then
+needs at most one merge-only head, at its turn, and that head is a plain merge
+(GitHub's update-branch) with nothing to regenerate: O(N).
+
 ## What is not in this change
 
-Taking main into the PR that is about to merge is still a new head under
-`strict`: someone or something has to update the branch, the holder has to
-authorize the head, and its required checks run. That is the merge-queue and
-admission side (DESIGN §65.6 executor, head authorization), not versioning.
+Taking main into the front is still a new head under `strict` (Owner Decision
+`9e2511fe`: GitHub merges only a head that contains main's tip, so the tested
+trial merge alone cannot be merged). Making that head without a person is the
+merge-queue and admission side (DESIGN §65.6 executor with update-branch, head
+authorization carried over a plain main merge), not versioning. §10.4's 40
+heads per Task per 24 h needs no change: at most one merge-only head per merge
+remains, and the cap is there to stop runaway loops.

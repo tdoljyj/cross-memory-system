@@ -605,3 +605,21 @@ test('node governance: companion-main.mjs hands the reporter the node status', a
     'companion-main.mjs sets reporter.hostCapacity');
   assert.ok(src.includes("import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';"), 'companion-main.mjs imports the status read');
 });
+
+// Defect C (2026-11-15): strict means only the PR about to merge must contain main. Telling every behind PR to merge main
+// after each merge made N queued PRs push O(N^2) merge-only heads (Task 570bd3e3 hit its 40 heads/24 h). A behind PR that
+// is not the train's front (seen in the last 30 minutes) is told to wait; the front, or any PR when no front is known, is
+// still told to take main in.
+test('a behind PR that is not the front is not asked to merge main; the front is', () => {
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const behind = pr => ({ pr, headSha: H(pr), eligible: false, hint: 'merge-main', behindBy: 3 });
+  const status = (front, at = now - 60_000) => ({ writtenAt: now, current: null, pending: [], recent: [],
+    train: { enabled: 'shadow', last: { at, mode: 'shadow', wouldDo: 'FRONT_NEEDS_MAIN_MERGE', front: { pr: front, headSha: H(front) } } } });
+  const waiting = describe({ pull: behind(8), status: status(7), now });
+  assert.equal(waiting.state, 'pending');
+  assert.match(waiting.description, /落后 main 3 个提交：排队中，不必现在合 main/);
+  assert.equal(describe({ pull: behind(7), status: status(7), now }).state, 'failure', 'the front takes main in');
+  assert.match(describe({ pull: behind(7), status: status(7), now }).description, /请合入最新 main 并推送/);
+  assert.equal(describe({ pull: behind(8), status: null, now }).state, 'failure', 'no front known: as before');
+  assert.equal(describe({ pull: behind(8), status: status(7, now - 31 * 60_000), now }).state, 'failure', 'a stale front is not known');
+});
