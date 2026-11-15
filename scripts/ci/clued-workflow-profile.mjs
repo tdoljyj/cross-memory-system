@@ -206,17 +206,37 @@ export const REQUIRED_TESTS_SOURCE=Object.freeze({
     'migration-verify':'df86f60de73f76903c3783366f08a6716744ce0bcaf9d911481926da84196e94',
   }),
 });
+// The earlier exact Sources of the same compound family, in historical
+// catalogues (before the lost-run dispatch, Task 7067280f, changed the bytes):
+// still recognized as the compound mode they were registered as, never another.
+export const REQUIRED_TESTS_PREDECESSORS=Object.freeze([Object.freeze({
+  file:REQUIRED_TESTS_SOURCE.file,
+  workflow_blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946',
+  source_sha256:'54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89',
+  workflow_definition_sha256:'2711f46c707ab128542792ffea4302275efcec22960e655012f968848a35edaa',
+  profile_sha256:'ef4d90596d62d223df7f34ca8f085c79f7bafecaff25833cb9215ec89f60ec1c',
+  primary_ids:REQUIRED_TESTS_SOURCE.primary_ids,
+  role_sha256:Object.freeze({
+    'clued-cloud-tests':'0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910',
+    'ci-suites':'c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa',
+    'migration-verify':'554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1',
+  }),
+})]);
+const REQUIRED_TESTS_FAMILY=Object.freeze([REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREDECESSORS]);
+// The exact compound Source with this blob (current or earlier), or null.
+export function requiredTestsSourceOf(blob){return REQUIRED_TESTS_FAMILY.find(source=>source.workflow_blob===blob)??null;}
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {
     if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
     const {accepted_sources,...fields}=profile;
-    return exactKeys(fields,['registration_status','workflow_blob','source_sha256','source_yaml','primary_ids',
+    const pin=requiredTestsSourceOf(fields.workflow_blob);
+    return pin!==null&&exactKeys(fields,['registration_status','workflow_blob','source_sha256','source_yaml','primary_ids',
       'pull_request','gated','routes','execution_mode'])&&
-      fields.execution_mode===ALL_REQUIRED_PRIMARIES_MODE&&fields.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob&&
-      fields.source_sha256===REQUIRED_TESTS_SOURCE.source_sha256&&typeof fields.source_yaml==='string'&&
-      workflowBlob(fields.source_yaml)===REQUIRED_TESTS_SOURCE.workflow_blob&&
-      digest(fields.source_yaml)===REQUIRED_TESTS_SOURCE.source_sha256&&
-      roleDefinitionDigest(fields)===REQUIRED_TESTS_SOURCE.profile_sha256;
+      fields.execution_mode===ALL_REQUIRED_PRIMARIES_MODE&&fields.workflow_blob===pin.workflow_blob&&
+      fields.source_sha256===pin.source_sha256&&typeof fields.source_yaml==='string'&&
+      workflowBlob(fields.source_yaml)===pin.workflow_blob&&
+      digest(fields.source_yaml)===pin.source_sha256&&
+      roleDefinitionDigest(fields)===pin.profile_sha256;
   }catch{return false;}
 }
 export const FUTURE_WORKFLOW_PURPOSE='work_handover_consumer_qualification';
@@ -355,11 +375,12 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
-  const compound=workflowBlob(text)===REQUIRED_TESTS_SOURCE.workflow_blob&&digest(text)===REQUIRED_TESTS_SOURCE.source_sha256;
-  if(compound&&(!same(primary_ids,REQUIRED_TESTS_SOURCE.primary_ids)||
-    roleDefinitionDigest(value)!==REQUIRED_TESTS_SOURCE.workflow_definition_sha256||
+  const pin=requiredTestsSourceOf(workflowBlob(text));
+  const compound=pin!==null&&digest(text)===pin.source_sha256;
+  if(compound&&(!same(primary_ids,pin.primary_ids)||
+    roleDefinitionDigest(value)!==pin.workflow_definition_sha256||
     accepted_roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition'])||
-      role.definition_sha256!==REQUIRED_TESTS_SOURCE.role_sha256[role.job_id]||
+      role.definition_sha256!==pin.role_sha256[role.job_id]||
       roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
     reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
@@ -432,7 +453,7 @@ export function registeredWorkflowSource(registry,file,blob) {
     const matching=entries.filter(entry=>entry.registration_status==='registered' && entry.workflow_blob===blob);
     if(matching.length!==1)return unknown(`${file}: exact source has no unique current registration`);
     const entry=matching[0];
-    if((Object.hasOwn(entry,'execution_mode')||entry.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob)&&
+    if((Object.hasOwn(entry,'execution_mode')||requiredTestsSourceOf(entry.workflow_blob)!==null)&&
       !isExactAllRequiredPrimariesProfile(entry,file))return unknown(`${file}: exact compound Source/profile invalid`);
     if(typeof entry.source_yaml!=='string' || workflowBlob(entry.source_yaml)!==blob ||
       digest(entry.source_yaml)!==entry.source_sha256 || !Array.isArray(entry.primary_ids) ||

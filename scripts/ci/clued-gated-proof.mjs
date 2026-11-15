@@ -1,6 +1,6 @@
 // Pure, typed execution proof. Callers supply authenticated, budgeted reads
 // and source qualification. No slot/executor imports and no mutation here.
-import {validDocumentationSkippedRoute,isExactAllRequiredPrimariesProfile,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
+import {validDocumentationSkippedRoute,isExactAllRequiredPrimariesProfile,REQUIRED_TESTS_SOURCE,requiredTestsSourceOf} from './clued-workflow-profile.mjs';
 import {inspectRequiredApplicability} from './clued-required-applicability.mjs';
 export const QUALITY = '.github/workflows/clued-cloud-quality-gate.yml';
 export const DOCUMENTATION_STEPS = Object.freeze(['Install from lockfile', 'Run npm run lint',
@@ -169,7 +169,7 @@ function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
 export function qualifyPrimary(profile, jobs, file,{requiredDiffContext}={}) {
   if(profile?.execution_eligible===false)return {...unknown('source_metadata_only_disabled'),
     code:'SOURCE_METADATA_ONLY_DISABLED',gate_only:false};
-  if(profile&&(Object.hasOwn(profile,'execution_mode')||profile.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob||
+  if(profile&&(Object.hasOwn(profile,'execution_mode')||requiredTestsSourceOf(profile.workflow_blob)!==null||
     file===REQUIRED_TESTS_SOURCE.file))
     return qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext);
   if(!profile || !Array.isArray(profile.routes) || !Array.isArray(jobs)) return unknown(`${file}: missing profile/jobs`);
