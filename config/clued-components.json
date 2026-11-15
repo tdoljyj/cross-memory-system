@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "fab948d941b16b3a17e4cb82ac20029345f2e95b430b04c78d1e67542a839624"
+      "content_sha256": "522b1610afb687e997e5c9078bca4ed186faf85c238360d71482bde93b4e3808"
     },
     {
       "id": "hook.runner-job-started",
@@ -865,7 +865,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -876,7 +876,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "569a777de2e61ac1179da4b7bd5851e85cb89f955523b819c87215e2677fa535"
+      "content_sha256": "10d08e0f0b622f811b9e6631b74319c6f9b4bdf3107166919fb57586378f39c6"
     },
     {
       "id": "script.archive-retention",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "35b85444b129149dc7c7d7231751d487f344eff42ecae99068b088ff6dea50e0"
+      "content_sha256": "d5f3a43355580156b1a5b7be6717bbc660e68b075f7b11a41e10a5ebab804bcf"
     }
   ]
 }
