@@ -600,6 +600,8 @@ test('node governance: the line names only the status numbers; the held Linux ru
 
 test('node governance: companion-main.mjs hands the reporter the node status', async () => {
   const src = await fs.readFile(new URL('../src/companion-main.mjs', import.meta.url), 'utf8');
-  assert.ok(/reporter\.hostCapacity = \(\) => readCapacityAlert\(NODE_STATUS_FILE\);/.test(src), 'companion-main.mjs sets reporter.hostCapacity');
-  assert.ok(/import \{ NODE_STATUS_FILE, readCapacityAlert \} from '\.\/host-capacity\.mjs';/.test(src), 'companion-main.mjs imports the status read');
+  // the governance status first, else the resident's own disk/memory hold (holder node-resource) in its status
+  assert.ok(src.includes('reporter.hostCapacity = async () => (await readCapacityAlert(NODE_STATUS_FILE)) ?? resourceHoldAlert(await readStatus(values.root).catch(() => null));'),
+    'companion-main.mjs sets reporter.hostCapacity');
+  assert.ok(src.includes("import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';"), 'companion-main.mjs imports the status read');
 });

@@ -195,7 +195,7 @@ test('archive-prune: one fixed root command; its facts travel through the mailbo
 test('service-main wires the heartbeat gate, the idle check, both prunes and the node status gate', async () => {
   const text = await fs.readFile(new URL('../src/service-main.mjs', import.meta.url), 'utf8');
   for (const s of ['companionReady:', 'clock() - beat.at <= policy.companion.heartbeatMaxAgeMs', "reason: 'BATCH_OPEN'", "reason: 'HALTED'", "reason: 'SCENE_UNARCHIVED'",
-    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', 'nodeStatus: () => readNodeStatus(NODE_STATUS_FILE)']) {
+    "reason: 'CHILD_RUNNING'", "readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows')", 'pruneLinux: () => companion.archivePrune()', 'nodeStatus: createNodeResourceReader({ statusFile: NODE_STATUS_FILE']) {
     assert.ok(text.includes(s), s);
   }
 });

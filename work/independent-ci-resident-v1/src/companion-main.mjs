@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
 import { fileURLToPath } from 'node:url';
-import { Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig } from './companion.mjs';
+import { BUNDLE_PRUNE_EVERY_MS, Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig } from './companion.mjs';
 import { UpgradeMailbox } from './upgrade-mailbox.mjs';
 import { Mailbox } from './mailbox.mjs';
 import { Runner, JOB_HOST_EXE } from './runner.mjs';
@@ -21,7 +21,7 @@ import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
-import { NODE_STATUS_FILE, readCapacityAlert } from './host-capacity.mjs';
+import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { readWin32Process } from './resident-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
@@ -236,7 +236,7 @@ export async function main(args = process.argv.slice(2)) {
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
   const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
-    readText, log: relayLog });
+    readText, log: relayLog, bundleDir: path.join(values.root, 'bundles') });
   const inboxDir = path.join(values.root, 'inbox');
   // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
   const poller = new Poller({
@@ -281,7 +281,8 @@ export async function main(args = process.argv.slice(2)) {
   reporter.autoHandoverSince = () => heartbeat?.autoHandoverSince ?? null;
   // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).
-  reporter.hostCapacity = () => readCapacityAlert(NODE_STATUS_FILE);
+  // The resident's own disk/memory hold (holder node-resource in the intake pause) says the same line without a governance status.
+  reporter.hostCapacity = async () => (await readCapacityAlert(NODE_STATUS_FILE)) ?? resourceHoldAlert(await readStatus(values.root).catch(() => null));
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
   // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
   const panelRunner = new Runner({ env: { ...process.env }, jobHost });
@@ -315,7 +316,7 @@ export async function main(args = process.argv.slice(2)) {
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
     run: (a, o) => upgradeRunner.run(a, o) })
     .then(f => writeSessionFacts(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI'), { ...f, wslClient })).catch(() => {});
-  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0;
+  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
@@ -339,6 +340,8 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
         try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
+        // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
+        if (Date.now() - lastBundlePrune > BUNDLE_PRUNE_EVERY_MS) { lastBundlePrune = Date.now(); await companion.pruneOldBundles(); }
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
           // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
