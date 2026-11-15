@@ -15,8 +15,10 @@
 //     or control check of this App, whatever its conclusion (one revoked to failure counts too), ends at once with
 //     HEAD_PUBLISHED_ON_GITHUB, so it never reaches the Task's CI meter. kooyumi-work-admission of another attempt or
 //     Source does not count: it is proven again per attempt (DESIGN §7.2). The same job's own (same job id and attempt,
-//     so the same external id under the same claim generation), published by another node or install, does: posting it
-//     again would make two checks of one identity, which the read-back refuses (UNCERTAIN, HALT);
+//     so the same external id under the same claim generation), published by another node or install, stops the attempt:
+//     posting it again would make two checks of one identity, which the read-back refuses (UNCERTAIN, HALT). Alone (no role or
+//     control check beside it) it ends with HEAD_INTERRUPTED_ON_GITHUB: the run that wrote it was interrupted (a failover) before
+//     any check ran, so the head is not executed and the resident's attempt 2 runs it (resident DESIGN §78);
 //   - before a check's first publication, and only when this node's own records know nothing of it (no effect key, no
 //     K(head, role)): a check of the same name of this App ends that publication cleanly with ROLE_ALREADY_ON_GITHUB
 //     (nothing published for it, nothing revoked, no HALT). What this node knows keeps its existing path.
@@ -25,6 +27,7 @@
 export const PUBLISHER_APP_ID = 5368905;
 export const HEAD_PUBLISHED_ON_GITHUB = 'HEAD_PUBLISHED_ON_GITHUB';
 export const ROLE_ALREADY_ON_GITHUB = 'ROLE_ALREADY_ON_GITHUB';
+export const HEAD_INTERRUPTED_ON_GITHUB = 'HEAD_INTERRUPTED_ON_GITHUB';
 // The scanner publisher's reason for it (its reasons are lower case; stage-fact.mjs maps both spellings).
 export const ROLE_ALREADY_ON_GITHUB_REASON = 'role_already_on_github';
 // Every required check but kooyumi-work-admission: the role checks and the control pair (design J2).
