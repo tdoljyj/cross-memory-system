@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "2979b271bed1db0877a7ecb5cb2ca8ee25a8f663ea04dba7eddf5c651b8a7022"
+      "content_sha256": "ab22b50ae25edaf9b83a7522b932da8fba1063c4238056a96cddc5796f022f82"
     },
     {
       "id": "hook.runner-job-started",
@@ -881,7 +881,7 @@
     {
       "id": "script.archive-retention",
       "kind": "script",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "description": "Fail-closed Owner retention settings, normal notifications and explicit archived-generation maintenance; preserves installed ACL and frozen upgrade channel.",
       "root": ".",
       "files": [
@@ -897,7 +897,7 @@
         "work/independent-ci-resident-v1/test/fixtures/retention-cases.json",
         "work/independent-ci-resident-v1/docs/adr/0024-retention-settings-and-notifications.md"
       ],
-      "content_sha256": "35a54e1cd96c33f509d1da444aa8970fb3763f05c1c79ead3b3ee5b92f1ffd3a"
+      "content_sha256": "295e7abef2fec59c3f28f6d40e0c0fa0aec1f634afafe0dbd2b6c358d10bbf1e"
     },
     {
       "id": "script.merge-reconciliation",
