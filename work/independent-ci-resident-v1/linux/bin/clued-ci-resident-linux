@@ -658,7 +658,7 @@ def sweep_stale_workspaces(state, now_ms, remove=remove_tree, rule=RETENTION_RUL
         cands = []
         ws = os.path.join(state, 'workspaces')
         if os.path.isdir(ws) and not os.path.islink(ws):
-            cands += [(os.path.join('workspaces', n), os.path.join(ws, n)) for n in sorted(os.listdir(ws)) if JOB_ID.fullmatch(n)]
+            cands += [(f'workspaces/{n}', os.path.join(ws, n)) for n in sorted(os.listdir(ws)) if JOB_ID.fullmatch(n)]
         cands += [(n, os.path.join(state, n)) for n in sorted(os.listdir(state)) if re.fullmatch(r'ws-prep-[0-9a-f]{16}-[0-9a-f]{12}', n)]
         for rel, full in cands:
             st = os.lstat(full)
