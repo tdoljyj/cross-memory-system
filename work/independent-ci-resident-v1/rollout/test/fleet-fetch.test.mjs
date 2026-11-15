@@ -61,7 +61,9 @@ test('a tar cut off twice is continued with Range and ends with the accepted sha
     assert.equal(r.artifactSha256, sha(tar));
     assert.equal(r.source, 'release');
     assert.equal(r.resumed, 2);
-    assert.deepEqual(api.seen.ranges, [null, 'bytes=700000-', 'bytes=1400000-']);
+    const [first, ...later] = api.seen.ranges, at = r => Number(/^bytes=(\d+)-$/.exec(r)?.[1]);   // how much arrived before each cut is the network's
+    assert.equal(first, null);
+    assert.ok(later.length === 2 && at(later[0]) > 0 && at(later[1]) > at(later[0]), api.seen.ranges.join(' '));
     assert.equal(api.seen.authToBlob, 0, 'the token goes to the API host, not to the download host');
     assert.ok(api.seen.apiAuth.every(a => a === `Bearer ${FAKE_TOKEN}`));
     assert.deepEqual((await fs.readdir(dir)).sort(), ['SHA256SUMS', `${TAG}.acceptance.json`, `${TAG}.tar`]);
