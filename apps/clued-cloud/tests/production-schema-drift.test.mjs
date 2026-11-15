@@ -256,19 +256,21 @@ test('migration-verify blocks an undeclared breaking pending migration and passe
     return repo;
   };
   const drop = 'alter table public.clued_agent_bindings drop column expires_at;\n';
-  const blocked = await runCheck({ repository: withPending(drop), snapshot: snapshotFor(withPending(drop)), catalogSql });
+  const baseFiles = new Set(Object.keys(repository().migrations).filter((name) => name !== '20261101000000_pending.sql'));
+  const blocked = await runCheck({ repository: withPending(drop), snapshot: snapshotFor(withPending(drop)), catalogSql, baseMigrations: baseFiles });
   assert.equal(blocked.status, 'FAIL');
   assert.deepEqual(blocked.errors, ['pending_migration_breaks_previous_worker']);
   assert.deepEqual(blocked.pending_breaking.map((finding) => [finding.file, finding.rule]), [['migrations/20261101000000_pending.sql', 'drop_column']]);
   const lines = [];
   printSummary(blocked, (line) => lines.push(line));
   assert.ok(lines.some((line) => line.includes('20261101000000_pending.sql') && line.includes('drop column expires_at') && line.includes('previous Worker')), lines.join('\n'));
-  const pendingOf = (repo) => productionChain({ applied: snapshotFor(repo).applied, ...repo }).pending;
-  const declared = withPending('-- clued-release: breaking Worker 41 no longer reads expires_at\n' + drop);
-  assert.deepEqual(pendingBreakingFindings(pendingOf(declared)), []);
-  const additive = withPending('alter table public.clued_agent_bindings add column note text;\n');
-  assert.deepEqual(pendingBreakingFindings(pendingOf(additive)), []);
-  // The same drop in an already applied file is history, not pending.
-  const history = withPending(sql('pending'), drop);
-  assert.deepEqual(pendingBreakingFindings(pendingOf(history)), []);
+  const judged = (repo, base) => pendingBreakingFindings(productionChain({ applied: snapshotFor(repo).applied, ...repo }).pending
+    .filter((step) => !base.has(step.file.slice('migrations/'.length))));
+  const declared = withPending('-- clued-release: breaking Worker 41 no longer reads expires_at' + String.fromCharCode(10) + drop);
+  assert.deepEqual(judged(declared, baseFiles), []);
+  const additive = withPending('alter table public.clued_agent_bindings add column note text;' + String.fromCharCode(10));
+  assert.deepEqual(judged(additive, baseFiles), []);
+  // A file the base already has was judged when it was added: a snapshot that lags production cannot fail it.
+  const onMain = withPending(drop);
+  assert.deepEqual(judged(onMain, new Set(Object.keys(onMain.migrations))), []);
 });

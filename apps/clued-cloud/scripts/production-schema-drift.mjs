@@ -20,18 +20,20 @@
 //      `-- production-schema: allow <schema>.<table>.<column>` (a reviewed
 //      statement that the reference is intended, for example a migration that
 //      adds that column to production).
-// Before the clusters start, every pending migration is also checked for
-// statements that break the previous Worker (scripts/release-migration-compat.mjs).
+// Before the clusters start, every migration this change adds is also checked
+// for statements that break the previous Worker (scripts/release-migration-compat.mjs).
 // import turns the output of catalog.sql and applied.sql (run read-only
 // against production by whoever refreshes the snapshot) into catalog.json.
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {
   SNAPSHOT_CONTRACT, catalogSqlPath, productionChain, readRepository, readSnapshot, repositoryChain, snapshotPath,
 } from './production-schema-chain.mjs';
+import { appDirectory } from './migration-ledger.mjs';
 import { pendingBreakingFindings } from './release-migration-compat.mjs';
 
 // Supabase platform objects the migrations assume and a plain PostgreSQL
@@ -290,7 +292,7 @@ export function prepareReplay(steps, { skipped, substitutions, errors }) {
   });
 }
 
-export async function runCheck({ repository, snapshot, catalogSql, log = () => {} }) {
+export async function runCheck({ repository, snapshot, catalogSql, baseMigrations, log = () => {} }) {
   const report = { contract: 'clued.production-schema-drift-report.v1', status: 'FAIL', errors: [] };
   if (snapshot?.contract !== SNAPSHOT_CONTRACT || !Array.isArray(snapshot.objects) || !Array.isArray(snapshot.applied)) {
     report.errors.push('snapshot_contract_invalid');
@@ -306,9 +308,14 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
   report.errors.push(...chain.errors);
   report.pending = chain.pending.map((step) => step.file);
   if (chain.errors.length > 0) return report;
-  // Static, so it needs no database: a pending migration that breaks the
-  // previous Worker without declaring it fails the check at once.
-  report.pending_breaking = pendingBreakingFindings(chain.pending);
+  // Static, so it needs no database. Only a migration this change adds (a file
+  // the base lacks) is judged: it was judged when it was added, so the
+  // snapshot and ledger lagging behind production can never turn a migration
+  // that is already on main into a failure. Without a base (a bare local
+  // run) nothing is judged.
+  report.pending_breaking = baseMigrations
+    ? pendingBreakingFindings(chain.pending.filter((step) => !baseMigrations.has(step.file.slice('migrations/'.length))))
+    : [];
   if (report.pending_breaking.length > 0) {
     report.errors.push('pending_migration_breaks_previous_worker');
     return report;
@@ -474,6 +481,20 @@ function argument(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+// Migration file names the base has: the trusted base checkout in CI
+// (CLUED_BASE_ROOT), else the base commit's tree (CI_BASE_SHA); undefined when neither is known.
+async function readBaseMigrations(env = process.env) {
+  if (env.CLUED_BASE_ROOT) {
+    return new Set(await readdir(path.join(env.CLUED_BASE_ROOT, 'apps/clued-cloud/supabase/migrations')));
+  }
+  if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
+    const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'apps/clued-cloud/supabase/migrations'],
+      { cwd: appDirectory, encoding: 'utf8' });
+    if (run.status === 0) return new Set(run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter((name) => name && name !== '.'));
+  }
+  return undefined;
+}
+
 async function main(argv) {
   const [command, ...args] = argv;
   const catalogSql = await readFile(catalogSqlPath, 'utf8');
@@ -496,7 +517,7 @@ async function main(argv) {
     return 2;
   }
   const report = await runCheck({
-    repository: await readRepository(), snapshot: await readSnapshot(), catalogSql,
+    repository: await readRepository(), snapshot: await readSnapshot(), catalogSql, baseMigrations: await readBaseMigrations(),
     log: (line) => console.error(`production-schema: ${line}`),
   });
   const reportFile = argument(args, '--report');

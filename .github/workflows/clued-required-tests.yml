@@ -14,8 +14,9 @@ name: clued-required-tests
 # - migration-verify: replays production's recorded migration history from the
 #   committed schema-only snapshot (apps/clued-cloud/supabase/production-schema),
 #   requires its catalog to equal production's, applies pending migrations the
-#   way release migrate mode does, and fails a pending migration that reads a
-#   column only the repository chain has. No production credential.
+#   way release migrate mode does, fails a pending migration that reads a
+#   column only the repository chain has, and fails a migration the change adds
+#   that breaks the previous Worker without declaring it. No production credential.
 #
 # Every check always reports, so each can be a required check under one name.
 # scripts/ci/ci-required-selection.mjs, from the trusted base checkout, decides
@@ -282,6 +283,7 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          CLUED_BASE_ROOT: ${{ github.workspace }}/trusted
         run: |
           status=0
           node "$SELECTOR" --run production-schema --root candidate || status=$?
