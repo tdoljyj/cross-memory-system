@@ -697,7 +697,7 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // Task/current generation. Several PRs of that Task are normal scheduling choices;
 // contradictory Task/generation projections, unreadable data and deadline fail closed.
 async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
-  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null }) {
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null, preferLandable = false }) {
   const matches = [], observed = [];
   for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
@@ -721,18 +721,41 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
   // The PR at the holder's CI head; none there (field 2026-11-13, #1087: its author pushed) -> the lowest PR, as with no CI head.
   const atHead = preferredHead === null ? [] : matches.filter(m => m.pull.head.sha === preferredHead);
   if (atHead.length > 1) return null;
-  const eligible = atHead.length ? atHead : matches;
-  const p = eligible.sort((a,b) => a.pull.number - b.pull.number)[0]?.pull ?? null;
+  const ordered = [...atHead, ...matches.filter(m => !atHead.includes(m)).sort((a,b) => a.pull.number - b.pull.number)];
+  let p = ordered[0]?.pull ?? null;
+  // Field 2026-11-15 (#1121): of the holder's PRs, the first one GitHub can merge as it stands is the front (landable); only when none
+  // can is the choice as before. The front never holds the slot for a PR that cannot land while another PR of the claim waits green.
+  if (preferLandable) for (const m of ordered) {
+    if (clock() >= until) break;
+    if (await landable(github, m.pull)) { p = m.pull; break; }
+  }
   if (!p || !Number.isSafeInteger(p.number) || p.state !== 'open' || p.draft !== false || p.base?.ref !== 'main' || p.head?.repo?.full_name !== job.repo
     || !SHA.test(p.head?.sha ?? '')) return null;
   return { pr: p.number, headSha: p.head.sha, claimId: holder.claimId };
+}
+
+// A PR GitHub will not merge as it stands: its auto-merge is off (its author withdrew it; a draft is never a candidate at all), or a
+// GitHub Actions check-run failed on its head (#1121: the admission gate failed, so the required ci-suites, clued-cloud-tests and
+// migration-verify never ran and the Native six alone were green). A check list that cannot be read counts as landable (the
+// choice is then as before); a later run of the same name supersedes an earlier one.
+const ACTIONS_APP_ID = 15368;
+const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
+async function landable(github, pull) {
+  if (pull.auto_merge == null) return false;
+  let listed;
+  try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
+  if (listed?.complete !== true || !Array.isArray(listed.checks)) return true;
+  const latest = new Map();
+  for (const c of listed.checks) if (c?.app?.id === ACTIONS_APP_ID && c.head_sha === pull.head.sha && Number.isSafeInteger(c.id)
+    && !(latest.get(c.name)?.id > c.id)) latest.set(c.name, c);
+  return ![...latest.values()].some(c => c.status === 'completed' && FAILED_CONCLUSIONS.has(c.conclusion));
 }
 
 async function selectProjectedHolder({ holder, ...ports }) {
   if (!Array.isArray(holder.prs) || !holder.prs.length || typeof holder.taskId !== 'string') return null;
   const activeHead = ['running','green'].includes(holder.ciState) && SHA.test(holder.ciHeadSha ?? '') ? holder.ciHeadSha : null;
   const selected = await findFrontBind({ ...ports, holder, rows: holder.prs.map(number => ({ number, state: 'open', baseRef: 'main' })),
-    readOnly: true, preferredHead: activeHead, maxReads: 50 });
+    readOnly: true, preferredHead: activeHead, maxReads: 50, preferLandable: true });
   return selected ? { ...holder, pr: selected.pr, boundPr: `${ports.job.repo}#${selected.pr}` } : null;
 }
 
