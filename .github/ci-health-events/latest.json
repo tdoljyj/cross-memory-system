@@ -1,10 +1,10 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-11-14T13:29:59.917478Z",
+  "observed_at": "2026-11-15T18:47:39.487794Z",
   "status": "ANOMALY",
   "notify_model": true,
-  "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
+  "fingerprint": "bd61acf45dc3f6b39e58d939e303a3075e29ddd8397e88e2fd65ca4964474ffb",
   "thresholds": {
     "startup_delay_seconds": 300,
     "minimum_repeats": 2,
@@ -22,34 +22,189 @@
         "occupation_evidence": "sampled_jobs_only",
         "threshold_seconds": 300,
         "minimum_repeats": 2,
-        "occurrences": 2,
+        "occurrences": 7,
         "wait_causes": {
-          "unexplained": 2
+          "runner_occupied": 2,
+          "unexplained": 5
         },
         "jobs": [
           {
-            "job_id": "132425642202",
-            "run_id": 43587698754,
-            "name": "runner-heartbeat / clued-ci-company-linux-01",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-14T10:57:28Z",
-            "started_at": "2026-11-14T11:19:54Z",
-            "delay_seconds": 1346,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 1346
-          },
-          {
-            "job_id": "132425642435",
-            "run_id": 43587698754,
+            "job_id": "132871563993",
+            "run_id": 43733710933,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-14T10:57:28Z",
-            "started_at": "2026-11-14T11:06:28Z",
-            "delay_seconds": 540,
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:17:39Z",
+            "delay_seconds": 595,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 540
+            "idle_seconds": 595
+          },
+          {
+            "job_id": "132871564035",
+            "run_id": 43733710933,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:22:03Z",
+            "delay_seconds": 859,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 859
+          },
+          {
+            "job_id": "132888371091",
+            "run_id": 43739188627,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T17:06:10Z",
+            "started_at": "2026-11-15T17:13:11Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "132892494606",
+            "run_id": 43740357621,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-15T17:20:20Z",
+            "started_at": "2026-11-15T17:28:43Z",
+            "delay_seconds": 503,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 503
+          },
+          {
+            "job_id": "132900498827",
+            "run_id": 43743142671,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T17:48:12Z",
+            "started_at": "2026-11-15T18:05:31Z",
+            "delay_seconds": 1039,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 1039
+          },
+          {
+            "job_id": "132906399983",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:19:08Z",
+            "delay_seconds": 632,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 7,
+            "occupied_by": [
+              {
+                "job_id": 132909412955,
+                "run_id": 43745990686,
+                "name": "compute-probe / clued-ci-company-linux-01"
+              },
+              {
+                "job_id": 132905804317,
+                "run_id": 43744819560,
+                "name": "ci-suites"
+              }
+            ]
+          },
+          {
+            "job_id": "132906399995",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:32:29Z",
+            "delay_seconds": 1433,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
+              {
+                "job_id": 132905804290,
+                "run_id": 43744819560,
+                "name": "migration-verify"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "code": "REPEATED_STARTUP_DELAY",
+      "key": "pool:windows-general-v1:startup-delay-repeated:startup_delay_needs_investigation",
+      "message": "windows-general-v1 has repeated startup waits with incomplete occupation evidence; investigate before inferring an outage.",
+      "details": {
+        "pool": "windows-general-v1",
+        "classification": "startup_delay_needs_investigation",
+        "severity": "warning",
+        "occupation_evidence": "sampled_jobs_only",
+        "threshold_seconds": 300,
+        "minimum_repeats": 2,
+        "occurrences": 4,
+        "wait_causes": {
+          "runner_occupied": 1,
+          "unexplained": 3
+        },
+        "jobs": [
+          {
+            "job_id": "132871563703",
+            "run_id": 43733710933,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:16:31Z",
+            "delay_seconds": 527,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 527
+          },
+          {
+            "job_id": "132888371087",
+            "run_id": 43739188627,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T17:06:10Z",
+            "started_at": "2026-11-15T17:20:07Z",
+            "delay_seconds": 837,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 837
+          },
+          {
+            "job_id": "132900498607",
+            "run_id": 43743142671,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T17:48:12Z",
+            "started_at": "2026-11-15T17:55:23Z",
+            "delay_seconds": 431,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 431
+          },
+          {
+            "job_id": "132906399701",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-win-01",
+            "runner_name": "clued-ci-company-win-01",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:21:05Z",
+            "delay_seconds": 749,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 3,
+            "occupied_by": [
+              {
+                "job_id": 132905819704,
+                "run_id": 43744819667,
+                "name": "ci-suites-windows"
+              }
+            ]
           }
         ]
       }
@@ -75,7 +230,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-14T10:57:28Z",
+          "last_verified_at": "2026-11-15T18:34:25Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -93,7 +248,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-14T10:57:28Z",
+          "last_verified_at": "2026-11-15T18:34:25Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -146,7 +301,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-14T10:57:28Z",
+          "last_verified_at": "2026-11-15T18:34:25Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -163,7 +318,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-14T10:57:28Z",
+          "last_verified_at": "2026-11-15T18:34:25Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -177,42 +332,164 @@
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
           {
-            "job_id": "132425642202",
-            "run_id": 43587698754,
-            "name": "runner-heartbeat / clued-ci-company-linux-01",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-14T10:57:28Z",
-            "started_at": "2026-11-14T11:19:54Z",
-            "delay_seconds": 1346,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 1346
-          },
-          {
-            "job_id": "132425642435",
-            "run_id": 43587698754,
+            "job_id": "132871563993",
+            "run_id": 43733710933,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-11-14T10:57:28Z",
-            "started_at": "2026-11-14T11:06:28Z",
-            "delay_seconds": 540,
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:17:39Z",
+            "delay_seconds": 595,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 540
+            "idle_seconds": 595
+          },
+          {
+            "job_id": "132871564035",
+            "run_id": 43733710933,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:22:03Z",
+            "delay_seconds": 859,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 859
+          },
+          {
+            "job_id": "132888371091",
+            "run_id": 43739188627,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T17:06:10Z",
+            "started_at": "2026-11-15T17:13:11Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "132892494606",
+            "run_id": 43740357621,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-15T17:20:20Z",
+            "started_at": "2026-11-15T17:28:43Z",
+            "delay_seconds": 503,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 503
+          },
+          {
+            "job_id": "132900498827",
+            "run_id": 43743142671,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T17:48:12Z",
+            "started_at": "2026-11-15T18:05:31Z",
+            "delay_seconds": 1039,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 1039
+          },
+          {
+            "job_id": "132906399983",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:19:08Z",
+            "delay_seconds": 632,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 7,
+            "occupied_by": [
+              {
+                "job_id": 132909412955,
+                "run_id": 43745990686,
+                "name": "compute-probe / clued-ci-company-linux-01"
+              },
+              {
+                "job_id": 132905804317,
+                "run_id": 43744819560,
+                "name": "ci-suites"
+              }
+            ]
+          },
+          {
+            "job_id": "132906399995",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:32:29Z",
+            "delay_seconds": 1433,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
+              {
+                "job_id": 132905804290,
+                "run_id": 43744819560,
+                "name": "migration-verify"
+              }
+            ]
           }
         ],
         "windows-general-v1": [
           {
-            "job_id": "132425642384",
-            "run_id": 43587698754,
-            "name": "runner-heartbeat / clued-ci-company-win-01",
-            "runner_name": "clued-ci-company-win-01",
-            "created_at": "2026-11-14T10:57:28Z",
-            "started_at": "2026-11-14T11:03:46Z",
-            "delay_seconds": 378,
+            "job_id": "132871563703",
+            "run_id": 43733710933,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T16:07:44Z",
+            "started_at": "2026-11-15T16:16:31Z",
+            "delay_seconds": 527,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 378
+            "idle_seconds": 527
+          },
+          {
+            "job_id": "132888371087",
+            "run_id": 43739188627,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T17:06:10Z",
+            "started_at": "2026-11-15T17:20:07Z",
+            "delay_seconds": 837,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 837
+          },
+          {
+            "job_id": "132900498607",
+            "run_id": 43743142671,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-15T17:48:12Z",
+            "started_at": "2026-11-15T17:55:23Z",
+            "delay_seconds": 431,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 431
+          },
+          {
+            "job_id": "132906399701",
+            "run_id": 43745050974,
+            "name": "runner-heartbeat / clued-ci-company-win-01",
+            "runner_name": "clued-ci-company-win-01",
+            "created_at": "2026-11-15T18:08:36Z",
+            "started_at": "2026-11-15T18:21:05Z",
+            "delay_seconds": 749,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 3,
+            "occupied_by": [
+              {
+                "job_id": 132905819704,
+                "run_id": 43744819667,
+                "name": "ci-suites-windows"
+              }
+            ]
           }
         ]
       }
