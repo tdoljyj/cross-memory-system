@@ -10,6 +10,8 @@
 //   - every Linux unit it starts re-checks its own preconditions as root;
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
@@ -462,6 +464,39 @@ export function jobTreeOf(trees) {
   return trees.every(t => t === 'zero') ? 'zero' : 'unconfirmed';
 }
 
+// Bundle retention (disk/memory guard, 2026-11-15): bundles\<batchId>\ gains one repository bundle per batch and nothing removed
+// them. A batch reads its bundle only while it is open, and an open batch lives at most park.maxMs (24 h, the policy's bound) after
+// its bundle was built; so a batch directory whose newest entry is older than BUNDLE_KEEP_MS belongs to an ended batch and is
+// removed (it is regenerable: a new batch builds its own). The BUNDLE_KEEP_NEWEST newest are always kept; only directories of the
+// batch id shape directly below bundles\ are considered (the seed _seed\ and any other name never); a link anywhere in one keeps
+// it; an error removes nothing more. The companion's advisory lane runs it at start and every BUNDLE_PRUNE_EVERY_MS. -> names removed.
+export const BUNDLE_KEEP_MS = 30 * 3_600_000;
+export const BUNDLE_PRUNE_EVERY_MS = 3_600_000;
+export const BUNDLE_KEEP_NEWEST = 3;
+export async function pruneBundles({ dir, now, fsImpl = fs }) {
+  const newest = async (d, depth) => {
+    let m = (await fsImpl.lstat(d)).mtimeMs;
+    for (const e of await fsImpl.readdir(d, { withFileTypes: true })) {
+      if (e.isSymbolicLink()) return Infinity;
+      const p = path.join(d, e.name);
+      m = Math.max(m, e.isDirectory() && depth > 0 ? await newest(p, depth - 1) : (await fsImpl.lstat(p)).mtimeMs);
+    }
+    return m;
+  };
+  const list = [];
+  for (const e of await fsImpl.readdir(dir, { withFileTypes: true })) {
+    if (BATCH_ID.test(e.name) && e.isDirectory() && !e.isSymbolicLink()) list.push({ name: e.name, at: await newest(path.join(dir, e.name), 2) });
+  }
+  list.sort((a, b) => b.at - a.at);
+  const removed = [];
+  for (const b of list.slice(BUNDLE_KEEP_NEWEST)) {
+    if (!(now - b.at > BUNDLE_KEEP_MS)) continue;
+    await fsImpl.rm(path.join(dir, b.name), { recursive: true, force: true });
+    removed.push(b.name);
+  }
+  return removed;
+}
+
 export class Companion {
   // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr, timedOut?, tree?}, fileExists(path), sleep(ms), clock(),
   //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE),
@@ -512,6 +547,15 @@ export class Companion {
     const confirmed = plainObject(v) && Object.keys(v).sort().join('|') === 'containersZero|linuxUnitsInactive|pendingJobsQuiet'
       && ['linuxUnitsInactive', 'containersZero', 'pendingJobsQuiet'].every(k => typeof v[k] === 'boolean') && v.pendingJobsQuiet;
     return { linuxUnitsInactive: confirmed && v.linuxUnitsInactive, containersZero: confirmed && v.containersZero };
+  }
+
+  // The bundle retention (pruneBundles), with the bundles directory of the ports (bundleDir; none: nothing). Never decides anything.
+  async pruneOldBundles() {
+    if (typeof this.bundleDir !== 'string') return;
+    try {
+      const removed = await pruneBundles({ dir: this.bundleDir, now: this.clock() });
+      if (removed.length > 0) await this.log?.({ at: new Date(this.clock()).toISOString(), op: 'bundle-prune', removed: removed.length });
+    } catch { /* advisory: a bundle left is only disk */ }
   }
 
   async handle(request) {

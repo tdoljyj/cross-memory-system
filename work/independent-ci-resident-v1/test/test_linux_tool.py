@@ -358,3 +358,29 @@ class Retention(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Trim(unittest.TestCase):
+    """Disk/memory guard: a quiet retention pass ends with one fixed-argv fstrim of /; its failure is recorded, never raised."""
+    def test_fixed_argv_and_failures_are_facts(self):
+        calls = []
+        class R:
+            returncode = 0
+        def run(argv, **kw):
+            calls.append((argv, kw['env'], kw['timeout'], kw['check']))
+            return R()
+        self.assertEqual(tool.trim_root(run), {'exit': 0})
+        self.assertEqual(calls, [(['/usr/sbin/fstrim', '/'], tool.ENV, tool.FSTRIM_TIMEOUT_S, False)])
+        def boom(argv, **kw):
+            raise tool.subprocess.TimeoutExpired(argv, 1)
+        self.assertEqual(tool.trim_root(boom), {'exit': None, 'error': 'TimeoutExpired'})
+        def missing(argv, **kw):
+            raise FileNotFoundError(argv[0])
+        self.assertEqual(tool.trim_root(missing), {'exit': None, 'error': 'FileNotFoundError'})
+
+    def test_only_after_a_quiet_pass(self):
+        src = (HERE.parent / 'linux' / 'bin' / 'clued-ci-resident-linux').read_text(encoding='utf-8')
+        block = src[src.index("    if cmd == 'archive-prune':"):src.index("    raise Refused('COMMAND_REFUSED')")]
+        self.assertLess(block.index("if q['linuxUnitsInactive'] and q['containersZero']:"), block.index('trim = trim_root()'))
+        self.assertLess(block.index('trim = trim_root()'), block.index('else:'))
+

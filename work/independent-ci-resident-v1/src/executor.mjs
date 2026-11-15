@@ -131,7 +131,7 @@ import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABA
 import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { ALERT_RECEIPT } from './retention.mjs';
-import { NODE_STATUS_MAX_AGE_MS } from './host-capacity.mjs';
+import { NODE_RESOURCE_HOLDER } from './host-capacity.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
@@ -168,6 +168,11 @@ export const VERSION_SKEW_RENEW_BELOW_MS = 90 * 60_000;
 export const UPGRADE_VERSION_SKEW = 'UPGRADE_VERSION_SKEW';
 // The precheck's global deferral while the sides disagree (before any reservation; nothing burned, nothing counted).
 export const VERSION_SKEW = 'VERSION_SKEW';
+// The disk/memory guard's own intake hold (nodeResourceRefresh): 30 minutes, renewed below 20 left, so a node that stops beating
+// leaves at most a short hold behind for the server's take-over to respect.
+export { NODE_RESOURCE_HOLDER };
+export const NODE_RESOURCE_HOLD_MINUTES = 30;
+export const NODE_RESOURCE_RENEW_BELOW_MS = 20 * 60_000;
 export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
 // Poll of the owner directory while a scanner-issuer stage runs, and the bounded re-check of quiescence after an abort.
 export const ABORT_POLL_MS = 5_000;
@@ -445,7 +450,7 @@ export class ResidentExecutor {
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
     this.statusFlush ??= null;
-    this.nodeStatus ??= null; // optional node status port (nodeResourceGate)
+    this.nodeStatus ??= null; // optional disk/memory guard port (nodeResourceRefresh)
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
     this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
@@ -1647,24 +1652,28 @@ export class ResidentExecutor {
 
   // null: a new batch may start. Otherwise the deferral: a hold in force, or a state that cannot be read now (fail safe,
   // bounded by intakeTrouble's HALT).
-  // The node resource gate (node governance v1). Optional port nodeStatus() -> host-capacity.mjs#readNodeStatus (none: no gate).
-  // Red on the drive of the resident WSL disk (status.intake) holds new batches; the levels and their hysteresis are the node
-  // governance task's, never the executor's. An unreadable, foreign or stale status lets the batch run and raises one alert a day
-  // in the retention notice channel. Never HALT.
-  async nodeResourceGate(now) {
+  // The disk/memory guard (node governance v1; 2026-11-15). Optional port nodeStatus() -> host-capacity.mjs#createNodeResourceReader
+  // (none: no guard): { ok, red, reason }. Red holds new batches through the executor's own word in the intake pause (holder
+  // node-resource), as the version-skew hold does: a short hold, renewed while red, lifted once the reading is green again (its
+  // hysteresis is the reader's). So the status board, the PR page and the node heartbeat (INTAKE_PAUSED: the server routes no
+  // ci-admission to this node) all say it; a batch in flight goes on; never HALT. A reading that fails leaves the hold as it is
+  // (it runs out by itself) and raises one alert a day in the retention notice channel: the guard failing can only do nothing.
+  async nodeResourceRefresh() {
     if (typeof this.nodeStatus !== 'function') return null;
     let s = null;
     try { s = await this.nodeStatus(); } catch { s = null; }
-    const at = s?.writtenAtMs ?? Date.parse(s?.writtenAt);
-    if (!s?.ok || !Number.isFinite(at) || Math.abs(now - at) > NODE_STATUS_MAX_AGE_MS) {
-      const day = dayKey(now);
+    if (!s?.ok || typeof s.red !== 'boolean') {
+      const day = dayKey(this.clock());
       if (this.nodeStatusNotice !== day) {
         this.nodeStatusNotice = day;
         try { await this.receipts.append(ALERT_RECEIPT, { spool: 'disk', code: 'NODE_STATUS_UNREADABLE', action: 'owner-review-retention', deletesAnything: false }); } catch { /* a notice only */ }
       }
       return null;
     }
-    return s.intake?.level === 'red' ? { state: 'DEFERRED', reason: 'NODE_RESOURCE_RED' } : null;
+    try {
+      return await this.ownIntakeHold(NODE_RESOURCE_HOLDER, s.red, { minutes: NODE_RESOURCE_HOLD_MINUTES, renewBelowMs: NODE_RESOURCE_RENEW_BELOW_MS,
+        reason: CODE.test(s.reason ?? '') ? s.reason : 'NODE_RESOURCE_RED', liftReason: 'NODE_RESOURCE_RECOVERED' });
+    } catch { return null; }
   }
 
   async intakeGate() {
@@ -1785,17 +1794,25 @@ export class ResidentExecutor {
   // still lift it by hand (it then comes back on the next tick while the versions still disagree). Returns the receipt kind written.
   async versionSkewHold(consistent) {
     if (consistent !== true && consistent !== false) return null;
+    return this.ownIntakeHold(VERSION_SKEW_HOLDER, consistent === false, { minutes: INTAKE_PAUSE_MAX_MINUTES, renewBelowMs: VERSION_SKEW_RENEW_BELOW_MS,
+      reason: UPGRADE_VERSION_SKEW, liftReason: 'VERSIONS_CONSISTENT' });
+  }
+
+  // The executor's own hold in the intake pause (intake-pause.mjs#apply): on adds it (or renews it below renewBelowMs left), off
+  // lifts it. PAUSE, HALT and the other holders are untouched; the Owner may lift it by hand (it comes back on the next tick while
+  // its cause lasts). Returns the receipt kind written, or null.
+  async ownIntakeHold(holder, on, { minutes, renewBelowMs, reason, liftReason }) {
     try { await this.intakeRefresh(); } catch { return null; }
     const p = this.intakePause, now = this.clock();
-    const hold = p.active(now).find(h => h.holder === VERSION_SKEW_HOLDER) ?? null;
-    const word = { holder: VERSION_SKEW_HOLDER, requestedAt: new Date(now).toISOString(), nonce: randomBytes(8).toString('hex') };
+    const hold = p.active(now).find(h => h.holder === holder) ?? null;
+    const word = { holder, requestedAt: new Date(now).toISOString(), nonce: randomBytes(8).toString('hex') };
     let request;
-    if (consistent === false) {
-      if (hold && Date.parse(hold.until) - now >= VERSION_SKEW_RENEW_BELOW_MS) return null;
-      request = { contract: INTAKE_PAUSE_CONTRACT, ...word, minutes: INTAKE_PAUSE_MAX_MINUTES, reason: UPGRADE_VERSION_SKEW };
+    if (on) {
+      if (hold && Date.parse(hold.until) - now >= renewBelowMs) return null;
+      request = { contract: INTAKE_PAUSE_CONTRACT, ...word, minutes, reason };
     } else {
       if (!hold) return null;
-      request = { contract: INTAKE_RESUME_CONTRACT, ...word, reason: 'VERSIONS_CONSISTENT' };
+      request = { contract: INTAKE_RESUME_CONTRACT, ...word, reason: liftReason };
     }
     const requestSha256 = digest(request);
     const next = p.apply(request, requestSha256, now);
@@ -1861,6 +1878,8 @@ export class ResidentExecutor {
     await this.reportLedgerLatches();
     // DESIGN §34: the versions of both sides, and the version-skew hold, before anything is scheduled.
     await this.versionsRefresh();
+    // The disk/memory guard's hold (holder node-resource), before anything is scheduled.
+    await this.nodeResourceRefresh();
     // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
     // halted, so the status shows what the ledger says).
     try { await this.reconcileQueue(); } catch { /* the next tick */ }
@@ -3063,9 +3082,6 @@ export class ResidentExecutor {
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
     if (held) { await this.persistQueue(); return held; }
-    // The node resource gate: no new batch while the node status is red on the resident WSL disk's drive (DEFERRED, never HALT; a batch in flight goes on).
-    const diskHeld = await this.nodeResourceGate(now);
-    if (diskHeld) { await this.persistQueue(); return diskHeld; }
     // No new batch while park.maxParked batches rest at A or in the queue's first two places at B: a new one could not
     // park (design v0.5 §4.7). A due attempt 2 is a batch too.
     // Nor while the bound outside those places is full: a new batch would run its whole zone and end PARKED_OVER_CAPACITY

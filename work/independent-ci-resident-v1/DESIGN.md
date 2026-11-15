@@ -3143,6 +3143,13 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 测试：`test/retention-nonblocking.test.mjs`（companion 不应答时暂停 5 秒内锁定，且满足升级程序认定暂停生效的条件：PAUSED 是它的请求、无未关闭批次、`status.current` 为 false、无未结束的 stage 10；停止 5 秒内返回；步骤在跑时不开新批、之后照常；认领复查的 `pr-head` 不会排到挂住的 prune 后面（真实 companion 串行通道）；步骤在跑时不做会起子进程的维护；放弃的请求被取消且 companion 不再开始；停止最多等 `leaveMaxMs`；并发回执链不断；放弃信号只作用于保留请求；service-main 接线）。`test/bridge-observer.test.mjs` 的取消原因清单加上 `service-stopping`。
 
+### 35.12 磁盘/内存守护（2026-11-15，现场：两台都未装节点治理任务，`status.json` 不存在，旧磁盘门形同虚设；TURING 常驻 WSL 盘所在 C: 只剩 5 GB）
+
+- 读数（`src/host-capacity.mjs#createNodeResourceReader`）：节点治理状态新鲜（≤10 分钟）时用它的 intake 红线；否则常驻自己量：WSL 盘所在盘（安装记录 `install\companion-wsl.json` 的 target，读不到为 C:）与 resident 根所在盘，低于 10 GB 为红、回到 15 GB 才解除（数值即 `config/node-governance-standard.json` disk，测试保持相等）；主机可用内存低于 1.5 GB 为红、回到 2.5 GB 解除（compact-v1 的 suspend/resume）。读不到＝没有读数。
+- 动作（`executor.mjs#nodeResourceRefresh`，每个 tick 在版本 hold 之后）：红＝执行器自己在 intake 暂停里加持有者 `node-resource` 的 hold（30 分钟，剩不到 20 分钟续），绿＝解除；与 version-skew hold 同一机制（`ownIntakeHold`）。于是状态板、PR 页（`节点资源红线（暂停接新批）`）和心跳（`INTAKE_PAUSED`，服务端不把 ci-admission 交给它）都如实显示；在跑的批次照常跑完；从不 HALT。没有读数：hold 不加不撤（短 hold 自己到期），每天一条 `NODE_STATUS_UNREADABLE` 提醒——守护出错只能“不做”。
+- 先清可再生的（`companion.mjs#pruneBundles`，companion 顾问通道启动时及每小时）：`bundles\<batchId>\` 最新写入超过 30 小时（大于 park.maxMs 上限 24 小时，批次必已结束）的删除；最新 3 个、`_seed` 与其他名字不动；含链接不动；出错不再删。现场 TURING 约 25 个/天 × 0.15 GB，此前无人清理。
+- 测试：`test/node-resource-gate.test.mjs`（低盘→先清 bundles→仍低则 hold 并上报→回差区间仍 hold、续期→恢复自动继续；内存同理；读不到不 hold）。
+
 ## 36. 按风险分档计每日额度（Task `12ada80e`，来自 c0ff5167；Decision `ca70ea31`）
 
 ### 36.1 为什么

@@ -52,10 +52,72 @@ export function capacityText(s) {
   return s.linuxRunners?.suspended ? `${CAPACITY_ALERT_TEXT}（${s.host} Linux runner 已停）` : null;
 }
 
+// ---- the resident's own reading (disk/memory guard, 2026-11-15) ----
+// Field facts 2026-11-15: neither resident node has the governance task (no status file), so the rule above held nothing while
+// TURING's C: (its resident WSL disk) fell to 5 GB. The resident therefore reads the same rule itself, shipped with its package:
+// the governance status when it is fresh, else its own measurement of the drives it writes (the WSL disk's, from the install
+// record, and the resident root's) at the standard's numbers (held equal to config/node-governance-standard.json disk by its
+// test) and host memory at the compact capacity profile's suspend/resume numbers. Hysteresis: red below the red line, green
+// again only at the recover line. Anything that cannot be read is { ok: false }: the guard then does nothing (never a hold).
+export const DISK_LEVELS = Object.freeze({ redGb: 10, recoverGb: 15 });
+export const MEMORY_LEVELS = Object.freeze({ redGb: 1.5, recoverGb: 2.5 });
+export const NODE_RESOURCE_RED = 'NODE_RESOURCE_RED';
+export const NODE_MEMORY_LOW = 'NODE_MEMORY_LOW';
+// The executor's intake hold of this guard (executor.mjs#nodeResourceRefresh).
+export const NODE_RESOURCE_HOLDER = 'node-resource';
+const GB = 1024 ** 3;
+
+// The drive of the resident's WSL disk from the install record (companion-wsl.json), null when it says none.
+export function wslDrive(text) {
+  try { const r = JSON.parse(text); return r?.contract === 'clued.independent-ci.companion-wsl/1' && /^[A-Za-z]:\\/.test(r.target ?? '') ? r.target[0].toUpperCase() : null; } catch { return null; }
+}
+
+// ports: { statusFile, installRecord (path), root (the resident root), statfs(path) -> { bavail, bsize }, freemem() -> bytes,
+// readFile(path) -> string, clock }. Returns an async reader -> { ok, red, reason, source, drives: [{ drive, freeGb }], memoryFreeGb }.
+export function createNodeResourceReader({ statusFile = NODE_STATUS_FILE, installRecord, root, statfs, freemem, readFile = p => fs.readFile(p, 'utf8'), clock = Date.now }) {
+  let diskRed = false, memoryRed = false;
+  const below = (held, free, l) => (held ? free < l.recoverGb : free < l.redGb);
+  return async () => {
+    try {
+      const memoryFreeGb = gb(freemem() / GB);
+      if (memoryFreeGb === null) return { ok: false };
+      memoryRed = below(memoryRed, memoryFreeGb, MEMORY_LEVELS);
+      const s = await readNodeStatus(statusFile);
+      let drives, source;
+      if (s.ok && Math.abs(clock() - s.writtenAtMs) <= NODE_STATUS_MAX_AGE_MS) {
+        source = 'governance';
+        diskRed = s.intake.level === 'red';
+        drives = s.drives.filter(d => d.drive === s.intake.drive).map(d => ({ drive: d.drive, freeGb: d.freeGb }));
+      } else {
+        source = 'self';
+        let wsl = null;
+        try { wsl = wslDrive(await readFile(installRecord)); } catch { wsl = null; }
+        const letters = [...new Set([wsl ?? 'C', String(root ?? 'C:')[0].toUpperCase()])].filter(l => /^[A-Z]$/.test(l));
+        drives = [];
+        for (const l of letters) {
+          const st = await statfs(`${l}:\\`);
+          const freeGb = gb((Number(st.bavail) * Number(st.bsize)) / GB);
+          if (freeGb === null) return { ok: false };
+          drives.push({ drive: l, freeGb });
+        }
+        diskRed = drives.some(d => below(diskRed, d.freeGb, DISK_LEVELS));
+      }
+      return { ok: true, red: diskRed || memoryRed, reason: diskRed ? NODE_RESOURCE_RED : memoryRed ? NODE_MEMORY_LOW : null, source, drives, memoryFreeGb };
+    } catch {
+      return { ok: false };
+    }
+  };
+}
+
 // -> { text } while the status names a red line; null otherwise. Never throws.
 export async function readCapacityAlert(file = NODE_STATUS_FILE, clock = Date.now) {
   const s = await readNodeStatus(file);
   if (!s.ok || Math.abs(clock() - s.writtenAtMs) > NODE_STATUS_MAX_AGE_MS) return null;
   const text = capacityText(s);
   return text ? { text } : null;
+}
+
+// The PR page line while the executor's own disk/memory hold is in force (status.intakePause holder node-resource), or null.
+export function resourceHoldAlert(status) {
+  return (status?.intakePause?.holders ?? []).some(h => h?.holder === NODE_RESOURCE_HOLDER) ? { text: `${CAPACITY_ALERT_TEXT}（暂停接新批）` } : null;
 }
