@@ -176,7 +176,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
           const i = `${mins} minutes`;
           await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-$2::interval,
             heartbeat_previous_at=heartbeat_previous_at-$2::interval,readable_at=readable_at-$2::interval,
-            unhealthy_since=unhealthy_since-$2::interval,reported_intake_until=reported_intake_until-$2::interval,
+            unhealthy_since=unhealthy_since-$2::interval,steady_since=steady_since-$2::interval,reported_intake_until=reported_intake_until-$2::interval,
             readable_intake_until=readable_intake_until-$2::interval where user_id=$1`, [user, i]);
           await admin.query('update clued_private.ci_failover_members_v1 set marked_at=marked_at-$2::interval where user_id=$1', [user, i]);
           await admin.query(`update clued_private.ci_failover_settings_v1 set enabled_at=enabled_at-$2::interval,
