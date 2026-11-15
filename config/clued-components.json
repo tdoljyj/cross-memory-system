@@ -57,7 +57,7 @@
         "worker/**/*",
         "supabase/migrations/*.sql"
       ],
-      "content_sha256": "863e0a32a065e168724ef7f45a726c27aa96c19a5bdf7dd9eb40fba07ac8d2a2"
+      "content_sha256": "6b9727b250255ea6a1c9d4a2c9e1785a8aefbf73756542a718f76b5ac5521dc2"
     },
     {
       "id": "hook.runner-job-started",
@@ -423,7 +423,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.71",
+      "version": "1.1.72",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -616,7 +616,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "10c42cfce747d89e525b41e24a24b7ffe71398382521e9fa0f6f2b6b1f2a1dbf"
+      "content_sha256": "6520835f3da72414bdab07486cbe878d7bbee7ea04a1d80d4c9d239f40517c71"
     },
     {
       "id": "script.resource-maintenance",
@@ -688,7 +688,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "ef70b7a981c7ebadefccfe9576dd7a05771255a0b02d45d87f55b8e55170ef35"
+      "content_sha256": "f8d4e8589b3be652e8836972a48a0678c5b4ea7c0ee4c2ecfcfc9d03cd75e5c4"
     },
     {
       "id": "script.required-applicability",
@@ -920,7 +920,7 @@
         "file": "scripts/ci/clued-merge-reconcile.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "4a719f6d98d5e827acb93a8302549314a9ec2010169fff24f145319aae968663"
+      "content_sha256": "b9766416f014d9fb7aa22018a86110475d6fe44f6b59d2bcfbb0b8b262e86bbf"
     }
   ]
 }
