@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -35,6 +36,10 @@ class BundleTests(unittest.TestCase):
         self.root_patch = patch.object(bundle, "REPOSITORY_ROOT", self.repository)
         self.root_patch.start()
         self.addCleanup(self.root_patch.stop)
+        # The release gate reads git history (ReleaseGateTests); these fixtures are not repositories.
+        self.release_patch = patch.object(bundle, "released_skill", lambda: None)
+        self.release_patch.start()
+        self.addCleanup(self.release_patch.stop)
 
     def write_json(self, name, value):
         (self.plugin / name).write_text(json.dumps(value), encoding="utf-8")
@@ -198,6 +203,35 @@ class BundleTests(unittest.TestCase):
         linked.symlink_to(self.directory, target_is_directory=True)
         with self.assertRaisesRegex(bundle.BundleError, "linked_path_rejected"):
             bundle.build_archive(linked / "out.zip")
+
+
+
+class ReleaseGateTests(unittest.TestCase):
+    """The build is a Skill publishing entry: it refuses a Skill whose files differ from its released version."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="kooyumi-bundle-gate-")
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        root = patch.object(bundle, "REPOSITORY_ROOT", self.directory / "repo")
+        root.start()
+        self.addCleanup(root.stop)
+
+    def test_build_refuses_when_the_skill_release_is_unknown_and_writes_nothing(self):
+        with self.assertRaisesRegex(bundle.BundleError, "skill_release_unknown"):
+            bundle.build_archive(self.directory / "out.zip")
+        self.assertFalse((self.directory / "out.zip").exists())
+
+    def test_build_refuses_a_changed_skill_under_its_released_version(self):
+        sys.path.insert(0, str(Path(bundle.__file__).absolute().parents[2] / "scripts"))
+        try:
+            import clued_components
+        finally:
+            sys.path.pop(0)
+        with patch.object(clued_components, "unreleased_change", lambda *_: "skill.clued 1.0.25: its files differ"):
+            with self.assertRaisesRegex(bundle.BundleError, "skill_changed_without_version"):
+                bundle.build_archive(self.directory / "out.zip")
+        self.assertFalse((self.directory / "out.zip").exists())
 
 
 if __name__ == "__main__":

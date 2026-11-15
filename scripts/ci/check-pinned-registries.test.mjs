@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CHECK_IDS, GENERATED, COMPONENTS_FIX, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
 import { PINNED_REGISTRY_PATHS, globToRegExp } from './ci-required-selection.mjs';
 import { SOURCE_FILE, hash, sourceClosure } from './clued-merge-reconcile-source.mjs';
+import { layoutRegistry } from './registry-layout.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.resolve(here, '../..');
 const CLI = path.join(here, 'check-pinned-registries.mjs');
@@ -74,7 +75,7 @@ const byId = (report, id) => report.results.find((r) => r.id === id);
 function refreshReconcile(dir) {
   const file = path.join(dir, SOURCE_FILE), source = JSON.parse(fs.readFileSync(file, 'utf8'));
   source.files = Object.fromEntries(sourceClosure(dir).map((name) => [name, hash(fs.readFileSync(path.join(dir, name)))]));
-  fs.writeFileSync(file, JSON.stringify(source, null, 2) + '\n');
+  fs.writeFileSync(file, layoutRegistry(source));
 }
 // A registered copy: this checkout's files with the reconcile registry brought up to date for the files this
 // change adds, committed as the base.
@@ -120,17 +121,13 @@ test('changing a pinned file names the stale registries and the commands that fi
     assert.match(r.stdout, /STALE\s+reconcile\s+\(scripts\/ci\/clued-merge-reconcile-source\.json\)/);
     assert.match(r.stdout, /bytes differ from the registry: scripts\/ci\/merge-admission-source-producer\.mjs/);
     assert.match(r.stdout, /regenerate: node scripts\/ci\/clued-merge-reconcile-source-build\.mjs/);
-    assert.match(r.stdout, /STALE\s+components/);
-    assert.match(r.stdout, /script\.independent-native-publication: files changed/);
-    assert.match(r.stdout, /3 registries are stale/);
+    // No component digest is stored and no version has to move, so the source edit makes no component stale
+    // (defect C: the digest/version chase made every queued PR re-run the builder after each merge).
+    assert.match(r.stdout, /ok\s+components/);
+    assert.match(r.stdout, /2 registries are stale/);
     assert.match(r.stdout, /fix sequence/);
-    assert.match(r.stdout, /clued-merge-reconcile-source-build\.mjs[\s\S]*clued_components\.py update[\s\S]*generate-agent-contract\.mjs[\s\S]*check-pinned-registries\.mjs/);
-
-    r = cli(dir, '--base', 'HEAD', '--only', 'components'); assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, /STALE\s+components/);
-    // Remediation text may mention its dependencies; --only must still run/report only the component check.
-    assert.doesNotMatch(r.stdout, /^\s*(?:ok|STALE|UNCHECKED)\s+(?:r9|reconcile)\b/m);
-    assert.match(r.stdout, /1 registry is stale/);
+    assert.match(r.stdout, /clued-merge-reconcile-source-build\.mjs[\s\S]*generate-agent-contract\.mjs[\s\S]*check-pinned-registries\.mjs/);
+    assert.doesNotMatch(r.stdout, /clued_components\.py update/);
 
     // The printed commands, in the printed order. The reconcile build script needs yaml, which is not
     // installed everywhere; its effect on the registry is applied directly.
@@ -138,26 +135,8 @@ test('changing a pinned file names the stale registries and the commands that fi
     assert.equal(fix.status, 0, fix.stdout + fix.stderr);
     r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 1); assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /STALE\s+reconcile/);
+    // One regeneration settles it: the reconcile registry no longer chases a component digest.
     refreshReconcile(dir);
-    // The reconcile registry is itself a file of the script.merge-reconciliation component, so the registries
-    // chase each other: regenerating it makes the component digest stale, and the check says so.
-    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
-    assert.equal(r.status, 1, r.stdout); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /STALE\s+components/);
-    // The full chain the check prints: bump (the bump edits the version marker, a locked file), regenerate the
-    // reconcile registry, update the digests, then check again.
-    const py = (...args) => { const x = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['scripts/clued_components.py', ...args], { cwd: dir, encoding: 'utf8' }); assert.equal(x.status, 0, x.stdout + x.stderr); };
-    py('bump', 'script.independent-native-publication', '99.0.0');
-    py('bump', 'script.merge-reconciliation', '99.0.0');
-    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
-    assert.equal(r.status, 1); assert.match(r.stdout, /STALE\s+reconcile/);
-    refreshReconcile(dir);
-    py('update');
-    const gen = spawnSync(process.execPath, ['apps/clued-cloud/scripts/generate-agent-contract.mjs'], { cwd: dir, encoding: 'utf8' });
-    assert.equal(gen.status, 0, gen.stdout + gen.stderr);
-    // A service with explicit Worker coverage also covers the generated version
-    // map. Refresh its raw digest after generation, just as the automatic
-    // integration builder's fixed-point pass does; no extra version is needed.
-    py('update');
     r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
   } finally { /* the shared copy is reset by the next test */ }
@@ -175,18 +154,21 @@ test('a new or removed file under a locked directory makes the reconcile registr
   } finally { /* the shared copy is reset by the next test */ }
 });
 
-test('a stale component manifest is reported with its bump and update commands', () => {
+test('a stale component manifest is reported with the integration command; a stored digest is refused', () => {
   const dir = registeredCopy();
   try {
     const file = path.join(dir, 'config/clued-components.json'), manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const withDigest = manifest.components.find((c) => c.content_sha256);
-    assert.ok(withDigest, 'the manifest has a component with a digest');
-    withDigest.content_sha256 = '0'.repeat(64);
+    assert.ok(manifest.components.every((c) => !('content_sha256' in c)), 'no component stores a digest');
+    manifest.components[0].content_sha256 = '0'.repeat(64);
     fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n');
-    const r = cli(dir, '--base', 'HEAD', '--only', 'components');
+    let r = cli(dir, '--base', 'HEAD', '--only', 'components');
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE\s+components\s+\(config\/clued-components\.json\)/);
-    assert.match(r.stdout, /component-version-integration\.py/); assert.match(r.stdout, /clued_components\.py update/);
+    assert.match(r.stdout, /stores content_sha256/);
+    assert.match(r.stdout, /component-version-integration\.py/); assert.doesNotMatch(r.stdout, /clued_components\.py update/);
+    // --only must still run/report only the component check.
+    assert.doesNotMatch(r.stdout, /^\s*(?:ok|STALE|UNCHECKED)\s+(?:r9|reconcile)\b/m);
+    assert.match(r.stdout, /1 registry is stale/);
   } finally { /* the shared copy is reset by the next test */ }
 });
 
