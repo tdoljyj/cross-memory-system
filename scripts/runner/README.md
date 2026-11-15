@@ -18,6 +18,31 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### Lost-run dispatch successor (Task 7067280f)
+
+`required-tests-dispatch-v1` / component `1.0.3` keeps every rule of
+`work-handover-native-admission-retry-v1` and adds `clued-required-tests.yml`
+to the branch-dispatch list. When GitHub creates no run of that workflow for a
+pull request head (a0122fd9, 2026-11-09), the on-duty node's companion asks
+once for "Run workflow" on the pull request's branch (resident DESIGN §56.5a).
+The hook starts that dispatch's jobs only while the branch's workflow files are
+the default branch's and never as a re-run, as for the other dispatch-gated
+workflows. The workflow's `admission-gate` then admits it only as the first run
+of the exact head of one open pull request into `main`, under that pull
+request's Native admission (`scripts/ci/clued-work-admission.mjs#lostRunPullRequest`).
+A runner still on 1.0.2 refuses the dispatch at "Set up runner" (fail closed):
+the lost run is then only reported, as before.
+
+Rollout, the same for every runner (there is no per-runner variant and no
+script that reaches into the runners; nothing in the repository installs the
+hook): after the merge, on each registered runner keep the installed
+`clued-runner-job-started.mjs` as `.prev`, copy this merged file over it
+(Linux `/opt/clued-runner-hook/`, Windows `C:\ProgramData\CluedRunnerHook\`),
+leave wrappers, key and settings alone, and confirm
+`[hook required-tests-dispatch-v1]` in a "Set up runner" log of each runner.
+On 2026-11-15 the four company Linux runners (the only ones that take
+`clued-required-tests.yml` jobs) logged `[hook work-handover-native-admission-retry-v1]`.
+
 ### Transient-read successor candidate (Task 5cee3629)
 
 `work-handover-native-admission-retry-v1` / component `1.0.2` keeps every rule

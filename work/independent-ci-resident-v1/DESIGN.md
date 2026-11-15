@@ -4482,11 +4482,11 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 读失败、列表截断、head 变了、年龄不知道，都算“未知”，不动作，2 分钟后再读。
   - 先写 `intent` 回执再发请求；每个 head 一辈子只发一次，不论结果。
 - **告知。** PR 页面基础文字前加一句：已补发写“必需测试没有运行，已自动补发一次”，被拒或没发出写“……自动补发未成功”，结果不明写“……自动补发结果不确定”。同时给 Owner 弹一次通知。
-- **还缺的受保护改动（要 Grant）**：
-  - `clued-required-tests.yml`：加 `workflow_dispatch`，各 job 的 `if:` 认这种事件；
-  - `scripts/ci/clued-work-admission.mjs`：dispatch 也走 Native 准入，并绑定这个分支唯一开着的 PR；
-  - `scripts/runner/clued-runner-job-started.mjs`：把它列进 `DISPATCH_GATED_WORKFLOWS`，各 runner 重装 hook。
-  - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
+- **受保护的另一半（claude/required-dispatch，要 Grant）**：
+  - `clued-required-tests.yml`：加无输入的 `workflow_dispatch`；三个重作业的 `if:`/名字认 `workflow_dispatch`（分支 ref、Owner 账号），trusted 检出换成默认分支；
+  - `scripts/ci/clued-work-admission.mjs#lostRunPullRequest`：这种 dispatch 只在“分支恰好是一个开着的本仓库→main PR、提交就是它的 head、它是这个 head 的第一个运行”时，按这个 PR 走 Native 准入（同 `pull_request` 运行）；其他 ref、已有运行、head 变了一律 REJECTED；dispatch 之后才来的 `pull_request` 运行也 REJECTED（同一提交只真跑一次）；
+  - `scripts/runner/clued-runner-job-started.mjs`（`required-tests-dispatch-v1`，组件 1.0.3）：列进 `DISPATCH_GATED_WORKFLOWS`，只在分支的 workflow 与 main 相同时放行，不许重跑；合入后每台 runner 照 `scripts/runner/README.md` 换文件，并在任务启动日志确认版本。
+  - 合入且 runner 换好之前，丢事件只会被发现、留痕和告知（旧 hook 在 Set up runner 拒绝，fail closed）。
 - **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
 
 ### 56.6 策略、Source 与安装

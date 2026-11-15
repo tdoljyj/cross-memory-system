@@ -3749,3 +3749,97 @@ test('G4 all-jobs repair requires a current Native admission and every prior hea
   assert.equal((await repairGate([oldHead], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
   assert.equal((await repairGate([make(1)], { envOverrides, checks: [nativeCheck({ conclusion: 'failure' })] })).outcome.verdict, 'REJECTED');
 });
+
+// --- Lost-run dispatch of clued-required-tests.yml (Task 7067280f, resident DESIGN §56.5a): GitHub created no run for a
+// pull request head; the on-duty node asks once for "Run workflow" on the pull request's branch. The gate judges it as
+// that pull request's run (Native admission bound to it), and only as the head's first run.
+const LOST_BRANCH = "claude/x";
+const LOST_REQUIRED_RUNS = "GET https://api.test/repos/o/r/actions/workflows/clued-required-tests.yml/runs";
+const lostPr = (overrides = {}) => ({ number: 452, state: "open",
+  head: { sha: HEAD, ref: LOST_BRANCH, repo: { full_name: "o/r" } },
+  base: { sha: BASE, ref: "main", repo: { full_name: "o/r", default_branch: "main" } }, ...overrides });
+const lostRun = (id, eventName) => ({ id, event: eventName, head_sha: HEAD, status: "queued" });
+async function lostRunGate({ pulls = [lostPr()], runs = [lostRun(9001, "workflow_dispatch")], checks = [nativeCheck()],
+  ref = `refs/heads/${LOST_BRANCH}`, sha = HEAD, eventName = "workflow_dispatch", attempt = "1" } = {}) {
+  const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [CHECKS]: { body: { check_runs: checks } },
+    [OPEN_PULLS]: { body: pulls }, [LOST_REQUIRED_RUNS]: { body: { total_count: runs.length, workflow_runs: runs } } });
+  const dispatched = eventName === "workflow_dispatch";
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ATTEMPT: attempt,
+    GITHUB_WORKFLOW_REF: `o/r/.github/workflows/clued-required-tests.yml@${dispatched ? ref : "refs/pull/452/merge"}`,
+    GITHUB_REF: dispatched ? ref : "refs/pull/452/merge", GITHUB_SHA: sha }),
+    event: dispatched ? { repository: { default_branch: "main" }, inputs: {} } : independentEvent(),
+    eventName, fetchImpl, sleep: async () => {} });
+  return { outcome, calls };
+}
+
+test("lost-run dispatch: the first run of an open pull request's exact head is admitted under that pull request's Native admission", async () => {
+  assert.equal(admissionModule.LOST_RUN_DISPATCH_WORKFLOW, "clued-required-tests.yml");
+  const { outcome, calls } = await lostRunGate();
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source, outcome.pr_ref, outcome.head_sha, outcome.reasons],
+    [true, "ADMITTED", INDEPENDENT_GATE_SOURCE, "o/r#452", HEAD, []]);
+  assert.deepEqual(outcome.lost_run_dispatch, { pr: 452, branch: LOST_BRANCH });
+  // The pull request is found from the dispatched branch, never from an input.
+  assert.ok(calls.some((call) => call.url.startsWith("https://api.test/repos/o/r/pulls?state=open&head=o%3Aclaude%2Fx&base=main")));
+  assert.ok(calls.some((call) => call.url.includes("/check-runs?check_name=kooyumi-work-admission&filter=all")));
+  assert.ok(calls.every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
+  // The Native admission must bind this very pull request and succeed.
+  const other = (await lostRunGate({ checks: [nativeCheck({ output: { title: "t", summary: "Independent Native control check for o/r#453." } })] })).outcome;
+  assert.deepEqual([other.admitted, other.verdict], [false, "REJECTED"]);
+  assert.match(other.reasons[0], /does not bind this pull request/);
+  const failed = (await lostRunGate({ checks: [nativeCheck({ conclusion: "failure" })] })).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
+});
+
+test("lost-run dispatch: a head that already has a run is refused, and a late pull_request run after the dispatch is refused", async () => {
+  for (const earlier of ["pull_request", "workflow_dispatch", "push"]) {
+    const { outcome, calls } = await lostRunGate({ runs: [lostRun(8000, earlier), lostRun(9001, "workflow_dispatch")] });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], earlier);
+    assert.match(outcome.reasons[0], new RegExp(`^dispatch_head_already_has_run:8000 \\(${earlier}\\)`));
+    assert.ok(!calls.some((call) => call.url.includes("/check-runs?")), "refused before any admission read");
+  }
+  // A later run (higher id) does not take the head away from the first one.
+  assert.equal((await lostRunGate({ runs: [lostRun(9001, "workflow_dispatch"), lostRun(9500, "pull_request")] })).outcome.admitted, true);
+  // The pull_request run GitHub created after the dispatch runs nothing; one before it, or none, is unaffected.
+  const late = (await lostRunGate({ eventName: "pull_request", runs: [lostRun(8000, "workflow_dispatch"), lostRun(9001, "pull_request")] })).outcome;
+  assert.deepEqual([late.admitted, late.verdict], [false, "REJECTED"]);
+  assert.match(late.reasons[0], /^head_already_dispatched:8000/);
+  const first = (await lostRunGate({ eventName: "pull_request", runs: [lostRun(9001, "pull_request"), lostRun(9500, "workflow_dispatch")] })).outcome;
+  assert.deepEqual([first.admitted, first.verdict], [true, "ADMITTED"]);
+});
+
+test("lost-run dispatch: a ref that is not an open pull request's head is refused", async () => {
+  const refused = async (options, pattern) => {
+    const { outcome } = await lostRunGate(options);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], JSON.stringify(options));
+    assert.match(outcome.reasons[0], pattern);
+  };
+  await refused({ pulls: [] }, /^dispatch_not_a_pull_request_head:0 open pull requests into main from claude\/x/);
+  await refused({ ref: "refs/heads/main" }, /^dispatch_not_a_pull_request_branch:refs\/heads\/main/);
+  await refused({ ref: "refs/tags/v1" }, /^dispatch_not_a_pull_request_branch:refs\/tags\/v1/);
+  await refused({ sha: "d".repeat(40) }, /^dispatch_not_the_pull_request_head:#452 is on a{40}, the dispatch on d{40}/);
+  await refused({ pulls: [lostPr({ head: { sha: HEAD, ref: LOST_BRANCH, repo: { full_name: "fork/r" } } })] }, /^dispatch_not_a_pull_request_head:0/);
+  await refused({ pulls: [lostPr({ base: { sha: BASE, ref: "release", repo: { full_name: "o/r" } } })] }, /^dispatch_not_a_pull_request_head:0/);
+  await refused({ pulls: [lostPr(), lostPr({ number: 453 })] }, /^dispatch_not_a_pull_request_head:2/);
+  // Any other dispatchable workflow keeps its own rules (here: not dispatch-gated, so not an admission subject).
+  const { fetchImpl } = fakeFetch({});
+  const plain = await gate({ env: env({ GITHUB_WORKFLOW_REF: "o/r/.github/workflows/other.yml@refs/heads/claude/x", GITHUB_REF: "refs/heads/claude/x" }),
+    event: { repository: { default_branch: "main" } }, eventName: "workflow_dispatch", fetchImpl });
+  assert.equal(plain.verdict, "NOT_APPLICABLE");
+});
+
+test("lost-run dispatch: the workflow accepts workflow_dispatch only behind the registered gate, with main's selection as trusted", () => {
+  const text = fs.readFileSync(path.join(ROOT, ".github/workflows/clued-required-tests.yml"), "utf8");
+  assert.match(text, /\non:\n  pull_request:\n  push:\n    branches: \[main\]\n  workflow_dispatch:\n\n/, "no inputs: the branch alone locates the pull request");
+  assert.deepEqual(gateFindings(text, text), []);
+  const jobs = admissionModule.workflowJobs(text);
+  const gateJob = jobs.find((job) => job.name === "admission-gate");
+  assert.equal(admissionModule.sha256Hex(gateJob.lines.join("\n")), "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2", "the gate job is unchanged");
+  const dispatchClause = "(github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.actor == github.repository_owner)";
+  for (const name of ["clued-cloud-tests", "ci-suites", "migration-verify"]) {
+    const job = jobs.find((entry) => entry.name === name).lines.join("\n");
+    const flat = job.replace(/\s+/g, " ");
+    assert.ok(flat.includes(` || ${dispatchClause}) && '${name}' || '${name}-skipped' }}`), `${name}: the check's name only for an admitted dispatch`);
+    assert.ok(flat.includes(`if: >- needs.admission-gate.outputs.admitted == 'true' && (`) && flat.includes(` || ${dispatchClause}) runs-on:`), `${name}: if`);
+    assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| \(github\.event_name == 'workflow_dispatch' && github\.event\.repository\.default_branch\) \|\| github\.sha \}\}\n {10}path: trusted\n/, name);
+  }
+});

@@ -2961,6 +2961,63 @@ async function currentHeadOf(fetchImpl, env, pr) {
   return null;
 }
 
+// Lost run (Task 7067280f, PLAN 1a; resident DESIGN §56.5a). GitHub sometimes
+// creates no clued-required-tests run for a pushed pull request head (a0122fd9,
+// 2026-11-09: no GitHub Actions check suite either). The on-duty node's
+// companion then asks once for "Run workflow" of that workflow on the pull
+// request's branch, with no inputs. Such a run is judged as a run of that pull
+// request, never as a hand dispatch of a ref:
+//   - it is a dispatch of clued-required-tests.yml on a branch (refs/heads/,
+//     not the default branch) whose commit (GITHUB_SHA) is the head of exactly
+//     one open pull request of this repository into the default branch from
+//     the same branch; any other ref, a tag or a moved head is REJECTED;
+//   - it is the first run of the workflow on that commit, of any event (the
+//     lowest run id). A pull_request run of the same head that comes later is
+//     in turn REJECTED when an earlier dispatch run exists, so one commit's
+//     required tests run once, whichever of the two GitHub created first;
+//   - the pull request then goes through the same Native admission as its
+//     pull_request run (App 5368905's kooyumi-work-admission check bound to
+//     that pull request and head, the execution epoch, the re-run rules).
+// The runners' job-started hook lists the workflow among its dispatch-gated
+// workflows, so it starts only while the branch's workflow files are main's
+// and is never re-run. Anyone may press "Run workflow": it runs nothing unless
+// all of the above hold.
+export const LOST_RUN_DISPATCH_WORKFLOW = "clued-required-tests.yml";
+
+async function runsOfHead(fetchImpl, env, headSha) {
+  const route = `/repos/${env.GITHUB_REPOSITORY}/actions/workflows/${LOST_RUN_DISPATCH_WORKFLOW}/runs?head_sha=${headSha}`;
+  const runs = await githubPaged(fetchImpl, env, route, "workflow_runs");
+  if (!Array.isArray(runs) || runs.some((run) => !run || !/^[0-9]{1,20}$/.test(String(run.id ?? ""))))
+    throw new Error(`GitHub API ${route} returned an unreadable run list`);
+  return runs.filter((run) => run.head_sha === undefined || run.head_sha === headSha);
+}
+
+// -> the pull request the dispatch stands for, or { refused: reason }.
+export async function lostRunPullRequest({ env, event, fetchImpl }) {
+  const repository = String(env.GITHUB_REPOSITORY ?? "");
+  const defaultBranch = (event && event.repository && event.repository.default_branch) || "main";
+  const ref = /^refs\/heads\/(.+)$/.exec(String(env.GITHUB_REF ?? ""));
+  const branch = ref ? ref[1] : null;
+  const sha = String(env.GITHUB_SHA ?? "").toLowerCase();
+  if (!branch || !GIT_REF.test(branch) || branch.includes("..") || branch === defaultBranch)
+    return { refused: `dispatch_not_a_pull_request_branch:${String(env.GITHUB_REF ?? "").slice(0, 200)}` };
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("GITHUB_SHA is not a commit SHA.");
+  const owner = repository.split("/")[0];
+  const listed = await githubPaged(fetchImpl, env,
+    `/repos/${repository}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&base=${encodeURIComponent(defaultBranch)}`, null);
+  const open = (Array.isArray(listed) ? listed : []).filter((pr) => pr && pr.state === "open" && Number.isSafeInteger(pr.number) && pr.number > 0 &&
+    pr.head && pr.head.ref === branch && pr.head.repo && pr.head.repo.full_name === repository &&
+    pr.base && pr.base.ref === defaultBranch && pr.base.repo && pr.base.repo.full_name === repository);
+  if (open.length !== 1) return { refused: `dispatch_not_a_pull_request_head:${open.length} open pull requests into ${defaultBranch} from ${branch}` };
+  const pr = open[0];
+  if (pr.head.sha !== sha) return { refused: `dispatch_not_the_pull_request_head:#${pr.number} is on ${pr.head.sha}, the dispatch on ${sha}` };
+  const self = Number(env.GITHUB_RUN_ID);
+  const earlier = (await runsOfHead(fetchImpl, env, sha)).filter((run) => Number(run.id) < self);
+  if (earlier.length > 0)
+    return { refused: `dispatch_head_already_has_run:${earlier.map((run) => `${run.id} (${run.event})`).join(", ")}; one commit's required tests run once` };
+  return { pr: { ...pr, base: { ...pr.base, repo: { ...pr.base.repo, default_branch: pr.base.repo.default_branch ?? defaultBranch } } } };
+}
+
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v1'){
     const {consumeIndependentGate}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
@@ -2976,14 +3033,26 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   const outcome = emptyOutcome(eventName);
   const retryBudget = { spentMs: 0 };
   fetchImpl = withGithubReadRetry(fetchImpl, env, { sleep, budget: retryBudget });
-  if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
-  if (!PR_EVENTS.has(eventName)) {
+  const lostRunWorkflow = workflowFileOf(env) === LOST_RUN_DISPATCH_WORKFLOW;
+  let pr = event && event.pull_request;
+  if (eventName === "workflow_dispatch") {
+    if (!lostRunWorkflow) return dispatchGate({ env, event, fetchImpl, now, outcome });
+    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+    const lost = await lostRunPullRequest({ env, event, fetchImpl });
+    outcome.head_sha = env.GITHUB_SHA ?? null;
+    if (lost.refused) {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(lost.refused);
+      return outcome;
+    }
+    pr = lost.pr;
+    outcome.lost_run_dispatch = { pr: pr.number, branch: pr.head.ref };
+  } else if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
     outcome.reasons = [`event ${eventName} is not an admission subject`];
     return outcome;
   }
-  const pr = event && event.pull_request;
   if (!pr || !pr.head || !pr.base) throw new Error("pull_request payload is missing head/base.");
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
@@ -3015,6 +3084,16 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     }
     if (!/^[0-9]{1,20}$/.test(String(env.GITHUB_RUN_ID ?? ""))) throw new Error("GITHUB_RUN_ID is not set.");
     const self = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`);
+    if (lostRunWorkflow && eventName !== "workflow_dispatch") {
+      // The lost-run dispatch above came first: this late run of the head runs nothing.
+      const dispatched = (await runsOfHead(fetchImpl, env, pr.head.sha))
+        .filter((run) => run.event === "workflow_dispatch" && Number(run.id) < Number(env.GITHUB_RUN_ID));
+      if (dispatched.length > 0) {
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`head_already_dispatched:${dispatched.map((run) => run.id).join(", ")}; one commit's required tests run once`);
+        throw Object.assign(new Error("refused"), { refused: true });
+      }
+    }
     const since = Date.parse(self && self.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };

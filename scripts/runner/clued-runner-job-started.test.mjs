@@ -3,7 +3,7 @@ import { createVerify, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 
-import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
+import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, LOST_RUN_DISPATCH_WORKFLOW, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
 import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, OBSERVATION_ATTEMPT_MS, READ_ALLOWANCE_MS, READ_ATTEMPTS, READ_ATTEMPT_MS, READ_RETRY_DELAYS_MS, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, retryingFetch, shortCheckFindings, waitLimitSeconds, workflowPathOf } from "./clued-runner-job-started.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
@@ -343,7 +343,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-native-admission-retry-v1");
+  assert.equal(HOOK_VERSION, "required-tests-dispatch-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -770,7 +770,11 @@ test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be 
   // clued-standard-runner-actor-qualification.yml is admitted by the admission script but runs on main only (both qualification jobs require github.ref == refs/heads/main),
   // so the hook must keep refusing its dispatch on any other branch: it is the one deliberate difference.
   const MAIN_ONLY_ADMITTED = ["clued-standard-runner-actor-qualification.yml"];
-  assert.deepEqual(DISPATCH_GATED_WORKFLOWS, ADMISSION_DISPATCH_GATED.filter((file) => !MAIN_ONLY_ADMITTED.includes(file)), "the admission script's list without the main-only workflows");
+  // Task 7067280f: clued-required-tests.yml is dispatched on a pull request branch only for a lost run; its gate judges that
+  // dispatch as a run of the pull request (LOST_RUN_DISPATCH_WORKFLOW), not through the two-step claim dispatch.
+  assert.deepEqual(DISPATCH_GATED_WORKFLOWS, [...ADMISSION_DISPATCH_GATED.filter((file) => !MAIN_ONLY_ADMITTED.includes(file)), LOST_RUN_DISPATCH_WORKFLOW],
+    "the admission script's list without the main-only workflows, plus the lost-run dispatch");
+  assert.equal(LOST_RUN_DISPATCH_WORKFLOW, "clued-required-tests.yml");
   for (const file of DISPATCH_GATED_WORKFLOWS) {
     const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x",
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/feature/x` };
@@ -796,6 +800,25 @@ test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be 
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/main` }, {});
     assert.equal(onMain.result.allow, true, `${file} on main`);
   }
+});
+
+test("runner hook (Task 7067280f): a lost-run dispatch of clued-required-tests.yml on a pull request branch is dispatch-gated", async () => {
+  const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/claude/x",
+    GITHUB_WORKFLOW_REF: "o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/x" };
+  const same = { "clued-required-tests.yml": "1".repeat(40), "trivy.yml": "2".repeat(40) };
+  const identical = { [`${LIST}${SHA}`]: listing(same), [`${LIST}main`]: listing(same) };
+  // Starts while the branch's workflows are main's: its admission-gate then judges it as the pull request's run.
+  const started = await run(dispatch, identical);
+  assert.equal(started.result.allow, true, started.result.reason);
+  assert.equal(started.result.reason, "dispatch on refs/heads/claude/x, workflows identical to main");
+  // A branch that changes (or lags) a workflow file is refused: the dispatched YAML would not be main's.
+  const changed = await run(dispatch, { ...identical, [`${LIST}${SHA}`]: listing({ ...same, "clued-required-tests.yml": "9".repeat(40) }) });
+  assert.equal(changed.result.allow, false);
+  assert.match(changed.result.reason, /workflows differ from main/);
+  // Never re-run.
+  const rerun = await run({ ...dispatch, GITHUB_RUN_ATTEMPT: "2" }, { ...identical, [RUN]: thisRun({ run_attempt: 2 }) });
+  assert.equal(rerun.result.allow, false);
+  assert.match(rerun.result.reason, /re-runs are refused/);
 });
 
 test("runner hook (Decision d8bc893c): with its read-only App configured, the hook calls GitHub as that App", async () => {
@@ -883,13 +906,15 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // The numeric registry binds the immutable source, so the primary copy must match every raw byte.
 test("primary runner matches the exact immutable numeric successor candidate; equality is not deployment acceptance", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.2");
+  assert.equal(COMPONENT_VERSION, "1.0.3");
   const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
-  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs", import.meta.url));
+  const source = fs.readFileSync(new URL("./clued-runner-job-started.required-tests-dispatch-v1.mjs", import.meta.url));
   assert.deepEqual(primary, source);
-  // the predecessor stays, byte for byte, for rollback and its own qualifier pin
-  const previous = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
-  assert.match(previous.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.1";/);
+  // the predecessors stay, byte for byte, for rollback and their own qualifier pins
+  const previous = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs", import.meta.url));
+  assert.match(previous.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.2";/);
+  const older = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
+  assert.match(older.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.1";/);
 });
 
 // ---- Transient reads (work-handover-native-admission-retry-v1, component 1.0.2; Task 5cee3629) ----

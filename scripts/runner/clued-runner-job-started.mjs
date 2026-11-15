@@ -100,6 +100,15 @@
 // READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
 // read, never at a time taken before the retries. Fail closed is unchanged:
 // nothing is admitted on a failure.
+//
+// Lost-run dispatch (required-tests-dispatch-v1, component 1.0.3; Task
+// 7067280f, resident CI DESIGN 56.5a): clued-required-tests.yml joins the
+// dispatch-gated workflows, so the on-duty node's "Run workflow" on a pull
+// request branch, for a head GitHub created no run for, may start: only while
+// the branch's workflow files are main's, never as a re-run. Its admission-gate
+// admits it only as the first run of one open pull request's exact head under
+// that pull request's Native admission
+// (scripts/ci/clued-work-admission.mjs#lostRunPullRequest).
 
 import { createSign,createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -107,8 +116,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-native-admission-retry-v1";
-export const COMPONENT_VERSION = "1.0.2";
+export const HOOK_VERSION = "required-tests-dispatch-v1";
+export const COMPONENT_VERSION = "1.0.3";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -193,9 +202,10 @@ export function proxyBootstrapArguments({ env = process.env, execArgv = process.
   return [...execArgv, "--use-env-proxy", ...argv.slice(1)];
 }
 
-// The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
-// (this file is installed alone, so it keeps its own copy; a test compares them).
-export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"];
+// The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs,
+// plus its LOST_RUN_DISPATCH_WORKFLOW (this file is installed alone, so it keeps
+// its own copy; a test compares them).
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml", "clued-required-tests.yml"];
 const MAIN_EVENTS = new Set(["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]);
 
 export function workflowPathOf(env) {

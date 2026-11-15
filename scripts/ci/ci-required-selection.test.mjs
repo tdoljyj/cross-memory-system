@@ -648,8 +648,11 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   assert.ok(!existsSync(path.join(ROOT, 'work', 'ci-required-tests-v1', 'clued-required-tests-windows.candidate.yml')), 'one copy: the workflow');
   const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
   const between = (source, from, to) => source.slice(source.indexOf(from), source.indexOf(to));
-  assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'), between(live, 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
-    'the triggers, permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');
+  // Only the Linux workflow takes the lost-run dispatch (Task 7067280f): its gate admits that dispatch for clued-required-tests.yml alone.
+  assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'),
+    between(live.replace('\n  workflow_dispatch:\n', '\n'), 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
+    'the triggers (but the lost-run dispatch), permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');
+  assert.doesNotMatch(text, /workflow_dispatch/);
   const job = text.slice(text.indexOf('  ci-suites-windows:\n'));
   assert.match(job, /&& 'ci-suites-windows' \|\| 'ci-suites-windows-skipped' \}\}\n {4}needs: admission-gate\n/);
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
