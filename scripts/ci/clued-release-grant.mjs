@@ -22,6 +22,12 @@
 // Task 23045c17). A database without `with` refuses the input; the run then
 // asks again without it.
 //
+// The release mode (PLAN 3a) runs the migrations and the deploy of one commit
+// in one run, so it uses that one approval once: the grant for the named
+// migrations (asking for the deploy with it, as migrate does), then the grant
+// for the deploy; without migrations, only the deploy's. It stops at the first
+// grant that is not there, so a missing approval opens one link for both.
+//
 // Enforcement is the Owner's switch, the repository variable
 // CLUED_RELEASE_GRANT_ENFORCE=true (Owner choice 2026-10-03). Until it is on,
 // the result is reported and the run continues. Once on, a missing grant, a
@@ -135,6 +141,21 @@ export function admitted(result) {
   return result.consumed || !result.enforced;
 }
 
+export async function checkRelease({ env, fetchImpl, workspace }) {
+  const modes = String(env.MIGRATIONS ?? "").trim() ? ["migrate", "deploy"] : ["deploy"];
+  const results = [];
+  for (const mode of modes) {
+    const result = await checkGrant({ env, mode, fetchImpl, workspace });
+    results.push(result);
+    if (!result.consumed) break;
+  }
+  return results;
+}
+
+export function releaseAdmitted(results) {
+  return results.length > 0 && results.every(admitted);
+}
+
 export function renderSummary(result) {
   const lines = [`## Owner Grant for ${result.mode}`, ""];
   lines.push(`- Action: \`${result.action ?? "n/a"}\``, `- Resource: \`${result.resource ?? "n/a"}\``);
@@ -154,20 +175,31 @@ export function renderSummary(result) {
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "";
-  if (!ACTIONS[mode]) {
-    console.error("usage: clued-release-grant.mjs --mode deploy|migrate");
+  if (!ACTIONS[mode] && mode !== "release") {
+    console.error("usage: clued-release-grant.mjs --mode deploy|migrate|release");
     return 2;
   }
-  const result = await checkGrant({ env, mode, fetchImpl, workspace: env.GITHUB_WORKSPACE });
-  console.log(JSON.stringify(result, null, 2));
-  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
-  const text = result.error ?? result.reason ?? "";
-  if (admitted(result)) {
-    if (!result.consumed) console.error(`::warning title=Owner Grant (not enforced)::${text}${result.confirm_url ? ` Approve: ${result.confirm_url}` : ""}`);
-    return 0;
+  const workspace = env.GITHUB_WORKSPACE;
+  const results = mode === "release" ? await checkRelease({ env, fetchImpl, workspace })
+    : [await checkGrant({ env, mode, fetchImpl, workspace })];
+  console.log(JSON.stringify(mode === "release" ? results : results[0], null, 2));
+  if (env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(env.GITHUB_STEP_SUMMARY, (mode === "release" ? `## Owner Grant for release
+
+` : "") + results.map(renderSummary).join(""));
   }
-  console.error(`::error title=Owner Grant required::${text}${result.confirm_url ? ` Approve: ${result.confirm_url}` : ""}`);
-  return 1;
+  let ok = true;
+  for (const result of results) {
+    const text = result.error ?? result.reason ?? "";
+    const link = result.confirm_url ? ` Approve: ${result.confirm_url}` : "";
+    if (admitted(result)) {
+      if (!result.consumed) console.error(`::warning title=Owner Grant (not enforced)::${text}${link}`);
+    } else {
+      console.error(`::error title=Owner Grant required::${text}${link}`);
+      ok = false;
+    }
+  }
+  return ok ? 0 : 1;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

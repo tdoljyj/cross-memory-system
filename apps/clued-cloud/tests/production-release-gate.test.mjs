@@ -251,7 +251,7 @@ test('production backup mode encrypts and verifies the dump before removing plai
   const backup = productionWorkflow.split(/\n      - name: /)
     .find((step) => step.startsWith('Create and verify encrypted pre-migration backup\n'));
   const publisher = await readFile(new URL('../scripts/verify-production-backup-scope.mjs', import.meta.url), 'utf8');
-  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
+  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
   assert.match(backup, /secrets\.CLUED_PRODUCTION_BACKUP_KEY/);
   assert.match(backup, /--user \"\$\(id -u\):\$\(id -g\)\"/);
   assert.match(backup, /searchParams\.delete\(\"uselibpqcompat\"\)/);
@@ -298,7 +298,7 @@ test('production release deploys the PDF extractor Worker first and verifies the
   assert.match(steps[extractor], /CLOUDFLARE_ACCOUNT_ID: \$\{\{ vars\.CLUED_CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(steps[extractor], /\n        run: npx wrangler deploy --config wrangler\.pdf-extractor\.jsonc\n?$/);
   assert.match(steps[main], /npx wrangler deploy --config wrangler\.production\.jsonc --keep-vars/);
-  assert.match(steps[verify], /\n        if: \$\{\{ inputs\.mode == 'deploy' \}\}\n/);
+  assert.match(steps[verify], /\n        if: \$\{\{ inputs\.mode == 'deploy' \|\| inputs\.mode == 'release' \}\}\n/);
   assert.match(steps[verify], /node scripts\/verify-pdf-extractor\.mjs --evidence-out \.sites-runtime\/release-evidence\/pdf-extractor\.json/);
   assert.match(productionWorkflow, /release-evidence\/pdf-extractor\.json\n/);
   const buildScript = await readFile(new URL('../scripts/build-verified.sh', import.meta.url), 'utf8');
@@ -342,8 +342,9 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   const deploySteps = steps.filter((step) =>
     /wrangler deploy|CLUED_CLOUDFLARE_DEPLOY_TOKEN/.test(step));
   assert.ok(deploySteps.length > 0);
+  // Only deploy and release deploy (release: one run from preflight to verification).
   for (const step of deploySteps) {
-    assert.match(step, /\n        if: \$\{\{ inputs\.mode == 'deploy' \}\}\n/, step.split('\n')[0]);
+    assert.match(step, /\n        if: \$\{\{ (failure\(\) && \()?inputs\.mode == 'deploy' \|\| inputs\.mode == 'release'(\) && steps\.worker_versions\.outcome == 'success')? \}\}\n/, step.split('\n')[0]);
   }
 
   const validate = steps.find((step) => step.startsWith('name: Validate exclusive release mode'));
@@ -365,6 +366,14 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   for (const mode of ['preflight', 'backup', 'deploy']) {
     assert.notEqual(run({ RELEASE_MODE: mode, MIGRATIONS: 'x.sql' }), 0, mode);
   }
+  // release takes migration file names or none, and never a source request.
+  assert.equal(run({ RELEASE_MODE: 'release' }), 0);
+  assert.equal(run({ RELEASE_MODE: 'release', MIGRATIONS: '20261003170000_owner_grants_release_door.sql' }), 0);
+  assert.equal(run({ RELEASE_MODE: 'release', MIGRATIONS: '20261003170000_a.sql, 20261003180000_b.sql' }), 0);
+  for (const migrations of ['x.sql', ' ', '20261003170000_a.sql,', '20261003170000_a.sql;id', '../20261003170000_a.sql']) {
+    assert.notEqual(run({ RELEASE_MODE: 'release', MIGRATIONS: migrations }), 0, JSON.stringify(migrations));
+  }
+  assert.notEqual(run({ RELEASE_MODE: 'release', SOURCE_REQUEST_ID: 'r' }), 0);
 });
 
 test('deploy and migrate consume an Owner Grant before they change production', () => {
@@ -374,8 +383,9 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   const migrateGrant = names.indexOf('name: Consume the Owner Grant for the named migrations');
   const deployGrant = names.indexOf('name: Consume the Owner Grant for this commit');
   assert.ok(migrateGrant > 0 && deployGrant > 0);
-  assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \}\}/);
-  assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \}\}/);
+  // A release uses one of the two: with migrations the first, else the second.
+  assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
+  assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \|\| \(inputs\.mode == 'release' && inputs\.migrations == ''\) \}\}/);
   for (const grant of [migrateGrant, deployGrant]) {
     assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
     assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
@@ -479,7 +489,7 @@ const releaseSteps = productionWorkflow.split(/\n      - /).slice(1).map((text) 
   text,
   name: /(?:^|\n {8})name: (.+)\n/.exec(text)?.[1] ?? text.split('\n')[0],
   id: /(?:^|\n {8})id: (\S+)\n/.exec(text)?.[1] ?? null,
-  condition: /(?:^|\n {8})if: \$\{\{ (.+?) \}\}\n/.exec(text)?.[1] ?? null,
+  condition: ((match) => match?.[1] ?? match?.[2] ?? null)(/(?:^|\n {8})if: (?:\$\{\{ (.+?) \}\}|(.+))\n/.exec(text)),
 }));
 
 function evaluateCondition(source, context) {

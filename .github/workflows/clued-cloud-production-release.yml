@@ -10,6 +10,9 @@ on:
           the encrypted pre-migration backup, source-capture captures one reviewed storage
           client source, migrate applies the named migration files. deploy publishes the
           PDF, main application and Kooyumi Connect Workers as one controlled release.
+          release runs preflight, backup, the named migrations (if any), deploy and the
+          post-deploy verification in one run from one Owner approval, and rolls the
+          Workers back to the versions they served before if a deploy or verification fails.
         type: choice
         required: true
         default: preflight
@@ -19,6 +22,7 @@ on:
           - source-capture
           - deploy
           - migrate
+          - release
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
@@ -29,8 +33,8 @@ on:
         default: ''
       migrations:
         description: >-
-          migrate mode only: migration file names under apps/clued-cloud/supabase/migrations,
-          comma-separated, in the order to apply
+          migrate and release modes: migration file names under apps/clued-cloud/supabase/migrations,
+          comma-separated, in the order to apply (release: empty for a deploy without migrations)
         type: string
         default: ''
 
@@ -90,6 +94,16 @@ jobs:
               test -z "$SOURCE_REQUEST_ID"
               test -z "$SOURCE_REQUEST_DIGEST"
               test -n "${MIGRATIONS:-}" ;;
+            release)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              # No migrations is a deploy-only release; any other value names files.
+              name='[0-9]{14}_[a-z0-9_]+\.sql'
+              names="^${name}(, ?${name})*\$"
+              if [ -n "${MIGRATIONS:-}" ] && ! [[ "$MIGRATIONS" =~ $names ]]; then
+                echo "::error::migrations must be comma-separated migration file names" >&2
+                exit 1
+              fi ;;
             *)
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
@@ -112,15 +126,90 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Check production backup encryption credential
-        if: ${{ inputs.mode == 'backup' }}
+        if: ${{ inputs.mode == 'backup' || (inputs.mode == 'release' && inputs.migrations != '') }}
         env:
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
         run: test -n "$CLUED_PRODUCTION_BACKUP_KEY"
+      # It connects once (select 1), so a wrong password or host fails here,
+      # before the grant step uses one of the Owner's grants (trial run
+      # 37155374056 used its grant and then failed to authenticate).
+      - name: Check migration database credential
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_MIGRATION_DATABASE_URL"
+          # A malformed URL (for example an unencoded @ or # in the password)
+          # is reported without echoing the value.
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
+            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
+          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
+          echo "Migration database connection works"
+      - name: Check Cloudflare deployment credential
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
+        run: npm ci --ignore-scripts
+      - name: Capture exact nonsecret registration source
+        if: ${{ inputs.mode == 'source-capture' }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+          REQUEST_ID: ${{ inputs.source_request_id }}
+          REQUEST_DIGEST: ${{ inputs.source_request_digest }}
+        run: |
+          mkdir -p .sites-runtime/storage-client-source
+          node scripts/storage-client-registration-source.mjs \
+            --request-id "$REQUEST_ID" \
+            --expected-request-digest "$REQUEST_DIGEST" \
+            --expected-release-sha "$GITHUB_SHA" \
+            --output .sites-runtime/storage-client-source/registration.json
+      - name: Install embedded PostgreSQL ICU compatibility runtime
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        run: |
+          set -euo pipefail
+          icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
+          trap 'rm -f -- "$icu_deb"' EXIT
+          curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i "$icu_deb"
+      - name: Verify projection and MTPE behavior
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        run: |
+          node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
+          npm run test:projection:refresh
+          npm run test:mtpe:intake
+          npm run typecheck
+      - name: Build exact Worker source
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
+        # and fails if the main Worker's bundle contains pdf.js.
+        run: npm run build
+      - name: Verify and build Kooyumi Connect release source
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        run: |
+          set -euo pipefail
+          node --test tests/oauth-origin.test.mjs
+          node --check ../kooyumi-connect/worker.mjs
+          node --test ../kooyumi-connect/tests/*.test.mjs
+          mkdir -p .sites-runtime/release-evidence
+          node ../kooyumi-connect/build-release.mjs \
+            --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
+            --evidence-out .sites-runtime/release-evidence/connect-build.json
+          node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
       # The connection URLs are written for node-postgres, whose sslmode=no-verify
       # (encrypt, do not verify the certificate) libpq rejects; libpq's require
       # means the same, so the libpq tools below get require instead.
       - name: Create and verify encrypted pre-migration backup
-        if: ${{ inputs.mode == 'backup' }}
+        if: ${{ inputs.mode == 'backup' || (inputs.mode == 'release' && inputs.migrations != '') }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
@@ -193,34 +282,22 @@ jobs:
           node -e 'const fs=require("node:fs"); const proof=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(proof.verified!==true) throw new Error("Unverified backup scope"); process.stdout.write(JSON.stringify({contract:"clued.production-pre-migration-backup.v1",source_commit:process.env.GITHUB_SHA,database_project:"clued-prod",scope:proof.scope,scope_verification:proof,dump_sha256:process.argv[2],dump_bytes:Number(process.argv[3]),encrypted_sha256:process.argv[4],created_at:new Date().toISOString()},null,2)+"\n")' \
             "$scope_proof" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" \
             > "$evidence_dir/production-backup-manifest.json"
-      # It connects once (select 1), so a wrong password or host fails here,
-      # before the grant step uses one of the Owner's grants (trial run
-      # 37155374056 used its grant and then failed to authenticate).
-      - name: Check migration database credential
-        if: ${{ inputs.mode == 'migrate' }}
-        env:
-          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          test -n "$CLUED_MIGRATION_DATABASE_URL"
-          # A malformed URL (for example an unencoded @ or # in the password)
-          # is reported without echoing the value.
-          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
-          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
-            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
-            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
-          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
-          echo "Migration database connection works"
       # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
       # consume one use of the Owner's grant for the named migration files of
       # this commit. Advisory until the Owner sets CLUED_RELEASE_GRANT_ENFORCE=true;
-      # then no grant, no run. It runs after the credential check, so a run that
+      # then no grant, no run. It runs after the credential checks, so a run that
       # cannot proceed uses no grant. deploy consumes its grant further down,
-      # after the release gate.
+      # after the release gate. A release with migrations uses its one approval
+      # here, migrations and deploy together (clued-release-grant.mjs --mode
+      # release), after the build and the backup: the release gate needs the
+      # migrations applied, so it runs after them.
       - name: Consume the Owner Grant for the named migrations
-        if: ${{ inputs.mode == 'migrate' }}
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
         working-directory: .
         env:
+          # In a release, npm ci, tests and the build ran before this step; none
+          # of that dependency code may preload code into the grant check.
+          NODE_OPTIONS: ''
           RELEASE_MODE: ${{ inputs.mode }}
           MIGRATIONS: ${{ inputs.migrations }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
@@ -240,7 +317,7 @@ jobs:
       # savepoint, rollback) or end with SELECT ... INTO; either fails and rolls
       # back, leaving no record.
       - name: Apply the named migrations
-        if: ${{ inputs.mode == 'migrate' }}
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           MIGRATIONS: ${{ inputs.migrations }}
@@ -295,77 +372,21 @@ jobs:
           done
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
-      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
-        run: npm ci --ignore-scripts
-      - name: Capture exact nonsecret registration source
-        if: ${{ inputs.mode == 'source-capture' }}
-        env:
-          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
-          REQUEST_ID: ${{ inputs.source_request_id }}
-          REQUEST_DIGEST: ${{ inputs.source_request_digest }}
-        run: |
-          mkdir -p .sites-runtime/storage-client-source
-          node scripts/storage-client-registration-source.mjs \
-            --request-id "$REQUEST_ID" \
-            --expected-request-digest "$REQUEST_DIGEST" \
-            --expected-release-sha "$GITHUB_SHA" \
-            --output .sites-runtime/storage-client-source/registration.json
-      - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
-        run: |
-          set -euo pipefail
-          icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
-          trap 'rm -f -- "$icu_deb"' EXIT
-          curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
-          sudo dpkg -i "$icu_deb"
-      - name: Verify projection and MTPE behavior
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
-        run: |
-          node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
-          npm run test:projection:refresh
-          npm run test:mtpe:intake
-          npm run typecheck
-      - name: Build exact Worker source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
-        # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
-        # and fails if the main Worker's bundle contains pdf.js.
-        run: npm run build
-      - name: Verify and build Kooyumi Connect release source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
-        run: |
-          set -euo pipefail
-          node --test tests/oauth-origin.test.mjs
-          node --check ../kooyumi-connect/worker.mjs
-          node --test ../kooyumi-connect/tests/*.test.mjs
-          mkdir -p .sites-runtime/release-evidence
-          node ../kooyumi-connect/build-release.mjs \
-            --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
-            --evidence-out .sites-runtime/release-evidence/connect-build.json
-          node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
       - name: Block release unless database and Worker heartbeat are ready
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
           mkdir -p .sites-runtime/release-evidence
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
-      - name: Check Cloudflare deployment credential
-        if: ${{ inputs.mode == 'deploy' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
       # OwnerCredential §6.1: consume one use of the Owner's grant for this
       # commit before anything changes production. It runs after the release
       # gate and the credential checks, so a deploy the gate stops uses no grant
-      # (run 37329072487 used its grant and then stopped at the gate).
+      # (run 37329072487 used its grant and then stopped at the gate). A release
+      # without migrations uses its approval (the deploy only) here as well.
       - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || (inputs.mode == 'release' && inputs.migrations == '') }}
         working-directory: .
         env:
           # Steps before this one ran dependency code (npm ci, tests, build);
@@ -376,8 +397,18 @@ jobs:
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
         run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
+      # Right before the first change to the Workers: the version each one serves,
+      # so a failed deploy or verification below rolls back to exactly that.
+      # A Worker without a single version at 100% stops here, before any deploy.
+      - name: Record the Worker versions production serves
+        id: worker_versions
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-worker-versions.mjs record --out .sites-runtime/release-evidence/worker-versions.json
       - name: Ensure Storage job queue exists
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -388,7 +419,7 @@ jobs:
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued PDF extractor Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -398,32 +429,32 @@ jobs:
         # service binding names it.
         run: npx wrangler deploy --config wrangler.pdf-extractor.jsonc
       - name: Deploy Clued production Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
       - name: Record deployment completion time
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         id: deployment_completion
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
       - name: Verify production serves the repository Agent contract
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
       - name: Verify the PDF extractor service binding
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         run: node scripts/verify-pdf-extractor.mjs --evidence-out .sites-runtime/release-evidence/pdf-extractor.json
       # The existing service binding already names clued-cloud. Publish Connect only
       # after the main application's exact commit, contract and PDF binding pass.
       # The same commit's Owner Grant above covers this explicit release cohort.
       - name: Deploy Kooyumi Connect Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -431,10 +462,10 @@ jobs:
           npx wrangler deploy "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
           --config ../kooyumi-connect/wrangler.production.jsonc --no-bundle --keep-vars
       - name: Verify Kooyumi Connect production release
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         run: node ../kooyumi-connect/verify-production.mjs --evidence-out .sites-runtime/release-evidence/connect-postflight.json
       - name: Verify projection currentness after deployment
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
@@ -447,6 +478,20 @@ jobs:
             sleep 30
           done
           exit 1
+      # Any failure after the versions were recorded (a deploy, the live-commit,
+      # contract, PDF, Connect or currentness verification) rolls each changed
+      # Worker back to its recorded version and writes what it did to the
+      # Summary. The run still fails. The database is forward-only: migrations
+      # are never rolled back.
+      - name: Roll back the Workers after a failed deploy or verification
+        if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          node scripts/release-worker-versions.mjs rollback
+          --from .sites-runtime/release-evidence/worker-versions.json
+          --out .sites-runtime/release-evidence/worker-rollback.json
       - name: Preserve release evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -460,6 +505,8 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/connect-build.json
             apps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-versions.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-rollback.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json
