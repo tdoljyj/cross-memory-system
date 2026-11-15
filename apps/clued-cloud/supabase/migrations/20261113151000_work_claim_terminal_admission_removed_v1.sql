@@ -1,3 +1,4 @@
+-- clued-release: breaking removes internal clued_private terminal-admission helpers and one index; no Worker code references them and the public RPC names are unchanged
 -- Terminal admission (20261108204157) is removed; a PR's end releases its claim directly.
 --
 -- 20261108204157 wrapped verify, authorize_head, the lease-key issue, adopt and

@@ -9,9 +9,10 @@ import test from 'node:test';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
 import {
   SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, prepareReplay, relationAliases,
-  repositoryOnlyObjects, runCheck, serializeSnapshot,
+  printSummary, repositoryOnlyObjects, runCheck, serializeSnapshot,
 } from '../scripts/production-schema-drift.mjs';
 import { md5 } from '../scripts/migration-ledger.mjs';
+import { pendingBreakingFindings } from '../scripts/release-migration-compat.mjs';
 
 const column = (key, type = 'text') => ['column', key, { type, not_null: false, default: null, identity: null, generated: null }];
 const relation = (key) => ['relation', key, { relkind: 'r', rls: true, force_rls: false, view_md5: null }];
@@ -238,4 +239,36 @@ test('ledger rows newer than the snapshot go through the same replay-skip and su
   assert.deepEqual(prepared.map((step) => step.file), ['migrations/b.sql', 'migrations/c.sql']);
   assert.equal(prepared[0].text, 'select 1; create table b();');
   assert.deepEqual(errors, ['snapshot_replay_substitution_not_unique:migrations/c.sql']);
+});
+
+// A pending migration that drops a column the previous Worker still reads fails the check
+// before any database starts; declared as a contract step, or purely additive, it is clean.
+// Applied (historic) files are never judged, even when they drop things.
+test('migration-verify blocks an undeclared breaking pending migration and passes a declared or additive one', async () => {
+  const catalogSql = 'select 1';
+  const snapshotFor = (repo) => ({ contract: SNAPSHOT_CONTRACT, objects: [], catalog_sql_sha256: createHash('sha256').update(catalogSql).digest('hex'),
+    applied: [appliedRow('20260901120000', 'one', sql('one').replace(/\n/g, '\r\n')), appliedRow('20260902120000', 'two', sql('two')),
+      appliedRow('20261031000000', 'applied_late', repo.migrations['20261102000000_applied_late.sql'])] });
+  const withPending = (pendingText, lateText = sql('applied_late')) => {
+    const repo = repository();
+    repo.migrations['20261101000000_pending.sql'] = pendingText;
+    repo.migrations['20261102000000_applied_late.sql'] = lateText;
+    return repo;
+  };
+  const drop = 'alter table public.clued_agent_bindings drop column expires_at;\n';
+  const blocked = await runCheck({ repository: withPending(drop), snapshot: snapshotFor(withPending(drop)), catalogSql });
+  assert.equal(blocked.status, 'FAIL');
+  assert.deepEqual(blocked.errors, ['pending_migration_breaks_previous_worker']);
+  assert.deepEqual(blocked.pending_breaking.map((finding) => [finding.file, finding.rule]), [['migrations/20261101000000_pending.sql', 'drop_column']]);
+  const lines = [];
+  printSummary(blocked, (line) => lines.push(line));
+  assert.ok(lines.some((line) => line.includes('20261101000000_pending.sql') && line.includes('drop column expires_at') && line.includes('previous Worker')), lines.join('\n'));
+  const pendingOf = (repo) => productionChain({ applied: snapshotFor(repo).applied, ...repo }).pending;
+  const declared = withPending('-- clued-release: breaking Worker 41 no longer reads expires_at\n' + drop);
+  assert.deepEqual(pendingBreakingFindings(pendingOf(declared)), []);
+  const additive = withPending('alter table public.clued_agent_bindings add column note text;\n');
+  assert.deepEqual(pendingBreakingFindings(pendingOf(additive)), []);
+  // The same drop in an already applied file is history, not pending.
+  const history = withPending(sql('pending'), drop);
+  assert.deepEqual(pendingBreakingFindings(pendingOf(history)), []);
 });

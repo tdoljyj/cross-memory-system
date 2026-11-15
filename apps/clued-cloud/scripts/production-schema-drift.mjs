@@ -20,6 +20,8 @@
 //      `-- production-schema: allow <schema>.<table>.<column>` (a reviewed
 //      statement that the reference is intended, for example a migration that
 //      adds that column to production).
+// Before the clusters start, every pending migration is also checked for
+// statements that break the previous Worker (scripts/release-migration-compat.mjs).
 // import turns the output of catalog.sql and applied.sql (run read-only
 // against production by whoever refreshes the snapshot) into catalog.json.
 import { createHash } from 'node:crypto';
@@ -30,6 +32,7 @@ import path from 'node:path';
 import {
   SNAPSHOT_CONTRACT, catalogSqlPath, productionChain, readRepository, readSnapshot, repositoryChain, snapshotPath,
 } from './production-schema-chain.mjs';
+import { pendingBreakingFindings } from './release-migration-compat.mjs';
 
 // Supabase platform objects the migrations assume and a plain PostgreSQL
 // lacks, in the shape the database tests already use. Default privileges
@@ -303,6 +306,13 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
   report.errors.push(...chain.errors);
   report.pending = chain.pending.map((step) => step.file);
   if (chain.errors.length > 0) return report;
+  // Static, so it needs no database: a pending migration that breaks the
+  // previous Worker without declaring it fails the check at once.
+  report.pending_breaking = pendingBreakingFindings(chain.pending);
+  if (report.pending_breaking.length > 0) {
+    report.errors.push('pending_migration_breaks_previous_worker');
+    return report;
+  }
   let ignored;
   try {
     ignored = deviationMatcher(snapshot.known_deviations);
@@ -510,6 +520,9 @@ export function printSummary(report, write = (line) => console.log(line)) {
   if (report.production_failure) write(`production chain failed: ${report.production_failure.file}: ${report.production_failure.message}`);
   if (report.pending_failure) write(`pending migration failed: ${report.pending_failure.file}: ${report.pending_failure.message}`);
   if (report.repository_failure) write(`repository chain failed: ${report.repository_failure.file}: ${report.repository_failure.message}`);
+  for (const finding of report.pending_breaking ?? []) {
+    write(`pending migration ${finding.file} breaks the previous Worker (${finding.rule}): ${finding.statement} -- ${finding.reason}; if intended, declare it with "-- clued-release: breaking <reason>" before its first statement`);
+  }
   for (const finding of report.pending_references ?? []) {
     write(`pending migration ${finding.file} reads ${finding.key} through "${finding.via}" (${finding.context}); only the repository chain has that column, production lacks it`);
   }
