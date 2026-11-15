@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
 import {
   SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, prepareReplay, relationAliases,
@@ -278,8 +279,10 @@ test('migration-verify blocks an undeclared breaking pending migration and passe
 test('the base migrations are read from the base commit tree, relative to the application directory', async () => {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
   if (head.status !== 0) return;
-  const names = await readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() });
+  // No trusted sibling checkout here, so the base commit tree is what gets read (CI has a real trusted sibling).
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  const names = await readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() }, noTrusted);
   assert.ok(names instanceof Set && names.size > 100, 'the base tree lists the committed migrations');
   assert.equal(names.has('20261113151000_work_claim_terminal_admission_removed_v1.sql'), true);
-  assert.equal(await readBaseMigrations({}), undefined);
+  assert.equal(await readBaseMigrations({}, noTrusted), undefined);
 });

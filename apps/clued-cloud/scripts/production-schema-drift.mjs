@@ -484,8 +484,8 @@ function argument(args, name) {
 // Migration file names the base has: the trusted base checkout that
 // migration-verify puts next to the candidate checkout (workspace/trusted), else
 // the base commit tree (CI_BASE_SHA, local-verify); undefined when neither is known.
-export async function readBaseMigrations(env = process.env) {
-  const trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations');
+export async function readBaseMigrations(env = process.env,
+  trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations')) {
   const sibling = await readdir(trusted).catch(() => null);
   if (sibling) return new Set(sibling);
   if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
