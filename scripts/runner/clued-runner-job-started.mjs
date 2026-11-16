@@ -119,8 +119,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "required-tests-late-admission-v1";
-export const COMPONENT_VERSION = "1.0.3";
+export const HOOK_VERSION = "required-tests-dispatch-v1";
+export const COMPONENT_VERSION = "1.0.4";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -616,7 +616,8 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   result.workflow = workflow;
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
-  if (MAIN_EVENTS.has(event) && result.ref === mainRef) {
+  const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
+  if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
     // Re-review 7, m1: pull_request_target runs on the default branch's ref
     // whatever the pull request's base, and a workflow may check out that
     // base, which an Agent controls when it is another branch.
@@ -650,6 +651,30 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       return result;
     }
     const file = workflow.slice(".github/workflows/".length);
+    if (requiredDispatch) {
+      const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, 'utf8')));
+      const { pr: number, head } = payload?.inputs ?? {};
+      if (!/^[1-9][0-9]{0,9}$/.test(String(number ?? '')) || head !== sha
+        || !env.GITHUB_REPOSITORY_OWNER || env.GITHUB_ACTOR !== env.GITHUB_REPOSITORY_OWNER
+        || run?.run_attempt !== 1) {
+        result.reason = 'required-tests dispatch target, actor or attempt refused';
+        return result;
+      }
+      const pr = await github(fetchImpl, token, `/repos/${repository}/pulls/${number}`);
+      if (pr?.number !== Number(number) || pr.state !== 'open' || pr.head?.sha !== head
+        || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository
+        || pr.base?.ref !== defaultBranch || result.ref !== `refs/heads/${pr.head.ref}`) {
+        result.reason = 'required-tests dispatch PR is closed, foreign or moved';
+        return result;
+      }
+      // Retain the branch-dispatch rule: workflow bytes must match main.
+      // The unchanged trusted gate then judges the Native PR admission.
+      const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
+      result.allow = differing.length === 0;
+      result.reason = result.allow ? `required-tests recovery for current PR #${number}` : 'required-tests dispatch workflows differ from main';
+      if (result.allow) result.execution_target = { repository, head_sha: head, pr_ref: `${repository}#${number}`, target_branch: defaultBranch };
+      return result;
+    }
     if (!DISPATCH_GATED_WORKFLOWS.includes(file)) {
       result.reason = `dispatch of ${workflow} on ${result.ref}: only ${DISPATCH_GATED_WORKFLOWS.join(", ")} may be dispatched on another branch; this one runs on ${defaultBranch} only`;
       return result;
@@ -772,7 +797,9 @@ export async function decideWithCurrentEpoch(options) {
   const match = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(source);
   if (!match) throw new Error("Trusted Clued public configuration is invalid");
   let target;
-  if (env.GITHUB_EVENT_NAME === "pull_request") {
+  if (result.execution_target) {
+    target = result.execution_target;
+  } else if (env.GITHUB_EVENT_NAME === "pull_request") {
     const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, "utf8")));
     target = { repository, head_sha: payload.pull_request.head.sha,
       pr_ref: `${repository}#${payload.pull_request.number}`, target_branch: payload.pull_request.base.ref };

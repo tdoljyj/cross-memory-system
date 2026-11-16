@@ -58,14 +58,14 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.required-tests-late-admission-v1.mjs"
+        "clued-runner-job-started.required-tests-dispatch-v1.mjs"
       ],
       "version_marker": {
-        "file": "clued-runner-job-started.required-tests-late-admission-v1.mjs",
+        "file": "clued-runner-job-started.required-tests-dispatch-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },

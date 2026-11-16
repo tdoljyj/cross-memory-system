@@ -18,6 +18,18 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### 必需运行缺失补发后继（G3，Task 7067280f）
+
+`required-tests-dispatch-v1` / component `1.0.4` 只增加
+`clued-required-tests.yml` 的首次补发入口：Owner 身份、仍开放的同仓库 main PR、
+输入 head、实际运行 SHA 和分支必须一致；其他分支 dispatch 与重跑规则不变。
+工作流仍须与 main 相同，重任务仍由原 Native PR 准入 gate 放行，启动前的
+execution epoch 查询绑定 PR，而不是把本次补发当作普通分支任务。
+
+主分发文件与新后继候选保持逐字节一致，`1.0.3` 及更早的源保留不改。
+仓库候选不证明已安装；经既有通用升级/安装路径部署后，用真实缺失运行的
+测试 PR 验证，并在 “Set up runner” 日志核对 `[hook required-tests-dispatch-v1]`。
+
 ### Late Native admission successor (defect B, 2026-11-15)
 
 `required-tests-late-admission-v1` / component `1.0.3` keeps every rule of
