@@ -72,7 +72,7 @@
 
     ".github/actions/ci-temporary-storage/check-workflows.mjs": "5f3bdc672c484f376f656f89afd522cca203b78b303c790b9e34bac992c902ff",
 
-    ".github/actions/ci-temporary-storage/coverage.json": "cbaad7d62ad94088181b668b5cb73be26ae208223e064b17c4aebba680d64390",
+    ".github/actions/ci-temporary-storage/coverage.json": "6503643a81f50708f497c2259c24ce05918cbfcf214823db11d526e182a5bf0b",
 
     ".github/actions/ci-temporary-storage/setup.mjs": "dd64d641d040f2036edec99ff1b86d780d12e1b73c5036f839734398946df270",
 
@@ -95,8 +95,6 @@
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
     ".github/workflows/clued-currentness-post-deploy-attestation.yml": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
-
-    ".github/workflows/clued-front-main-merge.yml": "64deb30777fc36311e0f6172265799e28139f001238b928cf4f246f3d1efd53b",
 
     ".github/workflows/clued-g4-database.yml": "570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d",
 
@@ -172,7 +170,7 @@
 
     "apps/clued-cloud/package.json": "f16653d202e17235f3ac2e45ca8eb08fe1293727f893e7c8f65abea02a61297d",
 
-    "config/clued-mechanical-files.json": "fce04110b1d9b6ac7870709dd058ee457db14970ef1664a1861be5445c556e07",
+    "config/clued-mechanical-files.json": "cc57e503e53de1b496019fd2878b38ecb774f6419e6fc9a325039eaeca9723db",
 
     "config/merge-admission-policy.json": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
 
@@ -204,7 +202,7 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "7a68bdd876903de944ec36269f7b0e5440d7a0ea4f7f2ab6bd1df91bcfdb6f42",
+    "scripts/ci/ci-required-selection.mjs": "195ff89c1acaea2223aad6d0659ae809d030adb81f207d3d5bef857c25f97de4",
 
     "scripts/ci/ci-required-selection.test.mjs": "ac2dff3fb20336f582f6d94c8e4f11a16bdd9a9f51b98a75a4c82468cb011931",
 
@@ -231,10 +229,6 @@
     "scripts/ci/clued-control-workflow-sources.json": "db94156e4eb6c0d0c37dc36489f83091b8d52066e49eb43c4f75e0ed68876ae6",
 
     "scripts/ci/clued-docs-only.py": "55a23681687378d3732c3416e88ad55c3244e69d04d1d09b5c3ac3e15013b573",
-
-    "scripts/ci/clued-front-main-merge.mjs": "012a17635289f61e6d59dd417a194654589bf190b8ffe657f1c71154c3f5722d",
-
-    "scripts/ci/clued-front-main-merge.test.mjs": "4976be97f426bc761618c6ad827ec88148fa5be2ae0b2e5c14058fdb01df5fd6",
 
     "scripts/ci/clued-g4-fresh-start.mjs": "c88597bb9834a6ca51075237241fcabf904c23e8ace0076156d78e1b1f00c0d7",
 
@@ -400,7 +394,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "7fc60018e3bbaf27a5f7bdca0cc7b5c36bf21d87b035b1df910aacbc47b3b0bd",
+    "scripts/ci/clued-required-applicability.mjs": "f81908609713bc5e557cd6e7701cfd0475a868559904c577802e2c962b07c48c",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -422,9 +416,9 @@
 
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
 
-    "scripts/ci/clued-work-admission.mjs": "4bc0813701d958bd14dfd01daede21da6d264ad9ceac40f2decb21b0d94ea318",
+    "scripts/ci/clued-work-admission.mjs": "459fe35322553bfd70bcd548aadb546636c50c27af5489c6fed6539d5508d13e",
 
-    "scripts/ci/clued-work-admission.test.mjs": "7078e5929ee8e3a3717857b3e71d3546907ab03a18794f9ad2b5c2fd4861058f",
+    "scripts/ci/clued-work-admission.test.mjs": "4e6ae1e4bdf4de62da6f852d13d8418d602fc830bf84d54f110e962862bf1aca",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -518,7 +512,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "b7a2ba06f46b5b8be978509631bb0360a4740a125c553ee72c6bf5e7b63d2ec2",
+    "scripts/ci/merge-admission-r9-source.json": "3773a4d7848a752f7dfd10793647f706392436e69de063ac02e6daf7382ef7d4",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
@@ -612,7 +606,11 @@
 
     "scripts/ci/validate_runner_budget_policy.py": "a915d5d4d2e25a66926928a4abe799088a1a66faa75a4eea24fae1fc90061eb3",
 
-    "scripts/runner/clued-runner-job-started.mjs": "547c8d0fb4029a715a0389e1b85fead93fc6d3b234541073a134b8dc889af3fe",
+    "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
+
+    "scripts/runner/clued-runner-hook-loader.test.mjs": "76079eac51efe273a4da68ceba57150eb9b26f8de4d6a8ddc57b3b4dfd3b600f",
+
+    "scripts/runner/clued-runner-job-started.mjs": "40f74490182205db12829f3220b61d2696c6092818147538f5e5b5fd2dd895da",
 
     "scripts/runner/clued-runner-job-started.ps1": "d3ed2f7755db0f906d60064926d5bf233ceef51089dc64c1bc736f92d0065217",
 
@@ -620,13 +618,17 @@
 
     "scripts/runner/clued-runner-job-started.sh": "47022237ae7f41e00b61dc158f103002d20787e555a42b6afeed7ed5561e26f0",
 
-    "scripts/runner/clued-runner-job-started.test.mjs": "8b17bfbceb4a307d6d9e96b77d73c454fb3caed0b3ffce95595c06ad55c0cd30",
+    "scripts/runner/clued-runner-job-started.test.mjs": "6df91b2545324a1418c36cffdeef167152a2054eccfb0a20addec8e69bc9bd74",
 
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
 
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-retry-v1.mjs": "c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912",
 
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-v1.mjs": "548866b17f9bfec27113d88858982a9233b4ad41c207dfdc948d6e2a2403fd83",
+
+    "scripts/runner/install-hook-loader.mjs": "1ceb4a77f71b3a83209d6ea2e7cf1e3b27c56af07f6a564e6c68baf4fd0cb87b",
+
+    "scripts/runner/install-hook-loader.test.mjs": "e4a25cd48bd1451a6177d97113b9c6fea7bfe98a95051addf1fded9e76654e63",
 
     "scripts/runner/qualify-native-admission-candidate.mjs": "d56b71c331a68645ba12bdd4a32c4f03c15e6a19e3485f67ab45261b5967e6b4",
 
