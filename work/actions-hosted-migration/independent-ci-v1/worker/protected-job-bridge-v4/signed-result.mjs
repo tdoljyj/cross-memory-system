@@ -11,6 +11,7 @@
 import fs from 'node:fs/promises';
 import {createPublicKey,sign} from 'node:crypto';
 import {canonical} from '../../src/proof.mjs';
+import {validateGitleaksReport} from '../../src/gitleaks-report.mjs';
 import {subjectOfV2} from '../../src/job-v2.mjs';
 import {verifyResultV2,RESULT_CONTRACT_V2,ENVELOPE_CONTRACT_V2} from '../../src/proof-v2.mjs';
 import {protectedPath,qualificationDeadline,QUALIFICATION_SCHEMA_V2} from '../qualification-v2.mjs';
@@ -42,6 +43,7 @@ export function observationFacts(issue,o,now=Date.now()){
   }
   let start,end,exit,stdout,stderr;
   if(gl||placement){check((!gl||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
+    if(gl){validateGitleaksReport(o.gitleaksReport,issue.job);check(o.exitCode===(o.gitleaksReport.pr.count?1:0),'ACTUAL_EXECUTION_TERMINAL_REQUIRED');}
     start=o.startedAt;end=o.cleanup.observedAt;exit=o.exitCode;stdout=o.logs?.stdout?.sha256;stderr=o.logs?.stderr?.sha256;
   }else{const scans=hit?o.cacheHit.originalObservation.scans:o.scans;
     check(!hit||!Object.hasOwn(o,'scans')&&o.conclusion===o.cacheHit.originalObservation.conclusion,'SCAN_RESULT_CACHE_HIT_EVIDENCE_REQUIRED');
@@ -57,7 +59,7 @@ export function resultPayload(issue,observation,facts,runtimeIdentity){
   return{contract:RESULT_CONTRACT_V2,domain:'production',runtimeId:runtimeIdentity,subject:subjectOfV2(issue.job),...facts,
     conclusion:observation.conclusion,artifactsSha256:digest([]),requestDigest:digest(issue),sourceSha:observation.sourceSha,
     executionObservationSha256:digest(observation),profile:observation.profile,cleanupSha256:digest(observation.cleanup),logDigestMode:issue.job.role==='trivy'?'canonical-scan-log-digests':'actual-stream-sha256',
-    cacheHit:cacheHitMarker(observation)};
+    cacheHit:cacheHitMarker(observation),...(issue.job.role==='gitleaks'?{gitleaksReport:validateGitleaksReport(observation.gitleaksReport,issue.job)}:{})};
 }
 // session (optional): the role session whose finish() has just loaded the role policy after the execution; that load is
 // used once instead of a second identical one (bf57ff10 P2 D). Without it, or for another job, the policy is loaded here.
@@ -84,7 +86,8 @@ export function verifySignedBridgeResult({issue,wrapper,signers,now=Date.now()})
   const facts=observationFacts(issue,wrapper.observation,now),verified=verifyResultV2({job:issue.job,envelope:wrapper.envelope,signers,domain:'production',now});
   const p=verified.payload;check(p.requestDigest===digest(issue)&&p.profile===wrapper.observation.profile&&p.sourceSha===wrapper.observation.sourceSha&&p.executionObservationSha256===digest(wrapper.observation)&&p.cleanupSha256===digest(wrapper.observation.cleanup)&&
     Object.entries(facts).every(([k,v])=>p[k]===v)&&p.conclusion===wrapper.observation.conclusion&&verified.signer.sourceAcceptanceRef===issue.sourceAcceptanceRef&&verified.signer.qualificationRef===issue.hostQualificationRef
-    &&canonical(p.cacheHit??null)===canonical(cacheHitMarker(wrapper.observation)),'SIGNED_FORMAL_OBSERVATION_CHANGED');
+    &&canonical(p.cacheHit??null)===canonical(cacheHitMarker(wrapper.observation))
+    &&(issue.job.role!=='gitleaks'||canonical(p.gitleaksReport)===canonical(wrapper.observation.gitleaksReport)),'SIGNED_FORMAL_OBSERVATION_CHANGED');
   // A hit: the issuer itself checks that the original observation was signed by a production signer of this same Source
   // and qualification (its own signer table, not the Linux side's word).
   const hit=wrapper.observation.cacheHit;

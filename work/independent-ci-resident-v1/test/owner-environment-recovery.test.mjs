@@ -24,15 +24,13 @@ const receipts = async (f, type) => {
 };
 const request = f => breakerReleaseRequest({ reason: 'Native environment repaired and checked', by: OWNER }, f.clock);
 
-test('two real safe stage-1 environment releases stop with an absent active ledger; Owner recovery permits one normal run and no replay', async t => {
+test('two real broker-no-launch releases stop with an absent active ledger; Owner recovery permits one normal run and no replay', async t => {
   let repaired = false, stage1 = 0;
   const engine = fakeEngine(), run = engine.runStage;
   engine.runStage = async (batch, stage, opts) => {
     if (stage.number === 1) {
       stage1++;
-      if (!repaired) return { ok: false, code: 'NATIVE_ADMISSION_UNAVAILABLE', proof: WINDOWS_CLEAN, brokerNoLaunch: false,
-        outcome: { status: 'BLOCKED', reason: 'full_admission_unavailable', sideEffects: 0, mayHavePublished: false,
-          safeToRerun: true, diagnostic: { transport: false } } };
+      if (!repaired) return { ok: false, code: 'BROKER_REQUEST_EXPIRED', proof: WINDOWS_CLEAN, brokerNoLaunch: true, outcome: null };
     }
     return run(batch, stage, opts);
   };

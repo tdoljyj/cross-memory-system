@@ -331,6 +331,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`${place}：停靠的批次已满，等它们结束`) };
     // A daily budget used up, or a global deferral: no start before it ends (no estimate that assumes it).
     if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? globalDeferText(gate, status)}`) };
+    if (row.deferred === 'SAFE_POINT_READMISSION') return { state: 'pending', description: `${place}：流程在安全点结束，条件恢复后自动接着跑，不用推新提交` };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
     return { state: 'pending', description: clip(`${place}${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
@@ -347,6 +348,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     switch (recent.outcome) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
+        if (recent.retry === 'safe-point') return { state: 'pending', description: '流程在安全点结束：条件恢复后自动接着跑，不用推新提交' };
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
         // DESIGN §41.4 (review R3 MINOR 10): GitHub recomputed the test merge; the next stage 10 reads S again (the head's second

@@ -258,7 +258,7 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   const u = await ledger.usage(0);
   assert.deepEqual([u.started, u.startedByPr.get(1), u.evaluations, u.waitingRetries], [1, 1, 2, 1]);
   assert.deepEqual([u.reevaluations.get(`2:${'2'.repeat(40)}`), u.releasesByHead.get('2'.repeat(40)), u.releasesByHead.get('3'.repeat(40)), u.releasesByHead.get('4'.repeat(40)), u.releasesByHead.get('5'.repeat(40))],
-    [1, 2, undefined, 1, undefined]);
+    [1, undefined, undefined, 1, undefined]);
   // generation 10 (DESIGN 53.3): a network release (facts.network) counts in networkReleasesByHead, whatever the breaker, and only when
   // the caller separates them (a /9 policy); otherwise it counts as before
   await release(s(7, 7), 'queued', 'BUNDLE_UNAVAILABLE', { class: 'environment', breakerState: 'closed', network: true });
@@ -270,6 +270,25 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
   now += 86_400_001;
   assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');
+});
+
+test('G4: reopening the ledger reclassifies old claim releases once, without exempting burned failures', async t => {
+  const root = await tempRoot(t);
+  const ledger = await Ledger.open(root);
+  for (const [i, origin] of ['queued', 'backoff-retry', 'new-trigger', 'waiting-retry'].entries()) {
+    const s = subject({ pr: i + 1, headSha: String(i + 1).repeat(40) });
+    await ledger.reserve(batchKey(s), s, { origin });
+    await ledger.releaseUnexecuted(batchKey(s), 'NOT_ADMITTED', { class: 'not-admitted', failureCode: 'CLAIM_NOT_CURRENT' });
+  }
+  const s = subject({ pr: 5, headSha: '5'.repeat(40) });
+  await ledger.reserve(batchKey(s), s);
+  await ledger.burnHead(batchKey(s), { failureCode: 'CLAIM_NOT_CURRENT', quotaTier: 'evaluation' });
+  await ledger.terminal(batchKey(s), 'FAILED_CLEAN', { class: 'not-admitted', failureCode: 'CLAIM_NOT_CURRENT' });
+  const reopened = await Ledger.open(root);
+  const u = await reopened.usage(0);
+  assert.deepEqual([u.evaluations, u.waitingRetries, u.lowRiskBurns, u.started, u.releasesByHead.size], [1, 4, 1, 0, 0]);
+  assert.equal(u.reevaluations.get(`3:${'3'.repeat(40)}`), 1, 'new-trigger cap is preserved');
+  assert.deepEqual(await reopened.usage(0), u, 're-reading usage never double counts');
 });
 
 test('policy pins a complete immutable node and cross-binds Owner and WSL without changing quota or train authority', () => {
