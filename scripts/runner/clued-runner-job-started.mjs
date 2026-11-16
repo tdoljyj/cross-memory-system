@@ -112,6 +112,14 @@
 // that runs anything: a later attempt starts when every job of every earlier
 // attempt ran nothing (skipped, or refused in the runner's setup; see
 // ranNothing). Still one run per admitted head.
+//
+// Loaded from main (runner-hook-loader-v1, component 1.0.4; Owner Decision
+// 2026-11-16): runners keep only clued-runner-hook-loader.mjs, installed under
+// this file's name. At each job start it reads this file from the protected
+// default branch, checks its blob id and imports it from memory, then calls
+// main(env, fetch, { sourceSha256 }). So this file is never the entry point
+// there, and its clued-r9-pre-job source_sha256 is the loader's. Merging this
+// file is its rollout; there are no per-version copies to install any more.
 
 import { createSign,createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -119,8 +127,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "required-tests-late-admission-v1";
-export const COMPONENT_VERSION = "1.0.3";
+export const HOOK_VERSION = "runner-hook-loader-v1";
+export const COMPONENT_VERSION = "1.0.4";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -794,7 +802,9 @@ export async function decideWithCurrentEpoch(options) {
   return result;
 }
 
-export async function main(env = process.env, fetchImpl = globalThis.fetch) {
+// options.sourceSha256: the sha256 of the bytes this hook runs from, given by the loader that read them from main (a hook it runs
+// from memory has no file of its own); without it, this file's own bytes.
+export async function main(env = process.env, fetchImpl = globalThis.fetch, { sourceSha256 = null } = {}) {
   const enforce = /^(1|true|on|enabled)$/i.test((env.CLUED_RUNNER_HOOK_ENFORCE ?? "").trim());
   let result;
   try {
@@ -809,7 +819,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
     console.log("clued-r9-pre-job: "+JSON.stringify({schema:"clued.merge-admission-runner-observation/1",
       run_id:positive(env.GITHUB_RUN_ID),attempt:positive(env.GITHUB_RUN_ATTEMPT),logical_job_key:key(env.GITHUB_JOB),
       repository:key(env.GITHUB_REPOSITORY),workflow:key(result.workflow),hook_version:HOOK_VERSION,
-      source_sha256:createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex"),
+      source_sha256:/^[0-9a-f]{64}$/.test(String(sourceSha256))?sourceSha256:createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex"),
       observed_at:new Date().toISOString(),allow:result.allow,enforced:enforce,
       phase:"pre_job_permission",native_job_started_at:null,native_job_completed_at:null,
       source_authenticated:false,official_metric:false,t0:null}));
@@ -822,8 +832,9 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
 
 // The entry point, also behind a link or junction (defect 2102f7e1). An argv[1] that does not exist is not this file
 // (an importer's); this file's own path always resolves.
+// Run from memory by the loader (a data: URL), it is never the entry point.
 const realOrNull = (file) => { try { return fs.realpathSync(file); } catch { return null; } };
-if (process.argv[1] && realOrNull(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+if (import.meta.url.startsWith("file:") && process.argv[1] && realOrNull(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const proxyArguments = proxyBootstrapArguments();
     if (proxyArguments) {
