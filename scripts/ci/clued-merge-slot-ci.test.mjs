@@ -58,12 +58,12 @@ test('default CI enumeration excludes only exact registered dispatch publisher b
     'an arbitrary gated dispatch is never a basename exclusion');
 });
 test('non-PR enumeration requires fresh complete fixed-family data and exact Source bytes at every observation',()=>{
-  const names=['clued-compute-panel.yml','clued-native617-admission-dispatch.yml'],
+  const names=['clued-compute-panel.yml','clued-front-main-merge.yml','clued-native617-admission-dispatch.yml'],
     raw=fs.readFileSync(path.join(ROOT,NON_PR_CONTROL_SOURCE_PATH)),r=parseNonPrControlCatalogue(raw);
   let reads=0;
   const read=p=>{if(p.endsWith('clued-non-pr-control-sources.json')){reads++;return raw;}return fs.readFileSync(p);};
-  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,2);
-  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,4,'a later call obtains new Source data');
+  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,names.length);
+  assert.equal(ciWorkflows(ROOT,()=>names,read).size,0);assert.equal(reads,2*names.length,'a later call obtains new Source data');
   for(const name of names){
     const file='.github/workflows/'+name,text=fs.readFileSync(path.join(ROOT,file),'utf8');
     for(const changed of [text+'\n',text.replace('admission-gate:','changed-gate:'),text.replace('workflow_dispatch:','pull_request:')])
@@ -368,6 +368,7 @@ test("PR CI enumeration retains registered ordinary Sources and excludes only ex
   assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS,...ordinary])].map((name) => `.github/workflows/${name}`).sort());
   assert.equal(WORKFLOWS.has('.github/workflows/clued-compute-panel.yml'),false);
   assert.equal(WORKFLOWS.has('.github/workflows/clued-native617-admission-dispatch.yml'),false);
+  assert.equal(WORKFLOWS.has('.github/workflows/clued-front-main-merge.yml'),false);
 });
 
 test("the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted", () => {
@@ -379,8 +380,9 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const nameOf = (file) => /^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(dir, file), "utf8"))[1].trim();
   // Resident ADR 0032 step 2: clued-required-tests-windows is counted (WORKFLOWS) but not yet a trigger. This
   // workflow is a registered control Source and its reporter is disabled (Decision 928e6638); the name joins the
-  // list with the Source change that re-enables it. Exactly this one name is missing, nothing else.
-  const NOT_YET_A_TRIGGER = ["clued-required-tests-windows"];
+  // list with the Source change that re-enables it. The dispatch-only front merge workflow is also
+  // counted after acquiring a gate, but is not a PR CI completion trigger.
+  const NOT_YET_A_TRIGGER = ["clued-required-tests-windows", "clued-front-main-merge"];
   assert.ok(WORKFLOWS.has(".github/workflows/clued-required-tests-windows.yml"));
   for (const name of NOT_YET_A_TRIGGER) assert.ok(!names.includes(name), name);
   const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")]
