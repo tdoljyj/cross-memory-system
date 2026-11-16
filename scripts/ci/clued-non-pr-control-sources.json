@@ -344,6 +344,116 @@
         "job_id": "panel"
       }
     ],
+    ".github/workflows/clued-front-main-merge.yml": [
+      {
+        "definition": {
+          "name": "admission-gate",
+          "outputs": {
+            "admitted": "${{ steps.gate.outputs.admitted }}",
+            "automation_self_hosted": "${{ steps.gate.outputs.automation_self_hosted }}",
+            "enforced": "${{ steps.gate.outputs.enforced }}",
+            "verdict": "${{ steps.gate.outputs.verdict }}"
+          },
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "pull-requests": "read"
+          },
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+              }
+            },
+            {
+              "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+              "with": {
+                "node-version": "24.19.0"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_ADMISSION_GATE_SOURCE": "independent-ci-native-work-admission",
+                "CLUED_ADMISSION_GATE_WAIT_SECONDS": "600",
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "id": "gate",
+              "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+            }
+          ],
+          "timeout-minutes": 15
+        },
+        "definition_sha256": "2b609bfa2f0df5218d4f2db824737fb6066b54f132626a1470a49bc606743348",
+        "job_id": "admission-gate"
+      },
+      {
+        "definition": {
+          "concurrency": {
+            "cancel-in-progress": false,
+            "group": "clued-front-main-merge"
+          },
+          "environment": "clued-admission",
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+          "name": "clued-front-main-merge",
+          "needs": "admission-gate",
+          "runs-on": [
+            "self-hosted",
+            "Linux",
+            "X64",
+            "clued",
+            "pool-general",
+            "trust-internal"
+          ],
+          "steps": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "with": {
+                "persist-credentials": false,
+                "ref": "${{ github.event.repository.default_branch || 'main' }}"
+              }
+            },
+            {
+              "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+              "with": {
+                "node-version": "22"
+              }
+            },
+            {
+              "name": "Configure job temporary storage",
+              "uses": "./.github/actions/ci-temporary-storage"
+            },
+            {
+              "env": {
+                "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                "GITHUB_TOKEN": "${{ github.token }}"
+              },
+              "name": "Bring main into the train front",
+              "run": "node scripts/ci/clued-front-main-merge.mjs"
+            }
+          ],
+          "timeout-minutes": 5
+        },
+        "definition_sha256": "0b93443b5f9ebfbaa14134ef74e33eede99446b4683a90105489415569f492df",
+        "job_id": "merge-main"
+      }
+    ],
     ".github/workflows/clued-native617-admission-dispatch.yml": [
       {
         "definition": {
@@ -1143,6 +1253,238 @@
         }
       },
       "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d"
+    },
+    ".github/workflows/clued-front-main-merge.yml": {
+      "family": "front_main_merge_dispatch",
+      "source_sha256": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
+      "source_yaml_lines": [
+        "name: clued-front-main-merge",
+        "",
+        "# The merge train's front brought up to date with main (Owner Decisions",
+        "# 9e2511fe item 3 and 78a3052f item 2; resident DESIGN §80;",
+        "# scripts/ci/clued-front-main-merge.mjs). The on-duty node's companion starts",
+        "# it when stage 10 says FRONT_NEEDS_MAIN_MERGE (front-merge-dispatch.mjs), with",
+        "# the PR and the head the train named; a person may start it the same way.",
+        "# As the clued-admission App it does one thing, only when it is still true:",
+        "# update-branch of that PR from that head (GitHub merges main in itself and",
+        "# refuses a conflict or a moved head), then the App's check kooyumi-main-merge",
+        "# on the new merge commit, by which the admission keeps the holder's head",
+        "# authorization (migration 20261116090000). It holds no Clued credential.",
+        "#",
+        "# Only workflow_dispatch: this file and the script run from the default",
+        "# branch, with the clued-admission environment's App key (deployment branches",
+        "# limited to main); the inputs are only a request, every fact is read again.",
+        "",
+        "on:",
+        "  workflow_dispatch:",
+        "    inputs:",
+        "      pr:",
+        "        description: Pull request number of the train front",
+        "        type: string",
+        "        required: true",
+        "      head:",
+        "        description: Its head SHA as the train saw it",
+        "        type: string",
+        "        required: true",
+        "",
+        "permissions:",
+        "  contents: read",
+        "  pull-requests: read",
+        "  checks: read",
+        "",
+        "jobs:",
+        "  admission-gate:",
+        "    name: admission-gate",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "    timeout-minutes: 15",
+        "    permissions:",
+        "      actions: read",
+        "      checks: read",
+        "      contents: read",
+        "      pull-requests: read",
+        "    outputs:",
+        "      admitted: ${{ steps.gate.outputs.admitted }}",
+        "      enforced: ${{ steps.gate.outputs.enforced }}",
+        "      verdict: ${{ steps.gate.outputs.verdict }}",
+        "      automation_self_hosted: ${{ steps.gate.outputs.automation_self_hosted }}",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          persist-credentials: false",
+        "          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+        "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+        "        with:",
+        "          node-version: 24.19.0",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission",
+        "      # check for this exact head, polled for at most 10 minutes; never on another App's check.",
+        "      - id: gate",
+        "        env:",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission",
+        "          CLUED_ADMISSION_GATE_WAIT_SECONDS: \"600\"",
+        "        run: node scripts/ci/clued-work-admission.mjs --mode gate",
+        "",
+        "  merge-main:",
+        "    needs: admission-gate",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+        "    name: clued-front-main-merge",
+        "    # The self-hosted pool, as clued-native617-admission-dispatch.yml with the same environment (new hosted execution is prohibited).",
+        "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "    timeout-minutes: 5",
+        "    environment: clued-admission",
+        "    # One at a time; a second request for the same front reads the state the first one left.",
+        "    concurrency:",
+        "      group: clued-front-main-merge",
+        "      cancel-in-progress: false",
+        "    steps:",
+        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+        "        with:",
+        "          ref: ${{ github.event.repository.default_branch || 'main' }}",
+        "          persist-credentials: false",
+        "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+        "        with:",
+        "          node-version: \"22\"",
+        "      - name: Configure job temporary storage",
+        "        uses: ./.github/actions/ci-temporary-storage",
+        "      - name: Bring main into the train front",
+        "        env:",
+        "          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}",
+        "          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+        "          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "        run: node scripts/ci/clued-front-main-merge.mjs",
+        ""
+      ],
+      "workflow_blob": "74a96c7ab1de73c64259f78f8072deee06ec8686",
+      "workflow_definition": {
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "automation_self_hosted": "${{ steps.gate.outputs.automation_self_hosted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_ADMISSION_GATE_SOURCE": "independent-ci-native-work-admission",
+                  "CLUED_ADMISSION_GATE_WAIT_SECONDS": "600",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "id": "gate",
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ],
+            "timeout-minutes": 15
+          },
+          "merge-main": {
+            "concurrency": {
+              "cancel-in-progress": false,
+              "group": "clued-front-main-merge"
+            },
+            "environment": "clued-admission",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+            "name": "clued-front-main-merge",
+            "needs": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "env": {
+                  "CLUED_ADMISSION_APP_ID": "${{ secrets.CLUED_ADMISSION_APP_ID }}",
+                  "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ secrets.CLUED_ADMISSION_APP_KEY }}",
+                  "CLUED_MERGE_ADMISSION_STATE": "${{ vars.CLUED_MERGE_ADMISSION_STATE }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "name": "Bring main into the train front",
+                "run": "node scripts/ci/clued-front-main-merge.mjs"
+              }
+            ],
+            "timeout-minutes": 5
+          }
+        },
+        "name": "clued-front-main-merge",
+        "on": {
+          "workflow_dispatch": {
+            "inputs": {
+              "head": {
+                "description": "Its head SHA as the train saw it",
+                "required": true,
+                "type": "string"
+              },
+              "pr": {
+                "description": "Pull request number of the train front",
+                "required": true,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "permissions": {
+          "checks": "read",
+          "contents": "read",
+          "pull-requests": "read"
+        }
+      },
+      "workflow_definition_sha256": "8579bf1b7f0fece985d2c09ae70a37ec7286e8bfdeb2296ff1eb7b9cfe09c6d3"
     },
     ".github/workflows/clued-native617-admission-dispatch.yml": {
       "family": "disabled_native617_dispatch",

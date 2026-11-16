@@ -1234,7 +1234,7 @@ const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"
 // These consumers use the independently registered Linux Native gate; their
 // current gates are covered separately from the historical permission/bootstrap templates.
 // clued-required-tests-windows.yml (resident ADR 0032): the Windows side keeps the same Linux gate job, byte for byte.
-const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml", "clued-g4-database.yml"];
+const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml", "clued-g4-database.yml", "clued-front-main-merge.yml"];
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
@@ -2646,8 +2646,9 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
+  // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check).
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 

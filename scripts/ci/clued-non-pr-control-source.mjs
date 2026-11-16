@@ -31,6 +31,19 @@ export const NON_PR_CONTROL_FILES=freeze({
       "panel": "f6dab50b88823d3dc0e6a7901024d73956582a7a422525084348f52d258b1150"
     }
   },
+  ".github/workflows/clued-front-main-merge.yml": {
+    "family": "front_main_merge_dispatch",
+    "workflow_blob": "74a96c7ab1de73c64259f78f8072deee06ec8686",
+    "source_sha256": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
+    "workflow_definition_sha256": "8579bf1b7f0fece985d2c09ae70a37ec7286e8bfdeb2296ff1eb7b9cfe09c6d3",
+    "triggers": [
+      "workflow_dispatch"
+    ],
+    "roles": {
+      "admission-gate": "2b609bfa2f0df5218d4f2db824737fb6066b54f132626a1470a49bc606743348",
+      "merge-main": "0b93443b5f9ebfbaa14134ef74e33eede99446b4683a90105489415569f492df"
+    }
+  },
   ".github/workflows/clued-native617-admission-dispatch.yml": {
     "family": "disabled_native617_dispatch",
     "workflow_blob": "b3bac281913f30e0a30ad2adba28e1c9e822e5a5",

@@ -961,17 +961,16 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
 });
 
-// The numeric registry binds the immutable source, so the primary copy must match every raw byte.
-test("primary runner matches the exact immutable numeric successor candidate; equality is not deployment acceptance", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.4");
-  const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
-  const source = fs.readFileSync(new URL("./clued-runner-job-started.required-tests-dispatch-v1.mjs", import.meta.url));
-  assert.deepEqual(primary, source);
-  // the predecessors stay, byte for byte, for rollback and their own qualifier pins
-  const previous = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs", import.meta.url));
-  assert.match(previous.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.2";/);
-  const older = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
-  assert.match(older.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.1";/);
+// Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
+test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
+  assert.equal(COMPONENT_VERSION, "1.0.5");
+  const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
+  const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
+  assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);
+  for (const [name, version] of [["required-tests-late-admission-v1", "1.0.3"], ["work-handover-native-admission-retry-v1", "1.0.2"], ["work-handover-native-admission-v1", "1.0.1"]]) {
+    const earlier = fs.readFileSync(new URL(`./clued-runner-job-started.${name}.mjs`, import.meta.url), "utf8");
+    assert.ok(earlier.includes(`export const COMPONENT_VERSION = "${version}";`), name);
+  }
 });
 
 // ---- Transient reads (work-handover-native-admission-retry-v1, component 1.0.2; Task 5cee3629) ----
