@@ -35,7 +35,9 @@
     ci-root        C:\ProgramData\CluedIndependentCI and formal-spool with the baseline DACL the installer appends to, first-install\,
                    first-install\credentials\, the two secret folders (installer's Get-SecretDirectorySddl);
     runner         the carrier runner binaries (actions-runner) at C:\ProgramData\CluedControl\runner and its service (RunnerService.exe,
-                   Manual, Stopped, .\clued-control): never registered with GitHub;
+                   Manual, Stopped, .\clued-control): never registered with GitHub. Expanded resumably (Expand-Verified, M5): into a new
+                   directory, every file held to the pinned zip, renamed into place, then marked (CluedControl\runner.first-install-complete);
+                   a runner directory without the mark (a cut-off run) is set aside, kept, and expanded again; a marked one is checked;
     distribution   CluedResident-Linux from the pinned Ubuntu image (wsl --install --from-file --location --no-launch) under the
                    operator, at C:\ProgramData\CluedIndependentCI\wsl-first-install\CluedResident-Linux; the switch's target
                    facts.companionWsl.vhdxDirectory (...\wsl\CluedResident-Linux) is never made here (filled, it is residue): the M5-b
@@ -47,9 +49,14 @@
                    are asked for, and each must have the recorded fingerprint. Without facts.json: -CredentialDirectory (only a directory
                    whose DACL is SYSTEM and Administrators alone, fixed file names) or the Windows dialogs (one credential box per
                    connection token, the system's Open dialog for the App key, one input box per public value). The facts draft is then
-                   checked by install.mjs first-install-facts-check (the one rule, readFirstInstallFacts; M1) and only then are the App
-                   key and the ci-admission token placed (create-only, the installer's secret ACL; found there, the fingerprint must be
-                   this one), the two connection tokens, facts.json and companion-wsl.json written.
+                   checked by install.mjs first-install-facts-check (the one rule, readFirstInstallFacts; M1) and only then, in this
+                   order: facts.json (Write-NewFile: whole or not at all, create-only), the App key and the ci-admission token (create-only,
+                   the installer's secret ACL; found there, the fingerprint must be this one), the two connection tokens, companion-wsl.json.
+                   A run cut off in between leaves facts.json without some secrets, which the next run asks for (held to the recorded
+                   fingerprints) and -Reset removes; never secrets without the facts that say whose they are (review M1). A re-run asks
+                   for exactly what facts.json records and requires all of it (a recorded heartbeat token too: Get-MissingCredentials, L3).
+  Every tool P1 starts (wsl, msiexec, dism, powercfg, secedit, reg, the companion account's script) runs through Invoke-Native, its
+  stdout and stderr read apart: a line on stderr never ends P1 under Stop (review H1).
   -Reset (no resident on the host): removes what this host preparation made and nothing else: first-install\, the App key and the
   ci-admission token only where their fingerprints are the ones facts.json records, the distribution only when companion-wsl.json says
   this operator imported it (Get-ResetPlan). Prints FIRST_INSTALL_HOST_RESET with what it removed and what it kept.
@@ -96,6 +103,7 @@ $ImportDirectory = 'C:\ProgramData\CluedIndependentCI\wsl-first-install\CluedRes
 $CompanionAccountName = 'clued-companion'
 $Wsl = 'C:\Windows\System32\wsl.exe'
 $Sc = 'C:\Windows\System32\sc.exe'
+$PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $FactsContract = 'clued.independent-ci.first-install-facts/1'
 # install-resident.ps1 $SecretTargets: placed here, never passed to the installer (a reinstall finds them in place the same way)
 $SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
@@ -296,16 +304,82 @@ function Write-CreateOnly([string]$path, [byte[]]$bytes, [string]$sddl) {
   $f = New-Object IO.FileStream($path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $fs)
   try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
 }
+# M1: a new file whole or not at all: written under a temporary name beside it (create-only, its security descriptor from the start,
+# written through), then renamed into place; a name that exists is never replaced (File.Move refuses one).
+function Write-NewFile([string]$path, [byte[]]$bytes, [string]$sddl) {
+  if ([IO.File]::Exists($path)) { throw ('FILE_EXISTS_NOT_REPLACED:' + $path) }
+  $partial = $path + '.partial-' + [Guid]::NewGuid().ToString('N')
+  $fs = New-Object Security.AccessControl.FileSecurity; $fs.SetSecurityDescriptorSddlForm($sddl)
+  try {
+    $f = New-Object IO.FileStream($partial, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $fs)
+    try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+    [IO.File]::Move($partial, $path)
+  } finally { if ([IO.File]::Exists($partial)) { [IO.File]::Delete($partial) } }
+}
+# M5: an expansion of a pinned archive is complete only with its mark (a file beside the directory naming the archive's sha256).
+function Get-ExpandState([string]$dir, [string]$marker, [string]$sha256) {
+  if (-not [IO.Directory]::Exists($dir)) { return 'absent' }
+  if ([IO.File]::Exists($marker) -and ([IO.File]::ReadAllText($marker)).Trim() -ceq $sha256) { 'complete' } else { 'incomplete' }
+}
+# M5: every file of the zip is in $dir with the zip's bytes (sha256 of each entry against the file; nothing outside $dir; files the zip
+# does not name are not looked at).
+function Test-ZipExpanded([string]$zip, [string]$dir) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $root = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
+  $z = [IO.Compression.ZipFile]::OpenRead($zip)
+  try {
+    foreach ($e in $z.Entries) {
+      if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { continue }
+      $f = [IO.Path]::GetFullPath((Join-Path $root ($e.FullName.Replace('/', '\'))))
+      if (-not $f.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($f) -or (New-Object IO.FileInfo($f)).Length -ne $e.Length) { return $false }
+      $s = [Security.Cryptography.SHA256]::Create()
+      try {
+        $es = $e.Open(); try { $want = [BitConverter]::ToString($s.ComputeHash($es)) } finally { $es.Dispose() }
+        $fs = [IO.File]::OpenRead($f); try { $have = [BitConverter]::ToString($s.ComputeHash($fs)) } finally { $fs.Dispose() }
+      } finally { $s.Dispose() }
+      if ($want -cne $have) { return $false }
+    }
+  } finally { $z.Dispose() }
+  $true
+}
+# M5: the archive expanded resumably (bootstrap.ps1 Expand-Cached's way): into a new directory, checked against the zip, renamed into place,
+# then marked; a directory found without its mark (a cut-off run) is set aside whole (kept, never deleted) and the expansion done again;
+# a marked one is only checked, and refused when its files are not the zip's.
+function Expand-Verified([string]$zip, [string]$dir, [string]$marker, [string]$sha256) {
+  $state = Get-ExpandState $dir $marker $sha256
+  if ($state -ceq 'complete') {
+    if (-not (Test-ZipExpanded $zip $dir)) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $dir }
+    return 'checked'
+  }
+  if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.incomplete-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) }
+  if ([IO.File]::Exists($marker)) { [IO.File]::Delete($marker) }
+  $partial = $dir + '.partial-' + [Guid]::NewGuid().ToString('N')
+  Expand-Archive -LiteralPath $zip -DestinationPath $partial
+  if (-not (Test-ZipExpanded $zip $partial)) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $partial }
+  [IO.Directory]::Move($partial, $dir)
+  [IO.File]::WriteAllText($marker, $sha256)
+  'expanded'
+}
+# L3: what a run must have been given before anything is written: a first run (collect-all) the App key, the ci-admission token and the
+# upgrade token (the heartbeat token is optional: facts then record none); a re-run (ask-missing) everything it asked for, which
+# facts.json records (a recorded heartbeat token left empty reached READY and stopped the launcher at Step-CarryTokens).
+function Get-MissingCredentials($plan, [string[]]$given) {
+  $required = if ([string]$plan.mode -ceq 'collect-all') { @('appKey', 'ciToken', 'upgradeToken') } else { @($plan.ask) }
+  , @($required | Where-Object { @($given) -cnotcontains $_ })
+}
+function Get-HeartbeatPrompt([bool]$recorded) { if ($recorded) { 'heartbeat (the one facts.json records; required)' } else { 'heartbeat (leave empty for none)' } }
 function Copy-Verified([string]$from, [string]$to, [string]$sha, $bytes) {
   if (-not [IO.File]::Exists($from)) { Stop-Host 'INPUT_MISSING' $from }
   [IO.File]::Copy($from, $to, $false)
   if ((Sha256File $to) -cne $sha -or ($null -ne $bytes -and (Get-Item -LiteralPath $to).Length -ne [long]$bytes)) { Stop-Host 'INPUT_NOT_THE_PINNED_BYTES' ([IO.Path]::GetFileName($to)) }
   $to
 }
-function Invoke-Native([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = $Utf8) {
+# H1: every tool P1 starts runs here, stdout and stderr read apart: a line a tool writes on stderr is text, never a PowerShell error that
+# would end P1 under Stop. $shareConsole: the child keeps this console (a tool that may show a window or read the clipboard).
+function Invoke-Native([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = $Utf8, [bool]$shareConsole = $false) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
-  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = (-not $shareConsole)
   $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
   $p = [Diagnostics.Process]::Start($psi)
   $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
@@ -493,14 +567,14 @@ function Invoke-HostPreparation {
     # features (a restart: run the same command again), power
     $needRestart = $false
     foreach ($feature in @('VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux')) {
-      $info = & dism.exe /English /online /get-featureinfo "/featurename:$feature" | Out-String
-      if ($info -notmatch 'State : Enabled') {
-        $null = & dism.exe /English /online /enable-feature "/featurename:$feature" /all /norestart | Out-String
-        if ($LASTEXITCODE -eq 3010) { $needRestart = $true } elseif ($LASTEXITCODE -ne 0) { Stop-Host 'WINDOWS_FEATURE_ENABLE_FAILED' $feature }
+      $info = Invoke-Native 'C:\Windows\System32\dism.exe' @('/English', '/online', '/get-featureinfo', ('/featurename:' + $feature)) 600
+      if ($info.stdout -notmatch 'State : Enabled') {
+        $en = Invoke-Native 'C:\Windows\System32\dism.exe' @('/English', '/online', '/enable-feature', ('/featurename:' + $feature), '/all', '/norestart') 3600
+        if ($en.exit -eq 3010) { $needRestart = $true } elseif ($en.exit -ne 0) { Stop-Host 'WINDOWS_FEATURE_ENABLE_FAILED' ([ordered]@{ feature = $feature; exit = $en.exit; stderr = $en.stderr }) }
       }
     }
     if ($needRestart) { ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'Windows features enabled' })); exit 3 }
-    $null = & powercfg.exe /change standby-timeout-ac 0; $null = & powercfg.exe /hibernate off
+    $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/change', 'standby-timeout-ac', '0') 120; $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/hibernate', 'off') 120
     Step 'features' 'enabled; standby-ac 0, hibernate off'
     # accounts
     foreach ($name in @('clued-control', 'clued-runner')) {
@@ -511,22 +585,24 @@ function Invoke-HostPreparation {
     }
     $controllerSid = (Get-LocalUser -Name 'clued-control').SID.Value
     # the companion account by the package's own tool, its registrar held to the archive's pin (L2)
-    $prep = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File (Join-Path $R 'windows\prepare-companion-account.ps1') -LogDirectory (Join-Path $stage 'companion-log') -RegistrarSha256 $RegistrarSha256 | Out-String
+    # (it keeps this console: its token step may read the clipboard; its own output in the console's code page)
+    $prepRun = Invoke-Native $PowerShellExe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $R 'windows\prepare-companion-account.ps1'), '-LogDirectory', (Join-Path $stage 'companion-log'), '-RegistrarSha256', $RegistrarSha256) 1800 ([Console]::OutputEncoding) $true
+    $prep = [string]$prepRun.stdout
     $pr = try { $js.DeserializeObject($prep) } catch { try { $js.DeserializeObject(@($prep -split "`r?`n" | Where-Object { $_.Trim() })[-1]) } catch { $null } }
-    if ([string](Get-Key $pr 'status') -notlike 'COMPANION_ACCOUNT_PREPARED*') { Stop-Host 'COMPANION_ACCOUNT_NOT_PREPARED' $prep }
+    if ([string](Get-Key $pr 'status') -notlike 'COMPANION_ACCOUNT_PREPARED*') { Stop-Host 'COMPANION_ACCOUNT_NOT_PREPARED' ([ordered]@{ exit = $prepRun.exit; stdout = $prep; stderr = $prepRun.stderr }) }
     $companionSid = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerSid'); $companionProfile = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerProfileDirectory')
     $nodeProfile = try { Get-NodeProfile ([Environment]::MachineName) $controllerSid $companionSid $companionProfile } catch { Stop-Host ([string]$_.Exception.Message) 'rename the machine to a name of 1-15 letters, digits and inner hyphens; no parameter changes it' }
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
     # clued-control's right to log on as a service, never denied (install-resident.ps1 Test-ServiceLogonRight)
     $rights = Join-Path $stage 'rights'; $null = New-Dir $rights (Get-AdminOnlySddl)
-    $null = & secedit.exe /export /areas USER_RIGHTS /cfg (Join-Path $rights 'now.inf')
+    $null = Invoke-Native 'C:\Windows\System32\secedit.exe' @('/export', '/areas', 'USER_RIGHTS', '/cfg', (Join-Path $rights 'now.inf')) 300
     $now = [IO.File]::ReadAllText((Join-Path $rights 'now.inf'))
     if (Test-DenyServiceLogon $now $controllerSid) { Stop-Host 'CONTROLLER_DENIED_LOGON_AS_A_SERVICE' 'SeDenyServiceLogonRight names clued-control: remove it (a policy decision, never made here)' }
     if ($now -notmatch ('(?m)^SeServiceLogonRight\s*=.*\*' + [regex]::Escape($controllerSid) + '\b') -and $now -notmatch '(?m)^SeServiceLogonRight\s*=.*\bclued-control\b') {
       $line = if ($now -match '(?m)^SeServiceLogonRight\s*=\s*(.*)$') { 'SeServiceLogonRight = ' + $Matches[1].Trim() + ',*' + $controllerSid } else { 'SeServiceLogonRight = *' + $controllerSid }
       [IO.File]::WriteAllText((Join-Path $rights 'add.inf'), "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`n$line`r`n", [Text.Encoding]::Unicode)
-      $null = & secedit.exe /configure /db (Join-Path $rights 'add.sdb') /cfg (Join-Path $rights 'add.inf') /areas USER_RIGHTS
-      if ($LASTEXITCODE -ne 0) { Stop-Host 'SERVICE_LOGON_RIGHT_NOT_GRANTED' $LASTEXITCODE }
+      $seConf = Invoke-Native 'C:\Windows\System32\secedit.exe' @('/configure', '/db', (Join-Path $rights 'add.sdb'), '/cfg', (Join-Path $rights 'add.inf'), '/areas', 'USER_RIGHTS') 600
+      if ($seConf.exit -ne 0) { Stop-Host 'SERVICE_LOGON_RIGHT_NOT_GRANTED' ([ordered]@{ exit = $seConf.exit; stderr = $seConf.stderr }) }
     }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
     # CI root, formal-spool, first-install, credentials, the two secret folders
@@ -541,7 +617,9 @@ function Invoke-HostPreparation {
     $runnerDir = Join-Path $ControlRoot 'runner'
     $null = New-Dir $ControlRoot ('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')')
     $null = New-Dir (Split-Path -Parent $SecretTargets['appKey']) (Get-SecretDirectorySddl $controllerSid)
-    if (-not [IO.File]::Exists((Join-Path $runnerDir 'bin\RunnerService.exe'))) { Expand-Archive -LiteralPath $staged['actions-runner'] -DestinationPath $runnerDir }
+    # M5: resumable and checked: a cut-off expansion is set aside and done again, a completed one is held to the pinned archive
+    $runnerMark = Join-Path $ControlRoot 'runner.first-install-complete'
+    $null = Expand-Verified $staged['actions-runner'] $runnerDir $runnerMark ([string]$items['actions-runner']['sha256'])
     $svc = Get-Service -Name $nodeProfile.runnerService -ErrorAction SilentlyContinue
     if ($null -eq $svc) {
       # one new random password for the account and the service at once (CreateService keeps the binary path verbatim, quotes included)
@@ -596,7 +674,7 @@ function Invoke-HostPreparation {
             'appKey' { $script:Secrets['appKey'] = Read-AppKeyFromDialog }
             'ciToken' { $script:Secrets['ciToken'] = Read-TokenFromDialog 'ci-admission' }
             'upgradeToken' { $script:Secrets['upgradeToken'] = Read-TokenFromDialog 'resident-upgrade' }
-            'heartbeatToken' { $b = Read-TokenFromDialog 'heartbeat (leave empty for none)'; if ($b.Length) { $script:Secrets['heartbeatToken'] = $b } }
+            'heartbeatToken' { $b = Read-TokenFromDialog (Get-HeartbeatPrompt ($null -ne $old)); if ($b.Length) { $script:Secrets['heartbeatToken'] = $b } }
           }
         }
         if ($plan.mode -ceq 'collect-all') {
@@ -605,6 +683,9 @@ function Invoke-HostPreparation {
             heartbeatBindingId = $(if ($script:Secrets.Contains('heartbeatToken')) { Read-PublicFromDialog 'heartbeat connection id (UUID, or empty)' } else { '' }) }
         }
       }
+      # L3: what facts.json records is required again (a recorded heartbeat token too); only a first run may give no heartbeat token
+      $miss = Get-MissingCredentials $plan @($script:Secrets.Keys)
+      if ($miss.Count) { Stop-Host 'CREDENTIAL_MISSING' $miss }
     }
     $fps = [ordered]@{}
     foreach ($k in @($script:Secrets.Keys)) { $fps[$k] = Get-SecretFingerprintOf $k $script:Secrets[$k]; if (-not $fps[$k]) { Stop-Host 'CREDENTIAL_NOT_ITS_KIND' $k } }
@@ -629,14 +710,16 @@ function Invoke-HostPreparation {
     [IO.File]::WriteAllText($draft, $js.Serialize($facts) + "`n", $Utf8)
     $fc = Invoke-FactsCheck $draft
     if (-not $fc.ok) { Stop-Host 'FACTS_REFUSED' ([ordered]@{ result = $fc.result; stderr = $fc.stderr }) }
-    # only now: the secrets, the facts, the companion WSL record
+    # only now, in this order (M1): facts.json (whole or not at all, create-only), then the secrets, then the companion WSL record. A run
+    # cut off between them leaves facts.json without (some) secrets: the next run asks for what is missing, held to the fingerprints it
+    # records, and -Reset removes it; never the App key and the ci-admission token without the facts that say whose they are.
+    if ($null -eq $old) { Write-NewFile $factsFile ($Utf8.GetBytes($js.Serialize($facts) + "`n")) (Get-FirstInstallSddl $operator) }
     Write-Secrets $controllerSid
     Clear-Secrets
-    if ($null -eq $old) { Write-CreateOnly $factsFile ($Utf8.GetBytes($js.Serialize($facts) + "`n")) (Get-FirstInstallSddl $operator) }
     $cw = [ordered]@{ contract = 'clued.independent-ci.companion-wsl/1'; distro = $Distribution; target = ($ImportDirectory + '\ext4.vhdx'); companionSid = $nodeProfile.ownerSid; stage = 'owner-imported'; imported = $true; importedBy = $operator }
     $cwFile = Join-Path $FirstDir 'companion-wsl.json'
     if ([IO.File]::Exists($cwFile)) { if ($Strict8.GetString([IO.File]::ReadAllBytes($cwFile)).Trim() -cne $js.Serialize($cw)) { Stop-Host 'COMPANION_WSL_RECORD_ALREADY_WRITTEN_DIFFERS' $cwFile } }
-    else { Write-CreateOnly $cwFile ($Utf8.GetBytes($js.Serialize($cw) + "`n")) (Get-FirstInstallSddl $operator) }
+    else { Write-NewFile $cwFile ($Utf8.GetBytes($js.Serialize($cw) + "`n")) (Get-FirstInstallSddl $operator) }
     Step 'credentials' $plan.mode
     ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $factsFile; factsSha256 = (Sha256File $factsFile); node = $nodeProfile.nodeName; credentials = $plan.mode }))
   } finally {

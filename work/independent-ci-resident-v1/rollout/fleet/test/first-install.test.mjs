@@ -237,6 +237,27 @@ test('first install, the package\'s first-install.py for real: A.sh, B.sh, B-res
     assert.equal(runContinue(s.w2, s.base), 'NOT_CONTINUED', 'no completed A: the first install starts again (its cut-off staging kept aside)');
   });
 
+// Review L2: the host preparation gives the operator no right to list the CI root (first-install-host.ps1 Get-CiRootSddl, 0x120080),
+// so prepare (not elevated) cannot see kept roots there. That is said, never taken for "none": the output names what was not checked
+// (P1 and the launcher check it elevated); any other error reading the CI root is residue, refused by name.
+test('first install: a CI root this account may not list is named as not checked, never taken for one without kept roots; another read error refuses',
+  { timeout: 600_000 }, async t => {
+    const w = await getWorld();
+    const site = await freshSite(t, w);
+    const failing = code => () => Promise.reject(Object.assign(new Error(`${code}: scandir`), { code }));
+    for (const code of ['EACCES', 'EPERM']) {
+      const r = await prepareFresh(w, site, path.join(site.d, `work-${code}`), { python: pythonTools().fn, listDir: failing(code) });
+      assert.equal(r.status, 'FLEET_NODE_FIRST_INSTALL_PREPARED');
+      assert.deepEqual(r.residueUnchecked, [`kept-roots:not-listable:${site.ciRoot}:${code}`]);
+    }
+    const work = path.join(site.d, 'work-eio');
+    await assert.rejects(prepareFresh(w, site, work, { python: () => { throw new Error('not reached'); }, listDir: failing('EIO') }),
+      e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue.join() === `ci-root:unreadable:${site.ciRoot}:EIO`);
+    await assert.rejects(fs.access(work), 'nothing written');
+    const listed = await prepareFresh(w, site, path.join(site.d, 'work-listed'), { python: pythonTools().fn });
+    assert.deepEqual(listed.residueUnchecked, []);
+  });
+
 test('first install refuses: residue by name, a kit not accepted, facts not this machine\'s or not derived, another controller runtime, a missing image archive',
   { timeout: 600_000 }, async t => {
     const w = await getWorld();

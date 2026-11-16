@@ -472,7 +472,8 @@ export function runCommandOf(launcher, launcherSha256) {
 // (readFreshNode: this machine's own facts, the version's first-install kit; the same package, Linux and launcher steps after it).
 export async function prepareInstall({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(),
   node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE,
-  from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath, ciRootSddl = defaultCiRootSddl }) {
+  from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath, ciRootSddl = defaultCiRootSddl,
+  listDir = undefined }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
@@ -484,7 +485,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     need(want && want.equals(await fs.readFile(path.join(selfDir, n))), 'FLEET_INSTALLER_NOT_THE_ARCHIVES', n);
   }
   const fresh = (await readOrNull(path.join(root, 'install', 'install-receipt.json'))) === null;
-  const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname, ciRootSddl }) : await readNode({ root, now });
+  const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname, ciRootSddl, listDir }) : await readNode({ root, now });
   // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
   // Linux phases cannot run again over themselves; that launch is continued from where it stopped (reinstall/README.md, --fleet-continue).
   need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
@@ -822,13 +823,22 @@ export function readFirstInstallFacts(bytes, { hostname }) {
 // The first install's node: nothing of a resident on this machine (a leftover is refused by name, never guessed at or written over),
 // this machine's facts and the accepted kit, in the shape the reinstall's stages read (recordInputsFor, configInputsFor,
 // rolesDerivedReinstall: the template takes the installed node's place, as first-install.py's Linux A derives from it).
-export async function readFreshNode({ root, ciRoot = CI_ROOT, from, acceptance, controllerNode, serviceState = defaultServiceState, hostname = defaultHostname, ciRootSddl = defaultCiRootSddl }) {
-  const residue = [];
+export async function readFreshNode({ root, ciRoot = CI_ROOT, from, acceptance, controllerNode, serviceState = defaultServiceState, hostname = defaultHostname, ciRootSddl = defaultCiRootSddl,
+  listDir = d => fs.readdir(d) }) {
+  const residue = [], residueUnchecked = [];
   for (const s of RESIDENT_SERVICES) { const st = serviceState(s); if (st !== 'absent') residue.push(`service:${s}:${st}`); }
   if (fsSync.existsSync(root)) residue.push(`directory:${root}`);
   // what an uninstall leaves (its kept roots; the read ACE the installer appended to the CI root for the resident's service SID):
   // this machine had a resident. A first install is for a clean machine; nothing here is removed for it or guessed past.
-  const kept = (await fs.readdir(ciRoot).catch(() => [])).filter(n => /^resident-uninstalled-/.test(n));
+  // Review L2: the host preparation gives the operator no right to list the CI root (first-install-host.ps1 Get-CiRootSddl, 0x120080),
+  // so this run (not elevated) cannot see kept roots there: that is said in the output (residueUnchecked), never taken for none (the host
+  // preparation and the launcher look elevated). Any other error reading the CI root is residue: not known to be clean.
+  let names = [];
+  try { names = await listDir(ciRoot); } catch (e) {
+    if (e?.code === 'EACCES' || e?.code === 'EPERM') residueUnchecked.push(`kept-roots:not-listable:${ciRoot}:${e.code}`);
+    else if (e?.code !== 'ENOENT') residue.push(`ci-root:unreadable:${ciRoot}:${e?.code ?? 'ERROR'}`);
+  }
+  const kept = names.filter(n => /^resident-uninstalled-/.test(n));
   for (const n of kept) residue.push(`kept-root:${path.join(ciRoot, n)}`);
   const acl = ciRootSddl(ciRoot);
   if (acl === null) residue.push(`ci-root-acl:unreadable:${ciRoot}`);
@@ -861,7 +871,7 @@ export async function readFreshNode({ root, ciRoot = CI_ROOT, from, acceptance, 
   const credDir = path.join(ciRoot, 'first-install', 'credentials');
   const cred = n => path.join(credDir, CREDENTIAL_FILES[n]);
   const hb = facts.credentials.heartbeatToken;
-  return { fresh: true, root, profile, profileSha256: sha(Buffer.from(pyCanonical(profile), 'utf8')), facts, factsRaw, factsFile, kit, images,
+  return { fresh: true, root, residueUnchecked, profile, profileSha256: sha(Buffer.from(pyCanonical(profile), 'utf8')), facts, factsRaw, factsFile, kit, images,
     inst: { repository: kit.record.repository, scope: kit.record.scope, appId: kit.record.appId, installationId: kit.record.installationId, repositoryId: kit.record.repositoryId,
       supabaseUrl: kit.record.supabaseUrl, publishableKey: kit.record.publishableKey, controllerNodeSha256: kit.record.controllerNodeSha256, appKeyId: nr.appKeyId,
       appPublicKeySha256Base64: nr.appPublicKeySha256Base64, ciPrincipalBindingId: nr.ciPrincipalBindingId, ciPrincipalRoleRef: nr.ciPrincipalRoleRef,
@@ -965,7 +975,7 @@ async function prepareFirstInstallTail({ node, acceptance, universal, work, inpu
   plan.launcher = { path: launcherFile, sha256: sha(lb) };
   await writePlan(planFile, plan);
   return { status: 'FLEET_NODE_FIRST_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
-    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256) };
+    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256), residueUnchecked: [...node.residueUnchecked] };
 }
 
 // source-hash (read-only, no node): the ciSourceManifestSha256 every node's record will carry, from the package and a draft acceptance

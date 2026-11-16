@@ -8,8 +8,12 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
 $here = $PSScriptRoot
 $script:n = 0
-function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
+# Every failed check is named (a failure does not hide the checks after it); the run fails at the end when any did.
+$script:failures = New-Object Collections.Generic.List[string]
+function Yes([bool]$ok, [string]$what) { if (-not $ok) { $script:failures.Add($what) } else { $script:n++ } }
 function Throws([scriptblock]$b, [string]$like, [string]$what) { $m = $null; try { & $b } catch { $m = $_.Exception.Message }; Yes ($null -ne $m -and $m -like $like) ($what + ' (got: ' + $m + ')') }
+# A group of checks whose code may not exist yet: an exception fails the group by name, the run goes on.
+function Case([string]$what, [scriptblock]$b) { try { & $b } catch { $script:failures.Add($what + ' (threw: ' + $_.Exception.Message + ')') } }
 
 $file = Join-Path (Split-Path -Parent $here) 'bootstrap.ps1'
 $tokens = $null; $errors = $null
@@ -18,12 +22,14 @@ Yes ($errors.Count -eq 0) 'parse:bootstrap.ps1'
 $functions = @{}
 foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$f.Name] = $f.Extent.Text }
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
-    'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear')) {
-  Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name]))
+    'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear',
+    'Sha256File', 'Invoke-StageChild', 'Test-ParentAlive', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
+    'Get-NeededPrereqs')) {
+  Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 # the constants the functions read, from the script itself
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
-  if ($a.Left.Extent.Text -cin @('$PrereqContract', '$PrereqNames')) { . ([scriptblock]::Create($a.Extent.Text)) }
+  if ($a.Left.Extent.Text -cin @('$PrereqContract', '$PrereqNames', '$PowerShellExe')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
 Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 7 -and $PrereqNames -ccontains 'wsl') 'constants'
 $text = [IO.File]::ReadAllText($file)
@@ -150,4 +156,127 @@ Yes ((Test-CredentialsToClear 'cleanup' $null) -eq $true) 'l3:cleanup'
 Yes ($main -match "Invoke-Elevated 'cleanup'") 'l3:a-failed-prepare-or-declined-launcher-clears-them'
 Yes (Test-UacDeclined (New-Object InvalidOperationException('x', (New-Object ComponentModel.Win32Exception(1223))))) 'uac:declined'
 Yes (-not (Test-UacDeclined (New-Object ComponentModel.Win32Exception(2)))) 'uac:other-error'
-'{"status":"BOOTSTRAP_PURE_TESTS_PASSED","checks":' + $script:n + '}'
+
+# ---- independent review of 29c53c38c (REPORT-api-review-first-install.md)
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ('bootstrap-review-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($tmp)
+$evidence = [ordered]@{}
+try {
+  # H1: the elevated stage reads its child (P1, the launcher) with stdout and stderr apart. Under $ErrorActionPreference = 'Stop' a line
+  # on stderr must neither end the stage nor lose the child's verdict: the launcher prints its terminal and then throws (Stop-Launch).
+  $child = Join-Path $tmp 'child.ps1'
+  [IO.File]::WriteAllText($child, "param([switch]`$RunApprovedInstall, [switch]`$Grandchild)`r`n`$ErrorActionPreference = 'Stop'`r`n" +
+    "[Console]::Error.WriteLine('noise on stderr')`r`n" +
+    "if (`$Grandchild) { `$null = cmd.exe /c 'echo grandchild-stderr 1>&2'; '{`"status`":`"FIRST_INSTALL_HOST_READY`"}'; exit 0 }`r`n" +
+    "'{`"status`":`"STOPPED`",`"code`":`"LINUX_PHASE_B_NOT_COMPLETED`"}'`r`nthrow 'Stop-Launch: LINUX_PHASE_B_NOT_COMPLETED'`r`n", (New-Object Text.UTF8Encoding($false)))
+  $childArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $child)
+  Case 'h1:a-launcher-that-stops-keeps-its-terminal' {
+    $r = Invoke-StageChild $PowerShellExe ($childArgs + '-RunApprovedInstall') 300
+    Yes ($r.exit -eq 1 -and [string](Get-Key $r.last 'status') -ceq 'STOPPED' -and [string](Get-Key $r.last 'code') -ceq 'LINUX_PHASE_B_NOT_COMPLETED') ('h1:terminal-kept exit=' + $r.exit + ' last=' + (ConvertTo-Json $r.last -Compress))
+    Yes ([string]$r.stderr -match 'Stop-Launch: LINUX_PHASE_B_NOT_COMPLETED' -and [string]$r.stderr -match 'noise on stderr') ('h1:stderr-kept-apart ' + $r.stderr)
+    Yes ([string]$r.stdout -notmatch 'noise on stderr') 'h1:stdout-is-only-stdout'
+  }
+  Case 'h1:a-grandchild-on-stderr-does-not-end-the-host-stage' {
+    $r = Invoke-StageChild $PowerShellExe ($childArgs + '-Grandchild') 300
+    Yes ($r.exit -eq 0 -and [string](Get-Key $r.last 'status') -ceq 'FIRST_INSTALL_HOST_READY') ('h1:grandchild exit=' + $r.exit + ' stdout=' + $r.stdout + ' stderr=' + $r.stderr)
+  }
+  Case 'h1:the-stages-never-merge-stderr-into-the-verdict' {
+    Yes ($stageBody -notmatch '2>&1') 'h1:no-2>&1-in-Invoke-Stage'
+    Yes (([regex]::Matches($stageBody, 'Invoke-StageChild \$PowerShellExe')).Count -eq 2) 'h1:host-and-launcher-through-Invoke-StageChild'
+  }
+  # what the pattern H1 replaced does on this host (recorded for the report, not a check): `& powershell -File <child> 2>&1` under Stop
+  $old = $null
+  try { $ErrorActionPreference = 'Stop'; $o = & $PowerShellExe @($childArgs + '-RunApprovedInstall') 2>&1 | ForEach-Object { [string]$_ }; $old = 'no exception; lines=' + @($o).Count }
+  catch { $old = 'threw ' + $_.Exception.GetType().FullName + ': ' + $_.Exception.Message }
+  $evidence['oldPatternLauncherStop'] = $old
+
+  # H2: the host stage keeps the token directory for the launcher only while the bootstrap that started it still waits for it; it
+  # sweeps one an earlier run left before P1 runs.
+  Case 'h2:ready-but-the-bootstrap-gone-clears' {
+    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_READY' $false) -eq $true) 'h2:parent-gone-clears'
+    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_READY' $true) -eq $false) 'h2:parent-waiting-keeps'
+    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_REFUSED' $true) -eq $true) 'h2:refused-clears'
+  }
+  Case 'h2:the-parent-is-known-by-pid-and-start-time' {
+    $me = Get-Process -Id $PID
+    Yes (Test-ParentAlive $PID $me.StartTime.ToUniversalTime().Ticks) 'h2:alive'
+    Yes (-not (Test-ParentAlive $PID ($me.StartTime.ToUniversalTime().Ticks + 1))) 'h2:pid-reused-is-not-the-parent'
+    Yes (-not (Test-ParentAlive 0 0)) 'h2:no-parent'
+  }
+  Case 'h2:a-left-directory-is-swept' {
+    $cd = Join-Path $tmp 'credentials'; [void][IO.Directory]::CreateDirectory($cd); [IO.File]::WriteAllText((Join-Path $cd 'resident-upgrade.token'), 'x')
+    $c = Clear-CredentialDirectory $cd
+    Yes ($c.existed -eq $true -and $c.cleared -eq $true -and -not [IO.Directory]::Exists($cd)) 'h2:swept'
+    $c = Clear-CredentialDirectory $cd
+    Yes ($c.existed -eq $false -and $c.cleared -eq $true) 'h2:nothing-there'
+  }
+  Case 'h2:the-host-stage-sweeps-first-and-knows-its-parent' {
+    $hostPart = $stageBody.Substring($stageBody.IndexOf("if (`$Stage -ceq 'host')"))
+    Yes ($hostPart.IndexOf('Clear-CredentialDirectory') -gt 0 -and $hostPart.IndexOf('Clear-CredentialDirectory') -lt $hostPart.IndexOf('Invoke-StageChild')) 'h2:sweep-before-p1'
+    Yes ($stageBody -match 'Test-ParentAlive \$ParentProcessId \$ParentStartTicks') 'h2:stage-checks-the-parent'
+    Yes ($main.Contains("'-ParentProcessId'") -and $main.Contains("'-ParentStartTicks'")) 'h2:bootstrap-names-itself'
+  }
+
+  # M2: the toolchain's node.exe is the fleet's controller runtime before the first UAC (the check P1 can no longer undo)
+  $good = [ordered]@{ status = 'FIRST_INSTALL_INPUTS_ACCEPTED'; archiveSha256 = $h1; kitSha256 = $h2; controllerNodeSha256 = $h3; toolchainNodeSha256 = $img; registrarSha256 = $h1 }
+  Case 'm2:the-controller-node-before-uac-1' {
+    # (the function returns its codes as one array, as Test-AssetSet: used as it is, never wrapped in @() again)
+    Yes ((Test-FirstInstallCheck $good $h1 $h2 $h3).Count -eq 0) 'm2:accepted'
+    Yes ((Test-FirstInstallCheck $good $h1 $h2 ('9' * 64)) -ccontains 'CONTROLLER_NODE_NOT_THE_FLEETS') 'm2:node-differs'
+    Yes ((Test-FirstInstallCheck $good ('9' * 64) $h2 $h3) -ccontains 'ARCHIVE_NOT_THE_CHECKED') 'm2:archive-differs'
+    Yes ((Test-FirstInstallCheck $good $h1 $null $h3) -ccontains 'KIT_NOT_THE_LISTED') 'm2:no-kit'
+    $bad = [ordered]@{}; foreach ($k in @($good.Keys)) { $bad[$k] = $good[$k] }; $bad['registrarSha256'] = 'x'
+    Yes ((Test-FirstInstallCheck $bad $h1 $h2 $h3) -ccontains 'PIN_SHAPE:registrarSha256') 'm2:pin-shape'
+    $hostAt = $main.IndexOf("Invoke-Elevated 'host'")
+    Yes ($main.IndexOf('Test-FirstInstallCheck') -gt 0 -and $main.IndexOf('Test-FirstInstallCheck') -lt $hostAt -and $main.IndexOf('Sha256File $nodeExe[0]') -lt $hostAt -and $main.IndexOf('Sha256File $nodeExe[0]') -gt 0) 'm2:checked-before-uac-1'
+  }
+
+  # M3: what the elevated stage reads is a local copy in the work directory (an elevated token does not see the user's mapped drives)
+  Case 'm3:local-copies-for-the-elevated-stage' {
+    $src = Join-Path $tmp 'from'; $wd = Join-Path $tmp 'work'; [void][IO.Directory]::CreateDirectory($src); [void][IO.Directory]::CreateDirectory($wd)
+    $a = Join-Path $src 'fleet-node-1.tar'; [IO.File]::WriteAllText($a, 'archive bytes')
+    $want = Sha256File $a
+    $copy = Copy-ToWork $a $wd $want
+    Yes ($copy -ceq (Join-Path $wd 'fleet-node-1.tar') -and (Sha256File $copy) -ceq $want) 'm3:copied-and-held-to-its-hash'
+    Throws { Copy-ToWork $a (Join-Path $tmp 'work2') ('0' * 64) } 'LOCAL_COPY_NOT_THE_PINNED:*' 'm3:another-hash-refused'
+    Yes ((Test-UnderDirectory $copy $wd) -and -not (Test-UnderDirectory $a $wd) -and -not (Test-UnderDirectory ($wd + 'x\y') $wd)) 'm3:under-the-work-directory'
+    $hostArgsAt = $main.IndexOf('$hostArgs = @(')
+    $hostArgsText = $main.Substring($hostArgsAt, $main.IndexOf("`n", $main.IndexOf("`n", $hostArgsAt) + 1) - $hostArgsAt)
+    Yes ($hostArgsText -notmatch "'-Tar', \`$tar\b" -and $hostArgsText -notmatch "'-PrereqManifest', \`$prereqFile\b") ('m3:host-arguments-are-the-copies ' + $hostArgsText)
+    Yes ($main -match 'Copy-ToWork \$tar ' -and $main -match 'Copy-ToWork \$prereqFile ') 'm3:tar-and-manifest-copied'
+  }
+
+  # M4: a first install is done only when the M5-b switch moved the distribution to the companion (COMPANION_HEADLESS_QUALIFIED)
+  Case 'm4:the-companion-switch-counts-for-a-first-install' {
+    $term = { param($s, $c) [ordered]@{ status = $s; companionHeadless = [ordered]@{ ran = $true; status = $c } } }
+    Yes ((Get-LauncherVerdict $true (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_QUALIFIED')).status -ceq 'BOOTSTRAP_DONE') 'm4:first-install-done'
+    Yes ((Get-LauncherVerdict $true (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FELL_BACK')).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:switch-fell-back'
+    Yes ((Get-LauncherVerdict $true ([ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:switch-not-reported'
+    Yes ((Get-LauncherVerdict $false (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FELL_BACK')).status -ceq 'BOOTSTRAP_DONE') 'm4:a-reinstall-as-before'
+    Yes ((Get-LauncherVerdict $true (& $term 'PAUSE_NOT_CONFIRMED' 'COMPANION_HEADLESS_QUALIFIED')).status -ceq 'BOOTSTRAP_LAUNCHER_ENDED') 'm4:not-verified'
+    # the launcher prints its terminal with ConvertTo-Json: the switch's status is read from it
+    $printed = "x`r`n" + ((& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FAILED') | ConvertTo-Json -Depth 6)
+    Yes ((Get-LauncherVerdict $true (Get-LastJsonLine $printed)).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:read-from-the-printed-terminal'
+    Yes ($main -match 'Get-LauncherVerdict \$firstInstall') 'm4:the-bootstrap-uses-it'
+  }
+
+  # M6: a node with a resident (the reinstall) fetches and needs pinned only what its path runs: node, python, git; never the rootfs,
+  # the WSL package, the runner, the Linux toolchain node or the .debs
+  Case 'm6:the-reinstall-takes-only-what-it-needs' {
+    Yes (((Get-NeededPrereqs $false) -join ',') -ceq 'node,python,git') 'm6:reinstall-needs'
+    Yes (((Get-NeededPrereqs $true) -join ',') -ceq ($PrereqNames -join ',')) 'm6:first-install-needs-all'
+    $c = Test-PrereqManifest $committed (Get-NeededPrereqs $false) $false
+    $u = @($c | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' } | ForEach-Object { $_.Substring(18) } | Sort-Object)
+    Yes (($u -join ',') -ceq 'git,node,python' -and @($c | Where-Object { $_ -notlike 'PREREQ_NOT_PINNED:*' }).Count -eq 0) ('m6:reinstall-unpinned ' + ($c -join ','))
+    $m = New-Pinned; $m['debs'][0]['sha256'] = $null; foreach ($i in @($m['items'])) { if ($i['name'] -ceq 'wsl') { $i['sha256'] = $null } }
+    Yes ((Test-PrereqManifest $m (Get-NeededPrereqs $false) $false).Count -eq 0) 'm6:reinstall-ignores-first-install-pins'
+    Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_NOT_PINNED:wsl') 'm6:first-install-still-refuses'
+    Yes ($main -match 'Get-NeededPrereqs \$firstInstall' -and $main -match 'if \(\$firstInstall\) \{[^\r\n]*debs') 'm6:the-bootstrap-fetches-by-need'
+  }
+} finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+
+if ($script:failures.Count) {
+  (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'BOOTSTRAP_PURE_TESTS_FAILED'; checks = $script:n; failures = @($script:failures); evidence = $evidence })
+  exit 1
+}
+(New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'BOOTSTRAP_PURE_TESTS_PASSED'; checks = $script:n; evidence = $evidence })

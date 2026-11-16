@@ -12,8 +12,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions
 $here = $PSScriptRoot
 $script:n = 0; $script:skipped = $null
-function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
+# Every failed check is named (a failure does not hide the checks after it); the run fails at the end when any did.
+$script:failures = New-Object Collections.Generic.List[string]
+function Yes([bool]$ok, [string]$what) { if (-not $ok) { $script:failures.Add($what) } else { $script:n++ } }
 function Throws([scriptblock]$b, [string]$like, [string]$what) { $m = $null; try { & $b } catch { $m = $_.Exception.Message }; Yes ($null -ne $m -and $m -like $like) ($what + ' (got: ' + $m + ')') }
+function Case([string]$what, [scriptblock]$b) { try { & $b } catch { $script:failures.Add($what + ' (threw: ' + $_.Exception.Message + ')') } }
 
 $file = Join-Path $here 'first-install-host.ps1'
 $tokens = $null; $errors = $null
@@ -23,8 +26,9 @@ $functions = @{}
 foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$f.Name] = $f.Extent.Text }
 foreach ($name in @('Get-Key', 'Get-Rid', 'Get-NodeProfile', 'Get-Signer', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Test-SddlIs', 'Get-ResidueCodes',
     'Get-TokenFingerprint', 'New-FirstInstallFacts', 'Test-SameFacts', 'Test-LinuxFirstInstallFacts', 'Test-ExpectedOperator', 'Get-ServiceSid', 'Test-CiRootHasResidentAce',
-    'Get-WslVersion', 'Get-CredentialPlan', 'Get-ResetPlan', 'Test-DenyServiceLogon', 'Get-V1BaseCodes', 'Get-DebListText')) {
-  Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name]))
+    'Get-WslVersion', 'Get-CredentialPlan', 'Get-ResetPlan', 'Test-DenyServiceLogon', 'Get-V1BaseCodes', 'Get-DebListText',
+    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt')) {
+  Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
   if ($a.Left.Extent.Text -cin @('$Distribution', '$ResidentRoot', '$FactsContract', '$Utf8', '$Strict8', '$SecretTargets', '$CiRoot', '$VhdxDirectory')) { . ([scriptblock]::Create($a.Extent.Text)) }
@@ -117,7 +121,7 @@ Yes ($main -match 'msiexec\.exe' -and $main -match 'Get-WslVersion') 'm7:msi-ins
 # H2: the credentials are collected and the facts draft checked (install.mjs first-install-facts-check) before any file is written
 Yes (-not $functions.ContainsKey('Test-FirstInstallFacts')) 'm1:no-second-copy-of-the-facts-rule'
 Yes ($functions.ContainsKey('Invoke-FactsCheck') -and $functions['Invoke-FactsCheck'] -match 'first-install-facts-check') 'm1:the-rule-is-install-mjs'
-$firstWrite = [Math]::Min($main.IndexOf('Write-CreateOnly'), $main.IndexOf('Write-Secrets'))
+$firstWrite = @(@('Write-CreateOnly', 'Write-NewFile', 'Write-Secrets') | ForEach-Object { $main.IndexOf($_) } | Where-Object { $_ -ge 0 } | Sort-Object)[0]
 Yes ($main.IndexOf('Invoke-FactsCheck') -gt 0 -and $main.IndexOf('Invoke-FactsCheck') -lt $firstWrite) 'h2:checked-before-written'
 Yes ($main.IndexOf('Get-CredentialPlan') -gt 0 -and $main.IndexOf('Get-CredentialPlan') -lt $main.IndexOf('Read-TokenFromDialog')) 'h2:plan-before-dialogs'
 $cp = Get-CredentialPlan $false ([ordered]@{ appKey = 'missing'; ciToken = 'missing'; upgradeToken = 'missing'; heartbeatToken = 'missing' })
@@ -231,4 +235,89 @@ $o = New-Clean; $o['vhdxTargetNotEmpty'] = $true
 Yes ((Get-ResidueCodes $o) -ccontains 'DIRECTORY_NOT_EMPTY:C:\ProgramData\CluedIndependentCI\wsl\CluedResident-Linux') 'switch:a-filled-target-is-residue'
 Yes ($text -match "'remove-import-directory'" -and $text -notmatch "'remove-vhdx-directory'") 'switch:reset-removes-the-import-only'
 
-'{"status":"FIRST_INSTALL_HOST_PURE_TESTS_PASSED","checks":' + $script:n + ',"skipped":' + $(if ($script:skipped) { '"' + $script:skipped + '"' } else { 'null' }) + '}'
+# ---- independent review of 29c53c38c (REPORT-api-review-first-install.md)
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ('first-install-host-review-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($tmp)
+function Stop-Host([string]$code, $detail) { throw ('STOP:' + $code) }   # the real one prints the refusal and exits
+try {
+  # H1: P1 runs under Stop with its stdout and stderr read apart by the stage; no tool it starts may turn a line on stderr into the end
+  # of P1 (dism, powercfg, secedit, the companion account's own script): each runs through Invoke-Native (ProcessStartInfo).
+  Case 'h1:p1-starts-its-tools-through-invoke-native' {
+    Yes ($main -notmatch '&\s*(?:dism|powercfg|secedit)\.exe') 'h1:no-call-operator-on-dism-powercfg-secedit'
+    Yes ($main -notmatch "&\s*'C:\\Windows\\System32\\WindowsPowerShell") 'h1:no-call-operator-on-powershell'
+    Yes ($main -match "Invoke-Native \`$PowerShellExe @\('-NoProfile'" -and $main -match 'prepare-companion-account\.ps1') 'h1:companion-account-through-invoke-native'
+    foreach ($t in @('dism.exe', 'powercfg.exe', 'secedit.exe')) { Yes ($main -match ('Invoke-Native ''C:\\Windows\\System32\\' + [regex]::Escape($t) + '''')) ('h1:' + $t + '-through-invoke-native') }
+  }
+
+  # M1: facts.json is written (create-only, whole or not at all) BEFORE the App key and the ci-admission token are placed: a run cut off
+  # between the two leaves facts without secrets, which the next run asks for again (ask-missing) and -Reset removes; never secrets
+  # without facts, which nothing can attribute.
+  Case 'm1:facts-before-the-secrets' {
+    $fw = $main.IndexOf('Write-NewFile $factsFile'); $sw = $main.IndexOf('Write-Secrets $controllerSid')
+    Yes ($fw -gt 0 -and $sw -gt 0 -and $fw -lt $sw) ('m1:order facts=' + $fw + ' secrets=' + $sw)
+    Yes ($main.IndexOf('Invoke-FactsCheck') -lt $fw) 'm1:checked-before-written'
+    $cp = Get-CredentialPlan $true ([ordered]@{ appKey = 'missing'; ciToken = 'missing'; upgradeToken = 'missing'; heartbeatToken = 'missing' })
+    Yes ($cp.mode -ceq 'ask-missing' -and (@($cp.ask) -join ',') -ceq 'appKey,ciToken,upgradeToken,heartbeatToken') 'm1:cut-off-run-asks-again'
+    $rp = Get-ResetPlan ([ordered]@{ resident = @(); factsPresent = $true; appKey = 'missing'; ciToken = 'missing'; companionWsl = $null; operator = $operator; distributionRegistered = $false })
+    Yes ((@($rp.actions) -join ',') -ceq 'remove-first-install-directory' -and @($rp.kept).Count -eq 0) 'm1:reset-takes-the-cut-off-state'
+  }
+  Case 'm1:write-new-file-is-whole-or-nothing-and-create-only' {
+    $f = Join-Path $tmp 'facts.json'
+    Write-NewFile $f ($Utf8.GetBytes('{"a":1}' + "`n")) 'D:P(A;;FA;;;WD)'
+    Yes ([IO.File]::ReadAllText($f) -ceq ('{"a":1}' + "`n")) 'm1:written'
+    Throws { Write-NewFile $f ($Utf8.GetBytes('{}')) 'D:P(A;;FA;;;WD)' } '*' 'm1:create-only'
+    Yes ([IO.File]::ReadAllText($f) -ceq ('{"a":1}' + "`n")) 'm1:not-overwritten'
+    Yes (@(Get-ChildItem -LiteralPath $tmp -Force | Where-Object { $_.Name -like 'facts.json?*' }).Count -eq 0) 'm1:no-partial-left'
+  }
+
+  # M5: the runner's archive is expanded resumably: into a new directory, checked against the zip, renamed into place, marked complete;
+  # a directory found without its mark (a cut-off run) is set aside, kept, and the expansion done again; a marked one is checked.
+  $src = Join-Path $tmp 'runner-src'; [void][IO.Directory]::CreateDirectory((Join-Path $src 'bin'))
+  [IO.File]::WriteAllText((Join-Path $src 'bin\RunnerService.exe'), 'not really a service'); [IO.File]::WriteAllText((Join-Path $src 'run.cmd'), 'echo run')
+  $zip = Join-Path $tmp 'actions-runner.zip'; [IO.Compression.ZipFile]::CreateFromDirectory($src, $zip)
+  $zipSha = Sha256File $zip
+  $dir = Join-Path $tmp 'runner'; $mark = Join-Path $tmp 'runner.first-install-complete'
+  Case 'm5:expand-into-place' {
+    Yes ((Get-ExpandState $dir $mark $zipSha) -ceq 'absent') 'm5:absent'
+    $null = Expand-Verified $zip $dir $mark $zipSha
+    Yes ([IO.File]::Exists((Join-Path $dir 'bin\RunnerService.exe')) -and (Test-ZipExpanded $zip $dir) -and (Get-ExpandState $dir $mark $zipSha) -ceq 'complete') 'm5:complete'
+    Yes (@(Get-ChildItem -LiteralPath $tmp -Directory | Where-Object { $_.Name -like 'runner.partial-*' }).Count -eq 0) 'm5:no-partial-left'
+    $null = Expand-Verified $zip $dir $mark $zipSha
+    Yes ((Get-ExpandState $dir $mark $zipSha) -ceq 'complete') 'm5:a-rerun-only-checks'
+  }
+  Case 'm5:a-cut-off-expansion-is-set-aside-and-done-again' {
+    Remove-Item -LiteralPath $mark -Force; Remove-Item -LiteralPath (Join-Path $dir 'run.cmd') -Force
+    Yes ((Get-ExpandState $dir $mark $zipSha) -ceq 'incomplete' -and -not (Test-ZipExpanded $zip $dir)) 'm5:incomplete'
+    $null = Expand-Verified $zip $dir $mark $zipSha
+    Yes ((Get-ExpandState $dir $mark $zipSha) -ceq 'complete' -and (Test-ZipExpanded $zip $dir)) 'm5:done-again'
+    Yes (@(Get-ChildItem -LiteralPath $tmp -Directory | Where-Object { $_.Name -like 'runner.incomplete-*' }).Count -eq 1) 'm5:cut-off-kept-aside'
+  }
+  Case 'm5:a-marked-expansion-that-changed-is-refused' {
+    [IO.File]::WriteAllText((Join-Path $dir 'bin\RunnerService.exe'), 'changed')
+    Throws { Expand-Verified $zip $dir $mark $zipSha } 'STOP:EXPANDED_FILES_NOT_THE_PINNED' 'm5:changed-refused'
+    Yes ((Get-ExpandState $dir $mark ('0' * 64)) -ceq 'incomplete') 'm5:another-archive-is-not-complete'
+  }
+  Case 'm5:the-runner-step-uses-it' {
+    Yes ($main -match "Expand-Verified \`$staged\['actions-runner'\] \`$runnerDir" -and $main -notmatch "Expand-Archive -LiteralPath \`$staged\['actions-runner'\]") 'm5:runner-step'
+  }
+
+  # L3: a re-run asks for exactly what facts.json records: a recorded heartbeat token is required, never "leave empty for none"
+  Case 'l3:a-recorded-token-is-required' {
+    $ask = [ordered]@{ mode = 'ask-missing'; ask = @('upgradeToken', 'heartbeatToken'); code = $null }
+    Yes (((Get-MissingCredentials $ask @('upgradeToken')) -join ',') -ceq 'heartbeatToken') 'l3:recorded-heartbeat-missing'
+    # (the function returns one array, as Get-V1BaseCodes: used as it is, never wrapped in @() again)
+    Yes ((Get-MissingCredentials $ask @('upgradeToken', 'heartbeatToken')).Count -eq 0) 'l3:all-given'
+    $all = [ordered]@{ mode = 'collect-all'; ask = @('appKey', 'ciToken', 'upgradeToken', 'heartbeatToken'); code = $null }
+    Yes ((Get-MissingCredentials $all @('appKey', 'ciToken', 'upgradeToken')).Count -eq 0) 'l3:first-run-heartbeat-optional'
+    Yes (((Get-MissingCredentials $all @('appKey', 'upgradeToken')) -join ',') -ceq 'ciToken') 'l3:first-run-ci-token-required'
+    Yes ((Get-HeartbeatPrompt $true) -notmatch 'empty' -and (Get-HeartbeatPrompt $false) -match 'leave empty for none') 'l3:prompt'
+    Yes ($main -match 'Get-HeartbeatPrompt \(\$null -ne \$old\)' -and $main -match 'Get-MissingCredentials \$plan') 'l3:used'
+  }
+} finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+
+if ($script:failures.Count) {
+  $js.Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_PURE_TESTS_FAILED'; checks = $script:n; failures = @($script:failures); skipped = $script:skipped })
+  exit 1
+}
+$js.Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_PURE_TESTS_PASSED'; checks = $script:n; skipped = $script:skipped })

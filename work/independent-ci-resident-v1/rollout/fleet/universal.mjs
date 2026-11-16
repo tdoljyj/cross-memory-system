@@ -75,6 +75,9 @@ export async function selectTree(listing, read) {
     }
   }
   for (const p of chosen) check(['100644', '100755'].includes(listing.get(p).mode), 'UNIVERSAL_TREE_ENTRY_NOT_A_FILE', p);
+  // the node entry (bootstrap.ps1) extracts the archive with Windows' own tar.exe, which cannot write a name outside ASCII: a package
+  // never holds one (review M6; none at the commit this rule was added with)
+  for (const p of chosen) check(/^[\x20-\x7e]+$/.test(p), 'UNIVERSAL_TREE_PATH_NOT_ASCII', p);
   return [...chosen].sort(byteOrder);
 }
 
