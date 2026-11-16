@@ -411,7 +411,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.72",
+      "version": "1.1.73",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -473,6 +473,7 @@
         "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/github-budget.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/gitleaks-report.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/merge-slot-native.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
@@ -522,6 +523,7 @@
         "work/actions-hosted-migration/independent-ci-v1/test/formal-trivy-scan-start-window.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/github-budget.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/github.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/gitleaks-pr-range.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-claim-observation-retry.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-guarded-publication.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs",

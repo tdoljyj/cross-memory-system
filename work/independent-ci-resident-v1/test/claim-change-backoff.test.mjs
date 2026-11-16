@@ -28,7 +28,7 @@ const trigger = updatedAt => Buffer.from(JSON.stringify({ contract: TRIGGER_CONT
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
 
 // Stage 1 refuses the claim until the PR names `good`; the claim the PR body names is `body.claim` (read live by the fake companion).
-async function field(t, { good, refusal = CLAIM_REFUSAL }) {
+async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {} }) {
   const body = { claim: OLD_CLAIM, status: 'bound', authorization: null, epoch: 1 };
   const engine = fakeEngine();
   const run = engine.runStage;
@@ -43,6 +43,7 @@ async function field(t, { good, refusal = CLAIM_REFUSAL }) {
   let clock = () => 0;
   const companion = fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: HEAD, claims: [body.claim] }) }, () => clock());
   const policy = rawPolicy(); policy.train.maintenanceEveryMs = MIN;
+  Object.assign(policy.limits, limits);
   const f = await executorFixture(t, { engine, companion, policy, now: Date.parse('2026-11-08T03:05:00Z') });
   clock = f.clock;
   engine.runTrainStage = async mode => {
@@ -64,7 +65,7 @@ async function refused(f) {
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'CLAIM_NOT_CURRENT']);
   const row = f.queue.row(PR);
-  assert.deepEqual([row.state, row.reason, row.level, row.levelKind], ['BACKOFF', 'CLAIM_NOT_CURRENT', 0, null]);
+  assert.deepEqual([row.state, row.reason, row.level, row.levelKind], ['WAITING', 'CLAIM_NOT_CURRENT', 1, 'waiting']);
   await f.exec.tick(); // off-mode protected shadow collects the first baseline; it never admits the head.
   assert.equal(row.evalClaims, null, 'body claims are not retained as authority');
   assert.equal(typeof row.evalBinding, 'string');
@@ -120,7 +121,7 @@ test('unknown, stale, moved subject or wrong Source observations preserve the sa
     body.unknown = change === 'unknown'; body.observationPatch = patches[change];
     f.advance(MIN); await f.exec.tick(); await f.exec.tick();
     assert.equal(f.queue.row(PR).nextAt, before);
-    assert.equal(f.queue.row(PR).state, 'BACKOFF');
+    assert.equal(f.queue.row(PR).state, 'WAITING');
     assert.equal(stage1.length, 1);
     assert.ok(!f.engine.calls.some(c => c[0] === 'stage' && c[1] >= 2 && c[1] <= 9));
     assert.equal((await f.ledger.state(batchKey({ repo:'tdoljyj/cross-memory-system',pr:PR,headSha:HEAD,baseSha:BASE,sourceManifestSha256:SOURCE,attempt:1 }))).state, 'ABSENT');
@@ -137,7 +138,7 @@ test('off-mode claim observation obeys the maintenance cap and preserves cleanup
     const r = await f.exec.tick();
     if (change === 'cap') assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === 10).length, before);
     else { assert.equal(r.state, 'HALTED'); assert.equal(r.failureCode, 'TRAIN_STAGE_CLEANUP_UNCONFIRMED'); }
-    assert.equal(f.queue.row(PR).state, 'BACKOFF');
+    assert.equal(f.queue.row(PR).state, 'WAITING');
   });
 });
 
@@ -149,7 +150,7 @@ test('2026-11-08 PR #1039 control: a new trigger with the same claim keeps the b
   await f.drop(trigger(f.clock()));
   assert.notEqual((await f.exec.tick()).state, 'NOT_ADMITTED');
   const row = f.queue.row(PR);
-  assert.deepEqual([row.state, row.reason, row.nextAt], ['BACKOFF', 'CLAIM_NOT_CURRENT', backoffEnd], 'the back-off stands');
+  assert.deepEqual([row.state, row.reason, row.nextAt], ['WAITING', 'CLAIM_NOT_CURRENT', backoffEnd], 'the back-off stands');
   assert.equal(row.poke.claimCheck, undefined, 'the claim was checked once');
   assert.ok(row.poke.dueAt >= backoffEnd, 'the poke waits for the cool-down');
   for (let i = 0; i < 8; i += 1) { f.advance(MIN); await f.exec.tick(); }
@@ -171,7 +172,7 @@ test('no answer from the live read, or a refusal that is not about the claim, ke
   body.claim = NEW_CLAIM;
   await f.drop(trigger(f.clock()));
   await f.exec.tick();
-  assert.deepEqual([f.queue.row(PR).state, f.queue.row(PR).nextAt, stage1.length], ['BACKOFF', backoffEnd, 1]);
+  assert.deepEqual([f.queue.row(PR).state, f.queue.row(PR).nextAt, stage1.length], ['WAITING', backoffEnd, 1]);
   // Another not-admitted code never asks for the claim.
   const g = await field(t, { good: NEW_CLAIM });
   await g.f.drop(trigger(g.f.clock() - MIN));
@@ -182,7 +183,7 @@ test('no answer from the live read, or a refusal that is not about the claim, ke
   await g.f.drop(trigger(g.f.clock()));
   await g.f.exec.tick();
   assert.equal(g.f.queue.row(PR).poke?.claimCheck, undefined);
-  assert.equal(g.f.queue.row(PR).state, 'BACKOFF');
+  assert.equal(g.f.queue.row(PR).state, 'WAITING');
   assert.equal(g.stage1.length, 1);
 });
 
@@ -221,7 +222,7 @@ for (const [name, reasons] of [['no authorize_head yet', ['claim_not_found']], [
     assert.equal(r.failureCode, 'CLAIM_NOT_CURRENT');
     for (let i = 0; i < cap + 2; i += 1) {
       const row = f.queue.row(PR);
-      assert.deepEqual([row.state, row.reason], ['BACKOFF', 'CLAIM_NOT_CURRENT'], `round ${i}: still waiting, not stopped`);
+      assert.deepEqual([row.state, row.reason], ['WAITING', 'CLAIM_NOT_CURRENT'], `round ${i}: still waiting, not stopped`);
       if (i === 0) assert.match(row.deferred, /^CLAIM_NOT_CURRENT: /);
       f.advance(row.nextAt - f.clock() + 1);
       r = await f.exec.tick();
@@ -245,4 +246,50 @@ test('claim refusal: the head stops only after 24 hours of waiting for its claim
   row.nextAt = f.clock();
   await f.exec.tick();
   assert.deepEqual([f.queue.row(PR).state, f.queue.row(PR).stopKind], ['STOPPED', 'release-cap']);
+});
+
+test('G4: unchanged claim waits back off exponentially, including after unrelated PR edits', async t => {
+  const { f, body, stage1 } = await field(t, { good: NEW_CLAIM });
+  await f.drop(trigger(f.clock() - MIN));
+  const delays = [];
+  for (let i = 0; i < 7; i += 1) {
+    assert.equal((await f.exec.tick()).failureCode, 'CLAIM_NOT_CURRENT');
+    const due = f.queue.row(PR).nextAt;
+    delays.push((due - f.clock()) / MIN);
+    // Title/body edits with unchanged protected Native conditions cannot turn
+    // the exponential wait back into one evaluation every ten minutes.
+    if (i > 0) {
+      f.advance(10 * MIN);
+      await f.drop(trigger(f.clock()));
+      await f.exec.tick();
+      assert.equal(stage1.length, i + 1, 'an unchanged claim keeps its longer backoff');
+    }
+    if (i < 6) f.advance(due - f.clock());
+  }
+  assert.deepEqual(delays, [10, 20, 40, 80, 120, 120, 120]);
+  const due = f.queue.row(PR).nextAt;
+  body.claim = NEW_CLAIM;
+  f.advance(MIN);
+  await f.exec.tick(); // fresh protected observation, no PR edit
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.ok(f.clock() < due, 'a real claim change skips even a 120-minute wait');
+  assert.deepEqual(stage1, [...Array(7).fill(OLD_CLAIM), NEW_CLAIM]);
+});
+
+test('G4: a protected claim change wakes immediately even when the waiting budget is full', async t => {
+  const { f, body, stage1 } = await field(t, { good: NEW_CLAIM, limits: { waitingRetriesPer24h: 1 } });
+  await f.drop(trigger(f.clock() - MIN));
+  assert.equal((await f.exec.tick()).failureCode, 'CLAIM_NOT_CURRENT');
+  await f.exec.tick(); // baseline protected observation
+  f.advance(10 * MIN);
+  await f.exec.tick(); // exhausted waiting budget; this must not reserve again
+  assert.equal(f.queue.row(PR).deferred, 'WAITING_BUDGET_EXHAUSTED');
+  assert.equal(stage1.length, 1);
+  body.claim = NEW_CLAIM;
+  f.advance(MIN);
+  await f.exec.tick(); // observe new binding; no push or PR edit
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'COMPLETED');
+  assert.deepEqual(stage1, [OLD_CLAIM, NEW_CLAIM]);
+  assert.equal(f.queue.row(PR).current.headSha, HEAD);
 });

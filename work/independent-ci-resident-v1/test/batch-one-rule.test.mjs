@@ -180,7 +180,8 @@ test('PR state unreadable: the batch stays parked (one read per 10 minutes, no r
   // park.maxMs is outside the rule: it bounds how long a batch the rule cannot decide holds its parking place
   f.advance(24 * 60 * MIN);
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT']);
+  assert.equal((await f.ledger.state(KEY)).terminal.facts.basis, 'park-max-age');
 });
 
 test('reinstall: on a paused node off duty the rule ends the residue, so W1 and the uninstall find no open batch; the pause stays', async t => {

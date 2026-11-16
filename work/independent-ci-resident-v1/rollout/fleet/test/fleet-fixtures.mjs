@@ -47,7 +47,7 @@ export function profileOf(letter) {
     runnerService: `actions.runner.tdoljyj-cross-memory-system.clued-ci-${name}`, mutationMutex: `Global\\CluedControlControllerMutationV1-${host}-1015` });
 }
 
-// The checkout's universal subset (tracked files and this assembler's untracked ones), as one commit. No node profile:
+// The checkout's universal subset (tracked files and new resident/Source files), as one commit. No node profile:
 // a package carries none (each node's comes from its installed record).
 export async function fixtureRepo(t) {
   const d = await tempDir(t, 'fleetrepo');
@@ -56,7 +56,7 @@ export async function fixtureRepo(t) {
     const tab = rec.indexOf('\t'); const [mode, oid] = rec.slice(0, tab).split(' ');
     listing.set(rec.slice(tab + 1), { mode, oid });
   }
-  for (const p of git(CHECKOUT, 'ls-files', '-z', '--others', '--exclude-standard', '--', 'work/independent-ci-resident-v1').toString('utf8').split('\0').filter(Boolean)) {
+  for (const p of git(CHECKOUT, 'ls-files', '-z', '--others', '--exclude-standard', '--', 'work/independent-ci-resident-v1', 'work/actions-hosted-migration/independent-ci-v1').toString('utf8').split('\0').filter(Boolean)) {
     listing.set(p, { mode: '100644', oid: null });
   }
   const read = async paths => new Map(await Promise.all(paths.map(async p => [p, await fs.readFile(path.join(CHECKOUT, ...p.split('/')))])));
@@ -75,7 +75,7 @@ export function fleetFacts() {
 }
 
 function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), resultPublicKeySha256 = hex(32) } = {}) {
-  const p = { schema: 'independent-ci.linux-policy.v3', role, formalEnabled: true, runtimeIdentity: `fixture-${letter}-runtime`, keyId: `fixture-${letter}-key`,
+  const p = { schema: 'independent-ci.linux-policy.v3', role, formalEnabled: true, runtimeIdentity: `fixture-${letter}-runtime`, keyId: 'fixture-key', workspaceRoot: '/var/lib/clued-independent-ci/workspaces', runsRoot: '/var/lib/clued-independent-ci/runs',
     image: `sha256:${hex(32)}`, executionMode: role === 'contract-placement' ? 'node-entry' : 'scanner', dockerExecutable: '/usr/bin/docker', dockerExecutableSha256: hex(32),
     nodeExecutable: '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', nodeExecutableSha256: toolchainSha, gitExecutable: '/usr/bin/git', gitExecutableSha256: hex(32),
     cpus: new PyFloat(1.5), entryFile: `${TRUSTED_SOURCE}/${ENTRY}`, trustedSourceDirectory: TRUSTED_SOURCE, hostAcceptanceRef: fleet.hostQualificationRef,

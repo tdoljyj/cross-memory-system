@@ -16,6 +16,12 @@ The generic node package (rollout/fleet/BATCH1-INTERFACES.md sections 3 and 4; o
   python -I generate.py --fleet-plan <install-plan.json> --out <launcher.ps1>
   python -I generate.py --fleet-plan <install-plan.json> --check
 
+A first install (the plan's `firstInstall`, rollout/fleet/install.mjs on a node without an install receipt): no resident is installed, so
+nothing of one is read here and no W1 pause exists (`w1Paused` null, `reasons` only pause and rearm, `expectedInstalledLinux` null); the
+scripts are reinstall/linux/first-install.py's --in-dir form; the operator and the VHDX directory are the host preparation's facts
+(<CI root>/first-install/facts.json, by the plan's hash); the tokens are the host preparation's (`secrets.source` "first-install", in
+<CI root>/first-install/credentials, by fingerprint), carried and deleted by the launcher as a reinstall's installed ones.
+
 --check: every check of the generation that does not need the W1 pause, before W1 (the plan's `w1Paused` is still null); writes no
 launcher and prints FLEET_PLAN_CHECK_PASSED or the refusals. Without it the node must be paused by exactly the plan's W1 pause:
 state/PAUSED.json there, its sha256 the plan's `w1Paused.sha256`, its reason the plan's `reasons.w1Pause`.
@@ -67,23 +73,32 @@ else:
     A = sys.argv[2:]
 def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
+FIRST = None
 if FLEET_PLAN:
     # The values a configuration file gave, from the plan and the node (the rest follows below, once the package is read).
-    _S, _RS = PLAN.get('secrets'), PLAN.get('reasons')
+    _S, _RS, FIRST = PLAN.get('secrets'), PLAN.get('reasons'), PLAN.get('firstInstall')
+    _UUID0 = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    assert FIRST is None or (isinstance(FIRST, dict) and set(FIRST) == {'factsSha256', 'operatorSid', 'wslVhdxDirectory', 'kitSha256'}
+                             and all(isinstance(FIRST[k], str) and re.fullmatch(r'[0-9a-f]{64}', FIRST[k]) for k in ('factsSha256', 'kitSha256'))
+                             and rconfig.USER_SID.fullmatch(FIRST['operatorSid'] or '') and rconfig.VHDX_DIR.fullmatch(FIRST['wslVhdxDirectory'] or '')), 'FLEET_PLAN_FIRST_INSTALL'
+    FIRST_DIR = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'first-install'])
     _fp = lambda v, keys: isinstance(v, dict) and set(v) == keys and isinstance(v['target'], str) and isinstance(v['fingerprint'], str) and re.fullmatch(r'[0-9a-f]{64}', v['fingerprint'])
     _UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
-    assert (isinstance(_S, dict) and set(_S) == {'source', 'upgradeToken', 'heartbeatToken'} and _S['source'] == 'installed' and _fp(_S['upgradeToken'], {'target', 'fingerprint'})
+    assert (isinstance(_S, dict) and set(_S) == {'source', 'upgradeToken', 'heartbeatToken'} and _S['source'] == ('first-install' if FIRST else 'installed') and _fp(_S['upgradeToken'], {'target', 'fingerprint'})
             and (_S['heartbeatToken'] is None or (_fp(_S['heartbeatToken'], {'target', 'fingerprint', 'bindingId'}) and _S['heartbeatToken']['fingerprint'] != _S['upgradeToken']['fingerprint']
                                                  and (_S['heartbeatToken']['bindingId'] is None or (isinstance(_S['heartbeatToken']['bindingId'], str) and re.fullmatch(_UUID, _S['heartbeatToken']['bindingId'])))))), 'FLEET_PLAN_SECRETS'
-    assert isinstance(_RS, dict) and set(_RS) == {'pause', 'rearm', 'w1Pause'} and all(isinstance(v, str) and rconfig.REASON.match(v) for v in _RS.values()), 'FLEET_PLAN_REASONS'
+    assert isinstance(_RS, dict) and set(_RS) == ({'pause', 'rearm'} if FIRST else {'pause', 'rearm', 'w1Pause'}) and all(isinstance(v, str) and rconfig.REASON.match(v) for v in _RS.values()), 'FLEET_PLAN_REASONS'
     assert isinstance(PLAN.get('linux'), dict) and isinstance(PLAN['linux'].get('outDir'), str), 'FLEET_PLAN_OUT_DIR_REQUIRED'
     assert PLAN.get('launcher') is None, 'FLEET_PLAN_LAUNCHER_ALREADY_SET'   # the caller writes it after this returns
+    assert not FIRST or (_S['upgradeToken']['target'] == FIRST_DIR + BS + 'credentials' + BS + 'resident-upgrade.token'
+                         and (_S['heartbeatToken'] is None or _S['heartbeatToken']['target'] == FIRST_DIR + BS + 'credentials' + BS + 'ci-node-heartbeat.token')
+                         and PLAN.get('expectedInstalledLinux') is None and PLAN.get('companionAccount') is False), 'FLEET_PLAN_FIRST_INSTALL_SHAPE'
     _W1 = PLAN.get('w1Paused')
-    assert (_W1 is None) if CHECK else (isinstance(_W1, dict) and set(_W1) == {'sha256', 'reason'} and isinstance(_W1['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', _W1['sha256'])
+    assert (_W1 is None) if CHECK or FIRST else (isinstance(_W1, dict) and set(_W1) == {'sha256', 'reason'} and isinstance(_W1['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', _W1['sha256'])
                                          and _W1['reason'] == _RS['w1Pause']), 'FLEET_PLAN_W1_PAUSED'   # --check runs before W1; the launcher is generated after it
     CFG = {'workDir': os.path.dirname(FLEET_PLAN), 'upgradeTokenFile': None,   # no file: the launcher carries the installed tokens over
            'heartbeat': {'tokenFile': None, 'bindingId': _S['heartbeatToken']['bindingId']} if _S['heartbeatToken'] else None,
-           'launcher': {'pauseReason': _RS['pause'], 'rearmReason': _RS['rearm'], 'w1PauseReason': _RS['w1Pause']}, 'secretTargetsExist': [True, True],
+           'launcher': {'pauseReason': _RS['pause'], 'rearmReason': _RS['rearm'], 'w1PauseReason': _RS.get('w1Pause')}, 'secretTargetsExist': [True, True],
            '_sha256': hashlib.sha256(_plan_raw).hexdigest()}
 FINAL = '--final' in A
 MAINTENANCE_HOST_DROP = opt('--maintenance-host-drop')
@@ -109,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '51e4a89d0635bcdd5fddf6eee008fdcc7162f73d88dad99f621e28cdebadda01'   # + the generic node package's Linux steps (all inert unless $FleetPlanSha256 is pinned); independent review 2026-11-13: PASS-WITH-FIXES on each side; this pin is the merge of both (main db755d57 + claude/batch-one-rule), not separately reviewed
+TEMPLATE_SHA = 'fca432db3ac50efa23b6a31f1de90132f99c20242da77cf6650331c3dccb939a'   # + the first install (all inert unless $FleetFirstInstall is pinned; claude/first-install-entry, NOT YET REVIEWED); before it 51e4a89d (independent review 2026-11-13: PASS-WITH-FIXES)
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -218,8 +233,13 @@ if FLEET_PLAN:
     _XI = PLAN.get('expectedInstalledLinux')
     with open(_L['scripts']['A']['path'], 'rb') as _stream:
         _a_text = _stream.read().decode('utf-8')
+    with open(_L['scripts']['B']['path'], 'rb') as _stream:
+        _b_text = _stream.read().decode('utf-8')
+    # a first install's A refuses, as root and before it stages anything, any Linux CI already on the node; its B names its own status
+    assert not FIRST or ('refuse "NOT_A_FIRST_INSTALL:$p"' in _a_text and 'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' in _b_text
+                         and _L['scripts']['BResume']['sha256'] == _L['scripts']['B']['sha256']), 'FLEET_SCRIPTS_NOT_FIRST_INSTALL_SCRIPTS'
     _old = {k: re.findall('(?m)^' + k + '=([0-9a-f]{64}|[0-9]+)$', _a_text) for k in ('OLD_LINUX_RES_MANIFEST', 'OLD_MANIFEST', 'OLD_GENERATION')}
-    assert (isinstance(_XI, dict) and set(_XI) == {'generation', 'manifestSha256', 'ciSourceManifestSha256'} and type(_XI['generation']) is int
+    assert FIRST or (isinstance(_XI, dict) and set(_XI) == {'generation', 'manifestSha256', 'ciSourceManifestSha256'} and type(_XI['generation']) is int
             and _old == {'OLD_LINUX_RES_MANIFEST': [_XI['manifestSha256']], 'OLD_MANIFEST': [_XI['ciSourceManifestSha256']], 'OLD_GENERATION': [str(_XI['generation'])]}
             and 'refuse LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2' in _a_text and 'refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION' in _a_text
             and 'refuse INSTALLED_MANIFEST_NOT_SOURCE34' in _a_text), 'FLEET_SCRIPTS_NOT_FOR_THE_PLANS_INSTALLED_LINUX'
@@ -234,6 +254,15 @@ if FLEET_PLAN:
     _account_file, _wsl_file = os.path.join(LIVE_ROOT, 'install', 'companion-account.json'), os.path.join(LIVE_ROOT, 'install', 'companion-wsl.json')
     assert PLAN['companionAccount'] == (os.path.exists(_account_file) or os.path.exists(_wsl_file)), 'FLEET_PLAN_COMPANION_ACCOUNT_NOT_AS_INSTALLED'
     OPERATOR, VHDX_DIR = OWNER, None
+    if FIRST:
+        _ff = os.path.join(os.path.dirname(LIVE_ROOT), 'first-install', 'facts.json')
+        with open(_ff, 'rb') as _stream:
+            _fraw = _stream.read()
+        _facts = json.loads(_fraw.decode('utf-8'))
+        assert (hashlib.sha256(_fraw).hexdigest() == FIRST['factsSha256'] and _facts.get('contract') == 'clued.independent-ci.first-install-facts/1' and _facts.get('node') == node
+                and _facts.get('operatorSid') == FIRST['operatorSid'] and (_facts.get('companionWsl') or {}).get('vhdxDirectory') == FIRST['wslVhdxDirectory']
+                and FIRST['operatorSid'] != OWNER), 'FIRST_INSTALL_FACTS_NOT_THE_PLANS'
+        OPERATOR, VHDX_DIR = FIRST['operatorSid'], FIRST['wslVhdxDirectory']
     if PLAN['companionAccount']:
         with open(_account_file, encoding='utf-8-sig') as _stream:
             _acct = json.load(_stream)
@@ -312,7 +341,7 @@ UCFG_WANT = {'contract': 'clued.independent-ci.resident-upgrader-config/1', 'nod
 assert ucfg == UCFG_WANT, ('UPGRADER_CONFIG_NOT_AS_GENERATED', ucfg)
 assert FLEET_PLAN or re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', TOKEN_FILE), ('UPGRADE_TOKEN_FILE_PATH_SHAPE', TOKEN_FILE)   # Invoke-Child refuses blanks and quotes
 token_file_present = True if FLEET_PLAN else os.path.isfile(TOKEN_FILE)   # stat only: the token's content is never opened here
-assert not FLEET_PLAN or PLAN['secrets']['upgradeToken']['target'] == TOKEN_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'upgradeToken')
+assert not FLEET_PLAN or FIRST or PLAN['secrets']['upgradeToken']['target'] == TOKEN_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'upgradeToken')
 # DESIGN section 41.6a: the optional node heartbeat token (path only, never opened here) and its optional binding id, passed to this
 # package's installer as -HeartbeatTokenFile [-HeartbeatBindingId]; the launcher's elevated with-token plan must add exactly that entry.
 HB = CFG['heartbeat']
@@ -323,7 +352,7 @@ if HB:
     HB_TARGET = _hd[0] + BS + 'ci-node-heartbeat.token'
     assert HB_TARGET == LIVE_ROOT + BS + 'secrets' + BS + 'heartbeat' + BS + 'ci-node-heartbeat.token', HB_TARGET
     assert FLEET_PLAN or re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', HB['tokenFile']), ('HEARTBEAT_TOKEN_FILE_PATH_SHAPE', HB['tokenFile'])   # Invoke-Child refuses blanks and quotes
-    assert not FLEET_PLAN or PLAN['secrets']['heartbeatToken']['target'] == HB_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'heartbeatToken')
+    assert not FLEET_PLAN or FIRST or PLAN['secrets']['heartbeatToken']['target'] == HB_TARGET, ('FLEET_PLAN_SECRETS_NOT_THE_INSTALLERS_TARGET', 'heartbeatToken')
     assert HB['bindingId'] is None or '$HeartbeatBindingId' in installer, 'PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_BINDING_ID'
     assert HB['bindingId'] is None or HB['bindingId'] != PKG_INST.get('ciPrincipalBindingId'), 'HEARTBEAT_BINDING_IS_THE_CI_BINDING'
     hb_file_present = True if FLEET_PLAN else os.path.isfile(HB['tokenFile'])
@@ -485,44 +514,54 @@ present += ['outgoing/active.lock'] if os.path.exists(os.path.join(SPOOL, 'outgo
 # (a batch in flight has its records here; --final refuses, the launcher's preflight refuses them too)
 
 # ---- installed (old) resident, read live ----
-live_receipt = os.path.join(LIVE_ROOT, 'install', 'install-receipt.json')
-with open(live_receipt, 'rb') as _stream:
-    installed_receipt_bytes = _stream.read()
-installed_receipt_sha = hashlib.sha256(installed_receipt_bytes).hexdigest()
-installed_resident = json.loads(installed_receipt_bytes.decode('utf-8-sig'))['residentManifestSha256']
-u_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'uninstall-resident.ps1'))
-halt_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'HALT.json'))
-ACCEPT_HALT = opt('--accept-halt-sha256')
-halt_sha = sha(os.path.join(LIVE_ROOT, 'state', 'HALT.json')) if halt_present else None
-halt_doc = json.load(open(os.path.join(LIVE_ROOT, 'state', 'HALT.json'), encoding='utf-8-sig')) if halt_present else None
-halt_accepted = bool(halt_present and ACCEPT_HALT and halt_sha == ACCEPT_HALT)
-PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
-                               capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
-paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
-paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
-status = json.load(open(os.path.join(LIVE_ROOT, 'state', 'status.json'), encoding='utf-8-sig'))
-current = status.get('current')
-ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
-entries = sorted(os.listdir(ledger))
-open_entries = [e for e in entries if not os.path.exists(os.path.join(ledger, e, '90-terminal.json'))]
-terminal = [e for e in entries if e not in open_entries]
-_spec = importlib.util.spec_from_file_location('ledger_evidence', os.path.join(HERE, '..', 'tools', 'ledger-evidence.py'))
-_ledger_evidence = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ledger_evidence)
-terminal_evidence = _ledger_evidence.select_terminal(LIVE_ROOT, halt_doc['facts']['key'] if halt_accepted else None, installed_receipt_sha)
-newest_key = terminal_evidence['key']
-quiet = {'haltPresent': halt_present, 'paused': paused_present, 'current': current, 'executorState': status.get('executor', {}).get('state'),
-         'openLedgerEntries': open_entries, 'statusWrittenAt': status.get('writtenAt')}
-refusals = []
-if halt_present and not halt_accepted: refusals.append('HALT_PRESENT_NOT_ACCEPTED')
-if halt_accepted and (status.get('halt') or {}).get('code') != halt_doc.get('code'): refusals.append('STATUS_HALT_NOT_THE_PINNED_ONE')
-if current: refusals.append('OLD_RESIDENT_BATCH_CURRENT')
-if open_entries: refusals.append('OPEN_BATCH')
-# (the generic node package: --check runs before W1 and does not need the pause; the launcher is generated only for a node paused by
-# exactly the plan's W1 pause, byte for byte, and pins it: the launcher lifts that pause again, and only that one, when it stops early)
-if not (FLEET_PLAN and CHECK) and not paused_present and not halt_accepted: refusals.append('OLD_RESIDENT_NOT_PAUSED')
-if FLEET_PLAN and not CHECK and paused_present and paused_sha != PLAN['w1Paused']['sha256']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_PLANS')
-if paused_present and not halt_accepted and json.load(open(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'), encoding='utf-8-sig')).get('source', {}).get('reason') != CFG['launcher']['w1PauseReason']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE')
+if FIRST:   # nothing installed: its root must not exist (Linux A and the launcher's preflight refuse the rest)
+    installed_receipt_sha = installed_resident = u_sha = halt_sha = halt_doc = newest_key = paused_sha = None
+    halt_present = halt_accepted = paused_present = False
+    terminal_evidence = {'key': None, 'relativeDirectory': '', 'terminalSha256': None, 'backfillManifestSha256': None}
+    PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+                                   capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
+    quiet = {'firstInstall': True, 'residentRootExists': os.path.lexists(LIVE_ROOT)}
+    refusals = ['FIRST_INSTALL_RESIDENT_ROOT_PRESENT'] if os.path.lexists(LIVE_ROOT) else []
+if not FIRST:
+    live_receipt = os.path.join(LIVE_ROOT, 'install', 'install-receipt.json')
+    with open(live_receipt, 'rb') as _stream:
+        installed_receipt_bytes = _stream.read()
+    installed_receipt_sha = hashlib.sha256(installed_receipt_bytes).hexdigest()
+    installed_resident = json.loads(installed_receipt_bytes.decode('utf-8-sig'))['residentManifestSha256']
+    u_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'uninstall-resident.ps1'))
+    halt_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'HALT.json'))
+    ACCEPT_HALT = opt('--accept-halt-sha256')
+    halt_sha = sha(os.path.join(LIVE_ROOT, 'state', 'HALT.json')) if halt_present else None
+    halt_doc = json.load(open(os.path.join(LIVE_ROOT, 'state', 'HALT.json'), encoding='utf-8-sig')) if halt_present else None
+    halt_accepted = bool(halt_present and ACCEPT_HALT and halt_sha == ACCEPT_HALT)
+    PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+                                   capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
+    paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
+    paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
+    status = json.load(open(os.path.join(LIVE_ROOT, 'state', 'status.json'), encoding='utf-8-sig'))
+    current = status.get('current')
+    ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
+    entries = sorted(os.listdir(ledger))
+    open_entries = [e for e in entries if not os.path.exists(os.path.join(ledger, e, '90-terminal.json'))]
+    terminal = [e for e in entries if e not in open_entries]
+    _spec = importlib.util.spec_from_file_location('ledger_evidence', os.path.join(HERE, '..', 'tools', 'ledger-evidence.py'))
+    _ledger_evidence = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ledger_evidence)
+    terminal_evidence = _ledger_evidence.select_terminal(LIVE_ROOT, halt_doc['facts']['key'] if halt_accepted else None, installed_receipt_sha)
+    newest_key = terminal_evidence['key']
+    quiet = {'haltPresent': halt_present, 'paused': paused_present, 'current': current, 'executorState': status.get('executor', {}).get('state'),
+             'openLedgerEntries': open_entries, 'statusWrittenAt': status.get('writtenAt')}
+    refusals = []
+    if halt_present and not halt_accepted: refusals.append('HALT_PRESENT_NOT_ACCEPTED')
+    if halt_accepted and (status.get('halt') or {}).get('code') != halt_doc.get('code'): refusals.append('STATUS_HALT_NOT_THE_PINNED_ONE')
+    if current: refusals.append('OLD_RESIDENT_BATCH_CURRENT')
+    if open_entries: refusals.append('OPEN_BATCH')
+    # (the generic node package: --check runs before W1 and does not need the pause; the launcher is generated only for a node paused by
+    # exactly the plan's W1 pause, byte for byte, and pins it: the launcher lifts that pause again, and only that one, when it stops early)
+    if not (FLEET_PLAN and CHECK) and not paused_present and not halt_accepted: refusals.append('OLD_RESIDENT_NOT_PAUSED')
+    if FLEET_PLAN and not CHECK and paused_present and paused_sha != PLAN['w1Paused']['sha256']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_PLANS')
+    if paused_present and not halt_accepted and json.load(open(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'), encoding='utf-8-sig')).get('source', {}).get('reason') != CFG['launcher']['w1PauseReason']: refusals.append('OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE')
 if not runner_usable: refusals.append('DRY_RUN_RUNNER_NOT_ORIGINAL_STOPPED')
 if not FLEET_PLAN and not linux_live: refusals.append('FINAL_NEEDS_LINUX_EVIDENCE')   # the generic node package: checked by rule at run time
 if not token_file_present: refusals.append('UPGRADE_TOKEN_FILE_MISSING')
@@ -563,6 +602,7 @@ if ace in parent_before:   # already added by an earlier r4.1 run: before == aft
 assert parent_before.startswith('O:BAG:') and parent_after == parent_before + ace and parent_after.count(plan['residentSid']) == 1, ('PARENT_ACL_UNEXPECTED', parent_before, parent_after)
 pause_dacl = 'D:P(A;;FR;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + OWNER + ')(A;;0x1301bf;;;' + plan['residentSid'] + ')' + ('(A;;FR;;;' + OPERATOR + ')' if OPERATOR != OWNER else '')
 
+_qn = lambda v: q(v) if v else '$null'
 lines = [
     '# Generated by reinstall/launcher/generate.py at ' + GEN_UTC + ' for node ' + node['nodeName'] + ' (' + ('install plan' if FLEET_PLAN else 'configuration') + ' sha256 ' + CFG['_sha256'] + '); every value comes from a file.',
     '$DraftOnly = ' + ('$false' if FINAL else '$true') + '   # P2: a draft refuses to run',
@@ -595,16 +635,16 @@ lines = [
     '$ArchiveReason = ' + q(ARCHIVE_REASON),
     '$Leftovers = [ordered]@{',
     '}',
-    '$InstalledResidentManifestSha256 = ' + q(installed_resident) + '   # the installed (Source34) resident tree',
-    '$InstalledUninstallSha256 = ' + q(u_sha),
-    '$InstalledReceiptSha256 = ' + q(installed_receipt_sha),
+    '$InstalledResidentManifestSha256 = ' + _qn(installed_resident) + '   # the installed (Source34) resident tree (null: a first install)',
+    '$InstalledUninstallSha256 = ' + _qn(u_sha),
+    '$InstalledReceiptSha256 = ' + _qn(installed_receipt_sha),
     '$InstalledHaltSha256 = ' + (q(halt_sha) if halt_accepted else '$null') + '   # r4.1 C3: the accepted HALT.json of the installed resident (--accept-halt-sha256)',
     '$InstalledHaltCode = ' + (q(halt_doc['code']) if halt_accepted else '$null'),
     '$ParentAclPath = ' + q(PARENT) + '   # r4.1 C2',
     '$ParentSddlBefore = ' + q(parent_live) + '   # r5 S2: the CI root DACL at generation (read-only check; the installer appends the ACE if missing)',
-    '$HaltedBatchKey = ' + q(newest_key) + '   # the HALTed batch (r4.1 C3) or the newest terminal ledger entry; must be in the kept ledger',
+    '$HaltedBatchKey = ' + _qn(newest_key) + '   # the HALTed batch (r4.1 C3) or the newest terminal ledger entry; must be in the kept ledger',
     '$LedgerEvidenceRelativeDirectory = ' + q(terminal_evidence['relativeDirectory'].replace('/', BS)),
-    '$TerminalEvidenceSha256 = ' + q(terminal_evidence['terminalSha256']),
+    '$TerminalEvidenceSha256 = ' + _qn(terminal_evidence['terminalSha256']),
     '$BackfillEvidenceManifestSha256 = ' + (q(terminal_evidence['backfillManifestSha256']) if terminal_evidence['backfillManifestSha256'] else '$null'),
     '$LaunchOutPin = ' + q(LAUNCH_DIR) + '   # F1: output directory of this generation',
     '$PauseRequestDacl = ' + q(pause_dacl) + '   # F2: the DACL a request in requests\\ inherits',
@@ -656,10 +696,12 @@ lines += [
     '$FleetUpgradeTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['upgradeToken']['fingerprint']) + '   # the installed resident-upgrade token (install receipt): carried over by the launcher ($UpgradeTokenFile is set at run time)',
     '$FleetHeartbeatTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['heartbeatToken'] and PLAN['secrets']['heartbeatToken']['fingerprint']) + '   # the installed heartbeat token, when there is one ($HeartbeatTokenFile is set at run time)',
     '$FleetW1PauseReason = ' + _fq(FLEET and CFG['launcher']['w1PauseReason']) + '   # with $InstalledPausedSha256: the W1 pause of this launch, lifted again by a stop before anything changed',
-    '$FleetInstalledRearmSha256 = ' + _fq(FLEET and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1'))) + '   # the Resume door of the installed resident (rearm-resident.ps1)',
+    '$FleetInstalledRearmSha256 = ' + _fq(FLEET and not FIRST and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1'))) + '   # the Resume door of the installed resident (rearm-resident.ps1)',
     '$FleetW1ResumeWaitSeconds = ' + ('420' if FLEET else '$null') + '   # as $PauseWaitSeconds: the service acknowledges an owner request within it',
     '$FleetHeadlessSha256 = ' + _fq(FLEET and FLEET['headlessSha256']) + '   # the package companion-headless.ps1 (New-CompanionBuildFromPackage)',
     '$FleetRegistrarSha256 = ' + _fq(FLEET and FLEET['registrarSha256']) + '   # the package CompanionTaskRegistrar.cs (root-run)',
+    '$FleetFirstInstall = ' + ('$true' if FIRST else '$null') + '   # set: no resident is installed (no W1, no uninstall); the tokens are the host preparation\'s',
+    '$FleetFirstInstallDirectory = ' + (q(FIRST_DIR + BS + 'credentials') if FIRST else '$null') + '   # the host preparation\'s two tokens; deleted once the installer has run',
 ]
 assert template.count('#PINS#') == 1
 text = template.replace('#PINS#', '\n'.join(lines))
