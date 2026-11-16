@@ -219,7 +219,7 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   assert.deepEqual([r.status, r.packageManifestSha256, q.calls.length], ['FLEET_NODE_UPGRADE_REQUESTED', dry.packageManifestSha256, 1], JSON.stringify(r).slice(0, 2000));
   assert.notEqual(r.packageDir, dry.packageDir);
   assert.equal(path.relative(sameWork, r.packageDir).split(path.sep).length, 2, 'under the same --work');
-  assert.deepEqual(await fs.readFile(path.join(dry.packageDir, 'package-manifest.json')), dryManifest, 'the earlier run's package is untouched');
+  assert.deepEqual(await fs.readFile(path.join(dry.packageDir, 'package-manifest.json')), dryManifest, "the earlier run's package is untouched");
 });
 
 test('fleet upgrade fetch: one command takes the tar from the second source, checks its sha256, unpacks it and runs the UNPACKED upgrade.mjs; a wrong tar is never unpacked', { timeout: 900_000 }, async t => {
