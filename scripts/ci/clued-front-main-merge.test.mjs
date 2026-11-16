@@ -3,11 +3,17 @@
 // of the earlier head, so the commit is ADMITTED with no person, no authorize_head and no push. Before §80 the same admission
 // answered REJECTED pr_task_binding_head_not_authorized and the front waited for the holder (11-15: #1123 three times).
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
 import { runFrontMainMerge } from './clued-front-main-merge.mjs';
+import { ciWorkflows } from './clued-merge-slot-ci.mjs';
+import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
+import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
+import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clued-workflow-profile.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RPC_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/clued_work_verify_v1`;
@@ -165,4 +171,32 @@ test('the workflow changes nothing that is no longer true', async () => {
   const other = world({ updateMakes: 'someone' });
   const r = await merge(other);
   assert.equal(r.result, 'unattested'); assert.equal(other.checks.length, 0);
+});
+
+// The workflow has no pull_request trigger, so it can never be a registered PR CI Source (compileRegisteredWorkflow
+// needs one). Unregistered, the PR CI enumeration counted it (it has an admission-gate) and its bytes had no catalogue
+// identity (CATALOGUE_SOURCE_NOT_IDENTIFIED), as ci-proof-profiles.test.mjs requires for every counted workflow. It is an
+// exact non-PR control Source like clued-native617-admission-dispatch.yml: its whole bytes and every job, the gate included, pinned.
+test('the dispatch-only workflow is an exact non-PR control Source; every counted CI workflow keeps its catalogue identity', () => {
+  const file = '.github/workflows/clued-front-main-merge.yml';
+  const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const catalogue = parseNonPrControlCatalogue(fs.readFileSync(path.join(ROOT, NON_PR_CONTROL_SOURCE_PATH)));
+  const pin = NON_PR_CONTROL_FILES[file], entry = catalogue.workflows[file];
+  assert.ok(pin && entry, `${file} is not a registered non-PR control Source`);
+  // The pins are the digests of the current Git bytes and of the registered definition, computed here.
+  const definition = entry.workflow_definition;
+  assert.deepEqual(Object.keys(definition.jobs).sort(), ['admission-gate', 'merge-main']);
+  assert.deepEqual({ workflow_blob: pin.workflow_blob, source_sha256: pin.source_sha256, workflow_definition_sha256: pin.workflow_definition_sha256,
+    triggers: [...pin.triggers], roles: { ...pin.roles } }, { workflow_blob: workflowBlob(text), source_sha256: createHash('sha256').update(text).digest('hex'),
+    workflow_definition_sha256: roleDefinitionDigest(definition), triggers: ['workflow_dispatch'],
+    roles: Object.fromEntries(Object.entries(definition.jobs).map(([id, job]) => [id, roleDefinitionDigest(job)])) });
+  const selected = classifyNonPrControlWorkflowSource(catalogue, file, text);
+  assert.equal(selected.passed, true, selected.reason);
+  assert.equal(selected.pull_request_ci, false); assert.equal(selected.execution_authority, false);
+  const counted = ciWorkflows(ROOT);
+  const registry = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-profiles.json'), 'utf8'));
+  const roleSpecs = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-role-specs.json'), 'utf8'));
+  for (const [name, blob] of counted)
+    assert.equal(recognizeCatalogueWorkflow({ registry, roleSpecs, file: name, blob }).source_identified, true, `${name}: no catalogue identity`);
+  assert.equal(counted.has(file), false, 'a workflow without a pull_request trigger is not counted PR CI');
 });

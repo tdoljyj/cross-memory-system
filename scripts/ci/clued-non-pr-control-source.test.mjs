@@ -15,9 +15,10 @@ const files=Object.keys(NON_PR_CONTROL_FILES),source=file=>fs.readFileSync(new U
 const classify=(r,file=files[0],text=source(file),options)=>classifyNonPrControlWorkflowSource(r,file,text,options);
 const refused=result=>{assert.equal(result.passed,false);assert.equal(result.execution_authority,false);assert.equal(result.host_qualified,false);};
 
-test('two exact non-PR Sources independently parse their entire YAML and all ten FullRoles',()=>{
-  const r=load();assert.equal(r.schema,NON_PR_CONTROL_SOURCE_SCHEMA);assert.equal(files.length,2);
-  assert.deepEqual(files.sort(),['.github/workflows/clued-compute-panel.yml','.github/workflows/clued-native617-admission-dispatch.yml']);
+test('three exact non-PR Sources independently parse their entire YAML and all twelve FullRoles',()=>{
+  const r=load();assert.equal(r.schema,NON_PR_CONTROL_SOURCE_SCHEMA);assert.equal(files.length,3);
+  assert.deepEqual([...files].sort(),['.github/workflows/clued-compute-panel.yml','.github/workflows/clued-front-main-merge.yml',
+    '.github/workflows/clued-native617-admission-dispatch.yml']);
   for(const file of files){
     const text=source(file),definition=yaml.parse(text),entry=r.workflows[file],roles=r.roles[file],pin=NON_PR_CONTROL_FILES[file];
     assert.equal(workflowBlob(text),pin.workflow_blob);assert.equal(hash(text),pin.source_sha256);
@@ -54,7 +55,7 @@ test('the seven pre-existing controller families keep their separate exact Sourc
 test('whole Git bytes, gate, trigger and every other workflow byte remain exactly pinned',()=>{
   for(const file of files){const r=load(),text=source(file);
     for(const changed of [text+'\n',text.replace('admission-gate:','unknown-gate:'),text.replace('workflow_dispatch:','pull_request:'),
-      text.replace('timeout-minutes: 10','timeout-minutes: 11')]){
+      text.replace(/timeout-minutes: (\d+)/,(_,minutes)=>`timeout-minutes: ${Number(minutes)+1}`)]){
       assert.notEqual(changed,text);refused(classify(r,file,changed));
     }
   }
@@ -70,7 +71,7 @@ test('a changed or partial entire family cannot borrow the still-valid requested
   ]){const r=load();edit(r);refused(classify(r));}
 });
 
-test('each of the ten FullRole definitions is independently pinned even after attacker-supplied hashes change',()=>{
+test('each of the twelve FullRole definitions is independently pinned even after attacker-supplied hashes change',()=>{
   for(const file of files)for(let index=0;index<load().roles[file].length;index++){
     for(const kind of ['timeout','steps']){
       const r=load(),role=r.roles[file][index];
