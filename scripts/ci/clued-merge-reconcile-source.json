@@ -204,7 +204,7 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "31e527539cc272ec20e7286adf1ebc7d25a32d27a0887359165f8261032170ce",
+    "scripts/ci/ci-required-selection.mjs": "f3363ba48c52700ccba8b0b79ce45eb0b44b24bb1b5c7900d1815562d31b6549",
 
     "scripts/ci/ci-required-selection.test.mjs": "ac2dff3fb20336f582f6d94c8e4f11a16bdd9a9f51b98a75a4c82468cb011931",
 
@@ -400,7 +400,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "823ca1a65829aa33c1f3f8d9da50fc4635b5c3815a6234b3f232b8782f3dbc37",
+    "scripts/ci/clued-required-applicability.mjs": "2651debc682b9b4bf263253951e8d35d45be149da8e4a8ed9731b2046ac89611",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -453,6 +453,8 @@
     "scripts/ci/fixtures/production-publisher-source-history.v1.json": "4a3fce0d4cf0e5a3a4148853a718dbf7b5fa02222cdd23d5d434eb2b62b0aca7",
 
     "scripts/ci/fixtures/retired-gated-proof-catalogue.mjs": "d6fd5b900dc67eb33fc7a9dfc260a9a40a092f03cd862851c0cd644bd229717e",
+
+    "scripts/ci/fixtures/retrigger-counter/responses.json": "e999b113e9e9ba9b676a12af3adb0dbac9590bc2f205753fae9e72428c857156",
 
     "scripts/ci/fixtures/workflow-profiles-69e30b6/fixture.mjs": "adff661303d49ae0477970e13257a2b757e7ff34200ff66cae9fbacf2ede6d38",
 
@@ -545,6 +547,10 @@
     "scripts/ci/public-mcp-supabase-isolation.test.mjs": "fa369e2ce4778a8edeac05c063d22a9cee2b5968f5629d30ca69a6113cc02b56",
 
     "scripts/ci/registry-layout.mjs": "aaab6b75865bba2e2067b1d2acc298f48d8f1f2db0785eccd6c2456e3230c0d9",
+
+    "scripts/ci/retrigger-counter.mjs": "91832616fdd475e4913bda7dcddb53e4e04e930e40ad96478241aaaf9a3ea5a9",
+
+    "scripts/ci/retrigger-counter.test.mjs": "6d6a3a2edd4ace76ea2195381e5580e2dcf38b445074fab83e1d0cb4a880d558",
 
     "scripts/ci/reviewed_gitleaks.py": "66eef4926112636255299592db4cd5bb2e1eef3eecdeca36737a5a31639c8f94",
 

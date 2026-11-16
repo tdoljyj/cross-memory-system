@@ -116,6 +116,7 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
+    'retrigger-counter': ['scripts/ci/retrigger-counter*', 'scripts/ci/fixtures/retrigger-counter/**'],
     'compute-panel': ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
     // Node Resource Governance v1: the renderer, its sweep and installer, the declarations and the standard (whose archive numbers the resident tests hold too).
     'node-governance': ['scripts/ci/self-hosted/node-governance/**', 'scripts/ci/self-hosted/node-profiles.json', 'scripts/ci/self-hosted/validate_node_profiles.py',
@@ -203,6 +204,7 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
 export const SUITE_COMMANDS = {
+  'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter.test.mjs'] }],
   'compute-panel': [{ cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] }],
   'node-governance': [{ cwd: '.', argv: ['node', '--test', '{tests:scripts/ci/self-hosted/node-governance}'] },
     { cwd: '.', argv: [PYTHON, '-I', '-B', 'scripts/ci/self-hosted/validate_node_profiles.py'], quiet: true }],
