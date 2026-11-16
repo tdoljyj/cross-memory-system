@@ -343,6 +343,7 @@ function Get-AclReadbackRefusals($acl) {
 # (sc.exe texts, the elevated plan hash next to the pinned one and the differing plan fields, the migrate-acl
 # result), so no stop needs a blind second round. Also kept in <W>\launch\preflight-report.json.
 function Step-Preflight {
+  if ($FleetFirstInstall -and $Done.Contains('preflight')) { return $script:FirstInstallPreflightResult }   # ran before Linux A (Step-FirstInstallWindowsPreflight)
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $runner = Get-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
@@ -367,7 +368,7 @@ function Step-Preflight {
   # missing broker target. Accepted only with the resident root absent and this run's pre-uninstall dry run of the same staged
   # migrate-acl clean (install-resident.ps1 step source-v2-acl applies it after it recreates the tree and refuses on any error).
   $aclBefore = try { Parse-LastLine ([IO.File]::ReadAllText((Join-Path $Out 'migrate-acl.dry-run.before-uninstall.stdout.json'))) } catch { $null }
-  $aclAfterUninstallOk = ($m.exit -ne 0 -and (Get-Key $mv 'status') -ceq 'REFUSED' -and (Get-Key $mv 'code') -ceq 'ACL_TARGET_MISSING' -and -not [IO.Directory]::Exists($ResidentRoot) -and (Get-Key $aclBefore 'status') -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN')
+  $aclAfterUninstallOk = ($m.exit -ne 0 -and (Get-Key $mv 'status') -ceq 'REFUSED' -and (Get-Key $mv 'code') -ceq 'ACL_TARGET_MISSING' -and -not [IO.Directory]::Exists($ResidentRoot) -and ($FleetFirstInstall -or (Get-Key $aclBefore 'status') -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN'))
   $report['migrateAcl']['acceptedMissingTargetBeforeInstall'] = $aclAfterUninstallOk
   if (-not $aclAfterUninstallOk -and ($m.exit -ne 0 -or (Get-Key $mv 'status') -cne 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN')) { $codes.Add('ACL_MIGRATION_PLAN_REFUSED') }
   $d = Invoke-Child 'install.dry-run' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -NoToken)   # r5c: the reviewed plan has no token
@@ -381,9 +382,9 @@ function Step-Preflight {
   if ($ExactAclReadbackGuard -and $null -ne $plan) { $bad = Get-AclReadbackRefusals (Get-Key $plan 'acl'); if ($bad.Count) { $codes.Add('INSTALLER_ACL_READBACK_WOULD_FAIL'); $report['aclReadbackRefusals'] = $bad } }
   # Quota phase 1 reinstall (tooling review MINOR-1): the carry-forward must now see the state this uninstall kept.
   $preview = $null; if ($dv -is [Collections.Generic.IDictionary[string, object]] -and $dv.ContainsKey('carryForwardPreview')) { $preview = $dv['carryForwardPreview'] }
-  $keptName = [IO.Path]::GetFileName([string](Get-Key $uninstall 'keptAt'))
+  $keptName = $(if ($FleetFirstInstall) { $null } else { [IO.Path]::GetFileName([string](Get-Key $uninstall 'keptAt')) })   # a first install has nothing kept (and runs this before any uninstall step)
   $report['carryForwardPreview'] = [ordered]@{ keptName = $keptName; preview = $preview }
-  if ($null -eq $preview -or $preview -is [string] -or -not $keptName -or @(@($preview) | Where-Object { (Get-Key $_ 'name') -ceq $keptName }).Count -ne 1) { $codes.Add('CARRY_FORWARD_PREVIEW_MISSING_KEPT_STATE') }
+  if (-not $FleetFirstInstall -and ($null -eq $preview -or $preview -is [string] -or -not $keptName -or @(@($preview) | Where-Object { (Get-Key $_ 'name') -ceq $keptName }).Count -ne 1)) { $codes.Add('CARRY_FORWARD_PREVIEW_MISSING_KEPT_STATE') }
   $tk = Test-TokenPlan $d.stdout; $report['upgradeTokenPlan'] = $tk; foreach ($q in @($tk.codes)) { $codes.Add($q) }   # r5c
   $report['codes'] = @($codes)
   Write-Json 'preflight-report.json' $report
@@ -411,6 +412,7 @@ function Step-Install {
   $rb = [IO.File]::ReadAllBytes((Join-Path $ResidentRoot 'install\install-receipt.json')); $sha = Sha256Bytes $rb
   if ($sha -cne (Get-Key $iv 'receiptSha256')) { Stop-Launch 'INSTALL_RECEIPT_CHANGED' ([ordered]@{ read = $sha; reported = (Get-Key $iv 'receiptSha256') }) }
   Write-New (Join-Path $Out 'install-receipt.json') $rb
+  if ($FleetFirstInstall) { Remove-FirstInstallCredentials }   # the installer has placed both tokens
   $Done.Add('install')
   [ordered]@{ status = 'RESIDENT_INSTALLED'; receiptSha256 = $sha; started = (Get-Key $iv 'started') }
 }
@@ -796,6 +798,7 @@ function Get-VerifyFactsArgs {
 # Read-only, before anything changes: the installed resident is the reviewed one, its uninstall accepts the
 # current state, and the parts of the install preflight that do not depend on the resident root already pass.
 function Step-UninstallPreflight {
+  if ($FleetFirstInstall) { return }   # nothing installed: Step-FirstInstallPreflight checked that, Step-Preflight's dry run checks it again
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
   if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
@@ -861,6 +864,7 @@ function Step-UninstallPreflight {
 # from the resident root, and confirm all of it. Already stopped services, a task that is not running and no
 # process under the root (what an earlier stopped run leaves) count as quiesced: sc stop then only reports 1062.
 function Step-Quiesce {
+  if ($FleetFirstInstall) { return $null }
   $report = [ordered]@{}
   # r7 r2: first the upgrader, through SCM (it runs under the root as LocalSystem and SCM restarts it after a failure, so it is never
   # killed): its host ends it at a step boundary, at most 60 s, as the installed uninstall does first; the uninstall deletes it stopped
@@ -886,6 +890,7 @@ function Step-Quiesce {
 # The installed uninstall-resident.ps1: dry run, plan fields, -Apply with exactly that plan; then the kept
 # evidence is checked byte for byte and both service deletions and the rename are confirmed.
 function Step-Uninstall {
+  if ($FleetFirstInstall) { return [ordered]@{ firstInstall = $true; keptAt = $null } }
   $report = [ordered]@{}
   $d = Invoke-Child 'uninstall.dry-run' $InstalledUninstall @()
   $dv = Parse-Json $d.stdout; $dp = Get-Key $dv 'plan'; $sha = [string](Get-Key $dv 'planSha256')
@@ -966,6 +971,7 @@ function Step-Rearm {
 # owner's original registration (DESK 2026-11-13: companion-headless exit 1, the node fell back to the interactive definition).
 function Step-CarryCompanionWslRecord([string]$keptAt) {
   $r = [ordered]@{ from = $keptAt; carried = @(); error = $null }
+  if ($FleetFirstInstall) { $r.error = 'FIRST_INSTALL_NO_KEPT_ROOT_COMPANION_SWITCH_PENDING'; return $r }   # the distribution is still the operator's
   try {
     if (-not $keptAt -or -not [IO.Directory]::Exists($keptAt)) { $r.error = 'KEPT_ROOT_MISSING'; return $r }
     # The newest kept root that holds the record: the one just kept, else an earlier one (a reinstall before this carry existed lost it)
@@ -1311,6 +1317,7 @@ function Remove-FleetRegistrar($build) {
 # the controller may log on as a service, the two secrets are as verify expects, the old root is paused between batches and its state
 # can be carried. Nothing is written but this run's own reports (their own names: Step-UninstallPreflight runs in full afterwards).
 function Step-WindowsPreflightBeforeLinux {
+  if ($FleetFirstInstall) { $W1Restore.armed = $false; Step-FirstInstallPreflight; return }   # no installed resident, no W1 pause to lift
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
   if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
@@ -1367,6 +1374,7 @@ function Get-FleetTokenFingerprint([byte[]]$bytes, [string]$kind) {
 # the installed tokens are still in place, and after it they are in the kept root (resident-uninstalled-*\secrets\), which the uninstall
 # renames and never deletes. A run that was cut off (power loss) is cleaned up by the next run's Step-SweepCarry. Idempotent.
 function Remove-FleetCarry {
+  if ($FleetFirstInstall) { Remove-FirstInstallCredentials }
   $d = [string]$CarriedTokens.directory
   if (-not $d -or $CarriedTokens.removed -eq $true -or (Split-Path -Parent $d) -cne $CarryParent -or (Split-Path -Leaf $d) -cnotmatch '^reinstall-carry-[0-9a-f]{32}$') { return }
   try {
@@ -1474,7 +1482,7 @@ function Step-CarryTokens {
     foreach ($w in $want) {
       $bytes = $null
       try {
-        $src = [string]$w[1]
+        $src = $(if ($FleetFirstInstall) { Join-Path $FleetFirstInstallDirectory ([string]$w[4]) } else { [string]$w[1] })   # a first install: the host preparation's
         if (-not $src -or -not [IO.File]::Exists($src) -or ([IO.File]::GetAttributes($src) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or (New-Object IO.FileInfo($src)).Length -gt 4096) { throw ('INSTALLED_TOKEN_NOT_A_PLAIN_FILE:' + $w[0]) }
         $bytes = [IO.File]::ReadAllBytes($src)
         if ((Get-FleetTokenFingerprint $bytes $w[2]) -cne $w[3]) { throw ('CARRIED_TOKEN_FINGERPRINT_MISMATCH:' + $w[0]) }
@@ -1497,6 +1505,9 @@ function Step-CarryTokens {
 # The installed public binaries' locks, observed ELEVATED (reinstall/tools/file-locks.ps1, pinned): the companion account's processes
 # and its task are readable only from here, so the rehearsal leaves this check to the launcher on a companion node. Read-only.
 function Step-FileLocks {
+  # A first install has no installed binary to hold a lock. Its slot (after the tokens are carried, before Linux A) runs the first
+  # install's Windows preflight instead: Linux B cannot be undone, so whatever the Windows side would refuse is refused before it.
+  if ($FleetFirstInstall) { Step-FirstInstallWindowsPreflight; return $null }
   $b = [IO.File]::ReadAllBytes($FleetFileLocks)
   if ((Sha256Bytes $b) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_CHANGED' $null }
   $tool = Join-Path $Stage 'file-locks.ps1'; Write-New $tool $b
@@ -1512,10 +1523,55 @@ function Step-FileLocks {
   $Done.Add('file-locks')
   [ordered]@{ fileCount = $v['fileCount']; external = 0 }
 }
+# A first install (generate.py --fleet-plan with plan.firstInstall): nothing of a resident on this host, read elevated before anything
+# changes (the same three services and root install-resident.ps1 creates; Step-Preflight's dry run checks the rest), and the host
+# preparation's token directory as it made it: SYSTEM and Administrators only, not a link.
+function Step-FirstInstallPreflight {
+  $report = [ordered]@{ root = [IO.Directory]::Exists($ResidentRoot); services = [ordered]@{}; directory = $FleetFirstInstallDirectory; directoryOk = $false; codes = @() }
+  foreach ($n in @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader')) { $report.services[$n] = [bool](Get-Service -Name $n -ErrorAction SilentlyContinue) }
+  if ($report.root -or @($report.services.Values | Where-Object { $_ }).Count) { $report.codes += 'FIRST_INSTALL_RESIDUE_PRESENT' }
+  try {
+    $acl = [IO.Directory]::GetAccessControl($FleetFirstInstallDirectory)
+    $sids = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
+    $report.directoryOk = $acl.AreAccessRulesProtected -and ([IO.File]::GetAttributes($FleetFirstInstallDirectory) -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and
+      @($sids | Where-Object { $_ -cne 'S-1-5-18' -and $_ -cne 'S-1-5-32-544' }).Count -eq 0
+  } catch { $report['error'] = $_.Exception.GetType().Name }
+  if (-not $report.directoryOk) { $report.codes += 'FIRST_INSTALL_CREDENTIAL_DIRECTORY_NOT_ADMIN_ONLY' }
+  Write-Json 'first-install-preflight-report.json' $report
+  if (@($report.codes).Count) { Stop-Launch $report.codes[0] $report }
+  $Done.Add('first-install-preflight')
+}
+# The first install's Windows side, read-only and complete, before Linux A (review H1): the runner as reviewed (waited for, as the
+# reinstall's preflights wait), the two secret files where verify will look for them, and the install preflight itself (Step-Preflight:
+# the installer's dry runs with and without the carried tokens, the ACL migration plan, the spool). Its result is kept; the install
+# preflight after Linux (main region) returns it instead of running a second time into the same report names.
+function Step-FirstInstallWindowsPreflight {
+  $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
+  $runner = Wait-RunnerState; $report['runner'] = $runner
+  if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
+  $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }
+  $report['codes'] = @($codes)
+  Write-Json 'first-install-windows-preflight-report.json' $report
+  if ($codes.Count) { Stop-Launch $codes[0] $report }
+  $script:FirstInstallPreflightResult = Step-Preflight
+  $Done.Add('first-install-windows-preflight')
+}
+# Once the installer has placed the tokens, the host preparation's directory is deleted (its copies too: Remove-FleetCarry). Before the
+# install it stays: the same command then runs again with it.
+function Remove-FirstInstallCredentials {
+  $d = [string]$FleetFirstInstallDirectory
+  if (-not $d -or (Split-Path -Leaf $d) -cne 'credentials') { return }
+  try {
+    if ([IO.Directory]::Exists($d)) { if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($d, $false) } else { [IO.Directory]::Delete($d, $true) } }
+    $CarriedTokens['firstInstallCredentialsRemoved'] = -not [IO.Directory]::Exists($d)
+  } catch { $CarriedTokens['firstInstallCredentialsRemoved'] = $false; $CarriedTokens['firstInstallCredentialsRemoveError'] = $_.Exception.GetType().Name }
+}
 # Linux A, then B (B-resume once after a failed B), then B's output by rule. A timeout stops the launch and kills nothing. Returns the
 # staged copy of the version facts (and its hash) for verify -LinuxVersionFactsFile.
 function Step-LinuxRoot {
   $report = [ordered]@{ companionAccount = [bool]$FleetCompanionAccount; distribution = $FleetDistribution; planSha256 = $FleetPlanSha256; registrar = $null; runs = @(); evidence = $null; versionFacts = $null; codes = @() }
+  # B's final status: a first install's B (reinstall/linux/first-install.py --in-dir) names itself; the rules for its output are the same
+  $bDone = $(if ($FleetFirstInstall) { 'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' } else { 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' })
   $stop = { param([string]$code) $report.codes = @($code); Write-Json 'linux-report.json' $report; Stop-Launch $code $report }
   if (Get-Variable -Name 'ResumeOriginalLauncherSha256' -ErrorAction SilentlyContinue) { & $stop 'FLEET_LAUNCH_RESUME_NOT_SUPPORTED' }
   Set-FleetLinuxDirectories
@@ -1537,7 +1593,7 @@ function Step-LinuxRoot {
     # B ran and exited, and its output could not be captured: whether it completed is not known here. Not "B did not complete" (no
     # resume is run over it): stopped like a timeout, and the continuation captures and checks the output (capture-file).
     if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
-    if (-not (Test-FleetRun $b 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1')) {
+    if (-not (Test-FleetRun $b $bDone)) {
       # The resume only after a B that ran and exited non-zero. A refusal or an unreadable result (B may never have started, or its
       # state is unknown) and an exit 0 without the final status are not a failed B: nothing more is run. B and B-resume both failing
       # stops here as well, with the node still paused and its Windows side untouched: an alarm for a person, on purpose.
@@ -1545,7 +1601,7 @@ function Step-LinuxRoot {
       $b = Invoke-FleetLinuxScript 'BResume' $exe; $report.runs += ,(Get-FleetRunReport $b)
       if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
       if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
-      if (-not (Test-FleetRun $b 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1')) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
+      if (-not (Test-FleetRun $b $bDone)) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
     }
     $Done.Add('linux-B')
     $last = Parse-LastLine $b.stdout

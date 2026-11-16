@@ -75,7 +75,7 @@ export function fleetFacts() {
 }
 
 function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), resultPublicKeySha256 = hex(32) } = {}) {
-  const p = { schema: 'independent-ci.linux-policy.v3', role, formalEnabled: true, runtimeIdentity: `fixture-${letter}-runtime`, keyId: `fixture-${letter}-key`,
+  const p = { schema: 'independent-ci.linux-policy.v3', role, formalEnabled: true, runtimeIdentity: `fixture-${letter}-runtime`, keyId: 'fixture-key', workspaceRoot: '/var/lib/clued-independent-ci/workspaces', runsRoot: '/var/lib/clued-independent-ci/runs',
     image: `sha256:${hex(32)}`, executionMode: role === 'contract-placement' ? 'node-entry' : 'scanner', dockerExecutable: '/usr/bin/docker', dockerExecutableSha256: hex(32),
     nodeExecutable: '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', nodeExecutableSha256: toolchainSha, gitExecutable: '/usr/bin/git', gitExecutableSha256: hex(32),
     cpus: new PyFloat(1.5), entryFile: `${TRUSTED_SOURCE}/${ENTRY}`, trustedSourceDirectory: TRUSTED_SOURCE, hostAcceptanceRef: fleet.hostQualificationRef,

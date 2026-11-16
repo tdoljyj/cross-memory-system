@@ -3,7 +3,7 @@
 节点只有两条路，用的是**同一个通用包、同一份接受文件**：
 
 1. **通用升级**（第 0 节）：已装节点原地升级，零 UAC，失败自动回滚。默认走这条。
-2. **通用重装**（第 1–8 节）：节点答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` 时才走，每台 1 次 UAC。
+2. **通用重装与首装**（第 1–8 节）：已装节点答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` 时、以及新节点（没有安装回执）时走。**唯一入口是 `fleet-node-<v>.bootstrap.ps1 -From <目录>`**（第 5 节），重装与首装是同一条命令。
 
 只构建一个通用包。包里没有任何节点值（无 record 引用、节点档案选择、SID、路径），节点身份全部在节点上从本机记录读。接口细节见 `BATCH1-INTERFACES.md`，升级的设计见 [ADR 0030](../../docs/adr/0030-fleet-generic-upgrade.md)。
 
@@ -54,7 +54,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_UPGRADE_IN_PROGRESS` | 升级代理有操作在途（`op.state`、`op.confirmUrl`） | 等；`WAITING_GRANT` 且没开自动审批时 Owner 批一次 |
 | `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
 | `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
-| `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 用同样三个文件走第 5 节 `install.mjs prepare` |
+| `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 把该版资产放进一个目录，走第 5 节唯一入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>` |
 | `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 其他节点都升好后加 `--allow-active-upgrade` 再跑（CI 暂停几分钟）；不能移交给已升级的节点（Source 不同，服务端拒绝） |
 | `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装（例如 `FLEET_SOURCE_MISMATCH`：先升另一台） | 按 `precheck.advice` |
 | `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
@@ -72,13 +72,13 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 - 切换之后核验不过：升级代理把 Windows 与 Linux 两侧一起换回上一代，节点保持暂停，`status.json` 的 `recent` 写着 `ROLLED_BACK_PAUSED` 和原因。生产节点失败一次就停手，先在一次性环境复现。
 - `ROLLBACK_FAILED`：走通用重装（它不要求两侧先一致）。
 
-## 目录（通用重装）
+## 目录（通用重装与首装）
 
 1. 总览与顺序
 2. 发布机：构建一次
 3. 发布机：发布到 GitHub Release
 4. Owner 接受一次（接受文件）
-5. 每台节点：取包、组装、一次 UAC
+5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 6. 顺序与列车窗口（先 DESK，后 TURING）
 7. 凭据在哪里
 8. 失败时怎么办
@@ -86,8 +86,8 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 1. 总览与顺序
 
 ```
-发布机   build（一次） -> publish release -> Owner 接受 -> publish attach-acceptance
-节点     gh release download -> install.mjs prepare（非提权） -> Owner 点 1 次 UAC 运行 runCommand
+发布机   build（一次） -> publish release -> Owner 接受 -> publish attach-acceptance（首装另加 attach-first-install-kit）
+节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
 节点顺序：先待命节点 -> 核验 -> 再当班节点（重装期间 CI 停）。要换当班，在开始前、两台还是同一 Source 时移交；装好一台之后不能再移交给它（Source 与全队不同，服务端拒绝，迁移 `20261114120000`）。两台装同一个提交的同一个包，前后接着装。
@@ -104,7 +104,7 @@ node R/rollout/fleet/universal.mjs build --repo <git 目录> --commit <40 位 he
 - `fleet-node-<version>.release.json`：合同 `clued.independent-ci.fleet-node-release/1`
 - `SHA256SUMS`
 
-每个版本只构建一次；节点不构建、不检出仓库。
+每个版本只构建一次；节点不构建、不检出仓库。包内路径只许可打印 ASCII（`UNIVERSAL_TREE_PATH_NOT_ASCII`）：节点入口用 Windows 自带的 `tar.exe` 解包，它写不了非 ASCII 文件名。
 
 ## 3. 发布机：发布到 GitHub Release
 
@@ -150,28 +150,50 @@ node R/rollout/fleet/publish.mjs attach-acceptance --version <version> --accepta
 
 先核接受文件：合同、`version`、`archive_sha256` 与 `commit` 必须等于索引行里的值（给了 `--dir` 还要等于 release.json）、`repository` 等于 `--repo`，并按节点 `prepare` 的同一份规则核整份合同（`ciSourceManifestSha256` 的形状、`fleetRefs` 的确切字段、Decision 与时间）；通过后作为追加资产上传（不加 `--clobber`，tar 不变），再把索引行的接受时间与 Decision 补全。该行已有接受则拒绝，且在上传之前。
 
-## 5. 每台节点：取包、组装、一次 UAC
+## 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 
-在节点上、Owner 会话、非提权。取包用同一个 `fetch.mjs`（断流续传、只认哈希，见 0.3）：
+在节点上、Owner 会话、**普通（非提权）窗口**，用系统自带的 Windows PowerShell 5.1。重装与首装是同一条命令，**没有任何节点参数**：
 
 ```
-node <任一份 upgrade.mjs> fetch --version <version> --work <新目录> [--from <目录>] --no-request
-node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs prepare --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录2>
+powershell -NoProfile -ExecutionPolicy Bypass -File <目录>\fleet-node-<v>.bootstrap.ps1 -From <目录>
 ```
 
-第一条取包、核哈希、解包（得到 `<新目录>\dl` 与 `<新目录>\unpacked`），并顺带用新包 `upgrade.mjs` 对本机做一次 `--no-request` 演练；需要重装的节点它会答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL`，正是要走本节的信号。手动 `gh release download` + `Get-FileHash` + 解包同样可以。
+`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产可以用 `fetch.mjs`（0.3，断流续传、只认哈希）或 `gh release download`。
 
-1. 先用 `Get-FileHash` 核 tar：输出必须等于接受文件的 `archive_sha256`（也等于索引行与 SHA256SUMS），不等就停，不解包。
-2. 解包用 Python 的 `tarfile`（`filter='data'` 拒绝链接、绝对路径和越界路径），不用 Windows 的 `tar.exe`（它解不了非 ASCII 文件名）。`<解包目录>` 必须是新目录。
-3. 运行 `prepare`。**这条命令在每台节点上完全相同，没有任何节点参数**：根目录固定为 `C:\ProgramData\CluedIndependentCI\resident`，令牌、已装包、配置都不从命令行给。`--artifact-sha` 就是第 1 步核过的值。
+bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象）：
 
-`prepare` 再核一遍 tar 的 sha256 与接受文件，严格读包、逐文件核 `universal-manifest.json`，并要求正在运行的 `install.mjs` 及其模块就是包里的字节；节点身份只从本机读（`install\install-receipt.json`、`record\*`、`config\policy.json`、`config\companion.json`、`install\companion-account.json`、`install\companion-wsl.json`、`upgrade\current.json`、`upgrade\mailbox\responses\version-facts.json` 与 `roles-public.json`、runner 服务的 SDDL，只读）。没有 `install-receipt.json` 的节点拒绝（`NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH`，首装走 `reinstall/README.md` §8c）。不需要按节点的配置文件，也不依赖仓库检出。
+1. 核资产集合与每个哈希（两份 sums 文件；多一个、少一个、哈希不符都拒绝）。
+2. 前置清单：这次要用的前置必须已钉住（sha256 与字节数），否则 `PREREQ_NOT_PINNED`，什么都不取。**已装节点（重装）只用 node、python、git**；首装用全部七项与 .deb。每个文件先找 `<目录>` 里哈希相符的，没有再下载，都核 sha256 与大小。
+3. 用 Windows 自带的 `tar.exe` 解出 `tree/`。`tar.exe` 写不了非 ASCII 文件名，所以构建器不许包里有这样的路径（第 2 节）；`prepare` 再逐文件核自己的字节，不信任解包工具。
+4. 有 `C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json`：非提权运行包内 `install.mjs prepare`（下面），再请求 1 次 UAC 运行它生成的启动器。没有回执：首装，见 5.1。
+5. 结局只有一行 JSON：`BOOTSTRAP_DONE`（核验通过、已暂停；首装还要求 companion 切换通过），否则写明停在哪一步、为什么。
 
-依次：构建本节点的首装包（两次，sha 相同）、`linux-in\`、合成的 `inputs\reinstall-config.json`、包内 `rehearse.py --fleet`（必须 `REHEARSAL_PASS`）、包内 `prep.py`（`linux\A.sh`、`B.sh`、`B-resume.sh`）、包内 `generate.py --fleet-plan <plan> --check`（生成启动器前的全部检查，不要求已暂停，不写启动器；不过则停，旧常驻不会被暂停），**然后做 W1 暂停**：包内 `reinstall/tools/pause-old-resident.py`，非提权，reason 为 `fleet-node-reinstall-<version>-w1-before-linux-switch`，必须得到 `OLD_RESIDENT_PAUSED_NO_OPEN_BATCH`（最多等 90 分钟），所确认的 `PAUSED.json` 的 sha 与 reason 写进 `install-plan.json` 的 `w1Paused`，由启动器钉住；最后包内 `generate.py` 生成 `launcher.ps1`。同一版本再跑一次 `prepare`（换新 `--work`）时，W1 找到自己的暂停并立即确认，不重复请求。
+`install.mjs prepare` 是 bootstrap 内部的一步，不是 Owner 的命令，不要绕过 bootstrap 手工运行它。**注意**：在协调者钉住 `prereq-manifest.json` 的 node、python、git 之前，bootstrap 对重装和首装都答 `PREREQ_NOT_PINNED`。
+
+### prepare 做什么（bootstrap 内部）
+
+`prepare` 的命令行在每台节点上完全相同，没有任何节点参数：根目录固定为 `C:\ProgramData\CluedIndependentCI\resident`，令牌、已装包、配置都不从命令行给；`--artifact-sha` 是 bootstrap 第 1 步核过的值。
+
+`prepare` 再核一遍 tar 的 sha256 与接受文件，严格读包、逐文件核 `universal-manifest.json`，并要求正在运行的 `install.mjs` 及其模块就是包里的字节；节点身份只从本机读（`install\install-receipt.json`、`record\*`、`config\policy.json`、`config\companion.json`、`install\companion-account.json`、`install\companion-wsl.json`、`upgrade\current.json`、`upgrade\mailbox\responses\version-facts.json` 与 `roles-public.json`、runner 服务的 SDDL，只读）。没有 `install-receipt.json` 的节点走首装分支，见 5.1。不需要按节点的配置文件，也不依赖仓库检出。
+
+依次：构建本节点的首装包（两次，sha 相同）、`linux-in\`、合成的 `inputs\reinstall-config.json`、包内 `rehearse.py --fleet`（必须 `REHEARSAL_PASS`）、包内 `prep.py`（`linux\A.sh`、`B.sh`、`B-resume.sh`）、包内 `generate.py --fleet-plan <plan> --check`（生成启动器前的全部检查，不要求已暂停，不写启动器；不过则停，旧常驻不会被暂停），**然后做 W1 暂停**：包内 `reinstall/tools/pause-old-resident.py`，非提权，reason 为 `fleet-node-reinstall-<version>-w1-before-linux-switch`，必须得到 `OLD_RESIDENT_PAUSED_NO_OPEN_BATCH`（最多等 90 分钟），所确认的 `PAUSED.json` 的 sha 与 reason 写进 `install-plan.json` 的 `w1Paused`，由启动器钉住；最后包内 `generate.py` 生成 `launcher.ps1`。同一版本再跑一次（bootstrap 每次用新的工作目录）时，W1 找到自己的暂停并立即确认，不重复请求。
 
 `<work>` 下产出（只许新建）：`package\`、`linux-in\`、`linux\A.sh`、`B.sh`、`B-resume.sh`、`launcher.ps1`、`install-plan.json`。Linux 脚本的输出目录是 `install-plan.json` 里 `linux.outDir` 指定的新目录 `C:\ProgramData\CluedIndependentCI\reinstall-linux-out-<32hex>`，由提权启动器在 Linux A 之前新建并设权限；`prepare` 不建它，也不改任何 ACL。结束时打印一行 JSON：`{status, node, version, workDir, installPlan, launcher:{path, sha256}, runCommand}`。
 
-**Owner 只做一件事：点 1 次 UAC 运行 `runCommand`。** 一次 UAC 内的顺序：W1 暂停（已由 `prepare` 完成，启动器只核 `w1Paused`） -> 暂存 -> Linux A -> Linux B（失败时 B-resume 一次）-> 核 B 的输出（evidence 恰一行 `sha256:` 等于包的 `ciSourceManifestSha256` 且 `exit: 0`；facts 第 1 代、`staged` 为 null、Source 与 Linux manifest 等于包、`pinsOk` 为 true，即 `install-plan.json` 的 `expectedLinux`）-> 卸载 -> 安装 -> verify -> rearm。有 companion 账户的节点，Linux root 步骤由 registrar 的 `root-run` 在 companion 账户的发行版里执行；没有的节点（`companionAccount=false`）由提权 Owner 直接 `wsl.exe -d <发行版> -u root` 运行，其余相同。
+**重装时 Owner 只做一件事：bootstrap 请求时点 1 次 UAC**（它复制 `prepare` 写的启动器到只给管理员的目录、核 sha256，再以 `-RunApprovedInstall` 运行）。一次 UAC 内的顺序：W1 暂停（已由 `prepare` 完成，启动器只核 `w1Paused`） -> 暂存 -> Linux A -> Linux B（失败时 B-resume 一次）-> 核 B 的输出（evidence 恰一行 `sha256:` 等于包的 `ciSourceManifestSha256` 且 `exit: 0`；facts 第 1 代、`staged` 为 null、Source 与 Linux manifest 等于包、`pinsOk` 为 true，即 `install-plan.json` 的 `expectedLinux`）-> 卸载 -> 安装 -> verify -> rearm。有 companion 账户的节点，Linux root 步骤由 registrar 的 `root-run` 在 companion 账户的发行版里执行；没有的节点（`companionAccount=false`）由提权 Owner 直接 `wsl.exe -d <发行版> -u root` 运行，其余相同。
+
+### 5.1 首装：同一条命令，没有回执的节点
+
+同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。它先非提权运行 `install.mjs first-install-check`（接受文件、tar 与 kit 的哈希、角色镜像，并核 toolchain 的 `node.exe` 就是 kit 记录的控制器运行时：不符即 `CONTROLLER_NODE_NOT_THE_FLEETS`，在任何 UAC 之前），再提权跑一次主机准备（UAC 1，`windows/first-install-host.ps1`：账户、runner、发行版、凭据，写 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`；它读的 tar 与前置清单是 bootstrap 复制到本地工作目录的副本，提权令牌看不到 Owner 映射的盘符），再非提权跑 `install.mjs prepare ... --from <目录>`，最后提权跑它给的启动器（UAC 2）。
+
+- `prepare` 的判据只有一个：有没有 `install\install-receipt.json`。没有时：本机不得有任何常驻残留（三个服务、resident 根；有就 `FIRST_INSTALL_RESIDUE_PRESENT` 并列出，不猜、不覆盖）；节点值只从 `facts.json`（`clued.independent-ci.first-install-facts/1`，名字全由机器名推导，规则写在 `readFirstInstallFacts`）和该版的首装 kit 读。CI 根对 operator 不可列目录（主机准备设的 DACL），`prepare` 看不到 `resident-uninstalled-*`：输出的 `residueUnchecked` 写明这一项没查，不当作没有（主机准备与启动器在提权下查）。
+- 首装 kit：`fleet-node-<v>.first-install-kit.json`，任一已装、Linux 与 Windows 同一包的节点上非提权只读运行 `install.mjs first-install-kit` 得到；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`），缺它首装即拒绝。kit 要取自装着**更早版本**的节点（模板 Source 等于新包 Source 时派生拒绝）。
+- 本地构建的角色镜像（contract-placement 的 `sha256:<id>`）随版发布为 `role-image-<id>.tar.gz`（全队一次导出），B 载入后由 docker 按 id 核内容；新节点不再要任何节点为它导出东西。
+- 其后与重装同一路径：建包两次、`linux-in\`、包内 `reinstall/linux/first-install.py` 的 `--in-dir/--out-dir` 形态（`A.sh` 首装检查与派生、`B.sh` 签名与安装、`B-resume.sh` 即 `B.sh`）、`install-plan.json`（`firstInstall`，无 W1，`secrets.source = first-install`）、`generate.py --fleet-plan`。结束输出 `FLEET_NODE_FIRST_INSTALL_PREPARED`。
+- 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。切换没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`，不答 `BOOTSTRAP_DONE`。
+- 令牌目录（`first-install\credentials\`）不留过本次运行：主机准备开始前先删掉以前运行留下的；主机准备只在 bootstrap 仍在等它时（进程号与启动时间）为启动器保留，bootstrap 已放弃等待或窗口已关就删；启动器在任何结局都删除（停止、异常、完成）；`prepare` 失败或启动器 UAC 被拒时 bootstrap 再请求一次 UAC 清掉。
+- 主机准备先写 `facts.json`（整份或没有），再放 App 私钥与 ci-admission 令牌：中途断掉只会留下有 facts、缺秘密的状态，下次运行按 facts 记录的指纹只问缺的那些（facts 记录了心跳令牌就必须再给），`-Reset` 能清掉；不会留下没有 facts、无法归属的秘密。
+- 中途停止：Linux A 之前停下，什么都没动，重跑同一条命令（P1 会再问令牌）。A 完成之后停下（B 中断、失败或 Windows 侧未完成），重跑同一条命令：Linux A 找到本提交的暂存（同一个包、自 A 起未变、新输入目录与暂存逐字节一致）即不再暂存，B 从停下处接着做；不一致按名拒绝。已安装（有回执）之后停下的，按重装处理。
 
 ## 6. 顺序与列车窗口（先待命，后当班）
 
@@ -191,11 +213,11 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 ## 8. 失败时怎么办
 
 - 生产节点失败一次就停手：不重试、不改参数硬再跑。先在一次性环境复现，核实根因，做最小修复，再一次性上生产。
-- `prepare` 的输出只许新建：失败后换一个新 `--work` 目录，不复用旧的。W1 之后才失败（例如 `generate.py`）时，旧常驻保持暂停；重跑 `prepare`（同一版本或更新的包）时 W1 直接认领留下的重装暂停，不需要先解除。
-- 启动器是一次性的：同一个文件再跑只会得到 `EXISTING_EXECUTION_PRESERVED`。停下之后（DESIGN §73）：
-  - A 开始之前停下：节点没动，W1 暂停已自动解除；重跑 `prepare`。
-  - A 之后停下（Linux 已是新包、Windows 还是旧装，节点保持暂停）：`python -I <tree>\work\independent-ci-resident-v1\reinstall\launcher\generate.py --fleet-continue <那次的 launcher.ps1> --out <新 launcher.ps1>`，再提权运行输出里的 `elevatedCommand`。暂停若已被解除，这条命令会重新请求。此时对同一个包重跑 `prepare` 会得到 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`。
-  - 那个包本身续不下去、已经换了新包：直接用新包 `prepare` + 启动器，两侧各从现状装到新包。
+- bootstrap 每次运行用新的工作目录（`C:\ProgramData\CluedBootstrap\<32hex>`），`prepare` 的输出只许新建。W1 之后才失败（例如 `generate.py`）时，旧常驻保持暂停；重跑同一条 bootstrap 命令（同一版本或更新的包）时 W1 直接认领留下的重装暂停，不需要先解除。
+- 启动器是一次性的：同一个文件再跑只会得到 `EXISTING_EXECUTION_PRESERVED`。重装的启动器停下之后（DESIGN §73）：
+  - A 开始之前停下：节点没动，W1 暂停已自动解除；重跑同一条 bootstrap 命令。
+  - A 之后停下（Linux 已是新包、Windows 还是旧装，节点保持暂停）：`python -I <tree>\work\independent-ci-resident-v1\reinstall\launcher\generate.py --fleet-continue <那次的 launcher.ps1> --out <新 launcher.ps1>`，再提权运行输出里的 `elevatedCommand`。暂停若已被解除，这条命令会重新请求。此时对同一个包重跑 bootstrap 会得到 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`。首装的启动器不走这条（`PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED`），见 5.1 的中途停止。
+  - 那个包本身续不下去、已经换了新包：直接用新包的 bootstrap，两侧各从现状装到新包。
 - `RUNNER_SERVICE_NOT_AS_REVIEWED`：当班节点在暂停下仍会为自己的维护临时交换运行器，预检会等它换回（最多 600 秒）；到时仍不对才停。
 - `publish.mjs` 在 gh 失败时不动索引；`release` 失败后先看 Release 是否已建出一部分，不要重复创建同一 tag。
 - `attach-acceptance` 对已接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。

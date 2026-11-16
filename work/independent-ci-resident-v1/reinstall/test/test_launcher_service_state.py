@@ -13,6 +13,7 @@ DRIVER = r'''
 param([string]$Template, [string]$Case)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $t = [IO.File]::ReadAllText($Template)
@@ -29,6 +30,7 @@ RUNNER_DRIVER = r'''
 param([string]$Template, [string]$Case)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
@@ -61,6 +63,7 @@ EVIDENCE_DRIVER = r'''
 param([string]$Template, [string]$Case)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall launcher's pins (generate.py)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
