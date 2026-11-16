@@ -91,6 +91,52 @@ test('only the exact required-tests Source and its three complete independent ro
   }
   assert.equal(compile().execution_mode,undefined,'old alternative compiler behavior is unchanged');
 });
+// G3 changed the bytes of clued-required-tests.yml (lost-run workflow_dispatch). The compound pin, the root registry
+// entry and the three independent roles must all name the committed bytes; the compound mode admits exactly one Source,
+// so replaced bytes are not kept as accepted_sources (the compiler would no longer compile them in compound mode).
+test('the compound pin, its registered entry and its three roles are the committed required-tests bytes',()=>{
+  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
+  const file=REQUIRED_TESTS_SOURCE.file,ids=[...REQUIRED_TESTS_SOURCE.primary_ids];
+  const raw=fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),value=yaml.parse(raw);
+  const blob=workflowBlob(raw),sha=createHash('sha256').update(raw).digest('hex');
+  const registry=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const specs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const {accepted_sources,...entry}=registry.workflows[file];
+  const actual={workflow_blob:blob,source_sha256:sha,workflow_definition_sha256:roleDefinitionDigest(value),
+    profile_sha256:roleDefinitionDigest({...entry,workflow_blob:blob,source_sha256:sha,source_yaml:raw}),
+    role_sha256:Object.fromEntries(ids.map(id=>[id,roleDefinitionDigest(value.jobs[id])]))};
+  const pinned={workflow_blob:REQUIRED_TESTS_SOURCE.workflow_blob,source_sha256:REQUIRED_TESTS_SOURCE.source_sha256,
+    workflow_definition_sha256:REQUIRED_TESTS_SOURCE.workflow_definition_sha256,profile_sha256:REQUIRED_TESTS_SOURCE.profile_sha256,
+    role_sha256:{...REQUIRED_TESTS_SOURCE.role_sha256}};
+  assert.deepEqual(pinned,actual,'REQUIRED_TESTS_SOURCE must pin the committed bytes: '+JSON.stringify(actual));
+  assert.equal(accepted_sources,undefined,'the compound mode registers exactly one Source');
+  assert.deepEqual(Object.keys(specs.workflows[file].sources),[blob],`${file}: roles are keyed by the committed blob only`);
+  const roles=rolesForSource(specs,file,blob);
+  assert.deepEqual(roles,ids.map(job_id=>({job_id,definition_sha256:actual.role_sha256[job_id],definition:value.jobs[job_id]})));
+  assert.deepEqual(compileRegisteredWorkflow(raw,{primary_ids:ids,parseYaml:yaml.parse,accepted_roles:roles}),entry);
+});
+// Catalogues kept as Git objects (the retired catalogue of main 4a3e0485 and every earlier main) carry the compound
+// entry of the bytes before G3. They must still decode, and that entry must still compile, as exactly those bytes and
+// roles: the earlier pin is history for reading them, never a second current Source.
+test('the earlier exact compound Source still decodes from its catalogue and compiles only as its own bytes',async()=>{
+  const {REQUIRED_TESTS_PREVIOUS_SOURCES:previous}=await import('./clued-workflow-profile.mjs');
+  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
+  const {registry,specs}=retiredCatalogue(),file=REQUIRED_TESTS_SOURCE.file,old=registry.workflows[file];
+  assert.notEqual(old.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the retired catalogue holds the predecessor bytes');
+  assert.deepEqual(previous.map(pin=>pin.workflow_blob),[old.workflow_blob]);
+  assert.equal(isExactAllRequiredPrimariesProfile(old,file),true);
+  assert.equal(registeredWorkflowSource(registry,file,old.workflow_blob).passed,true);
+  const value=yaml.parse(old.source_yaml),roles=rolesForSource(specs,file,old.workflow_blob).map(({job_id,definition_sha256})=>
+    ({job_id,definition_sha256,definition:value.jobs[job_id]}));
+  assert.deepEqual(compileRegisteredWorkflow(old.source_yaml,{primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}),old);
+  for(const edit of [p=>p.source_yaml+='# changed\n',p=>p.routes[0].required_steps['Select suites']=2,
+    p=>p.workflow_blob=REQUIRED_TESTS_SOURCE.workflow_blob,p=>p.source_sha256=REQUIRED_TESTS_SOURCE.source_sha256]) {
+    const p=structuredClone(old);edit(p);assert.equal(isExactAllRequiredPrimariesProfile(p,file),false);
+  }
+  assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
+  const current=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[file];
+  assert.equal(current.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the live catalogue registers the current bytes');
+});
 test('unregistered, altered, revoked, ambiguous or partial candidate sources stay unknown',()=>{
   const p=compile(),file='.github/workflows/fixture.yml';
   const registry={schema:'clued.gated-proof-profiles/2',workflows:{[file]:p}};

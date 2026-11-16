@@ -195,28 +195,49 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946',
-  source_sha256:'54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89',
-  workflow_definition_sha256:'2711f46c707ab128542792ffea4302275efcec22960e655012f968848a35edaa',
-  profile_sha256:'ef4d90596d62d223df7f34ca8f085c79f7bafecaff25833cb9215ec89f60ec1c',
+  workflow_blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686',
+  source_sha256:'3ffae8faf3faa90705ef5e7741dd258eb4485b0c6ad33105b40beaf95eec8334',
+  workflow_definition_sha256:'c38d8c2e53ea50e2d5dd178a3c531adbae4ffb47dfdb7850c394c04287d56b12',
+  profile_sha256:'1495ea5ea376476dd584f4827398703491d14e81a458ee2bd81a8d47248c71b2',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910',
-    'ci-suites':'c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa',
-    'migration-verify':'554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1',
+    'clued-cloud-tests':'a70ad71b3142881ed1ab33fd8e1a10d904d53e111f7f2e93943bd6ce862e5b4b',
+    'ci-suites':'28191dfb8b6c5c0d39f338c0eb8dd6798df852a4fb18a9b2c29c16cdbaabe36a',
+    'migration-verify':'3fdb8b60ba13bb5df9323e9be7fe060061e1d84e9b6956b72658b8bd687b627e',
   }),
 });
+// Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
+// Git objects still carry them; they decode and compile only as these exact bytes,
+// definition, profile and roles. History for reading those catalogues, not a second
+// current Source: the live catalogue registers REQUIRED_TESTS_SOURCE.
+export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
+  // Before the G3 lost-run workflow_dispatch entry (main 5e594a99 and earlier).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946',
+    source_sha256:'54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89',
+    workflow_definition_sha256:'2711f46c707ab128542792ffea4302275efcec22960e655012f968848a35edaa',
+    profile_sha256:'ef4d90596d62d223df7f34ca8f085c79f7bafecaff25833cb9215ec89f60ec1c',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910',
+      'ci-suites':'c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa',
+      'migration-verify':'554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1',
+    }),
+  }),
+]);
+const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {
     if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
-    const {accepted_sources,...fields}=profile;
-    return exactKeys(fields,['registration_status','workflow_blob','source_sha256','source_yaml','primary_ids',
+    const {accepted_sources,...fields}=profile,pin=requiredTestsPin(fields.workflow_blob);
+    return !!pin&&exactKeys(fields,['registration_status','workflow_blob','source_sha256','source_yaml','primary_ids',
       'pull_request','gated','routes','execution_mode'])&&
-      fields.execution_mode===ALL_REQUIRED_PRIMARIES_MODE&&fields.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob&&
-      fields.source_sha256===REQUIRED_TESTS_SOURCE.source_sha256&&typeof fields.source_yaml==='string'&&
-      workflowBlob(fields.source_yaml)===REQUIRED_TESTS_SOURCE.workflow_blob&&
-      digest(fields.source_yaml)===REQUIRED_TESTS_SOURCE.source_sha256&&
-      roleDefinitionDigest(fields)===REQUIRED_TESTS_SOURCE.profile_sha256;
+      fields.execution_mode===ALL_REQUIRED_PRIMARIES_MODE&&fields.workflow_blob===pin.workflow_blob&&
+      fields.source_sha256===pin.source_sha256&&typeof fields.source_yaml==='string'&&
+      workflowBlob(fields.source_yaml)===pin.workflow_blob&&
+      digest(fields.source_yaml)===pin.source_sha256&&
+      roleDefinitionDigest(fields)===pin.profile_sha256;
   }catch{return false;}
 }
 export const FUTURE_WORKFLOW_PURPOSE='work_handover_consumer_qualification';
@@ -355,11 +376,11 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
-  const compound=workflowBlob(text)===REQUIRED_TESTS_SOURCE.workflow_blob&&digest(text)===REQUIRED_TESTS_SOURCE.source_sha256;
-  if(compound&&(!same(primary_ids,REQUIRED_TESTS_SOURCE.primary_ids)||
-    roleDefinitionDigest(value)!==REQUIRED_TESTS_SOURCE.workflow_definition_sha256||
+  const pin=requiredTestsPin(workflowBlob(text)),compound=!!pin&&digest(text)===pin.source_sha256;
+  if(compound&&(!same(primary_ids,pin.primary_ids)||
+    roleDefinitionDigest(value)!==pin.workflow_definition_sha256||
     accepted_roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition'])||
-      role.definition_sha256!==REQUIRED_TESTS_SOURCE.role_sha256[role.job_id]||
+      role.definition_sha256!==pin.role_sha256[role.job_id]||
       roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
     reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
@@ -432,7 +453,7 @@ export function registeredWorkflowSource(registry,file,blob) {
     const matching=entries.filter(entry=>entry.registration_status==='registered' && entry.workflow_blob===blob);
     if(matching.length!==1)return unknown(`${file}: exact source has no unique current registration`);
     const entry=matching[0];
-    if((Object.hasOwn(entry,'execution_mode')||entry.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob)&&
+    if((Object.hasOwn(entry,'execution_mode')||requiredTestsPin(entry.workflow_blob))&&
       !isExactAllRequiredPrimariesProfile(entry,file))return unknown(`${file}: exact compound Source/profile invalid`);
     if(typeof entry.source_yaml!=='string' || workflowBlob(entry.source_yaml)!==blob ||
       digest(entry.source_yaml)!==entry.source_sha256 || !Array.isArray(entry.primary_ids) ||

@@ -240,9 +240,9 @@
 
     "scripts/ci/clued-g4-fresh-start.test.mjs": "620b3151b8b869ad232cc5810e9b98c73b2c3ff38bd011f6984ba7e24e94e0aa",
 
-    "scripts/ci/clued-gated-proof-profiles.json": "f899d641a7c5e9ea20e58f87f0d7f44c3cb50295af0b528b37afc870f7498f18",
+    "scripts/ci/clued-gated-proof-profiles.json": "2b5bdaad1048e0165cd2929c7c64e09af2641feaa25aa796d80078701af4ea6d",
 
-    "scripts/ci/clued-gated-proof-role-specs.json": "840ab2f9e1912df41eed36b0a1c653cdf8c0dbe464ce997e645a44ce6dfa4378",
+    "scripts/ci/clued-gated-proof-role-specs.json": "cb7136535d18436d349cb019f003cdffea5a9c984c9fd458900c5f6ed6d62dda",
 
     "scripts/ci/clued-gated-proof-runtime.mjs": "ad7b271a0ae0798bb5e5dab21697bc11cc79e10d14db8b9805cb011c93df8dfd",
 
@@ -432,9 +432,9 @@
 
     "scripts/ci/clued-workflow-profile-codec.test.mjs": "6d529c3159c9a60baf493bd8906937a5c7e67aaeee558b7126e407298df0512e",
 
-    "scripts/ci/clued-workflow-profile.mjs": "63b278c1bef4d9e83037d93ae5dc5d86f286937887aee0079584ab31ff07a1aa",
+    "scripts/ci/clued-workflow-profile.mjs": "f8087a8eb5175aa753fc1d87ba42f92e3f68f3cf2f56f0396c654196b08152e5",
 
-    "scripts/ci/clued-workflow-profile.test.mjs": "58d5715dd46bb8332be50cada792db3713f5425d9cc29f69bc209a779f9ba594",
+    "scripts/ci/clued-workflow-profile.test.mjs": "9144aefcfb8b8f911bf3811dac9b1901ca7294b1316843ad94096733fe9ec3d6",
 
     "scripts/ci/clued_release_tags.py": "37dbb708333c8a92647d23144a9b6fe3f0f1021e8801d0a781749138280b835f",
 
@@ -520,7 +520,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "d87eca7b126809d29fec968cd93c83e140acabb941ac5af73b3e0f02a400cee3",
+    "scripts/ci/merge-admission-r9-source.json": "d43656fa5c9781f651b1f37ec285b5ca434b5309fbd19f38863805ef315aba7d",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
