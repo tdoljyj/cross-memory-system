@@ -143,8 +143,10 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   };
 
   // --no-request: assembled and prechecked, not requested; the package is the one a real run requests (reproducible)
-  const dry = await upgrade(w, n, { request: q.request, noRequest: true });
+  const sameWork = path.join(n.dir, 'upgrade-same-work');
+  const dry = await upgrade(w, n, { request: q.request, noRequest: true, workDir: sameWork });
   assert.deepEqual([dry.status, q.calls.length], ['FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', 0], JSON.stringify(dry).slice(0, 2000));
+  const dryManifest = await fs.readFile(path.join(dry.packageDir, 'package-manifest.json'));
 
   // an operation the upgrader still owns: not requested twice (and nothing is read or written beyond the status)
   await fs.writeFile(at('upgrade', 'status.json'), JSON.stringify({ contract: 'clued.independent-ci.resident-upgrade-status/1', writtenAt: new Date().toISOString(),
@@ -154,10 +156,10 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   await fs.rm(at('upgrade', 'status.json'));
 
   // through the command line (as on a node): the reinstall hint is part of the answer
-  const viaMain = async (acceptance, deps = {}) => {
+  const viaMain = async (acceptance, deps = {}, work = path.join(n.dir, `upgrade-${workSeq += 1}`)) => {
     const file = path.join(n.dir, `acceptance-${workSeq += 1}.json`);
     await fs.writeFile(file, JSON.stringify(acceptance));
-    return main(['--artifact', w.tar, '--artifact-sha', w.release.source.archive_sha256, '--acceptance', file, '--work', path.join(n.dir, `upgrade-${workSeq += 1}`)],
+    return main(['--artifact', w.tar, '--artifact-sha', w.release.source.archive_sha256, '--acceptance', file, '--work', work],
       { root: n.root, request: q.request, ...deps });
   };
 
@@ -199,7 +201,7 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   await refusedBeforeAnyWork(await viaMain(w.acceptance), 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_SIDES_NOT_ONE_PACKAGE');
   await undo();
 
-  // other refusals are not a reason to reinstall: an archive that is not the accepted one, a work directory that exists
+  // other refusals are not a reason to reinstall: an archive that is not the accepted one
   await refusedBeforeAnyWork(await viaMain({ ...w.acceptance, archive_sha256: 'f'.repeat(64) }), 'FLEET_NODE_UPGRADE_REFUSED', 'FLEET_ARTIFACT_SHA_NOT_THE_ACCEPTED');
 
   // the node on duty is not requested by default (the standby first, then the hand-over); with the Owner's acceptance of the CI pause it is
@@ -211,9 +213,13 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   assert.deepEqual([accepted.status, accepted.ciPause, q.calls.length], ['FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', true, 0]);
   await fs.rm(at('state', 'status.json'));
 
-  // the node is untouched by all of the above: the real request goes through, for the package the dry run assembled
-  const r = await viaMain(w.acceptance);
+  // the node is untouched by all of the above: the real request goes through, for the package the dry run assembled. The same command
+  // again, with the same --work (field 2026-11-16: EEXIST): a run of its own under it, the earlier run's package untouched.
+  const r = await viaMain(w.acceptance, {}, sameWork);
   assert.deepEqual([r.status, r.packageManifestSha256, q.calls.length], ['FLEET_NODE_UPGRADE_REQUESTED', dry.packageManifestSha256, 1], JSON.stringify(r).slice(0, 2000));
+  assert.notEqual(r.packageDir, dry.packageDir);
+  assert.equal(path.relative(sameWork, r.packageDir).split(path.sep).length, 2, 'under the same --work');
+  assert.deepEqual(await fs.readFile(path.join(dry.packageDir, 'package-manifest.json')), dryManifest, 'the earlier run's package is untouched');
 });
 
 test('fleet upgrade fetch: one command takes the tar from the second source, checks its sha256, unpacks it and runs the UNPACKED upgrade.mjs; a wrong tar is never unpacked', { timeout: 900_000 }, async t => {
