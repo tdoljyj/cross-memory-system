@@ -56,7 +56,7 @@ const node = (id, name, rank, extra = {}) => ({ binding_id: id, agent_name: name
   node: { node_id: 'n-' + id, name: name.toUpperCase(), last_heartbeat_at: '2026-10-31T07:50:00Z', mode: 'STANDBY', state: 'NORMAL',
     service_running: true, snapshot_age_seconds: 120, ci_source_manifest_sha256: 'c'.repeat(64), ...extra } });
 const DATA = (extra = {}) => ({ status: 'ok', setting: { enabled: false, enabled_at: null, version: 3 },
-  rules: { silence_minutes: 5, unhealthy_minutes: 5 },
+  rules: { silence_minutes: 5, unhealthy_minutes: 5, halted_minutes: 5 },
   members: [member('b-turing', 'turing', 1), member('b-desk', 'desk-w-591', 2)],
   holders: [{ binding_id: 'b-turing', agent_name: 'turing', purpose: 'resident-node' }, { binding_id: 'b-park', agent_name: 'park', purpose: 'parking' },
     { binding_id: 'b-env', agent_name: 'github-env', purpose: 'other' }],
@@ -104,7 +104,9 @@ test('the page shows the switch, the watchdog, the order, every node heartbeat a
   assert.ok(shown.includes('cccccccccccc'));
   assert.ok(shown.includes('已自动把 CI 准入从 desk-w-591 移交给 turing（失联）'));
   // ADR 0026: the thresholds are the server's rules, never written into the page.
-  assert.ok(shown.includes('持有 CI 准入的常驻节点失联 5 分钟（或连续 5 分钟报“服务没在运行”）时'));
+  assert.ok(shown.includes('持有 CI 准入的常驻节点失联 5 分钟（或连续 5 分钟报“服务没在运行”，或停机（HALT）满 5 分钟）时'));
+  // A HALTED holder is handed out (migration 20261116100000); only a paused one never is.
+  assert.ok(shown.includes('暂停或暂停接新的持有者永远不会被自动交出') && !shown.includes('停机、暂停'));
   assert.ok(!shown.includes('30 分钟') && !shown.includes('20 分钟'));
   assert.ok(shown.includes('当前持有者 desk-w-591 失联，但没有可以接班的节点'));
   assert.ok(shown.includes('turing：最近没有心跳、6 小时内刚交出过 CI 准入'));
