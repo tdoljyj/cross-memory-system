@@ -60,6 +60,12 @@ $script:Drill = [ordered]@{
   Cpu = 4; CpuMaximum = 75; CpuWeight = 50; MaxIops = 2000
   Switch = 'Default Switch'
   InstallTimeoutMinutes = 90
+  # Nothing logs on to the guest before Windows says setup and OOBE are over: the first two real baselines (2026-11-16) logged
+  # on through PowerShell Direct while OOBE was still finishing (the account exists from the middle of OOBE) and both ended on
+  # OOBE's "Why did my PC restart?" screen. SetupComplete.cmd runs once OOBE is done, before any logon; it publishes one Hyper-V
+  # KVP item that the host reads without logging on (Msvm_KvpExchangeComponent).
+  SetupSignalName = 'CluedDrillSetup'
+  SetupSignalCommand = 'cmd.exe /c "if not exist %WINDIR%\Setup\Scripts mkdir %WINDIR%\Setup\Scripts & echo reg add "HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest" /v CluedDrillSetup /t REG_SZ /d complete /f>%WINDIR%\Setup\Scripts\SetupComplete.cmd"'
   BootKeySeconds = 30
   GuestRoot = 'C:\ProgramData\CluedIndependentCI\resident'
   GuestWork = 'C:\drill'
@@ -143,6 +149,18 @@ function Step-DrillReadiness($Previous, $Probe, [DateTimeOffset]$After) {
   return @{ ready = ($null -ne $Previous -and [string]$Previous -ceq $id); candidate = $id }
 }
 
+# The value of KVP item $Name among Msvm_KvpExchangeComponent.GuestExchangeItems (each an Msvm_KvpExchangeDataItem as XML).
+function Get-DrillKvpValue([string[]]$Items, [string]$Name) {
+  foreach ($item in @($Items)) {
+    try { $x = [xml]$item } catch { continue }
+    $props = @($x.SelectNodes('/INSTANCE/PROPERTY'))
+    $n = @($props | Where-Object { $_.GetAttribute('NAME') -ceq 'Name' })
+    $d = @($props | Where-Object { $_.GetAttribute('NAME') -ceq 'Data' })
+    if ($n.Count -eq 1 -and $d.Count -eq 1 -and [string]$n[0].InnerText -ceq $Name) { return [string]$d[0].InnerText }
+  }
+  return $null
+}
+
 # Why a guest step failed, from the boot time before it and the boot time once the guest is ready again ('' = never ready).
 function Get-DrillStepFailureKind([string]$BootBefore, [string]$BootAfter) {
   if ([string]::IsNullOrEmpty($BootAfter)) { return 'unreachable' }
@@ -203,6 +221,15 @@ function New-DrillAutounattend([string]$Password) {
     <component name="Microsoft-Windows-Shell-Setup" $amd>
       <ComputerName>$($script:Drill.ComputerName)</ComputerName>
       <TimeZone>China Standard Time</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment" $amd>
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>setup-complete signal to the host (Hyper-V KVP), written by SetupComplete.cmd once OOBE is over</Description>
+          <Path>$(ConvertTo-XmlText $script:Drill.SetupSignalCommand)</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
     </component>
   </settings>
   <settings pass="oobeSystem">
@@ -575,6 +602,25 @@ function Save-DrillScreen([string]$VmName, [string]$Path) {
   } catch { return $null }
 }
 
+# The guest's KVP item $Name, read on the host (no logon in the guest); $null when the guest has not published it.
+function Get-DrillGuestKvp([string]$Name) {
+  try {
+    $cs = Get-CimInstance -Namespace root\virtualization\v2 -ClassName Msvm_ComputerSystem -Filter "ElementName='$($script:Drill.VmName)'"
+    $kvp = Get-CimAssociatedInstance -InputObject $cs -ResultClassName Msvm_KvpExchangeComponent
+    return Get-DrillKvpValue @($kvp.GuestExchangeItems) $Name
+  } catch { return $null }
+}
+
+# Waits, logging on nowhere, until SetupComplete.cmd has published the setup signal (setup and OOBE are over).
+function Wait-DrillSetupSignal([int]$Minutes) {
+  $until = [DateTime]::UtcNow.AddMinutes($Minutes)
+  while ([DateTime]::UtcNow -lt $until) {
+    if ((Get-DrillGuestKvp $script:Drill.SetupSignalName) -ceq 'complete') { return }
+    Start-Sleep -Seconds 20
+  }
+  throw (New-DrillError 'DRILL_BASELINE_INSTALL_TIMEOUT' @{ minutes = $Minutes; signal = 'no setup-complete KVP item' })
+}
+
 # One readiness probe inside the guest (read-only): this boot's time and how far Windows setup is.
 $script:GuestProbe = {
   $setup = Get-ItemProperty -Path 'HKLM:\SYSTEM\Setup'
@@ -686,8 +732,9 @@ function Invoke-DrillBaseline([string]$RunDir) {
     & $note 'started; sending boot keys'
     $keys = Send-DrillBootKeys $script:Drill.VmName $script:Drill.BootKeySeconds
     & $note "boot keys sent: $keys; waiting for setup and OOBE to finish"
-    try { [void](Wait-DrillGuest $cred $script:Drill.InstallTimeoutMinutes) }
-    catch { $c = Get-DrillCode $_; throw (New-DrillError 'DRILL_BASELINE_INSTALL_TIMEOUT' @{ minutes = $script:Drill.InstallTimeoutMinutes; bootKeysSent = $keys; lastProbe = $c.detail }) }
+    Wait-DrillSetupSignal $script:Drill.InstallTimeoutMinutes   # no logon before this: see SetupSignalName
+    & $note 'setup-complete signal read (KVP); waiting for PowerShell Direct'
+    [void](Wait-DrillGuest $cred 15)
     $installMinutes = [Math]::Round(([DateTimeOffset]::UtcNow - $started).TotalMinutes, 1)
     & $note "setup and OOBE finished after $installMinutes min"
 
