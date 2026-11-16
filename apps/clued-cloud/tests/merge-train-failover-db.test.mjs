@@ -174,10 +174,11 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         // Time passes for this account: every stored time moves back.
         ago: async (mins) => {
           const i = `${mins} minutes`;
-          await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-$2::interval,
-            heartbeat_previous_at=heartbeat_previous_at-$2::interval,readable_at=readable_at-$2::interval,
-            unhealthy_since=unhealthy_since-$2::interval,steady_since=steady_since-$2::interval,reported_intake_until=reported_intake_until-$2::interval,
-            readable_intake_until=readable_intake_until-$2::interval where user_id=$1`, [user, i]);
+          // Every time column of the liveness row, read from the catalog: a column a later migration adds moves too.
+          const times = (await admin.query(`select column_name c from information_schema.columns where table_schema='clued_private'
+            and table_name='ci_node_liveness_v1' and data_type='timestamp with time zone' order by ordinal_position`)).rows.map((r) => r.c);
+          await admin.query(`update clued_private.ci_node_liveness_v1 set ${times.map((c) => `${c}=${c}-$2::interval`).join(',')}
+            where user_id=$1`, [user, i]);
           await admin.query('update clued_private.ci_failover_members_v1 set marked_at=marked_at-$2::interval where user_id=$1', [user, i]);
           await admin.query(`update clued_private.ci_failover_settings_v1 set enabled_at=enabled_at-$2::interval,
             updated_at=updated_at-$2::interval where user_id=$1`, [user, i]);
@@ -671,25 +672,76 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.close();
     });
 
-    await t.test('HALTED, PAUSED and unexpired INTAKE_PAUSED are never handed out; UNKNOWN looks back', async () => {
+    await t.test('a HALTED holder is handed out after halted_minutes, heartbeats coming or not (migration 20261116100000)', async () => {
+      // 2026-11-14: TURING held ci-admission, HALTed and went on sending healthy heartbeats (service running,
+      // snapshot fresh). Neither kind of lost contact applied and a HALTED holder was never handed out: no CI for ~3 hours.
+      const halted = { ...HOLDER, state: 'HALTED', halt: { code: 'STAGE_FAILED', at: '2026-11-14T07:00:00Z' } };
+      const unknown = { state: 'UNKNOWN', mode: undefined, probe: undefined, service_running: false, snapshot_age_seconds: undefined };
       const s = await account('halt', ['a', 'b']);
+      await s.members(['a', 'b']);
+      await s.switch(true);
+      await s.beat('a', halted); await s.beat('b');
+      await s.ago(4);
+      // Every heartbeat repeats the HALT; the count runs from the first.
+      await s.beat('a', halted); await s.beat('b');
+      await s.ago(0.9);
+      let o = await s.tick();
+      assert.equal(o.outcome, 'holder_alive', '4.9 minutes of HALT do not trigger');
+      assert.equal((await s.node('a')).unhealthy_since, null, 'the HALTED holder reports a running service: no lost contact');
+      await s.ago(0.1);
+      o = await s.tick();
+      assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'halted']);
+      assert.deepEqual(await s.holders(), ['b'], 'at most one resident-node holder');
+      assert.equal(await s.admits('a'), false, 'the old holder\'s role ends at once: its next live admission is refused');
+      const receipt = await s.receipt_(o.receipt_id);
+      assert.deepEqual([receipt.metadata.receipt_kind, receipt.metadata.principal, receipt.metadata.trigger],
+        ['CI_ADMISSION_AUTO_HANDOVER', 'server_watchdog', 'halted']);
+      assert.equal(o.note.status, 'committed', JSON.stringify(o.note));
+      assert.ok((await s.notes()).at(-1).content.includes('STAGE_FAILED'), 'the Note names the HALT code');
+      await s.close();
+      // A NORMAL report (the Owner rearmed) ends the HALT; a new HALT counts from its own start. UNKNOWN after
+      // HALTED still reads HALTED and keeps the start, though the stopped service has only just begun its own count.
+      const r = await account('rearm', ['a', 'b']);
+      await r.members(['a', 'b']);
+      await r.switch(true);
+      await r.beat('a', halted); await r.beat('b');
+      await r.ago(4);
+      await r.beat('a', HOLDER); await r.beat('a', halted); await r.beat('b');
+      await r.ago(4.9);
+      assert.equal((await r.tick()).outcome, 'holder_alive');
+      await r.beat('a', unknown); await r.beat('b');
+      await r.ago(0.1);
+      o = await r.tick();
+      assert.deepEqual([o.outcome, target(o, r), o.trigger], ['handed_over', 'b', 'halted']);
+      await r.close();
+      // A HALTED holder that falls silent is lost like any other.
+      const q = await account('halt-silent', ['a', 'b']);
+      await q.members(['a', 'b']);
+      await q.switch(true);
+      await q.beat('a', halted);
+      await q.ago(5); await q.beat('b'); await q.beat('b');
+      o = await q.tick();
+      assert.deepEqual([o.outcome, target(o, q), o.trigger], ['handed_over', 'b', 'silence']);
+      await q.close();
+    });
+
+    await t.test('PAUSED and unexpired INTAKE_PAUSED are never handed out; UNKNOWN looks back', async () => {
+      const s = await account('pause', ['a', 'b']);
       await s.members(['a', 'b']);
       await s.switch(true);
       const silence = async () => { await s.ago(31); await s.beat('b'); await s.beat('b'); return s.tick(); };
       const unknown = { state: 'UNKNOWN', mode: undefined, probe: undefined, service_running: false, snapshot_age_seconds: undefined };
-      await s.beat('a', { ...HOLDER, state: 'HALTED', halt: { code: 'STAGE_FAILED', at: '2026-10-31T07:00:00Z' } });
-      assert.equal((await silence()).outcome, 'holder_halted_or_paused');
-      // UNKNOWN after HALTED still reads HALTED, for silence and for a stopped service alike.
-      await s.beat('a', unknown);
-      assert.equal((await silence()).outcome, 'holder_halted_or_paused');
-      await s.beat('a', unknown); await s.beat('b'); await s.ago(20); await s.beat('a', unknown); await s.beat('b'); await s.ago(11);
-      assert.equal((await s.tick()).outcome, 'holder_halted_or_paused');
       await s.beat('a', { ...HOLDER, state: 'PAUSED' });
-      assert.equal((await silence()).outcome, 'holder_halted_or_paused');
+      assert.equal((await silence()).outcome, 'holder_paused');
+      // UNKNOWN after PAUSED still reads PAUSED, for silence and for a stopped service alike.
+      await s.beat('a', unknown);
+      assert.equal((await silence()).outcome, 'holder_paused');
+      await s.beat('a', unknown); await s.beat('b'); await s.ago(20); await s.beat('a', unknown); await s.beat('b'); await s.ago(11);
+      assert.equal((await s.tick()).outcome, 'holder_paused');
       // INTAKE_PAUSED until 199 minutes from now (clamped at 200): never handed out before it ends.
       await s.beat('a', { ...HOLDER, state: 'INTAKE_PAUSED', intake_paused_until: '2099-01-01T00:00:00Z' });
       await s.beat('a', unknown);
-      assert.equal((await silence()).outcome, 'holder_halted_or_paused');
+      assert.equal((await silence()).outcome, 'holder_paused');
       await s.ago(170);
       await s.beat('b'); await s.beat('b');
       assert.equal((await s.tick()).outcome, 'handed_over', 'once the pause has ended, silence counts');
