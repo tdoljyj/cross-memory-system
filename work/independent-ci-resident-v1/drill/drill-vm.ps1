@@ -711,7 +711,9 @@ function Invoke-DrillBaseline([string]$RunDir) {
   [void](New-DrillAnswerIso $script:Drill.AnswerDir $script:Drill.AnswerIso)
   Remove-Item -LiteralPath $script:Drill.AnswerDir -Recurse -Force
 
-  $vm = New-VM -Name $script:Drill.VmName -Generation 2 -MemoryStartupBytes $script:Drill.MemoryBytes -NewVHDPath $script:Drill.Vhd -NewVHDSizeBytes $script:Drill.VhdBytes -Path $script:Drill.VmDir -SwitchName $script:Drill.Switch
+  $vm = New-VM -Name $script:Drill.VmName -Generation 2 -MemoryStartupBytes $script:Drill.MemoryBytes -NewVHDPath $script:Drill.Vhd -NewVHDSizeBytes $script:Drill.VhdBytes -Path $script:Drill.VmDir
+  # The network adapter stays unplugged until the checkpoint: offline, OOBE skips its update step (OOBEZDP), which on the
+  # 2026-11-16 runs failed ("Something went wrong OOBEZDP") and sent OOBE to its "Why did my PC restart?" screen.
   Set-VM -VM $vm -Notes $script:Drill.Marker -StaticMemory -AutomaticStartAction Nothing -AutomaticStopAction TurnOff -CheckpointType Standard -AutomaticCheckpointsEnabled $false
   Set-VMProcessor -VM $vm -Count $script:Drill.Cpu -Maximum $script:Drill.CpuMaximum -RelativeWeight $script:Drill.CpuWeight -ExposeVirtualizationExtensions $true
   Set-VMHardDiskDrive -VMHardDiskDrive (Get-VMHardDiskDrive -VM $vm)[0] -MaximumIOPS $script:Drill.MaxIops
@@ -749,7 +751,7 @@ function Invoke-DrillBaseline([string]$RunDir) {
       $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
       New-Item -Path $au -Force | Out-Null
       Set-ItemProperty -Path $au -Name NoAutoUpdate -Value 1 -Type DWord
-      $f = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform -All -NoRestart
+      $f = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform -All -NoRestart -WarningAction SilentlyContinue
       $os = Get-CimInstance Win32_OperatingSystem
       [ordered]@{ caption = $os.Caption; build = $os.BuildNumber; edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID; host = $env:COMPUTERNAME; restartNeeded = [bool]$f.RestartNeeded }
     } -ArgumentList @($script:Drill.GuestUser) -TimeoutMinutes 20 -Step 'settle' -Restartable
@@ -775,8 +777,10 @@ function Invoke-DrillBaseline([string]$RunDir) {
     if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -VM $vm -TurnOff -Force }
     throw
   }
-  foreach ($d in @(Get-VMDvdDrive -VM $vm)) { Set-VMDvdDrive -VMDvdDrive $d -Path $null }
-  Remove-VMDvdDrive -VMDvdDrive (Get-VMDvdDrive -VM $vm)[1]
+  # Both DVD drives go (removing a drive takes its medium with it; ejecting first made the removal fail: 2026-11-16 12:18),
+  # and only now is the network plugged in.
+  foreach ($d in @(Get-VMDvdDrive -VM $vm)) { Remove-VMDvdDrive -VMDvdDrive $d }
+  Connect-VMNetworkAdapter -VMName $script:Drill.VmName -SwitchName $script:Drill.Switch
   Remove-Item -LiteralPath $script:Drill.AnswerIso -Force
   Checkpoint-VM -VM $vm -SnapshotName $script:Drill.Checkpoint
   & $note "checkpoint $($script:Drill.Checkpoint) taken (Off)"
@@ -999,6 +1003,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by the offl
 # The one output line is UTF-8 whatever the console code page (a Chinese Windows defaults to GBK, which garbled the guest's
 # localized messages in the first baseline run's detail).
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
+$WarningPreference = 'SilentlyContinue'   # one JSON line on stdout: warnings relayed from the guest would break it
 try {
   $result = Invoke-DrillMain
   Write-Output (ConvertTo-DrillJson $result)
