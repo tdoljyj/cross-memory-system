@@ -511,6 +511,61 @@ test('real multi-PR holder projection opens a stable front, preserves inflight h
   });
 });
 
+// Field 2026-11-15 (#1121): the front's head had the Native six green but its admission gate failed, so the required ci-suites,
+// clued-cloud-tests and migration-verify never ran and it could never merge; the train kept it as the front (its CI head) while the
+// claim's next PRs waited green, also after its auto-merge was turned off. The front is the first PR of the claim that can land.
+test('multi-PR holder: a front that cannot land (failed GitHub check, auto-merge off) gives way to the claim\'s next PR', async t => {
+  for (const mode of ['failed-check', 'auto-merge-off', 'rerun-green', 'none-can-land']) await t.test(mode, async t => {
+    const e = await unbound(t), otherHead = sha(0x8000 + 912);
+    e.gh.pull(912, { updated: iso(NOW) });
+    e.native.bindings.set(912, { claimId: CLAIM, taskId: CLAIM, scope: BIND_SCOPE });
+    // 910 is the front the claim's CI head names (green, as #1121 was).
+    e.native.holder = { ...e.native.holder, ciState: 'green', ciHeadSha: H };
+    const autoMerge = new Map([[910, mode !== 'auto-merge-off' && mode !== 'none-can-land'], [912, mode !== 'none-can-land']]);
+    const read = e.gh.readPullRequest;
+    e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: autoMerge.get(n) ? { merge_method: 'merge' } : null });
+    const actions = (id, name, conclusion) => e.gh.world.checks.set(id, { id, app: { id: 15368 }, name, head_sha: H, status: 'completed', conclusion });
+    if (mode !== 'auto-merge-off') actions(501, 'admission-gate', 'failure');
+    if (mode === 'rerun-green') actions(502, 'admission-gate', 'success');
+    const old = e.native.port.holders;
+    e.native.port.holders = async () => {
+      await old(); const h = e.native.holder;
+      return parseHolders(200, { status: 'ok', repository: REPO, holders: [{ claim_id: CLAIM, task_id: CLAIM,
+        bound_pr: null, bound_prs: [`${REPO}#910`, `${REPO}#912`], merge_slot_until: h.mergeSlotUntil,
+        merge_slot_ci: { taken_at: h.takenAt, ci_state: h.ciState, ci_head_sha: h.ciHeadSha, hard_cap_until: h.hardCapUntil } }] }, REPO);
+    };
+    const r = await e.bind();
+    assert.equal(r.facts.front.pr, { 'failed-check': 912, 'auto-merge-off': 912, 'rerun-green': 910, 'none-can-land': 910 }[mode], JSON.stringify(r.facts.front));
+    if (r.facts.front.pr === 912) assert.equal(r.facts.front.headSha, otherHead);
+  });
+});
+
+// The same field case across claims (one deliverable, one claim): a head claim whose only PR cannot land gives way to waiting claims
+// through Native's merge_queue_yield (migration 20261115150000) instead of holding the slot for its whole turn.
+test('a head whose PR cannot land yields the merge slot (Native decides whether anyone waits); a landable one opens its batch', async t => {
+  for (const mode of ['failed-check', 'auto-merge-off', 'draft', 'landable', 'nobody-waiting', 'not-deployed']) await t.test(mode, async t => {
+    // Steady state (the take-over full sweep done): a cold start holds every front until its strict observation, a draft's never comes.
+    const e = await setup(t, { strict: true, native: healthy, tick: 1 });
+    const read = e.gh.readPullRequest;
+    e.gh.readPullRequest = async n => ({ ...(await read(n)), draft: mode === 'draft', auto_merge: mode === 'auto-merge-off' ? null : { merge_method: 'merge' } });
+    if (mode !== 'landable' && mode !== 'auto-merge-off' && mode !== 'draft')
+      e.gh.world.checks.set(501, { id: 501, app: { id: 15368 }, name: 'admission-gate', head_sha: H, status: 'completed', conclusion: 'failure' });
+    e.native.port.yieldSlot = async i => { e.native.calls.push(['yield', i]);
+      return mode === 'not-deployed' ? { onDuty: null, yielded: false } : { onDuty: true, yielded: mode !== 'nobody-waiting' }; };
+    const r = await e.run();
+    const yields = e.native.calls.filter(c => c[0] === 'yield').map(c => c[1]);
+    if (mode === 'landable') {
+      assert.deepEqual(yields, []);
+      assert.equal(r.facts.openFrontBatch?.pr, 910, JSON.stringify(r.facts));
+      return;
+    }
+    assert.deepEqual(yields, [{ pr: 910, headSha: H }], JSON.stringify(r.facts));
+    if (['failed-check', 'auto-merge-off', 'draft'].includes(mode)) {
+      assert.equal(r.facts.decision, 'FRONT_RETURNED'); assert.equal(r.facts.actions.returned, true); assert.equal(r.facts.openFrontBatch, null);
+    } else assert.equal(r.facts.actions.returned, false, 'nothing yielded: the round goes on as before');
+  });
+});
+
 test('take-over front binding: nothing is named without strict, healthy Source and store, one holder, one PR, its scope and an open non-draft PR', async t => {
   for (const change of ['strict-off', 'fleet', 'pending', 'revoke-head', 'two-holders', 'bound-elsewhere', 'ambiguous', 'generation-race', 'scope', 'draft', 'fork', 'beyond-reads', 'full-done', 'shadow'])
     await t.test(change, async t => {
