@@ -105,7 +105,8 @@ export default function ResidentFailoverPage() {
   const [data, setData] = useState<Json | null>(null);
   const rules = object(data?.rules) ? data.rules : null;
   const minutes = (key: string) => typeof rules?.[key] === "number" ? String(rules[key]) + " 分钟" : "";
-  const silence = minutes("silence_minutes"), unhealthy = minutes("unhealthy_minutes"), rejoin = minutes("rejoin_steady_minutes");
+  const silence = minutes("silence_minutes"), unhealthy = minutes("unhealthy_minutes"), rejoin = minutes("rejoin_steady_minutes"),
+    halted = minutes("halted_minutes");
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -243,7 +244,7 @@ export default function ResidentFailoverPage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">BeamingFace</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>CI 准入自动接班</h1>
-    <p className="context-muted">持有 CI 准入的常驻节点失联{silence && " " + silence}（或{unhealthy ? "连续 " + unhealthy : "持续"}报“服务没在运行”）时，服务端的看门狗按你排的次序，把 CI 准入交给第一个健康的备用节点，交接 5 分钟后生效。只有你在这里列出的连接才会被选中；总开关关着时只提醒、不交接。停机、暂停或暂停接新的持有者永远不会被自动交出。被自动交出的节点要重新连续健康{rejoin ? " " + rejoin : "一段时间"}（心跳不断、服务在运行）才会再被自动选中。</p>
+    <p className="context-muted">持有 CI 准入的常驻节点失联{silence && " " + silence}（或{unhealthy ? "连续 " + unhealthy : "持续"}报“服务没在运行”，或停机（HALT）{halted ? "满 " + halted : "一段时间"}）时，服务端的看门狗按你排的次序，把 CI 准入交给第一个健康的备用节点，交接 5 分钟后生效。只有你在这里列出的连接才会被选中；总开关关着时只提醒、不交接。暂停或暂停接新的持有者永远不会被自动交出。被自动交出的节点要重新连续健康{rejoin ? " " + rejoin : "一段时间"}（心跳不断、服务在运行）才会再被自动选中。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理自动接班。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {view && <section aria-label="确认更改" className="owner-note"><h2>确认更改</h2>

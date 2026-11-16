@@ -22,6 +22,12 @@ test('a job that died in the runner\'s setup is an environment failure with no l
   assert.deepEqual(jobFailureKind(job('failure', SETUP)).kind, 'setup');
   assert.equal(diedInSetup(job('failure', SETUP)), true);
   assert.equal(diedInSetup(job('failure', [step('Set up job', 'failure'), step('Run tests', 'failure')])), false);
+  // Defect B: the runner's job-started hook ("Set up runner", right after "Set up job") refused the job: it ran nothing.
+  const hook = [step('Set up job', 'success'), step('Set up runner', 'failure'), step('Run tests', 'skipped'), step('Complete job', 'success')];
+  assert.equal(diedInSetup(job('failure', hook)), true);
+  assert.equal(jobFailureKind(job('failure', hook)).kind, 'setup');
+  // A workflow step of that name sits later in the job: not the runner's setup.
+  assert.equal(diedInSetup(job('failure', [step('Set up job', 'success'), step('Run tests', 'success'), step('Set up runner', 'failure')])), false);
   assert.equal(jobFailureKind(job('failure', RUN)).environment, false); // no log read
   assert.equal(jobFailureKind(job('failure')).environment, false); // no step record
   assert.equal(jobFailureKind(job('failure', [])).environment, false);

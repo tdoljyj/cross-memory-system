@@ -302,11 +302,13 @@ export async function githubJson(fetchImpl, env, route, { allowMissing = false }
 // Environment failures of a required-tests job (Task 1b): a job that died only because of the network or the runner's own setup, with
 // no test failing, may be re-run once ("Re-run all jobs", the only re-run clued-required-tests.yml allows). Evidence only, read from
 // the job record (its steps) and its log; whatever does not prove an environment failure is "not environment" and never re-run:
-//   setup:   every failed step is the runner's "Set up job" (it died before the workflow's own steps began; no test ran, no log needed);
+//   setup:   every failed step is one of the runner's own steps before the workflow's, in its place: "Set up job", then the job-started
+//            hook's "Set up runner" (defect B: the hook refused the job). It died before the workflow's own steps began; no test ran, no
+//            log needed. A workflow step of either name sits later in the job and does not count;
 //   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
 // Kept inside this file (a new imported file would widen the pinned Source closure). The resident companion's admission-rerun lane
 // keeps a copy (work/independent-ci-resident-v1/src/env-failure.mjs); its test keeps the two identical.
-export const SETUP_STEP = "Set up job";
+export const SETUP_STEPS = ["Set up job", "Set up runner"];
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;
 const NETWORK_FAILURE = [
@@ -326,13 +328,13 @@ export function failedSteps(job) {
 export function diedInSetup(job) {
   if (!job || job.status !== "completed" || job.conclusion !== "failure") return false;
   const failed = failedSteps(job);
-  return failed !== null && failed.length > 0 && failed.every((step) => step.name === SETUP_STEP);
+  return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
 // job: the Actions API job record; log: its log text, or null when it was not read. -> { environment, kind, why }
 export function jobFailureKind(job, log = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
   if (!job || job.status !== "completed" || job.conclusion !== "failure") return no("the job did not end in failure");
-  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${SETUP_STEP} step failed` };
+  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
   const failed = failedSteps(job);
   if (failed === null || failed.length === 0) return no("the job record names no failed step");
   if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
@@ -2008,6 +2010,73 @@ export async function baseTipCompare(fetchImpl, env, repository, pr) {
   };
 }
 
+// The train front brought up to date with main (Owner Decisions 9e2511fe item 3
+// and 78a3052f item 2; resident DESIGN §80; migration 20261116090000). One fact
+// links the two halves: the clued-admission App's check kooyumi-main-merge on
+// the new head, which scripts/ci/clued-front-main-merge.mjs posts only after
+// its own update-branch of the PR (expected head = the authorized head) made a
+// GitHub merge commit whose parents are exactly [authorized head, main]. Nobody
+// else holds that App's key (clued-admission environment, main only). Kept in
+// this file: a new imported file would widen the pinned Source closure.
+export const MAIN_MERGE_CHECK = "kooyumi-main-merge";
+export const MAIN_MERGE_WORKFLOW = "clued-front-main-merge.yml";
+export function mainMergeExternalId({ pr, from, main }) {
+  if (!Number.isSafeInteger(pr) || pr < 1 || !/^[0-9a-f]{40}$/.test(from ?? "") || !/^[0-9a-f]{40}$/.test(main ?? ""))
+    throw new Error("main merge attestation subject invalid");
+  return `main-merge:1:${pr}:${from}:${main}`;
+}
+export function parseMainMergeExternalId(value) {
+  const m = /^main-merge:1:([1-9][0-9]{0,9}):([0-9a-f]{40}):([0-9a-f]{40})$/.exec(String(value ?? ""));
+  return m ? { pr: Number(m[1]), from: m[2], main: m[3] } : null;
+}
+
+// The authorized head this head only merged main into, { from, main }, or null
+// whenever anything is missing or different (the holder's own authorize_head is
+// then needed, as before): the newest successful kooyumi-main-merge check of
+// the clued-admission App on this head names this PR, the head's parents are
+// exactly [from, main], and main (tip) still contains main.
+export async function mainMergeSource(fetchImpl, env, repository, prNumber, headSha, tip) {
+  if (!/^[0-9a-f]{40}$/.test(headSha ?? "") || !/^[0-9a-f]{40}$/.test(tip ?? "")) return null;
+  const listed = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${MAIN_MERGE_CHECK}&filter=all`);
+  const attested = (Array.isArray(listed?.check_runs) ? listed.check_runs : [])
+    .filter((c) => c?.name === MAIN_MERGE_CHECK && c.head_sha === headSha && Number(c.app?.id) === ADMISSION_APP_ID
+      && c.status === "completed" && c.conclusion === "success")
+    .sort((a, b) => Number(b.id) - Number(a.id))
+    .map((c) => parseMainMergeExternalId(c.external_id)).find((a) => a && a.pr === prNumber);
+  if (!attested) return null;
+  const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}`);
+  const parents = Array.isArray(commit?.parents) ? commit.parents.map((p) => p?.sha) : [];
+  if (commit?.sha !== headSha || parents.length !== 2 || parents[0] !== attested.from || parents[1] !== attested.main) return null;
+  if (attested.main !== tip) {
+    const onMain = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${attested.main}...${tip}`);
+    if (onMain?.status !== "ahead" && onMain?.status !== "identical") return null;
+  }
+  return attested;
+}
+
+// For a head the PR's claim has not authorized: when it only merged main into
+// an authorized head, Native carries that authorization (carry_main_merge; the
+// on-duty issuer only). Returns the source or null; never throws (an
+// unavailable read or refusal leaves the head unauthorized, as before).
+async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outcome) {
+  try {
+    const source = await mainMergeSource(fetchImpl, env, env.GITHUB_REPOSITORY, pr.number, pr.head.sha, tip);
+    if (!source) return null;
+    const reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
+      pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: source.from, head_sha: pr.head.sha, main_sha: source.main,
+      target_branch: pr.base.ref });
+    if (reply.status !== 200 || reply.body?.status !== "committed") {
+      outcome.notices.push(`main_merge_not_carried: ${plainFinding(reply.body?.error_code ?? reply.detail ?? reply.status)}`);
+      return null;
+    }
+    outcome.notices.push(`main_merge_carried: ${source.from.slice(0, 12)} + main ${source.main.slice(0, 12)}`);
+    return source;
+  } catch (error) {
+    outcome.notices.push(`main_merge_not_carried: ${plainFinding(error instanceof Error ? error.message : String(error))}`);
+    return null;
+  }
+}
+
 // Owner Decision a0d93cd0: merging the base branch into a head the Owner
 // approved keeps that approval when the protected change stays the one the
 // Owner saw. Each step back from the head must be a two-parent merge whose
@@ -2155,6 +2224,11 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
   try {
     outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr,
       { workspace, scope: bindingScope, readOnly: gateFindingsOfPr.length > 0 });
+    // DESIGN §80: a head that only merged main into the authorized head keeps
+    // that authorization (never in frozen, never for a read-only verification).
+    if (outcome.claim_binding.binding_status === 'head_not_authorized' && !gateFindingsOfPr.length && mode.state !== 'frozen'
+      && await carryMainMerge(fetchImpl, env, workspace, pr, outcome.claim_binding, tipCompare.tip, outcome))
+      outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, scope: bindingScope, readOnly: false });
     if (outcome.claim_binding.binding_status === 'bound') reference = claimReferenceFromBinding(outcome.claim_binding);
   } catch (error) {
     if (!claimAdvisory) throw error;

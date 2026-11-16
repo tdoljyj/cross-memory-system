@@ -23,13 +23,12 @@ Skill 1.0.22 的新客户端默认入口为 `https://kooyumi.pixelgrav.com/mcp`�
 
 ## 组件版本
 
-Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.2.md`）。每个组件的文件内容有摘要；内容变了版本必须升，CI 的 `clued-components` 检查会拒绝没升版本的改动。
+Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.4.md`）。版本是有意发布时才升的标签；文件内容的摘要随用随算、不入库（入库的摘要和每个 PR 都要升的版本号会让排队中的 PR 在每次合入后冲突、重生成）。CI 只拒绝版本倒退、版本号与标记不一致、以及重新入库的摘要。
 
-改动一个组件：
+发布一个组件的新版本：
 
 ```sh
 python3 scripts/clued_components.py bump skill.clued 1.1.0   # 升版本并改写 SKILL.md 里的版本号
-python3 scripts/clued_components.py update                   # 重新记录内容摘要
 node apps/clued-cloud/scripts/generate-agent-contract.mjs    # 让服务端报告的新版本号跟上
 python3 scripts/clued_components.py check --base origin/main
 ```

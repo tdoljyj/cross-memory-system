@@ -28,6 +28,7 @@ import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchC
 import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
+import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
@@ -302,6 +303,12 @@ export async function main(args = process.argv.slice(2)) {
     run:(a,o)=>mergeRunner.run(a,o),readStatus:()=>readStatus(values.root),
     notify,
     state:await MergeReconcileState.open(path.join(cfg.node.ownerProfileDirectory,'AppData','Local','CluedIndependentCI','companion-merge-reconcile.json'),mergeIdentity)}):null;
+  // DESIGN §80: the train front's main merge, asked for while this node is on duty and stage 10 says FRONT_NEEDS_MAIN_MERGE.
+  // Its own Runner and its own memory file (two lanes never write one file).
+  const frontMergeRunner = new Runner({ env: { ...process.env }, jobHost });
+  const frontMerge = raw.repo === FRONT_MERGE_REPO ? new FrontMergeDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe,
+    clock: Date.now, run: (a, o) => frontMergeRunner.run(a, o), readStatus: () => readStatus(values.root),
+    state: await FrontMergeDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-front-merge.json')) }) : null;
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
@@ -338,6 +345,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
+      ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       lane({ runner: advisory, work: async () => {
         try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
         // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.

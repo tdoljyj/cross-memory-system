@@ -18,6 +18,39 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### Late Native admission successor (defect B, 2026-11-15)
+
+`required-tests-late-admission-v1` / component `1.0.3` keeps every rule of
+`work-handover-native-admission-retry-v1`. Native admits a pull request only when it is the
+train's front, often long after the push. For a pull request that changes a
+workflow every job of attempt 1 then waits `CLUED_RUNNER_HOOK_WAIT_SECONDS` and
+is refused in "Set up runner" ("Native admission absent"); the companion's one
+"Re-run all jobs" after the admission (resident DESIGN §56.5) was refused as
+well, because Native admitted attempt 1 only, and a new commit had to be pushed
+by hand (#1121 run `43720693841`, #1122 run `43720708199`). The attempt-1 rule
+is there because such a pull request writes its own `admission-gate`, so the
+gate's re-run rules are its own to forge and the hook alone bounds how often it
+runs. It keeps that bound but counts real runs, not attempt numbers: a later
+attempt starts when every job of every earlier attempt of the run ran nothing,
+that is, was skipped or failed only in the runner's own setup ("Set up job",
+or this hook's "Set up runner", which always comes right after it) with every
+later step skipped but "Complete job". A job list that cannot be read in full
+counts as having run. One admitted head still runs once. The gate
+(`clued-work-admission.mjs#diedInSetup`) and the companion's copy
+(`env-failure.mjs`) count a refused "Set up runner" as a setup death too, so
+the companion asks for that one re-run by itself.
+
+A runner still on an older version refuses the re-run as before (fail closed).
+It changes no workflow file, so its own pull request is not caught by the
+defect it fixes; the lost-run dispatch successor (#1122) builds on it.
+
+Rollout, on each registered runner (no per-runner variant; nothing in the
+repository reaches into the runners): keep the installed
+`clued-runner-job-started.mjs` as `.prev`, copy the merged file over it (Linux
+`/opt/clued-runner-hook/`, Windows `C:\ProgramData\CluedRunnerHook\`), leave
+wrappers, key and settings alone, and confirm
+`[hook required-tests-late-admission-v1]` in a "Set up runner" log.
+
 ### Transient-read successor candidate (Task 5cee3629)
 
 `work-handover-native-admission-retry-v1` / component `1.0.2` keeps every rule
@@ -114,7 +147,75 @@ MergeAdmission v0.1 §8, Owner Decisions `77216370` and `1b93760d`. A re-run is 
 
 **After an Owner grant for a protected change:** edit the pull request body, which runs admission again, and wait until `clued-admission-verified` is green on the head. Under contract v39, use "Re-run all jobs" once on each gated workflow run of that current head (and on `gitleaks` / `trivy` and, from `merge-admission-ungated-rerun`, any other ungated short check if they were refused). Closing and reopening once is an exception only when the "Set up runner" log identifies a hook older than `merge-admission-step2`, or an old gate explicitly refuses with "re-runs are not admitted". A 403 from the current hook requires the permission repair below; a "Set up runner" refusal alone does not establish an old hook.
 
-## Updating the check
+## Updating the check: merge it into main (the loader)
+
+Owner Decision 2026-11-16 (review `REVIEW-fable-runner-hook-20261116`). Runners keep only
+`clued-runner-hook-loader.mjs`, installed under the hook's own name `clued-runner-job-started.mjs`,
+so the wrappers, `.env`/drop-in/registry settings, App key, folder rights and services stay as they
+are. At every job start the loader:
+
+1. mints a token of the hook's own read-only App (`contents: read`, this repository only; the two
+   admission publishing Apps are refused);
+2. reads `scripts/runner/clued-runner-job-started.mjs` from the default branch
+   (`CLUED_RUNNER_HOOK_DEFAULT_BRANCH`, else `main`), never from a pull request ref; network faults,
+   time-outs and 500-504 are tried again (3 attempts, 2 s and 5 s apart), any other answer is final;
+3. checks the bytes against the git blob id GitHub names for them, prints
+   `clued-runner-hook-loader: main blob <sha1> sha256 <hex> [loader <version>]`, and imports them from
+   memory (never written where a job could swap them);
+4. calls the hook's `main(env, fetch, { sourceSha256 })`; the hook prints its usual
+   `[hook <version>]` line, and its `clued-r9-pre-job` `source_sha256` is the loaded bytes'.
+
+Whatever fails (no repository or App configured, main unreadable, other bytes, a hook that throws or
+has no `main`) refuses the job when `CLUED_RUNNER_HOOK_ENFORCE` is true, and only warns otherwise.
+A hook change is rolled out by merging it (a protected path: Owner Grant); rollback is a revert.
+The loader is the one file still installed on runners: its bytes are pinned in its test and its
+component (`hook.runner-loader`), so changing it is a deliberate decision with its own install round.
+No per-version immutable copy of the hook is added any more; the earlier ones stay for their pins.
+
+### Installing the loader (once per hook folder; `install-hook-loader.mjs`)
+
+The same idempotent command on every host; the folder comes from the platform (Linux
+`/opt/clued-runner-hook`, Windows `C:\ProgramData\CluedRunnerHook`). It refuses a loader whose
+sha256 is not the one given, keeps the installed file as `clued-runner-job-started.mjs.prev`,
+overwrites the file in place (owner, mode and ACL unchanged; no restart), checks that the file has
+the expected sha256 and imports as the loader, and puts `.prev` back when that check fails. Run
+again, it reports `ALREADY`. `--rollback` puts `.prev` back. One JSON line (`--result <file>` also
+writes it, for an elevated run whose window closes).
+
+`<L>` is the merged `scripts/runner/clued-runner-hook-loader.mjs`, `<H>` its sha256 (the pin in
+`clued-runner-hook-loader.test.mjs`). One round, in this order (stop at the first failure; a
+production failure is not retried, `--rollback` restores the old hook with no restart):
+
+1. DESK, WSL distribution `CluedCI-Linux` (root by default there, no UAC; its four Linux runners
+   share the one folder):
+   `wsl.exe -d CluedCI-Linux -u root -- <node> <repo>/scripts/runner/install-hook-loader.mjs --loader <L> --sha256 <H>`
+   (`<node>`: the runners' own node, as in the drop-in's `CLUED_RUNNER_HOOK_NODE`; `<repo>` and
+   `<L>` as `/mnt/...` paths). Then wait for the next job on those runners (the 15-minute heartbeat)
+   and find `[loader 1.0.0]` and the merged `[hook <version>]` in its "Set up runner" log before
+   going on.
+2. DESK Windows, one UAC:
+   `Start-Process -Verb RunAs -Wait <node.exe> -ArgumentList '<repo>\scripts\runner\install-hook-loader.mjs','--loader','<L>','--sha256','<H>','--result','<result.json>'`;
+   read `<result.json>` (`INSTALLED` or `ALREADY`).
+3. TURING Windows, one UAC: the same command (started there through Desktop Commander), the same check.
+
+Done when a heartbeat run shows `[loader 1.0.0]` and the same `source_sha256` on all six runners.
+The old hook's leftover copies and temporary files in `/opt/clued-runner-hook/` may then be removed.
+
+### Candidate shadow check (design only; a later pull request, it changes a workflow)
+
+With the loader, a hook merged into main is at once every runner's hook, and a broken one would refuse
+every job, the revert's required checks included. So a pull request that changes
+`scripts/runner/clued-runner-job-started*.mjs` gets one more required step in `clued-required-tests.yml`,
+on a Linux and on a Windows runner: run the pull request's candidate hook with this job's real
+environment and App (`node <candidate> ` with `CLUED_RUNNER_HOOK_ENFORCE=false`, judging only), and
+require that it exits 0 and prints `clued-runner-hook: ALLOW` for this very job. A hook that crashes,
+cannot mint its token or refuses an admitted job then fails before it is merged. Tests to write with it:
+a candidate that throws on import, one that refuses the job and one that needs a permission the App lacks
+each fail the step; the unchanged hook passes; a pull request that does not touch the hook skips the step;
+the step runs the candidate from the candidate checkout, not from main. It is merged only after defect B's
+fix is live (it changes a workflow).
+
+### Before the loader (history)
 
 The installed copy does not follow the repository. To roll out a new version, keep the installed copy, copy the merged `scripts/runner/clued-runner-job-started.mjs` over it on every runner, and confirm the new `[hook <version>]` in a "Set up runner" log on each (steps 3 and 4 below). The `work-handover-current-epoch-proxy-dispatch-v1` source candidate above requires its own exact Source acceptance and merged-source installation, followed by actual PR and gated dispatch job-start qualification. The earlier `merge-admission-ungated-rerun` version (Task `26cced7e`) changed only which re-runs start, needed no new App permission, workflow or contract change, and a runner still on `merge-admission-step2-pr-read` kept refusing the ungated re-runs.
 

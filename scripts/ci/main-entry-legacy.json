@@ -51,7 +51,6 @@
     "scripts/phase2-qualification/preentry-parent/gate-successor/verify.mjs",
     "scripts/phase2-qualification/runtime-database-alignment-successor/prepare-restoration.mjs",
     "scripts/phase2-qualification/scenario-observations/sign-exact-live-object.mjs",
-    "scripts/runner/clued-runner-job-started.mjs",
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs",
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-retry-v1.mjs",
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-v1.mjs",

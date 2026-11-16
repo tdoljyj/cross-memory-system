@@ -69,394 +69,808 @@
   },
   "files": {
     ".github/actions/ci-temporary-storage/action.yml": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106",
+
     ".github/actions/ci-temporary-storage/check-workflows.mjs": "5f3bdc672c484f376f656f89afd522cca203b78b303c790b9e34bac992c902ff",
-    ".github/actions/ci-temporary-storage/coverage.json": "6503643a81f50708f497c2259c24ce05918cbfcf214823db11d526e182a5bf0b",
+
+    ".github/actions/ci-temporary-storage/coverage.json": "c6d1308d2327d6fbd02a7fbb117381059fb0c79f7695b41fc56546f692a60fb0",
+
     ".github/actions/ci-temporary-storage/setup.mjs": "dd64d641d040f2036edec99ff1b86d780d12e1b73c5036f839734398946df270",
+
     ".github/actions/ci-temporary-storage/setup.py": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd",
+
     ".github/workflows/active-doc-links.yml": "7f5dce87816ce519ee72ab1093955319f5ec224cc600a0e2f4743bf02c3ac2a4",
+
     ".github/workflows/clued-capture-guard.yml": "5ffca57e143036fcd891805d2fa51eb02f5447c75b4f4ade6476012324b6924a",
+
     ".github/workflows/clued-ci-health.yml": "960aa651f60ca035fa070d03a477b0edee54052f82df4b35b008aa5b772cdd07",
+
     ".github/workflows/clued-ci-runner-heartbeat.yml": "c60101d5c3406e73fd141cca85524072202395844d6cacb095c4d70e3b596020",
+
     ".github/workflows/clued-ci-usage-report.yml": "b439bd0dbc48bd6bc365f77a5a82ea18b47dfd3167c03519c1b302c497873c3f",
+
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
+
     ".github/workflows/clued-cloud-production-release.yml": "d836a95e37ba35581ebc41bdf8a4f6d517beeeec433803cff90c833224270d46",
+
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
+
     ".github/workflows/clued-currentness-post-deploy-attestation.yml": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
+
+    ".github/workflows/clued-front-main-merge.yml": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
+
     ".github/workflows/clued-g4-database.yml": "570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d",
+
     ".github/workflows/clued-handover-disposable-idle.yml": "133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66",
+
     ".github/workflows/clued-handover-external-qualification.yml": "c42ab88ddb6e8f0774ec55cecf3507578870f8233d6ec11c09162212f3442d5f",
+
     ".github/workflows/clued-information-flow-prod-e2e.yml": "1adc9215caf3d62c3b46fbcf7018558c7a21631202dc99941dc789b4a22deaba",
+
     ".github/workflows/clued-integration-runtime-config.yml": "33d77f8df2456521da18e9ef2724d9a90ca8eefcdebfdba988395bf1c5f88050",
+
     ".github/workflows/clued-integration-runtime-nightly.yml": "e2928ceb92a5680dc10a80bc2f6afb841ca5bf67c86b1f9a167e28c8ef51a2e6",
+
     ".github/workflows/clued-merge-executor.yml": "585a0c85a28b8e4f35e2e58e7339e72411ed0dda2f468e161021d17b6f1e5a5d",
+
     ".github/workflows/clued-merge-reconcile.yml": "11d4b72a9f330801bdb44d3bd8a5b6c411cd328b02a6946ab9ada7485ec7dbf3",
+
     ".github/workflows/clued-merge-slot-ci.yml": "f8ae06eb8a2e1cbe6b0ff91514067f7c216f6551fdf8cf3a8c24e0715a53abfa",
+
     ".github/workflows/clued-native617-admission-dispatch.yml": "03528c7c651114476d596e16944643108743681024bc32a54760f8ad93dbe460",
+
     ".github/workflows/clued-release-tags.yml": "069b2c1d2a692e769234942c2d192079e0a2ed4fd03d084567b664c828c04a55",
+
     ".github/workflows/clued-required-tests-windows.yml": "f3965775b404e926ec749b406529b5a8ed7285f0cf79c5d6670b58f27408c262",
+
     ".github/workflows/clued-required-tests.yml": "54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89",
+
     ".github/workflows/clued-standard-runner-actor-qualification.yml": "9414d76960d096e786738c4470bcf32dd3e50ab2999eea59c922473436034b1d",
+
     ".github/workflows/clued-storage-executor-window.yml": "27ec893da5185096b710ae1ac9ee33578f5355d2087ea72c5d9dfc922b03e4dc",
+
     ".github/workflows/clued-storage-read-config.yml": "0f75dee942dc529a83dcdb3daae05c704683e1dca1add1e682e31cc5991d4a67",
+
     ".github/workflows/clued-work-admission-dispatch.yml": "6ed9642dd95e4d116011f9cece441666d48838406ca3932022a8a39ff124697b",
+
     ".github/workflows/clued-work-admission-reverify.yml": "81974b780acd57fd727ca85b6c5067f835de4a5e2c73e81bcfb9745c10e22cbf",
+
     ".github/workflows/clued-work-admission.yml": "179c8d03e72c4d4a99c22b723ef92fc480cbf019f82fceda954100e9e0816a01",
+
     ".github/workflows/contract-placement.yml": "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b",
+
     ".github/workflows/design-refs.yml": "3e3ab0c3438b0538926f2b2323d09c2b489f1152e2f97a77b236fbbd1a15c861",
+
     ".github/workflows/gitleaks.yml": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966",
+
     ".github/workflows/information-flow-e2e.yml": "729d7a9bd1ed3563d2b7488e7aa277ad28f2b8e3adb6f4d1bf6e0989678e1a72",
+
     ".github/workflows/memory-publication-gate.yml": "6aa417be2389d3f0195ab6540bab27b336fa3287a9c3586daa564bdd9c3db207",
+
     ".github/workflows/model-program-m0.yml": "bc96ac9d43bdfdf8c6add9d6193319d14c3f4f9045aec34da7a072e81cf64873",
+
     ".github/workflows/model-program-m1-entry.yml": "292ad955d30b61e7c26751396255761986816829aa6291b762d2bbbc2011fe3f",
+
     ".github/workflows/model-program-m1-harness.yml": "dddf57a98e78ce8f16ecff1e177a7a39600dc3db2fc49fe32de77f09f3998399",
+
     ".github/workflows/model-program-m1-package.yml": "f33730bb86a84ec99465b14549b36f0526e7d6814bda196ce98afe92b74bd818",
+
     ".github/workflows/model-program-m2-scoped-consumer.yml": "9df7e67f93fbc13c2abd8211f31c5a848384e06b0c55e7762939861df2870c24",
+
     ".github/workflows/multitrack-governance-projection.yml": "216fed619d310d4ee266acb63ba97a8e42e279a8653d46a32a40734fff32a5df",
+
     ".github/workflows/node-profile-policy.yml": "05c986f89a1887309653617a58b434c27cb0e0db0c2a855f2b25aa6630158a61",
+
     ".github/workflows/public-mcp-behavior.yml": "e34956bbce71d3dfc7f45004ff3d594bda27352846083b490ecc4533c2d5344a",
+
     ".github/workflows/public-mcp-protocol.yml": "ae385d0995ff7ee312ee23e0be8f01d58e8b46ffd60859fe5f6a581e085e04db",
+
     ".github/workflows/trivy.yml": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb",
+
     "apps/clued-cloud/app/supabase-public-config.ts": "fcc754793f64e72ebdb62e0a97558b67a7b18be6b197bd30978e9646c556f2df",
+
     "apps/clued-cloud/package-lock.json": "1381ddd59526323e96bf0a470ae7395bf4911936ed617c6b54746cf1eb7dd96d",
+
     "apps/clued-cloud/package.json": "f16653d202e17235f3ac2e45ca8eb08fe1293727f893e7c8f65abea02a61297d",
-    "config/clued-mechanical-files.json": "e7dab54c2fa2c781185a50f749e4198615880b34f14491bd18912bc506f39bed",
+
+    "config/clued-mechanical-files.json": "cc57e503e53de1b496019fd2878b38ecb774f6419e6fc9a325039eaeca9723db",
+
     "config/merge-admission-policy.json": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
+
     "scripts/ci/activity-conflict-caller.test.mjs": "bd76fd78a32350c892f8c2e13ed44902741835e0f858b7c409032cff77c8cddc",
+
     "scripts/ci/check-ci-deps-entry.mjs": "d260ee09ba8cbad96c9c77d3bd95484f03faf138c0d4f409609be86558639949",
+
     "scripts/ci/check-ci-deps-entry.test.mjs": "7fa49dc008760f4ac24431ad7ddd33a6fd3b20577e32a69811bbfab6bf7c68cd",
-    "scripts/ci/check-pinned-registries.mjs": "f1688655443db4df8deb7090f61e1c0b2e74cc9b9d76e0c8f2585f0b94aa659d",
-    "scripts/ci/check-pinned-registries.test.mjs": "06ff7f65a2326355a0fd73310879687bfc7f826b7abdf2a1c344bd865cd8d554",
+
+    "scripts/ci/check-pinned-registries.mjs": "68eaeb1971047ddc8c69cfc71ffd40d27dd223857adb9b0325681d88e79c9280",
+
+    "scripts/ci/check-pinned-registries.test.mjs": "13e41d637f0ac3480cce621123498f3b88c1f690167724248a7752f915c300ae",
+
     "scripts/ci/check-powershell-count.mjs": "ea43513930daa146dd1a08256b2d12bc2e0594a7aa0f8c78f3d6a4eb998f99a9",
+
     "scripts/ci/check-powershell-count.test.mjs": "75d79d8cdca1ff127ec85e98ff9813770b85c323c19b4e1507b830e7d6822554",
+
     "scripts/ci/check_active_doc_links.py": "45ba8e59e126406a59e46078b20a5c3aa1b1b1abf60f8f84849f197c439c77c5",
+
     "scripts/ci/check_contract_placement.py": "18a5c02a7f39e397c0d4cd6273620dd5ed91a2a12351ed3639ab7986533ba007",
+
     "scripts/ci/check_design_refs.py": "448c6db2491582d12691998a51455610bf5b4dc6eec2048325f716b62db0b543",
+
     "scripts/ci/ci-deps-legacy.json": "f7f0ec35fc4f9702df2f39ed42c71be7c804e1ddf2d284b0bffc9ac99e2833a8",
+
     "scripts/ci/ci-deps.mjs": "c05d216129bd63b5d05fb5beab138796971c8190047e22a90efc2ca64563c097",
+
     "scripts/ci/ci-deps.test.mjs": "cd36c0c64a19a3d1061a73944ffd7d027cf7a026f80ba4578fb7aaa57c51254d",
+
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
-    "scripts/ci/ci-required-selection.mjs": "cac3873652bdae2cfa03c9cee897502e8b35ee91b392eb66edc261d9c841dfb5",
+
+    "scripts/ci/ci-required-selection.mjs": "f3363ba48c52700ccba8b0b79ce45eb0b44b24bb1b5c7900d1815562d31b6549",
+
     "scripts/ci/ci-required-selection.test.mjs": "ac2dff3fb20336f582f6d94c8e4f11a16bdd9a9f51b98a75a4c82468cb011931",
+
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
+
     "scripts/ci/ci-usage-attribution.mjs": "164b77b7e9dbd0b1e1384b966d0c9530f0d525b3e5a47b45cf0a4b05c65830f0",
+
     "scripts/ci/ci-usage-attribution.test.mjs": "90470ac2c126ad2818bcb8efff33b7b7a1fd3b1b8dd60229ff0a7d29efca4b9e",
+
     "scripts/ci/ci-usage-report.mjs": "63b107c6a732cc568b430c993eeeefd6d1940630c14e53b8a0622e344370b172",
+
     "scripts/ci/ci-usage-report.test.mjs": "3f938e22587568aa50c281d055f758ba4bbfc6e02031c542b34b27bf0cc394be",
+
     "scripts/ci/clued-control-source-pins.mjs": "c18f3a36466a4a621601f3d2d3b42d8f0d5023a91a080bbf56a982feb3df0472",
+
     "scripts/ci/clued-control-source-pins.test.mjs": "84eeba168928c5e84710252a0b190abbce3c1a543dc3673bc656cf6e634d2c3d",
+
     "scripts/ci/clued-control-workflow-reconcile-source.test.mjs": "e31ce637c6fab136d9cc5ae91a9f19022769d197b7c858d2ff274fe8f9738914",
-    "scripts/ci/clued-control-workflow-source.mjs": "db484e8b24ec0c14715e4e54e8c82a6f7ea2537b079fbc7c1354a2fbf62f2b7a",
-    "scripts/ci/clued-control-workflow-source.test.mjs": "a7a479885ff8e4dda8b43ec34e43ff114020abaff7f3eae1be5726091bd782bb",
+
+    "scripts/ci/clued-control-workflow-source.mjs": "243da8492460462ee880431c0496d85d444dfa3fb7292b147954950941726c5a",
+
+    "scripts/ci/clued-control-workflow-source.test.mjs": "f35ebc464b7065cc02da7930b6319c17e18038fbb4765035c78cdd12d3cfa2d8",
+
     "scripts/ci/clued-control-workflow-sources.json": "db94156e4eb6c0d0c37dc36489f83091b8d52066e49eb43c4f75e0ed68876ae6",
+
     "scripts/ci/clued-docs-only.py": "55a23681687378d3732c3416e88ad55c3244e69d04d1d09b5c3ac3e15013b573",
+
+    "scripts/ci/clued-front-main-merge.mjs": "012a17635289f61e6d59dd417a194654589bf190b8ffe657f1c71154c3f5722d",
+
+    "scripts/ci/clued-front-main-merge.test.mjs": "32a659e2087b04ed63131e914b1a5c972c2fb6ed323f8f8f8fb77ae002e9963c",
+
     "scripts/ci/clued-g4-fresh-start.mjs": "c88597bb9834a6ca51075237241fcabf904c23e8ace0076156d78e1b1f00c0d7",
+
     "scripts/ci/clued-g4-fresh-start.test.mjs": "620b3151b8b869ad232cc5810e9b98c73b2c3ff38bd011f6984ba7e24e94e0aa",
+
     "scripts/ci/clued-gated-proof-profiles.json": "f899d641a7c5e9ea20e58f87f0d7f44c3cb50295af0b528b37afc870f7498f18",
+
     "scripts/ci/clued-gated-proof-role-specs.json": "840ab2f9e1912df41eed36b0a1c653cdf8c0dbe464ce997e645a44ce6dfa4378",
+
     "scripts/ci/clued-gated-proof-runtime.mjs": "ad7b271a0ae0798bb5e5dab21697bc11cc79e10d14db8b9805cb011c93df8dfd",
+
     "scripts/ci/clued-gated-proof-runtime.test.mjs": "0a27419621764a3d6ab794dd28cfdda8accd708220c89afe82b13e0fc5505734",
+
     "scripts/ci/clued-gated-proof.mjs": "93ae35145d98dd42a3d8bf088b3fa1290c6263d3e6ca58be24e10fe26f7578c2",
+
     "scripts/ci/clued-gated-proof.test.mjs": "07254965cf233e8cfc25e247eecd74b11e2f7f809105c890dea16826aa0245af",
+
     "scripts/ci/clued-handover-external-bootstrap.mjs": "d5ab945ce11b53a7a2a35fadfcab65613d516b6ec57d04ace0ad1e6813823271",
+
     "scripts/ci/clued-handover-external-catalog-identities.mjs": "f33f96b8d51d90d9833302d2a03e46c8063509817eb5e58a9d500f8dc7c77378",
+
     "scripts/ci/clued-handover-external-catalog-identities.test.mjs": "b757b4d02b58add3e29af8bd50984f405aa5a23fb19c5831d6481c440e26146f",
+
     "scripts/ci/clued-handover-external-catalog.mjs": "173788f3ef6d54d54dc3adc50024f4ceeec722c67479053b9eb29d1f02da0152",
+
     "scripts/ci/clued-handover-external-driver.late-idle-source3-v1.mjs": "8f50881bf81c513efa7154b1f824749c1312d5470d8194eb400a6e27d147e9d8",
+
     "scripts/ci/clued-handover-external-driver.mjs": "1c0e34e736cad9df2e334341a0c5becc418f1490ba4361b6e6e4bda64dbab009",
+
     "scripts/ci/clued-handover-external-fixture-locator.mjs": "77c750f47c76a25c455189139406a4fd680feeb6a825a3ce6ef6dfd0b6837318",
+
     "scripts/ci/clued-handover-external-fixture-locator.test.mjs": "bad4f91309c0893d5f412a834987b5d3a2ec21442089f314ccf1df35a2f5f31a",
+
     "scripts/ci/clued-handover-external-gate-evidence.fixture.mjs": "26951d8d99b6002e5819484b5238916ae295e0e5b12e66c7e1a309b6da97b29e",
+
     "scripts/ci/clued-handover-external-gate-evidence.mjs": "858b5cbf9ba884c7a6680a80a9ceb7bca34564f155cbe43e1a7ce0ff85afd7d7",
+
     "scripts/ci/clued-handover-external-gate-evidence.test.mjs": "939a87e7a5718455ddb862a478e6cddfc238e80f099d404139d8266d7a3c0f03",
+
     "scripts/ci/clued-handover-external-journal.late-idle-source3-v1.mjs": "5b9a479341297a828f76a87b14020dc025afa93eb7322746c8a5337fbd03e3f6",
+
     "scripts/ci/clued-handover-external-journal.mjs": "7466b2a6769c5909b837b394d516cb856b22b64d1f8ecbc77843e15e57c7e0d5",
+
     "scripts/ci/clued-handover-external-pg-transport.mjs": "16a6a0a1236e957339b76589ca49e8e081471b7af63e25ebefdc4011dd94be1f",
+
     "scripts/ci/clued-handover-external-pg-transport.test.mjs": "ff74fadf8a88e09c50198a8d6bab03ce8b3f5cb29d6ddfb2656eb29094cbdc20",
+
     "scripts/ci/clued-handover-external-provider.integration.test.mjs": "fbe75926d8a5a2ce003755d9a4942fa0ec0cdb6fac7b3de099da889404668079",
+
     "scripts/ci/clued-handover-external-provider.mjs": "cb401c6c2340f6d82d995ce1e6b0c9958d31f9a7d44c2fcb36f7a8057f5ff82a",
+
     "scripts/ci/clued-handover-external-register.late-idle-source3-v1.mjs": "f2bddb2a554c46f24c9fa2938cfa361526c71a0cb3020ec1dba13baf3d0dedf9",
+
     "scripts/ci/clued-handover-external-register.mjs": "1d3bcebaf5cf189283ec11cea35cb631c28efcafb604f8424708cbca6e68cb65",
+
     "scripts/ci/clued-handover-external-source-check.late-idle-source3-v1.mjs": "5751e7da5ebb7eb4b18e531ebbc90604036e9ff5b3a65c8dfc28421cb821acaa",
+
     "scripts/ci/clued-handover-external-source-check.mjs": "7485a016df358c85b710f27a6c8bc858d43df0b3633e7ca263b3414b2590fd35",
+
     "scripts/ci/clued-handover-external-source-check.test.mjs": "1b619ba37fadadffa11c3bd38f15663fe2880d391728a3c2851ca151875ac114",
+
     "scripts/ci/clued-handover-external-source-pins.json": "baa5de1b49478fc6904bf486e5f0694e8238f662e7761af75f478cb637142f9a",
+
     "scripts/ci/clued-handover-native-entry.mjs": "6f6366e3ac098421ca2b1300fc299c17c5cc4bf439bec83adeae9fec69925b7f",
+
     "scripts/ci/clued-handover-native-entry.test.mjs": "73027f823c2163c77e4abd71d7df621ba1b5c17f2610cc65eb48654a32a9282c",
+
     "scripts/ci/clued-independent-legacy-drain.mjs": "793ba953f0a558c63720a8cb2f71d0fef3a5a1eeb228b3818bacbc9bd445a6bc",
+
     "scripts/ci/clued-independent-legacy-drain.test.mjs": "2414d08e4bd131d29a07047679e3c64108f69f2eb8d4321058d1ed296015bc39",
+
     "scripts/ci/clued-independent-publication-identity.mjs": "354d8997d96a3ccc804fa23d4a4543d3910f81e3584d5a59b1efb2ebb9367b1f",
+
     "scripts/ci/clued-independent-publication-identity.test.mjs": "0c2c540737f2d6375e8903c7ab26cf03eb3f4ad8918035de6617f56cc553369c",
+
     "scripts/ci/clued-independent-publication-port.mjs": "34d357da29ad8a29d23f701ca4e0dd481ef66b2c36470051a09dade6f2420658",
+
     "scripts/ci/clued-independent-publication-port.test.mjs": "1d319cce907478765d3aa7aeef849d4f53d6d75dcc1da8b1553fd56a6bf2de8e",
+
     "scripts/ci/clued-independent-publication-runtime.mjs": "fb1dd769b0e41b52f45a68b26b5a044ea817691eeb0bb9a9ede41c41916d3cff",
+
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "4ced446e444c99b55fc1bf98cced0786e584f862c9766ec0bd909718d59344ef",
+
     "scripts/ci/clued-independent-revocation-controller.mjs": "fa535957331fd4bfca1a5520ea5d6f0bcd629c28c8eec3cfea91116201613085",
+
     "scripts/ci/clued-independent-revocation-controller.test.mjs": "3de0bce3da4440388c390c0aa249ec04916c28163eff3344b98ac0788eca9023",
+
     "scripts/ci/clued-independent-revoker.mjs": "99d5ea080db754976c09163275f1e3b69af750a47d48a1442e2b15438670be9f",
+
     "scripts/ci/clued-independent-revoker.test.mjs": "05458ae9573d77cf92a0b1d0b187047ac09324820b34b02cfd53433d358f4cde",
+
     "scripts/ci/clued-independent-supervisor.mjs": "364da941e5ad159f5b7f362d5716e68078e21fbdcc8a295a7b7a175530000777",
+
     "scripts/ci/clued-independent-supervisor.test.mjs": "f024b253471e51485648a4cc2fafe75b292d6d903fbba04d4d49b001c075a592",
+
     "scripts/ci/clued-managed-auto-merge.mjs": "c561f6eb4323c7cc000e891da544a62bf4e24739563d7c527e0a262dd1bf9116",
+
     "scripts/ci/clued-merge-executor.mjs": "9f2159e646af583ec4933e62296eac4938c1aa7329944028267032ccdde8df78",
+
     "scripts/ci/clued-merge-executor.test.mjs": "6004ad79074a1673059bf8f1dccf1456b25328ff8037f48f798cf537d6d603a1",
+
     "scripts/ci/clued-merge-reconcile-activation.json": "31f1ccc5d960b6ee7d4a5c3ee0defe78a333be96856284c086c347a45c11f6cf",
+
     "scripts/ci/clued-merge-reconcile-gate.mjs": "db888ce05cfe5df903a60ff7129df6f681f24fbcec6a18647acb96869ac105e4",
+
     "scripts/ci/clued-merge-reconcile-gate.test.mjs": "ab239d0f55dd5f4356613e96529dd0ee3ae73fb0eef893808e0d8c0b661d34b1",
+
     "scripts/ci/clued-merge-reconcile-host.mjs": "d0df06bff4f0217d8d48dc24a4606374070a17fdd79f0002173b8569b84c5958",
-    "scripts/ci/clued-merge-reconcile-source-build.mjs": "c8dc325a6444b57b28ea6edce7da6d657cfc581ea3183c642c9f8e88fe7c58b7",
+
+    "scripts/ci/clued-merge-reconcile-source-build.mjs": "a21030b66e214e741bef3f49cdf2522e993ae77aacc9663d1219484777f54efb",
+
     "scripts/ci/clued-merge-reconcile-source.mjs": "5abcc1cd5031cc20588027234d511a23a5998dd7c5dfc87816ee80a9a7f79c91",
+
     "scripts/ci/clued-merge-reconcile-source.test.mjs": "8fb5a8590c101b66602905da885496bc68fa430de723b0f7dd51d752b2ce36f7",
+
     "scripts/ci/clued-merge-reconcile.mjs": "2da0f64cc59865b9c52ec51ff90809cdbb7ac92d73b8d40b9ba716d71db5e3b5",
+
     "scripts/ci/clued-merge-reconcile.test.mjs": "435a865b4c10936b571de51ee89a21567e42b561ecd9a28c78851aae35ed0c1b",
+
     "scripts/ci/clued-merge-slot-ci.mjs": "674b3429a793f0c387b094132ad685b24c90ad3b071737bdf0089f4ec20b7754",
-    "scripts/ci/clued-merge-slot-ci.test.mjs": "df3380579b56c6c5f5a01f2fdd8f7fe96f427cb335e2dd64c220139f156524f6",
+
+    "scripts/ci/clued-merge-slot-ci.test.mjs": "a2741cc4ffbd7359e42b709f5add97c4ea5040fbcc11b1b3bdbc858614b97e5b",
+
     "scripts/ci/clued-merge-train-native.mjs": "4a43e080042feeb00cddbdeec3f14b5bb34dd214e6880e0e4b63e10702870c63",
+
     "scripts/ci/clued-merge-train-native.test.mjs": "99dacdf82e90ab486079c1d8a41120cb52a148b2d35ad0f7276e8eee1f0a6ae8",
-    "scripts/ci/clued-non-pr-control-source.mjs": "a8f77176290025481baea5ca14a1de2badd62e4e605778111100a2c9025c265a",
-    "scripts/ci/clued-non-pr-control-source.test.mjs": "3916b678f7f53414b5e803b5304b463686695e1cdbc83c5cd4d130635b8029a0",
-    "scripts/ci/clued-non-pr-control-sources.json": "acd651e8d90fe3d61f982f25eb203e4fc76e37ccccdd3a6881934b5144d575d1",
+
+    "scripts/ci/clued-non-pr-control-source.mjs": "5f86388d8a1b95f9685c2ae806053b38c2e95f2387baaf07f3682629772b5487",
+
+    "scripts/ci/clued-non-pr-control-source.test.mjs": "be2271b280d01094ef7d71180859775cc34426a808beed2164df061cdc5ebc7b",
+
+    "scripts/ci/clued-non-pr-control-sources.json": "1f1636073660e80728cfac35653ee8938cb45a09bc4e151e5fa2702aee3d8d81",
+
     "scripts/ci/clued-pr-task-binding.mjs": "0a82d9005bcd06bdde2c55b6a59cd57c64fa175c447bee4162940d35b39b45f1",
+
     "scripts/ci/clued-pr-task-binding.test.mjs": "4c6f6868da58a9f3e5647370f4ffe127e42e7732a3ae180cf12b938327df8d3e",
+
     "scripts/ci/clued-pr-write-set.mjs": "43c5e681470ffeec59e05a220cd78a8e216f7d61c2eea26b0e5ee4305c955e02",
+
     "scripts/ci/clued-pr-write-set.test.mjs": "650812b03b359346779958019c1bc27e8a7617b501e58e32aa7fd0f5df73ceca",
+
     "scripts/ci/clued-production-publisher-source.mjs": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a",
+
     "scripts/ci/clued-production-publisher-source.test.mjs": "f0d53502c7527606b700c79b6266bd373aa6d4e4f69eac5c4d5673cfd4c66d1e",
+
     "scripts/ci/clued-production-publisher-sources.json": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf",
+
     "scripts/ci/clued-publisher-qualification-source.mjs": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048",
+
     "scripts/ci/clued-publisher-qualification-source.test.mjs": "5d5dcebf4d96368238f690095a45afbbb550ce6f61ad083e9676a7c613d28ea3",
+
     "scripts/ci/clued-publisher-qualification-sources.json": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
+
     "scripts/ci/clued-push-reuse.mjs": "ed0554e62d88becd474f43c5e50c454d9714840c561b1d25894d793595365c65",
+
     "scripts/ci/clued-push-reuse.test.mjs": "065b8ba38b4e4c1c0a21aae81708fa092ef500707bbbecacd26562b4181ac1b7",
+
     "scripts/ci/clued-reader-budget-cache.test.mjs": "14f3560b2ecdd7808f8d5048a49e8acbb58ee39e6203230d5d6a7097e29003fc",
+
     "scripts/ci/clued-registry-scan-guard.mjs": "630296844a6746b159e0ba128696e49ac5054c743829b58c141b00a55f1a5081",
+
     "scripts/ci/clued-release-grant.mjs": "55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e",
+
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
-    "scripts/ci/clued-required-applicability.mjs": "da29f22a5f91abd3995bc8ee101e57f58b5dc1ebc319589e9d9837bce3205a33",
+
+    "scripts/ci/clued-required-applicability.mjs": "2651debc682b9b4bf263253951e8d35d45be149da8e4a8ed9731b2046ac89611",
+
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
+
     "scripts/ci/clued-scan-start-732-successor.test.mjs": "da93ef5cf5a5b9f9a06fec6fae89aee5399e9260f53bca975f9f40bbe3c76499",
+
     "scripts/ci/clued-scan-start-prereg.test.mjs": "d4d95deda6ce2eaac70d83e3e8740f7c5316352d178dd9ab3c55ef9a838d75f1",
+
     "scripts/ci/clued-scan-start.mjs": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
+
     "scripts/ci/clued-scan-start.test.mjs": "a395d93328ac61683f73536ec8b8d983bae738258b1853cefee0bb286ef5e4c9",
+
     "scripts/ci/clued-source-only-workflow.mjs": "4b6840be92f22bbc699f4c20392c200b6694a6025bcff21b014e285a253ae1d8",
+
     "scripts/ci/clued-source-only-workflow.test.mjs": "0c2958c135e46d5c5ca68305109f865bdae4a79b277a59d3836974514092df69",
+
     "scripts/ci/clued-standard-runner-actor-source.mjs": "87b7b9a14833afad3382907085765b3cea8595e4c3e69ab56f10d795c9949d43",
+
     "scripts/ci/clued-standard-runner-actor-source.test.mjs": "2bf634b0ecedfbb59bef2d5610e21a9727a2b02c2dbd6cc026d295fac110d5fb",
+
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
-    "scripts/ci/clued-work-admission.mjs": "558f8d679a373b4ca90f13a2fdc4882e4f00e41069ac6bd73c558b8a83fb1c4e",
-    "scripts/ci/clued-work-admission.test.mjs": "f0772baf7234d68a78d0c0f5abff3874248f65bd771f3878bd0973e109a3ef1a",
+
+    "scripts/ci/clued-work-admission.mjs": "4bc0813701d958bd14dfd01daede21da6d264ad9ceac40f2decb21b0d94ea318",
+
+    "scripts/ci/clued-work-admission.test.mjs": "4de6e8e8faa48d2cd5f65ac5ade340cadeb2cd1f8b13ad96d5191a80adbd3afc",
+
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
+
     "scripts/ci/clued-work-claim-handover.test.mjs": "209b73806e36b5cb282879fdcf71eb8cf12d4e1c9577508b2718307bf5f4594a",
+
     "scripts/ci/clued-workflow-profile-codec.test.mjs": "6d529c3159c9a60baf493bd8906937a5c7e67aaeee558b7126e407298df0512e",
+
     "scripts/ci/clued-workflow-profile.mjs": "63b278c1bef4d9e83037d93ae5dc5d86f286937887aee0079584ab31ff07a1aa",
+
     "scripts/ci/clued-workflow-profile.test.mjs": "58d5715dd46bb8332be50cada792db3713f5425d9cc29f69bc209a779f9ba594",
+
     "scripts/ci/clued_release_tags.py": "37dbb708333c8a92647d23144a9b6fe3f0f1021e8801d0a781749138280b835f",
+
     "scripts/ci/component-version-integration-policy.mjs": "9c1ba6d3c4b93a51ab941862dbf16585ea6830464ec396d6365d940fff43e491",
+
     "scripts/ci/component-version-integration-policy.test.mjs": "fd2c5b17aa70dd0cde4c137d61d301e0cca916593e2987a8931bf3c3bd37782d",
-    "scripts/ci/component-version-integration.py": "18cc53d3b98bacdbe4a8f587dabf75a1231ce1fe02e795d0899c7d8c0009621a",
-    "scripts/ci/component-version-integration.test.py": "0369b08e329a38cd28c44ce27585dfc44e7eda7cd1c29aa7080424a588f4266a",
+
+    "scripts/ci/component-version-integration.py": "a50c3dad32f05a1ec2e5bed567babbe51a1ab6d057996cb7a859483b49db1b7c",
+
+    "scripts/ci/component-version-integration.test.py": "dcf3cf7d4a5b67648501a0585a8e7b1c0e318e4e7e3ffad75413cf78b083b230",
+
     "scripts/ci/fixtures/heartbeat-pr890-strategy-shrink.v1.json": "985ec57c0722daa9e2de230f39ab5a4f075f404f799933f9f8d2d0931cdddb43",
+
     "scripts/ci/fixtures/hosted-migration-source-history.v1.json": "3171be2d3c7f557ef3faced4a7bef558376416892c3c187e45c54e53242a133f",
+
     "scripts/ci/fixtures/production-publisher-source-history.v1.json": "4a3fce0d4cf0e5a3a4148853a718dbf7b5fa02222cdd23d5d434eb2b62b0aca7",
+
     "scripts/ci/fixtures/retired-gated-proof-catalogue.mjs": "d6fd5b900dc67eb33fc7a9dfc260a9a40a092f03cd862851c0cd644bd229717e",
+
+    "scripts/ci/fixtures/retrigger-counter/responses.json": "e999b113e9e9ba9b676a12af3adb0dbac9590bc2f205753fae9e72428c857156",
+
     "scripts/ci/fixtures/workflow-profiles-69e30b6/fixture.mjs": "adff661303d49ae0477970e13257a2b757e7ff34200ff66cae9fbacf2ede6d38",
+
     "scripts/ci/fixtures/workflow-profiles-69e30b6/profile-member-order.json": "cf6837b9ec91013e8560179abcbda64811272e93d89cfd6e7303f92ace35250f",
+
     "scripts/ci/fixtures/workflow-profiles-69e30b6/profiles.disk3.json": "c05abafd2c744c3c67521175972d2bbb89251aeaaac6b3b7a23af8187dad10e8",
+
     "scripts/ci/fixtures/workflow-profiles-69e30b6/role-specs.json": "7cddf4abf791bf0f1d7feb8fb1462888f3da462033159d59694136aba16e4fa1",
+
     "scripts/ci/hosted-migration-source-history.fixture.mjs": "e1a68070aa3800282a8fe675006eb531ba255a4d23a4eaed755f9e39f9bfa3e5",
+
     "scripts/ci/local-verify-concurrency.test.mjs": "272eb5255fd1b9e5c462a2fd03b8c9bf145065e7c0db1daad08002e016c56b80",
+
     "scripts/ci/local-verify.mjs": "b0e9879f4bd3725c8af68c37c319813dd884f8bf555ef3312cdf0b03f1f63762",
+
     "scripts/ci/local-verify.test.mjs": "103e3d8e6747a3e279fd8dba8719b067f09f7bcf5b6a68a214eb32c596a54f39",
-    "scripts/ci/main-entry-legacy.json": "7344774391c98033a94bb92cf3800b9969b826588d5ce0f0b73ab60f4cf7c15e",
+
+    "scripts/ci/main-entry-legacy.json": "ac555b84df927f2b1f2871a9955321c0ccea3b34fa4351e8c4a0217208f6e011",
+
     "scripts/ci/main-entry-realpath.test.mjs": "b0a2308233c39ae0faed8eaa92f98b145d1faa5d009a5de094c440eca34bf86c",
+
     "scripts/ci/merge-admission-clock-bootstrap.mjs": "a32404ea7b39e13e4484243198a2a286fb01e582d49b8328b6a1b519961b075e",
+
     "scripts/ci/merge-admission-clock-bootstrap.test.mjs": "8ce6a5edfb061b54256eb6fca611578915de20e8443ec8a7089e741ba6c85365",
+
     "scripts/ci/merge-admission-clock-source.mjs": "e09e08af89d6fbf8ed74e149a7c0f3abf2134fcb3fb26fc17ea2d7ec9042d1c9",
+
     "scripts/ci/merge-admission-clock-source.test.mjs": "08b61be79c6b0d007bf9dba6b3fd83a5e91b157af694894be27cb27f4dde46e4",
+
     "scripts/ci/merge-admission-four-sources.mjs": "9a2977c5542c68c922956c66ba357e3ae2db84060763808010bd007e282ec301",
+
     "scripts/ci/merge-admission-four-sources.test.mjs": "a80e55dea38640d0a234ca103b32532d4425462d1641d0afc147511d7a5d3208",
+
     "scripts/ci/merge-admission-measurement-history.mjs": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e",
+
     "scripts/ci/merge-admission-measurement-history.test.mjs": "61b8cc117c1d06746fdd3590d795ac24f43312c4afecff3858df74517cdd2290",
+
     "scripts/ci/merge-admission-native-activity.mjs": "7824b14b8d53934413f8dffa8ca1e1a48905dd975708f514e67063a4bc2327a2",
+
     "scripts/ci/merge-admission-native-population.mjs": "d3c18b7783932133499af2983d5666edfd3f88b43e36c602dcb676e789c56419",
+
     "scripts/ci/merge-admission-natural-frame.mjs": "0bf7df659a2c80d16f03ccd3582a235ce61962f033c8af06caebb02b7c01bea3",
+
     "scripts/ci/merge-admission-natural-frame.test.mjs": "3ab8a2db47b607756c7a11fe7d89c2c1d479373e9c43f1a92faf22f7f8f99902",
+
     "scripts/ci/merge-admission-natural-intake.mjs": "d29370d0f23831f3313282506164ca9ecc500219362f7e0504181d54cf3689d6",
+
     "scripts/ci/merge-admission-policy-file.test.mjs": "b3869dde03750e7ee1818647692e53bc495db7d12367d5eabf8310679eeaccd9",
+
     "scripts/ci/merge-admission-policy.fixtures.mjs": "a8b3a4ac8266d4686fdd0b4d0e5cf6c3e97ecf872aecab948f610b53f8878689",
+
     "scripts/ci/merge-admission-policy.mjs": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3",
+
     "scripts/ci/merge-admission-policy.test.mjs": "093bf5f2c0c17a61726aaeeb7034fd2c5c5a67145563b29a6982d8c453dd1278",
+
     "scripts/ci/merge-admission-r9-collector.mjs": "e0297e5203f028f0f87ea1ecd76bdbb5f45566529d22cd95c3543843903c2ffe",
+
     "scripts/ci/merge-admission-r9-collector.test.mjs": "0ad601cdc08925e0dfca2bd3cde7840fd808c8c36ccd2715f0c098105a604221",
+
     "scripts/ci/merge-admission-r9-reregister.mjs": "e7d21d918ea41e89d419b911b8a6e1c6bddb35dc790a900855538fae44049a54",
+
     "scripts/ci/merge-admission-r9-reregister.test.mjs": "d4ae870bb694c5c6a06e35ff10e88232a4748734b7bb5f4d720e1d9f5e2fdeb5",
+
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
-    "scripts/ci/merge-admission-r9-source.json": "4fe5eca2f0f98e8351f0a0429b032b92feb33e3cc8a53040361493b47674a863",
+
+    "scripts/ci/merge-admission-r9-source.json": "b7a2ba06f46b5b8be978509631bb0360a4740a125c553ee72c6bf5e7b63d2ec2",
+
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
+
     "scripts/ci/merge-admission-source-producer.test.mjs": "abe0450aecbb4a406ebf304980b0e4a1511e37df5ff9ca532afefbacf6e17eb7",
+
     "scripts/ci/nonpush-seal-caller.test.mjs": "239de27209026d175de291fca0e19728592afe5db531814b172b86d761137e11",
+
     "scripts/ci/npm-cache-observation.mjs": "8613cf2ca491ac61193bfb404ec2b45ce2282091271d689441f2f0e5dd60a6b1",
+
     "scripts/ci/npm-cache-observation.test.mjs": "2013bf8c495943379e38cb1bf8d41b7f44eb82422beeae2e4b320225c94bee90",
+
     "scripts/ci/pr-repush-preflight.mjs": "2740e018ee3f6e48aaa93884fe4ece6ad084041b68c55c5a569dbfe94d7c387c",
+
     "scripts/ci/pr-repush-preflight.test.mjs": "be7e82fae509959deb3c3fbb61b769942a20f1db5b2a4adb00865eee6d2abf0d",
+
     "scripts/ci/production-publisher-source-history.fixture.mjs": "9433af39a2a0aa559cb4cf53b0245551f315aae4b15a62b196fed5500ada8287",
+
     "scripts/ci/public-mcp-hosted-space.mjs": "f7f2732bd0b6c567ec839a17a3b4ee123c3c3ee3778a70314c5ec1d5c4fa11e1",
+
     "scripts/ci/public-mcp-hosted-space.test.mjs": "c3f454a423b2e4ebe63bea1868c6cbc52ce67e3e2e8c8a8cdd5b36965a758e26",
+
     "scripts/ci/public-mcp-supabase-isolation.mjs": "0ceada873b00347bfbad03bb02f2e363a48f636f155f654d20a8551d9902a8f1",
+
     "scripts/ci/public-mcp-supabase-isolation.test.mjs": "fa369e2ce4778a8edeac05c063d22a9cee2b5968f5629d30ca69a6113cc02b56",
+
+    "scripts/ci/registry-layout.mjs": "aaab6b75865bba2e2067b1d2acc298f48d8f1f2db0785eccd6c2456e3230c0d9",
+
+    "scripts/ci/retrigger-counter.mjs": "91832616fdd475e4913bda7dcddb53e4e04e930e40ad96478241aaaf9a3ea5a9",
+
+    "scripts/ci/retrigger-counter.test.mjs": "6d6a3a2edd4ace76ea2195381e5580e2dcf38b445074fab83e1d0cb4a880d558",
+
     "scripts/ci/reviewed_gitleaks.py": "66eef4926112636255299592db4cd5bb2e1eef3eecdeca36737a5a31639c8f94",
+
     "scripts/ci/reviewed_gitleaks_historical.py": "7656040557f4dbc7f04c1439eb99ef45021610ca7698fe2f6eb186a625141595",
+
     "scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1": "1bbf85dac7f8eb70a3d70448add424681fe681ed7b2a4e951ccf9e87fbeedff5",
+
     "scripts/ci/self-hosted/bootstrap-linux-runner.sh": "9ab960ebcdf95099a3c60d863ea6c1db6e70aad9a6e51b83c7622e5a37172e28",
+
     "scripts/ci/self-hosted/bootstrap-windows-runner.ps1": "5e34365861491cb803bd249c4a870e74f63b2cd9cc32cbf4f0db996dd616efa3",
+
     "scripts/ci/self-hosted/ci_health.py": "80b5154f54897757ee9f9db0a08d09de047bcfa8aea58313b5e572e45fe1b833",
+
     "scripts/ci/self-hosted/ci_health_analyze.py": "4f7914d6bf8654e9855fc06ff65d7bcd05134dbce1192c74b184c53f5171e118",
+
     "scripts/ci/self-hosted/ci_health_transport.py": "80b699350b6a3d2583c2332f00dceed6d9259c0b594b15df30121c2a624712a4",
+
     "scripts/ci/self-hosted/compute_panel.py": "9b26eb6c16f8fbc97ee15c7c1c7582ab2478927e487c8a4c8d2a0a6717c0de59",
+
     "scripts/ci/self-hosted/host-port-lock.sh": "87d437f440d5feb16ccc0651ee105e821e9cace6483b3a6cded2d02750abbd7e",
+
     "scripts/ci/self-hosted/node-governance/governance.test.mjs": "f551c19d2e5aee8aabd60a89ffa92ce7a478cb372a492e7ad8b1a31b6303997e",
+
     "scripts/ci/self-hosted/node-governance/install.ps1": "b3b78282c3719a258c6ec2e1b71ade1570e8820704823fc336582ba5d8bf3571",
+
     "scripts/ci/self-hosted/node-governance/linux-sweep.sh": "11065ad9d4b8f3acb48e7de59937b01cfb1e0c6ac58f4b11a8b09afd3f7dd43a",
+
     "scripts/ci/self-hosted/node-governance/render.ps1": "708805e6f3ebf1279a3fb5c70872b4c24ccc53e4f7daeffeb79a676a34cf4491",
+
     "scripts/ci/self-hosted/node-profiles.json": "0fb1cda985ea9f7de695d9d0dd0ab2b500c0f2d3897048898131fa38f721fb2c",
+
     "scripts/ci/self-hosted/resource-maintenance/enroll.py": "1065b8a01c52eb1249a1b282df6ceef2fb396eb4fc29fa6705c4c1263e6571b1",
+
     "scripts/ci/self-hosted/resource-maintenance/maintenance.py": "b4a4946f3e2252ec173d90fce7659d0f35c55c1dbee07949951c8a33f17fc8d8",
+
     "scripts/ci/self-hosted/resource-maintenance/probe.py": "94a2917c9f1f9a15bbe806a0bd90b2a37b7a17dff9501be2010c511cc88bd8f1",
+
     "scripts/ci/self-hosted/resource-maintenance/producer.py": "65708765edb2ca593b685ab59159894d3690bd04f45ea1518db074584ee92cfd",
+
     "scripts/ci/self-hosted/resource-maintenance/schedule.py": "d772148106aa3f132cccbc1e4b62cdb2d7068e5a16a2a54fb796b655951acdab",
+
     "scripts/ci/self-hosted/resource-maintenance/security.py": "932567b1fc5d753b7b29561991ac0ab3a8502f31edfad0fb5109b5b5d2083209",
+
     "scripts/ci/self-hosted/resource-maintenance/test_maintenance.py": "77b490df6dedd6b68d42e1d735920c3a8241c6195606c1b57f8e38a0ab07b40f",
+
     "scripts/ci/self-hosted/resource-maintenance/test_producer.py": "d3fc91eca4bdb64cf5a392c7a69fa5ddbdc64f93013cf8f84c39f382c9ddce19",
+
     "scripts/ci/self-hosted/resource-maintenance/test_schedule_probe.py": "2f5e5913f660c1c3bcc554108a28ac4b238f5fa0c21bbdc102062e9e192c3cc2",
+
     "scripts/ci/self-hosted/validate_node_profiles.py": "30bc1a26534a356b029293f0f6a3a6d05a19c1cfc90e87e24a62cb98235a47bf",
+
     "scripts/ci/setup-clued-dev-linux.ps1": "385742a996a637e51a2a2ebaa9b90986d6fe5c8deb483a0e7d6cea05406d8de7",
+
     "scripts/ci/setup-clued-dev-linux.test.mjs": "79d9f88033a7bed94fcc9fd75f609a2e7dd9365913d8d8411cc7af1d51cf2c66",
+
     "scripts/ci/test_check_contract_placement.py": "ac8efb4ce4f686c77c3f2f060d72f7995be79c3ed64f0efaf6869487f04ab247",
+
     "scripts/ci/test_check_design_refs.py": "1d3f519cde6339d8b0b3440531d07bab64e0f06d286eaf898c546af7ffa67dae",
+
     "scripts/ci/test_clued_docs_only.py": "f3ffca01838357c8b228ade809658be016d40caa474300efcfa98effa677a3aa",
+
     "scripts/ci/test_clued_release_tags.py": "ae38113ca193d13e094d2aa250d0bc6cfe99ac1c63f5e08abe4245f3d7f9b388",
+
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
+
     "scripts/ci/validate_runner_budget_policy.py": "a915d5d4d2e25a66926928a4abe799088a1a66faa75a4eea24fae1fc90061eb3",
-    "scripts/runner/clued-runner-job-started.mjs": "c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912",
+
+    "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
+
+    "scripts/runner/clued-runner-hook-loader.test.mjs": "76079eac51efe273a4da68ceba57150eb9b26f8de4d6a8ddc57b3b4dfd3b600f",
+
+    "scripts/runner/clued-runner-job-started.mjs": "40f74490182205db12829f3220b61d2696c6092818147538f5e5b5fd2dd895da",
+
     "scripts/runner/clued-runner-job-started.ps1": "d3ed2f7755db0f906d60064926d5bf233ceef51089dc64c1bc736f92d0065217",
+
+    "scripts/runner/clued-runner-job-started.required-tests-late-admission-v1.mjs": "547c8d0fb4029a715a0389e1b85fead93fc6d3b234541073a134b8dc889af3fe",
+
     "scripts/runner/clued-runner-job-started.sh": "47022237ae7f41e00b61dc158f103002d20787e555a42b6afeed7ed5561e26f0",
-    "scripts/runner/clued-runner-job-started.test.mjs": "772a78b8779371a2ad2b2e94e792268a5e0717549c1d4cec26fe2030bd8de79c",
+
+    "scripts/runner/clued-runner-job-started.test.mjs": "6df91b2545324a1418c36cffdeef167152a2054eccfb0a20addec8e69bc9bd74",
+
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-retry-v1.mjs": "c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912",
+
     "scripts/runner/clued-runner-job-started.work-handover-native-admission-v1.mjs": "548866b17f9bfec27113d88858982a9233b4ad41c207dfdc948d6e2a2403fd83",
+
+    "scripts/runner/install-hook-loader.mjs": "1ceb4a77f71b3a83209d6ea2e7cf1e3b27c56af07f6a564e6c68baf4fd0cb87b",
+
+    "scripts/runner/install-hook-loader.test.mjs": "e4a25cd48bd1451a6177d97113b9c6fea7bfe98a95051addf1fded9e76654e63",
+
     "scripts/runner/qualify-native-admission-candidate.mjs": "d56b71c331a68645ba12bdd4a32c4f03c15e6a19e3485f67ab45261b5967e6b4",
+
     "scripts/runner/qualify-native-admission-retry-candidate.mjs": "fc22c11b9eed8fca3ef0e6de9470662ebda1ffbab397ef35ed0ae1788f3fd48b",
+
     "scripts/runner/qualify-standard-runner-actor.mjs": "c2dd12444ae93439e0009acef45b4e4d436ff71db5c8e21c61ebdb880f6ccb12",
+
     "scripts/runner/qualify-work-handover.mjs": "2ae2c551819d481e47e1c353195d54f8c31f95e6e2395b1e0b0d4b0beeb5bfb9",
+
     "scripts/runner/qualify-work-handover.test.mjs": "e35142a1fb7a9cf591a5cea6b7af619bf64fd8938910443eb7807186256a3da8",
+
     "scripts/runner/standard-runner-actor181/actor-execution-files221.json": "f52a721bf5b1b6e75f536f26adcec054ee655f8b9c87652671e46f7c554402e0",
+
     "scripts/runner/standard-runner-actor181/actor-execution-pins221.json": "4ba433c44b12cae88a16f66d57fe89a3227628d8b50e9e63b6311b590809dde2",
+
     "scripts/runner/standard-runner-actor181/actor-execution-subject221.json": "ab1360b58b068b9eed738992c8ce526568772dda3afcbc007189a2e4d94a78ff",
+
     "scripts/runner/standard-runner-actor181/bridge/console_frame181.mjs": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+
     "scripts/runner/standard-runner-actor181/capture/actor.ps1": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+
     "scripts/runner/standard-runner-actor181/capture/definition.ps1": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+
     "scripts/runner/standard-runner-actor181/capture/observer_core.ps1": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c",
+
     "scripts/runner/standard-runner-actor181/capture/observer_entry.ps1": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079",
+
     "scripts/runner/standard-runner-actor181/capture/observer_os.ps1": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a",
+
     "scripts/runner/standard-runner-actor181/capture/registration.ps1": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+
     "scripts/runner/standard-runner-actor181/capture/runner_entry.ps1": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc",
+
     "scripts/runner/standard-runner-actor181/errors.mjs": "9df39d911f7e40a612cd0f9698361b40e410930592d843be3d46ad8427a84fd8",
+
     "scripts/runner/standard-runner-actor181/host-install/actor.ps1": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4",
+
     "scripts/runner/standard-runner-actor181/host-install/budget-table216.json": "74ce5f31697a0067fc9c01edb0d7e74d4b7c292b5b2490f7f93017057f321ea6",
+
     "scripts/runner/standard-runner-actor181/host-install/build_capture216.mjs": "dac98e3550cd59896ab74391f5c9c5226623f4dbef3c22a5419afd827e47f511",
+
     "scripts/runner/standard-runner-actor181/host-install/capture-inputs216.json": "e9d100c8b98ddd032faf6aa2784a1ef8f330ea329905456e66c6796ba0041eae",
+
     "scripts/runner/standard-runner-actor181/host-install/capture_pins216.mjs": "c5f477472a49e21f78af30bab16d7939f58f67953397197eb39e92fb1eb8922c",
+
     "scripts/runner/standard-runner-actor181/host-install/code-epochs216.json": "a002e31c7b07ed08f5100cef0983de92e99380da4dbd8353f89de3b0e4cafcc7",
+
     "scripts/runner/standard-runner-actor181/host-install/console_frame.mjs": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+
     "scripts/runner/standard-runner-actor181/host-install/console_transport.mjs": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd",
+
     "scripts/runner/standard-runner-actor181/host-install/definition.ps1": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+
     "scripts/runner/standard-runner-actor181/host-install/enrollment_adapter.ps1": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627",
+
     "scripts/runner/standard-runner-actor181/host-install/enrollment_code.py": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79",
+
     "scripts/runner/standard-runner-actor181/host-install/imports216.json": "e576ab8cb4e87512cdcc47e2a68d7d869b332231d23401addfb718f33bf50109",
+
     "scripts/runner/standard-runner-actor181/host-install/install_observer216.ps1": "e6a4cc9d6c0cf907cf1cd009bb6685b0c1bcf8d067bf28bc069d737328e80f73",
+
     "scripts/runner/standard-runner-actor181/host-install/install_observer_entry216.ps1": "dbc5b428b49b85bf4c2e58ea72da63ec7a91d07b319845207f076f2c59efb30e",
+
     "scripts/runner/standard-runner-actor181/host-install/install_relay216.ps1": "e7d70a9514a8057bd9541143824e41dd3d55a6235854c082f0a577fd60ea5653",
+
     "scripts/runner/standard-runner-actor181/host-install/install_relay_entry216.ps1": "c2036ae654ae2275b88a9bd6fe24caefbf088aeb04a673da97698ebb137a485f",
+
     "scripts/runner/standard-runner-actor181/host-install/namespace.ps1": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9",
+
     "scripts/runner/standard-runner-actor181/host-install/native-provenance216.json": "8f525e5756981cdc9a92b79511f628e2f9bf927ce28aa56df3c8aca145b839f7",
+
     "scripts/runner/standard-runner-actor181/host-install/node_ingress.ps1": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+
     "scripts/runner/standard-runner-actor181/host-install/observer-capture216.json": "19a5bf5de21d0a63ac9f64534310aab48c63d0a76bf31409726aca18e19a0ddf",
+
     "scripts/runner/standard-runner-actor181/host-install/observer.ps1": "142b564e2fd411e7f68d82b2b6ca4b16ef261c5d795324d296b8b6535a35895e",
+
     "scripts/runner/standard-runner-actor181/host-install/parent_bootstrap.ps1": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f",
+
     "scripts/runner/standard-runner-actor181/host-install/qual_helpers.ps1": "2eced12090f96460c5699f247d171bd3e16a69e908c9debd6986cd36af3dc509",
+
     "scripts/runner/standard-runner-actor181/host-install/qual_receiver.ps1": "4ea513a4a99a5aca4dac62670e37ed4237acbabd776d891be03bb906f5c856a0",
+
     "scripts/runner/standard-runner-actor181/host-install/registration.ps1": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+
     "scripts/runner/standard-runner-actor181/host-install/root_entry.ps1": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf",
+
     "scripts/runner/standard-runner-actor181/host-install/self-bootstrap215.json": "08f7b2694e0fbdd40faaba9303befd739695c6c243f00363b9900c32ee50e033",
+
     "scripts/runner/standard-runner-actor181/host-install/self_helpers.ps1": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+
     "scripts/runner/standard-runner-actor181/host-install/uac_supervisor.ps1": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36",
+
     "scripts/runner/standard-runner-actor181/host-install/xml.ps1": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5",
+
     "scripts/runner/standard-runner-actor181/host-qualification/authority_server_with_reader181.ps1": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3",
+
     "scripts/runner/standard-runner-actor181/host-qualification/ba_observer_wrapper181.ps1": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2",
+
     "scripts/runner/standard-runner-actor181/host-qualification/build_capture214.mjs": "3ee3c9ba45dd3614e5e34519f1649a09c1f0f04a16407126b81dcee67c977c75",
+
     "scripts/runner/standard-runner-actor181/host-qualification/capture-inputs214.json": "ce19a6c3e5bf08c690691cdaa5e8ba3733baa8b450db460fdf1cf35fcc0776d2",
+
     "scripts/runner/standard-runner-actor181/host-qualification/capture_pins214.mjs": "aeaed264569fa43e1bec24927aef27fc60b574358ffb653fc5f8069727b5ea17",
+
     "scripts/runner/standard-runner-actor181/host-qualification/console_frame181.mjs": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f",
+
     "scripts/runner/standard-runner-actor181/host-qualification/console_transport214.mjs": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd",
+
     "scripts/runner/standard-runner-actor181/host-qualification/observer_entry181.ps1": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079",
+
     "scripts/runner/standard-runner-actor181/host-qualification/owned_effects214.ps1": "5f14a330ff00e1701db0d0f37507d08370cd9a28f2e40cadba4319011334a81c",
+
     "scripts/runner/standard-runner-actor181/host-qualification/parent_bootstrap181.ps1": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f",
+
     "scripts/runner/standard-runner-actor181/host-qualification/relay_entry214.ps1": "0ed43755374e6f322c6ed7d8c3ddc0202cb9d88ecf6fcac4196369fa53e4e797",
+
     "scripts/runner/standard-runner-actor181/host-qualification/relay_ingress_mux216.ps1": "454c10a1caf4ca133084f7c8a86e742da62437df97f0cce26507f66a62a9b9a2",
+
     "scripts/runner/standard-runner-actor181/host-qualification/root_node_ingress212.ps1": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+
     "scripts/runner/standard-runner-actor181/host-qualification/root_uac_supervisor181.ps1": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36",
+
     "scripts/runner/standard-runner-actor181/host-qualification/selector_publisher216.ps1": "6dfe7e7d05e8a2d9a26bafb0237b14c55535bbc58882b0a4176ea6af2a4c59c2",
+
     "scripts/runner/standard-runner-actor181/host-qualification/self_registration_actor181.ps1": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+
     "scripts/runner/standard-runner-actor181/host-qualification/self_registration_observer181.ps1": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c",
+
     "scripts/runner/standard-runner-actor181/host-qualification/self_registration_observer_os181.ps1": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a",
+
     "scripts/runner/standard-runner-actor181/host-qualification/supervisor_entry214.ps1": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf",
+
     "scripts/runner/standard-runner-actor181/host-qualification/windows_task_definition181.ps1": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+
     "scripts/runner/standard-runner-actor181/host-qualification/windows_task_registration_account181.ps1": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+
     "scripts/runner/standard-runner-actor181/installed-authority.mjs": "3d98b57e9ea20106d7c4f964c1775a9f251ee2d4dd097e64c77361376a3654ed",
+
     "scripts/runner/standard-runner-actor181/installed-provider.mjs": "4f3f4cc6761587f6bb6571f1d6c8035b9054c80006deaf5fe5b77c3dd0674c6e",
+
     "scripts/runner/standard-runner-actor181/joint-capture.mjs": "e0ba93fc836efb7ef03bb7672fafaf19754ea01b293a7269a12ba40a05c9e40a",
+
     "scripts/runner/standard-runner-actor181/joint/authority_server_with_reader181.ps1": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3",
+
     "scripts/runner/standard-runner-actor181/joint/ba_observer_launcher181.mjs": "2275ba693f84d6a79783bd29771afedf7996a0c94f4ab11d10a15f09c6dc22c4",
+
     "scripts/runner/standard-runner-actor181/joint/ba_observer_wrapper181.ps1": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2",
+
     "scripts/runner/standard-runner-actor181/joint/captured_pair_launch181.mjs": "08ec2e011495b0960fb380fa08ec141199b968c31ec4814249e4aa2240a50a70",
+
     "scripts/runner/standard-runner-actor181/joint/joint_runtime211.mjs": "37248bb933bb38e35c834b8c3f38a1d97b808e66144c9afe5e93de12a431d99e",
+
     "scripts/runner/standard-runner-actor181/joint/provider_client_runtime181.ps1": "b71d7eb8159942d94bc6ea14c0a572b3c5cea7636140c373fc3dcdebd07932d1",
+
     "scripts/runner/standard-runner-actor181/joint/relay_stdio_wrapper181.ps1": "09e211957c29aeeedca084185f0c676f6b92157880f7f1e7f3b130e79b8248b8",
+
     "scripts/runner/standard-runner-actor181/joint/runner_entry_runtime181.ps1": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc",
+
     "scripts/runner/standard-runner-actor181/joint/runner_pipe_wrapper_runtime181.ps1": "769044544957af1c79d39e6cf30c49b6adc5900ec960e2e1846e27c43a3c9db3",
+
     "scripts/runner/standard-runner-actor181/joint/runner_spawn_transport211.mjs": "05306130b91a56d3958c4ae4d2ffc5380f5278a7b9e8d114bc62fc34734d95e7",
+
     "scripts/runner/standard-runner-actor181/maintenance-pipeline215.mjs": "ec477370b317f3d49b22c8eeed7cfe111875b9e7ff5265c0db1f5a1b4eb12ede",
+
     "scripts/runner/standard-runner-actor181/node-ingress/node-authority212.mjs": "7063e687f4f1a8565ba81f0f1efa4a11a3459b341b7bc8a5c83b067c23f1c2ac",
+
     "scripts/runner/standard-runner-actor181/node-ingress/node_broker212.ps1": "77f46d2d87ccae6e71160e16048b3b32d5357e409b8c8cce1e8f05c4da89d3a1",
+
     "scripts/runner/standard-runner-actor181/node-ingress/protocol212.mjs": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e",
+
     "scripts/runner/standard-runner-actor181/node-ingress/root_node_ingress212.ps1": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7",
+
     "scripts/runner/standard-runner-actor181/node-ingress/selector-wait212.mjs": "bb9b67aa63a1a4ed6a63c87bf3e13f0c3b337604b9c88768358327d0ba9386e5",
+
     "scripts/runner/standard-runner-actor181/node-runtime/read-node-primary.mjs": "fe4bee9ca15ce87d964c88770a3c9ee079f6c3cde555f6d6bbb1faa09807edc6",
+
     "scripts/runner/standard-runner-actor181/node-runtime/runtime-projection.mjs": "f75ef56429dbdbdcccf5b71be27fab4234da4bffbf5b4b210d76cd403ef5602c",
+
     "scripts/runner/standard-runner-actor181/provider-core.mjs": "73369d0ae90078effa64bc6f34b5f2e1e90af8debefac43eef9c674f11ef20c1",
+
     "scripts/runner/standard-runner-actor181/self-install/captured-members215.json": "b3d843c1281a5fa2d8590f9efd79b95ef305480ae173026951ad041f08e451f3",
+
     "scripts/runner/standard-runner-actor181/self-install/core.ps1": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4",
+
     "scripts/runner/standard-runner-actor181/self-install/definition.ps1": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4",
+
     "scripts/runner/standard-runner-actor181/self-install/enrollment_adapter.ps1": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627",
+
     "scripts/runner/standard-runner-actor181/self-install/enrollment_code.py": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79",
+
     "scripts/runner/standard-runner-actor181/self-install/install_protocol215.mjs": "e45cd5d9ecf6f2657417fa8d52377f632b4309f89c1772b923847b91b13ce294",
+
     "scripts/runner/standard-runner-actor181/self-install/install_spawn215.mjs": "aa07e354d2fc3e881c9bf50fa8d53bcbd39e110c72e96594236eb9df85471ca0",
+
     "scripts/runner/standard-runner-actor181/self-install/install_wrapper215.ps1": "383ab3c34ddc98c43fffa5a3b19269c299033231d0c7ce09b4408e546a33a749",
+
     "scripts/runner/standard-runner-actor181/self-install/namespace.ps1": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9",
+
     "scripts/runner/standard-runner-actor181/self-install/node_broker212.ps1": "cb8e77757c9924abe7b7a82859fa27506937c8db5def05659d9ed58e3eb81485",
+
     "scripts/runner/standard-runner-actor181/self-install/node_capture_pins215.json": "8e26a5ed5165ebc594c43b3f403f2ae2ce79dc58f6568f3423afb4a403da1a6c",
+
     "scripts/runner/standard-runner-actor181/self-install/node_install_authority215.mjs": "13679cac295573aa2593c870c1c6a417c4a73c31a7bb93ed3206eb4601414c5f",
+
     "scripts/runner/standard-runner-actor181/self-install/protocol212.mjs": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e",
+
     "scripts/runner/standard-runner-actor181/self-install/registration.ps1": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb",
+
     "scripts/runner/standard-runner-actor181/self-install/run_install215.mjs": "c4ffbc79ea4fc649614ce35a363eb25f6ba6db2dac933a3d571e35c6854c8e6d",
+
     "scripts/runner/standard-runner-actor181/self-install/selector_wait218.mjs": "dde1b02c0acf77877b0bf5fac22f266e99942318d383fbc4868eb43265eb2a59",
+
     "scripts/runner/standard-runner-actor181/self-install/self_helpers.ps1": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616",
+
     "scripts/runner/standard-runner-actor181/self-install/xml_helpers.ps1": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5",
+
     "scripts/runner/standard-runner-actor181/server/authority_server181.ps1": "15ad0a6e66ed87fa2fa30f398200ba35dd80ae524387ce6407306a84e24f03d1",
+
     "scripts/runner/standard-runner-actor181/server/closed-spawn-and-authority-abi181.json": "f1b7ec9212c1780f0c3d15edf4e4ba08cbfe3546ca9db164fc8e9181ade9a8a6",
+
     "scripts/runner/standard-runner-actor181/server/provider_client181.ps1": "5b53a5861e7708594c5c37343ea001c0d838cfdb8b0a15ff9008e35e2f236f3a",
+
     "scripts/runner/standard-runner-actor181/server/runner_pipe_wrapper181.ps1": "e39091d524ada1f0631c05eb8a91f417d76689196a4953801955c663a67f240f",
+
     "scripts/runner/standard-runner-actor181/server/runner_spawn_transport181.mjs": "ac56d52d00d11e14f80877a68276e9d6ffbcc4e80322e4fe2480e51a04a8ae15",
+
     "scripts/runner/standard-runner-actor181/source-capture.mjs": "c853d78d03618e4566dd08844538bb0b5a331381d2aeec679b04092c37b77b07",
+
     "scripts/runner/standard-runner-actor181/source-manifest.json": "54790a5675d35d5d559f63e64a8c03e093ad460a42862e3bfd0c1e044b391947"
+
   }
 }

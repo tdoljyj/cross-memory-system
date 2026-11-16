@@ -1,11 +1,12 @@
 # Automatic component integration
 
-Task 342c local implementation. This command is a candidate builder, not a
-deployment or a replacement for Source acceptance. DESK owns the existing
-`integrate.sh` integration point; activation is pending until it calls this tool.
+Task 342c local implementation, narrowed by ComponentVersioning v0.4 (defect C):
+the builder regenerates the mechanical outputs of a pull request's own change
+and sets no version. Taking main into a queued pull request is a plain merge
+with nothing to regenerate. This command is a candidate builder, not a
+deployment or a replacement for Source acceptance.
 
-After trial merge, from a clean disposable candidate, before generating the
-final tested commit:
+From a clean disposable candidate, before generating the final tested commit:
 
 ```text
 python scripts/ci/component-version-integration.py --root <candidate> --base <main-SHA> --expect-head <candidate-SHA> --write
@@ -22,7 +23,7 @@ none and the tool now refuses that omission. Its explicit source is
 `root: apps/clued-cloud`, `files: [worker/**/*, supabase/migrations/*.sql]`.
 Include the new integration helper/policy scripts and their tests in appropriate
 component coverage, and the static policy/helper in the accepted Source closure.
-Do not hand-bump versions; let the integration command calculate them.
+A version changes only when someone bumps it on purpose; nothing is computed per PR.
 
 The existing held config/generated/version files were not edited in this patch.
 Native migration and matching accepted CI source must be qualified through the

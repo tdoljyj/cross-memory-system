@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {sourceClosure,hash,canonical,SOURCE_FILE,WORKFLOW_FILE,SOURCE_SCHEMA} from './clued-merge-reconcile-source.mjs';
+import {layoutRegistry} from './registry-layout.mjs';
 const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
 const workflow=fs.readFileSync(WORKFLOW_FILE),pin=hash(workflow);
 const config='work/independent-ci-resident-v1/src/merge-reconcile-config.mjs';
@@ -15,5 +16,5 @@ const source={schema:SOURCE_SCHEMA,repository:'tdoljyj/cross-memory-system',defa
   productionAuthority:false,runnerHookException:false,hostQualification:'separate_required',
   workflow:{path:WORKFLOW_FILE,sha256:pin},role:{id:'reconcile',definition,sha256:hash(JSON.stringify(canonical(definition)))},
   files:Object.fromEntries(sourceClosure('.').map(name=>[name,hash(fs.readFileSync(name))]))};
-fs.writeFileSync(SOURCE_FILE,JSON.stringify(source,null,2)+'\n');
+fs.writeFileSync(SOURCE_FILE,layoutRegistry(source));
 console.log(JSON.stringify({sourceFiles:Object.keys(source.files).length,workflowSha256:pin,registrySha256:hash(fs.readFileSync(SOURCE_FILE))}));
