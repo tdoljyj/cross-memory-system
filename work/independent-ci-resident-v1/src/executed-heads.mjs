@@ -21,7 +21,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, isoNow, parseBoundedJson, sha256 } from './canonical.mjs';
-import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
+import { ensureDir, exists, readBounded, readJson, writeNew } from './store.mjs';
 
 export const EXECUTED_HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-executed-head-key/1';
 export const EXECUTED_HEAD_CONTRACT = 'clued.independent-ci.resident-executed-head/1';
@@ -100,6 +100,22 @@ export class ExecutedHeads {
 
   // Any record of this head, whatever Source or attempt wrote it, and also its directory alone (an interrupted write).
   async published(subject) { return exists(this.headDir(subject)); }
+
+  // A safe-point continuation owns only the publications in its exact predecessor chain. Empty/unreadable directories,
+  // unrelated executions, and records carried without that chain remain a refusal, exactly as published().
+  async onlyRecordsOf(subject, keys) {
+    if (!(await this.published(subject))) return true;
+    try {
+      const names = await fs.readdir(this.headDir(subject));
+      if (names.length === 0) return false;
+      for (const name of names) {
+        if (!/^(publication|backfill)-[0-9a-f]{16}\.json$/.test(name)) return false;
+        const v = (await readJson(path.join(this.headDir(subject), name))).value;
+        if (v.contract !== EXECUTED_HEAD_CONTRACT || executedHeadKey(v) !== executedHeadKey(subject) || !keys.includes(v.key)) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
 
   // True only when the head's one record FILE is attempt 1's own, written first "before stage R" (batch key key1). A
   // record is create-only per (origin, batch key), so a later stage of the same attempt writes nothing new: this alone

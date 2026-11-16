@@ -368,7 +368,8 @@ test('review m4: park.maxMs ends a parked batch at a tick start even when no try
   assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
   f.advance(60 * MIN);
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'RESIDENT_MERGE_QUEUE_NOT_JOINED']);
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT']);
+  assert.equal((await f.ledger.state(KEY)).terminal.facts.basis, 'park-max-age');
   assert.equal(stagesRun(f.engine).filter(n => n === 8).length, 1, 'no stage ran for the ending');
   assert.equal(await f.ledger.halted(), null);
 });

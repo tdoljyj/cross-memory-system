@@ -324,7 +324,7 @@ test('m1: a node-role release is no new-trigger re-evaluation either (the cap of
   }
   const u = await f.ledger.usage(0);
   assert.deepEqual([...u.reevaluations], [[`884:${H(2)}`, 1]]);
-  assert.deepEqual([u.evaluations, [...u.releasesByHead]], [1, [[H(2), 1]]]);
+  assert.deepEqual([u.evaluations, [...u.releasesByHead]], [1, []]);
 });
 
 // An engine whose attempt 1 ends in a transient stage-2 failure (so attempt 2 is scheduled) and whose attempt 2 meets `refuse` at stage 1.

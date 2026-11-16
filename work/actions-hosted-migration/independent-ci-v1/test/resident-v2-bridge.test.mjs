@@ -3,6 +3,7 @@
 // result, the Windows issuer engine end to end against a simulated Linux party, role policy v3 and
 // qualification v2. No network, Docker, WSL, Host path or credential; all directories are under os.tmpdir().
 import test from 'node:test';
+import {summarizeGitleaksReport} from '../src/gitleaks-report.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -71,12 +72,18 @@ test('gitleaks signed result v4 binds the exact 737/106/177/130 proof and reject
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
     sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 737,
-    reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
+    reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, gitleaksReport: summarizeGitleaksReport('[]', {...job,prCommits:[job.headSha]}, 0), startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
     logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
     formalEligible: false, checksWritten: false, qualificationIssued: false };
   const wrapper = signedWrapper(issue, observation, signer);
   assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  const changedReport = { ...wrapper, observation: structuredClone(wrapper.observation) };
+  changedReport.observation.gitleaksReport.prCommitSetSha256 = '0'.repeat(64);
+  assert.throws(() => verifySignedBridgeResult({ issue, wrapper: changedReport, signers: record.signers }), { code: 'SIGNED_FORMAL_OBSERVATION_CHANGED' });
+  const changedPayload = structuredClone(wrapper);
+  changedPayload.envelope.payload.gitleaksReport.prCommitSetSha256 = '0'.repeat(64);
+  assert.throws(() => verifySignedBridgeResult({ issue, wrapper: changedPayload, signers: record.signers }), { code: 'result_signature_invalid' });
   // gitleaks keeps /2; trivy's /3 (DESIGN 64.3) is not a gitleaks contract
   assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: { ...observation, contract: 'clued.independent-ci.formal-scanner-observation/3' } }, signers: record.signers }), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
   for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, requiredHistoricalExceptions: 729 }, { ...observation, requiredHistoricalExceptions: 732 }, { ...observation, requiredHistoricalExceptions: 733 }, { ...observation, requiredHistoricalExceptions: 734 }, { ...observation, requiredHistoricalExceptions: 736 }, { ...observation, requiredHistoricalExceptions: 738 }, { ...observation, reviewedHistoryProof: undefined },

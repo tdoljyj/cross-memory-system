@@ -1,6 +1,7 @@
 // Pure Source-v4 successor gates. These reports/observations never acquire an
 // actual self-test, observation, qualification or signer capability.
 import test from 'node:test';
+import {summarizeGitleaksReport} from '../src/gitleaks-report.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,7 @@ function execution() {
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 737, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 737, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, gitleaksReport: summarizeGitleaksReport('[]', {...job,prCommits:[job.headSha]}, 0), startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };

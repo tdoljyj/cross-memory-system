@@ -3436,7 +3436,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - 第 11 段探测在 ACTIVE 上 30 分钟一次（`role-probe.mjs:7`），要求没有 HALT、没有 PAUSE、没有未结束的批次（`executor.mjs:1158`），暂停接新时被挡（`:1112`），字节漂移时先 HALT 返回（`:1161-1162`），代理忙时推迟（`:1170`）；
   - 第 10 段在列车关着时不跑（`executor.mjs:1316`、`train.mjs:18`），间隔可设到 60 分钟（`policy.mjs:132`）；
   - 批次的独占区里不插任何段（§18.1）。
-- **触发只有一种：失联**（Decision `199cf3de`）。HALT 不再触发接班。
+- **触发：失联，或当班 HALT 满 5 分钟**（Decision `199cf3de`；HALT 一条由迁移 `20261116100000` 加入，待 Owner 批准）。HALT 本身不立即触发：要连续 HALT 满 `halted_minutes`（5 分钟）。
 - **专用心跳**：
   - 谁发：companion（Owner 登录会话里的计划任务，§8.4，本来就能出网），每 10 分钟一次，与列车模式、PAUSE、HALT、批次进行与否都无关。它不经代理、不跑任何段，没有 GitHub 副作用。companion 本来就要在线，节点才能干活（打 bundle、轮询，§3 的表），所以它的心跳就是“这个节点还能工作”。
   - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）。服务端把令牌绑定到这个节点，载荷里的节点名一律不用。
@@ -3456,7 +3456,10 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
     - 心跳还在来，但连续 30 分钟每一条都报“服务没在运行”或“快照超过 30 分钟”（机器开着、服务进程不在了）；中间只要有一条报服务在运行且快照新鲜，计时就重来；
   - X 在被标资格之后、并且在总开关打开之后，至少发过一次心跳。从没发过心跳的持有者（旧包、刚标资格、心跳连接还没建）不算失联，只告警；
   - 接收端当时在工作：X 沉默的这 30 分钟里，Y 至少有 2 次心跳到达服务端。否则可能是服务端或网络中断了 30 分钟以上，恢复后 Y 的心跳先到；这种情况只告警，不交接。第二种失联不受这一条限制（X 自己的心跳在来）；
-  - X 最近一条**读得出的**自报不是 `HALTED`（任何码）、`PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，两种失联都一样。暂停是 Owner 或兜底的决定：树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、回退第 1 步（41.9）；
+  - 或者 X 停机：最近一条**读得出的**自报是 `HALTED`（任何码），并且这次 HALT 已连续满 `halted_minutes`（5 分钟，规则 `halted_minutes`，迁移 `20261116100000`）。起点是服务端收到这次 HALT 第一条自报的时刻（`ci_node_liveness_v1.halted_since`，心跳写、服务端时钟；`UNKNOWN` 保留它，其他读得出的状态清空它）。心跳照来、服务在运行也算，不受“接收端两次心跳”限制。
+    - 2026-11-14 生产：TURING 当班时 HALT，心跳照常、服务在运行、快照新鲜，两种失联都不成立，HALTED 持有者又永不交出，CI 停了约 3 小时。
+    - 为何安全（不会两台同时发布）：与任何交接一样由服务端保证——交接核心在同一事务里结束 X 的记录，第 1、8 段每次都实时准入（`ci_duty_admits_v1`，记录结束即拒），Y 的记录只在 X 最近一次肯定答复早于 210 秒时立即生效，否则 5 分钟后生效（ADR 0026）。HALT 的执行器本来不再请求准入；Owner 复位后它下一次实时准入被拒，按 §29 转 STANDBY；它已发、未合入的绿由 Y 的接班清扫撤掉（41.6）。HALT 是节点自己出了未确认的状况（归档、worker、子进程树、companion），节点不可用、整个 CI 不该停。
+  - X 最近一条**读得出的**自报不是 `PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，三种触发都一样。暂停是有意的停：Owner 的急停、树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、升级与回退（41.9）；
   - 没有冷却（迁移 `20261115100000`，2026-11-15 起；原为 6 小时）：交出过角色的节点只要符合下面的目标条件就可选。原来的 6 小时冷却连 Owner 的计划内移交也算，两节点时每次计划内交接（升级、维护、切回）之后 6 小时没人接班（2026-11-15 生产实测：TURING→DESK→TURING 之后两台都在冷却）。它要防的两件事已有别的规则管：自动交接之间来回抖由“不自动交回”（见下，到被交出的节点重新连续健康满 30 分钟为止）挡；Owner 有意交出、还没修好的节点不健康、不是同一 Source，本来就不是候选。Owner 想让一个健康节点暂不接班，就暂停它或取消它的资格；
   - 存在目标 Y：有资格、不是持有者、20 分钟内有心跳、自报模式是 `STANDBY` 且最近一次探测结果为 `not-held`、自报状态不是 `HALTED`、`PAUSED`、`INTAKE_PAUSED`、`UNKNOWN`、Source 与 X 最近记下的相同，并与其余 24 小时内有心跳的常驻节点都相同（这里的常驻节点指所有发心跳的常驻节点，不只是标了资格的；全部常驻节点同一个 Source，与 41.6 开车条件一致；没有记录的节点不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对。
 - **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它。核心函数显式接收 owner（`pg_cron` 里没有 `authorization_owner_v12()`），取同一把 advisory 锁（`20261023010000`:457），同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
@@ -3472,7 +3475,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 的接班清扫撤掉（41.6：水位加增量，加整条流水）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
 - **验收**（DB 测试）：
   - 选择：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（心跳过期、不是 STANDBY、探测不是 not-held、HALTED、PAUSED、UNKNOWN、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；总开关关着时不交接。
-  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 HALTED（任何码）、PAUSED 或未到期 INTAKE_PAUSED 的持有者，两种失联都永不被交出；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 HALTED 或 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；Owner 计划内移交之后不冷却（两节点用例：Owner 手动把 B 交给 A，A 失联，交给 B；`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；被自动交出的连接不被自动选回，Owner 做过涉及它的手动交接后恢复，且只恢复它自己；候选用完时（A→B，B 失联，只剩被排除的 A）只告警不交接。
+  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 PAUSED 或未到期 INTAKE_PAUSED 的持有者永不被交出；心跳照来、服务在运行的 HALTED 持有者 4.9 分钟不交、满 5 分钟交出（trigger `halted`），复位后的一条 NORMAL 让计时重来，HALTED 之后的 `UNKNOWN` 保留起点，沉默的 HALTED 持有者按失联交出，交出后旧持有者的实时准入立即被拒、新持有在旧持有者刚拿到准入时 5 分钟后才生效（`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；Owner 计划内移交之后不冷却（两节点用例：Owner 手动把 B 交给 A，A 失联，交给 B；`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；被自动交出的连接不被自动选回，Owner 做过涉及它的手动交接后恢复，且只恢复它自己；候选用完时（A→B，B 失联，只剩被排除的 A）只告警不交接。
   - 交接与权限：交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、心跳连接都要两步确认；心跳连接调不了心跳以外的任何函数；心跳记到令牌所绑的节点上，载荷里的节点名不起作用；节点改不了心跳时刻；holders 入参不变、不写记录。
   - 常驻层：心跳在 HALT、PAUSE、暂停接新、批次进行中、列车关着时照发；状态变化时立即补发；服务停了时心跳照发、状态 `UNKNOWN`、报服务没在运行；一个 45 分钟的长段里快照照样每 15 秒刷新，不被当成服务进程不在；Owner 注销后心跳停止；自报的 Source 取自 `versions.windows`，改 companion 配置不影响它；HALT 时 PR 与 head 取自 `current`；连续 3 次心跳失败或令牌过期时发 Windows 通知；`-HeartbeatTokenFile` 装进的目录 Owner 只读、别的普通用户读不到；Y 的 companion 在算力面板 Issue 发带标记的 @Owner 评论，每个回执只一次，面板不重复 @；看门狗超过 5 分钟没 tick 时告警；X 在下一次准入被拒后转 STANDBY。
 
@@ -5761,6 +5764,28 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - attempt 2：预检后一次读，head 已变 → `ATTEMPT2_SUPERSEDED`；读不到 → 照常跑完。
 
 随之更新：`test/node-mode.test.mjs`（STANDBY 下停在 A、B 的批次不再续跑，而是按规则结束）、`test/scheduler.test.mjs`（等托管的批次在 tick 上按规则结束，安全点名 `waiting`）、`reinstall/test/test_rehearse.py`（卸载计划里的未结批次不是预演发现）。原有的取代、停靠、#1035、排队观察、重启重跑测试照旧通过。
+
+### 72.9 第四条（只对停靠批次）：本节点的升级在排空时，停靠批次不再成立
+
+现场（2026-11-16 北京时间 10:29，DESK 当班原地升级到 fleet-node-2026.11.16-446a7106）：待命 TURING 已先升到新 Source，DESK 的升级停在 `WAITING_DRAIN`、`openBatches=1`，就是 #1130 停在 B 的车头批次。它从 70-parked 起连试 17 次都是 `TRAIN_SINGLE_GREEN_NOT_PROVEN`：两台 Source 不同，第 10 段不证明单绿，要等 DESK 升完；DESK 的升级又在等这个批次收尾。车头在合并队列第 1 位的尝试不计入 `park.stage8MaxTries`，只有 `park.maxMs`（24 小时）能结束它，而排空最多 120 分钟、每 60 分钟重试、Grant 24 小时后作废。11:48 Owner 手工关闭 #1130 才放行。
+
+病根：冻结的升级代理（`upgrader/src/resident-ports.mjs#openBatches`）把账本里所有没有 `90-terminal.json` 的条目都算未结批次，排空要它为 0；§72.6 让重装前的停靠残留由规则结束，原地升级这条路漏了。停靠批次等的是本节点之外的东西（托管、合并队列、列车），而启动它的 Source 正要离开。
+
+- **规则**：停在 A 或 B 的批次，还要求本节点的升级代理没有在为它排空。判定是 `executor.mjs#upgradeDraining()`，两样都是升级代理自己的话、本拍读到的：`upgrade\status.json` 的 op 状态是 `WAITING_DRAIN`（versions 端口；由升级代理写，不是 Owner 会话），而且它的 intake hold（holder `resident-upgrade`，`executor.mjs#UPGRADE_HOLDER`，测试钉住与冻结的 `HOLDER_UPGRADE` 相等）在生效；再加 companion 心跳新鲜（同 `not-on-duty`）。排空超时后升级代理撤 hold，残留的状态文件结束不了任何批次；hold 最长两小时自动失效。
+- **结束**：同一条 `supersededEnd`，`basis: upgrade-drain`；B 上第 8 段终态，A 上第 1 段终态。此类流程性结束按 §72.10 自动重新接纳同一 head/S，不要求空提交；下一拍排空看到 0，往下走暂停。
+- **不判的**：在途批次照旧跑到下一个停靠点（排空本来就等它），到点再按本条结束；Owner 的 hold、只有状态没有 hold、只有 hold 没有 `WAITING_DRAIN`，都不结束。冻结通道不改。
+- **测试**：`test/upgrade-drain-parked.test.mjs` 用冻结升级代理自己的 drain 步骤（`STEPS.drain`）、冻结观察面（`ResidentPort` 的 hold 与 `openBatches`）和升级代理自己的状态文件（`buildStatus`/`writeStatus`），对真实执行器复现 #1130：修复前 120 分钟内排空一直等（`openBatches=1`），修复后一两分钟内通过，终态 `SUPERSEDED_AT_SAFE_POINT`/`upgrade-drain`，不再试第 8 段、不 attempt 2、不 HALT；以及上面四种不结束的情形。
+
+### 72.10 流程在安全点结束，不消耗同一 head/S 的续跑资格
+
+`upgrade-drain` 干净结束后，原实现的三层去重把 head 永久挡住：`supersededEnd` 返回 `burned`，`RunQueue.settle` 把行停为 `STOPPED/burned`，`offer` 忽略已见过的 head；即使重新入队，`precheck` 仍拒绝账本已烧号、已用批次键和 `executed-heads` 中已发布的 head/S。PR 页因此要求推新提交。三层去重对真实失败继续生效，流程性结束通过带前序证据的续跑解决。
+
+- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
+- 账本把这类完整终态整体改名保存到 `state/ledger-flow-ends/`。原始烧号和已发布记录保留；新预留的 `flowFrom` 消耗精确前序，`flowKeys` 只允许其自身发布链通过去重。队列只是投影：每拍从未消费前序恢复同一 PR/H/base/S，重复触发、队列丢失或重启不产生第二份执行。
+- 新批次仍走节点、列车、intake hold、版本一致性、停车容量、熔断、日额度与实时 PR 校验。升级 hold 或 PAUSE 未撤不续跑；读不到 PR 不放行，已关闭或 head 改变则退役该续跑资格。预留之前崩溃可重试，预留之后崩溃仍是原恢复机制的现场，不额外开 attempt 2。
+- A 尚未扫描，重新走准入。B 的 CI Source 未变时，只重派生当前安装版本的控制包，从第 8 段继续；该 CI Source 的原批次绑定与已完成检查仍有效，原扫描不重跑。CI Source 改变时，job ID 和 sticky batch claim 随之改变，必须重新走正常准入和扫描；既有 Native 发布、scan-start 和列车守卫继续决定能否执行。安装文件 Source 与 CI Source 不混用。
+- 同一 head/S 的其他执行、不可读发布记录或空发布目录仍拒绝续跑。历史尝试仍计入日预算；B 续跑的第一次第 8 段也计重试。流程性结束保持熔断中性；续跑后的真实失败照旧烧号，不继续重排。
+- PR 页对流程结束显示 pending、自动续跑、不用推新提交。`test/safe-point-readmit.test.mjs` 覆盖结束→hold→恢复→一次完成、A/B、超时、安装/CI Source、重启和队列丢失、版本错位、发布链、额度、真实失败及状态文案。冻结升级通道不变。
 
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 

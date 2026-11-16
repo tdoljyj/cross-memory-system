@@ -27,6 +27,38 @@ const perPr = (per, base = fakeEngine()) => {
   return base;
 };
 
+test('G4: claim waits spend only the waiting budget, leaving a real evaluation and another PR runnable', async t => {
+  const claim = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['claim_not_found'] } };
+  const engine = perPr({ 1: notAdmitted('CLAIM_NOT_CURRENT', claim), 2: notAdmitted('PATHS_OUTSIDE_WRITE_SET') });
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ limits: { ...rawPolicy().limits, maxEvaluationsPer24h: 1, waitingRetriesPer24h: 2 } }) });
+  await f.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  assert.equal((await f.exec.tick()).failureCode, 'CLAIM_NOT_CURRENT');
+  let u = await f.ledger.usage(0);
+  assert.deepEqual([u.evaluations, u.waitingRetries, u.started, u.releasesByHead.size], [0, 1, 0, 0]);
+  await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
+  assert.equal((await f.exec.tick()).failureCode, 'PATHS_OUTSIDE_WRITE_SET', 'real evaluation quota remains available');
+  // A full real-evaluation quota must still let the due claim wait run.
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).failureCode, 'CLAIM_NOT_CURRENT');
+  u = await f.ledger.usage(0);
+  assert.deepEqual([u.evaluations, u.waitingRetries], [1, 2]);
+  f.advance(20 * MIN);
+  await f.drop(triggerBytes({ pr: 3, headSha: H(3) }));
+  await f.exec.tick();
+  assert.equal(f.queue.row(1).deferred, 'WAITING_BUDGET_EXHAUSTED');
+  assert.equal((await f.ledger.usage(0)).waitingRetries, 2, 'a budget deferral reserves nothing');
+  // A separate fixture isolates the converse: a full waiting budget cannot block real work.
+  const g = await executorFixture(t, { engine: perPr({ 1: notAdmitted('CLAIM_NOT_CURRENT', claim) }),
+    policy: rawPolicy({ limits: { ...rawPolicy().limits, waitingRetriesPer24h: 1 } }) });
+  await g.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  await g.exec.tick();
+  g.advance(10 * MIN);
+  await g.drop(triggerBytes({ pr: 3, headSha: H(3) }));
+  assert.equal((await g.exec.tick()).state, 'COMPLETED');
+  assert.equal(g.queue.row(1).deferred, 'WAITING_BUDGET_EXHAUSTED');
+  assert.equal(g.queue.row(3).state, 'DONE');
+});
+
 test('the order: a due attempt 2, then due waits, then first come first served; a row deferred for itself never blocks the rest', async t => {
   const engine = perPr({ 1: notAdmitted('NATIVE_NOT_ADMITTED', WAIT) });
   const f = await executorFixture(t, { engine, policy: rawPolicy({ limits: { ...rawPolicy().limits, perPrBatchesPer24h: 1 } }) });
@@ -241,12 +273,13 @@ test('review M2: attempt 2 runs when the live read disproves the newer commit, o
 });
 
 test('review m4: the release cap holds across a queue that started over; the rebuilt breaker starts half-open', async t => {
-  const engine = fakeEngine({ stages: { 1: notAdmitted() } });
-  const f = await executorFixture(t, { engine });
+  const engine = fakeEngine();
+  const companion = fakeCompanion({ bundle: { ok: false, code: 'BUNDLE_UNAVAILABLE' } });
+  const f = await executorFixture(t, { engine, companion });
   await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
+  assert.equal((await f.exec.tick()).state, 'NOT_EXECUTED');
   f.advance(10 * MIN + 1);
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
+  assert.equal((await f.exec.tick()).state, 'NOT_EXECUTED');
   assert.equal(f.queue.row(884).state, 'STOPPED');
   await fs.writeFile(path.join(f.root, 'state', 'queue', 'queue.json'), '{"not":"a queue"}');
   const queue = await RunQueue.open(path.join(f.root, 'state', 'queue'), f.clock);
@@ -257,7 +290,8 @@ test('review m4: the release cap holds across a queue that started over; the reb
   const r = await exec.tick();
   assert.equal(r.reason, 'RELEASE_CAP_REACHED');
   assert.equal(queue.row(884).state, 'STOPPED');
-  assert.deepEqual(stagesRun(engine), [1, 1], 'never a third evaluation');
+  assert.deepEqual(stagesRun(engine), [], 'the cap stops it before any stage can run');
+  assert.equal(companion.calls.filter(c => c[0] === 'bundle').length, 2, 'never a third bundle release');
   assert.ok((await receiptTypes(f)).includes('queue-rebuilt'));
 });
 

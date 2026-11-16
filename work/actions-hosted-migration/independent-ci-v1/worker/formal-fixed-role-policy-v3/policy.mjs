@@ -13,13 +13,14 @@ import {spawn} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf,SCANNER_ROLES_V2} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
+import {validateGitleaksReport} from '../../src/gitleaks-report.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,LINUX_NODE_V2,POLICY_SCHEMA_V3} from '../qualification-v2.mjs';
 import {IMAGE as GITLEAKS_IMAGE,SCAN_ARGS,REVIEWED_COMMITS,matchesReviewedHistoryProof} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 import {IMAGE as TRIVY_IMAGE} from '../required-trivy-v3/plans.mjs';
 import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../trusted-workflows.mjs';
 const P='work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v3/policy.mjs';
 const PREFIX='work/actions-hosted-migration/independent-ci-v1/';
-const COMMON_SOURCE=Object.freeze(['worker/trusted-workflows.mjs','src/proof.mjs','src/job-v2.mjs','src/worker-v2.mjs','src/admission-facts-v2.mjs','worker/qualification-v2.mjs','worker/formal-fixed-role-policy-v3/policy.mjs','worker/formal-gitleaks-v4/required-history/prepare.mjs','worker/required-gitleaks/prepare.mjs','worker/required-trivy-v3/plans.mjs','worker/verify-once/verify-worker.mjs'].map(p=>PREFIX+p));
+const COMMON_SOURCE=Object.freeze(['worker/trusted-workflows.mjs','src/proof.mjs','src/gitleaks-report.mjs','src/job-v2.mjs','src/worker-v2.mjs','src/admission-facts-v2.mjs','worker/qualification-v2.mjs','worker/formal-fixed-role-policy-v3/policy.mjs','worker/formal-gitleaks-v4/required-history/prepare.mjs','worker/required-gitleaks/prepare.mjs','worker/required-trivy-v3/plans.mjs','worker/verify-once/verify-worker.mjs'].map(p=>PREFIX+p));
 const ROLE_SOURCE=Object.freeze({gitleaks:Object.freeze(['worker/formal-gitleaks-v4/adapter.mjs','worker/formal-gitleaks-v3/docker-transport.mjs','worker/formal-gitleaks-v4/required-history/selftest-shim.mjs'].map(p=>PREFIX+p).concat(['.gitleaks.toml','scripts/ci/reviewed_gitleaks.py','.github/workflows/gitleaks.yml'])),trivy:Object.freeze(['worker/formal-trivy-v4/adapter.mjs','worker/formal-trivy-v3/cache.mjs','worker/formal-trivy-v3/docker.mjs','worker/required-trivy-v2/plans.mjs','worker/qualification.mjs','src/worker.mjs','worker/scan-result-cache-v1/cache.mjs'].map(p=>PREFIX+p).concat(['.github/workflows/trivy.yml'])),'contract-placement':Object.freeze(['worker/formal-contract-placement-v2/adapter.mjs','worker/formal-contract-placement-v2/container-entry.mjs','worker/formal-gitleaks-v2/docker-transport.mjs','worker/scan-result-cache-v1/cache.mjs'].map(p=>PREFIX+p).concat(['.github/workflows/contract-placement.yml']))});
 // The same exact accepted set as formal-contract-placement-v2/adapter.mjs, from the one table (pure data;
 // the policy never imports a role adapter).
@@ -131,7 +132,8 @@ export function validateCleanupObservation(job,o){
   // trivy: observation contract /3 only (DESIGN 64.3; formal-trivy-v4 TRIVY_OBSERVATION_CONTRACT, literal here: the policy imports no adapter).
   // A scan result cache hit (DESIGN 68.5) carries no scans of its own: the original ones are inside cacheHit, checked in full by the signer.
   if(job.role==='trivy'){const scans=o.cacheHit?(Object.hasOwn(o,'scans')?null:o.cacheHit.originalObservation?.scans):o.scans;check(o.contract==='clued.independent-ci.formal-scanner-observation/3'&&o.profile==='required-trivy-three-scanners/1'&&scans?.length===3&&scans.every(s=>s.cleanupConfirmed===true&&s.complete===true)&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');}
-  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
+  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');
+  if(job.role==='gitleaks')validateGitleaksReport(o.gitleaksReport,job);return o;
 }
 export async function openFixedRoleSession(job,{preloaded=null}={}){
   const context=reusableRolePolicy(job,preloaded)??takeActualRolePolicy(await loadFixedRolePolicy(job));await protectedPath(path.dirname(SERIAL_LOCK),{directory:true});

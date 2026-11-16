@@ -245,7 +245,7 @@ test('every release reason is registered with its cool-down and the budget that 
     assert.equal(rule.cooldown, reason !== 'SUPERSEDED', reason);
     assert.ok([null, 'waitingRetriesPer24h', 'releasesPerHeadPer24h'].includes(rule.cap.waiting) && [null, 'releasesPerHeadPer24h'].includes(rule.cap.other), reason);
   }
-  assert.deepEqual(UNEXECUTED_REASON_RULES.NOT_ADMITTED.cap, { waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' });
+  assert.deepEqual(UNEXECUTED_REASON_RULES.NOT_ADMITTED.cap, { waiting: 'waitingRetriesPer24h', other: null });
   assert.deepEqual(UNEXECUTED_REASON_RULES.SUPERSEDED.cap, { waiting: null, other: null });
   // generation 10 (DESIGN 53.3): a bundle or broker release keeps the head's cap; only a network release under /9 has its own cap
   assert.deepEqual([UNEXECUTED_REASON_RULES.BUNDLE_UNAVAILABLE.cap, UNEXECUTED_REASON_RULES.BROKER_NOT_LAUNCHED.cap], [{ waiting: null, other: 'releasesPerHeadPer24h' }, { waiting: null, other: 'releasesPerHeadPer24h' }]);
