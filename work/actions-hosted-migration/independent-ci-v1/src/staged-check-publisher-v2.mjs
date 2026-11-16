@@ -23,7 +23,6 @@ import { canonical, digest } from './proof.mjs';
 import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { validateJobV2, SCANNER_ROLES_V2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
-import { gitleaksCheckSummary } from './gitleaks-report.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
@@ -419,9 +418,6 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: before.verified.payload.conclusion,
           external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}${republication ? `, republication ${republication} after a withdrawn verification` : ''}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
-        if(job.role==='gitleaks'&&before.verified.payload.gitleaksReport){
-          payload.output.summary+=gitleaksCheckSummary(before.verified.payload.gitleaksReport,job);
-        }
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
         const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, withdrawn);

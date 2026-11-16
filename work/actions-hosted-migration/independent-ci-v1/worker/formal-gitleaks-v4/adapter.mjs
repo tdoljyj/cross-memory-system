@@ -10,7 +10,6 @@ import {fileURLToPath} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
-import {summarizeGitleaksReport} from '../../src/gitleaks-report.mjs';
 import {validateFormalAdmissionV2,remoteRefsReferenceTime} from '../../src/admission-facts-v2.mjs';
 import {NATIVE_SCAN_START_REQUIRED,scanStartPermission} from '../../src/scan-start-v1/grant.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
@@ -20,7 +19,6 @@ import {dockerInvoke} from '../formal-gitleaks-v3/docker-transport.mjs';
 
 const PREFIX='work/actions-hosted-migration/independent-ci-v1/';
 const SOURCE_FILES=[['worker/formal-gitleaks-v4/adapter.mjs',import.meta.url],
-  ['src/gitleaks-report.mjs',new URL('../../src/gitleaks-report.mjs',import.meta.url)],
   ['src/scan-start-v1/grant.mjs',new URL('../../src/scan-start-v1/grant.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v3/docker-transport.mjs',new URL('../formal-gitleaks-v3/docker-transport.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v4/required-history/prepare.mjs',new URL('./required-history/prepare.mjs',import.meta.url)],
@@ -83,19 +81,13 @@ export function executionSummary(job,prepared,selfTest,plan,o,request,context){
     Date.parse(o.cleanupObservedAt)>=Date.parse(o.finishedAt)&&Date.parse(o.cleanupObservedAt)<=Date.parse(request.deadline),'ACTUAL_HISTORY_EXIT_AND_WHOLE_CONTAINER_CLEANUP_REQUIRED');
   for(const k of ['stdout','stderr'])check(HASH.test(o.attached.logs?.[k]?.sha256??'')&&Number.isSafeInteger(o.attached.logs[k].bytes)&&
     o.attached.logs[k].bytes>=0&&o.attached.logs[k].truncated===false,'BOUNDED_HISTORY_LOG_DIGEST_REQUIRED');
-  // --log-level error suppresses normal progress and finding warnings. Any
-  // stderr here is an execution error, possibly alongside a partial report.
-  check(o.attached.logs.stderr.bytes===0,'GITLEAKS_SCAN_ERROR');
-  // The check's exit is the PR gate; the actual full-history scanner exit is
-  // retained separately as gitleaksReport.auditExitCode, including on a green PR.
-  const gitleaksReport=summarizeGitleaksReport(o.attached.stdout,prepared,o.state.ExitCode),exitCode=gitleaksReport.pr.count?1:0;
   return deepFreeze({contract:'clued.independent-ci.formal-scanner-observation/2',domain:'production-observation',fixture:false,profile:'required-gitleaks-history/1',
     subject:subjectOf(job),sourceManifestSha256:job.sourceManifestSha256,sourceSha:prepared.sourceSha,nonce:request.nonce,
     requestSha256:digest(request),historyPackSha256:prepared.packedHistorySha256,remoteRefsSha256:prepared.remoteSnapshotSha256,
     selfTestReportSha256:digest(selfTest),reviewedIgnoreSha256:selfTest.ignore_sha256,requiredHistoricalExceptions:REVIEWED_COMMITS.findings,
     reviewedHistoryProof:REVIEWED_HISTORY_PROOF,
     image:IMAGE,nativeImageDigest:MANIFEST_DIGEST,nativeImageRepositoryDigest:NATIVE_IMAGE,nativeImageId:o.imageId,runtimeIdentity:context.runtimeIdentity,hostAcceptanceRef:context.hostAcceptanceRef,sourceAcceptanceRef:context.sourceAcceptanceRef,
-    startedAt:o.startedAt,finishedAt:o.finishedAt,conclusion:exitCode===0?'success':'failure',exitCode,gitleaksReport,
+    startedAt:o.startedAt,finishedAt:o.finishedAt,conclusion:o.state.ExitCode===0?'success':'failure',exitCode:o.state.ExitCode,
     logs:o.attached.logs,containerId:o.containerId,cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:o.cleanupObservedAt},
     evidenceClass:'unsigned-observation-requires-protected-result-issuer',formalEligible:false,checksWritten:false,qualificationIssued:false});
 }
@@ -154,7 +146,7 @@ export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort,scanSt
       // /repo retains the independently packed full history. This never calls
       // generic Linux launcher's tree-only /input copy or fixture executor.
       scanStartPermission(job,grantValue,nativeScanStartRequired);check(deadline>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_HISTORY');
-      const actual=await observeGitleaksContainer(c,request,plan,dockerInvoke,{signal});
+      const actual=await observeUnsignedContainer(c,request,plan,dockerInvoke,{signal});
       const after=await again();check(deadline>Date.now(),'AUTHORITY_EXPIRED_AFTER_HISTORY');
       const summary=executionSummary(job,prepared,selfTest,plan,actual,request,config);
       const observation=deepFreeze({...summary,preAdmissionSha256:before.observationSha256,postAdmissionSha256:after.observationSha256});
@@ -165,12 +157,4 @@ export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort,scanSt
       return outcome;
     }
   }});
-}
-
-// Only this fixed role collects bounded JSON stdout in memory. Stderr stays
-// digest-only; no Docker log persistence or writable report mount is enabled.
-export function observeGitleaksContainer(c,request,plan,docker,options){
-  validateHistoryPlan(plan);
-  return observeUnsignedContainer(c,request,plan,(args,opts)=>docker(args,
-    args[0]==='start'&&args[1]==='--attach'?{...opts,digestOnly:false}:opts),options);
 }

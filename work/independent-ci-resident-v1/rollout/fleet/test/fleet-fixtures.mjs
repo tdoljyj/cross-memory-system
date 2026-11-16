@@ -47,7 +47,7 @@ export function profileOf(letter) {
     runnerService: `actions.runner.tdoljyj-cross-memory-system.clued-ci-${name}`, mutationMutex: `Global\\CluedControlControllerMutationV1-${host}-1015` });
 }
 
-// The checkout's universal subset (tracked files and new resident/Source files), as one commit. No node profile:
+// The checkout's universal subset (tracked files and this assembler's untracked ones), as one commit. No node profile:
 // a package carries none (each node's comes from its installed record).
 export async function fixtureRepo(t) {
   const d = await tempDir(t, 'fleetrepo');
@@ -56,7 +56,7 @@ export async function fixtureRepo(t) {
     const tab = rec.indexOf('\t'); const [mode, oid] = rec.slice(0, tab).split(' ');
     listing.set(rec.slice(tab + 1), { mode, oid });
   }
-  for (const p of git(CHECKOUT, 'ls-files', '-z', '--others', '--exclude-standard', '--', 'work/independent-ci-resident-v1', 'work/actions-hosted-migration/independent-ci-v1').toString('utf8').split('\0').filter(Boolean)) {
+  for (const p of git(CHECKOUT, 'ls-files', '-z', '--others', '--exclude-standard', '--', 'work/independent-ci-resident-v1').toString('utf8').split('\0').filter(Boolean)) {
     listing.set(p, { mode: '100644', oid: null });
   }
   const read = async paths => new Map(await Promise.all(paths.map(async p => [p, await fs.readFile(path.join(CHECKOUT, ...p.split('/')))])));
