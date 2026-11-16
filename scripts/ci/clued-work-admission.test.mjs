@@ -3461,6 +3461,16 @@ test("independent gate environment re-run: a network failure or a setup death of
   // A gate job that died in the runner's setup ran nothing: no verdict annotation is needed (the RERUN_REFUSED of the setup death).
   const gateDied = earlierAttempt(1, { gateJobs: [attemptJob(100, "admission-gate", "failure", { steps: SETUP_DIED }), ...HEAVY_JOBS.map((name, index) => attemptJob(101 + index, name, "skipped"))], notes: [] });
   assert.deepEqual([(await repairGate([gateDied])).outcome.admitted], [true]);
+  // Defect B: the runner's job-started hook refused the gate before any step (job 132831819306 of #1121): its "Set up runner" step,
+  // right after "Set up job", failed. That ran nothing either.
+  const hookRefused = [step("Set up job", "success"), step("Set up runner", "failure"),
+    step("Run node scripts/ci/clued-work-admission.mjs --mode gate", "skipped"), step("Complete job", "success")];
+  const refusedGate = earlierAttempt(1, { gateJobs: [attemptJob(100, "admission-gate", "failure", { steps: hookRefused }), ...HEAVY_JOBS.map((name, index) => attemptJob(101 + index, name, "skipped"))], notes: [] });
+  assert.deepEqual([(await repairGate([refusedGate])).outcome.admitted], [true]);
+  // A workflow step of that name, later in the job, is not the runner's setup.
+  const named = [step("Set up job", "success"), step("Run tests", "success"), step("Set up runner", "failure")];
+  const namedGate = earlierAttempt(1, { gateJobs: [attemptJob(100, "admission-gate", "failure", { steps: named }), ...HEAVY_JOBS.map((name, index) => attemptJob(101 + index, name, "skipped"))], notes: [] });
+  assert.deepEqual([(await repairGate([namedGate])).outcome.verdict], ["RERUN_REFUSED"]);
 });
 
 test("independent gate environment re-run: a failed test, an unproven failure or a second ran attempt never re-runs", async () => {

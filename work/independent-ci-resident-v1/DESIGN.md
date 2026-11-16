@@ -4492,6 +4492,12 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
 - **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
 
+#### 56.5b 改受保护工作流的 PR：准入晚于 runner 钩子（缺陷 B，2026-11-15）
+
+- **现场。** #1121 run `43720693841`、#1122 run `43720708199`：推送后 attempt 1 的每个作业在 “Set up runner” 等满钩子时限，以 “Native admission absent” 被拒（准入要等 PR 成为车头，14:11:36 才发）；attempt 2 有了准入（check `132838811702`），仍因钩子只认 attempt 1 被拒，只能人工推空提交。gate 在 “Set up runner” 被拒时，`diedInSetup` 只认 “Set up job”，这个 lane 也就把 head 判为 final，不会点补跑。
+- **做法。** `diedInSetup`（gate 与 `src/env-failure.mjs` 同一份）把紧跟 “Set up job” 的钩子步骤 “Set up runner” 也算 runner 自己的准备步骤：被钩子拒的作业什么也没跑。于是准入到达后，这个 lane 照 56.5 的规则点那一次 “Re-run all jobs”，gate 照 #993 放行；钩子后继版本 `required-tests-late-admission-v1`（组件 1.0.3，见 `scripts/runner/README.md`）不再只认 attempt 1，而是认“本运行之前每个尝试都什么也没跑”的那个尝试。同一提交仍只真跑一次。
+- **测试**：`test/env-failure.test.mjs`、`test/admission-rerun.test.mjs` 的 setup 一例，`scripts/ci/clued-work-admission.test.mjs` 的 environment re-run 一例，`scripts/runner/clued-runner-job-started.test.mjs` 的 `defect B` 两例。
+
 ### 56.6 策略、Source 与安装
 
 - **策略。** 不改（仍是 /9），没有新的策略字段。观察的节奏和上限是代码常量。
@@ -5197,7 +5203,9 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - §41.7 兜底里“strict=false 而全量清扫没完成”那一档只在 `gate` 下还有意义。
 - **回退**：一次 UAC 把策略写成 `train.sweep: "gate"`（新策略、新摘要、新职责），即回到 §41/§60–§62 的接管门；Source 不用换代。再往回（关 strict 的列车）仍按 §41.9 的流程，且必须先在 `gate` 下完成一轮真实全量扫描。
 
-### 65.6 车头落后自动更新分支：方案（未实现，需要 Owner 决定）
+### 65.6 车头落后自动更新分支：已获授权，未实现
+
+**更正（2026-11-16，缺陷 C）**：本节原题“需要 Owner 决定”已过时。Owner 决定 `9e2511fe` 第 3 条（机器人自动给落后 main 的车头更新分支）与 `78a3052f` 第 2 条（`clued-merge-executor` 重新启用，范围收窄为列车开时只给 BEHIND 的车头 update-branch、merge 方式；受保护层 PR 暂不自动更新；测过再启用）已授权下文的建议方案，下文“需要 Owner 决定”的 ① 已答，② 答为“暂不”。现状仍是未实现、工作流 `disabled_manually`。另：组件版本规则 v0.4（`development/contracts/components/ComponentVersioning.v0.4.md`）之后合 main 是普通合并、不需重生成，update-branch 产生的 head 本身就是正确的；PR 页面只提示车头合 main，其余落后的 PR 显示“排队中，不必现在合 main”（30 分钟内没有列车给出车头时退回旧提示）。
 
 GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需要有人把 main 合进 PR 分支（update-branch，merge 方式），然后对新 head 走正常流程（第 1 段重新准入、第 10 段重开车头批次）。只读核对（2026-11-07）：
 

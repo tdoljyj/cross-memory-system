@@ -485,6 +485,14 @@ test('environment failure: a setup death needs no log; a gate job that died in s
   const died = ran([{ conclusion: 'skipped' }, { conclusion: 'skipped' }, { conclusion: 'skipped' }], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: SETUP_DIED } });
   const d = await decide({ gh: world({ runs: [run(700, [died])] }).gh, headSha: HEAD });
   assert.deepEqual([d.action, d.environment], ['rerun', null]);
+  // Defect B (#1121 run 43720693841): the runner's job-started hook refused the gate in "Set up runner" before the admission came;
+  // once it came, this lane asks for the one re-run (it used to call the head final and a new commit had to be pushed).
+  const hookRefused = [step('Set up job', 'success'), step('Set up runner', 'failure'), step('Run node scripts/ci/clued-work-admission.mjs --mode gate', 'skipped'), step('Complete job', 'success')];
+  const refused = ran([{ conclusion: 'skipped' }, { conclusion: 'skipped' }, { conclusion: 'skipped' }], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: hookRefused } });
+  const wb = world({ runs: [run(700, [refused])] });
+  const late = await decide({ gh: wb.gh, headSha: HEAD });
+  assert.deepEqual([late.action, late.runId, late.attempt, late.environment], ['rerun', 700, 1, null]);
+  assert.equal(wb.calls.filter(c => /annotations/.test(c.target)).length, 0, 'no verdict is looked for: the gate never ran');
 });
 
 test('environment failure: a failed test, an unproven failure, a cancelled job or a failure of the attempt after a pending one never re-runs', async t => {
