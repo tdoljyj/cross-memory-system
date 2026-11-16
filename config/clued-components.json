@@ -58,15 +58,29 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.3",
-      "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
+      "version": "1.0.4",
+      "description": "Runner job-started hook, run from the protected default branch by the installed loader at every job start; merging it is its rollout.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.required-tests-late-admission-v1.mjs"
+        "clued-runner-job-started.mjs"
       ],
       "version_marker": {
-        "file": "clued-runner-job-started.required-tests-late-admission-v1.mjs",
+        "file": "clued-runner-job-started.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "hook.runner-loader",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "The one file installed on runners (under the hook's name): reads the hook from the protected default branch, checks its blob id, runs it in memory; fail closed.",
+      "root": "scripts/runner",
+      "files": [
+        "clued-runner-hook-loader.mjs"
+      ],
+      "version_marker": {
+        "file": "clued-runner-hook-loader.mjs",
+        "pattern": "export const LOADER_VERSION = \"{version}\";"
       }
     },
     {

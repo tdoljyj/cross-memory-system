@@ -232,7 +232,7 @@ export const SUITE_COMMANDS = {
   'admission-self-tests': [{ cwd: '.', known: 'admission-self-tests', argv: ['node', '--test',
     'scripts/ci/clued-work-admission.test.mjs', 'scripts/ci/merge-admission-policy.test.mjs',
     'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs',
-    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
+    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/runner/clued-runner-hook-loader.test.mjs', 'scripts/runner/install-hook-loader.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
   // Integrates a throwaway worktree. It never installs into the checkout: there
