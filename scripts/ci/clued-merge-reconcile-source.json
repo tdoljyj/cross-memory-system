@@ -520,7 +520,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "e119ce35ddee6454720273bb60f512c297717c020db60f4d20597fd7952f551f",
+    "scripts/ci/merge-admission-r9-source.json": "d87eca7b126809d29fec968cd93c83e140acabb941ac5af73b3e0f02a400cee3",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
