@@ -1,7 +1,5 @@
 // 只读、零 npm 依赖。口径与证据边界见 retrigger-counter.md。
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const KINDS = ['reruns', 'empty_commits', 'main_merges', 'reopens'];
@@ -210,4 +208,4 @@ export async function main(argv, { api, write = line => process.stdout.write(`${
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+if (import.meta.main) process.exitCode = await main(process.argv.slice(2));

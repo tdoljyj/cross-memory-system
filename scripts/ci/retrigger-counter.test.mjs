@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { collect, ghReader, main } from './retrigger-counter.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/retrigger-counter/api.json', import.meta.url)));
@@ -16,6 +17,7 @@ function api(overrides = {}) {
     return structuredClone(routes[route]);
   } };
 }
+const CLI = fileURLToPath(new URL('./retrigger-counter.mjs', import.meta.url)); // 不依赖运行时的工作目录
 const bucket = (manual, automatic, unknown = 0) => ({ manual, automatic, unknown, total: manual + automatic + unknown });
 
 test('录制响应：按 attempt 时间统计，Owner 身份的 companion 提示只抵扣一次，提交跨 PR 去重', async () => {
@@ -67,7 +69,7 @@ test('gh 传输只发显式 GET，参数无 shell；CLI 成功与失败都只输
 });
 
 test('实际 CLI 错误出口是一行可解析 JSON，且不启动 gh', () => {
-  const r = spawnSync(process.execPath, ['scripts/ci/retrigger-counter.mjs', '--unknown'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [CLI, '--unknown'], { encoding: 'utf8' });
   assert.equal(r.status, 1);
   assert.equal(r.stdout.trim().split('\n').length, 1);
   assert.equal(JSON.parse(r.stdout).status, 'error');
@@ -86,7 +88,7 @@ test('实际 CLI 从录制 gh GET 响应输出完整计数，且没有额外标�
       return {status:0,stdout:JSON.stringify(fixture[route])};
     };syncBuiltinESMExports();`;
   const r = spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(source)}`,
-    'scripts/ci/retrigger-counter.mjs', '--since', options.since, '--until', options.until, '--automation-actor', 'clued-companion'], { encoding: 'utf8' });
+    CLI, '--since', options.since, '--until', options.until, '--automation-actor', 'clued-companion'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
   assert.equal(r.stdout.trim().split('\n').length, 1);
   assert.deepEqual(JSON.parse(r.stdout).counts.reruns, bucket(1, 2));
