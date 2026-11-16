@@ -33,7 +33,42 @@ permissions:
   checks: read
 
 jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+      automation_self_hosted: ${{ steps.gate.outputs.automation_self_hosted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission
+      # check for this exact head, polled for at most 10 minutes; never on another App's check.
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission
+          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   merge-main:
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     name: clued-front-main-merge
     # The self-hosted pool, as clued-native617-admission-dispatch.yml with the same environment (new hosted execution is prohibited).
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]

@@ -379,8 +379,9 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const nameOf = (file) => /^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(dir, file), "utf8"))[1].trim();
   // Resident ADR 0032 step 2: clued-required-tests-windows is counted (WORKFLOWS) but not yet a trigger. This
   // workflow is a registered control Source and its reporter is disabled (Decision 928e6638); the name joins the
-  // list with the Source change that re-enables it. Exactly this one name is missing, nothing else.
-  const NOT_YET_A_TRIGGER = ["clued-required-tests-windows"];
+  // list with the Source change that re-enables it. The dispatch-only front merge workflow is also
+  // counted after acquiring a gate, but is not a PR CI completion trigger.
+  const NOT_YET_A_TRIGGER = ["clued-required-tests-windows", "clued-front-main-merge"];
   assert.ok(WORKFLOWS.has(".github/workflows/clued-required-tests-windows.yml"));
   for (const name of NOT_YET_A_TRIGGER) assert.ok(!names.includes(name), name);
   const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")]

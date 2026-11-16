@@ -96,7 +96,7 @@
 
     ".github/workflows/clued-currentness-post-deploy-attestation.yml": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
 
-    ".github/workflows/clued-front-main-merge.yml": "64deb30777fc36311e0f6172265799e28139f001238b928cf4f246f3d1efd53b",
+    ".github/workflows/clued-front-main-merge.yml": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
 
     ".github/workflows/clued-g4-database.yml": "570cfb6e8b9b13c562de6cd690e01c8ef68b525b79206d937950bedf954d8c3d",
 
@@ -356,7 +356,7 @@
 
     "scripts/ci/clued-merge-slot-ci.mjs": "674b3429a793f0c387b094132ad685b24c90ad3b071737bdf0089f4ec20b7754",
 
-    "scripts/ci/clued-merge-slot-ci.test.mjs": "df3380579b56c6c5f5a01f2fdd8f7fe96f427cb335e2dd64c220139f156524f6",
+    "scripts/ci/clued-merge-slot-ci.test.mjs": "95e7fe6337d3598d76eb8a9ca51277502d818c5c4e055f99938d42c923a16de6",
 
     "scripts/ci/clued-merge-train-native.mjs": "4a43e080042feeb00cddbdeec3f14b5bb34dd214e6880e0e4b63e10702870c63",
 
@@ -424,7 +424,7 @@
 
     "scripts/ci/clued-work-admission.mjs": "4bc0813701d958bd14dfd01daede21da6d264ad9ceac40f2decb21b0d94ea318",
 
-    "scripts/ci/clued-work-admission.test.mjs": "7078e5929ee8e3a3717857b3e71d3546907ab03a18794f9ad2b5c2fd4861058f",
+    "scripts/ci/clued-work-admission.test.mjs": "4de6e8e8faa48d2cd5f65ac5ade340cadeb2cd1f8b13ad96d5191a80adbd3afc",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
