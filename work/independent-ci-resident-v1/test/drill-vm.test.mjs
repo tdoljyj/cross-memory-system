@@ -89,7 +89,7 @@ test('the baseline action comes from the scene: only the VM whose name and notes
 
 test('the guest is ready only after setup and OOBE finish, on the same boot twice (PowerShell Direct answers mid-OOBE)', opts, () => {
   // The first real baseline (2026-11-16): the account answered PowerShell Direct while OOBEInProgress was still 1; the settle
-  // step's DISM ran into OOBE, OOBE restarted the machine ("the system is shutting down") and fell into its recovery screen.
+  // step started mid-OOBE and died when OOBE restarted the machine ("the system is shutting down").
   const r = ps(`$a = [DateTimeOffset]::Parse('2026-11-16T02:00:00Z');
     $mid = @{ boot = '2026-11-16T02:12:00.5+00:00'; imageState = 'IMAGE_STATE_UNDEPLOYABLE'; oobe = 1 };
     $done = @{ boot = '2026-11-16T02:31:26.5+00:00'; imageState = 'IMAGE_STATE_COMPLETE'; oobe = 0 };

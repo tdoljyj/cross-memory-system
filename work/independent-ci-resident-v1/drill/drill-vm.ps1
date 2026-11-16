@@ -60,10 +60,9 @@ $script:Drill = [ordered]@{
   Cpu = 4; CpuMaximum = 75; CpuWeight = 50; MaxIops = 2000
   Switch = 'Default Switch'
   InstallTimeoutMinutes = 90
-  # Nothing logs on to the guest before Windows says setup and OOBE are over: the first two real baselines (2026-11-16) logged
-  # on through PowerShell Direct while OOBE was still finishing (the account exists from the middle of OOBE) and both ended on
-  # OOBE's "Why did my PC restart?" screen. SetupComplete.cmd runs once OOBE is done, before any logon; it publishes one Hyper-V
-  # KVP item that the host reads without logging on (Msvm_KvpExchangeComponent).
+  # No logon attempt while Windows setup is still copying and rebooting: SetupComplete.cmd (written in specialize) runs when
+  # setup hands over to OOBE and publishes one Hyper-V KVP item, read on the host without logging on (Msvm_KvpExchangeComponent).
+  # From there Wait-DrillGuest's probes take over (ImageState IMAGE_STATE_COMPLETE, OOBEInProgress 0, the same boot twice).
   SetupSignalName = 'CluedDrillSetup'
   SetupSignalCommand = 'cmd.exe /c "if not exist %WINDIR%\Setup\Scripts mkdir %WINDIR%\Setup\Scripts & echo reg add "HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest" /v CluedDrillSetup /t REG_SZ /d complete /f>%WINDIR%\Setup\Scripts\SetupComplete.cmd"'
   BootKeySeconds = 30
@@ -371,7 +370,8 @@ function Read-DrillPrereq([string]$Dir) {
 
 # Inside the VM (elevated PowerShell Direct session): install the pinned WSL package, register the pinned Ubuntu image under the
 # prerequisite distribution name, install the pinned .deb closure offline and confirm docker.service runs under systemd.
-# Returns facts only. Never downloads: apt is pointed at the local files and told not to fetch.
+# Returns facts only; the host judges them. Never downloads: dpkg installs exactly the pinned files. (apt-get, even with
+# --no-download, resolved against the apt lists the Ubuntu image ships and wanted archives from the network: 2026-11-16 12:58.)
 $script:GuestPrereq = {
   param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion)
   $ErrorActionPreference = 'Stop'
@@ -382,12 +382,17 @@ $script:GuestPrereq = {
   if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { throw "PREREQ_WSL_VERSION_NOT_PINNED" }
   & $wslExe --install --from-file (Join-Path $Dir $Rootfs) --name $Distro --no-launch | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "PREREQ_DISTRO_INSTALL_EXIT_$LASTEXITCODE" }
-  $root = { param([string]$cmd) $o = @(& $wslExe -d $Distro -u root -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c $cmd 2>&1 | ForEach-Object { ([string]$_) -replace [char]0, '' }); [ordered]@{ exit = $LASTEXITCODE; out = $o } }
+  # --exec: the arguments go to env as they are (with `--` WSL runs the command line through root's shell, which split the
+  # bash -c text at its | and ; - 2026-11-16 13:07). Continue: in Windows PowerShell a native stderr line under 2>&1 would
+  # otherwise become a terminating error; the output is judged as data.
+  $root = { param([string]$cmd) $ErrorActionPreference = 'Continue'; $o = @(& $wslExe -d $Distro -u root --exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c $cmd 2>&1 | ForEach-Object { ([string]$_) -replace [char]0, '' }); [ordered]@{ exit = $LASTEXITCODE; out = $o } }
   $debDir = '/mnt/' + $Dir.Substring(0, 1).ToLowerInvariant() + ($Dir.Substring(2) -replace '\\', '/') + '/debs'
-  $apt = & $root "apt-get install -y --no-download --no-install-recommends -o Dpkg::Options::=--force-confold $debDir/*.deb"
-  if ($apt.exit -ne 0) { throw ("PREREQ_APT_EXIT_$($apt.exit): " + (@($apt.out | Select-Object -Last 5) -join ' | ')) }
+  $dpkg = & $root "dpkg -i --force-confold $debDir/*.deb 2>&1 | tail -n 25; echo DPKG_EXIT=`${PIPESTATUS[0]}; echo AUDIT=`$(dpkg --audit | wc -l)"
+  $dpkgExit = @($dpkg.out | Where-Object { $_ -match '^DPKG_EXIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
+  $audit = @($dpkg.out | Where-Object { $_ -match '^AUDIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $facts = & $root "for i in `$(seq 1 30); do systemctl is-active --quiet docker.service && break; sleep 2; done; grep ^PRETTY_NAME /usr/lib/os-release; ps -p 1 -o comm=; systemctl is-active docker.service; dpkg-query -W -f='`${Package} `${Version}\n' docker.io containerd runc"
-  [ordered]@{ wslVersion = $ver; distribution = $Distro; aptTail = @($apt.out | Select-Object -Last 3); facts = $facts.out; dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
+  [ordered]@{ wslVersion = $ver; distribution = $Distro; dpkgExit = $dpkgExit; dpkgAuditLines = $audit; dpkgTail = @($dpkg.out); facts = $facts.out
+    dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
 }
 
 # The kit entry's arguments with the fixed guest paths in place.
@@ -611,7 +616,7 @@ function Get-DrillGuestKvp([string]$Name) {
   } catch { return $null }
 }
 
-# Waits, logging on nowhere, until SetupComplete.cmd has published the setup signal (setup and OOBE are over).
+# Waits, logging on nowhere, until SetupComplete.cmd has published the setup signal (setup is over; OOBE starts).
 function Wait-DrillSetupSignal([int]$Minutes) {
   $until = [DateTime]::UtcNow.AddMinutes($Minutes)
   while ([DateTime]::UtcNow -lt $until) {
@@ -734,7 +739,7 @@ function Invoke-DrillBaseline([string]$RunDir) {
     & $note 'started; sending boot keys'
     $keys = Send-DrillBootKeys $script:Drill.VmName $script:Drill.BootKeySeconds
     & $note "boot keys sent: $keys; waiting for setup and OOBE to finish"
-    Wait-DrillSetupSignal $script:Drill.InstallTimeoutMinutes   # no logon before this: see SetupSignalName
+    Wait-DrillSetupSignal $script:Drill.InstallTimeoutMinutes   # no logon attempt before this: see SetupSignalName
     & $note 'setup-complete signal read (KVP); waiting for PowerShell Direct'
     [void](Wait-DrillGuest $cred 15)
     $installMinutes = [Math]::Round(([DateTimeOffset]::UtcNow - $started).TotalMinutes, 1)
@@ -824,7 +829,8 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
   try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
   catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_GUEST_STEP_FAILED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
   Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
-  if (-not $facts.dockerActive -or -not $facts.systemdPid1) { throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
+  if ($facts.dpkgExit -ne 0 -or $facts.dpkgAuditLines -ne 0 -or -not $facts.dockerActive -or -not $facts.systemdPid1) {
+    throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ dpkgExit = $facts.dpkgExit; audit = $facts.dpkgAuditLines; docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
   return $facts
 }
 
