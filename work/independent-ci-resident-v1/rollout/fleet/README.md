@@ -41,10 +41,10 @@ node <任一份 upgrade.mjs> fetch --version <version> --work <新目录> [--fro
 分步手动做仍可以：`gh release download` + `Get-FileHash` + 解包，再用 `--artifact` 形式（输出相同）：
 
 ```
-node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.mjs --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <新目录>
+node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.mjs --artifact <tar> --artifact-sha <hex> --acceptance <acceptance.json> --work <目录>
 ```
 
-没有节点参数。`--work` 目录不要放在会被清理的临时目录里：升级代理要从 `<新目录>\package` 读包。加 `--no-request` 只组装和预检，不发请求（演练）。
+没有节点参数。`--work` 目录不要放在会被清理的临时目录里：每次需要组装时在它下面新建一个 `run-*`，升级代理从 `<目录>\run-*\package` 读包；同一个 `--work` 可以原样再用（看进度、改正后重跑），以前的 `run-*` 不动。加 `--no-request` 只组装和预检，不发请求（演练）。
 
 输出一行 JSON，`status` 是下面之一：
 
@@ -67,7 +67,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 ### 0.5 失败
 
-- 请求之前的任何失败：节点没动，改正后换新 `--work` 重跑。
+- 请求之前的任何失败：节点没动，改正后原样重跑同一条命令。
 - 升级代理拒绝（Grant 被拒或过期、排空超时、暂存或 Linux stage 拒绝）：节点没动。
 - 切换之后核验不过：升级代理把 Windows 与 Linux 两侧一起换回上一代，节点保持暂停，`status.json` 的 `recent` 写着 `ROLLED_BACK_PAUSED` 和原因。生产节点失败一次就停手，先在一次性环境复现。
 - `ROLLBACK_FAILED`：走通用重装（它不要求两侧先一致）。

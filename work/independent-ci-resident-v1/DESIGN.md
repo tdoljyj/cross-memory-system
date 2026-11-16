@@ -5756,6 +5756,17 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 随之更新：`test/node-mode.test.mjs`（STANDBY 下停在 A、B 的批次不再续跑，而是按规则结束）、`test/scheduler.test.mjs`（等托管的批次在 tick 上按规则结束，安全点名 `waiting`）、`reinstall/test/test_rehearse.py`（卸载计划里的未结批次不是预演发现）。原有的取代、停靠、#1035、排队观察、重启重跑测试照旧通过。
 
+### 72.9 第四条（只对停靠批次）：本节点的升级在排空时，停靠批次不再成立
+
+现场（2026-11-16 北京时间 10:29，DESK 当班原地升级到 fleet-node-2026.11.16-446a7106）：待命 TURING 已先升到新 Source，DESK 的升级停在 `WAITING_DRAIN`、`openBatches=1`，就是 #1130 停在 B 的车头批次。它从 70-parked 起连试 17 次都是 `TRAIN_SINGLE_GREEN_NOT_PROVEN`：两台 Source 不同，第 10 段不证明单绿，要等 DESK 升完；DESK 的升级又在等这个批次收尾。车头在合并队列第 1 位的尝试不计入 `park.stage8MaxTries`，只有 `park.maxMs`（24 小时）能结束它，而排空最多 120 分钟、每 60 分钟重试、Grant 24 小时后作废。11:48 Owner 手工关闭 #1130 才放行。
+
+病根：冻结的升级代理（`upgrader/src/resident-ports.mjs#openBatches`）把账本里所有没有 `90-terminal.json` 的条目都算未结批次，排空要它为 0；§72.6 让重装前的停靠残留由规则结束，原地升级这条路漏了。停靠批次等的是本节点之外的东西（托管、合并队列、列车），而启动它的 Source 正要离开。
+
+- **规则**：停在 A 或 B 的批次，还要求本节点的升级代理没有在为它排空。判定是 `executor.mjs#upgradeDraining()`，两样都是升级代理自己的话、本拍读到的：`upgrade\status.json` 的 op 状态是 `WAITING_DRAIN`（versions 端口；由升级代理写，不是 Owner 会话），而且它的 intake hold（holder `resident-upgrade`，`executor.mjs#UPGRADE_HOLDER`，测试钉住与冻结的 `HOLDER_UPGRADE` 相等）在生效；再加 companion 心跳新鲜（同 `not-on-duty`）。排空超时后升级代理撤 hold，残留的状态文件结束不了任何批次；hold 最长两小时自动失效。
+- **结束**：同一条 `supersededEnd`，`basis: upgrade-drain`；B 上第 8 段终态（已发布，按 §72.2 要新的 S 或新提交），A 上第 1 段终态（未发布，新代可以再跑）。下一拍排空看到 0，往下走暂停。
+- **不判的**：在途批次照旧跑到下一个停靠点（排空本来就等它），到点再按本条结束；Owner 的 hold、只有状态没有 hold、只有 hold 没有 `WAITING_DRAIN`，都不结束。冻结通道不改。
+- **测试**：`test/upgrade-drain-parked.test.mjs` 用冻结升级代理自己的 drain 步骤（`STEPS.drain`）、冻结观察面（`ResidentPort` 的 hold 与 `openBatches`）和升级代理自己的状态文件（`buildStatus`/`writeStatus`），对真实执行器复现 #1130：修复前 120 分钟内排空一直等（`openBatches=1`），修复后一两分钟内通过，终态 `SUPERSEDED_AT_SAFE_POINT`/`upgrade-drain`，不再试第 8 段、不 attempt 2、不 HALT；以及上面四种不结束的情形。
+
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 
 现场（2026-11-13，desk-w-591）：启动器在 Linux A、B 之后的 Windows 预检停下（`RUNNER_SERVICE_NOT_AS_REVIEWED`），Linux 是新包、Windows 是旧装；之后既续不了也重新 `prepare` 不了。时间线与根因见 ADR 0029。

@@ -337,6 +337,10 @@ const NO_STATUS = Object.freeze({ update() {}, setState() {}, setCurrent() {}, o
 // Phase 2, step 1 (DESIGN §17).
 export const SUPERSEDED_AT_SAFE_POINT = 'SUPERSEDED_AT_SAFE_POINT';
 export const SUPERSEDED_ARCHIVE_REASON = 'superseded';
+// DESIGN §72 (4): the upgrader's intake hold (upgrader/src/resident-ports.mjs HOLDER_UPGRADE, frozen surface A11; the resident package
+// cannot import the upgrader's files, a test pins the two equal) and the basis of a resting batch ended for its drain.
+export const UPGRADE_HOLDER = 'resident-upgrade';
+export const UPGRADE_DRAIN_BASIS = 'upgrade-drain';
 // The status code of a reservation released for a newer commit before stage 1 (release reason SUPERSEDED).
 export const BATCH_SUPERSEDED = 'BATCH_SUPERSEDED';
 // The code of a new-trigger notice whose protected observation found changed claim/authorization conditions after a refusal (recheckClaims; field defect
@@ -4093,15 +4097,16 @@ export class ResidentExecutor {
   //   (1), (2) one live read of the PR through the companion's pr-head (DESIGN §17.5), due once every SUPERSEDE_LIVE_READ_MS per batch
   //       and at once when the run queue (a newer commit) or stage 10 (the front) names another head of the PR (hint). Stage 1 is a read
   //       too: markStarted counts as this batch's first one. No answer never ends a batch.
+  // A batch RESTING at a parking point (A or B) also stands only while (4) no upgrade of this node waits for it (endParkedIfNotStanding,
+  // upgradeDraining). Field 2026-11-16 (#1130): the frozen upgrader drains until no ledger entry lacks 90-terminal.json
+  // (upgrader/src/resident-ports.mjs#openBatches), while a front batch at B could not pass stage 8 before this node ran the Source the
+  // standby already ran (TRAIN_SINGLE_GREEN_NOT_PROVEN at the queue's first place, tries that never count): each waited for the other
+  // until the drain ran out, every retry again. A resting batch waits on things outside this node, and the Source that started it is
+  // leaving, so it ends here, as the Owner's drain ends every parked batch before a reinstall; a batch in flight finishes as before.
   // Every ending goes the one way, supersededEnd(): quiescence on both hosts, the head burned, a rename-only archive, FAILED_CLEAN
   // SUPERSEDED_AT_SAFE_POINT (neutral, never an attempt 2); anything unproven is UNKNOWN and HALTs. Nothing is published or retracted.
   async standing(key, subject, batch, { hint = null, safePoint = null } = {}) {
-    if (this.probing() && this.nodeMode() === 'STANDBY') {
-      let beat = null;
-      try { beat = await this.companion.heartbeat?.(); } catch { beat = null; }
-      const fresh = typeof beat?.at === 'number' && this.clock() - beat.at <= this.policy.companion.heartbeatMaxAgeMs;
-      return fresh ? { basis: 'not-on-duty', live: null } : null;
-    }
+    if (this.probing() && this.nodeMode() === 'STANDBY') return (await this.companionFresh()) ? { basis: 'not-on-duty', live: null } : null;
     const queued = this.queue.row(subject.pr)?.current?.headSha ?? null;
     const newer = HEX40.test(queued ?? '') && queued !== subject.headSha ? queued : null;
     const named = HEX40.test(hint ?? '') && hint !== subject.headSha ? hint : newer;
@@ -4133,6 +4138,24 @@ export class ResidentExecutor {
     return true;
   }
 
+  // The end proves quiescence through the companion: only with its fresh heartbeat.
+  async companionFresh() {
+    let beat = null;
+    try { beat = await this.companion.heartbeat?.(); } catch { beat = null; }
+    return typeof beat?.at === 'number' && this.clock() - beat.at <= this.policy.companion.heartbeatMaxAgeMs;
+  }
+
+  // (4) for a resting batch: this node's upgrader waits for the drain. Both of its own words, read this tick: upgrade\status.json says its
+  // op is WAITING_DRAIN (the versions port; the upgrader, not the Owner's session, writes it), and its intake hold is in force (renewed
+  // while it drains, lifted when the drain runs out, at most two hours: a status it left behind ends nothing). Not read: null.
+  async upgradeDraining() {
+    if (this.versionState?.view?.upgrade?.state !== 'WAITING_DRAIN') return null;
+    let view = null;
+    try { view = await this.intakeRefresh(); } catch { return null; }
+    if (!(view?.holders ?? []).some(h => h.holder === UPGRADE_HOLDER)) return null;
+    return (await this.companionFresh()) ? { basis: UPGRADE_DRAIN_BASIS, live: null } : null;
+  }
+
   // A batch in flight, at a safe point outside the Linux preparation (before stage R's plan, before the workspace): the inbox is read
   // again first, so a newer commit that arrived while it ran is a hint. null: it goes on.
   async endIfNotStanding(key, subject, batch, safePoint, pos, stage = 1) {
@@ -4147,7 +4170,7 @@ export class ResidentExecutor {
     const { key } = entry, subject = entry.reserved.subject, atB = Ledger.parkedAt(entry);
     if (!atB && !Ledger.waitingAt(entry)) return null;
     const batch = atB ? entry.parked.batch : entry.wait.batch, safePoint = atB ? 'parked' : 'waiting';
-    const fact = await this.standing(key, subject, batch, { hint, safePoint });
+    const fact = (await this.upgradeDraining()) ?? await this.standing(key, subject, batch, { hint, safePoint });
     if (!fact) return null;
     this.parkNudges?.delete(key);
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
@@ -4175,7 +4198,8 @@ export class ResidentExecutor {
   // The executor's own end of a batch that no longer stands (DESIGN §72), on the Owner abort's path (DESIGN §6.5): nothing of this batch
   // runs at a safe point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
   // FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT (neutral for the breaker, never an attempt 2). Unproven: UNKNOWN, HALT.
-  //   basis: which part of the rule failed ('pr-closed', 'head-moved', 'not-on-duty'); live: the PR read that showed it (null for duty).
+  //   basis: which part of the rule failed ('pr-closed', 'head-moved', 'not-on-duty', 'upgrade-drain'); live: the PR read that showed it (null
+  //   for duty and the drain).
   async supersededEnd(key, subject, batch, { safePoint, pos, basis, live = null, stage = 1 }) {
     const context = { safePoint, stage: null };
     try {
