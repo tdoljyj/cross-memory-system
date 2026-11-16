@@ -58,14 +58,14 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs"
+        "clued-runner-job-started.required-tests-late-admission-v1.mjs"
       ],
       "version_marker": {
-        "file": "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs",
+        "file": "clued-runner-job-started.required-tests-late-admission-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
@@ -641,7 +641,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.24",
+      "version": "1.0.25",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [

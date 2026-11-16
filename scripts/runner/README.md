@@ -18,6 +18,39 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### Late Native admission successor (defect B, 2026-11-15)
+
+`required-tests-late-admission-v1` / component `1.0.3` keeps every rule of
+`work-handover-native-admission-retry-v1`. Native admits a pull request only when it is the
+train's front, often long after the push. For a pull request that changes a
+workflow every job of attempt 1 then waits `CLUED_RUNNER_HOOK_WAIT_SECONDS` and
+is refused in "Set up runner" ("Native admission absent"); the companion's one
+"Re-run all jobs" after the admission (resident DESIGN §56.5) was refused as
+well, because Native admitted attempt 1 only, and a new commit had to be pushed
+by hand (#1121 run `43720693841`, #1122 run `43720708199`). The attempt-1 rule
+is there because such a pull request writes its own `admission-gate`, so the
+gate's re-run rules are its own to forge and the hook alone bounds how often it
+runs. It keeps that bound but counts real runs, not attempt numbers: a later
+attempt starts when every job of every earlier attempt of the run ran nothing,
+that is, was skipped or failed only in the runner's own setup ("Set up job",
+or this hook's "Set up runner", which always comes right after it) with every
+later step skipped but "Complete job". A job list that cannot be read in full
+counts as having run. One admitted head still runs once. The gate
+(`clued-work-admission.mjs#diedInSetup`) and the companion's copy
+(`env-failure.mjs`) count a refused "Set up runner" as a setup death too, so
+the companion asks for that one re-run by itself.
+
+A runner still on an older version refuses the re-run as before (fail closed).
+It changes no workflow file, so its own pull request is not caught by the
+defect it fixes; the lost-run dispatch successor (#1122) builds on it.
+
+Rollout, on each registered runner (no per-runner variant; nothing in the
+repository reaches into the runners): keep the installed
+`clued-runner-job-started.mjs` as `.prev`, copy the merged file over it (Linux
+`/opt/clued-runner-hook/`, Windows `C:\ProgramData\CluedRunnerHook\`), leave
+wrappers, key and settings alone, and confirm
+`[hook required-tests-late-admission-v1]` in a "Set up runner" log.
+
 ### Transient-read successor candidate (Task 5cee3629)
 
 `work-handover-native-admission-retry-v1` / component `1.0.2` keeps every rule
