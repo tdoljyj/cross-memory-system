@@ -101,6 +101,23 @@ test('waits back off 10, 20, 40, 80, 120, then every 120 minutes, or until ci_re
   assert.deepEqual(q.candidates(now()).filter(c => [9, 10].includes(c.pr)).map(c => c.pr), [10, 9]);
 });
 
+test('G4: a persisted legacy claim BACKOFF uses the waiting budget after restart', async t => {
+  const { q, now, advance, dir } = await fresh(t);
+  q.offer(trig(7, 1), now(), OPTS);
+  q.begin(7, H(1), KEY, 'queued', now());
+  q.settle(7, H(1), { kind: 'released', klass: 'not-admitted', code: 'CLAIM_NOT_CURRENT' }, now());
+  // The exact scheduling shape written by the previous resident generation.
+  Object.assign(q.row(7), { state: 'BACKOFF', level: 0, levelKind: null });
+  await q.save();
+  const reopened = await RunQueue.open(dir, now);
+  advance(10 * MIN);
+  assert.equal(reopened.candidates(now())[0].origin, 'waiting-retry');
+  assert.equal(reopened.claimChecks()[0].pr, 7);
+  reopened.begin(7, H(1), KEY, 'waiting-retry', now());
+  reopened.settle(7, H(1), { kind: 'released', klass: 'not-admitted', code: 'CLAIM_NOT_CURRENT' }, now());
+  assert.deepEqual([reopened.row(7).state, reopened.row(7).levelKind], ['WAITING', 'waiting']);
+});
+
 test('a new trigger pokes a row that waits: due after the 10-minute cool-down; a stopped row (cap or burned) needs a new commit', async t => {
   const { q, now, advance } = await fresh(t);
   q.offer(trig(7, 1, { prUpdatedAt: '2026-10-22T11:00:00Z' }), now(), OPTS);
