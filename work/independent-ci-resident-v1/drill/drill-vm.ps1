@@ -129,6 +129,29 @@ function Get-DrillBaselineAction($Vm) {
   return @{ action = 'rebuild'; code = $null }
 }
 
+# Guest readiness from successive probes (@{ boot; imageState; oobe }, $null when PowerShell Direct does not answer).
+# Ready = Windows setup and OOBE are finished (ImageState IMAGE_STATE_COMPLETE, OOBEInProgress 0), the boot is after $After, and
+# the same boot answers ready on two probes in a row. The local account, and so PowerShell Direct, works from the middle of OOBE
+# on, and OOBE still restarts the machine after that: the first real baseline (2026-11-16 10:29) took that answer for "installed"
+# and its next step died with "the system is shutting down".
+function Step-DrillReadiness($Previous, $Probe, [DateTimeOffset]$After) {
+  if ($null -eq $Probe) { return @{ ready = $false; candidate = $null } }
+  $boot = [DateTimeOffset]::Parse([string]$Probe.boot, [Globalization.CultureInfo]::InvariantCulture)
+  $settled = ([string]$Probe.imageState -ceq 'IMAGE_STATE_COMPLETE') -and ([int]$Probe.oobe -eq 0) -and ($boot -gt $After)
+  if (-not $settled) { return @{ ready = $false; candidate = $null } }
+  $id = $boot.ToUniversalTime().ToString('o')
+  return @{ ready = ($null -ne $Previous -and [string]$Previous -ceq $id); candidate = $id }
+}
+
+# Why a guest step failed, from the boot time before it and the boot time once the guest is ready again ('' = never ready).
+function Get-DrillStepFailureKind([string]$BootBefore, [string]$BootAfter) {
+  if ([string]::IsNullOrEmpty($BootAfter)) { return 'unreachable' }
+  if ([string]::IsNullOrEmpty($BootBefore)) { return 'restarted' }
+  $inv = [Globalization.CultureInfo]::InvariantCulture
+  if ([DateTimeOffset]::Parse($BootAfter, $inv) -ne [DateTimeOffset]::Parse($BootBefore, $inv)) { return 'restarted' }
+  return 'failed'
+}
+
 # The ISO is used only when its sha256 equals the expected value written next to it (the download's single source of truth).
 function Test-DrillIsoHash([string]$Actual, [string]$ExpectedText) {
   $expected = ([string]$ExpectedText).Trim().Split()[0].ToLowerInvariant()
@@ -552,24 +575,55 @@ function Save-DrillScreen([string]$VmName, [string]$Path) {
   } catch { return $null }
 }
 
-function Wait-DrillGuest([pscredential]$Credential, [int]$Minutes, [DateTimeOffset]$After = [DateTimeOffset]::MinValue) {
-  $until = [DateTime]::UtcNow.AddMinutes($Minutes)
-  while ([DateTime]::UtcNow -lt $until) {
-    try {
-      $boot = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ErrorAction Stop -ScriptBlock { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
-      if ([DateTimeOffset]::Parse($boot) -gt $After) { return [DateTimeOffset]::Parse($boot) }
-    } catch { }
-    Start-Sleep -Seconds 20
-  }
-  throw (New-DrillError 'DRILL_GUEST_NOT_REACHABLE_IN_TIME' @{ minutes = $Minutes })
+# One readiness probe inside the guest (read-only): this boot's time and how far Windows setup is.
+$script:GuestProbe = {
+  $setup = Get-ItemProperty -Path 'HKLM:\SYSTEM\Setup'
+  $state = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State' -ErrorAction SilentlyContinue
+  @{ boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+     imageState = $(if ($state) { [string]$state.ImageState } else { '' })
+     oobe = $(if ($setup.PSObject.Properties['OOBEInProgress']) { [int]$setup.OOBEInProgress } else { 0 }) }
+}
+function Get-DrillGuestProbe([pscredential]$Credential) {
+  try { return Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ErrorAction Stop -ScriptBlock $script:GuestProbe } catch { return $null }
 }
 
-function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [object[]]$ArgumentList = @(), [int]$TimeoutMinutes = 10, [string]$Code = 'DRILL_GUEST_STEP_TIMEOUT') {
-  $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $Script -ArgumentList $ArgumentList -AsJob
-  try {
-    if (-not (Wait-Job -Job $job -Timeout ($TimeoutMinutes * 60))) { throw (New-DrillError $Code @{ minutes = $TimeoutMinutes }) }
-    return Receive-Job -Job $job -ErrorAction Stop
-  } finally { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+function Wait-DrillGuest([pscredential]$Credential, [int]$Minutes, [DateTimeOffset]$After = [DateTimeOffset]::MinValue) {
+  $until = [DateTime]::UtcNow.AddMinutes($Minutes); $candidate = $null; $last = $null
+  while ([DateTime]::UtcNow -lt $until) {
+    $probe = Get-DrillGuestProbe $Credential
+    if ($probe) { $last = $probe }
+    $step = Step-DrillReadiness $candidate $probe $After
+    if ($step.ready) { return [DateTimeOffset]::Parse($step.candidate, [Globalization.CultureInfo]::InvariantCulture) }
+    $candidate = $step.candidate
+    Start-Sleep -Seconds 20
+  }
+  throw (New-DrillError 'DRILL_GUEST_NOT_READY_IN_TIME' @{ minutes = $Minutes; lastProbe = $last })
+}
+
+# Run one step in the guest, bounded. A failure is classified by the guest's boot time, never by the (localized) message:
+#   the guest restarted under the step -> a restartable (idempotent) step waits for the guest to be ready and runs again, at
+#   most twice; any other step stops with DRILL_GUEST_RESTARTED_DURING_STEP; the same boot -> DRILL_GUEST_STEP_FAILED.
+function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [object[]]$ArgumentList = @(), [int]$TimeoutMinutes = 10,
+    [string]$Code = 'DRILL_GUEST_STEP_TIMEOUT', [string]$Step = 'guest-step', [switch]$Restartable) {
+  for ($restarts = 0; ; $restarts++) {
+    $probe = Get-DrillGuestProbe $Credential
+    if ($null -eq $probe) { [void](Wait-DrillGuest $Credential 20); $probe = Get-DrillGuestProbe $Credential }
+    $before = if ($probe) { [string]$probe.boot } else { '' }
+    $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $Script -ArgumentList $ArgumentList -AsJob
+    try {
+      if (-not (Wait-Job -Job $job -Timeout ($TimeoutMinutes * 60))) { throw (New-DrillError $Code @{ step = $Step; minutes = $TimeoutMinutes }) }
+      return Receive-Job -Job $job -ErrorAction Stop
+    } catch {
+      $c = Get-DrillCode $_
+      if ($c.code -ne 'DRILL_UNEXPECTED') { throw }
+      $after = ''
+      try { $after = (Wait-DrillGuest $Credential 30).ToString('o') } catch { $after = '' }
+      $kind = Get-DrillStepFailureKind $before $after
+      if ($kind -eq 'restarted' -and $Restartable -and $restarts -lt 2) { continue }
+      $codeOut = @{ restarted = 'DRILL_GUEST_RESTARTED_DURING_STEP'; unreachable = 'DRILL_GUEST_NOT_READY_IN_TIME'; failed = 'DRILL_GUEST_STEP_FAILED' }[$kind]
+      throw (New-DrillError $codeOut @{ step = $Step; message = $c.detail; bootBefore = $before; bootAfter = $after })
+    } finally { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 function Remove-DrillVm {
@@ -622,44 +676,63 @@ function Invoke-DrillBaseline([string]$RunDir) {
   Add-VMDvdDrive -VM $vm -Path $script:Drill.AnswerIso
   Set-VMFirmware -VM $vm -FirstBootDevice (Get-VMDvdDrive -VM $vm)[0]
 
+  # Everything after Start-VM: any stop turns the VM off (it never stays running) and leaves the screen and the step log as
+  # evidence; the VM keeps no checkpoint, so the next run rebuilds it.
+  $log = Join-Path $RunDir 'baseline-steps.log'
+  $note = { param([string]$m) Add-Content -LiteralPath $log -Value ("{0} {1}" -f [DateTimeOffset]::UtcNow.ToString('o'), $m) -Encoding UTF8 }
   $started = [DateTimeOffset]::UtcNow
-  Start-VM -VM $vm
-  $keys = Send-DrillBootKeys $script:Drill.VmName $script:Drill.BootKeySeconds
-  try { [void](Wait-DrillGuest $cred $script:Drill.InstallTimeoutMinutes) }
-  catch { [void](Save-DrillScreen $script:Drill.VmName (Join-Path $RunDir 'baseline-timeout.bmp')); Stop-VM -VM $vm -TurnOff -Force; throw (New-DrillError 'DRILL_BASELINE_INSTALL_TIMEOUT' @{ minutes = $script:Drill.InstallTimeoutMinutes; bootKeysSent = $keys }) }
-  $installMinutes = [Math]::Round(([DateTimeOffset]::UtcNow - $started).TotalMinutes, 1)
+  try {
+    Start-VM -VM $vm
+    & $note 'started; sending boot keys'
+    $keys = Send-DrillBootKeys $script:Drill.VmName $script:Drill.BootKeySeconds
+    & $note "boot keys sent: $keys; waiting for setup and OOBE to finish"
+    try { [void](Wait-DrillGuest $cred $script:Drill.InstallTimeoutMinutes) }
+    catch { $c = Get-DrillCode $_; throw (New-DrillError 'DRILL_BASELINE_INSTALL_TIMEOUT' @{ minutes = $script:Drill.InstallTimeoutMinutes; bootKeysSent = $keys; lastProbe = $c.detail }) }
+    $installMinutes = [Math]::Round(([DateTimeOffset]::UtcNow - $started).TotalMinutes, 1)
+    & $note "setup and OOBE finished after $installMinutes min"
 
-  # Settle: never-expiring local password (a restored checkpoint must still log in months later), no sleep/hibernate,
-  # no automatic updates (every drill starts from the same bits), WSL and Virtual Machine Platform enabled.
-  $settle = Invoke-DrillGuest $cred {
-    $ErrorActionPreference = 'Stop'
-    Set-LocalUser -Name $args[0] -PasswordNeverExpires $true
-    & powercfg.exe /hibernate off | Out-Null
-    & powercfg.exe /change standby-timeout-ac 0 | Out-Null
-    & powercfg.exe /change monitor-timeout-ac 0 | Out-Null
-    $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
-    New-Item -Path $au -Force | Out-Null
-    Set-ItemProperty -Path $au -Name NoAutoUpdate -Value 1 -Type DWord
-    $f = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform -All -NoRestart
-    $os = Get-CimInstance Win32_OperatingSystem
-    [ordered]@{ caption = $os.Caption; build = $os.BuildNumber; edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID; host = $env:COMPUTERNAME; restartNeeded = [bool]$f.RestartNeeded }
-  } -ArgumentList @($script:Drill.GuestUser) -TimeoutMinutes 20
-  if ([string]$settle.edition -cne 'Professional') { Stop-VM -VM $vm -TurnOff -Force; throw (New-DrillError 'DRILL_BASELINE_NOT_PRO' @{ edition = [string]$settle.edition }) }
+    # Settle (idempotent, so it survives a guest restart): never-expiring local password (a restored checkpoint must still log in
+    # months later), no sleep/hibernate, no automatic updates (every drill starts from the same bits), WSL and VMP enabled.
+    $settle = Invoke-DrillGuest $cred {
+      $ErrorActionPreference = 'Stop'
+      Set-LocalUser -Name $args[0] -PasswordNeverExpires $true
+      & powercfg.exe /hibernate off | Out-Null
+      & powercfg.exe /change standby-timeout-ac 0 | Out-Null
+      & powercfg.exe /change monitor-timeout-ac 0 | Out-Null
+      $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+      New-Item -Path $au -Force | Out-Null
+      Set-ItemProperty -Path $au -Name NoAutoUpdate -Value 1 -Type DWord
+      $f = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform -All -NoRestart
+      $os = Get-CimInstance Win32_OperatingSystem
+      [ordered]@{ caption = $os.Caption; build = $os.BuildNumber; edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID; host = $env:COMPUTERNAME; restartNeeded = [bool]$f.RestartNeeded }
+    } -ArgumentList @($script:Drill.GuestUser) -TimeoutMinutes 20 -Step 'settle' -Restartable
+    & $note "settled: $($settle.caption) $($settle.build) $($settle.edition)"
+    if ([string]$settle.edition -cne 'Professional') { throw (New-DrillError 'DRILL_BASELINE_NOT_PRO' @{ edition = [string]$settle.edition }) }
 
-  $beforeReboot = [DateTimeOffset]::UtcNow
-  try { Invoke-Command -VMName $script:Drill.VmName -Credential $cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
-  [void](Wait-DrillGuest $cred 20 $beforeReboot)
-  $nested = Invoke-DrillGuest $cred {
-    $feat = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') | ForEach-Object { [ordered]@{ name = $_; state = [string](Get-WindowsOptionalFeature -Online -FeatureName $_).State } }
-    $hv = @(Get-WinEvent -LogName 'Microsoft-Windows-Hyper-V-Hypervisor-Operational' -MaxEvents 20 -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { "$($_.Id):$($_.Message.Split([Environment]::NewLine)[0])" })
-    [ordered]@{ features = @($feat); hypervisorEvents = $hv; vbs = [string](Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue).VirtualizationBasedSecurityStatus }
-  } -TimeoutMinutes 5
-  Stop-VM -VM $vm -Force   # graceful shutdown
-  if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { throw (New-DrillError 'DRILL_BASELINE_NOT_OFF') }
+    $beforeReboot = [DateTimeOffset]::UtcNow
+    try { Invoke-Command -VMName $script:Drill.VmName -Credential $cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
+    [void](Wait-DrillGuest $cred 20 $beforeReboot)
+    & $note 'restarted for the features'
+    $nested = Invoke-DrillGuest $cred {
+      $feat = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') | ForEach-Object { [ordered]@{ name = $_; state = [string](Get-WindowsOptionalFeature -Online -FeatureName $_).State } }
+      $hv = @(Get-WinEvent -LogName 'Microsoft-Windows-Hyper-V-Hypervisor-Operational' -MaxEvents 20 -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { "$($_.Id):$($_.Message.Split([Environment]::NewLine)[0])" })
+      [ordered]@{ features = @($feat); hypervisorEvents = $hv; vbs = [string](Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue).VirtualizationBasedSecurityStatus }
+    } -TimeoutMinutes 5 -Step 'features' -Restartable
+    if (@($nested.features | Where-Object { [string]$_.state -ne 'Enabled' }).Count) { throw (New-DrillError 'DRILL_BASELINE_FEATURES_NOT_ENABLED' $nested.features) }
+    Stop-VM -VM $vm -Force   # graceful shutdown
+    if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { throw (New-DrillError 'DRILL_BASELINE_NOT_OFF') }
+  } catch {
+    [void](Save-DrillScreen $script:Drill.VmName (Join-Path $RunDir 'baseline-failure.bmp'))
+    $c = Get-DrillCode $_
+    & $note "stopped: $($c.code)"
+    if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -VM $vm -TurnOff -Force }
+    throw
+  }
   foreach ($d in @(Get-VMDvdDrive -VM $vm)) { Set-VMDvdDrive -VMDvdDrive $d -Path $null }
   Remove-VMDvdDrive -VMDvdDrive (Get-VMDvdDrive -VM $vm)[1]
   Remove-Item -LiteralPath $script:Drill.AnswerIso -Force
   Checkpoint-VM -VM $vm -SnapshotName $script:Drill.Checkpoint
+  & $note "checkpoint $($script:Drill.Checkpoint) taken (Off)"
   return [ordered]@{ action = $decision.action; checkpoint = $script:Drill.Checkpoint; isoSha256 = $isoCheck.sha256; bootKeysSent = $keys; installMinutes = $installMinutes; guest = $settle; nested = $nested }
 }
 
@@ -697,8 +770,8 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
     $bad = Invoke-Command -Session $session -ScriptBlock { param($d, $w) @($w.Keys | Where-Object { (Get-FileHash -LiteralPath (Join-Path $d $_) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $w[$_] }) } -ArgumentList $dest, $want
     if (@($bad).Count) { throw (New-DrillError 'DRILL_PREREQ_CHANGED_IN_COPY' @($bad)) }
   } finally { Remove-PSSession -Session $session }
-  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' }
-  catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_UNEXPECTED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
+  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
+  catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_GUEST_STEP_FAILED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
   Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
   if (-not $facts.dockerActive -or -not $facts.systemdPid1) { throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
   return $facts
@@ -747,11 +820,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     param($Entry, $EntryArgs)
     $out = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Entry @EntryArgs 2>&1 | ForEach-Object { [string]$_ })
     [ordered]@{ lines = $out; exit = $LASTEXITCODE }
-  } -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT'
+  } -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
   [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($entryOut.lines))
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
 
-  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15
+  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
   # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes.
@@ -764,7 +837,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
       param($Root) $p = Join-Path $Root 'state\status.json'
       $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
       [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
-    } -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2
+    } -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
     $written = Get-Prop $r.status 'writtenAt'
     $ok = $false; if ($written) { try { $ok = [DateTimeOffset]::Parse([string]$written) -gt $boot } catch { $ok = $false } }
     $reboot = @{ ok = $ok; status = $r.status; readAt = $r.readAt }
@@ -786,8 +859,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
       $launch = @()
       if ($p1j -and $p1j.runCommand) { $launch = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $p1j.runCommand 2>&1 | ForEach-Object { [string]$_ }) }
       [ordered]@{ skipped = $false; upgradeStatus = [string](& $last $up).status; prepareStatus = [string]$p1j.status; launcherTail = @($launch | Select-Object -Last 20); upgradeTail = @($up | Select-Object -Last 5); prepareTail = @($p1 | Select-Object -Last 5) }
-    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT'
-    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15
+    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
     $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
@@ -796,7 +869,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
       $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
       $o = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare-again') 2>&1 | ForEach-Object { [string]$_ })
       $l = @($o | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }
-    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 60
+    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 60 -Step 'prepare-again'
     $reinstall.prepareAgainStatus = [string]$p2
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
@@ -876,6 +949,9 @@ function Invoke-DrillMain {
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by the offline tests: definitions only
+# The one output line is UTF-8 whatever the console code page (a Chinese Windows defaults to GBK, which garbled the guest's
+# localized messages in the first baseline run's detail).
+try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
 try {
   $result = Invoke-DrillMain
   Write-Output (ConvertTo-DrillJson $result)

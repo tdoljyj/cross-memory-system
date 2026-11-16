@@ -76,6 +76,36 @@ test('the baseline action comes from the scene: only the VM whose name and notes
   assert.deepEqual(r, ['build', 'DRILL_VM_NAME_TAKEN_NOT_OURS', 'DRILL_VM_NOT_OFF', 'ready', 'rebuild']);
 });
 
+test('the guest is ready only after setup and OOBE finish, on the same boot twice (PowerShell Direct answers mid-OOBE)', opts, () => {
+  // The first real baseline (2026-11-16): the account answered PowerShell Direct while OOBEInProgress was still 1; the settle
+  // step's DISM ran into OOBE, OOBE restarted the machine ("the system is shutting down") and fell into its recovery screen.
+  const r = ps(`$a = [DateTimeOffset]::Parse('2026-11-16T02:00:00Z');
+    $mid = @{ boot = '2026-11-16T02:12:00.5+00:00'; imageState = 'IMAGE_STATE_UNDEPLOYABLE'; oobe = 1 };
+    $done = @{ boot = '2026-11-16T02:31:26.5+00:00'; imageState = 'IMAGE_STATE_COMPLETE'; oobe = 0 };
+    $other = @{ boot = '2026-11-16T02:40:00Z'; imageState = 'IMAGE_STATE_COMPLETE'; oobe = 0 };
+    $s1 = Step-DrillReadiness $null $null $a; $s2 = Step-DrillReadiness $null $mid $a; $s3 = Step-DrillReadiness $null $done $a;
+    $s4 = Step-DrillReadiness $s3.candidate $done $a; $s5 = Step-DrillReadiness $s3.candidate $other $a;
+    $s6 = Step-DrillReadiness $s3.candidate $done ([DateTimeOffset]::Parse('2026-11-16T02:35:00Z'));
+    @($s1.ready, $s2.ready, $s3.ready, $s4.ready, $s5.ready, $s6.ready, ($s5.candidate -ne $s3.candidate))`);
+  assert.deepEqual(r, [false, false, false, true, false, false, true]);
+});
+
+test('a failed guest step is classified by the boot time, not by the localized message', opts, () => {
+  const r = ps(`@((Get-DrillStepFailureKind '2026-11-16T02:31:26.5000000+00:00' '2026-11-16T10:31:26.5+08:00'),
+    (Get-DrillStepFailureKind '2026-11-16T02:31:26.5+00:00' '2026-11-16T02:40:00+00:00'),
+    (Get-DrillStepFailureKind '2026-11-16T02:31:26.5+00:00' ''), (Get-DrillStepFailureKind '' '2026-11-16T02:40:00+00:00'))`);
+  assert.deepEqual(r, ['failed', 'restarted', 'unreachable', 'restarted']);
+});
+
+test('the one output line is UTF-8 even on a GBK console (localized details stay readable)', opts, () => {
+  const missing = path.join(tmp, '不存在的回执', '收据.json');
+  const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', missing, '-ProductionReadback', missing]);
+  assert.equal(run.status, 1);
+  const out = JSON.parse(run.stdout.toString('utf8').trim());
+  assert.equal(out.status, 'DRILL_STOPPED');
+  assert.match(out.detail, /收据\.json/);
+});
+
 test('the ISO is used only when its sha256 equals the expected file', opts, () => {
   const h = 'b'.repeat(64);
   const r = ps(`@((Test-DrillIsoHash ${q(h)} (${q(h.toUpperCase())} + [Environment]::NewLine)).ok,(Test-DrillIsoHash ${q('c'.repeat(64))} ${q(h)}).code, (Test-DrillIsoHash ${q(h)} 'x').code)`);
