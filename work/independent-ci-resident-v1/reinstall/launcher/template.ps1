@@ -343,6 +343,7 @@ function Get-AclReadbackRefusals($acl) {
 # (sc.exe texts, the elevated plan hash next to the pinned one and the differing plan fields, the migrate-acl
 # result), so no stop needs a blind second round. Also kept in <W>\launch\preflight-report.json.
 function Step-Preflight {
+  if ($FleetFirstInstall -and $Done.Contains('preflight')) { return $script:FirstInstallPreflightResult }   # ran before Linux A (Step-FirstInstallWindowsPreflight)
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $runner = Get-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
@@ -381,7 +382,7 @@ function Step-Preflight {
   if ($ExactAclReadbackGuard -and $null -ne $plan) { $bad = Get-AclReadbackRefusals (Get-Key $plan 'acl'); if ($bad.Count) { $codes.Add('INSTALLER_ACL_READBACK_WOULD_FAIL'); $report['aclReadbackRefusals'] = $bad } }
   # Quota phase 1 reinstall (tooling review MINOR-1): the carry-forward must now see the state this uninstall kept.
   $preview = $null; if ($dv -is [Collections.Generic.IDictionary[string, object]] -and $dv.ContainsKey('carryForwardPreview')) { $preview = $dv['carryForwardPreview'] }
-  $keptName = [IO.Path]::GetFileName([string](Get-Key $uninstall 'keptAt'))
+  $keptName = $(if ($FleetFirstInstall) { $null } else { [IO.Path]::GetFileName([string](Get-Key $uninstall 'keptAt')) })   # a first install has nothing kept (and runs this before any uninstall step)
   $report['carryForwardPreview'] = [ordered]@{ keptName = $keptName; preview = $preview }
   if (-not $FleetFirstInstall -and ($null -eq $preview -or $preview -is [string] -or -not $keptName -or @(@($preview) | Where-Object { (Get-Key $_ 'name') -ceq $keptName }).Count -ne 1)) { $codes.Add('CARRY_FORWARD_PREVIEW_MISSING_KEPT_STATE') }
   $tk = Test-TokenPlan $d.stdout; $report['upgradeTokenPlan'] = $tk; foreach ($q in @($tk.codes)) { $codes.Add($q) }   # r5c
@@ -411,7 +412,7 @@ function Step-Install {
   $rb = [IO.File]::ReadAllBytes((Join-Path $ResidentRoot 'install\install-receipt.json')); $sha = Sha256Bytes $rb
   if ($sha -cne (Get-Key $iv 'receiptSha256')) { Stop-Launch 'INSTALL_RECEIPT_CHANGED' ([ordered]@{ read = $sha; reported = (Get-Key $iv 'receiptSha256') }) }
   Write-New (Join-Path $Out 'install-receipt.json') $rb
-  if ($FleetFirstInstall) { $null = Remove-FirstInstallCredentials }   # the installer has placed both tokens
+  if ($FleetFirstInstall) { Remove-FirstInstallCredentials }   # the installer has placed both tokens
   $Done.Add('install')
   [ordered]@{ status = 'RESIDENT_INSTALLED'; receiptSha256 = $sha; started = (Get-Key $iv 'started') }
 }
@@ -1373,6 +1374,7 @@ function Get-FleetTokenFingerprint([byte[]]$bytes, [string]$kind) {
 # the installed tokens are still in place, and after it they are in the kept root (resident-uninstalled-*\secrets\), which the uninstall
 # renames and never deletes. A run that was cut off (power loss) is cleaned up by the next run's Step-SweepCarry. Idempotent.
 function Remove-FleetCarry {
+  if ($FleetFirstInstall) { Remove-FirstInstallCredentials }
   $d = [string]$CarriedTokens.directory
   if (-not $d -or $CarriedTokens.removed -eq $true -or (Split-Path -Parent $d) -cne $CarryParent -or (Split-Path -Leaf $d) -cnotmatch '^reinstall-carry-[0-9a-f]{32}$') { return }
   try {
@@ -1503,7 +1505,9 @@ function Step-CarryTokens {
 # The installed public binaries' locks, observed ELEVATED (reinstall/tools/file-locks.ps1, pinned): the companion account's processes
 # and its task are readable only from here, so the rehearsal leaves this check to the launcher on a companion node. Read-only.
 function Step-FileLocks {
-  if ($FleetFirstInstall) { return $null }   # no installed binary to hold a lock
+  # A first install has no installed binary to hold a lock. Its slot (after the tokens are carried, before Linux A) runs the first
+  # install's Windows preflight instead: Linux B cannot be undone, so whatever the Windows side would refuse is refused before it.
+  if ($FleetFirstInstall) { Step-FirstInstallWindowsPreflight; return $null }
   $b = [IO.File]::ReadAllBytes($FleetFileLocks)
   if ((Sha256Bytes $b) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_CHANGED' $null }
   $tool = Join-Path $Stage 'file-locks.ps1'; Write-New $tool $b
@@ -1537,13 +1541,30 @@ function Step-FirstInstallPreflight {
   if (@($report.codes).Count) { Stop-Launch $report.codes[0] $report }
   $Done.Add('first-install-preflight')
 }
+# The first install's Windows side, read-only and complete, before Linux A (review H1): the runner as reviewed (waited for, as the
+# reinstall's preflights wait), the two secret files where verify will look for them, and the install preflight itself (Step-Preflight:
+# the installer's dry runs with and without the carried tokens, the ACL migration plan, the spool). Its result is kept; the install
+# preflight after Linux (main region) returns it instead of running a second time into the same report names.
+function Step-FirstInstallWindowsPreflight {
+  $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
+  $runner = Wait-RunnerState; $report['runner'] = $runner
+  if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
+  $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }
+  $report['codes'] = @($codes)
+  Write-Json 'first-install-windows-preflight-report.json' $report
+  if ($codes.Count) { Stop-Launch $codes[0] $report }
+  $script:FirstInstallPreflightResult = Step-Preflight
+  $Done.Add('first-install-windows-preflight')
+}
 # Once the installer has placed the tokens, the host preparation's directory is deleted (its copies too: Remove-FleetCarry). Before the
 # install it stays: the same command then runs again with it.
 function Remove-FirstInstallCredentials {
-  $r = [ordered]@{ directory = $FleetFirstInstallDirectory; removed = $false; error = $null }
-  try { [IO.Directory]::Delete($FleetFirstInstallDirectory, $true); $r.removed = -not [IO.Directory]::Exists($FleetFirstInstallDirectory) } catch { $r.error = $_.Exception.GetType().Name }
-  Write-Json 'first-install-credentials-report.json' $r
-  $r
+  $d = [string]$FleetFirstInstallDirectory
+  if (-not $d -or (Split-Path -Leaf $d) -cne 'credentials') { return }
+  try {
+    if ([IO.Directory]::Exists($d)) { if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($d, $false) } else { [IO.Directory]::Delete($d, $true) } }
+    $CarriedTokens['firstInstallCredentialsRemoved'] = -not [IO.Directory]::Exists($d)
+  } catch { $CarriedTokens['firstInstallCredentialsRemoved'] = $false; $CarriedTokens['firstInstallCredentialsRemoveError'] = $_.Exception.GetType().Name }
 }
 # Linux A, then B (B-resume once after a failed B), then B's output by rule. A timeout stops the launch and kills nothing. Returns the
 # staged copy of the version facts (and its hash) for verify -LinuxVersionFactsFile.

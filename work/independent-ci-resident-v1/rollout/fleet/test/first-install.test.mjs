@@ -16,7 +16,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, LINUX_SCRIPTS, PLAN_CONTRACT, firstInstallKitOf, imageAssetOf, main, prepareInstall, readKit, sourceHashOf } from '../install.mjs';
+import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, RESIDENT_SERVICE_SID, firstInstallCheck, LINUX_SCRIPTS, PLAN_CONTRACT, firstInstallKitOf, imageAssetOf, main, prepareInstall, readKit, sourceHashOf } from '../install.mjs';
 import { buildUniversal } from '../universal.mjs';
 import { readPackageOnce } from '../../../upgrader/src/package.mjs';
 import { roles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -103,13 +103,14 @@ async function getWorld() {
 // A fresh machine: no resident root, the CI root holding only the host preparation's facts.
 async function freshSite(t, w, over = {}) {
   const d = await tempDir(t, 'fleetfresh');
-  const ciRoot = path.join(d, 'ci'), facts = { ...freshFacts({ toolchainNodeSha256: w.kit.template.toolchainNodeSha256 }), ...over };
+  const base = freshFacts({ toolchainNodeSha256: w.kit.template.toolchainNodeSha256 });
+  const ciRoot = path.join(d, 'ci'), facts = { ...base, ...(typeof over === 'function' ? over(base) : over) };
   await fs.mkdir(path.join(ciRoot, 'first-install'), { recursive: true });
   await fs.writeFile(path.join(ciRoot, 'first-install', 'facts.json'), JSON.stringify(facts));
   return { d, ciRoot, facts, root: path.join(ciRoot, 'resident') };
 }
 const prepareFresh = (w, site, work, over = {}) => prepareInstall({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: w.acceptance,
-  root: site.root, ciRoot: site.ciRoot, from: w.from, workDir: work, scm: SCM, serviceState: () => 'absent', hostname: () => HOST,
+  root: site.root, ciRoot: site.ciRoot, from: w.from, workDir: work, scm: SCM, serviceState: () => 'absent', hostname: () => HOST, ciRootSddl: () => '',
   controllerNode: path.join(w.template.root, 'runtime', 'node.exe'), ...over });
 
 test('first install: no receipt, the same command: the node from this machine\'s facts and the accepted kit, one package, the first-install scripts, no W1',
@@ -195,6 +196,45 @@ test('first install, the package\'s first-install.py for real: A.sh, B.sh, B-res
       assert.match(text['B.sh'], new RegExp(`^${l.id} ${l.id}\\.tar\\.gz ${sha(await fs.readFile(path.join(w.from, l.asset)))}$`, 'm'));
     }
     assert.ok(!/^[0-9a-f]{64} - -$/m.test(text['B.sh']));
+
+    // A stopped first install continues: a prepare again finds this commit's staging (one per commit, never per prepare) and A, when
+    // the staging is this package's and unchanged and the new in-directory carries exactly the staged inputs, stages nothing; B goes
+    // on from where it stopped. Run the continuation of the real A.sh in Git's own bash (never WSL), in a sandbox.
+    assert.match(text['A.sh'], new RegExp(`^BASE=/root/clued-ci-first-install-${w.commit.slice(0, 8)}$`, 'm'));
+    assert.ok(text['A.sh'].includes('mv -n -T "$BASE" "$BASE.cut-'), 'an A cut off before it completed is kept aside, not refused for ever');
+    const gitBash = path.resolve(spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim(), '..', '..', '..', 'bin', 'bash.exe');
+    if (!fsSync.existsSync(gitBash)) return t.diagnostic('no Git bash: the continuation is checked as text only');
+    const after = text['A.sh'].split('# ---- continue a stopped first install')[1];
+    const snippet = after?.slice(after.indexOf(String.fromCharCode(10)) + 1).split('# ---- end continue')[0];
+    assert.ok(snippet, 'A.sh continues a stopped first install');
+    const listed = [...snippet.split("<<'STAGED_EOF'")[1].split('STAGED_EOF')[0].matchAll(/^([0-9a-f]{64})  (.+)$/gm)].map(x => x[2]);
+    assert.ok(listed.length > 20);
+    const pkgSha = /^PKG_SHA=([0-9a-f]{64})$/m.exec(text['A.sh'])[1];
+    const box = path.join(site.d, 'box'), fwd = p => p.replace(/\\/g, '/');
+    const stage = async (dir) => { for (const f of listed) { await fs.mkdir(path.dirname(path.join(dir, f)), { recursive: true }); await fs.copyFile(path.join(plan.linux.inDir, ...f.split('/')), path.join(dir, f)); } };
+    const runContinue = (w2, base) => {
+      const script = `refuse() { echo "{\\"status\\":\\"REFUSED\\",\\"code\\":\\"$1\\"}"; exit 1; }\nset -euo pipefail\nW='${fwd(w2)}'\nBASE='${fwd(base)}'\nSTG="$BASE/stg"\nPKG_SHA=${pkgSha}\n${snippet}\necho '{"status":"NOT_CONTINUED"}'\n`;
+      const r = spawnSync(gitBash, ['--noprofile', '--norc', '-c', script], { encoding: 'utf8' });
+      assert.ok(r.stdout.trim(), `the continuation printed nothing: ${r.stderr}`);
+      return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1)).code ?? JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1)).status;
+    };
+    const fresh = async (name) => {
+      const base = path.join(box, name), stg = path.join(base, 'stg'), w2 = path.join(box, `${name}-in`);
+      await stage(stg); await stage(w2);
+      await fs.writeFile(path.join(stg, 'phaseA.sha256'), listed.map(f => `${sha(fsSync.readFileSync(path.join(stg, f)))}  ${f}\n`).join(''));
+      await fs.writeFile(path.join(base, 'package.sha256'), `${pkgSha}\n`);
+      return { base, stg, w2 };
+    };
+    let s = await fresh('ok');
+    assert.equal(runContinue(s.w2, s.base), 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED', 'the same package, unchanged: A done, B continues');
+    s = await fresh('other'); await fs.writeFile(path.join(s.base, 'package.sha256'), `${'0'.repeat(64)}\n`);
+    assert.equal(runContinue(s.w2, s.base), 'STAGED_FIRST_INSTALL_OF_ANOTHER_PACKAGE');
+    s = await fresh('changed'); await fs.appendFile(path.join(s.stg, listed[0]), 'x');
+    assert.equal(runContinue(s.w2, s.base), 'STAGED_BYTES_CHANGED_SINCE_PHASE_A');
+    s = await fresh('in'); await fs.appendFile(path.join(s.w2, listed.at(-1)), 'x');
+    assert.equal(runContinue(s.w2, s.base), 'IN_DIR_NOT_THE_STAGED_INPUTS');
+    s = await fresh('cut'); await fs.rm(path.join(s.stg, 'phaseA.sha256'));
+    assert.equal(runContinue(s.w2, s.base), 'NOT_CONTINUED', 'no completed A: the first install starts again (its cut-off staging kept aside)');
   });
 
 test('first install refuses: residue by name, a kit not accepted, facts not this machine\'s or not derived, another controller runtime, a missing image archive',
@@ -215,6 +255,16 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
     await fs.mkdir(site.root);
     await attempt(site, {}, e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue.join() === `directory:${site.root}`);
     await fs.rm(site.root, { recursive: true });
+    // what an uninstall leaves is residue too, named: a kept root, the installer's read ACE for the resident's service SID on the CI
+    // root (sc.exe showsid CluedCIResident gives this SID), and a CI root whose ACL cannot be read is not taken for a clean one
+    assert.equal(RESIDENT_SERVICE_SID, 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629');
+    const kept = path.join(site.ciRoot, 'resident-uninstalled-20261101T000000Z-abcdef012345');
+    await fs.mkdir(kept);
+    await attempt(site, {}, e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue.join() === `kept-root:${kept}` && /clean machine/.test(e.detail.next));
+    await fs.rm(kept, { recursive: true });
+    await attempt(site, { ciRootSddl: () => `O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;${RESIDENT_SERVICE_SID})` },
+      e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue.join() === `ci-root-ace:${RESIDENT_SERVICE_SID}`);
+    await attempt(site, { ciRootSddl: () => null }, e => e.code === 'FIRST_INSTALL_RESIDUE_PRESENT' && e.detail.residue[0].startsWith('ci-root-acl:unreadable:'));
     // the kit: the accepted one only; an acceptance without one is no first install
     const { firstInstallKitSha256, ...noKit } = w.acceptance;
     await attempt(site, { acceptance: noKit }, { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
@@ -227,7 +277,11 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
       [nodeOver({ wslDistribution: 'Ubuntu-24.04' }), 'FIRST_INSTALL_PROFILE_NOT_DERIVED'], [nodeOver({ nodeName: 'another' }), 'FIRST_INSTALL_PROFILE_NOT_DERIVED'],
       [{ signer: { ...site.facts.signer, keyId: 'template-key-20261116' } }, 'FIRST_INSTALL_SIGNER_NOT_DERIVED'],
       [{ linuxHost: { ...site.facts.linuxHost, resultPublicKeySha256: 'f'.repeat(64) } }, 'FIRST_INSTALL_SIGNER_NOT_THE_RESULT_KEY'],
-      [{ operatorSid: site.facts.node.ownerSid }, 'FIRST_INSTALL_FACTS_REFUSED'], [{ extra: 1 }, 'FIRST_INSTALL_FACTS_REFUSED']]) {
+      [{ operatorSid: site.facts.node.ownerSid }, 'FIRST_INSTALL_FACTS_REFUSED'], [{ extra: 1 }, 'FIRST_INSTALL_FACTS_REFUSED'],
+      // one token for two connections (the ci-admission pin is the upgrade token's fingerprint)
+      [{ nodeRecord: { ...site.facts.nodeRecord, ciTokenPinSha256: site.facts.credentials.upgradeToken.fingerprint } }, 'FIRST_INSTALL_FACTS_REFUSED'],
+      // the toolchain node in place is not the one the template's roles run
+      [f => ({ linuxHost: { ...f.linuxHost, toolchainNodeSha256: 'd'.repeat(64) } }), 'FIRST_INSTALL_TOOLCHAIN_NODE_NOT_THE_KITS']]) {
       const bad = await freshSite(t, w, over);
       await attempt(bad, {}, { code });
     }
@@ -240,6 +294,18 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
     await fs.cp(w.from, from2, { recursive: true });
     await fs.rm(path.join(from2, w.kit.images.local[0].asset));
     await attempt(site2, { from: from2 }, { code: 'FIRST_INSTALL_ROLE_IMAGE_ASSET_MISSING' });
+    // the read-only checks the bootstrap runs before any UAC (the host preparation takes its pins from them, never computes them)
+    const accFile = path.join(site2.d, 'acceptance.json'); await fs.writeFile(accFile, JSON.stringify(w.acceptance));
+    const chk = await main(['first-install-check', '--artifact', w.tar, '--artifact-sha', w.release.source.archive_sha256, '--acceptance', accFile, '--from', w.from]);
+    assert.deepEqual([chk.status, chk.kitSha256, chk.toolchainNodeSha256, chk.controllerNodeSha256, chk.archiveSha256],
+      ['FIRST_INSTALL_INPUTS_ACCEPTED', w.acceptance.firstInstallKitSha256, w.kit.template.toolchainNodeSha256, w.kit.record.controllerNodeSha256, w.release.source.archive_sha256]);
+    assert.match(chk.registrarSha256, /^[0-9a-f]{64}$/);
+    await assert.rejects(firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: { ...w.acceptance, firstInstallKitSha256: 'e'.repeat(64) }, from: w.from }),
+      { code: 'FIRST_INSTALL_KIT_NOT_THE_ACCEPTED' });
+    await assert.rejects(firstInstallCheck({ artifactPath: w.tar, artifactSha256: 'e'.repeat(64), acceptance: w.acceptance, from: w.from }), { code: 'FLEET_ARTIFACT_SHA_NOT_THE_ACCEPTED' });
+    const factsFile = path.join(site2.ciRoot, 'first-install', 'facts.json');
+    assert.equal((await main(['first-install-facts-check', '--facts', factsFile], { hostname: () => HOST })).status, 'FIRST_INSTALL_FACTS_VALID');
+    await assert.rejects(main(['first-install-facts-check', '--facts', factsFile], { hostname: () => 'ANOTHER' }), { code: 'FIRST_INSTALL_FACTS_NOT_THIS_MACHINE' });
     // a kit that names an image its roles do not: refused whole
     const forged = { ...w.kit, images: { ...w.kit.images, pull: [...w.kit.images.pull, `ghcr.io/x/y@sha256:${'1'.repeat(64)}`] } };
     assert.throws(() => readKit(Buffer.from(JSON.stringify(forged))), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_POLICIES' });

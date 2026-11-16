@@ -1,6 +1,6 @@
 {
   "contract": "clued.independent-ci.fleet-node-prereq-manifest/1",
-  "pending": "sha256 and bytes are pinned by the coordinator for each version from the official file (never computed on a node, never guessed); until then every item is null and bootstrap.ps1 refuses with PREREQ_NOT_PINNED. Open points per item in its own `pending`.",
+  "pending": "node, python, git, actions-runner and linux-node are pinned by the coordinator for each version from the official file (never computed on a node, never guessed); until then bootstrap.ps1 refuses with PREREQ_NOT_PINNED. wsl, ubuntu-rootfs and debs are the set the drill VM installed (D:\\clued-drill\\prereq\\prereq.json, 2026-11-16).",
   "items": [
     {
       "name": "node",
@@ -34,13 +34,13 @@
     },
     {
       "name": "ubuntu-rootfs",
-      "use": "the resident distribution CluedResident-Linux (wsl --import by first-install-host.ps1)",
-      "url": "https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz",
-      "fileName": "ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz",
-      "kind": "tar.gz",
-      "sha256": null,
-      "bytes": null,
-      "pending": "pin a dated build (not `current`, which moves): the coordinator replaces `current` with the build directory it pinned"
+      "use": "the resident distribution CluedResident-Linux (wsl --install --from-file by first-install-host.ps1); the drill VM image",
+      "url": "https://releases.ubuntu.com/24.04.5/ubuntu-24.04.5-wsl-amd64.wsl",
+      "fileName": "ubuntu-24.04.5-wsl-amd64.wsl",
+      "kind": "wsl",
+      "sha256": "bb415d824822c4b878125729af451a5d18fb13d1cf5cbed9a7393ad64ac6039e",
+      "bytes": 388975696,
+      "pinSource": "microsoft/WSL distributions/DistributionInfo.json, ModernDistributions Ubuntu-24.04 Amd64Url.Sha256"
     },
     {
       "name": "actions-runner",
@@ -61,13 +61,148 @@
       "sha256": null,
       "bytes": null,
       "pending": "the node version whose linux-x64 bin/node has that sha256 is not known here; the coordinator names the official tarball (https://nodejs.org/dist/v<ver>/node-v<ver>-linux-x64.tar.xz) and pins it"
+    },
+    {
+      "name": "wsl",
+      "use": "WSL itself: installed by first-install-host.ps1 when wsl --version is not this version (msiexec /i /qn /norestart), then wsl --version must name it",
+      "url": "https://github.com/microsoft/WSL/releases/download/2.7.13/wsl.2.7.13.0.x64.msi",
+      "fileName": "wsl.2.7.13.0.x64.msi",
+      "kind": "msi",
+      "version": "2.7.13.0",
+      "sha256": "a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754",
+      "bytes": 258985984,
+      "pinSource": "GitHub release asset digest (sha256); Authenticode Valid, CN=Microsoft Corporation"
     }
   ],
-  "aptPins": {
-    "docker.io": null,
-    "containerd": null,
-    "python3.12": null,
-    "git": null
-  },
-  "aptPinsPending": "the Ubuntu 24.04 (noble) package versions linux/first-host-prep.sh installs and holds; docker.io must be a version whose default image store is the classic one (the script also pins it in daemon.json and checks docker info)"
+  "debs": [
+    {
+      "package": "bridge-utils",
+      "version": "1.7.1-1ubuntu2",
+      "fileName": "bridge-utils_1.7.1-1ubuntu2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/b/bridge-utils/bridge-utils_1.7.1-1ubuntu2_amd64.deb",
+      "sha256": "de7c05690b77d96f9453e5a824f0b523da7bda15a4538349a1591a21498281d2",
+      "bytes": 33884
+    },
+    {
+      "package": "containerd",
+      "version": "2.2.1-0ubuntu1~24.04.4",
+      "fileName": "containerd_2.2.1-0ubuntu1~24.04.4_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/c/containerd-app/containerd_2.2.1-0ubuntu1~24.04.4_amd64.deb",
+      "sha256": "213089e5957d1ea6554b312f8e69869229017fc962ef4f6950228d7160fef2e9",
+      "bytes": 28151546
+    },
+    {
+      "package": "dns-root-data",
+      "version": "2024071801~ubuntu0.24.04.1",
+      "fileName": "dns-root-data_2024071801~ubuntu0.24.04.1_all.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/d/dns-root-data/dns-root-data_2024071801~ubuntu0.24.04.1_all.deb",
+      "sha256": "ee4617a269ec00257bb56ea28eb0eca3b1d4248d02ff65f79d4d40244f732df4",
+      "bytes": 5918
+    },
+    {
+      "package": "dnsmasq-base",
+      "version": "2.91-0ubuntu0.24.04.2",
+      "fileName": "dnsmasq-base_2.91-0ubuntu0.24.04.2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/d/dnsmasq/dnsmasq-base_2.91-0ubuntu0.24.04.2_amd64.deb",
+      "sha256": "2af43430c69bcb25078975c613b49288bc0474b98fc97af6e1e059dc973416f1",
+      "bytes": 380848
+    },
+    {
+      "package": "docker.io",
+      "version": "29.1.3-0ubuntu3~24.04.2",
+      "fileName": "docker.io_29.1.3-0ubuntu3~24.04.2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/universe/d/docker.io-app/docker.io_29.1.3-0ubuntu3~24.04.2_amd64.deb",
+      "sha256": "bd5c22d42d4ce3021958b7a8d627701597f61a1a9867ba83fe3c841f04991e3a",
+      "bytes": 35558504
+    },
+    {
+      "package": "iptables",
+      "version": "1.8.10-3ubuntu2",
+      "fileName": "iptables_1.8.10-3ubuntu2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/i/iptables/iptables_1.8.10-3ubuntu2_amd64.deb",
+      "sha256": "d341e8ffc42ca035f5aa0fd9a798c8d2b2edb019225dc11f4dac16edf9c57840",
+      "bytes": 381328
+    },
+    {
+      "package": "libip4tc2",
+      "version": "1.8.10-3ubuntu2",
+      "fileName": "libip4tc2_1.8.10-3ubuntu2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip4tc2_1.8.10-3ubuntu2_amd64.deb",
+      "sha256": "eb381f8ff0469534df3f1b146c3eb8baa6e36f8cfcdf2e3e039398322930d0a4",
+      "bytes": 23342
+    },
+    {
+      "package": "libip6tc2",
+      "version": "1.8.10-3ubuntu2",
+      "fileName": "libip6tc2_1.8.10-3ubuntu2_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip6tc2_1.8.10-3ubuntu2_amd64.deb",
+      "sha256": "b98b88eb6aa14a902ea1aebc3b12ddd140572545ae1fc6428cb0868c31671d05",
+      "bytes": 23732
+    },
+    {
+      "package": "libnetfilter-conntrack3",
+      "version": "1.0.9-6build1",
+      "fileName": "libnetfilter-conntrack3_1.0.9-6build1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.0.9-6build1_amd64.deb",
+      "sha256": "6d32a4c4618eb7d6c0d989591d28637a9acdfa86dfe22e42e9ac9cc25d882a97",
+      "bytes": 45218
+    },
+    {
+      "package": "libnfnetlink0",
+      "version": "1.0.2-2build1",
+      "fileName": "libnfnetlink0_1.0.2-2build1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-2build1_amd64.deb",
+      "sha256": "f557a287af2ca00df5dbf632c6b77d77479139ffb51c83e3de9766eb609b5d63",
+      "bytes": 14810
+    },
+    {
+      "package": "libnftables1",
+      "version": "1.0.9-1ubuntu0.1",
+      "fileName": "libnftables1_1.0.9-1ubuntu0.1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/n/nftables/libnftables1_1.0.9-1ubuntu0.1_amd64.deb",
+      "sha256": "fcaee001747a6adaa0cd9337fef437b3aa7a7a6d5246b62fbd4784d3d6a5009e",
+      "bytes": 358574
+    },
+    {
+      "package": "libnftnl11",
+      "version": "1.2.6-2build1",
+      "fileName": "libnftnl11_1.2.6-2build1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/libn/libnftnl/libnftnl11_1.2.6-2build1_amd64.deb",
+      "sha256": "e5bde5c9cbb95082700011f0b7ef2c0a41900b0a9fd7434f6e90448e2a7b4e50",
+      "bytes": 65986
+    },
+    {
+      "package": "nftables",
+      "version": "1.0.9-1ubuntu0.1",
+      "fileName": "nftables_1.0.9-1ubuntu0.1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/n/nftables/nftables_1.0.9-1ubuntu0.1_amd64.deb",
+      "sha256": "d648859fccde3c17b8b9b89993427564f91f394a39306db1f67bd5ea3ac42c6e",
+      "bytes": 69842
+    },
+    {
+      "package": "pigz",
+      "version": "2.8-1",
+      "fileName": "pigz_2.8-1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/universe/p/pigz/pigz_2.8-1_amd64.deb",
+      "sha256": "9c90b8ada9e9c346b787aa7e827c1f70c4a8933ee322171689f2a0311e3f7b5e",
+      "bytes": 65554
+    },
+    {
+      "package": "runc",
+      "version": "1.3.4-0ubuntu1~24.04.1",
+      "fileName": "runc_1.3.4-0ubuntu1~24.04.1_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/r/runc-app/runc_1.3.4-0ubuntu1~24.04.1_amd64.deb",
+      "sha256": "6ddd64ed7ef1693dd95620a2b1148a4187ef4fe0819c3c3049fad9385ecfd5dc",
+      "bytes": 9573850
+    },
+    {
+      "package": "ubuntu-fan",
+      "version": "0.12.16+24.04.1",
+      "fileName": "ubuntu-fan_0.12.16+24.04.1_all.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/universe/u/ubuntu-fan/ubuntu-fan_0.12.16+24.04.1_all.deb",
+      "sha256": "eeb7e4d6d139aa4fdaa7c17cefc0c235839b0a5100b5538f545eb2da00eda78b",
+      "bytes": 34228
+    }
+  ],
+  "debsPinSource": "apt Packages SHA256 of noble, noble-updates, noble-security (main, universe, amd64); each Packages.xz checked against its InRelease; each InRelease verified by gpgv with ubuntu-archive-keyring.gpg taken from the pinned rootfs; the closure of apt install docker.io (Depends, Pre-Depends, Recommends) against the rootfs dpkg status. Installed offline by linux/first-host-prep.sh with dpkg -i from these files only (sha256sum -c first); python3.12 and git are the pinned rootfs own packages."
 }

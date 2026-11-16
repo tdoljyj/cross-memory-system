@@ -203,7 +203,7 @@ sums = ''.join('%s  %s\n' % (sha(os.path.join(IN, *f.split('/'))), f) for f in f
 NODE_IN = WSL_IN if FLEET else ARGV[8] if len(ARGV) > 8 else '/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/')
 assert re.fullmatch(r'/[A-Za-z0-9._/-]+', NODE_IN) and '..' not in NODE_IN.split('/'), 'NODE_IN_DIR_SHAPE'
 W = shlex.quote(NODE_IN)
-BASE = '/root/clued-ci-first-install-' + COMMIT[:8] + ('-' + SUFFIX if FLEET else '')   # the package path: a new prepare, a new staging
+BASE = '/root/clued-ci-first-install-' + COMMIT[:8]   # one staging per commit: the package path continues in it (CONTINUE below)
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 
@@ -287,15 +287,15 @@ host_ready() {
 
 A = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase A (root, NO private key, writes only under $BASE). Commit @@C8@@, node @@NODE_NAME@@.
 @@HOW_A@@""" + COMMON + r"""host_ready
-# a first install: nothing of a Linux CI here yet
+@@CONTINUE@@# a first install: nothing of a Linux CI here yet
 for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 \
          /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/formal-source-manifest-v2.json \
          /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json /var/lib/clued-independent-ci/resident/upgrade/current.json; do
   [ ! -e "$p" ] || refuse "NOT_A_FIRST_INSTALL:$p"
 done
 [ -z "$(ls -A /var/lib/clued-independent-ci/runs 2>/dev/null)" ] || refuse RUNS_NOT_EMPTY
-[ ! -e "$BASE" ] || refuse STAGING_EXISTS_PRESERVE
-install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$STG/template" "$STG/linux-pkg" "$STG/linux-pkg/upgrade-v1" "$STG/linux-pkg/upgrade-v1/bin" "$STG/linux-res-pkg" "$STG/linux-res-pkg/bin" "$STG/linux-res-pkg/systemd"
+@@BASE_GATE@@install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$STG/template" "$STG/linux-pkg" "$STG/linux-pkg/upgrade-v1" "$STG/linux-pkg/upgrade-v1/bin" "$STG/linux-res-pkg" "$STG/linux-res-pkg/bin" "$STG/linux-res-pkg/systemd"
+printf '%s\n' "$PKG_SHA" > "$BASE/package.sha256"
 for f in @@FILES@@; do install -o root -g root -m 0400 "$W/$f" "$STG/$f"; done
 cp -a --no-preserve=ownership "$W/src.git" "$STG/src.git"
 chown -R root:root "$STG/src.git"
@@ -447,6 +447,23 @@ for h in LOCAL_IMAGES:
     LOCAL_ARCHIVES[h] = {'archive': 'images/' + found[0], 'sha256': sha(os.path.join(IN, 'images', found[0]))} if found else None
     assert found or not FLEET, ('LOCAL_ROLE_IMAGE_ARCHIVE_MISSING', h)   # the package path never waits for a person to put one there
     LOCAL_LINES += '%s %s %s' % (h, found[0] if found else '-', LOCAL_ARCHIVES[h]['sha256'] if found else '-') + chr(10)
+# The package path continues a stopped first install. A prepare again after a launch that stopped once Linux phase A had completed
+# (B cut off, failed twice, or done while the Windows side stopped) finds this commit's staging: the same package (package.sha256), the
+# staged bytes unchanged since A (phaseA.sha256), and this in-directory carrying exactly the staged inputs. A then stages nothing and
+# B, whose every step checks what is already done, goes on from where it stopped. Anything else is refused by name, never redone over.
+CONT_FLEET = r"""# ---- continue a stopped first install of this package (A done earlier; B goes on from where it stopped)
+if [ -s "$STG/phaseA.sha256" ]; then
+  [ "$(cat "$BASE/package.sha256" 2>/dev/null)" = "$PKG_SHA" ] || refuse STAGED_FIRST_INSTALL_OF_ANOTHER_PACKAGE
+  (cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+  (cd "$STG" && sha256sum --quiet -c - <<'STAGED_EOF') || refuse STAGED_INPUTS_NOT_THIS_PACKAGES
+@@SUMS@@STAGED_EOF
+  (cd "$W" && sha256sum --quiet -c - <<'IN_EOF') || refuse IN_DIR_NOT_THE_STAGED_INPUTS
+@@SUMS@@IN_EOF
+  echo "{\"status\":\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\",\"continued\":true,\"phaseAManifestSha256\":\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\"}"
+  exit 0
+fi
+# ---- end continue
+"""
 # The two forms differ only in these pieces (reinstall/test/test_first_install.py holds every other line equal).
 if FLEET:
     FORM = {'ENV_GATE': '# run by the elevated launcher under `/usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc` (fixed by the registrar)\n',
@@ -454,6 +471,9 @@ if FLEET:
             'HOW_A': '#   run by the elevated first-install launcher only (no argument): A.sh\n',
             'HOW_B': '#   run by the elevated first-install launcher only (no argument): B.sh after A.sh; B-resume.sh (the same text) once after a failed B\n',
             'WANT_A': '[ -s "$STG/phaseA.sha256" ] || refuse PHASE_A_NOT_DONE\n',
+            'CONTINUE': CONT_FLEET,
+            # an A cut off before it completed left a staging without phaseA.sha256: kept aside whole (never deleted), A again
+            'BASE_GATE': '[ ! -e "$BASE" ] || mv -n -T "$BASE" "$BASE.cut-$(date -u +%Y%m%dT%H%M%SZ)" || refuse STAGING_CUT_OFF_NOT_KEPT_ASIDE\n[ ! -e "$BASE" ] || refuse STAGING_EXISTS_PRESERVE\n',
             'VF': '$O/linux-version-facts.$(date -u +%Y%m%dT%H%M%SZ).json',
             'B_DONE': ('E="$O/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"\n'
                        '{ echo "source: first-install-linux-B (root, launcher)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; '
@@ -467,6 +487,7 @@ else:
             'HOW_A': '#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-A.@@SUFFIX@@.sh\n',
             'HOW_B': '#   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/first-install-linux-B.@@SUFFIX@@.sh <phaseAManifestSha256 as reviewed>\n',
             'WANT_A': 'WANT_A="${1:?phase A manifest sha256 required}"\n[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' \' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED\n',
+            'CONTINUE': '', 'BASE_GATE': '[ ! -e "$BASE" ] || refuse STAGING_EXISTS_PRESERVE\n',
             'VF': '$W/../linux-version-facts.@@NODE_NAME@@.$(date -u +%Y%m%dT%H%M%SZ).json',
             'B_DONE': 'echo "{\\"status\\":\\"LINUX_FIRST_INSTALL_DONE\\",\\"node\\":\\"@@NODE_NAME@@\\",\\"sourceCommit\\":\\"$COMMIT\\",\\"ciSourceManifestSha256\\":\\"$NEW_MANIFEST\\",\\"packageManifestSha256\\":\\"$PKG_SHA\\",\\"versionFacts\\":\\"$VF\\"}"\n'}
 for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ / @@NODE_NAME@@ of their own

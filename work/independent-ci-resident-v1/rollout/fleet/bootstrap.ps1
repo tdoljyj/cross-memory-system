@@ -3,53 +3,63 @@
   The one node entry of the universal node package (Release asset fleet-node-<v>.bootstrap.ps1): first install, reinstall, the same
   command on every node, no node argument.
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File <dir>\fleet-node-<v>.bootstrap.ps1 -From <dir>
+    powershell -NoProfile -ExecutionPolicy Bypass -File <dir>\fleet-node-<v>.bootstrap.ps1 -From <dir> [-Reset]
 
 .DESCRIPTION
   Run by the Owner in a NORMAL (not elevated) window, with the system's own Windows PowerShell 5.1. <dir> holds one version's Release
-  assets (a USB stick, a share, a synced folder: only the hashes count):
+  assets (a USB stick, a share, a synced folder: only the hashes count); its path, like every path this script hands to an elevated
+  process, is letters, digits, '.', '_', '-' and '\' only (a path with a blank or any other character is refused, never quoted):
     fleet-node-<v>.tar, fleet-node-<v>.release.json, SHA256SUMS, fleet-node-<v>.bootstrap.ps1, fleet-node-<v>.prereq-manifest.json,
-    fleet-node-<v>.acceptance.json (the Owner's acceptance; install.mjs prepare validates it as a whole)
+    fleet-node-<v>.acceptance.json (the Owner's acceptance; install.mjs validates it as a whole)
     and, for a first install, fleet-node-<v>.first-install-kit.json, role-image-<64hex>.tar.gz (each local role image the kit names)
     and fleet-node-<v>.first-install.SHA256SUMS (over those two kinds; publish.mjs attach-first-install-kit).
-  Every file in <dir> must be listed in exactly one of the two sums files with its hash (the acceptance and the two sums files
-  themselves excepted); a listed file that is missing, an unlisted file, or a hash that differs refuses before anything else.
-  Optional prerequisite downloads may also be in <dir> under their manifest file names (then they are taken from there, by hash).
+  Every file in <dir> must be listed in exactly one of the two sums files with its hash (the acceptance, the two sums files and the
+  prerequisite files the manifest names excepted); a listed file that is missing, an unlisted file, or a hash that differs refuses.
 
-  Steps, each judged by the last line of JSON of what it ran:
+  Steps, each judged by the last JSON object of what it ran:
     1. the asset set and every hash (Test-AssetSet, Read-Sha256Sums);
-    2. the prerequisite manifest (contract clued.independent-ci.fleet-node-prereq-manifest/1): every item pinned (a null sha256 or
-       bytes refuses with PREREQ_NOT_PINNED: nothing is ever fetched unpinned); node, python and git fetched into a new work directory
-       C:\ProgramData\CluedBootstrap\<32hex>\ (from <dir> when a file of that name and hash is there, else downloaded) and checked by
-       sha256 and size; each zip expanded. The work directory is not under C:\ProgramData\CluedIndependentCI: that folder, its owner and
-       ACL are made by the elevated host preparation (first-install-host.ps1), never by this non-elevated process;
-    3. the archive's tree/ (Windows' own tar.exe; install.mjs then checks its own bytes against the archive, OWN_MODULES, so the
-       extracting tool is not trusted for content);
-    4. a node with C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json: install.mjs prepare (non-elevated, the
-       existing arguments), then its runCommand ELEVATED (one UAC);
-       a node without it: the host preparation ELEVATED (UAC 1: windows\first-install-host.ps1 run from a copy of the archive the elevated
-       process extracted itself into an admin-only directory after checking the archive's sha256), then install.mjs prepare --from <dir>
-       (non-elevated), then the runCommand ELEVATED (UAC 2). A Windows feature that needs a restart stops after step 4's first part with
-       RESTART_THEN_RUN_THE_SAME_COMMAND: done steps are only checked on the next run.
-  A declined UAC prompt is reported as UAC_DECLINED (nothing elevated ran); an elevated run that has not ended within its limit is
-  reported as ELEVATED_RUN_STILL_RUNNING (nothing is killed). The elevated child's output goes to a file in the work directory and is
-  read back here; this script prints one JSON line at the end: {status, step, code?, detail?, workDir}.
+    2. the prerequisite manifest (Test-PrereqManifest): every item pinned (PREREQ_NOT_PINNED otherwise: nothing is fetched unpinned);
+       each file from <dir> when it is there with its pinned hash, else downloaded, then held to sha256 and size; node, python and git
+       expanded once into C:\ProgramData\CluedBootstrap\tools\<name>-<sha256> (complete only with its marker; a cut-off expansion is
+       set aside and done again: Get-ExtractState);
+    3. the archive's tree/ (Windows' own tar.exe; install.mjs checks its own bytes against the archive, so the tool is not trusted);
+    4. a node with C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json: install.mjs prepare, then the launcher;
+       a node without it (a first install):
+         a. install.mjs first-install-check, NOT elevated: the acceptance, the archive's and the kit's sha256 held to it, the kit read
+            whole, every role image asset there; its output (kit sha256, toolchain node sha256, the registrar's pin in the archive's
+            resident manifest, the images) is all the host preparation is given (M2, L2);
+         b. the host preparation ELEVATED (UAC 1): this same file with -Stage host and its arguments one by one (-File, M3), which
+            first refuses an elevated account that is not the operator who started this (M4), copies the archive into an admin-only
+            directory, checks its sha256, extracts it and runs its windows\first-install-host.ps1;
+         c. install.mjs prepare --from <dir> (not elevated);
+       then the launcher ELEVATED (UAC 2): -Stage launcher copies the launcher prepare wrote into an admin-only directory, checks its
+       sha256 and runs that copy with -RunApprovedInstall.
+  The first install's token directory (C:\ProgramData\CluedIndependentCI\first-install\credentials) never outlives the run (L3): the
+  host stage removes it on every end but FIRST_INSTALL_HOST_READY, the launcher stage on every end, and a prepare that fails or a
+  launcher UAC that is declined is followed by -Stage cleanup (one more UAC; declined, the result says CREDENTIALS_LEFT and where).
+  -Reset (a first install only, no resident on the host): the host stage runs first-install-host.ps1 -Reset, which removes what this
+  host preparation made and nothing else.
+  A declined UAC prompt is UAC_DECLINED (nothing elevated ran); an elevated run that has not ended within its limit is
+  ELEVATED_RUN_STILL_RUNNING (nothing is killed). A stage's terminating exception is kept in its result with its message (L4) and its
+  temporary copies are removed in every case. The last line printed is one JSON object: {status, step, code?, detail?, workDir}.
 #>
-param([string]$From)
+param([string]$From, [ValidateSet('', 'host', 'launcher', 'cleanup')][string]$Stage = '', [string]$Result, [string]$Tar, [string]$ArchiveSha256,
+  [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256, [string]$RegistrarSha256,
+  [string]$ExpectedOperatorSid, [string]$Launcher, [string]$LauncherSha256, [switch]$Reset)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
-$CiRoot = 'C:\ProgramData\CluedIndependentCI'
 $ReceiptFile = 'C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json'
+$CredentialDirectory = 'C:\ProgramData\CluedIndependentCI\first-install\credentials'
 $WorkParent = 'C:\ProgramData\CluedBootstrap'
 $PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $TarExe = 'C:\Windows\System32\tar.exe'
 $Resident = 'tree/work/independent-ci-resident-v1'
 $PrereqContract = 'clued.independent-ci.fleet-node-prereq-manifest/1'
-$PrereqNames = @('node', 'python', 'git', 'ubuntu-rootfs', 'actions-runner', 'linux-node')
-$AptPackages = @('containerd', 'docker.io', 'git', 'python3.12')
-$HostLimitSeconds = 4 * 3600      # P1: Windows features, accounts, the distribution import, docker in it
+$PrereqNames = @('node', 'python', 'git', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl')
+$AdminOnlySddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+$HostLimitSeconds = 4 * 3600      # P1: Windows features, WSL, accounts, the distribution, docker in it
 $LauncherLimitSeconds = 6 * 3600  # Linux A (1800 s) + B (7200 s) + first-train wait + verify, with margin
 
 # ------------------------------------------------------------------ pure functions (test/test-bootstrap.ps1 runs them)
@@ -61,7 +71,7 @@ function Read-Sha256Sums([string]$text) {
   $map = [ordered]@{}
   foreach ($line in @($text -split "`r?`n")) {
     if ($line -ceq '') { continue }
-    if ($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]{0,200})$') { throw ('BOOTSTRAP_SUMS_REFUSED:' + $line) }
+    if ($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+~-]{0,200})$') { throw ('BOOTSTRAP_SUMS_REFUSED:' + $line) }
     if ($map.Contains($Matches[2])) { throw ('BOOTSTRAP_SUMS_DUPLICATE:' + $Matches[2]) }
     $map[$Matches[2]] = $Matches[1]
   }
@@ -96,8 +106,9 @@ function Test-AssetSet([string[]]$present, $sums, $firstSums, [string]$version, 
   foreach ($k in @($sums.Keys)) { if ($k -cmatch '^role-image-' -or $k -ceq "$t.first-install-kit.json") { $codes += ('RELEASE_SUMS_NAMES_FIRST_INSTALL_ASSET:' + $k) } }
   , @($codes | Sort-Object -Unique)
 }
-# The prerequisite manifest: exactly the five items, each pinned (sha256 and bytes), an https URL, a plain file name, a known kind.
-# Returns the codes; PREREQ_NOT_PINNED:<name> for an item a coordinator has not pinned yet (the manifest says so in `pending`).
+# The prerequisite manifest: exactly the seven items, each pinned (sha256 and bytes), an https URL, a plain file name, a known kind;
+# the WSL package with its exact version; the docker closure as .deb files, each pinned (the drill VM's set, installed by dpkg from
+# these files only: no apt resolution anywhere). Returns the codes; PREREQ_NOT_PINNED:<name> for what a coordinator has not pinned yet.
 function Test-PrereqManifest($m) {
   $codes = @()
   if ((Get-Key $m 'contract') -cne $PrereqContract -or $null -eq (Get-Key $m 'items')) { return , @('PREREQ_MANIFEST_SHAPE') }
@@ -106,34 +117,64 @@ function Test-PrereqManifest($m) {
     if ($i -isnot [Collections.IDictionary]) { $codes += 'PREREQ_ITEM_SHAPE'; continue }
     $name = [string](Get-Key $i 'name'); $names += $name
     if ($PrereqNames -cnotcontains $name) { $codes += ('PREREQ_UNKNOWN_ITEM:' + $name) }
-    if ([string](Get-Key $i 'url') -cnotmatch '^https://[A-Za-z0-9.-]+/[^\s"''`]+$') { $codes += ('PREREQ_URL:' + $name) }
-    if ([string](Get-Key $i 'fileName') -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}$') { $codes += ('PREREQ_FILE_NAME:' + $name) }
-    if (@('zip', 'exe', 'tar.gz', 'tar.xz') -cnotcontains [string](Get-Key $i 'kind')) { $codes += ('PREREQ_KIND:' + $name) }
     $b = Get-Key $i 'bytes'
     $pinned = ([string](Get-Key $i 'sha256') -cmatch '^[0-9a-f]{64}$') -and ($b -is [int] -or $b -is [long]) -and [long]$b -gt 0
     if (-not $pinned) { $codes += ('PREREQ_NOT_PINNED:' + $name) }
+    # (an item not pinned yet may not name its URL either: the coordinator names both)
+    if (($pinned -or $null -ne (Get-Key $i 'url')) -and [string](Get-Key $i 'url') -cnotmatch '^https://[A-Za-z0-9.-]+/[^\s"''`]+$') { $codes += ('PREREQ_URL:' + $name) }
+    if ([string](Get-Key $i 'fileName') -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$') { $codes += ('PREREQ_FILE_NAME:' + $name) }
+    if (@('zip', 'exe', 'msi', 'wsl', 'tar.gz', 'tar.xz') -cnotcontains [string](Get-Key $i 'kind')) { $codes += ('PREREQ_KIND:' + $name) }
+    if ($name -ceq 'wsl' -and [string](Get-Key $i 'version') -cnotmatch '^\d+\.\d+\.\d+\.\d+$') { $codes += 'PREREQ_WSL_VERSION' }
   }
   foreach ($n in $PrereqNames) { if (@($names | Where-Object { $_ -ceq $n }).Count -ne 1) { $codes += ('PREREQ_ITEM_NOT_ONCE:' + $n) } }
-  # the resident distribution's apt packages (linux/first-host-prep.sh): exactly these four, each an exact version
-  $apt = Get-Key $m 'aptPins'
-  if ($apt -isnot [Collections.IDictionary] -or (@($apt.Keys | Sort-Object) -join ',') -cne ($AptPackages -join ',')) { $codes += 'PREREQ_APT_PINS_SHAPE' }
-  else { foreach ($k in $AptPackages) { if ([string]$apt[$k] -cnotmatch '^[A-Za-z0-9.+:~-]{1,100}$') { $codes += ('PREREQ_NOT_PINNED:apt:' + $k) } } }
+  $debs = @(Get-Key $m 'debs' | Where-Object { $null -ne $_ })
+  if ($debs.Count -lt 1) { $codes += 'PREREQ_DEBS_SHAPE' }
+  foreach ($d in $debs) {
+    $pkg = [string](Get-Key $d 'package')
+    if ($pkg -cnotmatch '^[a-z0-9][a-z0-9.+-]{0,100}$' -or [string](Get-Key $d 'version') -cnotmatch '^[A-Za-z0-9.+:~-]{1,100}$') { $codes += ('PREREQ_DEB_SHAPE:' + $pkg); continue }
+    if ([string](Get-Key $d 'fileName') -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}\.deb$') { $codes += ('PREREQ_DEB_FILE_NAME:' + $pkg) }
+    if ([string](Get-Key $d 'url') -cnotmatch '^https?://[A-Za-z0-9.-]+/[^\s"''`]+\.deb$') { $codes += ('PREREQ_DEB_URL:' + $pkg) }   # by its sha256: the archive serves http
+    $b = Get-Key $d 'bytes'
+    if ([string](Get-Key $d 'sha256') -cnotmatch '^[0-9a-f]{64}$' -or -not (($b -is [int] -or $b -is [long]) -and [long]$b -gt 0)) { $codes += ('PREREQ_NOT_PINNED:deb:' + $pkg) }
+  }
   , @($codes)
 }
-# The last non-empty line of a child's output, parsed as JSON (a dictionary), else $null.
+# The last JSON object a child printed: its last line when that parses, else the text from the last line that begins with '{' (the
+# launcher prints its terminal as an indented object). $null when there is none.
 function Get-LastJsonLine([string]$text) {
   if ($null -eq $text) { return $null }
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = 16777216
   $lines = @($text -split "`r?`n" | Where-Object { $_.Trim() })
   if ($lines.Count -eq 0) { return $null }
-  try { $o = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($lines[$lines.Count - 1]) } catch { return $null }
+  $o = $null
+  try { $o = $js.DeserializeObject($lines[$lines.Count - 1]) } catch { $o = $null }
+  if ($o -isnot [Collections.IDictionary]) {
+    $at = -1; for ($i = $lines.Count - 1; $i -ge 0; $i--) { if ($lines[$i] -ceq '{') { $at = $i; break } }
+    if ($at -ge 0) { try { $o = $js.DeserializeObject((@($lines[$at..($lines.Count - 1)]) -join "`n")) } catch { $o = $null } }
+  }
   if ($o -is [Collections.IDictionary]) { $o } else { $null }
 }
-# The elevated command: a PowerShell scriptblock text, run with -EncodedCommand (no quoting through the shell). It writes every line it
-# produces to $resultFile (UTF-8) so the non-elevated caller can read it.
-function Get-ElevatedArguments([string]$scriptText, [string]$resultFile) {
-  if ($resultFile -cnotmatch '^[A-Za-z]:\\[A-Za-z0-9._\\-]+$') { throw 'BOOTSTRAP_RESULT_PATH_REFUSED' }
-  $wrapped = "`$ErrorActionPreference = 'Stop'; & { " + $scriptText + " } *>&1 | ForEach-Object { [string]`$_ } | Out-File -LiteralPath '" + $resultFile + "' -Encoding utf8"
-  @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($wrapped)))
+# M3: a path handed on is a drive path of letters, digits, '.', '_', '-' only (no blank, no quote, no '..', no trailing '\').
+function Test-SafePath([string]$p) { $p -cmatch '^[A-Za-z]:(?:\\[A-Za-z0-9_-][A-Za-z0-9._-]*)+$' -and ($p.Split('\') -cnotcontains '..') }
+# M3: any other argument value: a word of letters, digits, '.', '_', '-', ':' or '\'; one with ':' or '\' must be a safe path.
+function Test-SafeArgument([string]$v) {
+  if ($v -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:\\-]{0,500}$') { return $false }
+  if ($v.Contains('\') -or $v.Contains(':')) { return (Test-SafePath $v) }
+  $true
+}
+# M3: the elevated command line: -File <this script> and named arguments one by one (pairs), every value inside the whitelist. No value
+# is ever part of code text; Start-Process joins them with blanks and none can hold one.
+function Get-ElevatedArguments([string]$scriptFile, [string[]]$named, [string[]]$switches = @()) {
+  if (-not (Test-SafePath $scriptFile)) { throw ('BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:' + $scriptFile) }
+  $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $scriptFile)
+  if (@($named).Count % 2) { throw 'BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:pairs' }
+  for ($i = 0; $i -lt @($named).Count; $i += 2) {
+    if ($named[$i] -cnotmatch '^-[A-Z][A-Za-z0-9]{1,40}$') { throw ('BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:' + $named[$i]) }
+    if (-not (Test-SafeArgument $named[$i + 1])) { throw ('BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:' + $named[$i + 1]) }
+    $a += @($named[$i], $named[$i + 1])
+  }
+  foreach ($s in @($switches)) { if ($s -cnotmatch '^-[A-Z][A-Za-z0-9]{1,40}$') { throw ('BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:' + $s) }; $a += $s }
+  , $a
 }
 # True when an exception is the UAC prompt declined (ERROR_CANCELLED 1223), however PowerShell wrapped it.
 function Test-UacDeclined($err) {
@@ -141,23 +182,48 @@ function Test-UacDeclined($err) {
   while ($null -ne $e) { if ($e -is [ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { return $true }; $e = $e.InnerException }
   $false
 }
+# L1: an expansion is complete only when its marker holds the sha256 of what was expanded.
+function Get-ExtractState([string]$dir, [string]$sourceSha256) {
+  if (-not [IO.Directory]::Exists($dir)) { return 'absent' }
+  $marker = Join-Path $dir '.bootstrap-complete'
+  if ([IO.File]::Exists($marker) -and ([IO.File]::ReadAllText($marker)).Trim() -ceq $sourceSha256) { 'complete' } else { 'incomplete' }
+}
+# L4: a stage's terminating exception, kept with its message and type.
+function Get-StageFailure([string]$stage, $exception) {
+  [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; stage = $stage; message = [string]$exception.Message; type = $exception.GetType().FullName }
+}
+# M4: the elevated stage runs as the operator who started the bootstrap, or not at all (a UAC prompt answered with another account).
+function Test-StageOperator([string]$actualSid, [string]$expectedSid) {
+  if ($expectedSid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { return 'EXPECTED_OPERATOR_SID_REQUIRED' }
+  if ($actualSid -cne $expectedSid) { return 'ELEVATED_ACCOUNT_IS_NOT_THE_OPERATOR' }
+  $null
+}
+# L3: whether a stage's end clears the token directory: always, but after a host preparation that left it for the launcher.
+function Test-CredentialsToClear([string]$stage, [string]$status) {
+  if ($stage -ceq 'host') { return ($status -cne 'FIRST_INSTALL_HOST_READY') }
+  $true
+}
 
 # ------------------------------------------------------------------ host actions
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); $f = [IO.File]::OpenRead($p); try { (-join ($s.ComputeHash($f) | ForEach-Object { $_.ToString('x2') })) } finally { $f.Dispose(); $s.Dispose() } }
+function ConvertTo-JsonLine($o) { (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($o) }
 function Out-Result([string]$status, [string]$step, $extra) {
   $r = [ordered]@{ status = $status; step = $step; workDir = $script:Work }
   if ($null -ne $extra) { foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] } }
-  ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($r))
+  ConvertTo-JsonLine $r
 }
 function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
-function Invoke-Elevated([string]$step, [string]$scriptText, [int]$limitSeconds) {
+# One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
+# declined: { declined = $true } (the caller decides what follows).
+function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [string[]]$switches = @()) {
   $result = Join-Path $script:Work ('elevated-' + $step + '-' + [Guid]::NewGuid().ToString('N') + '.txt')
+  $arguments = try { Get-ElevatedArguments $script:Self (@('-Stage', $step, '-Result', $result) + @($named)) $switches } catch { Stop-Bootstrap $step 'ELEVATED_ARGUMENT_REFUSED' ([string]$_.Exception.Message) }
   $p = $null
-  try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList (Get-ElevatedArguments $scriptText $result) -Verb RunAs -PassThru -WindowStyle Normal }
-  catch { if (Test-UacDeclined $_.Exception) { Stop-Bootstrap $step 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }; throw }
+  try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -PassThru -WindowStyle Normal }
+  catch { if (Test-UacDeclined $_.Exception) { return [ordered]@{ declined = $true; exit = $null; last = $null; output = $null } }; throw }
   if (-not $p.WaitForExit($limitSeconds * 1000)) { Stop-Bootstrap $step 'ELEVATED_RUN_STILL_RUNNING' ([ordered]@{ pid = $p.Id; output = $result; note = 'nothing was killed' }) }
   $text = if ([IO.File]::Exists($result)) { [IO.File]::ReadAllText($result) } else { $null }
-  [ordered]@{ exit = $p.ExitCode; last = (Get-LastJsonLine $text); output = $result }
+  [ordered]@{ declined = $false; exit = $p.ExitCode; last = (Get-LastJsonLine $text); output = $result }
 }
 function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envAdd) {
   $psi = New-Object Diagnostics.ProcessStartInfo
@@ -169,41 +235,117 @@ function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envA
   $proc.WaitForExit()
   [ordered]@{ exit = $proc.ExitCode; last = (Get-LastJsonLine $o.Result); stderr = $(if ($e.Result.Length -gt 600) { $e.Result.Substring($e.Result.Length - 600) } else { $e.Result }) }
 }
-# One prerequisite into $dest: <From>\<fileName> when it has the pinned hash, else downloaded; checked by sha256 and size either way.
+# One prerequisite file into $dest: <From>\<fileName> when it has the pinned hash, else downloaded; held to sha256 and size either way.
 function Get-Prereq($item, [string]$dest) {
   $target = Join-Path $dest $item['fileName']
-  $local = Join-Path $From $item['fileName']
+  $local = Join-Path $script:From $item['fileName']
   if ([IO.File]::Exists($local) -and (Sha256File $local) -ceq $item['sha256']) { [IO.File]::Copy($local, $target, $false) }
   else {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $item['url'] -OutFile $target -UseBasicParsing
   }
   $len = (Get-Item -LiteralPath $target).Length
-  if ((Sha256File $target) -cne $item['sha256'] -or $len -ne [long]$item['bytes']) { Stop-Bootstrap 'prereq' 'PREREQ_HASH_MISMATCH' ([ordered]@{ name = $item['name']; bytes = $len }) }
+  if ((Sha256File $target) -cne $item['sha256'] -or $len -ne [long]$item['bytes']) { Stop-Bootstrap 'prereq' 'PREREQ_HASH_MISMATCH' ([ordered]@{ name = $item['fileName']; bytes = $len }) }
   $target
 }
+# L1: a zip expanded once per sha256 into the tools cache: into a new directory, marked complete, then renamed into place; a directory
+# found incomplete (a cut-off run) is renamed aside, kept, and the expansion done again.
+function Expand-Cached([string]$zip, [string]$name, [string]$sha256) {
+  $dir = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + $sha256)
+  $state = Get-ExtractState $dir $sha256
+  if ($state -ceq 'complete') { return $dir }
+  if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.incomplete-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')) }
+  $partial = $dir + '.partial-' + [Guid]::NewGuid().ToString('N')
+  Expand-Archive -LiteralPath $zip -DestinationPath $partial
+  [IO.File]::WriteAllText((Join-Path $partial '.bootstrap-complete'), $sha256)
+  [IO.Directory]::Move($partial, $dir)
+  $dir
+}
 
+# ------------------------------------------------------------------ the elevated stages (this file, -Stage)
+function Invoke-Stage {
+  $lines = New-Object Collections.Generic.List[string]; $stageDir = $null; $status = $null
+  try {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'STAGE_NOT_ELEVATED' }
+    $code = Test-StageOperator $me.User.Value $ExpectedOperatorSid
+    if ($code) { throw $code }
+    if ($Stage -cne 'cleanup') {
+      $stageDir = Join-Path 'C:\Windows\Temp' ('clued-bootstrap-' + $Stage + '-' + [Guid]::NewGuid().ToString('N'))
+      $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
+      [void][IO.Directory]::CreateDirectory($stageDir, $ds)
+    }
+    if ($Stage -ceq 'host') {
+      foreach ($p in @($Tar, $PrereqDirectory, $PrereqManifest)) { if (-not (Test-SafePath $p)) { throw ('STAGE_ARGUMENT_REFUSED:' + $p) } }
+      foreach ($h in @($ArchiveSha256, $PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:sha256' } }
+      $copy = Join-Path $stageDir 'a.tar'
+      [IO.File]::Copy($Tar, $copy, $false)
+      if ((Sha256File $copy) -cne $ArchiveSha256) { throw 'ARCHIVE_COPY_NOT_THE_ACCEPTED' }
+      & $TarExe -x -f $copy -C $stageDir 'tree'
+      if ($LASTEXITCODE -ne 0) { throw ('ARCHIVE_EXTRACT_FAILED:' + $LASTEXITCODE) }
+      $p1 = Join-Path $stageDir ($Resident.Replace('/', '\') + '\windows\first-install-host.ps1')
+      $p1Args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $p1, '-Tree', (Join-Path $stageDir 'tree'), '-PrereqDirectory', $PrereqDirectory,
+        '-PrereqManifest', $PrereqManifest, '-PrereqManifestSha256', $PrereqManifestSha256, '-KitSha256', $KitSha256, '-ToolchainNodeSha256', $ToolchainNodeSha256,
+        '-RegistrarSha256', $RegistrarSha256, '-ExpectedOperatorSid', $ExpectedOperatorSid)
+      if ($Reset) { $p1Args += '-Reset' }
+      $out = & $PowerShellExe @p1Args 2>&1 | ForEach-Object { [string]$_ }
+      foreach ($l in @($out)) { $lines.Add($l) }
+      $status = [string](Get-Key (Get-LastJsonLine ($lines -join "`n")) 'status')
+    } elseif ($Stage -ceq 'launcher') {
+      if (-not (Test-SafePath $Launcher) -or $LauncherSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:launcher' }
+      $copy = Join-Path $stageDir 'launcher.ps1'
+      [IO.File]::Copy($Launcher, $copy, $false)
+      if ((Sha256File $copy) -cne $LauncherSha256) { throw 'LAUNCHER_CHANGED' }
+      $out = & $PowerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $copy -RunApprovedInstall 2>&1 | ForEach-Object { [string]$_ }
+      foreach ($l in @($out)) { $lines.Add($l) }
+      $status = [string](Get-Key (Get-LastJsonLine ($lines -join "`n")) 'status')
+    } else { $status = 'CLEANUP' }
+  } catch {
+    $f = Get-StageFailure $Stage $_.Exception
+    $lines.Add((ConvertTo-JsonLine $f)); $status = $f.status
+  } finally {
+    if ($stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-CredentialsToClear $Stage $status) {
+      $cleared = $true
+      if ([IO.Directory]::Exists($CredentialDirectory)) { try { [IO.Directory]::Delete($CredentialDirectory, $true) } catch { $cleared = $false } }
+      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $cleared; directory = $CredentialDirectory })))
+      if ($Stage -ceq 'cleanup') { $lines.Add((ConvertTo-JsonLine ([ordered]@{ status = $(if ($cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }))) }
+    }
+    # the verdict stays the last object: a host or launcher result line is repeated after the cleanup note
+    $verdict = Get-LastJsonLine (@($lines | Where-Object { $_ -notmatch '"credentialsCleared"' }) -join "`n")
+    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { $lines.Add((ConvertTo-JsonLine $verdict)) }
+    if ($Result -and (Test-SafePath $Result)) { [IO.File]::WriteAllLines($Result, $lines.ToArray(), (New-Object Text.UTF8Encoding($false))) }
+  }
+}
+
+# ------------------------------------------------------------------ the non-elevated entry
 function Invoke-Bootstrap {
   if (-not $From -or -not [IO.Directory]::Exists($From)) { Stop-Bootstrap 'arguments' 'FROM_DIRECTORY_MISSING' $From }
-  $script:From = [IO.Path]::GetFullPath($From)
-  $id = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-  if ($id.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Bootstrap 'arguments' 'RUN_NOT_ELEVATED' 'run this in a normal window: it asks for UAC itself where it must' }
+  $script:From = [IO.Path]::GetFullPath($From).TrimEnd('\')
+  $script:Self = $PSCommandPath
+  foreach ($p in @($script:From, $script:Self)) { if (-not (Test-SafePath $p)) { Stop-Bootstrap 'arguments' 'PATH_NOT_ALLOWED' ([ordered]@{ path = $p; allowed = 'a drive path of letters, digits, ".", "_", "-" only: copy the assets to such a folder' }) } }
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  if ((New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Bootstrap 'arguments' 'RUN_NOT_ELEVATED' 'run this in a normal window: it asks for UAC itself where it must' }
+  $operator = $id.User.Value
   # 1. the asset set and every hash
-  $present = @(Get-ChildItem -LiteralPath $From -File -Force | ForEach-Object { $_.Name })
+  $present = @(Get-ChildItem -LiteralPath $script:From -File -Force | ForEach-Object { $_.Name })
   $version = try { Get-ReleaseVersion $present } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
   $t = 'fleet-node-' + $version
   $firstInstall = -not [IO.File]::Exists($ReceiptFile)
-  $sums = try { Read-Sha256Sums ([IO.File]::ReadAllText((Join-Path $From 'SHA256SUMS'))) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
-  $firstSumsFile = Join-Path $From "$t.first-install.SHA256SUMS"
+  if ($Reset -and -not $firstInstall) { Stop-Bootstrap 'arguments' 'RESET_ONLY_WITHOUT_A_RESIDENT' 'this node has an install receipt: it is reinstalled or uninstalled, never reset' }
+  $sums = try { Read-Sha256Sums ([IO.File]::ReadAllText((Join-Path $script:From 'SHA256SUMS'))) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
+  $firstSumsFile = Join-Path $script:From "$t.first-install.SHA256SUMS"
   $firstSums = if ([IO.File]::Exists($firstSumsFile)) { try { Read-Sha256Sums ([IO.File]::ReadAllText($firstSumsFile)) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null } } else { $null }
-  $js = New-Object Web.Script.Serialization.JavaScriptSerializer
-  $prereqFile = Join-Path $From "$t.prereq-manifest.json"
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = 16777216
+  $prereqFile = Join-Path $script:From "$t.prereq-manifest.json"
   $prereqNamesInDir = @()
-  if ([IO.File]::Exists($prereqFile)) { try { $prereqNamesInDir = @(Get-Key $js.DeserializeObject([IO.File]::ReadAllText($prereqFile)) 'items' | ForEach-Object { [string](Get-Key $_ 'fileName') }) } catch { $prereqNamesInDir = @() } }
+  if ([IO.File]::Exists($prereqFile)) {
+    try { $pm = $js.DeserializeObject([IO.File]::ReadAllText($prereqFile)); $prereqNamesInDir = @(@(Get-Key $pm 'items') + @(Get-Key $pm 'debs') | Where-Object { $null -ne $_ } | ForEach-Object { [string](Get-Key $_ 'fileName') }) } catch { $prereqNamesInDir = @() }
+  }
   $codes = Test-AssetSet $present $sums $firstSums $version $firstInstall $prereqNamesInDir
   if ($codes.Count) { Stop-Bootstrap 'assets' 'ASSET_SET_REFUSED' $codes }
   $all = [ordered]@{}; foreach ($k in @($sums.Keys)) { $all[$k] = $sums[$k] }; if ($null -ne $firstSums) { foreach ($k in @($firstSums.Keys)) { $all[$k] = $firstSums[$k] } }
-  foreach ($n in @($all.Keys)) { if ((Sha256File (Join-Path $From $n)) -cne $all[$n]) { Stop-Bootstrap 'assets' 'ASSET_HASH_MISMATCH' $n } }
+  foreach ($n in @($all.Keys)) { if ((Sha256File (Join-Path $script:From $n)) -cne $all[$n]) { Stop-Bootstrap 'assets' 'ASSET_HASH_MISMATCH' $n } }
   # 2. the prerequisites
   $m = $js.DeserializeObject([IO.File]::ReadAllText($prereqFile))
   $pc = Test-PrereqManifest $m
@@ -215,54 +357,62 @@ function Invoke-Bootstrap {
   $tools = [ordered]@{}
   foreach ($i in @($m['items'])) {
     $file = Get-Prereq $i $pre
-    $tools[$i['name']] = $file
-    if ($i['kind'] -ceq 'zip' -and @('node', 'python', 'git') -ccontains [string]$i['name']) {
-      $x = Join-Path $script:Work ('tool-' + $i['name']); Expand-Archive -LiteralPath $file -DestinationPath $x
-      $tools[$i['name'] + 'Dir'] = $x
-    }
+    if (@('node', 'python', 'git') -ccontains [string]$i['name']) { $tools[[string]$i['name']] = Expand-Cached $file ([string]$i['name']) ([string]$i['sha256']) }
   }
-  $nodeExe = @(Get-ChildItem -LiteralPath $tools['nodeDir'] -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
-  $pyExe = @(Get-ChildItem -LiteralPath $tools['pythonDir'] -Recurse -Filter python.exe | ForEach-Object { $_.FullName })
-  $gitExe = @(Get-ChildItem -LiteralPath $tools['gitDir'] -Recurse -Filter git.exe | Where-Object { $_.Directory.Name -ceq 'cmd' } | ForEach-Object { $_.FullName })
+  $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)
+  foreach ($d in @($m['debs'])) { $null = Get-Prereq $d $debDir }
+  $nodeExe = @(Get-ChildItem -LiteralPath $tools['node'] -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
+  $pyExe = @(Get-ChildItem -LiteralPath $tools['python'] -Recurse -Filter python.exe | ForEach-Object { $_.FullName })
+  $gitExe = @(Get-ChildItem -LiteralPath $tools['git'] -Recurse -Filter git.exe | Where-Object { $_.Directory.Name -ceq 'cmd' } | ForEach-Object { $_.FullName })
   if ($nodeExe.Count -ne 1 -or $pyExe.Count -ne 1 -or $gitExe.Count -ne 1) { Stop-Bootstrap 'prereq' 'PREREQ_TOOL_NOT_ONE' ([ordered]@{ node = $nodeExe.Count; python = $pyExe.Count; git = $gitExe.Count }) }
   $path = (Split-Path -Parent $pyExe[0]) + ';' + (Split-Path -Parent $gitExe[0]) + ';' + (Split-Path -Parent $nodeExe[0]) + ';C:\Windows\System32;C:\Windows'
-  # 3. the archive's tree
-  $tar = Join-Path $From "$t.tar"
+  $childEnv = @{ PATH = $path; PSModulePath = $env:PSModulePath }
+  # 3. the archive's tree (a new work directory every run: never a half one)
+  $tar = Join-Path $script:From "$t.tar"
   $x = Join-Path $script:Work 'x'; [void][IO.Directory]::CreateDirectory($x)
   & $TarExe -x -f $tar -C $x 'tree' 'universal-manifest.json'
   if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'unpack' 'ARCHIVE_EXTRACT_FAILED' $LASTEXITCODE }
   $install = Join-Path $x ($Resident.Replace('/', '\') + '\rollout\fleet\install.mjs')
-  $acceptance = Join-Path $From "$t.acceptance.json"
+  $acceptance = Join-Path $script:From "$t.acceptance.json"
   $archiveSha = $sums["$t.tar"]
   $prepareArgs = @($install, 'prepare', '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'))
-  # 4. a first install: the host preparation, elevated, from the archive the elevated process checks and extracts itself
+  # 4. a first install: the accepted inputs checked non-elevated, then the host preparation elevated with exactly their pins
   if ($firstInstall) {
-    $kit = Join-Path $From "$t.first-install-kit.json"
-    $p1 = "`$ErrorActionPreference='Stop'; `$tar='$tar'; `$want='$archiveSha'; " +
-      "`$s=[Security.Cryptography.SHA256]::Create(); `$f=[IO.File]::OpenRead(`$tar); try { `$h=-join (`$s.ComputeHash(`$f) | ForEach-Object { `$_.ToString('x2') }) } finally { `$f.Dispose() }; " +
-      "if (`$h -cne `$want) { throw 'ARCHIVE_CHANGED_BEFORE_ELEVATION' }; " +
-      "`$stage=Join-Path 'C:\Windows\Temp' ('clued-first-install-' + [Guid]::NewGuid().ToString('N')); `$ds=New-Object Security.AccessControl.DirectorySecurity; `$ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'); [void][IO.Directory]::CreateDirectory(`$stage, `$ds); " +
-      "Copy-Item -LiteralPath `$tar -Destination (Join-Path `$stage 'a.tar'); " +
-      "`$f=[IO.File]::OpenRead((Join-Path `$stage 'a.tar')); try { `$h=-join (`$s.ComputeHash(`$f) | ForEach-Object { `$_.ToString('x2') }) } finally { `$f.Dispose() }; if (`$h -cne `$want) { throw 'ARCHIVE_COPY_CHANGED' }; " +
-      "& '$TarExe' -x -f (Join-Path `$stage 'a.tar') -C `$stage 'tree'; if (`$LASTEXITCODE -ne 0) { throw 'ARCHIVE_EXTRACT_FAILED' }; " +
-      "& (Join-Path `$stage '" + $Resident.Replace('/', '\') + "\windows\first-install-host.ps1') -Tree (Join-Path `$stage 'tree') -PrereqDirectory '$pre' -PrereqManifest '$prereqFile' -PrereqManifestSha256 '" + $sums["$t.prereq-manifest.json"] + "' -Kit '$kit' -KitSha256 '" + $firstSums["$t.first-install-kit.json"] + "'"
-    $h = Invoke-Elevated 'host' $p1 $HostLimitSeconds
-    $st = if ($null -ne $h.last -and $h.last.ContainsKey('status')) { [string]$h.last['status'] } else { $null }
+    $c = Invoke-NonElevated $nodeExe[0] @($install, 'first-install-check', '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance, '--from', $script:From) $childEnv
+    $chk = $c.last
+    if ($c.exit -ne 0 -or [string](Get-Key $chk 'status') -cne 'FIRST_INSTALL_INPUTS_ACCEPTED' -or [string](Get-Key $chk 'archiveSha256') -cne $archiveSha -or
+        $null -eq $firstSums -or [string](Get-Key $chk 'kitSha256') -cne $firstSums["$t.first-install-kit.json"]) {
+      Stop-Bootstrap 'first-install-check' 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' ([ordered]@{ exit = $c.exit; last = $chk; stderr = $c.stderr })
+    }
+    $hostArgs = @('-Tar', $tar, '-ArchiveSha256', $archiveSha, '-PrereqDirectory', $pre, '-PrereqManifest', $prereqFile, '-PrereqManifestSha256', $sums["$t.prereq-manifest.json"],
+      '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator)
+    $h = Invoke-Elevated 'host' $hostArgs $HostLimitSeconds $(if ($Reset) { @('-Reset') } else { @() })
+    if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
+    $st = [string](Get-Key $h.last 'status')
+    if ($Reset) { Out-Result $(if ($st -ceq 'FIRST_INSTALL_HOST_RESET') { 'BOOTSTRAP_RESET_DONE' } else { 'BOOTSTRAP_RESET_NOT_DONE' }) 'host' ([ordered]@{ last = $h.last; output = $h.output }); return }
     if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
     if ($h.exit -ne 0 -or $st -cne 'FIRST_INSTALL_HOST_READY') { Stop-Bootstrap 'host' 'HOST_PREPARATION_NOT_DONE' ([ordered]@{ exit = $h.exit; last = $h.last; output = $h.output }) }
-    $prepareArgs += @('--from', $From)
+    $prepareArgs += @('--from', $script:From)
   }
-  # 5. prepare (non-elevated), then its launcher elevated
-  $pr = Invoke-NonElevated $nodeExe[0] $prepareArgs @{ PATH = $path; PSModulePath = $env:PSModulePath }
-  $ps = if ($null -ne $pr.last -and $pr.last.ContainsKey('status')) { [string]$pr.last['status'] } else { $null }
-  if ($pr.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains $ps -or -not $pr.last.ContainsKey('runCommand')) {
-    Stop-Bootstrap 'prepare' 'PREPARE_REFUSED' ([ordered]@{ exit = $pr.exit; last = $pr.last; stderr = $pr.stderr })
+  # 5. prepare (non-elevated), then its launcher elevated; after a first install's host preparation every failure clears the tokens
+  $clear = {
+    param([string]$why)
+    if (-not $firstInstall) { return $null }
+    $cl = Invoke-Elevated 'cleanup' @('-ExpectedOperatorSid', $operator) 600
+    [ordered]@{ why = $why; credentials = $(if ($cl.declined) { 'CREDENTIALS_LEFT_UAC_DECLINED: ' + $CredentialDirectory } else { [string](Get-Key $cl.last 'status') }) }
   }
-  $l = Invoke-Elevated 'launcher' ([string]$pr.last['runCommand']) $LauncherLimitSeconds
-  $ls = if ($null -ne $l.last -and $l.last.ContainsKey('status')) { [string]$l.last['status'] } else { $null }
+  $pr = Invoke-NonElevated $nodeExe[0] $prepareArgs $childEnv
+  $ps = [string](Get-Key $pr.last 'status')
+  $lch = Get-Key $pr.last 'launcher'
+  if ($pr.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains $ps -or -not (Test-SafePath ([string](Get-Key $lch 'path'))) -or [string](Get-Key $lch 'sha256') -cnotmatch '^[0-9a-f]{64}$') {
+    Stop-Bootstrap 'prepare' 'PREPARE_REFUSED' ([ordered]@{ exit = $pr.exit; last = $pr.last; stderr = $pr.stderr; cleanup = (& $clear 'prepare') })
+  }
+  $l = Invoke-Elevated 'launcher' @('-Launcher', [string]$lch['path'], '-LauncherSha256', [string]$lch['sha256'], '-ExpectedOperatorSid', $operator) $LauncherLimitSeconds
+  if ($l.declined) { Stop-Bootstrap 'launcher' 'UAC_DECLINED' ([ordered]@{ note = 'the launcher did not run; run the same command again'; cleanup = (& $clear 'launcher declined') }) }
+  $ls = [string](Get-Key $l.last 'status')
   Out-Result $(if ($ls -ceq 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') { 'BOOTSTRAP_DONE' } else { 'BOOTSTRAP_LAUNCHER_ENDED' }) 'launcher' ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; exit = $l.exit; output = $l.output })
   if ($ls -cne 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') { exit 1 }
 }
 
-$script:Work = $null
-if ($MyInvocation.InvocationName -ne '.') { Invoke-Bootstrap }
+$script:Work = $null; $script:Self = $null
+if ($MyInvocation.InvocationName -ne '.') { if ($Stage) { Invoke-Stage } else { Invoke-Bootstrap } }

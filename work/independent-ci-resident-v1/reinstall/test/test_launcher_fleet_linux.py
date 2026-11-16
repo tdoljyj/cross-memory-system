@@ -262,9 +262,9 @@ class FleetPins(unittest.TestCase):
         template, generator = TEMPLATE.read_text(encoding='utf-8'), GENERATE.read_text(encoding='utf-8')
         body = lambda name: template.split('function ' + name + ' ', 1)[1].split('\nfunction ', 1)[0]
         for name, first in (('Step-WindowsPreflightBeforeLinux', '  if ($FleetFirstInstall) { $W1Restore.armed = $false; Step-FirstInstallPreflight; return }'),
-                            ('Step-FileLocks', '  if ($FleetFirstInstall) { return $null }'), ('Step-UninstallPreflight', '  if ($FleetFirstInstall) { return }'),
+                            ('Step-FileLocks', '  if ($FleetFirstInstall) { Step-FirstInstallWindowsPreflight; return $null }'), ('Step-UninstallPreflight', '  if ($FleetFirstInstall) { return }'),
                             ('Step-Quiesce', '  if ($FleetFirstInstall) { return $null }'), ('Step-Uninstall', '  if ($FleetFirstInstall) { return [ordered]@{ firstInstall = $true; keptAt = $null } }')):
-            self.assertEqual(body(name).split('\n')[1].split('   #')[0], first, name)
+            self.assertEqual([l for l in body(name).split('\n')[1:] if not l.lstrip().startswith('#')][0].split('   #')[0], first, name)
         self.assertIn('Remove-FirstInstallCredentials', body('Step-Install'))
         self.assertIn('Join-Path $FleetFirstInstallDirectory ([string]$w[4])', body('Step-CarryTokens'))
         self.assertIn("'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1'", body('Step-LinuxRoot'))
@@ -282,6 +282,66 @@ class FleetPins(unittest.TestCase):
         # a timeout never kills, on either way
         body = template.split('function Invoke-FleetProcess', 1)[1].split('\nfunction ', 1)[0]
         self.assertNotIn('Kill', body); self.assertNotIn('Stop-Process', body)
+
+
+FIRST_PREFLIGHT_DRIVER = r"""
+param([string]$Template, [string]$Case)
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
+$errors = $null; $tokens = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Template, [ref]$tokens, [ref]$errors)
+foreach ($name in @('Step-FileLocks', 'Step-FirstInstallWindowsPreflight', 'Step-Preflight')) {
+  $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
+  if ($nodes.Count -ne 1) { throw ('FUNCTION_MISSING_OR_DUPLICATED:' + $name) }
+  . ([scriptblock]::Create($nodes[0].Extent.Text))
+}
+$FleetFirstInstall = $true; $Done = New-Object Collections.Generic.List[string]; $script:calls = @(); $script:stopped = $null; $script:reports = @()
+function Wait-RunnerState { $script:calls += 'Wait-RunnerState'; [ordered]@{ ok = [bool]$c.runnerOk } }
+function Test-SecretsAsVerify { $script:calls += 'Test-SecretsAsVerify'; [ordered]@{ codes = @($c.secretCodes) } }
+function Write-Json([string]$name, $obj) { $script:reports += $name }
+function Stop-Launch([string]$code, $detail) { $script:stopped = $code; throw $code }
+# the install preflight's own first read: reached only when Step-Preflight really runs (not when it returns the result kept before Linux)
+function Get-RunnerState { $script:calls += 'Step-Preflight-ran'; throw 'PREFLIGHT_STAND_IN_STOPS_HERE' }
+$out = $null; $second = $null
+try { $out = Step-FileLocks } catch { if (-not $script:stopped -and $_.Exception.Message -cne 'PREFLIGHT_STAND_IN_STOPS_HERE') { throw } }
+if ($c.cached) { $Done.Add('preflight'); $script:FirstInstallPreflightResult = $false; $script:calls += 'after-linux'; $second = Step-Preflight }
+[ordered]@{ stopped = $script:stopped; calls = @($script:calls); reports = @($script:reports); second = $second } | ConvertTo-Json -Compress
+"""
+
+
+@unittest.skipUnless(POWERSHELL.is_file(), 'Windows PowerShell 5.1 required')
+class FirstInstallWindowsPreflight(unittest.TestCase):
+    """Review H1: on a first install Linux B cannot be undone either, so the Windows side's whole preflight runs before Linux A, after the
+    tokens are carried (the token plan needs them): the runner (waited for), the secret files as verify reads them, the install preflight."""
+    def run_case(self, **case):
+        case = dict({'runnerOk': True, 'secretCodes': [], 'cached': False}, **case)
+        with tempfile.TemporaryDirectory(prefix='fipre-') as d:
+            (Path(d) / 'driver.ps1').write_text(FIRST_PREFLIGHT_DRIVER, encoding='utf-8'); (Path(d) / 'case.json').write_text(json.dumps(case), encoding='utf-8')
+            p = subprocess.run([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-File', str(Path(d) / 'driver.ps1'), str(TEMPLATE), str(Path(d) / 'case.json')], capture_output=True, text=True, encoding='utf-8', timeout=60)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return json.loads(p.stdout)
+
+    def test_the_runner_and_the_secret_files_are_refused_before_linux_a(self):
+        r = self.run_case(runnerOk=False)
+        self.assertEqual((r['stopped'], r['calls']), ('RUNNER_SERVICE_NOT_AS_REVIEWED', ['Wait-RunnerState', 'Test-SecretsAsVerify']))
+        self.assertEqual(r['reports'], ['first-install-windows-preflight-report.json'])
+        r = self.run_case(secretCodes=['SECRET_FILE_NOT_AS_VERIFY_EXPECTS:appKey:missing'])
+        self.assertEqual(r['stopped'], 'SECRET_FILE_NOT_AS_VERIFY_EXPECTS:appKey:missing')
+        self.assertNotIn('Step-Preflight-ran', r['calls'])
+
+    def test_then_the_install_preflight_itself_runs_and_after_linux_its_result_is_kept(self):
+        r = self.run_case()
+        self.assertEqual(r['calls'], ['Wait-RunnerState', 'Test-SecretsAsVerify', 'Step-Preflight-ran'])
+        r = self.run_case(cached=True)
+        self.assertEqual(r['calls'][-1], 'after-linux', 'the main region\'s install preflight after Linux returns the kept result: nothing runs twice into the same report names')
+        self.assertIs(r['second'], False)
+
+    def test_its_slot_is_after_the_tokens_and_before_linux_a(self):
+        main = TEMPLATE.read_text(encoding='utf-8').split('#region main', 1)[1]
+        self.assertLess(main.index('$carried = Step-CarryTokens'), main.index('$fileLocks = Step-FileLocks'))
+        self.assertLess(main.index('$fileLocks = Step-FileLocks'), main.index('$linux = Step-LinuxRoot'))
 
 
 @unittest.skipUnless(os.name == 'nt', 'generate.py reads Windows paths and the service control manager')
@@ -499,7 +559,7 @@ $FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall 
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Template, [ref]$tokens, [ref]$errors)
-foreach ($name in @('Sha256Bytes', 'Write-New', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Step-CarryTokens')) {
+foreach ($name in @('Sha256Bytes', 'Write-New', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Remove-FirstInstallCredentials', 'Step-CarryTokens')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
   if ($nodes.Count -ne 1) { throw ('FUNCTION_MISSING_OR_DUPLICATED:' + $name) }
   . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -523,7 +583,8 @@ $acl = $(if ($got) { [IO.Directory]::GetAccessControl($CarriedTokens.directory).
 $before = [ordered]@{ directory = $CarriedTokens.directory; tokens = @($CarriedTokens.tokens); removed = $CarriedTokens.removed }
 if ($got -and $c.remove) { Remove-FleetCarry }
 [ordered]@{ stopped = $script:stopped; copies = $copies; carry = $before; acl = $acl; me = $me; left = $left; done = @($Done)
-  removedAfter = $CarriedTokens.removed; leftAfter = @([IO.Directory]::GetFileSystemEntries($CarryParent)).Count } | ConvertTo-Json -Compress -Depth 6
+  removedAfter = $CarriedTokens.removed; leftAfter = @([IO.Directory]::GetFileSystemEntries($CarryParent)).Count
+  credentialsLeft = $(if ($FleetFirstInstall) { [IO.Directory]::Exists($FleetFirstInstallDirectory) } else { $null }) } | ConvertTo-Json -Compress -Depth 6
 """
 
 
@@ -585,9 +646,10 @@ class CarriedTokens(unittest.TestCase):
         self.assertIsNone(r['stopped'])
         self.assertEqual({k: (v['leaf'], v['sha256']) for k, v in r['copies'].items()}, {'upgradeToken': ('resident-upgrade.token', hashlib.sha256(upgrade).hexdigest()),
                                                                                           'heartbeatToken': ('ci-node-heartbeat.token', hashlib.sha256(heartbeat).hexdigest())})
-        self.assertEqual((r['removedAfter'], r['leftAfter']), (True, 0))
+        self.assertEqual((r['removedAfter'], r['leftAfter'], r['credentialsLeft']), (True, 0, False), 'the host preparation\'s tokens go with the copies (review L3)')
         r, _, _ = self.carry(first_install=True, upgrade=('clued' + '_bnd_' + 'Z' * 40).encode())
         self.assertEqual((r['stopped']['code'], r['stopped']['detail']['token'], r['left']), ('CARRIED_TOKEN_FINGERPRINT_MISMATCH', 'upgradeToken', []))
+        self.assertIs(r['credentialsLeft'], False, 'refused: the tokens are removed all the same (review L3)')
 
     def test_a_node_without_a_heartbeat_token_carries_only_the_upgrade_token(self):
         r, _, _ = self.carry(with_heartbeat=False, heartbeat=False)
