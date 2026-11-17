@@ -109,7 +109,9 @@ LEGACY_HOSTED_DEBT = {
     "clued-cloud-production-release.yml": {
         "control_sha256": "ba9aebecbf6b9a87fdfb2563ba8f223bfbfe4e44211ca32dac64145c48a53f68",
         "jobs": {
-            "release": "354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0"
+            # Mandatory backup repair (40dad0c0 / PR #1148): exact existing job only.
+            # Previous registration 354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0; controls and routing remain frozen.
+            "release": "4630deff3c4cb1d1b4ff143e6c812a5a5ab3b590b98fa1ceca935ae79bf80e09"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
