@@ -78,7 +78,7 @@ Yes ($c -ccontains "RELEASE_SUMS_NAMES_FIRST_INSTALL_ASSET:role-image-$img.tar.g
 $committed = $js.DeserializeObject([IO.File]::ReadAllText((Join-Path (Split-Path -Parent $here) 'prereq-manifest.json')))
 $c = Test-PrereqManifest $committed
 $unpinned = @($c | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' } | ForEach-Object { $_.Substring(18) } | Sort-Object)
-Yes (($unpinned -join ',') -ceq 'actions-runner,git,linux-node,node,python' -and @($c | Where-Object { $_ -notlike 'PREREQ_NOT_PINNED:*' }).Count -eq 0) ('prereq:committed-pins-the-drill-set ' + ($c -join ','))
+Yes ($c.Count -eq 0 -and @($committed['items'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' -or -not ($_['bytes'] -gt 0) -or [string]::IsNullOrEmpty([string]$_['url']) }).Count -eq 0) ('prereq:committed-pins-every-item ' + ($c -join ','))
 $wslItem = @($committed['items'] | Where-Object { $_['name'] -ceq 'wsl' })[0]
 Yes ($wslItem['sha256'] -ceq 'a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754' -and $wslItem['version'] -ceq '2.7.13.0' -and $wslItem['kind'] -ceq 'msi') 'prereq:wsl-msi-pinned'
 Yes (@($committed['debs']).Count -eq 16 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1) 'prereq:16-debs-pinned'
@@ -267,7 +267,7 @@ try {
     Yes (((Get-NeededPrereqs $true) -join ',') -ceq ($PrereqNames -join ',')) 'm6:first-install-needs-all'
     $c = Test-PrereqManifest $committed (Get-NeededPrereqs $false) $false
     $u = @($c | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' } | ForEach-Object { $_.Substring(18) } | Sort-Object)
-    Yes (($u -join ',') -ceq 'git,node,python' -and @($c | Where-Object { $_ -notlike 'PREREQ_NOT_PINNED:*' }).Count -eq 0) ('m6:reinstall-unpinned ' + ($c -join ','))
+    Yes ($c.Count -eq 0) ('m6:reinstall-committed-pins-pass ' + ($c -join ','))
     $m = New-Pinned; $m['debs'][0]['sha256'] = $null; foreach ($i in @($m['items'])) { if ($i['name'] -ceq 'wsl') { $i['sha256'] = $null } }
     Yes ((Test-PrereqManifest $m (Get-NeededPrereqs $false) $false).Count -eq 0) 'm6:reinstall-ignores-first-install-pins'
     Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_NOT_PINNED:wsl') 'm6:first-install-still-refuses'
