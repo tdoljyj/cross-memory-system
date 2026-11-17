@@ -894,6 +894,8 @@ test('failed rehearsal distinguishes timeout and invalidation without retries or
   for (const [error, expected] of [
     [{ message: 'canceling statement due to statement timeout', code: '57014' }, '预演超时'],
     [{ message: 'bulk_preview_changed', code: '40001' }, '本轮预演已失效'],
+    [{ message: 'bulk_preview_changed', code: 'PT409' }, '本轮预演已失效'],
+    [{ message: 'bulk_proof_expired', code: 'PT409' }, '本轮预演已失效'],
   ]) {
     const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
     f.click('盘点并预演（不修改内容）'); f.calls[1].resolve({ data: null, error, status: 500 }); await f.settle();
@@ -976,6 +978,46 @@ test('paged preview requires continuous full coverage and carries the final serv
   assert.deepEqual(plain(f.calls[4].args.p_input.proof), last.proof);
   assert.equal(f.calls[4].args.p_input.items.length, 1);
 });
+test('bounded multi-source pages accumulate exact coverage and pass only the final signed plan to begin', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  const rows = Array.from({ length: 19 }, (_, i) => ({ record_id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+    record_version: 1, title: 'Synthetic page row', domains: ['learning'] }));
+  const completed = bulkPlan({ items: rows, counts: { ...bulkPlan().counts, total: 19, characters: 380,
+    ineligible: 0, protected: 0, personal: 19, current: 19, manual_or_unspecified_marked: 0,
+    unmarked: 19, ready: 19, ready_characters: 380 } });
+  const first = { ...completed, items: rows.slice(0, 16), ready_characters: 320,
+    page: { cursor: 0, scanned: 16, next_cursor: 16, complete: false }, proof: { ...completed.proof,
+      payload: { ...completed.proof.payload, cursor: 16, ready: 16, ready_characters: 320,
+        items: completed.proof.payload.items.slice(0, 16) } } };
+  const last = { ...completed, items: rows.slice(16), ready_characters: 60,
+    page: { cursor: 16, scanned: 3, next_cursor: null, complete: true } };
+  f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].args.p_input.page_size, 16);
+  await f.respond(1, first); assert.ok(f.text().includes('已预演 16/19'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+  assert.equal(f.calls[2].args.p_input.page_size, 16);
+  await f.respond(2, last); await f.respond(3, { status: 'ok', available: false });
+  assert.ok(f.text().includes('完整盘点 19 条'));
+  f.click('确认这19条，保存首批计划'); await f.untilCalls(5);
+  assert.deepEqual(plain(f.calls[4].args.p_input.proof), completed.proof);
+  assert.equal(f.calls[4].args.p_input.items.length, 19);
+});
+
+test('an oversized or nonprogressing multi-source page remains incomplete with no confirmation', async t => {
+  for (const scanned of [0, 17]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+    const rows = Array.from({ length: scanned }, (_, i) => ({ record_id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+      record_version: 1, domains: ['learning'] }));
+    const invalid = bulkPlan({ items: rows, counts: { ...bulkPlan().counts, total: 20, characters: 400,
+      ineligible: 0, protected: 0, personal: 20, current: 20, manual_or_unspecified_marked: 0,
+      unmarked: 20, ready: 20, ready_characters: 400 } });
+    invalid.page = { cursor: 0, scanned, next_cursor: scanned, complete: false };
+    f.click('盘点并预演（不修改内容）'); await f.respond(1, invalid);
+    assert.ok(f.text().includes('预演未完成')); assert.ok(!f.text().includes('完整盘点'));
+    assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+    assert.equal(f.calls.length, 2);
+  }
+});
+
 test('a missing, duplicated, drifting or forged-complete page invalidates all accumulated confirmation', async t => {
   for (const mode of ['transport', 'duplicate', 'digest', 'counts', 'proof', 'cursor']) {
     const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page()); const [first, original] = bulkTwoPages();
