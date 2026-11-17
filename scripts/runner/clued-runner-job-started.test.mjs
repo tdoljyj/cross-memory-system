@@ -22,14 +22,13 @@ const env = (overrides = {}) => ({
 });
 const prEvent = (base = "main") => JSON.stringify({ pull_request: { number: 9, base: { ref: base }, head: { sha: HEAD } } });
 
-test('bors staging: only the required-tests workflow pushed by App 5368905 may run off main', async () => {
+test('bors staging: only the required-tests workflow pushed by App 5368905 may be considered off main', async () => {
   const staging = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
     GITHUB_ACTOR: 'clued-ci-checks-turing-20261018[bot]',
     GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
   const check = overrides => decide({ env: env({ ...staging, ...overrides }),
     fetchImpl: async () => { throw Error('staging admission must not need a credential or network read'); },
     readFile: () => { throw Error('staging admission must not read credentials'); } });
-  for (const attempt of ['1', '2']) assert.equal((await check({ GITHUB_RUN_ATTEMPT: attempt })).allow, true);
   for (const changed of [
     { GITHUB_ACTOR: 'o' }, { GITHUB_ACTOR: 'clued-admission[bot]' }, { GITHUB_ACTOR: '' },
     { GITHUB_REF: 'refs/heads/clued-train/staging.tmp' }, { GITHUB_REF: 'refs/heads/feature' },
@@ -134,6 +133,123 @@ const nativeScript = (...checks) => ({
   [COMPARE]: files(".github/workflows/gitleaks.yml"),
   [NATIVE]: { body: { total_count: checks.length, check_runs: checks } },
   [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } },
+});
+
+// S = merge(T, H). Admission belongs to the current member PR/head, never S
+// itself or an arbitrary success with the same display name.
+const STAGING_ENV = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
+  GITHUB_ACTOR: 'clued-ci-checks-turing-20261018[bot]',
+  GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
+const MAIN = 'd'.repeat(40);
+const MAIN_REF = `${API}/git/ref/heads/main`;
+const MEMBER = { number: 9, state: 'open', draft: false, created_at: RUN_CREATED,
+  base: { ref: 'main', repo: { full_name: 'o/r' } }, head: { sha: HEAD, repo: { full_name: 'o/r' } } };
+const memberRunsUrl = head => `${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&event=pull_request`;
+const memberRuns = (head = HEAD, number = 9, created_at = RUN_CREATED) => ({ body: { total_count: 1, workflow_runs: [
+  { id: 550, event: 'pull_request', head_sha: head, path: '.github/workflows/clued-required-tests.yml',
+    created_at, pull_requests: [{ number }] },
+] } });
+const stagingScript = () => ({
+  [RUN]: thisRun({ event: 'push', head_sha: SHA, head_branch: 'clued-train/staging',
+    path: '.github/workflows/clued-required-tests.yml', actor: { login: STAGING_ENV.GITHUB_ACTOR } }),
+  [MAIN_REF]: { body: { object: { type: 'commit', sha: MAIN } } },
+  [`${API}/git/commits/${SHA}`]: { body: { sha: SHA, parents: [{ sha: MAIN }, { sha: HEAD }] } },
+  [`${API}/commits/${HEAD}/pulls`]: { body: [MEMBER] },
+  [`${API}/pulls/9`]: { body: MEMBER },
+  [memberRunsUrl(HEAD)]: memberRuns(),
+  [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck()] } },
+});
+const stagingRun = (script = {}, overrides = {}) => run({ ...STAGING_ENV, ...overrides }, { ...stagingScript(), ...script });
+
+test('bors staging: workflow or protected changes without member admission must fail before any step', async () => {
+  // Deliberately no path exception: every staging member needs admission, so
+  // changed workflows, protected paths and an unreadable diff all fail closed.
+  const { result } = await stagingRun({ [NATIVE]: { body: { total_count: 0, check_runs: [] } } });
+  assert.equal(result.allow, false);
+});
+
+test('bors staging: admitted current member heads in a chain rooted at live main may run, including reruns', async () => {
+  for (const attempt of [1, 2]) {
+    const script = stagingScript();
+    script[RUN].body.run_attempt = attempt;
+    const { result, calls } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: String(attempt) });
+    assert.equal(result.allow, true, result.reason);
+    assert.ok(calls.some(call => call.url.startsWith(NATIVE)));
+    assert.equal(calls.filter(call => call.url === MAIN_REF).length, 2);
+  }
+});
+
+test('bors staging: a name alone, wrong App/PR/head, malformed binding, pending or newer failed admission never suffices', async () => {
+  for (const change of [{ app: { id: 15368 } }, { head_sha: SHA }, { output: { summary: 'o/r#10' } },
+    { external_id: 'unbound' }, { status: 'in_progress', conclusion: null }, { conclusion: 'failure' },
+    { started_at: '2020-01-01T00:00:00Z' }]) {
+    const { result } = await stagingRun({ [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck(change)] } } });
+    assert.equal(result.allow, false, JSON.stringify(change));
+  }
+  assert.equal((await stagingRun({ [NATIVE]: { body: { total_count: 2,
+    check_runs: [nativeCheck(), nativeCheck({ id: 81, conclusion: 'failure' })] } } })).result.allow, false);
+});
+
+test('bors staging: no open current same-repository PR, or a moved PR/main, refuses', async () => {
+  for (const change of [{ state: 'closed' }, { draft: true }, { head: { ...MEMBER.head, sha: SHA } },
+    { head: { ...MEMBER.head, repo: { full_name: 'fork/r' } } }, { base: { ...MEMBER.base, ref: 'feature' } }]) {
+    assert.equal((await stagingRun({ [`${API}/commits/${HEAD}/pulls`]: { body: [{ ...MEMBER, ...change }] } })).result.allow, false);
+  }
+  assert.equal((await stagingRun({ [`${API}/pulls/9`]: { body: { ...MEMBER, head: { ...MEMBER.head, sha: SHA } } } })).result.allow, false);
+  let reads = 0;
+  assert.equal((await stagingRun({ [MAIN_REF]: () => ({ body: { object: { type: 'commit', sha: ++reads === 1 ? MAIN : HEAD } } }) })).result.allow, false);
+});
+
+test('bors staging: malformed ancestry and a run not bound to this S are refused', async () => {
+  for (const commit of [{ sha: SHA, parents: [] }, { sha: HEAD, parents: [{ sha: MAIN }, { sha: HEAD }] },
+    { sha: SHA, parents: [{ sha: SHA }, { sha: HEAD }] }]) {
+    assert.equal((await stagingRun({ [`${API}/git/commits/${SHA}`]: { body: commit } })).result.allow, false);
+  }
+  for (const change of [{ head_sha: HEAD }, { event: 'workflow_dispatch' }, { actor: { login: 'o' } },
+    { path: '.github/workflows/other.yml' }, { head_branch: 'feature' }]) {
+    const script = stagingScript();
+    Object.assign(script[RUN].body, change);
+    assert.equal((await stagingRun(script)).result.allow, false, JSON.stringify(change));
+  }
+});
+
+test('bors staging: every member of a multi-PR chain must have its own admission', async () => {
+  const riderHead = 'e'.repeat(40), step = 'f'.repeat(40);
+  const rider = { ...MEMBER, number: 10, head: { ...MEMBER.head, sha: riderHead } };
+  const riderChecks = `${API}/commits/${riderHead}/check-runs?check_name=kooyumi-work-admission`;
+  const script = {
+    [`${API}/git/commits/${SHA}`]: { body: { sha: SHA, parents: [{ sha: step }, { sha: riderHead }] } },
+    [`${API}/git/commits/${step}`]: { body: { sha: step, parents: [{ sha: MAIN }, { sha: HEAD }] } },
+    [`${API}/commits/${riderHead}/pulls`]: { body: [rider] }, [`${API}/pulls/10`]: { body: rider },
+    [memberRunsUrl(riderHead)]: memberRuns(riderHead, 10),
+    [riderChecks]: { body: { total_count: 1, check_runs: [nativeCheck({ head_sha: riderHead, output: { summary: 'o/r#10' } })] } },
+  };
+  assert.equal((await stagingRun(script)).result.allow, true);
+  assert.equal((await stagingRun({ ...script, [riderChecks]: { body: { total_count: 0, check_runs: [] } } })).result.allow, false);
+});
+
+test('bors staging: an earlier success on the same head cannot authorize a later PR event', async () => {
+  assert.equal((await stagingRun({ [memberRunsUrl(HEAD)]: memberRuns(HEAD, 9, '2026-10-04T05:01:00Z') })).result.allow, false);
+  for (const body of [{ total_count: 0, workflow_runs: [] }, { total_count: 101, workflow_runs: [] }]) {
+    assert.equal((await stagingRun({ [memberRunsUrl(HEAD)]: { body } })).result.allow, false);
+  }
+});
+
+test('bors staging: the current epoch is observed for the admitted member PR/head', async () => {
+  const { url, key } = resolvePublicSupabaseConfig({}, path.resolve(import.meta.dirname, '../..'));
+  const rpc = `${url}/rest/v1/rpc/clued_work_verify_v1`;
+  for (const current of [true, false]) {
+    const fake = fakeFetch({ ...stagingScript(),
+      [`${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`]: { body: { type: 'file', encoding: 'base64',
+        content: Buffer.from(`return { url: "${url}", key: "${key}" };`).toString('base64') } },
+      [rpc]: { body: { status: 'ok', guard_required: true, epoch_current: current } },
+    });
+    const result = await decideWithCurrentEpoch({ env: env(STAGING_ENV), fetchImpl: fake.fetchImpl,
+      readFile: () => 'ghp_read', sleep: async () => {} });
+    assert.equal(result.allow, current);
+    const input = JSON.parse(fake.calls.find(call => call.url === rpc).body).p_input;
+    assert.deepEqual(input, { action: 'execution_current', repository: 'o/r', head_sha: HEAD, pr_ref: 'o/r#9', target_branch: 'main' });
+  }
 });
 
 test('G3 hook: required-tests dispatch stays bound to its current PR/head', async () => {
@@ -979,7 +1095,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.5");
+  assert.equal(COMPONENT_VERSION, "1.0.6");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
   const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
   assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);

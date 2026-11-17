@@ -23,6 +23,8 @@ Local-worktree Git rules do not map one-to-one onto GitHub Contents/API writes. 
 
 #292 修订（ADR 0018 §8 第 5 条；Owner 2026-11-17 授权准备启用）：合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。所有变更仍经 PR 审核；connector 与本地 Agent 不得自行调用列车落地端口。push 仅在 ADR 0018 §8 前提齐备后启用，以下历史读取不证明生产已启用。
 
+每个进 main 的变更仍必须是一个打开的、准入过的 PR 的 head；变的只是谁执行合并。任何 bypass 名单永不含 Owner、Admin 或任何 Agent 可用的身份；App 5368905 的私钥不得供 Agent 使用，其私钥泄露等同 main 写权限泄露，须立即撤销该 App 的 bypass 和 Contents/Workflows 权限。“main 只许快进”规则集的 bypass 名单始终为空，其它任何人或自动化不得直推 main；该规则集不构成私钥泄露后的写权限隔离。
+
 GitHub enforces this with repository ruleset `24182890` (`main write policy (#292)`) on the default branch. As read from GitHub on 2026-10-28:
 
 - pull request required, 0 approving reviews (the Owner is the only maintainer and cannot approve their own PR);

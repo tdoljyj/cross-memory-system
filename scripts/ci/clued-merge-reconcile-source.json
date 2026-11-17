@@ -622,7 +622,7 @@
 
     "scripts/runner/clued-runner-hook-loader.test.mjs": "76079eac51efe273a4da68ceba57150eb9b26f8de4d6a8ddc57b3b4dfd3b600f",
 
-    "scripts/runner/clued-runner-job-started.mjs": "5622529a1ab3265cd8d3f665b1d804d574e47dcd0f93f9cbc39a205053bf7c0f",
+    "scripts/runner/clued-runner-job-started.mjs": "16c56bf4658af7417dde67cf6d9f65c49a0564f9022fa7cef34101f934de8baa",
 
     "scripts/runner/clued-runner-job-started.ps1": "d3ed2f7755db0f906d60064926d5bf233ceef51089dc64c1bc736f92d0065217",
 
@@ -630,7 +630,7 @@
 
     "scripts/runner/clued-runner-job-started.sh": "47022237ae7f41e00b61dc158f103002d20787e555a42b6afeed7ed5561e26f0",
 
-    "scripts/runner/clued-runner-job-started.test.mjs": "b7baaecf8c10bc93b7ce482ca0f49cefb86b578a6f6bddeed9a213ab6ec02748",
+    "scripts/runner/clued-runner-job-started.test.mjs": "cc7d39937260e7975227207a0793a91a6eb9d127544ce00dea60f0d9862074dd",
 
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
 

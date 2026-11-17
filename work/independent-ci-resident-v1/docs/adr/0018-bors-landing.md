@@ -102,9 +102,10 @@
    - 新建规则集“列车暂存”：目标 `clued-train/**`，规则“限制创建、更新、删除”，bypass 只有 App 5368905（列车要强制移动这两个 ref）。
 3. **禁止从 PR 页面直接合并**：在主规则集的必需检查里加一项 `kooyumi-train-landed`，来源钉 App 5368905；任何代码都不发布它。于是没有 bypass 的人（包括 auto-merge、守队程序、Owner 在网页上点合并）都凑不齐必需检查；列车推 main 走 bypass，不受影响。（只靠“push 下不发 merge-slot 绿”不够：旧模式发过的 merge-slot 绿还挂在一些旧 head 上。）回退到 `github-merge` 时同一次保存删掉这一项。注意：第 8 段 `waitForQueueHead` 的必需检查判定（`train-rules.mjs#requiredCheckFailure`）今天把“钉在 App 5368905、名字不认识”的必需检查当作不认识的来源，整次判定读不出（`REQUIRED_CHECKS_UNREADABLE`，车头永远停靠）。所以代码把 `kooyumi-train-landed` 列为已知、永不发布的检查：缺席不算失败，也不算读不出；它不进 `rulesetFacts` 的六项钉住要求（`github-merge` 下规则集里没有它）。必须先装包、再在规则集里加这一项，顺序反了会让第 8 段全部停靠（失败关闭，但会卡车）。
 4. **项目 CI 跑在 S 上**（受保护路径 `.github/**`，要 protected-change Grant）：`clued-required-tests.yml` 的 `push` 触发加上 `clued-train/staging`；这种运行的可信基线取 S 的第一父提交 T，并核对 T 在 main 上（`git merge-base --is-ancestor`），只接受推送者是 App 5368905 的 bot；三项检查照旧以原名报告在 S 上。没做这一步时，见本文第 3 节“触发项目 CI”的失败关闭行为。
-4b. 工作流改动的细节（审查第 8 条）：runner 只放行 `clued-required-tests.yml` + `clued-train/staging` + App bot 的 push；`CI_BASE_SHA` 同样取经祖先核对的 T，不能用暂存 ref 的 `before`。守队程序在 main 必需检查含 `kooyumi-train-landed@5368905` 时不再 update-branch 或合并车头。`push` 触发的运行用的是 S 里的工作流文件，可信基线只能在 job 里落实（今天写的是 `github.sha`），要改成取 S 的第一父并核对它在 main 上；核对环境的部署保护不会因规则集放行 `clued-train/**`；`push` 的并发组不能丢掉排队中的旧运行（否则二分时检查会一直停在 `TRAIN_LANDING_CHECKS_PENDING` 直到位子到期）。
+4b. 工作流改动的细节（审查第 8 条、Fable C.6）：runner 只考虑 `clued-required-tests.yml` + `clued-train/staging` + App bot 的 push，并在任何 step 前核对运行与 S、当前 main T 的合并父链、每个成员的打开 PR 与当前 head、该 head 上 App 5368905 的 Native 准入成功及当前执行 epoch；缺失、过期、绑定错误或读取失败均拒绝。所有成员统一要求准入，因此 S 自带的工作流或受保护路径没有较弱的放行例外。`CI_BASE_SHA` 同样取经祖先核对的 T，不能用暂存 ref 的 `before`。守队程序在 main 必需检查含 `kooyumi-train-landed@5368905` 时不再 update-branch 或合并车头。job 仍须在加载可信选择器或命令前核对基线 T；核对环境的部署保护不会因规则集放行 `clued-train/**`；`push` 的并发组不能丢掉排队中的旧运行（否则二分时检查会一直停在 `TRAIN_LANDING_CHECKS_PENDING` 直到位子到期）。
 5. **修订 #292 的措辞**：原文“自动化也必须经 PR、bypass 名单为空”改为：
    > 合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。
+   > 每个进 main 的变更仍必须是一个打开的、准入过的 PR 的 head；变的只是谁执行合并。任何 bypass 名单永不含 Owner、Admin 或任何 Agent 可用的身份；App 5368905 的私钥不得供 Agent 使用，其私钥泄露等同 main 写权限泄露，须立即撤销该 App 的 bypass 和 Contents/Workflows 权限。“main 只许快进”规则集的 bypass 名单始终为空，其它任何人或自动化不得直推 main；该规则集不构成私钥泄露后的写权限隔离。
 6. **合同**：MergeAdmission 与合同草稿写明：`push` 下 PR 不再由人或 auto-merge 合并，列车测过就推；批量时位子之后的骑乘成员随车头一起合入（每个成员都过实时准入，坏的被二分剔除）。
 7. **策略**：`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略。先合入仓库侧工作流、runner 钩子和守队程序门控，配好 App 权限、列车暂存与无 bypass 的“main 只许快进”规则集；再以单独 PR 将 `FLEET_TRAIN.landing` 改为 `push`（`batchMax` 先保持 1），发通用包，先升级待命节点、再升级当班节点并核实两侧同代。之后主规则集的 App bypass 与 `kooyumi-train-landed` 同一次保存。不得以节点本地策略替代通用包，包会重写 train；未完成前保持 `github-merge`。旧代码上线前不能先加它不认识的必需检查，否则全部 `REQUIRED_CHECKS_UNREADABLE` 停靠。
 8. **合并意愿**（审查第 4 条，Owner 决定点）：今天 strict 模式下 PR 要靠 auto-merge（`Clued-Auto-Merge:` 选择加入）或守队程序合并；`push` 下认领进了合并队列就等于要合并，列车测过就推（守队程序 §41.8 本来也会合任何全绿的 PR）。若 Owner 要保留“显式选择加入”，再加一条：骑乘成员和车头都要有选择加入 trailer。
@@ -146,7 +147,7 @@
 |---|---|---|---|
 | 1 | 阻断 | 没有 `workflows` 权限推不了带工作流改动的提交；所有 422 都当成 main 移动会吃掉尝试、冤枉 PR | 令牌加 `workflows: write`（本文第 4 节，上线前提 1）；422 后 main 仍是 T 判 `TRAIN_LANDING_REFUSED` 停靠，不算移动（本文第 5 节） |
 | 2 | 阻断 | adopt 只按 `bound_pr` 取认领，成员换 head 会被误 adopt | adopt 前实时核对 PR head 仍是批里的 H_k，换了就不 adopt（本文第 6 节，测试覆盖）；RPC 加参数列为后续 |
-| 3 | 重要 | 私钥泄露能快进到任意树 | “只许快进”规则集加 Actions 三项必需检查（规则集必需检查对推送生效），回退时撤权限（本文第 8 节第 1、2 条） |
+| 3 | 重要 | App 5368905 私钥泄露等同 main 写权限泄露 | 立即撤 bypass 和 Contents/Workflows 权限；“只许快进”规则集 bypass 为空，但 S 自带工作流，三项 Actions 检查不能隔离持钥者（本文第 8 节第 5 条） |
 | 4 | 重要 | 绕过了 Native 发布票据与 auto-merge 选择加入 | guarded 骑乘成员不搭车（代码）；车头的落地票据、合并意愿列为 Owner 决定点（本文第 8 节第 8、9 条） |
 | 5 | 重要 | 骑乘成员准入：frozen、`requireQueueHead:false`、认领代次、顺序 | 显式拒 frozen、`requireQueueHead:false`、认领 id 必须等于批记录的、必须在合并队列里（代码、测试）；代次（fence/epoch）组批时读不到，残余；顺序按 PR 号的残余见本文第 11 节 |
 | 6 | 重要 | 二分会把车头的两次机会用完 | 多人批失败不计车头次数（本文第 3 节，端到端测试） |
