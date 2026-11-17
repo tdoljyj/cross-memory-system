@@ -64,6 +64,7 @@ test('upgrade drain: same head is automatically readmitted once, without a push 
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1, 'one successful continuation only');
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).startedByPr.get(884), 1, 'the archived flow end spends no PR quota; its completed continuation spends one');
   assert.deepEqual([2, 3, 4, 5, 6, 7].map(n => count(f, n)), scans);
   assert.equal(await f.ledger.halted(), null);
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);

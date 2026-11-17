@@ -246,6 +246,7 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   // an execution
   await ledger.reserve(batchKey(s(1, 1)), s(1, 1));
   await ledger.markStarted(batchKey(s(1, 1)), { batchId: '0123456789abcdef-0123456789ab' });
+  await ledger.terminal(batchKey(s(1, 1)), 'COMPLETED', {});
   // a real refusal (an evaluation), a wait from a waiting retry (its own budget), an environment release while the breaker
   // was open (neither), a supersession (neither), a new-trigger re-evaluation (an evaluation and one re-evaluation)
   const release = async (subj, origin, reason, facts) => { const k = batchKey(subj); await ledger.reserve(k, subj, { origin }); await ledger.releaseUnexecuted(k, reason, facts); };
@@ -270,6 +271,32 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
   now += 86_400_001;
   assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');
+});
+
+test('PR daily cap: only a terminal verdict counts, including after reopening and across the rolling window', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-22T12:00:00Z');
+  const ledger = await Ledger.open(root, () => now);
+  const s = subject(), key = batchKey(s);
+  await ledger.reserve(key, s);
+  await ledger.markStarted(key, { batchId: '0123456789abcdef-0123456789ab' });
+  assert.equal((await ledger.usage(0)).startedByPr.size, 0, 'running or parked is not a PR verdict');
+  await ledger.terminal(key, 'COMPLETED', {});
+  const reopened = await Ledger.open(root, () => now);
+  assert.equal((await reopened.usage(0)).startedByPr.get(s.pr), 1, 'derived from durable terminal evidence');
+  now += 86_400_001;
+  assert.equal((await reopened.usage(now - 86_400_000)).startedByPr.size, 0);
+  const released = subject({ headSha: '9'.repeat(40) }), rk = batchKey(released);
+  await reopened.reserve(rk, released);
+  await reopened.releaseUnexecuted(rk, 'NOT_ADMITTED', { failureCode: 'CLAIM_NOT_CURRENT', class: 'not-admitted' });
+  assert.equal((await reopened.usage(now - 86_400_000)).startedByPr.size, 0, 'unexecuted history is not a verdict');
+  const damaged = subject({ headSha: '8'.repeat(40) }), dk = batchKey(damaged);
+  await reopened.reserve(dk, damaged);
+  await reopened.markStarted(dk, { batchId: '0123456789abcdef-0123456789ab' });
+  await reopened.terminal(dk, 'COMPLETED', {});
+  await fs.writeFile(path.join(reopened.dir(dk), '10-started.json'), '{');
+  const u = await reopened.usage(now - 86_400_000);
+  assert.deepEqual([u.started, u.evaluations, u.startedByPr.size], [1, 0, 0], 'unreadable verdict evidence preserves the existing global budgets');
 });
 
 test('G4: reopening the ledger reclassifies old claim releases once, without exempting burned failures', async t => {
