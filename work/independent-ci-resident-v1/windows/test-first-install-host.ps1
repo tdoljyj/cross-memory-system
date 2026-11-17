@@ -1,8 +1,9 @@
 <#
   Offline check of windows/first-install-host.ps1's pure functions (P1 of the first install): the node profile from the machine name,
   the signer convention, the CI root baseline DACL, the residue codes, the token fingerprints, the facts document and its check, the
-  Linux facts it accepts. Nothing on the host is read or changed (no elevation, no WSL); the functions are taken from the real script
-  by AST. Node is used only to hold two rules to the code they mirror: prepare-record.mjs#validateNodeProfile and
+  Linux facts it accepts. No installed host configuration is read or changed (no elevation, no WSL, no sc.exe or Get-Acl);
+  only repository inputs and temporary file fixtures are used. The functions are taken from the real script by AST.
+  Node is used only to hold two rules to the code they mirror: prepare-record.mjs#validateNodeProfile and
   tools/secret-fingerprint.mjs.
     powershell -NoProfile -ExecutionPolicy Bypass -File test-first-install-host.ps1 [-Node <node.exe>]
 #>
@@ -101,13 +102,17 @@ Yes ((Get-ResidueCodes $o) -ccontains 'COMPANION_WSL_REGISTRATIONS_UNREADABLE') 
 $o = New-Clean; $o.companionDistribution = 'absent'
 Yes ((Get-ResidueCodes $o).Count -eq 0) 'residue:companion-without-distribution'
 Yes ($text -notmatch 'then run the same command') 'residue:no-run-again-after-uninstall-advice'
-# the resident service's SID, as Windows derives it (differential with sc.exe showsid; read-only, any account)
-$scOut = (& 'C:\Windows\System32\sc.exe' showsid CluedCIResident | Out-String)
-$scSid = if ($scOut -match 'S-1-5-80(?:-\d+){5}') { $Matches[0] } else { $null }
-Yes ($null -ne $scSid -and (Get-ServiceSid 'CluedCIResident') -ceq $scSid) ('service-sid:as-sc-showsid ' + $scSid)
-$ace = '(A;;0x120080;;;' + $scSid + ')'
-Yes (Test-CiRootHasResidentAce ((Get-CiRootSddl $operator $control) + $ace) $scSid) 'residue:resident-ace-found'
-Yes (-not (Test-CiRootHasResidentAce (Get-CiRootSddl $operator $control) $scSid)) 'residue:baseline-has-none'
+# Fixed Windows service-SID vectors (the resident vector is also pinned in rollout/fleet/test/first-install.test.mjs).
+# Never ask the executing host's service manager: these values do not depend on whether either service is installed.
+$residentSid = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
+Yes ((Get-ServiceSid 'CluedCIResident') -ceq $residentSid) 'service-sid:fixed-resident-vector'
+Yes ((Get-ServiceSid 'cluedciresident') -ceq $residentSid) 'service-sid:case-insensitive'
+Yes ((Get-ServiceSid 'TrustedInstaller') -ceq 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464') 'service-sid:fixed-trusted-installer-vector'
+$ace = '(A;;0x120080;;;' + $residentSid + ')'
+Yes (Test-CiRootHasResidentAce ((Get-CiRootSddl $operator $control) + $ace) $residentSid) 'residue:resident-ace-found'
+Yes (-not (Test-CiRootHasResidentAce (Get-CiRootSddl $operator $control) $residentSid)) 'residue:baseline-has-none'
+Yes (-not (Test-CiRootHasResidentAce $installed $residentSid)) 'residue:another-service-ace-is-not-the-resident'
+Yes (-not (Test-CiRootHasResidentAce 'not an sddl' $residentSid)) 'residue:malformed-sddl'
 # M4: the elevated account must be the operator the bootstrap ran as
 Yes ($null -eq (Test-ExpectedOperator $operator $operator)) 'm4:same'
 Yes ((Test-ExpectedOperator $control $operator) -ceq 'ELEVATED_ACCOUNT_IS_NOT_THE_OPERATOR') 'm4:other'
