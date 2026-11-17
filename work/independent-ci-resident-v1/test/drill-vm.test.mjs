@@ -82,8 +82,8 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   const manifest = drillKitManifest(inputs);
   assert.deepEqual(drillKitManifest(inputs), manifest);
   assert.equal(manifest.prereqSha256, sha(inputs.prereqBytes));
-  assert.equal(manifest.perNodeSteps.length, 3);
-  assert.match(manifest.perNodeSteps.join(' '), /非提权.*RunAs.*凭据窗口/);
+  assert.equal(manifest.perNodeSteps.length, 4);   // the three bypassed shell points and the Expand-Cached stand-in (#1154)
+  assert.match(manifest.perNodeSteps.join(" "), /非提权.*RunAs.*凭据窗口.*短路径/);
   assert.equal(manifest.prerequisiteMode, 'first-install-host');
   assert.equal(Object.hasOwn(manifest, 'executionBlocker'), false);
   assert.ok(manifest.entry.arguments.every(a => /^(-[A-Za-z]+|\{(from|kit|fake|work|version)\})$/.test(a)));
