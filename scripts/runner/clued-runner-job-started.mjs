@@ -10,6 +10,13 @@
 //     dispatch on main. Those workflow files are main's own. A
 //     pull_request_target run counts only for a pull request into main
 //     (re-review 7, m1).
+//   - clued-train/staging: only clued-required-tests.yml pushed by the
+//     App 5368905 bot (ADR 0018), with a merge chain rooted at live main T.
+//     Every second-parent member must be an open, current, same-repository
+//     PR into main with exact-head Native admission from App 5368905.
+//     This deliberately requires admission for every member, so workflow
+//     and protected-path changes cannot take a weaker staging exception.
+//     Missing, ambiguous or unreadable evidence refuses before any step.
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
@@ -61,7 +68,7 @@
 //     The rule for a pull request that changes a workflow applies to every
 //     attempt as to the first; under Native admission a later attempt also
 //     needs every earlier attempt to have run nothing (late admission, below).
-// Everything else is refused: pushes to other branches, pull requests into
+// Everything else is refused: other non-main pushes, pull requests into
 // other branches, other events.
 //
 // HOOK_VERSION is printed in every ALLOW/REFUSE line, so the Owner can see in
@@ -128,7 +135,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOOK_VERSION = "required-tests-dispatch-v1";
-export const COMPONENT_VERSION = "1.0.5";
+export const COMPONENT_VERSION = "1.0.6";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -391,6 +398,81 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
+// Installed alone and loaded from main: do not import candidate policy/code.
+// Requiring admission for ALL members covers protected paths (including any
+// additions in main's policy), changed workflow bytes and unavailable diffs.
+// S carries the heads as second parents of the train's first-parent chain;
+// neither the push payload nor a candidate-authored member list is authority.
+async function stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result }) {
+  const refuse = reason => ({ ...result, allow: false, reason: `staging: ${reason}` });
+  const sha = env.GITHUB_SHA ?? '', runId = env.GITHUB_RUN_ID ?? '';
+  if (!/^[a-f0-9]{40}$/.test(sha) || !/^[0-9]{1,20}$/.test(runId)) return refuse('invalid S or run id');
+  const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+  const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
+  const attempt = attemptNumber(env.GITHUB_RUN_ATTEMPT ?? '1');
+  if (run?.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
+    || run.path !== workflow || run.actor?.login !== env.GITHUB_ACTOR
+    || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
+    return refuse('run does not bind the workflow, App actor, attempt and S');
+  const mainPath = `/repos/${repository}/git/ref/heads/${encodeURIComponent(defaultBranch)}`;
+  const main = await github(fetchImpl, token, mainPath);
+  const base = main?.object?.sha;
+  if (main?.object?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(base ?? '')) return refuse('live main is unavailable');
+  const heads = [], seen = new Set();
+  let at = sha;
+  // Bounded reads; a malformed, cyclic or oversized chain never admits.
+  while (at !== base) {
+    if (heads.length >= 20 || seen.has(at)) return refuse('merge chain is cyclic, oversized or not rooted at main');
+    seen.add(at);
+    const commit = await github(fetchImpl, token, `/repos/${repository}/git/commits/${at}`);
+    if (commit?.sha !== at || !Array.isArray(commit.parents) || commit.parents.length !== 2
+      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent?.sha ?? ''))
+      || commit.parents[0].sha === commit.parents[1].sha || commit.parents[1].sha === base
+      || heads.includes(commit.parents[1].sha)) return refuse('invalid merge chain');
+    heads.push(commit.parents[1].sha);
+    at = commit.parents[0].sha;
+  }
+  if (!heads.length) return refuse('S has no PR members');
+  const memberIsLive = (pr, head) => Number.isSafeInteger(pr?.number) && pr.number > 0
+    && pr.state === 'open' && pr.draft === false && pr.head?.sha === head
+    && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
+    && pr.base?.ref === defaultBranch && Number.isFinite(Date.parse(pr.created_at));
+  const members = [];
+  for (const head of heads.reverse()) {
+    const pulls = await github(fetchImpl, token, `/repos/${repository}/commits/${head}/pulls?per_page=100`);
+    if (!Array.isArray(pulls) || pulls.length >= 100) return refuse('member PR list is unavailable or truncated');
+    const candidates = pulls.filter(pr => memberIsLive(pr, head));
+    if (candidates.length !== 1) return refuse('member has no unique open current PR into main');
+    const pr = candidates[0];
+    // Preserve the PR route's same-event lower bound: an older success on
+    // the same head must not authorize a close/reopen or a new workflow run.
+    const runs = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&event=pull_request&per_page=100`);
+    if (!Array.isArray(runs?.workflow_runs) || !Number.isSafeInteger(runs.total_count)
+      || runs.total_count !== runs.workflow_runs.length || runs.total_count >= 100)
+      return refuse('member PR workflow runs are unavailable or truncated');
+    const latest = runs.workflow_runs.filter(candidate => candidate?.event === 'pull_request' && candidate.head_sha === head
+      && candidate.path === workflow && candidate.pull_requests?.some(pull => pull.number === pr.number))
+      .sort((a, b) => Number(b.id) - Number(a.id))[0];
+    const since = Date.parse(latest?.created_at);
+    if (!Number.isFinite(since) || since < Date.parse(pr.created_at) || since > now() + SAME_EVENT_MS)
+      return refuse('member has no current PR workflow event');
+    const admission = await nativeAdmissionCheck(fetchImpl, token, repository, head, pr.number, since, now);
+    if (!admission.admitted) return refuse(`PR #${pr.number} has no successful exact-head Native admission`);
+    members.push({ number: pr.number, head });
+  }
+  // Re-read all members after the proof reads, then main. A moved/closed PR
+  // or an advanced base requires a new staging batch, never an old proof.
+  for (const member of members) {
+    const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${member.number}`);
+    if (current?.number !== member.number || !memberIsLive(current, member.head)) return refuse('member PR moved or closed');
+  }
+  const currentMain = await github(fetchImpl, token, mainPath);
+  if (currentMain?.object?.type !== 'commit' || currentMain.object.sha !== base) return refuse('main moved');
+  return { ...result, allow: true, reason: `App 5368905 staging S rooted at ${base}, all ${members.length} PR heads admitted`,
+    execution_targets: members.map(member => ({ repository, head_sha: member.head,
+      pr_ref: `${repository}#${member.number}`, target_branch: defaultBranch })) };
+}
+
 // Whether the workflow is an ungated short check on the default branch and
 // the run's commit has that very file: same path, same git blob, the default
 // branch's copy names no admission-gate anywhere (fail closed: any mention
@@ -624,6 +706,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   result.workflow = workflow;
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
+  if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
+    workflow === '.github/workflows/clued-required-tests.yml' &&
+    env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
+    return stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result });
+  }
   const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
   if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
     // Re-review 7, m1: pull_request_target runs on the default branch's ref
@@ -804,28 +891,32 @@ export async function decideWithCurrentEpoch(options) {
   const source = Buffer.from(configuration.content, "base64").toString("utf8");
   const match = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(source);
   if (!match) throw new Error("Trusted Clued public configuration is invalid");
-  let target;
-  if (result.execution_target) {
-    target = result.execution_target;
+  let targets;
+  if (result.execution_targets) {
+    targets = result.execution_targets;
+  } else if (result.execution_target) {
+    targets = [result.execution_target];
   } else if (env.GITHUB_EVENT_NAME === "pull_request") {
     const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, "utf8")));
-    target = { repository, head_sha: payload.pull_request.head.sha,
-      pr_ref: `${repository}#${payload.pull_request.number}`, target_branch: payload.pull_request.base.ref };
+    targets = [{ repository, head_sha: payload.pull_request.head.sha,
+      pr_ref: `${repository}#${payload.pull_request.number}`, target_branch: payload.pull_request.base.ref }];
   } else {
-    target = { repository, head_sha: env.GITHUB_SHA, target_branch: env.GITHUB_REF_NAME,
-      workflow: result.workflow.slice(".github/workflows/".length) };
+    targets = [{ repository, head_sha: env.GITHUB_SHA, target_branch: env.GITHUB_REF_NAME,
+      workflow: result.workflow.slice(".github/workflows/".length) }];
   }
-  const response = await fetchImpl(`${match[1]}/rest/v1/rpc/clued_work_verify_v1`, {
-    method: "POST", retryRead: true, attemptMs: OBSERVATION_ATTEMPT_MS, headers: { apikey: match[2], authorization: `Bearer ${match[2]}`, "content-type": "application/json" },
-    body: JSON.stringify({ p_token_hash: null, p_input: { action: "execution_current", ...target } }),
-  });
-  if (response.status !== 200) throw new Error(`Clued execution epoch unavailable (${response.status})`);
-  const observation = await response.json();
-  if (observation?.status !== "ok" || typeof observation.guard_required !== "boolean"
-    || (observation.guard_required && typeof observation.epoch_current !== "boolean"))
-    throw new Error("Clued execution epoch observation is invalid");
-  if (observation.guard_required && !observation.epoch_current)
-    return { ...result, allow: false, reason: "work claim execution epoch is stale or handover is pending" };
+  for (const target of targets) {
+    const response = await fetchImpl(`${match[1]}/rest/v1/rpc/clued_work_verify_v1`, {
+      method: "POST", retryRead: true, attemptMs: OBSERVATION_ATTEMPT_MS, headers: { apikey: match[2], authorization: `Bearer ${match[2]}`, "content-type": "application/json" },
+      body: JSON.stringify({ p_token_hash: null, p_input: { action: "execution_current", ...target } }),
+    });
+    if (response.status !== 200) throw new Error(`Clued execution epoch unavailable (${response.status})`);
+    const observation = await response.json();
+    if (observation?.status !== "ok" || typeof observation.guard_required !== "boolean"
+      || (observation.guard_required && typeof observation.epoch_current !== "boolean"))
+      throw new Error("Clued execution epoch observation is invalid");
+    if (observation.guard_required && !observation.epoch_current)
+      return { ...result, allow: false, reason: "work claim execution epoch is stale or handover is pending" };
+  }
   return result;
 }
 

@@ -732,6 +732,77 @@ test('steady state (task 60f83aa3): a head makes stage 10 urgent at most twice, 
   assert.equal(f.exec.trainUrgent, false, 'a front row (S) is not asked');
 });
 
+// PR #1142: stage 1 ran before this claim became the head. Its ordinary stage 8 now rests at B;
+// continuously available ordinary work must not spend the head's entire 45-minute slot first.
+async function busyFrontAtB(t) {
+  const e = await world(t, { quick: true }), at = { t };
+  const engine = engineFor(e, at, {}, { frontStageMs: 2 * MIN });
+  const f = await executorFixture(t, { policy: policy(), engine, now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  await f.exec.trainRecover();
+  for (let i = 0; i < 40 && !f.exec.trainTakeoverDone; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  assert.equal(f.exec.trainTakeoverDone, true);
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ claimId: OTHER_CLAIM, pr: 999, prs: [999], boundPr: `${REPO}#999`, boundPrs: [`${REPO}#999`] });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(f.clock()), claim: CLAIM });
+  const run = engine.runStage;
+  let since = null;
+  engine.runStage = async (batch, stage, opts) => {
+    const subject = engine.subjects.get(batch.key);
+    if (subject.pr === 910 && !subject.testSha && stage.number >= 2 && stage.number <= 7) f.advance(2 * MIN);
+    if (subject.pr === 910 && !subject.testSha && stage.number === 8 && since === null) {
+      since = f.clock();
+      e.native.holder = holderOf({ takenAt: iso(since), mergeSlotUntil: iso(since + 45 * MIN) });
+    }
+    const result = await run(batch, stage, opts);
+    if (subject.pr === 910 && !subject.testSha && stage.number === 8) result.outcome.scheduling = { mergeQueue: { entered: true, state: 'head', position: 1 } };
+    return result;
+  };
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const parked = await f.exec.tick();
+  assert.equal(parked.state, 'PARKED');
+  assert.equal(f.queue.row(910).parked.position, 1);
+  for (const pr of [911, 912, 913]) {
+    const head = sha(pr);
+    e.gh.pull(pr, { head, updated: iso(f.clock()), claim: OTHER_CLAIM });
+    await f.drop(triggerBytes({ pr, headSha: head, baseSha: T }));
+  }
+  return { e, at, engine, f, since, key: parked.key };
+}
+
+for (const restart of [false, true]) test(`field 2026-11-17 PR #1142: the head parked at B opens before busy ordinary work (restart ${restart})`, async t => {
+  const setup = await busyFrontAtB(t);
+  const { e, at, engine, since } = setup;
+  let { f } = setup;
+  const before = engine.trainRuns.length;
+  if (restart) {
+    f = await executorFixture(t, { policy: policy(), engine, root: f.root, now: f.clock() });
+    Object.assign(at, { clock: f.clock, advance: f.advance });
+  }
+  await f.exec.tick();
+  assert.ok(engine.trainRuns.slice(before).some(r => r.decision === 'OPEN_FRONT_BATCH'), 'next tick must run stage 10 and open the front, even with ordinary work ready');
+  assert.equal(engine.stages.some(s => s.pr !== 910 && s.stage >= 2), false, 'stage 10 precedes all other ordinary work');
+  assert.equal((await f.ledger.state(setup.key)).terminal.facts.failureCode, 'TRAIN_FRONT_TAKES_OVER');
+  for (let i = 0; i < 4 && !slotGreen(e, H); i++) { await f.exec.tick(); f.advance(1000); }
+  assert.ok(slotGreen(e, H), `no slot green: ${JSON.stringify(engine.trainRuns)}`);
+  assert.ok(f.clock() - since < 45 * MIN, 'front completes within the original slot');
+});
+
+test('a settled front-open debt does not repeatedly preempt busy ticks, including after restart', async t => {
+  const setup = await busyFrontAtB(t), { e, at, engine } = setup;
+  let { f } = setup;
+  // The head left before stage 10: a confirmed NO_FRONT settles this debt too.
+  e.native.holders = [];
+  const before = engine.trainRuns.length;
+  await f.exec.tick();
+  assert.equal(engine.trainRuns.length, before + 1, 'the owed decision runs once');
+  assert.equal(engine.lastFacts.wouldDo, 'NO_FRONT');
+  f = await executorFixture(t, { policy: policy(), engine, root: f.root, now: f.clock() });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  for (let i = 0; i < 2; i++) { f.advance(1000); await f.exec.tick(); }
+  assert.equal(engine.trainRuns.length, before + 1, 'no repeated empty stage 10 in non-quiet ticks');
+});
+
 // ---- Strict-permanent mode (Owner decision 9e2511fe, Task 40f0dfb7, DESIGN §65) ----
 // The policy names no train.sweep: the default is the Owner's decision ('audit'). Strict stays on for good, so no full sweep gates
 // anything: the queue head's ordinary batch binds its claim at stage 1 (no take-over binding exception needed), gives way, and the front

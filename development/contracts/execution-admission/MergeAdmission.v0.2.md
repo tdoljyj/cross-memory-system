@@ -35,7 +35,19 @@
 
 ---
 
-## 0. 一句话结论
+## 0a. push 落地后继（ADR 0018/0019）
+
+Owner 于 2026-11-17 13:55 决定按预授权 Decision `9e2511fe` 第 6 项准备启用 bors 式落地。本节明确后继模式；本文原有关闭 strict、单 PR 发绿后由 GitHub 合并的设计保留为历史方案，不据此宣称候选合同已接受或生产已启用。
+
+合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。
+
+push 上线必须满足 [ADR 0018 §8](../../../work/independent-ci-resident-v1/docs/adr/0018-bors-landing.md)：App 权限、暂存分支保护、无 bypass 的 main 快进保护、S 上原名三项 Actions 检查、runner 钩子、#292 修订和守队程序门控。strict 保持 true。`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略；修改 landing 的代码 PR 与生产规则集、包发布分开执行。仅在 main 规则集出现 `kooyumi-train-landed@5368905` 后，守队程序停止 update-branch 和合并车头。
+
+第 8 段推送前对车头和每个骑乘成员逐项实时准入，验证队列、精确 head、Source、Owner Grant（受保护层）和 S 本身的外部检查，失败关闭。push 下不发布 merge-slot 或 train-landed 绿，PR 不再由人或 auto-merge 合并；auto-merge 的现有选择加入检查仍是合并意愿条件，不能据此假定已授权所有排队 PR。多人批次通过 ADR 0019 的成员链核对，随车头一起合入，坏成员经二分剔除；受保护层 head 仍须含 T，Native 发布票据边界不因本文扩权。
+
+回退先暂停列车，在同一次规则集保存中移除 App bypass 与 train-landed 必需检查，保持 strict=true；通过新的通用包恢复 `FLEET_TRAIN.landing: github-merge`。其它准入、受保护路径批准与应急约束继续适用。
+
+## 0. 一句话结论（历史 github-merge 方案）
 
 列车开着时，合并仍然一次只放行一个 PR：KooYomi 合并队列的队首，也就是车头。车头不再需要作者把 main 合进分支：执行器直接测 GitHub 为它算好的试合并提交 S（父提交是 [main 尖端 T, 车头 head H]），测完立即把六项发在 H 上。
 

@@ -3276,13 +3276,16 @@ const independentEvent = () => {
   value.pull_request.base.repo = { full_name: "o/r", default_branch: "main" };
   return value;
 };
-async function requiredDispatch({ inputs = { pr: '452', head: HEAD }, current = {}, checks = [nativeCheck()], overrides = {}, others = [], truncated = false, epoch = true, moveAfterGate = false } = {}) {
+async function requiredDispatch({ inputs = { pr: '452', head: HEAD }, current = {}, checks = [nativeCheck()], overrides = {}, others = [], jobs = {}, truncated = false, epoch = true, moveAfterGate = false } = {}) {
   const pr = independentEvent().pull_request;
   Object.assign(pr, { state: 'open', head: { ...pr.head, ref: 'claude/g3' } }, current);
   const self = { id: 9001, head_sha: HEAD, head_branch: 'claude/g3', event: 'workflow_dispatch', run_attempt: 1,
     path: '.github/workflows/clued-required-tests.yml', created_at: RUN_CREATED, actor: { login: 'o', type: 'User' } };
   let prReads = 0;
-  const fake = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: self }, [PULL]: () => ({ body:
+  const fake = fakeFetch({ ...SELF_RUN, ...Object.fromEntries(Object.entries(jobs).map(([id, value]) =>
+    [`GET https://api.test/repos/o/r/actions/runs/${id.split(':')[0]}/attempts/${id.split(':')[1] ?? 1}/jobs`,
+      { body: Array.isArray(value) ? { total_count: value.length, jobs: value } : value }])),
+    [THIS_RUN]: { body: self }, [PULL]: () => ({ body:
     moveAfterGate && ++prReads > 1 ? { ...pr, head: { ...pr.head, sha: BASE } } : pr }),
     [CHECKS]: { body: { check_runs: checks } },
     [`POST ${EPOCH_URL}`]: { body: { status: 'ok', guard_required: true, epoch_current: epoch } },
@@ -3301,6 +3304,43 @@ test('G3 dispatch: current open PR/head needs the original Native admission and 
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha, outcome.pr_ref], [true, 'ADMITTED', HEAD, 'o/r#452']);
   assert.ok(calls.some(call => call.url.includes('check_name=kooyumi-work-admission')));
   assert.ok(calls.some(call => call.body?.p_input?.action === 'execution_current' && call.body.p_input.pr_ref === 'o/r#452'));
+});
+
+const skippedDispatchRun = (overrides = {}) => ({ id: 8001, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1,
+  actor: { login: 'clued-admission[bot]', type: 'Bot' }, ...overrides });
+const skippedDispatchJobs = () => [{ id: 80, name: 'admission-gate', head_sha: HEAD, status: 'completed', conclusion: 'success' },
+  ...['ci-suites-skipped', 'clued-cloud-tests-skipped', 'migration-verify-skipped'].map((name, i) =>
+    ({ id: 81 + i, name, head_sha: HEAD, status: 'completed', conclusion: 'skipped' }))];
+
+test('bot head dispatch: Owner recovers completed PR runs whose heavy jobs all skipped', async () => {
+  const { outcome, calls } = await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() } });
+  assert.equal(outcome.admitted, true, JSON.stringify(outcome));
+  assert.equal(outcome.automation_self_hosted, false, 'does not extend automation trust');
+  assert.ok(calls.some(c => c.url.includes('/actions/runs/8001/attempts/1/jobs')));
+});
+
+test('bot head dispatch: active, dispatch, foreign, empty or previously executed jobs stay refused', async () => {
+  const ran = skippedDispatchJobs(); ran[1].conclusion = 'success';
+  const wrongHead = skippedDispatchJobs(); wrongHead[1].head_sha = BASE;
+  for (const opts of [
+    { others: [skippedDispatchRun({ status: 'queued' })] },
+    { others: [skippedDispatchRun({ status: 'in_progress' })] },
+    { others: [skippedDispatchRun({ event: 'workflow_dispatch' })] },
+    { others: [skippedDispatchRun({ event: 'push' })] },
+    { others: [skippedDispatchRun({ head_sha: BASE })] },
+    { jobs: { 8001: [] } }, { jobs: { 8001: ran } }, { jobs: { 8001: wrongHead } },
+  ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
+});
+
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse', async () => {
+  const others = [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })];
+  const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
+  assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true);
+  const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
+  for (const changed of [
+    { ...jobs, 8001: ran }, { ...jobs, 8002: ran },
+    { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } },
+  ]) assert.equal((await requiredDispatch({ others, jobs: changed })).outcome.admitted, false);
 });
 
 test('G3 dispatch: malformed, closed, moved, foreign, duplicate and unauthorized requests fail closed', async () => {

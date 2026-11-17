@@ -10,9 +10,11 @@ The Owner, and Agents acting with the Owner's GitHub identity. CI cannot tell th
 
 Code, protocols and contracts, ADRs, schemas and migrations, tests and fixtures, runbooks, Skills, build and deployment configuration, current execution control and machine-verifiable evidence live in this repository. Product research, strategy, business, brand and visual material, reports, meeting notes, historical reviews and office documents go to Google Drive: see the README section [Documentation & Release Boundary](./README.md#documentation--release-boundary--文档与发布边界) and [docs/EXTERNAL_DOCUMENT_ARCHIVE.md](./docs/EXTERNAL_DOCUMENT_ARCHIVE.md).
 
-## Every change is a pull request
+## Main 的两条合入路径
 
-Every change reaches `main` through a merged pull request, whatever its size or type (tdoljyj/cross-memory-system#292). Nobody pushes `main` directly, and nobody merges locally and pushes the merge commit: merge the pull request on GitHub after its CI passes. Branches take normal commits, fetch and merge before push, and never a force push, reset or rebase. The `main` ruleset and the connector write flow are in [GitConnectorWriteContract v0.1](./development/contracts/repository/GitConnectorWriteContract.v0.1.md).
+合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。此为 ADR 0018 §8 第 5 条对 #292 的修订，push 仅在上线前提齐备后启用；所有改动仍经 PR 审核。Agent 只推功能分支，正常 commit，push 前 fetch + merge，不得 force push、reset 或 rebase。详见 [GitConnectorWriteContract v0.1](./development/contracts/repository/GitConnectorWriteContract.v0.1.md)。
+
+每个进 main 的变更仍必须是一个打开的、准入过的 PR 的 head；变的只是谁执行合并。任何 bypass 名单永不含 Owner、Admin 或任何 Agent 可用的身份；App 5368905 的私钥不得供 Agent 使用，其私钥泄露等同 main 写权限泄露，须立即撤销该 App 的 bypass 和 Contents/Workflows 权限。
 
 ## Work claims
 
@@ -55,9 +57,9 @@ Finish with `git diff --check`.
 
 ## CI overview
 
-- `clued-cloud-tests` ([clued-required-tests.yml](./.github/workflows/clued-required-tests.yml)) runs lint, the migration ledger, typecheck, build and the unit tests on every pull request and every push to `main`, with no path filter; `ci-suites` in the same workflow runs the repository suites the changed paths select.
+- `clued-cloud-tests` ([clued-required-tests.yml](./.github/workflows/clued-required-tests.yml)) runs lint, the migration ledger, typecheck, build and the unit tests on every pull request and every push to `main`, plus App 5368905 bot pushes to `clued-train/staging`, with no path filter; `ci-suites` in the same workflow runs the repository suites the changed paths select. Staging uses the verified first parent T as its trusted checkout and CI base.
 - Path-filtered heavy gates run only when their paths change, for example `Clued G4 Database Gate` ([clued-g4-database.yml](./.github/workflows/clued-g4-database.yml)); `design-refs` and `active-doc-links` guard the contracts and the entry documents.
-- After the previous display-name cutover, the `main` ruleset (`main write policy (#292)`) requires six checks: `gitleaks`, `trivy`, `contract-placement` and `kooyumi-work-admission` from GitHub Actions, and `kooyumi-admission-verified` and `kooyumi-merge-slot` from the same clued-admission App; the recovery steps are in [docs/maintenance/main-admission-self-test-deadlock.md](./docs/maintenance/main-admission-self-test-deadlock.md) (written when the fifth check was not yet required). A path-filtered check is never required, because a pull request that does not touch its paths would wait for it forever.
+- 六项独立 CI 必需检查 `gitleaks`、`trivy`、`contract-placement`、`kooyumi-work-admission`、`kooyumi-admission-verified`、`kooyumi-merge-slot` 均钉 App `5368905`；三项仓库/应用必需检查 `ci-suites`、`clued-cloud-tests`、`migration-verify` 钉 GitHub Actions `15368`。启用 push 落地时，主规则集再加永不发布的 `kooyumi-train-landed@5368905`，与 App bypass 同一次保存，另设无 bypass 的“main 只许快进”规则集（ADR 0018 §8）。带路径过滤的检查不能设为必需检查。
 - A gated workflow runs its heavy jobs only after its `admission-gate` job has read the `kooyumi-work-admission` result. Jobs run on self-hosted runners when the actor is the repository owner and the head is in this repository, otherwise on GitHub-hosted runners, under one check name.
 
 ## Commit messages

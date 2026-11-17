@@ -377,6 +377,53 @@ test('command line: a --base older than a main this branch already merged is ref
     writeTree(dir,new Map([['a/script.mjs','generation two script']]));
     await assert.rejects(cli(dir,'--base','stale'),/R9_REREGISTER_BASE_BEHIND.*refs\/heads\/main/);
     r=await cli(dir,'--base','main');assert.equal(r.code,1,r.out);
+    gitIn(dir,'checkout','-q','-b','candidate');
+    gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','candidate after newer main');
+    await assert.rejects(cli(dir,'--base','stale'),/R9_REREGISTER_BASE_BEHIND.*refs\/heads\/main/);
+  }finally{cleanup(dir);}
+});
+
+test('push audit: an already committed main generation is a no-op against its first parent', async () => {
+  const dir=repoWithRegistry('r9-reregister-push-');
+  try{
+    const before=gitIn(dir,'rev-parse','HEAD');
+    gitIn(dir,'checkout','-q','-b','feature');
+    writeTree(dir,new Map([['a/script.mjs','generation one script']]));
+    let r=await cli(dir,'--base',before,'--write');assert.equal(r.code,0,r.out);
+    gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','register feature generation');
+    gitIn(dir,'checkout','-q','main');gitIn(dir,'merge','-q','--no-ff','-m','merge feature','feature');
+    const head=gitIn(dir,'rev-parse','HEAD');
+    gitIn(dir,'update-ref','refs/remotes/origin/main',head);
+    gitIn(dir,'checkout','-q','--detach',head);
+    const committed=fs.readFileSync(path.join(dir,R9_REGISTRY_PATH),'utf8');
+    r=await cli(dir,'--base',before,'--write');assert.equal(r.code,0,r.out);
+    assert.match(r.out,/up to date/);
+    assert.equal(fs.readFileSync(path.join(dir,R9_REGISTRY_PATH),'utf8'),committed);
+    assert.equal(gitIn(dir,'status','--porcelain'),'');
+    assert.deepEqual(JSON.parse(committed).previous_admission_sources.map(e=>e.source_checkout_sha),[before]);
+
+    // This exception must never rotate a new edit from the old generation.
+    writeTree(dir,new Map([['a/script.mjs','generation two script']]));
+    await assert.rejects(cli(dir,'--base',before,'--write'),/R9_REREGISTER_BASE_BEHIND/);
+
+    // Even a working registry precomputed against that old base cannot authorize
+    // losing the committed generation. It must be byte-identical to HEAD too.
+    const stale=reregister({baseConfig:JSON.parse(gitIn(dir,'show',`${before}:${R9_REGISTRY_PATH}`)),
+      workingConfig:JSON.parse(committed),read:p=>fs.readFileSync(path.join(dir,p)),oldCheckout:before});
+    fs.writeFileSync(path.join(dir,R9_REGISTRY_PATH),JSON.stringify(stale.config,null,2)+'\n');
+    await assert.rejects(cli(dir,'--base',before,'--write'),/R9_REREGISTER_BASE_BEHIND/);
+  }finally{cleanup(dir);}
+});
+
+test('push audit: committed stale pins still fail instead of using the HEAD no-op exception', async () => {
+  const dir=repoWithRegistry('r9-reregister-push-stale-');
+  try{
+    const before=gitIn(dir,'rev-parse','HEAD');
+    writeTree(dir,new Map([['a/script.mjs','changed without re-registering']]));
+    gitIn(dir,'add','-A');gitIn(dir,'commit','-q','-m','stale pushed generation');
+    gitIn(dir,'update-ref','refs/remotes/origin/main',gitIn(dir,'rev-parse','HEAD'));
+    await assert.rejects(cli(dir,'--base',before,'--write'),/R9_REREGISTER_BASE_BEHIND/);
+    assert.equal(gitIn(dir,'status','--porcelain'),'');
   }finally{cleanup(dir);}
 });
 
