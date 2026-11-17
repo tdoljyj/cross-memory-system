@@ -894,6 +894,8 @@ test('failed rehearsal distinguishes timeout and invalidation without retries or
   for (const [error, expected] of [
     [{ message: 'canceling statement due to statement timeout', code: '57014' }, '预演超时'],
     [{ message: 'bulk_preview_changed', code: '40001' }, '本轮预演已失效'],
+    [{ message: 'bulk_preview_changed', code: 'PT409' }, '本轮预演已失效'],
+    [{ message: 'bulk_proof_expired', code: 'PT409' }, '本轮预演已失效'],
   ]) {
     const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
     f.click('盘点并预演（不修改内容）'); f.calls[1].resolve({ data: null, error, status: 500 }); await f.settle();

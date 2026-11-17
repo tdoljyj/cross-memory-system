@@ -290,13 +290,30 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       assert.equal((await mutate({ action: 'begin', selection: {}, digest: complete.digest, proof: complete.proof, items: wrong }, isolated.client)).error_code, 'bulk_proposal_mismatch');
       assert.equal((await status(isolated.client)).available, false);
       await org(first.items[0].record_id, first.items[0].record_version, 0, [], isolated.client);
-      await assert.rejects(previewPage({ proof: first.proof }, isolated.client), /bulk_preview_changed/);
+      await assert.rejects(previewPage({ proof: first.proof }, isolated.client), error => error.code==='PT409' && error.message==='bulk_preview_changed');
       assert.equal((await mutate({ action: 'begin', selection: {}, digest: complete.digest, proof: complete.proof, items: complete.items }, isolated.client)).error_code, 'bulk_preview_changed');
       for (const role of ['authenticated', 'anon', 'service_role', 'clued_worker_gateway']) {
         assert.equal((await admin.query("select has_table_privilege($1,'clued_private.imprint_bulk_proof_key_v1','select,insert,update,delete') v", [role])).rows[0].v, false);
         for (const signature of ['clued_private.imprint_bulk_seal_v1(jsonb)', 'clued_private.imprint_bulk_unseal_v1(uuid,jsonb)'])
           assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') v", [role, signature])).rows[0].v, false);
       }
+    });
+    await t.test('public preview reports expired immutable proofs as business conflicts and preserves real serialization failures', async () => {
+      const isolated = await isolatedOwner('bulk-proof-errors');
+      await legacy('用途：我的学习', 'global', isolated.client);
+      await legacy('用途：我的学习', 'global', isolated.client);
+      const first = await previewPage({}, isolated.client);
+      const expiredPayload = { ...first.proof.payload, expires_at: '2000-01-01T00:00:00Z' };
+      const expired = (await admin.query('select clued_private.imprint_bulk_seal_v1($1) v', [expiredPayload])).rows[0].v;
+      await assert.rejects(previewPage({ proof: expired }, isolated.client), error => error.code==='PT409' && error.message==='bulk_proof_expired');
+      const original = (await admin.query(`select pg_get_functiondef('clued_private.imprint_bulk_unseal_v1(uuid,jsonb)'::regprocedure) definition`)).rows[0].definition;
+      try {
+        await admin.query(`create or replace function clued_private.imprint_bulk_unseal_v1(p_owner uuid,p_proof jsonb)
+          returns jsonb language plpgsql security definer set search_path='' as $serialization_test$
+          begin raise exception 'real_serialization_fixture' using errcode='40001'; end $serialization_test$`);
+        await assert.rejects(previewPage({ proof: first.proof }, isolated.client), error => error.code==='40001' && error.message==='real_serialization_fixture');
+      } finally { await admin.query(original); }
+      assert.equal((await status(isolated.client)).available, false, 'error handling never saves a batch');
     });
     await t.test('opt-in bounded pages preserve the complete signed first-100 plan and yield on a slow classifier', async () => {
       const isolated = await isolatedOwner('bulk-bounded-pages');

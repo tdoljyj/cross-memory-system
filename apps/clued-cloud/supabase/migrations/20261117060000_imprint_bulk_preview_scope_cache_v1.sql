@@ -135,8 +135,15 @@ begin
   end if;
   selection:=clued_private.imprint_bulk_selection_v1(owner_id,p_input-array['proof','page_size']);
   if p_input ? 'proof' then
-    chain:=clued_private.imprint_bulk_unseal_v1(owner_id,p_input->'proof');
-    if chain->'selection' is distinct from selection then raise exception 'bulk_preview_changed' using errcode='40001'; end if;
+    begin
+      chain:=clued_private.imprint_bulk_unseal_v1(owner_id,p_input->'proof');
+    exception when serialization_failure then
+      -- An immutable expired proof cannot recover by retrying its transaction.
+      -- Preserve every unrelated serialization failure and the private ABI.
+      if sqlerrm='bulk_proof_expired' then raise exception 'bulk_proof_expired' using errcode='PT409'; end if;
+      raise;
+    end;
+    if chain->'selection' is distinct from selection then raise exception 'bulk_preview_changed' using errcode='PT409'; end if;
     cursor_at:=(chain->>'cursor')::integer;
     if cursor_at>=(chain->>'classifiable')::integer then raise exception 'bulk_preview_already_complete' using errcode='22023'; end if;
   end if;
@@ -145,7 +152,7 @@ begin
   if chain is not null and (result->>'digest' is distinct from chain->>'digest'
     or result->>'rules_version' is distinct from chain->>'rules_version'
     or result->'inventory_counts'->'classifiable' is distinct from chain->'classifiable') then
-    raise exception 'bulk_preview_changed' using errcode='40001'; end if;
+    raise exception 'bulk_preview_changed' using errcode='PT409'; end if;
   chain:=coalesce(chain,jsonb_build_object('owner_id',owner_id,'selection',selection,'digest',result->>'digest',
     'rules_version',result->>'rules_version','classifiable',result->'inventory_counts'->'classifiable',
     'expires_at',statement_timestamp()+interval '2 hours','cursor',0,'ready',0,'needs_review',0,

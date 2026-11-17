@@ -45,7 +45,13 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
   // The bound fails explicitly rather than silently claiming a complete scan.
   for (let page = 0; page < 10000; page++) {
     if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
-    const value = await call(rpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, page_size: pageSize, ...(proof ? { proof } : {}) } });
+    let value: Json;
+    try { value = await call(rpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, page_size: pageSize, ...(proof ? { proof } : {}) } }); }
+    catch (failure) {
+      if (failure instanceof ImprintFailure && ["bulk_preview_changed", "bulk_proof_expired"].includes(failure.code))
+        throw new ImprintFailure("conflict", failure.code);
+      throw failure;
+    }
     if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
     if (value.status !== "ok" || value.authoritative !== false || value.max_batch_size !== 100 || !digest(value.digest)
       || value.rules_version !== "imprint-explicit-local.v2" || !object(value.selection) || !object(value.page)
