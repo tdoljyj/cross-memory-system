@@ -227,6 +227,26 @@ docker_ready() {
 }
 """
 
+# .Id is backend-defined: config digest on classic Docker, target index/manifest
+# digest on containerd. Keep the exact policy ID, never substitute a config ID,
+# tag, load stdout or a RepoDigest. An incompatible target store must refuse.
+LOCAL_IMAGE_LOAD = r"""# a local image's archive (pinned below when the generator saw it): images/<hex>.tar, or .tar.gz (gzip of the docker save)
+while read -r hex name want; do
+  [ -n "$hex" ] || continue
+  if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
+    [ "$name" != - ] && [ -f "$W/images/$name" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar(.gz)"
+    [ "$(sha256sum "$W/images/$name" | cut -d' ' -f1)" = "$want" ] || refuse "IMAGE_ARCHIVE_NOT_THE_PINNED_ONE:$name"
+    case "$name" in
+      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+      *) docker load -q -i "$W/images/$name" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+    esac
+  fi
+  got=$(docker image inspect --format '{{.Id}}' "sha256:$hex") || refuse "IMAGE_INSPECT_FAILED:$hex"
+  [ "$got" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
+done <<'IMAGES'
+@@LOCAL_IMAGES@@IMAGES
+"""
+
 COMMON = DOCKER_READY + r"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
 refuse() { echo "{\"status\":\"REFUSED\",\"code\":\"$1\"}"; exit 1; }
@@ -402,20 +422,7 @@ for ref in @@PULL_IMAGES@@; do
   docker image inspect "$ref" >/dev/null 2>&1 || docker pull -q "$ref" >/dev/null || refuse "IMAGE_PULL_FAILED:$ref"
   docker image inspect "$ref" >/dev/null 2>&1 || refuse "IMAGE_NOT_PRESENT:$ref"
 done
-# a local image's archive (pinned below when the generator saw it): images/<hex>.tar, or .tar.gz (gzip of the docker save)
-while read -r hex name want; do
-  [ -n "$hex" ] || continue
-  if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
-    [ "$name" != - ] && [ -f "$W/images/$name" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar(.gz)"
-    [ "$(sha256sum "$W/images/$name" | cut -d' ' -f1)" = "$want" ] || refuse "IMAGE_ARCHIVE_NOT_THE_PINNED_ONE:$name"
-    case "$name" in
-      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
-      *) docker load -q -i "$W/images/$name" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
-    esac
-  fi
-  [ "$(docker image inspect --format '{{.Id}}' "sha256:$hex")" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
-done <<'IMAGES'
-@@LOCAL_IMAGES@@IMAGES
+""" + LOCAL_IMAGE_LOAD + r"""
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THIS_PACKAGE
 # B8: the frozen upgrade tool with exactly the plan generated on Windows; found installed, it must have been this plan
 if [ -e "$UPG" ]; then
