@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
+import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
+import { writeTar } from '../rollout/fleet/tar.mjs';
 
 const windows = process.platform === 'win32';
 const script = fileURLToPath(new URL('../drill/drill-vm.ps1', import.meta.url));
@@ -32,6 +34,129 @@ function psCode(expr) {
   return ps(`try { ${expr} | Out-Null; $null } catch { (Get-DrillCode $_).code }`);
 }
 const opts = { skip: !windows };
+const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
+const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
+
+test('entry converts only completed bootstrap with valid paths and exit zero into A1 success', opts, () => {
+  const r = entryPs(`@(
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_DONE' } 0 'C:\\tree' 'C:\\node.exe'),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_REFUSED'; code = 'ASSET_HASH_MISMATCH' } 1 '' ''),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND' } 3 '' ''),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE' } 1 'C:\\tree' 'C:\\node.exe'),
+    (ConvertTo-FirstInstallEntryResult $null 0 '' ''),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_DONE' } 1 'C:\\tree' 'C:\\node.exe'),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_DONE' } 0 '' ''),
+    (ConvertTo-FirstInstallEntryResult @{ status = 'BOOTSTRAP_DONE'; code = 'FAILED' } 0 'C:\\tree' 'C:\\node.exe'))`);
+  assert.deepEqual(r.map(x => x.stopCode), [null, 'ASSET_HASH_MISMATCH', 'RESTART_THEN_RUN_THE_SAME_COMMAND',
+    'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE', 'DRILL_BOOTSTRAP_NO_VERDICT', 'DRILL_BOOTSTRAP_EXIT_NONZERO',
+    'DRILL_BOOTSTRAP_TREE_OR_NODE_MISSING', 'FAILED']);
+  assert.equal(r[0].status, 'FIRST_INSTALL_DONE');
+  assert.ok(r.slice(1).every(x => x.status === 'FIRST_INSTALL_STOPPED'));
+  assert.deepEqual(entryPs(`@((Read-FirstInstallTerminal 'noise'), (Read-FirstInstallTerminal ('noise' + [Environment]::NewLine + '{"status":"BOOTSTRAP_DONE"}')))`),
+    [null, { status: 'BOOTSTRAP_DONE' }]);
+});
+
+test('A1 reads the actual last stdout line and rejects a zero-exit failure verdict', opts, () => {
+  const good = '{"status":"FIRST_INSTALL_DONE","stopCode":null,"tree":"t","node":"n"}';
+  assert.equal(ps(`(Read-DrillEntryResult @('noise', ${q(good)}, '') 0).parsed`), true);
+  assert.equal(ps(`(Read-DrillEntryResult @(${q(good)}, 'trailing noise') 0).parsed`), false);
+  const e = JSON.parse(evidence());
+  assert.equal(pass(verdictOf(evidence({ entry: { ...e.entry, status: 'FIRST_INSTALL_STOPPED' } }))).A1, false);
+});
+
+test('a declared entry blocker stops the full drill before its host or VM gate', opts, () => {
+  const code = psCode(`
+    $Version = '1.2.3'; $From = 'unused'; $Kit = 'unused';
+    function Read-DrillPrereq { @{ sha256 = 'pin' } }
+    function Test-DrillPackageDir { @{ tar = 'unused' } }
+    function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = 'DRILL_BOOTSTRAP_REQUIRES_INTERACTIVE_UNELEVATED_SESSION' } }
+    function Get-DrillReleaseFiles { @('unused') }
+    function Assert-DrillHost { throw 'HOST_GATE_MUST_NOT_RUN' }
+    Invoke-DrillMain`);
+  assert.equal(code, 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY');
+});
+
+test('kit manifest is deterministic, pins exact bytes and uses only guest placeholders', () => {
+  const inputs = { payloads: { 'release-pins.json': Buffer.from('{}'), 'first-install-entry.ps1': Buffer.from('entry') },
+    prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}\r\n') };
+  const manifest = drillKitManifest(inputs);
+  assert.deepEqual(drillKitManifest(inputs), manifest);
+  assert.equal(manifest.prereqSha256, sha(inputs.prereqBytes));
+  assert.equal(manifest.perNodeSteps.length, 3);
+  assert.match(manifest.perNodeSteps.join(' '), /非提权.*RunAs.*凭据窗口/);
+  assert.equal(manifest.prerequisiteMode, 'first-install-host');
+  assert.equal(Object.hasOwn(manifest, 'executionBlocker'), false);
+  assert.ok(manifest.entry.arguments.every(a => /^(-[A-Za-z]+|\{(from|kit|fake|work|version)\})$/.test(a)));
+  for (const f of manifest.files) assert.equal(f.sha256, sha(inputs.payloads[f.path]));
+  for (const timeoutMinutes of [4, 241, 5.5]) assert.throws(() => drillKitManifest({ ...inputs, timeoutMinutes }), /TIMEOUT_REFUSED/);
+  assert.throws(() => drillKitManifest({ ...inputs, prereqBytes: Buffer.from('{}') }), /PREREQ_CONTRACT_REFUSED/);
+  assert.throws(() => readSums(`${'a'.repeat(64)}  x\n${'b'.repeat(64)}  X\n`), /SUMS_REFUSED/);
+  assert.throws(() => readSums(`${'a'.repeat(64)}  ../x\n`), /SUMS_REFUSED/);
+});
+
+function firstInstallAssets(label) {
+  const root = path.join(tmp, label); fs.mkdirSync(root);
+  for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
+  const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
+  const image = `role-image-${id}.tar.gz`;
+  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] } }));
+  const archive = writeTar(['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
+    path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
+    data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
+      { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }
+    ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })));
+  fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
+  fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
+  fs.writeFileSync(path.join(root, 'build', 'SHA256SUMS'), `${sha(archive)}  ${tag}.tar\n${sha('{}')}  ${tag}.release.json\n`);
+  fs.writeFileSync(path.join(root, 'final', `${tag}.first-install-kit.json`), kit);
+  fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify({
+    contract: 'clued.independent-ci.fleet-node-acceptance/1', version, archive_sha256: sha(archive), firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64) }));
+  fs.writeFileSync(path.join(root, 'images', image), 'fake image fixture');
+  const prereq = path.join(root, 'prereq.json');
+  fs.writeFileSync(prereq, JSON.stringify({ contract: 'clued.drill.prereq/1',
+    wsl: { path: 'wsl.msi', sha256: sha('wsl') }, rootfs: { path: 'ubuntu.wsl', sha256: sha('rootfs') },
+    debs: [{ path: 'docker.deb', sha256: sha('deb') }] }));
+  for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb']]) fs.writeFileSync(path.join(root, name), bytes);
+  return { root, build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq,
+    from: path.join(root, 'from'), out: path.join(root, 'kit') };
+}
+
+test('local assembly mirrors publication, preserves originals, builds a kit accepted by drill', () => {
+  const f = firstInstallAssets('assembly-good');
+  const before = fs.readFileSync(path.join(f.build, 'SHA256SUMS'));
+  prepareFrom({ ...f, out: f.from });
+  assert.deepEqual(fs.readFileSync(path.join(f.build, 'SHA256SUMS')), before);
+  assert.equal(releasePins(f.from, f.version).files.length, 9);
+  makeDrillKit(f);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
+  for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
+  if (windows) {
+    assert.equal(ps(`(Read-DrillKit ${q(f.out)}).prerequisiteMode`), 'first-install-host');
+    assert.equal(ps(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; @(Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})).Count`), 9);
+  }
+  assert.throws(() => makeDrillKit(f), /EEXIST/);
+  fs.writeFileSync(path.join(f.root, 'wsl.msi'), 'changed');
+  assert.throws(() => makeDrillKit({ ...f, out: path.join(f.root, 'changed-prereq-kit') }), /PREREQ_CHANGED/);
+  assert.ok(!fs.existsSync(path.join(f.root, 'changed-prereq-kit')), 'validate before writing kit');
+  fs.appendFileSync(path.join(f.from, `fleet-node-${f.version}.bootstrap.ps1`), '# tampered');
+  assert.throws(() => releasePins(f.from, f.version), /ASSET_HASH_MISMATCH/);
+  if (windows) assert.equal(psCode(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})`), 'DRILL_RELEASE_ASSET_CHANGED');
+});
+
+test('assembly rejects a different acceptance, extra assets and missing images', () => {
+  const f = firstInstallAssets('assembly-bad'); prepareFrom({ ...f, out: f.from });
+  const accPath = path.join(f.from, `fleet-node-${f.version}.acceptance.json`);
+  const original = fs.readFileSync(accPath), acc = JSON.parse(original);
+  fs.writeFileSync(accPath, JSON.stringify({ ...acc, firstInstallKitSha256: 'c'.repeat(64) }));
+  assert.throws(() => releasePins(f.from, f.version), /KIT_NOT_ACCEPTED/);
+  fs.writeFileSync(accPath, original);
+  fs.writeFileSync(path.join(f.from, 'unlisted.log'), 'x');
+  assert.throws(() => releasePins(f.from, f.version), /UNLISTED_ASSET/);
+  fs.unlinkSync(path.join(f.from, 'unlisted.log'));
+  const img = fs.readdirSync(f.from).find(n => n.startsWith('role-image-'));
+  fs.unlinkSync(path.join(f.from, img));
+  assert.throws(() => releasePins(f.from, f.version), /ASSET_MISSING/);
+});
 
 test('the answer file is well-formed and installs Windows 11 Pro, zh-CN, a local admin, no online account', opts, () => {
   const r = ps(`$x = [xml](New-DrillAutounattend 'p<&>w'); $ns = @{ u = 'urn:schemas-microsoft-com:unattend' };
@@ -69,6 +194,132 @@ test('the answer ISO is built without elevation and carries autounattend.xml und
   assert.equal(b.subarray(0x8001, 0x8006).toString('latin1'), 'CD001');
   assert.ok(b.includes(Buffer.from('autounattend.xml', 'utf16le').swap16()), 'Joliet (UTF-16BE) name');
   assert.equal(psCode(`New-DrillAnswerIso ${q(src)} ${q(iso)}`), 'DRILL_UNEXPECTED', 'never overwrites an existing ISO');
+});
+
+test('host duty gate fails closed for active, busy, missing and malformed resident status', opts, () => {
+  const r = ps(`@(
+    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":{"pr":1153}}' 64GB),
+    (Test-DrillHostSafety $null 64GB), (Test-DrillHostSafety '{broken' 64GB),
+    (Test-DrillHostSafety '{}' 64GB),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"}}' 64GB),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}' 64GB))`);
+  assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_CI_BUSY',
+    'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_STATUS_UNREADABLE',
+    'DRILL_HOST_STATUS_UNREADABLE', null]);
+  assert.ok(r.slice(0, -1).every(x => !x.ok && x.action === 'refuse'));
+  assert.equal(r.at(-1).action, 'start');
+});
+
+test('running guard aborts on duty, batch, unreadable status or memory pressure after a safe start', opts, () => {
+  const r = ps(`$idle = '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'; @(
+    (Test-DrillHostSafety $idle 64GB), (Test-DrillHostSafety $idle 64GB -Running),
+    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB -Running),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB -Running),
+    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"WAITING"},"current":{"pr":1153}}' 64GB -Running),
+    (Test-DrillHostSafety $null 64GB -Running), (Test-DrillHostSafety $idle (14GB - 1) -Running),
+    (Test-DrillHostSafety $idle 14GB -Running))`);
+  assert.deepEqual(r.map(x => x.action), ['start', 'continue', 'abort', 'abort', 'abort', 'abort', 'abort', 'continue']);
+  assert.deepEqual(r.slice(2, 7).map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY',
+    'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_MEMORY_SHORT']);
+});
+
+test('memory threshold follows actual VM memory plus the single production reserve at start and runtime', opts, () => {
+  const r = ps(`$idle = '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'; @(
+    (Test-DrillHostSafety $idle 14GB -VmMemoryBytes 14GB),
+    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB),
+    (Test-DrillHostSafety $idle (20GB - 1) -VmMemoryBytes 14GB -Running),
+    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB -Running))`);
+  assert.deepEqual(r.map(x => x.ok), [false, true, false, true]);
+  assert.ok(r.every(x => x.requiredFreeBytes === 20 * 1024 ** 3));
+});
+
+test('host preflight refuses duty before any Hyper-V or memory query', opts, () => {
+  assert.equal(psCode(`
+    function Get-DrillHostSafety { Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB }
+    function Get-CimInstance { throw 'MUST_NOT_QUERY_HOST' }
+    function Get-VMSwitch { throw 'MUST_NOT_QUERY_HYPERV' }
+    Assert-DrillHost`), 'DRILL_HOST_IS_ON_DUTY');
+});
+
+test('guard latches the reason and shuts down/restores independently of guest waits', opts, () => {
+  const r = ps(`
+    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null })
+    $script:events = @()
+    function Get-DrillHostSafety { param([switch]$Running) Test-DrillHostSafety $null 64GB -Running:$Running }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events += "stop-and-restore:$RestoreCheckpoint"; return $true }
+    function Write-DrillJson { param($Path, $Value) $script:events += 'receipt'; $script:lastReceipt = $Value }
+    Invoke-DrillHostGuardLoop $state 'unused' -RestoreCheckpoint
+    @{ failure = $state.failure; ready = $state.ready; events = $script:events; receipt = $script:lastReceipt }`);
+  assert.equal(r.failure.code, 'DRILL_HOST_STATUS_UNREADABLE');
+  assert.equal(r.ready, true);
+  assert.deepEqual(r.events, ['receipt', 'stop-and-restore:True', 'receipt']);
+  assert.equal(r.receipt.code, 'DRILL_HOST_STATUS_UNREADABLE');
+  assert.equal(r.receipt.restoredToCheckpoint, true);
+});
+
+test('the real background guard aborts while the foreground is blocked, without any VM access', opts, () => {
+  const fixture = path.join(tmp, 'guard-fixture.ps1');
+  const marker = path.join(tmp, 'guard-stopped.txt');
+  fs.writeFileSync(fixture, `. ${q(script)}
+    $script:DrillScriptPath = $PSCommandPath
+    $script:Drill.HostGuardSeconds = 0.1
+    $script:guardReads = 0
+    function Get-DrillHostSafety {
+      param([switch]$Running)
+      $script:guardReads++
+      $mode = if ($script:guardReads -eq 1) { 'STANDBY' } else { 'ACTIVE' }
+      Test-DrillHostSafety ('{"node":{"mode":"' + $mode + '"},"executor":{"state":"IDLE"},"current":null}') 64GB -Running:$Running
+    }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint)
+      [IO.File]::WriteAllText(${q(marker)}, [string]$RestoreCheckpoint); return $true
+    }
+  `);
+  const r = ps(`. ${q(fixture)}; $guard = $null
+    try {
+      $guard = Start-DrillHostGuard ${q(tmp)} -RestoreCheckpoint
+      $guard.state.armed = $true
+      Start-Sleep -Seconds 2
+      @{ ready = $guard.state.ready; failure = $guard.state.failure; cleanup = $guard.state.cleanup }
+    } finally { Stop-DrillHostGuard $guard }`);
+  assert.equal(r.ready, true);
+  assert.equal(r.failure.code, 'DRILL_HOST_IS_ON_DUTY');
+  assert.equal(r.cleanup.restoredToCheckpoint, true);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'True');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'host-guard.json'), 'utf8')).code, 'DRILL_HOST_IS_ON_DUTY');
+});
+
+test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
+  const r = ps(`
+    function Get-Content { param($LiteralPath, [switch]$Raw, $Encoding, $ErrorAction)
+      $script:readPath = $LiteralPath
+      return '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'
+    }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 20GB / 1KB } }
+    function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = 0 } }
+    $safety = Get-DrillHostSafety
+    @{ path = $script:readPath; safety = $safety }
+  `);
+  assert.equal(r.path, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
+  assert.equal(r.safety.requiredFreeBytes, 20 * 1024 ** 3);
+  assert.equal(r.safety.ok, true);
+});
+
+test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
+  const r = ps(`
+    $script:events = @(); $script:vm = @{ State = 'Running' }
+    $script:info = @{ vm = $script:vm; notes = $script:Drill.Marker; state = 'Running' }
+    function Get-DrillVmInfo { $script:info }
+    function Stop-VM { param($VM, [switch]$TurnOff, [switch]$Force, $ErrorAction) $script:events += 'stop'; $script:vm.State = 'Off' }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm, $ErrorAction) $script:events += 'restore' }
+    function Get-VM { param($Name, $ErrorAction) $script:vm }
+    $off = Stop-DrillOwnedVm -RestoreCheckpoint
+    $script:info.notes = 'someone-else'
+    $code = try { Stop-DrillOwnedVm -RestoreCheckpoint; 'BAD' } catch { (Get-DrillCode $_).code }
+    @{ off = $off; code = $code; events = $script:events }
+  `);
+  assert.deepEqual(r, { off: true, code: 'DRILL_VM_NAME_TAKEN_NOT_OURS', events: ['stop', 'restore'] });
 });
 
 test('the host memory gate refuses below 14 GB free, with no retry', opts, () => {
@@ -162,6 +413,10 @@ test('the first-install kit: every file pinned, only fixed placeholders, the per
   const changed = kitDir('kit-changed'); fs.writeFileSync(path.join(changed, 'tools', 'a.bin'), 'b');
   assert.equal(psCode(`Read-DrillKit ${q(changed)}`), 'DRILL_KIT_FILE_CHANGED');
   assert.equal(psCode(`Read-DrillKit ${q(kitDir('kit-nodearg', (k) => ({ ...k, entry: { ...k.entry, arguments: ['-Node', 'desk-w-591'] } })))}`), 'DRILL_KIT_ARGUMENT_REFUSED');
+  // Ubuntu package names carry + and ~ (containerd_2.2.1-0ubuntu1~24.04.4_amd64.deb): the kit reader accepts what the prereq reader accepts
+  const debKit = kitDir('kit-deb', (k) => ({ ...k, files: [...k.files, { path: 'tools\\c_2.2.1-0ubuntu1~24.04.4+x.deb', sha256: sha('d') }] }));
+  fs.writeFileSync(path.join(debKit, 'tools', 'c_2.2.1-0ubuntu1~24.04.4+x.deb'), 'd');
+  assert.equal(ps(`(Read-DrillKit ${q(debKit)}).entryFile`), 'entry.ps1');
   assert.equal(psCode(`Read-DrillKit ${q(kitDir('kit-escape', (k) => ({ ...k, files: [...k.files, { path: '..\\x', sha256: 'a'.repeat(64) }] })))}`), 'DRILL_KIT_REFUSED');
   assert.equal(psCode(`Read-DrillKit ${q(kitDir('kit-noper', (k) => { const { perNodeSteps, ...rest } = k; return rest; }))}`), 'DRILL_KIT_REFUSED');
   assert.equal(psCode(`Read-DrillKit ${q(path.join(tmp, 'nowhere'))}`), 'DRILL_FIRST_INSTALL_KIT_MISSING');
@@ -209,6 +464,33 @@ function evidence(over = {}) {
 const verdictOf = (json) => ps(`$j = ${q(json)} | ConvertFrom-Json; $h = @{}; foreach ($p in $j.PSObject.Properties) { $h[$p.Name] = $p.Value };
   $h.now = [DateTimeOffset]::Parse($j.now); $items = Get-DrillVerdict $h; [ordered]@{ items = @($items); conclusion = (Get-DrillConclusion $items) }`);
 const pass = (r) => Object.fromEntries(r.items.map((i) => [i.id, i.pass]));
+
+test('adapted kits can never become PASS_A_FULL, including after production finalization or erased per-node steps', opts, () => {
+  const generated = drillKitManifest({ payloads: { 'first-install-entry.ps1': Buffer.from('entry') },
+    prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}') });
+  for (const kit of [generated, { ...generated, perNodeSteps: [] }]) {
+    const r = verdictOf(evidence({ kit }));
+    assert.equal(pass(r).A10, false);
+    const items = r.items.map(i => ['A5', 'A9'].includes(i.id) ? { ...i, pass: true } : i);
+    assert.equal(ps(`Get-DrillConclusion (${q(JSON.stringify(items))} | ConvertFrom-Json)`), 'PASS_A_PER_NODE_STEPS_REMAIN');
+  }
+});
+
+test('interactive A1 requires one genuine qualified launcher result, PNG evidence and A8 paths', opts, () => {
+  const good = { fileCount: 1, qualified: true, screenshot: true, tree: 't', node: 'n' };
+  const values = [good, { ...good, fileCount: 0 }, { ...good, fileCount: 2 }, { ...good, qualified: false },
+    { ...good, screenshot: false }, { ...good, tree: '' }, { ...good, node: '' }];
+  const r = ps(`$cases = ${q(JSON.stringify(values))} | ConvertFrom-Json; @($cases | ForEach-Object { ConvertFrom-DrillInteractiveEvidence $_ })`);
+  assert.equal(r[0].status, 'FIRST_INSTALL_DONE');
+  assert.ok(r.slice(1).every(x => x.exitCode === 1 && x.stopCode === 'DRILL_INTERACTIVE_EVIDENCE_NOT_COMPLETE'));
+  assert.equal(psCode('$Interactive = $true; $BaselineOnly = $true; Invoke-DrillMain'), 'DRILL_USAGE');
+});
+
+test('guest scripts parse under Windows PowerShell before any VM work', opts, () => {
+  for (const file of [script, entryScript]) {
+    assert.deepEqual(ps(`$tokens = $null; $errors = $null; $null = [Management.Automation.Language.Parser]::ParseFile(${q(file)}, [ref]$tokens, [ref]$errors); [ordered]@{ count = @($errors).Count; messages = @($errors | ForEach-Object { $_.Message }) }`), { count: 0, messages: [] });
+  }
+});
 
 test('the verdict: a clean drill passes A1-A8 and A10 reports the per-node steps; A5 production half and A9 wait for -Finalize', opts, () => {
   const r = verdictOf(evidence());
@@ -278,6 +560,11 @@ test('the guest-side fake credentials match the package fingerprint formulas and
   assert.equal(pub.upgradeTokenFingerprint, fingerprintCiToken(up));
   assert.equal(pub.appPublicKeySha256Base64, fingerprintAppKey(pem));
   assert.match(pub.ciPrincipalBindingId, /^[0-9a-f-]{36}$/);
+  const hostPublic = entryPs(`ConvertTo-FirstInstallPublic (${q(JSON.stringify(pub))} | ConvertFrom-Json)`);
+  assert.equal(hostPublic.ciPrincipalBindingId, pub.ciPrincipalBindingId);
+  assert.equal(hostPublic.ciPrincipalRoleRef, pub.ciPrincipalRoleRef);
+  assert.equal(hostPublic.ciPrincipalQualificationRef, pub.ciPrincipalQualificationRef);
+  assert.equal(hostPublic.heartbeatBindingId, '');
   const printed = JSON.stringify(pub);
   for (const secret of [ci, up, pem.split('\n')[1]]) assert.ok(!printed.includes(secret));
   assert.equal(psCode(`New-DrillFakeCredentials ${q(out)}`), 'DRILL_UNEXPECTED', 'never reuses a directory');

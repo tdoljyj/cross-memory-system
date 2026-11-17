@@ -1,4 +1,4 @@
-# drill-vm.ps1 -- the new-node first-install drill machine: one Hyper-V VM on this host (plan PLAN-drill-vm-20261116, phase A).
+﻿# drill-vm.ps1 -- the new-node first-install drill machine: one Hyper-V VM on this host (plan PLAN-drill-vm-20261116, phase A).
 #
 #   pwsh -NoProfile -File drill-vm.ps1 -BaselineOnly
 #   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
@@ -18,9 +18,10 @@
 # and is never in the failover list. Its role probe can only answer "unauthorized", so it stays UNCERTAIN, which starts nothing.
 #
 # Host boundary: writes only under D:\clued-drill\; touches only the VM whose name AND notes are ours; never touches the
-# production roots, services, scheduled tasks, the host's WSL distributions, or any process by name. No elevation: the account
+# production writes, services, scheduled tasks, the host's WSL distributions, or any process by name. The sole production
+# read is HostStatus below (node.mode / executor.state / current). No elevation: the account
 # must be in Hyper-V Administrators. Every wait is bounded; nothing is retried; a failed drill still restores the checkpoint.
-# The VM is Off whenever this script is not running, and it starts only when the host has >= 14 GB free memory.
+# Host duty, CI activity and memory are checked before start and independently every 30 seconds while running.
 [CmdletBinding()]
 param(
   [string]$Version,
@@ -29,11 +30,15 @@ param(
   [switch]$BaselineOnly,
   [switch]$PrereqOnly,
   [switch]$SkipReinstall,
+  [switch]$Interactive,
+  [ValidateRange(5, 240)][int]$InteractiveTimeoutMinutes = 120,
   [string]$Finalize,
   [string]$ProductionReadback
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
+$script:DrillScriptPath = $PSCommandPath
+$script:HostGuard = $null
 
 # ---------------------------------------------------------------- constants (the one place each fact lives)
 $script:Drill = [ordered]@{
@@ -54,7 +59,11 @@ $script:Drill = [ordered]@{
   # Microsoft's published generic install key for Windows 11 Pro: it only selects the edition; the VM is never activated.
   ProProductKey = 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'
   MemoryBytes = 8GB
-  MinHostFreeBytes = 14GB
+  # Keep production's workstation low-memory margin (Runner Runbook 2.2: 6 GiB), IN ADDITION to the VM's memory.
+  # Use the larger of the configured and existing VM allocation; an older 14 GiB VM therefore requires 20 GiB free.
+  ProductionReserveBytes = 6GB
+  HostGuardSeconds = 30
+  HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
   MinDiskFreeBytes = 100GB
   VhdBytes = 80GB
   Cpu = 4; CpuMaximum = 75; CpuWeight = 50; MaxIops = 2000
@@ -115,10 +124,28 @@ function Get-Prop($Object, [string]$Path) {
 
 # ---------------------------------------------------------------- pure decisions (unit-tested offline)
 
-# The host memory gate: an 8 GB static VM never starts unless the host keeps >= 14 GB free. No retry.
-function Test-DrillHostMemory([long]$FreeBytes) {
-  if ($FreeBytes -lt $script:Drill.MinHostFreeBytes) { return @{ ok = $false; code = 'DRILL_HOST_MEMORY_SHORT'; freeGB = [Math]::Round($FreeBytes / 1GB, 1) } }
-  return @{ ok = $true; code = $null; freeGB = [Math]::Round($FreeBytes / 1GB, 1) }
+function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes) {
+  $required = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes) + $script:Drill.ProductionReserveBytes
+  return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
+    freeGB = [Math]::Round($FreeBytes / 1GB, 1); requiredFreeBytes = $required }
+}
+
+# Pure projection: inspect only node.mode, executor.state and current. Absent/invalid/unknown facts never grant a start.
+# Any current batch (including WAITING/PARKED) still owns resources, even when executor.state is not RUNNING.
+function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes) {
+  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes
+  $code = 'DRILL_HOST_STATUS_UNREADABLE'
+  try {
+    $s = ConvertFrom-Json -InputObject $StatusJson -ErrorAction Stop
+    $mode = Get-Prop $s 'node.mode'; $executor = Get-Prop $s 'executor.state'
+    if ($mode -ceq 'ACTIVE') { $code = 'DRILL_HOST_IS_ON_DUTY' }
+    elseif ($executor -cin @('RUNNING', 'PARKED') -or $null -ne (Get-Prop $s 'current')) { $code = 'DRILL_HOST_CI_BUSY' }
+    elseif ($mode -ceq 'STANDBY' -and $null -ne $s.PSObject.Properties['current'] -and
+      $executor -cin @('IDLE', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'STOPPED',
+        'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')) { $code = $memory.code }
+  } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
+  return @{ ok = ($null -eq $code); code = $code; freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
+    action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
 }
 
 # What to do with the VM named ours. $Vm: $null or @{ notes; state; checkpoints = @(names) }.
@@ -312,7 +339,7 @@ function Read-DrillKit([string]$Dir) {
   $seen = @{}
   foreach ($f in $files) {
     $rel = [string](Get-Prop $f 'path'); $want = [string](Get-Prop $f 'sha256')
-    if ($rel -notmatch '^[A-Za-z0-9._\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or $want -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "file $rel") }
+    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or $want -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "file $rel") }
     $full = [IO.Path]::GetFullPath((Join-Path $Dir $rel))
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw (New-DrillError 'DRILL_KIT_REFUSED' "file $rel") }
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw (New-DrillError 'DRILL_KIT_FILE_MISSING' $rel) }
@@ -333,7 +360,32 @@ function Read-DrillKit([string]$Dir) {
   $perNode = @($kit.perNodeSteps | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
   $prereqSha = [string](Get-Prop $kit 'prereqSha256')
   if ($prereqSha -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'prereqSha256') }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha }
+  $mode = [string](Get-Prop $kit 'prerequisiteMode')
+  if ($mode -and $mode -cne 'first-install-host') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'prerequisiteMode') }
+  if ($mode -and -not $seen.ContainsKey('release-pins.json')) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'release-pins.json') }
+  $blocker = [string](Get-Prop $kit 'executionBlocker')
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker }
+}
+
+# A generated kit binds the complete Release directory, not just the old package triple.
+# Validate before touching Hyper-V; entry validates these pins again after PowerShell Direct copy.
+function Get-DrillReleaseFiles($Package, $KitInfo) {
+  if ($KitInfo.prerequisiteMode -cne 'first-install-host') { return @($Package.tar, $Package.acceptance, $Package.sums) }
+  $pins = Read-DrillJson (Join-Path $KitInfo.dir 'release-pins.json')
+  if ([string](Get-Prop $pins 'version') -cne $Package.version) { throw (New-DrillError 'DRILL_RELEASE_VERSION_MISMATCH') }
+  $root = Split-Path -Parent $Package.tar; $seen = @{}; $files = @()
+  foreach ($f in @(Get-Prop $pins 'files')) {
+    $name = [string](Get-Prop $f 'path'); $hash = [string](Get-Prop $f 'sha256')
+    if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey($name)) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
+    $seen[$name] = $true; $file = Join-Path $root $name
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Sha256Hex $file) -cne $hash) { throw (New-DrillError 'DRILL_RELEASE_ASSET_CHANGED' $name) }
+    $files += $file
+  }
+  foreach ($file in @($Package.tar, $Package.acceptance, $Package.sums)) {
+    if (-not $seen.ContainsKey([IO.Path]::GetFileName($file))) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
+  }
+  if (@(Get-ChildItem -LiteralPath $root -Force).Count -ne $files.Count) { throw (New-DrillError 'DRILL_RELEASE_UNLISTED_ASSET') }
+  return $files
 }
 
 # The prerequisites a new node needs before the first install (plan 1.2; Owner approved 11-16): the WSL package, the Ubuntu
@@ -402,9 +454,79 @@ function Resolve-DrillKitArguments([string[]]$Arguments, [hashtable]$Paths) {
 
 # The kit entry's last stdout line: { status, stopCode, tree, node } (A1 reads stopCode; A8 needs tree and node).
 function Read-DrillEntryResult([string[]]$Lines, [int]$ExitCode) {
-  $last = @($Lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1
+  $last = @($Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1
   $doc = $null; if ($last) { try { $doc = $last | ConvertFrom-Json } catch { $doc = $null } }
   return [ordered]@{ exitCode = $ExitCode; status = [string](Get-Prop $doc 'status'); stopCode = (Get-Prop $doc 'stopCode'); tree = [string](Get-Prop $doc 'tree'); node = [string](Get-Prop $doc 'node'); parsed = ($null -ne $doc) }
+}
+
+# Pure conversion. A1 is the launcher's terminal object, never an Owner-supplied success string.
+function ConvertFrom-DrillInteractiveEvidence($Evidence) {
+  $ok = (Get-Prop $Evidence 'fileCount') -eq 1 -and (Get-Prop $Evidence 'qualified') -eq $true -and
+    (Get-Prop $Evidence 'screenshot') -eq $true -and (Get-Prop $Evidence 'tree') -and (Get-Prop $Evidence 'node')
+  [ordered]@{ exitCode = $(if ($ok) { 0 } else { 1 }); status = $(if ($ok) { 'FIRST_INSTALL_DONE' } else { 'FIRST_INSTALL_STOPPED' });
+    stopCode = $(if ($ok) { $null } else { 'DRILL_INTERACTIVE_EVIDENCE_NOT_COMPLETE' }); tree = [string](Get-Prop $Evidence 'tree'); node = [string](Get-Prop $Evidence 'node'); parsed = $true }
+}
+
+function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
+  # Owner chooses a temporary password via secure input; it is sent as SecureString, never printed or saved.
+  $password = Read-Host '为本次 VM 的 drill 交互登录设置临时口令（不记录）' -AsSecureString
+  if ($password.Length -eq 0) { throw (New-DrillError 'DRILL_INTERACTIVE_PASSWORD_EMPTY') }
+  Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { param($p) Set-LocalUser -Name 'drill' -Password $p } -ArgumentList $password | Out-Null
+  $Cred = New-Object pscredential ('drill', $password); $password = $null
+  $command = "powershell -NoProfile -ExecutionPolicy Bypass -File C:\drill\from\fleet-node-$($Paths.version).bootstrap.ps1 -From C:\drill\from"
+  [Console]::Error.WriteLine("请在 VM 内以 drill 登录，打开普通 PowerShell，运行：$command")
+  [Console]::Error.WriteLine('凭据仅在 VM 内读取 C:\drill\fake：app-key.pem、ci-admission.token、resident-upgrade.token、public.json；心跳留空点确定。关闭凭据窗口后，保存结局截图 C:\drill\work\interactive-screen.png。')
+  [Console]::Error.WriteLine("全部结束（包含需要重启后重跑）再执行：New-Item C:\drill\work\interactive.done -ItemType File；等待上限 $InteractiveTimeoutMinutes 分钟，超时或取消会还原 S0。")
+  Start-Process -FilePath "$env:SystemRoot\System32\vmconnect.exe" -ArgumentList @('localhost', $script:Drill.VmName) -WindowStyle Normal | Out-Null
+  $deadline = [DateTimeOffset]::UtcNow.AddMinutes($InteractiveTimeoutMinutes)
+  $done = $false
+  while ([DateTimeOffset]::UtcNow -lt $deadline) {
+    Assert-DrillGuard
+    # Reboot during the genuine bootstrap is expected. Do not restart/bootstrap through Direct.
+    $job = $null
+    try {
+      $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Test-Path -LiteralPath 'C:\drill\work\interactive.done' } -AsJob -ErrorAction Stop
+      $remaining = [Math]::Max(1, [Math]::Min(15, [int]($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+      if (Wait-Job -Job $job -Timeout $remaining) { $done = (Receive-Job -Job $job -ErrorAction Stop) -eq $true }
+    } catch { $done = $false }
+    finally { if ($job) { Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue } }
+    if ($done) { break }
+    Start-Sleep -Seconds 5
+  }
+  if (-not $done) { throw (New-DrillError 'DRILL_INTERACTIVE_TIMEOUT') }
+  $observed = Invoke-DrillGuest $Cred {
+    param($assets, $version)
+    . (Join-Path $assets "fleet-node-$version.bootstrap.ps1") -From $assets
+    $files = @(Get-ChildItem -Path 'C:\ProgramData\CluedBootstrap\*\elevated-launcher-*.txt' -File)
+    $treePath = ''; $nodePath = ''; $terminal = $null; $qualified = $false; $source = ''; $text = ''
+    if ($files.Count -eq 1) {
+      $source = $files[0].FullName; $text = [IO.File]::ReadAllText($source); $terminal = Get-LastJsonLine $text
+      $qualified = (Get-LauncherVerdict $true $terminal).status -ceq 'BOOTSTRAP_DONE'
+      $treePath = Join-Path $files[0].DirectoryName 'x\tree'
+      $js = New-Object Web.Script.Serialization.JavaScriptSerializer
+      $pm = $js.DeserializeObject([IO.File]::ReadAllText((Join-Path $assets "fleet-node-$version.prereq-manifest.json")))
+      $nodePin = @($pm['items'] | Where-Object { $_['name'] -ceq 'node' })
+      if ($nodePin.Count -eq 1) {
+        $nodes = @(Get-ChildItem -Path (Join-Path $WorkParent ('tools\node-' + $nodePin[0]['sha256'])) -Recurse -Filter node.exe)
+        if ($nodes.Count -eq 1) { $nodePath = $nodes[0].FullName }
+      }
+      if (-not (Test-Path -LiteralPath (Join-Path $treePath 'work\independent-ci-resident-v1\rollout\fleet\install.mjs'))) { $treePath = '' }
+    }
+    $screen = 'C:\drill\work\interactive-screen.png'; $png = $false
+    if (Test-Path -LiteralPath $screen -PathType Leaf) {
+      $stream = [IO.File]::OpenRead($screen)
+      try { $header = New-Object byte[] 8; $png = $stream.Read($header, 0, 8) -eq 8 -and [BitConverter]::ToString($header) -ceq '89-50-4E-47-0D-0A-1A-0A' } finally { $stream.Dispose() }
+    }
+    [ordered]@{ fileCount = $files.Count; source = $source; text = $text; terminal = $terminal; qualified = $qualified;
+      tree = $treePath; node = $nodePath; screenshot = $png }
+  } -ArgumentList @($Paths.from, $Paths.version) -TimeoutMinutes 2 -Step 'interactive-evidence'
+  Write-DrillJson (Join-Path $RunDir 'interactive-launcher.json') $observed
+  if ($observed.screenshot) {
+    $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
+    try { Copy-Item -LiteralPath 'C:\drill\work\interactive-screen.png' -Destination (Join-Path $RunDir 'interactive-screen.png') -FromSession $session }
+    finally { Remove-PSSession -Session $session }
+  }
+  return @{ entry = (ConvertFrom-DrillInteractiveEvidence $observed); credential = $Cred }
 }
 
 function New-DrillItem([string]$Id, $Pass, [string]$Detail) { [ordered]@{ id = $Id; pass = $Pass; detail = $Detail } }
@@ -417,7 +539,7 @@ function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
   $entry = $E.entry
-  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode
+  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE'
   [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { 'no entry result' } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode)" })))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
@@ -446,6 +568,10 @@ function Get-DrillVerdict($E) {
   }
   [void]$items.Add((New-DrillItem 'A9' $null 'production read-back by -Finalize'))
   $steps = @($E.kit.perNodeSteps)
+  # A malformed/edited adapted kit cannot erase the shell exception by clearing perNodeSteps.
+  if ([string](Get-Prop $E.kit 'prerequisiteMode') -ceq 'first-install-host') {
+    $steps = @($steps) + @('adapted drill: non-elevated check, RunAs and credential dialogs not validated')
+  }
   [void]$items.Add((New-DrillItem 'A10' ($steps.Count -eq 0) $(if ($steps.Count) { 'per-node steps: ' + ($steps -join ' | ') } else { 'one command, no node value' })))
   return ,$items.ToArray()
 }
@@ -539,6 +665,8 @@ function New-DrillFakeCredentials {
     contract = 'clued.drill.fake-credentials/1'
     note = 'generated inside the drill VM; registered nowhere; the service refuses them'
     ciPrincipalBindingId = [guid]::NewGuid().ToString()
+    ciPrincipalRoleRef = [guid]::NewGuid().ToString()
+    ciPrincipalQualificationRef = [guid]::NewGuid().ToString()
     ciTokenPinSha256 = (& $pin $ci)
     upgradeTokenFingerprint = (& $pin $up)
     appKeyId = 1
@@ -558,12 +686,131 @@ function Get-DrillVmInfo {
   return @{ vm = $vm; notes = $vm.Notes; state = [string]$vm.State; checkpoints = @(Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
 }
 
+# Only this one production file is read, never modified; no other resident fields or files are used.
+function Get-DrillHostSafety([switch]$Running) {
+  try { $json = Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop }
+  catch { return Test-DrillHostSafety $null 0 -Running:$Running }
+  $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running
+  if (-not $duty.ok) { return $duty }
+  try {
+    $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
+    if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
+    $free = [long]$os.FreePhysicalMemory * 1KB
+    $bytes = $script:Drill.MemoryBytes
+    $vm = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $script:Drill.VmName }
+    if ($vm) {
+      if ($vm.Notes -cne $script:Drill.Marker) { throw (New-DrillError 'DRILL_VM_NAME_TAKEN_NOT_OURS') }
+      $bytes = [Math]::Max($bytes, [Math]::Max([long]$vm.MemoryStartup, [long]$vm.MemoryAssigned))
+    }
+    return Test-DrillHostSafety $json $free -VmMemoryBytes $bytes -Running:$Running
+  } catch {
+    $c = Get-DrillCode $_
+    return @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
+  }
+}
+
+function Assert-DrillHostSafety {
+  Assert-DrillGuard
+  $safety = Get-DrillHostSafety
+  if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
+  return $safety
+}
+
+# Always revalidate name + notes before destructive Hyper-V operations. Never touch a VM we do not own.
+function Stop-DrillOwnedVm([switch]$RestoreCheckpoint) {
+  $info = Get-DrillVmInfo
+  if ($null -eq $info) { throw (New-DrillError 'DRILL_VM_MISSING') }
+  if ($info.notes -cne $script:Drill.Marker) { throw (New-DrillError 'DRILL_VM_NAME_TAKEN_NOT_OURS') }
+  if ($info.state -ne 'Off') { Stop-VM -VM $info.vm -TurnOff -Force -ErrorAction Stop }
+  if ($RestoreCheckpoint) {
+    Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false -ErrorAction Stop
+  }
+  return (Get-VM -Name $script:Drill.VmName -ErrorAction Stop).State -eq 'Off'
+}
+
+# A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
+# The start and abort share a lock, so an abort can never be followed by a late Start-VM.
+function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  try {
+    while (-not $State.stop) {
+      if (-not $State.ready -or $clock.Elapsed.TotalSeconds -ge $script:Drill.HostGuardSeconds) {
+        $clock.Restart()
+        [Threading.Monitor]::Enter($State.SyncRoot)
+        try {
+          if ($State.stop) { return }
+          $safety = Get-DrillHostSafety -Running:$State.armed
+          if (-not $safety.ok) { $State.failure = @{ code = $safety.code; detail = $safety } }
+          $State.ready = $true
+        } finally { [Threading.Monitor]::Exit($State.SyncRoot) }
+        if ($State.failure) { break }
+      }
+      Start-Sleep -Milliseconds 200
+    }
+  } catch { $State.failure = @{ code = 'DRILL_HOST_GUARD_FAILED'; detail = (Get-DrillCode $_) } }
+  finally {
+    $State.ready = $true
+    if ($State.failure -and $State.armed) {
+      $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
+        abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
+      # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
+      try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
+      try {
+        $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
+        $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
+      } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
+      $State.cleanup = $receipt
+      try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { $State.receiptFailure = $true }
+    }
+  }
+}
+
+function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint) {
+  $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $false; failure = $null; cleanup = $null })
+  $worker = [PowerShell]::Create()
+  [void]$worker.AddScript({ param($file, $config, $state, $dir, $restore)
+    . $file
+    $script:Drill = $config
+    Invoke-DrillHostGuardLoop $state $dir -RestoreCheckpoint:$restore
+  }).AddArgument($script:DrillScriptPath).AddArgument($script:Drill).AddArgument($state).AddArgument($RunDir).AddArgument([bool]$RestoreCheckpoint)
+  $guard = @{ worker = $worker; pending = $worker.BeginInvoke(); state = $state }
+  $script:HostGuard = $guard
+  $until = [DateTime]::UtcNow.AddSeconds(15)
+  while (-not $state.ready -and -not $guard.pending.IsCompleted -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 50 }
+  if (-not $state.ready) { $state.failure = @{ code = 'DRILL_HOST_GUARD_FAILED'; detail = 'guard did not become ready' } }
+  return $guard
+}
+
+function Assert-DrillGuard {
+  if ($script:HostGuard) {
+    $guard = $script:HostGuard
+    if ($guard.state.failure) { throw (New-DrillError $guard.state.failure.code $guard.state.failure.detail) }
+    if ($guard.pending.IsCompleted) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
+  }
+}
+
+function Start-DrillGuardedVm {
+  if (-not $script:HostGuard) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
+  $state = $script:HostGuard.state
+  [Threading.Monitor]::Enter($state.SyncRoot)
+  try {
+    [void](Assert-DrillHostSafety)
+    Start-VM -Name $script:Drill.VmName -ErrorAction Stop
+    $state.armed = $true
+  } finally { [Threading.Monitor]::Exit($state.SyncRoot) }
+}
+
+function Stop-DrillHostGuard($Guard) {
+  if (-not $Guard) { return }
+  $Guard.state.stop = $true
+  try { [void]$Guard.worker.EndInvoke($Guard.pending) }
+  finally { $Guard.worker.Dispose(); $script:HostGuard = $null }
+}
+
 function Assert-DrillHost {
+  $mem = Assert-DrillHostSafety
   $groups = [Security.Principal.WindowsIdentity]::GetCurrent().Groups | ForEach-Object { $_.Value }
   if (@($groups) -notcontains 'S-1-5-32-578') { throw (New-DrillError 'DRILL_NOT_IN_HYPERV_ADMINISTRATORS') }
-  $free = [long](Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory * 1KB
-  $mem = Test-DrillHostMemory $free
-  if (-not $mem.ok) { throw (New-DrillError $mem.code @{ freeGB = $mem.freeGB }) }
   $d = Get-PSDrive -Name D
   if ($d.Free -lt $script:Drill.MinDiskFreeBytes) { throw (New-DrillError 'DRILL_DISK_SHORT' @{ freeGB = [Math]::Round($d.Free / 1GB) }) }
   if (-not (Get-VMSwitch -Name $script:Drill.Switch -ErrorAction SilentlyContinue)) { throw (New-DrillError 'DRILL_SWITCH_MISSING') }
@@ -581,6 +828,7 @@ function Send-DrillBootKeys([string]$VmName, [int]$Seconds) {
   $kb = Get-CimAssociatedInstance -InputObject $cs -ResultClassName Msvm_Keyboard
   $until = [DateTime]::UtcNow.AddSeconds($Seconds); $sent = 0
   while ([DateTime]::UtcNow -lt $until) {
+    Assert-DrillGuard
     $r = Invoke-CimMethod -InputObject $kb -MethodName TypeKey -Arguments @{ keyCode = [uint32]13 }
     if ($r.ReturnValue -eq 0) { $sent++ }
     Start-Sleep -Milliseconds 400
@@ -620,6 +868,7 @@ function Get-DrillGuestKvp([string]$Name) {
 function Wait-DrillSetupSignal([int]$Minutes) {
   $until = [DateTime]::UtcNow.AddMinutes($Minutes)
   while ([DateTime]::UtcNow -lt $until) {
+    Assert-DrillGuard
     if ((Get-DrillGuestKvp $script:Drill.SetupSignalName) -ceq 'complete') { return }
     Start-Sleep -Seconds 20
   }
@@ -635,6 +884,7 @@ $script:GuestProbe = {
      oobe = $(if ($setup.PSObject.Properties['OOBEInProgress']) { [int]$setup.OOBEInProgress } else { 0 }) }
 }
 function Get-DrillGuestProbe([pscredential]$Credential) {
+  Assert-DrillGuard
   try { return Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ErrorAction Stop -ScriptBlock $script:GuestProbe } catch { return $null }
 }
 
@@ -668,7 +918,7 @@ function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [obj
       $c = Get-DrillCode $_
       if ($c.code -ne 'DRILL_UNEXPECTED') { throw }
       $after = ''
-      try { $after = (Wait-DrillGuest $Credential 30).ToString('o') } catch { $after = '' }
+      try { $after = (Wait-DrillGuest $Credential 30).ToString('o') } catch { Assert-DrillGuard; $after = '' }
       $kind = Get-DrillStepFailureKind $before $after
       if ($kind -eq 'restarted' -and $Restartable -and $restarts -lt 2) { continue }
       $codeOut = @{ restarted = 'DRILL_GUEST_RESTARTED_DURING_STEP'; unreachable = 'DRILL_GUEST_NOT_READY_IN_TIME'; failed = 'DRILL_GUEST_STEP_FAILED' }[$kind]
@@ -734,8 +984,10 @@ function Invoke-DrillBaseline([string]$RunDir) {
   $log = Join-Path $RunDir 'baseline-steps.log'
   $note = { param([string]$m) Add-Content -LiteralPath $log -Value ("{0} {1}" -f [DateTimeOffset]::UtcNow.ToString('o'), $m) -Encoding UTF8 }
   $started = [DateTimeOffset]::UtcNow
+  $guard = $null
   try {
-    Start-VM -VM $vm
+    $guard = Start-DrillHostGuard $RunDir
+    Start-DrillGuardedVm
     & $note 'started; sending boot keys'
     $keys = Send-DrillBootKeys $script:Drill.VmName $script:Drill.BootKeySeconds
     & $note "boot keys sent: $keys; waiting for setup and OOBE to finish"
@@ -779,8 +1031,11 @@ function Invoke-DrillBaseline([string]$RunDir) {
     [void](Save-DrillScreen $script:Drill.VmName (Join-Path $RunDir 'baseline-failure.bmp'))
     $c = Get-DrillCode $_
     & $note "stopped: $($c.code)"
-    if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -VM $vm -TurnOff -Force }
+    [void](Stop-DrillOwnedVm)
     throw
+  } finally {
+    Stop-DrillHostGuard $guard
+    if ($guard -and $guard.state.failure) { throw (New-DrillError $guard.state.failure.code $guard.state.failure.detail) }
   }
   # Both DVD drives go (removing a drive takes its medium with it; ejecting first made the removal fail: 2026-11-16 12:18),
   # and only now is the network plugged in.
@@ -836,21 +1091,28 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
 
 # Restore the clean checkpoint, start the VM behind the memory gate, run $Body with the guest credential, and always end Off
 # and restored, whatever happened. Returns @{ result; failure; restored }.
-function Invoke-DrillOnCheckpoint([scriptblock]$Body) {
-  $result = $null; $failure = $null; $restored = $false
+function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir) {
+  $result = $null; $failure = $null; $restored = $false; $guard = $null; $cleanupNeeded = $false
   try {
+    [void](Assert-DrillHostSafety)
+    $info = Get-DrillVmInfo
+    $decision = Get-DrillBaselineAction $info
+    if ($decision.action -ne 'ready') { throw (New-DrillError $(if ($decision.code) { $decision.code } else { 'DRILL_CHECKPOINT_NOT_READY' })) }
+    $cleanupNeeded = $true
     Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
-    [void](Assert-DrillHost)   # the gate again right before the VM takes its 8 GB
-    Start-VM -Name $script:Drill.VmName
+    [void](Assert-DrillHost)
+    $guard = Start-DrillHostGuard $RunDir -RestoreCheckpoint
+    Start-DrillGuardedVm
     $cred = Get-DrillCredential
     [void](Wait-DrillGuest $cred 15)
     $result = & $Body $cred
+    Assert-DrillGuard
   } catch { $failure = Get-DrillCode $_ }
   finally {
+    Stop-DrillHostGuard $guard
+    if ($guard -and $guard.state.failure) { $failure = $guard.state.failure; $result = $null }
     try {
-      if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { Stop-VM -Name $script:Drill.VmName -TurnOff -Force }
-      Restore-VMCheckpoint -VMName $script:Drill.VmName -Name $script:Drill.Checkpoint -Confirm:$false
-      $restored = (Get-VM -Name $script:Drill.VmName).State -eq 'Off'
+      if ($cleanupNeeded) { $restored = Stop-DrillOwnedVm -RestoreCheckpoint }
     } catch { $restored = $false }
   }
   return @{ result = $result; failure = $failure; restored = $restored }
@@ -858,12 +1120,12 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body) {
 
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
   $g = $script:Drill.GuestWork
-  $prereqFacts = Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred
+  $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
   $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
   try {
     Invoke-Command -Session $session -ScriptBlock { param($p) foreach ($d in @($p.from, $p.kit, $p.work)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } } -ArgumentList $paths
-    foreach ($f in @($Package.tar, $Package.acceptance, $Package.sums)) { Copy-Item -LiteralPath $f -Destination $paths.from -ToSession $session }
+    foreach ($f in $Package.files) { Copy-Item -LiteralPath $f -Destination $paths.from -ToSession $session }
     Copy-Item -Path (Join-Path $KitInfo.dir '*') -Destination $paths.kit -ToSession $session -Recurse
     $tarInGuest = Invoke-Command -Session $session -ScriptBlock { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() } -ArgumentList (Join-Path $paths.from ([IO.Path]::GetFileName($Package.tar)))
     if ($tarInGuest -cne $Package.tarSha256) { throw (New-DrillError 'DRILL_TAR_CHANGED_IN_COPY') }
@@ -871,6 +1133,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
+  $timings = $null
+  if ($Interactive) {
+    $interactiveRun = Wait-DrillInteractive $RunDir $paths $Cred
+    $entry = $interactiveRun.entry; $Cred = $interactiveRun.credential
+  } else {
   # A1: the kit entry, once, bounded. No retry.
   $entryArgs = Resolve-DrillKitArguments $KitInfo.arguments $paths
   $entryOut = Invoke-DrillGuest $Cred {
@@ -880,6 +1147,20 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   } -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
   [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($entryOut.lines))
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
+  $timings = Invoke-DrillGuest $Cred {
+    $p = 'C:\drill\work\stage-timings.json'; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json }
+  } -TimeoutMinutes 2 -Step 'stage-timings'
+  Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
+  $stageEvidence = Invoke-DrillGuest $Cred {
+    $r = [ordered]@{}
+    foreach ($name in @('host-result.json', 'launcher-result.json')) {
+      $p = Join-Path 'C:\drill\work' $name
+      $r[$name] = if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+    }
+    $r
+  } -TimeoutMinutes 2 -Step 'stage-evidence'
+  Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence
+  }
 
   $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
@@ -931,11 +1212,12 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
-  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts }
+  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings }
 }
 
 # ---------------------------------------------------------------- main
 function Invoke-DrillMain {
+  if ($Interactive -and ($BaselineOnly -or $PrereqOnly -or $Finalize)) { throw (New-DrillError 'DRILL_USAGE' '-Interactive is a full first-install run only') }
   if ($Finalize) {
     if (-not $ProductionReadback) { throw (New-DrillError 'DRILL_USAGE' '-Finalize needs -ProductionReadback') }
     $receipt = Read-DrillJson $Finalize
@@ -956,7 +1238,10 @@ function Invoke-DrillMain {
   if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
   if ($full) {
     $package = Test-DrillPackageDir $From $Version; $kitInfo = Read-DrillKit $Kit
+    if ($Interactive -and $kitInfo.prerequisiteMode -cne 'first-install-host') { throw (New-DrillError 'DRILL_INTERACTIVE_REQUIRES_RELEASE_KIT') }
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
+    $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
+    if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
   }
   $mem = Assert-DrillHost
   $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
@@ -971,7 +1256,7 @@ function Invoke-DrillMain {
   }
   if ($PrereqOnly) {
     # The prerequisites alone, on a fresh copy of the baseline, then restored: WSL2 under nested virtualization, systemd, docker.
-    $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillPrereqInGuest $runDir $prereq $cred }
+    $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillPrereqInGuest $runDir $prereq $cred } $runDir
     $out = [ordered]@{ status = $(if ($o.failure) { 'DRILL_PREREQ_FAILED' } else { 'DRILL_PREREQ_READY' }); code = $(if ($o.failure) { $o.failure.code } else { $null });
       detail = $(if ($o.failure) { $o.failure.detail } else { $null }); restored = $o.restored; prereqSha256 = $prereq.sha256; evidence = (Join-Path $runDir 'prereq-facts.json') }
     Write-DrillJson (Join-Path $runDir 'prereq-run.json') $out
@@ -979,19 +1264,22 @@ function Invoke-DrillMain {
   }
 
   $startedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $package $kitInfo $prereq $cred }
+  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $package $kitInfo $prereq $cred } $runDir
   $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
   $evidence = [ordered]@{ localSource = $null }
   $items = @()
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
+    $evidence.stageTimingsSeconds = $run.timings
     $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo }
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   $receipt = [ordered]@{
     contract = $script:Drill.ReceiptContract
     machine = 'Hyper-V VM on DESK (drill machine, not a node; phase A)'
+    entryMode = $(if ($Interactive) { 'interactive-original-bootstrap' } else { 'adapted-unattended' })
+    bootstrapException = $(if ($Interactive) { $null } else { 'README section 5: drill VM only exception to do not bypass bootstrap to run prepare; non-elevated check, RunAs and credential dialogs bypassed' })
     version = $package.version; tarSha256 = $package.tarSha256; ciSourceManifestSha256 = $package.ciSourceManifestSha256
     kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = $mem.freeGB
