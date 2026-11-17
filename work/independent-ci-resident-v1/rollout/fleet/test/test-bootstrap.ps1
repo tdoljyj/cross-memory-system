@@ -24,12 +24,12 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear',
     'Sha256File', 'Invoke-StageChild', 'Test-ParentAlive', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
-    'Get-NeededPrereqs')) {
+    'Get-NeededPrereqs', 'Expand-Cached')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 # the constants the functions read, from the script itself
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
-  if ($a.Left.Extent.Text -cin @('$PrereqContract', '$PrereqNames', '$PowerShellExe')) { . ([scriptblock]::Create($a.Extent.Text)) }
+  if ($a.Left.Extent.Text -cin @('$PrereqContract', '$PrereqNames', '$PowerShellExe', '$WorkParent')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
 Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 7 -and $PrereqNames -ccontains 'wsl') 'constants'
 $text = [IO.File]::ReadAllText($file)
@@ -83,6 +83,23 @@ $wslItem = @($committed['items'] | Where-Object { $_['name'] -ceq 'wsl' })[0]
 Yes ($wslItem['sha256'] -ceq 'a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754' -and $wslItem['version'] -ceq '2.7.13.0' -and $wslItem['kind'] -ceq 'msi') 'prereq:wsl-msi-pinned'
 Yes (@($committed['debs']).Count -eq 16 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1) 'prereq:16-debs-pinned'
 Yes ($null -eq (Get-Key $committed 'aptPins')) 'prereq:no-apt-resolution'
+# Measured from the pinned ZIPs, including directory entries and the archive's top-level directory (DESK, 2026-11-17).
+# Capture the real extraction destination before any I/O: this checks Windows' default path budget even on a long-path-enabled host.
+Case 'cache:default-Windows-path-budget' {
+  $measured = @{ node = 125; python = 20; git = 64; 'actions-runner' = 61 }
+  function Get-ExtractState([string]$dir, [string]$sourceSha256) { 'absent' }
+  function Expand-Archive([string]$LiteralPath, [string]$DestinationPath) { $script:cacheDestination = $DestinationPath; throw 'CACHE_PATH_CAPTURED' }
+  foreach ($i in @($committed['items'] | Where-Object { $_['kind'] -ceq 'zip' })) {
+    $name = [string]$i['name']; $max = Get-Key $i 'maxEntryPathLength'
+    Yes ($measured.ContainsKey($name) -and $max -eq $measured[$name]) ('cache:measured-max-entry:' + $name)
+    $script:cacheDestination = $null
+    Throws { Expand-Cached 'not-read.zip' $name ([string]$i['sha256']) $measured[$name] } 'CACHE_PATH_CAPTURED' ('cache:capture:' + $name)
+    $dest = [string]$script:cacheDestination
+    Yes ($dest.Length -gt 0 -and $dest.Length + 1 + $measured[$name] -le 259) ('cache:default-path-at-most-259:' + $name + ':' + ($dest.Length + 1 + $measured[$name]))
+    $prefix = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + ([string]$i['sha256']).Substring(0, 16))
+    Yes ($dest -cmatch ('^' + [regex]::Escape($prefix) + '\.p-[0-9a-f]{8}$')) ('cache:short-destination:' + $name)
+  }
+}
 function New-Pinned {
   $m = $js.DeserializeObject([IO.File]::ReadAllText((Join-Path (Split-Path -Parent $here) 'prereq-manifest.json')))
   foreach ($i in @($m['items'])) { if ($null -eq $i['sha256']) { $i['sha256'] = 'e' * 64; $i['bytes'] = 12345 }; if ($null -eq $i['url']) { $i['url'] = 'https://example.invalid/' + $i['fileName'] } }
@@ -90,6 +107,12 @@ function New-Pinned {
 }
 $m = New-Pinned
 Yes ((Test-PrereqManifest $m).Count -eq 0) ('prereq:pinned-passes ' + ((Test-PrereqManifest $m) -join ','))
+foreach ($bad in @($null, 0, -1, 1.5, '125', $true, 2147483648L)) {
+  $m = New-Pinned; $m['items'][0]['maxEntryPathLength'] = $bad
+  Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH:node') ('prereq:invalid-zip-max-entry:' + $bad)
+}
+$m = New-Pinned; [void]$m['items'][0].Remove('maxEntryPathLength')
+Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH:node') 'prereq:missing-zip-max-entry'
 $m = New-Pinned; $m['items'][0]['sha256'] = $null
 Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_NOT_PINNED:node') 'prereq:null-sha-refused'
 $m = New-Pinned; $m['items'][1]['bytes'] = $null
@@ -142,6 +165,36 @@ try {
   [IO.File]::WriteAllText((Join-Path $tmpx '.bootstrap-complete'), ('a' * 64))
   Yes ((Get-ExtractState $tmpx ('a' * 64)) -ceq 'complete') 'l1:complete'
 } finally { Remove-Item -LiteralPath $tmpx -Recurse -Force -ErrorAction SilentlyContinue }
+Case 'cache:expansion-budget-and-full-hash-integrity' {
+  $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+  $WorkParent = [IO.Path]::GetFullPath((Join-Path $tempParent ('cache-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))))
+  $script:cacheExpansions = 0
+  function Expand-Archive([string]$LiteralPath, [string]$DestinationPath) {
+    $script:cacheExpansions++; $script:cacheDestination = $DestinationPath
+    [void][IO.Directory]::CreateDirectory($DestinationPath)
+    [IO.File]::WriteAllText((Join-Path $DestinationPath 'payload.txt'), 'extracted')
+  }
+  try {
+    $expected = Join-Path (Join-Path $WorkParent 'tools') ('node-' + $h1.Substring(0, 16))
+    $budget = 259 - ($expected.Length + '.p-12345678'.Length + 1)
+    $dir = Expand-Cached 'not-read.zip' 'node' $h1 $budget
+    Yes ($dir -ceq $expected -and $script:cacheDestination.Length + 1 + $budget -eq 259) 'cache:259-accepted'
+    Yes (([IO.File]::ReadAllText((Join-Path $dir '.bootstrap-complete'))) -ceq $h1) 'cache:marker-is-full-sha256'
+    Yes ((Expand-Cached 'not-read.zip' 'node' $h1 $budget) -ceq $dir -and $script:cacheExpansions -eq 1) 'cache:complete-reused'
+    Throws { Expand-Cached 'not-read.zip' 'node' $h1 ($budget + 1) } 'TOOL_CACHE_PATH_TOO_LONG:*' 'cache:260-refused-before-reuse-or-extraction'
+    Yes ($script:cacheExpansions -eq 1 -and (Get-ExtractState $dir $h1) -ceq 'complete') 'cache:overlong-has-no-side-effects'
+    $collision = $h1.Substring(0, 16) + ('b' * 48)
+    Yes ((Get-ExtractState $dir $collision) -ceq 'incomplete') 'cache:same-prefix-different-full-sha-incomplete'
+    $again = Expand-Cached 'not-read.zip' 'node' $collision $budget
+    Yes ($again -ceq $dir -and $script:cacheExpansions -eq 2 -and (Get-ExtractState $dir $collision) -ceq 'complete') 'cache:collision-reexpanded'
+    $aside = @(Get-ChildItem -LiteralPath (Split-Path -Parent $dir) -Directory | Where-Object { $_.FullName -cne $dir })
+    Yes ($aside.Count -eq 1 -and (Get-ExtractState $aside[0].FullName $h1) -ceq 'complete') 'cache:previous-extraction-preserved'
+    Throws { Expand-Cached 'not-read.zip' 'python' $h2 } 'PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH:python' 'cache:missing-bound-refused'
+  } finally {
+    if (-not $WorkParent.StartsWith($tempParent, [StringComparison]::OrdinalIgnoreCase) -or $WorkParent -ceq $tempParent) { throw 'CACHE_TEST_CLEANUP_OUTSIDE_TEMP' }
+    Remove-Item -LiteralPath $WorkParent -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
 # L4: a terminating exception of a stage keeps its message in the result
 $sf = Get-StageFailure 'host' (New-Object InvalidOperationException('ARCHIVE_CHANGED_BEFORE_ELEVATION'))
 Yes ($sf['status'] -ceq 'BOOTSTRAP_STAGE_FAILED' -and $sf['stage'] -ceq 'host' -and $sf['message'] -ceq 'ARCHIVE_CHANGED_BEFORE_ELEVATION' -and $sf['type'] -ceq 'System.InvalidOperationException') 'l4:message-kept'
