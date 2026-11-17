@@ -72,6 +72,7 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 // §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml); the database security hygiene,
 // which stops its own embedded PostgreSQL servers and so runs without --test-force-exit.
 const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
+  'apps/clued-cloud/tests/ci-node-binding-rebind-db.test.mjs',
   'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
   'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs',
   'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
@@ -257,6 +258,7 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'typecheck'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'] },
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', 'tests/ci-node-binding-rebind-db.test.mjs'] },
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
   ],
   'production-schema': [
