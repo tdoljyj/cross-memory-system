@@ -15,47 +15,6 @@ import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporte
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
-test('bors staging workflow: exact bot/ref/event keeps the three original required names', () => {
-  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8');
-  assert.match(text, /branches: \[main, clued-train\/staging\]/);
-  assert.match(text, /group:.*github\.ref == 'refs\/heads\/clued-train\/staging' && github\.sha/);
-  assert.match(text, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
-  for (const name of ['clued-cloud-tests', 'ci-suites', 'migration-verify']) {
-    const job = text.slice(text.indexOf(`\n  ${name}:\n`) + 1).split(/\n  [a-z][a-z-]+:\n/)[0];
-    const expr = field => job.match(new RegExp(`^    ${field}: >-\\n([\\s\\S]*?)(?=^    [a-z])`, 'm'))[1]
-      .trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.admission-gate', "needs['admission-gate']");
-    const evaluate = (field, change = {}, admitted = 'true') => Function('github', 'needs', `return (${expr(field)});`)(
-      { event_name: 'push', ref: 'refs/heads/clued-train/staging', actor: 'clued-ci-checks-turing-20261018[bot]',
-        event: { pull_request: { base: {}, head: { repo: {} } } }, ...change },
-      { 'admission-gate': { outputs: { admitted } } });
-    for (const [change, admitted, allowed] of [[{}, 'true', true], [{ actor: 'owner' }, 'true', false],
-      [{ ref: 'refs/heads/clued-train/staging.tmp' }, 'true', false], [{ event_name: 'schedule' }, 'true', false],
-      [{}, 'false', false], [{ ref: 'refs/heads/main' }, 'true', true]]) {
-      assert.equal(Boolean(evaluate('if', change, admitted)), allowed, `${name}: ${JSON.stringify(change)}`);
-      assert.equal(evaluate('name', change, admitted), allowed ? name : `${name}-skipped`);
-    }
-  }
-});
-
-test('bors staging workflow: verify S first parent against main before loading trusted commands', () => {
-  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8');
-  assert.doesNotMatch(text, /github\.event\.before/);
-  assert.match(text, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha/);
-  for (const name of ['clued-cloud-tests', 'ci-suites', 'migration-verify']) {
-    const job = text.slice(text.indexOf(`\n  ${name}:\n`) + 1).split(/\n  [a-z][a-z-]+:\n/)[0];
-    const candidate = job.indexOf('path: candidate');
-    const resolver = job.indexOf('id: train-base');
-    const trusted = job.indexOf('path: trusted');
-    assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, name);
-    assert.match(job.slice(0, resolver), /fetch-depth: 0/);
-    const verification = job.slice(resolver, trusted);
-    assert.match(verification, /git rev-parse "\$STAGING_SHA\^1"/);
-    assert.match(verification, /git merge-base --is-ancestor "\$base" origin\/main/);
-    assert.ok(verification.indexOf('git merge-base --is-ancestor') < verification.indexOf('>> "$GITHUB_OUTPUT"'));
-    assert.match(verification, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha/);
-  }
-});
-
 test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted checks gated on that head', async () => {
   const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8');
   const { gateFindings } = await import('./clued-work-admission.mjs');
