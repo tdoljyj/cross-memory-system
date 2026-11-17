@@ -618,7 +618,7 @@ export default function StorageConnections() {
           {renewals[c.id].failures > 0 ? `；连续失败 ${renewals[c.id].failures} 次。` : ""}</p>
           <button disabled={busy || (!renewalAuthorized(renewals[c.id]) && (c.state !== "active" || renewals[c.id].pending))}
             onClick={() => void renewal(c, renewalAuthorized(renewals[c.id]) ? "disable" : "enable")}>{renewalAuthorized(renewals[c.id]) ? "停用后台续签" : "授权开启后台续签"}</button></>}
-        {renewalConfirmation?.connection_id === c.id && renewalConfirmation.epoch === revision.current &&
+        {renewalConfirmation?.connection_id === c.id &&
           <section role="region" aria-label="确认后台续签设置" className="my-3 rounded border p-3">
             <h4>确认后台续签设置</h4>
             <p className="my-2">{renewalConfirmation.action === "enable"
