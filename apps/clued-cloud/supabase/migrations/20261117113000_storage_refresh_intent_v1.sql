@@ -28,6 +28,10 @@ $a$,
         $r$      -- Renewal intent survives a failure; state/backoff/failure limit pause execution.
 $r$),
       ('worker',
+        $a$if d.connection_id is null or not d.enabled or d.issuer_hash<>a.issuer_hash or c.oauth_client_id<>a.oauth_client_id then$a$,
+        $r$if d.connection_id is null or not d.enabled or (op='claim' and d.failures>=3)
+    or d.issuer_hash<>a.issuer_hash or c.oauth_client_id<>a.oauth_client_id then$r$),
+      ('worker',
         $a$elsif p_input<>(jsonb_build_object('action','fail','connection_id',c.id,'attempt_id',x.id,'reason',p_input->>'reason')||case when recovery_job is null then '{}'::jsonb else jsonb_build_object('recovery_job_id',recovery_job) end)
     or coalesce(p_input->>'reason','') not in ('provider_rejected','provider_unavailable','credential_invalid') then$a$,
         $r$elsif p_input<>(jsonb_build_object('action','fail','connection_id',c.id,'attempt_id',x.id,'reason',p_input->>'reason')
@@ -51,7 +55,7 @@ $r$),
     req->>'idempotency_key'$r$),
       ('manage',
         $a$return jsonb_build_object('enabled',coalesce(d.enabled,false) and c.state='active','version',coalesce(d.version,0),$a$,
-        $r$return jsonb_build_object('enabled',coalesce(d.enabled,false) and c.state='active',
+        $r$return jsonb_build_object('enabled',coalesce(d.enabled,false) and c.state='active' and d.failures<3,
       'authorized_enabled',coalesce(d.enabled,false) and c.revoked_at is null,
       'pause_reason',case when not coalesce(d.enabled,false) or c.revoked_at is not null then 'none'
         when c.state='reauthorization_required' then 'reauthorization_required'

@@ -736,8 +736,8 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
     await t.test('third temporary failure stops new attempts without forgetting the Owner choice; fresh OAuth resets the limit',async()=>{
       const r=await root();await refreshManage(r,'enable');
       for(let n=1;n<=3;n++){await pauseRenewal(r,'provider_unavailable','token_server_error');const s=await refreshStatus(r);
-        assert.equal(s.authorized_enabled,true);assert.equal(s.failures,n);assert.equal(s.pause_reason,n===3?'failure_limit':'backoff');}
-      await assert.rejects(refreshCall({action:'claim',connection_id:r.connection,attempt_id:id()}),e=>e.code==='42501');
+        assert.equal(s.authorized_enabled,true);assert.equal(s.enabled,n<3);assert.equal(s.failures,n);assert.equal(s.pause_reason,n===3?'failure_limit':'backoff');}
+      await assert.rejects(refreshCall({action:'claim',connection_id:r.connection,attempt_id:id()}),e=>e.code==='42501'&&/storage_refresh_denied/.test(e.message));
       await finishRenewalOAuth(await prepareRenewalOAuth(r));const current=await refreshStatus(r);
       assert.equal(current.enabled,true);assert.equal(current.authorized_enabled,true);assert.equal(current.failures,0);
     });
