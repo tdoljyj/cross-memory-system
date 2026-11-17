@@ -42,11 +42,25 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
   let ready = 0, review = 0, readyCharacters = 0, reviewCharacters = 0;
   const seen = new Set<string>(), planned: BulkItem[] = [], samples: { record_id: string; title: string }[] = [];
   const identities = (rows: BulkItem[]) => JSON.stringify(rows.map(row => [row.record_id, row.record_version, row.domains]));
+  let timeoutRetries = 0;
+  // A failed read has not advanced the signed chain. Retry only PostgreSQL's
+  // statement timeout, with the exact same request and a bounded scan budget.
+  // Semantic conflicts, transport uncertainty and all writes remain single-shot.
+  const previewRpc: NativeRpc = async (name, args) => {
+    for (let attempt = 0; ; attempt++) {
+      if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
+      const result = await rpc(name, args);
+      if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
+      if (result.error?.code !== "57014" || attempt >= 2 || timeoutRetries >= 6) return result;
+      timeoutRetries++;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  };
   // The bound fails explicitly rather than silently claiming a complete scan.
   for (let page = 0; page < 10000; page++) {
     if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
     let value: Json;
-    try { value = await call(rpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, page_size: pageSize, ...(proof ? { proof } : {}) } }); }
+    try { value = await call(previewRpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, page_size: pageSize, ...(proof ? { proof } : {}) } }); }
     catch (failure) {
       if (failure instanceof ImprintFailure && ["bulk_preview_changed", "bulk_proof_expired"].includes(failure.code))
         throw new ImprintFailure("conflict", failure.code);
