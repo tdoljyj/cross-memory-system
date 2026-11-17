@@ -166,6 +166,51 @@ test('a nudge (main moved, or the parked PR changed) brings the next try forward
   assert.ok(g.queue.notices.some(n => n.kind === 'stage8-budget'));
 });
 
+test('#1144: 100 historical retries across PRs cannot block the front PR after restart', async t => {
+  const f = await executorFixture(t, { now: Date.parse('2026-11-17T01:23:32.000Z'),
+    engine: stage8Engine([notReady('TRAIN_SINGLE_GREEN_NOT_PROVEN', { entered: true, state: 'head', position: 1 })]) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  // Report: #1142 35, #1143 36, other PRs 24, the current front 5 = 100.
+  for (const [pr, retries] of [[1142, 35], [1143, 36], [1130, 24], [884, 5]]) {
+    const s = subject({ pr, headSha: pr.toString(16).padStart(40, '0') }), key = batchKey(s);
+    await f.ledger.reserve(key, s);
+    await f.ledger.markStarted(key, { batchId: 'history' });
+    await f.ledger.beginWait(key, { t0: f.clock(), batch: { batchId: 'history' } });
+    await f.ledger.writePlanIntent(key, {});
+    await f.ledger.writePlan(key, { relayed: [] });
+    await f.ledger.park(key, { batch: { batchId: 'history' } });
+    for (let i = 0; i <= retries; i++) {
+      const n = await f.ledger.beginTry(key, { batchId: 'history' });
+      await f.ledger.endTry(key, n, { code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', nextAt: isoAt(f.clock()), position: 1 });
+    }
+    await f.ledger.terminal(key, 'COMPLETED', {});
+  }
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).stage8Retries, 100);
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000, { stage8Pr: 884 })).stage8Retries, 5);
+  f.advance(MIN);
+  const restarted = new ResidentExecutor(f.ports);
+  assert.equal((await restarted.tick()).state, 'COMPLETED', 'the front still has 95 of its own retries');
+});
+
+const isoAt = at => new Date(at).toISOString();
+
+test('#1144: an exhausted PR does not block another due parked PR; its own limit still holds', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]),
+    policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 1 } }) });
+  await f.drop(triggerBytes()); assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) })); assert.equal((await f.exec.tick()).state, 'PARKED');
+  const n = await f.ledger.beginTry(KEY, { batchId: 'historical-retry' });
+  await f.ledger.endTry(KEY, n, { code: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', nextAt: isoAt(f.clock()), position: null });
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'skip the exhausted first PR and try the second');
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'the exhausted PR still waits');
+  assert.equal((await f.ledger.state(batchKey(subject({ pr: 900, headSha: H(4) })))).outcome, 'COMPLETED');
+  assert.ok(f.queue.notices.some(n => n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' && n.pr === 884));
+  const notice = notificationEvents({ status: { pending: [], notices: f.queue.notices }, now: f.clock() }).find(n => /第 8 段重试额度/.test(n.title));
+  assert.match(notice.title, /PR #884/);
+});
+
 test('an install authority ending soon closes a parked batch neutrally instead of a HALT', async t => {
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]), policy: rawPolicy({ validUntil: '2026-10-21T02:00:00Z' }) });
   await f.drop(triggerBytes());
