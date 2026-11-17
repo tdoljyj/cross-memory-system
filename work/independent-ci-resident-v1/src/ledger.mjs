@@ -563,11 +563,20 @@ export class Ledger {
   // separateNetwork (generation 10, DESIGN 53.3: the policy names breaker.network): a release whose facts say network (classify.mjs
   // #networkFailure) counts in networkReleasesByHead, whatever the breaker's state, and never in releasesByHead.
   // UNCAPPED_RELEASES (including historical stage-1 refusals) spend neither cap; evaluation budgets stay independent.
-  async usage(sinceMs, { separateNetwork = false, stage8Pr = null } = {}) {
+  async usage(sinceMs, { separateNetwork = false, stage8Pr = null, budgetTimes = false } = {}) {
     check(stage8Pr === null || (Number.isSafeInteger(stage8Pr) && stage8Pr > 0), 'STAGE8_BUDGET_PR_INVALID');
     const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(),
       networkReleasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
+    // Optional advisory timestamps follow the SAME counting branches as admission; unknown evidence stays unknown.
+    const times = new Map();
+    const charge = (key, at) => {
+      if (!budgetTimes) return;
+      const ms = typeof at === 'number' ? at : Date.parse(at);
+      const list = times.get(key) ?? [];
+      list.push(Number.isFinite(ms) ? ms : null); times.set(key, list);
+    };
+    if (budgetTimes) u.budgetTimes = times;
     // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
     // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
     const before = async p => { try { return (await fs.stat(p)).mtimeMs < sinceMs - 3_600_000; } catch { return false; } };
@@ -578,11 +587,12 @@ export class Ledger {
         if (Date.parse(v.startedAt) >= sinceMs) {
           // A low-risk burn still counts against its PR's own daily cap (independent review m4): one PR cannot spend the
           // whole evaluation budget on commits that stage 1 refuses.
-          if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
+          if (Number.isSafeInteger(v.subject?.pr)) { bump(u.startedByPr, v.subject.pr); charge(`pr:${v.subject.pr}`, v.startedAt); }
           if (v.burnedBy?.quotaTier === QUOTA_TIER_EVALUATION) { u.lowRiskBurns += 1; continue; }
           u.started += 1;
+          charge('started', v.startedAt);
         }
-      } catch (error) { if (!contentError(error)) throw error; u.started += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.started += 1; charge('started', null); }
     }
     // One reservation: its origin, whether it executed, and how it ended (a release reason and the failure-table facts).
     const count = ({ reserved, started, reason, facts, burned = false }) => {
@@ -592,16 +602,16 @@ export class Ledger {
       // new-trigger origins must not keep the real evaluation budget exhausted.
       // Only a proven unexecuted release qualifies; a burned/unclean ending stays charged.
       const claimWait = !started && reason === 'NOT_ADMITTED' && CLAIM_REASONS.includes(facts?.failureCode);
-      if (origin === 'waiting-retry' || claimWait) u.waitingRetries += 1;
+      if (origin === 'waiting-retry' || claimWait) { u.waitingRetries += 1; charge('waitingRetries', reserved.reservedAt); }
       const nodeRole = facts?.class === 'node-role';
-      if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
+      if (origin === 'new-trigger' && !nodeRole) { bump(u.reevaluations, `${s.pr}:${s.headSha}`); charge(`reevaluation:${s.pr}:${s.headSha}`, reserved.reservedAt); }
       const environment = ['environment', 'transient'].includes(facts?.class);
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       // A claim wait (G4) spends the waiting budget instead; any other stage-1 refusal stays an evaluation but spends no release cap.
-      if (!started && origin !== 'waiting-retry' && !claimWait && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
-      if (separateNetwork && facts?.network === true) { if (reason && !UNCAPPED_RELEASES.includes(reason) && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
-      if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      if (!started && origin !== 'waiting-retry' && !claimWait && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) { u.evaluations += 1; charge('evaluations', reserved.reservedAt); }
+      if (separateNetwork && facts?.network === true) { if (reason && !UNCAPPED_RELEASES.includes(reason) && HEX40.test(s.headSha ?? '')) { bump(u.networkReleasesByHead, s.headSha); charge(`network:${s.headSha}`, reserved.reservedAt); } return; }
+      if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) { bump(u.releasesByHead, s.headSha); charge(`release:${s.headSha}`, reserved.reservedAt); }
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     const dirs = [...(await this.keys()).map(key => this.dir(key)), ...(await fs.readdir(this.flowEnds)).map(name => path.join(this.flowEnds, name))];
@@ -613,13 +623,13 @@ export class Ledger {
         const reserved = await read(path.join(dir, '00-reserved.json'));
         for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
-          if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) u.stage8Retries += 1;
+          if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) { u.stage8Retries += 1; charge('stage8Retries', at); }
         }
         if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
         count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
           burned: ['FAILED_CLEAN', 'FAILED_UNKNOWN'].includes(terminal?.outcome) });
-      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; charge('evaluations', null); }
     }
     for (const name of await fs.readdir(this.unexecuted)) {
       if (await before(path.join(this.unexecuted, name))) continue;
@@ -629,7 +639,7 @@ export class Ledger {
         const terminal = (await readJson(path.join(this.unexecuted, name, '90-terminal.json'))).value;
         // Unknown evidence must keep the conservative counted fallback, never acquire NOT_ADMITTED's exemption.
         count({ reserved, started: false, reason: UNEXECUTED_REASONS.includes(terminal.reason) ? terminal.reason : 'UNKNOWN_RELEASE', facts: terminal.facts ?? null });
-      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; charge('evaluations', null); }
     }
     return u;
   }

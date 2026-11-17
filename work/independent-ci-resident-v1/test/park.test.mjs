@@ -195,6 +195,7 @@ test('#1144: 100 historical retries across PRs cannot block the front PR after r
 
 const isoAt = at => new Date(at).toISOString();
 
+// scope-isolation: park.stage8RetriesPer24h
 test('#1144: an exhausted PR does not block another due parked PR; its own limit still holds', async t => {
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]),
     policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 1 } }) });

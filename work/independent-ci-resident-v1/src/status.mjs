@@ -1,3 +1,4 @@
+import { parseBudget } from './budget-alert.mjs';
 // The resident's status snapshot (resident quota redesign v0.6 + §9, phase 1, item 7; Owner Decision 38936534).
 //
 // state\status.json is a VIEW, never evidence (the ledger and the receipt chain are): the executor keeps one in-memory
@@ -65,7 +66,7 @@ export const EXECUTOR_STATES = Object.freeze(['STARTING', 'IDLE', 'RUNNING', 'WA
 export const RECENT_OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED']);
 const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
-export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
+export const NOTICE_KINDS = Object.freeze(['budget', 'new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
   'stage8-rules', 'role-probe-uncertain', 'role-probe-connection', 'role-probe-interrupted',
   // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
@@ -284,12 +285,12 @@ export function parseStatus(bytes) {
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
         at: Date.parse(r.at) || null })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
-    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, parkingFull: v.queue.parkingFull === true,
+    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, depth: Number.isSafeInteger(v.queue.depth) ? v.queue.depth : null, parkingFull: v.queue.parkingFull === true,
       hold: codeOrNull(v.queue.hold ?? null) } : null,
     breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt),
       cause: v.breaker.cause === 'network' ? 'network' : null } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
-      .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
+      .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until), ...(parseBudget(n.budget) ? { budget: parseBudget(n.budget) } : {}) })) : [],
     train: trainOf(v.train),
     // /7 only; /6 has none. Read with the same rules as written (parseVersions), so what does not fit is null, never a refusal.
     versions: v.contract === STATUS_CONTRACT || v.contract === STATUS_CONTRACT_V7 ? parseVersions(v.versions) : null,

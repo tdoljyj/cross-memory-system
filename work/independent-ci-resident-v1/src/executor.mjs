@@ -1,3 +1,4 @@
+import { boundedNotice, budgetNotice } from './budget-alert.mjs';
 // Resident executor state machine (runs inside the CluedCIResident service).
 //
 // One tick: crash recovery first (always), then the Owner's own requests (re-arm, resume) from the
@@ -1757,7 +1758,7 @@ export class ResidentExecutor {
   async refreshLimits() {
     const now = this.clock();
     if (Number.isFinite(this.limitsReportedAt) && now >= this.limitsReportedAt && now - this.limitsReportedAt < LIMITS_REFRESH_MS) return;
-    try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null }), now); } catch { /* a view: the next tick tries again */ }
+    try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true }), now); } catch { /* a view: the next tick tries again */ }
   }
 
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
@@ -2411,6 +2412,8 @@ export class ResidentExecutor {
     }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
     const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
+    if (this.trainRuns.length >= train.maintenanceMaxPerDay) this.queue.notice(boundedNotice({ code: 'TRAIN_DAILY_LIMIT', used: this.trainRuns.length,
+      limit: train.maintenanceMaxPerDay, now, resetsAt: this.trainRuns.length ? Math.min(...this.trainRuns) + DAY : null, recovery: null }));
     const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
     // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
@@ -2671,7 +2674,7 @@ export class ResidentExecutor {
       const old = this.queueWatchBudgets.get(pr);
       if (old && now >= old.at && now - old.at < QUEUE_WATCH_MS) continue;
       let ok = false;
-      try { ok = (await this.ledger.usage(now - DAY, { stage8Pr: pr })).stage8Retries < this.policy.park.stage8RetriesPer24h; } catch { /* no proven budget */ }
+      try { ok = (await this.ledger.usage(now - DAY, { stage8Pr: pr, budgetTimes: true })).stage8Retries < this.policy.park.stage8RetriesPer24h; } catch { /* no proven budget */ }
       this.queueWatchBudgets.set(pr, { at: now, ok });
     }
     const affordable = e => this.queueWatchBudgets.get(e.reserved.subject.pr)?.ok === true;
@@ -2805,9 +2808,9 @@ export class ResidentExecutor {
     if (due.length === 0) return { acted: null, waiting };
     for (const e of due) {
       const pr = e.reserved.subject.pr;
-      const usage = await this.ledger.usage(now - DAY, { stage8Pr: pr });
+      const usage = await this.ledger.usage(now - DAY, { stage8Pr: pr, budgetTimes: true });
       if (usage.stage8Retries < this.policy.park.stage8RetriesPer24h) return { acted: await this.resumeParkedB(e), waiting };
-      this.queue.notice({ key: `stage8-budget:${pr}:${dayKey(now)}`, kind: 'stage8-budget', pr, headSha: e.reserved.subject.headSha, code: 'STAGE8_RETRY_BUDGET_EXHAUSTED' });
+      this.queue.notice(await this.quotaNotice('STAGE8_RETRY_BUDGET_EXHAUSTED', e.reserved.subject, usage));
     }
     return { acted: null, waiting };
   }
@@ -2937,6 +2940,8 @@ export class ResidentExecutor {
     let streakFrom = now;
     for (let i = before.length - 1; i >= 0 && before[i].ended.position === 1; i--) streakFrom = Date.parse(before[i].ended.at) || streakFrom;
     // The ledger takes at most MAX_TRIES tries: the last one is final whatever the answer (re-review of step 2, m15).
+    if (zero && STAGE8_NOT_READY_CODES.includes(control.code) && counted >= this.policy.park.stage8MaxTries)
+      this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries, now, recovery: 'batch', episode: key }));
     const final = control.code === 'RESIDENT_BASE_MOVED' || counted >= this.policy.park.stage8MaxTries || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
     if (zero && STAGE8_NOT_READY_CODES.includes(control.code) && !final) {
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
@@ -2946,6 +2951,7 @@ export class ResidentExecutor {
       // Over capacity outside the queue's first two places: end it now rather than hold a slot (§4.9, review n-m9).
       const counts = await this.parkedCounts();
       if (!(Number.isSafeInteger(position) && position <= 2) && counts.outside >= this.policy.park.maxParkedOutsideTop2) {
+        this.queue.notice(boundedNotice({ code: 'PARKED_OVER_CAPACITY', used: counts.outside, limit: this.policy.park.maxParkedOutsideTop2, now }));
         await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(now).toISOString(), position, entered: queueFact?.entered ?? null, ending: 'PARKED_OVER_CAPACITY' });
         return windowsOnly(new StepFailure(8, 'PARKED_OVER_CAPACITY', control.proof, 'stage', relayed));
       }
@@ -3038,7 +3044,7 @@ export class ResidentExecutor {
       }
       const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
       if (r.action === 'refused') {
-        this.queue.notice({ key: `queue-full:${dayKey(now)}`, kind: 'queue-full', pr: null, headSha: null, code: r.code });
+        this.queue.notice(boundedNotice({ code: 'QUEUE_DEPTH_EXCEEDED', used: this.queue.live().length, limit: this.policy.limits.queueDepth, now }));
         done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] });
         continue;
       }
@@ -3171,6 +3177,9 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     if (counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax)) {
+      const inside = counts.inside >= this.policy.park.maxParked;
+      this.queue.notice(boundedNotice({ code: inside ? 'PARKING_FULL' : 'PARKED_OVER_CAPACITY', used: inside ? counts.inside : counts.outside,
+        limit: inside ? this.policy.park.maxParked : outsideMax, now }));
       await this.persistQueue();
       return { state: 'DEFERRED', reason: 'PARKING_FULL' };
     }
@@ -3206,7 +3215,7 @@ export class ResidentExecutor {
       const others = list.filter(x => !gate.exclude.includes(x.pr));
       if (others.length > 0) list = others;
     }
-    this.tickUsage = await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null });
+    this.tickUsage = await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true });
     const u = this.tickUsage;
     this.reportLimits(u, now);
     let last = null, evaluationsFull = null;
@@ -3270,19 +3279,16 @@ export class ResidentExecutor {
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
     // The daily budgets (policy /4), all from the ledger: executions, evaluations (not for a wait: it has its own
     // budget), the waits' budget, the new-trigger re-evaluations of this PR commit, the PR's own executions.
-    if (usage.started >= l.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT', notice: { key: `batch-limit:${dayKey(now)}`, kind: 'batch-limit', pr: null, headSha: null, code: 'DAILY_BATCH_LIMIT' } };
-    if (origin !== 'waiting-retry' && usage.evaluations >= l.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
-    if (origin === 'waiting-retry' && usage.waitingRetries >= l.waitingRetriesPer24h) {
-      return { defer: 'WAITING_BUDGET_EXHAUSTED', perRow: true, notice: { key: `waiting-budget:${dayKey(now)}`, kind: 'waiting-budget', pr: null, headSha: null, code: 'WAITING_BUDGET_EXHAUSTED' } };
-    }
-    if (origin === 'new-trigger' && (usage.reevaluations.get(`${subject.pr}:${subject.headSha}`) ?? 0) >= l.reevaluationsPerPrHeadPer24h) return { defer: 'REEVALUATION_CAP', perRow: true, dropPoke: true };
-    if ((usage.startedByPr.get(subject.pr) ?? 0) >= l.perPrBatchesPer24h) return { defer: 'PR_DAILY_BATCH_LIMIT', perRow: true };
-    // The head's release cap (design v0.5 §4.5: at most releasesPerHeadPer24h releases a day) from the ledger, so a queue
-    // that started over never forgets it (independent review m4). A wait, a new trigger and attempt 2 are not bound by it.
-    if (['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.releasesByHead.get(subject.headSha) ?? 0) >= l.releasesPerHeadPer24h) return { stop: 'RELEASE_CAP_REACHED' };
-    // Generation 10 (DESIGN 53.3): the network cap of a /9 policy; an environment stop, lifted when the outside answers again.
+    const quota = async (code, result) => ({ ...result, notice: await this.quotaNotice(code, subject, usage) });
+    if (usage.started >= l.maxBatchesPer24h) return quota('DAILY_BATCH_LIMIT', { defer: 'DAILY_BATCH_LIMIT' });
+    if (origin !== 'waiting-retry' && usage.evaluations >= l.maxEvaluationsPer24h) return quota('DAILY_EVALUATION_LIMIT', { defer: 'DAILY_EVALUATION_LIMIT' });
+    if (origin === 'waiting-retry' && usage.waitingRetries >= l.waitingRetriesPer24h) return quota('WAITING_BUDGET_EXHAUSTED', { defer: 'WAITING_BUDGET_EXHAUSTED', perRow: true });
+    if (origin === 'new-trigger' && (usage.reevaluations.get(`${subject.pr}:${subject.headSha}`) ?? 0) >= l.reevaluationsPerPrHeadPer24h) return quota('REEVALUATION_CAP', { defer: 'REEVALUATION_CAP', perRow: true, dropPoke: true });
+    if ((usage.startedByPr.get(subject.pr) ?? 0) >= l.perPrBatchesPer24h) return quota('PR_DAILY_BATCH_LIMIT', { defer: 'PR_DAILY_BATCH_LIMIT', perRow: true });
+    // These stops retain their existing release-cap semantics; the notice grants no retry.
+    if (['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.releasesByHead.get(subject.headSha) ?? 0) >= l.releasesPerHeadPer24h) return quota('RELEASE_CAP_REACHED', { stop: 'RELEASE_CAP_REACHED' });
     const net = this.networkPolicy();
-    if (net && ['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.networkReleasesByHead?.get(subject.headSha) ?? 0) >= net.releasesPerHeadPer24h) return { stop: 'NETWORK_RELEASE_CAP_REACHED', stopClass: 'environment' };
+    if (net && ['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.networkReleasesByHead?.get(subject.headSha) ?? 0) >= net.releasesPerHeadPer24h) return quota('NETWORK_RELEASE_CAP_REACHED', { stop: 'NETWORK_RELEASE_CAP_REACHED', stopClass: 'environment' });
     const startCode = await this.batchStartChecks(null);
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
@@ -3308,6 +3314,10 @@ export class ResidentExecutor {
       || integrity.residentManifestSha256 !== this.policy.residentManifestSha256) return 'RESIDENT_SOURCE_DRIFT';
     if (subject && subject.sourceManifestSha256 !== this.policy.sourceManifestSha256) return 'RESIDENT_SOURCE_DRIFT';
     return null;
+  }
+
+  async quotaNotice(code, subject, usage) {
+    return budgetNotice({ code, subject, usage, policy: this.policy, ledger: this.ledger, now: this.clock() });
   }
 
   // A precheck's deferral: the row's own one is shown on it and the pass goes on; a global one ends the pass.
@@ -3352,11 +3362,15 @@ export class ResidentExecutor {
     if (pre.halt) { await this.haltWith(pre.halt, { key }); return { state: 'HALTED', key, failureCode: pre.halt }; }
     if (pre.defer) return this.deferral(pre, key, c.pr);
     if (pre.stop) {
+      if (pre.notice) this.queue.notice(pre.notice);
       if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock(), pre.stopClass ?? null)) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
-    if (resumeStage8 && (await this.ledger.usage(this.clock() - DAY, { stage8Pr: subject.pr })).stage8Retries >= this.policy.park.stage8RetriesPer24h)
-      return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true }, key, c.pr);
+    if (resumeStage8) {
+      const usage = await this.ledger.usage(this.clock() - DAY, { stage8Pr: subject.pr, budgetTimes: true });
+      if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true,
+        notice: await this.quotaNotice('STAGE8_RETRY_BUDGET_EXHAUSTED', subject, usage) }, key, c.pr);
+    }
     // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
     // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again
     // (rule 41ab823a). No answer is never a fact: the row runs as before.
@@ -3532,6 +3546,11 @@ export class ResidentExecutor {
     }
     const now = this.clock();
     const s = result.settle ?? null;
+    if (['CI_BUDGET_EXHAUSTED', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED'].includes(s?.code)) {
+      const retryAt = Date.parse(s.ciRetryAfter ?? '');
+      this.queue.notice(boundedNotice({ code: s.code, subject, used: null, limit: null, now,
+        resetsAt: Number.isFinite(retryAt) ? retryAt : null, recovery: null }));
+    }
     try {
       const environment = ['environment', 'transient'].includes(s?.klass);
       const b = breakerOf(this.queue.breaker);
@@ -3554,6 +3573,12 @@ export class ResidentExecutor {
       // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase).
       if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored') this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
       if (settled === 'stopped') {
+        const capCode = network && networkReleases24h >= this.networkPolicy()?.releasesPerHeadPer24h ? 'NETWORK_RELEASE_CAP_REACHED'
+          : counted && releases24h >= this.policy.limits.releasesPerHeadPer24h ? 'RELEASE_CAP_REACHED' : null;
+        if (['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(capCode)) {
+          const usage = await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true });
+          this.queue.notice(await this.quotaNotice(capCode, subject, usage));
+        }
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h, ...(network ? { networkReleases24h } : {}) });
       }
